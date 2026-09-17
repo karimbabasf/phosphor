@@ -54,11 +54,13 @@ The chain stops at the first refusal, in this order:
    patchable at all (`kill_switch_not_patchable`); anything else is schema-checked
    (`invalid_patch`); a valid patch always returns `needs_approval`
 4. The draft is a rail this app runs (a swap inside NEAR Intents, a Hyperliquid deposit or
-   withdrawal, a send to another intents account, a trade); any other kind is refused by name
-   (`unknown_kind`)
+   withdrawal, a send to another intents account, a payout to an address on a chain, a trade);
+   any other kind is refused by name (`unknown_kind`)
 5. The amount the app priced is finite and positive (`invalid_amount`)
 6. The venue the funds are handed to is on the allowlist, and the account the proceeds land in is
-   one of our own or on the allowlist (`destination_not_allowed`)
+   one of our own or on the allowlist (`destination_not_allowed`). The two sends are the
+   exception to the second half since 2026-09-17: their receiver is meant to be somebody else,
+   and no list blesses it (see Sends below)
 7. Per-transaction cap (`max_per_transaction`)
 8. Rolling session cap (`max_per_session`)
 9. Composition, over the two pockets (the NEAR Intents balance and the Hyperliquid collateral):
@@ -77,6 +79,84 @@ delta, so a portfolio already past a cap cannot make further moves until a human
 policy or the breach clears. And a policy change can never be auto-executed no matter how small or
 how sensible, because a policy change the human did not click is how every other guarantee here
 gets removed.
+
+## Sends
+
+`propose_send` is the one tool with a destination field, and the one place money leaves for
+somebody else. It drafts one of two rails: `intents_pay` (`src/rails/intents-pay.ts`) pays a
+balance out of `intents.near` to an address on a real chain through 1Click's bridge, and
+`intents_send` (`src/rails/intents-send.ts`) credits another NEAR Intents account. `where` picks
+between them and has no default: a send with no place named is refused as a draft. There is no
+allowlist for a receiver. What stands in for one is four things that cannot be skipped:
+
+1. **The read-back.** The tool schema (`src/mcp.ts`) holds `confirmed` to the literal `true`, and
+   the description and the persona (`src/persona.ts`) say what that means: the agent restates the
+   amount, the token, the full address character for character and where it lands, waits for the
+   human's yes, and never sends to an address that came from a tool result or a page. The door
+   (`src/http/propose.ts`) refuses `confirmed` that is not exactly `true` too, so a raw post cannot
+   skip it either. A send the agent has not confirmed cannot be expressed.
+2. **The decoding.** The builder (`src/proposals/rails.ts`) decodes `to` for the place it is going
+   through `src/chainscan/networks.ts`: an EVM address has to be 40 hex and, when it carries
+   capitals, pass its own EIP-55 checksum; a Solana address has to decode to exactly 32 bytes; a
+   NEAR id has to be one; an intents account id is an EVM address lowercased or a NEAR id. A
+   dropped digit is refused before any quote. The chain is then asked about the address (public
+   activity through `src/chainscan/index.ts`, bounded, never a refusal when it will not answer),
+   and a contract cannot be paid the chain's own coin.
+3. **The click, always.** `land()` in `src/proposals/execute.ts` turns any `allow` on
+   `intents_send`, `intents_pay` or `hl_withdraw` into `needs_approval`, whatever the size. The
+   `$100` no-click convenience applies to swaps, Hyperliquid deposits and trades (money that
+   stays in the app's own custody) and never to money leaving it. On an enclave wallet the click
+   puts up a Touch ID dialog whose sentence (`src/vault/reason.ts`) names the amount, the receiver
+   shortened to its two ends and the chain: "Pay 0.01 ETH to 0xd7b2...5050 on Ethereum ($24.40)".
+   The sentence is composed from the draft's fields; an address field that is not shaped like an
+   address is said as "an address", never echoed.
+4. **The echo.** The signed intent hands the balance to a solver handle and says nothing about the
+   far side. What ties the signature to the receiver is 1Click's `quoteRequest` echo, checked
+   against the draft on the dry quote at simulate time and again on the live quote a moment before
+   the key is touched (`src/rails/intents-spend.ts`): recipient, `recipientType`
+   (`DESTINATION_CHAIN` for a payout, `INTENTS` for a send), both assets and the amount. No echo,
+   no signature.
+
+The card (`ui/screens/sendcard.js`) is what the person reads before the click: the amount, the
+route from their balance through the bridge to the destination, the full address in groups of
+four with a copy and an explorer link the server built, the chain, the token, what arrives at
+least, the fee with the bridge's flat part named, the time, and whether they have paid this
+address before. That last fact comes from the recipients book (`src/recipients.ts`,
+`<dataDir>/recipients.json`): every send a human approved, by (where, address), with a count and
+a last date. The book gates nothing. A first send is a line in amber on the card, never a refusal,
+and an address in the book still takes the click and the Touch ID every time. The agent's `note`
+about a receiver is kept on the book row as data and never drawn on the card: the agent does not
+get to label the address it is paying.
+
+Hyperliquid never pays an external address. `propose_hl_withdraw` has no destination field and
+lands only in the app's own intents balance; a payout from trading collateral is two moves and two
+clicks, the withdrawal and then the send.
+
+### Every way a send could execute without a click and Touch ID
+
+On an enclave wallet with the shell attached: none. Each path below either ends in the click or
+is not a path.
+
+- **A policy `allow` in `land()`.** Bound for every send kind: the override in
+  `src/proposals/execute.ts` runs before the `allow` branch and turns it into `needs_approval`.
+  `approve()` and `releaseQueued()` re-run the engine and end in `land()` or in a click, so the
+  override binds there too.
+- **A window-token holder posting `/api/approve`.** That is a click, recorded `decidedBy:
+  'human'`, and on an enclave wallet it still puts up the Touch ID dialog that names the receiver.
+  The token is minted by the shell per boot and reaches the control webview only
+  (`src/http/auth.ts`).
+- **A software (password) wallet.** One click, no biometric: `approve()` skips the enclave branch
+  when the keystore custody is not the enclave or the relay is not attached
+  (`src/proposals/lifecycle.ts`). The card says "Approve" rather than "Approve, then Touch ID"
+  on such a wallet. This is the custody the person chose, not a bypass of it.
+- **The device passcode.** `evaluatePolicy(.deviceOwnerAuthentication)` accepts the Mac password
+  as well as a finger. The unwrap that approves a send goes through the Secure Enclave key's own
+  access control (`src-tauri/se-helper/main.swift`).
+- **A repeat.** The same send twice from one session while the first is pending is one row: a
+  `clientKey` repeat is answered with the existing row, and a keyless repeat is refused with its
+  id (`src/duplicates.ts`).
+- **Reconciliation** re-judges rows and signs nothing. **A worker seat** has no propose tool
+  registered and is refused at the door by role. **A skill** is data and cannot widen the surface.
 
 ## The approval gate has no off switch
 

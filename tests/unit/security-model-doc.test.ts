@@ -81,3 +81,33 @@ test('no long dash reaches the document', () => {
     .filter(({ line }) => long.test(line));
   assert.deepEqual(offenders.map(({ n }) => n), []);
 });
+
+/* The Sends section (2026-09-17) makes four claims a code change can falsify: that every send
+   kind is turned from allow to needs_approval in land(), that the tool holds `confirmed` to the
+   literal true, that the engine no longer allowlists a send's receiver, and that the reason
+   sentence names the receiver. Each is read off the code here, not off the prose. */
+test('the Sends section describes the gate the code has', () => {
+  assert.ok(DOC.includes('## Sends'), 'the document has no Sends section');
+  assert.ok(DOC.replace(/\s+/g, ' ').includes('There is no allowlist for a receiver'), 'the section has to say there is no allowlist');
+
+  const execute = fs.readFileSync(path.join(ROOT, 'src', 'proposals', 'execute.ts'), 'utf8');
+  for (const kind of ['intents_send', 'intents_pay', 'hl_withdraw']) {
+    assert.ok(execute.includes(`'${kind}'`), `land() does not name ${kind}`);
+  }
+  assert.match(execute, /p\.verdict\.outcome === 'allow'[\s\S]*?outcome: 'needs_approval'/, 'land() no longer turns allow into needs_approval');
+
+  const mcp = fs.readFileSync(path.join(ROOT, 'src', 'mcp.ts'), 'utf8');
+  assert.match(mcp, /confirmed: z\.literal\(true\)/, 'propose_send lost the literal-true confirmed field');
+  assert.ok(mcp.includes("'propose_send'"), 'propose_send is not registered');
+  assert.ok(!mcp.includes("'propose_intents_send'"), 'the old send tool is back');
+
+  const engine = fs.readFileSync(path.join(ROOT, 'src', 'policy', 'engine.ts'), 'utf8');
+  assert.match(engine, /draft\.kind === 'intents_send' \|\| draft\.kind === 'intents_pay'\) return null/, 'the engine allowlists a send receiver again');
+
+  const reason = fs.readFileSync(path.join(ROOT, 'src', 'vault', 'reason.ts'), 'utf8');
+  assert.match(reason, /case 'intents_pay':[\s\S]*?shortAddress\(draft\.to\)/, 'the Touch ID sentence for a payout does not name the receiver');
+  assert.ok(DOC.includes('Pay 0.01 ETH to 0xd7b2...5050 on Ethereum ($24.40)'), 'the documented dialog sentence has to be the one the code writes');
+
+  const door = fs.readFileSync(path.join(ROOT, 'src', 'http', 'propose.ts'), 'utf8');
+  assert.match(door, /params\.confirmed !== true/, 'the door no longer holds confirmed to true');
+});
