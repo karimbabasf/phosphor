@@ -113,6 +113,7 @@ function frame(totalUsd: number | null, holdings: Any[]): Any {
 function build() {
   const host = make('section');
   const timers: Array<{ id: number; fn: () => void }> = [];
+  const metaHandlers: Array<(meta: Any) => void> = [];
   let seq = 0;
   const win: Any = {
     setTimeout: (fn: () => void) => { seq += 1; timers.push({ id: seq, fn }); return seq; },
@@ -123,8 +124,14 @@ function build() {
     addEventListener: () => {},
     PhosphorMotion: { reduced: () => false },
     // The Activity fold mounts the shared list (ui/screens/receipts.js) into its body; the
-    // column under test never opens it, so a stub that draws nothing is the whole contract.
-    PhosphorReceipts: { list: () => ({ load: () => Promise.resolve([]), setWindow: () => {}, setKind: () => {}, expand: () => {}, get: () => [] }) },
+    // column under test never opens it, so a stub that draws nothing is the whole contract,
+    // except for the meta line, which the list feeds back through onMeta and a test can push.
+    PhosphorReceipts: {
+      list: (_host: Any, opts: Any) => {
+        if (opts && typeof opts.onMeta === 'function') metaHandlers.push(opts.onMeta);
+        return { load: () => Promise.resolve([]), setWindow: () => {}, setKind: () => {}, expand: () => {}, get: () => [] };
+      },
+    },
     PhosphorMoneyIn: { render: () => {} },
     // The icon set (ui/design/icons.js): one stand-in svg per name, so the strip and the folds
     // can be checked for the icon they asked for.
@@ -158,6 +165,11 @@ function build() {
     runTimers() {
       const due = timers.splice(0, timers.length);
       for (const timer of due) timer.fn();
+    },
+    /* The two folds under the list, by surface, and the Activity list's meta line. */
+    fold: (surface: string) => all(host, 'fold').find((f) => f.dataset.surface === surface)!,
+    meta: (meta: Any) => {
+      for (const handler of metaHandlers) handler(meta);
     },
   };
 }
@@ -247,4 +259,47 @@ test('the rules strip keeps its surface and its sentence, with the ask icon at i
   assert.equal(all(strip, 'strip-glyph')[0].children[0].dataset.icon, 'waiting', 'the strip wears the ask rule icon');
   assert.equal(all(strip, 'strip-text')[0].textContent,
     'Asks you above $100. Refuses above $10,000 at once and $25,000 a day.');
+});
+
+test('a fold opens on its head and shuts again, and what is behind it is inert while shut', () => {
+  const world = build();
+  world.put(frame(1000, COINS));
+  const fold = world.fold('moneyin');
+  const head = all(fold, 'fold-head')[0];
+  const reveal = all(fold, 'fold-reveal')[0];
+  assert.ok(head, 'no head on the fold');
+  assert.ok(reveal, 'no reveal track on the fold');
+  assert.equal(all(head, 'card-title')[0].textContent, 'Money in');
+  assert.equal(all(head, 'card-meta')[0].textContent, 'Where to send money');
+  assert.equal(all(head, 'fold-mark')[0].children[0].dataset.icon, 'chevron-down', 'the fold wears no chevron');
+  assert.equal(fold.dataset.open, undefined);
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.equal(reveal.hasAttribute('inert'), true, 'a shut fold is reachable from the keyboard');
+
+  for (const handler of head.__on.click ?? []) handler({ preventDefault: () => {} });
+  assert.equal(fold.dataset.open, 'true');
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  assert.equal(reveal.hasAttribute('inert'), false, 'an open fold is still inert');
+
+  for (const handler of head.__on.click ?? []) handler({ preventDefault: () => {} });
+  assert.equal(fold.dataset.open, undefined);
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.equal(reveal.hasAttribute('inert'), true);
+});
+
+test('the Activity meta is words in Sora and its fee in the mono face', () => {
+  const world = build();
+  world.put(frame(1000, COINS));
+  const meta = all(world.fold('activity'), 'card-meta')[0];
+  assert.equal(meta.textContent, 'Last 24 hours');
+  world.meta({ words: 'last 24 hours', state: 'ready', count: 3, total: 3, feesUsd: 0.0094 });
+  assert.equal(meta.textContent, 'Last 24 hours, $0.0094 in fees');
+  const mono = all(meta, 'mono');
+  assert.equal(mono.length, 1, 'the fee is not in the mono face');
+  assert.equal(mono[0].textContent, '$0.0094');
+  world.meta({ words: 'last 24 hours', state: 'ready', count: 1, total: 1, feesUsd: 0 });
+  assert.equal(meta.textContent, 'Last 24 hours, no fees');
+  assert.equal(all(meta, 'mono').length, 0);
+  world.meta({ words: 'last 24 hours', state: 'error', count: 0, total: 0, feesUsd: 0 });
+  assert.equal(meta.textContent, 'Last 24 hours, unread');
 });

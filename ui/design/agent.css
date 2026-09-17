@@ -408,6 +408,19 @@
 
 /* ---------- the transcript ---------- */
 
+/* The frame does not scroll; the transcript inside it does, and it is the
+   only thing in the column that moves. What is drawn over the scroller (the
+   edge fades, the pill) is drawn on the frame, so the scroller's own paint is
+   rows and nothing else: a mask on the scroller kept WebKit compositing it on
+   the main thread, and that was the stutter under every new row. */
+.transcript-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .transcript {
   display: flex;
   flex-direction: column;
@@ -427,19 +440,113 @@
   display: none;
 }
 
-.transcript[data-cut="top"] {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 32px);
+/* The fades: the column's own ground, thinning to nothing over 32 px, laid
+   over the edge that has more behind it. Each one is on or off by opacity,
+   so an edge crossing costs the scroller no repaint. */
+.transcript-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 32px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-press) var(--ease-out);
+  z-index: 2;
 }
 
-.transcript[data-cut="bottom"] {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+.transcript-fade[data-edge="top"] {
+  top: 0;
+  background: linear-gradient(to bottom, var(--bg-0), transparent);
 }
 
-.transcript[data-cut="both"] {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
+.transcript-fade[data-edge="bottom"] {
+  bottom: 0;
+  background: linear-gradient(to top, var(--bg-0), transparent);
+}
+
+.transcript-wrap[data-cut="top"] > .transcript-fade[data-edge="top"],
+.transcript-wrap[data-cut="both"] > .transcript-fade[data-edge="top"],
+.transcript-wrap[data-cut="bottom"] > .transcript-fade[data-edge="bottom"],
+.transcript-wrap[data-cut="both"] > .transcript-fade[data-edge="bottom"] {
+  opacity: 1;
+}
+
+/* THE WAY BACK DOWN. One round pill at the foot of the scroller, in the
+   assistant's own tone, with a down chevron and the count of what landed
+   while the person was reading further up. It springs in from a little
+   below on the window's spring (the tokens motion.js seeds on the root) and
+   leaves the way it came. Off, it is not in the way and not in the tab
+   order: visibility carries both. */
+.jump-latest {
+  position: absolute;
+  left: 50%;
+  bottom: var(--s-3);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--agent-edge);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--agent) 14%, var(--bg-1));
+  color: var(--agent);
+  box-shadow: var(--lift-sm);
+  cursor: pointer;
+  visibility: hidden;
+  opacity: 0;
+  transform: translate(-50%, 12px) scale(0.92);
+  transition: transform var(--dur-spring, 300ms) var(--ease-spring, var(--ease-out)),
+              opacity var(--dur-press) var(--ease-out),
+              visibility 0s linear var(--dur-press);
+}
+
+.jump-latest[data-on="true"] {
+  visibility: visible;
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+  transition-delay: 0s, 0s, 0s;
+}
+
+.jump-latest .btn-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.jump-latest .jump-glyph {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.jump-count {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  line-height: 1;
+  padding-right: 2px;
+}
+
+.jump-count:empty {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .jump-latest:hover {
+    background: color-mix(in srgb, var(--agent) 22%, var(--bg-1));
+    border-color: var(--agent);
+  }
+}
+
+.jump-latest:focus-visible {
+  outline: 2px solid var(--agent);
+  outline-offset: 2px;
 }
 
 /* A short conversation sits against the composer rather than floating at the top
@@ -1045,19 +1152,26 @@
 
 /* ---------- surfaces: where the beam lands ---------- */
 
-/* Any element with data-surface can glow. The glow is a layer whose OPACITY
-   moves, never a shadow that animates: in at 120 ms, out over 2.4 s. The tone
-   is the assistant's light by default, amber for a proposal waiting on a
-   person, rose for a tool that failed. ui/beam/beam.js writes the attributes
-   and never touches a style property.
+/* Any element with data-surface can carry the edge. The edge is a layer whose
+   OPACITY moves, never a shadow that animates: in at 160 ms, out over 400 ms.
+   The tone is the assistant's light by default, amber for a proposal waiting
+   on a person, rose for a tool that failed. ui/beam/beam.js writes the
+   attributes and never touches a style property of the surface.
 
-   The inset ring is drawn here, inside the element, so a surface that clips
-   its overflow (a fold, the conversation column) still shows its edge. The
-   outer bloom is painted by beam.js on the #beam canvas over the whole
-   window, which no overflow can clip. */
+   It is one hairline inside the element's own edge and nothing more. The
+   bloom that used to sit outside it, fading over two and a half seconds,
+   read as a scanner and went on 2026-09-16 with the canvas streak; the
+   moment of arrival is the ring in the beam layer below, and while a call is
+   open the seat light in the head is what says "working". Inside the edge
+   means a surface that clips its overflow (a fold, the conversation column)
+   still shows all of it. */
 [data-surface] {
   position: relative;
   --glow-c: var(--beam);
+  /* The edge's own clock. beam.js keeps the tone attribute for the out
+     half, so a rose edge fading stays rose the whole way (EDGE_OUT_MS). */
+  --dur-edge-in: 160ms;
+  --dur-edge-out: 400ms;
 }
 
 [data-surface][data-glow-tone="wait"] { --glow-c: var(--warn); }
@@ -1066,54 +1180,88 @@
 [data-surface]::after {
   content: "";
   position: absolute;
-  inset: -1px;
+  inset: 0;
   border-radius: inherit;
   pointer-events: none;
   opacity: 0;
-  /* The edge is held back to a little over half the tone and the bloom
-     carries the rest, inside and out. At full strength the hairline reads as
-     a selected border, which is a different thing from a surface something
-     just lit up. The inset half is never clipped; the outer half is what a
-     fold's overflow used to eat, so a glowing fold lifts its overflow below. */
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow-c) 55%, transparent),
-              inset 0 0 34px -12px var(--glow-c),
-              0 0 26px -6px var(--glow-c);
-  transition: opacity var(--dur-glow-out) var(--ease-out);
+  /* Held back to a little over half the tone: at full strength the hairline
+     reads as a selected border, which is a different thing from a surface
+     something is touching. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glow-c) 60%, transparent);
+  transition: opacity var(--dur-edge-out) var(--ease-out);
   z-index: 3;
 }
 
 [data-surface][data-glow="on"]::after {
   opacity: 1;
-  transition-duration: var(--dur-glow-in);
+  transition-duration: var(--dur-edge-in);
 }
 
-/* THE FOLD CLIP. A fold keeps overflow:hidden for its collapse, which ate the
-   outer bloom of a surface that landed on it (moneyin, activity on Basic).
-   A fold only ever glows while it is open and the agent is touching it, so
-   lifting its overflow for the life of the glow shows the bloom without
-   breaking the collapse, which runs from the closed state where nothing
-   glows. */
-.fold[data-surface][data-glow="on"] {
-  overflow: visible;
-}
-
-/* The rules strip and the tabs are inline surfaces: the edge only, no bloom. */
+/* The rules strip and the tabs are inline surfaces and wear the edge at full
+   strength: a hairline at half tone on a 1 px thing is not there. */
 .tab::after,
 .strip::after {
   box-shadow: inset 0 0 0 1px var(--glow-c);
 }
 
-/* The beam itself is drawn on one fixed canvas over the whole window. It is
-   pointer transparent and the loop runs only while a flight is in the air or
-   a bloom is fading. */
+/* THE BEAM LAYER. One fixed layer over the whole window, pointer transparent,
+   that holds the dot while it flies and the ring while it breathes. Nothing
+   in it is ever there at rest. */
 .beam-layer {
   position: fixed;
   inset: 0;
-  width: 100%;
-  height: 100%;
   z-index: 80;
   pointer-events: none;
+  overflow: hidden;
 }
+
+/* The dot: 8 px of the tone with a little light around it, placed at the
+   layer's origin and moved by motion.dev on its transform, so the flight
+   costs the window no layout. It is drawn transparent; the flight brings it
+   up out of the step row and puts it out again as the ring takes over. */
+.beam-dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--beam);
+  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--beam) 55%, transparent);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.beam-dot[data-tone="wait"] {
+  background: var(--warn);
+  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--warn) 55%, transparent);
+}
+
+.beam-dot[data-tone="down"] {
+  background: var(--down);
+  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--down) 55%, transparent);
+}
+
+/* The ring: a 2 px stroke the size of the panel it landed on, on the
+   panel's own corners, read off the custom properties the beam sets.
+   motion.dev breathes it (scale 1 to 1.06, twice) and fades it. */
+.beam-ring {
+  position: absolute;
+  left: var(--beam-x);
+  top: var(--beam-y);
+  width: var(--beam-w);
+  height: var(--beam-h);
+  box-sizing: border-box;
+  border: 2px solid var(--beam);
+  border-radius: var(--beam-r, var(--radius-lg));
+  opacity: 0;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+.beam-ring[data-tone="wait"] { border-color: var(--warn); }
+.beam-ring[data-tone="down"] { border-color: var(--down); }
 
 /* ---------- reduced motion ---------- */
 
@@ -1136,6 +1284,13 @@
   .suggest { animation-name: suggest-in-still; }
   .agent-connect { animation: none; }
   .composer-send:active:not(:disabled) { transform: none; }
-  /* The glow keeps a short fade: it is the one motion that carries meaning. */
+  /* The edge keeps a short fade: it is the one motion that carries meaning.
+     The dot never flies and the ring only fades (beam.js checks). */
   [data-surface]::after { transition-duration: 200ms !important; }
+  /* The pill fades in where it sits rather than springing up. */
+  .jump-latest {
+    transform: translate(-50%, 0) scale(1);
+    transition: opacity var(--dur-press) var(--ease-out), visibility 0s linear var(--dur-press);
+  }
+  .jump-latest[data-on="true"] { transition-delay: 0s, 0s; }
 }

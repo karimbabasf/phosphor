@@ -137,7 +137,7 @@
       window: '24h',
       kind: 'all',
       source: 'activity',
-      onMeta: function (meta) { dom.setText(activity.meta, activityWords(meta)); }
+      onMeta: function (meta) { setMeta(activity.meta, activityMeta(meta)); }
     });
 
     refs = {
@@ -184,7 +184,10 @@
   }
 
   /* A fold is the same card shut: the head is the control, the meta says what
-     is behind it, and the chevron says it opens. */
+     is behind it, and the chevron says it opens. The body sits on a track
+     (basic.css .fold-reveal) that the open state grows from nothing over 200
+     ms, and the track is inert while shut, so nothing behind a shut fold can
+     take focus or be read. */
   function fold(title, note, surface) {
     var node = dom.el('section', 'fold card');
     node.dataset.surface = surface;
@@ -200,22 +203,26 @@
     mark.appendChild(icon('chevron-down'));
     right.appendChild(mark);
     head.appendChild(right);
+    var reveal = dom.el('div', 'fold-reveal');
+    reveal.setAttribute('inert', '');
+    var clip = dom.el('div', 'fold-clip');
     var body = dom.el('div', 'fold-body');
-    body.hidden = true;
+    clip.appendChild(body);
+    reveal.appendChild(clip);
     node.appendChild(head);
-    node.appendChild(body);
+    node.appendChild(reveal);
 
     var opened = [];
     dom.on(head, 'click', function () {
       var open = node.dataset.open === 'true';
       if (open) {
         delete node.dataset.open;
-        body.hidden = true;
+        reveal.setAttribute('inert', '');
         head.setAttribute('aria-expanded', 'false');
         return;
       }
       node.dataset.open = 'true';
-      body.hidden = false;
+      reveal.removeAttribute('inert');
       head.setAttribute('aria-expanded', 'true');
       for (var i = 0; i < opened.length; i += 1) opened[i]();
     });
@@ -480,13 +487,25 @@
   }
 
   /* The fold's one line of meta: the window, then what it cost, the way the
-     Pro card says it. Before the fold has read anything it names the window. */
-  function activityWords(meta) {
+     Pro card says it. Before the fold has read anything it names the window.
+     The parts are strings for words and { mono } for the one number, so the
+     fee lands in the mono face (type.css: numbers are Geist Mono) while the
+     words stay in Sora. */
+  function activityMeta(meta) {
     var words = meta.words.charAt(0).toUpperCase() + meta.words.slice(1);
-    if (meta.state === 'error') return words + ', unread';
-    if (meta.state === 'loading' && !meta.count) return words;
-    if (!meta.total) return words + ', nothing yet';
-    return words + ', ' + (meta.feesUsd > 0 ? dom.fee(meta.feesUsd) + ' in fees' : 'no fees');
+    if (meta.state === 'error') return [words + ', unread'];
+    if (meta.state === 'loading' && !meta.count) return [words];
+    if (!meta.total) return [words + ', nothing yet'];
+    if (!(meta.feesUsd > 0)) return [words + ', no fees'];
+    return [words + ', ', { mono: dom.fee(meta.feesUsd) }, ' in fees'];
+  }
+
+  function setMeta(node, parts) {
+    dom.clear(node);
+    for (var i = 0; i < parts.length; i += 1) {
+      var part = parts[i];
+      node.appendChild(typeof part === 'string' ? dom.el('span', '', part) : dom.el('span', 'mono', part.mono));
+    }
   }
 
   function emptyBlock(title, note) {

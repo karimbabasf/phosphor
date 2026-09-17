@@ -28,6 +28,10 @@ const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
 const SHOTS = path.join(ROOT, 'docs', 'screenshots', 'chat');
+// PROOF_EXTRA_DIR: a working folder for pictures of the panel's states that are not deliverables
+// (the jump pill, the quit card, the empty state after a quit, the beam in the air, the Basic
+// folds). Set, it also slows the beam (?beam=slow) so a shot can catch the dot mid-flight.
+const EXTRA = process.env.PROOF_EXTRA_DIR;
 
 type Json = any;
 
@@ -252,7 +256,7 @@ async function main(): Promise<void> {
     page.on('console', (msg: Json) => {
       if (msg.type() === 'error' || msg.type() === 'warning') log.push(`[console.${msg.type()}] ${msg.text()}\n`);
     });
-    await page.goto(`${base}/?token=${token}`, { waitUntil: 'load' });
+    await page.goto(`${base}/?token=${token}${EXTRA ? '&beam=slow' : ''}`, { waitUntil: 'load' });
     await page.waitForSelector('#conversation', { state: 'attached' });
     await page.waitForFunction('!!(window.PhosphorAgent && window.PhosphorEvents && window.PhosphorCards)', undefined, { timeout: 20_000 });
     await page.evaluate('document.fonts.ready');
@@ -313,12 +317,95 @@ async function main(): Promise<void> {
     await page.evaluate('(function () { var t = document.querySelector(".transcript"); if (t) t.scrollTop = t.scrollHeight; })()');
     await sleep(200);
     await shoot('chat-2560.png');
+
+    if (EXTRA) await extras(page, emit, shots);
   } finally {
     await browser.close();
   }
   console.log(JSON.stringify({ screenshots: shots }, null, 2));
   const noise = log.filter((l) => l.startsWith('[page]') || l.startsWith('[console'));
   if (noise.length) console.log(`browser noise:\n${noise.join('')}`);
+}
+
+/* The panel's other states, one picture each, into PROOF_EXTRA_DIR. */
+async function extras(page: Json, emit: string, shots: string[]): Promise<void> {
+  const dir = EXTRA as string;
+  fs.mkdirSync(dir, { recursive: true });
+  const shoot = async (name: string): Promise<void> => {
+    const file = path.join(dir, name);
+    await page.screenshot({ path: file });
+    shots.push(file);
+  };
+  const send = async (frame: Frame): Promise<void> => {
+    await page.evaluate(`${emit}(${JSON.stringify(frame)})`);
+  };
+  const chat = 'c1';
+  const driver = (event: Record<string, unknown>): Frame => ({ chat, event: { ...event, at: Date.now() } });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  /* The receipt shots above centre a card with scrollIntoView, which also scrolls the column's
+     own overflow:hidden body a few pixels; put the head back where a person sees it. */
+  await page.evaluate('(function () { var b = document.querySelector(".conversation-body"); if (b) b.scrollTop = 0; var c = document.querySelector(".conversation"); if (c) c.scrollTop = 0; })()');
+  await sleep(400);
+
+  /* The pill: the person is reading at the top when two rows land. */
+  await page.evaluate('(function () { var t = document.querySelector(".transcript"); if (t) { t.scrollTop = t.scrollHeight; } })()');
+  await sleep(200);
+  await page.evaluate('(function () { var t = document.querySelector(".transcript"); if (t) { t.scrollTop = 0; } })()');
+  await sleep(300);
+  await send(driver({ kind: 'said', text: 'Is anything waiting on me?' }));
+  await sleep(120);
+  await send(driver({ kind: 'text', text: 'Nothing is waiting. The swap you approved landed and the deposit address is still open in the window.' }));
+  await send(driver({ kind: 'turn_end', error: false, turns: 1 }));
+  await send(driver({ kind: 'status', state: 'ready' }));
+  await sleep(700);
+  await shoot('panel-jump-pill.png');
+  await page.click('.jump-latest');
+  await sleep(700);
+  await shoot('panel-jump-landed.png');
+
+  /* The Basic folds at the foot of the column: shut, then Money in open. */
+  const toFoot = '(function () { var v = document.getElementById("views"); if (v) v.scrollTop = v.scrollHeight; })()';
+  await page.evaluate(toFoot);
+  await sleep(300);
+  await shoot('panel-basic-folds.png');
+  await page.click('.fold[data-surface="moneyin"] > .fold-head');
+  await sleep(500);
+  await page.evaluate(toFoot);
+  await sleep(200);
+  await shoot('panel-basic-moneyin-open.png');
+  await page.click('.fold[data-surface="moneyin"] > .fold-head');
+  await sleep(300);
+  await page.evaluate('(function () { var v = document.getElementById("views"); if (v) v.scrollTop = 0; })()');
+
+  /* The Pro Money head. */
+  await page.click('.tab[data-tab="pro"]');
+  await sleep(900);
+  await shoot('panel-pro-money.png');
+  await page.click('.tab[data-tab="basic"]');
+  await sleep(600);
+
+  /* The beam, slowed to four seconds by ?beam=slow: the dot in the air, then the landing. */
+  await send(driver({ kind: 'said', text: 'Draw the levels on ETH' }));
+  await sleep(80);
+  await send(driver({ kind: 'tool', name: 'mcp__phosphor__chart_draw', input: { product: 'ETH-USD' } }));
+  await sleep(1600);
+  await shoot('panel-beam-flight.png');
+  await sleep(3700);
+  await shoot('panel-beam-landed.png');
+  await send(driver({ kind: 'tool_result', name: 'mcp__phosphor__chart_draw', ok: true }));
+  await send(driver({ kind: 'text', text: 'Done: support at 2,410 and the range top at 2,560 are on the chart.' }));
+  await send(driver({ kind: 'turn_end', error: false, turns: 1 }));
+  await send(driver({ kind: 'status', state: 'ready' }));
+  await sleep(600);
+
+  /* Turn off: the card, then the empty state it leaves behind. */
+  await page.click('.agent-controls .btn-quiet');
+  await sleep(500);
+  await shoot('panel-quit-card.png');
+  await page.click('#overlay-card .btn-danger');
+  await sleep(1200);
+  await shoot('panel-empty-after-quit.png');
 }
 
 function stop(): void {

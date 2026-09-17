@@ -2,14 +2,20 @@
 
    A phosphor screen glows where the beam hits and fades once it has moved on,
    which is the name of the product and exactly the feedback this window owes a
-   person. A tool call sends a point of light from its step row in the
-   conversation to the panel the tool touched. The panel lights and holds
-   while the call is open, and decays over two and a half seconds once the
-   result is back. Amber while a person still has to click, rose when the tool
-   failed. While any call is held, the assistant's seat light (the status line
-   in the head of the conversation, #agent-status) is live: that line is where
-   "working" is shown now. It used to be a band sweeping the panel, which read
-   as a scanner rather than as a screen.
+   person. A tool call sends one point of light from its step row in the
+   conversation to the panel the tool touched: the dot leaves the row, arcs
+   over the content on a spring, and lands as a ring on the panel's own edge
+   that breathes twice and fades. The panel keeps a quiet edge while the call
+   is open and lets it go when the result is back. Amber while a person still
+   has to click, rose when the tool failed. While any call is held, the
+   assistant's seat light (the status line in the head of the conversation,
+   #agent-status) is live: that line is where "working" is shown.
+
+   It used to be a streak on a canvas with a bloom that decayed over two and a
+   half seconds, which read as a scanner (Karim, 2026-09-16: "remove the
+   scanning animation and just fix that entire animation with motion.dev").
+   The flight and the ring are motion.dev now, through PhosphorMotion.animate,
+   and there is no canvas and no loop of this file's own.
 
    window.PhosphorBeam
      fire(opts)        one flight. opts:
@@ -18,78 +24,54 @@
                          tone  'glow' | 'wait' | 'down'
                          then  'hold' | 'decay' | 'none', default 'decay'
                          done  called on arrival, after `then`
-     hold(id, tone)    the glow held and the seat light live, while a tool is in flight
-     release(id, ok)   let go: glow and decay, the seat light settles; rose when ok is false
-     decay(id, tone)   glow once and fade, no flight
+     hold(id, tone)    the edge held and the seat light live, while a tool is in flight
+     release(id, ok)   let go: the edge fades, the seat light settles; rose when ok is false
+     decay(id, tone)   one breath of the ring and the edge, no flight: "this changed"
      wait(id, on)      amber, held while a proposal waits for a click
      surface(id)       the element for a surface id, or null
 
-   THE CANVAS CARRIES THE FLIGHT AND NOTHING ELSE. Everything that happens on a
-   surface is two attributes (data-glow, data-glow-tone), and everything that
-   happens on the seat light is one (data-live); the Surfaces block and the
-   status line in components.css draw all of it. This file never writes a
-   style property, so a theme change or a reduced-motion preference reaches
-   the glow without it knowing.
+   WHAT THIS FILE WRITES. Everything that happens ON a surface is two
+   attributes (data-glow, data-glow-tone) and everything on the seat light is
+   one (data-live); agent.css draws all of it, so a theme change or a
+   reduced-motion preference reaches the edge without this file knowing. The
+   dot and the ring are elements of its own in the fixed #beam layer, moved by
+   motion.dev, and the one style this file sets is their geometry: the ring's
+   box, as custom properties the stylesheet reads. Colour, stroke, timing and
+   easing all live in the stylesheet or in the motion options here.
 
-   The budget, and each line of it is a rule the performance audit wrote:
-   the rAF handle exists only while a flight is in the air and unregisters
-   itself when the last one lands; rects are read at fire time and never inside
-   the loop; the canvas clears the box it drew last frame rather than the
-   window; device pixels are capped at 2; nothing is allocated per frame. */
+   The budget: geometry is read at fire time and once more at the landing,
+   never inside anything that runs per frame, because nothing here runs per
+   frame; motion.dev owns the frames. */
 (function () {
   'use strict';
 
-  var TONE_TOKEN = { glow: '--beam', wait: '--warn', down: '--down' };
-  var TONE_FALLBACK = { glow: '51,255,102', wait: '245,185,66', down: '255,90,110' };
+  var TONES = { glow: true, wait: true, down: true };
 
-  /* Twelve samples lagging by 0.022 of the path each: the tail covers about a
-     quarter of the curve, which at 320 ms is roughly 85 ms of trail. Shorter
-     reads as a dot being dragged, longer as a stripe. The samples are joined
-     rather than stamped: twelve dots along a 700 px path is a dotted line, and
-     what this is meant to look like is light. */
-  var TAIL = 12;
-  var TAIL_LAG = 0.022;
-  var TAIL_W = 3.2; /* the tail's width where it meets the head */
-  var HEAD_R = 1.5; /* 3 px across, the spec's head */
-  var HALO_R = 17;
-  var LIFT = 80; /* the control point, lifted toward the top of the window */
-  var TAU = Math.PI * 2;
-  var GLOW_IN_MS = 120;
-  var DECAY_MS = 2400;
-  var CLEAR_PAD = 22;
-  var SLOW_MS = 4000;
-  var DEFAULT_MS = 320;
-
-  /* ?beam=slow stretches one flight to four seconds so a screenshot can catch
-     the head in the air. It is read from the query string once and from nowhere
+  /* The flight. Its visual duration is the window's --dur-beam (320 ms): the
+     spring on x lands the dot in that time and settles a beat after; the arc
+     on y rises to LIFT above the higher end and comes down in the same beat.
+     ?beam=slow stretches a flight twelve times so a screenshot can catch the
+     dot in the air. It is read from the query string once and from nowhere
      else: nothing a frame or a tool carries can slow the window down. */
+  var LIFT = 80;
+  var FLIGHT_S = 0.32;
+  var SLOW_FLIGHT = 12;
+  var SLOW_RING = 3;
+  /* The ring: two breaths, scale 1 to 1.06 and back, in one second, then
+     gone. Under reduced motion it is a fade and nothing else. */
+  var RING_S = 1.0;
+  var RING_REDUCED_S = 0.6;
+  /* How long the tone attribute outlives the edge, so a rose edge fading out
+     stays rose the whole way down (agent.css --dur-edge-out). */
+  var EDGE_OUT_MS = 400;
+  var GLOW_IN_MS = 160;
+
   var slow = false;
   try {
     slow = /(^|[?&])beam=slow(&|$)/.test(String(window.location.search || ''));
   } catch (err) {
     slow = false;
   }
-
-  var canvas = null;
-  var ctx = null;
-  var dpr = 1;
-  var fitted = false;
-  var flights = [];
-  var handle = null;
-  var teardownAt = 0;
-
-  /* The box painted last frame, in CSS pixels, so the next frame clears what it
-     has to and leaves the rest of a full-window canvas alone. */
-  var dirty = null;
-  var dx0 = 0;
-  var dy0 = 0;
-  var dx1 = 0;
-  var dy1 = 0;
-
-  /* Scratch for the curve. Module scalars rather than a returned object,
-     because this is the one path that runs at display rate. */
-  var px = 0;
-  var py = 0;
 
   var records = Object.create(null);
 
@@ -104,8 +86,8 @@
   }
 
   /* The view a node sits in, or null when it sits outside all of them (the
-     topbar, the stage itself). The views are #view-basic, #view-pro and
-     #view-trade, so the id is the test rather than a class lookup. */
+     topbar, the stage itself, the conversation). The views are #view-basic,
+     #view-pro, #view-trade and #view-vault, so the id is the test. */
   function viewOf(node) {
     var walk = node;
     while (walk) {
@@ -119,15 +101,13 @@
     return document.querySelector('.tab[aria-selected="true"]');
   }
 
-  /* A tool whose panel is in another mode lands on that mode's tab, so a chart
-     tool called from Basic lights the Trade tab a beat before the server moves
-     the window. That beat is the point: the light arrives first and the view
-     follows it. */
-  /* A surface that does not exist yet falls back to one that does, on the same
-     screen. 'position' is the trade deck (the Open/Waiting/Done pane): the
-     trade screen carries it, and until that lands the chart on the same view
-     takes the light, so a trade proposal is never aimed at nothing. */
-  var FALLBACK = { position: 'chart' };
+  /* A surface that does not exist yet falls back to one that does, on the
+     same screen. 'position' is the trade deck: until it lands the chart on
+     the same view takes the light. 'dock' is the decision dock, which is only
+     on screen while something waits for a click: a proposal the app refused
+     outright never opens it, and the flight then lands on the conversation
+     the request came from. */
+  var FALLBACK = { position: 'chart', dock: 'assistant' };
 
   function resolve(key) {
     if (key === 'window') return document.getElementById('stage');
@@ -143,6 +123,10 @@
       if (view.getAttribute('data-active') === 'true') return node;
       if (!hidden) hidden = view;
     }
+    /* A tool whose panel is in another mode lands on that mode's tab, so a
+       chart tool called from Basic lights the Trade tab a beat before the
+       server moves the window. That beat is the point: the light arrives
+       first and the view follows it. */
     if (hidden) {
       var mode = String(hidden.id).slice('view-'.length);
       return document.querySelector('[data-surface="tab-' + esc(mode) + '"]');
@@ -161,14 +145,14 @@
   /* An element is a target only once it has a box: a display:none panel or one
      in a view still crossfading in measures at zero, and a flight to 0,0 lands
      under the composer. isConnected is a cheap detach check with no layout in
-     it; the rect read is the one layout read, at fire time. */
+     it; the rect read is a layout read, at fire time or at the landing. */
   function visible(el) {
     if (!el || el.isConnected === false || typeof el.getBoundingClientRect !== 'function') return false;
     var rect = el.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
   }
 
-  /* ---------------------------------------------------------------- glow */
+  /* ---------------------------------------------------------------- edge */
 
   function recordFor(id) {
     var key = String(id);
@@ -178,13 +162,13 @@
         id: key,
         holds: 0,
         /* THE RACE. A hold is armed at fire time and applied on arrival, so a
-           result that comes back faster than the 320 ms flight (switch,
-           set_theme, trade_focus all answer in well under it) has something
-           to cancel. `armed` counts flights on the way to holding this
-           surface; `cancels` counts releases that arrived before their
-           flight, so the arrival knows to skip the hold rather than stick a
-           glow with no call behind it. `errored` carries a rose flash for a
-           failure that beat its flight. */
+           result that comes back faster than the flight (switch, set_theme,
+           trade_focus all answer in well under it) has something to cancel.
+           `armed` counts flights on the way to holding this surface;
+           `cancels` counts releases that arrived before their flight, so the
+           arrival knows to skip the hold rather than stick an edge with no
+           call behind it. `errored` carries a rose flash for a failure that
+           beat its flight. */
         armed: 0,
         cancels: 0,
         errored: 0,
@@ -211,7 +195,7 @@
     if (el !== rec.el) {
       /* The surface moved: a view swapped, so the panel a call was aimed at is
          now the tab, or the other way round. The old element has to give its
-         attributes back or it keeps a glow with nothing behind it. */
+         attributes back or it keeps an edge with nothing behind it. */
       if (rec.el) {
         rec.el.removeAttribute('data-glow');
         rec.el.removeAttribute('data-glow-tone');
@@ -234,9 +218,9 @@
       rec.wroteGlow = on;
     }
 
-    /* The tone outlives the glow, because a rose surface fading out has to stay
-       rose the whole way down. Once the decay is over the attribute goes, so a
-       surface at rest carries nothing. */
+    /* The tone outlives the edge for the length of its fade, so a rose edge
+       going out stays rose the whole way. Then the attribute goes, so a
+       surface at rest carries nothing at all. */
     if (rec.toneTimer) {
       window.clearTimeout(rec.toneTimer);
       rec.toneTimer = 0;
@@ -249,7 +233,7 @@
           rec.el.removeAttribute('data-glow-tone');
           rec.wroteTone = '';
         }
-      }, DECAY_MS);
+      }, EDGE_OUT_MS);
     }
   }
 
@@ -257,8 +241,8 @@
      is the assistant at work, so the status line in the head of the
      conversation is live while the count is above zero and settles the moment
      the last call lets go. One attribute, read by the status line's own
-     block in components.css; the breathing and the light through the verb
-     are drawn there. The element is looked up at the event, never kept: the
+     block in agent.css; the breathing and the light through the verb are
+     drawn there. The element is looked up at the event, never kept: the
      column rebuilds its head when it mounts, and a held reference would be
      the old one. */
   var liveHolds = 0;
@@ -282,7 +266,7 @@
     var rec = recordFor(id);
     rec.holds += 1;
     liveHolds += 1;
-    if (tone && TONE_TOKEN[tone]) rec.tone = tone;
+    if (tone && TONES[tone]) rec.tone = tone;
     paint(rec);
     paintSeat();
   }
@@ -292,6 +276,20 @@
   function arm(id) {
     if (!id) return;
     recordFor(id).armed += 1;
+  }
+
+  /* A flight that will never arrive (no target, or the target left the DOM
+     on the way) gives its arming back, and takes with it any release that
+     already answered it, so the next flight to the same surface starts even. */
+  function disarm(id) {
+    if (!id) return;
+    var rec = records[String(id)];
+    if (!rec) return;
+    if (rec.armed > 0) rec.armed -= 1;
+    if (rec.cancels > rec.armed) {
+      rec.cancels -= 1;
+      if (rec.errored > rec.cancels) rec.errored = rec.cancels;
+    }
   }
 
   function release(id, ok) {
@@ -321,13 +319,13 @@
     }
   }
 
-  /* Glow once and fade: the shape of "this changed on its own". The attribute
-     goes on now and comes off after the rise, which hands the fall to the CSS
-     transition rather than running it here. */
+  /* One breath: the shape of "this changed on its own". The edge comes on
+     for its rise and hands the fall to the stylesheet's transition; the ring
+     breathes once around the panel and goes. */
   function decay(id, tone) {
     if (!id) return;
     var rec = recordFor(id);
-    if (tone && TONE_TOKEN[tone]) rec.tone = tone;
+    if (tone && TONES[tone]) rec.tone = tone;
     rec.pulse = true;
     paint(rec);
     if (rec.pulseTimer) window.clearTimeout(rec.pulseTimer);
@@ -336,6 +334,7 @@
       rec.pulse = false;
       paint(rec);
     }, GLOW_IN_MS + 20);
+    ring(surface(rec.id), rec.waiting ? 'wait' : rec.tone);
   }
 
   function wait(id, on) {
@@ -345,96 +344,50 @@
     paint(rec);
   }
 
-  /* --------------------------------------------------------------- colour */
+  /* ---------------------------------------------------------------- layer */
 
-  function parseRgb(raw, fallback) {
-    if (typeof raw !== 'string') return fallback;
-    var value = raw.trim();
-    var hex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(value);
-    if (hex) {
-      var body = hex[1];
-      if (body.length === 3) body = body[0] + body[0] + body[1] + body[1] + body[2] + body[2];
-      return parseInt(body.slice(0, 2), 16) + ',' +
-        parseInt(body.slice(2, 4), 16) + ',' +
-        parseInt(body.slice(4, 6), 16);
+  /* One fixed layer over the whole window holds the dot and the ring, so no
+     panel's overflow can clip either. index.html carries it; a page without
+     it (the update window, a test page) gets one made here. */
+  var host = null;
+
+  function layer() {
+    if (host && host.isConnected !== false) return host;
+    var found = document.getElementById('beam');
+    if (found && String(found.tagName || '').toLowerCase() === 'canvas') found = null;
+    if (!found) {
+      found = document.createElement('div');
+      found.id = 'beam';
+      found.className = 'beam-layer';
+      found.setAttribute('aria-hidden', 'true');
+      var root = document.body || document.documentElement;
+      if (root) root.appendChild(found);
     }
-    var rgb = /^rgba?\(\s*([0-9.]+)[,\s]+([0-9.]+)[,\s]+([0-9.]+)/.exec(value);
-    if (rgb) return Math.round(Number(rgb[1])) + ',' + Math.round(Number(rgb[2])) + ',' + Math.round(Number(rgb[3]));
-    return fallback;
+    host = found;
+    return host;
   }
 
-  function millis(raw, fallback) {
-    if (typeof raw !== 'string') return fallback;
-    var ms = /^\s*([0-9.]+)ms/.exec(raw);
-    if (ms) return Number(ms[1]);
-    var s = /^\s*([0-9.]+)s/.exec(raw);
-    if (s) return Number(s[1]) * 1000;
-    return fallback;
+  function motion() {
+    var m = window.PhosphorMotion;
+    return m && typeof m.animate === 'function' ? m : null;
   }
 
-  /* --------------------------------------------------------------- easing */
-
-  /* The flight eases on the window's own --ease-in-out rather than on a curve
-     picked here, so the beam and every CSS transition in the window move the
-     same way. Newton-Raphson on the bezier's x, six passes, which lands inside
-     a thousandth over this range. */
-  function easeFor(raw) {
-    var m = /cubic-bezier\(\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*,\s*([-0-9.]+)\s*\)/.exec(String(raw || ''));
-    var x1 = m ? Number(m[1]) : 0.77;
-    var y1 = m ? Number(m[2]) : 0;
-    var x2 = m ? Number(m[3]) : 0.175;
-    var y2 = m ? Number(m[4]) : 1;
-    return {
-      ax: 1 - 3 * x2 + 3 * x1, bx: 3 * x2 - 6 * x1, cx: 3 * x1,
-      ay: 1 - 3 * y2 + 3 * y1, by: 3 * y2 - 6 * y1, cy: 3 * y1
-    };
+  function reduced() {
+    var m = window.PhosphorMotion;
+    return !m || (typeof m.reduced === 'function' && m.reduced());
   }
 
-  function easeAt(e, p) {
-    if (p <= 0) return 0;
-    if (p >= 1) return 1;
-    var t = p;
-    for (var i = 0; i < 6; i += 1) {
-      var x = ((e.ax * t + e.bx) * t + e.cx) * t - p;
-      var d = (3 * e.ax * t + 2 * e.bx) * t + e.cx;
-      if (d < 1e-6 && d > -1e-6) break;
-      t -= x / d;
-    }
-    if (t < 0) t = 0;
-    if (t > 1) t = 1;
-    return ((e.ay * t + e.by) * t + e.cy) * t;
+  function remove(node) {
+    if (node && node.parentNode) node.parentNode.removeChild(node);
   }
 
-  /* ---------------------------------------------------------------- canvas */
-
-  function ensureCanvas() {
-    if (canvas) return canvas;
-    canvas = document.getElementById('beam');
-    if (!canvas || typeof canvas.getContext !== 'function') {
-      canvas = null;
-      return null;
+  function after(animation, fn) {
+    var finished = animation && animation.finished;
+    if (finished && typeof finished.then === 'function') {
+      finished.then(fn, function (err) { report(err); fn(); });
+      return;
     }
-    ctx = canvas.getContext('2d');
-    if (!ctx) {
-      canvas = null;
-      return null;
-    }
-    fit();
-    if (typeof ResizeObserver === 'function' && document.body) {
-      new ResizeObserver(fit).observe(document.body);
-    }
-    return canvas;
-  }
-
-  /* The one layout read outside fire, and it is in a ResizeObserver callback,
-     which is where the rebuild rules put geometry. */
-  function fit() {
-    if (!canvas || !window.PhosphorMotion) return;
-    var size = window.PhosphorMotion.fitCanvas(canvas, 2);
-    dpr = size.dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    dirty = null;
-    fitted = true;
+    fn();
   }
 
   function pointOf(source) {
@@ -447,191 +400,57 @@
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   }
 
-  function bound(x, y, r) {
-    if (!dirty) {
-      dirty = true;
-      dx0 = x - r;
-      dy0 = y - r;
-      dx1 = x + r;
-      dy1 = y + r;
-      return;
+  /* ----------------------------------------------------------------- ring */
+
+  /* The landing: a ring the size of the panel, on its own edge with its own
+     corners, that breathes twice and fades. The one layout read here is the
+     panel's box, taken at the landing rather than at fire time, because a
+     view can swap under a flight. The geometry goes to the stylesheet as
+     custom properties; the stroke, the colour and the layer are its. */
+  function ring(el, tone) {
+    var m = motion();
+    if (!m || !el || el.isConnected === false || typeof el.getBoundingClientRect !== 'function') return;
+    var rect = el.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return;
+    var node = document.createElement('span');
+    node.className = 'beam-ring';
+    node.setAttribute('data-tone', TONES[tone] ? tone : 'glow');
+    place(node, rect, radiusOf(el));
+    layer().appendChild(node);
+
+    var k = slow ? SLOW_RING : 1;
+    var animation;
+    if (reduced()) {
+      animation = m.animate(node, { opacity: [0, 1, 0] }, { duration: RING_REDUCED_S * k, ease: 'easeInOut', times: [0, 0.3, 1] });
+    } else {
+      animation = m.animate(node, {
+        opacity: [0, 1, 1, 1, 1, 0],
+        scale: [1, 1.06, 1, 1.06, 1, 1]
+      }, { duration: RING_S * k, ease: 'easeInOut', times: [0, 0.2, 0.45, 0.7, 0.9, 1] });
     }
-    if (x - r < dx0) dx0 = x - r;
-    if (y - r < dy0) dy0 = y - r;
-    if (x + r > dx1) dx1 = x + r;
-    if (y + r > dy1) dy1 = y + r;
+    after(animation, function () { remove(node); });
   }
 
-  function at(f, t) {
-    var u = 1 - t;
-    px = u * u * f.x0 + 2 * u * t * f.cx + t * t * f.x1;
-    py = u * u * f.y0 + 2 * u * t * f.cy + t * t * f.y1;
+  function place(node, rect, radius) {
+    node.style.setProperty('--beam-x', rect.left + 'px');
+    node.style.setProperty('--beam-y', rect.top + 'px');
+    node.style.setProperty('--beam-w', rect.width + 'px');
+    node.style.setProperty('--beam-h', rect.height + 'px');
+    node.style.setProperty('--beam-r', radius);
   }
 
-  /* RE-MEASURE ON RESIZE AND SCROLL, and nowhere else. A flight reads its
-     rects once at fire time (the draw loop reads no layout, which is the
-     budget rule the performance audit wrote), so a window that resizes or a
-     panel that scrolls under the light mid-flight would leave the dot landing
-     where the element WAS. These listeners recompute the endpoints on the two
-     events that move them, off the elements the flight kept. They are added
-     only while flights are in the air and dropped with the last one, so a
-     window at rest carries no beam listeners. The glow itself is attribute
-     based and already follows its element. */
-  var reflowing = false;
-
-  function reflow() {
-    if (!flights.length) return;
-    for (var i = 0; i < flights.length; i += 1) {
-      var f = flights[i];
-      if (f.fromEl) {
-        var fp = pointOf(f.fromEl);
-        if (fp) { f.x0 = fp.x; f.y0 = fp.y; }
-      }
-      if (f.toEl) {
-        var tp = pointOf(f.toEl);
-        if (tp) { f.x1 = tp.x; f.y1 = tp.y; }
-      }
-      f.cx = (f.x0 + f.x1) / 2;
-      f.cy = (f.y0 + f.y1) / 2 - LIFT;
-    }
-    if (handle && typeof handle.start === 'function') handle.start();
-  }
-
-  function watchReflow() {
-    if (reflowing || typeof window.addEventListener !== 'function') return;
-    reflowing = true;
-    /* Capture, so a scroll inside any pane is heard: a scroll event does not
-       bubble, and the nearest scrolling ancestor of the target is whichever
-       pane the panel sits in. */
-    window.addEventListener('scroll', reflow, true);
-    window.addEventListener('resize', reflow);
-  }
-
-  function unwatchReflow() {
-    if (!reflowing) return;
-    reflowing = false;
-    window.removeEventListener('scroll', reflow, true);
-    window.removeEventListener('resize', reflow);
-  }
-
-  function draw(now) {
-    if (dirty) {
-      ctx.clearRect(dx0 - CLEAR_PAD, dy0 - CLEAR_PAD,
-        (dx1 - dx0) + CLEAR_PAD * 2, (dy1 - dy0) + CLEAR_PAD * 2);
-      dirty = null;
-    }
-
-    /* Light adds. A beam crossing its own tail brightens rather than repainting
-       over it, which is the difference between a moving dot and a moving
-       light. */
-    ctx.globalCompositeOperation = 'lighter';
-
-    for (var i = flights.length - 1; i >= 0; i -= 1) {
-      var f = flights[i];
-      /* The target left the DOM while the light was on its way. isConnected
-         is not a layout read, so this costs the loop nothing. Drop the flight
-         and give back its armed hold, so nothing lights an element that is
-         gone. */
-      if (f.toEl && f.toEl.isConnected === false) {
-        flights.splice(i, 1);
-        if (f.then === 'hold' && typeof f.to === 'string') release(f.to, true);
-        continue;
-      }
-      var p = (now - f.startedAt) / f.durationMs;
-      if (p < 0) p = 0;
-      var t = easeAt(f.ease, p > 1 ? 1 : p);
-
-      /* The tail, drawn from the far end forward as twelve joined segments,
-         each thinner and fainter than the one in front of it. Round caps, so
-         the joins disappear and the taper reads as one stroke of light rather
-         than twelve of anything. */
-      ctx.strokeStyle = f.css;
-      ctx.lineCap = 'round';
-      var hasPrev = false;
-      var lastX = 0;
-      var lastY = 0;
-      for (var s = TAIL; s >= 0; s -= 1) {
-        var tt = t - s * TAIL_LAG;
-        if (tt <= 0) {
-          hasPrev = false;
-          continue;
-        }
-        var k = 1 - s / (TAIL + 1);
-        at(f, tt);
-        if (hasPrev) {
-          ctx.globalAlpha = 0.34 * k * k;
-          ctx.lineWidth = 0.4 + TAIL_W * k;
-          ctx.beginPath();
-          ctx.moveTo(lastX, lastY);
-          ctx.lineTo(px, py);
-          ctx.stroke();
-          bound(px, py, TAIL_W);
-        }
-        lastX = px;
-        lastY = py;
-        hasPrev = true;
-      }
-
-      at(f, t);
-      var hx = px;
-      var hy = py;
-
-      /* The halo is one gradient built at fire time and stamped by moving the
-         transform, so the loop allocates nothing. */
-      ctx.globalAlpha = 1;
-      ctx.setTransform(dpr, 0, 0, dpr, hx * dpr, hy * dpr);
-      ctx.fillStyle = f.halo;
-      ctx.fillRect(-HALO_R, -HALO_R, HALO_R * 2, HALO_R * 2);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      /* Two discs make the head: the tone at three pixels, then a white core
-         inside it. Under a lighter composite that is what a bright point of
-         coloured light does, rather than a coloured dot with a hard edge. */
-      ctx.globalAlpha = 0.85;
-      ctx.fillStyle = f.css;
-      ctx.beginPath();
-      ctx.arc(hx, hy, HEAD_R * 2, 0, TAU);
-      ctx.fill();
-
-      ctx.globalAlpha = 0.95;
-      ctx.fillStyle = '#FFFFFF';
-      ctx.beginPath();
-      ctx.arc(hx, hy, HEAD_R, 0, TAU);
-      ctx.fill();
-      bound(hx, hy, HALO_R);
-
-      if (p >= 1) {
-        flights.splice(i, 1);
-        arrive(f);
-      }
-    }
-
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
-
-    if (flights.length === 0) {
-      if (dirty) {
-        ctx.clearRect(dx0 - CLEAR_PAD, dy0 - CLEAR_PAD,
-          (dx1 - dx0) + CLEAR_PAD * 2, (dy1 - dy0) + CLEAR_PAD * 2);
-        dirty = null;
-      }
-      /* Out of band, because destroying a handle from inside the loop's own
-         walk would skip the handle that shifts into its place. */
-      if (handle && !teardownAt) {
-        teardownAt = window.setTimeout(teardown, 0);
-      }
+  /* The panel's own corners, so the ring sits on its edge rather than boxing
+     it. A style read, not a layout read. */
+  function radiusOf(el) {
+    try {
+      var value = getComputedStyle(el).getPropertyValue('border-radius');
+      return value && value.trim() ? value.trim() : '0px';
+    } catch (err) {
+      return '0px';
     }
   }
 
-  function teardown() {
-    teardownAt = 0;
-    if (flights.length > 0) return;
-    unwatchReflow();
-    if (handle) {
-      handle.destroy();
-      handle = null;
-    }
-  }
+  /* --------------------------------------------------------------- arrive */
 
   function arrive(f) {
     if (f.then === 'hold') {
@@ -639,7 +458,7 @@
       if (rec && rec.armed > 0) rec.armed -= 1;
       if (rec && rec.cancels > 0) {
         /* The result already came back. Skip the hold, and if it failed give
-           the surface its one rose flash so a fast failure still shows. */
+           the surface its one rose breath so a fast failure still shows. */
         rec.cancels -= 1;
         if (rec.errored > 0) {
           rec.errored -= 1;
@@ -666,40 +485,46 @@
      body. A tool that switches the view fires its light a beat before the
      panel it names is mounted or crossfaded in, and a flight measured then
      lands at 0,0 under the composer. Resolved fresh on each poll, because the
-     element that answers a surface id changes as views swap. */
+     element that answers a surface id changes as views swap. A dock that
+     never opens hands the flight to its fallback. */
   var WAIT_MS = 1000;
+
+  function now() {
+    return window.performance && performance.now ? performance.now() : Date.now();
+  }
+
+  function later(fn) {
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(fn);
+    else window.setTimeout(fn, 16);
+  }
 
   function whenVisible(id, run) {
     var direct = typeof id !== 'string';
     var first = direct ? id : surface(id);
-    if (visible(first) || direct) {
+    if (direct || visible(first)) {
       run(first);
       return;
     }
-    var startedAt = window.performance && performance.now ? performance.now() : Date.now();
+    var startedAt = now();
     var poll = function () {
       var el = surface(id);
       if (visible(el)) {
         run(el);
         return;
       }
-      var now = window.performance && performance.now ? performance.now() : Date.now();
-      if (now - startedAt >= WAIT_MS) {
-        /* It never appeared. Land the glow on whatever the id resolves to now
-           (which may be a tab), or drop it if there is nothing at all. */
-        if (el) run(el);
+      if (now() - startedAt >= WAIT_MS) {
+        var alt = FALLBACK[id] ? surface(FALLBACK[id]) : null;
+        run(visible(alt) ? alt : null);
         return;
       }
-      if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(poll);
-      else window.setTimeout(poll, 16);
+      later(poll);
     };
-    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(poll);
-    else window.setTimeout(poll, 16);
+    later(poll);
   }
 
   function fire(opts) {
     var o = opts || {};
-    var tone = TONE_TOKEN[o.tone] ? o.tone : 'glow';
+    var tone = TONES[o.tone] ? o.tone : 'glow';
     var then = o.then === 'hold' || o.then === 'none' ? o.then : 'decay';
     /* The hold is armed now, not on arrival, so a release that beats the
        flight is not lost (see recordFor). */
@@ -708,86 +533,68 @@
   }
 
   function launch(o, tone, then, target) {
+    var f = { to: o.to, tone: tone, then: then, done: o.done };
     if (!target) {
       /* Nothing to aim at even after the wait: give back the armed hold so the
          seat and the count stay balanced. */
-      if (then === 'hold' && typeof o.to === 'string') release(o.to, true);
+      if (then === 'hold' && typeof o.to === 'string') disarm(o.to);
       return;
     }
 
-    var motion = window.PhosphorMotion;
-
-    /* Reduced motion has no flight: the light is simply already there. The
-       glow keeps its short fade, because that fade is meaning rather than
-       decoration, and components.css shortens it under the preference. */
-    if (!motion || motion.reduced()) {
-      arrive({ to: o.to, tone: tone, then: then, done: o.done });
-      return;
-    }
-    if (!ensureCanvas()) {
-      arrive({ to: o.to, tone: tone, then: then, done: o.done });
-      return;
-    }
-    if (!fitted) fit();
-
-    var fromEl = o.from && typeof o.from.getBoundingClientRect === 'function' ? o.from : null;
+    var m = motion();
     var from = pointOf(o.from);
     var to = pointOf(target);
-    if (!from || !to) {
-      arrive({ to: o.to, tone: tone, then: then, done: o.done });
+    var named = typeof o.to === 'string';
+
+    /* Reduced motion has no flight: the light is simply already there, the
+       ring fades in and out where it landed, and the edge keeps its short
+       fade because that fade is meaning rather than decoration. The same
+       when there is nothing to fly between, or no motion.dev to fly with. */
+    if (!m || reduced() || !from || !to) {
+      if (named) ring(target, tone);
+      arrive(f);
       return;
     }
 
-    var root = getComputedStyle(document.documentElement);
-    var rgb = parseRgb(root.getPropertyValue(TONE_TOKEN[tone]), TONE_FALLBACK[tone]);
-    var duration = slow ? SLOW_MS : millis(root.getPropertyValue('--dur-beam'), DEFAULT_MS);
+    var dot = document.createElement('span');
+    dot.className = 'beam-dot';
+    dot.setAttribute('data-tone', tone);
+    layer().appendChild(dot);
 
-    var halo = ctx.createRadialGradient(0, 0, 0, 0, 0, HALO_R);
-    halo.addColorStop(0, 'rgba(' + rgb + ',0.62)');
-    halo.addColorStop(0.25, 'rgba(' + rgb + ',0.30)');
-    halo.addColorStop(0.6, 'rgba(' + rgb + ',0.08)');
-    halo.addColorStop(1, 'rgba(' + rgb + ',0)');
+    /* The arc, in two motions on one dot. A spring carries x to the target
+       and settles there on its own clock; y rises to LIFT above the higher
+       end (never above the window) and comes back down in one beat, with the
+       dot transparent at both ends of the path, so it appears out of the step
+       row and gives way to the ring. The landing is the arc's end, not the
+       spring's rest: by then x is as good as there, and a ring that waited
+       for the last thousandth of a spring would leave a gap with nothing on
+       screen. */
+    var k = slow ? SLOW_FLIGHT : 1;
+    var beat = FLIGHT_S * k;
+    var peak = Math.max(16, Math.min(from.y, to.y) - LIFT);
+    var glide = m.animate(dot, { x: [from.x, to.x] }, { type: 'spring', visualDuration: beat, bounce: 0 });
+    /* motion.dev reads a value's own options alone when it has any, so the
+       duration is named on each rather than once above them. */
+    var arc = m.animate(dot, {
+      y: [from.y, peak, to.y],
+      opacity: [0, 1, 1, 0]
+    }, {
+      y: { duration: beat * 1.15, ease: ['easeOut', 'easeIn'], times: [0, 0.42, 1] },
+      opacity: { duration: beat * 1.15, ease: 'linear', times: [0, 0.1, 0.85, 1] }
+    });
 
-    var flight = {
-      x0: from.x,
-      y0: from.y,
-      x1: to.x,
-      y1: to.y,
-      /* Lifted toward the top of the window, so the light arcs over the
-         content rather than sliding across it. */
-      cx: (from.x + to.x) / 2,
-      cy: (from.y + to.y) / 2 - LIFT,
-      css: 'rgb(' + rgb + ')',
-      halo: halo,
-      ease: easeFor(root.getPropertyValue('--ease-in-out')),
-      startedAt: (window.performance && performance.now ? performance.now() : Date.now()),
-      durationMs: duration,
-      to: o.to,
-      /* The elements, kept so the flight can be re-measured when the window
-         resizes or the target's scroller moves, and dropped if the target
-         leaves the DOM mid-flight. */
-      fromEl: fromEl,
-      toEl: target,
-      tone: tone,
-      then: then,
-      done: o.done
-    };
-    flights.push(flight);
-    watchReflow();
-
-    if (teardownAt) {
-      window.clearTimeout(teardownAt);
-      teardownAt = 0;
-    }
-    if (!handle) {
-      /* fps 120 rather than a cap: a flight is a foreground animation and
-         should paint on every frame the display offers. observe:false because
-         a fixed full-window canvas is never off screen and watching it is
-         work for nothing. */
-      handle = motion.register(canvas, draw, { fps: 120, observe: false });
-    } else {
-      handle.start();
-    }
+    after(arc, function () {
+      if (glide && typeof glide.stop === 'function') glide.stop();
+      remove(dot);
+      /* The target left the DOM while the light was on its way: a view
+         swapped it out. Land nothing and give back the armed hold. */
+      if (target.isConnected === false) {
+        if (then === 'hold' && named) disarm(o.to);
+        return;
+      }
+      if (named) ring(target, tone);
+      arrive(f);
+    });
   }
 
   window.PhosphorBeam = {

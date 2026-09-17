@@ -75,9 +75,10 @@ test('the panel builds no control that decides anything', () => {
   // Every labelled button goes through the one helper, button(className, label), and the three
   // suggestion pills carry the questions in SUGGESTIONS. No other site builds a <button>.
   const labels = SOURCE.match(/\bbutton\('[^']*', '([^']+)'/g) ?? [];
-  // Keep it on and Turn off are the confirmation card's two answers (2026-09-16): the card
-  // decides nothing about money, only whether the assistant's process ends.
-  const allowed = ['Start your assistant', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep it on'];
+  // Keep running and Turn off are the confirmation card's two answers (2026-09-16): the card
+  // decides nothing about money, only whether the assistant's process ends. Jump to latest is
+  // the pill at the foot of the scroller: it scrolls, and that is all it does.
+  const allowed = ['Start your assistant', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep running', 'Jump to latest'];
   assert.ok(labels.length > 0, 'the panel builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');
@@ -118,8 +119,9 @@ test('a tool that only asks never reads as a tool that did it', () => {
   // is the entire difference between asking and moving money.
   assert.equal(agent.toolLabel('propose_swap'), 'asking to swap');
   assert.equal(agent.toolLabel('swap'), 'swapping');
-  assert.equal(agent.toolLabel('propose_intents_withdraw'), 'asking to withdraw');
-  assert.equal(agent.toolLabel('intents_withdraw'), 'withdrawing');
+  assert.equal(agent.toolLabel('propose_send'), 'asking to send');
+  assert.equal(agent.toolLabel('intents_send'), 'sending inside NEAR Intents');
+  assert.equal(agent.toolLabel('intents_pay'), 'paying out');
   assert.equal(agent.toolLabel('propose_trade'), 'proposing a trade');
   assert.equal(agent.toolLabel('trade'), 'opening a trade');
   assert.equal(agent.toolLabel('propose_trade_change'), 'proposing a change');
@@ -130,16 +132,25 @@ test('a tool that only asks never reads as a tool that did it', () => {
 });
 
 test('every tool the server offers has a phrase, not an id', () => {
-  // A step row printing `gas_report` is the window handing a person the tool
+  // A step row printing `chain_address` is the window handing a person the tool
   // surface instead of the answer, and the table is the only place that fixes it.
   const agent = load();
-  assert.equal(agent.toolLabel('gas_report'), 'checking gas');
+  assert.equal(agent.toolLabel('chain_address'), 'looking up an address');
+  assert.equal(agent.toolLabel('chain_transaction'), 'reading a transaction');
+  assert.equal(agent.toolLabel('intents_activity'), 'reading the NEAR Intents history');
   assert.equal(agent.toolLabel('set_theme'), 'recolouring the window');
 });
 
-test('the one tool that leaves this machine says so', () => {
+test('the tools that leave this machine say so', () => {
   const agent = load();
   assert.equal(agent.toolLabel('research'), 'reading the news');
+  assert.equal(agent.toolLabel('chain_transactions'), 'reading an address\'s history');
+  // The step row's own words beside the phrase come from LEAVES, which names the news and the
+  // four public chain reads: the wallet app reaching the internet is a fact a person is owed.
+  const table = /var LEAVES = \{([^}]*)\}/.exec(SOURCE)?.[1] ?? '';
+  for (const tool of ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity']) {
+    assert.ok(new RegExp(`\\b${tool}: true`).test(table), `${tool} is not marked as leaving the machine`);
+  }
 });
 
 test('the server prefix is stripped and an unknown tool prints its own name', () => {
