@@ -13,12 +13,12 @@
 
 import http from 'node:http';
 
-import type { ChainId } from '../types.ts';
 import { fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { sameOrigin } from './auth.ts';
 import type { Ctx } from './context.ts';
 import { announce, guarded, refusal } from './wallet.ts';
+import { receiveNetworkOf } from '../rails/intents-address.ts';
 import { mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
 import type { EnclaveRef } from '../keystore/store.ts';
 import type { VaultResult } from '../vault/relay.ts';
@@ -31,8 +31,6 @@ import {
   REVEAL_REASON,
   UNLOCK_REASON,
 } from '../vault/reason.ts';
-
-const CHAINS: ReadonlySet<string> = new Set(['eth', 'base', 'arb', 'sol', 'near']);
 
 /* Set when an unwrap failed inside the enclave itself (not a cancel, not a timeout): the key
    blob in this file was not made by this Mac's enclave, which is what a wallet file carried over
@@ -372,7 +370,9 @@ export async function handleVaultPrefs(ctx: Ctx, req: http.IncomingMessage, res:
 export async function handleDepositShow(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/deposit/show', req, res);
   if (body === null) return;
-  const chain = typeof body.chain === 'string' && CHAINS.has(body.chain) ? (body.chain as ChainId) : null;
+  // Any network the registry knows, by its short id. The report below is what says whether the
+  // bridge answered for it.
+  const chain = typeof body.chain === 'string' && receiveNetworkOf(body.chain) !== undefined ? body.chain : null;
   const symbol = typeof body.symbol === 'string' ? body.symbol.trim().toUpperCase() : '';
   if (chain === null || symbol === '' || symbol.length > 12) return fail(res, 400, 'chain and symbol are required');
   const report = await ctx.intentsReceive();

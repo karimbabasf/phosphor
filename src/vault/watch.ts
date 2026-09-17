@@ -15,7 +15,6 @@
 // whichever first, and the window is told on every change over SSE. The frame the window keys
 // off is `{type:'deposit', ...}`; the backup nudge keys off the first `landed`.
 
-import type { ChainId } from '../types.ts';
 import type { Ledger } from '../ledger/index.ts';
 import { poaRecentDeposits } from '../rails/intents-address.ts';
 import type { PoaDeposit } from '../rails/intents-address.ts';
@@ -24,7 +23,8 @@ export type DepositPhase = 'show' | 'watching' | 'seen' | 'landed' | 'stopped';
 
 export type DepositState = {
   phase: DepositPhase;
-  chain: ChainId;
+  /** A receive network id from the registry in src/rails/intents-address.ts: 'btc', 'eth', 'sol'. */
+  chain: string;
   symbol: string;
   /** The bridge address the card shows. Carried so a card opened from the agent's tool call can
    *  draw without a second fetch, and so the window can compare it to /api/intents-receive. */
@@ -40,7 +40,7 @@ export type DepositState = {
 
 export type DepositWatch = {
   /** The agent or the window asked for the card. Starts the watch and tells the window. */
-  show(chain: ChainId, symbol: string, address: string | null): DepositState;
+  show(chain: string, symbol: string, address: string | null): DepositState;
   current(): DepositState | null;
   stop(): void;
 };
@@ -53,7 +53,7 @@ type Deps = {
   sse: { broadcast: (payload: unknown) => void };
   /** The intents account the bridge credits: the wallet's EVM address, lowercased. */
   account: () => string | null;
-  recent?: (account: string, chain: ChainId) => Promise<PoaDeposit[]>;
+  recent?: (account: string, chain: string) => Promise<PoaDeposit[]>;
   now?: () => number;
   pollMs?: number;
 };

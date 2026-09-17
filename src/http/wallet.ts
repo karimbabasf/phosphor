@@ -24,9 +24,8 @@ import type http from 'node:http';
 import path from 'node:path';
 
 import { sameOrigin, tokenMatches } from './auth.ts';
-import { POA_NETWORK, intentsDepositAddress, parsePoaTokens, poaSupportedTokens } from '../rails/intents-address.ts';
-import type { PoaToken } from '../rails/intents-address.ts';
-import type { ChainId } from '../types.ts';
+import { RECEIVE_NETWORKS, intentsDepositAddress, parsePoaTokens, poaSupportedTokens, receiveNetworkByBridge } from '../rails/intents-address.ts';
+import type { PoaToken, ReceiveKind, ReceiveNetwork } from '../rails/intents-address.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
@@ -444,33 +443,51 @@ const CHAIN_NAMES: Array<{ id: string; name: string; of: 'evm' | 'solana' | 'nea
    Works while locked, for the same reason the wallet one does. It reads the account id out of
    the keystore's address report rather than out of an unlocked key, so money arriving never
    waits on a password. */
-const INTENTS_NETWORKS: Array<{ id: ChainId; name: string }> = [
-  { id: 'eth', name: 'Ethereum' },
-  { id: 'base', name: 'Base' },
-  { id: 'arb', name: 'Arbitrum' },
-  { id: 'sol', name: 'Solana' },
-  { id: 'near', name: 'NEAR' },
-];
+
+/* The floor as the window prints it. `shown` is the one decision: a floor worth under a cent is
+   "No minimum" rather than a number nobody can type, and where no price is known the same cut is
+   made on the amount itself, at a millionth of a unit. The raw floor stays on the token row for
+   the developer line. */
+export type IntentsReceiveMinimum = {
+  shown: boolean;
+  // The floor in the token's own unit, the same string as minDepositHuman.
+  amount: string;
+  // The floor in dollars from the 1Click price list, null when that list has no price for it.
+  usd: number | null;
+};
 
 export type IntentsReceiveToken = {
   symbol: string;
+  decimals: number;
   // Base units, as the bridge said it. The window never prints this one.
   minDeposit: string;
   // The floor in the token's own unit: "0.001" USDC, "0.0000001" ETH. The one that is printed.
   minDepositHuman: string;
-  decimals: number;
-  // The contract on that chain, null for the chain's own coin. Shown behind the developer switch.
+  minimum: IntentsReceiveMinimum;
+  // The contract on that chain, spelled the way the chain spells it, null for the chain's own
+  // coin. The window copies it, so it is the exact string and never a shortened one.
   contract: string | null;
 };
 
 export type IntentsReceiveNetwork = {
-  id: ChainId;
+  id: string;
   name: string;
+  words: string;
+  bridge: string;
+  kind: ReceiveKind;
+  native: string;
+  mark: string;
+  colour: string;
+  popular: boolean;
   address: string | null;
   memo: string | null;
   unavailable: string | null;
-  accepts: IntentsReceiveToken[];
+  // The ids of the other networks whose address is byte-equal to this one. Computed from what the
+  // bridge answered, never assumed from the kind: the EVM chains share one address today, and the
+  // day the bridge changes that the list changes with it.
+  sharedWith: string[];
   warning: string;
+  accepts: IntentsReceiveToken[];
 };
 
 export type IntentsReceiveReport = {
@@ -486,67 +503,169 @@ export async function handleIntentsReceive(ctx: Ctx, res: http.ServerResponse): 
   sendJson(res, 200, await ctx.intentsReceive());
 }
 
-/* The bridge's half of the report: five addresses and the token list, six round trips. It is
-   what the bridge said about an account, and the bridge says the same thing every time (the
-   whole point of these addresses is that they do not change), so it is kept for a minute per
-   account. The window read it three times for one deposit card and the wizard read it on
-   every step change; each read was the six calls again. `verified` and `tampered` are NOT in
-   here: those flip when the wallet opens and are read fresh on every call below. A call that
-   came back with no addresses or no tokens is not kept, so a bridge that was down a second ago
-   is asked again on the next call rather than remembered as down for a minute. */
-type BridgeAddress = { net: { id: ChainId; name: string }; got: { address: string; memo: string | null } | null; why: string | null };
-type BridgeHalf = { at: number; addresses: BridgeAddress[]; tokens: PoaToken[] };
+/* The bridge's half of the report: one address per registry network and the token list, so
+   thirty-six round trips, plus the 1Click price list when the app has one to read. It is what
+   the bridge said about an account, and the bridge says the same thing every time (the whole
+   point of these addresses is that they do not change), so it is kept for a minute per account.
+   The window read it three times for one deposit card and the wizard read it on every step
+   change; each read was the whole set again. `verified` and `tampered` are NOT in here: those
+   flip when the wallet opens and are read fresh on every call below. A call that came back with
+   no addresses or no tokens is not kept, so a bridge that was down a second ago is asked again
+   on the next call rather than remembered as down for a minute. */
+type BridgeAddress = { net: ReceiveNetwork; got: { address: string; memo: string | null } | null; why: string | null };
+type BridgeHalf = { at: number; addresses: BridgeAddress[]; tokens: PoaToken[]; prices: Map<string, number> | null };
 const RECEIVE_CACHE_MS = 60_000;
 const bridgeCache = new Map<string, BridgeHalf>();
+
+async function askAddress(account: string, net: ReceiveNetwork): Promise<BridgeAddress> {
+  try {
+    // A registry id, or the raw key of a network the registry does not know: both resolve.
+    const got = await intentsDepositAddress(account, net.id);
+    return { net, got: { address: got.address, memo: got.memo }, why: null };
+  } catch (err) {
+    // One network refusing is not the others failing. The row says why and the rest draw.
+    return { net, got: null, why: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/* A network the bridge lists that the registry does not know. Shown under the bridge's own key
+   rather than a name made up here: the key is the one true thing known about it. Its coin is the
+   symbol of the row with no contract, when the list has one. */
+function unknownNetwork(bridge: string, tokens: PoaToken[]): ReceiveNetwork {
+  const native = tokens.find((t) => t.network === bridge && t.contract === null)?.symbol ?? '';
+  return { id: bridge, name: bridge, words: bridge, bridge, kind: 'other', native, mark: native, colour: '#8A8F98', popular: false };
+}
+
+/* The 1Click price list, as assetId -> dollars, through the seam main.ts wires. A report never
+   fails for want of a price: no seam, or a seam that throws, is null, and every floor is then
+   printed in the token's own unit alone. */
+async function readPrices(ctx: Ctx): Promise<Map<string, number> | null> {
+  if (ctx.intentsPrices === undefined) return null;
+  try {
+    return await ctx.intentsPrices();
+  } catch {
+    return null;
+  }
+}
 
 async function readBridge(ctx: Ctx, account: string, force: boolean): Promise<BridgeHalf> {
   const held = bridgeCache.get(account);
   if (!force && held !== undefined && Date.now() - held.at < RECEIVE_CACHE_MS) return held;
 
   const fixture = ctx.cfg.mode === 'demo' ? demoFixture() : null;
-  const [addresses, tokens] = fixture !== null
-    ? [fixture.addresses, fixture.tokens]
-    : await Promise.all([
-        Promise.all(
-          INTENTS_NETWORKS.map(async (n): Promise<BridgeAddress> => {
-            try {
-              const got = await intentsDepositAddress(account, n.id);
-              return { net: n, got: { address: got.address, memo: got.memo }, why: null };
-            } catch (err) {
-              // One network refusing is not the others failing. The row says why and the rest draw.
-              return { net: n, got: null, why: err instanceof Error ? err.message : String(err) };
-            }
-          }),
-        ),
-        poaSupportedTokens(),
-      ]);
+  let addresses: BridgeAddress[];
+  let tokens: PoaToken[];
+  let prices: Map<string, number> | null;
+  if (fixture !== null) {
+    ({ addresses, tokens, prices } = fixture);
+  } else {
+    [addresses, tokens, prices] = await Promise.all([
+      Promise.all(RECEIVE_NETWORKS.map((n) => askAddress(account, n))),
+      poaSupportedTokens(),
+      readPrices(ctx),
+    ]);
+    /* A prefix the bridge added since the registry was written. One more round of asks, only
+       when there is something to ask about, so a new network is a row with an address rather
+       than a row with an excuse. */
+    const strangers = [...new Set(tokens.map((t) => t.network))].filter((key) => receiveNetworkByBridge(key) === undefined);
+    if (strangers.length > 0) {
+      addresses = addresses.concat(await Promise.all(strangers.map((key) => askAddress(account, unknownNetwork(key, tokens)))));
+    }
+  }
 
-  const half: BridgeHalf = { at: Date.now(), addresses, tokens };
+  const half: BridgeHalf = { at: Date.now(), addresses, tokens, prices };
   if (tokens.length > 0 && addresses.some((row) => row.got !== null)) bridgeCache.set(account, half);
   return half;
 }
 
 /* PHOSPHOR_DEMO_RECEIVE: a JSON file that stands in for the bridge in demo mode, for a proof
    run on a machine that cannot reach it. Shape: { "addresses": { "eth": "0x..", "sol": "..",
-   ... }, "tokens": [ bridge rows as supported_tokens returns them ] }. Demo mode without the
-   file still asks the real bridge, as it always did. Never read in live mode. */
-function demoFixture(): { addresses: BridgeAddress[]; tokens: PoaToken[] } | null {
+   ... }, "tokens": [ bridge rows as supported_tokens returns them ], "prices": { "<intents
+   token id>": dollars } }. Addresses are keyed by registry id and may name only some networks;
+   the rest are rows that say so. Prices are optional. Demo mode without the file still asks the
+   real bridge, as it always did. Never read in live mode. */
+function demoFixture(): { addresses: BridgeAddress[]; tokens: PoaToken[]; prices: Map<string, number> | null } | null {
   const file = process.env.PHOSPHOR_DEMO_RECEIVE;
   if (file === undefined || file === '') return null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { addresses?: Record<string, unknown>; tokens?: unknown };
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+      addresses?: Record<string, unknown>;
+      tokens?: unknown;
+      prices?: Record<string, unknown>;
+    };
     const book = parsed.addresses ?? {};
-    const addresses = INTENTS_NETWORKS.map((n): BridgeAddress => {
+    const addresses = RECEIVE_NETWORKS.map((n): BridgeAddress => {
       const address = book[n.id];
       return typeof address === 'string' && address !== ''
         ? { net: n, got: { address, memo: null }, why: null }
         : { net: n, got: null, why: 'not in the demo fixture' };
     });
-    return { addresses, tokens: parsePoaTokens(parsed.tokens) };
+    const prices = new Map<string, number>();
+    for (const [assetId, price] of Object.entries(parsed.prices ?? {})) {
+      if (typeof price === 'number' && Number.isFinite(price)) prices.set(assetId, price);
+    }
+    return { addresses, tokens: parsePoaTokens(parsed.tokens), prices: prices.size > 0 ? prices : null };
   } catch (err) {
     console.error(`phosphor: PHOSPHOR_DEMO_RECEIVE could not be read: ${errText(err)}`);
     return null;
   }
+}
+
+/* The token rows for one network: what the bridge credits there, one row per (symbol, contract).
+   The live list carries BTC twice on Bitcoin (two NEAR tokens for one coin); a person sending
+   BTC sees one row, and it carries the higher of the two floors, because the lower one is a
+   promise only one of the two paths keeps. */
+function acceptsOn(bridge: string, tokens: PoaToken[], prices: Map<string, number> | null): IntentsReceiveToken[] {
+  const rows = new Map<string, IntentsReceiveToken>();
+  for (const t of tokens) {
+    if (t.network !== bridge) continue;
+    const key = `${t.symbol}|${t.contract ?? ''}`;
+    const held = rows.get(key);
+    if (held !== undefined && !floorAbove(t.minDeposit, held.minDeposit)) continue;
+    const price = prices?.get(t.intentsAssetId);
+    rows.set(key, {
+      symbol: t.symbol,
+      decimals: t.decimals,
+      minDeposit: t.minDeposit,
+      minDepositHuman: t.minDepositHuman,
+      minimum: minimumOf(t.minDepositHuman, typeof price === 'number' && Number.isFinite(price) ? price : null),
+      contract: t.contract,
+    });
+  }
+  return [...rows.values()];
+}
+
+// Base units against base units, exactly. A floor that is not a whole number never wins.
+function floorAbove(a: string, b: string): boolean {
+  if (!/^\d+$/.test(a) || !/^\d+$/.test(b)) return false;
+  return BigInt(a) > BigInt(b);
+}
+
+function minimumOf(amount: string, price: number | null): IntentsReceiveMinimum {
+  const human = Number(amount);
+  const known = Number.isFinite(human);
+  const usd = price !== null && known ? human * price : null;
+  const shown = usd !== null ? usd >= 0.01 : known && human >= 1e-6;
+  return { shown, amount, usd: usd === null ? null : Math.round(usd * 10_000) / 10_000 };
+}
+
+/* Which other networks answered with the very same address. Byte equality on the string the
+   bridge sent, so two spellings of one address are two addresses here, which is the safe way
+   round: the warning then says "only", and "only" is never wrong. */
+function sharedWithOf(row: BridgeAddress, all: BridgeAddress[]): string[] {
+  if (row.got === null) return [];
+  const address = row.got.address;
+  return all.filter((other) => other !== row && other.got !== null && other.got.address === address).map((other) => other.net.id);
+}
+
+function warningOf(net: ReceiveNetwork, shared: string[], nets: Map<string, ReceiveNetwork>): string {
+  if (shared.length === 0) return `${net.name} only. Anything sent here from another network is lost.`;
+  // The popular ones by name, in registry order, then how many more: sixteen names is a
+  // paragraph, and the point is the last clause.
+  const named = shared.map((id) => nets.get(id)).filter((n): n is ReceiveNetwork => n !== undefined && n.popular).map((n) => n.name);
+  const rest = shared.length - named.length;
+  const listed = named.length === 0 ? `${rest} other networks` : rest === 0 ? named.join(', ') : `${named.join(', ')} and ${rest} more`;
+  return `${net.name} shares this address with ${listed}, but send only on "${net.words}", and only an asset it credits.`;
 }
 
 /* The bridge addresses and what each network credits, as one report. The route above serves
@@ -559,8 +678,8 @@ export async function intentsReceiveReport(ctx: Ctx, opts: { force?: boolean } =
   const account = report.addresses.evm;
 
   /* No EVM address is not an empty list, it is a different sentence. The verifier keys balances
-     by this id, so without it there is no account to deposit into and a screen showing five
-     blank cards would imply otherwise. */
+     by this id, so without it there is no account to deposit into and a screen showing a row
+     of blank tiles would imply otherwise. */
   if (account === null) {
     return {
       account: null,
@@ -573,34 +692,39 @@ export async function intentsReceiveReport(ctx: Ctx, opts: { force?: boolean } =
     };
   }
 
-  const { addresses, tokens } = await readBridge(ctx, account, opts.force === true);
+  const { addresses, tokens, prices } = await readBridge(ctx, account, opts.force === true);
+  const nets = new Map(addresses.map((row) => [row.net.id, row.net]));
 
-  const networks = addresses.map((row) => {
-    const network = POA_NETWORK[row.net.id];
-    const accepts = tokens.filter((t) => t.network === network);
+  const networks: IntentsReceiveNetwork[] = addresses.map((row) => {
+    const shared = sharedWithOf(row, addresses);
     return {
       id: row.net.id,
       name: row.net.name,
+      words: row.net.words,
+      bridge: row.net.bridge,
+      kind: row.net.kind,
+      native: row.net.native,
+      mark: row.net.mark,
+      colour: row.net.colour,
+      popular: row.net.popular,
       address: row.got?.address ?? null,
       memo: row.got?.memo ?? null,
       unavailable: row.why,
+      sharedWith: shared,
+      warning: warningOf(row.net, shared, nets),
       /* What the bridge will credit on this network. An asset that is not on this list is not
          credited and is not refunded, which is the one loss this screen exists to prevent, so
          the list is shown rather than left to the address to imply. */
-      accepts: accepts.map((t) => ({
-        symbol: t.symbol,
-        minDeposit: t.minDeposit,
-        minDepositHuman: t.minDepositHuman,
-        decimals: t.decimals,
-        contract: t.contract,
-      })),
-      warning:
-        row.net.id === 'sol'
-          ? 'Solana only. Anything sent here from another network is lost.'
-          : row.net.id === 'near'
-            ? 'NEAR only. Anything sent here from another network is lost.'
-            : 'Ethereum, Base and Arbitrum share this address, but send only on the network you picked.',
+      accepts: acceptsOn(row.net.bridge, tokens, prices),
     };
+  });
+
+  // The six quick tiles first, in the registry's order, then everything else by name.
+  const order = new Map(RECEIVE_NETWORKS.map((n, i) => [n.id, i]));
+  networks.sort((a, b) => {
+    if (a.popular !== b.popular) return a.popular ? -1 : 1;
+    if (a.popular) return (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0);
+    return a.name.localeCompare(b.name, 'en');
   });
 
   return {

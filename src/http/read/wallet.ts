@@ -13,7 +13,7 @@ import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
 import { outcomeOf } from '../../proposals/lifecycle.ts';
 import type { PlanFate } from '../../proposals/lifecycle.ts';
-import type { ChainId } from '../../types.ts';
+import { RECEIVE_NETWORKS, receiveNetworkOf } from '../../rails/intents-address.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
    paste. The window shows the whole string, off a Touch ID open, and that is the only place
@@ -22,15 +22,57 @@ export function fingerprint(address: string): string {
   return address.length > 12 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
 }
 
-const CHAIN_IDS: ReadonlySet<string> = new Set(['eth', 'base', 'arb', 'sol', 'near']);
-// How exchanges name the network in their withdrawal picker, which is where the money is lost.
-const EXCHANGE_NETWORK: Record<ChainId, string> = {
-  eth: 'Ethereum (ERC-20)',
-  base: 'Base',
-  arb: 'Arbitrum One',
-  sol: 'Solana (SPL)',
-  near: 'NEAR Protocol',
+/* The other spellings an agent reaches for: the chain's full name, the ticker it is known by
+   where that names one chain, and the network label off an exchange's withdraw screen. Each
+   maps to a registry id. Compared with spaces, hyphens and underscores removed and case
+   folded, so "BNB Smart Chain", "bnb-chain" and "bnbchain" are one word. A ticker shared by
+   several chains (ETH) is not here: guessing which one is how money is lost. */
+const CHAIN_ALIASES: Record<string, string> = {
+  ethereum: 'eth', erc20: 'eth', mainnet: 'eth', 'ethereum mainnet': 'eth',
+  arbitrum: 'arb', 'arbitrum one': 'arb', arb1: 'arb',
+  solana: 'sol', spl: 'sol',
+  'near protocol': 'near',
+  bitcoin: 'btc',
+  'bitcoin cash': 'bch',
+  litecoin: 'ltc',
+  dogecoin: 'doge',
+  zcash: 'zec',
+  ripple: 'xrp', xrpl: 'xrp', 'xrp ledger': 'xrp',
+  'the open network': 'ton', toncoin: 'ton',
+  trx: 'tron', trc20: 'tron',
+  apt: 'aptos',
+  ada: 'cardano',
+  xlm: 'stellar',
+  strk: 'starknet',
+  move: 'movement',
+  hyperliquid: 'hypercore', hl: 'hypercore', 'hyper core': 'hypercore',
+  optimism: 'op', 'op mainnet': 'op',
+  'gnosis chain': 'gnosis', xdai: 'gnosis',
+  matic: 'polygon', pol: 'polygon', 'polygon pos': 'polygon',
+  mon: 'monad',
+  'x layer': 'xlayer', okx: 'xlayer', okb: 'xlayer',
+  'adi chain': 'adi',
+  avalanche: 'avax', 'c chain': 'avax', 'avalanche c chain': 'avax',
+  'robinhood chain': 'robinhood',
+  bsc: 'bnb', 'bnb chain': 'bnb', 'bnb smart chain': 'bnb', 'binance smart chain': 'bnb', binance: 'bnb', bep20: 'bnb',
+  berachain: 'bera',
+  xpl: 'plasma',
 };
+const CHAIN_IDS = RECEIVE_NETWORKS.map((n) => n.id).join(', ');
+
+function fold(word: string): string {
+  return word.toLowerCase().replace(/[\s_-]+/g, '');
+}
+const ALIAS_BY_FOLD = new Map(Object.entries(CHAIN_ALIASES).map(([alias, id]) => [fold(alias), id]));
+
+/* The registry id for what the agent typed, or null. An id is taken as it is; anything else
+   goes through the alias table. */
+function chainIdOf(raw: string): string | null {
+  const word = fold(raw);
+  if (word === '') return null;
+  if (receiveNetworkOf(word) !== undefined) return word;
+  return ALIAS_BY_FOLD.get(word) ?? null;
+}
 
 const DISCLAIMER =
   'Send a small test amount first and wait for the app to say it landed before sending the rest. Sending on any other network, or any asset not on the accepted list, loses the money: the bridge does not refund.';
@@ -116,21 +158,22 @@ export const walletReads: ReadTable = {
      which shows it off a Touch ID open, and nothing an agent says can change it. A wrong
      network or an asset the bridge does not credit is refused with the list of what is. */
   deposit: async (ctx, _body, args, res) => {
-    const chainRaw = typeof args?.chain === 'string' ? args.chain.trim().toLowerCase() : '';
+    const chainRaw = typeof args?.chain === 'string' ? args.chain.trim() : '';
     const symbol = typeof args?.asset === 'string' ? args.asset.trim().toUpperCase() : '';
     const report = await ctx.intentsReceive();
-    const accepted = report.networks.map((n) => ({ chain: n.id, network: EXCHANGE_NETWORK[n.id], accepts: n.accepts.map((a) => a.symbol) }));
+    // `network` is the label off an exchange's withdraw screen, which is where the money is lost.
+    const accepted = report.networks.map((n) => ({ chain: n.id, network: n.words, accepts: n.accepts.map((a) => a.symbol) }));
     if (report.account === null) {
       return sendJson(res, 200, { ok: false, reason: report.reason ?? 'no wallet', accepted });
     }
-    if (!CHAIN_IDS.has(chainRaw)) {
+    const chain = chainIdOf(chainRaw);
+    if (chain === null) {
       return sendJson(res, 200, {
         ok: false,
-        reason: `chain must be one of eth, base, arb, sol, near (got ${chainRaw || 'nothing'}). Ask the person which network they will send on before calling again.`,
+        reason: `chain must be one of ${CHAIN_IDS} (got ${chainRaw || 'nothing'}). Ask the person which network they will send on before calling again.`,
         accepted,
       });
     }
-    const chain = chainRaw as ChainId;
     const network = report.networks.find((n) => n.id === chain);
     if (network === undefined || network.address === null) {
       return sendJson(res, 200, { ok: false, reason: network?.unavailable ?? `no deposit address for ${chain} right now`, accepted });
@@ -139,17 +182,20 @@ export const walletReads: ReadTable = {
     if (token === undefined) {
       return sendJson(res, 200, {
         ok: false,
-        reason: `${symbol || 'that asset'} is not credited on ${EXCHANGE_NETWORK[chain]}. Sending it there loses it. Accepted on that network: ${network.accepts.map((a) => a.symbol).join(', ') || 'nothing'}.`,
+        reason: `${symbol || 'that asset'} is not credited on ${network.words}. Sending it there loses it. Accepted on that network: ${network.accepts.map((a) => a.symbol).join(', ') || 'nothing'}.`,
         accepted,
       });
     }
     const deposit = ctx.deposits.show(chain, token.symbol, network.address);
     ctx.audit.append('app_start', `the deposit card was opened for ${token.symbol} on ${chain}`, { chain, symbol: token.symbol, by: 'agent' });
+    // A memo is half the destination on the chains that route by one: said in the relay line
+    // so it cannot be left out of what the person is told.
+    const memoLine = network.memo === null ? '' : ` This network needs the memo ${network.memo} on the deposit as well; without it the money is not credited.`;
     sendJson(res, 200, {
       ok: true,
       shownInWindow: true,
       chain,
-      network: EXCHANGE_NETWORK[chain],
+      network: network.words,
       asset: token.symbol,
       // In the token's own unit ("0.001"), never the bridge's base units ("1000"): the agent
       // relays this number to a person about to type an amount.
@@ -158,7 +204,7 @@ export const walletReads: ReadTable = {
       addressVerified: report.verified,
       memo: network.memo,
       disclaimer: DISCLAIMER,
-      relay: `The address and a QR code are in the Phosphor window now. Tell the person to read it there, check that it ends in ${network.address.slice(-4)}, choose the network "${EXCHANGE_NETWORK[chain]}" on the sending side, and send a small test amount first.`,
+      relay: `The address and a QR code are in the Phosphor window now. Tell the person to read it there, check that it ends in ${network.address.slice(-4)}, choose the network "${network.words}" on the sending side, and send a small test amount first.${memoLine}`,
       watching: deposit.phase,
       backedUp: vaultStatus(ctx).backedUp,
     });

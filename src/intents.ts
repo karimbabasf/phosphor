@@ -32,6 +32,9 @@ export type OneClickToken = {
   blockchain: string;
   symbol: string;
   contractAddress?: string;
+  // Dollars per unit as 1Click last saw it. Guidance for a screen, never an input to a quote.
+  price?: number;
+  priceUpdatedAt?: string;
 };
 
 const CHAIN_TO_BLOCKCHAIN: Record<ChainId, string> = {

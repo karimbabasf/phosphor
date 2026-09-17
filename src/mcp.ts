@@ -479,17 +479,23 @@ registerLeadRead(
     'the address and scan the QR there, and starts watching for the money to land.',
     '',
     'Call it when the person asks where to send funds. Ask which network they will send on first if',
-    'they did not say: USDC on the wrong network is lost, and the bridge does not refund. You get back',
-    'the network in the words an exchange uses, the minimum, a FINGERPRINT of the address (the first',
-    'six and last four characters) and a sentence to relay. You never get the full address, and you',
-    'must never state or guess one in chat: the window is where it is read. Relay the disclaimer,',
-    'tell them to check the last four characters, and tell them to send a small test amount first.',
-    'If `backedUp` is false and money is coming in, say so and point at the Vault tab. Read-only',
-    'apart from opening the card; it moves nothing.',
+    'they did not say: USDC on the wrong network is lost, and the bridge does not refund. Every',
+    'network the NEAR Intents bridge credits is available, Bitcoin, Tron, BNB Smart Chain and the',
+    'rest included; a refusal lists the ids. You get back the network in the words an exchange',
+    'uses, the minimum, a memo where the chain needs one (Stellar), a FINGERPRINT of the address',
+    '(the first six and last four characters) and a sentence to relay. You never get the full',
+    'address, and you must never state or guess one in chat: the window is where it is read. Relay',
+    'the disclaimer and the memo, tell them to check the last four characters, and tell them to send',
+    'a small test amount first. If `backedUp` is false and money is coming in, say so and point at',
+    'the Vault tab. Read-only apart from opening the card; it moves nothing.',
   ].join(' '),
   {
     asset: z.string().describe('the token symbol the person will send, for example USDC or SOL'),
-    chain: z.enum(['eth', 'base', 'arb', 'sol', 'near']).describe('the network they will send on'),
+    chain: z
+      .string()
+      .describe(
+        'the network they will send on, by id: eth, base, arb, sol, near, btc, bch, ltc, doge, dash, zec, xrp, ton, tron, sui, aptos, cardano, stellar, starknet, aleo, fogo, movement, hypercore, op, gnosis, polygon, monad, xlayer, adi, avax, robinhood, scroll, bnb, bera, plasma. Plain names work too (bitcoin, ethereum, solana, optimism, avalanche, bnb chain, polygon, tron, hyperliquid)',
+      ),
   },
 );
 registerRead(
@@ -1127,7 +1133,7 @@ registerPropose(
 
 The money leaves the intents balance and nowhere else: one signed intent, nothing sent on any chain. If the balance is in a wallet, propose_intents_deposit first. amount is in symbol, which defaults to USDC; the app picks which held flavor it spends. Which Hyperliquid account gets credited is resolved by the app from its own key and cannot be named here.
 
-Two numbers decide whether this is worth doing, and both are in the approval summary rather than here, because they are live: the routing fee is close to FLAT, about \$0.32 plus 25 bp, so it is about 3.4 percent on \$10 and about 0.3 percent on \$1000. Below \$5 it is refused, and above 5 percent of the deposit it is refused. If a human asks to fund a small amount, say what the percentage would be before you propose it.
+Two numbers decide whether this is worth doing, and both are in the approval summary rather than here, because they are live: the routing fee is close to FLAT, about \$0.32 plus 25 bp, so it is about 3.4 percent on \$10 and about 0.3 percent on \$1000. Below \$7 it is refused, because Hyperliquid does not credit a deposit under 5 USDC delivered (the money is lost, not returned), and 7 in is what guarantees 5 lands after the flat fee while keeping that fee under the 5 percent ceiling; above 5 percent of the deposit it is refused too. If a human asks to fund a small amount, say what the percentage would be before you propose it.
 
 The way back is propose_hl_withdraw, which returns collateral to the same intents balance and is always a human click. After this executes, read proposal_status for the intent hash and the collateral before and after; do not report the deposit as done from the tool reply alone. ${CANNOT_APPROVE}`,
   {

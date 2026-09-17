@@ -26,6 +26,8 @@ import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import { seUnwrapWithSoftwareKey } from '../../src/keystore/sewrap.ts';
 import { createVaultRelay } from '../../src/vault/relay.ts';
+import { receiveNetworkOf } from '../../src/rails/intents-address.ts';
+import type { IntentsReceiveNetwork } from '../../src/http/wallet.ts';
 import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
 
 const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
@@ -56,6 +58,22 @@ function enclave(): Enclave {
 }
 
 type Mode = 'answer' | 'cancel';
+
+/* One report row off the registry, the way the live report builds it, so the fake report is
+   the real shape and a field added to the contract fails here rather than in the window. */
+function network(id: string, address: string, accepts: Array<{ symbol: string; minDeposit: string; minDepositHuman: string; decimals: number; contract: string | null }>): IntentsReceiveNetwork {
+  const net = receiveNetworkOf(id);
+  if (net === undefined) throw new Error(`no registry network ${id}`);
+  return {
+    ...net,
+    address,
+    memo: null,
+    unavailable: null,
+    sharedWith: [],
+    warning: `${net.name} only.`,
+    accepts: accepts.map((a) => ({ ...a, minimum: { shown: true, amount: a.minDepositHuman, usd: null } })),
+  };
+}
 
 async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-vault-'));
@@ -88,8 +106,9 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
         verified: report.verified,
         tampered: report.tampered,
         networks: [
-          { id: 'sol', name: 'Solana', address: 'Dep0s1tSoLaNaAddre55', memo: null, unavailable: null, accepts: [{ symbol: 'SOL', minDeposit: '10000000', minDepositHuman: '0.01', decimals: 9, contract: null }], warning: 'Solana only.' },
-          { id: 'base', name: 'Base', address: '0xbridge', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }], warning: 'Base only.' },
+          network('sol', 'Dep0s1tSoLaNaAddre55', [{ symbol: 'SOL', minDeposit: '10000000', minDepositHuman: '0.01', decimals: 9, contract: null }]),
+          network('base', '0xbridge', [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }]),
+          network('btc', 'bc1qbridge', [{ symbol: 'BTC', minDeposit: '5000', minDepositHuman: '0.00005', decimals: 8, contract: null }]),
         ],
       };
     },
@@ -478,8 +497,14 @@ test('the vault prefs set the idle time and the deposit card is opened and watch
     assert.equal(notCredited.status, 409);
     assert.equal((await b.get('/api/deposit')).json.deposit.chain, 'sol');
     assert.equal((await b.get('/api/state')).json.deposit.phase, 'watching');
-    const nope = await b.post('/api/deposit/show', { chain: 'btc', symbol: 'BTC' });
-    assert.equal(nope.status, 400);
+    // Any registry id opens the card, not only the five the app was born with.
+    const bitcoin = await b.post('/api/deposit/show', { chain: 'btc', symbol: 'btc' });
+    assert.equal(bitcoin.json.ok, true, JSON.stringify(bitcoin.json));
+    assert.equal(bitcoin.json.deposit.chain, 'btc');
+    assert.equal(bitcoin.json.deposit.address, 'bc1qbridge');
+    assert.equal((await b.get('/api/deposit')).json.deposit.chain, 'btc');
+    const nope = await b.post('/api/deposit/show', { chain: 'bitcoin', symbol: 'BTC' });
+    assert.equal(nope.status, 400, 'the route takes registry ids, not names');
     const stopped = await b.post('/api/deposit/stop', {});
     assert.equal(stopped.json.ok, true);
     assert.equal((await b.get('/api/deposit')).json.deposit.phase, 'stopped');

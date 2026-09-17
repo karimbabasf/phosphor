@@ -481,6 +481,22 @@ const oneClickStatus =
     ? (handle: string): Promise<OneClickStatus> => oneClickClient().status(handle)
     : undefined;
 
+/* What a deposit floor is worth, for the receive report: 1Click's token list carries a dollar
+   price per asset id, and the bridge's rows name the same ids. A fresh client per read, because
+   the client caches its list for its lifetime and a price is only good for a while; the report
+   itself keeps the answer a minute. Absent in demo mode, where every floor is printed in the
+   token's own unit alone. */
+const intentsPrices =
+  cfg.mode === 'live'
+    ? async (): Promise<Map<string, number>> => {
+        const prices = new Map<string, number>();
+        for (const token of await oneClickClient().tokens()) {
+          if (typeof token.price === 'number' && Number.isFinite(token.price) && token.price > 0) prices.set(token.assetId, token.price);
+        }
+        return prices;
+      }
+    : undefined;
+
 /* And how it tells a Hyperliquid deposit 1Click calls SUCCESS from one the venue has credited:
    the account's own ledger of credits, read with no key over the same public endpoint the
    wallet panel reads. 1Click's word is the solver's delivery; only this is the money. */
@@ -711,6 +727,7 @@ const server = createServer({
   keystore,
   session,
   trade,
+  intentsPrices,
   /* Default OFF, and the window opens with the assistant panel waiting to be started.
      Karim, 2026-08-20: with no agent attached yet, the idle panel is what the app opens on,
      always. (It said "the turning globe" when that was written. ui/screens/agent.js now opens

@@ -166,6 +166,10 @@ export type ServerDeps = {
   /* Where money comes in: the bridge's deposit addresses for this wallet's account. Optional so
      a test can answer without the network; the app reads the bridge. */
   intentsReceive?: () => Promise<IntentsReceiveReport>;
+  /* The 1Click price list as assetId -> dollars, so the receive report can say what a floor is
+     worth. Optional because a test has no 1Click and demo mode builds no client; absent, every
+     floor is printed in the token's own unit alone. A throw here never fails the report. */
+  intentsPrices?: () => Promise<Map<string, number>>;
   audit: Audit;
   store: Store;
   ledger: Ledger;

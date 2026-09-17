@@ -27,8 +27,8 @@ import type { ChainId } from '../types.ts';
 export type FundingOrigin = { chain: ChainId; etaSec: number };
 
 export type FundingShape = {
-  // Below this the rail refuses: the flat part of the fee stops being a fee and starts being
-  // most of the deposit.
+  // Below this the rail refuses: Hyperliquid credits nothing under 5 USDC delivered (the docs
+  // say the money is lost), and this is the size that puts 5 on the ground after the flat fee.
   minUsd: number;
   // What a deposit is allowed to cost before the rail stops calling it a deposit.
   maxFeePct: number;
@@ -40,7 +40,7 @@ export type FundingShape = {
 };
 
 export const FUNDING_SHAPE: FundingShape = {
-  minUsd: 5,
+  minUsd: 7,
   maxFeePct: 5,
   flatUsd: 0.315,
   rateBp: 10,

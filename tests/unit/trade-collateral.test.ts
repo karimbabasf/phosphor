@@ -89,8 +89,9 @@ test('the cost model reproduces the measured dry quotes', () => {
     assert.ok(pct !== null, `no cost for $${usd}`);
     return pct.toFixed(2);
   };
-  // $6 is the size the rail refuses for cost, and it refuses it at 5.35 percent.
+  // $6 is a size the rail refuses for cost (5.35 percent), which is why the floor is $7.
   assert.equal(at(6), '5.35');
+  assert.ok(Number(at(7)) <= MAX_FEE_PCT, `the floor itself costs ${at(7)} percent`);
   assert.equal(at(50), '0.73');
   assert.equal(at(1000), '0.13');
 });

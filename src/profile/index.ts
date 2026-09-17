@@ -47,9 +47,24 @@ export function isConcept(s: string): boolean {
 
 /* The one spelling of a concept, so "stop  loss" and " stop loss" are the entry the list already
    holds rather than two more. Only runs of spaces fold: a newline or a tab inside a concept is
-   still refused by the rule, which is what the caller expects of it. */
+   still refused by the rule, which is what the caller expects of it.
+
+   A model hands the concept over the way it would write it in a sentence: quoted, or with a
+   full stop after it ("Isolated margin.", 'funding rate'). Those were refused by the rule for
+   the punctuation alone, and the note-taking call "did not go through" for nothing. So the
+   wrapping quotes and a trailing full stop, exclamation mark or semicolon come off first, as
+   many times as they are stacked, and the rule then applies to the words. Nothing inside the
+   words is touched: a colon, an angle bracket or a sentence is still refused. */
 export function normalizeConcept(raw: unknown): string {
-  return typeof raw === 'string' ? raw.trim().replace(/ {2,}/g, ' ') : '';
+  if (typeof raw !== 'string') return '';
+  let s = raw.trim();
+  for (;;) {
+    const before = s;
+    s = s.replace(/[.!;]+$/, '').trim();
+    if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) s = s.slice(1, -1).trim();
+    if (s === before) break;
+  }
+  return s.replace(/ {2,}/g, ' ');
 }
 
 export const KNOWS_MAX = 60;

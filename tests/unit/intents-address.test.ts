@@ -9,10 +9,14 @@ import assert from 'node:assert/strict';
 import {
   POA_BRIDGE_RPC,
   POA_NETWORK,
+  RECEIVE_NETWORKS,
+  bridgeKeyOf,
   humanAmount,
   intentsDepositAddress,
+  parsePoaToken,
   poaRecentDeposits,
   poaSupportedTokens,
+  receiveNetworkOf,
 } from '../../src/rails/intents-address.ts';
 
 type Call = { url: string; method: string; params: unknown[] };
@@ -51,6 +55,71 @@ test('each chain is asked for under its defuse network id, never its short name'
 // The verifier keys balances by the lowercased EVM address, and every other read in this app
 // lowercases before it asks. The bridge happens to be case insensitive, which is exactly why
 // this is asserted here: a difference that does not bite today is the one that bites later.
+// The five the app is typed on are a view of the registry, so the two can never disagree.
+test('POA_NETWORK is the registry\'s five, and every registry id resolves to its bridge key', () => {
+  for (const [id, bridge] of Object.entries(POA_NETWORK)) {
+    assert.equal(receiveNetworkOf(id)?.bridge, bridge);
+    assert.equal(bridgeKeyOf(id), bridge);
+  }
+  for (const n of RECEIVE_NETWORKS) assert.equal(bridgeKeyOf(n.id), n.bridge, n.id);
+  assert.equal(bridgeKeyOf('btc'), 'btc:mainnet');
+  assert.equal(bridgeKeyOf('bnb'), 'eth:56');
+  assert.equal(bridgeKeyOf('hypercore'), 'hypercore:mainnet');
+});
+
+// A raw key is the bridge's own spelling and passes through; a name, a typo or an injection
+// shaped like a key does not become one.
+test('bridgeKeyOf takes a raw bridge key through untouched and answers undefined for anything else', () => {
+  assert.equal(bridgeKeyOf('eth:56'), 'eth:56');
+  assert.equal(bridgeKeyOf('newchain:mainnet'), 'newchain:mainnet');
+  for (const bad of ['bitcoin', 'ETH', 'eth:', ':1', 'eth:1:0xabc', 'eth 1', '', 'Eth:1', 'eth:1\n']) {
+    assert.equal(bridgeKeyOf(bad), undefined, JSON.stringify(bad));
+  }
+});
+
+test('any registry id or raw key is asked for under the bridge key, and an unknown one is refused before any call', async () => {
+  const known = replying({ result: { address: 'bc1qabc' } });
+  const got = await intentsDepositAddress('0xABC', 'btc', known.fetchImpl);
+  assert.deepEqual(known.calls[0]!.params, [{ account_id: '0xabc', chain: 'btc:mainnet' }]);
+  assert.equal(got.chain, 'btc');
+  assert.equal(got.network, 'btc:mainnet');
+
+  const raw = replying({ result: { address: '0xabc' } });
+  assert.equal((await intentsDepositAddress('0xABC', 'eth:56', raw.fetchImpl)).network, 'eth:56');
+
+  const never = replying({ result: { address: '0xabc' } });
+  await assert.rejects(() => intentsDepositAddress('0xABC', 'bitcoin', never.fetchImpl), /no bridge network is mapped for bitcoin/);
+  assert.equal(never.calls.length, 0);
+});
+
+/* Stellar, live on 2026-09-16: the plain ask is refused with "Deposit mode MEMO is required for
+   this chain", and the memo-mode ask answers with one address for everybody plus the memo that
+   says whose the deposit is. The memo is half the destination, so it is asked for and carried
+   rather than the row going grey. */
+test('a chain that routes by memo is asked again in memo mode and the memo is carried', async () => {
+  const calls: Array<{ method: string; params: unknown[] }> = [];
+  const fetchImpl = (async (_url: unknown, init: { body?: string } = {}) => {
+    const body = JSON.parse(init.body ?? '{}') as { method: string; params: Array<Record<string, unknown>> };
+    calls.push(body);
+    const payload = body.params[0]?.deposit_mode === 'MEMO'
+      ? { result: { address: 'GDJ4Jshared', chain: 'stellar:mainnet', memo: '177237517' } }
+      : { error: 'Deposit mode MEMO is required for this chain' };
+    return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+  }) as unknown as typeof fetch;
+
+  const got = await intentsDepositAddress('0xABC', 'stellar', fetchImpl);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0]!.params, [{ account_id: '0xabc', chain: 'stellar:mainnet' }]);
+  assert.deepEqual(calls[1]!.params, [{ account_id: '0xabc', chain: 'stellar:mainnet', deposit_mode: 'MEMO' }]);
+  assert.equal(got.address, 'GDJ4Jshared');
+  assert.equal(got.memo, '177237517');
+
+  // Any other refusal is still a refusal, asked once.
+  const other = replying({ error: 'Network not supported' });
+  await assert.rejects(() => intentsDepositAddress('0xABC', 'stellar', other.fetchImpl), /refused stellar:mainnet.*Network not supported/);
+  assert.equal(other.calls.length, 1);
+});
+
 test('the account id is lowercased before it is sent', async () => {
   const { fetchImpl, calls } = replying({ result: { address: '0xabc' } });
   await intentsDepositAddress('0xD7B2DE5862008D949DD6E5D70D4C68AD1D4D5050', 'eth', fetchImpl);
@@ -128,6 +197,45 @@ test('the token list keeps only rows it can actually read, and cuts the network 
   assert.equal(tokens[1]!.contract, null, 'the chain\'s own coin has no contract');
 });
 
+/* The live list spells a chain's own coin 'eth:8453:native' with origin_chain_address 'native',
+   and the old reading put the word native in the contract field, where the window would have
+   offered it to copy. The contract is the chain's own spelling (checksummed on EVM) when the
+   row carries one, the identifier's tail when it does not, and null for the coin itself. */
+test('the contract is origin_chain_address as the chain spells it, the identifier tail without one, and never the word native', () => {
+  const evm = parsePoaToken({
+    defuse_asset_identifier: 'eth:8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    origin_chain_address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    near_token_id: 'base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near',
+    asset_name: 'USDC',
+    decimals: 6,
+    min_deposit_amount: '150000',
+    intents_token_id: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near',
+  });
+  assert.equal(evm?.contract, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+  assert.equal(evm?.nearTokenId, 'base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near');
+  assert.equal(evm?.minDepositHuman, '0.15');
+
+  for (const row of [
+    { defuse_asset_identifier: 'eth:8453:native', origin_chain_address: 'native', asset_name: 'ETH', decimals: 18, min_deposit_amount: '1' },
+    { defuse_asset_identifier: 'btc:mainnet:native', origin_chain_address: 'native', asset_name: 'BTC', decimals: 8, min_deposit_amount: '5000' },
+    { defuse_asset_identifier: 'eth:1', origin_chain_address: '', asset_name: 'ETH', decimals: 18, min_deposit_amount: '1' },
+    { defuse_asset_identifier: 'sol:mainnet:native', asset_name: 'SOL', decimals: 9, min_deposit_amount: '1' },
+  ]) {
+    assert.equal(parsePoaToken(row)?.contract, null, row.defuse_asset_identifier);
+  }
+
+  // The two Move chains say native in the address and carry the coin's type in the identifier;
+  // the type is what an explorer takes, so it is kept.
+  const apt = parsePoaToken({ defuse_asset_identifier: 'aptos:mainnet:0x1::aptos_coin::AptosCoin', origin_chain_address: 'native', asset_name: 'APT', decimals: 8, min_deposit_amount: '1' });
+  assert.equal(apt?.contract, '0x1::aptos_coin::AptosCoin');
+  assert.equal(apt?.network, 'aptos:mainnet');
+  // A Stellar asset carries a colon of its own; the tail is kept whole.
+  const xlm = parsePoaToken({ defuse_asset_identifier: 'stellar:mainnet:USDC:GA5ZSEJYB37J', origin_chain_address: 'GA5ZSEJYB37J', asset_name: 'USDC', decimals: 7, min_deposit_amount: '1' });
+  assert.equal(xlm?.contract, 'GA5ZSEJYB37J');
+  assert.equal(parsePoaToken({ defuse_asset_identifier: 'sui:mainnet:0x2::sui::SUI', asset_name: 'SUI', decimals: 9, min_deposit_amount: '1' })?.contract, '0x2::sui::SUI');
+  assert.equal(parsePoaToken({ defuse_asset_identifier: 'eth:1:native', asset_name: 'ETH', decimals: 18 })?.nearTokenId, '');
+});
+
 // The minimum is a number a person compares against the amount they are about to type, so it
 // is printed in the token's unit and never in base units: "Minimum 1000 USDC" was a thousand
 // dollars on screen for a floor of a tenth of a cent.
@@ -151,6 +259,21 @@ test('recent deposits never throws and never invents a row', async () => {
     const { fetchImpl } = replying(payload);
     assert.deepEqual(await poaRecentDeposits('0xabc', 'eth', fetchImpl), []);
   }
+});
+
+test('recent deposits resolve a registry id or a raw key to the bridge key, and an unknown chain is an empty list with no call', async () => {
+  const btc = replying({ result: { deposits: [{ tx_hash: 'abc', amount: '5000', status: 'PENDING', defuse_asset_identifier: 'btc:mainnet:native' }] } });
+  const rows = await poaRecentDeposits('0xABC', 'btc', btc.fetchImpl);
+  assert.deepEqual(btc.calls[0]!.params, [{ account_id: '0xabc', chain: 'btc:mainnet', limit: 10 }]);
+  assert.equal(rows[0]!.status, 'PENDING');
+
+  const raw = replying({ result: { deposits: [] } });
+  await poaRecentDeposits('0xABC', 'eth:56', raw.fetchImpl);
+  assert.deepEqual(raw.calls[0]!.params, [{ account_id: '0xabc', chain: 'eth:56', limit: 10 }]);
+
+  const unknown = replying({ result: { deposits: [{ tx_hash: 'x' }] } });
+  assert.deepEqual(await poaRecentDeposits('0xABC', 'bitcoin', unknown.fetchImpl), []);
+  assert.equal(unknown.calls.length, 0);
 });
 
 test('a deposit row is read with its hash, amount and status', async () => {

@@ -15,6 +15,7 @@ import {
   HYPERCORE_SLIPPAGE_BPS,
   HYPERCORE_USDC_ASSET_ID,
   HYPERCORE_USDC_DECIMALS,
+  HYPERCORE_VENUE_MIN_CREDIT_USDC,
   MAX_FEE_PCT,
   MIN_DEPOSIT_USDC,
   hypercoreDepositRail,
@@ -262,13 +263,58 @@ test('a trading account that is not an EVM address is refused, because HyperCore
   assert.equal(calls.quotes.length, 0);
 });
 
-test('below the floor the refusal names the flat fee, not a venue minimum', async () => {
+test('below the floor the refusal names the venue minimum and the flat fee that sets the floor above it', async () => {
   const { rail: r, calls } = rail();
-  const out = await r.simulate(draft({ amount: 3, amountUsd: 3, minCredited: minCreditedFor(3) }));
-  assert.equal(out.ok, false);
-  assert.match(out.summary, new RegExp(`below the ${MIN_DEPOSIT_USDC} USDC floor`));
-  assert.match(out.summary, /flat/);
+  for (const amount of [3, 5, 5.99]) {
+    const out = await r.simulate(draft({ amount, amountUsd: amount, minCredited: minCreditedFor(amount) }));
+    assert.equal(out.ok, false, `${amount} was accepted`);
+    assert.match(out.summary, new RegExp(`below the ${MIN_DEPOSIT_USDC} USDC floor`));
+    assert.match(out.summary, new RegExp(`Hyperliquid does not credit a deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC, it is lost`));
+    assert.match(out.summary, new RegExp(`${MIN_DEPOSIT_USDC} in is what guarantees ${HYPERCORE_VENUE_MIN_CREDIT_USDC} lands`));
+    assert.match(out.summary, /flat/);
+  }
   assert.equal(calls.quotes.length, 0);
+});
+
+// ---------- the venue's own floor: under 5 USDC delivered, Hyperliquid credits nothing ----------
+
+// Docs: "The minimum deposit amount is 5 USDC. If you send an amount less than this, it will
+// not be credited and be lost forever." 1Click quotes a 3 USDC deposit without a word, so the
+// app is the one that refuses, at draft time and again against the quote's guarantee.
+test('the venue floor is 5 USDC delivered, and the size floor of 7 puts 5 on the ground after the fee and keeps the fee under the ceiling', () => {
+  assert.equal(HYPERCORE_VENUE_MIN_CREDIT_USDC, 5);
+  assert.equal(MIN_DEPOSIT_USDC, 7);
+  assert.ok(minCreditedFor(MIN_DEPOSIT_USDC) >= HYPERCORE_VENUE_MIN_CREDIT_USDC, `${minCreditedFor(MIN_DEPOSIT_USDC)} guaranteed at the floor is under the venue's 5`);
+  assert.ok(minCreditedFor(5) < HYPERCORE_VENUE_MIN_CREDIT_USDC, 'a 5 USDC deposit would be refused for its size, not only for its guarantee');
+  // That the measured fee at 7 sits under the ceiling is pinned in tests/unit/trade-collateral.test.ts,
+  // beside the cost model that reproduces the live quotes.
+});
+
+test('a draft whose own guarantee is under 5 USDC landing is refused before any quote, and the sentence says the money is lost', async () => {
+  const { rail: r, calls } = rail();
+  const out = await r.simulate(draft({ amount: 7, amountUsd: 7, minCredited: 4.9 }));
+  assert.equal(out.ok, false);
+  assert.match(out.summary, /would guarantee only 4\.9000 USDC landing; Hyperliquid does not credit a deposit under 5 USDC, it is lost/);
+  assert.equal(calls.quotes.length, 0);
+  const fine = await r.simulate(draft({ amount: 7, amountUsd: 7, minCredited: minCreditedFor(7) }));
+  assert.equal(calls.quotes.length, 1, 'an honest 7 USDC draft was refused before the quote');
+  assert.doesNotMatch(fine.summary, /does not credit/, 'the venue floor spoke about a draft that clears it');
+});
+
+test('a quote guaranteeing under 5 USDC delivered is refused first, whatever the draft floor says, and 5 exactly passes that gate', async () => {
+  // The default draft is 10 in, floored at 9.51, so a 4.99999999 guarantee fails both floors;
+  // the venue's is the one named, because it is the one that loses everything.
+  const { rail: under } = rail({ quote: { amountOutFormatted: '5.2', amountOut: '520000000', minAmountOut: '499999999' } });
+  const lost = await under.simulate(draft());
+  assert.equal(lost.ok, false);
+  assert.match(lost.summary, /guarantees only 4\.99999999 USDC landing; Hyperliquid does not credit a deposit under 5 USDC, it is lost/);
+  assert.doesNotMatch(lost.summary, /approved draft floors at/, 'the draft floor spoke before the venue floor');
+
+  const { rail: at } = rail({ quote: { amountOutFormatted: '5.2', amountOut: '520000000', minAmountOut: '500000000' } });
+  const short = await at.simulate(draft());
+  assert.equal(short.ok, false);
+  assert.doesNotMatch(short.summary, /does not credit/, 'a guarantee of exactly 5 tripped the venue gate');
+  assert.match(short.summary, /approved draft floors at/);
 });
 
 test('a draft spending an intents account that is not ours is refused', async () => {
@@ -628,8 +674,9 @@ test('the floor clears the real fee at every size the rail accepts', () => {
   // Live dry quotes from the intents balance on 2026-09-11, no partner key, so the 25 bp app
   // fee is inside these numbers. The floor has to sit UNDER each delivered amount or it refuses
   // an honest quote and blames the wrong thing.
+  // The 6 row is from 2026-09-16, the day the size floor moved up to it.
   const live: Array<[number, number]> = [
-    [5, 4.672108],
+    [6, 5.669525],
     [10, 9.6594],
     [50, 49.55863],
     [1000, 997.115655],

@@ -198,6 +198,37 @@ test('a repeat of a recorded concept is fine and adds nothing', async () => {
   }
 });
 
+/* The shapes a model actually sends: the concept quoted, or with the full stop it would give a
+   sentence. Both used to be refused for the punctuation, and the note-taking step "did not go
+   through" for nothing. The rule itself is untouched: a sentence is still a sentence. */
+test('wrapping quotes and a trailing full stop come off before the rule, and a sentence is still refused', async () => {
+  const h = await boot();
+  try {
+    const dotted = await learned(h, '"Isolated margin."');
+    assert.equal(dotted.status, 200, JSON.stringify(dotted.json));
+    assert.equal(dotted.json.added, true);
+    const quoted = await learned(h, "'funding rate'");
+    assert.equal(quoted.status, 200, JSON.stringify(quoted.json));
+    assert.equal(quoted.json.added, true);
+    const stacked = await learned(h, ' "Maker fee".. ');
+    assert.equal(stacked.status, 200, JSON.stringify(stacked.json));
+    const again = await learned(h, 'isolated margin');
+    assert.equal(again.json.added, false, 'the quoted spelling and the bare one are two entries');
+    assert.deepEqual(loadProfile(h.dataDir).knows.map((k) => k.concept), ['Isolated margin', 'funding rate', 'Maker fee']);
+
+    const sentence = 'The funding rate is paid every eight hours by the side that is crowded';
+    assert.equal(sentence.length, 70, 'a sentence well past the 48 the rule allows');
+    for (const bad of [sentence, `"${sentence}."`, 'Isolated margin: what it is.', '"stop loss" or die', "'", '"."', 'a.b']) {
+      const out = await learned(h, bad);
+      assert.equal(out.status, 400, `accepted: ${bad}`);
+      assert.match(String(out.json.error), /noun phrase/);
+    }
+    assert.equal(loadProfile(h.dataDir).knows.length, 3);
+  } finally {
+    await h.close();
+  }
+});
+
 test('ten concepts per session, then a refusal that says so, and another session still has its ten', async () => {
   const h = await boot();
   try {

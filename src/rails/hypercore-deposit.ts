@@ -30,6 +30,14 @@
 //      So this rail states the EFFECTIVE rate in the approval summary and refuses below a
 //      floor and above a ceiling, and all three exist because of that table.
 //
+//      And the venue has a floor of its own that is not a fee but a loss. Hyperliquid's bridge
+//      docs: "The minimum deposit amount is 5 USDC. If you send an amount less than this, it
+//      will not be credited and be lost forever." 1Click quotes a 3 USDC deposit without a
+//      word (2.676895 out, live 2026-09-16), so the refusal has to be this app's: the draft's
+//      guaranteed floor and the quote's guaranteed output are both held to 5 USDC delivered,
+//      and the size floor sits at 7 so that 5 lands after the flat fee and the fee itself
+//      stays under the ceiling.
+//
 //   2. THE DESTINATION IS PINNED. The HyperCore asset id is a `1cs_v1:...` string the token
 //      registry does not hold, so it is a constant here, verified against the live list on
 //      every quote and never replaced from it. A hostile list can stop this rail; it cannot
@@ -74,9 +82,24 @@ export const HYPERCORE_USDC_DECIMALS = 8;
 // which is one decision rather than three that look like one.
 export const HYPERCORE_COUNTERPARTY = INTENTS_VERIFIER;
 
-// Below this the flat fee stops being a fee and starts being most of the deposit. 1Click's own
-// floor is lower; 5 is where the refusal can say "you would pay 7 percent" and be right.
-export const MIN_DEPOSIT_USDC = 5;
+// What Hyperliquid credits at all. Its bridge docs: "The minimum deposit amount is 5 USDC. If
+// you send an amount less than this, it will not be credited and be lost forever." Held in
+// USDC delivered, not USDC sent: a 5 USDC deposit loses 0.33 to the route and lands at 4.67,
+// which the venue keeps. Verified 2026-09-16: 1Click prices a 3 USDC delivery of 2.68 without
+// complaint, so nothing upstream refuses this for us.
+export const HYPERCORE_VENUE_MIN_CREDIT_USDC = 5;
+
+// The size floor, in USDC sent. 7, for two reasons that both have to hold: 7 in guarantees
+// at least 5 lands after the flat fee (minCreditedFor(7) is 6.52; a live 6 USDC quote already
+// delivered 5.67), and at 7 the nearly flat fee is about 4.8 percent of the deposit, under the
+// MAX_FEE_PCT ceiling below. 6 cleared the venue's floor and was refused by the ceiling (5.5
+// percent, measured 2026-09-16), which is a floor that refuses everything at the floor. Below
+// this the deposit is not a bad deal, it is gone. 1Click's own floor is lower and says nothing
+// about the venue's.
+export const MIN_DEPOSIT_USDC = 7;
+// The venue floor in HyperCore USDC base units (8 decimals), for the quote check, which
+// compares base units to base units and never through a double.
+const VENUE_MIN_CREDIT_BASE = BigInt(HYPERCORE_VENUE_MIN_CREDIT_USDC) * 10n ** BigInt(HYPERCORE_USDC_DECIMALS);
 
 // What a deposit is allowed to cost before this rail stops calling it a deposit. 5 percent lets
 // a $10 test through with a loud number attached and refuses the sizes where the user would be
@@ -225,13 +248,24 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     if (draft.amountUsd < MIN_DEPOSIT_USDC) {
       return {
         reasons: [
-          `${draft.amount} ${draft.symbol} is below the ${MIN_DEPOSIT_USDC} USDC floor. The routing fee is nearly flat ` +
-            `(about ${HYPERCORE_MEASURED_FLAT_USDC} USDC), so at this size it would be most of the deposit; deposit more at once`,
+          `${draft.amount} ${draft.symbol} is below the ${MIN_DEPOSIT_USDC} USDC floor. Hyperliquid does not credit a deposit ` +
+            `under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC, it is lost, and the routing fee is nearly flat (about ` +
+            `${HYPERCORE_MEASURED_FLAT_USDC} USDC), so ${MIN_DEPOSIT_USDC} in is what guarantees ${HYPERCORE_VENUE_MIN_CREDIT_USDC} lands; deposit more at once`,
         ],
       };
     }
     if (!Number.isFinite(draft.minCredited) || draft.minCredited <= 0) {
       return { reasons: [`the draft floors at ${draft.minCredited} USDC, which is no floor at all`] };
+    }
+    // The venue's floor against the draft's own guarantee, before any quote: a draft that can
+    // only promise 4.9 landing is a draft that can lose the whole deposit.
+    if (draft.minCredited < HYPERCORE_VENUE_MIN_CREDIT_USDC) {
+      return {
+        reasons: [
+          `${draft.amount} ${draft.symbol} would guarantee only ${draft.minCredited.toFixed(4)} USDC landing; Hyperliquid does not credit ` +
+            `a deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC, it is lost`,
+        ],
+      };
     }
 
     let list: OneClickToken[];
@@ -307,6 +341,16 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     // strings through a double is how a floor stops being exact. A missing minAmountOut throws
     // rather than reading as zero: a quote that guarantees nothing cannot be measured.
     const guaranteed = baseUnits(quote.minAmountOut, 'minAmountOut');
+    // The venue's floor first, because it is the one that loses the money rather than some of
+    // it: under 5 USDC delivered Hyperliquid credits nothing. 1Click quotes such deliveries
+    // happily, so this is the only place the guarantee meets the docs.
+    if (guaranteed < VENUE_MIN_CREDIT_BASE) {
+      problems.push(
+        `the quote guarantees only ${formatUnits(guaranteed, HYPERCORE_USDC_DECIMALS)} USDC landing; Hyperliquid does not credit ` +
+          `a deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC, it is lost. Deposit more at once`,
+      );
+      return problems;
+    }
     if (guaranteed < p.minCreditedBase) {
       problems.push(
         `the quote guarantees only ${formatUnits(guaranteed, HYPERCORE_USDC_DECIMALS)} USDC against the ` +
