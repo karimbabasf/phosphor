@@ -1,6 +1,6 @@
 # Phosphor reference
 
-The long form of what the README says in short: the tool surface, gas, how a proposal is decided, policy as sentences, the first run, mode and config, keys and signing, the code layout and the operator profile. Everything here describes the code as it is; where it names a count (tools, tests), re-check the number before quoting it.
+The long form of what the README says in short: the tool surface, how a proposal is decided, policy as sentences, the first run, mode and config, keys and signing, the code layout and the operator profile. Everything here describes the code as it is; where it names a count (tools, tests), re-check the number before quoting it.
 
 ## The tool surface
 
@@ -76,7 +76,6 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `log_tail` | Most recent audit lines, newest first |
 | `proposal_status` | Status, verdict and simulation result for a proposal id |
 | `research` | The one read that leaves this machine. The APP fetches from a fixed allowlist of documentation hosts and hands back text; the agent never gets a URL it can point anywhere, which is the whole reason this is a Phosphor tool and not a general web fetch |
-| `gas_report` | What the app has spent on gas over a window, split by action, chain, rail kind and venue, plus gas as basis points of the value moved. An aggregation of receipts the history surface already read, so it makes no chain call. The four remainders (pending, unknown, unpriced, intent-settled) and the reverted line are counted separately and named in the tool description, because a total that drops what it could not count is a wrong number said confidently |
 
 | Write tool | Does |
 |---|---|
@@ -176,39 +175,6 @@ the server after the label the agent supplied, agent lines are dotted where a hu
 and the chart bar carries a count with a one-click clear. An agent can never alter a candle, and a
 price line it draws is excluded from the automatic price fit, so one absurd level cannot flatten
 the chart into a hairline.
-
-## Where the gas went
-
-Every movement this app makes burns gas somewhere, the per-transaction figure has always been on
-the row in HISTORY, and nothing added it up. `GET /api/gas` does: a total for the window, what each
-kind of action spent, the same split by chain, and gas as basis points of the value actually moved.
-Agents ask the same question with `gas_report`, and both doors run the same derivation, so the
-human and the agent cannot be told different numbers about the same money.
-
-The `[ GAS ]` deck-bar modal that used to draw this, with a donut and a table on both decks, went
-with the window rebuild: per-transaction fees ride on the Activity rows now, with a total for the
-window. The derivation and both doors onto it are unchanged.
-
-It is an aggregation, not a new read. The receipts come from the same cache the history surface
-fills, so opening GAS after HISTORY costs nothing and opening it first warms the cache for HISTORY.
-No new RPC call, no new store.
-
-The part worth reading is the remainders. An aggregate that silently drops what it cannot count
-reports a smaller number than the truth and calls it the truth, so four categories are counted
-apart and reported, and none of them means zero gas:
-
-    still reading     the receipt has not landed yet
-    unknown           no chain this app can reach has that hash
-    intent-settled    signed, not broadcast, so a solver paid the gas and we paid none
-    unpriced          gas known in native units, no price available to convert it
-
-And one that is not a remainder: **reverted**, in red, because gas spent on a transaction that
-moved nothing is the only figure here that is pure loss. A remainder that is zero prints nothing at
-all: "0 pending" is chrome.
-
-The numbers are the authority. The rings that used to draw their shape, and the labelled canvas
-that read them out, went with the composition donut in the window rebuild: the figures survived the
-drawing of them, because the derivation was never in the canvas.
 
 ## How a proposal gets decided
 
@@ -475,7 +441,6 @@ Still open, unrelated to keys:
 
 1. Review `data/risk-table.json` rows and sources (curated, human-owned).
 2. Optional: a JWT for NEAR Intents 1Click, which buys a lower fee tier.
-3. Optional: an indexer key (Etherscan or similar) for historical gas and spread.
 
 ## Latency
 
@@ -512,10 +477,9 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/rails/         the rail registry: intents, hyperliquid
     src/trade/         plan, risk, plans on disk, the watcher, the rail, the surface
     src/runner/        the host (registry, watcher, fills watch) and the child that signs
-    src/gas/           what a movement cost, grouped by action, chain, rail and venue
-    src/chain/         the only places phosphor signs: evm.ts and near.ts
+    src/chain/         the EVM readers and explorer prefixes, the NEAR RPC and account id rules
     src/ledger/        the NEAR Intents verifier read + demo fixtures
-    src/transactions.ts  receipts and the gas cache both doors read
+    src/transactions.ts  the transaction history, derived from the store and the log
     src/role.ts        what the app tells an agent it is, in the MCP handshake
     src/composition.ts risk classification against data/risk-table.json
     src/intents.ts     1Click quotes, synthetic quoter, stub signer

@@ -116,17 +116,10 @@ function receiptStatus(entry: TxEntry): Receipt['status'] | null {
   return null;
 }
 
-/* Gas is filled in behind the response by the same background reader the history uses, so a
-   receipt read a second after the action shows the venue fee and adds the gas once it lands.
-   Adding them is right: a person asking what this cost means everything it cost. */
+/* The venue's own fee, off the quote the human approved. There is no gas beside it: every
+   move settles inside a venue and a solver pays the gas, so this is everything it cost. */
 function feesOf(entry: TxEntry): number | null {
-  const gas = entry.hashes
-    .map((h) => h.gas?.feeUsd ?? null)
-    .filter((usd): usd is number => usd !== null)
-    .reduce<number | null>((sum, usd) => (sum ?? 0) + usd, null);
-  const venueFee = entry.status === 'executed' ? entry.venueFeeUsd : null;
-  if (venueFee === null && gas === null) return null;
-  return (venueFee ?? 0) + (gas ?? 0);
+  return entry.status === 'executed' ? entry.venueFeeUsd : null;
 }
 
 /* The row's sentence. Past tense only for a row that went through; anything else is what

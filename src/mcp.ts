@@ -511,27 +511,6 @@ registerRead(
 // the whole reason this description is long. An aggregate that silently drops what it could not
 // count reports a smaller number than the truth and calls it the truth, and an agent reading
 // only `totalUsd` will say it out loud with four receipts still being read.
-registerRead(
-  'gas_report',
-  [
-    'What this app has spent on gas: a dollar total, then the same total split by action, by chain,',
-    'by rail kind and by venue, plus gas as basis points of the value actually moved. It groups',
-    'receipts already read for the history surface, so it makes no new chain call and adds no delay.',
-    '',
-    'REPORT THE REMAINDERS OR THE TOTAL IS WRONG. Four counts sit beside it and not one of them means',
-    'zero gas: `pending` receipts are still being read, `unknown` hashes are on no chain this app can',
-    'reach, `unpriced` receipts have gas in native units and no price to convert it, and `intentOnly`',
-    'moves were settled by a solver so they burned none of our gas, which is a fact rather than a gap.',
-    '`reverted` is not a remainder and is worse than one: gas spent, nothing moved, pure loss. Saying',
-    '"$1.42 on gas" while four receipts are pending has told a human a wrong number confidently.',
-    '',
-    'The window filters on settle time, the same order every other surface here uses, and defaults to',
-    '7d. Chain dollars sum to the total; action counts may exceed the movement count, because one',
-    'cross-chain movement burns gas on two chains. Read-only, changes nothing.',
-  ].join(' '),
-  { window: z.enum(['24h', '7d', '30d', 'all']).optional().default('7d') },
-);
-
 // ---------- the chart ----------
 //
 // Reading and driving the chart moves no money, so none of this goes near the approval gate.

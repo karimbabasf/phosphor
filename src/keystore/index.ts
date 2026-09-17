@@ -12,6 +12,7 @@
 // `readFileSync` beside `keys`.
 
 import fs from 'node:fs';
+import { privateKeyToAccount } from 'viem/accounts';
 
 import type { Keystore, KeysPayload, StoredAddresses } from './store.ts';
 
@@ -49,6 +50,18 @@ export function evmPrivateKey(keysPath: string): `0x${string}` {
     throw new Error('this wallet has no valid EVM private key');
   }
   return key as `0x${string}`;
+}
+
+/* The EVM ADDRESS, which is not signing material and must not behave like it. It is the
+   intents account id (lowercased by the callers that need it) and the Hyperliquid account,
+   and a locked wallet still has balances: the address comes from the keystore's plaintext
+   header, so the whole read surface works while locked. The derivation is the fallback for an
+   install that has not migrated yet and has no header. Header first, always: a regression here
+   points reads and signatures at two different accounts. */
+export function evmAddress(keysPath: string): `0x${string}` {
+  const fromHeader = walletAddresses().evm;
+  if (fromHeader !== null) return fromHeader as `0x${string}`;
+  return privateKeyToAccount(evmPrivateKey(keysPath)).address;
 }
 
 export function isLocked(): boolean {

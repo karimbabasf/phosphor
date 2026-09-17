@@ -32,7 +32,7 @@ import {
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { finishTouch } from './proposals/lifecycle.ts';
 import { executeApproved, land, watchSettling } from './proposals/execute.ts';
-import { acknowledge, chainTxLookup, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
+import { acknowledge, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
 import { proposePolicyChange } from './proposals/draft.ts';
 import { proposeHlDeposit, proposeHlWithdraw, proposeIntentsSend, proposeSwap } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
@@ -50,7 +50,6 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     notify: () => deps.onChange?.(),
     execute: (p: Proposal) => executeApproved(ctx, p),
     land: (p: Proposal) => land(ctx, p),
-    txLookup: deps.txLookup ?? chainTxLookup(),
     afterTouch: (id, result) => serialise(() => finishTouch(ctx, id, result)),
     inflight: new Map(),
   };

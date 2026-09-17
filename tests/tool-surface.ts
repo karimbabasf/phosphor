@@ -28,12 +28,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'log_tail',
   'policy_show',
   'proposal_status',
-  // The gas bill, grouped by action and by chain over a window. It reaches no rail and makes no
-  // chain call: it groups receipts the history surface has already read. It is on this list as a
-  // read, but the thing worth checking in review is its DESCRIPTION, which has to keep naming the
-  // four remainders (pending, unknown, unpriced, intent-settled). A total that drops what it could
-  // not count is a smaller number than the truth, said confidently.
-  'gas_report',
   'propose_policy_change',
   // The rails. Each moves funds through a contract and none takes an address: the property
   // walk in tests/injection.test.ts is what holds that to be true.

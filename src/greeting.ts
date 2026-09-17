@@ -143,10 +143,6 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'policy_show', does: 'the rules currently enforced, as plain-English sentences.' },
       { tool: 'log_tail', does: 'the audit log, newest first: everything attempted, executed and refused.' },
       { tool: 'proposal_status', does: 'what happened to one proposal id.' },
-      {
-        tool: 'gas_report',
-        does: 'what this app has spent on gas, grouped by action and by chain. Read the remainder counts before you state a total: receipts still being read are not zero gas, and a total quoted over them is confidently wrong.',
-      },
     ],
   },
   {

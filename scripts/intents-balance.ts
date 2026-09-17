@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.ts';
 import { fetchIntentsHoldings } from '../src/ledger/intents.ts';
 import { oneClickClient } from '../src/intents.ts';
-import { evmAddress } from '../src/chain/evm.ts';
+import { evmAddress } from '../src/keystore/index.ts';
 
 // rpc.mainnet.near.org answers every request with -429 and a notice telling you to stop
 // using it, so it is deliberately not the default here.

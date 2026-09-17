@@ -339,7 +339,6 @@ test('no route serves the window token (P0-1)', async () => {
       '/api/chart',
       '/api/log',
       '/api/transactions',
-      '/api/gas',
       '/api/trade',
       '/api/driver',
     ];

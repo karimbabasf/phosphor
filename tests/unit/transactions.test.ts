@@ -267,11 +267,6 @@ test('the venue fee is the one the human approved, and is absent when no quote n
   assert.equal(build([noFee])[0].venueFeeUsd, null);
 });
 
-test('gas is unknown until a receipt is read, and unknown is not zero', () => {
-  const [entry] = build([deposit()]);
-  assert.equal(entry.hashes[0].gas, null);
-});
-
 test('a move with no token amount says what it did move', () => {
   const lpRemove = {
     id: 'p-lp',
@@ -503,7 +498,6 @@ test('a venue hash on a trade links to the venue explorer and never goes looking
   assert.equal(row.hashes.length, 1);
   assert.equal(row.hashes[0]?.place, 'hyperliquid');
   assert.equal(row.hashes[0]?.url, explorerTxUrl('hyperliquid', HL_HASH));
-  assert.equal(row.hashes[0]?.gasPending, true, 'the gas reader is asked once, and skips a place with no native symbol');
 });
 
 test('a trade that the venue refused is a failed row, and a pending one is no row', () => {

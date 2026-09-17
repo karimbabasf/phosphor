@@ -44,7 +44,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 
 import { evmPrivateKey } from '../keystore/index.ts';
 import type { Address, Hex } from 'viem';
-import { evmAddress } from '../chain/evm.ts';
+import { evmAddress } from '../keystore/index.ts';
 import { readTimeout, venueWriteTimeout } from '../net.ts';
 
 // ---------- the venue table ----------

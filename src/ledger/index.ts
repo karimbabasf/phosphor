@@ -13,7 +13,7 @@ import { loadDemoLedger } from './demo.ts';
 import { fetchIntentsHoldings, type IntentsRead } from './intents.ts';
 import { fetchHyperliquidRead, type HlRead } from './hyperliquid.ts';
 import { oneClickClient } from '../intents.ts';
-import { evmAddress } from '../chain/evm.ts';
+import { evmAddress } from '../keystore/index.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
 

@@ -8,10 +8,7 @@ import type { Policy, Proposal } from '../types.ts';
 import { buildBasic } from '../view/basic.ts';
 import { classify } from '../composition.ts';
 import { buildWallet } from '../wallet.ts';
-import { buildTransactions, evmCandidates } from '../transactions.ts';
-import type { TxPlace } from '../transactions.ts';
-import { buildGasReport } from '../gas/report.ts';
-import type { GasReport, GasWindow } from '../gas/report.ts';
+import { buildTransactions } from '../transactions.ts';
 import { renderSentences } from '../policy/render.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
 import { intParam, jsonWithEtag } from './respond.ts';
@@ -298,72 +295,14 @@ export function buildStateCached(ctx: Ctx): CachedJson {
 // ---------- transaction history ----------
 //
 // Derived from the proposal store and the audit log on every request (see the header of
-// src/transactions.ts). Gas is the one part that needs the chain, so it is read behind the
-// response rather than in front of it: the panel draws immediately with whatever receipts
-// are already cached, the rest are fetched, and the browser is told when they land.
+// src/transactions.ts). Nothing here reads a chain: every move settles inside a venue.
 
-export function transactionsPayload(ctx: Ctx): { entries: ReturnType<typeof buildTransactions>; gasPending: number } {
+export function transactionsPayload(ctx: Ctx): { entries: ReturnType<typeof buildTransactions> } {
   const entries = buildTransactions({
     proposals: ctx.proposals.list(),
     events: ctx.audit.tail(LOG_LIMIT_MAX),
     selfAddresses: [...ctx.cfg.addresses.evm, ...ctx.cfg.addresses.solana, ...ctx.cfg.addresses.near],
-    gas: ctx.gas.cache.all(),
-    tried: ctx.gas.cache.triedAll(),
   });
-  // Only what is still worth waiting for. A hash no chain we can reach has ever heard of
-  // is answered, not pending: an app that has run on two networks holds plenty of them.
-  let gasPending = 0;
-  for (const entry of entries) {
-    for (const tx of entry.hashes) if (tx.gasPending) gasPending += 1;
-  }
-  return { entries, gasPending };
+  return { entries };
 }
 
-// One fill at a time, and only for hashes nobody has read yet. A receipt is immutable, so
-// this converges: every call after the last one has landed does no network work at all.
-export function fillGas(ctx: Ctx, entries: ReturnType<typeof buildTransactions>): void {
-  if (ctx.gas.filling) return;
-  const wanted: Array<{ places: TxPlace[]; hash: string }> = [];
-  for (const entry of entries) {
-    for (const tx of entry.hashes) {
-      if (tx.gasPending) wanted.push({ places: evmCandidates(tx.place), hash: tx.hash });
-    }
-  }
-  if (wanted.length === 0) return;
-  ctx.gas.filling = true;
-  const prices = ctx.ledger.snapshot().prices;
-  void ctx.gas.cache
-    .fill(wanted, symbol => prices[symbol] ?? 0)
-    .then(landed => {
-      if (landed > 0) ctx.sse.broadcastTransactions();
-    })
-    .catch(() => undefined)
-    .finally(() => {
-      ctx.gas.filling = false;
-    });
-}
-
-// ---------- gas analytics ----------
-//
-// One derivation, two doors. The window opens GET /api/gas and an agent asks for the
-// gas_report read tool, and both land here, for the same reason /api/chart and the chart
-// read tools land in one place: two aggregations of one history would eventually disagree
-// about a dollar, and the human and the agent would each be told a different number about
-// the same money.
-//
-// The fill is kicked off exactly as /api/transactions does it. Without that line, a report
-// asked for before the history panel was ever opened would count every unread receipt as a
-// remainder forever, because nothing else on this surface reads a receipt.
-
-export function gasReport(ctx: Ctx, windowRaw: string): { status: number; body: GasReport | { error: string } } {
-  const window = windowRaw as GasWindow;
-  if (window !== '24h' && window !== '7d' && window !== '30d' && window !== 'all') {
-    // A 400, not a 200 carrying an error field. The window renders whatever body it is
-    // handed, so an error object answered with a success status draws as a report of zero
-    // gas, which is the one wrong answer this whole feature exists to avoid.
-    return { status: 400, body: { error: `window must be one of 24h, 7d, 30d, all; got '${windowRaw}'` } };
-  }
-  const payload = transactionsPayload(ctx);
-  fillGas(ctx, payload.entries);
-  return { status: 200, body: buildGasReport({ entries: payload.entries, window, nowMs: Date.now() }) };
-}

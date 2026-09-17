@@ -32,7 +32,7 @@ import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { reasonFor } from '../vault/reason.ts';
 import type { RailRegistry } from '../rails/index.ts';
 import type { TradeDeps } from '../trade/rail.ts';
-import type { OneClickLookup, TxLookup, VenueCredited } from './reconcile.ts';
+import type { OneClickLookup, VenueCredited } from './reconcile.ts';
 import { withReservation } from './reservation.ts';
 
 export const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
@@ -55,10 +55,6 @@ export type ProposalDeps = {
   // be proposed, which is demo mode and every test that builds a service without one.
   trade?: TradeDeps;
   onChange?: () => void;
-  // How a recorded transaction hash is checked against the chain, for reconcile. Defaulted to
-  // the viem readers the rails already use; a test hands in a fake so the four outcomes can be
-  // driven without a network.
-  txLookup?: TxLookup;
   // How a 1Click order is re-checked by its quote handle, for reconcile. Wired from the intents
   // client in src/main.ts; absent means no venue lookup and reconcile falls back to the chain.
   oneClickStatus?: OneClickLookup;
@@ -161,10 +157,6 @@ export type PCtx = {
   /* land() from execute.ts, wired by the service for the same reason `execute` is: this file is
      the leaf of the directory and importing the module that imports it would be a cycle. */
   land: (p: Proposal) => Promise<Proposal>;
-  // How a recorded transaction hash is checked against the chain, for reconcile. Same
-  // indirection for a different reason: it is a seam, so a test can drive the four outcomes
-  // without a network.
-  txLookup: TxLookup;
   // How a 1Click order is re-checked by its quote handle. Optional: absent falls back to the
   // chain lookup, which is demo mode and every test that does not drive the venue path.
   oneClickStatus?: OneClickLookup;

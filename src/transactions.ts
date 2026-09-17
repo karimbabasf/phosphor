@@ -2,21 +2,18 @@
 //
 // It is DERIVED, never a second ledger. The proposal store already holds every write this
 // app has made, and the audit log already holds the hashes those writes produced. This
-// joins the two and adds the three things a person reading a wallet expects and neither
-// source carries: which explorer a hash belongs to, what it cost in gas, and which side of
-// the trade an address is on. Nothing here is authored: every number traces to a proposal,
-// a receipt, or a quote the human approved.
+// joins the two and adds the two things a person reading a wallet expects and neither
+// source carries: which explorer a hash belongs to, and which side of the trade an address
+// is on. Nothing here is authored: every number traces to a proposal or a quote the human
+// approved. Gas is not here: every move settles inside a venue, and a solver pays the gas.
 //
 // Why the audit log for hashes. executeRail logs {id, txids} and stores {ok, detail} on the
 // proposal, so the hashes have historically lived in the log alone. They are now written to
 // the proposal as well (see proposals.ts), because the log is compactable and a compacted
 // log would take the evidence with it. Old records still resolve through the join.
 
-import fs from 'node:fs';
-import path from 'node:path';
 import type { ChainId, DecidedBy, LogEvent, Proposal, RailEvidence, WriteDraft } from './types.ts';
-import { chainSpec, reader } from './chain/evm.ts';
-import { atomicWriteJson } from './fsatomic.ts';
+import { chainSpec } from './chain/evm.ts';
 import { HYPERLIQUID_EXPLORER_ADDRESS, HYPERLIQUID_EXPLORER_TX } from './explorers.ts';
 
 // ---------- explorers ----------
@@ -45,7 +42,7 @@ export type TxPlace = ChainId | 'intents' | 'hyperliquid';
 function evmExplorer(chain: ChainId): { tx: string; address: string } | null {
   try {
     const spec = chainSpec(chain);
-    return { tx: spec.explorerTx, address: spec.explorerTx.replace(/\/tx\/$/, '/address/') };
+    return { tx: spec.explorerTx, address: spec.explorerAddress };
   } catch {
     return null;
   }
@@ -84,24 +81,6 @@ export type TxHash = {
   // of them "tx" is how a reader ends up looking for a fee that never existed.
   kind: 'chain' | 'intent';
   url: string | null;
-  // Filled in by the enricher for EVM hashes, null until then or when the read failed.
-  gas: TxGas | null;
-  // Whether the fee is still coming. False with a null gas means no chain we can reach
-  // knows this hash, which the surface says as "unknown" rather than as "reading".
-  gasPending: boolean;
-};
-
-export type TxGas = {
-  // The chain whose RPC actually returned this receipt, which is the authority on where
-  // the hash lives. It overrides the guess classifyHash made from the draft.
-  place: TxPlace;
-  gasUsed: string; // base units, as a decimal string: a receipt figure, not a rounded one
-  gasPriceWei: string;
-  feeNative: number;
-  feeSymbol: string;
-  feeUsd: number | null;
-  blockNumber: string | null;
-  status: 'success' | 'reverted';
 };
 
 export type TxParty = { label: string; address: string; place: TxPlace; url: string | null; self: boolean };
@@ -572,18 +551,12 @@ export type BuildParams = {
   proposals: Proposal[];
   events: LogEvent[];
   selfAddresses: string[];
-  // Hash -> gas, from the enricher. Absent keys read as "not looked up yet", never as "free".
-  gas?: Map<string, TxGas>;
-  // Hashes the enricher looked for and could not find on any chain it can reach.
-  tried?: Set<string>;
 };
 
 export function buildTransactions(params: BuildParams): TxEntry[] {
   const { proposals, events } = params;
   const fromLog = txidsFromLog(events);
   const selfAddresses = new Set(params.selfAddresses.map(a => a.toLowerCase()));
-  const gas = params.gas ?? new Map<string, TxGas>();
-  const tried = params.tried ?? new Set<string>();
 
   const entries: TxEntry[] = [];
   for (const p of proposals) {
@@ -596,17 +569,11 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
     const swapPage = intentsSwapUrl(depositHandleOf(detail));
     const hashes = hashesFor(p, fromLog).map((hash, index): TxHash => {
       const seen = classifyHash(hash, index, p.draft.kind, sides.venue, sides.place, sides.toPlace);
-      // A receipt outranks the guess: if this hash was read off arb, the row says arb and
-      // the link goes to arbiscan, whatever the draft implied.
-      const receipt = gas.get(hash.toLowerCase()) ?? null;
-      const place = receipt !== null ? receipt.place : seen.place;
       return {
         hash,
-        place,
+        place: seen.place,
         kind: seen.kind,
-        url: seen.kind === 'intent' ? swapPage : explorerTxUrl(place, hash),
-        gas: receipt,
-        gasPending: seen.kind === 'chain' && receipt === null && !tried.has(gasKey(hash)),
+        url: seen.kind === 'intent' ? swapPage : explorerTxUrl(seen.place, hash),
       };
     });
 
@@ -640,110 +607,4 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
   // Newest first: a history is read from the top.
   entries.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
   return entries;
-}
-
-// ---------- gas, read back off the chain ----------
-
-// Keyed by hash alone, not by chain: the whole point of the read is to find out which chain
-// the hash is on, so the key cannot assume the answer.
-function gasKey(hash: string): string {
-  return hash.toLowerCase();
-}
-
-export type GasCache = {
-  get(hash: string): TxGas | null;
-  all(): Map<string, TxGas>;
-  // True once this hash has been looked for and not found: no chain we can reach has it.
-  // A history carrying a hash from a chain this app no longer reads is full of these, and
-  // "we looked and cannot see it" is a different sentence from "we have not looked yet".
-  tried(hash: string): boolean;
-  triedAll(): Set<string>;
-  // Reads receipts for anything not cached yet and returns how many landed. Each hash comes
-  // with the chains it could plausibly be on, tried in order. Never throws: an RPC that will
-  // not answer leaves the fee unknown, which the UI says out loud rather than calling it zero.
-  fill(wanted: Array<{ places: TxPlace[]; hash: string }>, priceOf: (symbol: string) => number): Promise<number>;
-};
-
-const NATIVE_SYMBOL: Partial<Record<TxPlace, string>> = { eth: 'ETH', base: 'ETH', arb: 'ETH' };
-const WEI = 1e18;
-
-// A mined receipt never changes, so the cache is write-once and lives across restarts. It
-// holds nothing private: public hashes and the gas they burned.
-export function createGasCache(params: { dataDir: string }): GasCache {
-  const filePath = path.join(params.dataDir, 'tx-gas.json');
-  const cache = new Map<string, TxGas>();
-  const failed = new Set<string>();
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, TxGas>;
-    for (const [key, value] of Object.entries(raw)) cache.set(key, value);
-  } catch {
-    // no cache yet, or a corrupt one: start empty and rewrite it on the next fill
-  }
-
-  function save(): void {
-    try {
-      atomicWriteJson(filePath, Object.fromEntries(cache));
-    } catch {
-      // a cache that cannot be written is a slower app, not a broken one
-    }
-  }
-
-  // Tries each candidate chain until one has the hash. A chain that does not know a hash
-  // answers with an error, which is the negative result this needs, so at most one extra
-  // round trip settles which chain a payout actually landed on. Cached forever after.
-  async function readOne(places: TxPlace[], hash: string, priceOf: (symbol: string) => number): Promise<boolean> {
-    if (!EVM_HASH.test(hash)) return false;
-    for (const place of places) {
-      const symbol = NATIVE_SYMBOL[place];
-      if (symbol === undefined) continue;
-      try {
-        const receipt = await reader(place as ChainId).getTransactionReceipt({ hash: hash as `0x${string}` });
-        const feeNative = Number(receipt.gasUsed * receipt.effectiveGasPrice) / WEI;
-        const price = priceOf(symbol);
-        cache.set(gasKey(hash), {
-          place,
-          gasUsed: receipt.gasUsed.toString(),
-          gasPriceWei: receipt.effectiveGasPrice.toString(),
-          feeNative,
-          feeSymbol: symbol,
-          feeUsd: price > 0 ? feeNative * price : null,
-          blockNumber: receipt.blockNumber.toString(),
-          status: receipt.status === 'success' ? 'success' : 'reverted',
-        });
-        return true;
-      } catch {
-        // not on this chain, or this chain would not answer: try the next candidate
-      }
-    }
-    // Remembered as unread for this process so a hash nobody can resolve is not retried on
-    // every panel refresh. A restart tries again, which is what makes a temporary RPC
-    // outage recoverable without a cache to clear.
-    failed.add(gasKey(hash));
-    return false;
-  }
-
-  return {
-    get: (hash) => cache.get(gasKey(hash)) ?? null,
-    all: () => new Map(cache),
-    tried: (hash) => failed.has(gasKey(hash)),
-    triedAll: () => new Set(failed),
-    async fill(wanted, priceOf) {
-      const todo = wanted.filter(w => {
-        const key = gasKey(w.hash);
-        return !cache.has(key) && !failed.has(key) && EVM_HASH.test(w.hash);
-      });
-      if (todo.length === 0) return 0;
-      const results = await Promise.all(todo.map(w => readOne(w.places, w.hash, priceOf)));
-      const landed = results.filter(Boolean).length;
-      if (landed > 0) save();
-      return landed;
-    },
-  };
-}
-
-// Which chains a hash could be on, most likely first. Everything EVM this app can reach,
-// with the row's own guess in front of it.
-export function evmCandidates(first: TxPlace): TxPlace[] {
-  return [first, ...EVM_PLACES.filter(p => p !== first)];
 }

@@ -25,7 +25,6 @@ import type { MarketData } from '../market/index.ts';
 import type { TradeService } from '../trade/service.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
 import type { AgentPresence } from '../agents.ts';
-import type { GasCache } from '../transactions.ts';
 import type { createChartStore } from '../chart.ts';
 import type { ChartSlots } from '../charts.ts';
 import type { SnapshotBroker } from '../snapshot.ts';
@@ -103,9 +102,6 @@ export const READ_TOOLS: readonly string[] = [
   'agent_roster',
   'agent_board',
   'agent_jobs',
-  // What this app has spent on gas, grouped. A pure aggregation over the history the
-  // HISTORY overlay already derives, so it reaches no chain of its own.
-  'gas_report',
 ];
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
 // an approval. They are still audited like every other op: an agent that can change what the
@@ -288,9 +284,6 @@ export type ThemeSlot = { get(): Theme; set(theme: Theme): void };
 // name is a price for the wrong asset.
 export type PriceCache = { coins: string[]; readings: PriceReading[] };
 
-// The receipt reader behind the history panel. `filling` is the one-at-a-time latch.
-export type GasFill = { cache: GasCache; filling: boolean };
-
 /* ServerDeps minus the optional theme pair, because `theme` below is the resolved one and a
    handler reading ctx.getTheme() would crash on the install that did not pass it. The screen
    record is resolved the same way. */
@@ -333,7 +326,6 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   // already there without resolving the claude binary on an install that never spawned one.
   crewIfAny: () => Crew | null;
   prices: PriceCache;
-  gas: GasFill;
   duplicates: DuplicateGuard;
   // One audit line per refused session or client, then silence. See firstRefusal in mcp.ts.
   seats: Set<string>;

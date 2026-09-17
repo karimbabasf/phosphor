@@ -1,5 +1,5 @@
-// The line between a READER and a SIGNER, drawn through the five places in the app that used
-// to open the key file themselves.
+// The line between a READER and a SIGNER, drawn through the places in the app that used to
+// open the key file themselves.
 //
 // The claim under test is decision 6 in the spec: while locked, every read works and nothing
 // signs. A reader that reached for key material would break the first half; a signer that kept
@@ -14,12 +14,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { evmAddress } from '../../src/chain/evm.ts';
-import { nearAccountId, readNearSigner } from '../../src/chain/near.ts';
 import { liveIntentsSigner } from '../../src/rails/intents-native.ts';
 import { liveSignPort } from '../../src/rails/hl-user-signed.ts';
 import { readApiWallet } from '../../src/runner/keys.ts';
-import { createKeystore, useKeystore } from '../../src/keystore/index.ts';
+import { createKeystore, evmAddress, useKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import { walletFromMnemonic } from '../../src/keystore/derive.ts';
 
@@ -46,13 +44,10 @@ test.afterEach(() => {
 
 test('while unlocked every signer and every reader answers', async () => {
   const { keysPath, store } = await walletOnDisk();
-  const wallet = walletFromMnemonic(VECTOR);
 
   assert.equal(evmAddress(keysPath), VECTOR_EVM);
-  assert.equal(nearAccountId(keysPath), wallet.addresses.near);
   assert.equal(liveIntentsSigner.address(keysPath), VECTOR_EVM);
   assert.equal(liveSignPort.address(keysPath), VECTOR_EVM);
-  assert.equal(readNearSigner(keysPath).accountId, wallet.addresses.near);
 
   const signed = await liveIntentsSigner.signErc191(keysPath, 'a payload');
   assert.match(signed, /^secp256k1:/, 'the intents rail really signs');
@@ -65,8 +60,7 @@ test('while locked the readers still answer, because addresses come from the hea
   store.lock();
 
   assert.equal(store.state(), 'locked');
-  assert.equal(evmAddress(keysPath), VECTOR_EVM, 'the EVM address is the balance reader for three chains');
-  assert.equal(nearAccountId(keysPath), wallet.addresses.near);
+  assert.equal(evmAddress(keysPath), VECTOR_EVM, 'the EVM address is the intents account and the balance reader');
   assert.equal(liveIntentsSigner.address(keysPath), VECTOR_EVM);
   assert.equal(liveSignPort.address(keysPath), VECTOR_EVM);
   assert.equal(store.addresses().solana, wallet.addresses.solana);
@@ -81,7 +75,6 @@ test('while locked every signer refuses, and says the wallet is locked', async (
     () => liveSignPort.signTypedData(keysPath, { domain: {}, types: {}, primaryType: 'x', message: {} } as never),
     /locked/,
   );
-  assert.throws(() => readNearSigner(keysPath), /locked/);
 });
 
 test('the runner asks for the API wallet key and is told the wallet is locked, not that there is none', async () => {

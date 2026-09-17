@@ -16,7 +16,6 @@ import path from 'node:path';
 
 import type { LogEvent, Screen, ScreenBy, ViewMode } from './types.ts';
 import { readCoins } from './view/coins.ts';
-import { createGasCache } from './transactions.ts';
 import { buildWorkerRole } from './role.ts';
 import { createChartSlots } from './charts.ts';
 import { createSnapshotBroker } from './snapshot.ts';
@@ -26,7 +25,7 @@ import { createBoard } from './board.ts';
 import { createDuplicateGuard, stillInFlight } from './duplicates.ts';
 import { createCrew } from './crew.ts';
 import { BASIC_EVENT_SCAN, PROJECT_DIR } from './http/context.ts';
-import type { Ctx, GasFill, PriceCache, ServerDeps, PhosphorServer, SseHub } from './http/context.ts';
+import type { Ctx, PriceCache, ServerDeps, PhosphorServer, SseHub } from './http/context.ts';
 import { HOST, windowToken } from './http/auth.ts';
 import { createKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
@@ -171,9 +170,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     inFlight: (id) => stillInFlight(store.get(id)),
   });
 
-  // The receipt reader behind the history panel, and the one-at-a-time latch in front of it.
-  const gas: GasFill = { cache: createGasCache({ dataDir: cfg.dataDir }), filling: false };
-
   // A refused agent keeps trying: its heartbeat alone is one attempt every few seconds, and
   // the condition it is waiting on (a full roster, a missing secret) can last hours. One audit
   // line per refused session or client, then silence, over a set mcp.ts keeps bounded because
@@ -281,7 +277,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     crewIfAny: () => crew,
     recent: recentEvents,
     prices,
-    gas,
     duplicates,
     seats,
   };

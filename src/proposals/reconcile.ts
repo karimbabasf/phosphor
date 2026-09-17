@@ -10,26 +10,21 @@
 // about which. It carries whatever hashes were recorded, it is excluded from the spend cap, and
 // the window renders it as "this may or may not have sent".
 //
-// `reconcile` is the way out. It takes the hashes and asks the chain. It never guesses: a hash
-// that cannot be looked up leaves the proposal exactly where it was, with a sentence saying why.
+// `reconcile` is the way out. It asks the venue, by the balance the rail read and by the 1Click
+// handle the rail recorded. It never guesses: a row it cannot ask about is left exactly where it
+// was, with a sentence saying why. No chain is read: every move settles inside a venue, and the
+// hashes a rail records are intent hashes and venue hashes, not transactions of this app's own.
 
-import type { ChainId, Proposal, RailEvidence, WriteDraft } from '../types.ts';
+import type { Proposal, RailEvidence } from '../types.ts';
 import type { OneClickStatus } from '../intents.ts';
 import { depositHandleOf } from '../transactions.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
-import { balanceAfter, judgeSettlingNow, settleProposal } from './execute.ts';
+import { judgeSettlingNow, settleProposal } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
 
-// What the chain says about one hash. `unknown` is a real answer and the most important one:
-// it means this app cannot check that chain, which is different from the transaction not being
-// there. Reporting `absent` for a chain we never asked would be a lie that reads as "no funds
-// left the wallet".
-export type TxState = 'confirmed' | 'reverted' | 'pending' | 'absent' | 'unknown';
-export type TxLookup = (chain: ChainId, hash: string) => Promise<TxState>;
-
 // How a 1Click order is re-checked by the deposit address a quote minted. It is the handle the
-// rails already record on evidence, and it is what lets a row that carries no EVM hash (an
-// INTENTS-mode swap settles on NEAR, which chainTxLookup answers `unknown` for) still be settled.
+// rails already record on evidence, and it is what settles a row: an INTENTS-mode swap settles
+// on NEAR, inside the verifier, where no explorer of ours can look.
 export type OneClickLookup = (handle: string) => Promise<OneClickStatus>;
 
 // Whether the venue on the far side of a 1Click order shows the money it delivered. For a
@@ -79,47 +74,6 @@ function awaitsVenue(p: Proposal): boolean {
 // deposit deadline is long gone and the order is settled one way or the other; a stale row stays
 // for a human to clear rather than being re-queried forever.
 const ONECLICK_SWEEP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
-const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
-
-// Which chains a draft's origin transaction could be on: every rail draft carries the origin
-// chain in `chain`. Nothing here guesses beyond what the draft says, so a hash with no
-// candidate chain reads as unknown rather than absent.
-export function chainsOf(draft: WriteDraft): ChainId[] {
-  if (draft.kind === 'policy_change') return [];
-  const chain = (draft as { chain?: ChainId }).chain;
-  return chain === undefined ? [] : [chain];
-}
-
-export function looksLikeEvmHash(hash: string): boolean {
-  return /^0x[0-9a-fA-F]{64}$/.test(hash);
-}
-
-// The default reader. viem's public client per chain, which the rails already use, so this adds
-// no dependency and no second view of the chain. Non-EVM chains answer `unknown` rather than
-// pretending: NEAR and Solana hashes are base58 and the receipt read for each is a different
-// shape, which is a second piece of work and not a silent one.
-export function chainTxLookup(): TxLookup {
-  return async function lookup(chain: ChainId, hash: string): Promise<TxState> {
-    if (!EVM_CHAINS.includes(chain)) return 'unknown';
-    if (!looksLikeEvmHash(hash)) return 'unknown';
-    const { reader } = await import('../chain/evm.ts');
-    const client = reader(chain);
-    try {
-      const receipt = await client.getTransactionReceipt({ hash: hash as `0x${string}` });
-      return receipt.status === 'success' ? 'confirmed' : 'reverted';
-    } catch {
-      // No receipt. Either it is still in the mempool or it never existed, and those are two
-      // very different sentences to show someone who is asking whether their money moved.
-      try {
-        await client.getTransaction({ hash: hash as `0x${string}` });
-        return 'pending';
-      } catch {
-        return 'absent';
-      }
-    }
-  };
-}
 
 /* Boot sweep. Runs once, before the port opens, so no surface ever renders a row a dead process
    left mid-decision. Returns what it changed, for the audit line and the tests.
@@ -222,41 +176,6 @@ export async function reconcileOpen(ctx: PCtx): Promise<number> {
     }
   }
   return changed;
-}
-
-function summarise(states: Array<{ hash: string; state: TxState }>): { status: Proposal['status']; detail: string } {
-  const by = (s: TxState): string[] => states.filter(x => x.state === s).map(x => x.hash);
-  const reverted = by('reverted');
-  const pending = by('pending');
-  const unknown = by('unknown');
-  const absent = by('absent');
-  const confirmed = by('confirmed');
-
-  if (reverted.length > 0) {
-    return { status: 'failed', detail: `the chain rejected ${reverted.join(', ')}, so nothing moved on that transaction` };
-  }
-  if (pending.length > 0) {
-    return {
-      status: 'needs_reconciliation',
-      detail: `${pending.join(', ')} is broadcast and not yet included in a block. Check again shortly.`,
-    };
-  }
-  if (unknown.length > 0) {
-    return {
-      status: 'needs_reconciliation',
-      detail: `Phosphor cannot read that chain's transactions, so ${unknown.join(', ')} has to be checked in a block explorer by hand.`,
-    };
-  }
-  if (absent.length > 0 && confirmed.length === 0) {
-    return { status: 'failed', detail: `no transaction with hash ${absent.join(', ')} exists on chain, so nothing was sent` };
-  }
-  if (absent.length > 0) {
-    return {
-      status: 'needs_reconciliation',
-      detail: `${confirmed.length} transaction(s) confirmed and ${absent.length} cannot be found, so this move is part done`,
-    };
-  }
-  return { status: 'executed', detail: `confirmed on chain: ${confirmed.join(', ')}` };
 }
 
 // Where the venue's word starts inside a detail, behind the rail's own sentence. Written by
@@ -404,73 +323,25 @@ export async function reconcileProposal(ctx: PCtx, id: string, quiet = false): P
     return judged;
   }
 
-  /* THE VENUE, BY THE HANDLE, NEXT. A 1Click order settles on NEAR for an INTENTS swap, which
-     chainTxLookup answers `unknown` for, so the quote handle is the only thing that can tell a
-     SUCCESS from a REFUND. Only when there is no handle, or no client wired, does this fall back
-     to reading the chain by hash. */
+  /* THE VENUE, BY THE HANDLE, NEXT. A 1Click order settles on NEAR for an INTENTS swap, inside
+     the verifier, so the quote handle is the only thing that can tell a SUCCESS from a REFUND. */
   if (typeof handle === 'string' && ctx.oneClickStatus !== undefined) {
     return reconcileByHandle(ctx, p, handle);
   }
 
+  /* Nothing left to ask. No handle means no venue to re-check, and this app reads no chain of
+     its own any more (the hashes a rail records are intent and venue hashes, not transactions
+     it broadcast). Say so and change nothing: an app that cleared this row would be asserting
+     that no funds moved, which is exactly what it does not know. */
   const txids = p.result?.txids ?? [];
-  if (txids.length === 0) {
-    // Nothing to look up. Say so and change nothing: an app that cleared this row would be
-    // asserting that no funds moved, which is exactly what it does not know.
-    const detail =
-      'No transaction hash was recorded, so there is nothing to look up on chain. ' +
-      'Compare the balances before and after on the receipt, or search the wallet address in a block explorer.';
-    ctx.audit.append('error', `${id}: reconcile found no hash to check`, { id });
-    return persist(ctx, { ...p, result: { ok: false, detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) } });
-  }
-
-  const chains = chainsOf(p.draft);
-  const states: Array<{ hash: string; state: TxState }> = [];
-  for (const hash of txids) {
-    let best: TxState = 'unknown';
-    for (const chain of chains) {
-      let state: TxState;
-      try {
-        state = await ctx.txLookup(chain, hash);
-      } catch (err) {
-        ctx.audit.append('error', `${id}: reading ${chain} for ${hash} failed: ${errText(err)}`, { id, chain, hash });
-        state = 'unknown';
-      }
-      // A definite answer on any candidate chain beats an absence on the others: a hash only
-      // exists on the one chain it was broadcast to.
-      if (state === 'confirmed' || state === 'reverted' || state === 'pending') {
-        best = state;
-        break;
-      }
-      if (state === 'absent' && best === 'unknown') best = 'absent';
-    }
-    states.push({ hash, state: best });
-  }
-
-  const outcome = summarise(states);
-  ctx.audit.append(
-    outcome.status === 'executed' ? 'executed' : 'error',
-    `${id} reconciled: ${outcome.status}. ${outcome.detail}`,
-    { id, states },
-  );
-  /* The receipt a person most wants a number on is this one: a row the app could not say had
-     moved money, now confirmed on chain. It kept `afterUsd: null` off the boot sweep, so the
-     answer to "what did that leave me with" was "unknown" for the one case where it matters.
-     Only on the confirmed path: a row that reverted or is still unknown has no after to report,
-     and inventing one would be worse than the blank. */
-  const balances =
-    outcome.status === 'executed' && p.balances !== undefined
-      ? { ...p.balances, afterUsd: await balanceAfter(ctx, p.draft) }
-      : p.balances;
-
-  return persist(ctx, {
-    ...p,
-    status: outcome.status,
-    decidedAt: p.decidedAt ?? nowIso(),
-    ...(balances !== undefined ? { balances } : {}),
-    // The evidence the rail recorded stays: a settle by the chain adds a verdict, it does not
-    // forget the nonce or the handle a later question would go by.
-    result: { ok: outcome.status === 'executed', detail: outcome.detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) },
-  });
+  const detail =
+    txids.length === 0
+      ? 'No transaction hash was recorded, so there is nothing to look up. ' +
+        'Compare the balances before and after on the receipt, or search the account in the explorer.'
+      : `No venue handle was recorded for ${txids.join(', ')}, so there is nothing this app can re-check. ` +
+        'Compare the balances before and after on the receipt, or look the hash up in the explorer by hand.';
+  ctx.audit.append('error', `${id}: reconcile found nothing to re-check`, { id, txids });
+  return persist(ctx, { ...p, result: { ok: false, detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) } });
 }
 
 /* Filing an unconfirmed row. The dock keeps an unconfirmed move in front of a person because

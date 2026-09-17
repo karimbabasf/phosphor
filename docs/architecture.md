@@ -70,7 +70,7 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/config.ts` | Merges `config.local.json` over `config.json`, applies the `PHOSPHOR_*` env overrides, resolves `keysPath` and asserts it sits outside the repo, creates the data dir. |
 | `src/server.ts` | HTTP surface: the UI, the read APIs, `/api/mcp`, and the token-gated decision routes. |
 | `src/mcp.ts` | The stdio MCP server. A proxy, nothing else. |
-| `src/ledger/` | `intents.ts` reads the NEAR Intents verifier, `near.ts` reads NEAR chain balances, `demo.ts` holds the fixtures, and `index.ts` is the one interface over them. Read-only by construction. Live mode reads ONE place: the verifier. Nothing is held on a chain, so `snapshot().holdings` is empty on a live snapshot and `intents()` carries what this app owns, with its own ok flag. |
+| `src/ledger/` | `intents.ts` reads the NEAR Intents verifier, `hyperliquid.ts` reads the trading account, `demo.ts` holds the fixtures, and `index.ts` is the one interface over them. Read-only by construction. Live mode reads TWO places, the verifier and the venue, and nothing on any chain. |
 | `src/wallet.ts` | The wallet view: one row per token on a chain, one per balance inside NEAR Intents, one for the Hyperliquid account, with quantity, unit price, USD value and share. Natives included. |
 | `src/composition.ts` | Classifies holdings against `data/risk-table.json`: issuer, freeze power, shares. Natives excluded, because composition rules are about stablecoin issuer concentration. |
 | `src/policy/engine.ts` | Pure. Takes a draft and a context, returns one of three verdicts. No IO, no clock, no network. |
@@ -79,8 +79,8 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/proposals.ts` | Simulate, evaluate, persist, and execute after approval. The only path to execution. |
 | `src/intents.ts` | The NEAR Intents 1Click client (quotes, status, the token list) and asset id resolution (registry first, then the native-asset table). |
 | `src/rails/` | The rails: the swap inside `intents.near` (`intents-native.ts`), the send to another intents account (`intents-send.ts`), the Hyperliquid deposit and withdrawal (`hypercore-*.ts`), and the POA deposit address (`intents-address.ts`). Every rail reads its own account from the key, never from a caller. |
-| `src/chain/evm.ts` | The one place an EVM transaction is signed and broadcast. Rails hand it calldata; they never broadcast. |
-| `src/chain/near.ts` | The one place a NEAR transaction is signed and broadcast: borsh, ed25519, nonce and block hash, receipt-level failure detection. Also NEP-413 message signing. Separate from `evm.ts` because it is a different curve, serialization and transaction shape, not because of taste. |
+| `src/chain/evm.ts` | The EVM chains this app can read and name: a public RPC per chain for read-only lookups and the explorer prefixes a receipt links to. Nothing here signs: the EVM key signs intents and Hyperliquid actions, never a chain transaction. |
+| `src/chain/near.ts` | The NEAR RPC the verifier is read through, base58 for the keystore and the 1Click quote signature, and the account id rules a send checks. Nothing here signs. |
 | `src/market/` | The market data layer: the venue catalogue and symbol resolver, the candle cache the render path reads from, the folding that turns a venue-served interval into any timeframe, and the one ATR the trade payload reads. |
 | `src/audit.ts` | Append-only JSONL. One line per event, never rewritten by the app. |
 | `src/store.ts` | Proposal persistence with subscribe/notify, re-created from disk on boot. |
