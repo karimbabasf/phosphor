@@ -82,6 +82,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       proposeHlWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsDeposit: async () => { throw new Error('unused'); },
       proposeIntentsWithdraw: async () => { throw new Error('unused'); },
+      proposeIntentsSend: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },
       proposeTradeChange: async () => { throw new Error('unused'); },
       approve: async () => { throw new Error('unused'); },

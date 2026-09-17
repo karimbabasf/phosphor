@@ -107,6 +107,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       proposeHlWithdraw: async () => builtSwap(),
       proposeIntentsDeposit: async () => builtSwap(),
       proposeIntentsWithdraw: async () => builtSwap(),
+      proposeIntentsSend: async () => builtSwap(),
       proposeTrade: async () => builtSwap(),
       proposeTradeChange: async () => builtSwap(),
       approve: async () => builtSwap(),

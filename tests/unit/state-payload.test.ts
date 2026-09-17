@@ -135,6 +135,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
       proposeHlWithdraw: async () => settled,
       proposeIntentsDeposit: async () => settled,
       proposeIntentsWithdraw: async () => settled,
+      proposeIntentsSend: async () => settled,
       proposeTrade: async () => settled,
       proposeTradeChange: async () => settled,
       approve: async () => settled,

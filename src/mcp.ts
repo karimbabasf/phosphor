@@ -376,6 +376,7 @@ type ProposeKind =
   | 'swap'
   | 'intents_deposit'
   | 'intents_withdraw'
+  | 'intents_send'
   | 'hl_deposit'
   | 'trade'
   | 'trade_change'
@@ -1070,6 +1071,19 @@ chain says where the money LANDS, so it is EVM only: eth, base or arb. This app 
   {
     chain: SELF_CUSTODY_CHAIN,
     symbol: z.string().optional(),
+    amount: z.number(),
+  },
+);
+
+registerPropose(
+  'propose_intents_send',
+  'intents_send',
+  `Proposes sending a balance held inside NEAR Intents to ANOTHER intents account: another Phosphor's wallet, or anyone's intents account. The same asset arrives inside the verifier, less the solver's fee (about 25 bp, no flat part), and nothing touches a chain.
+
+This is the one propose tool with a destination field. \`to\` is an EVM address (the intents account id of an EVM key) or a NEAR account id. The policy engine refuses any \`to\` that is not one of this app's own addresses or on the destination allowlist; a human puts an account on that list with a click through propose_policy_change, and until they have, this tool is refused with the reason. A send to this app's own account is refused as pointless. symbol names which balance to move; the app spends the largest matching flavor it holds. ${ALWAYS_CLICK}`,
+  {
+    to: z.string().describe('the receiving intents account: an EVM address or a NEAR account id, already on the destination allowlist'),
+    symbol: z.string(),
     amount: z.number(),
   },
 );

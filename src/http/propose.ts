@@ -356,6 +356,19 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       await respond(await ctx.proposals.proposeIntentsWithdraw({ chain, symbol, amount, clientKey }));
       return;
     }
+    if (kind === 'intents_send') {
+      // The one propose kind with a destination field. It is a string the policy engine holds
+      // to the destination allowlist; the builder decodes it and refuses our own account.
+      const to = strField(params, 'to', problems);
+      const symbol = strField(params, 'symbol', problems);
+      const amount = positiveField(params, 'amount', problems);
+      if (problems.length > 0) {
+        fail(res, 400, problems.join('; '));
+        return;
+      }
+      await respond(await ctx.proposals.proposeIntentsSend({ to, symbol, amount, clientKey }));
+      return;
+    }
     if (kind === 'consolidate') {
       const toChain = String(params.toChain ?? '');
       const symbol = typeof params.symbol === 'string' ? params.symbol.trim() : '';

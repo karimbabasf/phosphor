@@ -123,6 +123,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       proposeHlWithdraw: async () => pendingProposal(),
       proposeIntentsDeposit: async () => pendingProposal(),
       proposeIntentsWithdraw: async () => pendingProposal(),
+      proposeIntentsSend: async () => pendingProposal(),
       proposeTrade: async () => pendingProposal(),
       proposeTradeChange: async () => pendingProposal(),
       approve: async () => pendingProposal(),

@@ -293,6 +293,21 @@ export type HlDepositDraft = {
 // action rather than a chain transaction or an intent: one spotSend from the venue account to
 // an address 1Click mints for the quote. `to` is our own account inside intents.near and is
 // never a caller's; a draft naming anything else is refused by the rail and by the engine.
+// A balance inside intents.near moving to ANOTHER account inside the same verifier: the one
+// draft whose `to` is not this app's own wallet. It is held to the destination allowlist by the
+// policy engine and always waits for a click; see the header of src/rails/intents-send.ts.
+export type IntentsSendDraft = {
+  kind: 'intents_send';
+  symbol: string;
+  originAsset: string; // the 1Click asset id of the flavor held; the same asset arrives
+  amount: number;
+  amountUsd: number;
+  minReceived: number; // the least that may be credited to the receiver
+  from: string; // our account id inside intents.near: the EVM address, lowercased
+  to: string; // the receiver's intents account id, as the verifier keys it
+  counterparty: string; // must be on the policy allowlist
+};
+
 export type HlWithdrawDraft = {
   kind: 'hl_withdraw';
   symbol: 'USDC'; // the only asset HyperCore holds as collateral
@@ -346,6 +361,7 @@ export type WriteDraft =
   | HlWithdrawDraft
   | IntentsDepositDraft
   | IntentsWithdrawDraft
+  | IntentsSendDraft
   | TradeDraft;
 
 // One rail per feature, each owning exactly one module under src/rails/. The dispatch
@@ -755,6 +771,7 @@ export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: nu
 // the money lands; which wallet on that chain is our own is read from config and from the
 // key, never from this call.
 export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: ClientKey };
+export type IntentsSendParams = { to: string; symbol: string; amount: number; clientKey?: ClientKey };
 
 // No address, no recipient, no contract. The agent sends a plan or names one it drew, and
 // everything about WHERE the money is resolves from the app's own config and the venue table.
@@ -775,6 +792,7 @@ export type ProposalService = {
   proposeHlWithdraw(params: HlWithdrawParams): Promise<Proposal>;
   proposeIntentsDeposit(params: IntentsDepositParams): Promise<Proposal>;
   proposeIntentsWithdraw(params: IntentsWithdrawParams): Promise<Proposal>;
+  proposeIntentsSend(params: IntentsSendParams): Promise<Proposal>;
   proposeTrade(params: TradeParams): Promise<Proposal>;
   proposeTradeChange(params: TradeChangeParams): Promise<Proposal>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval

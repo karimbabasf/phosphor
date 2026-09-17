@@ -26,3 +26,4 @@ src-tauri/gen/
 security-scan-*/
 src-tauri/binaries
 security-scan-*/
+scripts/scratch/

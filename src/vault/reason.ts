@@ -42,6 +42,8 @@ function describe(draft: WriteDraft): string {
       return `Deposit ${amount(draft.amount, draft.symbol)} from ${clean(draft.chain)} into NEAR Intents (${usd(draft.amountUsd)})`;
     case 'intents_withdraw':
       return `Withdraw ${amount(draft.amount, draft.symbol)} from NEAR Intents to ${clean(draft.chain)} (${usd(draft.amountUsd)})`;
+    case 'intents_send':
+      return `Send ${amount(draft.amount, draft.symbol)} inside NEAR Intents to another account (${usd(draft.amountUsd)})`;
     case 'hl_deposit':
       return `Move ${amount(draft.amount, draft.symbol)} into Hyperliquid (${usd(draft.amountUsd)})`;
     case 'hl_withdraw':

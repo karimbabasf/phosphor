@@ -107,6 +107,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       proposeHlWithdraw: async () => settled('x', 'executed'),
       proposeIntentsDeposit: async () => settled('x', 'executed'),
       proposeIntentsWithdraw: async () => settled('x', 'executed'),
+      proposeIntentsSend: async () => settled('x', 'executed'),
       proposeTrade: async () => settled('x', 'executed'),
       proposeTradeChange: async () => settled('x', 'executed'),
       approve: async () => settled('x', 'executed'),

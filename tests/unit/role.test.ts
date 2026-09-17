@@ -219,7 +219,10 @@ test('the role with a full profile still fits under the ceiling', () => {
     date: '2026-09-11',
   }));
   const text = buildRole({ root: ROOT, view: 'trade', profile: { ...PROFILE, name: 'K'.repeat(40), knows } });
-  assert.ok(text.length < 15000, `the role is ${text.length} characters with a full profile`);
+  // 15,200 since 2026-09-16: propose_intents_send is a tool the role has to name (the money
+  // graph, the always-click rule and the index each carry it once), and that is about 100
+  // characters the ceiling did not have room for. The number is still a ceiling, not a target.
+  assert.ok(text.length < 15200, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {

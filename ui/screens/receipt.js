@@ -66,6 +66,7 @@
     yield_deposit: { word: 'Deposit', icon: 'deposit' },
     lp_add: { word: 'Liquidity added', icon: 'deposit' },
     intents_withdraw: { word: 'Withdrawal', icon: 'withdraw' },
+    intents_send: { word: 'Sent', icon: 'withdraw' },
     hl_withdraw: { word: 'Withdrawal', icon: 'withdraw' },
     yield_withdraw: { word: 'Withdrawal', icon: 'withdraw' },
     lp_remove: { word: 'Liquidity removed', icon: 'withdraw' },

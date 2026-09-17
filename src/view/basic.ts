@@ -228,7 +228,7 @@ function symbolsOf(draft: WriteDraft): string[] {
   if (draft.kind === 'swap') out.push(draft.fromSymbol, draft.toSymbol);
   // Both intents kinds carry one symbol. The deposit was missing here, so its "What is
   // involved" line came out blank on the one screen a human approves money from.
-  else if (draft.kind === 'hl_deposit' || draft.kind === 'hl_withdraw' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw')
+  else if (draft.kind === 'hl_deposit' || draft.kind === 'hl_withdraw' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw' || draft.kind === 'intents_send')
     out.push(draft.symbol);
   else if (kindOf(draft) === 'lp_add')
     out.push(retired(draft).token0?.symbol ?? '', retired(draft).token1?.symbol ?? '');
@@ -283,6 +283,10 @@ function destinationsOf(proposal: Proposal, selfAddresses: string[]): BasicDesti
     // whose address that is, so it says it here rather than showing a withdrawal with no
     // destination at all.
     push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
+  } else if (draft.kind === 'intents_send') {
+    // The one draft MEANT to name somebody else's account. It is said as exactly that, so
+    // the person clicking reads the whole account they are paying and knows it is not theirs.
+    push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own NEAR Intents balance' : 'the NEAR Intents account you are sending to, on your approved list', 'app');
   } else if (draft.kind === 'transfer') {
     const to = draft.leg.to;
     push(to, isSelf(to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
@@ -324,6 +328,9 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   }
   if (draft.kind === 'intents_withdraw') {
     return `It wants to bring ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} back out of the NEAR trading service and into your ${plainChain(draft.chain)} wallet.`;
+  }
+  if (draft.kind === 'intents_send') {
+    return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} inside the NEAR trading service to another account, ${draft.to}. That account is on your approved list, and the money will belong to whoever holds its key.`;
   }
   if (kindOf(draft) === 'lp_add') {
     const pair = `${plainSymbol(retired(draft).token0?.symbol ?? '')} and ${plainSymbol(retired(draft).token1?.symbol ?? '')}`;
@@ -387,6 +394,8 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   // this reader they were about to have less, which is the opposite of what happens.
   if (draft.kind === 'intents_withdraw')
     return 'The money comes back into your own wallet, where you can spend it directly again.';
+  if (draft.kind === 'intents_send')
+    return 'The money leaves your balance for good and lands in the other account. There is no way to take it back from here.';
   if (kindOf(draft) === 'lp_add') return `${money(amountUsd)} moves into the pool. You can take it back out later.`;
   if (kindOf(draft) === 'lp_remove') return 'Money comes back out of the pool to you.';
   if (kindOf(draft) === 'yield_deposit')
@@ -598,6 +607,9 @@ export function didHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'intents_withdraw') {
     return `Brought ${amt}your ${plainSymbol(draft.symbol)} out of NEAR Intents onto ${plainChain(draft.chain)}.`;
   }
+  if (draft.kind === 'intents_send') {
+    return `Sent ${amt}your ${plainSymbol(draft.symbol)} inside NEAR Intents to ${draft.to}.`;
+  }
   if (kindOf(draft) === 'lp_add') return `Put ${amt}your money into a pool.`;
   if (kindOf(draft) === 'lp_remove') return 'Took money back out of a pool.';
   if (kindOf(draft) === 'yield_deposit') return `Put ${amt}your money somewhere it earns interest.`;
@@ -671,6 +683,9 @@ function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
   }
   if (draft.kind === 'intents_withdraw') {
     return `bringing ${amt}your ${plainSymbol(draft.symbol)} out of NEAR Intents onto ${plainChain(draft.chain)}`;
+  }
+  if (draft.kind === 'intents_send') {
+    return `sending ${amt}your ${plainSymbol(draft.symbol)} inside NEAR Intents to ${draft.to}`;
   }
   if (kindOf(draft) === 'lp_add') return `putting ${amt}your money into a pool`;
   if (kindOf(draft) === 'lp_remove') return 'taking money back out of a pool';

@@ -74,6 +74,7 @@
     trade_change: 'Trade change',
     intents_deposit: 'Deposit',
     intents_withdraw: 'Withdraw',
+    intents_send: 'Send',
     hl_deposit: 'Fund trading',
     hl_withdraw: 'Collateral back',
     consolidate: 'Consolidate',
@@ -615,6 +616,11 @@
     } else if (kind === 'intents_withdraw') {
       move.from = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = { symbol: d.symbol || args.symbol, place: d.chain || args.chain, amount: num(d.minReceived) };
+    } else if (kind === 'intents_send') {
+      /* Both ends inside intents; the receiver's account is the fact this card exists to show. */
+      move.from = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
+      move.to = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.minReceived) };
+      if (d.to || args.to) move.quote = 'to ' + String(d.to || args.to);
     } else if (kind === 'hl_deposit') {
       move.from = { symbol: d.symbol || args.symbol || 'USDC', place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = { symbol: 'USDC', place: 'hyperliquid', amount: num(d.minCredited) };
@@ -684,7 +690,7 @@
   function moveIcon(kind) {
     if (kind === 'trade' || kind === 'trade_change') return icon('long');
     if (kind === 'intents_deposit' || kind === 'hl_deposit' || kind === 'yield_deposit' || kind === 'lp_add') return icon('deposit');
-    if (kind === 'intents_withdraw' || kind === 'hl_withdraw' || kind === 'yield_withdraw' || kind === 'lp_remove') return icon('withdraw');
+    if (kind === 'intents_withdraw' || kind === 'intents_send' || kind === 'hl_withdraw' || kind === 'yield_withdraw' || kind === 'lp_remove') return icon('withdraw');
     return icon('swap');
   }
 

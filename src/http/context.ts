@@ -69,6 +69,7 @@ export const PROPOSE_KINDS: readonly string[] = [
   'hl_withdraw',
   'intents_deposit',
   'intents_withdraw',
+  'intents_send',
   // Two door kinds for one rail kind: a plan, and a change to one that is armed.
   'trade',
   'trade_change',

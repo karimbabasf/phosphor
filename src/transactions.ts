@@ -154,6 +154,7 @@ const ACTIONS: Record<string, TxEntry['action'] | null | undefined> = {
   hl_withdraw: 'withdraw',
   intents_deposit: 'deposit',
   intents_withdraw: 'withdraw',
+  intents_send: 'transfer',
   transfer: 'transfer',
   consolidate: 'consolidate',
   // Retired rails, kept for the rows already on disk.
@@ -241,7 +242,7 @@ function classifyHash(
   place: TxPlace,
   toPlace: TxPlace,
 ): { place: TxPlace; kind: TxHash['kind'] } {
-  if (index === 0 && (kind === 'intents_withdraw' || kind === 'hl_deposit' || venue === 'intents-native')) {
+  if (index === 0 && (kind === 'intents_withdraw' || kind === 'intents_send' || kind === 'hl_deposit' || venue === 'intents-native')) {
     return { place: 'intents', kind: 'intent' };
   }
   // A hash a trade recorded is the venue's own ledger hash: the venue's explorer resolves
@@ -427,6 +428,17 @@ function sidesOf(draft: WriteDraft): Sides {
       return {
         place: 'intents',
         toPlace: draft.chain,
+        venue: 'intents.near',
+        sent: { symbol: draft.symbol, amount: draft.amount },
+        from: draft.from,
+        to: draft.to,
+        counterparty: draft.counterparty,
+      };
+    case 'intents_send':
+      // Both ends inside the verifier: the row moves between two intents accounts.
+      return {
+        place: 'intents',
+        toPlace: 'intents',
         venue: 'intents.near',
         sent: { symbol: draft.symbol, amount: draft.amount },
         from: draft.from,

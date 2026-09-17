@@ -38,6 +38,7 @@
     swap: 'holdings',
     consolidate: 'holdings',
     intents_withdraw: 'holdings',
+    intents_send: 'holdings',
     /* the rules */
     policy_show: 'rules',
     policy_change: 'rules',

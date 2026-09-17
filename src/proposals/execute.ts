@@ -35,6 +35,17 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
       },
     };
   }
+  // A balance leaving for another account, likewise: the allowlist says the account may be
+  // paid, the click says this payment is wanted, and neither stands in for the other.
+  if (p.kind === 'intents_send' && p.verdict.outcome === 'allow') {
+    p = {
+      ...p,
+      verdict: {
+        outcome: 'needs_approval',
+        reasons: [...p.verdict.reasons, 'Money leaving for another account always needs a human click, whatever the size.'],
+      },
+    };
+  }
 
   if (p.verdict.outcome === 'refuse') {
     const refused: Proposal = { ...p, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() };
@@ -124,6 +135,7 @@ function pocketOf(draft: WriteDraft | undefined): 'intents' | 'hyperliquid' | nu
       return draft.venue === 'intents-native' ? 'intents' : null;
     case 'intents_deposit':
     case 'intents_withdraw':
+    case 'intents_send':
       return 'intents';
     case 'hl_deposit':
     case 'hl_withdraw':

@@ -638,6 +638,7 @@ test('the live registry holds every rail kind and nothing else', () => {
     'hl_deposit',
     'hl_withdraw',
     'intents_deposit',
+    'intents_send',
     'intents_withdraw',
     'swap',
     'trade',

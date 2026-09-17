@@ -325,6 +325,9 @@ function destinationOf(draft: RailDraft): string | null {
   if (draft.kind === 'swap') return draft.to;
   if (draft.kind === 'intents_deposit') return draft.intentsAccount;
   if (draft.kind === 'intents_withdraw') return draft.to;
+  // intents_send is the one draft whose `to` is meant to be somebody else's account, and this
+  // is the rule that decides whose: one of ours, or an entry a human put on the allowlist.
+  if (draft.kind === 'intents_send') return draft.to;
   // hl_deposit gained one on 2026-08-20. The old Bridge2 mechanism credited whoever sent the
   // tokens, so there was nothing here to check; the 1Click route names the account it credits,
   // so funding a Hyperliquid account that is not ours is now a thing this can refuse.

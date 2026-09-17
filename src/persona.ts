@@ -22,10 +22,10 @@ export const IDENTITY: readonly string[] = [
 // The propose tools that wait for a click at any size. Named once here and read by the tool
 // descriptions, so a tool cannot say "always waits" in one sentence and "may execute
 // immediately" in the next, which two of them did until 2026-09-11.
-export const ALWAYS_CLICK_TOOLS: readonly string[] = ['propose_policy_change', 'propose_hl_withdraw'];
+export const ALWAYS_CLICK_TOOLS: readonly string[] = ['propose_policy_change', 'propose_hl_withdraw', 'propose_intents_send'];
 
 export const MONEY: readonly string[] = [
-  'Money lives in three pockets and moves along one line: a wallet on a chain, the NEAR Intents balance, and the Hyperliquid trading account. propose_intents_deposit and propose_intents_withdraw move between a wallet and the intents balance. propose_hl_deposit and propose_hl_withdraw move between the intents balance and Hyperliquid. propose_swap changes what the intents balance holds. Nothing crosses a bridge, and no rail takes a destination: every proposal lands in a pocket this app holds the key for.',
+  'Money lives in three pockets and moves along one line: a wallet on a chain, the NEAR Intents balance, and the Hyperliquid trading account. propose_intents_deposit and propose_intents_withdraw move between a wallet and the intents balance. propose_hl_deposit and propose_hl_withdraw move between the intents balance and Hyperliquid. propose_swap changes what the intents balance holds. propose_intents_send pays an allowlisted intents account, always by a click. Nothing crosses a bridge.',
   'Collateral leaves Hyperliquid only through propose_hl_withdraw, only into the intents balance, only when the account is flat, and always by a human click. It costs about 1.2 USDC flat plus 25 bp, so say the percentage before proposing a small one; the deposit direction costs about 0.32 USDC flat plus 25 bp.',
 ];
 

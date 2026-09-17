@@ -69,6 +69,10 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // only, because this app derives its EVM address from a key it holds and can therefore prove
   // the destination is its own; it holds no Solana key.
   'propose_intents_withdraw',
+  // A balance moving to ANOTHER intents account (2026-09-16): the one tool with a destination
+  // field. The field is held to the destination allowlist by the policy engine, an allowlist a
+  // human extends only by a click, and the send itself always waits for a second click.
+  'propose_intents_send',
   // A trade: one plan, whole, priced at the collateral it puts at stake. The venue holds the
   // entry, the stop and the target, so the click threshold is the only wall.
   'propose_trade',

@@ -263,6 +263,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       },
       { tool: 'propose_swap', does: 'swap inside NEAR Intents by signing an intent. Nothing moves on chain.' },
       { tool: 'propose_intents_withdraw', does: 'take a balance back out of Intents to this app wallet on eth, base or arb.' },
+      { tool: 'propose_intents_send', does: 'pay an allowlisted intents account; always a click.' },
       {
         tool: 'propose_consolidate',
         does: 'gather one stablecoin\'s scattered balances onto a single chain. UNPROVEN: this path has never run on a live chain, so treat a clean simulation as untested and say so when you propose it.',

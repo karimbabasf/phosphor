@@ -13,6 +13,7 @@ import type {
   HlWithdrawDraft,
   IntentsDepositDraft,
   IntentsWithdrawDraft,
+  IntentsSendDraft,
   Policy,
   RiskRow,
   SwapDraft,
@@ -120,6 +121,23 @@ function intentsWithdraw(over: Partial<IntentsWithdrawDraft> = {}): IntentsWithd
   };
 }
 
+const FRIEND = '0x3333333333333333333333333333333333333333';
+
+function intentsSend(over: Partial<IntentsSendDraft> = {}): IntentsSendDraft {
+  return {
+    kind: 'intents_send',
+    symbol: 'USDC',
+    originAsset: 'nep141:usdc.near',
+    amount: 20,
+    amountUsd: 20,
+    minReceived: 19.8,
+    from: SELF_EVM.toLowerCase(),
+    to: FRIEND,
+    counterparty: VENUE,
+    ...over,
+  };
+}
+
 function hlWithdraw(over: Partial<HlWithdrawDraft> = {}): HlWithdrawDraft {
   return {
     kind: 'hl_withdraw',
@@ -140,6 +158,7 @@ const ALL = [
   ['hl_withdraw', hlWithdraw()],
   ['intents_deposit', intentsDeposit()],
   ['intents_withdraw', intentsWithdraw()],
+  ['intents_send', intentsSend({ to: SELF_EVM })],
 ] as const;
 
 // ---------- the rails are reachable at all ----------
@@ -185,6 +204,25 @@ test('a Hyperliquid withdrawal crediting an intents account that is not ours is 
   assert.equal(v.outcome, 'refuse');
   assert.equal(v.outcome === 'refuse' ? v.rule : '', 'destination_not_allowed');
   assert.match(v.outcome === 'refuse' ? v.reasons.join(' ') : '', /proceeds/);
+});
+
+// The send is the one draft MEANT to name another account, so the destination rule is the whole
+// fence: a receiver the human never allowlisted is refused whatever the size, and one they did
+// is decided like every other rail (the always-click rule sits in execute.ts, not here).
+test('an intents send to an account that is neither ours nor on the allowlist is refused', () => {
+  const v = evaluate(intentsSend({ to: FRIEND }), ctxWith());
+  assert.equal(v.outcome, 'refuse');
+  assert.equal(v.outcome === 'refuse' ? v.rule : '', 'destination_not_allowed');
+  assert.match(v.reasons[v.reasons.length - 1] ?? '', /intents_send would deliver the proceeds to 0x3333/);
+});
+
+test('an intents send to an allowlisted account passes the destination rule, and the allowlist match ignores case', () => {
+  const p = policyAllowing(VENUE);
+  p.outbound.destinationAllowlist = [VENUE, FRIEND.toUpperCase().replace('0X', '0x')];
+  const v = evaluate(intentsSend({ to: FRIEND }), ctxWith({ policy: p }));
+  assert.notEqual(v.outcome, 'refuse', JSON.stringify(v));
+  const own = evaluate(intentsSend({ to: SELF_EVM }), ctxWith());
+  assert.notEqual(own.outcome, 'refuse', 'our own account counts as allowed without being listed');
 });
 
 test('a Hyperliquid withdrawal into our own intents account passes the engine on the threshold alone', () => {

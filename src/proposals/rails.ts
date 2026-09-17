@@ -13,6 +13,8 @@ import type {
   IntentsDepositParams,
   IntentsWithdrawDraft,
   IntentsWithdrawParams,
+  IntentsSendDraft,
+  IntentsSendParams,
   Proposal,
   SwapDraft,
   SwapParams,
@@ -31,6 +33,7 @@ import {
   minReceivedFor,
   ourWalletOn,
 } from '../rails/intents-withdraw.ts';
+import { INTENTS_SEND_COUNTERPARTY, intentsAccountProblem, minReceivedForSend } from '../rails/intents-send.ts';
 import { NATIVE_ASSET, NATIVE_TOKEN_ID } from '../intents.ts';
 import { ourAddress, ourIntentsAddress, proposeRail, refuseDraft, usdOf } from './draft.ts';
 import type { PCtx } from './lifecycle.ts';
@@ -306,4 +309,72 @@ export async function proposeIntentsWithdraw(ctx: PCtx, params: IntentsWithdrawP
   return problems.length > 0
     ? refuseDraft(ctx, 'intents_withdraw', draft, problems, params.clientKey)
     : proposeRail(ctx, 'intents_withdraw', draft, params.clientKey);
+}
+
+// "Send 3.78 USDC to 0xd7b2...5050 inside NEAR Intents." The balance moves to another account
+// inside the verifier and nowhere else: no chain, no wallet, the same asset arriving less the
+// solver's fee. `to` is the ONE field on the propose surface that names where money ends up,
+// and it is not resolved here from anything the app knows: it is decoded, refused if it is
+// ours, and then held to the destination allowlist by the policy engine, which refuses any
+// account a human has not put there with a click. The send itself always waits for a second
+// click (src/proposals/execute.ts). See the header of src/rails/intents-send.ts.
+export async function proposeIntentsSend(ctx: PCtx, params: IntentsSendParams): Promise<Proposal> {
+  const snapshot = ctx.ledger.snapshot();
+  const problems: string[] = [];
+  const symbol = String(params.symbol ?? '').trim().toUpperCase();
+  if (symbol === '') problems.push('The send has to name a symbol: which balance inside intents.near to move.');
+
+  const from = ourIntentsAddress(ctx, snapshot, problems).toLowerCase();
+
+  const receiver = intentsAccountProblem(params.to);
+  let to = '';
+  if (!receiver.ok) {
+    problems.push(`The receiving account is unusable: ${receiver.problem}.`);
+  } else if (receiver.id === from) {
+    problems.push(`${receiver.id} is this app's own intents account; a send to ourselves pays a fee to move nothing.`);
+  } else {
+    to = receiver.id;
+  }
+
+  // The flavor spent: the largest matching balance the verifier holds. It refuses where it is
+  // certain and lets the contract answer otherwise, for the reason the withdraw builder gives.
+  const read = ctx.ledger.intents();
+  let originAsset = '';
+  if (read === undefined || !read.ok) {
+    problems.push(
+      `The balance inside intents.near could not be read${read?.error ? ` (${read.error})` : ''}, so this cannot tell ` +
+        `which ${symbol} it would send. Read the wallet again and propose once it shows.`,
+    );
+  } else {
+    const held = read.holdings
+      .filter((h) => h.symbol.toUpperCase() === symbol && h.amount > 0)
+      .sort((a, b) => b.amount - a.amount);
+    if (held.length === 0) {
+      problems.push(`intents.near holds no ${symbol} for ${from}, so there is nothing to send.`);
+    } else {
+      originAsset = held[0].assetId;
+      if (held[0].amount < params.amount) {
+        problems.push(
+          `intents.near holds ${held[0].amount} ${symbol} (from ${held[0].originChain}) for ${from}, which is less ` +
+            `than the ${params.amount} this would send.`,
+        );
+      }
+    }
+  }
+
+  const draft: IntentsSendDraft = {
+    kind: 'intents_send',
+    symbol,
+    originAsset,
+    amount: params.amount,
+    amountUsd: usdOf(ctx, symbol, params.amount, snapshot),
+    minReceived: minReceivedForSend(params.amount),
+    from,
+    to,
+    counterparty: INTENTS_SEND_COUNTERPARTY,
+  };
+
+  return problems.length > 0
+    ? refuseDraft(ctx, 'intents_send', draft, problems, params.clientKey)
+    : proposeRail(ctx, 'intents_send', draft, params.clientKey);
 }

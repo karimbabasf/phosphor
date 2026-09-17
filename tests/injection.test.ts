@@ -277,9 +277,24 @@ function openBags(schema: unknown, at = '$', out: string[] = []): string[] {
 
 type ListedTool = { name: string; inputSchema: unknown };
 
+/* THE ONE TOOL WITH A DESTINATION FIELD, and the whole of what is allowed about it.
+   propose_intents_send (2026-09-16) moves an intents balance to another intents account, so it
+   carries `to`. It is the only tool that may, `to` is the only recipient-shaped field it may
+   carry, and the field is governed twice: the policy engine refuses any account that is not
+   ours or on the destination allowlist (an allowlist only a human click extends), and the
+   send itself always waits for a click (src/proposals/execute.ts). The test below this walk
+   drives it through the door with a hostile account and holds it to that. */
+const DESTINATION_TOOL = 'propose_intents_send';
+
 function assertNoExfiltrationTarget(tools: ListedTool[]): void {
   for (const tool of tools) {
     const names = [...propertyNames(tool.inputSchema)].map(n => n.toLowerCase());
+    if (tool.name === DESTINATION_TOOL) {
+      assert.deepEqual(names.filter((n) => RECIPIENT_FIELDS.includes(n)), ['to'], `${DESTINATION_TOOL} carries a second recipient-shaped field`);
+      assert.deepEqual(names.sort(), ['amount', 'symbol', 'to'], `${DESTINATION_TOOL} grew an argument`);
+      assert.deepEqual(openBags(tool.inputSchema), [], `tool ${tool.name} carries an open bag of arguments`);
+      continue;
+    }
     for (const field of RECIPIENT_FIELDS) {
       assert.ok(!names.includes(field), `tool ${tool.name} exposes an argument named ${field}`);
     }
@@ -311,6 +326,32 @@ test('the tool surface cannot express an exfiltration target', async () => {
   assert.ok(planTool !== undefined);
   assert.ok(propertyNames(planTool.inputSchema).has('px'), 'the property walk cannot see inside a plan condition');
   assertNoExfiltrationTarget(tools);
+});
+
+test('the one tool with a destination field never executes on its own, and a hostile receiver never reaches a signature', async () => {
+  assert.ok(client !== null);
+  const hostile = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'hostile.json'), 'utf8')) as { attacker: string };
+  const stored = (id: string): Record<string, unknown> => {
+    const rows = JSON.parse(fs.readFileSync(path.join(dataDir, 'proposals.json'), 'utf8')) as Array<Record<string, unknown>> | Record<string, unknown>;
+    const list = Array.isArray(rows) ? rows : Object.values(rows);
+    const row = list.find((r) => (r as { id?: string }).id === id) as { draft?: Record<string, unknown> } | undefined;
+    assert.ok(row?.draft, `proposal ${id} is not in the store`);
+    return row.draft;
+  };
+  // The attacker's account, a stranger's address, our own account, and garbage: none executes,
+  // none gets a verdict other than refuse in a demo that holds nothing, and the draft never
+  // carries an account the door was not handed.
+  for (const to of [hostile.attacker, '0x9999999999999999999999999999999999999999', SELF[0], 'not an account', '']) {
+    const r = await callTool('propose_intents_send', { to, symbol: 'USDC', amount: 1 });
+    const text = typeof r === 'string' ? r : JSON.stringify(r);
+    assert.ok(!/"status":"executed"/.test(text), `a send to ${JSON.stringify(to)} executed`);
+    if (typeof r === 'object' && r !== null && typeof (r as { id?: unknown }).id === 'string') {
+      assert.equal((r as { verdict?: { outcome?: string } }).verdict?.outcome, 'refuse', `a send to ${JSON.stringify(to)} was not refused: ${text.slice(0, 200)}`);
+      const draft = stored((r as { id: string }).id);
+      assert.equal(draft.kind, 'intents_send');
+      assert.equal(String(draft.from).toLowerCase(), SELF[0].toLowerCase());
+    }
+  }
 });
 
 /* A SPAWNED WORKER'S DOOR IS NARROWER THAN ITS PARENT'S, and this is the assertion that whole
