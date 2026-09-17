@@ -364,13 +364,19 @@ async function extras(page: Json, emit: string, shots: string[]): Promise<void> 
   await sleep(700);
   await shoot('panel-jump-landed.png');
 
-  /* The Basic folds: shut, then Money in open. */
+  /* The Basic folds at the foot of the column: shut, then Money in open. */
+  const toFoot = '(function () { var v = document.getElementById("views"); if (v) v.scrollTop = v.scrollHeight; })()';
+  await page.evaluate(toFoot);
+  await sleep(300);
   await shoot('panel-basic-folds.png');
   await page.click('.fold[data-surface="moneyin"] > .fold-head');
   await sleep(500);
+  await page.evaluate(toFoot);
+  await sleep(200);
   await shoot('panel-basic-moneyin-open.png');
   await page.click('.fold[data-surface="moneyin"] > .fold-head');
   await sleep(300);
+  await page.evaluate('(function () { var v = document.getElementById("views"); if (v) v.scrollTop = 0; })()');
 
   /* The Pro Money head. */
   await page.click('.tab[data-tab="pro"]');

@@ -65,10 +65,12 @@
   border-bottom: 1px solid var(--line);
 }
 
-/* A head with a lead figure stacks the figure over the meta at the right, so
-   the two right-hand lines start level with the title. */
-.card-head[data-lead="true"] {
-  align-items: flex-start;
+/* A head with a lead figure puts the title and the figure on one baseline
+   (the figure is the first line of the right-hand column, so the row's
+   baseline is its baseline), and the sentence under the figure reads in the
+   second tone: it is the answer's caption, not a footnote. */
+.card-head[data-lead="true"] .card-meta {
+  color: var(--text-2);
 }
 
 .card-title {
