@@ -104,13 +104,30 @@ function positiveField(params: JsonBody, name: string, problems: string[]): numb
   return value;
 }
 
-function strField(params: JsonBody, name: string, problems: string[]): string {
+/* What each free-text field on this door may hold. A symbol is a ticker, an address is at most a
+   64-character NEAR id, a note is one line, a policy sentence is a short paragraph. Before these,
+   the only bound was the 1 MiB body cap: a 900 KiB symbol went through into the refusal reason,
+   proposals.json and every state frame after it. Over the cap is a 400 that names the field,
+   like every other shape problem here. */
+export const SYMBOL_MAX = 16;
+export const ADDRESS_MAX = 128;
+export const WHERE_MAX = 32;
+export const ID_MAX = 64;
+export const NOTE_MAX = 280;
+export const SENTENCE_MAX = 1000;
+
+function strField(params: JsonBody, name: string, problems: string[], max: number): string {
   const raw = params[name];
   if (typeof raw !== 'string' || raw.trim().length === 0) {
     problems.push(`${name} is required`);
     return '';
   }
-  return raw.trim();
+  const value = raw.trim();
+  if (value.length > max) {
+    problems.push(`${name} is ${value.length} characters, over the ${max} this field takes`);
+    return '';
+  }
+  return value;
 }
 
 /* null on an unknown chain, never a sentinel.
@@ -254,8 +271,8 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // the two assets, never a place money lands, so there is no venue field to check.
       const chain = chainField(params, 'chain', problems);
       const toChain = params.toChain === undefined ? chain : chainField(params, 'toChain', problems);
-      const fromSymbol = strField(params, 'fromSymbol', problems);
-      const toSymbol = strField(params, 'toSymbol', problems);
+      const fromSymbol = strField(params, 'fromSymbol', problems, SYMBOL_MAX);
+      const toSymbol = strField(params, 'toSymbol', problems, SYMBOL_MAX);
       // A negative or zero input has no honest swap, and neither does one too large to be
       // represented exactly. Rejected at the edge so it never reaches usdOf, where a negative
       // amount became "$Infinity ... cannot be checked against a limit" and only failed closed
@@ -290,7 +307,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       /* A plan, or the id of one already drawn. The shape is checked by the plan schema inside
          the proposal service; what is checked HERE is the edge every kind shares, so a zero or
          a 1e308 on the plan's numbers is answered with the field's name like everywhere else. */
-      const planId = params.planId === undefined ? undefined : strField(params, 'planId', problems);
+      const planId = params.planId === undefined ? undefined : strField(params, 'planId', problems, ID_MAX);
       const plan = params.plan;
       if (planId === undefined) {
         if (plan === null || typeof plan !== 'object') problems.push('plan is required, or planId of a drawn plan');
@@ -310,7 +327,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       return;
     }
     if (kind === 'trade_change') {
-      const id = strField(params, 'id', problems);
+      const id = strField(params, 'id', problems, ID_MAX);
       const stop = params.stop === undefined ? undefined : positiveField(params, 'stop', problems);
       const target = params.target === undefined ? undefined : positiveField(params, 'target', problems);
       const cancel = params.cancel === true;
@@ -325,7 +342,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     if (kind === 'hl_deposit') {
       // No chain: the money leaves the intents balance and nowhere else. symbol is optional
       // and defaults to USDC inside proposeHlDeposit, which also picks the flavor held.
-      const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
+      const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems, SYMBOL_MAX);
       const amount = positiveField(params, 'amount', problems);
       if (problems.length > 0) {
         fail(res, 400, problems.join('; '));
@@ -353,15 +370,16 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // yes; the schema at src/mcp.ts holds it to the literal true and so does this door, so a
       // raw post cannot skip the read-back either. The builder decodes `to` for the place it is
       // going, and the card and the Touch ID sentence are the gate.
-      const to = strField(params, 'to', problems);
-      const symbol = strField(params, 'symbol', problems);
+      const to = strField(params, 'to', problems, ADDRESS_MAX);
+      const symbol = strField(params, 'symbol', problems, SYMBOL_MAX);
       const amount = positiveField(params, 'amount', problems);
-      const where = strField(params, 'where', problems);
+      const where = strField(params, 'where', problems, WHERE_MAX);
       if (params.confirmed !== true) {
         problems.push('confirmed must be true, and only after the human confirmed the exact address and where it lands in this conversation');
       }
       if (params.note !== undefined && typeof params.note !== 'string') problems.push('note must be a string');
       const note = typeof params.note === 'string' && params.note.trim() !== '' ? params.note.trim() : undefined;
+      if (note !== undefined && note.length > NOTE_MAX) problems.push(`note is ${note.length} characters, over the ${NOTE_MAX} this field takes`);
       if (problems.length > 0) {
         fail(res, 400, problems.join('; '));
         return;
@@ -373,6 +391,10 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // patch and sentence are passed through as authored: the engine validates
       // the patch, and the sentence is stored as data, never read as instruction.
       const sentence = typeof params.sentence === 'string' ? params.sentence : '';
+      if (sentence.length > SENTENCE_MAX) {
+        fail(res, 400, `sentence is ${sentence.length} characters, over the ${SENTENCE_MAX} this field takes`);
+        return;
+      }
       await respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence, clientKey }));
       return;
     }

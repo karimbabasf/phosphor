@@ -51,6 +51,37 @@ export function capLabel(raw: string): string {
   return raw.length <= MAX_LABEL_CHARS ? raw : `${raw.slice(0, MAX_LABEL_CHARS)}...`;
 }
 
+/* The longest string anywhere inside a JSON value, when one is over `max`: its path and its
+   length, for a refusal that names the field. Every free-text argument on the agent door is
+   caller-controlled and bounded only by the body cap, and a 900 KiB symbol went through the
+   propose door into the refusal reason, the store and every state frame after it. */
+export function oversizeString(value: unknown, max: number, at = 'body'): { path: string; length: number } | null {
+  if (typeof value === 'string') return value.length > max ? { path: at, length: value.length } : null;
+  if (value === null || typeof value !== 'object') return null;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      const found = oversizeString(value[i], max, `${at}[${i}]`);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  for (const [key, inner] of Object.entries(value as JsonBody)) {
+    const found = oversizeString(inner, max, `${at}.${key}`);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+// The same value with every string cut to `max`, for the copy a log line keeps.
+export function capStrings(value: unknown, max: number): unknown {
+  if (typeof value === 'string') return value.length <= max ? value : `${value.slice(0, max)}... (${value.length} characters)`;
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((inner) => capStrings(inner, max));
+  const out: JsonBody = {};
+  for (const [key, inner] of Object.entries(value as JsonBody)) out[key] = capStrings(inner, max);
+  return out;
+}
+
 export function intParam(raw: unknown, fallback: number, max: number): number {
   if (raw === null || raw === undefined) return fallback;
   const n = Number.parseInt(String(raw), 10);
