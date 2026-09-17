@@ -155,6 +155,7 @@ function build(options: { command?: string } = {}) {
   const agentsHandlers: Array<(slice: unknown) => void> = [];
   const busHandlers: Record<string, Array<(payload: unknown) => void>> = {};
   const actions: string[] = [];
+  const confirms: Node[] = [];
 
   const host = make('div');
   const composerHost = make('div');
@@ -187,6 +188,16 @@ function build(options: { command?: string } = {}) {
     PhosphorNet: { readable: (e: Error) => String(e.message) },
     PhosphorShell: { setPending: () => {}, updateField: () => {} },
     PhosphorToast: { show: () => {} },
+    /* The decision dock (ui/screens/decision.js): a card handed a builder. The stub builds it
+       into a node the test can read and press, and records that it was asked. */
+    PhosphorDecision: {
+      showCard: (build: (host: unknown, done: () => void) => void) => {
+        const card = make('div');
+        card.className = 'dock-card';
+        confirms.push(card);
+        build(card, () => { card.setAttribute('data-done', 'true'); });
+      },
+    },
     PhosphorApi: {
       driver: (body: { action: string; text?: string }) => {
         actions.push(body.action);
@@ -265,6 +276,7 @@ function build(options: { command?: string } = {}) {
     emit,
     sends,
     actions,
+    confirms,
     fail: (message: string) => reject?.(new Error(message)),
     type(text: string) {
       input.value = text;
@@ -870,4 +882,32 @@ test('a receipt opened anywhere in the window is posted into the thread as the s
   assert.equal(world.cards().length, 1);
   assert.equal((world.built[0] as Record<string, unknown>).id, 'p1');
   assert.equal(world.cardHidden(), true, 'a card in the thread and the empty card at once');
+});
+
+test('Turn off asks first, on a card of its own, and only the card\'s Turn off quits: the process stops and the chat closes', async () => {
+  const world = build();
+  world.emit({ kind: 'status', state: 'starting' });
+  world.emit({ kind: 'status', state: 'ready' });
+  world.runTimers();
+  world.press('Turn off');
+  assert.deepEqual(world.actions, [], 'the process was stopped before the person confirmed');
+  assert.equal(world.confirms.length, 1, 'no confirmation card');
+  const card = world.confirms[0];
+  const words = all(card, 'title').map((n) => n.textContent);
+  assert.deepEqual(words, ['Turn your assistant off?']);
+  const buttons = all(card, 'btn').map((n) => n.textContent);
+  assert.deepEqual(buttons, ['Keep it on', 'Turn off']);
+
+  /* Keep it on: the card goes and nothing was sent. */
+  fire(all(card, 'btn')[0], 'click');
+  assert.equal(card.getAttribute('data-done'), 'true');
+  assert.deepEqual(world.actions, []);
+
+  /* Turn off on the card: stop, then close, in that order. */
+  world.press('Turn off');
+  const again = world.confirms[1];
+  fire(all(again, 'btn')[1], 'click');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(world.actions, ['stop', 'close']);
 });

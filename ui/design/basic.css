@@ -254,16 +254,26 @@
 /* ---------- the folds ---------- */
 
 /* A fold is a card shut: the head is the control, with the same title and meta
-   as an open card, and the chevron says it opens. */
+   as an open card, and the chevron says it opens.
+
+   THE WHOLE CARD IS THE CONTROL WHILE IT IS SHUT. The head used to take a
+   wash of its own under the pointer, inset by the card's padding, which drew
+   a lit box inside the card's box (Karim, 2026-09-16: "this looks like shit,
+   i hate these components"). Now the shut card lights the way every panel
+   that opens does (components.css .opens): its own edge and its own ground,
+   nothing inside it. Open, the head is a row like any other: the title
+   brightens under the pointer and nothing is painted. */
 .fold {
   overflow: hidden;
+  transition: border-color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
 }
 
 .fold-head {
   width: 100%;
   border-bottom: 0;
+  background: transparent;
   cursor: pointer;
-  transition: background-color var(--dur-press) var(--ease-out);
 }
 
 /* Shut, the head is the card's last row, so it carries the 16 under it. */
@@ -279,12 +289,18 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .fold-head:hover { background: var(--bg-2); }
+  .fold:not([data-open="true"]):hover {
+    border-color: var(--line-strong);
+    background: var(--bg-2);
+  }
+  .fold-head:hover .card-meta { color: var(--text-2); }
+  .fold-head:hover .fold-mark { color: var(--text-2); }
 }
 
 .fold-head:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: -2px;
+  border-radius: var(--radius-sm);
 }
 
 .fold-mark {
@@ -294,7 +310,8 @@
   display: grid;
   place-items: center;
   color: var(--text-3);
-  transition: transform var(--dur-enter) var(--ease-out);
+  transition: transform var(--dur-enter) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
 }
 
 .fold-mark .icon { width: 16px; height: 16px; }
@@ -307,8 +324,13 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* Open, the body breathes: 20 above the first line, 24 under the last. */
 .fold-body {
-  padding: var(--s-3) var(--card-x) var(--s-4);
+  padding: var(--s-5) var(--card-x) var(--s-5);
+}
+
+.fold[data-surface="moneyin"] > .fold-body {
+  padding-top: var(--s-4);
 }
 
 /* The Activity fold: the rows sit flush under the head, the filters (once

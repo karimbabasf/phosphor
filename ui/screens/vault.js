@@ -97,8 +97,24 @@
     return node;
   }
 
+  /* Two columns, the way Pro lays its deck: each column stacks its cards
+     with nothing stretched and no hole, because a grid row is as tall as its
+     tallest card and left a blank under the shorter one (Karim, 2026-09-16:
+     "the blank space shouldn't even be there"). Under 980 px of world the
+     columns dissolve (vault.css, display: contents) and the cards keep the
+     reading order through `order`. */
   function build(host) {
     var col = dom.el('div', 'basic-col vault-col');
+    var left = dom.el('div', 'vault-column');
+    var right = dom.el('div', 'vault-column');
+    col.appendChild(left);
+    col.appendChild(right);
+    var order = 0;
+    function place(column, node) {
+      order += 1;
+      node.style.order = String(order);
+      column.appendChild(node);
+    }
 
     /* Custody */
     var custody = panel('Custody', 'custody');
@@ -128,7 +144,7 @@
     custody.body.appendChild(refs.custodyReach);
     custody.body.appendChild(custodyActions);
     dom.on(refs.migrate, 'click', function () { openMigrate(false); });
-    col.appendChild(custody.node);
+    place(left, custody.node);
 
     /* Recovery */
     var recovery = panel('Recovery', 'recovery');
@@ -144,13 +160,21 @@
     refs.restore = button('Restore from a phrase', 'btn-ghost');
     recoveryActions.appendChild(refs.reveal);
     recoveryActions.appendChild(refs.restore);
+    /* A password wallet's two doors, the ones the Money in fold used to hold:
+       the words behind the password, and an encrypted copy of the file. */
+    refs.revealPassword = button('Show my recovery words', 'btn-ghost');
+    refs.exportPassword = button('Save an encrypted backup', 'btn-ghost');
+    recoveryActions.appendChild(refs.revealPassword);
+    recoveryActions.appendChild(refs.exportPassword);
     recovery.body.appendChild(recoveryActions);
+    dom.on(refs.revealPassword, 'click', function () { window.PhosphorMoneyIn.revealWithPassword(); });
+    dom.on(refs.exportPassword, 'click', function () { window.PhosphorMoneyIn.exportWithPassword(); });
     refs.recoveryFlow = dom.el('div', 'stack vault-flow');
     refs.recoveryFlow.hidden = true;
     recovery.body.appendChild(refs.recoveryFlow);
     dom.on(refs.reveal, 'click', startReveal);
     dom.on(refs.restore, 'click', startRestore);
-    col.appendChild(recovery.node);
+    place(right, recovery.node);
 
     /* Addresses: the network menu, the tokens it credits, and behind the
        developer switch the wallet's own key on that network. */
@@ -162,7 +186,7 @@
     refs.keyRow = dom.el('div', 'vault-key');
     refs.keyRow.setAttribute('data-dev-only', '');
     addr.body.appendChild(refs.keyRow);
-    col.appendChild(addr.node);
+    place(left, addr.node);
 
     /* Agent */
     var agent = panel('Agent', 'agent');
@@ -179,7 +203,7 @@
     dom.on(rules, 'click', function () {
       window.PhosphorShell.setView('basic', { fromClick: true });
     });
-    col.appendChild(agent.node);
+    place(right, agent.node);
 
     /* Window */
     var win = panel('Window', 'window');
@@ -197,7 +221,7 @@
     });
     win.body.appendChild(refs.idleRow);
     win.body.appendChild(dom.el('p', 'meta', 'Frost hides the window until you unlock it again. It never affects signing: every move still needs its own click.'));
-    col.appendChild(win.node);
+    place(right, win.node);
 
     /* Danger */
     var danger = panel('Danger', 'danger');
@@ -224,7 +248,7 @@
       refs.forget.disabled = refs.forgetInput.value.trim() !== 'FORGET';
     });
     dom.on(refs.forget, 'click', forgetWallet);
-    col.appendChild(danger.node);
+    place(left, danger.node);
 
     host.appendChild(col);
   }
@@ -346,11 +370,14 @@
       dom.setText(refs.backupLine, 'Backed up: no.');
       dom.setText(refs.recoveryHelp, 'Reveal the phrase, write it down somewhere that is not this Mac, then type three words back. Only that clears this.');
     }
-    /* Reveal and Restore go through the enclave. A password wallet reveals its
-       words behind the password on the Money in fold, as it always has. */
+    /* Reveal and Restore go through the enclave. A password wallet reveals
+       its words behind the password, and can save an encrypted copy, here. */
     var enclave = vault.custody === 'secure-enclave';
     refs.reveal.hidden = !enclave || vault.hasMnemonic === false;
     refs.restore.hidden = !enclave;
+    var password = has && !enclave;
+    refs.revealPassword.hidden = !password || vault.hasMnemonic === false;
+    refs.exportPassword.hidden = !password;
     refs.reveal.className = 'btn ' + (backed ? 'btn-ghost' : 'btn-primary');
     refs.forget.hidden = !has;
   }
@@ -387,10 +414,12 @@
 
   /* ---------- addresses ---------- */
 
-  /* The five networks the bridge credits, in the component's own order and
-     colours, so the menu and the tiles elsewhere are the same five things. */
+  /* Every network the bridge credits, in the component's own order and
+     colours, so the menu and the tiles elsewhere are the same things: the
+     six quick ones until the report has landed, all of them after. */
   function networks() {
     var pick = window.PhosphorNetPick;
+    if (pick && typeof pick.allNetworks === 'function') return pick.allNetworks(report);
     return pick && Array.isArray(pick.NETWORKS) ? pick.NETWORKS : [
       { id: 'eth', name: 'Ethereum', mark: 'ETH' },
       { id: 'base', name: 'Base', mark: 'BASE' },
@@ -575,6 +604,7 @@
       .then(function (result) { report = result && result.data ? result.data : null; })
       .catch(function () { report = null; });
     Promise.all([wallet, bridge]).then(function () {
+      renderSelect();
       renderTokens();
       renderKey();
     });
@@ -612,6 +642,11 @@
     }
     var n = networkOf(network) || { name: String(network) };
     host.appendChild(dom.el('p', 'label', 'Wallet key address on ' + n.name));
+    var own = network === 'eth' || network === 'base' || network === 'arb' || network === 'sol' || network === 'near';
+    if (!own) {
+      host.appendChild(dom.el('p', 'body dim', 'This wallet has no key of its own on ' + n.name + '. Money sent there arrives through the bridge address above.'));
+      return;
+    }
     if (!chain || !chain.address) {
       host.appendChild(dom.el('p', 'body dim', addresses && addresses.tampered
         ? 'The wallet file has been edited, so no address in it can be trusted.'
@@ -650,7 +685,8 @@
      the network in the menu has, so the two read as one thing. */
   function chunked(address) {
     var pick = window.PhosphorNetPick;
-    var kind = network === 'sol' ? 'sol' : (network === 'near' ? 'near' : 'evm');
+    var kind = pick && typeof pick.kindOf === 'function' ? (pick.kindOf(network) || 'evm')
+      : (network === 'sol' ? 'sol' : (network === 'near' ? 'near' : 'evm'));
     if (pick && typeof pick.addressBlock === 'function') {
       var block = pick.addressBlock(address, kind);
       block.className = block.className + ' vault-address';

@@ -56,8 +56,10 @@
     trade_plan: 'drawing a plan',
     trade_batch: 'redrawing the account',
     trade_clear: 'clearing the chart',
-    /* the human's own profile */
-    profile_learned: 'noting what you learned',
+    /* The human's own profile: a note that they now understand a concept,
+       so the next session does not explain it again. The concept rides on
+       the row (ARG_FIELDS), so the row says what was noted. */
+    profile_learned: 'noting for next time that you now understand',
     /* asking. None of these moves anything: each puts a request in the gate. */
     propose_consolidate: 'asking to consolidate',
     propose_swap: 'asking to swap',
@@ -107,7 +109,7 @@
      person can use, and this row is not the place to find out. */
   var ARG_FIELDS = [
     'product', 'symbol', 'query', 'coins', 'mode', 'name', 'indicator',
-    'chain', 'toChain', 'venue', 'label', 'text', 'sentence', 'what', 'source', 'id'
+    'chain', 'toChain', 'venue', 'label', 'text', 'sentence', 'what', 'source', 'id', 'concept'
   ];
   var ARG_MAX = 38;
 
@@ -558,6 +560,9 @@
     list.setAttribute('role', 'log');
     list.setAttribute('aria-live', 'polite');
     host.appendChild(list);
+    /* No scrollbar (agent.css hides it): the transcript fades at the edge
+       that has more behind it, the way every list in the window does. */
+    cuts(list);
 
     /* The turn bar is text and one dot: no control, nothing that decides
        anything. Heard and not seen (agent.css clips it): the seat light says
@@ -794,9 +799,19 @@
       });
   }
 
+  /* Turn off quits the assistant: its process ends and its chat closes, so
+     nothing is left running or waiting (Karim, 2026-09-16: "turn off should
+     completely quit the assistant. meaning quit ... of course with
+     confirmation first"). The confirmation is an in-app card on the dock,
+     never a system dialog. Stopping an answer in progress is the composer's
+     button and asks nothing. */
   function doStop(action, node) {
-    var btn = action === 'stop' ? node.refs.stopAgent : node.refs.send;
-    window.PhosphorShell.setPending(btn, true, action === 'stop' ? 'Turning off' : 'Stopping');
+    if (action === 'stop') {
+      confirmOff(node);
+      return;
+    }
+    var btn = node.refs.send;
+    window.PhosphorShell.setPending(btn, true, 'Stopping');
     api.driver({ action: action, chat: '' })
       .catch(function (err) {
         window.PhosphorToast.show(net.readable(err), 'down');
@@ -804,6 +819,62 @@
       .finally(function () {
         window.PhosphorShell.setPending(btn, false);
       });
+  }
+
+  function confirmOff(node) {
+    var decision = window.PhosphorDecision;
+    if (!decision || typeof decision.showCard !== 'function') return quitAssistant(node);
+    decision.showCard(function (host, done) {
+      dom.clear(host);
+      host.appendChild(dom.el('h2', 'title', 'Turn your assistant off?'));
+      host.appendChild(dom.el('p', 'body dim', 'It stops what it is doing and its process quits. Nothing it asked for is approved by this, and you can start it again any time.'));
+      var actions = dom.el('div', 'dock-actions');
+      var keep = button('btn btn-ghost', 'Keep it on');
+      var off = button('btn btn-danger', 'Turn off');
+      actions.appendChild(keep);
+      actions.appendChild(off);
+      host.appendChild(actions);
+      dom.on(keep, 'click', function () { done(); });
+      dom.on(off, 'click', function () {
+        done();
+        quitAssistant(node);
+      });
+      if (keep.focus) keep.focus();
+    });
+  }
+
+  function quitAssistant(node) {
+    var btn = node.refs.stopAgent;
+    window.PhosphorShell.setPending(btn, true, 'Turning off');
+    api.driver({ action: 'stop', chat: '' })
+      .then(function () {
+        /* Stopped is the process gone; closed is the chat gone with it. The
+           column then shows Start, which is what "off" looks like. */
+        return api.driver({ action: 'close', chat: '' });
+      })
+      .then(function () {
+        chatId = null;
+      })
+      .catch(function (err) {
+        window.PhosphorToast.show(net.readable(err), 'down');
+      })
+      .finally(function () {
+        window.PhosphorShell.setPending(btn, false);
+      });
+  }
+
+  /* Paint which edges of a scroller have more behind them, for the fade
+     the stylesheet draws there. */
+  function cuts(scroller) {
+    function paint() {
+      var top = scroller.scrollTop > 2;
+      var bottom = scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 2;
+      dom.setAttr(scroller, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
+    }
+    dom.on(scroller, 'scroll', paint, { passive: true });
+    if (window.ResizeObserver) new window.ResizeObserver(paint).observe(scroller);
+    paint();
+    return paint;
   }
 
   /* A start that did not happen, in the window's own words: the reason the

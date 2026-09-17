@@ -80,16 +80,17 @@ var SPLIT_PAGES = {
      bar and the axis is y. The pane is below the handle, so dragging down
      shrinks it: the sign is -1.
 
-     236 is the deck's design height and 168 is its floor: one zone heading
-     with a price tag and a row of figures under it, or one open position with
-     its Close button, and nothing under that fits. 364 for the chart column
+     The deck opens at its floor and the drag makes it taller: 120 is the tab
+     row with two rows under it, which is "Nothing open." with air, or one
+     open position with its Close button (Karim, 2026-09-16: "default this to
+     being as small as possible when the trade page is open"). 364 for the chart column
      is the give's floor: the stage's own 320 px min-height, under which
      candles stop being read and start being estimated, plus the 44 px bar
      above it. A floor of 320 alone would let the handle push the stage under
      its own minimum and spill it over the deck. */
   trade: {
     'deck-rail': {
-      axis: 'y', sign: -1, min: 168,
+      axis: 'y', sign: -1, min: 120,
       pane: '.trade-rail', host: '.trade-wrap', prop: '--deck',
       give: '.trade-main', giveMin: 364,
     },
@@ -482,6 +483,29 @@ function splitPaneControl(name) {
   return button;
 }
 
+/* The way back, at the edge the pane left: one 24 px ghost button wearing the eye, drawn
+   only while its pane is hidden (the stylesheet keys it off the host's data-pane attribute).
+   The deck's sits in the chart bar beside the chart's own eye-off, the chart's in the deck's
+   tab row, and the assistant column's on the world's left edge as a small tab. The Layout menu
+   on the bar still lists every pane; this is the shortcut a hand reaches for (Karim,
+   2026-09-16: "a subtle button around there as well on the side ... that is super subtle to
+   bring it back"). Null in a document with nothing to build it in. */
+function splitPaneRestore(name) {
+  var conf = SPLIT_PANES[name];
+  if (!conf || typeof document.createElement !== 'function') return null;
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'pane-show';
+  button.setAttribute('data-pane', name);
+  button.setAttribute('aria-label', 'Show the ' + conf.label.toLowerCase());
+  button.title = 'Show the ' + conf.label.toLowerCase();
+  button.appendChild(window.PhosphorIcons.svg('show'));
+  button.addEventListener('click', function () {
+    splitPaneSet(name, true);
+  });
+  return button;
+}
+
 /* The dock is watched once. Its hidden attribute is the one fact that says a proposal is
    waiting on a person, and the column that holds it is shown the moment that is true. */
 var SPLIT_GATE_WATCHED = false;
@@ -508,4 +532,5 @@ window.PhosphorSplit = {
   togglePane: splitPaneToggle,
   panes: splitPaneList,
   paneControl: splitPaneControl,
+  paneRestore: splitPaneRestore,
 };

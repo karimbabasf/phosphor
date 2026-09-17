@@ -134,7 +134,7 @@ test('the deck has a floor, and a drag that asks for zero lands on it', () => {
   s.splitApply(h, s.splitAt(h, 2000));
 
   assert.equal(applied(h), s.SPLIT_PAGES.trade['deck-rail'].min, 'the deck stops at its floor');
-  assert.ok(applied(h)! >= 168, 'and the floor keeps a price tag and a row of figures on screen');
+  assert.ok(applied(h)! >= 120, 'and the floor keeps the tab row and two rows under it on screen');
 });
 
 test('every handle has a floor, and so does the pane it takes from', () => {
@@ -146,11 +146,12 @@ test('every handle has a floor, and so does the pane it takes from', () => {
       assert.ok(conf.giveMin > 0, page + '.' + id + ' leaves its neighbour a floor');
     }
   }
-  // The deck under the chart (2026-09-14): 168 keeps one zone's heading, the
-  // price tag and a row of figures on screen, and 364 keeps the chart column
-  // at its stage's own 320 px minimum plus the 44 px bar above it.
+  // The deck under the chart (2026-09-14): 120 keeps the tab row and two rows
+  // under it on screen, which is where it opens (Karim, 2026-09-16: as small
+  // as possible by default), and 364 keeps the chart column at its stage's
+  // own 320 px minimum plus the 44 px bar above it.
   assert.equal(s.SPLIT_PAGES.trade['deck-rail'].axis, 'y');
-  assert.equal(s.SPLIT_PAGES.trade['deck-rail'].min, 168);
+  assert.equal(s.SPLIT_PAGES.trade['deck-rail'].min, 120);
   assert.equal(s.SPLIT_PAGES.trade['deck-rail'].giveMin, 364);
 });
 
@@ -165,7 +166,7 @@ test('a pane cannot be grown past the point where its neighbour hits its own flo
 
   assert.equal(s.splitAt(h, -60), 460, 'a small drag moves the boundary one for one');
   assert.equal(s.splitAt(h, -5000), 936, 'a big one stops where the chart would be squeezed');
-  assert.equal(s.splitAt(h, 5000), 168, 'and the other way, at the deck own floor');
+  assert.equal(s.splitAt(h, 5000), 120, 'and the other way, at the deck own floor');
 });
 
 test('a handle whose pointer runs the other way still grows the right pane', () => {
@@ -176,7 +177,7 @@ test('a handle whose pointer runs the other way still grows the right pane', () 
 
   assert.equal(s.splitAt(h, -60), 460, 'up makes the deck taller');
   assert.equal(s.splitAt(h, 60), 340, 'down makes it shorter');
-  assert.equal(s.splitAt(h, 5000), 168, 'and it stops at its floor');
+  assert.equal(s.splitAt(h, 5000), 120, 'and it stops at its floor');
 });
 
 test('a size survives a reload, and a reset forgets it', () => {
@@ -311,7 +312,7 @@ test('a handle with no neighbour to take from can still take the spare room, and
   const h = handle(s, 'trade', 'deck-rail', { pane: 400, give: 364 });
   s.splitBegin(h, 0);
   assert.equal(s.splitAt(h, -5000), 400, 'there is nothing to take, so nothing moves');
-  assert.equal(s.splitAt(h, 5000), 168, 'and it can always be given back, down to the floor');
+  assert.equal(s.splitAt(h, 5000), 120, 'and it can always be given back, down to the floor');
 });
 
 test('a window too small for both floors keeps the safety surface', () => {
@@ -477,4 +478,33 @@ test('two presses on a handle put it back to the stylesheet default', () => {
   assert.equal(applied(h), null, 'the property is gone, so the CSS default is what shows');
   assert.equal(h.pane.getAttribute('data-sized'), null);
   assert.equal(storage.map.has('phosphor.split.pro.deck-agent'), false, 'and it is not remembered');
+});
+
+test('the way back: a restore control draws for its pane, names it, and shows it on a click', () => {
+  const { s } = loadWithHosts();
+  assert.equal(s.PhosphorSplit.paneRestore('deck'), null, 'no document to build a control in, so none');
+  /* A document that can make an element: the control is one button wearing the eye. */
+  const made: Any[] = [];
+  s.document.createElement = (tag: string) => {
+    const node: Any = { tag, attrs: {} as Record<string, string>, children: [] as Any[], listeners: {} as Record<string, Array<() => void>> };
+    node.setAttribute = (k: string, v: string) => { node.attrs[k] = v; };
+    node.getAttribute = (k: string) => node.attrs[k] ?? null;
+    node.appendChild = (c: Any) => { node.children.push(c); };
+    node.addEventListener = (kind: string, fn: () => void) => { (node.listeners[kind] = node.listeners[kind] || []).push(fn); };
+    node.click = () => { (node.listeners.click || []).forEach((fn: () => void) => fn()); };
+    made.push(node);
+    return node;
+  };
+  s.PhosphorIcons = { svg: (name: string) => ({ icon: name }) };
+  const back = s.PhosphorSplit.paneRestore('conversation');
+  assert.ok(back, 'no restore control');
+  assert.equal(back.className, 'pane-show');
+  assert.equal(back.getAttribute('data-pane'), 'conversation');
+  assert.equal(back.getAttribute('aria-label'), 'Show the assistant');
+  assert.deepEqual(back.children, [{ icon: 'show' }]);
+  s.PhosphorSplit.setPane('conversation', false);
+  assert.equal(s.PhosphorSplit.paneHidden('conversation'), true);
+  back.click();
+  assert.equal(s.PhosphorSplit.paneHidden('conversation'), false, 'the click did not bring the pane back');
+  assert.equal(s.PhosphorSplit.paneRestore('nothing'), null);
 });

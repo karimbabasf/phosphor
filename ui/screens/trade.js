@@ -242,20 +242,31 @@
     row.appendChild(symbolControl());
     row.appendChild(venueChip());
 
-    /* THE PRICE. The venue's mark, 26 px mono. On a tick its digits flip to
-       the direction's colour and settle back to the text colour over 600 ms,
-       and never a background flash: the digits are the price, the box is not.
-       data-tick is set on change and cleared when the animation ends. */
+    /* THE PRICE BLOCK. The venue's mark at 32 px mono, the cents one step
+       quieter so the figure reads as a price and not as a run of characters
+       (Karim, 2026-09-16: "that main price number should look like a price
+       and not just a blob of text"), and the day's change on the line under
+       it, the way an exchange header stacks them. On a tick the digits flip
+       to the direction's colour and settle back to the text colour over
+       600 ms, and never a background flash: the digits are the price, the box
+       is not. data-tick is set on change and cleared when the animation ends. */
+    var block = dom.el('div', 'strip-price');
     var px = dom.el('span', 'px trade-mark-price');
     px.setAttribute('title', 'Mark price');
+    var whole = dom.el('span', 'px-whole');
+    var cents = dom.el('span', 'px-cents');
+    px.appendChild(whole);
+    px.appendChild(cents);
     dom.on(px, 'animationend', function () { dom.setAttr(px, 'data-tick', null); });
-    row.appendChild(px);
+    block.appendChild(px);
+    var change = stripStat('24h', 'trade-change');
+    block.appendChild(change.node);
+    row.appendChild(block);
 
+    /* The day's extremes, two figures with the label over the value. */
     var day = dom.el('div', 'strip-day');
-    var change = stripStat('24h change', 'trade-change');
     var high = stripStat('24h high', 'trade-high');
     var low = stripStat('24h low', 'trade-low');
-    day.appendChild(change.node);
     day.appendChild(high.node);
     day.appendChild(low.node);
     row.appendChild(day);
@@ -286,6 +297,8 @@
 
     refs.strip = strip;
     refs.price = px;
+    refs.priceWhole = whole;
+    refs.priceCents = cents;
     refs.change = change.value;
     refs.high = high.value;
     refs.low = low.value;
@@ -351,6 +364,10 @@
       refs.counts[TABS[i].id] = count;
     }
     row.appendChild(list);
+    /* The chart's way back sits here while the chart is hidden, then the
+       deck's own eye-off. */
+    var back = paneRestore('chart');
+    if (back) row.appendChild(back);
     var hide = paneControl('deck');
     if (hide) row.appendChild(hide);
     return row;
@@ -481,6 +498,10 @@
     status.appendChild(feed);
     bar.appendChild(status);
 
+    /* The deck's way back sits here while the deck is hidden, then the
+       chart's own eye-off. */
+    var back = paneRestore('deck');
+    if (back) bar.appendChild(back);
     var hide = paneControl('chart');
     if (hide) bar.appendChild(hide);
     return bar;
@@ -604,6 +625,11 @@
   /* The eye-off control for a pane header, from ui/split.js so every header
      draws the same one. Null in a document with nothing to build it in. The
      way back is the bar's Layout menu (ui/screens/shell.js). */
+  function paneRestore(name) {
+    var split = window.PhosphorSplit;
+    return split && typeof split.paneRestore === 'function' ? split.paneRestore(name) : null;
+  }
+
   function paneControl(name) {
     return window.PhosphorSplit.paneControl(name);
   }
@@ -1028,7 +1054,7 @@
   function renderPrice() {
     var symbol = symbolOf();
     var mark = markOf();
-    dom.setText(refs.price, priceText(mark));
+    setPrice(priceText(mark));
     if (typeof mark !== 'number' || !isFinite(mark) || !symbol) return;
 
     var was = lastPx[symbol];
@@ -1063,6 +1089,20 @@
     dom.setAttr(refs.change, 'data-dir', dir);
     dom.setText(refs.high, priceText(range.high));
     dom.setText(refs.low, priceText(range.low));
+  }
+
+  /* The figure in two spans: everything up to the point, then the point and
+     the places after it, which the stylesheet sets one step quieter. "--"
+     and a price with no point go whole. */
+  function setPrice(text) {
+    var at = text.lastIndexOf('.');
+    if (at < 1 || !/^\$?[\d,]+\.\d+$/.test(text)) {
+      dom.setText(refs.priceWhole, text);
+      dom.setText(refs.priceCents, '');
+      return;
+    }
+    dom.setText(refs.priceWhole, text.slice(0, at));
+    dom.setText(refs.priceCents, text.slice(at));
   }
 
   /* A signed number in the price's own places, without the currency sign:

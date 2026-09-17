@@ -43,6 +43,7 @@
       sayLanded(deposit);
       maybeBackupPrompt(deposit);
     });
+    store.subscribe(maybeBootPrompt);
   }
 
   /* The watch outlives the card. Money that lands after the card was put away
@@ -220,6 +221,37 @@
       buildBackup(refs.backup, close);
       return;
     }
+    showBackupCard();
+  }
+
+  /* And once per app start, the moment the window knows there is money in
+     and the phrase is not proven: the same card, with an X. Karim,
+     2026-09-16: "as a user I want this to pop up every time i start the app,
+     but I want to be able to x it out." The X puts it away until the next
+     start; only typing the words back clears it for good. */
+  var booted = false;
+
+  function maybeBootPrompt() {
+    if (booted) return;
+    if (typeof store.loaded === 'function' && !store.loaded()) return;
+    var state = store.get() || {};
+    var vault = state.vault || {};
+    if (vault.backedUp !== false) return;
+    var basic = state.basic || {};
+    var total = typeof basic.totalUsd === 'number' && isFinite(basic.totalUsd) ? basic.totalUsd : null;
+    if (total === null || total < 0.01) return;
+    /* A request waiting on the person outranks a reminder: the dock shows one
+       thing, and the one that stops money moving is the one it shows. */
+    var proposals = Array.isArray(state.proposals) ? state.proposals : [];
+    for (var i = 0; i < proposals.length; i += 1) {
+      var p = proposals[i];
+      if (p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch')) return;
+    }
+    booted = true;
+    showBackupCard();
+  }
+
+  function showBackupCard() {
     if (window.PhosphorDecision && typeof window.PhosphorDecision.showCard === 'function') {
       window.PhosphorDecision.showCard(function (host, done) {
         dom.clear(host);
@@ -230,7 +262,17 @@
 
   function buildBackup(host, done) {
     dom.clear(host);
-    host.appendChild(dom.el('h2', 'title', 'You have money in. Back up now.'));
+    var head = dom.el('div', 'dock-head');
+    head.appendChild(dom.el('h2', 'title', 'You have money in. Back up now.'));
+    var away = dom.el('button', 'dock-close');
+    away.type = 'button';
+    away.setAttribute('aria-label', 'Not now');
+    away.title = 'Not now';
+    var icons = window.PhosphorIcons;
+    away.appendChild(icons && typeof icons.svg === 'function' ? icons.svg('close') : dom.el('span', 'sr-only', 'Not now'));
+    dom.on(away, 'click', function () { done(); });
+    head.appendChild(away);
+    host.appendChild(head);
     host.appendChild(dom.el('p', 'body dim', 'Your recovery phrase is the only way back to this wallet. Reveal it once, write it down, and type three words back to prove it.'));
     var actions = dom.el('div', 'screen-actions');
     var go = dom.el('button', 'btn btn-primary');

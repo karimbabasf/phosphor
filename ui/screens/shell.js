@@ -42,6 +42,7 @@
     wireTabs();
     wireFreeze();
     wireLayout();
+    wireRestore();
     wireBackupChip();
     wireStream();
 
@@ -412,6 +413,17 @@
      is on every mode: the assistant hidden on Basic has to come back from
      Basic (Karim, 2026-09-15: "when i hide the chat thing, i cant bring it
      back"). */
+  /* The assistant column's way back: a small tab on the world's left edge,
+     drawn only while the column is hidden (trade.css keys it off the stage's
+     data-pane attribute). The Layout menu still lists it; this is the one a
+     hand reaches for. */
+  function wireRestore() {
+    var split = window.PhosphorSplit;
+    if (!refs.stage || !split || typeof split.paneRestore !== 'function') return;
+    var back = split.paneRestore('conversation');
+    if (back) refs.stage.appendChild(back);
+  }
+
   function wireLayout() {
     if (!refs.layoutButton || !refs.layoutPop || !refs.layoutRows) return;
     var wrap = refs.layoutButton.parentNode;

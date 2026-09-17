@@ -9,19 +9,30 @@
 
 .vault-col {
   width: min(1120px, 100%);
+  gap: var(--s-3);
+}
+
+/* Under 980 px the two columns dissolve into the one column Basic reads,
+   and the cards keep their reading order through the `order` each carries. */
+.vault-column {
+  display: contents;
 }
 
 @container world (min-width: 980px) {
   .vault-col {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: start;
   }
 
-  /* Custody and Recovery share the first row; Addresses takes the whole of
-     the second, because a token list and an address need the width. */
-  .vault-col > .panel[data-surface="addresses"] {
-    grid-column: 1 / -1;
+  /* A column stacks its cards, each as tall as what it holds: no card is
+     stretched to its neighbour and no row leaves a hole under the shorter
+     one. */
+  .vault-column {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    min-width: 0;
   }
 }
 
@@ -113,7 +124,10 @@
 }
 
 .netsel-menu {
-  min-width: 220px;
+  min-width: 240px;
+  max-height: min(52vh, 440px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .netsel-option {

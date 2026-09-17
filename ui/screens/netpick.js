@@ -9,11 +9,19 @@
    choosing the layer and token if they are literally the same, it's
    misleading."
 
-   So: one network, picked once, on a tile that wears its brand colour only
-   under the pointer. Then the tokens that network credits, searchable, each
-   with its minimum in the unit a person types. Then one address, and nothing
-   to choose beside it: a token does not change the address, so the card offers
-   no token chips and no network chips, only a way back.
+   And 2026-09-16: "make them either fit in one row or something and also idk i
+   feel like near supports much more networks, like bitcoin addresses and stuff
+   like that. so build the rails for everything as well."
+
+   So: six quick tiles in one row that never wraps, colourless at rest and in
+   their brand colour under the pointer, and under them a search over every
+   network the bridge credits (the backend's registry, thirty-odd today, read
+   off the report so a network the bridge adds is on this list without a
+   window change). Then the tokens that network credits, searchable, each with
+   its minimum in the unit a person types, or "No minimum" where the bridge's
+   floor is dust; each token with a contract is a row that copies that
+   contract, read back byte for byte before the window says Copied. Then one
+   address, and nothing to choose beside it.
 
    One component, three hosts. The Money in fold and the wizard's addresses
    step run all three steps in place. The deposit card opens at the step its
@@ -34,18 +42,20 @@
   var EASE = [0.16, 1, 0.3, 1];
   var COPIED_MS = 1500;
 
-  /* The five networks the bridge credits, in the order an exchange lists them,
-     each with its brand colour. ui/design/marks.js carries a colour per coin
-     for the marks; the network colours are the chains' own (Base's brand blue
-     is #0052FF, marks.js has the coin file's #0000FF), so they are written
-     here where a tile reads them. `words` is the network in the words an
+  /* The six networks an exchange withdraw screen lists first, each with its
+     brand colour, for the one row of tiles: the five the app has always
+     credited and Bitcoin. Every other network comes off the report, where the
+     backend's registry names it, colours it and says what it credits. The
+     colours here are the chains' own (Base's brand blue is #0052FF, marks.js
+     has the coin file's #0000FF). `words` is the network in the words an
      exchange's withdraw screen uses. */
   var NETWORKS = [
-    { id: 'eth', name: 'Ethereum', mark: 'ETH', colour: '#627EEA', words: 'Ethereum (ERC-20)', native: 'ETH' },
-    { id: 'base', name: 'Base', mark: 'BASE', colour: '#0052FF', words: 'Base', native: 'ETH' },
-    { id: 'arb', name: 'Arbitrum', mark: 'ARB', colour: '#12AAFF', words: 'Arbitrum One', native: 'ETH' },
-    { id: 'sol', name: 'Solana', mark: 'SOL', colour: '#9945FF', accent: '#14F195', words: 'Solana (SPL)', native: 'SOL' },
-    { id: 'near', name: 'NEAR', mark: 'NEAR', colour: '#00EC97', words: 'NEAR Protocol', native: 'NEAR' }
+    { id: 'eth', name: 'Ethereum', mark: 'ETH', colour: '#627EEA', words: 'Ethereum (ERC-20)', native: 'ETH', kind: 'evm', popular: true },
+    { id: 'base', name: 'Base', mark: 'BASE', colour: '#0052FF', words: 'Base', native: 'ETH', kind: 'evm', popular: true },
+    { id: 'arb', name: 'Arbitrum', mark: 'ARB', colour: '#12AAFF', words: 'Arbitrum One', native: 'ETH', kind: 'evm', popular: true },
+    { id: 'sol', name: 'Solana', mark: 'SOL', colour: '#9945FF', accent: '#14F195', words: 'Solana (SPL)', native: 'SOL', kind: 'sol', popular: true },
+    { id: 'near', name: 'NEAR', mark: 'NEAR', colour: '#00EC97', words: 'NEAR Protocol', native: 'NEAR', kind: 'near', popular: true },
+    { id: 'btc', name: 'Bitcoin', mark: 'BTC', colour: '#F7931A', words: 'Bitcoin (BTC)', native: 'BTC', kind: 'other', popular: true }
   ];
   var EVM = ['eth', 'base', 'arb'];
 
@@ -56,11 +66,51 @@
   var QR_TARGET_PX = 176;
   var MIN_SCALE = 3;
 
-  function networkOf(id) {
+  /* Every network the window has heard of: the six above, and every one a
+     report named, kept across renders so a watcher line or a toast can say
+     "Bitcoin" for a watch this render never drew. A report's row wins over the
+     static entry for the fields it carries, so the backend's registry is the
+     source of truth once it has been read. */
+  var known = {};
+
+  function remember(report) {
+    var rows = report && Array.isArray(report.networks) ? report.networks : [];
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = rows[i];
+      if (!row || typeof row.id !== 'string') continue;
+      known[row.id] = merged(staticOf(row.id), row);
+    }
+  }
+
+  function staticOf(id) {
     for (var i = 0; i < NETWORKS.length; i += 1) {
       if (NETWORKS[i].id === id) return NETWORKS[i];
     }
     return null;
+  }
+
+  /* The metadata of a network, never its address: the report row carries the
+     address too, and a merged object that held one would be a second place an
+     address lives. */
+  function merged(base, row) {
+    var out = {};
+    var keys = ['id', 'name', 'mark', 'colour', 'accent', 'words', 'native', 'kind', 'popular'];
+    for (var i = 0; i < keys.length; i += 1) {
+      var key = keys[i];
+      if (row && row[key] !== undefined && row[key] !== null && row[key] !== '') out[key] = row[key];
+      else if (base && base[key] !== undefined) out[key] = base[key];
+    }
+    if (!out.name) out.name = String(out.id || '');
+    if (!out.mark) out.mark = String(out.native || out.name || '?');
+    if (!out.words) out.words = out.name;
+    if (!out.kind) out.kind = 'other';
+    return out;
+  }
+
+  function networkOf(id) {
+    if (known[id]) return known[id];
+    var base = staticOf(id);
+    return base ? merged(base, null) : null;
   }
 
   function networkWords(chain) {
@@ -71,6 +121,34 @@
   function networkName(chain) {
     var n = networkOf(chain);
     return n ? n.name : String(chain || '');
+  }
+
+  /* The list a search runs over: the report's networks in the report's order
+     (popular first, then by name), or the six while no report has landed. */
+  function allNetworks(report) {
+    var rows = report && Array.isArray(report.networks) ? report.networks : [];
+    if (!rows.length) return NETWORKS.map(function (n) { return merged(n, null); });
+    var out = [];
+    for (var i = 0; i < rows.length; i += 1) {
+      if (rows[i] && typeof rows[i].id === 'string') out.push(networkOf(rows[i].id) || merged(null, rows[i]));
+    }
+    return out;
+  }
+
+  /* What starts with the letters typed, then what merely contains them, over
+     the name, the exchange's words and the coin. */
+  function filterNetworks(list, query) {
+    var q = String(query || '').trim().toUpperCase();
+    if (!q) return list.slice();
+    var starts = [];
+    var holds = [];
+    for (var i = 0; i < list.length; i += 1) {
+      var n = list[i];
+      var hay = [n.name, n.words, n.native, n.id].join(' ').toUpperCase();
+      if (String(n.name).toUpperCase().indexOf(q) === 0 || String(n.native || '').toUpperCase().indexOf(q) === 0) starts.push(n);
+      else if (hay.indexOf(q) >= 0) holds.push(n);
+    }
+    return starts.concat(holds);
   }
 
   /* ---------- the acknowledgement, once per install ---------- */
@@ -142,11 +220,40 @@
     return null;
   }
 
+  /* The floor, as the report states it, or worked out here from the raw
+     figure when a report predates the `minimum` field. A floor worth under a
+     cent, or under a millionth of the coin where no price is known, is dust:
+     the bridge would credit it, and no exchange lets a person send it, so the
+     row says "No minimum" rather than printing eighteen zeros. */
+  var DUST = 0.000001;
+
+  function minimumOf(token) {
+    if (!token) return null;
+    var given = token.minimum && typeof token.minimum === 'object' ? token.minimum : null;
+    var amount = given && typeof given.amount === 'string' ? given.amount : token.minDepositHuman;
+    if (typeof amount !== 'string' || !amount) return null;
+    var usd = given && typeof given.usd === 'number' && isFinite(given.usd) ? given.usd : null;
+    var shown;
+    if (given && typeof given.shown === 'boolean') shown = given.shown;
+    else if (usd !== null) shown = usd >= 0.01;
+    else shown = Number(amount) >= DUST;
+    return { shown: shown, amount: amount, symbol: String(token.symbol), usd: usd };
+  }
+
   function minimumWords(token) {
-    if (!token) return '';
-    var floor = token.minDepositHuman;
-    if (typeof floor !== 'string' || !floor) return '';
-    return floor + ' ' + token.symbol;
+    var min = minimumOf(token);
+    if (!min) return '';
+    if (!min.shown) return 'No minimum';
+    var words = 'Min ' + min.amount + ' ' + min.symbol;
+    if (min.usd !== null && min.usd >= 0.01) words += ', about ' + dom.usd(min.usd, min.usd < 1 ? 2 : 0);
+    return words;
+  }
+
+  /* "0x8335...2913": the ends a person checks against the explorer. */
+  function shortContract(contract) {
+    var text = String(contract || '');
+    if (text.length <= 14) return text;
+    return text.slice(0, 6) + '...' + text.slice(-4);
   }
 
   /* ---------- small helpers that survive the test harness ---------- */
@@ -198,12 +305,15 @@
     return String(address).slice(-4);
   }
 
-  /* The shape an address has, from the network it is on. */
+  /* The shape an address has, from the network it is on: the registry's word
+     for it, or the five the window has always known. */
   function kindOf(networkId) {
+    var n = networkOf(networkId);
+    if (n && n.kind && n.kind !== 'other') return n.kind;
     if (networkId === 'sol') return 'sol';
     if (networkId === 'near') return 'near';
     if (EVM.indexOf(networkId) >= 0) return 'evm';
-    return null;
+    return n ? 'other' : null;
   }
 
   /* The shape read off the address itself, for a caller that did not say. */
@@ -378,6 +488,8 @@
     dom.clear(host);
     host.appendChild(root);
 
+    remember(opts.report || null);
+
     var state = {
       stage: null,
       network: opts.network || null,
@@ -407,6 +519,7 @@
         .then(function (result) {
           state.loading = null;
           state.report = result && result.data ? result.data : null;
+          remember(state.report);
           return state.report;
         })
         .catch(function (err) {
@@ -460,6 +573,10 @@
 
     /* ---------- step one: the network ---------- */
 
+    /* Six tiles in one row that never wraps, then a search over every network
+       the bridge credits. The list draws only while there is a query or the
+       person asked for all of them: thirty rows under six tiles would push
+       the whole fold off the screen for the one network they came for. */
     function stageNetworks() {
       var node = dom.el('div');
       node.appendChild(dom.el('p', 'netpick-lead', 'Pick the network you are sending on.'));
@@ -467,7 +584,8 @@
       grid.setAttribute('role', 'group');
       grid.setAttribute('aria-label', 'Networks');
       var tiles = [];
-      NETWORKS.forEach(function (n, index) {
+      NETWORKS.forEach(function (base, index) {
+        var n = networkOf(base.id) || base;
         var tile = dom.el('button', 'net-tile');
         tile.type = 'button';
         tile.dataset.network = n.id;
@@ -478,12 +596,7 @@
         mark.appendChild(logo(n.mark, 28));
         tile.appendChild(mark);
         tile.appendChild(dom.el('span', 'net-tile-name', n.name));
-        var known = reportNetwork(n.id);
-        if (known && known.unavailable) {
-          tile.dataset.unavailable = 'true';
-          tile.setAttribute('aria-disabled', 'true');
-          tile.title = 'Not available right now: ' + known.unavailable;
-        }
+        markUnavailable(tile, n.id);
         if (state.network === n.id) tile.setAttribute('aria-current', 'true');
         dom.on(tile, 'click', function () { pick(n.id); });
         dom.on(tile, 'keydown', function (event) { onTileKey(event, index); });
@@ -491,6 +604,76 @@
         grid.appendChild(tile);
       });
       node.appendChild(grid);
+
+      /* The search over all of them. */
+      var search = dom.el('div', 'netpick-search netpick-netsearch');
+      search.appendChild(icon('search', 'netpick-search-icon'));
+      var input = dom.el('input', 'input netpick-search-input');
+      input.type = 'text';
+      input.name = 'network-search';
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+      input.setAttribute('aria-label', 'Search networks');
+      search.appendChild(input);
+      node.appendChild(search);
+
+      var list = dom.el('div', 'netpick-list netpick-netlist');
+      list.setAttribute('role', 'list');
+      list.setAttribute('aria-label', 'All networks');
+      list.hidden = true;
+      node.appendChild(list);
+
+      var empty = dom.el('p', 'netpick-empty');
+      empty.hidden = true;
+      node.appendChild(empty);
+
+      var foot = dom.el('div', 'netpick-netfoot');
+      var all = dom.el('button', 'netpick-link');
+      all.type = 'button';
+      all.dataset.role = 'all-networks';
+      foot.appendChild(all);
+      node.appendChild(foot);
+
+      var query = '';
+      var showAll = false;
+
+      function placeholder() {
+        var total = allNetworks(state.report).length;
+        input.placeholder = total > NETWORKS.length
+          ? 'Search all ' + total + ' networks'
+          : 'Search networks';
+      }
+
+      function fillList() {
+        var every = allNetworks(state.report);
+        var others = every.length - NETWORKS.length;
+        dom.setText(all, showAll ? 'Fewer networks' : (others > 0 ? 'All ' + every.length + ' networks' : ''));
+        dom.setHidden(foot, others <= 0);
+        var q = query.trim();
+        if (!q && !showAll) {
+          dom.setHidden(list, true);
+          dom.setHidden(empty, true);
+          return;
+        }
+        var shown = filterNetworks(every, q);
+        dom.clear(list);
+        dom.setHidden(empty, shown.length > 0);
+        dom.setHidden(list, shown.length === 0);
+        if (!shown.length) {
+          dom.setText(empty, 'No network called ' + q + '. Check the name your exchange uses.');
+          return;
+        }
+        shown.forEach(function (n) { list.appendChild(networkRow(n)); });
+      }
+
+      dom.on(input, 'input', function () {
+        query = input.value || '';
+        fillList();
+      });
+      dom.on(all, 'click', function () {
+        showAll = !showAll;
+        fillList();
+      });
 
       /* Arrow keys move between the tiles, Enter or Space picks the one under
          the focus. The tiles are buttons, so Enter and Space already click. */
@@ -507,22 +690,66 @@
         tiles[next].focus();
       }
 
+      placeholder();
+      fillList();
+
       /* The report is read behind the tiles, so a network the bridge refused
-         is greyed by the time the pointer gets there. */
+         is greyed by the time the pointer gets there, and the search knows
+         every network by the time a letter is typed. */
       if (!state.report) {
         load().then(function () {
           if (!state.alive || state.stageNode !== node) return;
-          tiles.forEach(function (tile) {
-            var known = reportNetwork(tile.dataset.network);
-            if (known && known.unavailable) {
-              tile.dataset.unavailable = 'true';
-              tile.setAttribute('aria-disabled', 'true');
-              tile.title = 'Not available right now: ' + known.unavailable;
-            }
-          });
+          tiles.forEach(function (tile) { markUnavailable(tile, tile.dataset.network); });
+          placeholder();
+          fillList();
         });
       }
       show('network', node);
+    }
+
+    function markUnavailable(tile, id) {
+      var known = reportNetwork(id);
+      if (!known || !known.unavailable) return;
+      tile.dataset.unavailable = 'true';
+      tile.setAttribute('aria-disabled', 'true');
+      tile.title = 'Not available right now: ' + known.unavailable;
+    }
+
+    /* One network in the list: the mark, the name, and at the right what it
+       credits, three symbols and a count for the rest. */
+    function networkRow(n) {
+      var row = dom.el('button', 'net-row');
+      row.type = 'button';
+      row.setAttribute('role', 'listitem');
+      row.dataset.network = n.id;
+      setVar(row, '--net', n.colour || 'var(--text-2)');
+      row.appendChild(logo(n.mark, 24));
+      var main = dom.el('div', 'net-row-main');
+      main.appendChild(dom.el('span', 'net-row-name', n.name));
+      if (n.words && n.words !== n.name) main.appendChild(dom.el('span', 'net-row-words', n.words));
+      row.appendChild(main);
+      var known = reportNetwork(n.id);
+      var accepts = known && Array.isArray(known.accepts) ? known.accepts : [];
+      /* The symbols in a wallet's order, each once: a bridge that lists one
+         coin twice (two routes in) is still one coin to send. */
+      var symbols = [];
+      var seen = {};
+      var sorted = sortTokens(accepts, n.native);
+      for (var i = 0; i < sorted.length; i += 1) {
+        var sym = String(sorted[i].symbol);
+        if (!seen[sym]) { seen[sym] = true; symbols.push(sym); }
+      }
+      var side = dom.el('span', 'net-row-side');
+      if (known && known.unavailable) {
+        row.dataset.unavailable = 'true';
+        row.title = 'Not available right now: ' + known.unavailable;
+        dom.setText(side, 'Unavailable');
+      } else if (symbols.length) {
+        dom.setText(side, symbols.slice(0, 3).join(', ') + (symbols.length > 3 ? ' +' + (symbols.length - 3) : ''));
+      }
+      row.appendChild(side);
+      dom.on(row, 'click', function () { pick(n.id); });
+      return row;
     }
 
     function pick(id) {
@@ -638,6 +865,13 @@
       empty.hidden = true;
       body.appendChild(empty);
 
+      /* What the last copy did, in words, under the list: the sentence a
+         screen reader hears and the one a person checks the paste against. */
+      var said = dom.el('p', 'meta netpick-copied');
+      said.setAttribute('role', 'status');
+      body.appendChild(said);
+      var say = function (sentence) { dom.setText(said, sentence); };
+
       function fill() {
         dom.clear(list);
         var shown = filterTokens(tokens, state.query);
@@ -647,7 +881,7 @@
           dom.setText(empty, 'No token called ' + state.query.trim() + ' on ' + n.name + '.');
           return;
         }
-        shown.forEach(function (token) { list.appendChild(tokenRow(token)); });
+        shown.forEach(function (token) { list.appendChild(tokenRow(token, say)); });
       }
 
       dom.on(input, 'input', function () {
@@ -659,7 +893,7 @@
       /* Behind the developer switch: the bridge's own id for this network. */
       var bridge = dom.el('p', 'netpick-dev mono');
       bridge.setAttribute('data-dev-only', '');
-      dom.setText(bridge, 'Bridge network id: ' + bridgeId(n.id));
+      dom.setText(bridge, 'Bridge network id: ' + (network && typeof network.bridge === 'string' && network.bridge ? network.bridge : bridgeId(n.id)));
       body.appendChild(bridge);
 
       body.appendChild(ackBlock(n, network, tokens));
@@ -669,26 +903,64 @@
       return { eth: 'eth:1', base: 'eth:8453', arb: 'eth:42161', sol: 'sol:mainnet', near: 'near:mainnet' }[id] || id;
     }
 
-    /* One token, one row: the mark, the symbol, and the minimum in the unit a
-       person types, never the bridge's base units. */
-    function tokenRow(token) {
-      var row = dom.el('div', 'token-row');
+    /* One token, one row: the mark, the symbol, the minimum in the unit a
+       person types, never the bridge's base units, and where the token has a
+       contract, the contract's ends under the symbol and a copy glyph at the
+       right. The whole row is the button: a click writes the contract to the
+       clipboard, reads it back, compares it byte for byte, and only then says
+       Copied, with the last four characters, so what was pasted can be checked
+       against what was shown. The chain's own coin has no contract and says
+       so; its row does nothing. */
+    function tokenRow(token, say) {
+      var contract = typeof token.contract === 'string' && token.contract && token.contract !== 'native' ? token.contract : null;
+      var row = dom.el(contract ? 'button' : 'div', 'token-row');
+      if (contract) row.type = 'button';
       row.setAttribute('role', 'listitem');
       row.dataset.symbol = String(token.symbol);
       row.appendChild(logo(token.symbol, 24));
       var main = dom.el('div', 'token-main');
       main.appendChild(dom.el('span', 'token-symbol', token.symbol));
-      if (token.contract) {
-        var contract = dom.el('span', 'token-contract mono');
-        contract.setAttribute('data-dev-only', '');
-        dom.setText(contract, token.contract);
-        main.appendChild(contract);
+      var line = dom.el('span', 'token-contract mono');
+      if (contract) {
+        row.dataset.contract = contract;
+        row.setAttribute('aria-label', 'Copy the ' + token.symbol + ' contract address');
+        row.title = contract;
+        dom.setText(line, shortContract(contract));
+      } else {
+        dom.setText(line, 'The chain\'s own coin, no contract');
+        line.className = 'token-contract token-native';
       }
+      main.appendChild(line);
       row.appendChild(main);
-      var floor = minimumWords(token);
+      var side = dom.el('span', 'token-side');
       var min = dom.el('span', 'token-min mono');
-      dom.setText(min, floor ? 'min ' + floor : 'no minimum');
-      row.appendChild(min);
+      dom.setText(min, minimumWords(token));
+      side.appendChild(min);
+      if (contract) {
+        var glyph = dom.el('span', 'token-copy');
+        glyph.setAttribute('aria-hidden', 'true');
+        glyph.appendChild(icon('copy', 'token-copy-icon'));
+        glyph.appendChild(icon('done', 'token-copied-icon'));
+        side.appendChild(glyph);
+        dom.on(row, 'click', function () {
+          if (row.disabled) return;
+          row.disabled = true;
+          copyChecked(contract, function (sentence) { if (say) say(sentence); })
+            .then(function (ok) {
+              if (!ok || !state.alive) return;
+              row.dataset.copied = 'true';
+              dom.setText(line, 'Copied, ends in ...' + tail(contract));
+              if (row.__copiedTimer) window.clearTimeout(row.__copiedTimer);
+              row.__copiedTimer = window.setTimeout(function () {
+                row.__copiedTimer = 0;
+                delete row.dataset.copied;
+                dom.setText(line, shortContract(contract));
+              }, COPIED_MS);
+            })
+            .finally(function () { row.disabled = false; });
+        });
+      }
+      row.appendChild(side);
       return row;
     }
 
@@ -896,17 +1168,15 @@
 
       var notes = dom.el('div', 'deposit-notes');
       var plain = dom.el('p', 'deposit-plain');
-      dom.setText(plain, EVM.indexOf(n.id) >= 0
-        ? 'Ethereum, Base and Arbitrum use this same address. The network you send on is what decides where it lands, so choose ' + n.name + ' on the sending side.'
-        : 'Choose ' + n.words + ' on the sending side. Anything sent here from another network is lost.');
+      dom.setText(plain, sharedWords(n, network));
       notes.appendChild(plain);
 
       if (token) {
-        var floor = minimumWords(token);
         var minLine = dom.el('p', 'deposit-min');
-        minLine.appendChild(dom.el('span', '', floor ? 'Minimum ' : 'No minimum for ' + token.symbol + '.'));
-        if (floor) minLine.appendChild(dom.el('span', 'mono', floor));
-        if (floor) minLine.appendChild(dom.el('span', '', '.'));
+        var min = minimumOf(token);
+        minLine.appendChild(dom.el('span', '', min && min.shown
+          ? minimumWords(token).replace(/^Min /, 'Minimum ') + '.'
+          : 'No minimum for ' + token.symbol + '.'));
         var accepts = Array.isArray(network.accepts) ? network.accepts : [];
         if (accepts.length > 1) {
           var more = dom.el('button', 'netpick-link');
@@ -928,6 +1198,23 @@
       var held = state.deposit;
       var same = held && held.chain === n.id && String(held.symbol || '').toUpperCase() === String(watchSymbol || '').toUpperCase();
       if (!same) startWatch(n, watchSymbol, address);
+    }
+
+    /* Which networks this address also serves, from the report's own byte
+       comparison, never from a table: the bridge hands the EVM chains one
+       address, and the sentence names the ones it actually did. */
+    function sharedWords(n, network) {
+      var ids = network && Array.isArray(network.sharedWith) ? network.sharedWith : null;
+      if (ids === null && EVM.indexOf(n.id) >= 0) ids = EVM.filter(function (id) { return id !== n.id; });
+      var names = [];
+      for (var i = 0; ids && i < ids.length; i += 1) names.push(networkName(ids[i]));
+      if (!names.length) return 'Choose ' + n.words + ' on the sending side. Anything sent here from another network is lost.';
+      /* Three named and the rest counted: sixteen EVM chains in one sentence
+         is a sentence nobody reads to the end. */
+      var list;
+      if (names.length <= 3) list = names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+      else list = names.slice(0, 3).join(', ') + ' and ' + (names.length - 3) + ' more';
+      return n.name + ', ' + list + ' use this same address. The network you send on is what decides where it lands, so choose ' + n.words + ' on the sending side.';
     }
 
     /* Check 1 failed: one button, the system dialog, then a fresh fetch. On a
@@ -1075,6 +1362,17 @@
        tokens, or on its address once the acknowledgement has been given. */
     function go(stage, network) {
       if (network) state.network = network;
+      /* A network the window has not heard of yet (one the report names and
+         the six do not) is read off the report before its step is drawn,
+         rather than falling back to the tiles because the name was unknown
+         for a moment. */
+      if ((stage === 'address' || stage === 'tokens') && state.network && !networkOf(state.network) && !state.report) {
+        load().then(function () {
+          if (!state.alive) return;
+          go(stage, null);
+        });
+        return;
+      }
       if (stage === 'address' && state.network) {
         if (ackRemembered()) stageAddress();
         else stageTokens();
@@ -1103,6 +1401,12 @@
     NETWORKS: NETWORKS,
     words: networkWords,
     name: networkName,
+    networkOf: networkOf,
+    allNetworks: allNetworks,
+    filterNetworks: filterNetworks,
+    remember: remember,
+    minimumWords: minimumWords,
+    shortContract: shortContract,
     defaultSymbol: defaultSymbol,
     sortTokens: sortTokens,
     filterTokens: filterTokens,

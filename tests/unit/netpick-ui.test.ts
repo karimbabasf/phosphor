@@ -284,15 +284,15 @@ test('no string reaches the DOM as markup', () => {
 
 /* ---------- step one to step two to step three ---------- */
 
-test('the tiles are the five networks, and a tile leads to the tokens it credits', async () => {
+test('the tiles are the six quick networks, and a tile leads to the tokens it credits', async () => {
   const world = build({ ack: true });
   const view = world.render();
   assert.equal(stage(world), 'network');
   assert.ok(textOf(root(world)).includes('Pick the network you are sending on.'));
   const tiles = find(world.host, '.net-tile');
-  assert.deepEqual(tiles.map((t: Any) => t.dataset.network), ['eth', 'base', 'arb', 'sol', 'near']);
-  assert.deepEqual(find(world.host, '.net-tile-name').map((n: Any) => n.textContent), ['Ethereum', 'Base', 'Arbitrum', 'Solana', 'NEAR']);
-  assert.deepEqual(tiles.map((t: Any) => t.style['--net']), ['#627EEA', '#0052FF', '#12AAFF', '#9945FF', '#00EC97'], 'a tile does not carry its real network colour');
+  assert.deepEqual(tiles.map((t: Any) => t.dataset.network), ['eth', 'base', 'arb', 'sol', 'near', 'btc']);
+  assert.deepEqual(find(world.host, '.net-tile-name').map((n: Any) => n.textContent), ['Ethereum', 'Base', 'Arbitrum', 'Solana', 'NEAR', 'Bitcoin']);
+  assert.deepEqual(tiles.map((t: Any) => t.style['--net']), ['#627EEA', '#0052FF', '#12AAFF', '#9945FF', '#00EC97', '#F7931A'], 'a tile does not carry its real network colour');
   assert.equal(tiles[3].style['--net-accent'], '#14F195');
   // The report is read behind the tiles: the network the bridge refused is greyed once it lands.
   await flush();
@@ -326,7 +326,8 @@ test('every minimum is in the token\'s own unit, in mono at the right, and the b
   world.render({ stage: 'tokens', network: 'eth' });
   await flush();
   const mins = find(world.host, '.token-min');
-  assert.deepEqual(mins.map((n: Any) => n.textContent), ['min 0.0000001 ETH', 'min 0.001 USDC', 'min 0.001 USDT', 'min 0.001 DAI', 'min 0.001 PYUSD', 'min 0.0001 WBTC']);
+  // A floor under a millionth of the coin is dust and says so in words rather than in zeros.
+  assert.deepEqual(mins.map((n: Any) => n.textContent), ['No minimum', 'Min 0.001 USDC', 'Min 0.001 USDT', 'Min 0.001 DAI', 'Min 0.001 PYUSD', 'Min 0.0001 WBTC']);
   assert.ok(mins.every((n: Any) => String(n.className).split(' ').includes('mono')), 'a minimum is not in mono');
   const words = textOf(root(world)).join(' ');
   assert.equal(/\b1000\b|100000000000|1000000000000000/.test(words), false, 'a raw base-unit figure is on screen: ' + words);
@@ -410,7 +411,7 @@ test('the address step draws one address after its checks, starts the watch, and
   assert.equal('0x7d4e' + find(body, '.addr-mid').map((n: Any) => n.textContent).join('') + '0e1d', EVM);
   const text = textOf(root(world));
   assert.ok(text.includes('Send on Base only.'));
-  assert.ok(text.some((t) => t.startsWith('Ethereum, Base and Arbitrum use this same address.') && t.endsWith('choose Base on the sending side.')));
+  assert.ok(text.some((t) => t.startsWith('Base, Ethereum and Arbitrum use this same address.') && t.endsWith('choose Base on the sending side.')));
   assert.ok(find(body, '.deposit-min')[0].textContent.startsWith('Minimum 0.001 USDC.'), 'the minimum line does not carry the human number');
   assert.equal(find(world.host, 'button.chip').length, 0, 'chips on the address step');
   assert.equal(find(world.host, '.token-row').length, 0, 'the token list is on the address step');
@@ -534,7 +535,7 @@ test('a network the bridge refused, an edited wallet file, and a token it does n
 
 /* ---------- the Vault card and the developer switch ---------- */
 
-test('in the Vault card the address is handed off, the way back is not offered, and the contract sits behind the developer switch', async () => {
+test('in the Vault card the address is handed off, the way back is not offered, and every token row shows its contract or says it has none', async () => {
   const world = build({ ack: true });
   const handed: Any[] = [];
   world.render({ context: 'vault', stage: 'tokens', network: 'eth', onAddress: (network: string, symbol: string, row: Any) => { handed.push({ network, symbol, address: row.address }); } });
@@ -542,9 +543,10 @@ test('in the Vault card the address is handed off, the way back is not offered, 
   assert.equal(root(world).dataset.context, 'vault');
   assert.equal(buttonNamed(world.host, 'Change network'), undefined, 'a Change network link under a network menu');
   const contracts = find(world.host, '.token-contract');
-  assert.equal(contracts.length, 5, 'a contract row per token that has one');
-  assert.ok(contracts.every((c: Any) => c.hasAttribute('data-dev-only')), 'a contract is on screen without the switch');
-  assert.equal(contracts[0].textContent, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
+  assert.equal(contracts.length, 6, 'a contract line per token');
+  assert.equal(contracts[0].textContent, 'The chain\'s own coin, no contract');
+  assert.equal(contracts[1].textContent, '0xa0b8...eb48');
+  assert.equal(find(world.host, '.token-row')[1].title, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 'the whole contract is on the row for the pointer');
   const dev = find(world.host, '.netpick-dev')[0];
   assert.ok(dev.hasAttribute('data-dev-only'));
   assert.equal(dev.textContent, 'Bridge network id: eth:1');
@@ -559,17 +561,127 @@ test('the arrow keys walk the tiles and destroy takes the component off the page
   const world = build({ ack: true });
   const view = world.render();
   const tiles = find(world.host, '.net-tile');
-  assert.deepEqual(tiles.map((t: Any) => t.tabIndex), [0, -1, -1, -1, -1]);
+  assert.deepEqual(tiles.map((t: Any) => t.tabIndex), [0, -1, -1, -1, -1, -1]);
   tiles[0].dispatch('keydown', { key: 'ArrowRight' });
   assert.equal(focusedNow, tiles[1]);
-  assert.deepEqual(tiles.map((t: Any) => t.tabIndex), [-1, 0, -1, -1, -1]);
+  assert.deepEqual(tiles.map((t: Any) => t.tabIndex), [-1, 0, -1, -1, -1, -1]);
   tiles[1].dispatch('keydown', { key: 'End' });
-  assert.equal(focusedNow, tiles[4]);
-  tiles[4].dispatch('keydown', { key: 'ArrowRight' });
-  assert.equal(focusedNow, tiles[4], 'the focus fell off the end');
-  tiles[4].dispatch('keydown', { key: 'Home' });
+  assert.equal(focusedNow, tiles[5]);
+  tiles[5].dispatch('keydown', { key: 'ArrowRight' });
+  assert.equal(focusedNow, tiles[5], 'the focus fell off the end');
+  tiles[5].dispatch('keydown', { key: 'Home' });
   assert.equal(focusedNow, tiles[0]);
   view.destroy();
   assert.equal(find(world.host, '.netpick').length, 0);
   world.store.put(Object.assign({}, world.store.get(), { deposit: { phase: 'watching', chain: 'eth', symbol: 'USDC', startedAt: 'x' } }));
+});
+
+/* ---------- every network, and the contract under every token ---------- */
+
+function wideReport(): Any {
+  const base = report();
+  base.networks = base.networks.map((n: Any) => Object.assign({ popular: true, kind: n.id === 'sol' ? 'sol' : (n.id === 'near' ? 'near' : 'evm') }, n));
+  base.networks.push(
+    { id: 'btc', name: 'Bitcoin', words: 'Bitcoin (BTC)', kind: 'other', native: 'BTC', mark: 'BTC', colour: '#F7931A', popular: true, address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', memo: null, unavailable: null, warning: 'w', accepts: [Object.assign(token('BTC', 8, '5000', '0.00005'), { minimum: { shown: true, amount: '0.00005', usd: 4.1 } })] },
+    { id: 'bnb', name: 'BNB Smart Chain', words: 'BNB Smart Chain (BEP-20)', kind: 'evm', native: 'BNB', mark: 'BNB', colour: '#F3BA2F', popular: false, address: EVM, memo: null, unavailable: null, warning: 'w', accepts: [Object.assign(token('BNB', 18, '100000000000', '0.0000001'), { minimum: { shown: false, amount: '0.0000001', usd: 0.00006 } }), token('USDT', 18, '1', '0.000000000000000001', '0x55d398326f99059ff775485246999027b3197955')] },
+    { id: 'tron', name: 'Tron', words: 'Tron (TRC-20)', kind: 'other', native: 'TRX', mark: 'TRX', colour: '#FF060A', popular: false, address: 'TXYZ', memo: null, unavailable: 'the bridge refused tron:mainnet: paused', warning: 'w', accepts: [] },
+  );
+  return base;
+}
+
+test('the search under the tiles lists every network the report carries, and a row picks it', async () => {
+  const world = build({ report: wideReport() });
+  world.render();
+  await flush();
+  const input = find(world.host, '.netpick-search-input')[0];
+  assert.equal(input.placeholder, 'Search all 8 networks');
+  assert.equal(find(world.host, '.net-row').length, 0, 'the list is open before anything was typed');
+  input.value = 'bn';
+  input.dispatch('input');
+  const rows = find(world.host, '.net-row');
+  assert.deepEqual(rows.map((r: Any) => r.dataset.network), ['bnb']);
+  // The B is the mark's fallback initial: no logo file ships for BNB in the test's world.
+  assert.deepEqual(textOf(rows[0]), ['B', 'BNB Smart Chain', 'BNB Smart Chain (BEP-20)', 'BNB, USDT']);
+  rows[0].click();
+  assert.equal(stage(world), 'tokens');
+  assert.ok(textOf(root(world)).includes('Tokens credited on BNB Smart Chain'));
+});
+
+test('All networks opens the whole list, popular first, with a refused network greyed and named', async () => {
+  const world = build({ report: wideReport() });
+  world.render();
+  await flush();
+  const all = find(world.host, '.netpick-link').find((b: Any) => b.dataset.role === 'all-networks') as Any;
+  assert.equal(all.textContent, 'All 8 networks');
+  all.click();
+  const rows = find(world.host, '.net-row');
+  assert.deepEqual(rows.map((r: Any) => r.dataset.network), ['eth', 'base', 'arb', 'sol', 'near', 'btc', 'bnb', 'tron']);
+  const tron = rows[7];
+  assert.equal(tron.dataset.unavailable, 'true');
+  assert.ok(textOf(tron).includes('Unavailable'));
+  input(world).value = 'zzz';
+  input(world).dispatch('input');
+  assert.equal(find(world.host, '.net-row').length, 0);
+  assert.ok(textOf(root(world)).some((t) => t.startsWith('No network called zzz.')));
+});
+
+function input(world: World): Any {
+  return find(world.host, '.netpick-search-input')[0];
+}
+
+test('a floor the report calls dust says No minimum, a real one carries the dollars, and a network the report names is known to the address step', async () => {
+  const world = build({ report: wideReport() });
+  world.render({ stage: 'tokens', network: 'bnb' });
+  await flush();
+  assert.deepEqual(find(world.host, '.token-min').map((n: Any) => n.textContent), ['No minimum', 'No minimum']);
+  world.render({ stage: 'tokens', network: 'btc' });
+  await flush();
+  // Dollars above one are whole: "about $4" is what a person needs, not the cents.
+  assert.deepEqual(find(world.host, '.token-min').map((n: Any) => n.textContent), ['Min 0.00005 BTC, about $4']);
+  assert.equal(world.pick.words('btc'), 'Bitcoin (BTC)');
+  assert.equal(world.pick.words('bnb'), 'BNB Smart Chain (BEP-20)');
+  assert.equal(world.pick.kindOf('btc'), 'other');
+  assert.equal(world.pick.kindOf('bnb'), 'evm');
+});
+
+test('a token row with a contract copies it, reads it back, and says the last four; the chain\'s own coin has no button', async () => {
+  const world = build({ report: wideReport() });
+  world.render({ stage: 'tokens', network: 'eth' });
+  await flush();
+  const rows = find(world.host, '.token-row');
+  const eth = rows[0];
+  assert.equal(eth.tagName, 'DIV', 'the chain\'s own coin got a button');
+  assert.equal(find(eth, '.token-contract')[0].textContent, 'The chain\'s own coin, no contract');
+  assert.equal(find(eth, '.token-copy').length, 0);
+  const usdc = rows[1];
+  assert.equal(usdc.tagName, 'BUTTON');
+  assert.equal(usdc.getAttribute('aria-label'), 'Copy the USDC contract address');
+  assert.equal(usdc.dataset.contract, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
+  assert.equal(find(usdc, '.token-contract')[0].textContent, '0xa0b8...eb48');
+  assert.equal(find(usdc, '.token-copy').length, 1);
+  usdc.click();
+  await flush();
+  await flush();
+  const written = world.calls.filter((c) => c.route === 'clipboard').map((c) => c.text);
+  assert.deepEqual(written, ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48']);
+  assert.equal(usdc.dataset.copied, 'true');
+  assert.equal(find(usdc, '.token-contract')[0].textContent, 'Copied, ends in ...eb48');
+  assert.equal(find(world.host, '.netpick-copied')[0].textContent, 'Copied, ends in ...eb48');
+  // The moment passes and the row reads as it did.
+  world.timers.forEach((fn) => fn());
+  assert.equal(usdc.dataset.copied, undefined);
+  assert.equal(find(usdc, '.token-contract')[0].textContent, '0xa0b8...eb48');
+});
+
+test('a clipboard that reads back something else is not called copied on a contract row either', async () => {
+  const world = build({ report: wideReport() });
+  world.sandbox.navigator.clipboard.readText = () => Promise.resolve('something else');
+  world.render({ stage: 'tokens', network: 'eth' });
+  await flush();
+  const usdc = find(world.host, '.token-row')[1];
+  usdc.click();
+  await flush();
+  await flush();
+  assert.equal(usdc.dataset.copied, undefined, 'a mismatched clipboard was reported as copied');
+  assert.ok(find(world.host, '.netpick-copied')[0].textContent.startsWith('The clipboard does not hold the address'));
 });

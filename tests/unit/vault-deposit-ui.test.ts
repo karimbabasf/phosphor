@@ -436,7 +436,7 @@ test('the card says the network once, plainly, and the minimum in the unit a per
   const text = textOf(dialog);
   assert.ok(text.includes('Send on Ethereum only.'), 'the address step does not name the network');
   assert.ok(text.some((t) => t.includes('Ethereum, Base and Arbitrum use this same address.')), 'the EVM line is missing');
-  assert.ok(text.some((t) => t.includes('choose Ethereum on the sending side')), 'the sending-side sentence is missing');
+  assert.ok(text.some((t) => t.includes('choose Ethereum (ERC-20) on the sending side')), 'the sending-side sentence is missing');
   const min = find(dialog, '.deposit-min')[0];
   assert.ok(min.textContent.startsWith('Minimum 1 USDC.'), min.textContent);
   assert.equal(text.some((t) => t.includes('1000000')), false, 'the raw base units reached the screen');
@@ -526,9 +526,10 @@ test('the first landed deposit on a wallet that is not backed up opens the backu
   const text = textOf(backup);
   assert.ok(text.includes('You have money in. Back up now.'));
   const buttons = find(backup, 'button');
-  assert.equal(buttons.length, 1, 'the backup card has more than one button');
-  assert.equal(buttons[0].textContent, 'Back up now');
-  buttons[0].click();
+  assert.equal(buttons.length, 2, 'the backup card has the X and Back up now, nothing else');
+  assert.equal(buttons[0].getAttribute('aria-label'), 'Not now');
+  assert.equal(buttons[1].textContent, 'Back up now');
+  buttons[1].click();
   assert.equal(dialog.open, false, 'Back up now left the deposit card open');
   assert.ok(world.calls.some((c) => c.route === 'startReveal'), 'Back up now did not go to Reveal');
 
@@ -573,7 +574,7 @@ test('Change network goes back to the tiles, and a different network is a fresh 
   back.click();
   assert.equal(pick.dataset.stage, 'network');
   const tiles = find(dialog, '.net-tile');
-  assert.deepEqual(tiles.map((t: Any) => t.dataset.network), ['eth', 'base', 'arb', 'sol', 'near']);
+  assert.deepEqual(tiles.map((t: Any) => t.dataset.network), ['eth', 'base', 'arb', 'sol', 'near', 'btc']);
   (tiles[1] as Any).click();
   await flush();
   assert.equal(pick.dataset.stage, 'tokens');
@@ -598,7 +599,7 @@ test('with no acknowledgement on this Mac the card opens on the token list, and 
   assert.equal(find(dialog, 'canvas').length, 0, 'the address was drawn before the acknowledgement');
   const rows = find(dialog, '.token-row');
   assert.deepEqual(rows.map((r: Any) => r.dataset.symbol), ['ETH', 'USDC'], 'the chain\'s own coin is not first');
-  assert.deepEqual(find(dialog, '.token-min').map((n: Any) => n.textContent), ['min 0.001 ETH', 'min 1 USDC']);
+  assert.deepEqual(find(dialog, '.token-min').map((n: Any) => n.textContent), ['Min 0.001 ETH', 'Min 1 USDC']);
   const go = find(dialog, 'button').find((b: Any) => b.textContent === 'Show the address') as Any;
   assert.equal(go.disabled, true, 'the address button is live before the box is ticked');
   const box = find(dialog, '.ack-input')[0];
@@ -612,4 +613,37 @@ test('with no acknowledgement on this Mac the card opens on the token list, and 
   // Remembered: the same watch again opens straight on the address.
   assert.equal(world.sandbox.localStorage.getItem('phosphor.depositAck'), '1');
   assert.equal(world.calls.filter((c) => c.route === '/api/deposit/show').length, 0, 'the card started a second watch for the watch it was opened with');
+});
+
+/* ---------- the reminder at every start ---------- */
+
+test('with money in and the phrase not proven, the backup card is up once per start, with an X that puts it away', async () => {
+  const world = build({ vault: { custody: 'secure-enclave', backedUp: false } });
+  assert.equal(world.card(), null, 'a card before the window knows what it holds');
+  world.store.put(Object.assign({}, world.store.get(), { basic: { totalUsd: 12.5 } }));
+  const card = world.card();
+  assert.ok(card, 'no reminder with money in and no backup');
+  assert.ok(textOf(card).includes('You have money in. Back up now.'));
+  const buttons = find(card, 'button');
+  assert.equal(buttons[0].getAttribute('aria-label'), 'Not now');
+  assert.equal(buttons[1].textContent, 'Back up now');
+  // A later frame with the same facts does not raise a second card this session.
+  world.store.put(Object.assign({}, world.store.get(), { basic: { totalUsd: 13 } }));
+  assert.equal(world.card(), card, 'the reminder came back inside one session');
+});
+
+test('the reminder waits while a request is waiting, and never shows for an empty or proven wallet', async () => {
+  const waiting = build({ vault: { custody: 'secure-enclave', backedUp: false } });
+  waiting.store.put(Object.assign({}, waiting.store.get(), { basic: { totalUsd: 12.5 }, proposals: [{ id: 'p1', status: 'pending' }] }));
+  assert.equal(waiting.card(), null, 'the reminder covered a request waiting on the person');
+  waiting.store.put(Object.assign({}, waiting.store.get(), { proposals: [] }));
+  assert.ok(waiting.card(), 'the reminder did not come once the request was answered');
+
+  const empty = build({ vault: { custody: 'secure-enclave', backedUp: false } });
+  empty.store.put(Object.assign({}, empty.store.get(), { basic: { totalUsd: 0 } }));
+  assert.equal(empty.card(), null, 'a reminder for a wallet holding nothing');
+
+  const proven = build({ vault: { custody: 'secure-enclave', backedUp: true } });
+  proven.store.put(Object.assign({}, proven.store.get(), { basic: { totalUsd: 500 } }));
+  assert.equal(proven.card(), null, 'a reminder for a wallet whose phrase is proven');
 });

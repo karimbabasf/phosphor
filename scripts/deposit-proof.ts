@@ -10,6 +10,9 @@
 //
 // Fixture data only: the demo wallet on a temp directory, never the live one. Run:
 //   node scripts/deposit-proof.ts
+// PROOF_LIVE_BRIDGE=1 skips the fixture and lets the demo backend ask the real bridge for the
+// demo wallet's addresses on every network it credits (read-only calls, thirty-odd of them),
+// which is the one way to see the whole network list drawn from real rows.
 // playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy. Without
 // playwright's own Chromium installed, point PROOF_BROWSER at a Chromium binary (Brave's, say).
 
@@ -100,9 +103,10 @@ async function startApp(port: number): Promise<void> {
   base = `http://127.0.0.1:${port}`;
   const fixture = path.join(dataDir, 'receive.json');
   fs.writeFileSync(fixture, JSON.stringify(bridgeFixture()));
+  const live = process.env.PROOF_LIVE_BRIDGE === '1';
   app = spawn(process.execPath, ['src/main.ts'], {
     cwd: ROOT,
-    env: { ...process.env, ACC_MODE: 'demo', ACC_PORT: String(port), ACC_DATA_DIR: dataDir, PHOSPHOR_DEMO_RECEIVE: fixture },
+    env: { ...process.env, ACC_MODE: 'demo', ACC_PORT: String(port), ACC_DATA_DIR: dataDir, ...(live ? {} : { PHOSPHOR_DEMO_RECEIVE: fixture }) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   app.stdout?.on('data', (d: Buffer) => log.push(d.toString()));
@@ -160,8 +164,10 @@ async function main(): Promise<void> {
   await startApp(port);
   await createWallet();
   const report = (await (await fetch(`${base}/api/intents-receive`)).json()) as Json;
-  if (!Array.isArray(report.networks) || report.networks.length !== 5 || report.networks.some((n: Json) => n.address === null)) {
-    throw new Error(`the demo fixture did not reach the report: ${JSON.stringify(report).slice(0, 400)}`);
+  const five = ['eth', 'base', 'arb', 'sol', 'near'];
+  const drawn = Array.isArray(report.networks) ? report.networks : [];
+  if (drawn.length < 5 || five.some((id) => !drawn.some((n: Json) => n.id === id && n.address !== null))) {
+    throw new Error(`the bridge report is missing one of the five: ${JSON.stringify(report).slice(0, 400)}`);
   }
 
   const require = createRequire(import.meta.url);
@@ -208,6 +214,17 @@ async function main(): Promise<void> {
       await sleep(350);
       await shoot('stage1');
 
+      /* Every network the bridge credits, listed under the six tiles. */
+      const all = await page.$('.netpick-link[data-role="all-networks"]');
+      if (all) {
+        await all.click();
+        await page.waitForSelector('.net-row', { timeout: 10_000 });
+        await showFold();
+        await sleep(300);
+        await shoot('stage1-all');
+        await all.click();
+      }
+
       // Step two: the tokens Base credits, the box ticked.
       await page.click('.net-tile[data-network="base"]');
       await page.waitForSelector('.token-row', { timeout: 20_000 });
@@ -227,6 +244,12 @@ async function main(): Promise<void> {
       await shoot('stage3');
 
       // The Vault tab, then with the developer switch on, then the card it opens.
+      /* The trade strip: the price block and the deck at its floor. */
+      await page.click('.tab[data-tab="trade"]');
+      await page.waitForSelector('.trade-strip .px', { timeout: 20_000 });
+      await sleep(900);
+      await shoot('trade');
+
       await page.click('.tab[data-tab="vault"]');
       await page.waitForSelector('#view-vault .netsel', { timeout: 20_000 });
       await page.waitForSelector('#view-vault .token-row', { timeout: 20_000 });

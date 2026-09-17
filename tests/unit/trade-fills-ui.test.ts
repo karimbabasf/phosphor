@@ -747,13 +747,15 @@ test('the strip is the coin, the venue, the mark, free collateral and what the p
 test('the price ticks in colour: a rise marks the digits up, a fall marks them down', async () => {
   const world = await renderPayload(flat());
   const [px] = withClass(world.host, 'px');
-  assert.equal(px.textContent, '$60,000.00');
+  // The figure is two spans, the cents one step quieter, and reads as one price.
+  assert.equal(textOf(px).join(''), '$60,000.00');
+  assert.equal(px.childNodes[1].textContent, '.00');
   assert.equal(px.dataset.tick, undefined, 'the first paint is not a tick');
   const up = flat();
   up.markets = [{ coin: 'BTC', markPx: 60010, szDecimals: 5, maxLeverage: 20, assetId: 0 }];
   world.set(up);
   await world.refresh();
-  assert.equal(px.textContent, '$60,010.00');
+  assert.equal(textOf(px).join(''), '$60,010.00');
   assert.equal(px.dataset.tick, 'up');
   const down = flat();
   down.markets = [{ coin: 'BTC', markPx: 59990, szDecimals: 5, maxLeverage: 20, assetId: 0 }];
@@ -774,7 +776,7 @@ test('reduced motion skips the tick', async () => {
   world.set(up);
   await world.refresh();
   const [px] = withClass(world.host, 'px');
-  assert.equal(px.textContent, '$60,010.00');
+  assert.equal(textOf(px).join(''), '$60,010.00');
   assert.equal(px.dataset.tick, undefined);
 });
 
@@ -834,17 +836,16 @@ test('no money at all is one sentence that names the next step', async () => {
 
 test('the mark price is on the rail whether or not anything is open', async () => {
   const { host, lines } = await renderPayload(flat());
-  assert.ok(lines.includes('$60,000.00'), `no mark price: ${JSON.stringify(lines)}`);
   const [mark] = withClass(host, 'trade-mark-price');
   assert.ok(mark !== undefined, 'the mark price has no type of its own');
-  assert.equal(mark.textContent, '$60,000.00');
+  assert.equal(textOf(mark).join(''), '$60,000.00', `no mark price: ${JSON.stringify(lines)}`);
 });
 
 test('a market the payload does not price reads as unknown rather than as zero', async () => {
   const data = flat();
   data.markets = [];
   const { host } = await renderPayload(data);
-  assert.equal(withClass(host, 'trade-mark-price')[0].textContent, '--');
+  assert.equal(textOf(withClass(host, 'trade-mark-price')[0]).join(''), '--');
 });
 
 test('an unreachable venue says so in plain words rather than drawing its last numbers as current', async () => {

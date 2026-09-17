@@ -416,8 +416,30 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: var(--s-1);
-  scrollbar-gutter: stable;
+  /* No scrollbar: a grey track down a column of words is the one thing on
+     it that is not the conversation (Karim, 2026-09-16: "remove this scroll
+     thing for the agent assistant"). The fade at the edge that has more
+     behind it says what the track said. */
+  scrollbar-width: none;
+}
+
+.transcript::-webkit-scrollbar {
+  display: none;
+}
+
+.transcript[data-cut="top"] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 32px);
+}
+
+.transcript[data-cut="bottom"] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+}
+
+.transcript[data-cut="both"] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
 }
 
 /* A short conversation sits against the composer rather than floating at the top

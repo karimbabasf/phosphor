@@ -455,8 +455,13 @@ test('the Addresses card is a network menu over the token list, and Show the add
   await flush();
   const card = find(world.view, '.panel').find((p: Any) => p.dataset.surface === 'addresses') as Any;
   assert.ok(card, 'no Addresses card');
-  // The six cards, in the order the grid wants them: Custody and Recovery first, Addresses across.
-  assert.deepEqual(find(world.view, '.panel').map((p: Any) => p.dataset.surface), ['custody', 'recovery', 'addresses', 'agent', 'window', 'danger']);
+  // Two columns (Custody, Addresses, Danger down the left; Recovery, Agent, Window down the
+  // right), and the reading order every card carries as `order` for the one-column world.
+  const panels = find(world.view, '.panel');
+  assert.deepEqual(panels.map((p: Any) => p.dataset.surface), ['custody', 'addresses', 'danger', 'recovery', 'agent', 'window']);
+  const byOrder = panels.slice().sort((a: Any, b: Any) => Number(a.style.order) - Number(b.style.order));
+  assert.deepEqual(byOrder.map((p: Any) => p.dataset.surface), ['custody', 'recovery', 'addresses', 'agent', 'window', 'danger']);
+  assert.equal(find(world.view, '.vault-column').length, 2);
 
   const button = find(card, '.netsel')[0];
   assert.equal(button.getAttribute('aria-haspopup'), 'listbox');

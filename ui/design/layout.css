@@ -525,6 +525,40 @@ html, body {
   flex: 1 1 0;
 }
 
+/* A card that can be put away: the title at the left, one 24 px X at the
+   right, quiet until pointed at. Only a card to read carries one; an ask
+   has No and Yes and nothing else. */
+.dock-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.dock-close {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: -2px -4px 0 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+.dock-close .icon { width: 16px; height: 16px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .dock-close:hover { color: var(--text); background: var(--bg-2); }
+}
+
+.dock-close:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
 /* The rail's own report, which arrives as lines rather than a paragraph. */
 .dock-summary {
   white-space: pre-wrap;

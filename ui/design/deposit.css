@@ -33,10 +33,20 @@
 
 /* ---------- step one: the network ---------- */
 
+/* Six tiles, one row, always: the columns are fixed so the row never wraps
+   and never leaves one tile alone on a second line (Karim, 2026-09-16: "make
+   them either fit in one row or something"). Under 480 px of room the six
+   become two rows of three, still even. */
 .netpick-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--s-2);
+}
+
+@container (max-width: 479px) {
+  .netpick-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .net-tile {
@@ -45,14 +55,16 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: var(--s-2);
-  min-height: 92px;
-  padding: var(--s-4) var(--s-2) var(--s-3);
+  min-height: 84px;
+  min-width: 0;
+  padding: var(--s-3) var(--s-1);
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--bg-1);
   color: var(--text-2);
-  font-size: var(--fs-13);
+  font-size: var(--fs-12);
   font-weight: 500;
   letter-spacing: -0.005em;
   text-align: center;
@@ -66,8 +78,8 @@
 .net-tile-mark {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
 }
 
 .net-tile .logo {
@@ -80,6 +92,10 @@
 
 .net-tile-name {
   line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .net-tile:hover,
@@ -111,20 +127,103 @@
 
 /* The bridge refused this one just now. Still on the board, still tells why
    on hover, and the click leads to the sentence instead of an address. */
-.net-tile[data-unavailable="true"] {
+.net-tile[data-unavailable="true"],
+.net-row[data-unavailable="true"] {
   opacity: 0.45;
 }
 
 /* Base's mark is a square of pure blue, which grayscale turns to near black:
    lifted at rest so it reads as a square like the others read as marks. */
-.net-tile .logo[data-token="BASE"] {
+.net-tile .logo[data-token="BASE"],
+.net-row .logo[data-token="BASE"] {
   filter: grayscale(1) brightness(3.2);
 }
 
 .net-tile:hover .logo[data-token="BASE"],
 .net-tile:focus-visible .logo[data-token="BASE"],
-.net-tile[aria-current="true"] .logo[data-token="BASE"] {
+.net-tile[aria-current="true"] .logo[data-token="BASE"],
+.net-row:hover .logo[data-token="BASE"],
+.net-row:focus-visible .logo[data-token="BASE"] {
   filter: none;
+}
+
+/* The search over every network, and the list it opens: the same list a
+   token gets, one row per network with what it credits at the right. The
+   rows keep the tiles' rule, colourless until pointed at. */
+.netpick-netlist {
+  max-height: min(48vh, 440px);
+}
+
+.net-row {
+  --net: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  min-height: 48px;
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+.net-row:first-child { border-top: 0; }
+
+.net-row .logo {
+  filter: grayscale(1);
+  opacity: 0.8;
+  transition: filter var(--dur-press) var(--ease-out),
+              opacity var(--dur-press) var(--ease-out);
+}
+
+.net-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.net-row-name {
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.net-row-words {
+  font-size: var(--fs-11);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.net-row-side {
+  flex: 0 0 auto;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .net-row:hover { background: var(--bg-1); }
+  .net-row:hover .logo { filter: none; opacity: 1; }
+  .net-row:hover .net-row-name { color: var(--net); }
+}
+
+.net-row:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.netpick-netfoot {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.netpick-netfoot:not(:has(> :not([hidden]))),
+.netpick-netfoot .netpick-link:empty {
+  display: none;
 }
 
 /* ---------- the line above steps two and three ---------- */
@@ -249,13 +348,39 @@
   display: flex;
   align-items: center;
   gap: var(--s-3);
-  min-height: 48px;
+  width: 100%;
+  min-height: 52px;
   padding: var(--s-2) var(--s-3);
   border-top: 1px solid var(--line);
+  color: var(--text);
+  text-align: left;
 }
 
 .token-row:first-child {
   border-top: 0;
+}
+
+/* A row with a contract is a button: the pointer says so, the glyph at the
+   right says what a click does, and the wash under the pointer is the same
+   one every list row in the window wears. */
+button.token-row {
+  cursor: pointer;
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.token-row:hover { background: var(--bg-1); }
+  button.token-row:hover .token-copy { color: var(--text); }
+  button.token-row:hover .token-contract { color: var(--text-2); }
+}
+
+button.token-row:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+button.token-row[disabled] {
+  cursor: default;
 }
 
 .token-main {
@@ -269,26 +394,65 @@
 .token-symbol {
   font-size: var(--fs-14);
   font-weight: 500;
+  line-height: 1.3;
   color: var(--text);
 }
 
+/* The contract's ends under the symbol, quiet, in mono because it is read
+   against an explorer. The chain's own coin says it has none, in the UI face. */
 .token-contract {
+  display: block;
   font-size: var(--fs-11);
-  color: var(--text-3);
-  overflow-wrap: anywhere;
   line-height: 1.4;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--dur-press) var(--ease-out);
 }
 
-:root[data-developer="true"] .token-contract {
-  display: block;
+.token-row[data-copied="true"] .token-contract {
+  color: var(--up);
+}
+
+.token-side {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
 }
 
 .token-min {
-  flex: 0 0 auto;
-  font-size: var(--fs-13);
+  font-size: var(--fs-12);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* The copy glyph: 16 px, quiet until the row is pointed at, a tick in the
+   up colour for a moment once the clipboard read back the contract. */
+.token-copy {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+  transition: color var(--dur-press) var(--ease-out);
+}
+
+.token-copy .icon {
+  width: 16px;
+  height: 16px;
+  grid-area: 1 / 1;
+}
+
+.token-copied-icon { opacity: 0; }
+.token-row[data-copied="true"] .token-copy { color: var(--up); }
+.token-row[data-copied="true"] .token-copy-icon { opacity: 0; }
+.token-row[data-copied="true"] .token-copied-icon { opacity: 1; }
+
+.netpick-copied:empty {
+  display: none;
 }
 
 .netpick-empty {
@@ -590,6 +754,11 @@ dialog.deposit-dialog {
 @media (prefers-reduced-motion: reduce) {
   .net-tile,
   .net-tile .logo,
+  .net-row,
+  .net-row .logo,
+  button.token-row,
+  .token-copy,
+  .token-contract,
   .netpick-back,
   .ack-row,
   .ack-box,
