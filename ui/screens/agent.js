@@ -33,14 +33,14 @@
     proposal_status: 'checking the approval',
     market_search: 'looking up a market',
     log_tail: 'reading the log',
-    /* The one tool that leaves this machine, and the row says so in its own
-       words beside the phrase. A person watching their wallet app reach the
-       internet is entitled to see that happen. */
+    /* The tools that leave this machine (LEAVES), and the row says so in its
+       own words beside the phrase. A person watching their wallet app reach
+       the internet is entitled to see that happen. */
     research: 'reading the news',
     skill: 'reading its instructions',
     trade_read: 'reading the account',
     deposit: 'showing a deposit address',
-    /* public chain data, read only */
+    /* public chain data, read only, and it leaves the machine too */
     chain_address: 'looking up an address',
     chain_transactions: 'reading an address\'s history',
     chain_transaction: 'reading a transaction',
@@ -92,9 +92,16 @@
     start: 'starting up'
   };
 
-  /* The tools that reach past this machine. The step row names them, because a
-     wallet app opening the internet is a fact a person is owed in words. */
-  var LEAVES = { research: true };
+  /* The tools that reach past this machine: the news, and the public chain
+     reads. The step row names them, because a wallet app opening the internet
+     is a fact a person is owed in words. */
+  var LEAVES = {
+    research: true,
+    chain_address: true,
+    chain_transactions: true,
+    chain_transaction: true,
+    intents_activity: true
+  };
 
   /* WHAT the call was about, not just what kind of call it was. The tool event
      already carries the arguments the model sent, and dropping them was the

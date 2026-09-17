@@ -89,19 +89,26 @@
      the dock itself (ui/screens/decision.js reads surfaceForProposal). */
   var DOCK = 'dock';
 
-  /* The one tool that leaves this machine. Its light goes out through the top
-     of the window and comes back, rather than crossing to a panel, because
-     nothing in this window is where it went. */
-  var LEAVES = { research: true };
+  /* The tools that leave this machine: the news, and the public chain reads
+     (src/chainscan). Their light goes out through the top of the window and
+     comes back, rather than crossing to a panel, because nothing in this
+     window is where it went. */
+  var LEAVES = {
+    research: true,
+    chain_address: true,
+    chain_transactions: true,
+    chain_transaction: true,
+    intents_activity: true
+  };
 
   /* THE BEAM FLIES FOR WRITES ONLY. A write is a tool that changes what the
      window shows (the chart's one write, a layout, a plan drawn as an idea, a
      highlight, an overlay, the focus, a clear, the theme, the view) or asks a
      person to click (every propose verb). A read lights nothing: the agent
      reads balances and the chart constantly, and a panel that scanned on every
-     one of those was a window flashing for an agent thinking. The one read
-     that still flies is research, because its light is about where the call
-     went rather than that a call happened. */
+     one of those was a window flashing for an agent thinking. The reads that
+     still fly are the ones that leave the machine (LEAVES), because their
+     light is about where the call went rather than that a call happened. */
   var WRITES = {
     chart_draw: true,
     chart_layout: true,

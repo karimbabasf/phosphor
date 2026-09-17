@@ -450,3 +450,45 @@ test('cards.js builds nothing that decides anything and writes no markup', () =>
   const buttons = CARDS_SOURCE.match(/dom\.el\('button'[^\n]*/g) ?? [];
   assert.deepEqual(buttons.map((b) => b.trim()), ["dom.el('button', 'btn btn-ghost btn-sm tcard-open');"], 'an unknown button site in cards.js');
 });
+
+test('a chain_address answer is a small data block through the facts card, and its step row says the call left the machine', () => {
+  // src/chainscan (feat/chainscan) puts chain_address on TOOL_DATA_TOOLS. No card of its own:
+  // the generic facts card takes the payload, the long address wraps, the counts are mono, the
+  // nested balance flattens to two facts, and the token list is counted rather than dumped.
+  const world = build();
+  world.ask('who is this address');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__chain_address', input: { network: 'ethereum', address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' } });
+  const step = all(world.host, 'step')[0];
+  assert.ok(step, 'no step row');
+  assert.equal(all(step, 'step-leaves')[0].textContent, 'leaves this computer', 'a chain read did not say it left the machine');
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__chain_address', ok: true });
+  world.emit({
+    kind: 'tool_data',
+    name: 'mcp__phosphor__chain_address',
+    input: { network: 'ethereum', address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' },
+    data: {
+      network: 'ethereum',
+      address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+      ok: true,
+      txCount: 1842,
+      balance: { amount: '0.51', symbol: 'ETH' },
+      isContract: false,
+      lastSeen: '2026-09-12T10:00:00Z',
+      source: 'eth.blockscout.com',
+      tokens: [{ symbol: 'USDC', amount: '12.5' }, { symbol: 'DAI', amount: '3' }],
+    },
+  });
+  const card = world.cardNodes('kv')[0];
+  assert.ok(card, 'no facts card was drawn for chain_address');
+  const keys = all(card, 'tcard-kv-key').map((n) => n.textContent);
+  const values = all(card, 'tcard-kv-value');
+  const value = (key: string): Any => values[keys.indexOf(key)];
+  assert.ok(keys.includes('address'), keys.join(' | '));
+  assert.equal(value('address').textContent, '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045');
+  assert.equal(value('tx count').textContent, '1842');
+  assert.ok(value('tx count').className.includes('mono'), 'the count is not in the mono face');
+  assert.equal(value('balance amount').textContent, '0.51');
+  assert.equal(value('balance symbol').textContent, 'ETH');
+  assert.equal(value('is contract').textContent, 'no');
+  assert.equal(value('tokens').textContent, '2 items');
+});

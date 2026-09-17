@@ -219,10 +219,12 @@ test('switch lights the tab it is going TO, read from the tool argument, not the
   assert.equal(trace.surfaceOf('switch', { mode: 'sideways' }).id, 'tabs');
 });
 
-test('the one tool that leaves this machine says so, and an unknown tool lands on the assistant', () => {
+test('the tools that leave this machine say so, and an unknown tool lands on the assistant', () => {
   const trace = load();
-  assert.equal(trace.surfaceOf('research').leaves, true);
-  assert.equal(trace.surfaceOf('research').id, 'assistant');
+  for (const tool of ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity']) {
+    assert.equal(trace.surfaceOf(tool).leaves, true, tool);
+    assert.equal(trace.surfaceOf(tool).id, 'assistant', tool);
+  }
   assert.equal(trace.surfaceOf('wallet').leaves, false);
   // A tool id from a model that no row knows still comes from the assistant, so it lights there.
   assert.equal(trace.surfaceOf('some_tool_added_next_release').id, 'assistant');

@@ -141,9 +141,16 @@ test('every tool the server offers has a phrase, not an id', () => {
   assert.equal(agent.toolLabel('set_theme'), 'recolouring the window');
 });
 
-test('the one tool that leaves this machine says so', () => {
+test('the tools that leave this machine say so', () => {
   const agent = load();
   assert.equal(agent.toolLabel('research'), 'reading the news');
+  assert.equal(agent.toolLabel('chain_transactions'), 'reading an address\'s history');
+  // The step row's own words beside the phrase come from LEAVES, which names the news and the
+  // four public chain reads: the wallet app reaching the internet is a fact a person is owed.
+  const table = /var LEAVES = \{([^}]*)\}/.exec(SOURCE)?.[1] ?? '';
+  for (const tool of ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity']) {
+    assert.ok(new RegExp(`\\b${tool}: true`).test(table), `${tool} is not marked as leaving the machine`);
+  }
 });
 
 test('the server prefix is stripped and an unknown tool prints its own name', () => {

@@ -8,12 +8,13 @@
 //
 // Three rules carry weight beyond the table. A tool that only asks lands amber
 // on the dock, because amber in this window means a person has to click and
-// the dock is where the click is. The one tool that leaves this machine is
-// marked, so the trace can send its light out of the window and back rather
-// than across it. And the beam flies for WRITES only: a tool that changes what
-// the window shows, or asks a person to click. A read lights nothing, because
-// a panel that lit on every wallet read was a window flashing for an agent
-// thinking, and the agent thinks constantly.
+// the dock is where the click is. The tools that leave this machine (the news,
+// the chain reads) are marked, so the trace can send their light out of the
+// window and back rather than across it. And the beam flies for WRITES only: a
+// tool that changes what the window shows, asks a person to click, or leaves
+// the machine. Any other read lights nothing, because a panel that lit on
+// every wallet read was a window flashing for an agent thinking, and the agent
+// thinks constantly.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -117,10 +118,6 @@ const READS: Array<[string, string]> = [
   ['profile_learned', 'assistant'],
   ['agent_roster', 'assistant'],
   ['agent_spawn', 'assistant'],
-  ['chain_address', 'assistant'],
-  ['chain_transactions', 'assistant'],
-  ['chain_transaction', 'assistant'],
-  ['intents_activity', 'assistant'],
 ];
 
 for (const [tool, id] of READS) {
@@ -155,11 +152,14 @@ test('the tools that move money land where the money moved, in the assistant col
   assert.deepEqual(plain(world.trace.surfaceOf('trade')), { id: 'position', tone: 'glow', leaves: false });
 });
 
-test('the one tool that leaves this machine is marked', () => {
+test('the tools that leave this machine are marked: the news and the chain reads', () => {
   const world = build();
-  const where = world.trace.surfaceOf('research');
-  assert.equal(where.leaves, true);
-  assert.equal(where.id, 'assistant');
+  for (const tool of ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity']) {
+    const where = world.trace.surfaceOf(tool);
+    assert.equal(where.leaves, true, `${tool} does not say it leaves`);
+    assert.equal(where.id, 'assistant');
+    assert.equal(where.tone, 'glow');
+  }
 });
 
 test('the server prefix is stripped and a tool nobody has mapped lands on the assistant', () => {
@@ -248,7 +248,6 @@ for (const [tool, id, tone] of WRITES) {
 const QUIET: string[] = [
   'wallet', 'composition', 'policy_show', 'proposal_status', 'log_tail', 'deposit',
   'chart_read', 'chart_scan', 'chart_batch', 'chart_snapshot', 'market_search', 'trade_read', 'trade_batch',
-  'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity',
   'start', 'skill', 'agent_roster', 'agent_board', 'agent_jobs', 'some_new_tool', 'constructor',
 ];
 
@@ -287,27 +286,33 @@ test('a result for a step nobody opened releases nothing', () => {
   assert.deepEqual(world.calls, []);
 });
 
-test('the tool that leaves the machine flies out of the window before it comes back', () => {
-  // research is a read, and the one read that still flies: its light is about WHERE the
-  // call went, not that a call happened. A person watching their wallet app reach the
-  // internet is entitled to see it, every time.
-  const world = build();
-  const node = { dot: true };
-  world.step({ id: 's3', name: 'research', state: 'live', node });
-  assert.equal(world.calls.length, 1);
-  const out = world.calls[0];
-  assert.equal(out.call, 'fire');
-  assert.equal(out.from, node);
-  assert.deepEqual(plain(out.to), { x: 720, y: -20 }, 'the light did not leave through the top of the window');
-  assert.equal(out.then, 'none');
-  // The return leg is what holds the assistant, so the step stays lit while
-  // the network call runs.
-  out.done();
-  const back = world.calls[1];
-  assert.deepEqual(plain(back.from), { x: 720, y: -20 });
-  assert.equal(back.to, 'assistant');
-  assert.equal(back.then, 'hold');
-});
+for (const tool of ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity']) {
+  test(`${tool} leaves the machine: its light flies out of the window before it comes back`, () => {
+    // A read, and one of the reads that still fly: its light is about WHERE the call went, not
+    // that a call happened. A person watching their wallet app reach the internet is entitled to
+    // see it, every time.
+    const world = build();
+    const node = { dot: true };
+    world.step({ id: 's3', name: tool, state: 'live', node });
+    assert.equal(world.calls.length, 1);
+    const out = world.calls[0];
+    assert.equal(out.call, 'fire');
+    assert.equal(out.from, node);
+    assert.deepEqual(plain(out.to), { x: 720, y: -20 }, 'the light did not leave through the top of the window');
+    assert.equal(out.then, 'none');
+    // The return leg is what holds the assistant, so the step stays lit while
+    // the network call runs.
+    out.done();
+    const back = world.calls[1];
+    assert.deepEqual(plain(back.from), { x: 720, y: -20 });
+    assert.equal(back.to, 'assistant');
+    assert.equal(back.then, 'hold');
+    // And the result lets the assistant go.
+    world.calls.length = 0;
+    world.step({ id: 's3', name: tool, state: 'done', node });
+    assert.deepEqual(world.calls, [{ call: 'release', id: 'assistant', ok: true }]);
+  });
+}
 
 test('what changed after an execution glows on its own', () => {
   const world = build();
