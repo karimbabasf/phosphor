@@ -816,22 +816,35 @@ test('max loss is not on the strip', async () => {
   assert.ok(!lines.includes('Max loss'), `a max loss spent a figure: ${JSON.stringify(lines)}`);
 });
 
-test('an account the feed has not settled yet says it is waiting, not that it is empty', async () => {
+test('an account the feed has not settled yet says nothing: no line, no figures, and never the empty sentence', async () => {
   // accountKnown false means every figure above it is null on purpose. Answering that with
-  // "no trading money" is the window inventing a fact the venue has not stated.
+  // "no trading money" is the window inventing a fact the venue has not stated, and a line
+  // about the wait ("Still reading the account") was a status about the app's own plumbing
+  // that every new window opened on. The line only appears when it has something to say.
   const data = funded();
   data.account = { ...data.account, accountKnown: false, equityUsd: null, freeUsd: null, healthPct: null } as never;
-  const { lines } = await renderPayload(data);
-  assert.ok(lines.some((l) => l.startsWith('Still reading the account')), JSON.stringify(lines));
+  const { host, lines } = await renderPayload(data);
+  assert.ok(!lines.some((l) => l.startsWith('Still reading')), JSON.stringify(lines));
   assert.ok(!lines.some((l) => l.startsWith('No trading money yet')), JSON.stringify(lines));
+  const [line] = withClass(host, 'trade-line');
+  assert.equal(line.hidden, true, 'a wait is not news');
+  assert.equal(withClass(host, 'strip-stats')[0].hidden, true, 'no figures while none are known');
 });
 
-test('no money at all is one sentence that names the next step', async () => {
+test('no money at all is one sentence that names the next step, with the clock ahead of it', async () => {
   const data = flat();
   data.account = { equityUsd: null, freeUsd: null, healthPct: null, unified: false, accountKnown: true, atRiskUsd: 0, maxLossUsd: 0 };
   data.fills = [];
-  const { lines } = await renderPayload(data);
-  assert.ok(lines.includes('No trading money yet. Ask your assistant to fund it.'), JSON.stringify(lines));
+  const world = await renderPayload(data);
+  assert.ok(world.lines.includes('No trading money yet. Ask your assistant to fund it.'), JSON.stringify(world.lines));
+  const [line] = withClass(world.host, 'trade-line');
+  assert.equal(line.hidden, false);
+  assert.equal(line.dataset.tone, undefined, 'an empty account is not a fault');
+  assert.equal(line.childNodes[0].dataset.icon, 'waiting', 'the clock, not the deposit tray');
+  // The line is written once: a payload that says the same thing keeps the node.
+  const icon = line.childNodes[0];
+  await world.refresh();
+  assert.equal(line.childNodes[0], icon, 'the icon was rebuilt for a sentence that did not change');
 });
 
 test('the mark price is on the rail whether or not anything is open', async () => {
@@ -903,13 +916,13 @@ test('the venue notice is drawn in the tone of the news: red with the link struc
   assert.equal(wait.childNodes[1].textContent, 'Nothing to read until a wallet exists.');
   assert.equal(wait.childNodes[2].textContent, 'spot read skipped: no wallet yet');
 
+  // An account the feed has not settled is not news: the line stays away.
   const reading = funded();
   reading.account = { ...reading.account, accountKnown: false, equityUsd: null, freeUsd: null, healthPct: null } as never;
   const c = await renderPayload(reading);
   const [quiet] = withClass(c.host, 'trade-line');
-  assert.equal(quiet.dataset.tone, undefined, 'a wait is not washed');
-  assert.equal(quiet.childNodes[0].dataset.icon, 'waiting');
-  assert.equal(quiet.childNodes[2].hidden, true, 'a wait has no raw words to show');
+  assert.equal(quiet.hidden, true, 'a wait is not something to say');
+  assert.equal(quiet.dataset.icon, undefined);
 
   const d = await renderPayload(flat());
   const [gone] = withClass(d.host, 'trade-line');
@@ -1262,7 +1275,13 @@ test('the bar is one segmented control, the command, Layers and one status line;
   assert.equal(withClass(seg, 'trade-symbol').length, 0, 'the market is still in the segment');
   const [strip] = withClass(host, 'trade-strip');
   assert.equal(withClass(strip, 'trade-symbol').length, 1, 'the market is not on the strip');
-  assert.ok(byId(host, 'chart-cmd') !== null, 'the indicator command is gone');
+  // The indicator command: a search glyph ahead of the input the engine binds by id, and a
+  // placeholder that says what typing here does.
+  const cmd = byId(host, 'chart-cmd');
+  assert.ok(cmd !== null, 'the indicator command is gone');
+  assert.equal(cmd.getAttribute('placeholder') ?? (cmd as unknown as { placeholder: string }).placeholder, 'Add indicator');
+  assert.ok(cmd.parentNode !== null && cmd.parentNode.className.includes('chart-cmd-wrap'), 'the command has no wrap for its glyph');
+  assert.equal(cmd.parentNode.childNodes[0].dataset.icon, 'search', 'no search glyph ahead of the command');
   const [layers] = withClass(host, 'layers');
   assert.ok(layers !== undefined, 'no Layers control');
   assert.equal(layers.tagName, 'button');
@@ -1294,6 +1313,52 @@ test('the status line is a dot, the state word and the latency slot, all three l
   // every half second. The slot belongs to the chart engine, which writes the delay of the
   // socket that actually serves the bars (tests/unit/chart-status-ui.test.ts).
   assert.equal(ms.textContent, '', 'the trade screen must not paint the account age as the chart latency');
+});
+
+test('the bar reads left to right: the segment, the command, Layers, one status group, then the eyes in a group of their own', async () => {
+  // The eye-off controls come from ui/split.js; the stand-in hands back a button per pane so
+  // the group at the end of the bar can be read.
+  const split = {
+    panes: () => [],
+    setPane: () => false,
+    paneControl: (name: string) => {
+      const b = makeNode('button');
+      b.className = 'pane-hide';
+      b.dataset.pane = name;
+      return b;
+    },
+    paneRestore: (name: string) => {
+      const b = makeNode('button');
+      b.className = 'pane-show';
+      b.dataset.pane = name;
+      return b;
+    },
+  };
+  const { host } = await renderPayload(funded(), { split });
+  const [bar] = withClass(host, 'chart-bar');
+  assert.deepEqual(bar.childNodes.map((n) => n.className.split(' ')[0]), ['seg', 'chart-cmd-wrap', 'layers-wrap', 'chartstatus', 'chart-bar-eyes']);
+  const eyes = bar.childNodes[4];
+  assert.deepEqual(eyes.childNodes.map((n) => n.dataset.pane), ['deck', 'chart'], 'the way back to the deck, then the chart\'s own eye-off');
+  assert.equal(bar.childNodes[3].id, 'chart-status');
+});
+
+test('ten timeframes fit the segment as ten equal cells', async () => {
+  // The engine fills #timeframes with a button per timeframe the server lists; 1w and 1M make
+  // ten. Equal widths are the stylesheet's: one grid column of one fraction per cell, which
+  // the harness cannot lay out, so the rule is read off the sheet.
+  const { host } = await renderPayload(funded());
+  const cells = byId(host, 'timeframes');
+  assert.ok(cells !== null);
+  for (const label of ['1m', '5m', '15m', '30m', '1h', '4h', '8h', '1d', '1w', '1M']) {
+    const b = makeNode('button');
+    b.className = 'timeframe';
+    b.textContent = label;
+    cells.appendChild(b);
+  }
+  assert.equal(cells.childNodes.length, 10);
+  assert.ok(cells.className.includes('seg-cells'));
+  const css = readFileSync(new URL('../../ui/design/trade.css', import.meta.url), 'utf8');
+  assert.ok(/\.seg-cells\s*\{[^}]*grid-auto-columns:\s*1fr/.test(css), 'the cells are not equal columns');
 });
 
 test('Layers holds the seven overlays and volume as check rows, following the payload', async () => {
