@@ -100,6 +100,7 @@
     });
     events.on('candle', function (frame) {
       if (charted && typeof window.candleLive === 'function') window.candleLive(frame);
+      onCandle(frame);
     });
     events.on('chart', function (frame) {
       if (charted && typeof window.chartPushed === 'function') window.chartPushed(frame.rev);
@@ -242,17 +243,17 @@
     row.appendChild(symbolControl());
     row.appendChild(venueChip());
 
-    /* THE PRICE BLOCK. The venue's mark at 32 px mono, the cents one step
-       quieter so the figure reads as a price and not as a run of characters
-       (Karim, 2026-09-16: "that main price number should look like a price
-       and not just a blob of text"), and the day's change on the line under
-       it, the way an exchange header stacks them. On a tick the digits flip
-       to the direction's colour and settle back to the text colour over
-       600 ms, and never a background flash: the digits are the price, the box
-       is not. data-tick is set on change and cleared when the animation ends. */
+    /* THE PRICE BLOCK. The chart's last trade at 32 px mono (the tape, below),
+       the cents one step quieter so the figure reads as a price and not as a
+       run of characters (Karim, 2026-09-16: "that main price number should
+       look like a price and not just a blob of text"), and the day's change
+       on the line under it, the way an exchange header stacks them. On a tick
+       the digits flip to the direction's colour and settle back to the text
+       colour over 600 ms, and never a background flash: the digits are the
+       price, the box is not. data-tick is set on change and cleared when the
+       animation ends. */
     var block = dom.el('div', 'strip-price');
     var px = dom.el('span', 'px trade-mark-price');
-    px.setAttribute('title', 'Mark price');
     var whole = dom.el('span', 'px-whole');
     var cents = dom.el('span', 'px-cents');
     px.appendChild(whole);
@@ -969,7 +970,66 @@
       }
       range = { symbol: symbol, open: typeof since.c === 'number' ? since.c : null, high: high, low: low };
     }
+    /* The bars just read cover everything up to now, so what the tape folded
+       in since the last read starts over. */
+    tape.high = null;
+    tape.low = null;
     renderDay();
+  }
+
+  /* ---------- the tape ----------
+
+     The big figure is the chart's last trade, read off the same candle frames
+     the chart draws its live bar from (SSE {type:'candle'}, 120 ms deltas, no
+     fetch behind them). The venue's mark is a different number on a different
+     socket: a smoothed oracle price ticking once a second, and it reached the
+     strip through /api/trade and a six-part render, so the strip stepped while
+     the chart moved per trade, cents to dollars apart (Karim, 2026-09-16: "the
+     price is stalling"). The mark stays as the figure's title. The tape is one
+     market's: a frame for any other market, or from a venue the strip does not
+     name, is nobody's business here. Frames fold to one paint per animation
+     frame, so a burst restarts the 600 ms tick once with the newest value
+     instead of queueing a tick per trade. */
+  var STRIP_VENUE = 'hyperliquid';
+  var tape = { product: '', px: null, high: null, low: null };
+  var tapeFrame = 0;
+
+  function onCandle(frame) {
+    if (!mounted || !frame || !frame.candle) return;
+    if (frame.provider && frame.provider !== STRIP_VENUE) return;
+    var product = currentProduct();
+    if (!product || frame.product !== product) return;
+    var bar = frame.candle;
+    if (typeof bar.c !== 'number' || !isFinite(bar.c)) return;
+    if (tape.product !== product) tape = { product: product, px: null, high: null, low: null };
+    tape.px = bar.c;
+    if (typeof bar.h === 'number' && (tape.high === null || bar.h > tape.high)) tape.high = bar.h;
+    if (typeof bar.l === 'number' && (tape.low === null || bar.l < tape.low)) tape.low = bar.l;
+    if (tapeFrame) return;
+    tapeFrame = nextFrame(paintTape);
+  }
+
+  function paintTape() {
+    tapeFrame = 0;
+    renderPrice();
+    renderDay();
+  }
+
+  function nextFrame(fn) {
+    if (typeof window.requestAnimationFrame === 'function') return window.requestAnimationFrame(fn);
+    return window.setTimeout(fn, 16);
+  }
+
+  /* Whether the tape is about the market on the strip right now. */
+  function onTape() {
+    return !!tape.product && tape.product === currentProduct();
+  }
+
+  /* The figure on the strip: the last trade once the tape has one for this
+     market, the venue's mark until then. */
+  function priceOf() {
+    if (onTape() && typeof tape.px === 'number') return tape.px;
+    return markOf();
   }
 
   /* ---------- the strip, filled ---------- */
@@ -1048,47 +1108,57 @@
      digits, it recolours them. The tick attribute is set on a change and
      cleared by the animation's end; the same direction twice inside 600 ms
      restarts it, which is what the reflow between the two writes is for.
-     Reduced motion skips the tick altogether. */
+     Reduced motion skips the tick altogether. The mark is the title, so the
+     venue's own number is one hover away from the last trade. */
   var lastPx = {};
 
   function renderPrice() {
     var symbol = symbolOf();
     var mark = markOf();
-    setPrice(priceText(mark));
-    if (typeof mark !== 'number' || !isFinite(mark) || !symbol) return;
+    var price = priceOf();
+    setPrice(priceText(price));
+    dom.setAttr(refs.price, 'title', typeof mark === 'number' && isFinite(mark) ? 'Hyperliquid mark ' + priceText(mark) : null);
+    if (typeof price !== 'number' || !isFinite(price) || !symbol) return;
 
     var was = lastPx[symbol];
-    lastPx[symbol] = mark;
-    if (typeof was !== 'number' || was === mark) return;
+    lastPx[symbol] = price;
+    if (typeof was !== 'number' || was === price) return;
     if (window.PhosphorMotion.reduced()) return;
     dom.setAttr(refs.price, 'data-tick', null);
     void refs.price.offsetWidth;
-    dom.setAttr(refs.price, 'data-tick', mark > was ? 'up' : 'down');
+    dom.setAttr(refs.price, 'data-tick', price > was ? 'up' : 'down');
   }
 
-  /* The day. The change is the mark against the close a day ago, as
+  /* The day. The change is the price against the close a day ago, as
      "-2,188.00 / -2.78%" in the direction's colour and nothing else: no chip,
-     no wash. High and low are the day's extremes. All three read -- until the
-     candles for this market have landed. */
+     no wash. High and low are the day's extremes, with what the tape has seen
+     since the bars were read folded in. All three read -- until the candles
+     for this market have landed. */
   function renderDay() {
     var symbol = symbolOf();
-    var mark = markOf();
+    var price = priceOf();
     var have = range.symbol === symbol && typeof range.open === 'number' && range.open > 0
-      && typeof mark === 'number' && isFinite(mark);
+      && typeof price === 'number' && isFinite(price);
+    var high = range.high;
+    var low = range.low;
+    if (range.symbol === symbol && onTape()) {
+      if (typeof tape.high === 'number' && (high === null || tape.high > high)) high = tape.high;
+      if (typeof tape.low === 'number' && (low === null || tape.low < low)) low = tape.low;
+    }
     if (!have) {
       dom.setText(refs.change, '--');
       dom.setAttr(refs.change, 'data-dir', null);
-      dom.setText(refs.high, range.symbol === symbol ? priceText(range.high) : '--');
-      dom.setText(refs.low, range.symbol === symbol ? priceText(range.low) : '--');
+      dom.setText(refs.high, range.symbol === symbol ? priceText(high) : '--');
+      dom.setText(refs.low, range.symbol === symbol ? priceText(low) : '--');
       return;
     }
-    var delta = mark - range.open;
+    var delta = price - range.open;
     var pct = (delta / range.open) * 100;
     var dir = Math.abs(delta) < 1e-9 ? null : (delta > 0 ? 'up' : 'down');
-    dom.setText(refs.change, signedPlain(delta, decimalsOf(mark)) + ' / ' + (pct > 0 ? '+' : pct < 0 ? '-' : '') + Math.abs(pct).toFixed(2) + '%');
+    dom.setText(refs.change, signedPlain(delta, decimalsOf(price)) + ' / ' + (pct > 0 ? '+' : pct < 0 ? '-' : '') + Math.abs(pct).toFixed(2) + '%');
     dom.setAttr(refs.change, 'data-dir', dir);
-    dom.setText(refs.high, priceText(range.high));
-    dom.setText(refs.low, priceText(range.low));
+    dom.setText(refs.high, priceText(high));
+    dom.setText(refs.low, priceText(low));
   }
 
   /* The figure in two spans: everything up to the point, then the point and
