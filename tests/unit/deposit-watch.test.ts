@@ -150,11 +150,11 @@ test('PENDING then COMPLETED then a balance rise walks watching, seen, bridged a
 
   // The bridge has seen the transfer arrive on Ethereum, three blocks deep.
   h.clock.t += 12_000;
-  h.world.rows = [{ txHash: '0xfeed', amount: '5000000', status: 'PENDING', asset: `eth:1:${USDC_CONTRACT}` }];
+  h.world.rows = [{ txHash: '0xfefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe', amount: '5000000', status: 'PENDING', asset: `eth:1:${USDC_CONTRACT}` }];
   h.world.receiptBlock = 98;
   const seen = await until(h, 'seen', 'the pending row');
-  assert.equal(seen.txHash, '0xfeed');
-  assert.equal(seen.explorerUrl, 'https://etherscan.io/tx/0xfeed');
+  assert.equal(seen.txHash, '0xfefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe');
+  assert.equal(seen.explorerUrl, 'https://etherscan.io/tx/0xfefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe');
   assert.equal(seen.confirmations, 3, 'head 100, mined in 98: three confirmations');
   assert.equal(seen.amount, 5, 'the row amount, scaled by the row decimals');
   assert.equal(seen.ms, 12_000);
@@ -164,9 +164,9 @@ test('PENDING then COMPLETED then a balance rise walks watching, seen, bridged a
 
   // The bridge is done with it; the verifier has not caught up yet.
   h.clock.t += 30_000;
-  h.world.rows = [{ txHash: '0xfeed', amount: '5000000', status: 'COMPLETED', asset: `eth:1:${USDC_CONTRACT}` }];
+  h.world.rows = [{ txHash: '0xfefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe', amount: '5000000', status: 'COMPLETED', asset: `eth:1:${USDC_CONTRACT}` }];
   const bridged = await until(h, 'bridged', 'the completed row');
-  assert.equal(bridged.txHash, '0xfeed');
+  assert.equal(bridged.txHash, '0xfefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe');
   assert.equal(bridged.amount, 5);
   assert.equal(h.refreshes, 0);
 
@@ -175,7 +175,7 @@ test('PENDING then COMPLETED then a balance rise walks watching, seen, bridged a
   h.world.balance = '5000000';
   const credited = await until(h, 'credited', 'the balance rise');
   assert.equal(credited.amount, 5, 'what landed, over the baseline');
-  assert.equal(credited.txHash, '0xfeed', 'the hash is kept through to the end');
+  assert.equal(credited.txHash, '0xfefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe', 'the hash is kept through to the end');
   assert.equal(credited.ms, 62_000);
   await ticks(2);
   assert.equal(h.refreshes, 1, 'credited refreshes the ledger through the one seam, once');

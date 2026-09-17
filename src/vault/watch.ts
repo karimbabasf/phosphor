@@ -98,7 +98,20 @@ function evmChainOf(chain: string): EvmChain | null {
   return chain === 'eth' || chain === 'base' || chain === 'arb' ? chain : null;
 }
 
+// A hash the bridge reports is data from the wire: it becomes a link only when it has the shape
+// of a hash on that chain, so a malformed answer can never put an arbitrary string in a URL.
+const HASH_SHAPE: Record<string, RegExp> = {
+  eth: /^0x[0-9a-f]{64}$/i,
+  base: /^0x[0-9a-f]{64}$/i,
+  arb: /^0x[0-9a-f]{64}$/i,
+  sol: /^[1-9A-HJ-NP-Za-km-z]{43,88}$/,
+  near: /^[1-9A-HJ-NP-Za-km-z]{32,64}$/,
+  btc: /^[0-9a-f]{64}$/i,
+};
+
 function explorerTxUrl(chain: string, txHash: string): string | null {
+  const shape = HASH_SHAPE[chain];
+  if (shape === undefined || !shape.test(txHash)) return null;
   const evm = evmChainOf(chain);
   if (evm !== null) return chainSpec(evm).explorerTx + txHash;
   const prefix = EXPLORER_TX[chain];

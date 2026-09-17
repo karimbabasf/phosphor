@@ -437,10 +437,13 @@
 
   function watch(host, root) {
     if (typeof ResizeObserver !== 'function') return;
+    if (host.__sendcardObserver) host.__sendcardObserver.disconnect();
     var ro = new ResizeObserver(function (entries) {
+      if (!root.isConnected) { ro.disconnect(); host.__sendcardObserver = null; return; }
       for (var i = 0; i < entries.length; i += 1) layout(root, entries[i].contentRect.width);
     });
     ro.observe(host);
+    host.__sendcardObserver = ro;
   }
 
   /* ---------- the card ---------- */
