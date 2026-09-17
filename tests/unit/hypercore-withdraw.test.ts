@@ -6,7 +6,7 @@ import type { HlWithdrawDraft } from '../../src/types.ts';
 import type { OneClickClient, OneClickQuote, OneClickQuoteParams, OneClickStatus } from '../../src/intents.ts';
 import type { HlSignPort, HlTypedData, HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
 import { HL_USDC_TOKEN } from '../../src/rails/hl-user-signed.ts';
-import { ONECLICK_COUNTERPARTY } from '../../src/rails/oneclick.ts';
+import { ONECLICK_COUNTERPARTY } from '../../src/intents.ts';
 import {
   HL_WITHDRAW_COUNTERPARTY,
   HL_WITHDRAW_FEE_BPS,

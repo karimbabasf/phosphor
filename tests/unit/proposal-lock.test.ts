@@ -163,7 +163,7 @@ test('a rail whose status poll hangs does not hold a refuse on another proposal'
   // A rail whose execute never returns: exactly what watchStatus looks like against a venue
   // that has stopped answering, and the shape that used to hold the whole app.
   const rail: Rail = {
-    kind: 'intents_deposit',
+    kind: 'swap',
     valueUsd: () => 1,
     simulate: async () => ({ ok: true, summary: 'fine' }),
     execute: async () => {
@@ -172,7 +172,7 @@ test('a rail whose status poll hangs does not hold a refuse on another proposal'
     },
   } as unknown as Rail;
 
-  // $50: the $1 deposit executes and reaches the hung rail; the rule change always waits.
+  // $50: the $1 swap executes and reaches the hung rail; the rule change always waits.
   const { svc } = setup(rail, 50);
 
   // One proposal that will sit pending, so there is something to refuse.
@@ -180,7 +180,7 @@ test('a rail whose status poll hangs does not hold a refuse on another proposal'
   assert.equal(pending.status, 'pending');
 
   // And one that goes straight into the hung rail. Not awaited: it never finishes.
-  const stuck = svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 1 });
+  const stuck = svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: 1, minAmountOut: 0.9 });
   void stuck.catch(() => undefined);
   await new Promise((r) => setTimeout(r, 100));
 
@@ -199,7 +199,7 @@ test('a rail whose status poll hangs does not hold the next propose either', asy
   let releaseRail = (): void => {};
   const hung = new Promise<void>((r) => (releaseRail = r));
   const rail: Rail = {
-    kind: 'intents_deposit',
+    kind: 'swap',
     valueUsd: () => 1,
     simulate: async () => ({ ok: true, summary: 'fine' }),
     execute: async () => {
@@ -209,7 +209,7 @@ test('a rail whose status poll hangs does not hold the next propose either', asy
   } as unknown as Rail;
 
   const { svc } = setup(rail);
-  const stuck = svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 1 });
+  const stuck = svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: 1, minAmountOut: 0.9 });
   void stuck.catch(() => undefined);
   await new Promise((r) => setTimeout(r, 100));
 
@@ -226,7 +226,7 @@ test('and the cap still holds: the reservation is on disk before the next caller
   let releaseRail = (): void => {};
   const hung = new Promise<void>((r) => (releaseRail = r));
   const rail: Rail = {
-    kind: 'intents_deposit',
+    kind: 'swap',
     valueUsd: () => 1,
     simulate: async () => ({ ok: true, summary: 'fine' }),
     execute: async () => {
@@ -236,7 +236,7 @@ test('and the cap still holds: the reservation is on disk before the next caller
   } as unknown as Rail;
 
   const { svc } = setup(rail);
-  const stuck = svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 250 });
+  const stuck = svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: 250, minAmountOut: 240 });
   void stuck.catch(() => undefined);
   await new Promise((r) => setTimeout(r, 100));
 

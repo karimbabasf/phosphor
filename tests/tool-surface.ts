@@ -59,15 +59,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // Brings collateral back into the intents balance. One argument, the amount; the intents
   // account credited is our own, derived from the key, and every withdrawal is a click.
   'propose_hl_withdraw',
-  // Funds this app's own balance inside intents.near. Its far side is an account id rather
-  // than a chain address, and the credited account is derived from our own key, so there is no
-  // argument here that can name it.
-  'propose_intents_deposit',
-  // The way back out, and the only rail on this surface that pays an ordinary address on a
-  // chain. That makes it the sharpest test of the no-address rule. Its chain argument is EVM
-  // only, because this app derives its EVM address from a key it holds and can therefore prove
-  // the destination is its own; it holds no Solana key.
-  'propose_intents_withdraw',
   // A balance moving to ANOTHER intents account (2026-09-16): the one tool with a destination
   // field. The field is held to the destination allowlist by the policy engine, an allowlist a
   // human extends only by a click, and the send itself always waits for a second click.

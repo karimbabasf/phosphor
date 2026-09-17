@@ -68,7 +68,7 @@ function toolCall(ts: string, data: Record<string, unknown>): LogEvent {
 function swapDraft(over: Partial<SwapDraft> = {}): SwapDraft {
   return {
     kind: 'swap',
-    venue: 'uniswap-v3',
+    venue: 'intents-native',
     chain: 'arb',
     toChain: 'arb',
     fromSymbol: 'USDC',
@@ -296,11 +296,11 @@ test('basic never truncates an address it shows', () => {
   }
 });
 
-test('every symbol and chain the draft names survives into basic', () => {
-  const draft = swapDraft({ fromSymbol: 'USDC', toSymbol: 'WETH', chain: 'arb', toChain: 'arb' });
+test('every symbol the draft names survives into basic, and a swap names no chain: both legs sit inside NEAR Intents', () => {
+  const draft = swapDraft({ fromSymbol: 'USDC', toSymbol: 'WETH', chain: 'arb', toChain: 'sol' });
   const view = buildBasic(baseInput({ proposals: [proposal({ draft })] }));
   assert.deepEqual([...view.ask!.symbols].sort(), ['USDC', 'WETH']);
-  assert.deepEqual(view.ask!.chains, ['arb']);
+  assert.deepEqual(view.ask!.chains, [], 'chain and toChain are the assets\' home chains, not places the money goes');
 });
 
 /* The retired kinds are in this list on purpose. lp_add, lp_remove, yield_deposit and

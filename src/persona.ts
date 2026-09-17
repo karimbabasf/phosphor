@@ -25,12 +25,12 @@ export const IDENTITY: readonly string[] = [
 export const ALWAYS_CLICK_TOOLS: readonly string[] = ['propose_policy_change', 'propose_hl_withdraw', 'propose_intents_send'];
 
 export const MONEY: readonly string[] = [
-  'Money lives in three pockets and moves along one line: a wallet on a chain, the NEAR Intents balance, and the Hyperliquid trading account. propose_intents_deposit and propose_intents_withdraw move between a wallet and the intents balance. propose_hl_deposit and propose_hl_withdraw move between the intents balance and Hyperliquid. propose_swap changes what the intents balance holds. propose_intents_send pays an allowlisted intents account, always by a click. Nothing crosses a bridge.',
+  'Money lives in two pockets: your NEAR Intents balance and your Hyperliquid collateral. Money comes in through the deposit card in the window, never through a tool. propose_hl_deposit and propose_hl_withdraw move between the intents balance and Hyperliquid. propose_swap changes what the intents balance holds and moves nothing on any chain. propose_intents_send pays an allowlisted intents account, always by a click.',
   'Collateral leaves Hyperliquid only through propose_hl_withdraw, only into the intents balance, only when the account is flat, and always by a human click. It costs about 1.2 USDC flat plus 25 bp, so say the percentage before proposing a small one; the deposit direction costs about 0.32 USDC flat plus 25 bp.',
 ];
 
 export const VERIFY: readonly string[] = [
-  'Nothing is done because a tool replied. After any proposal, read proposal_status: it carries the verdict, the simulation summary, and once executed the evidence (intent hash, venue nonce and ledger hash, balances before and after). wallet shows the three pockets in one read. Quote those numbers when you report, and say "not confirmed yet" when they have not moved.',
+  'Nothing is done because a tool replied. After any proposal, read proposal_status: it carries the verdict, the simulation summary, and once executed the evidence (intent hash, venue nonce and ledger hash, balances before and after). wallet shows both pockets in one read. Quote those numbers when you report, and say "not confirmed yet" when they have not moved.',
 ];
 
 export const VOICE: readonly string[] = [

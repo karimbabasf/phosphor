@@ -257,29 +257,12 @@ function counterpartyOf(draft: RailDraft): string {
 }
 
 // Where the OUTPUT lands, which is a different question from who we hand the funds to.
-// A swap passes tokens through an allowlisted router and the router delivers them to
-// draft.to; allowlisting only the router says nothing about who receives the proceeds.
-// hl_deposit credits whoever sent, so it has no such field. Returns null when the kind has
-// no destination.
-//
-// intents_deposit has one and it is not an address on any chain: it is the account id
-// credited inside the verifier contract. Checking it here matters more than for a swap, not
-// less. A swap sending proceeds to a stranger is visible on chain and the money is at least
-// somewhere; a deposit credited to an account id we hold no key for is a balance that exists,
-// reads as a success, and can never be spent or withdrawn by anyone but its owner. The rail
-// checks this too, against the configured key. This is the same rule in the layer that does
-// not depend on which rail ran.
-// intents_withdraw is the sharpest case of all of them, and the reason this rule is worth
-// having twice. It is the only draft whose destination is an ordinary address on a chain the
-// app may hold no key for: a wrong one is not a balance stuck somewhere recoverable, it is
-// money in a stranger's wallet, settled. The rail re-derives the address from config and
-// refuses a mismatch; this is the same rule in the layer that does not depend on which rail
-// ran, and here it also asserts the address is one of ours rather than merely the one config
-// last said.
+// A swap hands a balance to the verifier and the verifier credits draft.to; allowlisting
+// only the verifier says nothing about who receives the proceeds, and an account id we hold
+// no key for is a balance that exists, reads as a success, and can never be spent by anyone
+// but its owner. Returns null when the kind has no destination.
 function destinationOf(draft: RailDraft): string | null {
   if (draft.kind === 'swap') return draft.to;
-  if (draft.kind === 'intents_deposit') return draft.intentsAccount;
-  if (draft.kind === 'intents_withdraw') return draft.to;
   // intents_send is the one draft whose `to` is meant to be somebody else's account, and this
   // is the rule that decides whose: one of ours, or an entry a human put on the allowlist.
   if (draft.kind === 'intents_send') return draft.to;

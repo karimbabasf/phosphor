@@ -435,7 +435,7 @@ test('a payload naming a different verifying contract is refused before signing'
 
 test('a draft for another venue never reaches this rail', async () => {
   const h = harness();
-  const result = await railOf(h).simulate(draftOf({ venue: 'oneclick' }));
+  const result = await railOf(h).simulate(draftOf({ venue: 'oneclick' as unknown as 'intents-native' }));
 
   assert.equal(result.ok, false);
   assert.match(String(result.error), /venue is not/);

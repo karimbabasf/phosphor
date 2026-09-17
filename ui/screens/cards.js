@@ -606,8 +606,10 @@
     var d = draft || {};
     if (kind === 'swap') {
       var q = isObject(d.quote) ? d.quote : null;
-      move.from = { symbol: d.fromSymbol || args.fromSymbol, place: d.chain || args.chain, amount: num(d.amountIn !== undefined ? d.amountIn : args.amountIn) };
-      move.to = { symbol: d.toSymbol || args.toSymbol, place: d.toChain || args.toChain || d.chain || args.chain, amount: q ? num(q.amountOut) : num(args.minAmountOut) };
+      /* Both legs sit inside NEAR Intents: chain and toChain on a swap name the
+         assets' home chains, not places the money goes. */
+      move.from = { symbol: d.fromSymbol || args.fromSymbol, place: 'intents', amount: num(d.amountIn !== undefined ? d.amountIn : args.amountIn) };
+      move.to = { symbol: d.toSymbol || args.toSymbol, place: 'intents', amount: q ? num(q.amountOut) : num(args.minAmountOut) };
       if (q) move.feeUsd = num(q.feeUsd);
       if (!q && num(args.minAmountOut) !== null) move.quote = 'at least ' + dom.qty(num(args.minAmountOut)) + ' ' + String(move.to.symbol || '');
     } else if (kind === 'intents_deposit') {
@@ -672,7 +674,7 @@
     }
     text.appendChild(amount);
     var where = leg.place ? chainName(leg.place) : '';
-    var placeText = where ? (role === 'from' ? 'from ' : 'to ') + where : '';
+    var placeText = where ? (leg.place === 'intents' ? 'inside ' : role === 'from' ? 'from ' : 'to ') + where : '';
     if (leg.label) placeText = placeText ? leg.label + ', ' + placeText : leg.label;
     if (placeText) text.appendChild(dom.el('span', 'tcard-leg-place', placeText));
     row.appendChild(text);

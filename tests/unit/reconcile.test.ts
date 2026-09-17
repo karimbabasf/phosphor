@@ -72,7 +72,8 @@ function strand(dir: string, over: Partial<Proposal> = {}): Proposal {
   const store = createStore(dir);
   const p: Proposal = {
     id: over.id ?? 'stranded-1',
-    kind: 'intents_deposit',
+    // A retired kind, the shape rows on disk still have.
+    kind: 'intents_deposit' as unknown as Proposal['kind'],
     createdAt: new Date().toISOString(),
     status: 'executing',
     draft: {

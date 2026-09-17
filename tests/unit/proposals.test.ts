@@ -53,7 +53,7 @@ test('a non-stable is priced at spot, not at the ledger stablecoin assumption', 
   snap.prices.ETH = 1880;
 
   const p = await h.svc.proposeSwap({
-    venue: 'intents-native', chain: 'arb', fromSymbol: 'WETH', toSymbol: 'USDC',
+    chain: 'arb', fromSymbol: 'WETH', toSymbol: 'USDC',
     amountIn: 0.01, minAmountOut: 1,
   });
 
@@ -68,7 +68,7 @@ test('a token the app cannot price is refused rather than guessed at 1.0', async
   snap.holdings.push({ chain: 'arb', address: '0x1', symbol: 'MYSTERY', tokenId: '0xm', amount: 5, usd: 5, native: false });
 
   const p = await h.svc.proposeSwap({
-    venue: 'intents-native', chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
+    chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
     amountIn: 1000, minAmountOut: 1,
   });
 

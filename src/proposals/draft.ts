@@ -5,7 +5,6 @@
 // its own dollar value could name a small one, and amountUsd is what every budget reads.
 
 import type {
-  ChainId,
   ClientKey,
   LedgerSnapshot,
   PolicyPatch,
@@ -17,7 +16,7 @@ import { evaluate } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import type { RailDraft, RailKind } from '../rails/index.ts';
-import { buildCtx, errText, mergePatch, newProposal, recipientFor } from './lifecycle.ts';
+import { buildCtx, errText, mergePatch, newProposal, ownBook, recipientFor } from './lifecycle.ts';
 import { land } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
 
@@ -103,30 +102,26 @@ export function resolve<T>(fn: () => T, problems: string[], fallback: T): T {
   }
 }
 
-export function ourAddress(ctx: PCtx, chain: ChainId, snapshot: LedgerSnapshot, problems: string[]): string {
-  const found = recipientFor(ctx, chain, snapshot);
+// The one address this app owns: the EVM address of its signing key. It is the intents
+// account id (the verifier derives the account from the erc191 signer, whatever chain an
+// asset calls home) and the Hyperliquid account. The keystore is read first because the key
+// is the truth, config.local.json second for an install that only reads, and the ledger's
+// own rows last (demo mode). No wallet means nothing can be proposed, and the refusal says
+// the one thing to do about it.
+export function ourEvmAddress(ctx: PCtx, snapshot: LedgerSnapshot, problems: string[]): string {
+  const found = ownBook(ctx).evm[0] ?? recipientFor(ctx, 'eth', snapshot);
   if (found === null) {
-    problems.push(`We hold no address on ${chain}, so there is no wallet of ours for this to run from.`);
+    problems.push('Make a wallet first.');
     return '';
   }
   return found;
 }
 
-// Who owns a balance held inside intents.near. This is deliberately not a per-chain wallet
-// lookup: the verifier derives the account id from the erc191 signer, so it is our EVM
-// address whatever chain the asset calls home. A SOL balance in there is owned by the EVM
-// account, not by the Solana address we hold SOL at on Solana, and those are different
-// strings for the same money.
+// Who owns a balance held inside intents.near: the same EVM address. A SOL balance in there
+// is owned by the EVM account, not by any Solana address, and the callers lowercase it the
+// way the verifier does.
 export function ourIntentsAddress(ctx: PCtx, snapshot: LedgerSnapshot, problems: string[]): string {
-  const found = recipientFor(ctx, 'eth', snapshot);
-  if (found === null) {
-    problems.push(
-      'We hold no EVM address, and a balance inside intents.near is owned by the EVM account the ' +
-        'verifier derives from our signing key, so there is no account of ours to swap from.',
-    );
-    return '';
-  }
-  return found;
+  return ourEvmAddress(ctx, snapshot, problems);
 }
 
 export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[], clientKey?: ClientKey): Promise<Proposal> {

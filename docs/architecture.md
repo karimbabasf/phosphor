@@ -77,8 +77,8 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/policy/file.ts` | Load, validate and save `state/policy.json`. Returns null on anything it cannot trust. |
 | `src/policy/render.ts` | Policy to plain English. Pure and deterministic. |
 | `src/proposals.ts` | Simulate, evaluate, persist, and execute after approval. The only path to execution. |
-| `src/intents.ts` | NEAR Intents 1Click quotes, asset id resolution (registry first, then the gas-asset table), the synthetic quoter for demo mode, and the stub Signer. |
-| `src/rails/intents-deposit.ts` | Moves wallet funds INTO `intents.near` so the `intents-native` venue has something to swap. The only rail that sends a chain's own gas asset, so the only one that has to reserve gas before it spends. |
+| `src/intents.ts` | The NEAR Intents 1Click client (quotes, status, the token list) and asset id resolution (registry first, then the native-asset table). |
+| `src/rails/` | The rails: the swap inside `intents.near` (`intents-native.ts`), the send to another intents account (`intents-send.ts`), the Hyperliquid deposit and withdrawal (`hypercore-*.ts`), and the POA deposit address (`intents-address.ts`). Every rail reads its own account from the key, never from a caller. |
 | `src/chain/evm.ts` | The one place an EVM transaction is signed and broadcast. Rails hand it calldata; they never broadcast. |
 | `src/chain/near.ts` | The one place a NEAR transaction is signed and broadcast: borsh, ed25519, nonce and block hash, receipt-level failure detection. Also NEP-413 message signing. Separate from `evm.ts` because it is a different curve, serialization and transaction shape, not because of taste. |
 | `src/market/` | The market data layer: the venue catalogue and symbol resolver, the candle cache the render path reads from, the folding that turns a venue-served interval into any timeframe, and the one ATR the trade payload reads. |

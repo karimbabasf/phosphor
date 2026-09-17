@@ -22,6 +22,11 @@ import { readTimeout, venueWriteTimeout } from './net.ts';
 
 export const ONECLICK_BASE = 'https://1click.chaindefuser.com';
 
+// The allowlist entry for anything routed through 1Click. 1Click mints a fresh deposit address
+// per quote, so no address of its own can ever sit on a static list; the venue string stands
+// in, and the Hyperliquid withdraw rail names it as its counterparty.
+export const ONECLICK_COUNTERPARTY = 'oneclick:1click.chaindefuser.com';
+
 // Token registry shape loaded from data/tokens.json: chain -> symbol -> contract/mint id + decimals.
 export type TokensFile = Record<ChainId, Record<string, { tokenId: string; decimals: number }>>;
 
@@ -115,10 +120,6 @@ export const NATIVE_ASSET: Partial<Record<ChainId, { symbol: string; decimals: n
   sol: { symbol: 'SOL', decimals: 9 },
   near: { symbol: 'NEAR', decimals: 24 },
 };
-
-// What a Holding carries in tokenId for the gas asset. Kept here so a draft can name the
-// native asset without inventing a second spelling.
-export const NATIVE_TOKEN_ID = 'native';
 
 // One place that turns "USDC on base" or "ETH on eth" into the pair a quote needs. The token
 // registry is tried first and the gas-asset table second, so a chain that lists a symbol

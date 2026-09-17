@@ -164,7 +164,8 @@ test('a proposal stranded mid-execution comes back as an unknown outcome, not as
   // rail's answer leaves behind, and nothing on any surface could act on them.
   const stranded = (id: string, amountUsd: number, txids: string[]): Proposal => ({
     id,
-    kind: 'intents_deposit',
+    // A retired kind, the shape rows on disk still have.
+    kind: 'intents_deposit' as unknown as Proposal['kind'],
     createdAt: new Date().toISOString(),
     decidedAt: new Date().toISOString(),
     decidedBy: 'policy',

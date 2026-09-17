@@ -17,12 +17,42 @@ import type { AppConfig, ChainId, Mode } from './types.ts';
 // The keystore owns where a keystore file sits. Imported rather than restated, because a second
 // copy of that filename is a second thing to keep in step with the first.
 import { keystorePathFor } from './keystore/store.ts';
-// The address rules, imported from the modules that already own them rather than restated here.
-// addressProblem decodes an EVM or Solana address instead of matching a regex over it, and
-// isSettlableNearAccount is the shape a NEAR account has to have before anything can pay out to
-// it. A second copy of either is a second thing that goes out of step with the first.
-import { addressProblem } from './rails/intents-withdraw.ts';
-import { isNearAccountId, isSettlableNearAccount } from './chain/near.ts';
+// The address rules. An EVM address is decoded by viem rather than matched by a regex; a
+// Solana address is decoded and its bytes counted, since a regex over base58 accepts a key
+// with a digit dropped; isSettlableNearAccount is the shape a NEAR account has to have before
+// anything can pay out to it.
+import { isAddress } from 'viem';
+import { base58Decode, isNearAccountId, isSettlableNearAccount } from './chain/near.ts';
+
+const SOLANA_KEY_BYTES = 32;
+
+function oneLine(s: string, max: number): string {
+  const flat = s.replace(/\s+/g, ' ');
+  return flat.length > max ? `${flat.slice(0, max)}...` : flat;
+}
+
+// Whether a string is an address of the shape this chain actually uses. Returns the problem,
+// or null when the address is well formed.
+function addressProblem(chain: ChainId, address: string): string | null {
+  const trimmed = address.trim();
+  if (trimmed === '') return `no address is configured for ${chain}`;
+  if (chain === 'eth' || chain === 'base' || chain === 'arb') {
+    return isAddress(trimmed, { strict: false }) ? null : `${oneLine(trimmed, 60)} is not an EVM address, so it cannot be our wallet on ${chain}`;
+  }
+  if (chain === 'sol') {
+    let bytes: Uint8Array;
+    try {
+      bytes = base58Decode(trimmed);
+    } catch {
+      return `${oneLine(trimmed, 60)} is not base58, so it cannot be a Solana address`;
+    }
+    if (bytes.length !== SOLANA_KEY_BYTES) {
+      return `${oneLine(trimmed, 60)} decodes to ${bytes.length} bytes, not the ${SOLANA_KEY_BYTES} a Solana address is`;
+    }
+    return null;
+  }
+  return `${chain} is not a chain this app holds a wallet on`;
+}
 
 // addresses is overridden rather than intersected: an intersection keeps the required
 // fields from AppConfig and defeats the whole point of a partial file.

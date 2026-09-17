@@ -72,7 +72,8 @@ function spend(dir: string, id: string, usd: number, status: ProposalStatus, ago
   createStore(dir).put({
     ...(txids === undefined ? {} : { result: { ok: false, detail: 'part done', txids } }),
     id,
-    kind: 'intents_deposit',
+    // A retired kind, the shape rows on disk still have.
+    kind: 'intents_deposit' as unknown as Proposal['kind'],
     createdAt: at,
     decidedAt: at,
     decidedBy: 'policy',

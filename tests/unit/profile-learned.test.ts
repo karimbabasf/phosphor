@@ -83,8 +83,6 @@ async function boot(): Promise<Harness> {
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
       proposeHlWithdraw: async () => { throw new Error('unused'); },
-      proposeIntentsDeposit: async () => { throw new Error('unused'); },
-      proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsSend: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },
       proposeTradeChange: async () => { throw new Error('unused'); },

@@ -198,17 +198,16 @@ export type LegQuote = {
 
 export type SwapDraft = {
   kind: 'swap';
-  // 'oneclick' and 'intents-native' are both NEAR Intents and they are not interchangeable:
-  // oneclick transfers wallet funds to a per-quote deposit address, intents-native signs an
-  // intent over a balance already held inside the intents.near verifier and transfers
-  // nothing. See the header of src/rails/intents-native.ts for which one to use.
-  //
-  // 'uniswap-v3' is retired and cannot be proposed. It stays in the union because
-  // state/proposals.json holds executed rows naming it, and a history reader that could not
-  // type those rows would have to drop them. Nothing builds one.
-  venue: 'oneclick' | 'uniswap-v3' | 'intents-native';
-  chain: ChainId; // origin chain
-  toChain: ChainId; // equal to chain when nothing crosses
+  // A swap signs an intent over a balance already held inside the intents.near verifier and
+  // transfers nothing on any chain. 'oneclick' (wallet funds to a per-quote deposit address)
+  // and 'uniswap-v3' are retired: state/proposals.json holds executed rows naming them, and
+  // the history readers take the venue as a string, so nothing has to type those rows.
+  venue: 'intents-native';
+  // The home chains of the two ASSETS, which is how the 1Click token list names an asset
+  // ("USDC from eth" and "USDC from arb" are two ids). Neither is a place money moves to or
+  // from: both legs sit inside NEAR Intents, and every card says so.
+  chain: ChainId;
+  toChain: ChainId;
   fromSymbol: string;
   toSymbol: string;
   amountIn: number;
@@ -218,40 +217,6 @@ export type SwapDraft = {
   to: string;
   counterparty: string; // the contract funds are handed to; must be on the policy allowlist
   quote: LegQuote | null;
-};
-
-// Moving funds from this wallet into the intents.near verifier, where they become a balance
-// the intents-native rail can swap. Not a SwapDraft: the asset does not change, and the far
-// side is an account id inside a contract rather than an address. See the header of
-// src/rails/intents-deposit.ts for why that distinction is load bearing on the tool surface.
-export type IntentsDepositDraft = {
-  kind: 'intents_deposit';
-  chain: ChainId; // origin chain, an EVM one; the app has no signer for the others
-  symbol: string;
-  tokenId: string; // 'native' for the gas asset, otherwise the ERC-20 contract
-  amount: number;
-  amountUsd: number;
-  minCredited: number; // the least that may be credited inside the verifier
-  from: string; // our wallet on the origin chain
-  intentsAccount: string; // who is credited inside intents.near: our own address, lowercased
-  counterparty: string; // must be on the policy allowlist
-};
-
-// The way back out: a balance held inside intents.near leaves the verifier and lands in a
-// wallet on a real chain. The mirror of IntentsDepositDraft, and the only draft in the app
-// whose destination is an address on a chain this app may hold no key for. `to` is resolved
-// from config by the proposal service and re-derived by the rail; see the header of
-// src/rails/intents-withdraw.ts for why that is the whole safety story of this kind.
-export type IntentsWithdrawDraft = {
-  kind: 'intents_withdraw';
-  chain: ChainId; // where it lands, and whose bridged asset we are spending inside the verifier
-  symbol: string;
-  amount: number;
-  amountUsd: number;
-  minReceived: number; // the least that may arrive in the wallet
-  from: string; // our account id inside intents.near: the EVM address, lowercased
-  to: string; // our own wallet on `chain`; never named by a caller
-  counterparty: string; // must be on the policy allowlist
 };
 
 // Collateral entering a Hyperliquid perps account. The kind is older than the mechanism: it
@@ -345,8 +310,6 @@ export type WriteDraft =
   | SwapDraft
   | HlDepositDraft
   | HlWithdrawDraft
-  | IntentsDepositDraft
-  | IntentsWithdrawDraft
   | IntentsSendDraft
   | TradeDraft;
 
@@ -704,9 +667,8 @@ export type AppConfig = {
 // the MCP schemas built from these carry no destination field.
 
 export type SwapParams = {
-  venue: SwapDraft['venue'];
-  chain: ChainId; // origin
-  toChain?: ChainId; // defaults to chain; only the oneclick venue crosses chains
+  chain: ChainId; // the asset home of what is sold
+  toChain?: ChainId; // the asset home of what is bought; defaults to chain
   fromSymbol: string;
   toSymbol: string;
   amountIn: number;
@@ -737,14 +699,6 @@ export type HlDepositParams = { amount: number; symbol?: string; clientKey?: Cli
 // are all the app's; there is no field for a destination, which is the whole point.
 export type HlWithdrawParams = { amount: number; clientKey?: ClientKey };
 
-// The credited account, the loss floor and the counterparty are all resolved by the app.
-// symbol defaults to the origin chain's gas asset, which is what "deposit $10 of ETH" means.
-export type IntentsDepositParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: ClientKey };
-
-// Same shape, opposite direction, and the same silence about addresses. `chain` says where
-// the money lands; which wallet on that chain is our own is read from config and from the
-// key, never from this call.
-export type IntentsWithdrawParams = { chain: ChainId; symbol?: string; amount: number; clientKey?: ClientKey };
 export type IntentsSendParams = { to: string; symbol: string; amount: number; clientKey?: ClientKey };
 
 // No address, no recipient, no contract. The agent sends a plan or names one it drew, and
@@ -757,8 +711,6 @@ export type ProposalService = {
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
   proposeHlWithdraw(params: HlWithdrawParams): Promise<Proposal>;
-  proposeIntentsDeposit(params: IntentsDepositParams): Promise<Proposal>;
-  proposeIntentsWithdraw(params: IntentsWithdrawParams): Promise<Proposal>;
   proposeIntentsSend(params: IntentsSendParams): Promise<Proposal>;
   proposeTrade(params: TradeParams): Promise<Proposal>;
   proposeTradeChange(params: TradeChangeParams): Promise<Proposal>;

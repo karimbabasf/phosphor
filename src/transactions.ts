@@ -242,7 +242,7 @@ function classifyHash(
   place: TxPlace,
   toPlace: TxPlace,
 ): { place: TxPlace; kind: TxHash['kind'] } {
-  if (index === 0 && (kind === 'intents_withdraw' || kind === 'intents_send' || kind === 'hl_deposit' || venue === 'intents-native')) {
+  if (index === 0 && (String(kind) === 'intents_withdraw' || kind === 'intents_send' || kind === 'hl_deposit' || venue === 'intents-native')) {
     return { place: 'intents', kind: 'intent' };
   }
   // A hash a trade recorded is the venue's own ledger hash: the venue's explorer resolves
@@ -317,6 +317,8 @@ type RetiredDraft = {
   token0?: { symbol: string; amount: number };
   token1?: { symbol: string };
   from?: string;
+  to?: string;
+  intentsAccount?: string;
   counterparty?: string;
   // The chain-era fund moves (gone 2026-09-16): a consolidation gathered one symbol across
   // legs onto toChain, a transfer was one leg.
@@ -328,7 +330,7 @@ type RetiredDraft = {
 
 type RetiredLeg = { fromChain?: TxPlace; toChain?: TxPlace; symbol?: string; amount?: number; amountUsd?: number; from?: string; to?: string };
 
-const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'consolidate', 'transfer'];
+const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'consolidate', 'transfer', 'intents_deposit', 'intents_withdraw'];
 
 /* Historic rows, rendered off what the retired draft actually carries.
    These used to fall through to `default`, which is a quiet way to be wrong: the fallback
@@ -344,6 +346,29 @@ const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw',
    says so in `note` rather than printing a figure that was already stale when written. */
 function retiredSidesOf(draft: RetiredDraft): Sides {
   // The chain-era fund moves: every field off the legs the row carries, nothing guessed.
+  // The chain moves in and out of the verifier (gone 2026-09-16 with the chain wallets).
+  if (draft.kind === 'intents_deposit') {
+    return {
+      place: draft.chain ?? 'eth',
+      toPlace: 'intents',
+      venue: 'intents.near',
+      sent: draft.symbol === undefined || draft.amount === undefined ? null : { symbol: draft.symbol, amount: draft.amount },
+      from: draft.from,
+      to: draft.intentsAccount,
+      counterparty: draft.counterparty,
+    };
+  }
+  if (draft.kind === 'intents_withdraw') {
+    return {
+      place: 'intents',
+      toPlace: draft.chain ?? 'eth',
+      venue: 'intents.near',
+      sent: draft.symbol === undefined || draft.amount === undefined ? null : { symbol: draft.symbol, amount: draft.amount },
+      from: draft.from,
+      to: draft.to,
+      counterparty: draft.counterparty,
+    };
+  }
   if (draft.kind === 'transfer') {
     const leg = draft.leg ?? {};
     return {
@@ -415,16 +440,22 @@ function sidesOf(draft: WriteDraft): Sides {
     };
   }
   switch (draft.kind) {
-    case 'swap':
+    case 'swap': {
+      // Both legs sit inside the verifier: chain and toChain are the home chains of the two
+      // assets, not places the money went. A row the retired 1Click venue wrote did move
+      // between chains, and it keeps saying so; the venue is read as the string it is.
+      const venue = String(draft.venue);
+      const inside = venue === 'intents-native';
       return {
-        place: draft.chain,
-        toPlace: draft.toChain,
-        venue: draft.venue,
+        place: inside ? 'intents' : draft.chain,
+        toPlace: inside ? 'intents' : draft.toChain,
+        venue,
         sent: { symbol: draft.fromSymbol, amount: draft.amountIn },
         from: draft.from,
         to: draft.to,
         counterparty: draft.counterparty,
       };
+    }
     case 'hl_deposit':
       return {
         // The money leaves the intents balance and lands on the venue. Earlier mechanisms
@@ -438,16 +469,6 @@ function sidesOf(draft: WriteDraft): Sides {
         to: draft.hlAccount,
         counterparty: draft.counterparty,
       };
-    case 'intents_deposit':
-      return {
-        place: draft.chain,
-        toPlace: 'intents',
-        venue: 'intents.near',
-        sent: { symbol: draft.symbol, amount: draft.amount },
-        from: draft.from,
-        to: draft.intentsAccount,
-        counterparty: draft.counterparty,
-      };
     case 'hl_withdraw':
       return {
         // Collateral leaves the venue and lands inside the verifier. The first hash is the
@@ -455,16 +476,6 @@ function sidesOf(draft: WriteDraft): Sides {
         place: 'hyperliquid',
         toPlace: 'intents',
         venue: 'hyperliquid',
-        sent: { symbol: draft.symbol, amount: draft.amount },
-        from: draft.from,
-        to: draft.to,
-        counterparty: draft.counterparty,
-      };
-    case 'intents_withdraw':
-      return {
-        place: 'intents',
-        toPlace: draft.chain,
-        venue: 'intents.near',
         sent: { symbol: draft.symbol, amount: draft.amount },
         from: draft.from,
         to: draft.to,
@@ -500,8 +511,9 @@ function noteOf(draft: WriteDraft): string | null {
 // first; the sentence is read only for rows from before that field existed, and never a
 // figure the sentence calls quoted, because a quote is a promise and not an arrival.
 function receivedOf(draft: WriteDraft, detail: string, evidence: RailEvidence | undefined): { symbol: string; amount: number } | null {
-  if (draft.kind !== 'swap' && draft.kind !== 'intents_withdraw' && draft.kind !== 'intents_deposit') return null;
-  const symbol = draft.kind === 'swap' ? draft.toSymbol : draft.symbol;
+  const kind = String(draft.kind);
+  if (kind !== 'swap' && kind !== 'intents_withdraw' && kind !== 'intents_deposit') return null;
+  const symbol = draft.kind === 'swap' ? draft.toSymbol : ((draft as unknown as RetiredDraft).symbol ?? '');
   const settled = Number(evidence?.settledAmountOut);
   if (typeof evidence?.settledAmountOut === 'string' && Number.isFinite(settled)) return { symbol, amount: settled };
   // Rail sentences are generated by this repo: "swapped X ETH for 0.1214 SOL", "1.9927 USDC

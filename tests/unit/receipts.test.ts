@@ -48,7 +48,8 @@ function settled(id: string, status: ProposalStatus, over: Partial<Proposal> = {
   const at = new Date().toISOString();
   return {
     id,
-    kind: 'intents_deposit',
+    // A retired kind, the shape rows on disk still have.
+    kind: 'intents_deposit' as unknown as Proposal['kind'],
     createdAt: at,
     decidedAt: at,
     decidedBy: 'policy',
@@ -102,8 +103,6 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       proposeSwap: async () => settled('x', 'executed'),
       proposeHlDeposit: async () => settled('x', 'executed'),
       proposeHlWithdraw: async () => settled('x', 'executed'),
-      proposeIntentsDeposit: async () => settled('x', 'executed'),
-      proposeIntentsWithdraw: async () => settled('x', 'executed'),
       proposeIntentsSend: async () => settled('x', 'executed'),
       proposeTrade: async () => settled('x', 'executed'),
       proposeTradeChange: async () => settled('x', 'executed'),

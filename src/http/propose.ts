@@ -226,14 +226,8 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
 
   try {
     if (kind === 'swap') {
-      // Two venues, and the default crosses chains, which is what a bare "swap" means here now.
-      // The old default was an on-chain DEX that could only work same-chain, so a cross-chain
-      // swap naming no venue was refused at this door and had to be retried. There is nothing
-      // left to refuse: both venues reach every pair the token list carries.
-      const venueRaw = params.venue === undefined ? 'oneclick' : String(params.venue);
-      if (venueRaw !== 'oneclick' && venueRaw !== 'intents-native') {
-        problems.push('venue must be oneclick or intents-native');
-      }
+      // One venue: the balance inside NEAR Intents. chain and toChain name the home chains of
+      // the two assets, never a place money lands, so there is no venue field to check.
       const chain = chainField(params, 'chain', problems);
       const toChain = params.toChain === undefined ? chain : chainField(params, 'toChain', problems);
       const fromSymbol = strField(params, 'fromSymbol', problems);
@@ -257,7 +251,6 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       }
       await respond(
         await ctx.proposals.proposeSwap({
-          venue: venueRaw as 'oneclick' | 'intents-native',
           chain,
           toChain,
           fromSymbol,
@@ -326,34 +319,6 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         return;
       }
       await respond(await ctx.proposals.proposeHlWithdraw({ amount, clientKey }));
-      return;
-    }
-    if (kind === 'intents_deposit') {
-      const chain = chainField(params, 'chain', problems);
-      // symbol is optional: absent means the chain's gas asset, which is the common case
-      // and the one the ERC-20 path could not serve.
-      const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-      const amount = positiveField(params, 'amount', problems);
-      if (problems.length > 0 || chain === null) {
-        fail(res, 400, problems.join('; '));
-        return;
-      }
-      await respond(await ctx.proposals.proposeIntentsDeposit({ chain, symbol, amount, clientKey }));
-      return;
-    }
-    if (kind === 'intents_withdraw') {
-      const chain = chainField(params, 'chain', problems);
-      // Same optional symbol as the deposit: absent means the destination chain's gas asset.
-      // There is no field here for the address, and there must never be one: the wallet the
-      // payout lands in is resolved from config by the proposal service and re-derived by the
-      // rail. tests/injection.test.ts holds this schema to that.
-      const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems);
-      const amount = positiveField(params, 'amount', problems);
-      if (problems.length > 0 || chain === null) {
-        fail(res, 400, problems.join('; '));
-        return;
-      }
-      await respond(await ctx.proposals.proposeIntentsWithdraw({ chain, symbol, amount, clientKey }));
       return;
     }
     if (kind === 'intents_send') {

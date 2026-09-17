@@ -118,14 +118,10 @@ export async function executeApproved(ctx: PCtx, p: Proposal): Promise<Proposal>
 }
 
 /* Which pocket a draft moves money through. The intents rails read the verifier, the
-   Hyperliquid rails the trading account; a chain-side move (the oneclick swap) has no pocket
-   the live ledger reads and is valued as the wallet total. */
+   Hyperliquid rails the trading account; anything else is valued as the wallet total. */
 function pocketOf(draft: WriteDraft | undefined): 'intents' | 'hyperliquid' | null {
   switch (draft?.kind) {
     case 'swap':
-      return draft.venue === 'intents-native' ? 'intents' : null;
-    case 'intents_deposit':
-    case 'intents_withdraw':
     case 'intents_send':
       return 'intents';
     case 'hl_deposit':

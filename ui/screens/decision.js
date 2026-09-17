@@ -123,10 +123,9 @@
   function headlineOf(proposal) {
     var draft = proposal.draft || {};
     if (draft.kind === 'swap') {
-      var where = draft.chain === draft.toChain
-        ? 'on ' + draft.chain
-        : draft.chain + ' to ' + draft.toChain;
-      return 'Swap ' + draft.fromSymbol + ' for ' + draft.toSymbol + ' ' + where;
+      /* Both legs sit inside NEAR Intents; chain and toChain name the assets'
+         home chains, never a place the money goes. */
+      return 'Swap ' + draft.fromSymbol + ' for ' + draft.toSymbol + ' inside NEAR Intents';
     }
     if (draft.kind === 'trade') return tradeHeadline(draft);
     /* Rows an older build wrote. Nothing proposes these any more; they still

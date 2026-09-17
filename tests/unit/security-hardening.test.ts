@@ -52,7 +52,7 @@ function builtSwap(): Proposal {
     status: 'pending',
     draft: {
       kind: 'swap',
-      venue: 'oneclick',
+      venue: 'intents-native',
       chain: 'arb',
       toChain: 'sol',
       fromSymbol: 'USDC',
@@ -69,6 +69,9 @@ function builtSwap(): Proposal {
     verdict: { outcome: 'needs_approval', reasons: ['above the click threshold'] },
   };
 }
+
+// What the door handed the swap builder last, so a test can see what a stray field did.
+let lastSwapParams: Record<string, unknown> | null = null;
 
 async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-sec-'));
@@ -98,12 +101,13 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     }),
     proposals: {
       proposePolicyChange: async () => builtSwap(),
-      // Only reached when the swap guards pass. A bad venue or amount is refused before here.
-      proposeSwap: async () => builtSwap(),
+      // Only reached when the swap guards pass. A bad amount is refused before here.
+      proposeSwap: async (params) => {
+        lastSwapParams = params as unknown as Record<string, unknown>;
+        return builtSwap();
+      },
       proposeHlDeposit: async () => builtSwap(),
       proposeHlWithdraw: async () => builtSwap(),
-      proposeIntentsDeposit: async () => builtSwap(),
-      proposeIntentsWithdraw: async () => builtSwap(),
       proposeIntentsSend: async () => builtSwap(),
       proposeTrade: async () => builtSwap(),
       proposeTradeChange: async () => builtSwap(),
@@ -278,38 +282,23 @@ test('a cross-chain swap that names no venue now builds, because the default ven
   }
 });
 
-test('a venue this app does not run is refused by name rather than swapped somewhere else', async () => {
+test('a venue this app does not run cannot route a swap anywhere else: every swap is inside NEAR Intents', async () => {
   const h = await boot();
   try {
-    const out = await raw(h.url, '/api/mcp', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', Origin: h.url },
-      body: JSON.stringify({ secret: SEAT,
-        op: 'propose',
-        kind: 'swap',
-        params: { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 100, minAmountOut: 0.5, venue: 'uniswap-v3' },
-      }),
-    });
-    assert.equal(out.status, 400);
-    assert.match(out.body, /venue must be oneclick or intents-native/);
-  } finally {
-    await h.close();
-  }
-});
-
-test('the same cross-chain swap with venue oneclick passes the guard and builds', async () => {
-  const h = await boot();
-  try {
-    const out = await raw(h.url, '/api/mcp', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', Origin: h.url },
-      body: JSON.stringify({ secret: SEAT,
-        op: 'propose',
-        kind: 'swap',
-        params: { chain: 'arb', toChain: 'sol', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 100, minAmountOut: 0.5, venue: 'oneclick' },
-      }),
-    });
-    assert.equal(out.status, 200, 'a named cross-chain venue must not be refused by the guard');
+    for (const venue of ['uniswap-v3', 'oneclick']) {
+      const out = await raw(h.url, '/api/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Origin: h.url },
+        body: JSON.stringify({ secret: SEAT,
+          op: 'propose',
+          kind: 'swap',
+          params: { chain: 'arb', toChain: 'sol', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 100, minAmountOut: 0.5, venue },
+        }),
+      });
+      assert.equal(out.status, 200, out.body.slice(0, 200));
+      assert.ok(lastSwapParams !== null, 'the builder was reached');
+      assert.equal('venue' in lastSwapParams, false, `a stray venue of ${venue} reached the builder`);
+    }
   } finally {
     await h.close();
   }
@@ -397,8 +386,6 @@ for (const [label, amount] of BAD_AMOUNTS) {
     try {
       const cases: Array<[string, Record<string, unknown>]> = [
         ['hl_deposit', { chain: 'arb', symbol: 'USDC', amount }],
-        ['intents_deposit', { chain: 'arb', symbol: 'USDC', amount }],
-        ['intents_withdraw', { chain: 'arb', symbol: 'USDC', amount }],
         ['swap', { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: amount, minAmountOut: 1 }],
       ];
       for (const [kind, params] of cases) {
@@ -439,7 +426,7 @@ test('an unknown chain is refused rather than silently drafted against ethereum'
     // chainField used to return 'eth' as its sentinel. Every caller checks problems.length
     // first, so it was latent; the point of returning null is that the next branch that forgets
     // cannot spend on the wrong chain.
-    const out = await proposeWith(h.url, 'intents_deposit', { chain: 'polygon', symbol: 'USDC', amount: 10 });
+    const out = await proposeWith(h.url, 'swap', { chain: 'polygon', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 10, minAmountOut: 1 });
     assert.equal(out.status, 400);
     assert.match(out.body, /chain must be one of/);
     assert.doesNotMatch(out.body, /"id"/, 'no proposal was created');
@@ -451,7 +438,7 @@ test('an unknown chain is refused rather than silently drafted against ethereum'
 test('a good amount still gets through, so the bound is a bound and not a wall', async () => {
   const h = await boot();
   try {
-    const out = await proposeWith(h.url, 'intents_deposit', { chain: 'arb', symbol: 'USDC', amount: 10 });
+    const out = await proposeWith(h.url, 'swap', { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 10, minAmountOut: 1 });
     assert.equal(out.status, 200, out.body.slice(0, 200));
   } finally {
     await h.close();

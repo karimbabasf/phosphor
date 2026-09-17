@@ -139,7 +139,7 @@ function setup(result: RailResult | ((ledger: ReturnType<typeof fakeLedger>) => 
   return { svc, store, ledger, rails, audit, lines: () => audit.tail(50).reverse() };
 }
 
-const swap = { venue: 'oneclick' as const, chain: 'arb' as const, fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: 50, minAmountOut: 49.5 };
+const swap = { chain: 'arb' as const, fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: 50, minAmountOut: 49.5 };
 
 /* A propose under the click threshold answers with the executing row and runs the rail behind
    it (src/proposals/execute.ts executeRail); the settled row is what these tests judge. */
@@ -274,7 +274,7 @@ test('without a rail read, the before and after are the intents pocket as the le
     ledger.setUsdt('104500000');
     return { ok: true, detail: 'spy rail', txids: ['0xintent'] };
   });
-  const p = await landed(h, h.svc.proposeSwap({ ...swap, venue: 'intents-native' as const }));
+  const p = await landed(h, h.svc.proposeSwap(swap));
   assert.equal(p.status, 'executed', p.result?.detail ?? '');
   assert.equal(p.balances?.beforeUsd, 105, '100 USDC and 5 USDT inside the verifier before');
   await drained();

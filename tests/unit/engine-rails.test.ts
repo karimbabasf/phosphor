@@ -11,8 +11,6 @@ import path from 'node:path';
 import type {
   HlDepositDraft,
   HlWithdrawDraft,
-  IntentsDepositDraft,
-  IntentsWithdrawDraft,
   IntentsSendDraft,
   Policy,
   RiskRow,
@@ -59,7 +57,7 @@ function ctxWith(over: Partial<EngineCtx> = {}): EngineCtx {
 function swap(over: Partial<SwapDraft> = {}): SwapDraft {
   return {
     kind: 'swap',
-    venue: 'uniswap-v3',
+    venue: 'intents-native',
     chain: 'base',
     toChain: 'base',
     fromSymbol: 'USDC',
@@ -85,37 +83,6 @@ function hlDeposit(over: Partial<HlDepositDraft> = {}): HlDepositDraft {
     minCredited: 24.7,
     from: SELF_EVM,
     hlAccount: SELF_EVM,
-    counterparty: VENUE,
-    ...over,
-  };
-}
-
-function intentsDeposit(over: Partial<IntentsDepositDraft> = {}): IntentsDepositDraft {
-  return {
-    kind: 'intents_deposit',
-    chain: 'base',
-    symbol: 'USDC',
-    tokenId: 'USDC',
-    amount: 30,
-    amountUsd: 30,
-    minCredited: 29.4,
-    from: SELF_EVM,
-    intentsAccount: SELF_EVM.toLowerCase(),
-    counterparty: VENUE,
-    ...over,
-  };
-}
-
-function intentsWithdraw(over: Partial<IntentsWithdrawDraft> = {}): IntentsWithdrawDraft {
-  return {
-    kind: 'intents_withdraw',
-    chain: 'base',
-    symbol: 'USDC',
-    amount: 20,
-    amountUsd: 20,
-    minReceived: 19.6,
-    from: SELF_EVM.toLowerCase(),
-    to: SELF_EVM,
     counterparty: VENUE,
     ...over,
   };
@@ -156,8 +123,6 @@ const ALL = [
   ['swap', swap()],
   ['hl_deposit', hlDeposit()],
   ['hl_withdraw', hlWithdraw()],
-  ['intents_deposit', intentsDeposit()],
-  ['intents_withdraw', intentsWithdraw()],
   ['intents_send', intentsSend({ to: SELF_EVM })],
 ] as const;
 
@@ -177,8 +142,6 @@ test('a rail pointed at an unlisted venue is refused', () => {
     swap({ counterparty: UNKNOWN_VENUE }),
     hlDeposit({ counterparty: UNKNOWN_VENUE }),
     hlWithdraw({ counterparty: UNKNOWN_VENUE }),
-    intentsDeposit({ counterparty: UNKNOWN_VENUE }),
-    intentsWithdraw({ counterparty: UNKNOWN_VENUE }),
   ];
   for (const draft of cases) {
     const v = evaluate(draft, ctxWith());
