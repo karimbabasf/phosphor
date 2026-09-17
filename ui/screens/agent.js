@@ -118,6 +118,12 @@
   var TRANSCRIPT_CAP = 400;
   var TICK_MS = 100;
   var STICK_PX = 40;
+  /* How long the column counts as still at the end after it asked the
+     scroller to ease there. A smooth scroll is not at the bottom on the very
+     next frame, and a row that lands during it must not read that as "the
+     person scrolled up". A wheel turn ends the follow at once. */
+  var FOLLOW_MS = 600;
+  var JUMP_S = 0.32;
   /* Six lines, and the line's height is read off the box rather than written
      down here: the fallback is only for a computed style that says `normal`. */
   var COMPOSER_MAX_LINES = 6;
@@ -396,7 +402,11 @@
   function mount(host, options) {
     if (!host) return null;
     var opts = options || {};
-    var node = { host: host, composerHost: opts.composerHost || null, refs: {}, live: [] };
+    /* mark is what the transcript held at the last render, so the next one can
+       tell an arrival from a redraw; unseen counts arrivals since the person
+       was last at the end; followUntil is the clock the column is easing
+       down on. */
+    var node = { host: host, composerHost: opts.composerHost || null, refs: {}, live: [], mark: '', unseen: 0, followUntil: 0, lastTop: 0 };
     build(node);
     mounts.push(node);
     render(node, mounts.length === 1);
@@ -558,13 +568,40 @@
     centre.appendChild(sheet);
     host.appendChild(centre);
 
+    /* THE SCROLLER, IN A FRAME THAT DOES NOT SCROLL. The transcript is the
+       one thing in the column that moves, so the things drawn over it (the
+       edge fades, the way back down) sit on the frame around it rather than
+       inside it, and the scroller itself carries nothing but rows. */
+    var wrap = dom.el('div', 'transcript-wrap');
     var list = dom.el('div', 'transcript');
     list.setAttribute('role', 'log');
     list.setAttribute('aria-live', 'polite');
-    host.appendChild(list);
+    wrap.appendChild(list);
     /* No scrollbar (agent.css hides it): the transcript fades at the edge
-       that has more behind it, the way every list in the window does. */
-    cuts(list);
+       that has more behind it, the way every list in the window does. The
+       fade is two gradients laid over the frame, never a mask on the scroller:
+       a mask keeps WebKit scrolling on the main thread. cuts() says which
+       edge has more behind it. */
+    var fadeTop = dom.el('div', 'transcript-fade');
+    fadeTop.setAttribute('data-edge', 'top');
+    var fadeBottom = dom.el('div', 'transcript-fade');
+    fadeBottom.setAttribute('data-edge', 'bottom');
+    wrap.appendChild(fadeTop);
+    wrap.appendChild(fadeBottom);
+    /* THE WAY BACK DOWN. A person who scrolled up to read is left where they
+       are when a row lands (Karim, 2026-09-16: "when i send a new message it
+       doesnt auto scroll me all the way down or at least give me an arrow I
+       can click if I have scrolled up to go straight down"), and this is the
+       arrow: one round pill at the foot of the scroller, the count of what
+       landed while they were away when it is more than one. It decides
+       nothing: it scrolls. */
+    var jump = button('jump-latest', 'Jump to latest', 'Jump to the latest message');
+    jump.appendChild(icon('chevron-down', 'jump-glyph'));
+    var jumpCount = dom.el('span', 'jump-count mono');
+    jump.appendChild(jumpCount);
+    wrap.appendChild(jump);
+    host.appendChild(wrap);
+    cuts(list, wrap);
 
     /* The turn bar is text and one dot: no control, nothing that decides
        anything. Heard and not seen (agent.css clips it): the seat light says
@@ -619,6 +656,9 @@
       emptyInner: emptyInner,
       sheet: sheet,
       list: list,
+      listWrap: wrap,
+      jump: jump,
+      jumpCount: jumpCount,
       composer: composer,
       input: input,
       send: send,
@@ -647,6 +687,18 @@
     dom.on(copy, 'click', function () { copyLine(node); });
     dom.on(connectBtn, 'click', function () { setView('connect'); });
     dom.on(back, 'click', function () { setView('card'); });
+    dom.on(jump, 'click', function () { jumpToEnd(node); });
+    /* Reaching the end by hand puts the pill away. Going up ends the follow:
+       the column's own easing only ever moves down, so a scroll that moved
+       up is the person, and the hand wins. */
+    dom.on(list, 'scroll', function () {
+      if (list.scrollTop < node.lastTop) node.followUntil = 0;
+      node.lastTop = list.scrollTop;
+      if (node.unseen && atEnd(list)) {
+        node.unseen = 0;
+        paintJump(node);
+      }
+    }, { passive: true });
 
     /* Enter sends and Shift+Enter breaks the line, which is the shape every
        chat box has. Escape lets go of the box and keeps the draft: leaving is
@@ -777,6 +829,8 @@
     node.refs.input.value = '';
     autogrow(node.refs.input);
     arm(node);
+    /* Their own words always land in view, however far up they were reading. */
+    jumpAll = true;
     var mine = said(text, 'pending');
     api.driver({ action: 'prompt', text: text, chat: '' }).catch(function (err) {
       mine.state = 'failed';
@@ -866,12 +920,14 @@
   }
 
   /* Paint which edges of a scroller have more behind them, for the fade
-     the stylesheet draws there. */
-  function cuts(scroller) {
+     the stylesheet draws there: on the frame around the scroller when there
+     is one, so the scroller's own paint is never touched. */
+  function cuts(scroller, frame) {
+    var target = frame || scroller;
     function paint() {
       var top = scroller.scrollTop > 2;
       var bottom = scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 2;
-      dom.setAttr(scroller, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
+      dom.setAttr(target, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
     }
     dom.on(scroller, 'scroll', paint, { passive: true });
     if (window.ResizeObserver) new window.ResizeObserver(paint).observe(scroller);
@@ -1174,8 +1230,13 @@
 
   /* ---------- render ---------- */
 
+  /* Set by the one render that must end at the bottom whatever the scroll
+     position was: the person's own message going in. */
+  var jumpAll = false;
+
   function renderAll() {
     for (var i = 0; i < mounts.length; i += 1) render(mounts[i], i === 0);
+    jumpAll = false;
     flushSteps();
     tickerCheck();
   }
@@ -1220,7 +1281,7 @@
     var sheet = view === 'connect' && empty && canStart();
     dom.setHidden(refs.sheet, !sheet);
     dom.setHidden(refs.empty, !empty || sheet);
-    dom.setHidden(refs.list, empty);
+    dom.setHidden(refs.listWrap, empty);
     if (empty && !sheet) renderEmpty(node);
     if (sheet) renderSheet(node);
 
@@ -1244,9 +1305,24 @@
       dom.setAttr(refs.turnBar, 'data-state', turn.state);
     }
 
-    var stick = refs.list.scrollHeight - refs.list.scrollTop - refs.list.clientHeight < STICK_PX;
+    /* WHERE THE SCROLL GOES. Read before the rows change: at the end (or
+       still easing there, or their own message going in) means the column
+       follows the new row down, smoothly. Anywhere else means the person is
+       reading, so nothing moves and the pill counts what they have not seen.
+       A render that changed no content (a phase word, the roster) is not an
+       arrival and scrolls nothing. */
+    var stuck = jumpAll || node.followUntil > now || atEnd(refs.list);
     renderBlocks(node, primary);
-    if (stick) refs.list.scrollTop = refs.list.scrollHeight;
+    var mark = contentMark();
+    var arrived = mark !== node.mark;
+    node.mark = mark;
+    if (stuck) {
+      node.unseen = 0;
+      if (arrived) scrollToEnd(node);
+    } else if (arrived) {
+      node.unseen += 1;
+    }
+    paintJump(node);
 
     /* No line means the backend cannot name one, so the offer goes away with it.
        A button that reveals an empty block is worse than no button. */
@@ -1267,6 +1343,64 @@
       dom.setText(kids[1], client.name + ', ' + (client.role === 'analyst' ? 'read only' : 'can ask'));
       dom.setText(kids[2], String(client.calls || 0) + ' calls');
     });
+  }
+
+  /* ---------- the scroll ---------- */
+
+  function atEnd(list) {
+    return list.scrollHeight - list.scrollTop - list.clientHeight < STICK_PX;
+  }
+
+  /* What the transcript holds, as one string that changes when a row lands or
+     a reply grows and stays the same across a redraw of the same rows. seq
+     moves for every block and every step, and the tail's length catches the
+     text that joins a reply already on screen. */
+  function contentMark() {
+    var tail = blocks[blocks.length - 1];
+    var grow = tail && tail.type === 'reply' ? tail.text.length : 0;
+    return blocks.length + ':' + seq + ':' + grow;
+  }
+
+  /* The follow: the scroller eases to the end (the browser's own smooth
+     scroll, which runs off the main thread) and the column counts as at the
+     end until it gets there. Under reduced motion it lands at once. */
+  function scrollToEnd(node) {
+    var list = node.refs.list;
+    var motion = window.PhosphorMotion;
+    var smooth = !(motion && motion.reduced());
+    var top = Math.max(0, list.scrollHeight - list.clientHeight);
+    node.lastTop = list.scrollTop;
+    node.followUntil = smooth ? Date.now() + FOLLOW_MS : 0;
+    if (typeof list.scrollTo === 'function') list.scrollTo({ top: top, behavior: smooth ? 'smooth' : 'auto' });
+    else list.scrollTop = top;
+  }
+
+  /* The pill's jump is authored rather than the browser's: one ease-out over
+     a third of a second, driven by motion.dev, so a long transcript reads as
+     a place the column went back to rather than a cut. */
+  function jumpToEnd(node) {
+    var list = node.refs.list;
+    var motion = window.PhosphorMotion;
+    var top = Math.max(0, list.scrollHeight - list.clientHeight);
+    node.unseen = 0;
+    paintJump(node);
+    if (!motion || motion.reduced() || typeof motion.animate !== 'function') {
+      list.scrollTop = top;
+      return;
+    }
+    node.lastTop = list.scrollTop;
+    node.followUntil = Date.now() + FOLLOW_MS;
+    motion.animate(list.scrollTop, top, {
+      duration: JUMP_S,
+      ease: [0.23, 1, 0.32, 1],
+      onUpdate: function (value) { list.scrollTop = value; }
+    });
+  }
+
+  function paintJump(node) {
+    var refs = node.refs;
+    dom.setAttr(refs.jump, 'data-on', node.unseen > 0 ? 'true' : null);
+    dom.setText(refs.jumpCount, node.unseen > 1 ? String(node.unseen) : '');
   }
 
   /* No, coming, and yes. The seat carries the state as an attribute so the
@@ -1445,7 +1579,12 @@
 
   /* Rendered once per change of text, not once per pass: the reconciler calls
      update on every render and a table rebuilt on each tick of the turn clock
-     would be the column doing work for nobody. */
+     would be the column doing work for nobody.
+
+     A reply grows by whole blocks, joined on a blank line (ingest). When the
+     new text is the old text with more under it, only the new blocks are
+     drawn, under the paragraphs already there: the row keeps what it had
+     rather than being emptied and rebuilt for every block that lands. */
   function renderReply(node, value) {
     var md = window.PhosphorMarkdown;
     if (!md) {
@@ -1453,7 +1592,12 @@
       return;
     }
     if (node.__md === value) return;
+    var had = node.__md;
     node.__md = value;
+    if (typeof had === 'string' && had !== '' && typeof md.appendInto === 'function' && value.indexOf(had + '\n\n') === 0) {
+      md.appendInto(node, value.slice(had.length + 2));
+      return;
+    }
     md.renderInto(node, value);
   }
 

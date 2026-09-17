@@ -123,6 +123,11 @@ function make(tag: string): Node {
   };
   node.removeEventListener = () => {};
   node.querySelector = () => null;
+  /* The scroller's one write. A browser eases it; the stub lands it, so a test reads where the
+     column asked to be rather than a frame of the way there. */
+  (node as unknown as { scrollTo: (opts: { top: number }) => void }).scrollTo = (opts) => {
+    node.scrollTop = opts.top;
+  };
   (node as unknown as { focus: () => void; focused: boolean }).focus = () => {
     (node as unknown as { focused: boolean }).focused = true;
   };
@@ -239,7 +244,16 @@ function build(options: { command?: string } = {}) {
     },
     /* The shared icon set and the motion helper (foundation): one svg per name, no motion. */
     PhosphorIcons: { svg: (name: string, className: string) => { const n = make('svg'); n.className = 'icon ' + (className || ''); n.setAttribute('data-icon', name); return n; } },
-    PhosphorMotion: { reduced: () => false, spring: () => 'linear' },
+    /* The motion helper (ui/design/motion.js): no reduced preference, and a value animation
+       that lands on its end value at once, the way the browser would a few frames later. */
+    PhosphorMotion: {
+      reduced: () => false,
+      spring: () => 'linear',
+      animate: (_from: unknown, to: number, opts: { onUpdate?: (v: number) => void }) => {
+        if (opts && typeof opts.onUpdate === 'function') opts.onUpdate(to);
+        return { finished: Promise.resolve(), stop: () => {} };
+      },
+    },
     /* The state store: the column reads the roster slice for the connect sheet. */
     PhosphorState: {
       select: (key: string, fn: (slice: unknown) => void) => {
@@ -321,6 +335,22 @@ function build(options: { command?: string } = {}) {
       for (const handler of receiptHandlers) handler(list, 'ready');
     },
     cards: () => all(host, 'receipt-card'),
+    /* The scroller and the pill that offers the way back down. */
+    list: () => all(host, 'transcript')[0],
+    pill: () => all(host, 'jump-latest')[0],
+    pillOn: () => all(host, 'jump-latest')[0].getAttribute('data-on') === 'true',
+    pillCount: () => all(host, 'jump-count')[0].textContent,
+    /* Put the person part way up a long transcript: the box is 400 tall, the content 2000,
+       and the top is where they are reading. */
+    scrollUp() {
+      const list = all(host, 'transcript')[0];
+      list.clientHeight = 400;
+      list.scrollHeight = 2000;
+      list.scrollTop = 1600;
+      fire(list, 'scroll');
+      list.scrollTop = 0;
+      fire(list, 'scroll');
+    },
   };
 }
 
@@ -910,4 +940,65 @@ test('Turn off asks first, on a card of its own, and only the card\'s Turn off q
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(world.actions, ['stop', 'close']);
+});
+
+/* ---------- scrolling ---------- */
+
+test('new content while the person is scrolled up leaves the scroll alone and offers the way down', () => {
+  const world = build();
+  world.type('what do I hold?');
+  world.emit({ kind: 'text', text: 'You hold two coins.' });
+  assert.equal(world.pillOn(), false, 'the pill is up while the person is at the end');
+
+  world.scrollUp();
+  world.emit({ kind: 'text', text: 'Most of it is USDC.' });
+  assert.equal(world.list().scrollTop, 0, 'a new block moved a person who had scrolled up');
+  assert.equal(world.pillOn(), true, 'nothing told them a row landed');
+  assert.equal(world.pillCount(), '', 'one arrival is not a count');
+
+  /* A second arrival counts, and the count is of what they have not seen. */
+  world.emit({ kind: 'said', text: 'and my positions?' }, 'c1');
+  assert.equal(world.pillCount(), '2');
+  assert.equal(world.list().scrollTop, 0);
+});
+
+test('pressing the pill scrolls to the end and puts the pill away', () => {
+  const world = build();
+  world.type('what do I hold?');
+  world.scrollUp();
+  world.emit({ kind: 'text', text: 'Two coins.' });
+  assert.equal(world.pillOn(), true);
+  fire(world.pill(), 'click');
+  assert.equal(world.list().scrollTop, world.list().scrollHeight - world.list().clientHeight, 'the jump did not reach the end');
+  assert.equal(world.pillOn(), false, 'the pill outlived the jump');
+});
+
+test('sending a message always scrolls to the end, however far up the person was', () => {
+  const world = build();
+  world.type('what do I hold?');
+  world.emit({ kind: 'text', text: 'Two coins.' });
+  world.emit({ kind: 'turn_end', error: false, turns: 1 });
+  world.emit({ kind: 'status', state: 'ready' });
+  world.scrollUp();
+  /* A row from a second window on the same chat lands while they are up. */
+  world.emit({ kind: 'said', text: 'is anything waiting on me?' });
+  assert.equal(world.pillOn(), true);
+  world.type('and my positions?');
+  assert.equal(world.list().scrollTop, world.list().scrollHeight - world.list().clientHeight, 'their own message landed off screen');
+  assert.equal(world.pillOn(), false);
+});
+
+test('a reply that grows keeps the paragraphs it already drew and appends the new ones', () => {
+  const world = build();
+  world.type('what do I hold?');
+  world.emit({ kind: 'text', text: 'You hold two coins.' });
+  const row = world.replyRows()[0];
+  const first = all(row, 'chat-p')[0];
+  assert.ok(first, 'no paragraph was drawn');
+  world.emit({ kind: 'text', text: 'Most of it is USDC.' });
+  assert.equal(world.replyRows().length, 1, 'text that follows text made a second row');
+  const paragraphs = all(row, 'chat-p');
+  assert.equal(paragraphs.length, 2);
+  assert.equal(paragraphs[0], first, 'the first paragraph was rebuilt rather than kept');
+  assert.equal(paragraphs[1].textContent, 'Most of it is USDC.');
 });

@@ -141,9 +141,22 @@
     host.appendChild(p);
   }
 
+  /* Two doors, one renderer. renderInto draws a reply from nothing; appendInto
+     draws only the blocks that arrived since, under what is already there. A
+     reply grows one model block at a time, joined on a blank line, so the
+     paragraphs already on screen are never rebuilt for the one that landed. */
   function renderInto(host, source) {
     if (!host) return;
     while (host.firstChild) host.removeChild(host.firstChild);
+    render(host, source);
+  }
+
+  function appendInto(host, source) {
+    if (!host) return;
+    render(host, source);
+  }
+
+  function render(host, source) {
     if (typeof source !== 'string' || source === '') return;
     var lines = source.replace(/\r\n?/g, '\n').split('\n');
     var para = [];
@@ -217,5 +230,5 @@
     flush();
   }
 
-  window.PhosphorMarkdown = { renderInto: renderInto };
+  window.PhosphorMarkdown = { renderInto: renderInto, appendInto: appendInto };
 })();

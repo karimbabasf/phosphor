@@ -11,9 +11,16 @@
                                     spring as linear(), or the ease-out curve
                                     when the vendored file is not there
 
+     animate(target, keyframes, options)
+                                 -> motion.dev's animate, through one door:
+                                    an element with keyframes, or a number to
+                                    a number with onUpdate. Always answers with
+                                    something that has `finished` and stop(),
+                                    even where the vendored file is not there
+
    window.Motion (ui/vendor/motion-13.3.0.js) is loaded by index.html before
-   this file, so screen code calls Motion.animate(el, keyframes, options)
-   directly for its authored moments and asks reduced() before any of them.
+   this file. Screen code reaches it through animate() above and asks
+   reduced() before any authored moment.
 
    handle
      start()       run the draw loop (subject to visibility)
@@ -294,6 +301,32 @@
     return springDur;
   }
 
+  /* THE ONE DOOR TO motion.dev. Every authored moment (the beam's flight, the
+     jump down a transcript, a ring that breathes) goes through here rather
+     than reaching for window.Motion, so a page that failed to load the
+     vendored file, and the unit harness that never has it, still get an
+     answer: a value animation lands on its end value at once and an element
+     is left where it is, and `finished` resolves either way. Nothing here
+     decides whether to move at all: callers ask reduced() first. */
+  function animate(target, keyframes, options) {
+    var Motion = window.Motion;
+    if (Motion && typeof Motion.animate === 'function') {
+      try {
+        return Motion.animate(target, keyframes, options);
+      } catch (err) {
+        report(err);
+      }
+    }
+    var opts = options || {};
+    if (typeof target === 'number' && typeof opts.onUpdate === 'function') {
+      try { opts.onUpdate(keyframes); } catch (err) { report(err); }
+    }
+    if (typeof opts.onComplete === 'function') {
+      try { opts.onComplete(); } catch (err) { report(err); }
+    }
+    return { finished: Promise.resolve(), stop: function () {}, cancel: function () {} };
+  }
+
   /* Written at boot, once, on the root: the one place the stylesheet reads
      the spring from. Guarded, because the file also runs where there is no
      document to write to. */
@@ -328,6 +361,7 @@
   window.PhosphorMotion = {
     register: register,
     once: once,
+    animate: animate,
     reduced: reduced,
     onReducedChange: onReducedChange,
     fitCanvas: fitCanvas,
