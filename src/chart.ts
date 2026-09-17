@@ -156,17 +156,22 @@ export const TIMEFRAMES: readonly { label: string; sec: number }[] = [
   { label: '1d', sec: 86400 },
 ];
 
-// The window is allowed to squeeze until the renderer stops being able to say anything, not
-// until a round number runs out. Two thousand one-minute bars is a day and a half on screen;
-// past that the bars are thinner than the hairline that separates them. What the window can
-// actually be filled with is a separate question, and the sources answer it: the chart draws
-// the history it was given and leaves the rest of the window empty rather than pretending.
+// The window squeezes and pans as far as the cache can hold, not to a round number. What the
+// window can actually be filled with is a separate question, and the venues answer it: the
+// chart draws the history it was given, backfills behind the left edge as the pan reaches it,
+// and says where the venue's history begins rather than pretending.
 export const LIMITS = {
   barCountMin: 10,
-  barCountMax: 2000,
+  // Twenty thousand bars across the plot. Past two a pixel the renderer folds bars per pixel
+  // column (candleColumns in ui/chart/chart.js), so a squeeze this deep is a column per pixel
+  // on any screen there is rather than a smear of wicks.
+  barCountMax: 20000,
   barCountDefault: 120,
-  panMax: 400,
-  historyMax: 2000,
+  // Bars back from the newest the view may sit at. It is the cache's depth (src/market/store.ts
+  // maxBars): the window clamps earlier than this, at the venue's own first bar, once the
+  // series has said it has nothing older.
+  panMax: 50000,
+  historyMax: 50000,
   // Bars served beyond the left edge of the window, so a small pan does not run off the data
   // before the backfill behind it lands.
   fetchMargin: 30,

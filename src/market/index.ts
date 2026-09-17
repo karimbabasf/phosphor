@@ -52,6 +52,11 @@ export type MarketRead = {
   // Seconds since a live bar last arrived for this market on this venue, null if none ever
   // has. The three feed states are derived from it in src/market/push.ts.
   liveAgeSec: number | null;
+  // Older bars are on their way in behind the ones held.
+  backfilling: boolean;
+  // The venue has nothing older than `oldestSec`, the oldest base bar the cache holds.
+  exhaustedBack: boolean;
+  oldestSec: number | null;
   note: string | null;
   error: string | null;
 };
@@ -158,6 +163,9 @@ export function createMarketData(deps: MarketDeps = {}) {
         coverageSec: 0,
         bars: 0,
         liveAgeSec: null,
+        backfilling: false,
+        exhaustedBack: false,
+        oldestSec: null,
         note: null,
         error: `${want} does not list ${product}`,
       };
@@ -183,9 +191,29 @@ export function createMarketData(deps: MarketDeps = {}) {
       coverageSec: reached,
       bars: held.candles.length,
       liveAgeSec: held.liveAgeSec,
+      backfilling: held.backfilling,
+      exhaustedBack: held.exhaustedBack,
+      oldestSec: held.oldestSec,
       note,
       error: held.error,
     };
+  }
+
+  /* The bars older than a moment, for the chart panning into history. Awaits the venue when
+     the cache is short behind the moment, like warm(): the window asked because it has run out
+     of bars to draw, and an empty answer would leave it drawing nothing. */
+  async function before(
+    query: string,
+    timeframe: string | number,
+    beforeSec: number,
+    bars: number,
+    want: Provider | 'auto' = 'auto',
+  ): Promise<{ candles: Candle[]; exhaustedBack: boolean; oldestSec: number | null }> {
+    const { ref, product, targetSec, base, unlisted } = plan(query, timeframe, want);
+    if (unlisted) return { candles: [], exhaustedBack: false, oldestSec: null };
+    const venue = ref?.provider ?? 'hyperliquid';
+    follow(product, venue);
+    return store.before(product, base.baseSec, targetSec, beforeSec, bars, venue);
   }
 
   /* The agent path. Waits for a cold cache, because an empty answer is worse than a slow
@@ -217,6 +245,7 @@ export function createMarketData(deps: MarketDeps = {}) {
   return {
     read,
     warm,
+    before,
     atr,
     resolve: (query: string) => catalog.resolve(query),
     resolveOn: (query: string, provider: Provider) => catalog.resolveOn(query, provider),

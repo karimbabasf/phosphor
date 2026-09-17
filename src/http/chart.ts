@@ -6,7 +6,7 @@ import type http from 'node:http';
 
 import type { Candle } from '../types.ts';
 import type { PriceReading } from '../view/basic.ts';
-import { buildCompactRead, buildRead, LIMITS as CHART_LIMITS, TIMEFRAMES, timeframeLabel } from '../chart.ts';
+import { buildCompactRead, buildRead, LIMITS as CHART_LIMITS, MAX_TIMEFRAME_SEC, TIMEFRAMES, timeframeLabel } from '../chart.ts';
 import type { ChartGeometry, ChartIndicator, ChartState, ProviderChoice } from '../chart.ts';
 import { PROVIDER_CHOICES } from '../chart.ts';
 import type { ChartSlot, ChartStore } from '../charts.ts';
@@ -95,6 +95,11 @@ type CandleLoad = {
   // How far behind the venue that socket runs, only while it is the one carrying the price.
   // On any other feed state the number would be about a socket that is not serving the chart.
   latencyMs: number | null;
+  // Older bars are on their way in behind the ones held; the venue has nothing older than
+  // `oldestSec`. The window draws "loading older bars" and "history begins here" from these.
+  backfilling: boolean;
+  exhaustedBack: boolean;
+  oldestSec: number | null;
   note: string | null;
 };
 
@@ -128,6 +133,9 @@ function readCandles(
     filling: held.filling,
     feed,
     latencyMs: feed === 'live' ? ctx.market.liveLatencyMs(held.source) : null,
+    backfilling: held.backfilling,
+    exhaustedBack: held.exhaustedBack,
+    oldestSec: held.oldestSec,
     note: held.note,
   };
 }
@@ -146,14 +154,36 @@ export async function loadCandles(
   return readCandles(ctx, product, granularitySec, limit, provider);
 }
 
+// The one candle route. `before=<open time>` is the window panning into history: the `limit`
+// bars older than that moment, from the cache and then the venue, with the venue's floor in a
+// header so the window knows when to stop asking. `provider` pins the venue the way the chart's
+// view does, so a backfill lands in the series the chart is drawing from.
 export async function sendCandles(ctx: Ctx, url: URL, res: http.ServerResponse): Promise<void> {
   const product = url.searchParams.get('product') ?? ctx.cfg.candleProducts[0] ?? 'BTC-USD';
-  const granularity = intParam(url.searchParams.get('granularity'), 60, 86400);
+  const granularity = intParam(url.searchParams.get('granularity'), 60, MAX_TIMEFRAME_SEC);
   const limit = intParam(url.searchParams.get('limit'), 120, CANDLE_LIMIT_MAX);
+  const providerRaw = String(url.searchParams.get('provider') ?? 'auto').trim().toLowerCase();
+  const provider: ProviderChoice = PROVIDER_CHOICES.includes(providerRaw as ProviderChoice) ? (providerRaw as ProviderChoice) : 'auto';
+  const beforeRaw = url.searchParams.get('before');
+  const before = beforeRaw === null ? null : Number.parseInt(beforeRaw, 10);
+  if (before !== null && !(Number.isFinite(before) && before > 0)) return fail(res, 400, 'before must be a unix time in seconds');
   try {
-    const load = await loadCandles(ctx, product, granularity, limit);
     // Body is Candle[] per the contract; the staleness marker the chart region
     // needs rides in headers so the body shape stays exactly what was specified.
+    if (before !== null) {
+      const older = await ctx.market.before(product, granularity, before, limit, provider);
+      const body = JSON.stringify(older.candles);
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store',
+        'x-candle-exhausted-back': String(older.exhaustedBack),
+        'x-candle-oldest': older.oldestSec === null ? '' : String(older.oldestSec),
+      });
+      res.end(body);
+      return;
+    }
+    const load = await loadCandles(ctx, product, granularity, limit, provider);
     const body = JSON.stringify(load.candles);
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
@@ -163,6 +193,8 @@ export async function sendCandles(ctx: Ctx, url: URL, res: http.ServerResponse):
       'x-candle-stale': String(load.stale),
       'x-candle-fetched-at': load.fetchedAt,
       'x-candle-built': load.built,
+      'x-candle-exhausted-back': String(load.exhaustedBack),
+      'x-candle-oldest': load.oldestSec === null ? '' : String(load.oldestSec),
     });
     res.end(body);
   } catch (err) {
@@ -388,6 +420,9 @@ export function chartPayload(ctx: Ctx, slot = 0, part: ChartPart = 'full'): unkn
       filling: load.filling,
       feed: load.feed,
       latencyMs: load.latencyMs,
+      backfilling: load.backfilling,
+      exhaustedBack: load.exhaustedBack,
+      oldest: load.oldestSec,
       note: load.note,
       error,
     },

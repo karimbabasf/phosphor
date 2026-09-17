@@ -224,7 +224,7 @@ var CHART_SIZE = { w: 0, h: 0, dpr: 0 };
 /* `at` is the last FULL fetch: the floor poll and the candle nudge read it to decide whether the
    candles are due, and a markup part refreshes no candle. A queued refresh is the widest part
    anyone asked for while the wire was busy. */
-var CHART_FETCH = { inflight: false, at: 0, queued: false, queuedPart: '' };
+var CHART_FETCH = { inflight: false, at: 0, queued: false, queuedPart: '', bytes: 0 };
 /* Candles the window keeps at most. Well past anything one payload carries: the array grows by
    backfill behind the left edge and by live bars at the right, and only the oldest go when it
    is over, and only while the window sits at the live edge. */
@@ -982,6 +982,7 @@ function drawScene() {
   var L = buildLayout(width, height, ctx);
   CHART_LAYOUT = L;
   CHART_SCENE_LABELS = [];
+  maybeBackfill(L);
 
   drawPriceGrid(ctx, L);
   drawTimeGrid(ctx, L);
@@ -1222,9 +1223,42 @@ function drawTimeGrid(ctx, L) {
   ctx.textAlign = 'left';
 }
 
+/* Below this many pixels per bar the bars are folded per pixel column before they are drawn. */
+var LOD_SLOT_PX = 2;
+
+/* The visible bars folded one per pixel column: the first open, the last close, the extremes,
+   the volume summed. Twenty thousand bars across an 800 px plot is 800 columns, each one an
+   honest bar of what happened in the minutes under that pixel, and a column is what a squeezed
+   chart could show anyway: a wick per bar at a fifth of a pixel each is a smear. Bounded by the
+   plot's width, whatever the window holds. */
+function candleColumns(L) {
+  var columns = [];
+  var current = null;
+  for (var i = L.start; i <= L.end; i++) {
+    var c = CHART.candles[i];
+    if (!c) continue;
+    var x = Math.floor(L.xOf(i));
+    if (current && current.x === x) {
+      if (c.h > current.h) current.h = c.h;
+      if (c.l < current.l) current.l = c.l;
+      current.c = c.c;
+      current.v += c.v || 0;
+      current.last = i;
+      continue;
+    }
+    current = { x: x, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v || 0, first: i, last: i };
+    columns.push(current);
+  }
+  return columns;
+}
+
 /* Four paths for the whole series instead of two calls per candle. At five hundred bars that
    is the difference between a draw that keeps up with a drag and one that does not. */
 function drawCandles(ctx, L) {
+  if (L.slot < LOD_SLOT_PX) {
+    drawCandleColumns(ctx, L, candleColumns(L));
+    return;
+  }
   var bodyWidth = Math.max(1, Math.floor(L.slot * 0.68));
   if (bodyWidth % 2 === 0 && L.slot > 3) bodyWidth -= 1;
   var wickWidth = L.slot > 6 ? Math.max(1, Math.round(L.slot * 0.1)) : 1;
@@ -1260,6 +1294,40 @@ function drawCandles(ctx, L) {
       // A doji still has to be a mark on the screen, so the body has a floor of one pixel.
       var h = Math.max(1, bottom - top);
       ctx.rect(Math.round(cx - half), Math.round(top), bodyWidth, Math.round(h));
+    }
+    ctx.fill();
+  }
+}
+
+/* One wick per column, in the column's own direction, and a one pixel body only where the
+   open and close are a pixel apart: below that a body is a dot on the wick that says nothing. */
+function drawCandleColumns(ctx, L, columns) {
+  var sets = [
+    { colour: C_UP, up: true },
+    { colour: C_DOWN, up: false }
+  ];
+  for (var s = 0; s < sets.length; s++) {
+    var set = sets[s];
+    ctx.strokeStyle = set.colour;
+    ctx.fillStyle = set.colour;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var i = 0; i < columns.length; i++) {
+      var col = columns[i];
+      if (col.c >= col.o !== set.up) continue;
+      var x = col.x + 0.5;
+      ctx.moveTo(x, L.yOf(col.h));
+      ctx.lineTo(x, L.yOf(col.l));
+    }
+    ctx.stroke();
+    ctx.beginPath();
+    for (var j = 0; j < columns.length; j++) {
+      var body = columns[j];
+      if (body.c >= body.o !== set.up) continue;
+      var top = Math.min(L.yOf(body.o), L.yOf(body.c));
+      var h = Math.abs(L.yOf(body.o) - L.yOf(body.c));
+      if (h < 1) continue;
+      ctx.rect(body.x, Math.round(top), 1, Math.round(h));
     }
     ctx.fill();
   }
@@ -1406,10 +1474,15 @@ function drawPaneHistogram(ctx, L, pane, plot) {
   var base = paneYOf(pane, clampNum(0, pane.low, pane.high));
   var signs = plot.signs;
   var sets = plot.signed === true || signs ? [1, -1] : [1];
+  // Squeezed below a pixel a bar, the tallest bar under each column stands for the column:
+  // a sum would leave the pane's scale, and one rect per column is what a pixel can hold.
+  var folded = L.slot < LOD_SLOT_PX;
   for (var s = 0; s < sets.length; s++) {
     var sign = sets[s];
     ctx.fillStyle = sets.length === 1 ? accent(0.34) : sign > 0 ? accent(0.4) : danger(0.45);
     ctx.beginPath();
+    var lastX = null;
+    var lastTop = 0;
     for (var i = L.start; i <= L.end; i++) {
       var v = plot.values[i];
       if (v === null || v === undefined || !isFinite(v)) continue;
@@ -1418,6 +1491,14 @@ function drawPaneHistogram(ctx, L, pane, plot) {
       var y = paneYOf(pane, v);
       var top = Math.min(y, base);
       var height = Math.max(1, Math.abs(base - y));
+      if (folded) {
+        var x = Math.floor(L.xOf(i));
+        if (x === lastX && top >= lastTop) continue;
+        lastX = x;
+        lastTop = top;
+        ctx.rect(x, Math.round(top), 1, Math.round(height));
+        continue;
+      }
       ctx.rect(Math.round(L.xOf(i) - width / 2), Math.round(top), width, Math.round(height));
     }
     ctx.fill();
@@ -1839,11 +1920,11 @@ function drawChartNotes(ctx, L) {
     x += ctx.measureText(full).width + 12;
   }
 
-  // Squeezed past the end of what the source will serve. The window is wider than the data,
-  // which is a fact about the exchange rather than a fault in the chart.
-  var asked = Math.round(CHART.view.barCount);
+  // The left edge of history: older bars on their way, or the venue's own first bar on screen.
+  // A fact about the exchange rather than a fault in the chart, said beside the bars.
   var notes = [];
-  if (CHART.candles.length && CHART.candles.length < asked) notes.push('history ends at ' + CHART.candles.length + ' bars');
+  if (CHART_BACKFILL.inflight) notes.push('loading older bars');
+  else if (historyBegins() && L.start === 0) notes.push('history begins here');
   if (CHART.view.panOffset > 0) notes.push('panned back ' + Math.round(CHART.view.panOffset));
   if (notes.length === 0) return;
   ctx.fillStyle = text2(0.55);
@@ -1903,6 +1984,9 @@ async function refreshChart(opts) {
   try {
     var res = await fetch(part === 'markup' ? '/api/chart?part=markup' : '/api/chart', { headers: { accept: 'application/json' } });
     if (!res.ok) throw new Error('chart returned ' + res.status);
+    if (part === 'full' && res.headers && typeof res.headers.get === 'function') {
+      CHART_FETCH.bytes = Number(res.headers.get('content-length')) || 0;
+    }
     var payload = await res.json();
     applyChart(payload);
   } catch (err) {
@@ -2055,7 +2139,12 @@ function applyChart(payload) {
   CHART.agentObjects = payload.agentObjects || 0;
   CHART.lastDriver = payload.lastDriver || 'human';
   if (payload.limits && typeof payload.limits.barCountMax === 'number') {
-    CHART_BARS = { min: payload.limits.barCountMin, max: payload.limits.barCountMax };
+    CHART_BARS = {
+      min: payload.limits.barCountMin,
+      max: payload.limits.barCountMax,
+      panMax: typeof payload.limits.panMax === 'number' ? payload.limits.panMax : CHART_BARS.panMax
+    };
+    if (typeof payload.limits.fetchMargin === 'number') CHART_FETCH_MARGIN = payload.limits.fetchMargin;
   }
   /* Who owns the view. The hand in the window owns it while the hand is on it, and the only
      thing that may move the chart out from under that hand is the agent. Adopting the
@@ -2165,7 +2254,9 @@ async function pushChart(extra) {
     // The answer to our own write, so the clamps the server applied land here rather than
     // leaving the window showing something the agent's read does not agree with.
     if (answer && answer.view && CHART_DRAG === null && CHART_PUSH === null) CHART.view = answer.view;
-    if (extra) void refreshChart();
+    // The server's series follows the view just written. A pan into bars the plots were not
+    // computed over is answered by fetching them again, now that the server knows the window.
+    if (extra || plotsShortOnScreen()) void refreshChart();
     else chartInvalidate(true);
   } catch (err) {
     // A failed view write is not worth an alert line: the chart still draws, and the window
@@ -2174,6 +2265,15 @@ async function pushChart(extra) {
   } finally {
     CHART_PUSH_WAIT--;
   }
+}
+
+/* Whether a plot on screen starts to the right of the left edge: the series it was computed
+   over began after the bars now in view, which a pan into backfilled history does. */
+function plotsShortOnScreen() {
+  var L = CHART_LAYOUT;
+  if (!L || !CHART.series || !CHART.indicators.length || !CHART.candles.length) return false;
+  var first = indexOfExact(CHART.candles, CHART.series.first);
+  return first > L.start;
 }
 
 /* A one-line answer under the chart bar, for a refused indicator or a clamped parameter.
@@ -2385,13 +2485,9 @@ function applyLiveCandle(frame) {
     // actually looking at instead.
     if (CHART.view.panOffset > 0) CHART.view.panOffset += 1;
     // The array only ever grows here, and a window left open for hours would grow it without
-    // bound. The cap is far past anything the server serves, so trimming is the exception.
-    var cap = Math.max(600, Math.round(CHART.view.barCount) * 4 + 200);
-    if (list.length > cap) {
-      var cut = list.length - cap;
-      CHART.candles = list.slice(cut);
-      CHART.view.panOffset = Math.max(0, CHART.view.panOffset - cut);
-    }
+    // bound. Only the oldest go, only over the cap, and only at the live edge: a window panned
+    // into history is looking at exactly the bars a trim would take.
+    else if (list.length > CHART_KEEP_MAX) CHART.candles = list.slice(list.length - CHART_KEEP_MAX);
   }
 
   var newest = CHART.candles[CHART.candles.length - 1];
@@ -2414,8 +2510,10 @@ function candlesPushed() {
   // refreshed every 3 s, and the two throttles plus the server's own push timer stacked into
   // a price 4.0 s old at p50 (measured 2026-09-01). It is 250 ms now, matching staleAfterSec
   // in src/market/store.ts. This path is the REST fallback: the live rail moves the price
-  // through candleLive() with no fetch at all.
-  var minGap = 250;
+  // through candleLive() with no fetch at all. The floor grows with the payload, because the
+  // series follows the view: a window squeezed to twenty thousand bars is megabytes per
+  // refetch, and four of those a second would be all this window did.
+  var minGap = clampNum(250 + CHART_FETCH.bytes / 2000, 250, 2500);
   if (Date.now() - CHART_FETCH.at < minGap) return;
   void refreshChart();
 }
@@ -2568,17 +2666,100 @@ function regionAt(point) {
   return 'plot';
 }
 
-/* The ceiling is the server's, taken from the payload rather than restated here, so a drag
+/* The ceilings are the server's, taken from the payload rather than restated here, so a drag
    that has run out of room stops where the write would have clamped it instead of springing
-   back a frame later. The pair below is only what holds before the first payload lands. */
-var CHART_BARS = { min: 10, max: 2000 };
+   back a frame later. The values below are only what holds before the first payload lands. */
+var CHART_BARS = { min: 10, max: 20000, panMax: 50000 };
+/* How near the oldest bar held the left edge may come before older bars are asked for. The
+   server serves this many bars beyond the edge, and the window asks when it is inside them. */
+var CHART_FETCH_MARGIN = 30;
 
 function setBarCount(next) {
   CHART.view.barCount = clampNum(next, CHART_BARS.min, CHART_BARS.max);
 }
 
+/* Back is unbounded until the venue's own first bar is on screen: the pan used to stop at four
+   hundred bars, which read as the chart hitting a wall while the venue had years more. Once the
+   series has said it has nothing older, the first bar may come as far as the last quarter of the
+   plot, the same room the newest bar has on the other side. */
 function setPan(next) {
-  CHART.view.panOffset = clampNum(next, -CHART.view.barCount * 0.25, 400);
+  var back = CHART_BARS.panMax;
+  if (CHART.meta.exhaustedBack && CHART.candles.length && typeof CHART.meta.oldest === 'number' && CHART.candles[0].t <= CHART.meta.oldest) {
+    back = Math.max(0, CHART.candles.length - Math.ceil(CHART.view.barCount * 0.25));
+  }
+  CHART.view.panOffset = clampNum(next, -CHART.view.barCount * 0.25, back);
+}
+
+/* ---------- history behind the left edge ----------
+
+   The payload carries the window the view shows and a margin, never the whole history: a
+   window that asked for everything it might ever pan into would be megabytes on every refresh.
+   So the window fetches older bars itself, a page at a time, when its left edge nears the
+   oldest bar it holds, and prepends them. The pan is anchored at the newest bar, so a prepend
+   moves nothing on screen; the plots are laid down again over the longer array and the server's
+   own series follows the pushed view, which brings their values for the new region. */
+var BACKFILL_BARS = 2000;
+var CHART_BACKFILL = { inflight: false, key: '' };
+
+function backfillKey() {
+  var view = CHART.dataView || CHART.view;
+  return view.product + '|' + view.granularitySec + '|' + (CHART.meta.source || '') + '|' + (CHART.view.provider || 'auto');
+}
+
+/* Whether the bars held reach the venue's first bar, which is the one place a pan may stop. */
+function historyBegins() {
+  return Boolean(CHART.meta.exhaustedBack && CHART.candles.length && typeof CHART.meta.oldest === 'number' && CHART.candles[0].t <= CHART.meta.oldest);
+}
+
+function maybeBackfill(L) {
+  if (CHART_BACKFILL.inflight || !CHART.candles.length || !CHART_READY) return;
+  if (historyBegins()) return;
+  if (L.start > CHART_FETCH_MARGIN) return;
+  void fetchOlder();
+}
+
+async function fetchOlder() {
+  var first = CHART.candles[0];
+  var key = backfillKey();
+  var view = CHART.dataView || CHART.view;
+  CHART_BACKFILL = { inflight: true, key: key };
+  chartInvalidate(false);
+  try {
+    var url =
+      '/api/candles?product=' + encodeURIComponent(view.product) +
+      '&granularity=' + view.granularitySec +
+      '&before=' + first.t +
+      '&limit=' + BACKFILL_BARS +
+      '&provider=' + encodeURIComponent(CHART.view.provider || 'auto');
+    var res = await fetch(url, { headers: { accept: 'application/json' } });
+    if (!res.ok) throw new Error('candles returned ' + res.status);
+    var older = await res.json();
+    var exhausted = res.headers.get('x-candle-exhausted-back') === 'true';
+    var oldest = Number(res.headers.get('x-candle-oldest'));
+    // Another market or bar length while this was on the wire: these bars are someone else's.
+    if (backfillKey() !== key || !CHART.candles.length) return;
+    prependCandles(older);
+    CHART.meta.exhaustedBack = exhausted;
+    if (isFinite(oldest) && oldest > 0) CHART.meta.oldest = oldest;
+    else if (exhausted) CHART.meta.oldest = CHART.candles[0].t;
+  } catch (err) {
+    // The chart still draws what it holds; the next frame near the edge asks again.
+  } finally {
+    CHART_BACKFILL.inflight = false;
+    chartInvalidate(true);
+  }
+}
+
+/* Older bars in front of the ones held. Only the ones actually older go in, in case the two
+   windows overlap by a bar, and every plot is laid down again over the longer array. */
+function prependCandles(older) {
+  if (!older || !older.length) return;
+  var firstT = CHART.candles[0].t;
+  var fresh = [];
+  for (var i = 0; i < older.length; i++) if (older[i].t < firstT) fresh.push(older[i]);
+  if (!fresh.length) return;
+  CHART.candles = fresh.concat(CHART.candles);
+  CHART.indicators = rebaseIndicators(CHART.indicators, fresh.length, CHART.candles.length);
 }
 
 /* The range in force right now. Reading it from the view once the scale is manual, rather

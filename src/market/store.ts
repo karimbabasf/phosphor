@@ -19,7 +19,9 @@
 import type { Candle } from '../types.ts';
 import { aggregate, baseBarsNeeded, bucketStart } from './aggregate.ts';
 
-type FetchWindow = (product: string, baseSec: number, bars: number, provider: string) => Promise<Candle[]>;
+// `endSec` is the newest open time wanted, for a window behind the ones held. Absent, the
+// window ends now, which is every fill that is not a backfill.
+type FetchWindow = (product: string, baseSec: number, bars: number, provider: string, endSec?: number) => Promise<Candle[]>;
 
 type ReadResult = {
   candles: Candle[];
@@ -33,6 +35,14 @@ type ReadResult = {
   // True while a fill for this series is in flight, so the UI can say "filling" rather
   // than showing a stalled chart and letting the human guess.
   filling: boolean;
+  // True while older bars are on their way in behind the ones held.
+  backfilling: boolean;
+  // The venue has nothing older than `oldestSec`. Set by a backfill that came back short, or by
+  // a first fill that did; it is what stops the store asking a bottomed venue on every read and
+  // what lets the chart say "history begins here" rather than "loading".
+  exhaustedBack: boolean;
+  // The oldest base bar the cache holds for this series, or null on a cold one.
+  oldestSec: number | null;
   // How much history the cache actually holds, which is not always what was asked for.
   bars: number;
   source: string;
@@ -48,8 +58,10 @@ type MarketStoreOptions = {
   // point for anything that reaches the cache without a network call, so the SSE frame is
   // wired once here rather than at each caller of put().
   onLive?: (product: string, baseSec: number, candle: Candle, provider: string) => void;
-  // Most recent bars kept per series. Five thousand 1m bars is about three and a half
-  // days, and the deepest window the chart offers is two thousand.
+  // Bars kept per series, newest kept when it is over. Fifty thousand is the pan depth the
+  // chart offers: a backfill behind the left edge grows a series to it, and the venues stop
+  // well short of it on every interval but the slow ones (Hyperliquid serves the newest five
+  // thousand bars of an interval and nothing older, measured 2026-09-16).
   maxBars?: number;
   // Series kept at once, oldest read evicted first. Twenty four covers a person flipping
   // through timeframes on two or three products without unbounded growth.
@@ -69,6 +81,9 @@ type Series = {
   // yet" and refetches forever: the margin in baseBarsNeeded means the ask is always a
   // couple of bars past what exists, so the window is never technically full.
   exhausted: boolean;
+  // Set when a window asked for behind the oldest bar held came back short or empty: the
+  // venue has nothing older, and no read asks it for older bars again.
+  exhaustedBack: boolean;
   // When a live bar was last folded into this series. Zero means never.
   liveAt: number;
 };
@@ -84,18 +99,51 @@ const LIVE_FRESH_MS = 5000;
 // it was before the rail existed.
 const LIVE_RELAXED_STALE_SEC = 30;
 
+/* A copy of a window in open-time order with one bar per open time, the later copy winning.
+   The venues answer in order and pageBackward sorts, so this is a scan and no copy almost
+   always; a venue that answered newest first still merges correctly. */
+function ordered(candles: readonly Candle[]): readonly Candle[] {
+  let sorted = true;
+  for (let i = 1; i < candles.length && sorted; i++) sorted = (candles[i] as Candle).t > (candles[i - 1] as Candle).t;
+  if (sorted) return candles;
+  const byTime = new Map<number, Candle>();
+  for (const candle of candles) byTime.set(candle.t, candle);
+  return [...byTime.values()].sort((a, b) => a.t - b.t);
+}
+
 /* Union two oldest-first series by open time, letting the incoming bar win.
    The incoming copy is fresher by definition: it is either the same closed bar or the
-   newest bar with more trades folded into it. */
+   newest bar with more trades folded into it.
+
+   A walk over both rather than a map and a sort: a series is fifty thousand bars now, and a
+   backfill landing behind it or a tail landing after it is a concat, which the walk does in
+   one pass and the sort did in n log n with a map of every bar built first. */
 export function mergeSeries(existing: readonly Candle[], incoming: readonly Candle[], maxBars: number): Candle[] {
-  if (existing.length === 0) return incoming.slice(-maxBars);
+  if (existing.length === 0) return ordered(incoming).slice(-maxBars);
   if (incoming.length === 0) return existing.slice(-maxBars);
+  const fresh = ordered(incoming);
 
-  const byTime = new Map<number, Candle>();
-  for (const candle of existing) byTime.set(candle.t, candle);
-  for (const candle of incoming) byTime.set(candle.t, candle);
-
-  const out = [...byTime.values()].sort((a, b) => a.t - b.t);
+  const out: Candle[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < existing.length || j < fresh.length) {
+    const held = existing[i];
+    const next = fresh[j];
+    if (next === undefined) {
+      out.push(held as Candle);
+      i++;
+    } else if (held === undefined || held.t > next.t) {
+      out.push(next);
+      j++;
+    } else if (held.t < next.t) {
+      out.push(held);
+      i++;
+    } else {
+      out.push(next);
+      i++;
+      j++;
+    }
+  }
   return out.length > maxBars ? out.slice(-maxBars) : out;
 }
 
@@ -116,9 +164,13 @@ export function staleAfterSec(baseSec: number): number {
   return 60;
 }
 
+// Bars a backfill asks for at once, in base bars. Two thousand is what the deep venue answers
+// in one call and about what one pan gesture can cross.
+const BACKFILL_BARS = 2000;
+
 export function createMarketStore(options: MarketStoreOptions) {
   const { fetchWindow, onUpdate, onLive } = options;
-  const maxBars = options.maxBars ?? 5000;
+  const maxBars = options.maxBars ?? 50000;
   const maxSeries = options.maxSeries ?? 24;
   const now = options.now ?? (() => Date.now());
 
@@ -225,6 +277,9 @@ export function createMarketStore(options: MarketStoreOptions) {
             current.candles.length > 0 &&
             merged[merged.length - 1]?.c !== current.candles[current.candles.length - 1]?.c);
 
+        // A newest window that came back short is the venue's whole history: nothing is
+        // older either, and a backfill would only confirm it with a round trip.
+        const short = fetched.length < bars;
         series.set(key, {
           candles: merged,
           fetchedAt: now(),
@@ -232,7 +287,8 @@ export function createMarketStore(options: MarketStoreOptions) {
           filling: false,
           source: 'live',
           error: null,
-          exhausted: fetched.length < bars,
+          exhausted: short,
+          exhaustedBack: (current?.exhaustedBack ?? false) || (short && (current === undefined || current.candles.length === 0)),
           liveAt: current?.liveAt ?? 0,
         });
         evictIfNeeded();
@@ -248,6 +304,7 @@ export function createMarketStore(options: MarketStoreOptions) {
           source: current?.source ?? 'unavailable',
           error: message,
           exhausted: current?.exhausted ?? false,
+          exhaustedBack: current?.exhaustedBack ?? false,
           liveAt: current?.liveAt ?? 0,
         });
       } finally {
@@ -256,6 +313,40 @@ export function createMarketStore(options: MarketStoreOptions) {
     })();
 
     inflight.set(key, task);
+    return task;
+  }
+
+  /* Fill the bars behind the oldest one held, deduped like fill and keyed apart from it, so a
+     stale refresh at the newest end and a pan into history never wait on each other. The
+     window asked for ends one base bar before the oldest held; a venue that answers fewer
+     than asked, or nothing at all, has no more, and the series says so. */
+  function fillBefore(product: string, baseSec: number, bars: number, provider = 'hyperliquid'): Promise<void> {
+    const key = keyOf(product, baseSec, provider);
+    const backKey = `${key}:back`;
+    const running = inflight.get(backKey);
+    if (running !== undefined) return running;
+    const entry = series.get(key);
+    const oldest = entry?.candles[0];
+    if (entry === undefined || oldest === undefined || entry.exhaustedBack) return Promise.resolve();
+
+    const task = (async () => {
+      try {
+        const fetched = await fetchWindow(product, baseSec, bars, provider, oldest.t - baseSec);
+        const older = fetched.filter((c) => c.t < oldest.t);
+        const current = series.get(key);
+        if (current === undefined) return;
+        current.candles = mergeSeries(current.candles, older, maxBars);
+        current.exhaustedBack = older.length < bars;
+        if (older.length > 0 && onUpdate) onUpdate(product, baseSec);
+      } catch (err) {
+        const current = series.get(key);
+        if (current !== undefined) current.error = err instanceof Error ? err.message : String(err);
+      } finally {
+        inflight.delete(backKey);
+      }
+    })();
+
+    inflight.set(backKey, task);
     return task;
   }
 
@@ -273,20 +364,24 @@ export function createMarketStore(options: MarketStoreOptions) {
 
     const bridged = bridge(product, provider, baseSec, targetSec, bars);
 
-    if (entry === undefined) {
+    if (entry === undefined || entry.candles.length === 0) {
       void fill(product, baseSec, needBase, provider);
       // A cold series with a warm finer one is not a blank chart, it is the same market at a
       // different bucket size, and the human clicked one timeframe rather than asking for a
       // skeleton. The real fill lands behind this and replaces it.
       const held = bridged.length > bars ? bridged.slice(-bars) : bridged;
+      if (entry !== undefined) entry.lastReadAt = at;
       return {
         candles: held,
         ageSec: 0,
         liveAgeSec,
         filling: true,
+        backfilling: false,
+        exhaustedBack: false,
+        oldestSec: null,
         bars: held.length,
         source: held.length > 0 ? 'bridged' : 'filling',
-        error: null,
+        error: entry?.error ?? null,
       };
     }
 
@@ -296,11 +391,20 @@ export function createMarketStore(options: MarketStoreOptions) {
     // and REST reconciles the closed bar, so the gate relaxes while the deltas keep landing
     // and snaps back the moment they stop.
     const gateSec = at - liveAt < LIVE_FRESH_MS ? LIVE_RELAXED_STALE_SEC : staleAfterSec(baseSec);
-    // Short only counts when the venue has not already said it is out of history.
-    const short = !entry.exhausted && entry.candles.length < needBase;
-    if (ageSec >= gateSec || short) {
-      // Background only. The caller gets the bars already in hand.
-      void fill(product, baseSec, needBase, provider);
+    if (ageSec >= gateSec) {
+      // Background only, and only the tail: the bars that can have changed since the last
+      // fill are the forming one and whatever closed in the meantime. The whole window used
+      // to be refetched here, which was two thousand bars a second on a quiet socket and
+      // would be fifty thousand now.
+      const tail = Math.min(needBase, Math.ceil(ageSec / baseSec) + 2);
+      void fill(product, baseSec, tail, provider);
+    }
+    // Short at the back, and the venue has not said it is out of history: the missing bars
+    // are all older than the oldest held, so they are asked for behind it rather than by
+    // refetching the newest window with a bigger number, which never reached them.
+    const missing = needBase - entry.candles.length;
+    if (missing > 0 && !entry.exhaustedBack) {
+      void fillBefore(product, baseSec, Math.max(missing, Math.min(BACKFILL_BARS, needBase)), provider);
     }
 
     // The finer bars win where the two overlap. They are fresher by construction: the rail
@@ -315,9 +419,53 @@ export function createMarketStore(options: MarketStoreOptions) {
       ageSec,
       liveAgeSec,
       filling: inflight.has(key),
+      backfilling: inflight.has(`${key}:back`),
+      exhaustedBack: entry.exhaustedBack,
+      oldestSec: (entry.candles[0] as Candle).t,
       bars: windowed.length,
       source: entry.source,
       error: entry.error,
+    };
+  }
+
+  /* The bars of a timeframe older than a moment, for the chart panning into history: what the
+     cache holds before `beforeSec`, folded, and when that is short, the venue behind it,
+     awaited. The window asks for these when its left edge nears the oldest bar it holds. */
+  async function before(
+    product: string,
+    baseSec: number,
+    targetSec: number,
+    beforeSec: number,
+    bars: number,
+    provider = 'hyperliquid',
+  ): Promise<{ candles: Candle[]; exhaustedBack: boolean; oldestSec: number | null }> {
+    const key = keyOf(product, baseSec, provider);
+    const needBase = baseBarsNeeded(bars, baseSec, targetSec);
+    if (series.get(key) === undefined || (series.get(key) as Series).candles.length === 0) {
+      await fill(product, baseSec, needBase, provider);
+    }
+    const heldBase = (): number => {
+      const entry = series.get(key);
+      if (entry === undefined) return 0;
+      let n = 0;
+      while (n < entry.candles.length && (entry.candles[n] as Candle).t < beforeSec) n++;
+      return n;
+    };
+    // Page until the cache holds enough behind the moment or the venue has no more. Four
+    // pages of the biggest ask is the deepest one call to this reaches; the window asks again.
+    for (let page = 0; page < 4; page++) {
+      const entry = series.get(key);
+      if (entry === undefined || entry.exhaustedBack || heldBase() >= needBase) break;
+      await fillBefore(product, baseSec, Math.max(BACKFILL_BARS, needBase - heldBase()), provider);
+    }
+    const entry = series.get(key);
+    if (entry === undefined) return { candles: [], exhaustedBack: false, oldestSec: null };
+    const olderBase = entry.candles.filter((c) => c.t < beforeSec);
+    const folded = aggregate(olderBase, baseSec, targetSec).filter((c) => c.t < beforeSec);
+    return {
+      candles: folded.length > bars ? folded.slice(-bars) : folded,
+      exhaustedBack: entry.exhaustedBack,
+      oldestSec: entry.candles.length > 0 ? (entry.candles[0] as Candle).t : null,
     };
   }
 
@@ -331,7 +479,9 @@ export function createMarketStore(options: MarketStoreOptions) {
   }
 
   /* Wait for a series to be usable. Only for callers that genuinely cannot draw without
-     data, which is the first paint and an agent read, never the render loop. */
+     data, which is the first paint and an agent read, never the render loop. A series that
+     is there but short, with the bars behind it on their way, is waited for too: an agent
+     reading a chart panned into history wants the history, not the one bar left on screen. */
   async function warm(
     product: string,
     baseSec: number,
@@ -340,8 +490,9 @@ export function createMarketStore(options: MarketStoreOptions) {
     provider = 'hyperliquid',
   ): Promise<ReadResult> {
     const first = read(product, baseSec, targetSec, bars, provider);
-    if (first.candles.length > 0) return first;
-    const pending = inflight.get(keyOf(product, baseSec, provider));
+    const key = keyOf(product, baseSec, provider);
+    if (first.candles.length > 0 && (first.bars >= bars || !inflight.has(`${key}:back`))) return first;
+    const pending = first.candles.length === 0 ? inflight.get(key) : inflight.get(`${key}:back`);
     if (pending !== undefined) await pending;
     return read(product, baseSec, targetSec, bars, provider);
   }
@@ -386,6 +537,7 @@ export function createMarketStore(options: MarketStoreOptions) {
       source: current?.source ?? 'live',
       error: null,
       exhausted: current?.exhausted ?? false,
+      exhaustedBack: current?.exhaustedBack ?? false,
       liveAt: at,
     });
     evictIfNeeded();
@@ -400,7 +552,7 @@ export function createMarketStore(options: MarketStoreOptions) {
     return { series: series.size, inflight: inflight.size, bars };
   }
 
-  return { read, warm, fill, put, peek, stats };
+  return { read, warm, fill, before, put, peek, stats };
 }
 
 export type MarketStore = ReturnType<typeof createMarketStore>;

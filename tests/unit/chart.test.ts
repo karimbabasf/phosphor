@@ -50,8 +50,11 @@ test('a sub-minute timeframe is refused, because no venue serves one', () => {
   assert.equal(chart.state().view.granularitySec, 60, 'and the view is left where it was');
 });
 
-test('pan is capped back and allowed a little past the newest bar', () => {
-  assert.equal(clampPan(9999, 120), LIMITS.panMax);
+test('pan is capped back at the cache depth and allowed a little past the newest bar', () => {
+  assert.equal(clampPan(99999, 120), LIMITS.panMax);
+  // Four hundred bars back used to be the wall. The window stops at the venue's own first
+  // bar now, and the server only at the depth the cache can hold.
+  assert.equal(clampPan(9999, 120), 9999);
   // Walling at the last bar makes a chart feel stuck, so a quarter window of forward room.
   assert.equal(clampPan(-9999, 120), -30);
   assert.equal(clampPan(12, 120), 12);

@@ -47,7 +47,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const PROJECT_DIR = path.join(__dirname, '..', '..');
 
 export const LOG_LIMIT_MAX = 2000;
-export const CANDLE_LIMIT_MAX = 2000; // matches LIMITS.historyMax: the widest window the chart allows
+export const CANDLE_LIMIT_MAX = 5000; // one page of history: what the deep venue answers in one call
 
 // How far back the basic screen's "what the assistant did" list is willing to look for
 // five distinct sentences. Runs collapse, so an assistant that read the wallet two
