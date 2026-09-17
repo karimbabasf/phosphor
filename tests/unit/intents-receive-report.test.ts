@@ -6,6 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,13 +15,15 @@ import type http from 'node:http';
 import { intentsReceiveReport } from '../../src/http/wallet.ts';
 import type { IntentsReceiveNetwork } from '../../src/http/wallet.ts';
 import { walletReads } from '../../src/http/read/wallet.ts';
-import { RECEIVE_NETWORKS } from '../../src/rails/intents-address.ts';
+import { RECEIVE_NETWORKS, receiveNetworkByBridge } from '../../src/rails/intents-address.ts';
+import { base58Encode } from '../../src/chain/near.ts';
 import type { Ctx } from '../../src/http/context.ts';
 
 type Any = Record<string, any>;
 
-// One address per registry network, plus the token list.
-const CALLS_PER_READ = RECEIVE_NETWORKS.length + 1;
+// Two asks per registry network (the report shows an address only when two answers agree), plus
+// the token list.
+const CALLS_PER_READ = 2 * RECEIVE_NETWORKS.length + 1;
 
 const USDC_ROW = {
   defuse_asset_identifier: 'eth:8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
@@ -56,6 +59,17 @@ function ctxFor(account: string | null, mode: 'live' | 'demo' = 'live', extra: P
   } as unknown as Ctx;
 }
 
+// An address with the shape the report checks for the network: the EVM chains one hex address
+// each, Solana a 32-byte base58 key, NEAR an account id, Bitcoin a bech32 string, and the rest a
+// plain printable token, which is all the report can ask of a chain it cannot decode.
+export function shapedAddress(chain: string): string {
+  if (chain.startsWith('eth:') || receiveNetworkByBridge(chain)?.kind === 'evm') return `0x${crypto.createHash('sha256').update(chain).digest('hex').slice(0, 40)}`;
+  if (receiveNetworkByBridge(chain)?.kind === 'sol') return base58Encode(new Uint8Array(crypto.createHash('sha256').update(chain).digest()));
+  if (chain === 'near:mainnet') return 'deposit-for-you.near';
+  if (chain === 'btc:mainnet') return 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4';
+  return `addr-for-${chain}`;
+}
+
 /* A bridge that answers every deposit_address with one address per network and the token
    list once, and counts how often it was asked. `down` makes every call throw. `address`
    chooses the string per network, so a test can make two networks share one. */
@@ -69,7 +83,7 @@ function bridge(options: { down?: boolean; tokens?: unknown[]; address?: (chain:
     const chain = String(body.params[0]?.chain);
     const answer = body.method === 'supported_tokens'
       ? { result: { tokens: options.tokens ?? [USDC_ROW, ETH_ROW] } }
-      : { result: { address: options.address ? options.address(chain) : `addr-for-${chain}`, chain } };
+      : { result: { address: options.address ? options.address(chain) : shapedAddress(chain), chain } };
     return { ok: true, status: 200, json: async () => answer } as unknown as Response;
   }) as unknown as typeof fetch;
   return { calls, restore: () => { globalThis.fetch = real; } };
@@ -108,7 +122,7 @@ test('the token rows carry the floor in base units and in the unit a person read
     const eth = net(report, 'eth');
     // A ten millionth of an ETH, unpriced, is under the millionth-of-a-unit cut: "No minimum".
     assert.deepEqual(eth.accepts, [{ symbol: 'ETH', assetId: '', decimals: 18, minDeposit: '100000000000', minDepositHuman: '0.0000001', minimum: { shown: false, amount: '0.0000001', usd: null }, contract: null }]);
-    assert.equal(base.address, 'addr-for-eth:8453');
+    assert.equal(base.address, shapedAddress('eth:8453'));
   } finally {
     net_.restore();
   }
@@ -128,8 +142,8 @@ test('every row carries the registry fields the window draws by, and the six qui
       { name: btc.name, words: btc.words, bridge: btc.bridge, kind: btc.kind, native: btc.native, mark: btc.mark, colour: btc.colour, popular: btc.popular },
       { name: 'Bitcoin', words: 'Bitcoin (BTC)', bridge: 'btc:mainnet', kind: 'other', native: 'BTC', mark: 'BTC', colour: '#F7931A', popular: true },
     );
-    assert.equal(btc.address, 'addr-for-btc:mainnet');
-    assert.deepEqual(Object.keys(btc), ['id', 'name', 'words', 'bridge', 'kind', 'native', 'mark', 'colour', 'popular', 'address', 'memo', 'unavailable', 'sharedWith', 'warning', 'accepts']);
+    assert.equal(btc.address, shapedAddress('btc:mainnet'));
+    assert.deepEqual(Object.keys(btc), ['id', 'name', 'words', 'bridge', 'kind', 'native', 'mark', 'colour', 'popular', 'address', 'memo', 'unavailable', 'sharedWith', 'warning', 'accepts', 'changed']);
   } finally {
     b.restore();
   }
@@ -308,7 +322,7 @@ test('sharedWith is computed from byte-equal addresses, and the warning names th
   // Every EVM network and HyperCore answer with one address, as the live bridge does; the rest
   // are their own.
   const evm = new Set(RECEIVE_NETWORKS.filter((n) => n.kind === 'evm').map((n) => n.bridge));
-  const b = bridge({ address: (chain) => (evm.has(chain) ? '0xSHARED' : `addr-for-${chain}`) });
+  const b = bridge({ address: (chain) => (evm.has(chain) ? `0x${'ab'.repeat(20)}` : shapedAddress(chain)) });
   try {
     const report = await intentsReceiveReport(ctxFor(account()));
     const eth = net(report, 'eth');
@@ -329,7 +343,7 @@ test('a network the bridge lists that the registry does not know is a row under 
   const b = bridge({ tokens: [USDC_ROW, stranger] });
   try {
     const report = await intentsReceiveReport(ctxFor(account()));
-    assert.equal(b.calls.length, CALLS_PER_READ + 1, 'the stranger was not asked for');
+    assert.equal(b.calls.length, CALLS_PER_READ + 2, 'the stranger was not asked for');
     const row = net(report, 'newchain:mainnet');
     assert.deepEqual(
       { name: row.name, words: row.words, bridge: row.bridge, kind: row.kind, native: row.native, popular: row.popular, address: row.address },
@@ -392,10 +406,10 @@ test('the agent deposit tool takes a registry id or a plain name, answers in the
     assert.equal(out.network, 'Bitcoin (BTC)');
     assert.equal(out.asset, 'BTC');
     assert.equal(out.minDeposit, '0.00007');
-    assert.equal(out.addressFingerprint, 'addr-f...nnet');
+    assert.equal(out.addressFingerprint, 'bc1qw5...f3t4');
     assert.match(out.relay, /choose the network "Bitcoin \(BTC\)"/);
     assert.doesNotMatch(out.relay, /memo/);
-    assert.deepEqual(shown, [{ chain: 'btc', symbol: 'BTC', address: 'addr-for-btc:mainnet' }]);
+    assert.deepEqual(shown, [{ chain: 'btc', symbol: 'BTC', address: shapedAddress('btc:mainnet') }]);
     assert.equal(audited.length, 1);
   }
 

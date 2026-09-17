@@ -432,6 +432,26 @@ test('the address step draws one address after its checks, starts the watch, and
   assert.equal(viaCard.calls.some((c) => c.route === '/api/deposit/show'), false);
 });
 
+test('a row the report marks changed draws the pinned address with the sentence as an alert, and one it does not draws no such line', async () => {
+  const changed = 'The bridge now answers a different address for Base (ending ...999999) than the one shown before. The address shown is the one shown before.';
+  const rows = report().networks.map((n: Any) => (n.id === 'base' ? Object.assign({}, n, { changed }) : n));
+  const world = build({ ack: true, report: report({ networks: rows }) });
+  world.render({ stage: 'address', network: 'base' });
+  await flush();
+  const body = find(world.host, '.deposit-body')[0];
+  assert.equal(body.dataset.state, 'shown');
+  assert.equal(find(body, '.sr-only')[0].textContent, EVM, 'the address drawn is the one the report carries, the pinned one');
+  const line = find(body, '.deposit-changed');
+  assert.equal(line.length, 1);
+  assert.equal(line[0].textContent, changed);
+  assert.equal(line[0].getAttribute('role'), 'alert');
+
+  const plain = build({ ack: true });
+  plain.render({ stage: 'address', network: 'base' });
+  await flush();
+  assert.equal(find(plain.host, '.deposit-changed').length, 0);
+});
+
 test('a network that is not EVM says so in its own words, and NEAR and Solana get their own address', async () => {
   const world = build({ ack: true });
   world.render({ stage: 'address', network: 'sol' });
