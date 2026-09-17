@@ -15,6 +15,7 @@
 import type { ChainId, DecidedBy, LogEvent, Proposal, RailEvidence, WriteDraft } from './types.ts';
 import { chainSpec } from './chain/evm.ts';
 import { HYPERLIQUID_EXPLORER_ADDRESS, HYPERLIQUID_EXPLORER_TX } from './explorers.ts';
+import { networkChain } from './rails/intents-pay.ts';
 
 // ---------- explorers ----------
 
@@ -134,6 +135,7 @@ const ACTIONS: Record<string, TxEntry['action'] | null | undefined> = {
   intents_deposit: 'deposit',
   intents_withdraw: 'withdraw',
   intents_send: 'transfer',
+  intents_pay: 'transfer',
   // Retired rails, kept for the rows already on disk.
   transfer: 'transfer',
   consolidate: 'consolidate',
@@ -221,7 +223,7 @@ function classifyHash(
   place: TxPlace,
   toPlace: TxPlace,
 ): { place: TxPlace; kind: TxHash['kind'] } {
-  if (index === 0 && (String(kind) === 'intents_withdraw' || kind === 'intents_send' || kind === 'hl_deposit' || venue === 'intents-native')) {
+  if (index === 0 && (String(kind) === 'intents_withdraw' || kind === 'intents_send' || kind === 'intents_pay' || kind === 'hl_deposit' || venue === 'intents-native')) {
     return { place: 'intents', kind: 'intent' };
   }
   // A hash a trade recorded is the venue's own ledger hash: the venue's explorer resolves
@@ -471,6 +473,18 @@ function sidesOf(draft: WriteDraft): Sides {
         to: draft.to,
         counterparty: draft.counterparty,
       };
+    case 'intents_pay':
+      // Out of the verifier and onto a real chain: the payout hash is on that chain, and the
+      // receiver is somebody else's address there.
+      return {
+        place: 'intents',
+        toPlace: networkChain(draft.network) ?? 'eth',
+        venue: 'intents.near',
+        sent: { symbol: draft.symbol, amount: draft.amount },
+        from: draft.from,
+        to: draft.to,
+        counterparty: draft.counterparty,
+      };
     default:
       return { place: 'eth', toPlace: 'eth', venue: null, sent: null, from: undefined, to: undefined, counterparty: undefined };
   }
@@ -491,7 +505,7 @@ function noteOf(draft: WriteDraft): string | null {
 // figure the sentence calls quoted, because a quote is a promise and not an arrival.
 function receivedOf(draft: WriteDraft, detail: string, evidence: RailEvidence | undefined): { symbol: string; amount: number } | null {
   const kind = String(draft.kind);
-  if (kind !== 'swap' && kind !== 'intents_withdraw' && kind !== 'intents_deposit') return null;
+  if (kind !== 'swap' && kind !== 'intents_withdraw' && kind !== 'intents_deposit' && kind !== 'intents_pay') return null;
   const symbol = draft.kind === 'swap' ? draft.toSymbol : ((draft as unknown as RetiredDraft).symbol ?? '');
   const settled = Number(evidence?.settledAmountOut);
   if (typeof evidence?.settledAmountOut === 'string' && Number.isFinite(settled)) return { symbol, amount: settled };

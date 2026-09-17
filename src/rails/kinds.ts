@@ -19,6 +19,7 @@
 import type {
   HlDepositDraft,
   HlWithdrawDraft,
+  IntentsPayDraft,
   IntentsSendDraft,
   SwapDraft,
   TradeDraft,
@@ -30,6 +31,7 @@ export type RailKind =
   | 'hl_deposit'
   | 'hl_withdraw'
   | 'intents_send'
+  | 'intents_pay'
   | 'trade';
 
 export type RailDraft =
@@ -37,6 +39,7 @@ export type RailDraft =
   | HlDepositDraft
   | HlWithdrawDraft
   | IntentsSendDraft
+  | IntentsPayDraft
   | TradeDraft;
 
 export const RAIL_KINDS: readonly RailKind[] = [
@@ -44,6 +47,7 @@ export const RAIL_KINDS: readonly RailKind[] = [
   'hl_deposit',
   'hl_withdraw',
   'intents_send',
+  'intents_pay',
   'trade',
 ];
 

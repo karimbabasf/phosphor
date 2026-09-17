@@ -74,6 +74,7 @@
     intents_deposit: 'Deposit',
     intents_withdraw: 'Withdraw',
     intents_send: 'Send',
+    intents_pay: 'Pay',
     hl_deposit: 'Fund trading',
     hl_withdraw: 'Collateral back',
     policy_change: 'Rule change',
@@ -553,7 +554,10 @@
   function moveOf(name, input, data) {
     var args = isObject(input) ? input : {};
     var draft = isObject(data.draft) ? data.draft : null;
-    var kind = String((draft && draft.kind) || data.kind || bare(name).replace(/^propose_/, '') || 'move');
+    /* A send's reply names its rail kind on the `send` facts (src/http/propose.ts), because
+       one tool, propose_send, drafts either of two kinds and the tool name cannot say which. */
+    var sendFacts = isObject(data.send) ? data.send : null;
+    var kind = String((draft && draft.kind) || data.kind || (sendFacts && sendFacts.kind) || bare(name).replace(/^propose_/, '') || 'move');
     var move = {
       kind: kind,
       title: TITLES[kind] || 'Move',
@@ -620,6 +624,11 @@
       move.from = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.minReceived) };
       if (d.to || args.to) move.quote = 'to ' + String(d.to || args.to);
+    } else if (kind === 'intents_pay') {
+      /* Out of intents and onto a chain: the send card draws the address, this is the head. */
+      var send = isObject(data.send) ? data.send : {};
+      move.from = { symbol: d.symbol || send.symbol || args.symbol, place: 'intents', amount: num(d.amount !== undefined ? d.amount : (send.amount !== undefined ? send.amount : args.amount)) };
+      move.to = { symbol: d.symbol || send.symbol || args.symbol, place: d.network || send.where || args.where, amount: num(d.minReceived) };
     } else if (kind === 'hl_deposit') {
       move.from = { symbol: d.symbol || args.symbol || 'USDC', place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = { symbol: 'USDC', place: 'hyperliquid', amount: num(d.minCredited) };
@@ -686,7 +695,7 @@
   function moveIcon(kind) {
     if (kind === 'trade' || kind === 'trade_change') return icon('long');
     if (kind === 'intents_deposit' || kind === 'hl_deposit' || kind === 'yield_deposit' || kind === 'lp_add') return icon('deposit');
-    if (kind === 'intents_withdraw' || kind === 'intents_send' || kind === 'hl_withdraw' || kind === 'yield_withdraw' || kind === 'lp_remove') return icon('withdraw');
+    if (kind === 'intents_withdraw' || kind === 'intents_send' || kind === 'intents_pay' || kind === 'hl_withdraw' || kind === 'yield_withdraw' || kind === 'lp_remove') return icon('withdraw');
     return icon('swap');
   }
 
@@ -700,6 +709,16 @@
       onToggle: extra.onToggle
     });
     var body = parts.body;
+
+    /* A send draws the shared send card under the head: the same card the
+       dock asks with, minus its buttons. The tool answer carries no draft, so
+       the view comes from the reply's `send` facts and the tool's arguments. */
+    var sendCard = window.PhosphorSendCard;
+    if ((move.kind === 'intents_pay' || move.kind === 'intents_send') && sendCard) {
+      var view = isObject(data.draft) ? sendCard.viewOf(data) : sendCard.viewOfToolData(extra.input, data);
+      sendCard.build(body, view, {});
+      return parts.card;
+    }
 
     if (move.from || move.to) {
       var legs = dom.el('div', 'tcard-legs');

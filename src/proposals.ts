@@ -34,7 +34,7 @@ import { finishTouch } from './proposals/lifecycle.ts';
 import { executeApproved, land, watchSettling } from './proposals/execute.ts';
 import { acknowledge, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
 import { proposePolicyChange } from './proposals/draft.ts';
-import { proposeHlDeposit, proposeHlWithdraw, proposeIntentsSend, proposeSwap } from './proposals/rails.ts';
+import { proposeHlDeposit, proposeHlWithdraw, proposeSend, proposeSwap } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
 
 export type { ProposalDeps };
@@ -63,7 +63,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     proposeSwap: (p) => serialise(() => proposeSwap(ctx, p)),
     proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(ctx, p)),
     proposeHlWithdraw: (p) => serialise(() => proposeHlWithdraw(ctx, p)),
-    proposeIntentsSend: (p) => serialise(() => proposeIntentsSend(ctx, p)),
+    proposeSend: (p) => serialise(() => proposeSend(ctx, p)),
     proposeTrade: (p) => serialise(() => proposeTrade(ctx, p)),
     proposeTradeChange: (p) => serialise(() => proposeTradeChange(ctx, p)),
     // approve() executes, so it shares the queue: a human click landing next to an

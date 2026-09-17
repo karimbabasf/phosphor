@@ -240,9 +240,13 @@ function counterpartyOf(draft: RailDraft): string {
 // but its owner. Returns null when the kind has no destination.
 function destinationOf(draft: RailDraft): string | null {
   if (draft.kind === 'swap') return draft.to;
-  // intents_send is the one draft whose `to` is meant to be somebody else's account, and this
-  // is the rule that decides whose: one of ours, or an entry a human put on the allowlist.
-  if (draft.kind === 'intents_send') return draft.to;
+  // intents_send and intents_pay are the two drafts whose `to` is meant to be somebody else's,
+  // and since 2026-09-17 this rule does not bind them (decision 3 of the new-user pass). The
+  // allowlist was a second click that named the same address a day earlier; the gate for a
+  // send is the card and the Touch ID sentence that show the full address and the chain, and
+  // src/proposals/execute.ts land() holds every send to that click at any size. The
+  // counterparty rule above still binds: the verifier is the only venue a send passes through.
+  if (draft.kind === 'intents_send' || draft.kind === 'intents_pay') return null;
   // hl_deposit gained one on 2026-08-20. The old Bridge2 mechanism credited whoever sent the
   // tokens, so there was nothing here to check; the 1Click route names the account it credits,
   // so funding a Hyperliquid account that is not ours is now a thing this can refuse.
@@ -363,7 +367,7 @@ function postPositions(draft: RailDraft, ctx: EngineCtx): Position[] {
   if (draft.kind === 'swap') {
     take(draft.fromSymbol, draft.amountUsd);
     give(draft.toSymbol, 'intents', draft.amountUsd);
-  } else if (draft.kind === 'intents_send') {
+  } else if (draft.kind === 'intents_send' || draft.kind === 'intents_pay') {
     take(draft.symbol, draft.amountUsd);
   }
   return positions;

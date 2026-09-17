@@ -6,8 +6,11 @@
 // description of what the click does, and it stays honest only if no agent-authored sentence
 // can reach it: a draft's `summary` is rendered in the window, a policy change carries a
 // `sentence`, and a plan has a name, and none of those appear here. Amounts are numbers the
-// app priced; chains are enum values; a symbol is the one agent-chosen word that survives,
-// and it survives only when it is shaped like a ticker (see clean).
+// app priced; chains are enum values; a symbol is one of two agent-chosen strings that survive,
+// and it survives only when it is shaped like a ticker (see clean). The other is the receiver
+// of a send (see shortAddress), because a dialog that approves a payment and hides who is paid
+// is the dialog Karim asked never to see: it is shown shortened, and only when it is shaped
+// like an address.
 
 import type { Proposal, WriteDraft } from '../types.ts';
 
@@ -21,7 +24,7 @@ function amount(n: unknown, symbol: string): string {
 
 function usd(n: unknown): string {
   if (typeof n !== 'number' || !Number.isFinite(n)) return 'an unpriced amount';
-  return `$${n.toLocaleString('en-US', { maximumFractionDigits: n >= 100 ? 0 : 2 })}`;
+  return `$${n.toLocaleString('en-US', n >= 100 ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /* A symbol or chain id is an agent-chosen string until the rail refuses it, and the pen test
@@ -34,12 +37,41 @@ function clean(s: string): string {
   return /^[A-Z0-9]{2,8}$/.test(upper) ? upper : 'a token';
 }
 
+/* The receiver of a send, shortened to its two ends. The address is the one field on a send
+   the agent chose, and it reaches the dialog because the dialog is the last place a person can
+   see where the money goes; it reaches it only when it is shaped like an address (hex, base58
+   or a NEAR id), so an agent-authored sentence in that field is said as "an address". */
+const ADDRESS_SHAPE = /^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44}|[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?)$/;
+
+function shortAddress(raw: unknown): string {
+  const s = String(raw ?? '').trim();
+  if (!ADDRESS_SHAPE.test(s)) return 'an address';
+  return s.length <= 14 ? s : `${s.slice(0, 6)}...${s.slice(-4)}`;
+}
+
+// The chain a payout lands on, by name and only from the table: a network id the table does
+// not know is said as "a chain", never echoed.
+const NETWORK_NAMES: Record<string, string> = {
+  ethereum: 'Ethereum',
+  base: 'Base',
+  arbitrum: 'Arbitrum',
+  solana: 'Solana',
+  near: 'NEAR',
+  bitcoin: 'Bitcoin',
+};
+
+function networkName(raw: unknown): string {
+  return NETWORK_NAMES[String(raw)] ?? 'a chain';
+}
+
 function describe(draft: WriteDraft): string {
   switch (draft.kind) {
     case 'swap':
       return `Swap ${amount(draft.amountIn, draft.fromSymbol)} to ${clean(draft.toSymbol)} (${usd(draft.amountUsd)})`;
     case 'intents_send':
-      return `Send ${amount(draft.amount, draft.symbol)} inside NEAR Intents to another account (${usd(draft.amountUsd)})`;
+      return `Send ${amount(draft.amount, draft.symbol)} inside NEAR Intents to ${shortAddress(draft.to)} (${usd(draft.amountUsd)})`;
+    case 'intents_pay':
+      return `Pay ${amount(draft.amount, draft.symbol)} to ${shortAddress(draft.to)} on ${networkName(draft.network)} (${usd(draft.amountUsd)})`;
     case 'hl_deposit':
       return `Move ${amount(draft.amount, draft.symbol)} into Hyperliquid (${usd(draft.amountUsd)})`;
     case 'hl_withdraw':

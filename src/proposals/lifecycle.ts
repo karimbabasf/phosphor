@@ -30,6 +30,8 @@ import { isLocked } from '../keystore/index.ts';
 import type { Keystore } from '../keystore/store.ts';
 import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { reasonFor } from '../vault/reason.ts';
+import { recordRecipient } from '../recipients.ts';
+import type { AddressActivity, ChainNetwork } from '../chainscan/index.ts';
 import type { RailRegistry } from '../rails/index.ts';
 import type { TradeDeps } from '../trade/rail.ts';
 import type { OneClickLookup, VenueCredited } from './reconcile.ts';
@@ -66,6 +68,12 @@ export type ProposalDeps = {
      wallet is opened by password and a click is a click. */
   vault?: VaultRelay;
   keystore?: Keystore;
+  /* The public chain read a send builder makes about the receiver (transaction count, balance,
+     whether it is a contract), so the card can say "never used on Ethereum, check it twice".
+     src/main.ts wires chainscan in live mode; absent means no read and a card that says the
+     address was not checked. Bounded and never a refusal: a chain that will not answer is not
+     a reason to stop a person deciding. */
+  recipientActivity?: (network: ChainNetwork, address: string) => Promise<AddressActivity | null>;
 };
 
 export function nowIso(): string {
@@ -163,6 +171,7 @@ export type PCtx = {
   venueCredited?: VenueCredited;
   vault?: VaultRelay;
   keystore?: Keystore;
+  recipientActivity?: (network: ChainNetwork, address: string) => Promise<AddressActivity | null>;
   // finishTouch, serialised by the service like approve is, so the continuation of a click
   // never interleaves with another proposal's execution.
   afterTouch: (id: string, result: VaultResult) => Promise<Proposal | null>;
@@ -417,9 +426,26 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
 
   const approved = persist(ctx, { ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
   ctx.audit.append('approved', `human approved ${p.kind} proposal ${id}`, { id, totalUsd: totalUsdOf(p.draft) });
+  rememberRecipient(ctx, approved);
   // Through the context rather than a direct import: execute.ts reads from this file, so calling
   // it by name here would make the two modules a cycle. createProposalService wires it.
   return ctx.execute(approved);
+}
+
+/* A send a human approved puts its receiver in the recipients book, so the next card to the
+   same address can say how many times and when. Written on the click and not on execution:
+   the book records what a person decided, and a payout that then failed at the venue was still
+   an address they chose to pay. Never a refusal: a book that cannot be written is a card that
+   says "first send" one more time. */
+export function rememberRecipient(ctx: PCtx, p: Proposal): void {
+  const draft = p.draft;
+  if (draft.kind !== 'intents_send' && draft.kind !== 'intents_pay') return;
+  const where = draft.kind === 'intents_send' ? 'intents' : draft.network;
+  try {
+    recordRecipient(ctx.dataDir, where, draft.to, p.decidedAt ?? nowIso(), draft.recipient?.note);
+  } catch (err) {
+    ctx.audit.append('proposal_created', `${p.id}: the recipients book could not be written (${errText(err)})`, { id: p.id });
+  }
 }
 
 /* True when this backend has an enclave wallet AND a shell relaying to the enclave. Either
@@ -461,6 +487,7 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
   }
   const approved = persist(ctx, { ...current, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
   ctx.audit.append('approved', `human approved ${current.kind} proposal ${id} with Touch ID`, { id, totalUsd: totalUsdOf(current.draft), touch: true });
+  rememberRecipient(ctx, approved);
   return ctx.execute(approved);
 }
 

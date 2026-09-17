@@ -565,6 +565,7 @@ test('the live registry holds every rail kind and nothing else', () => {
   assert.deepEqual(registry.kinds().sort(), [
     'hl_deposit',
     'hl_withdraw',
+    'intents_pay',
     'intents_send',
     'swap',
     'trade',

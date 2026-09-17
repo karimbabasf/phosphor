@@ -49,16 +49,22 @@ test('no string reaches the DOM as markup', () => {
   assert.equal(/insertAdjacentHTML|outerHTML|document\.write/.test(SOURCE), false);
 });
 
-test('the dock builds five buttons and they are named', () => {
+test('the dock builds its buttons here and every one is named', () => {
   const labels = SOURCE.match(/'btn-label', '([^']+)'/g) ?? [];
   // Got it files an unconfirmed row without deciding anything; it is the one button that
-  // neither approves, refuses, unlocks nor re-checks.
-  const allowed = ['No', 'Yes', 'Unlock', 'Reconcile', 'Got it'];
+  // neither approves, refuses, unlocks nor re-checks. A send's primary says what the click
+  // starts (the Touch ID dialog that names the receiver) and, while that dialog is up, that it
+  // is waiting on it; the send card itself (ui/screens/sendcard.js) builds no deciding button.
+  const allowed = ['No', 'Yes', 'Unlock', 'Reconcile', 'Got it', 'Approve, then Touch ID', 'Approve', 'Waiting for Touch ID'];
   assert.ok(labels.length > 0, 'the dock builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');
     assert.ok(allowed.includes(label), `the dock built a button labelled "${label}"`);
   }
+  // The send primary is picked between two labels, so the literal walk above cannot see it.
+  assert.ok(SOURCE.includes("'Approve, then Touch ID' : 'Approve'"), 'the send primary is not named as this test expects');
+  const SENDCARD = readFileSync(new URL('../../ui/screens/sendcard.js', import.meta.url), 'utf8');
+  assert.equal(/'btn-label', 'Approve|api\.approve|\/api\/approve/.test(SENDCARD), false, 'the send card builds a deciding button');
 });
 
 test('no key dismisses a decision', () => {

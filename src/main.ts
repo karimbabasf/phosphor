@@ -31,6 +31,7 @@ import { oneClickClient, type OneClickStatus, type TokensFile } from './intents.
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
 import { createProposalService } from './proposals.ts';
+import { addressActivity } from './chainscan/index.ts';
 import { hlDepositCredited } from './proposals/reconcile.ts';
 import { MAX_AGENTS, RESERVED_SEATS, createAgents, seatSecretPath } from './agents.ts';
 import { atomicWrite } from './fsatomic.ts';
@@ -519,6 +520,15 @@ const proposals = createProposalService({
   venueCredited,
   vault,
   keystore,
+  /* What the chain says about a send's receiver (transaction count, balance, contract or
+     not), read once at propose time so the card can say "never used on Ethereum, check it
+     twice". Live only: a demo holds nothing and asks nobody. Bounded to eight seconds because
+     it runs inside the spend queue, and a chain that will not answer leaves the receiver
+     unchecked rather than the send undecided. */
+  recipientActivity:
+    cfg.mode === 'live'
+      ? (network, address) => addressActivity(network, address, { deadline: Date.now() + 8_000 })
+      : undefined,
 });
 
 /* ASKING for the venues an existing policy.json does not list, rather than adding them.

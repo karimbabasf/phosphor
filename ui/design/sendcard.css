@@ -1,0 +1,380 @@
+/* The send card (ui/screens/sendcard.js): the one card a person reads before
+   money leaves for somebody else, in the decision dock and in the thread.
+
+   Quiet by design. Sora for the words, Geist Mono for every number and the
+   address. One colour per meaning and no more: green for what arrives, amber
+   for a first send and for a card still waiting, red only on a refusal. Every
+   explainer sits behind an (i). The 4 px grid throughout: 16 px card padding,
+   12 px between groups, 4 px inside them. Fluid: min(100%, 520px) in the dock,
+   the full column in the thread, and under 560 px the route stacks and the
+   arrows turn down (the class comes from a ResizeObserver, so the card answers
+   to its column and not to the window). */
+
+.sendcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  width: min(100%, 520px);
+  padding: var(--s-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--text);
+}
+
+.tcard-body > .sendcard {
+  width: 100%;
+  padding: var(--s-3) 0 0;
+  border: 0;
+  background: transparent;
+}
+
+/* ---------- head ---------- */
+
+.sendcard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.sendcard-title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.sendcard-verb {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.sendcard-amount {
+  font-size: var(--fs-20);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.sendcard-usd {
+  font-size: var(--fs-13);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+}
+
+.sendcard-status {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+/* ---------- route ---------- */
+
+.sendcard-route {
+  display: flex;
+  align-items: stretch;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+
+.sendcard-node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-1);
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.sendcard-node[data-node="from"] {
+  flex: 1.2 1 0;
+  min-width: 112px;
+}
+
+.sendcard-node[data-node="via"] {
+  flex: 0 0 auto;
+}
+
+.sendcard-node[data-node="via"] .sendcard-node-name--small {
+  white-space: nowrap;
+}
+
+.sendcard-node[data-node="to"] {
+  flex: 2 1 0;
+}
+
+/* The mark and the name on one 20 px line, so every node and every arrow
+   shares a top edge whatever wraps under it. */
+.sendcard-node-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  min-height: 20px;
+  min-width: 0;
+}
+
+.sendcard-node-head .logo {
+  margin-top: -1px;
+}
+
+.sendcard-node-head .sendcard-node-name {
+  padding-top: 1px;
+}
+
+.sendcard-node-name {
+  font-size: var(--fs-13);
+  font-weight: 500;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.sendcard-node-name--small {
+  font-size: var(--fs-11);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.sendcard-arrow {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 20px;
+  color: var(--text-3);
+}
+
+.sendcard-arrow svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--dur-swap) var(--ease-out);
+}
+
+/* The full address, four characters a group, wrapping at group edges so a
+   line never splits a group and a person checks it in the same pieces they
+   typed it in. */
+.sendcard-address {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--s-2);
+  margin-top: var(--s-1);
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.sendcard-group {
+  display: inline-block;
+}
+
+.sendcard-address-actions {
+  display: flex;
+  gap: var(--s-1);
+  margin-top: var(--s-1);
+}
+
+.sendcard-address-actions .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.sendcard-address-actions a {
+  text-decoration: none;
+}
+
+/* Stacked: the three nodes on top of each other, the arrows pointing down. */
+.sendcard--stacked .sendcard-route {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.sendcard--stacked .sendcard-node[data-node="via"] .sendcard-node-name--small {
+  white-space: normal;
+}
+
+.sendcard--stacked .sendcard-arrow {
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+}
+
+.sendcard--stacked .sendcard-arrow svg {
+  transform: rotate(90deg);
+}
+
+/* ---------- the (i) ---------- */
+
+.sendcard-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: var(--s-1);
+  padding: 0;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: help;
+  transition: color var(--dur-press) var(--ease-out), border-color var(--dur-press) var(--ease-out);
+}
+
+.sendcard-info:hover,
+.sendcard-info:focus-visible {
+  color: var(--text);
+  border-color: var(--text-3);
+  outline: none;
+}
+
+.sendcard-info::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  width: max-content;
+  max-width: 240px;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-0);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  box-shadow: var(--lift-sm);
+  transform: translate(-50%, 4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-press) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+
+.sendcard-info:hover::after,
+.sendcard-info:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ---------- facts ---------- */
+
+.sendcard-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-3) var(--s-4);
+  margin: 0;
+}
+
+.sendcard-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sendcard-fact-label {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs-11);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.sendcard-fact-value {
+  font-size: var(--fs-13);
+  overflow-wrap: anywhere;
+}
+
+.sendcard-fact-value[data-tone="up"] {
+  color: var(--up);
+}
+
+/* ---------- recipient ---------- */
+
+.sendcard-recipient {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.sendcard-recipient-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-13);
+  color: var(--text-2);
+}
+
+.sendcard-recipient-line[data-first="true"] {
+  color: var(--warn);
+}
+
+.sendcard-activity {
+  font-size: var(--fs-13);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.sendcard-why {
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+
+.sendcard-why[data-tone="down"] {
+  color: var(--down);
+}
+
+/* The preflight slot: nothing until the checks land, and no height either. */
+.sendcard-checks:empty {
+  display: none;
+}
+
+/* ---------- the dock's buttons around it ---------- */
+
+.sendcard-finger {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+}
+
+.sendcard-finger svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dock-actions .btn[data-touch="true"] .sendcard-finger {
+  animation: sendcard-pulse 1.6s var(--ease-out) infinite;
+}
+
+@keyframes sendcard-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-actions .btn[data-touch="true"] .sendcard-finger { animation: none; }
+  .sendcard-arrow svg, .sendcard-info::after { transition: none; }
+}
