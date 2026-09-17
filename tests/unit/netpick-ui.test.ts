@@ -483,7 +483,7 @@ test('Copy says Copied for a moment once the clipboard reads back, and the statu
   assert.equal(world.calls.find((c) => c.route === 'clipboard')?.text, EVM);
   assert.equal(copy.textContent, 'Copied');
   assert.equal(copy.dataset.copied, 'true');
-  assert.equal(find(world.host, '.deposit-copied')[0].textContent, 'Copied, ends in ...0e1d');
+  assert.equal(find(world.host, '.deposit-copied')[0].textContent, 'Address copied, ends in ...0e1d');
   const back = world.timers[world.timers.length - 1];
   back?.();
   assert.equal(copy.textContent, 'Copy');
@@ -665,8 +665,8 @@ test('a token row with a contract copies it, reads it back, and says the last fo
   const written = world.calls.filter((c) => c.route === 'clipboard').map((c) => c.text);
   assert.deepEqual(written, ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48']);
   assert.equal(usdc.dataset.copied, 'true');
-  assert.equal(find(usdc, '.token-contract')[0].textContent, 'Copied, ends in ...eb48');
-  assert.equal(find(world.host, '.netpick-copied')[0].textContent, 'Copied, ends in ...eb48');
+  assert.equal(find(usdc, '.token-contract')[0].textContent, 'Contract copied, ends in ...eb48');
+  assert.equal(find(world.host, '.netpick-copied')[0].textContent, 'USDC contract copied, ends in ...eb48');
   // The moment passes and the row reads as it did.
   world.timers.forEach((fn) => fn());
   assert.equal(usdc.dataset.copied, undefined);
@@ -683,5 +683,33 @@ test('a clipboard that reads back something else is not called copied on a contr
   await flush();
   await flush();
   assert.equal(usdc.dataset.copied, undefined, 'a mismatched clipboard was reported as copied');
-  assert.ok(find(world.host, '.netpick-copied')[0].textContent.startsWith('The clipboard does not hold the address'));
+  assert.ok(find(world.host, '.netpick-copied')[0].textContent.startsWith('The clipboard does not hold the USDC contract'));
+});
+
+test('a memo network draws no QR of the bare address: the address and the memo each have a checked Copy, and the card says why', async () => {
+  const wide = wideReport();
+  wide.networks.push({ id: 'stellar', name: 'Stellar', words: 'Stellar (XLM)', kind: 'other', native: 'XLM', mark: 'XLM', colour: '#7D00FF', popular: false, address: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', memo: '4471209', unavailable: null, warning: 'w', accepts: [token('XLM', 7, '1', '0.0000001')] });
+  const world = build({ ack: true, report: wide, withDeposit: true });
+  world.render({ stage: 'address', network: 'stellar', symbol: 'XLM' });
+  await flush();
+  await flush();
+  const body = find(world.host, '.deposit-body')[0];
+  assert.equal(body.dataset.state, 'shown');
+  assert.equal(body.dataset.memo, 'true');
+  assert.equal(find(body, 'canvas').length, 0, 'a QR of an address that needs a memo');
+  assert.equal(find(body, '.deposit-memo-value')[0].textContent, '4471209');
+  const text = textOf(body);
+  assert.ok(text.some((t) => t.startsWith('Paste the memo into the memo or tag field')), 'the memo warning is missing');
+  const copies = find(body, 'button').filter((b: Any) => b.dataset.role === 'copy' || b.dataset.role === 'copy-memo');
+  assert.deepEqual(copies.map((b: Any) => b.textContent), ['Copy address', 'Copy memo']);
+  copies[1].click();
+  await flush();
+  await flush();
+  const written = world.calls.filter((c) => c.route === 'clipboard').map((c) => c.text);
+  assert.deepEqual(written, ['4471209']);
+  assert.equal(find(body, '.deposit-copied')[1].textContent, 'Memo copied, ends in ...1209');
+  copies[0].click();
+  await flush();
+  await flush();
+  assert.equal(find(body, '.deposit-copied')[0].textContent, 'Address copied, ends in ...KZVN');
 });

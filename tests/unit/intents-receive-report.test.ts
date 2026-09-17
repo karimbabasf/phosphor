@@ -208,7 +208,9 @@ test('PHOSPHOR_DEMO_RECEIVE stands in for the bridge in demo mode only, and may 
     assert.equal(b.calls.length, 0, 'demo mode with a fixture still asked the bridge');
     assert.equal(demo.networks.length, RECEIVE_NETWORKS.length, 'a fixture naming four networks drew fewer rows');
     assert.equal(net(demo, 'base').address, '0xfixture');
-    assert.deepEqual(net(demo, 'base').accepts[0]?.minimum, { shown: false, amount: '0.001', usd: 0.001 }, 'a tenth of a cent is a minimum nobody types');
+    // A real floor of a thousandth is shown whatever the price says: a price can reveal a
+    // floor the unit rule would have called dust, never hide one.
+    assert.deepEqual(net(demo, 'base').accepts[0]?.minimum, { shown: true, amount: '0.001', usd: 0.001 });
     assert.deepEqual(net(demo, 'btc').accepts.map((a) => a.minimum), [{ shown: true, amount: '0.00007', usd: 7 }]);
     assert.deepEqual(net(demo, 'eth').sharedWith, ['base']);
     assert.deepEqual(net(demo, 'base').sharedWith, ['eth']);
@@ -287,7 +289,7 @@ test('the price list turns a floor into dollars and decides whether it is shown;
       intentsPrices: async () => new Map([['nep141:base-0x8335.omft.near', 0.9997], ['nep141:base.omft.near', 4000]]),
     } as Partial<Ctx>));
     const base = net(priced, 'base');
-    assert.deepEqual(base.accepts.find((a) => a.symbol === 'USDC')?.minimum, { shown: false, amount: '0.001', usd: 0.001 });
+    assert.deepEqual(base.accepts.find((a) => a.symbol === 'USDC')?.minimum, { shown: true, amount: '0.001', usd: 0.001 }, 'a price hid a floor the unit rule shows');
     // One wei of ETH at four thousand dollars is a millionth of a cent: not shown, but priced.
     assert.deepEqual(base.accepts.find((a) => a.symbol === 'ETH')?.minimum, { shown: false, amount: '0.000000000000000001', usd: 0 });
     // ETH on Ethereum has no price in this list: judged on its own size.

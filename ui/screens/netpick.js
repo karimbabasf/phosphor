@@ -235,8 +235,7 @@
     var usd = given && typeof given.usd === 'number' && isFinite(given.usd) ? given.usd : null;
     var shown;
     if (given && typeof given.shown === 'boolean') shown = given.shown;
-    else if (usd !== null) shown = usd >= 0.01;
-    else shown = Number(amount) >= DUST;
+    else shown = Number(amount) >= DUST || (usd !== null && usd >= 0.01);
     return { shown: shown, amount: amount, symbol: String(token.symbol), usd: usd };
   }
 
@@ -429,14 +428,19 @@
 
   /* Write, read back, and say what was found. A clipboard that cannot be read
      back is said to be that, with the last four characters to check by hand,
-     rather than reported as copied. Resolves true only on a read-back match. */
-  function copyChecked(address, say) {
+     rather than reported as copied. Resolves true only on a read-back match.
+     `what` names the thing in the sentence: an address by default, a memo, or
+     a token's contract, so "Copied" never leaves a person unsure whether the
+     clipboard holds the place to send to or the coin's contract. */
+  function copyChecked(address, say, what) {
+    var noun = what || 'address';
+    var Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
     var clip = window.navigator ? window.navigator.clipboard : null;
     if (!clip || typeof clip.writeText !== 'function') {
-      say('This window cannot reach the clipboard. Read the address from the screen.');
+      say('This window cannot reach the clipboard. Read the ' + noun + ' from the screen.');
       return Promise.resolve(false);
     }
-    var unread = 'Copied, but the clipboard could not be read back. Check it ends in ...' + tail(address) + ' before you send.';
+    var unread = Noun + ' copied, but the clipboard could not be read back. Check it ends in ...' + tail(address) + ' before you send.';
     return clip.writeText(address)
       .then(function () {
         if (typeof clip.readText !== 'function') {
@@ -445,10 +449,10 @@
         }
         return clip.readText().then(function (back) {
           if (sameBytes(back, address)) {
-            say('Copied, ends in ...' + tail(address));
+            say(Noun + ' copied, ends in ...' + tail(address));
             return true;
           }
-          say('The clipboard does not hold the address: something else is in it. Copy again, or read it from the screen.');
+          say('The clipboard does not hold the ' + noun + ': something else is in it. Copy again, or read it from the screen.');
           return false;
         }, function () {
           say(unread);
@@ -456,7 +460,7 @@
         });
       })
       .catch(function () {
-        say('The copy did not work. Read the address from the screen.');
+        say('The copy did not work. Read the ' + noun + ' from the screen.');
         return false;
       });
   }
@@ -945,11 +949,11 @@
         dom.on(row, 'click', function () {
           if (row.disabled) return;
           row.disabled = true;
-          copyChecked(contract, function (sentence) { if (say) say(sentence); })
+          copyChecked(contract, function (sentence) { if (say) say(sentence); }, token.symbol + ' contract')
             .then(function (ok) {
               if (!ok || !state.alive) return;
               row.dataset.copied = 'true';
-              dom.setText(line, 'Copied, ends in ...' + tail(contract));
+              dom.setText(line, 'Contract copied, ends in ...' + tail(contract));
               if (row.__copiedTimer) window.clearTimeout(row.__copiedTimer);
               row.__copiedTimer = window.setTimeout(function () {
                 row.__copiedTimer = 0;
@@ -1115,33 +1119,37 @@
       }
 
       var address = network.address;
+      var memoText = typeof network.memo === 'string' && network.memo ? network.memo : null;
       dom.clear(body);
 
-      var qr = dom.el('div', 'qr deposit-qr');
-      var canvas = dom.el('canvas');
-      canvas.setAttribute('role', 'img');
-      canvas.setAttribute('aria-label', 'QR code of the deposit address');
-      qr.appendChild(canvas);
-      var check = drawChecked(canvas, address);
-      if (!check.ok) {
-        return refuse(body, 'Nothing is shown: ' + check.why + ' Close this and open it again. If it happens twice, do not send money until it is fixed.');
+      /* A memo network (Stellar today) hands everybody one address and tells
+         the deposits apart by memo, so a send without the memo is credited to
+         nobody and not refunded. No QR of the bare address, then: a wallet
+         that scans one sends without the memo. The address and the memo each
+         get their own Copy, and the card says why (security review,
+         2026-09-16). */
+      if (memoText === null) {
+        var qr = dom.el('div', 'qr deposit-qr');
+        var canvas = dom.el('canvas');
+        canvas.setAttribute('role', 'img');
+        canvas.setAttribute('aria-label', 'QR code of the deposit address');
+        qr.appendChild(canvas);
+        var check = drawChecked(canvas, address);
+        if (!check.ok) {
+          return refuse(body, 'Nothing is shown: ' + check.why + ' Close this and open it again. If it happens twice, do not send money until it is fixed.');
+        }
+        body.dataset.state = 'shown';
+        body.appendChild(qr);
+      } else {
+        body.dataset.state = 'shown';
+        body.dataset.memo = 'true';
       }
-
-      body.dataset.state = 'shown';
-      body.appendChild(qr);
 
       var side = dom.el('div', 'deposit-side');
       side.appendChild(addressBlock(address, kindOf(n.id)));
 
-      if (network.memo) {
-        var memo = dom.el('p', 'deposit-memo');
-        memo.appendChild(dom.el('span', 'label', 'Memo, required: '));
-        memo.appendChild(dom.el('span', 'mono', network.memo));
-        side.appendChild(memo);
-      }
-
       var tools = dom.el('div', 'deposit-tools');
-      var copy = button('Copy', 'btn-ghost btn-sm');
+      var copy = button(memoText === null ? 'Copy' : 'Copy address', 'btn-ghost btn-sm');
       copy.dataset.role = 'copy';
       var said = dom.el('span', 'meta deposit-copied');
       said.setAttribute('role', 'status');
@@ -1158,12 +1166,35 @@
             if (state.copiedTimer) window.clearTimeout(state.copiedTimer);
             state.copiedTimer = window.setTimeout(function () {
               state.copiedTimer = 0;
-              dom.setText(copy.firstChild, 'Copy');
+              dom.setText(copy.firstChild, memoText === null ? 'Copy' : 'Copy address');
               delete copy.dataset.copied;
             }, COPIED_MS);
           })
           .finally(function () { copy.disabled = false; });
       });
+
+      if (memoText !== null) {
+        var memoBlock = dom.el('div', 'deposit-memo');
+        memoBlock.appendChild(dom.el('p', 'label', 'Memo, required with the address'));
+        memoBlock.appendChild(dom.el('p', 'deposit-memo-value mono', memoText));
+        var memoTools = dom.el('div', 'deposit-tools');
+        var copyMemo = button('Copy memo', 'btn-ghost btn-sm');
+        copyMemo.dataset.role = 'copy-memo';
+        var saidMemo = dom.el('span', 'meta deposit-copied');
+        saidMemo.setAttribute('role', 'status');
+        memoTools.appendChild(copyMemo);
+        memoTools.appendChild(saidMemo);
+        memoBlock.appendChild(memoTools);
+        dom.on(copyMemo, 'click', function () {
+          copyMemo.disabled = true;
+          copyChecked(memoText, function (sentence) { dom.setText(saidMemo, sentence); }, 'memo')
+            .finally(function () { copyMemo.disabled = false; });
+        });
+        var memoWarn = dom.el('p', 'deposit-memo-warn');
+        dom.setText(memoWarn, 'Paste the memo into the memo or tag field on the sending side. This address is shared with other people and the memo is what credits the money to you; without it the deposit goes to nobody and is not refunded. No QR code here, because a scanned address leaves the memo out.');
+        memoBlock.appendChild(memoWarn);
+        side.appendChild(memoBlock);
+      }
       body.appendChild(side);
 
       var notes = dom.el('div', 'deposit-notes');

@@ -645,7 +645,12 @@ function minimumOf(amount: string, price: number | null): IntentsReceiveMinimum 
   const human = Number(amount);
   const known = Number.isFinite(human);
   const usd = price !== null && known ? human * price : null;
-  const shown = usd !== null ? usd >= 0.01 : known && human >= 1e-6;
+  /* Shown when EITHER rule says so: a floor of a millionth of the coin or more is shown whatever
+     the price says, and a price only ever adds a floor that the unit rule would have called
+     dust. A wrong price from 1Click (it is a read, not a fact) can therefore reveal a floor,
+     never hide one: hiding XRP's 2 or Tron USDT's 1 behind "No minimum" is the loss this row
+     exists to prevent (security review, 2026-09-16). */
+  const shown = (known && human >= 1e-6) || (usd !== null && usd >= 0.01);
   return { shown, amount, usd: usd === null ? null : Math.round(usd * 10_000) / 10_000 };
 }
 

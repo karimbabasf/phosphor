@@ -634,10 +634,31 @@ button.token-row[disabled] {
   overflow-wrap: anywhere;
 }
 
+/* The memo, where a network routes by one: its own block under the address
+   with its own Copy, and the sentence that says why it cannot be left out.
+   With no QR the address takes the whole width. */
+.deposit-body[data-memo="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .deposit-memo {
-  font-size: var(--fs-13);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.deposit-memo-value {
+  font-size: var(--fs-18);
   color: var(--text);
   overflow-wrap: anywhere;
+}
+
+.deposit-memo-warn {
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--warn);
 }
 
 .deposit-tools {

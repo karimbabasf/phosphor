@@ -374,7 +374,7 @@ test('Copy writes the clipboard, reads it back, and says the last four', async (
   await flush();
   assert.equal(world.clipboard.held, ADDRESS);
   const said = find(world.dialog(), '.deposit-copied')[0];
-  assert.equal(said.textContent, 'Copied, ends in ...0e1d');
+  assert.equal(said.textContent, 'Address copied, ends in ...0e1d');
 });
 
 test('a clipboard that reads back something else is not reported as copied', async () => {

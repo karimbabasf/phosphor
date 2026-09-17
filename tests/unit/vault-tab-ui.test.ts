@@ -229,7 +229,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any }
   };
   sandbox.PhosphorDeposit = {
     open: (opts: Any) => { calls.push(Object.assign({ route: 'deposit.open' }, opts)); return Promise.resolve(null); },
-    copyChecked: (address: string, say: (s: string) => void) => { calls.push({ route: 'copy', address }); say('Copied, ends in ...' + address.slice(-4)); return Promise.resolve(true); },
+    copyChecked: (address: string, say: (s: string) => void) => { calls.push({ route: 'copy', address }); say('Address copied, ends in ...' + address.slice(-4)); return Promise.resolve(true); },
     networkWords: (chain: string) => chain,
     defaultSymbol: (accepts: Any[]) => (accepts && accepts.length ? accepts[0].symbol : ''),
     chunks: (address: string) => [address.slice(0, 4), address.slice(4, -4), address.slice(-4)],
@@ -524,7 +524,7 @@ test('the wallet\'s own key on the network in the menu sits behind the developer
   buttonNamed(key, 'Copy').click();
   await flush();
   assert.deepEqual(world.calls.find((c) => c.route === 'copy'), { route: 'copy', address: EVM });
-  assert.ok(textOf(key).includes('Copied, ends in ...0e1d'));
+  assert.ok(textOf(key).includes('Address copied, ends in ...0e1d'));
 
   // Solana and NEAR keys have no rail out of them: no Copy, and the row says so.
   find(card, '.netsel')[0].click();
