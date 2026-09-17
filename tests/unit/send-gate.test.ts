@@ -200,14 +200,14 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
       recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
     } as IntentsPayDraft,
   });
-  assert.equal(pay, 'Approve: Pay 0.01 ETH to 0xd7b2...5050 on Ethereum ($24.40)');
+  assert.equal(pay, 'Approve: Pay 0.01 ETH to 0xd7b2de...1D4d5050 on Ethereum ($24.40)');
   const send = reasonFor({
     draft: {
       kind: 'intents_send', symbol: 'USDC', originAsset: 'nep141:usdc.near', amount: 3.7, amountUsd: 3.7, minReceived: 3.66,
       from: SELF_EVM.toLowerCase(), to: FRIEND.toLowerCase(), counterparty: 'intents.near',
     } as IntentsSendDraft,
   });
-  assert.equal(send, 'Approve: Send 3.7 USDC inside NEAR Intents to 0xd7b2...5050 ($3.70)');
+  assert.equal(send, 'Approve: Send 3.7 USDC inside NEAR Intents to 0xd7b2de...1d4d5050 ($3.70)');
   const sol = reasonFor({
     draft: {
       kind: 'intents_pay', symbol: 'SOL', originAsset: 'nep141:sol.omft.near', network: 'solana', amount: 1234.5, amountUsd: 260000,
@@ -215,8 +215,26 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
       recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
     } as IntentsPayDraft,
   });
-  assert.equal(sol, 'Approve: Pay 1,235 SOL to DRpbCB...21hy on Solana ($260,000)');
+  assert.equal(sol, 'Approve: Pay 1,235 SOL to DRpbCBMx...8okm21hy on Solana ($260,000)');
   assert.ok(sol.length <= 120);
+  // Eight characters each end, never six and four: a vanity address matching the shorter form
+  // is minutes of work, and a NEAR name short enough is said whole.
+  const vanity = reasonFor({
+    draft: {
+      kind: 'intents_pay', symbol: 'ETH', originAsset: 'nep141:eth.omft.near', network: 'ethereum', amount: 0.01, amountUsd: 24.4,
+      minReceived: 0.0097, from: SELF_EVM.toLowerCase(), to: '0xd7b2' + 'ff' + '0'.repeat(26) + 'ffff' + '5050', toChecksum: null, counterparty: 'intents.near',
+      recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
+    } as IntentsPayDraft,
+  });
+  assert.notEqual(vanity, pay, 'an address sharing the six-and-four ends reads the same as the real one');
+  assert.match(vanity, /to 0xd7b2ff\.\.\.ffff5050 on Ethereum/);
+  const named = reasonFor({
+    draft: {
+      kind: 'intents_send', symbol: 'USDC', originAsset: 'nep141:usdc.near', amount: 3.7, amountUsd: 3.7, minReceived: 3.66,
+      from: SELF_EVM.toLowerCase(), to: 'alice-and-bob.near', counterparty: 'intents.near',
+    } as IntentsSendDraft,
+  });
+  assert.equal(named, 'Approve: Send 3.7 USDC inside NEAR Intents to alice-and-bob.near ($3.70)');
   // A sentence in the address field is not an address, and a network off the table is not named.
   const hostile = reasonFor({
     draft: {

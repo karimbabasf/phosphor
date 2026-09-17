@@ -636,12 +636,22 @@ for (const [index, sentence] of hostile.sentences.entries()) {
   });
 }
 
+/* A symbol is a ticker, and the schema and the propose door hold it to sixteen characters
+   (src/http/propose.ts SYMBOL_MAX): a hostile name longer than that is refused by its length
+   before a draft exists, and one short enough is refused by the engine. Either way nothing moves. */
+function refusedByLength(reply: Json, symbol: string): boolean {
+  const text = typeof reply === 'string' ? reply : JSON.stringify(reply);
+  return symbol.length > 16 && /Input validation error|over the 16 this field takes/.test(text);
+}
+
 test('hostile token names move nothing', async () => {
   for (const symbol of hostile.tokenNames) {
     const proposed = await callTool('propose_swap', { venue: 'intents-native', chain: 'eth', fromSymbol: symbol, toSymbol: 'USDC', amountIn: 1, minAmountOut: 0.5 });
-    assert.equal(proposed.status, 'policy_refused', `symbol ${JSON.stringify(symbol)} was not refused`);
+    const text = typeof proposed === 'string' ? proposed : JSON.stringify(proposed);
+    assert.ok(!/"status":"executed"/.test(text), `symbol ${JSON.stringify(symbol)} executed`);
+    if (refusedByLength(proposed, symbol)) continue;
+    assert.equal(proposed.status, 'policy_refused', `symbol ${JSON.stringify(symbol)} was not refused: ${text.slice(0, 160)}`);
     assert.equal(proposed.verdict.outcome, 'refuse');
-    assert.notEqual(proposed.status, 'executed');
   }
 });
 
@@ -700,8 +710,10 @@ test('the Hyperliquid round trip cannot be pointed at a stranger, whatever the c
   // Hostile symbols on the deposit reach a sentence and never a signature.
   for (const symbol of hostile.tokenNames) {
     const proposed = await callTool('propose_hl_deposit', { amount: 10, symbol });
-    assert.notEqual(proposed.status, 'executed', `symbol ${JSON.stringify(symbol)} executed`);
-    assert.equal(proposed.verdict.outcome, 'refuse');
+    const text = typeof proposed === 'string' ? proposed : JSON.stringify(proposed);
+    assert.ok(!/"status":"executed"/.test(text), `symbol ${JSON.stringify(symbol)} executed`);
+    if (refusedByLength(proposed, symbol)) continue;
+    assert.equal(proposed.verdict.outcome, 'refuse', `symbol ${JSON.stringify(symbol)}: ${text.slice(0, 160)}`);
   }
 });
 

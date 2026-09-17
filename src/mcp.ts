@@ -1012,7 +1012,7 @@ registerLeadView(
 
 registerPropose('propose_policy_change', 'policy_change', `Proposes a change to the app's policy rules. ${ALWAYS_CLICK}`, {
   patch: z.object({}).passthrough(),
-  sentence: z.string(),
+  sentence: z.string().max(1000),
 });
 
 // The rail tools. Every one of them names assets and amounts and nothing else: the account
@@ -1029,8 +1029,8 @@ chain and toChain name each ASSET's home chain, which is how the token list tell
   {
     chain: CHAIN,
     toChain: CHAIN.optional(),
-    fromSymbol: z.string(),
-    toSymbol: z.string(),
+    fromSymbol: z.string().max(16),
+    toSymbol: z.string().max(16),
     amountIn: z.number(),
     minAmountOut: z.number(),
   },
@@ -1049,9 +1049,9 @@ Before calling: restate amount, token, the full address and where it lands, and 
 
 This is the one propose tool with a destination field. \`to\` is decoded for the place it is going (an EIP-55 address on an EVM chain, a base58 key on Solana, an account id on NEAR or inside intents) and a typo is refused before any quote; the app then reads the address's public activity and the card says whether it has ever been used. Paying this app's own wallet on a chain is allowed and labelled as such. A chain payout pays the bridge's flat fee on top of the solver's, so a small one is refused with the fee named. symbol names which balance to move; the app spends the largest matching flavor it holds. ${ALWAYS_CLICK} On an enclave wallet the Touch ID dialog names the amount, the receiver and the chain.`,
   {
-    symbol: z.string(),
+    symbol: z.string().max(16),
     amount: z.number(),
-    to: z.string().describe('the receiving address, exactly as the user gave it: an EVM address, a Solana address, a NEAR account id, or an intents account id'),
+    to: z.string().max(128).describe('the receiving address, exactly as the user gave it: an EVM address, a Solana address, a NEAR account id, or an intents account id'),
     where: SEND_WHERE.describe("where it lands, required: 'intents' keeps it inside NEAR Intents; a network id pays it out on that chain"),
     confirmed: z.literal(true).describe('true only after the user confirmed the exact address and network in this conversation'),
     note: z.string().max(64).optional().describe('your own one-line note about the receiver, kept as data in the audit trail and never shown as a name'),
@@ -1121,7 +1121,7 @@ Two numbers decide whether this is worth doing, and both are in the approval sum
 
 The way back is propose_hl_withdraw, which returns collateral to the same intents balance and is always a human click. After this executes, read proposal_status for the intent hash and the collateral before and after; do not report the deposit as done from the tool reply alone. ${CANNOT_APPROVE}`,
   {
-    symbol: z.string().optional(),
+    symbol: z.string().max(16).optional(),
     amount: z.number(),
   },
 );

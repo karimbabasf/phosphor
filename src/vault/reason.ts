@@ -40,13 +40,17 @@ function clean(s: string): string {
 /* The receiver of a send, shortened to its two ends. The address is the one field on a send
    the agent chose, and it reaches the dialog because the dialog is the last place a person can
    see where the money goes; it reaches it only when it is shaped like an address (hex, base58
-   or a NEAR id), so an agent-authored sentence in that field is said as "an address". */
+   or a NEAR id), so an agent-authored sentence in that field is said as "an address".
+   Eight characters each end: six and four was forty bits of hex, which a vanity generator
+   matches in minutes, so a substituted address could read the same in the dialog as the one on
+   the card. Sixteen is beyond that reach, and the card still shows the whole address. */
 const ADDRESS_SHAPE = /^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44}|[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?)$/;
+const END_CHARS = 8;
 
 function shortAddress(raw: unknown): string {
   const s = String(raw ?? '').trim();
   if (!ADDRESS_SHAPE.test(s)) return 'an address';
-  return s.length <= 14 ? s : `${s.slice(0, 6)}...${s.slice(-4)}`;
+  return s.length <= 2 * END_CHARS + 4 ? s : `${s.slice(0, END_CHARS)}...${s.slice(-END_CHARS)}`;
 }
 
 // The chain a payout lands on, by name and only from the table: a network id the table does

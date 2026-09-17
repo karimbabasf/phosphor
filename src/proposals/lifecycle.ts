@@ -385,7 +385,21 @@ export function requirePending(ctx: PCtx, id: string, action: string): Proposal 
     ctx.audit.append('approve_attempt_rejected', `${action} for proposal ${id} which is ${p.status}, not pending`, { id, action, status: p.status });
     throw new Error(`proposal ${id} is not pending (status ${p.status})`);
   }
+  requireIntact(ctx, id, action);
   return p;
+}
+
+/* THE ROW DECIDED IS THE ROW THE WINDOW DREW. The store re-reads proposals.json whenever the
+   file moves, and any process running as this user can move it: a pending send whose `to` was
+   rewritten on disk after the card was drawn was handed to the rail as the attacker, under a
+   click given to the friend, and a refused row flipped to pending on disk could be clicked at
+   all. The store seals every row it writes or first reads (src/store.ts), and a decision on a
+   row that no longer matches its seal is refused here, before the engine, the dialog or the
+   rail see it. Nothing is written back: writing would seal the stranger's bytes as ours. */
+export function requireIntact(ctx: PCtx, id: string, action: string): void {
+  if (ctx.store.intact(id)) return;
+  ctx.audit.append('approve_attempt_rejected', `${action} for proposal ${id}, whose row on disk is not the row this app wrote`, { id, action, changedOnDisk: true });
+  throw new Error(`proposal ${id} was changed on disk by something other than this app since it was proposed, so it cannot be decided; propose it again`);
 }
 
 export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
@@ -475,6 +489,13 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
     drop();
     return null;
   }
+  // A finger is a click too, and the row is read again here: the same seal check the click
+  // runs, with the data key wiped first, and the row left as it is rather than written back.
+  if (!ctx.store.intact(id)) {
+    drop();
+    ctx.audit.append('approve_attempt_rejected', `Touch ID for proposal ${id}, whose row on disk is not the row this app wrote`, { id, action: 'touch', changedOnDisk: true });
+    return null;
+  }
   if (!result.ok) {
     ctx.audit.append('proposal_created', `${id} goes back to pending: the Touch ID did not complete (${result.error})`, { id, error: result.error });
     return persist(ctx, { ...current, status: 'pending' });
@@ -528,6 +549,13 @@ export async function releaseQueued(ctx: PCtx): Promise<number> {
     // Anything a human refused, or another release already took, is somebody else's now.
     const current = ctx.store.get(p.id);
     if (current === undefined || current.status !== 'pending_unlock') continue;
+    // A queued row is re-decided and may execute on its verdict, so it takes the seal check a
+    // click takes, and a row changed on disk stays queued rather than being re-sealed by the
+    // rewrite below.
+    if (!ctx.store.intact(p.id)) {
+      ctx.audit.append('approve_attempt_rejected', `release for proposal ${p.id}, whose row on disk is not the row this app wrote`, { id: p.id, action: 'release', changedOnDisk: true });
+      continue;
+    }
 
     const verdict = evaluate(current.draft, buildCtx(ctx, snapshot, policy));
     // Back to pending, because land() reads the status of nothing but writes one: this is what

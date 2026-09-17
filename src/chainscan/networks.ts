@@ -108,8 +108,19 @@ export function validateAddress(network: ChainNetwork, address: string): Address
     case 'near': {
       // An EVM address is a valid NEAR account id in lowercase (the eth-implicit form, and how
       // an intents account is named), so that one spelling is normalised; every other id has
-      // to arrive in the lowercase NEAR defines.
-      if (EVM_ADDRESS.test(value)) return { ok: true, normalized: value.toLowerCase() };
+      // to arrive in the lowercase NEAR defines. A mixed-case spelling carries an EIP-55
+      // checksum and it has to match: a typo in it used to be lowercased into an account nobody
+      // holds. All lowercase or all capitals carries none, the rule intentsAccountProblem in
+      // src/rails/intents-send.ts applies to the same id space.
+      if (EVM_ADDRESS.test(value)) {
+        const body = value.slice(2);
+        if (/[A-F]/.test(body) && /[a-f]/.test(body)) {
+          const checked = evmAddressCheck(value, NETWORKS[network].label);
+          if (!checked.ok) return checked;
+          return { ok: true, normalized: value.toLowerCase(), checksum: 'valid' };
+        }
+        return { ok: true, normalized: value.toLowerCase(), checksum: 'lowercase' };
+      }
       if (!NEAR_ACCOUNT.test(value)) return { ok: false, reason: 'not a NEAR account id: expected a lowercase name like alice.near or a 64-character implicit id' };
       return { ok: true, normalized: value };
     }

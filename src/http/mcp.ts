@@ -3,17 +3,23 @@
 // handlers. The read table is assembled here too, because a read is one of those ops.
 //
 // Every op that reads, proposes or moves the window is audit-logged as a tool_call before
-// dispatch, arguments included verbatim. The one op that is not is the presence heartbeat: it
-// is logged as agent_connected and agent_disconnected on the edges, because a line every 15s
-// buries the transcript it is meant to sit in.
+// dispatch, arguments included, each string cut to MAX_LOGGED_CHARS. The one op that is not is
+// the presence heartbeat: it is logged as agent_connected and agent_disconnected on the edges,
+// because a line every 15s buries the transcript it is meant to sit in.
 
 import type http from 'node:http';
 
 import { SEAT_SECRET_FILE, seatSecretPath } from '../agents.ts';
 import { oneLine } from '../intents.ts';
 import { sameOrigin } from './auth.ts';
-import { asRecord, capLabel, fail, readBody, sendJson } from './respond.ts';
+import { asRecord, capLabel, capStrings, fail, oversizeString, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
+
+// The longest string any op on this door takes, and the longest one the audit line keeps. The
+// propose door caps its own fields lower (src/http/propose.ts); a chart label, a search query
+// or a policy sentence has no business past a kilobyte.
+export const MAX_ARG_CHARS = 1024;
+export const MAX_LOGGED_CHARS = 256;
 import { agentReads } from './read/agents.ts';
 import { chainReads } from './read/chain.ts';
 import { chartReads } from './read/chart.ts';
@@ -204,6 +210,18 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     return;
   }
 
+  /* EVERY STRING ON THIS DOOR HAS A CEILING, checked once here for hello, read, propose and the
+     window ops alike, before anything is seated, logged or drafted. The body cap is 1 MiB, and
+     nothing under it bounded a single argument: a 900 KiB symbol went through the propose door
+     into the refusal reason, proposals.json and every state frame the window was sent after
+     it. The propose door holds each of its fields tighter still (src/http/propose.ts); this is
+     the ceiling for everything else, chart labels and search queries included. */
+  const oversize = oversizeString(body, MAX_ARG_CHARS);
+  if (oversize !== null) {
+    fail(res, 400, `${oversize.path} is ${oversize.length} characters, over the ${MAX_ARG_CHARS} this door takes`);
+    return;
+  }
+
   // The presence heartbeat is not a tool call, so it is answered before the
   // append below and never enters the transcript. mcp.ts pings for the whole life
   // of an agent session: on 2026-08-12, with two sessions open, 242 of 418 audit
@@ -279,9 +297,10 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
             : op === 'set_basic_coins'
               ? `set_basic_coins ${(Array.isArray(body.coins) ? body.coins : []).join(' ')}`
               : `unknown op ${op}`;
-  // Contract: every op that reads, proposes or moves the window is audit-logged
-  // before dispatch, arguments included verbatim. The credentials are not arguments.
-  ctx.audit.append('tool_call', `agent: ${capLabel(label)}`, logged);
+  // Contract: every op that reads, proposes or moves the window is audit-logged before
+  // dispatch, arguments included. The credentials are not arguments, and a string is kept to
+  // its first MAX_LOGGED_CHARS with its length: the log is what log_tail hands every agent.
+  ctx.audit.append('tool_call', `agent: ${capLabel(label)}`, capStrings(logged, MAX_LOGGED_CHARS) as JsonBody);
 
   if (op === 'read') {
     await handleRead(ctx, body, res);

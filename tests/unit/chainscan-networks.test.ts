@@ -55,11 +55,25 @@ test('a Solana address must be base58 and decode to exactly 32 bytes', () => {
 test('a NEAR account id is a lowercase name or an implicit id, and an EVM address is lowercased into one', () => {
   assert.deepEqual(validateAddress('near', 'intents.near'), { ok: true, normalized: 'intents.near' });
   assert.deepEqual(validateAddress('near', 'karim-demo.near'), { ok: true, normalized: 'karim-demo.near' });
-  assert.deepEqual(validateAddress('near', VITALIK), { ok: true, normalized: VITALIK.toLowerCase() });
+  assert.deepEqual(validateAddress('near', VITALIK), { ok: true, normalized: VITALIK.toLowerCase(), checksum: 'valid' });
+  assert.deepEqual(validateAddress('near', VITALIK.toLowerCase()), { ok: true, normalized: VITALIK.toLowerCase(), checksum: 'lowercase' });
   assert.deepEqual(validateAddress('near', 'a'.repeat(64)), { ok: true, normalized: 'a'.repeat(64) });
   for (const bad of ['Intents.near', 'a', 'a'.repeat(65), 'has space.near', 'double..dot', '.near', 'near.', '-lead.near']) {
     assert.equal(validateAddress('near', bad).ok, false, bad);
   }
+});
+
+test('an EVM address with a wrong EIP-55 checksum is refused on the NEAR network too, never lowercased into an account nobody holds', () => {
+  // The same rule the EVM networks apply (2026-09-17 audit, finding 4): a payout to an
+  // eth-implicit account passed here with its capitals wrong, while the same string was refused
+  // on ethereum and for an intents send.
+  const wrong = VITALIK.slice(0, 2) + VITALIK.slice(2).replace('d8dA', 'D8da');
+  const check = validateAddress('near', wrong);
+  assert.equal(check.ok, false);
+  assert.match((check as { reason: string }).reason, /checksum/);
+  assert.equal(validateAddress('near', wrong.toLowerCase()).ok, true, 'the lowercase spelling carries no checksum and passes');
+  // All capitals carries no checksum either, the rule an intents account id already follows.
+  assert.deepEqual(validateAddress('near', VITALIK.toUpperCase().replace('0X', '0x')), { ok: true, normalized: VITALIK.toLowerCase(), checksum: 'lowercase' });
 });
 
 test('a Bitcoin address is checked for format only, bech32 or base58check', () => {

@@ -54,7 +54,10 @@ test('chart_layout: none, five, garbage entries, a product of ten thousand chara
       ['numbers', [1, 2], /1 to 4/],
       ['empty entry', [{}], /needs a product/],
       ['no product', [{ timeframe: '1h' }], /needs a product/],
-      ['ten thousand characters', [{ product: 'A'.repeat(10_000), timeframe: '1h' }], /no market listed/],
+      // Over a kilobyte the agent door refuses the string by its path before the tool sees it
+      // (src/http/mcp.ts); under it, the tool refuses the product by name.
+      ['ten thousand characters', [{ product: 'A'.repeat(10_000), timeframe: '1h' }], /charts\[0\]\.product is 10000 characters, over the 1024/],
+      ['a thousand characters', [{ product: 'A'.repeat(1_000), timeframe: '1h' }], /no market listed/],
       ['a thousand days', [{ product: 'BTC-USD', timeframe: '1000d' }], /not a timeframe/],
       ['a second', [one, { product: 'ETH-USD', timeframe: '1s' }], /not a timeframe/],
     ] as [string, unknown, RegExp][]) {
@@ -144,7 +147,12 @@ test('chart_draw: ten thousand levels, a 100 KB label and two hundred indicators
     assert.ok(refused.some((r) => /24 price levels/.test(r) && /x9976/.test(r)), JSON.stringify(refused).slice(0, 200));
     assert.ok(JSON.stringify(flood.json).length < 4096, `the digest is ${JSON.stringify(flood.json).length} bytes`);
 
-    const label = 'L'.repeat(100_000);
+    // A 100 KB label never reaches the pen: the agent door refuses any string over a kilobyte
+    // by its path (src/http/mcp.ts). A kilobyte one does, and the pen cuts it at 48.
+    const refusedLabel = await draw(h, { clear: 'mine', levels: [{ px: 7, label: 'L'.repeat(100_000) }] });
+    assert.equal(refusedLabel.status, 400);
+    assert.match(String(refusedLabel.json.error), /levels\[0\]\.label is 100000 characters, over the 1024/);
+    const label = 'L'.repeat(1_000);
     const labelled = await draw(h, { clear: 'mine', levels: [{ px: 7, label }], zones: [{ p1: 1, p2: 2, label }] });
     assert.equal(labelled.status, 200);
     const payload = await h.get('/api/chart');

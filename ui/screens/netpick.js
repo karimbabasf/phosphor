@@ -1319,6 +1319,15 @@
       body.appendChild(side);
 
       var notes = dom.el('div', 'deposit-notes');
+      /* The bridge answered a different address than the one pinned on disk for this network
+         (src/http/wallet.ts pinAddresses). The pinned one is what is drawn above; this line is
+         the reason to stop and look before sending anything. */
+      if (typeof network.changed === 'string' && network.changed) {
+        var changed = dom.el('p', 'deposit-changed');
+        changed.setAttribute('role', 'alert');
+        dom.setText(changed, network.changed);
+        notes.appendChild(changed);
+      }
       var plain = dom.el('p', 'deposit-plain');
       dom.setText(plain, sharedWords(n, network));
       notes.appendChild(plain);

@@ -450,6 +450,42 @@ export function intentDeadline(raw: unknown): string | undefined {
   }
 }
 
+/* The first key that appears twice in one object of a JSON text, decoded the way a parser
+   decodes it, or null. JSON.parse keeps the last of two equal keys, and the payload is signed
+   as the string it arrived as, so a payload carrying `"intents":[theirs],"intents":[ours]` was
+   checked against ours and signed over both, leaving what the signature meant to whichever
+   rule the verifier's parser applies. The verifier is not asked to be strict about that; the
+   payload is refused here. Written for a text JSON.parse has already accepted, so the walk
+   trusts the structure and only counts keys. */
+export function duplicateJsonKey(text: string): string | null {
+  type Frame = { keys: Set<string> | null; expectKey: boolean };
+  const stack: Frame[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const top = stack[stack.length - 1];
+    if (ch === '"') {
+      const start = i;
+      i += 1;
+      while (i < text.length && text[i] !== '"') i += text[i] === '\\' ? 2 : 1;
+      i += 1;
+      if (top !== undefined && top.keys !== null && top.expectKey) {
+        const key = JSON.parse(text.slice(start, i)) as string;
+        if (top.keys.has(key)) return key;
+        top.keys.add(key);
+        top.expectKey = false;
+      }
+      continue;
+    }
+    if (ch === '{') stack.push({ keys: new Set(), expectKey: true });
+    else if (ch === '[') stack.push({ keys: null, expectKey: false });
+    else if (ch === '}' || ch === ']') stack.pop();
+    else if (ch === ',' && top !== undefined && top.keys !== null) top.expectKey = true;
+    i += 1;
+  }
+  return null;
+}
+
 // Returns the problems it found. An empty array means the payload says what the draft says.
 export function checkIntentPayload(raw: unknown, expect: IntentPayloadExpectation): string[] {
   /* The floor first, before the payload is even read. Every amount check below compares against
@@ -478,6 +514,14 @@ export function checkIntentPayload(raw: unknown, expect: IntentPayloadExpectatio
     body = parsed as Record<string, unknown>;
   } catch {
     return [`the intent payload is not valid JSON: ${oneLine(raw, 80)}`];
+  }
+
+  const twice = duplicateJsonKey(raw);
+  if (twice !== null) {
+    return [
+      `the intent payload names ${oneLine(twice, 40)} twice in one object, so what this app checked and what the ` +
+        'verifier would read may differ; a payload that can be read two ways is not signed',
+    ];
   }
 
   // The verifier the signature is scoped to. A payload naming any other contract would be a

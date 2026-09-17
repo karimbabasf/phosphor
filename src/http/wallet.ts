@@ -26,6 +26,9 @@ import path from 'node:path';
 import { sameOrigin, tokenMatches } from './auth.ts';
 import { RECEIVE_NETWORKS, intentsDepositAddress, parsePoaTokens, poaSupportedTokens, receiveNetworkByBridge } from '../rails/intents-address.ts';
 import type { PoaToken, ReceiveKind, ReceiveNetwork } from '../rails/intents-address.ts';
+import { validateAddress } from '../chainscan/index.ts';
+import type { ChainNetwork } from '../chainscan/index.ts';
+import { atomicWriteJson } from '../fsatomic.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
@@ -492,6 +495,8 @@ export type IntentsReceiveNetwork = {
   sharedWith: string[];
   warning: string;
   accepts: IntentsReceiveToken[];
+  // The sentence for an address the bridge changed under the pin (pinAddresses below), or null.
+  changed: string | null;
 };
 
 export type IntentsReceiveReport = {
@@ -521,15 +526,131 @@ type BridgeHalf = { at: number; addresses: BridgeAddress[]; tokens: PoaToken[]; 
 const RECEIVE_CACHE_MS = 60_000;
 const bridgeCache = new Map<string, BridgeHalf>();
 
+/* The chain whose address rules a bridge address on this network has to pass. The EVM chains
+   share one shape, so any of them stands for all; a network this app cannot decode (Litecoin,
+   XRP, TON, Stellar and the rest) gets the plain rule below instead of a guess. */
+function shapeChainOf(net: ReceiveNetwork): ChainNetwork | null {
+  switch (net.kind) {
+    case 'evm':
+      return 'ethereum';
+    case 'sol':
+      return 'solana';
+    case 'near':
+      return 'near';
+    case 'other':
+      return net.id === 'btc' ? 'bitcoin' : null;
+  }
+}
+
+/* Why a string the bridge answered with is not an address on this network, or null. The
+   deposit address is the one string on the money-in screen this app cannot check against
+   anything it holds, and it used to be drawn as any non-empty string: a bridge answering
+   "0x1234", a sentence, or an address for another chain went under the QR code as is. The
+   decoders in src/chainscan rule where they know the chain; elsewhere an address is at least
+   printable, unbroken and of a plausible length. */
+export function depositAddressProblem(net: ReceiveNetwork, address: string): string | null {
+  const chain = shapeChainOf(net);
+  if (chain !== null) {
+    const check = validateAddress(chain, address);
+    return check.ok ? null : check.reason;
+  }
+  if (!/^[!-~]{10,128}$/.test(address)) return 'expected 10 to 128 printable characters with no spaces';
+  return null;
+}
+
+/* One network's address, asked for twice and shown only when both answers agree and the answer
+   has the shape of an address on that network. The bridge hands back the same address every
+   time by design, so two answers that differ mean a bridge, a proxy or a network path that
+   cannot be trusted with a deposit right now, and the row says so rather than drawing either. */
 async function askAddress(account: string, net: ReceiveNetwork): Promise<BridgeAddress> {
   try {
     // A registry id, or the raw key of a network the registry does not know: both resolve.
-    const got = await intentsDepositAddress(account, net.id);
-    return { net, got: { address: got.address, memo: got.memo }, why: null };
+    const [first, second] = await Promise.all([intentsDepositAddress(account, net.id), intentsDepositAddress(account, net.id)]);
+    if (first.address !== second.address || first.memo !== second.memo) {
+      return { net, got: null, why: 'the bridge answered two different addresses for this network within a second, so neither is shown' };
+    }
+    const problem = depositAddressProblem(net, first.address);
+    if (problem !== null) {
+      return { net, got: null, why: `the bridge answered with something that is not an address on ${net.name} (${problem}), so it is not shown` };
+    }
+    return { net, got: { address: first.address, memo: first.memo }, why: null };
   } catch (err) {
     // One network refusing is not the others failing. The row says why and the rest draw.
     return { net, got: null, why: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/* THE PIN: the address last shown for (account, bridge network), kept on disk so a bridge that
+   answers a different one later is caught rather than believed. The bridge's addresses are per
+   account and per network and never change (every token on a network shares the one address,
+   so the asset is not a dimension of it); a change is a substitution somewhere between the
+   bridge and this app, or a bridge that broke its own rule, and either way the person needs a
+   sentence, not a new QR code. The row keeps drawing the pinned address and carries the change
+   as `changed`. Memory would not do: the point is to remember across boots. A pin file that
+   cannot be read pins afresh, which is the same trust the first sight had. */
+type DepositPin = { address: string; memo: string | null; shownAt: string };
+type DepositPins = Record<string, DepositPin>;
+const PINS_FILE = 'deposit-addresses.json';
+
+export function depositPinsPath(dataDir: string): string {
+  return path.join(dataDir, PINS_FILE);
+}
+
+function readPins(dataDir: string): DepositPins {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(depositPinsPath(dataDir), 'utf8')) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: DepositPins = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const row = value as Partial<DepositPin> | null;
+      if (row === null || typeof row !== 'object' || typeof row.address !== 'string' || row.address === '') continue;
+      out[key] = { address: row.address, memo: typeof row.memo === 'string' ? row.memo : null, shownAt: typeof row.shownAt === 'string' ? row.shownAt : '' };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function tailOf(address: string): string {
+  return address.length <= 6 ? address : `...${address.slice(-6)}`;
+}
+
+/* Hold every row with an address to its pin: a first sight is pinned, a match is left alone,
+   and a change keeps the pinned address on the row with the sentence beside it. Returns the
+   rows as the window should draw them. */
+function pinAddresses(dataDir: string | null, account: string, networks: IntentsReceiveNetwork[]): IntentsReceiveNetwork[] {
+  if (dataDir === null) return networks;
+  const pins = readPins(dataDir);
+  let dirty = false;
+  const now = new Date().toISOString();
+  const out = networks.map((row) => {
+    if (row.address === null) return row;
+    const key = `${account.toLowerCase()}|${row.bridge}`;
+    const held = pins[key];
+    if (held === undefined) {
+      pins[key] = { address: row.address, memo: row.memo, shownAt: now };
+      dirty = true;
+      return row;
+    }
+    if (held.address === row.address && held.memo === row.memo) return row;
+    return {
+      ...row,
+      address: held.address,
+      memo: held.memo,
+      changed:
+        `The bridge now answers a different address for ${row.name} (ending ${tailOf(row.address)}) than the one shown before. ` +
+        'The address shown is the one shown before. A bridge address does not change on its own, so do not send anything until you know why this one did.',
+    };
+  });
+  if (dirty) {
+    try {
+      atomicWriteJson(depositPinsPath(dataDir), pins);
+    } catch {
+      // A pin that could not be written is a first sight again next time, never a blank card.
+    }
+  }
+  return out;
 }
 
 /* A network the bridge lists that the registry does not know. Shown under the bridge's own key
@@ -726,6 +847,7 @@ export async function intentsReceiveReport(ctx: Ctx, opts: { force?: boolean } =
          credited and is not refunded, which is the one loss this screen exists to prevent, so
          the list is shown rather than left to the address to imply. */
       accepts: acceptsOn(row.net.bridge, tokens, prices),
+      changed: null,
     };
   });
 
@@ -741,7 +863,7 @@ export async function intentsReceiveReport(ctx: Ctx, opts: { force?: boolean } =
     account,
     verified: report.verified,
     tampered: report.tampered,
-    networks,
+    networks: pinAddresses(typeof ctx.cfg.dataDir === 'string' && ctx.cfg.dataDir !== '' ? ctx.cfg.dataDir : null, account, networks),
     // Said plainly, because it is the one thing about this screen that surprises people: the
     // address is not ours, it is a bridge address that forwards.
     note: 'These addresses belong to the NEAR Intents bridge. It forwards what it receives to your intents balance.',

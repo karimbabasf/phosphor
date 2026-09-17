@@ -107,7 +107,8 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    `$100` no-click convenience applies to swaps, Hyperliquid deposits and trades (money that
    stays in the app's own custody) and never to money leaving it. On an enclave wallet the click
    puts up a Touch ID dialog whose sentence (`src/vault/reason.ts`) names the amount, the receiver
-   shortened to its two ends and the chain: "Pay 0.01 ETH to 0xd7b2...5050 on Ethereum ($24.40)".
+   shortened to its two ends (eight characters each, beyond what a vanity generator matches) and
+   the chain: "Pay 0.01 ETH to 0xd7b2de...1D4d5050 on Ethereum ($24.40)".
    The sentence is composed from the draft's fields; an address field that is not shaped like an
    address is said as "an address", never echoed.
 4. **The echo.** The signed intent hands the balance to a solver handle and says nothing about the
@@ -155,6 +156,14 @@ is not a path.
 - **A repeat.** The same send twice from one session while the first is pending is one row: a
   `clientKey` repeat is answered with the existing row, and a keyless repeat is refused with its
   id (`src/duplicates.ts`).
+- **A row rewritten on disk under the card.** The store re-reads `proposals.json` whenever the
+  file moves, and a process running as this user can move it: until 2026-09-17 a pending send
+  whose `to` was rewritten on disk after the card was drawn went to the rail as the new address
+  under a click given to the old one, and a refused row flipped to `pending` on disk could be
+  clicked. Every row this process writes or first reads is now sealed in memory (`src/store.ts`),
+  and the click, the finger and the unlock release all refuse a row whose bytes no longer match
+  its seal (`requireIntact` in `src/proposals/lifecycle.ts`), without writing it back. The
+  refusal is an `approve_attempt_rejected` line carrying `changedOnDisk`.
 - **Reconciliation** re-judges rows and signs nothing. **A worker seat** has no propose tool
   registered and is refused at the door by role. **A skill** is data and cannot widen the surface.
 

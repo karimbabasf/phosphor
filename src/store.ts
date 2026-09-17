@@ -10,6 +10,7 @@
 // the next put would write a one-row list over the history. main.ts is what turns the first of
 // those throws into a refusal to boot with a sentence.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Proposal } from './types.ts';
@@ -27,7 +28,30 @@ export type Store = {
      processes: a restart begins at zero, which is correct, because a restart has no derivation
      to keep. */
   revision(): number;
+  /* Whether the row on disk is still the row this process wrote, or first read. False for a row
+     something other than this app has rewritten since, and for a row that is not there. The
+     check every decision runs before it trusts a row it is about to execute (see the seal
+     below). */
+  intact(id: string): boolean;
 };
+
+/* JSON with its keys sorted and its undefined values dropped, the way JSON.stringify drops
+   them, so a row hashes the same before it is written and after it is parsed back. */
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const key of Object.keys(record).sort()) {
+    if (record[key] === undefined) continue;
+    parts.push(`${JSON.stringify(key)}:${canonical(record[key])}`);
+  }
+  return `{${parts.join(',')}}`;
+}
+
+function sealOf(row: Proposal): string {
+  return crypto.createHash('sha256').update(canonical(row), 'utf8').digest('hex');
+}
 
 // Thrown when proposals.json exists and cannot be read as a list of proposals. It carries the
 // path the bad bytes were moved to, because the only useful next step is to go and look at them.
@@ -134,6 +158,19 @@ export function createStore(dataDir: string): Store {
     return corrupt;
   }
 
+  /* THE SEAL on every row remembers what this process wrote, or first read. The re-read above
+     is what lets a fresh boot see prior proposals, and it is also what let a row change under a
+     person deciding about it: proposals.json is writable by any process running as this user,
+     the window draws the frame this process last built, and approve() reads the row again at
+     the click. Edit `to` on a pending send between those two reads and the card named the
+     friend while the rail was handed the attacker; flip a refused row's status to pending and it
+     could be clicked at all. So a row is hashed when this process writes it, or on first sight
+     for a file that predates the process (the window renders that same read), and a decision on
+     a row whose bytes no longer hash to that is refused (requirePending in
+     src/proposals/lifecycle.ts). Memory on purpose: a file beside the store could be rewritten by
+     the same hand. */
+  const seals = new Map<string, string>();
+
   function readAll(): Proposal[] {
     if (corrupt !== null) throw corrupt;
     const stat = fileKey();
@@ -169,6 +206,7 @@ export function createStore(dataDir: string): Store {
       throw quarantine(`the file holds ${parsed.length} rows and this app recorded ${anchor.count}. Something removed ${anchor.count - parsed.length} of them.`);
     }
     const rows = parsed as Proposal[];
+    for (const row of rows) if (!seals.has(row.id)) seals.set(row.id, sealOf(row));
     // Keyed on what the file looked like BEFORE the read, so a write that landed during it is
     // seen by the next call rather than hidden behind a key that already names the new bytes.
     held = { rows, key: stat.key };
@@ -228,8 +266,16 @@ export function createStore(dataDir: string): Store {
     // `all` is this function's own copy, so handing it to writeAll to hold is not handing the
     // cache to any caller: list() slices before it hands anything out.
     writeAll(all);
+    // After the write, so a write that throws leaves the seal naming the row still on disk.
+    seals.set(p.id, sealOf(p));
     revision += 1;
     for (const fn of subscribers) fn();
+  }
+
+  function intact(id: string): boolean {
+    const row = readAll().find((p) => p.id === id);
+    if (row === undefined) return false;
+    return seals.get(id) === sealOf(row);
   }
 
   function subscribe(fn: () => void): () => void {
@@ -237,5 +283,5 @@ export function createStore(dataDir: string): Store {
     return () => subscribers.delete(fn);
   }
 
-  return { list, get, put, subscribe, revision: () => revision };
+  return { list, get, put, subscribe, revision: () => revision, intact };
 }

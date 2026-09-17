@@ -691,6 +691,12 @@ button.token-row[disabled] {
   color: var(--text-2);
 }
 
+.deposit-changed {
+  font-size: var(--fs-14);
+  line-height: 1.55;
+  color: var(--warn);
+}
+
 .deposit-min {
   font-size: var(--fs-14);
   line-height: 1.55;
