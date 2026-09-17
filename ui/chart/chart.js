@@ -175,7 +175,29 @@ var PRICE_PAD = 0.06; // headroom above and below the auto-fitted range
 var GRID_PRICE_GAP = 46; // target pixels between price grid lines
 var GRID_TIME_GAP = 96;
 
-var TIME_STEPS = [1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400, 604800];
+/* The server's sentinel for a calendar month: the mean Gregorian month in seconds. A month is
+   not a fixed number of seconds, so it travels as this number and every place that buckets by
+   it uses the calendar instead (liveBucket, the axis). Mirrors MONTH_SEC in src/market/aggregate.ts. */
+var MONTH_SEC = 2629746;
+var YEAR_SEC = 31556952;
+
+/* The rungs of the time axis, coarsest last. A rung under a day is a fixed number of seconds on
+   the clock of the zone the axis prints in; the rest are calendar units, because a month is not
+   a number of seconds and a week that opens on Thursday is not a week anyone trades. `sec` is
+   only the rung's nominal size, for choosing one that leaves GRID_TIME_GAP between ticks. */
+var TIME_RUNGS = [
+  { sec: 60 }, { sec: 300 }, { sec: 900 }, { sec: 1800 }, { sec: 3600 }, { sec: 7200 }, { sec: 14400 }, { sec: 21600 }, { sec: 43200 },
+  { sec: 86400, unit: 'day' },
+  { sec: 604800, unit: 'week', n: 1 },
+  { sec: 604800 * 2, unit: 'week', n: 2 },
+  { sec: MONTH_SEC, unit: 'month', n: 1 },
+  { sec: MONTH_SEC * 3, unit: 'month', n: 3 },
+  { sec: YEAR_SEC, unit: 'year', n: 1 },
+  { sec: YEAR_SEC * 2, unit: 'year', n: 2 },
+  { sec: YEAR_SEC * 5, unit: 'year', n: 5 },
+  { sec: YEAR_SEC * 10, unit: 'year', n: 10 },
+  { sec: YEAR_SEC * 25, unit: 'year', n: 25 }
+];
 
 // False until the first /api/chart payload lands. Guards the view write-back: see
 // queueChartPush for what pushing before the server has been heard from costs.
@@ -374,11 +396,65 @@ function paneText(value) {
   return value.toFixed(4);
 }
 
-function stampOf(tSec, granularity, withDate) {
+/* ---------- the calendar behind the time axis ----------
+
+   Intraday bars are read in the zone the person is in: a 1m chart at midnight is midnight on
+   their wall clock. A daily bar is the venue's day, opened at 00:00 UTC and named by that date
+   wherever it is read, so from a day up the axis and the crosshair use UTC. Every stamp on the
+   chart comes through these two so the two calendars can never meet on one label. */
+function axisZoneUtc(granularity) {
+  return granularity >= 86400;
+}
+
+function timeParts(tSec, utc) {
   var d = new Date(tSec * 1000);
-  if (withDate) return d.getDate() + ' ' + MONTHS[d.getMonth()];
-  if (granularity < 86400) return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
-  return d.getDate() + ' ' + MONTHS[d.getMonth()];
+  if (utc) return { y: d.getUTCFullYear(), m: d.getUTCMonth(), day: d.getUTCDate(), hh: d.getUTCHours(), mm: d.getUTCMinutes(), wd: d.getUTCDay(), clock: tSec };
+  return { y: d.getFullYear(), m: d.getMonth(), day: d.getDate(), hh: d.getHours(), mm: d.getMinutes(), wd: d.getDay(), clock: tSec - d.getTimezoneOffset() * 60 };
+}
+
+function clockText(parts) {
+  return pad2(parts.hh) + ':' + pad2(parts.mm);
+}
+
+function dayText(parts) {
+  return parts.day + ' ' + MONTHS[parts.m];
+}
+
+/* What the crosshair prints for the bar under the pointer: the date on every timeframe, the
+   time too under a day, the year from a day up. A stamp that only said 14:07 left the reader
+   working out which day a panned chart was on. */
+function crosshairStamp(tSec, granularity) {
+  var parts = timeParts(tSec, axisZoneUtc(granularity));
+  if (granularity >= MONTH_SEC) return MONTHS[parts.m] + ' ' + parts.y;
+  if (granularity >= 86400) return dayText(parts) + ' ' + parts.y;
+  return dayText(parts) + ' ' + clockText(parts);
+}
+
+/* Which bucket of a rung a bar falls in, so a tick is the first bar of a new bucket. Weeks
+   open on Monday like bucketStart in src/market/aggregate.ts, not on the Thursday the epoch
+   started on. */
+function rungKey(rung, parts) {
+  if (rung.unit === 'day') return Math.floor(parts.clock / 86400);
+  if (rung.unit === 'week') return Math.floor((parts.clock - 345600) / (604800 * rung.n));
+  if (rung.unit === 'month') return Math.floor((parts.y * 12 + parts.m) / rung.n);
+  if (rung.unit === 'year') return Math.floor(parts.y / rung.n);
+  return Math.floor(parts.clock / rung.sec);
+}
+
+/* Which rung of the calendar a step lives on: 0 the clock, 1 the day, 2 the month, 3 the year. */
+function rungLevel(rung) {
+  if (rung.unit === 'year') return 3;
+  if (rung.unit === 'month') return 2;
+  if (rung.unit) return 1;
+  return 0;
+}
+
+/* The largest unit that changed between two moments, on the same scale. */
+function changedLevel(prev, next) {
+  if (prev.y !== next.y) return 3;
+  if (prev.m !== next.m) return 2;
+  if (prev.day !== next.day) return 1;
+  return 0;
 }
 
 function countdownText(seconds) {
@@ -1169,56 +1245,90 @@ function drawPriceGrid(ctx, L) {
   }
 }
 
-/* Grid lines land on round clock times, never on arbitrary bars, because a chart where the
-   labels read 14:07 and 14:22 makes the reader do arithmetic to place anything. */
-function drawTimeGrid(ctx, L) {
+/* The ticks of the time axis for one layout: the first bar of every bucket of the coarsest
+   rung that still leaves GRID_TIME_GAP between them, with the label each one gets.
+
+   Two rungs on one row. A tick is labelled by the largest unit that changed since the tick
+   before it: a clock time, then `16 Sep` where the day turns, `Sep` where the month does,
+   `2026` where the year does, and the date-bearing ones are drawn brighter. The first visible
+   tick always carries the date, and the year when the window spans two, so a chart panned into
+   last week never shows a row of times that could be any day. Ticks fall on the first bar of a
+   bucket rather than on a clock modulus: a 4h bar opens on no local midnight, and a modulus
+   found nothing to label. */
+function timeTicks(L) {
   var granularity = CHART.view.granularitySec;
-  var step = 0;
-  for (var s = 0; s < TIME_STEPS.length; s++) {
-    if (TIME_STEPS[s] < granularity) continue;
-    if ((TIME_STEPS[s] / granularity) * L.slot >= GRID_TIME_GAP) {
-      step = TIME_STEPS[s];
+  var utc = axisZoneUtc(granularity);
+  var rung = null;
+  for (var r = 0; r < TIME_RUNGS.length; r++) {
+    if (TIME_RUNGS[r].sec < granularity) continue;
+    if ((TIME_RUNGS[r].sec / granularity) * L.slot >= GRID_TIME_GAP) {
+      rung = TIME_RUNGS[r];
       break;
     }
   }
+  if (rung === null) return [];
 
-  /* Past the top of the ladder, or when even the widest step still packs the labels tighter
-     than they can be read, label every Nth bar instead of every bar on a clock boundary.
-     A weekly chart is the case that needs it: no round step above a week lands on a Monday
-     open, so the modulus below matches almost nothing, and the fallback of "the widest step"
-     matched EVERY bar and printed three hundred labels on top of each other. */
-  var everyN = 0;
-  if (step === 0 || (step / granularity) * L.slot < GRID_TIME_GAP) {
-    step = 0;
-    everyN = Math.max(1, Math.ceil(GRID_TIME_GAP / Math.max(0.01, L.slot)));
+  var candles = CHART.candles;
+  var first = candles[L.start] ? timeParts(candles[L.start].t, utc) : null;
+  var last = candles[L.end] ? timeParts(candles[L.end].t, utc) : null;
+  var spansYears = first !== null && last !== null && first.y !== last.y;
+  var level = rungLevel(rung);
+
+  var ticks = [];
+  var prevKey = null;
+  var prevParts = null;
+  for (var i = L.start; i <= L.end; i++) {
+    var candle = candles[i];
+    if (!candle) continue;
+    var parts = timeParts(candle.t, utc);
+    var key = rungKey(rung, parts);
+    if (prevKey === null) {
+      // The bucket the window opens in: the bar before the window says whether this bar starts it.
+      var before = candles[i - 1];
+      prevKey = before ? rungKey(rung, timeParts(before.t, utc)) : null;
+    }
+    var starts = prevKey === null || key !== prevKey;
+    prevKey = key;
+    if (!starts) continue;
+    var x = L.xOf(i);
+    if (x < 0 || x > L.plotWidth) continue;
+
+    var text;
+    var changed = prevParts === null ? 3 : Math.max(level, changedLevel(prevParts, parts));
+    if (prevParts === null) {
+      // The first tick names where the window is.
+      if (level >= 3) text = String(parts.y);
+      else if (level === 2) text = MONTHS[parts.m] + ' ' + parts.y;
+      else text = dayText(parts) + (spansYears ? ' ' + parts.y : '');
+    } else if (changed >= 3) text = String(parts.y);
+    else if (changed === 2) text = level >= 1 ? MONTHS[parts.m] : dayText(parts);
+    else if (changed === 1) text = dayText(parts);
+    else text = clockText(parts);
+    prevParts = parts;
+    ticks.push({ x: x, index: i, text: text, major: changed >= 1 });
   }
+  return ticks;
+}
 
+function drawTimeGrid(ctx, L) {
+  var ticks = timeTicks(L);
   var bottom = L.axisTop;
   ctx.lineWidth = 1 / DPR;
   ctx.strokeStyle = lineInk(0.7);
   ctx.beginPath();
-  var ticks = [];
-  var prevDay = null;
-  for (var i = L.start; i <= L.end; i++) {
-    var candle = CHART.candles[i];
-    if (!candle) continue;
-    if (everyN > 0 ? i % everyN !== 0 : candle.t % step !== 0) continue;
-    var x = L.xOf(i);
-    if (x < 0 || x > L.plotWidth) continue;
-    var day = Math.floor(candle.t / 86400);
-    var isNewDay = prevDay !== null && day !== prevDay;
-    prevDay = day;
-    ctx.moveTo(hair(x), PAD_TOP);
-    ctx.lineTo(hair(x), bottom);
-    ticks.push([x, candle.t, isNewDay]);
+  for (var i = 0; i < ticks.length; i++) {
+    ctx.moveTo(hair(ticks[i].x), PAD_TOP);
+    ctx.lineTo(hair(ticks[i].x), bottom);
   }
   ctx.stroke();
 
   ctx.textAlign = 'center';
   for (var k = 0; k < ticks.length; k++) {
-    var newDay = ticks[k][2];
-    ctx.fillStyle = newDay ? textInk(0.8) : text2(0.8);
-    ctx.fillText(stampOf(ticks[k][1], granularity, newDay), ticks[k][0], bottom + 9);
+    var tick = ticks[k];
+    ctx.fillStyle = tick.major ? textInk(0.8) : text2(0.8);
+    // A label centred on a tick at the edge would lose half of itself; it is slid inside.
+    var half = ctx.measureText(tick.text).width / 2;
+    ctx.fillText(tick.text, clampNum(tick.x, half + 1, L.plotWidth - half - 1), bottom + 9);
   }
   ctx.textAlign = 'left';
 }
@@ -1797,7 +1907,7 @@ function drawCrosshair(ctx, L) {
   }
 
   var candle = CHART.candles[index];
-  var stamp = stampOf(candle.t, CHART.view.granularitySec, false);
+  var stamp = crosshairStamp(candle.t, CHART.view.granularitySec);
   ctx.font = CHART_FONT;
   var width = ctx.measureText(stamp).width + 10;
   var boxX = clampNum(x - width / 2, 0, L.plotWidth - width);
