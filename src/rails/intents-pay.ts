@@ -96,6 +96,14 @@ export function networkChain(network: ChainNetwork): ChainId | null {
   }
 }
 
+// A chain balance as a person reads it: the explorer's eighteen decimals say nothing a card
+// needs. Four places above one, six below, and the raw string when it is not a number.
+function roundAmount(raw: string): string {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw;
+  return n.toLocaleString('en-US', { maximumFractionDigits: Math.abs(n) >= 1 ? 4 : 6 });
+}
+
 /* The one sentence about the receiver, from what the chain said at propose time. Plain
    English, one fact per clause, and a fresh address is told to check twice: that is the
    sentence that catches a pasted address which lost a character but still decodes. */
@@ -107,7 +115,7 @@ export function recipientSentence(network: ChainNetwork, recipient: SendRecipien
   if (!a.ok || a.txCount === null) {
     return `${own}This address could not be checked on ${label}${a.error ? ` (${oneLine(a.error, 80)})` : ''}.`.trim();
   }
-  const holds = a.balance === null ? null : `holds ${a.balance.amount} ${a.balance.symbol}`;
+  const holds = a.balance === null ? null : `holds ${roundAmount(a.balance.amount)} ${a.balance.symbol}`;
   if (a.isContract === true) {
     return `${own}This address is a contract on ${label} with ${a.txCount} transactions${holds === null ? '' : `; it ${holds}`}.`.trim();
   }
@@ -286,7 +294,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       const fee = flatFee(quote, p);
       problems.push(
         `the solver would deliver as little as ${units(minOut, p.decimals)} ${draft.symbol}, below the ` +
-          `${draft.minReceived} floor the draft names${fee === null ? '' : `, of which ${fee} ${draft.symbol} is a flat bridge fee`}. ` +
+          `${units(p.minReceivedBase, p.decimals)} floor the draft names${fee === null ? '' : `, of which ${fee} ${draft.symbol} is a flat bridge fee`}. ` +
           `That floor is ${PAY_MAX_LOSS_BPS / 100}% of the amount, so a payout this small loses too much of itself; send more at once.`,
       );
     }
@@ -330,7 +338,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
         (p.originAsset === p.destinationAsset ? '' : ` (swapped from the ${oneLine(p.originAsset, 40)} flavor on the way)`),
       `fee ${feeUsd === null ? 'unknown' : '$' + feeUsd.toFixed(4)}${fee === null ? '' : `, of which ${fee} ${draft.symbol} is the bridge's flat fee`}, ` +
         `eta ~${Number(quote.timeEstimate)}s, solver floor ${units(baseUnits(quote.minAmountOut, 'minAmountOut'), p.decimals)} ${draft.symbol}, ` +
-        `draft floor ${draft.minReceived} ${draft.symbol}`,
+        `draft floor ${units(p.minReceivedBase, p.decimals)} ${draft.symbol}`,
     ];
   }
 
