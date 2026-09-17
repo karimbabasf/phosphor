@@ -7,7 +7,7 @@
 // quoted, a move the venue has not confirmed is called unconfirmed, and a refund is named
 // only with the amount the API reported.
 
-import type { RailEvidence, RailHooks, RailResult } from '../types.ts';
+import type { Preflight, RailEvidence, RailHooks, RailResult } from '../types.ts';
 import { oneLine } from '../intents.ts';
 import type { OneClickStatus } from '../intents.ts';
 import type { QuoteRecord } from '../quote-signature.ts';
@@ -146,5 +146,19 @@ export function describeUnconfirmedSubmit(args: { error: string; handle: string;
       'Read the balance and the 1Click status for the handle before signing another.',
     txids: [],
     evidence: { handle, deadline: oneLine(args.deadline, 40) },
+  };
+}
+
+// The preflight said hold or fail, and nothing was generated or signed. A hold is the
+// executor's to retry (src/proposals/execute.ts); a fail stops with the reason. Either way the
+// checks ride on the result so the row and the receipt can draw them.
+export function describeHeld(preflight: Preflight): RailResult {
+  const reason = preflight.holdReason ?? 'the preflight did not pass';
+  const failing = preflight.checks.filter((c) => c.state === 'fail').map((c) => `${c.label}: ${c.detail}`);
+  return {
+    ok: false,
+    held: preflight.verdict === 'hold',
+    detail: `${reason}. Nothing was signed. ${failing.join(' ')}`.trim(),
+    preflight,
   };
 }

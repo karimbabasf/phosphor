@@ -19,7 +19,7 @@ import type { Proposal, RailEvidence } from '../types.ts';
 import type { OneClickStatus } from '../intents.ts';
 import { depositHandleOf } from '../transactions.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
-import { judgeSettlingNow, settleProposal } from './execute.ts';
+import { expireHold, judgeSettlingNow, settleProposal } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
 
 // How a 1Click order is re-checked by the deposit address a quote minted. It is the handle the
@@ -94,6 +94,12 @@ export function reconcileOnBoot(ctx: PCtx): Proposal[] {
       continue;
     }
     if (p.status !== 'executing' && p.status !== 'approved') continue;
+    // A row held by its preflight when the process stopped signed nothing: it closes with the
+    // reason rather than joining the unknowns, and the ask can be made again.
+    if (p.status === 'approved' && p.heldSince !== undefined) {
+      moved.push(expireHold(ctx, p, 'Phosphor stopped while this was waiting for the checks to clear. Nothing was signed; ask again.'));
+      continue;
+    }
     // Whatever the rail handed over before the process died stays on the row: the hashes,
     // and the handle or nonce a later reconcile asks the venue by. An `approved` row never
     // reached the rail, so it has neither.

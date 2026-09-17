@@ -25,6 +25,7 @@ import { hypercoreWithdrawRail } from './hypercore-withdraw.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsSendRail } from './intents-send.ts';
 import { intentsPayRail } from './intents-pay.ts';
+import { createLivePreflight } from '../preflight/live.ts';
 import { HYPERLIQUID_PERPS_COUNTERPARTY, tradeRail } from '../trade/rail.ts';
 import type { TradeDeps } from '../trade/rail.ts';
 import { isRailDraft, isRailKind, RAIL_KINDS } from './kinds.ts';
@@ -47,6 +48,9 @@ export type RailDeps = {
   cfg: AppConfig;
   tokens: TokensFile; // data/tokens.json, for the 1Click asset id lookup
   trade: TradeDeps; // the plan runner and the venue facts a plan is priced against
+  // The ledger's prices, for the preflight's fee check (gas priced in dollars). Absent means
+  // the check cannot price gas and says so; it never holds on a missing price.
+  prices?: () => Record<string, number>;
 };
 
 export function createRails(deps: RailDeps): RailRegistry {
@@ -62,6 +66,12 @@ export function createRails(deps: RailDeps): RailRegistry {
      tests inject. */
   const client = oneClickClient();
 
+  /* ONE preflight for the two rails whose payout lands on a chain, so the hour of gas
+     readings it keeps is one hour (src/preflight/live.ts). A HyperCore deposit ends in the
+     vendor's Arbitrum sweep and a payout ends on the chain the draft names; both run the
+     checks on the live quote before the intent is generated. */
+  const preflight = createLivePreflight({ prices: deps.prices ?? (() => ({})) });
+
   const table: Record<RailKind, Rail> = {
     swap: intentsNativeRail({
       keysPath: deps.cfg.keysPath,
@@ -71,6 +81,7 @@ export function createRails(deps: RailDeps): RailRegistry {
     hl_deposit: hypercoreDepositRail({
       keysPath: deps.cfg.keysPath,
       client,
+      preflight,
     }) as Rail,
     hl_withdraw: hypercoreWithdrawRail({
       keysPath: deps.cfg.keysPath,
@@ -87,6 +98,7 @@ export function createRails(deps: RailDeps): RailRegistry {
       keysPath: deps.cfg.keysPath,
       tokens: deps.tokens,
       client,
+      preflight,
     }) as Rail,
     trade: tradeRail(deps.trade) as Rail,
   };

@@ -1,7 +1,7 @@
 // Execution: the single exit for a freshly evaluated proposal, the one route from approved to
 // the thing that runs it, and the two ways a proposal actually moves (a rail, or a policy file).
 
-import type { Proposal, Rail, RailEvidence, RailHooks, RailResult, WriteDraft } from '../types.ts';
+import type { Preflight, Proposal, Rail, RailEvidence, RailHooks, RailResult, WriteDraft } from '../types.ts';
 import type { PocketRead } from '../ledger/settle.ts';
 import { SETTLING_SENTENCE } from '../ledger/settle.ts';
 import { loadPolicy, savePolicy } from '../policy/file.ts';
@@ -215,6 +215,32 @@ export async function balanceAfter(ctx: PCtx, draft?: WriteDraft, settledAt?: st
 const BALANCE_REFRESH_CAP_MS = 15_000;
 const BALANCE_RETRY_MS = 1_000;
 
+// A held row is tried again every half minute for a quarter of an hour. Gas surges of the
+// 2026-09-15 kind last minutes; a hold that outlives this is not a surge, and the row closes
+// with the reason rather than sitting approved for a day with a signature waiting behind it.
+export const HELD_RETRY_MS = 30_000;
+export const HELD_MAX_MS = 15 * 60_000;
+
+function heldTiming(ctx: PCtx): { retryMs: number; maxMs: number } {
+  return { retryMs: ctx.held?.retryMs ?? HELD_RETRY_MS, maxMs: ctx.held?.maxMs ?? HELD_MAX_MS };
+}
+
+// The row's checks with one more run on the end, never the same run twice: the rail tells the
+// executor through the hook the moment the checks exist and again on its result.
+function withPreflight(rows: Preflight[] | undefined, next: Preflight | undefined): Preflight[] | undefined {
+  if (next === undefined) return rows;
+  const kept = rows ?? [];
+  if (kept.some((r) => r.at === next.at)) return kept;
+  return [...kept, next];
+}
+
+// A row that has moved on from a hold, or never held: the stamp is the hold's alone.
+function withoutHold(p: Proposal): Proposal {
+  if (p.heldSince === undefined) return p;
+  const { heldSince: _heldSince, ...rest } = p;
+  return rest;
+}
+
 // What of a rail's evidence goes on the row: everything but the hashes, which have their own
 // field. Named so a rail cannot smuggle a stray key into the store through the hook.
 function pickEvidence(e: RailEvidence): RailEvidence {
@@ -286,6 +312,13 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
       ctx.audit.append('submitted', `${p.id}: the venue holds the move; evidence recorded before the wait`, { id: p.id, txids, evidence });
       persist(ctx, { ...current, result: { ok: false, detail: 'submitted, waiting for the venue', txids, evidence } });
     },
+    // The checks land on the row the moment they exist, before anything is signed, so a
+    // process that dies in the wait still shows what was read.
+    onPreflight: (checks) => {
+      const current = ctx.store.get(p.id) ?? executing;
+      if (current.status !== 'executing') return;
+      persist(ctx, { ...current, preflight: withPreflight(current.preflight, checks) });
+    },
   };
 
   let result: RailResult;
@@ -296,6 +329,15 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
     // is passed through as-is rather than summarised into "failed".
     result = { ok: false, detail: `${p.draft.kind} rail threw: ${errText(err)}` };
   }
+
+  const preflight = withPreflight(ctx.store.get(p.id)?.preflight, result.preflight);
+  const checks = preflight === undefined ? {} : { preflight };
+
+  /* THE HOLD. The preflight said wait and the rail signed nothing: no handle, no hash, no
+     nonce, nothing at the venue. The row goes back to approved, stamped with when the hold
+     began, and the rail runs again in a while. It is a status the card reads, never a
+     question: the person already decided, and the app is waiting for the chain. */
+  if (result.held === true) return holdRow(ctx, p, executing, rail, result.detail, checks);
 
   /* THE HASH IS THE RECORD. THE BALANCE IS A DECORATION.
      Both used to be written together, after `balanceAfter`, which is up to fifteen seconds of
@@ -348,12 +390,13 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
   const exactAfter = pocket === undefined || settling ? null : pocketPriced(ctx, pocket, pocket.after);
   const balances = { beforeUsd: exactBefore ?? beforeUsd, afterUsd: exactAfter };
   const recorded = persist(ctx, {
-    ...executing,
+    ...withoutHold(executing),
     status,
     settledAt,
     result: { ok: result.ok, detail: result.detail, txids, ...(Object.keys(evidence).length === 0 ? {} : { evidence }) },
     balances,
     ...(pocket === undefined ? {} : { pocket }),
+    ...checks,
   });
   if (settling) watchSettling(ctx);
 
@@ -383,6 +426,42 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
   }
 
   return recorded;
+}
+
+// ---------- held rows ----------
+//
+// Nothing here signs or sends: a held row is an approved row with a stamp, and the only thing
+// that moves it is the rail running again with the checks in front of it.
+
+function holdRow(ctx: PCtx, p: Proposal, executing: Proposal, rail: Rail, reason: string, checks: { preflight?: Preflight[] }): Proposal {
+  const heldSince = executing.heldSince ?? nowIso();
+  const heldFor = Math.max(0, Date.now() - Date.parse(heldSince));
+  const { retryMs, maxMs } = heldTiming(ctx);
+  if (heldFor >= maxMs) return expireHold(ctx, executing, `${reason} Held for ${Math.round(heldFor / 60_000)} min without clearing, so it is closed.`, checks);
+  ctx.audit.append('execution_held', `${p.id}: ${reason} Trying again in ${Math.round(retryMs / 1000)} s.`, { id: p.id, heldSince });
+  const held = persist(ctx, { ...executing, status: 'approved', heldSince, ...checks });
+  const timer = setTimeout(() => retryHeld(ctx, held.id, rail), retryMs);
+  timer.unref?.();
+  return held;
+}
+
+/* The hold is over and nothing was signed: a failure with no evidence, charged to nobody, with
+   the reason on it. Also what the boot sweep writes for a row held when the process stopped. */
+export function expireHold(ctx: PCtx, row: Proposal, detail: string, checks: { preflight?: Preflight[] } = {}): Proposal {
+  ctx.audit.append('execution_held_expired', `${row.id}: ${detail}`, { id: row.id, heldSince: row.heldSince });
+  return persist(ctx, { ...withoutHold(row), status: 'failed', settledAt: nowIso(), result: { ok: false, detail }, ...checks });
+}
+
+function retryHeld(ctx: PCtx, id: string, rail: Rail): void {
+  const row = ctx.store.get(id);
+  if (row === undefined || row.status !== 'approved' || row.heldSince === undefined) return;
+  // The key it would sign with is behind a lock now. Waiting on a person to unlock it is a
+  // question, and a hold is not one: the row closes and the ask can be made again.
+  if (isLocked()) {
+    expireHold(ctx, row, 'The wallet locked while this was waiting for the checks to clear. Nothing was signed; ask again once it is unlocked.');
+    return;
+  }
+  void executeRail(ctx, row, rail);
 }
 
 // ---------- settling rows ----------

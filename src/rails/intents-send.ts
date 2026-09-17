@@ -47,7 +47,7 @@ import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '..
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
-import { deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
+import { describeHeld, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { isNearAccountId, nearChainSpec } from '../chain/near.ts';
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 
@@ -325,6 +325,9 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
       },
       hooks,
     );
+    // This rail wires no preflight (the money stays inside the verifier), so an unsigned
+    // outcome cannot happen here; the type still has to be narrowed before a hash is read.
+    if (!spent.signed) return describeHeld(spent.preflight);
     if (!spent.submitted) {
       return withQuote(describeUnconfirmedSubmit({ error: spent.error, handle: spent.depositAddress, deadline: spent.deadline }), spent.signedQuote);
     }

@@ -158,6 +158,38 @@ is not a path.
 - **Reconciliation** re-judges rows and signs nothing. **A worker seat** has no propose tool
   registered and is refused at the door by role. **A skill** is data and cannot widen the surface.
 
+## Preflight
+
+Between the live quote and the intent, every HyperCore deposit and every chain payout runs five
+checks the app makes for itself (`src/preflight/index.ts`, wired in `src/preflight/live.ts` and
+called from `src/rails/intents-spend.ts`). They exist because of 2026-09-15: 1Click's relayer
+sweeps a HyperCore deposit into Circle CCTP on Arbitrum with a hard-coded 300,000 gas limit, an
+L1 data surge put 155,024 gas of L1 data into that sweep, it ran out of gas twice, and the money
+sat in a wallet nobody retried. The checks, in the order the receipt draws them:
+
+1. **Gas.** For Arbitrum (a HyperCore deposit, a payout landing there) the sweep is modelled off
+   the ArbGasInfo precompile (`src/preflight/arbitrum.ts`): 145,000 gas of execution plus the L1
+   charge for 420 bytes of calldata at today's per-byte price, held against the vendor's 300,000.
+   Under 240,000 is ok, up to the limit is elevated, above it the move holds. Ethereum and Base
+   payouts read the base fee against the hour's average: warn above twice it, hold above four
+   times. Solana and NEAR are not read, and the check says so.
+2. **Coverage.** The fee inside the quote against the app's own estimate of the payout's cost at
+   today's gas price, priced through the ledger. Under 1.5x it warns; under 1.0x it holds.
+3. **Venue.** A dry quote answers inside the read budget and the status endpoint the watch loop
+   will poll answers at all.
+4. **Balance.** The verifier holds what the intent will hand over. Short is a fail, not a hold.
+5. **Deadline.** The quote is good for at least three more minutes.
+
+A `hold` signs nothing: the rail returns before `generate-intent`, the row stays `approved` with
+`heldSince`, and the executor (`src/proposals/execute.ts`) runs the rail again every thirty
+seconds for up to fifteen minutes, each attempt appending its checks to the row. A hold that runs
+out fails with the reason and an `execution_held_expired` line; a row held when the process
+stopped is closed the same way by the boot sweep. Held money counts against the day's cap while
+it waits. The hold is a status, never a question: the card says what it is waiting for and the
+retry is the app's. A `fail` signs nothing and stops. The checks are drawn as a folded rail on the
+card and the receipt (`ui/screens/checks.js`), and every number on it is what the app read, not
+what the venue said.
+
 ## The approval gate has no off switch
 
 There used to be one. A config flag turned the gate off so a rail could be exercised without a
