@@ -380,10 +380,14 @@ export async function handleDepositShow(ctx: Ctx, req: http.IncomingMessage, res
   if (report.account === null || network === undefined || network.address === null) {
     return fail(res, 409, network?.unavailable ?? report.reason ?? `no deposit address for ${chain} right now`);
   }
-  if (!network.accepts.some((a) => a.symbol.toUpperCase() === symbol)) {
+  const accepted = network.accepts.find((a) => a.symbol.toUpperCase() === symbol);
+  if (accepted === undefined) {
     return fail(res, 409, `${symbol} is not credited on ${network.name}; accepted: ${network.accepts.map((a) => a.symbol).join(', ') || 'nothing'}`);
   }
-  sendJson(res, 200, { ok: true, deposit: ctx.deposits.show(chain, symbol, network.address) });
+  // The token as the bridge lists it, so the watch reads that one balance and matches the
+  // bridge's own rows for it, instead of guessing from the symbol.
+  const token = { assetId: accepted.assetId, decimals: accepted.decimals, contract: accepted.contract };
+  sendJson(res, 200, { ok: true, deposit: ctx.deposits.show(chain, symbol, network.address, token) });
 }
 
 export function handleDepositStatus(ctx: Ctx, res: http.ServerResponse): void {

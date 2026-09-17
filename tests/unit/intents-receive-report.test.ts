@@ -95,6 +95,8 @@ test('the token rows carry the floor in base units and in the unit a person read
     const base = net(report, 'base');
     assert.deepEqual(base.accepts, [{
       symbol: 'USDC',
+      // The verifier's id, so the deposit watch can read this one balance.
+      assetId: 'nep141:base-0x8335.omft.near',
       decimals: 6,
       minDeposit: '1000',
       minDepositHuman: '0.001',
@@ -105,7 +107,7 @@ test('the token rows carry the floor in base units and in the unit a person read
     }]);
     const eth = net(report, 'eth');
     // A ten millionth of an ETH, unpriced, is under the millionth-of-a-unit cut: "No minimum".
-    assert.deepEqual(eth.accepts, [{ symbol: 'ETH', decimals: 18, minDeposit: '100000000000', minDepositHuman: '0.0000001', minimum: { shown: false, amount: '0.0000001', usd: null }, contract: null }]);
+    assert.deepEqual(eth.accepts, [{ symbol: 'ETH', assetId: '', decimals: 18, minDeposit: '100000000000', minDepositHuman: '0.0000001', minimum: { shown: false, amount: '0.0000001', usd: null }, contract: null }]);
     assert.equal(base.address, 'addr-for-eth:8453');
   } finally {
     net_.restore();

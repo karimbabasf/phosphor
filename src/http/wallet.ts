@@ -458,6 +458,9 @@ export type IntentsReceiveMinimum = {
 
 export type IntentsReceiveToken = {
   symbol: string;
+  // The verifier's id for it (the bridge's intents_token_id), which is what the deposit watch
+  // reads the balance of. Empty when the bridge row carried none.
+  assetId: string;
   decimals: number;
   // Base units, as the bridge said it. The window never prints this one.
   minDeposit: string;
@@ -625,6 +628,7 @@ function acceptsOn(bridge: string, tokens: PoaToken[], prices: Map<string, numbe
     const price = prices?.get(t.intentsAssetId);
     rows.set(key, {
       symbol: t.symbol,
+      assetId: t.intentsAssetId,
       decimals: t.decimals,
       minDeposit: t.minDeposit,
       minDepositHuman: t.minDepositHuman,
