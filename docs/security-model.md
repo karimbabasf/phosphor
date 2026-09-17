@@ -155,6 +155,14 @@ is not a path.
 - **A repeat.** The same send twice from one session while the first is pending is one row: a
   `clientKey` repeat is answered with the existing row, and a keyless repeat is refused with its
   id (`src/duplicates.ts`).
+- **A row rewritten on disk under the card.** The store re-reads `proposals.json` whenever the
+  file moves, and a process running as this user can move it: until 2026-09-17 a pending send
+  whose `to` was rewritten on disk after the card was drawn went to the rail as the new address
+  under a click given to the old one, and a refused row flipped to `pending` on disk could be
+  clicked. Every row this process writes or first reads is now sealed in memory (`src/store.ts`),
+  and the click, the finger and the unlock release all refuse a row whose bytes no longer match
+  its seal (`requireIntact` in `src/proposals/lifecycle.ts`), without writing it back. The
+  refusal is an `approve_attempt_rejected` line carrying `changedOnDisk`.
 - **Reconciliation** re-judges rows and signs nothing. **A worker seat** has no propose tool
   registered and is refused at the door by role. **A skill** is data and cannot widen the surface.
 

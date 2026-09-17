@@ -217,8 +217,10 @@ test('a released queue is decided one at a time against one cap, not all against
   ];
   assert.deepEqual(made.map(p => p.status), ['pending', 'pending', 'pending'], made.map(p => JSON.stringify(p.verdict)).join('\n'));
 
-  // What custody writes when the wallet is locked while an agent proposes.
-  const store = createStore(dir);
+  // What custody writes when the wallet is locked while an agent proposes: through the
+  // service's own store, because a row written by any other hand is one the release refuses
+  // to decide (the seal in src/store.ts).
+  const store = h.store;
   for (const p of made) store.put({ ...store.get(p.id) as Proposal, status: 'pending_unlock' });
   assert.equal(svc.dailyLimit(5_000).spentUsd, 0, 'a queued proposal has not spent anything yet');
 
