@@ -13,6 +13,80 @@ import { bootChartServer } from '../fixtures/chart-server.ts';
 
 const T0 = 1_760_000_000;
 
+// Opens the window's own stream and hands back the next chart frame the server sends.
+async function nextChartFrame(url: string): Promise<{ frame: Promise<{ rev: number; slot: number }>; close: () => void }> {
+  const controller = new AbortController();
+  const res = await fetch(`${url}/api/events`, { signal: controller.signal });
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  const frame = (async () => {
+    let buffered = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error('the stream closed before a chart frame');
+      buffered += new TextDecoder().decode(value);
+      for (const line of buffered.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const parsed = JSON.parse(line.slice(6)) as { type: string; rev?: number; slot?: number };
+        if (parsed.type === 'chart') return { rev: parsed.rev as number, slot: parsed.slot as number };
+      }
+    }
+  })();
+  frame.catch(() => {});
+  return { frame, close: () => controller.abort() };
+}
+
+test('a lines-only draw moves the revision, the chart frame carries it, and the payload agrees', async () => {
+  // A line or a zone lives in the drawing store, which used to have no revision of its own: the
+  // frame went out with the OLD rev, the window read it as its own echo and dropped it, and the
+  // trend line waited for the next unrelated refetch. That wait is what "slow" meant.
+  const h = await bootChartServer();
+  const stream = await nextChartFrame(h.url);
+  try {
+    const before = (await h.get('/api/chart')).json.rev as number;
+    const out = await h.mcp({ op: 'view', tool: 'chart_draw', session: 'a', args: { lines: [{ t1: T0, p1: 1, t2: T0 + 60, p2: 2 }] } });
+    assert.equal(out.status, 200, JSON.stringify(out.json));
+    const frame = await stream.frame;
+    const after = (await h.get('/api/chart')).json;
+    assert.ok(after.rev > before, `a lines-only draw moved the rev from ${before} to ${after.rev}`);
+    assert.equal(frame.rev, after.rev, 'the frame carries the revision the payload now has');
+    assert.equal(frame.slot, 0);
+    assert.equal(after.lastDriver, 'agent');
+  } finally {
+    stream.close();
+    await h.close();
+  }
+});
+
+test('the markup part carries the drawing and the indicator series but no candles, and the full part still does', async () => {
+  const h = await bootChartServer();
+  try {
+    await h.mcp({ op: 'view', tool: 'chart_draw', session: 'a', args: { indicators: { preset: 'momentum' }, levels: [{ px: 100 }] } });
+    const full = await h.get('/api/chart');
+    assert.equal(full.status, 200);
+    assert.ok(Array.isArray(full.json.candles) && full.json.candles.length > 0, 'the full part carries candles');
+    assert.equal(typeof full.json.candlesRev, 'number');
+    assert.equal(full.json.series.count, full.json.candles.length);
+    assert.equal(full.json.series.first, full.json.candles[0].t);
+
+    const markup = await h.get('/api/chart?part=markup');
+    assert.equal(markup.status, 200);
+    assert.equal(markup.json.candles, undefined, 'a markup refresh moves no candle bytes');
+    assert.equal(markup.json.rev, full.json.rev);
+    assert.equal(markup.json.candlesRev, full.json.candlesRev);
+    assert.deepEqual(markup.json.series, full.json.series);
+    assert.equal(markup.json.levels.length, 1);
+    assert.equal(markup.json.indicators.length, 3);
+    assert.ok(markup.json.indicators.every((i: { plots: { values: unknown[] }[] }) => i.plots.every((p) => p.values.length === full.json.series.count)));
+    const bytes = Buffer.byteLength(JSON.stringify(markup.json));
+    assert.ok(bytes < 60_000, `the markup part is ${bytes} bytes`);
+
+    const bad = await h.get('/api/chart?part=nope');
+    assert.equal(bad.status, 400);
+  } finally {
+    await h.close();
+  }
+});
+
 test('one call sets the view, adds a preset, two levels, a line and a zone, and answers with a digest', async () => {
   const h = await bootChartServer();
   try {

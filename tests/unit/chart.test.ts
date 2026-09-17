@@ -50,8 +50,11 @@ test('a sub-minute timeframe is refused, because no venue serves one', () => {
   assert.equal(chart.state().view.granularitySec, 60, 'and the view is left where it was');
 });
 
-test('pan is capped back and allowed a little past the newest bar', () => {
-  assert.equal(clampPan(9999, 120), LIMITS.panMax);
+test('pan is capped back at the cache depth and allowed a little past the newest bar', () => {
+  assert.equal(clampPan(99999, 120), LIMITS.panMax);
+  // Four hundred bars back used to be the wall. The window stops at the venue's own first
+  // bar now, and the server only at the depth the cache can hold.
+  assert.equal(clampPan(9999, 120), 9999);
   // Walling at the last bar makes a chart feel stuck, so a quarter window of forward room.
   assert.equal(clampPan(-9999, 120), -30);
   assert.equal(clampPan(12, 120), 12);
@@ -151,26 +154,27 @@ test('every change bumps the revision, and reporting geometry does not', () => {
   assert.equal(chart.rev(), start + 1);
 });
 
-test('history fetched covers the longest indicator warmup', () => {
+test('history served covers the window, the pan and the longest indicator warmup, and no more', () => {
   const chart = createChartStore('BTC-USD');
   chart.setView({ barCount: 120 }, 'human');
   chart.addIndicator({ type: 'ema', params: { period: 200 } }, 'agent');
 
-  // The promise is that a 200 period line does not start in the middle of the screen.
-  // It used to be kept by fetching exactly the window plus the warmup, which meant the
-  // whole chart only ever held about 150 bars and a pan to the left ran off the end of
-  // the data. The floor keeps the same promise with room behind the left edge.
-  assert.ok(chart.historyNeeded() >= 120 + 200, 'the window and the warmup both fit');
-  assert.ok(chart.historyNeeded() >= LIMITS.historyFloor, 'and there is history behind the left edge');
+  // The promise is that a 200 period line does not start in the middle of the screen. The
+  // series the payload carries follows the view: a floor of fifteen hundred bars used to sit
+  // under it, which was two hundred kilobytes of indicator values per refresh to draw a
+  // screen that used a tenth of them. Depth behind the left edge is the backfill's job now.
+  assert.equal(chart.historyNeeded(), 120 + LIMITS.fetchMargin + 200, 'the window, the margin and the warmup');
+  chart.setView({ panOffset: 300 }, 'human');
+  assert.equal(chart.historyNeeded(), 120 + 300 + LIMITS.fetchMargin + 200, 'a pan back is served too');
   assert.ok(chart.historyNeeded() <= LIMITS.historyMax);
 });
 
-test('history fetched still grows when a warmup asks for more than the floor', () => {
+test('history served still grows with the warmup on a wide window', () => {
   const chart = createChartStore('BTC-USD');
   chart.setView({ barCount: 1600 }, 'human');
   const plain = chart.historyNeeded();
   chart.addIndicator({ type: 'ema', params: { period: 200 } }, 'agent');
-  assert.ok(chart.historyNeeded() > plain, 'past the floor the warmup still moves the number');
+  assert.ok(chart.historyNeeded() > plain, 'the warmup still moves the number');
   assert.ok(chart.historyNeeded() <= LIMITS.historyMax);
 });
 

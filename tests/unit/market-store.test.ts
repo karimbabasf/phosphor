@@ -143,6 +143,123 @@ test('a series is capped so a long session cannot grow without bound', () => {
   assert.equal(merged.length, 500);
 });
 
+test('merging a window that lands entirely before or after what is held is a concat, in order, with no duplicate', () => {
+  const held = minutes(3, 1_699_999_200);
+  const older = mergeSeries(held, minutes(3, 1_699_999_200 - 180), 5000);
+  assert.deepEqual(older.map((c) => c.t), [-180, -120, -60, 0, 60, 120].map((d) => 1_699_999_200 + d));
+  const newer = mergeSeries(held, minutes(2, 1_699_999_200 + 180), 5000);
+  assert.deepEqual(newer.map((c) => c.t), [0, 60, 120, 180, 240].map((d) => 1_699_999_200 + d));
+  // A venue that answers newest first is still merged in order.
+  const shuffled = mergeSeries(held, minutes(3, 1_699_999_200 - 180).reverse(), 5000);
+  assert.deepEqual(shuffled.map((c) => c.t), older.map((c) => c.t));
+});
+
+// ---------- history behind the left edge ----------
+
+/* A venue with a floor: bars before `oldest` do not exist, and a window that reaches past it
+   comes back short, which is how a venue says it has no more. Its clock is on a minute. */
+const VENUE_NOW = 1_700_000_040;
+
+function venueFrom(oldest: number, log: { bars: number; endSec: number | undefined }[] = []) {
+  return async (_product: string, baseSec: number, bars: number, _provider: string, endSec?: number): Promise<Candle[]> => {
+    log.push({ bars, endSec });
+    const end = endSec === undefined ? VENUE_NOW : Math.floor(endSec / baseSec) * baseSec;
+    const out: Candle[] = [];
+    for (let i = bars - 1; i >= 0; i--) {
+      const t = end - i * baseSec;
+      if (t < oldest) continue;
+      out.push({ t, o: 1, h: 2, l: 0.5, c: 1, v: 1 });
+    }
+    return out;
+  };
+}
+
+test('a series short at the back fills the bars before the ones it holds, not the newest window again', async () => {
+  const log: { bars: number; endSec: number | undefined }[] = [];
+  const store = createMarketStore({ fetchWindow: venueFrom(0, log) });
+  await store.warm('BTC-USD', 60, 60, 100);
+  const held = store.read('BTC-USD', 60, 60, 100);
+  const oldest = (held.candles[0] as Candle).t;
+  assert.equal(log.length, 1);
+  assert.equal(log[0]?.endSec, undefined, 'the first fill is the newest window');
+
+  // The window widens to 400 bars: the 300 missing are all older than what is held.
+  const short = store.read('BTC-USD', 60, 60, 400);
+  assert.equal(short.backfilling, true);
+  await tick();
+  await tick();
+  assert.equal(log.length, 2);
+  const endSec = log[1]?.endSec;
+  assert.ok(endSec !== undefined && endSec < oldest, 'asked for the bars before the ones held');
+  assert.ok((log[1]?.bars ?? 0) >= 300 && (log[1]?.bars ?? 0) <= 2000, `asked for at least the missing bars, got ${log[1]?.bars}`);
+
+  const filled = store.read('BTC-USD', 60, 60, 400);
+  assert.equal(filled.candles.length, 400);
+  const seen = new Set<number>();
+  for (let i = 0; i < filled.candles.length; i++) {
+    const t = (filled.candles[i] as Candle).t;
+    assert.ok(!seen.has(t), `no duplicate open time at ${t}`);
+    seen.add(t);
+    if (i > 0) assert.equal(t - (filled.candles[i - 1] as Candle).t, 60, 'contiguous');
+  }
+});
+
+test('a backfill that comes back short marks the series exhausted at the back, and a read stops asking', async () => {
+  const log: { bars: number; endSec: number | undefined }[] = [];
+  // Two hundred and fifty bars of history in all.
+  const store = createMarketStore({ fetchWindow: venueFrom(VENUE_NOW - 249 * 60, log) });
+  await store.warm('BTC-USD', 60, 60, 100);
+  store.read('BTC-USD', 60, 60, 1000);
+  await tick();
+  await tick();
+  const after = store.read('BTC-USD', 60, 60, 1000);
+  assert.equal(after.candles.length, 250, 'everything the venue had');
+  assert.equal(after.exhaustedBack, true);
+  assert.equal(after.oldestSec, VENUE_NOW - 249 * 60);
+  const calls = log.length;
+  store.read('BTC-USD', 60, 60, 1000);
+  await tick();
+  assert.equal(log.length, calls, 'a venue that said it has no more is not asked again');
+});
+
+test('before() serves the bars older than a moment from the cache, and fills the venue when short', async () => {
+  const log: { bars: number; endSec: number | undefined }[] = [];
+  const store = createMarketStore({ fetchWindow: venueFrom(0, log) });
+  await store.warm('BTC-USD', 60, 300, 100);
+  const held = store.read('BTC-USD', 60, 300, 100);
+  const first = (held.candles[0] as Candle).t;
+
+  const older = await store.before('BTC-USD', 60, 300, first, 200);
+  assert.equal(older.candles.length, 200);
+  assert.equal(older.exhaustedBack, false);
+  for (const c of older.candles) {
+    assert.ok(c.t < first, 'every bar is older than the moment asked for');
+    assert.equal(c.t % 300, 0, 'folded to the timeframe asked for');
+  }
+  const last = older.candles[older.candles.length - 1] as Candle;
+  assert.equal(last.t, first - 300, 'and they run right up to it');
+
+  // The cache now holds them: asking again touches no venue.
+  const calls = log.length;
+  const again = await store.before('BTC-USD', 60, 300, first, 200);
+  assert.equal(again.candles.length, 200);
+  assert.equal(log.length, calls);
+});
+
+test('a stale refresh asks the venue for the tail, not the whole window again', async () => {
+  let clock = 1_800_000_000_000;
+  const log: { bars: number; endSec: number | undefined }[] = [];
+  const store = createMarketStore({ fetchWindow: venueFrom(0, log), now: () => clock });
+  await store.warm('BTC-USD', 60, 60, 3000);
+  assert.ok((log[0]?.bars ?? 0) >= 3000);
+  clock += 2000;
+  store.read('BTC-USD', 60, 60, 3000);
+  await tick();
+  assert.equal(log.length, 2);
+  assert.ok((log[1]?.bars ?? 0) < 20, `a two second old series refetches a few bars, not ${log[1]?.bars}`);
+  assert.equal(log[1]?.endSec, undefined, 'from the newest bar back');
+});
+
 test('a slow timeframe is not refreshed on a fast cadence', () => {
   assert.ok(staleAfterSec(1) <= 1, 'a one second chart refreshes every second');
   assert.ok(staleAfterSec(86_400) >= 60, 'a daily chart does not refresh every second');

@@ -224,6 +224,203 @@ test('the right gutter is wide enough for the tag and the countdown to stop comp
   assert.ok(s.CHART_AXIS_W >= 66, `expected a floor of 66, got ${s.CHART_AXIS_W}`);
 });
 
+// ---------- the time axis ----------
+
+/* Bars of one length from a local wall-clock moment, so the same test reads the same in any
+   zone the suite runs in: the axis prints the zone the person is in. */
+function barsFrom(local: [number, number, number, number, number], stepSec: number, count: number): Bar[] {
+  const start = new Date(local[0], local[1], local[2], local[3], local[4]).getTime() / 1000;
+  const out: Bar[] = [];
+  for (let i = 0; i < count; i++) out.push({ t: start + i * stepSec, o: 100, h: 104, l: 96, c: 101, v: 1 });
+  return out;
+}
+
+function utcBars(iso: string, stepSec: number, count: number): Bar[] {
+  const start = Date.parse(iso) / 1000;
+  const out: Bar[] = [];
+  for (let i = 0; i < count; i++) out.push({ t: start + i * stepSec, o: 100, h: 104, l: 96, c: 101, v: 1 });
+  return out;
+}
+
+/* Every label the time axis printed, left to right. */
+function axisLabels(s: Sandbox, candles: Bar[], granularitySec: number): string[] {
+  s.CHART.candles = candles;
+  s.CHART.view = { product: 'BTC-USD', provider: 'auto', granularitySec, barCount: candles.length, panOffset: 0, priceScale: { mode: 'auto' } };
+  s.CHART.dataView = { product: 'BTC-USD', granularitySec };
+  const printed: { text: string; x: number }[] = [];
+  const ctx = {
+    font: '',
+    fillStyle: '',
+    textAlign: 'left',
+    lineWidth: 1,
+    strokeStyle: '',
+    measureText: (text: string) => ({ width: String(text).length * 6 }),
+    fillText: (text: string, x: number) => printed.push({ text: String(text), x }),
+    beginPath: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    stroke: () => {},
+  };
+  const L = s.buildLayout(900, 600, fakeCtx);
+  s.drawTimeGrid(ctx, L);
+  return printed.sort((a, b) => a.x - b.x).map((p) => p.text);
+}
+
+test('a 1m window across midnight names the new day once, and the first tick carries the date', () => {
+  const s = loadChartUi();
+  // 22:00 to 02:00, local, 15 to 16 September.
+  const labels = axisLabels(s, barsFrom([2026, 8, 15, 22, 0], 60, 240), 60);
+  assert.ok(labels.length >= 4, `ticks: ${labels.join(' | ')}`);
+  assert.equal(labels[0], '15 Sep', 'the first visible tick always says what day it is');
+  assert.equal(labels.filter((l) => l === '16 Sep').length, 1, `midnight is the one date rung: ${labels.join(' | ')}`);
+  for (const label of labels.slice(1)) {
+    if (label === '16 Sep') continue;
+    assert.match(label, /^\d\d:\d\d$/, `a clock time between the days: ${label}`);
+  }
+});
+
+test('a 1h window inside one day still shows the date on the first tick', () => {
+  const s = loadChartUi();
+  const labels = axisLabels(s, barsFrom([2026, 8, 16, 8, 0], 3600, 12), 3600);
+  assert.equal(labels[0], '16 Sep');
+  assert.ok(labels.length >= 3);
+  for (const label of labels.slice(1)) assert.match(label, /^\d\d:\d\d$/, label);
+});
+
+test('a 1d window across a year boundary shows the months and the year where it turns', () => {
+  const s = loadChartUi();
+  // Daily bars are the venue's days, so the calendar here is UTC: 1 Nov 2025 to 28 Feb 2026.
+  const labels = axisLabels(s, utcBars('2025-11-01T00:00:00Z', 86400, 120), 86400);
+  assert.equal(labels[0], '1 Nov 2025', 'the first tick carries the year when the window spans two');
+  // Fortnightly Monday ticks at this width: the month where it turns, the year where it does.
+  assert.equal(labels.filter((l) => l === '2026').length, 1, labels.join(' | '));
+  assert.ok(labels.includes('Dec') && labels.includes('Feb'), labels.join(' | '));
+  assert.ok(!labels.includes('Jan'), 'January is named by its year, not twice');
+  for (const label of labels.slice(1)) assert.match(label, /^(\d+ [A-Z][a-z]{2}|[A-Z][a-z]{2}|\d{4})$/, label);
+
+  // Squeezed to a bar a pixel, two years of days climb to the quarter rung.
+  const tight = axisLabels(s, utcBars('2025-11-01T00:00:00Z', 86400, 700), 86400);
+  assert.equal(tight[0], 'Nov 2025');
+  assert.deepEqual(tight.slice(1, 5), ['2026', 'Apr', 'Jul', 'Oct']);
+});
+
+test('a 1w window ticks on Mondays and a squeezed one on the first bar of each year', () => {
+  const s = loadChartUi();
+  // 2026-09-14 is a Monday. Twelve weekly bars at 69 px each: a tick every other week.
+  const wide = axisLabels(s, utcBars('2026-09-14T00:00:00Z', 604800, 12), 604800);
+  assert.equal(wide[0], '14 Sep');
+  assert.ok(wide.every((l) => /^\d+ [A-Z][a-z]{2}$|^[A-Z][a-z]{2}$|^\d{4}$/.test(l)), wide.join(' | '));
+  for (const label of wide) {
+    const m = /^(\d+) ([A-Z][a-z]{2})$/.exec(label);
+    if (!m) continue;
+    const day = new Date(Date.UTC(2026, ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].indexOf(m[2] as string), Number(m[1])));
+    assert.equal(day.getUTCDay(), 1, `${label} is a Monday`);
+  }
+  // Two hundred weeks at 4 px a bar: a month a tick would be 18 px apart, so the axis climbs
+  // to the year rung and every tick is the first bar of a year.
+  const squeezed = axisLabels(s, utcBars('2026-01-05T00:00:00Z', 604800, 200), 604800);
+  assert.deepEqual(squeezed, ['2026', '2027', '2028', '2029']);
+});
+
+test('the crosshair stamp carries the date on an intraday chart', () => {
+  const s = loadChartUi();
+  const at = new Date(2026, 8, 16, 14, 7).getTime() / 1000;
+  assert.equal(s.crosshairStamp(at, 60), '16 Sep 14:07');
+  assert.equal(s.crosshairStamp(at, 3600), '16 Sep 14:07');
+  assert.equal(s.crosshairStamp(Date.parse('2026-09-16T00:00:00Z') / 1000, 86400), '16 Sep 2026');
+  assert.equal(s.crosshairStamp(Date.parse('2026-09-01T00:00:00Z') / 1000, s.MONTH_SEC), 'Sep 2026');
+});
+
+// ---------- the labels ----------
+
+/* A 2d context that records every string and every dot drawn, with the ink each went down in. */
+function recorder(): { ctx: Record<string, unknown>; texts: { text: string; x: number; ink: string }[]; dots: { x: number; ink: string }[]; strokes: string[] } {
+  const texts: { text: string; x: number; ink: string }[] = [];
+  const dots: { x: number; ink: string }[] = [];
+  const strokes: string[] = [];
+  const ctx: Record<string, unknown> = {
+    font: '',
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    textAlign: 'left',
+    measureText: (text: string) => ({ width: String(text).length * 6 }),
+    fillText: (text: string, x: number) => texts.push({ text: String(text), x, ink: String(ctx.fillStyle) }),
+    fillRect: () => {},
+    strokeRect: () => {},
+    beginPath: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    closePath: () => {},
+    arc: (x: number) => dots.push({ x, ink: String(ctx.fillStyle) }),
+    fill: () => {},
+    stroke: () => strokes.push(`${String(ctx.strokeStyle)} w${String(ctx.lineWidth)}`),
+    setLineDash: () => {},
+    save: () => {},
+    restore: () => {},
+    clip: () => {},
+    rect: () => {},
+    translate: () => {},
+    rotate: () => {},
+  };
+  return { ctx, texts, dots, strokes };
+}
+
+test('a level the agent drew shows no [agent] word: its dot is drawn in the agent tone before the label', () => {
+  const s = loadChartUi();
+  ready(s, { levels: [{ id: 'level-1', price: 101, label: '[agent] ceiling', source: 'agent' }] });
+  const L = s.buildLayout(900, 600, fakeCtx);
+  s.CHART_SCENE_LABELS = [];
+  const scene = recorder();
+  s.drawLevels(scene.ctx, L);
+  const hud = recorder();
+  s.drawLegend(hud.ctx, L);
+  const printed = hud.texts.map((t) => t.text);
+  assert.ok(!printed.some((t) => /\[agent\]/.test(t)), `no bracketed word on the canvas: ${printed.join(' | ')}`);
+  const label = hud.texts.find((t) => /^ceiling /.test(t.text));
+  assert.ok(label, `the level is labelled by its name and price: ${printed.join(' | ')}`);
+  assert.equal(label?.ink, s.chartInk('agent', 0.9), 'in the agent tone');
+  assert.equal(hud.dots.length, 1, 'one dot, for the one agent object');
+  assert.equal(hud.dots[0]?.ink, s.chartInk('agent', 0.9), 'the dot is in the agent tone');
+  assert.ok((hud.dots[0]?.x ?? 0) < (label?.x ?? 0), 'and it sits before the label');
+});
+
+test('the four prices of the head line sit in equal columns, so a tick moves nothing beside it', () => {
+  const s = loadChartUi();
+  ready(s);
+  const L = s.buildLayout(900, 600, fakeCtx);
+  const hud = recorder();
+  s.drawLegend(hud.ctx, L);
+  const letters = ['O', 'H', 'L', 'C'].map((k) => hud.texts.find((t) => t.text === k)?.x ?? NaN);
+  const gaps = [letters[1]! - letters[0]!, letters[2]! - letters[1]!, letters[3]! - letters[2]!];
+  assert.ok(gaps.every((g) => g === gaps[0]), `the columns are one width: ${gaps.join(', ')}`);
+  const widest = Math.max(s.priceText(L.high, L.decimals).length, s.priceText(L.low, L.decimals).length) * 6;
+  assert.equal(gaps[0], 6 + 6 + widest + 6, 'a letter, a gap, a column as wide as the widest price on the axis, a gap');
+  assert.equal(hud.texts[0]?.x, 8, 'the column starts eight pixels in');
+});
+
+test('the cross that removes a study shows under the pointer and nowhere else', () => {
+  const s = loadChartUi();
+  ready(s, {
+    indicators: [{ id: 'ema-1', type: 'ema', label: '[agent] ema 21', pane: 'price', source: 'agent', plots: [{ key: 'ema', values: new Array(40).fill(100) }] }],
+  });
+  const L = s.buildLayout(900, 600, fakeCtx);
+  s.CHART_SCENE_LABELS = [];
+  s.CHART_HOVER = null;
+  const away = recorder();
+  s.drawLegend(away.ctx, L);
+  assert.ok(!away.strokes.some((st) => /w1\.5/.test(st)), 'no cross while the pointer is away');
+  assert.ok(!s.CHART_HITS.some((h: { remove: string }) => h.remove === 'ema-1'), 'and nothing to hit');
+  const box = s.CHART_LABEL_BOXES['ema-1'];
+  assert.ok(box, 'the row remembers where it was drawn');
+  s.CHART_HOVER = { x: box.x + 4, y: box.y + 4, index: 39 };
+  const over = recorder();
+  s.drawLegend(over.ctx, L);
+  assert.ok(over.strokes.some((st) => /w1\.5/.test(st)), 'the cross is drawn under the pointer');
+  assert.ok(s.CHART_HITS.some((h: { remove: string }) => h.remove === 'ema-1'), 'and it can be hit');
+  assert.ok(!over.texts.some((t) => /\[agent\]/.test(t.text)));
+});
+
 // ---------- the face ----------
 
 test('every number on the canvas is set in Geist Mono at 11 px, the face the rail uses', () => {

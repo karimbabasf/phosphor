@@ -174,8 +174,34 @@ var PANE_MAX = 96;
 var PRICE_PAD = 0.06; // headroom above and below the auto-fitted range
 var GRID_PRICE_GAP = 46; // target pixels between price grid lines
 var GRID_TIME_GAP = 96;
+/* A date is a short label (`16 Sep` is six characters) and a day tick is worth having a little
+   closer than a clock tick: a five day chart in a half width pane used to climb to the week
+   rung at 90 px a day and print one Monday. */
+var GRID_DATE_GAP = 72;
 
-var TIME_STEPS = [1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400, 604800];
+/* The server's sentinel for a calendar month: the mean Gregorian month in seconds. A month is
+   not a fixed number of seconds, so it travels as this number and every place that buckets by
+   it uses the calendar instead (liveBucket, the axis). Mirrors MONTH_SEC in src/market/aggregate.ts. */
+var MONTH_SEC = 2629746;
+var YEAR_SEC = 31556952;
+
+/* The rungs of the time axis, coarsest last. A rung under a day is a fixed number of seconds on
+   the clock of the zone the axis prints in; the rest are calendar units, because a month is not
+   a number of seconds and a week that opens on Thursday is not a week anyone trades. `sec` is
+   only the rung's nominal size, for choosing one that leaves GRID_TIME_GAP between ticks. */
+var TIME_RUNGS = [
+  { sec: 60 }, { sec: 300 }, { sec: 900 }, { sec: 1800 }, { sec: 3600 }, { sec: 7200 }, { sec: 14400 }, { sec: 21600 }, { sec: 43200 },
+  { sec: 86400, unit: 'day' },
+  { sec: 604800, unit: 'week', n: 1 },
+  { sec: 604800 * 2, unit: 'week', n: 2 },
+  { sec: MONTH_SEC, unit: 'month', n: 1 },
+  { sec: MONTH_SEC * 3, unit: 'month', n: 3 },
+  { sec: YEAR_SEC, unit: 'year', n: 1 },
+  { sec: YEAR_SEC * 2, unit: 'year', n: 2 },
+  { sec: YEAR_SEC * 5, unit: 'year', n: 5 },
+  { sec: YEAR_SEC * 10, unit: 'year', n: 10 },
+  { sec: YEAR_SEC * 25, unit: 'year', n: 25 }
+];
 
 // False until the first /api/chart payload lands. Guards the view write-back: see
 // queueChartPush for what pushing before the server has been heard from costs.
@@ -185,6 +211,12 @@ var CHART = {
   rev: 0,
   view: { product: '', provider: 'auto', granularitySec: 60, barCount: 120, panOffset: 0, priceScale: { mode: 'auto' } },
   candles: [],
+  /* The series the indicator values on screen were computed over, as the server names it: its
+     first and last open time and its length, plus the same fact hashed to one number. The array
+     above is not that series: it keeps older bars backfilled behind the left edge and newer ones
+     folded in off the live rail. See applyChart for how a plot is laid over it. */
+  candlesRev: 0,
+  series: null,
   /* What the candles on screen actually are, which is not always what the controls ask for.
      The view is a request and can run ahead of the data by a round trip, or sit on an
      instrument the server has stopped serving. The legend names this instead, so a price
@@ -215,7 +247,14 @@ var CHART_HITS = []; // clickable rectangles built while drawing the hud
 var CHART_DIRTY = { scene: false, hud: false };
 var CHART_FRAME = 0;
 var CHART_SIZE = { w: 0, h: 0, dpr: 0 };
-var CHART_FETCH = { inflight: false, at: 0, queued: false };
+/* `at` is the last FULL fetch: the floor poll and the candle nudge read it to decide whether the
+   candles are due, and a markup part refreshes no candle. A queued refresh is the widest part
+   anyone asked for while the wire was busy. */
+var CHART_FETCH = { inflight: false, at: 0, queued: false, queuedPart: '', bytes: 0 };
+/* Candles the window keeps at most. Well past anything one payload carries: the array grows by
+   backfill behind the left edge and by live bars at the right, and only the oldest go when it
+   is over, and only while the window sits at the live edge. */
+var CHART_KEEP_MAX = 50000;
 var CHART_PUSH = null; // debounce timer for writing the view back
 /* Writes of ours that are on the wire. A payload that left the server before our write
    arrived cannot answer it, so it is not allowed to overrule the hand that just moved. */
@@ -332,6 +371,38 @@ function chartSpotOn(kind, id) {
   return typeof window.chartSpotActive === 'function' && window.chartSpotActive(kind, id) === true;
 }
 
+/* The label as the human reads it. The server tags everything an agent draws with a literal
+   `[agent] ` it cannot write its way out of (src/chart.ts), and that tag is what the agent
+   reads back; on the canvas the word became a wall of brackets down the left edge. Here the
+   word comes off and the agent's own ink and a drawn dot say the same thing (labelGlyph
+   'agent'). The bare label is what is drawn; the source field is what decides the dot. */
+function labelText(label) {
+  var text = String(label || '');
+  if (text.indexOf('[agent] ') === 0) text = text.slice(8);
+  else if (text.indexOf('[agent]') === 0) text = text.slice(7).replace(/^\s+/, '');
+  if (text.slice(-8) === ' [agent]') text = text.slice(0, -8);
+  return text;
+}
+
+/* The parts that open every label of an object: the agent's dot when the agent drew it. */
+function labelLead(source, alpha) {
+  return source === 'agent' ? [{ glyph: 'agent', tone: 'agent', alpha: alpha === undefined ? 0.9 : alpha }] : [];
+}
+
+/* The boxes the label column drew last frame, by the id of the object a cross would remove,
+   so the cross can be shown only under the pointer: a column of crosses beside every study
+   read as controls where the reader wanted the numbers. The hit target is the cross, and the
+   cross is there when the pointer is on the label; the box is widened by the cross's own
+   advance so reaching for it does not make it vanish. */
+var CHART_LABEL_BOXES = {};
+
+function labelHovered(id) {
+  if (!CHART_HOVER || !id) return false;
+  var box = CHART_LABEL_BOXES[id];
+  if (!box) return false;
+  return CHART_HOVER.x >= box.x && CHART_HOVER.x <= box.x + box.w + 20 && CHART_HOVER.y >= box.y && CHART_HOVER.y <= box.y + box.h;
+}
+
 function clampNum(value, low, high) {
   return Math.min(high, Math.max(low, value));
 }
@@ -361,11 +432,65 @@ function paneText(value) {
   return value.toFixed(4);
 }
 
-function stampOf(tSec, granularity, withDate) {
+/* ---------- the calendar behind the time axis ----------
+
+   Intraday bars are read in the zone the person is in: a 1m chart at midnight is midnight on
+   their wall clock. A daily bar is the venue's day, opened at 00:00 UTC and named by that date
+   wherever it is read, so from a day up the axis and the crosshair use UTC. Every stamp on the
+   chart comes through these two so the two calendars can never meet on one label. */
+function axisZoneUtc(granularity) {
+  return granularity >= 86400;
+}
+
+function timeParts(tSec, utc) {
   var d = new Date(tSec * 1000);
-  if (withDate) return d.getDate() + ' ' + MONTHS[d.getMonth()];
-  if (granularity < 86400) return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
-  return d.getDate() + ' ' + MONTHS[d.getMonth()];
+  if (utc) return { y: d.getUTCFullYear(), m: d.getUTCMonth(), day: d.getUTCDate(), hh: d.getUTCHours(), mm: d.getUTCMinutes(), wd: d.getUTCDay(), clock: tSec };
+  return { y: d.getFullYear(), m: d.getMonth(), day: d.getDate(), hh: d.getHours(), mm: d.getMinutes(), wd: d.getDay(), clock: tSec - d.getTimezoneOffset() * 60 };
+}
+
+function clockText(parts) {
+  return pad2(parts.hh) + ':' + pad2(parts.mm);
+}
+
+function dayText(parts) {
+  return parts.day + ' ' + MONTHS[parts.m];
+}
+
+/* What the crosshair prints for the bar under the pointer: the date on every timeframe, the
+   time too under a day, the year from a day up. A stamp that only said 14:07 left the reader
+   working out which day a panned chart was on. */
+function crosshairStamp(tSec, granularity) {
+  var parts = timeParts(tSec, axisZoneUtc(granularity));
+  if (granularity >= MONTH_SEC) return MONTHS[parts.m] + ' ' + parts.y;
+  if (granularity >= 86400) return dayText(parts) + ' ' + parts.y;
+  return dayText(parts) + ' ' + clockText(parts);
+}
+
+/* Which bucket of a rung a bar falls in, so a tick is the first bar of a new bucket. Weeks
+   open on Monday like bucketStart in src/market/aggregate.ts, not on the Thursday the epoch
+   started on. */
+function rungKey(rung, parts) {
+  if (rung.unit === 'day') return Math.floor(parts.clock / 86400);
+  if (rung.unit === 'week') return Math.floor((parts.clock - 345600) / (604800 * rung.n));
+  if (rung.unit === 'month') return Math.floor((parts.y * 12 + parts.m) / rung.n);
+  if (rung.unit === 'year') return Math.floor(parts.y / rung.n);
+  return Math.floor(parts.clock / rung.sec);
+}
+
+/* Which rung of the calendar a step lives on: 0 the clock, 1 the day, 2 the month, 3 the year. */
+function rungLevel(rung) {
+  if (rung.unit === 'year') return 3;
+  if (rung.unit === 'month') return 2;
+  if (rung.unit) return 1;
+  return 0;
+}
+
+/* The largest unit that changed between two moments, on the same scale. */
+function changedLevel(prev, next) {
+  if (prev.y !== next.y) return 3;
+  if (prev.m !== next.m) return 2;
+  if (prev.day !== next.day) return 1;
+  return 0;
 }
 
 function countdownText(seconds) {
@@ -969,6 +1094,7 @@ function drawScene() {
   var L = buildLayout(width, height, ctx);
   CHART_LAYOUT = L;
   CHART_SCENE_LABELS = [];
+  maybeBackfill(L);
 
   drawPriceGrid(ctx, L);
   drawTimeGrid(ctx, L);
@@ -1155,63 +1281,130 @@ function drawPriceGrid(ctx, L) {
   }
 }
 
-/* Grid lines land on round clock times, never on arbitrary bars, because a chart where the
-   labels read 14:07 and 14:22 makes the reader do arithmetic to place anything. */
-function drawTimeGrid(ctx, L) {
+/* The ticks of the time axis for one layout: the first bar of every bucket of the coarsest
+   rung that still leaves GRID_TIME_GAP between them, with the label each one gets.
+
+   Two rungs on one row. A tick is labelled by the largest unit that changed since the tick
+   before it: a clock time, then `16 Sep` where the day turns, `Sep` where the month does,
+   `2026` where the year does, and the date-bearing ones are drawn brighter. The first visible
+   tick always carries the date, and the year when the window spans two, so a chart panned into
+   last week never shows a row of times that could be any day. Ticks fall on the first bar of a
+   bucket rather than on a clock modulus: a 4h bar opens on no local midnight, and a modulus
+   found nothing to label. */
+function timeTicks(L) {
   var granularity = CHART.view.granularitySec;
-  var step = 0;
-  for (var s = 0; s < TIME_STEPS.length; s++) {
-    if (TIME_STEPS[s] < granularity) continue;
-    if ((TIME_STEPS[s] / granularity) * L.slot >= GRID_TIME_GAP) {
-      step = TIME_STEPS[s];
+  var utc = axisZoneUtc(granularity);
+  var rung = null;
+  for (var r = 0; r < TIME_RUNGS.length; r++) {
+    if (TIME_RUNGS[r].sec < granularity) continue;
+    if ((TIME_RUNGS[r].sec / granularity) * L.slot >= (TIME_RUNGS[r].unit ? GRID_DATE_GAP : GRID_TIME_GAP)) {
+      rung = TIME_RUNGS[r];
       break;
     }
   }
+  if (rung === null) return [];
 
-  /* Past the top of the ladder, or when even the widest step still packs the labels tighter
-     than they can be read, label every Nth bar instead of every bar on a clock boundary.
-     A weekly chart is the case that needs it: no round step above a week lands on a Monday
-     open, so the modulus below matches almost nothing, and the fallback of "the widest step"
-     matched EVERY bar and printed three hundred labels on top of each other. */
-  var everyN = 0;
-  if (step === 0 || (step / granularity) * L.slot < GRID_TIME_GAP) {
-    step = 0;
-    everyN = Math.max(1, Math.ceil(GRID_TIME_GAP / Math.max(0.01, L.slot)));
+  var candles = CHART.candles;
+  var first = candles[L.start] ? timeParts(candles[L.start].t, utc) : null;
+  var last = candles[L.end] ? timeParts(candles[L.end].t, utc) : null;
+  var spansYears = first !== null && last !== null && first.y !== last.y;
+  var level = rungLevel(rung);
+
+  var ticks = [];
+  var prevKey = null;
+  var prevParts = null;
+  for (var i = L.start; i <= L.end; i++) {
+    var candle = candles[i];
+    if (!candle) continue;
+    var parts = timeParts(candle.t, utc);
+    var key = rungKey(rung, parts);
+    if (prevKey === null) {
+      // The bucket the window opens in: the bar before the window says whether this bar starts it.
+      var before = candles[i - 1];
+      prevKey = before ? rungKey(rung, timeParts(before.t, utc)) : null;
+    }
+    var starts = prevKey === null || key !== prevKey;
+    prevKey = key;
+    if (!starts) continue;
+    var x = L.xOf(i);
+    if (x < 0 || x > L.plotWidth) continue;
+
+    var text;
+    var changed = prevParts === null ? 3 : Math.max(level, changedLevel(prevParts, parts));
+    if (prevParts === null) {
+      // The first tick names where the window is.
+      if (level >= 3) text = String(parts.y);
+      else if (level === 2) text = MONTHS[parts.m] + ' ' + parts.y;
+      else text = dayText(parts) + (spansYears ? ' ' + parts.y : '');
+    } else if (changed >= 3) text = String(parts.y);
+    else if (changed === 2) text = level >= 1 ? MONTHS[parts.m] : dayText(parts);
+    else if (changed === 1) text = dayText(parts);
+    else text = clockText(parts);
+    prevParts = parts;
+    ticks.push({ x: x, index: i, text: text, major: changed >= 1 });
   }
+  return ticks;
+}
 
+function drawTimeGrid(ctx, L) {
+  var ticks = timeTicks(L);
   var bottom = L.axisTop;
   ctx.lineWidth = 1 / DPR;
   ctx.strokeStyle = lineInk(0.7);
   ctx.beginPath();
-  var ticks = [];
-  var prevDay = null;
-  for (var i = L.start; i <= L.end; i++) {
-    var candle = CHART.candles[i];
-    if (!candle) continue;
-    if (everyN > 0 ? i % everyN !== 0 : candle.t % step !== 0) continue;
-    var x = L.xOf(i);
-    if (x < 0 || x > L.plotWidth) continue;
-    var day = Math.floor(candle.t / 86400);
-    var isNewDay = prevDay !== null && day !== prevDay;
-    prevDay = day;
-    ctx.moveTo(hair(x), PAD_TOP);
-    ctx.lineTo(hair(x), bottom);
-    ticks.push([x, candle.t, isNewDay]);
+  for (var i = 0; i < ticks.length; i++) {
+    ctx.moveTo(hair(ticks[i].x), PAD_TOP);
+    ctx.lineTo(hair(ticks[i].x), bottom);
   }
   ctx.stroke();
 
   ctx.textAlign = 'center';
   for (var k = 0; k < ticks.length; k++) {
-    var newDay = ticks[k][2];
-    ctx.fillStyle = newDay ? textInk(0.8) : text2(0.8);
-    ctx.fillText(stampOf(ticks[k][1], granularity, newDay), ticks[k][0], bottom + 9);
+    var tick = ticks[k];
+    ctx.fillStyle = tick.major ? textInk(0.8) : text2(0.8);
+    // A label centred on a tick at the edge would lose half of itself; it is slid inside.
+    var half = ctx.measureText(tick.text).width / 2;
+    ctx.fillText(tick.text, clampNum(tick.x, half + 1, L.plotWidth - half - 1), bottom + 9);
   }
   ctx.textAlign = 'left';
+}
+
+/* Below this many pixels per bar the bars are folded per pixel column before they are drawn. */
+var LOD_SLOT_PX = 2;
+
+/* The visible bars folded one per pixel column: the first open, the last close, the extremes,
+   the volume summed. Twenty thousand bars across an 800 px plot is 800 columns, each one an
+   honest bar of what happened in the minutes under that pixel, and a column is what a squeezed
+   chart could show anyway: a wick per bar at a fifth of a pixel each is a smear. Bounded by the
+   plot's width, whatever the window holds. */
+function candleColumns(L) {
+  var columns = [];
+  var current = null;
+  for (var i = L.start; i <= L.end; i++) {
+    var c = CHART.candles[i];
+    if (!c) continue;
+    var x = Math.floor(L.xOf(i));
+    if (current && current.x === x) {
+      if (c.h > current.h) current.h = c.h;
+      if (c.l < current.l) current.l = c.l;
+      current.c = c.c;
+      current.v += c.v || 0;
+      current.last = i;
+      continue;
+    }
+    current = { x: x, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v || 0, first: i, last: i };
+    columns.push(current);
+  }
+  return columns;
 }
 
 /* Four paths for the whole series instead of two calls per candle. At five hundred bars that
    is the difference between a draw that keeps up with a drag and one that does not. */
 function drawCandles(ctx, L) {
+  if (L.slot < LOD_SLOT_PX) {
+    drawCandleColumns(ctx, L, candleColumns(L));
+    return;
+  }
   var bodyWidth = Math.max(1, Math.floor(L.slot * 0.68));
   if (bodyWidth % 2 === 0 && L.slot > 3) bodyWidth -= 1;
   var wickWidth = L.slot > 6 ? Math.max(1, Math.round(L.slot * 0.1)) : 1;
@@ -1247,6 +1440,40 @@ function drawCandles(ctx, L) {
       // A doji still has to be a mark on the screen, so the body has a floor of one pixel.
       var h = Math.max(1, bottom - top);
       ctx.rect(Math.round(cx - half), Math.round(top), bodyWidth, Math.round(h));
+    }
+    ctx.fill();
+  }
+}
+
+/* One wick per column, in the column's own direction, and a one pixel body only where the
+   open and close are a pixel apart: below that a body is a dot on the wick that says nothing. */
+function drawCandleColumns(ctx, L, columns) {
+  var sets = [
+    { colour: C_UP, up: true },
+    { colour: C_DOWN, up: false }
+  ];
+  for (var s = 0; s < sets.length; s++) {
+    var set = sets[s];
+    ctx.strokeStyle = set.colour;
+    ctx.fillStyle = set.colour;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var i = 0; i < columns.length; i++) {
+      var col = columns[i];
+      if (col.c >= col.o !== set.up) continue;
+      var x = col.x + 0.5;
+      ctx.moveTo(x, L.yOf(col.h));
+      ctx.lineTo(x, L.yOf(col.l));
+    }
+    ctx.stroke();
+    ctx.beginPath();
+    for (var j = 0; j < columns.length; j++) {
+      var body = columns[j];
+      if (body.c >= body.o !== set.up) continue;
+      var top = Math.min(L.yOf(body.o), L.yOf(body.c));
+      var h = Math.abs(L.yOf(body.o) - L.yOf(body.c));
+      if (h < 1) continue;
+      ctx.rect(body.x, Math.round(top), 1, Math.round(h));
     }
     ctx.fill();
   }
@@ -1393,10 +1620,15 @@ function drawPaneHistogram(ctx, L, pane, plot) {
   var base = paneYOf(pane, clampNum(0, pane.low, pane.high));
   var signs = plot.signs;
   var sets = plot.signed === true || signs ? [1, -1] : [1];
+  // Squeezed below a pixel a bar, the tallest bar under each column stands for the column:
+  // a sum would leave the pane's scale, and one rect per column is what a pixel can hold.
+  var folded = L.slot < LOD_SLOT_PX;
   for (var s = 0; s < sets.length; s++) {
     var sign = sets[s];
     ctx.fillStyle = sets.length === 1 ? accent(0.34) : sign > 0 ? accent(0.4) : danger(0.45);
     ctx.beginPath();
+    var lastX = null;
+    var lastTop = 0;
     for (var i = L.start; i <= L.end; i++) {
       var v = plot.values[i];
       if (v === null || v === undefined || !isFinite(v)) continue;
@@ -1405,6 +1637,14 @@ function drawPaneHistogram(ctx, L, pane, plot) {
       var y = paneYOf(pane, v);
       var top = Math.min(y, base);
       var height = Math.max(1, Math.abs(base - y));
+      if (folded) {
+        var x = Math.floor(L.xOf(i));
+        if (x === lastX && top >= lastTop) continue;
+        lastX = x;
+        lastTop = top;
+        ctx.rect(x, Math.round(top), 1, Math.round(height));
+        continue;
+      }
       ctx.rect(Math.round(L.xOf(i) - width / 2), Math.round(top), width, Math.round(height));
     }
     ctx.fill();
@@ -1428,10 +1668,9 @@ function drawLevels(ctx, L) {
       // which way (labels.js labelGlyph), and it joins the column like every other label.
       chartLabel({
         y: y < top ? top + 6 : bottom - 6,
-        parts: [
-          { glyph: y < top ? 'up' : 'down', tone: tone, alpha: 0.6 },
-          { text: level.label + ' ' + priceText(level.price, L.decimals), tone: tone, alpha: 0.6 }
-        ],
+        parts: [{ glyph: y < top ? 'up' : 'down', tone: tone, alpha: 0.6 }]
+          .concat(labelLead(level.source, 0.6))
+          .concat([{ text: labelText(level.label) + ' ' + priceText(level.price, L.decimals), tone: tone, alpha: 0.6 }]),
         ring: ring
       });
       continue;
@@ -1445,7 +1684,11 @@ function drawLevels(ctx, L) {
     ctx.lineTo(L.plotWidth, hair(y));
     ctx.stroke();
     ctx.setLineDash([]);
-    chartLabel({ y: y - 7, text: level.label + ' ' + priceText(level.price, L.decimals), tone: tone, ring: ring });
+    chartLabel({
+      y: y - 7,
+      parts: labelLead(level.source).concat([{ text: labelText(level.label) + ' ' + priceText(level.price, L.decimals), tone: tone }]),
+      ring: ring
+    });
   }
 }
 
@@ -1482,9 +1725,8 @@ function drawDrawings(ctx, L) {
     var d = list[i];
     var fromAgent = d.source === 'agent';
     // The server tags an agent's drawing "[agent] trend" as it lands (tagLabel in
-    // src/http/view.ts). Adding the word here as well printed it twice on one label.
-    var label = String(d.label || '');
-    if (fromAgent && label.indexOf('[agent]') < 0) label += ' [agent]';
+    // src/http/view.ts); on the canvas the word comes off and the dot says it.
+    var label = labelText(d.label);
 
     if (d.kind === 'zone' && d.zone) {
       var yHigh = L.yOf(d.zone.high);
@@ -1494,14 +1736,10 @@ function drawDrawings(ctx, L) {
       if (boxBottom <= top || boxTop >= bottom) continue;
       ctx.fillStyle = accent(0.14);
       ctx.fillRect(0, boxTop, L.plotWidth, boxBottom - boxTop);
-      ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
       // Right-aligned, like the trend line labels. Left-aligning collided with the OHLC
       // legend whenever a zone reached the top of the plot, which is exactly what a wide
       // zone does, so the collision was the common case rather than an edge one.
-      ctx.textAlign = 'right';
-      ctx.fillText(label, L.plotWidth - 4, boxTop + 11);
-      ctx.textAlign = 'left';
-      drawSpotRing(ctx, L.plotWidth - 4 - ctx.measureText(label).width, boxTop + 11, ctx.measureText(label).width, chartSpotOn('line', d.id));
+      drawEdgeLabel(ctx, label, fromAgent, L.plotWidth - 4, boxTop + 11, chartSpotOn('line', d.id));
       continue;
     }
 
@@ -1530,12 +1768,24 @@ function drawDrawings(ctx, L) {
 
     // The label rides the right end, where the line is heading.
     var labelY = Math.max(top + 10, Math.min(bottom - 3, y1 - 5));
-    ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
-    ctx.textAlign = 'right';
-    ctx.fillText(label, L.plotWidth - 4, labelY);
-    ctx.textAlign = 'left';
-    drawSpotRing(ctx, L.plotWidth - 4 - ctx.measureText(label).width, labelY, ctx.measureText(label).width, chartSpotOn('line', d.id));
+    drawEdgeLabel(ctx, label, fromAgent, L.plotWidth - 4, labelY, chartSpotOn('line', d.id));
   }
+}
+
+/* A label against the right edge of the plot, for a line or a zone: right-aligned text in the
+   accent, the agent's dot in front when the agent drew it, the spotlight ring around both. */
+function drawEdgeLabel(ctx, label, fromAgent, right, y, spot) {
+  ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
+  ctx.textAlign = 'right';
+  ctx.fillText(label, right, y);
+  ctx.textAlign = 'left';
+  var width = ctx.measureText(label).width;
+  var left = right - width;
+  if (fromAgent) {
+    left -= LABEL_GLYPH_W + 2;
+    labelGlyph(ctx, 'agent', left, y, agentInk(0.85));
+  }
+  drawSpotRing(ctx, left, y, right - left, spot);
 }
 
 /* The spotlight on a label drawn outside the column: the same amber ring the column draws. */
@@ -1558,7 +1808,7 @@ function drawMarks(ctx, L) {
     if (index < L.start - 1 || index > L.end + 1) continue;
     var x = L.xOf(index);
     if (x < 0 || x > L.plotWidth) continue;
-    var markInk = mark.source === 'agent' ? agentInk : green;
+    var markInk = mark.source === 'agent' ? agentInk : accent;
     ctx.strokeStyle = markInk(0.34);
     ctx.setLineDash([2, 4]);
     ctx.beginPath();
@@ -1570,7 +1820,7 @@ function drawMarks(ctx, L) {
     ctx.translate(x - 3, L.axisTop - 4);
     ctx.rotate(-Math.PI / 2);
     ctx.fillStyle = markInk(0.55);
-    ctx.fillText(mark.label, 0, 0);
+    ctx.fillText(labelText(mark.label), 0, 0);
     ctx.restore();
   }
 }
@@ -1658,7 +1908,7 @@ function drawLastPrice(ctx, L) {
       // as a rule that has nearly emptied.
       ctx.fillStyle = lineInk(0.9);
       ctx.fillRect(left, ruleTop, wide, 2);
-      var run = clampNum(closesIn / CHART.view.granularitySec, 0, 1) * wide;
+      var run = clampNum(closesIn / barSpanOf(last.t, CHART.view.granularitySec), 0, 1) * wide;
       ctx.fillStyle = up ? accent(0.45) : danger(0.55);
       ctx.fillRect(left, ruleTop, Math.max(1, Math.round(run)), 2);
     }
@@ -1703,7 +1953,7 @@ function drawCrosshair(ctx, L) {
   }
 
   var candle = CHART.candles[index];
-  var stamp = stampOf(candle.t, CHART.view.granularitySec, false);
+  var stamp = crosshairStamp(candle.t, CHART.view.granularitySec);
   ctx.font = CHART_FONT;
   var width = ctx.measureText(stamp).width + 10;
   var boxX = clampNum(x - width / 2, 0, L.plotWidth - width);
@@ -1743,24 +1993,26 @@ function drawLegend(ctx, L) {
 
   /* The legend is the head of the one label column: the market line first, then one line per
      price overlay, then everything the scene collected (levels, the account's lines, plans),
-     placed together so no two of them can print on one y. Sub-pane lines stay in their panes. */
+     placed together so no two of them can print on one y. Sub-pane lines stay in their panes.
+
+     The four prices sit in columns as wide as the widest price on the axis, so a close that
+     ticks from 999.99 to 1,000.01 moves nothing to its right: a legend that jittered on every
+     tick was the one thing on the surface that looked cheaper than the numbers on it. */
   var items = [];
+  var valueW = Math.max(ctx.measureText(priceText(L.high, L.decimals)).width, ctx.measureText(priceText(L.low, L.decimals)).width);
   var head = [
     { text: identity.product, tone: 'hi' },
-    { text: timeframeOf(identity.granularitySec), tone: 'text2', alpha: 0.85 },
-    { text: 'O', tone: 'text2', alpha: 0.7 },
-    { text: priceText(candle.o, L.decimals), tone: dir, alpha: 1 },
-    { text: 'H', tone: 'text2', alpha: 0.7 },
-    { text: priceText(candle.h, L.decimals), tone: dir, alpha: 1 },
-    { text: 'L', tone: 'text2', alpha: 0.7 },
-    { text: priceText(candle.l, L.decimals), tone: dir, alpha: 1 },
-    { text: 'C', tone: 'text2', alpha: 0.7 },
-    { text: priceText(candle.c, L.decimals), tone: dir, alpha: 1 }
+    { text: timeframeOf(identity.granularitySec), tone: 'text2', alpha: 0.85 }
   ];
+  var ohlc = [['O', candle.o], ['H', candle.h], ['L', candle.l], ['C', candle.c]];
+  for (var v = 0; v < ohlc.length; v++) {
+    head.push({ text: ohlc[v][0], tone: 'text2', alpha: 0.7 });
+    head.push({ text: priceText(ohlc[v][1], L.decimals), tone: dir, alpha: 1, width: valueW });
+  }
   // Round before choosing the sign, or a bar that moved a hundredth of a percent down
   // prints "-0.00%", which reads as a rendering fault rather than as a flat bar.
   var rounded = Math.abs(change) < 0.005 ? 0 : change;
-  head.push({ text: (rounded > 0 ? '+' : rounded < 0 ? '' : ' ') + rounded.toFixed(2) + '%', tone: dir, alpha: 1 });
+  head.push({ text: (rounded > 0 ? '+' : rounded < 0 ? '' : ' ') + rounded.toFixed(2) + '%', tone: dir, alpha: 1, width: ctx.measureText('+00.00%').width });
   items.push({ y: LABEL_TOP, parts: head, legend: true });
 
   for (var o = 0; o < L.overlays.length; o++) {
@@ -1772,30 +2024,47 @@ function drawLegend(ctx, L) {
   var boxes = labelDraw(ctx, laid.placed, chartInk, chartLabelPad());
   for (var b = 0; b < boxes.length; b++) {
     var placed = boxes[b].item;
+    if (!placed.id) continue;
+    CHART_LABEL_BOXES[placed.id] = boxes[b];
     if (!placed.remove) continue;
     // The cross is the last part of the line, so the hit is the tail of the box.
     CHART_HITS.push({ x: boxes[b].x + boxes[b].w - 16, y: boxes[b].y, w: 18, h: boxes[b].h, remove: placed.remove });
   }
 
   for (var p = 0; p < L.panes.length; p++) {
-    drawIndicatorLine(ctx, L, L.panes[p].indicator, 3, L.panes[p].top + 9, index);
+    drawIndicatorLine(ctx, L, L.panes[p].indicator, L.panes[p].top + 9, index);
   }
 
   drawChartNotes(ctx, L);
 }
 
-/* One legend line for a price overlay: its label, its values at the hovered bar, and the cross
-   that removes it, as one item in the column. */
-function legendItem(L, indicator, index, y) {
-  var parts = [{ text: indicator.label, tone: indicator.source === 'agent' ? 'agent' : 'text', alpha: 0.85 }];
+/* One legend line for a study: the agent's dot when the agent added it, the label, its values
+   at the hovered bar, and, under the pointer only, the cross that removes it. The same line
+   serves a price overlay in the column and a sub-pane at the top of its pane. */
+function studyParts(L, indicator, index) {
+  var parts = labelLead(indicator.source, 0.85);
+  parts.push({ text: labelText(indicator.label), tone: indicator.source === 'agent' ? 'agent' : 'text', alpha: 0.85 });
   var plots = indicator.plots || [];
   for (var i = 0; i < plots.length; i++) {
     var value = plots[i].values[index];
     if (value === null || value === undefined || !isFinite(value)) continue;
-    parts.push({ text: priceText(value, L.decimals), tone: 'text2', alpha: 0.9 });
+    parts.push({ text: indicator.pane === 'price' ? priceText(value, L.decimals) : paneText(value), tone: 'text2', alpha: 0.9 });
   }
-  parts.push({ glyph: 'close', tone: 'text2', alpha: 0.7 });
-  return { y: y, parts: parts, remove: indicator.id, ring: chartSpotOn('indicator', indicator.id), legend: true };
+  var hovered = labelHovered(indicator.id);
+  if (hovered) parts.push({ glyph: 'close', tone: 'text2', alpha: 0.7 });
+  return { parts: parts, hovered: hovered };
+}
+
+function legendItem(L, indicator, index, y) {
+  var study = studyParts(L, indicator, index);
+  return {
+    y: y,
+    parts: study.parts,
+    id: indicator.id,
+    remove: study.hovered ? indicator.id : null,
+    ring: chartSpotOn('indicator', indicator.id),
+    legend: true
+  };
 }
 
 /* The bottom rule of the plot, where the chart says what it could not do and offers back the
@@ -1806,7 +2075,7 @@ function legendItem(L, indicator, index, y) {
    while the row they sat on grew into a toolbar. They are here now, in the same ink as the
    legend, next to the bars they are about. */
 function drawChartNotes(ctx, L) {
-  var x = 3;
+  var x = LABEL_X;
   var y = L.axisTop - 6;
 
   if (!VOLUME_ON) {
@@ -1826,44 +2095,38 @@ function drawChartNotes(ctx, L) {
     x += ctx.measureText(full).width + 12;
   }
 
-  // Squeezed past the end of what the source will serve. The window is wider than the data,
-  // which is a fact about the exchange rather than a fault in the chart.
-  var asked = Math.round(CHART.view.barCount);
+  // The left edge of history: older bars on their way, or the venue's own first bar on screen.
+  // A fact about the exchange rather than a fault in the chart, said beside the bars.
   var notes = [];
-  if (CHART.candles.length && CHART.candles.length < asked) notes.push('history ends at ' + CHART.candles.length + ' bars');
+  if (CHART_BACKFILL.inflight) notes.push('loading older bars');
+  else if (historyBegins() && L.start === 0) notes.push('history begins here');
   if (CHART.view.panOffset > 0) notes.push('panned back ' + Math.round(CHART.view.panOffset));
   if (notes.length === 0) return;
   ctx.fillStyle = text2(0.55);
   ctx.fillText(notes.join('   '), x, y);
 }
 
-/* One line per indicator, with the values at the hovered bar and a cross that removes it.
-   The cross is the human's way out of anything an agent put on the chart. */
-function drawIndicatorLine(ctx, L, indicator, x, y, index) {
-  ctx.fillStyle = indicator.source === 'agent' ? agentInk(0.85) : textInk(0.85);
-  ctx.fillText(indicator.label, x, y);
-  var cursor = x + ctx.measureText(indicator.label).width + 8;
-  var plots = indicator.plots || [];
-  for (var i = 0; i < plots.length; i++) {
-    var value = plots[i].values[index];
-    if (value === null || value === undefined || !isFinite(value)) continue;
-    var text = indicator.pane === 'price' ? priceText(value, L.decimals) : paneText(value);
-    ctx.fillStyle = text2(0.9);
-    ctx.fillText(text, cursor, y);
-    cursor += ctx.measureText(text).width + 7;
-  }
-  // The cross is drawn, not typed (labels.js labelGlyph), inside the same hit box as before.
-  labelGlyph(ctx, 'close', cursor, y, text2(0.7));
-  CHART_HITS.push({ x: cursor - 4, y: y - 7, w: 14, h: 14, remove: indicator.id });
-  return y + 13;
+/* The title line of a sub-pane: the same line a price overlay gets in the column, drawn at
+   the top of its own pane through the same column painter, so the two cannot drift in style.
+   The cross is the human's way out of anything an agent put on the chart, and it shows under
+   the pointer. */
+function drawIndicatorLine(ctx, L, indicator, y, index) {
+  var study = studyParts(L, indicator, index);
+  var boxes = labelDraw(ctx, [{ labelY: y, parts: study.parts, ring: chartSpotOn('indicator', indicator.id) }], chartInk, chartLabelPad());
+  var box = boxes[0];
+  if (!box) return y + LABEL_PITCH;
+  CHART_LABEL_BOXES[indicator.id] = box;
+  if (study.hovered) CHART_HITS.push({ x: box.x + box.w - 16, y: box.y, w: 18, h: box.h, remove: indicator.id });
+  return y + LABEL_PITCH;
 }
 
 function timeframeOf(sec) {
   for (var i = 0; i < CHART.timeframes.length; i++) {
     if (CHART.timeframes[i].sec === sec) return CHART.timeframes[i].label;
   }
-  // Anything off the button bar, which an agent can now ask for: 7m, 2h, 1w. Falling
+  // Anything off the button bar, which an agent can now ask for: 7m, 2h, 3d. Falling
   // straight to seconds printed a weekly chart as "604800s".
+  if (sec === MONTH_SEC) return '1M';
   if (sec % 604800 === 0) return sec / 604800 + 'w';
   if (sec % 86400 === 0) return sec / 86400 + 'd';
   if (sec % 3600 === 0) return sec / 3600 + 'h';
@@ -1873,17 +2136,26 @@ function timeframeOf(sec) {
 
 /* ---------- talking to the server ---------- */
 
-async function refreshChart() {
+/* `opts.part` is which part of the payload to ask for. The markup part is the answer to a chart
+   frame: the view, the studies, the levels, the marks and the drawings, without the candles the
+   window already holds. Everything else (a nudge, a gesture, the floor poll) asks for the whole
+   thing. */
+async function refreshChart(opts) {
+  var part = opts && opts.part === 'markup' ? 'markup' : 'full';
   if (CHART_FETCH.inflight) {
     CHART_FETCH.queued = true;
+    if (part === 'full' || CHART_FETCH.queuedPart === '') CHART_FETCH.queuedPart = part;
     return;
   }
   CHART_FETCH.inflight = true;
-  CHART_FETCH.at = Date.now();
+  if (part === 'full') CHART_FETCH.at = Date.now();
   chartBusy(true);
   try {
-    var res = await fetch('/api/chart', { headers: { accept: 'application/json' } });
+    var res = await fetch(part === 'markup' ? '/api/chart?part=markup' : '/api/chart', { headers: { accept: 'application/json' } });
     if (!res.ok) throw new Error('chart returned ' + res.status);
+    if (part === 'full' && res.headers && typeof res.headers.get === 'function') {
+      CHART_FETCH.bytes = Number(res.headers.get('content-length')) || 0;
+    }
     var payload = await res.json();
     applyChart(payload);
   } catch (err) {
@@ -1893,8 +2165,10 @@ async function refreshChart() {
     CHART_FETCH.inflight = false;
     chartBusy(false);
     if (CHART_FETCH.queued) {
+      var next = CHART_FETCH.queuedPart;
       CHART_FETCH.queued = false;
-      void refreshChart();
+      CHART_FETCH.queuedPart = '';
+      void refreshChart({ part: next });
     }
   }
 }
@@ -1924,6 +2198,80 @@ function chartIdentityDiffers(view) {
   );
 }
 
+/* Where a bar opening at `tSec` sits in a series sorted by open time, or -1. Exact: a bar the
+   array does not hold is not a bar it can lay a value on. */
+function indexOfExact(candles, tSec) {
+  var lo = 0;
+  var hi = candles.length - 1;
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1;
+    var t = candles[mid].t;
+    if (t === tSec) return mid;
+    if (t < tSec) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return -1;
+}
+
+/* Whether the candles held are the series a markup part's values were computed over, and
+   where that series starts in them. Null when they are not: another market, another bar
+   length, a venue that changed, or a bar the server has and this window does not. The window
+   answers null by asking for the full part rather than drawing a plot one bar off. */
+function markupOffset(payload) {
+  var series = payload.series;
+  var view = payload.view;
+  if (!series || !view || !CHART.dataView) return null;
+  if (view.product !== CHART.dataView.product || view.granularitySec !== CHART.dataView.granularitySec) return null;
+  if (payload.meta && CHART.meta.source && payload.meta.source !== CHART.meta.source) return null;
+  if (series.count === 0) return CHART.candles.length === 0 ? 0 : null;
+  var first = indexOfExact(CHART.candles, series.first);
+  var last = indexOfExact(CHART.candles, series.last);
+  if (first < 0 || last < 0 || last - first + 1 !== series.count) return null;
+  return first;
+}
+
+/* A payload's candles over the ones held. The bars older than the payload's first stay: they
+   were backfilled behind the left edge on purpose, and a window that dropped them on every
+   refresh would jump to the right the moment a study was added. A different market shares
+   nothing with the old one, so its candles replace the array outright. */
+function mergeCandles(held, incoming, sameIdentity) {
+  if (!sameIdentity || !held.length || !incoming.length) return incoming;
+  var firstT = incoming[0].t;
+  var keep = 0;
+  while (keep < held.length && held[keep].t < firstT) keep += 1;
+  return keep === 0 ? incoming : held.slice(0, keep).concat(incoming);
+}
+
+/* Lay each plot down over the candles held, starting at `offset`: value k of a plot is the
+   value of bar k of the series it was computed over, which is bar offset + k here. The common
+   case, the same series, is the arrays as they came. */
+function rebaseIndicators(list, offset, total) {
+  if (offset === 0) return list;
+  function shift(values) {
+    var out = new Array(total);
+    for (var i = 0; i < total; i++) out[i] = null;
+    for (var k = 0; k < values.length && offset + k < total; k++) out[offset + k] = values[k];
+    return out;
+  }
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var ind = list[i];
+    var plots = [];
+    for (var p = 0; p < (ind.plots || []).length; p++) {
+      var plot = ind.plots[p];
+      var copy = {};
+      for (var key in plot) if (Object.prototype.hasOwnProperty.call(plot, key)) copy[key] = plot[key];
+      copy.values = shift(plot.values || []);
+      plots.push(copy);
+    }
+    var next = {};
+    for (var field in ind) if (Object.prototype.hasOwnProperty.call(ind, field)) next[field] = ind[field];
+    next.plots = plots;
+    out.push(next);
+  }
+  return out;
+}
+
 function applyChart(payload) {
   // The server has now been heard from, so writing our view back is safe.
   CHART_READY = true;
@@ -1931,10 +2279,27 @@ function applyChart(payload) {
   // the tag's ease are both about one series, and carrying either across would fold one
   // market's volume into another's bar and slide the tag between two unrelated prices.
   var wasIdentity = CHART.dataView ? CHART.dataView.product + '|' + CHART.dataView.granularitySec : '';
+  var sameIdentity = Boolean(payload.view) && payload.view.product + '|' + payload.view.granularitySec === wasIdentity;
+  var offset = 0;
+  if (payload.candles) {
+    CHART.candles = mergeCandles(CHART.candles, payload.candles, sameIdentity);
+    if (CHART.view.panOffset <= 0 && CHART.candles.length > CHART_KEEP_MAX) CHART.candles = CHART.candles.slice(-CHART_KEEP_MAX);
+    offset = payload.series ? Math.max(0, indexOfExact(CHART.candles, payload.series.first)) : 0;
+  } else {
+    // The markup part. It was computed over a series; if that is not the one held here, the
+    // whole payload is the answer, and this one is not applied half way.
+    var found = markupOffset(payload);
+    if (found === null) {
+      void refreshChart({ part: 'full' });
+      return;
+    }
+    offset = found;
+  }
   CHART.rev = payload.rev;
-  CHART.candles = payload.candles || [];
+  CHART.candlesRev = typeof payload.candlesRev === 'number' ? payload.candlesRev : CHART.candlesRev;
+  CHART.series = payload.series || CHART.series;
   CHART.meta = payload.meta || CHART.meta;
-  CHART.indicators = payload.indicators || [];
+  CHART.indicators = rebaseIndicators(payload.indicators || [], offset, CHART.candles.length);
   CHART.levels = payload.levels || [];
   CHART.marks = payload.marks || [];
   CHART.drawings = payload.drawings || [];
@@ -1943,7 +2308,12 @@ function applyChart(payload) {
   CHART.agentObjects = payload.agentObjects || 0;
   CHART.lastDriver = payload.lastDriver || 'human';
   if (payload.limits && typeof payload.limits.barCountMax === 'number') {
-    CHART_BARS = { min: payload.limits.barCountMin, max: payload.limits.barCountMax };
+    CHART_BARS = {
+      min: payload.limits.barCountMin,
+      max: payload.limits.barCountMax,
+      panMax: typeof payload.limits.panMax === 'number' ? payload.limits.panMax : CHART_BARS.panMax
+    };
+    if (typeof payload.limits.fetchMargin === 'number') CHART_FETCH_MARGIN = payload.limits.fetchMargin;
   }
   /* Who owns the view. The hand in the window owns it while the hand is on it, and the only
      thing that may move the chart out from under that hand is the agent. Adopting the
@@ -1983,7 +2353,7 @@ function applyChart(payload) {
   }
 
   var last = CHART.candles.length ? CHART.candles[CHART.candles.length - 1] : null;
-  CHART.meta.barCloseSec = last ? Math.max(0, last.t + CHART.view.granularitySec - Date.now() / 1000) : null;
+  CHART.meta.barCloseSec = last ? Math.max(0, bucketCloseOf(last.t, CHART.view.granularitySec) - Date.now() / 1000) : null;
   // The fallback rail moves the tag too. A REST refresh is slower than a socket frame and it
   // teleports harder, so it is the path that most needs the ease.
   if (last && isIdentity === wasIdentity) startPriceTween(last.c);
@@ -2053,7 +2423,9 @@ async function pushChart(extra) {
     // The answer to our own write, so the clamps the server applied land here rather than
     // leaving the window showing something the agent's read does not agree with.
     if (answer && answer.view && CHART_DRAG === null && CHART_PUSH === null) CHART.view = answer.view;
-    if (extra) void refreshChart();
+    // The server's series follows the view just written. A pan into bars the plots were not
+    // computed over is answered by fetching them again, now that the server knows the window.
+    if (extra || plotsShortOnScreen()) void refreshChart();
     else chartInvalidate(true);
   } catch (err) {
     // A failed view write is not worth an alert line: the chart still draws, and the window
@@ -2062,6 +2434,15 @@ async function pushChart(extra) {
   } finally {
     CHART_PUSH_WAIT--;
   }
+}
+
+/* Whether a plot on screen starts to the right of the left edge: the series it was computed
+   over began after the bars now in view, which a pan into backfilled history does. */
+function plotsShortOnScreen() {
+  var L = CHART_LAYOUT;
+  if (!L || !CHART.series || !CHART.indicators.length || !CHART.candles.length) return false;
+  var first = indexOfExact(CHART.candles, CHART.series.first);
+  return first > L.start;
 }
 
 /* A one-line answer under the chart bar, for a refused indicator or a clamped parameter.
@@ -2098,9 +2479,10 @@ function chartGeometry() {
 }
 
 function chartPushed(rev) {
-  // Our own echo. Anything newer came from an agent and has to repaint.
+  // Our own echo. Anything newer came from an agent and has to repaint. What moved is the
+  // markup, so the markup is what is fetched: the candles under it are the same bytes.
   if (typeof rev === 'number' && rev <= CHART_MY_REV) return;
-  void refreshChart();
+  void refreshChart({ part: 'markup' });
 }
 
 /* ---------- the snapshot ----------
@@ -2199,13 +2581,33 @@ var CHART_LIVE = null;
 var CHART_LIVE_HELD = null;
 
 /* Which bucket a moment belongs to. The same arithmetic as bucketStart in
-   src/market/aggregate.ts, week offset included: epoch second zero was a Thursday, so weeks
-   carry an offset to open on Monday and a chart that skips it disagrees with every venue. */
+   src/market/aggregate.ts: a month opens on the first at UTC midnight, and weeks carry an
+   offset to open on Monday, because epoch second zero was a Thursday and a chart that skips
+   the offset disagrees with every venue. */
 function liveBucket(tSec, stepSec) {
+  if (stepSec === MONTH_SEC) {
+    var d = new Date(tSec * 1000);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000;
+  }
   if (stepSec >= 604800 && stepSec % 604800 === 0) {
     return Math.floor((tSec - 345600) / stepSec) * stepSec + 345600;
   }
   return Math.floor(tSec / stepSec) * stepSec;
+}
+
+/* When the bar opening at `openSec` closes: the next first of the month for a month bar, one
+   step on for every other. Mirrors bucketEnd in src/market/aggregate.ts. */
+function bucketCloseOf(openSec, stepSec) {
+  if (stepSec === MONTH_SEC) {
+    var d = new Date(openSec * 1000);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000;
+  }
+  return openSec + stepSec;
+}
+
+/* How long the bar under the tag lasts, for the countdown's rule. */
+function barSpanOf(openSec, stepSec) {
+  return bucketCloseOf(openSec, stepSec) - openSec;
 }
 
 function liveFrameMatches(frame) {
@@ -2216,8 +2618,9 @@ function liveFrameMatches(frame) {
   var step = CHART.dataView.granularitySec;
   if (!(step > 0) || !(frame.baseSec > 0)) return false;
   // A base that does not divide the bucket cannot be folded into it without straddling, and
-  // a bar built from bars that straddle it is a price that never traded.
-  return step % frame.baseSec === 0;
+  // a bar built from bars that straddle it is a price that never traded. A month is whole
+  // days, so any base that divides a day folds into it.
+  return step === MONTH_SEC ? 86400 % frame.baseSec === 0 : step % frame.baseSec === 0;
 }
 
 function candleLive(frame) {
@@ -2272,17 +2675,13 @@ function applyLiveCandle(frame) {
     // actually looking at instead.
     if (CHART.view.panOffset > 0) CHART.view.panOffset += 1;
     // The array only ever grows here, and a window left open for hours would grow it without
-    // bound. The cap is far past anything the server serves, so trimming is the exception.
-    var cap = Math.max(600, Math.round(CHART.view.barCount) * 4 + 200);
-    if (list.length > cap) {
-      var cut = list.length - cap;
-      CHART.candles = list.slice(cut);
-      CHART.view.panOffset = Math.max(0, CHART.view.panOffset - cut);
-    }
+    // bound. Only the oldest go, only over the cap, and only at the live edge: a window panned
+    // into history is looking at exactly the bars a trim would take.
+    else if (list.length > CHART_KEEP_MAX) CHART.candles = list.slice(list.length - CHART_KEEP_MAX);
   }
 
   var newest = CHART.candles[CHART.candles.length - 1];
-  CHART.meta.barCloseSec = Math.max(0, newest.t + step - Date.now() / 1000);
+  CHART.meta.barCloseSec = Math.max(0, bucketCloseOf(newest.t, step) - Date.now() / 1000);
   startPriceTween(newest.c);
   chartInvalidate(true);
 }
@@ -2301,8 +2700,10 @@ function candlesPushed() {
   // refreshed every 3 s, and the two throttles plus the server's own push timer stacked into
   // a price 4.0 s old at p50 (measured 2026-09-01). It is 250 ms now, matching staleAfterSec
   // in src/market/store.ts. This path is the REST fallback: the live rail moves the price
-  // through candleLive() with no fetch at all.
-  var minGap = 250;
+  // through candleLive() with no fetch at all. The floor grows with the payload, because the
+  // series follows the view: a window squeezed to twenty thousand bars is megabytes per
+  // refetch, and four of those a second would be all this window did.
+  var minGap = clampNum(250 + CHART_FETCH.bytes / 2000, 250, 2500);
   if (Date.now() - CHART_FETCH.at < minGap) return;
   void refreshChart();
 }
@@ -2455,17 +2856,100 @@ function regionAt(point) {
   return 'plot';
 }
 
-/* The ceiling is the server's, taken from the payload rather than restated here, so a drag
+/* The ceilings are the server's, taken from the payload rather than restated here, so a drag
    that has run out of room stops where the write would have clamped it instead of springing
-   back a frame later. The pair below is only what holds before the first payload lands. */
-var CHART_BARS = { min: 10, max: 2000 };
+   back a frame later. The values below are only what holds before the first payload lands. */
+var CHART_BARS = { min: 10, max: 20000, panMax: 50000 };
+/* How near the oldest bar held the left edge may come before older bars are asked for. The
+   server serves this many bars beyond the edge, and the window asks when it is inside them. */
+var CHART_FETCH_MARGIN = 30;
 
 function setBarCount(next) {
   CHART.view.barCount = clampNum(next, CHART_BARS.min, CHART_BARS.max);
 }
 
+/* Back is unbounded until the venue's own first bar is on screen: the pan used to stop at four
+   hundred bars, which read as the chart hitting a wall while the venue had years more. Once the
+   series has said it has nothing older, the first bar may come as far as the last quarter of the
+   plot, the same room the newest bar has on the other side. */
 function setPan(next) {
-  CHART.view.panOffset = clampNum(next, -CHART.view.barCount * 0.25, 400);
+  var back = CHART_BARS.panMax;
+  if (CHART.meta.exhaustedBack && CHART.candles.length && typeof CHART.meta.oldest === 'number' && CHART.candles[0].t <= CHART.meta.oldest) {
+    back = Math.max(0, CHART.candles.length - Math.ceil(CHART.view.barCount * 0.25));
+  }
+  CHART.view.panOffset = clampNum(next, -CHART.view.barCount * 0.25, back);
+}
+
+/* ---------- history behind the left edge ----------
+
+   The payload carries the window the view shows and a margin, never the whole history: a
+   window that asked for everything it might ever pan into would be megabytes on every refresh.
+   So the window fetches older bars itself, a page at a time, when its left edge nears the
+   oldest bar it holds, and prepends them. The pan is anchored at the newest bar, so a prepend
+   moves nothing on screen; the plots are laid down again over the longer array and the server's
+   own series follows the pushed view, which brings their values for the new region. */
+var BACKFILL_BARS = 2000;
+var CHART_BACKFILL = { inflight: false, key: '' };
+
+function backfillKey() {
+  var view = CHART.dataView || CHART.view;
+  return view.product + '|' + view.granularitySec + '|' + (CHART.meta.source || '') + '|' + (CHART.view.provider || 'auto');
+}
+
+/* Whether the bars held reach the venue's first bar, which is the one place a pan may stop. */
+function historyBegins() {
+  return Boolean(CHART.meta.exhaustedBack && CHART.candles.length && typeof CHART.meta.oldest === 'number' && CHART.candles[0].t <= CHART.meta.oldest);
+}
+
+function maybeBackfill(L) {
+  if (CHART_BACKFILL.inflight || !CHART.candles.length || !CHART_READY) return;
+  if (historyBegins()) return;
+  if (L.start > CHART_FETCH_MARGIN) return;
+  void fetchOlder();
+}
+
+async function fetchOlder() {
+  var first = CHART.candles[0];
+  var key = backfillKey();
+  var view = CHART.dataView || CHART.view;
+  CHART_BACKFILL = { inflight: true, key: key };
+  chartInvalidate(false);
+  try {
+    var url =
+      '/api/candles?product=' + encodeURIComponent(view.product) +
+      '&granularity=' + view.granularitySec +
+      '&before=' + first.t +
+      '&limit=' + BACKFILL_BARS +
+      '&provider=' + encodeURIComponent(CHART.view.provider || 'auto');
+    var res = await fetch(url, { headers: { accept: 'application/json' } });
+    if (!res.ok) throw new Error('candles returned ' + res.status);
+    var older = await res.json();
+    var exhausted = res.headers.get('x-candle-exhausted-back') === 'true';
+    var oldest = Number(res.headers.get('x-candle-oldest'));
+    // Another market or bar length while this was on the wire: these bars are someone else's.
+    if (backfillKey() !== key || !CHART.candles.length) return;
+    prependCandles(older);
+    CHART.meta.exhaustedBack = exhausted;
+    if (isFinite(oldest) && oldest > 0) CHART.meta.oldest = oldest;
+    else if (exhausted) CHART.meta.oldest = CHART.candles[0].t;
+  } catch (err) {
+    // The chart still draws what it holds; the next frame near the edge asks again.
+  } finally {
+    CHART_BACKFILL.inflight = false;
+    chartInvalidate(true);
+  }
+}
+
+/* Older bars in front of the ones held. Only the ones actually older go in, in case the two
+   windows overlap by a bar, and every plot is laid down again over the longer array. */
+function prependCandles(older) {
+  if (!older || !older.length) return;
+  var firstT = CHART.candles[0].t;
+  var fresh = [];
+  for (var i = 0; i < older.length; i++) if (older[i].t < firstT) fresh.push(older[i]);
+  if (!fresh.length) return;
+  CHART.candles = fresh.concat(CHART.candles);
+  CHART.indicators = rebaseIndicators(CHART.indicators, fresh.length, CHART.candles.length);
 }
 
 /* The range in force right now. Reading it from the view once the scale is manual, rather
@@ -2744,7 +3228,7 @@ function wireChart() {
   // event, and it only touches the hud.
   setInterval(function () {
     var last = CHART.candles.length ? CHART.candles[CHART.candles.length - 1] : null;
-    CHART.meta.barCloseSec = last ? Math.max(0, last.t + CHART.view.granularitySec - Date.now() / 1000) : null;
+    CHART.meta.barCloseSec = last ? Math.max(0, bucketCloseOf(last.t, CHART.view.granularitySec) - Date.now() / 1000) : null;
     chartInvalidate(false);
   }, 1000);
 }

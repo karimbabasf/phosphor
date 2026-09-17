@@ -14,7 +14,10 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
-export const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'] as const;
+// The timeframes a condition may watch a bar close on. The week folds from minutes like the
+// rest (Monday open, src/market/aggregate.ts); the month is not here, because a plan that
+// waits a month for a bar to close is not a plan the runner should be holding.
+export const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d', '1w'] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
 export const TIMEFRAME_SEC: Record<Timeframe, number> = {
   '1m': 60,
@@ -23,6 +26,7 @@ export const TIMEFRAME_SEC: Record<Timeframe, number> = {
   '1h': 3600,
   '4h': 14_400,
   '1d': 86_400,
+  '1w': 604_800,
 };
 
 // The venue's own floor is $10 after lot rounding. Eleven leaves the rounding somewhere to go.

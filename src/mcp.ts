@@ -588,7 +588,7 @@ registerLeadRead(
 );
 registerRead(
   'market_search',
-  'Finds a market to chart. Takes anything a person would say ("btc", "bitcoin", "wif", "PEPE-USD") and returns the product id chart_set_view wants, plus near matches when the query is ambiguous. Every result can be charted on any timeframe from 1m to 1w. Read-only, changes nothing.',
+  'Finds a market to chart. Takes anything a person would say ("btc", "bitcoin", "wif", "PEPE-USD") and returns the product id chart_set_view wants, plus near matches when the query is ambiguous. Every result can be charted on any timeframe from 1m to 1M. Read-only, changes nothing.',
   { query: z.string(), limit: z.number().int().optional() },
 );
 /* The only tool that reaches outside this machine, and the shape is the point. You send a search
@@ -756,15 +756,17 @@ registerLeadView(
   'chart_draw',
   [
     'Draws on the chart: the whole markup in ONE call. Applied in this order: clear, view, indicators,',
-    'levels, marks, lines, zones. Omit anything you are not changing. Returns a digest of the chart as it',
+    'levels, marks, lines, zones. Every field takes a list, so draw everything for one idea in one call:',
+    'its levels, lines, zones and marks together. The window repaints once per call, and a markup split',
+    'over several calls lands piece by piece. Omit anything you are not changing. Returns a digest of the chart as it',
     'now stands (product, timeframe, last price, each indicator with its last values and state line, the',
     'counts of what is drawn) plus `refused`, one line per entry that could not be applied. One bad entry',
     'never stops the rest, so read `refused` rather than assuming everything landed.',
     '',
     'clear: mine (only what YOU drew; the one to reach for), agent (everything every agent drew), all (the',
     'human\'s too, only when they ask in those words). A plan drawn on the chart is never cleared here.',
-    'view: product (anything market_search resolves), timeframe (1m to 1w, including ones no venue serves',
-    'natively like 7m), bars across the plot, provider (auto, hyperliquid or coinbase; a venue that does not',
+    'view: product (anything market_search resolves), timeframe (1m to 1M, including ones no venue serves',
+    'natively like 7m; 1M is a calendar month and 1w opens on Monday), bars across the plot, provider (auto, hyperliquid or coinbase; a venue that does not',
     'list the product is refused rather than served from the other one).',
     'indicators: { preset } applies a whole package (wave, trend, momentum, volatility, ichimoku, volume,',
     'scalp, clean) and clears YOUR OWN studies first so it can never be refused by the three-pane cap;',
@@ -781,8 +783,8 @@ registerLeadView(
     view: z
       .object({
         product: z.string().optional(),
-        timeframe: z.string().optional().describe('a count and a unit: 1m 5m 15m 1h 4h 1d 1w, or 7m, 90m'),
-        bars: z.number().optional().describe('bars across the plot, 10 to 2000'),
+        timeframe: z.string().optional().describe('a count and a unit: 1m 5m 15m 1h 4h 1d 1w 1M, or 7m, 90m. 1M is a calendar month, 1m a minute'),
+        bars: z.number().optional().describe('bars across the plot, 10 to 20000'),
         provider: z.enum(['auto', 'hyperliquid', 'coinbase']).optional(),
       })
       .optional(),
@@ -950,7 +952,7 @@ registerView('trade_clear', `Removes what you put on the trading surface. ${TRAD
 const PLAN_REF = z.object({ px: z.number().optional(), line: z.string().optional().describe('a drawn line id like tl_3') });
 const PLAN_CONDITION = z.object({
   type: z.enum(['close', 'volume', 'time']),
-  tf: z.enum(['1m', '5m', '15m', '1h', '4h', '1d']).optional(),
+  tf: z.enum(['1m', '5m', '15m', '1h', '4h', '1d', '1w']).optional(),
   is: z.enum(['above', 'below']).optional(),
   at: PLAN_REF.optional(),
   wick: z.literal('through').optional().describe('close: the bar must first wick through the level and close back on the right side (a reclaim)'),

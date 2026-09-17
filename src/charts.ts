@@ -41,12 +41,19 @@ export function createChartSlots(
   // schema accepts `tl_N` only and the watcher reads the primary only (src/main.ts), so a
   // comparison chart minting its own `tl_1` was a line that resolved to a different one.
   const counters: Record<string, number> = {};
-  const drawingsFor = (index: number): DrawingStore => createDrawingStore({ now, counters, prefix: index === 0 ? '' : `c${index}_` });
-  const primary: ChartSlot = {
-    store: createChartStore(defaultProduct, now, resolve),
-    drawings: drawingsFor(0),
-    index: 0,
+  // A line landing in the drawing store moves the chart's revision, so the frame that announces
+  // it carries a number the window has not seen. See onChange in src/drawings.ts.
+  const slotFor = (index: number, product: string): ChartSlot => {
+    const store = createChartStore(product, now, resolve);
+    const drawings = createDrawingStore({
+      now,
+      counters,
+      prefix: index === 0 ? '' : `c${index}_`,
+      onChange: (source, by) => store.touch(source, by),
+    });
+    return { store, drawings, index };
   };
+  const primary: ChartSlot = slotFor(0, defaultProduct);
   const slots: ChartSlot[] = [primary];
 
   function slot(n: number): ChartSlot | null {
@@ -75,7 +82,7 @@ export function createChartSlots(
       const want = resolved[i] as { product: string; granularitySec: number };
       let held = slots[i];
       if (held === undefined) {
-        held = { store: createChartStore(want.product, now, resolve), drawings: drawingsFor(i), index: i };
+        held = slotFor(i, want.product);
         slots[i] = held;
       }
       const before = held.store.state().view.product;

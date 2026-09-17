@@ -11,9 +11,12 @@ import type { Candle } from '../../src/types.ts';
 import {
   aggregate,
   baseBarsNeeded,
+  bucketEnd,
   bucketStart,
   chooseBase,
   formatTimeframe,
+  MAX_TIMEFRAME_SEC,
+  MONTH_SEC,
   parseTimeframe,
 } from '../../src/market/aggregate.ts';
 
@@ -40,12 +43,28 @@ test('a timeframe is read the way a person writes it', () => {
 });
 
 test('a timeframe nobody can serve is refused rather than guessed', () => {
-  assert.equal(parseTimeframe('1M'), 60, 'lowercased M is minutes, which is what a person means');
   assert.equal(parseTimeframe('banana'), null);
   assert.equal(parseTimeframe(''), null);
   assert.equal(parseTimeframe('0m'), null);
   assert.equal(parseTimeframe('-5m'), null);
-  assert.equal(parseTimeframe('99w'), null, 'past a week there is no venue history to fold');
+  assert.equal(parseTimeframe('99w'), null, 'past a week the only bucket is the month');
+  assert.equal(parseTimeframe('2w'), null);
+  assert.equal(parseTimeframe('30d'), null, 'a fixed thirty days is what the month sentinel exists to not be');
+  assert.equal(parseTimeframe(2_000_000), null);
+  assert.equal(parseTimeframe('2M'), null, 'two months is not a bucket any venue or person keeps');
+});
+
+test('1M is a calendar month and 1m is a minute: the one case-sensitive letter', () => {
+  // The month is not a fixed number of seconds, so it travels as one sentinel that every
+  // bucketing step recognises and answers with the calendar.
+  assert.equal(parseTimeframe('1M'), MONTH_SEC);
+  assert.equal(parseTimeframe('1mo'), MONTH_SEC);
+  assert.equal(parseTimeframe('1 month'), MONTH_SEC);
+  assert.equal(parseTimeframe('1m'), 60);
+  assert.equal(parseTimeframe('1 minute'), 60);
+  assert.equal(parseTimeframe(MONTH_SEC), MONTH_SEC);
+  assert.equal(MAX_TIMEFRAME_SEC, MONTH_SEC);
+  assert.equal(formatTimeframe(MONTH_SEC), '1M');
 });
 
 test('a label prefers the largest unit that divides cleanly', () => {
@@ -54,6 +73,43 @@ test('a label prefers the largest unit that divides cleanly', () => {
   assert.equal(formatTimeframe(90), '90s');
   assert.equal(formatTimeframe(86_400), '1d');
   assert.equal(formatTimeframe(604_800), '1w');
+});
+
+test('a month opens on the first of the month at UTC midnight and closes on the next first', () => {
+  const midFeb = Math.floor(Date.UTC(2026, 1, 15, 12, 0, 0) / 1000);
+  assert.equal(new Date(bucketStart(midFeb, MONTH_SEC) * 1000).toISOString(), '2026-02-01T00:00:00.000Z');
+  assert.equal(new Date(bucketEnd(bucketStart(midFeb, MONTH_SEC), MONTH_SEC) * 1000).toISOString(), '2026-03-01T00:00:00.000Z');
+  const newYearsEve = Math.floor(Date.UTC(2026, 11, 31, 23, 59, 0) / 1000);
+  assert.equal(new Date(bucketStart(newYearsEve, MONTH_SEC) * 1000).toISOString(), '2026-12-01T00:00:00.000Z');
+  assert.equal(new Date(bucketEnd(bucketStart(newYearsEve, MONTH_SEC), MONTH_SEC) * 1000).toISOString(), '2027-01-01T00:00:00.000Z');
+  // Every other step is a fixed number of seconds.
+  assert.equal(bucketEnd(1_700_000_000, 60), 1_700_000_060);
+});
+
+test('daily bars fold into calendar months, February with its twenty eight days', () => {
+  const days: Candle[] = [];
+  const start = Math.floor(Date.UTC(2026, 0, 1) / 1000);
+  for (let i = 0; i < 90; i++) days.push({ t: start + i * 86_400, o: 100 + i, h: 110 + i, l: 90 + i, c: 105 + i, v: 1 });
+  const months = aggregate(days, 86_400, MONTH_SEC);
+  assert.equal(months.length, 3);
+  assert.deepEqual(
+    months.map((m) => new Date(m.t * 1000).toISOString().slice(0, 10)),
+    ['2026-01-01', '2026-02-01', '2026-03-01'],
+  );
+  const feb = months[1] as Candle;
+  assert.equal(feb.o, 100 + 31, 'opens on the first of February');
+  assert.equal(feb.c, 105 + 31 + 27, 'closes on the twenty eighth');
+  assert.equal(feb.v, 28, 'twenty eight days of volume');
+  assert.equal((months[2] as Candle).v, 90 - 31 - 28, 'the forming March bar holds what it has');
+});
+
+test('a month is built from days on either venue, never from a base that straddles a month', () => {
+  const hyperliquid = [60, 180, 300, 900, 1800, 3600, 7200, 14_400, 28_800, 43_200, 86_400, 259_200];
+  const coinbase = [60, 300, 900, 3600, 21_600, 86_400];
+  assert.equal(chooseBase(MONTH_SEC, hyperliquid), 86_400);
+  assert.equal(chooseBase(MONTH_SEC, coinbase), 86_400);
+  assert.equal(chooseBase(604_800, hyperliquid), 86_400, 'a week folds from days, so it opens on Monday everywhere');
+  assert.ok(baseBarsNeeded(12, 86_400, MONTH_SEC) >= 12 * 31, 'a year of months needs a year of days');
 });
 
 test('folding minutes into 5m keeps open, close and the extremes', () => {

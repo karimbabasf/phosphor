@@ -225,6 +225,7 @@
       if (list[i].sec === sec) return String(list[i].label);
     }
     if (!isFinite(sec)) return '';
+    if (sec === 2629746) return '1M';
     if (sec % 604800 === 0) return sec / 604800 + 'w';
     if (sec % 86400 === 0) return sec / 86400 + 'd';
     if (sec % 3600 === 0) return sec / 3600 + 'h';
@@ -248,16 +249,27 @@
     return n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
   }
 
-  /* Bars of an hour or more span days, so their stamps carry the day: three
-     times of day across a week of 4h bars name nothing. */
-  function stampOf(tSec, granularity) {
+  /* The three stamps under a comparison chart: the first always names its day, and
+     a later one names its day again only when it is a different day, so three times
+     of day across a week of 4h bars can never read as one afternoon. Intraday bars
+     are read on the person's clock; a daily bar is the venue's day, in UTC, like the
+     engine's own axis (ui/chart/chart.js). */
+  function stampOf(tSec, granularity, firstSec) {
+    var utc = granularity >= 86400;
     var d = new Date(tSec * 1000);
-    var day = d.getDate() + ' ' + MONTHS[d.getMonth()];
-    if (granularity >= 86400) return day;
-    var hh = d.getHours();
-    var mm = d.getMinutes();
+    var f = new Date(firstSec * 1000);
+    var y = utc ? d.getUTCFullYear() : d.getFullYear();
+    var m = utc ? d.getUTCMonth() : d.getMonth();
+    var day = (utc ? d.getUTCDate() : d.getDate()) + ' ' + MONTHS[m];
+    var sameDay = utc
+      ? d.getUTCFullYear() === f.getUTCFullYear() && d.getUTCMonth() === f.getUTCMonth() && d.getUTCDate() === f.getUTCDate()
+      : d.getFullYear() === f.getFullYear() && d.getMonth() === f.getMonth() && d.getDate() === f.getDate();
+    if (granularity >= 2629746) return MONTHS[m] + ' ' + y;
+    if (granularity >= 86400) return tSec === firstSec || y !== f.getUTCFullYear() ? day + ' ' + y : day;
+    var hh = utc ? d.getUTCHours() : d.getHours();
+    var mm = utc ? d.getUTCMinutes() : d.getMinutes();
     var time = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
-    return granularity >= 3600 ? day + ' ' + time : time;
+    return tSec === firstSec || !sameDay ? day + ' ' + time : time;
   }
 
   function alpha(hex, a) {
@@ -353,7 +365,7 @@
     /* The time axis: the first bar, the middle one and the last. */
     var stamps = [start, Math.round((start + end) / 2), end];
     for (var s = 0; s < stamps.length; s += 1) {
-      var label = stampOf(candles[stamps[s]].t, granularity);
+      var label = stampOf(candles[stamps[s]].t, granularity, candles[start].t);
       var tx = xOf(stamps[s]);
       ctx.textAlign = s === 0 ? 'left' : s === stamps.length - 1 ? 'right' : 'center';
       ctx.fillText(label, s === 0 ? Math.max(2, tx) : s === stamps.length - 1 ? Math.min(plotW - 2, tx) : tx, bottom + AXIS_H / 2 + 1);

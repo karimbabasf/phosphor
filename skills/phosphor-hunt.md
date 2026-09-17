@@ -84,7 +84,7 @@ says `R undefined, sizes are relative`. **Never invent a dollar figure from the 
 | scalp, 1m, 5m, right now | hours | 4h / 1h / 5m | 2 | every trigger bar close |
 | intraday, 15m, 1h, today | one session | 1d / 4h / 1h | 3 | 4h close |
 | swing, 4h, 1d, this week | days to two weeks | 1w / 1d / 4h | 4 | daily close |
-| position, 1w, months | weeks | 1w / 1d / 1d | 3 | weekly close |
+| position, 1w, 1M, months | weeks | 1M / 1w / 1d | 3 | weekly close |
 
 Both stated, neither ambiguous: begin. One missing: take the row above (`normal`, `swing`), say
 which default you took in the same line, and begin. **A hunt that stops to ask has failed at the
@@ -173,8 +173,9 @@ and wait, and do not spawn a fourth.
 ## Marking the chart
 
 Draw only the winner, on its trigger timeframe. One marked chart is a tool; four half-marked
-charts are a mess nobody reads. One `chart_draw` with `clear: "mine"` before a new thesis. Then
-one line saying what you drew. The batching rules and `$ref` are in phosphor-analysis.
+charts are a mess nobody reads. One `chart_draw` with `clear: "mine"` before a new thesis, and
+everything for that thesis (levels, lines, zones, marks) in that one call. Then one line saying
+what you drew. The batching rules and `$ref` are in phosphor-analysis.
 
 ## The board
 

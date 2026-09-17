@@ -102,7 +102,10 @@
       if (charted && typeof window.candleLive === 'function') window.candleLive(frame);
     });
     events.on('chart', function (frame) {
-      if (charted && typeof window.chartPushed === 'function') window.chartPushed(frame.rev);
+      // A comparison chart's frame is the mini renderer's (ui/chart/mini.js): the primary
+      // used to refetch its whole payload on it, for a chart that had not changed.
+      var slot = frame && typeof frame.slot === 'number' ? frame.slot : 0;
+      if (slot === 0 && charted && typeof window.chartPushed === 'function') window.chartPushed(frame.rev);
     });
     /* The server asking for a picture. A window that has never shown the
        chart has nothing to picture, and the server's three second wait says so

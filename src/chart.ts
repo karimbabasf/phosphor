@@ -18,7 +18,7 @@ import { lineAt } from './analysis/trendline.ts';
 import { indicatorSpec, normaliseParams, warmupBars, pctChange } from './indicators.ts';
 import { atr as wilderAtr } from './analysis/regime.ts';
 import type { IndicatorResult, IndicatorSpec } from './indicators.ts';
-import { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe } from './market/aggregate.ts';
+import { bucketEnd, MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, MONTH_SEC, parseTimeframe, formatTimeframe, servable } from './market/aggregate.ts';
 
 export type PriceScale = { mode: 'auto' } | { mode: 'manual'; low: number; high: number };
 
@@ -143,8 +143,10 @@ export type Housekeeping = {
 };
 
 // The timeframe vocabulary lives in the market layer, because that is what has to serve it.
-export { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe };
+export { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, MONTH_SEC, parseTimeframe, formatTimeframe };
 
+// The button bar. 1w folds from days so it opens on Monday; 1M is a calendar month, its
+// seconds a sentinel the market layer answers with the calendar (src/market/aggregate.ts).
 export const TIMEFRAMES: readonly { label: string; sec: number }[] = [
   { label: '1m', sec: 60 },
   { label: '5m', sec: 300 },
@@ -154,25 +156,28 @@ export const TIMEFRAMES: readonly { label: string; sec: number }[] = [
   { label: '4h', sec: 14400 },
   { label: '8h', sec: 28800 },
   { label: '1d', sec: 86400 },
+  { label: '1w', sec: 604800 },
+  { label: '1M', sec: MONTH_SEC },
 ];
 
-// The window is allowed to squeeze until the renderer stops being able to say anything, not
-// until a round number runs out. Two thousand one-minute bars is a day and a half on screen;
-// past that the bars are thinner than the hairline that separates them. What the window can
-// actually be filled with is a separate question, and the sources answer it: the chart draws
-// the history it was given and leaves the rest of the window empty rather than pretending.
+// The window squeezes and pans as far as the cache can hold, not to a round number. What the
+// window can actually be filled with is a separate question, and the venues answer it: the
+// chart draws the history it was given, backfills behind the left edge as the pan reaches it,
+// and says where the venue's history begins rather than pretending.
 export const LIMITS = {
   barCountMin: 10,
-  barCountMax: 2000,
+  // Twenty thousand bars across the plot. Past two a pixel the renderer folds bars per pixel
+  // column (candleColumns in ui/chart/chart.js), so a squeeze this deep is a column per pixel
+  // on any screen there is rather than a smear of wicks.
+  barCountMax: 20000,
   barCountDefault: 120,
-  panMax: 400,
-  historyMax: 2000,
-  // The floor exists because asking only for what is on screen is what made history look
-  // broken. The default window is 120 bars, so the old request was about 150, and a pan to
-  // the left ran off the end of the data within one gesture. The rails serve two thousand
-  // bars in one call, the cache keeps them, and the fill happens behind the render, so
-  // depth now costs a background request rather than a wait.
-  historyFloor: 1500,
+  // Bars back from the newest the view may sit at. It is the cache's depth (src/market/store.ts
+  // maxBars): the window clamps earlier than this, at the venue's own first bar, once the
+  // series has said it has nothing older.
+  panMax: 50000,
+  historyMax: 50000,
+  // Bars served beyond the left edge of the window, so a small pan does not run off the data
+  // before the backfill behind it lands.
   fetchMargin: 30,
   maxOverlays: 8,
   maxPanes: 3,
@@ -191,11 +196,12 @@ export function timeframeLabel(sec: number): string {
 /* One entry of a chart_scan timeframe list, resolved to seconds, or null if it is not a
    timeframe at all.
  *
- * The button-bar list stops at 1d, so matching against TIMEFRAMES alone cannot see `1w`. The
- * scan handler used to fall back to snapTimeframe(Number(entry)) for a miss, and Number('1w')
- * is NaN: every comparison inside the snap is then false, so it returned the first entry in the
- * list and a weekly scan silently answered with a MINUTE chart under whatever label was asked
- * for. Nothing downstream could tell that the higher timeframe had never been read.
+ * The button-bar list is not the set of legal timeframes (7m, 90m and 2h are not on it), so
+ * matching against TIMEFRAMES alone cannot see them. The scan handler used to fall back to
+ * snapTimeframe(Number(entry)) for a miss, and Number('7m') is NaN: every comparison inside the
+ * snap is then false, so it returned the first entry in the list and the scan silently answered
+ * with a MINUTE chart under whatever label was asked for. Nothing downstream could tell that the
+ * higher timeframe had never been read.
  *
  * Null rather than a nearest guess, because the caller needs to be able to say "that is not a
  * timeframe" out loud. Snapping is right for a number that is merely unservable (47 seconds);
@@ -285,6 +291,10 @@ export function createChartStore(
   setLevel(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   setMark(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   clear(what: string, by?: string | null): Outcome;
+  // A change to what the chart shows that was made outside this store: a line or a zone landing
+  // in src/drawings.ts. It moves the revision exactly as a level does, because the window watches
+  // one number and a frame carrying the old one is dropped as the echo of its own last write.
+  touch(source: Source, by?: string | null): void;
   setGeometry(geometry: ChartGeometry): void;
   agentObjects(): number;
   // `drawings` is the drawing store's list, handed in because the sloped objects live there
@@ -386,15 +396,15 @@ export function createChartStore(
       }
     }
 
-    // Any timeframe from a second to a week, not just the twelve on the button bar.
-    // The twelve are what a hand can click; an agent asked for 7m or 90s and used to be
+    // Any timeframe from a minute to a month, not just the ten on the button bar.
+    // The ten are what a hand can click; an agent asked for 7m or 90s and used to be
     // refused or silently snapped to something it did not ask for. The market layer folds
     // a base interval the venue does serve into whatever was requested, so the enum is a
     // convenience now and not a constraint. See src/market/aggregate.ts.
     if (typeof patch.granularitySec === 'number' && Number.isFinite(patch.granularitySec)) {
       const asked = Math.floor(patch.granularitySec);
-      if (asked < MIN_TIMEFRAME_SEC || asked > MAX_TIMEFRAME_SEC) {
-        return { ok: false, notes, error: `timeframe out of range: ${asked}s. between 1m and 1w` };
+      if (asked < MIN_TIMEFRAME_SEC || !servable(asked)) {
+        return { ok: false, notes, error: `timeframe out of range: ${asked}s. between 1m and 1w, or 1M` };
       }
       if (asked !== view.granularitySec) {
         view.granularitySec = asked;
@@ -406,7 +416,7 @@ export function createChartStore(
         return {
           ok: false,
           notes,
-          error: `unknown timeframe: ${patch.timeframe}. use a count and a unit, like 7m, 4h or 1w`,
+          error: `unknown timeframe: ${patch.timeframe}. use a count and a unit, like 7m, 4h, 1w or 1M`,
         };
       }
       if (parsed < MIN_TIMEFRAME_SEC) {
@@ -684,8 +694,13 @@ export function createChartStore(
     };
   }
 
-  // Bars to fetch: the window, the pan, a margin, and the longest indicator warmup so an
-  // overlay is drawn all the way to the left edge instead of starting mid screen.
+  // Bars to serve: the window, the pan, a margin, and the longest indicator warmup so an
+  // overlay is drawn all the way to the left edge instead of starting mid screen. It follows
+  // the view rather than sitting on a floor: the payload carries this many candles and this
+  // many values per indicator plot, so a floor of fifteen hundred bars under a 120-bar window
+  // was two hundred kilobytes of series on every refresh to draw a screen that used a tenth of
+  // it. The depth the window can pan into is a separate question, answered by the paged
+  // backfill behind the left edge, not by what one payload carries.
   function historyNeeded(): number {
     let warmup = 0;
     for (const ind of state.indicators) {
@@ -695,7 +710,7 @@ export function createChartStore(
       if (need > warmup) warmup = need;
     }
     const want = state.view.barCount + Math.max(0, state.view.panOffset) + LIMITS.fetchMargin + warmup;
-    return Math.min(LIMITS.historyMax, Math.max(LIMITS.historyFloor, Math.ceil(want)));
+    return Math.min(LIMITS.historyMax, Math.max(LIMITS.barCountMin, Math.ceil(want)));
   }
 
   return {
@@ -708,6 +723,9 @@ export function createChartStore(
     setLevel,
     setMark,
     clear,
+    touch(source: Source, by?: string | null): void {
+      bump(source, by);
+    },
     housekeeping,
     setGeometry(geometry: ChartGeometry): void {
       // Geometry is a report about the renderer, not a change to the chart, so it does not
@@ -825,7 +843,7 @@ export function digestSeries(candles: Candle[], granularitySec: number, nowSec: 
     atr,
     atrPct: newest.c > 0 ? (atr / newest.c) * 100 : null,
     trend,
-    barClosesInSec: Math.max(0, newest.t + granularitySec - nowSec),
+    barClosesInSec: Math.max(0, bucketEnd(newest.t, granularitySec) - nowSec),
     newestBarTime: isoOf(newest.t),
   };
 }
@@ -893,7 +911,7 @@ export function buildRead(args: ReadArgs): unknown {
       live: view.panOffset <= 0,
       from: firstBar === null ? null : { epochSec: firstBar.t, iso: isoOf(firstBar.t) },
       to: lastBar === null ? null : { epochSec: lastBar.t, iso: isoOf(lastBar.t) },
-      spansSec: firstBar !== null && lastBar !== null ? lastBar.t + view.granularitySec - firstBar.t : null,
+      spansSec: firstBar !== null && lastBar !== null ? bucketEnd(lastBar.t, view.granularitySec) - firstBar.t : null,
     },
 
     price: {
@@ -923,7 +941,7 @@ export function buildRead(args: ReadArgs): unknown {
             c: newest.c,
             v: newest.v,
             direction: newest.c >= newest.o ? 'up' : 'down',
-            closesInSec: Math.max(0, newest.t + view.granularitySec - nowSec),
+            closesInSec: Math.max(0, bucketEnd(newest.t, view.granularitySec) - nowSec),
           },
 
     indicators: computed.map(({ indicator, result }) => ({
@@ -1045,7 +1063,7 @@ export function buildCompactRead(args: ReadArgs & { chart: number }): unknown {
             l: short(newest.l),
             c: short(newest.c),
             v: short(newest.v),
-            closesInSec: Math.max(0, newest.t + view.granularitySec - nowSec),
+            closesInSec: Math.max(0, bucketEnd(newest.t, view.granularitySec) - nowSec),
           },
     indicators: args.computed.map(({ indicator, result }) => ({
       id: indicator.id,

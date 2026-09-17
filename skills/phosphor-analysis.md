@@ -48,7 +48,8 @@ ad hoc: with five timeframes one always agrees with any thesis, and you will fin
 | 5m | 4h | 1h | 5m |
 | 15m, 1h | 1d | 4h | as asked |
 | 4h | 1w | 1d | 4h |
-| 1d, 1w | 1w | 1d | 4h or 1d |
+| 1d | 1w | 1d | 4h or 1d |
+| 1w, 1M | 1M | 1w | 1d |
 
 **3. The measurements.** One `chart_batch` on the bias and structure timeframes: `atr`,
 `pivots`, `levels` twice (0.4 and 0.8 x ATR: keep only clusters that survive both), `range`,
@@ -93,10 +94,10 @@ already on. A gate nothing ever clears is not conservative, it is broken.
 dollars divided by stop distance.
 
 **9. Mark the chart.** SESSION and DEEP, not optional. One `chart_draw` on the trigger
-timeframe: `clear: "mine"` first, `view` with 200 to 400 bars, `indicators` the plan used and
-no others, `levels` labelled with what they are rather than their price, `marks` on the bar the
-thesis turns on, `lines` and `zones` the plan depends on. It answers with a digest, so it needs
-no `chart_read` after it.
+timeframe, all of one idea in that one call: `clear: "mine"` first, `view` with 200 to
+400 bars, `indicators` the plan used and no others, `levels` labelled with what they are rather
+than their price, `marks` on the bar the thesis turns on, `lines` and `zones` the plan depends
+on. It answers with a digest, so it needs no `chart_read` after it.
 
 **10. Draw the idea.** `trade_plan` with the plan: symbol, side, sizeUsd, leverage, entry, stop,
 target, the `when` conditions, a note. It is drawn on the chart and listed under Waiting as an
