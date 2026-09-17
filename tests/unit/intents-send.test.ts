@@ -239,6 +239,21 @@ test('the dry quote is asked for the same asset both ways, credited inside inten
   assert.equal(q.recipientType, 'INTENTS');
   assert.match(sim.summary, /credited to 0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050 inside the same verifier/);
   assert.match(sim.summary, /always waits for your click/);
+  // The facts the send card draws, and the receiver's balance read at simulate time as its sentence.
+  assert.equal(sim.send?.arrivesAtLeast, '3.747626');
+  assert.equal(sim.send?.arrives, '3.766459');
+  assert.equal(sim.send?.explorer, null);
+  assert.equal(sim.send?.activity, 'This account holds no USDC inside NEAR Intents yet. Check it twice.');
+  assert.match(sim.summary, /holds no USDC inside NEAR Intents yet/);
+});
+
+test('a receiver that already holds the asset is said as such, and one the verifier would not answer about as unchecked', async () => {
+  const holding = railOf({ receiver: [12_500_000n] });
+  const sim = await holding.rail.simulate(draftOf());
+  assert.equal(sim.send?.activity, 'This account already holds 12.5 USDC inside NEAR Intents.');
+  const unread = railOf({ receiver: [null] });
+  const sim2 = await unread.rail.simulate(draftOf());
+  assert.equal(sim2.send?.activity, 'This account could not be checked inside NEAR Intents right now.');
 });
 
 test('a quote whose echo names another receiver, or a chain wallet, or no echo at all, is refused', async () => {

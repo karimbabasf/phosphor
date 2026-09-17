@@ -10,12 +10,13 @@
 //
 // THE FENCE, three parts, none of them optional:
 //
-//   1. THE DESTINATION IS ON THE ALLOWLIST OR IT IS REFUSED. `to` is the one field on the whole
-//      tool surface that names where money ends up, and the policy engine holds it to the same
-//      rule as a swap's proceeds (destinationOf in src/policy/engine.ts): one of our own
-//      addresses, or an entry a human put on the destination allowlist with a click. An agent
-//      cannot add to that list without another click. So a send to a stranger is two human
-//      decisions, and the first one names the stranger in full.
+//   1. THE DESTINATION IS DECODED, SHOWN IN FULL, AND NAMED IN THE TOUCH ID DIALOG. `to` is the
+//      one field on the whole tool surface that names where money ends up. Until 2026-09-17 the
+//      policy engine held it to the destination allowlist; that gate is gone (decision 3 of the
+//      new-user pass), because it was a second click naming the same address a day earlier. The
+//      gate now is the send card (ui/screens/sendcard.js: the whole account in groups of four,
+//      whether it has been paid before, what it holds) and the dialog sentence that names it
+//      (src/vault/reason.ts), both drawn from the app's own decoding of the address.
 //
 //   2. IT ALWAYS WAITS FOR A CLICK, whatever the size. A withdrawal to our own wallet under the
 //      threshold may run on its own; a balance leaving for another account never does
@@ -39,8 +40,8 @@
 // on the verifier, so the rail reads it before the quote and again once 1Click reports success,
 // and the receipt states the rise. A rise smaller than the floor is said as such, never as done.
 
-import { isAddress } from 'viem';
-import type { IntentsSendDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
+import { formatUnits, isAddress } from 'viem';
+import type { IntentsSendDraft, Rail, RailHooks, RailResult, SendSimulation, SimulationResult } from '../types.ts';
 import { baseUnits, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '../intents.ts';
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
@@ -247,6 +248,30 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
     return Number.isFinite(draft.amountUsd) ? draft.amountUsd : Infinity;
   }
 
+  /* What the verifier says about the receiver, as the one sentence the card shows: an account
+     that already holds the asset is an account somebody uses, and one that holds nothing is the
+     one to read twice. A read the verifier would not answer says so rather than guessing. */
+  function receiverSentence(draft: IntentsSendDraft, p: Plan, held: bigint | null): string {
+    if (held === null) return 'This account could not be checked inside NEAR Intents right now.';
+    if (held === 0n) return `This account holds no ${draft.symbol} inside NEAR Intents yet. Check it twice.`;
+    return `This account already holds ${formatUnits(held, p.decimals)} ${draft.symbol} inside NEAR Intents.`;
+  }
+
+  function sendFacts(p: Plan, quote: OneClickQuote, activity: string): SendSimulation {
+    const inUsd = Number(quote.amountInUsd);
+    const outUsd = Number(quote.amountOutUsd);
+    return {
+      destinationAsset: p.asset,
+      arrives: oneLine(quote.amountOutFormatted, 40),
+      arrivesAtLeast: formatUnits(baseUnits(quote.minAmountOut, 'minAmountOut'), p.decimals),
+      feeUsd: Number.isFinite(inUsd) && Number.isFinite(outUsd) ? Math.round((inUsd - outUsd) * 10_000) / 10_000 : null,
+      bridgeFee: null,
+      etaSeconds: Number.isFinite(Number(quote.timeEstimate)) ? Number(quote.timeEstimate) : null,
+      activity,
+      explorer: null,
+    };
+  }
+
   async function simulate(draft: IntentsSendDraft): Promise<SimulationResult> {
     try {
       const p = await plan(draft);
@@ -262,14 +287,17 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
         slippageToleranceBps: SEND_SLIPPAGE_BPS,
       });
       const lines = priceLines(draft, p, response.quote);
+      const held = await receiverBalance(p.to, p.asset).catch(() => null);
+      const send = sendFacts(p, response.quote, receiverSentence(draft, p, held));
+      lines.push(send.activity);
       const problems = [...checkQuote(draft, p, response.quote), ...quoteEchoProblems(response.raw, echoWant(draft, p))];
       if (problems.length > 0) {
         const joined = problems.join('; ');
-        return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined };
+        return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined, send };
       }
       lines.push('execution signs one intent with the EVM key and sends nothing on any chain; the solver credits the receiver inside the verifier');
-      lines.push(`the receiver ${p.to} is named by the draft and blessed by the destination allowlist; this send always waits for your click`);
-      return { ok: true, summary: lines.join('\n') };
+      lines.push(`the receiver ${p.to} is named by the draft and shown in full on the card; this send always waits for your click`);
+      return { ok: true, summary: lines.join('\n'), send };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: `intents send simulation failed: ${message}`, error: message };

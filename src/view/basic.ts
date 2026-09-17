@@ -33,6 +33,7 @@ import type {
   ChainId,
   LogEvent,
   Proposal,
+  SendRecipient,
   SimulationResult,
   WalletView,
   WriteDraft,
@@ -117,6 +118,34 @@ function plainSymbol(symbol: string): string {
 
 function plainChain(chain: string): string {
   return PLAIN_CHAIN[chain] ?? chain;
+}
+
+// A payout network as this reader knows it. The ids are chainscan's (src/chainscan/networks.ts).
+const PLAIN_NETWORK: Record<string, string> = {
+  ethereum: 'Ethereum',
+  base: 'Base',
+  arbitrum: 'Arbitrum',
+  solana: 'Solana',
+  near: 'NEAR',
+  bitcoin: 'Bitcoin',
+};
+
+function plainNetwork(network: string): string {
+  return PLAIN_NETWORK[network] ?? network;
+}
+
+// "First send to this address" or "sent here 3 times before": the recipients book, in the
+// destination label, so this reader sees an address they have never paid for what it is.
+function sentBefore(recipient: SendRecipient | undefined): string {
+  if (recipient === undefined) return '';
+  if (!recipient.known) return '. First send to this address';
+  return `. Sent here ${recipient.count} ${recipient.count === 1 ? 'time' : 'times'} before`;
+}
+
+// What the chain said about the receiver, from the simulation, as its own sentence.
+function activityClause(simulation: SimulationResult | null | undefined): string {
+  const activity = simulation?.send?.activity;
+  return typeof activity === 'string' && activity !== '' ? ` ${activity}` : '';
 }
 
 export function money(usd: number): string {
@@ -233,7 +262,7 @@ function symbolsOf(draft: WriteDraft): string[] {
   if (draft.kind === 'swap') out.push(draft.fromSymbol, draft.toSymbol);
   // Every one-symbol kind. The retired intents deposit was missing here once, so its "What is
   // involved" line came out blank on the one screen a human approves money from.
-  else if (draft.kind === 'hl_deposit' || draft.kind === 'hl_withdraw' || draft.kind === 'intents_send')
+  else if (draft.kind === 'hl_deposit' || draft.kind === 'hl_withdraw' || draft.kind === 'intents_send' || draft.kind === 'intents_pay')
     out.push(draft.symbol);
   else if (kindOf(draft) === 'intents_deposit' || kindOf(draft) === 'intents_withdraw')
     out.push(retired(draft).symbol ?? '');
@@ -293,9 +322,19 @@ function destinationsOf(proposal: Proposal, selfAddresses: string[]): BasicDesti
     const to = retired(draft).to ?? '';
     push(to, isSelf(to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
   } else if (draft.kind === 'intents_send') {
-    // The one draft MEANT to name somebody else's account. It is said as exactly that, so
-    // the person clicking reads the whole account they are paying and knows it is not theirs.
-    push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own NEAR Intents balance' : 'the NEAR Intents account you are sending to, on your approved list', 'app');
+    // The two drafts MEANT to name somebody else's address. Each is said as exactly that, with
+    // whether the address has ever been paid before, so the person clicking reads the whole
+    // address they are paying and knows it is not theirs. No approved list since 2026-09-17:
+    // this sentence and the Touch ID dialog are the gate.
+    push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own NEAR Intents balance' : `the NEAR Intents account you are sending to${sentBefore(draft.recipient)}`, 'app');
+  } else if (draft.kind === 'intents_pay') {
+    push(
+      draft.to,
+      draft.recipient.ownAddress || isSelf(draft.to, selfAddresses)
+        ? `your own wallet on ${plainNetwork(draft.network)}`
+        : `a wallet on ${plainNetwork(draft.network)} that is NOT yours${sentBefore(draft.recipient)}`,
+      'app',
+    );
   } else if (kindOf(draft) === 'transfer') {
     const to = retired(draft).leg?.to ?? '';
     push(to, isSelf(to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
@@ -322,7 +361,7 @@ function amountClause(amountUsd: number): string {
   return amountUsd > 0 ? `${money(amountUsd)} of ` : '';
 }
 
-function askHeadline(draft: WriteDraft, amountUsd: number): string {
+function askHeadline(draft: WriteDraft, amountUsd: number, simulation?: SimulationResult | null): string {
   if (draft.kind === 'swap') {
     return `It wants to change ${amountClause(amountUsd)}your ${plainSymbol(draft.fromSymbol)} into ${plainSymbol(draft.toSymbol)}.`;
   }
@@ -339,7 +378,11 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
     return `It wants to bring ${amountClause(amountUsd)}your ${plainSymbol(retired(draft).symbol ?? '')} back out of the NEAR trading service and into your ${plainChain(retired(draft).chain ?? '')} wallet.`;
   }
   if (draft.kind === 'intents_send') {
-    return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} inside the NEAR trading service to another account, ${draft.to}. That account is on your approved list, and the money will belong to whoever holds its key.`;
+    return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} inside the NEAR trading service to another account, ${draft.to}. The money will belong to whoever holds that account's key.`;
+  }
+  if (draft.kind === 'intents_pay') {
+    const own = draft.recipient.ownAddress ? ' That is your own wallet.' : ' The money will belong to whoever holds that wallet\'s key.';
+    return `It wants to pay ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} out of the NEAR trading service to ${draft.to}, a wallet on ${plainNetwork(draft.network)}.${own}${activityClause(simulation)}`;
   }
   if (kindOf(draft) === 'lp_add') {
     const pair = `${plainSymbol(retired(draft).token0?.symbol ?? '')} and ${plainSymbol(retired(draft).token1?.symbol ?? '')}`;
@@ -405,6 +448,8 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
     return 'The money comes back into your own wallet, where you can spend it directly again.';
   if (draft.kind === 'intents_send')
     return 'The money leaves your balance for good and lands in the other account. There is no way to take it back from here.';
+  if (draft.kind === 'intents_pay')
+    return `The money leaves the NEAR trading service for good and lands on ${plainNetwork(draft.network)}. If the bridge cannot deliver it, it comes back to your balance; once it has landed there is no way to take it back from here.`;
   if (kindOf(draft) === 'lp_add') return `${money(amountUsd)} moves into the pool. You can take it back out later.`;
   if (kindOf(draft) === 'lp_remove') return 'Money comes back out of the pool to you.';
   if (kindOf(draft) === 'yield_deposit')
@@ -472,7 +517,7 @@ function buildAsk(proposal: Proposal, totalUsd: number | null, selfAddresses: st
   return {
     proposalId: proposal.id,
     kind: draft.kind,
-    headline: askHeadline(draft, amountUsd),
+    headline: askHeadline(draft, amountUsd, proposal.simulation),
     afterLine: askAfterLine(draft, totalUsd, amountUsd),
     amountUsd,
     symbols: symbolsOf(draft),
@@ -619,6 +664,9 @@ export function didHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'intents_send') {
     return `Sent ${amt}your ${plainSymbol(draft.symbol)} inside NEAR Intents to ${draft.to}.`;
   }
+  if (draft.kind === 'intents_pay') {
+    return `Paid ${amt}your ${plainSymbol(draft.symbol)} out of NEAR Intents to ${draft.to} on ${plainNetwork(draft.network)}.`;
+  }
   if (kindOf(draft) === 'lp_add') return `Put ${amt}your money into a pool.`;
   if (kindOf(draft) === 'lp_remove') return 'Took money back out of a pool.';
   if (kindOf(draft) === 'yield_deposit') return `Put ${amt}your money somewhere it earns interest.`;
@@ -695,6 +743,9 @@ function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
   }
   if (draft.kind === 'intents_send') {
     return `sending ${amt}your ${plainSymbol(draft.symbol)} inside NEAR Intents to ${draft.to}`;
+  }
+  if (draft.kind === 'intents_pay') {
+    return `paying ${amt}your ${plainSymbol(draft.symbol)} out of NEAR Intents to ${draft.to} on ${plainNetwork(draft.network)}`;
   }
   if (kindOf(draft) === 'lp_add') return `putting ${amt}your money into a pool`;
   if (kindOf(draft) === 'lp_remove') return 'taking money back out of a pool';

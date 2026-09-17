@@ -34,7 +34,7 @@ export const RECEIPT_KINDS: Record<string, readonly string[]> = {
   swap: ['swap'],
   trade: ['trade'],
   move: [
-    'intents_deposit', 'intents_withdraw', 'intents_send', 'hl_deposit', 'hl_withdraw', 'transfer', 'consolidate',
+    'intents_deposit', 'intents_withdraw', 'intents_send', 'intents_pay', 'hl_deposit', 'hl_withdraw', 'transfer', 'consolidate',
     'lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw',
   ],
   bot: ['bot'],

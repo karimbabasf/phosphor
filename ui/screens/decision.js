@@ -371,12 +371,125 @@
 
   /* ---------- the ask ---------- */
 
+  /* A send is the one ask whose card is drawn by another file: the same card
+     the thread shows (ui/screens/sendcard.js), with the full address in
+     groups, the chain, the fees and the receiver's history. The dock keeps
+     what is its own: the lock banner, the error line and the buttons. */
+  function isSend(draft) {
+    return (draft.kind === 'intents_send' || draft.kind === 'intents_pay') && !!window.PhosphorSendCard;
+  }
+
   function buildAsk(entry) {
     var proposal = entry.proposal;
     var draft = proposal.draft || {};
     var locked = proposal.status === 'pending_unlock';
     var touching = proposal.status === 'awaiting_touch';
+    var send = isSend(draft);
 
+    if (send) {
+      var sendCard = window.PhosphorSendCard;
+      sendCard.build(refs.card, sendCard.viewOf(proposal), { width: refs.card.clientWidth });
+    } else {
+      buildAskBody(proposal, draft, locked, touching);
+    }
+
+    if (draft.kind === 'policy_change') buildPolicyDiff(proposal);
+
+    var error = dom.el('p', 'body down');
+    error.hidden = true;
+    refs.card.appendChild(error);
+
+    /* A request that arrived while the wallet was shut. It was authored and
+       checked against the limits; what is missing is the ability to sign. So the
+       card asks for the lock first and does not offer Yes, because a Yes it
+       could not act on would be a click that did nothing. */
+    if (locked) {
+      var banner = dom.el('div', 'banner');
+      banner.dataset.tone = 'warn';
+      banner.appendChild(dom.el('span', '', 'The app is locked, so this is waiting. Nothing has moved and nothing will until you unlock and decide.'));
+      refs.card.insertBefore(banner, error);
+
+      var lockedActions = dom.el('div', 'dock-actions');
+      var lockedNo = dom.el('button', 'btn btn-ghost');
+      lockedNo.appendChild(dom.el('span', 'btn-label', 'No'));
+      var unlock = dom.el('button', 'btn btn-primary');
+      unlock.appendChild(dom.el('span', 'btn-label', 'Unlock'));
+      lockedActions.appendChild(lockedNo);
+      lockedActions.appendChild(unlock);
+      refs.card.appendChild(lockedActions);
+
+      dom.on(lockedNo, 'click', function () {
+        decide(api.refuse, proposal.id, [lockedNo, unlock], error, lockedNo, 'Refusing', 'Refused.', REFUSED_MS, null);
+      });
+      dom.on(unlock, 'click', function () {
+        /* The dock steps aside for the lock screen. It comes back on its own:
+           render() runs on the next state frame, and by then this request is
+           pending rather than pending_unlock. */
+        showing = null;
+        dom.setHidden(refs.dock, true);
+        hold(null);
+        window.PhosphorLock.focus();
+      });
+      return;
+    }
+
+    var actions = dom.el('div', 'dock-actions');
+    var no = dom.el('button', 'btn btn-ghost');
+    no.appendChild(dom.el('span', 'btn-label', 'No'));
+    var yes = dom.el('button', 'btn btn-primary');
+    /* On a send the primary says what the click starts: the Touch ID dialog
+       that names the receiver, on an enclave wallet, and plain approval on a
+       password wallet. Every other ask keeps its one-word Yes. */
+    var yesLabel = dom.el('span', 'btn-label', send ? (enclave() ? 'Approve, then Touch ID' : 'Approve') : 'Yes');
+    yes.appendChild(yesLabel);
+    actions.appendChild(no);
+    actions.appendChild(yes);
+    refs.card.appendChild(actions);
+
+    /* The click has landed and the system dialog owns the moment. Both buttons
+       go dead: a second Yes would be a second ask, and the backend only takes a
+       No on a row that is pending. The dialog's own sentence sits under them so
+       the window and the dialog can be checked against each other. It all comes
+       back on the next frame, as approved or as pending again. */
+    if (touching) {
+      if (send) {
+        dom.clear(yes);
+        yes.appendChild(window.PhosphorSendCard.fingerprint());
+        yes.appendChild(dom.el('span', 'btn-label', 'Waiting for Touch ID'));
+      } else {
+        dom.setText(yesLabel, 'Touch ID: confirm on your Mac');
+      }
+      yes.disabled = true;
+      no.disabled = true;
+      dom.setAttr(yes, 'data-touch', 'true');
+      refs.card.appendChild(dom.el('p', 'meta touch-reason',
+        touchReason() || 'The Touch ID dialog is up. Confirm it there, or cancel to come back here.'));
+      return;
+    }
+
+    if (entry.queued > 0) {
+      refs.card.appendChild(dom.el('p', 'meta', entry.queued === 1
+        ? 'One more request after this one.'
+        : entry.queued + ' more requests after this one.'));
+    }
+
+    dom.on(yes, 'click', function () {
+      decide(api.approve, proposal.id, [yes, no], error, yes, 'Approving', 'Done.', DONE_MS, proposal.id);
+    });
+    dom.on(no, 'click', function () {
+      decide(api.refuse, proposal.id, [yes, no], error, no, 'Refusing', 'Refused.', REFUSED_MS, null);
+    });
+  }
+
+  /* Whether this wallet asks for a finger on a click: the vault slice says
+     which custody the keystore has. Absent means the password path. */
+  function enclave() {
+    var state = store.get() || {};
+    var vault = state.vault || {};
+    return vault.custody === 'secure-enclave';
+  }
+
+  function buildAskBody(proposal, draft, locked, touching) {
     refs.card.appendChild(dom.el('p', 'label', locked ? 'Unlock to decide' : (touching ? 'Confirm on your Mac' : 'Waiting for you')));
     refs.card.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
 
@@ -437,84 +550,6 @@
       }
       refs.card.appendChild(dwrap);
     }
-
-    if (draft.kind === 'policy_change') buildPolicyDiff(proposal);
-
-    var error = dom.el('p', 'body down');
-    error.hidden = true;
-    refs.card.appendChild(error);
-
-    /* A request that arrived while the wallet was shut. It was authored and
-       checked against the limits; what is missing is the ability to sign. So the
-       card asks for the lock first and does not offer Yes, because a Yes it
-       could not act on would be a click that did nothing. */
-    if (locked) {
-      var banner = dom.el('div', 'banner');
-      banner.dataset.tone = 'warn';
-      banner.appendChild(dom.el('span', '', 'The app is locked, so this is waiting. Nothing has moved and nothing will until you unlock and decide.'));
-      refs.card.insertBefore(banner, error);
-
-      var lockedActions = dom.el('div', 'dock-actions');
-      var lockedNo = dom.el('button', 'btn btn-ghost');
-      lockedNo.appendChild(dom.el('span', 'btn-label', 'No'));
-      var unlock = dom.el('button', 'btn btn-primary');
-      unlock.appendChild(dom.el('span', 'btn-label', 'Unlock'));
-      lockedActions.appendChild(lockedNo);
-      lockedActions.appendChild(unlock);
-      refs.card.appendChild(lockedActions);
-
-      dom.on(lockedNo, 'click', function () {
-        decide(api.refuse, proposal.id, [lockedNo, unlock], error, lockedNo, 'Refusing', 'Refused.', REFUSED_MS, null);
-      });
-      dom.on(unlock, 'click', function () {
-        /* The dock steps aside for the lock screen. It comes back on its own:
-           render() runs on the next state frame, and by then this request is
-           pending rather than pending_unlock. */
-        showing = null;
-        dom.setHidden(refs.dock, true);
-        hold(null);
-        window.PhosphorLock.focus();
-      });
-      return;
-    }
-
-    var actions = dom.el('div', 'dock-actions');
-    var no = dom.el('button', 'btn btn-ghost');
-    no.appendChild(dom.el('span', 'btn-label', 'No'));
-    var yes = dom.el('button', 'btn btn-primary');
-    var yesLabel = dom.el('span', 'btn-label', 'Yes');
-    yes.appendChild(yesLabel);
-    actions.appendChild(no);
-    actions.appendChild(yes);
-    refs.card.appendChild(actions);
-
-    /* The click has landed and the system dialog owns the moment. Both buttons
-       go dead: a second Yes would be a second ask, and the backend only takes a
-       No on a row that is pending. The dialog's own sentence sits under them so
-       the window and the dialog can be checked against each other. It all comes
-       back on the next frame, as approved or as pending again. */
-    if (touching) {
-      dom.setText(yesLabel, 'Touch ID: confirm on your Mac');
-      yes.disabled = true;
-      no.disabled = true;
-      dom.setAttr(yes, 'data-touch', 'true');
-      refs.card.appendChild(dom.el('p', 'meta touch-reason',
-        touchReason() || 'The Touch ID dialog is up. Confirm it there, or cancel to come back here.'));
-      return;
-    }
-
-    if (entry.queued > 0) {
-      refs.card.appendChild(dom.el('p', 'meta', entry.queued === 1
-        ? 'One more request after this one.'
-        : entry.queued + ' more requests after this one.'));
-    }
-
-    dom.on(yes, 'click', function () {
-      decide(api.approve, proposal.id, [yes, no], error, yes, 'Approving', 'Done.', DONE_MS, proposal.id);
-    });
-    dom.on(no, 'click', function () {
-      decide(api.refuse, proposal.id, [yes, no], error, no, 'Refusing', 'Refused.', REFUSED_MS, null);
-    });
   }
 
   /* ---------- the unread outcome ---------- */

@@ -25,9 +25,11 @@ export const PROPOSE_REPLY_CAP_MS = 20_000;
 // What the agent gets back from any propose: the id to poll, what the policy decided, what
 // the simulation said, and what the rail said if it has answered. Never the draft itself, so
 // the app's resolved addresses are not echoed to the caller that was deliberately not allowed
-// to name them. The rail's sentence rides along because it is the one that says "do not send
-// this again", and a reply that carried only the status word left the agent reading `failed`
-// as a cue to retry.
+// to name them. The one exception is a send (sendFacts below): the receiver is the address the
+// caller itself named, so echoing it as the chain spells it gives nothing away, and the card in
+// the conversation needs that spelling rather than the argument. The rail's sentence rides along
+// because it is the one that says "do not send this again", and a reply that carried only the
+// status word left the agent reading `failed` as a cue to retry.
 function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): void {
   ctx.sse.broadcastState();
   sendJson(res, 200, {
@@ -36,8 +38,30 @@ function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): v
     verdict: proposal.verdict,
     simulation: proposal.simulation,
     ...(proposal.result === undefined ? {} : { result: proposal.result }),
+    ...sendFacts(proposal),
     ...(proposal.status === 'executing' ? { next: 'executing: read proposal_status until it settles' } : {}),
   });
+}
+
+/* The reply carries no draft, and a send card in the conversation has to draw the address the
+   app decoded and the receiver's history rather than the agent's own argument. So a send answers
+   with the few normalised facts the card needs (ui/screens/sendcard.js viewOfToolData): what
+   kind of send, where, to whom as the chain spells it, and what the recipients book knows. */
+function sendFacts(proposal: Proposal): { send?: Record<string, unknown> } {
+  const draft = proposal.draft;
+  if (draft.kind !== 'intents_send' && draft.kind !== 'intents_pay') return {};
+  const r = draft.recipient;
+  return {
+    send: {
+      kind: draft.kind,
+      where: 'network' in draft ? draft.network : 'intents',
+      to: draft.to,
+      symbol: draft.symbol,
+      amount: draft.amount,
+      amountUsd: draft.amountUsd,
+      recipient: r === undefined ? null : { known: r.known, count: r.count, lastAt: r.lastAt, ownAddress: r.ownAddress },
+    },
+  };
 }
 
 // Boundary checks only: a wrong type or an unknown chain is answered here, and every
