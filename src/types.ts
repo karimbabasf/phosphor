@@ -636,7 +636,10 @@ export type Candle = { t: number; o: number; h: number; l: number; c: number; v:
 export type AppConfig = {
   mode: Mode;
   port: number;
-  addresses: { evm: string[]; solana: string[]; near: string[] };
+  // The one address this app owns, as a read-only install names it. The keystore is the truth
+  // when there is one (src/proposals/lifecycle.ts ownBook); this is the fallback for an install
+  // that reads without a key. It is the intents account id and the Hyperliquid account.
+  addresses: { evm?: string };
   candleProducts: string[];
   dataDir: string; // state dir: policy.json, proposals.json, audit.jsonl
   keysPath: string; // absolute path OUTSIDE the working copy; never inside the repo

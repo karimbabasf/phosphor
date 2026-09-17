@@ -13,50 +13,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
-import type { AppConfig, ChainId, Mode } from './types.ts';
+import type { AppConfig, Mode } from './types.ts';
 // The keystore owns where a keystore file sits. Imported rather than restated, because a second
 // copy of that filename is a second thing to keep in step with the first.
 import { keystorePathFor } from './keystore/store.ts';
-// The address rules. An EVM address is decoded by viem rather than matched by a regex; a
-// Solana address is decoded and its bytes counted, since a regex over base58 accepts a key
-// with a digit dropped; isSettlableNearAccount is the shape a NEAR account has to have before
-// anything can pay out to it.
+// The address rule: an EVM address is decoded by viem rather than matched by a regex.
 import { isAddress } from 'viem';
-import { base58Decode, isNearAccountId, isSettlableNearAccount } from './chain/near.ts';
-
-const SOLANA_KEY_BYTES = 32;
 
 function oneLine(s: string, max: number): string {
   const flat = s.replace(/\s+/g, ' ');
   return flat.length > max ? `${flat.slice(0, max)}...` : flat;
 }
 
-// Whether a string is an address of the shape this chain actually uses. Returns the problem,
-// or null when the address is well formed.
-function addressProblem(chain: ChainId, address: string): string | null {
-  const trimmed = address.trim();
-  if (trimmed === '') return `no address is configured for ${chain}`;
-  if (chain === 'eth' || chain === 'base' || chain === 'arb') {
-    return isAddress(trimmed, { strict: false }) ? null : `${oneLine(trimmed, 60)} is not an EVM address, so it cannot be our wallet on ${chain}`;
-  }
-  if (chain === 'sol') {
-    let bytes: Uint8Array;
-    try {
-      bytes = base58Decode(trimmed);
-    } catch {
-      return `${oneLine(trimmed, 60)} is not base58, so it cannot be a Solana address`;
-    }
-    if (bytes.length !== SOLANA_KEY_BYTES) {
-      return `${oneLine(trimmed, 60)} decodes to ${bytes.length} bytes, not the ${SOLANA_KEY_BYTES} a Solana address is`;
-    }
-    return null;
-  }
-  return `${chain} is not a chain this app holds a wallet on`;
-}
-
 // addresses is overridden rather than intersected: an intersection keeps the required
 // fields from AppConfig and defeats the whole point of a partial file.
-type PartialConfig = Omit<Partial<AppConfig>, 'addresses'> & { addresses?: Partial<AppConfig['addresses']> };
+type PartialConfig = Omit<Partial<AppConfig>, 'addresses'> & { addresses?: { evm?: string | string[]; solana?: string[]; near?: string[] } };
 
 /* The shape of a config file on disk, strict everywhere, exactly as patchSchema in
    policy/engine.ts is strict about a policy patch: an unknown key is an invalid config rather
@@ -69,9 +40,12 @@ type PartialConfig = Omit<Partial<AppConfig>, 'addresses'> & { addresses?: Parti
    meant something, and both beliefs were wrong. A config key that does nothing has to say so at
    boot, because there is no later moment when anybody finds out. */
 const skillNames = z.array(z.string());
+/* One EVM address, or the list an older file carried (the first entry is the one that counts).
+   The Solana and NEAR lists are retired with the chain wallets (2026-09-16): accepted so a
+   config.local.json written before then still loads, and ignored. */
 const addressBookSchema = z
   .object({
-    evm: z.array(z.string()).optional(),
+    evm: z.union([z.string(), z.array(z.string())]).optional(),
     solana: z.array(z.string()).optional(),
     near: z.array(z.string()).optional(),
   })
@@ -137,51 +111,21 @@ function readJsonIfPresent(file: string): PartialConfig {
   return parsed.data as PartialConfig;
 }
 
-/* Every configured address, checked for the shape its chain actually uses, before anything
-   trusts it.
-
-   Nothing checked these, and the policy engine folds all of them into the set of destinations it
-   treats as our own. A live config carrying "phosphor.testnet" under addresses.near therefore
-   made a testnet account an allowlisted destination for a cross-chain swap: the ERC-20 transfer
-   leaves the origin chain and the solver is asked to pay out on NEAR mainnet to an account that
-   does not exist. Best case the swap ends REFUNDED and the wallet is down the round trip; worst
-   case it stalls past the poll and the receipt says the funds were sent.
-
-   Deleting one string would not have fixed it, because any wrong entry behaves the same way. */
-function assertAddressesUsable(addresses: AppConfig['addresses'], mode: Mode, file: string): void {
-  const problems: string[] = [];
-
-  const check = (chain: ChainId, list: string[]): void => {
-    for (const address of list) {
-      const problem = addressProblem(chain, address);
-      if (problem !== null) problems.push(problem);
-    }
-  };
-  check('eth', addresses.evm);
-  check('sol', addresses.solana);
-
-  /* NEAR goes through its own rule because addressProblem refuses the chain outright: no rail
-     withdraws to NEAR, so it has no shape to offer. Live means the settlement shape, a named
-     account under .near or a 64-character implicit id, since that is what a solver can pay out
-     to. Demo asks only that the id is structurally valid, because demo signs nothing. */
-  for (const address of addresses.near) {
-    const id = address.trim();
-    if (id === '') {
-      problems.push('addresses.near carries an empty entry');
-      continue;
-    }
-    if (mode === 'live' ? !isSettlableNearAccount(id) : !isNearAccountId(id)) {
-      problems.push(
-        `${id} is not a NEAR mainnet account id, so it cannot receive anything: a mainnet account is a name ` +
-          'under .near or a 64-character implicit id, and a .testnet account does not exist on the network ' +
-          'this app runs against',
-      );
-    }
-  }
-
-  if (problems.length > 0) {
+/* The configured address, checked for its shape before anything trusts it. The policy engine
+   folds it into the set of destinations it treats as our own, so a wrong entry is a
+   destination nobody vetted. */
+function assertAddressUsable(address: string | undefined, file: string): void {
+  if (address === undefined) return;
+  const trimmed = address.trim();
+  const problem =
+    trimmed === ''
+      ? 'addresses.evm is empty'
+      : isAddress(trimmed, { strict: false })
+        ? null
+        : `${oneLine(trimmed, 60)} is not an EVM address, so it cannot be this app's account`;
+  if (problem !== null) {
     throw new Error(
-      `${file} names an address this app cannot use: ${problems.join('; ')}. ` +
+      `${file} names an address this app cannot use: ${problem}. ` +
         'A configured address is treated as one of ours by the policy engine, so a wrong one is a destination ' +
         'nobody vetted.',
     );
@@ -321,14 +265,13 @@ export function loadConfig(root?: string): AppConfig {
   const keysPath = path.resolve(keysInput.replace(/^~(?=$|\/)/, os.homedir()));
   assertOutsideRepo(keysPath, baseDir);
 
+  // A string, or the first entry of the list an older file carried.
+  const evmRaw = parsed.addresses?.evm;
+  const evm = Array.isArray(evmRaw) ? evmRaw[0] : evmRaw;
   const cfg: AppConfig = {
     mode,
     port,
-    addresses: {
-      evm: parsed.addresses?.evm ?? [],
-      solana: parsed.addresses?.solana ?? [],
-      near: parsed.addresses?.near ?? [],
-    },
+    addresses: evm === undefined ? {} : { evm },
     candleProducts: parsed.candleProducts ?? [],
     dataDir,
     keysPath,
@@ -337,7 +280,7 @@ export function loadConfig(root?: string): AppConfig {
   // After the merge, because config.local.json overrides the template key by key and it is the
   // merged book every other module reads. The file named is the local one when it carries an
   // address book at all, since that is the file an owner edits.
-  assertAddressesUsable(cfg.addresses, mode, local.addresses !== undefined ? 'config.local.json' : 'config.json');
+  assertAddressUsable(cfg.addresses.evm, local.addresses !== undefined ? 'config.local.json' : 'config.json');
 
   fs.mkdirSync(dataDir, { recursive: true });
 

@@ -24,7 +24,7 @@ function cfgFor(mode: AppConfig['mode'], dataDir: string): AppConfig {
     mode,
     keysPath: path.join(dataDir, 'no-keys.json'),
     port: 4177,
-    addresses: { evm: [], solana: [], near: [] },
+    addresses: {},
     candleProducts: [],
     dataDir,
   };

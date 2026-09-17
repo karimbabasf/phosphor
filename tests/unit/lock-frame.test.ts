@@ -45,7 +45,7 @@ async function boot() {
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: [], solana: [], near: [] },
+    addresses: {},
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath,

@@ -21,7 +21,7 @@ const demoConfig: AppConfig = {
   mode: 'demo',
   keysPath: '/tmp/phosphor-test-keys.json',
   port: 4177,
-  addresses: { evm: [], solana: [], near: [] },
+  addresses: {},
   candleProducts: ['BTC-USD'],
   dataDir: 'state',
 };
@@ -116,11 +116,7 @@ const liveConfig: AppConfig = {
   mode: 'live',
   keysPath: '/tmp/phosphor-test-keys.json',
   port: 4177,
-  addresses: {
-    evm: ['0x1111111111111111111111111111111111111111'],
-    solana: [],
-    near: [],
-  },
+  addresses: { evm: '0x1111111111111111111111111111111111111111' },
   candleProducts: ['BTC-USD'],
   dataDir: 'state',
 };
@@ -149,7 +145,7 @@ test('createLedger live mode: configured addresses change nothing, because no ch
     new Response(JSON.stringify([[0, 0, 0, 0, 100, 0]]), { status: 200 })) as typeof fetch;
 
   const configured = createLedger(liveConfig, { fetchImpl: okFetch });
-  const unconfigured = createLedger({ ...liveConfig, addresses: { evm: [], solana: [], near: [] } }, { fetchImpl: okFetch });
+  const unconfigured = createLedger({ ...liveConfig, addresses: {} }, { fetchImpl: okFetch });
 
   assert.deepEqual((await configured.refresh()).prices, (await unconfigured.refresh()).prices);
   assert.equal(configured.intents(), undefined);

@@ -195,7 +195,7 @@ function setup(clickUsd: number) {
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,
-    addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
+    addresses: { evm: '0x1111111111111111111111111111111111111111' },
     candleProducts: ['ETH-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),

@@ -29,7 +29,7 @@ function configuredUser(): string {
   for (const file of ['config.local.json', 'config.json']) {
     try {
       const cfg = JSON.parse(fs.readFileSync(path.join(root, file), 'utf8')) as { addresses?: { evm?: unknown[] } };
-      const first = cfg.addresses?.evm?.[0];
+      const first = cfg.addresses?.evm;
       if (typeof first === 'string' && /^0x[0-9a-fA-F]{40}$/.test(first)) return first;
     } catch {
       // Absent or unreadable: the next file, then the zero address.

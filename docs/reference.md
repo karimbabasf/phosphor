@@ -248,30 +248,32 @@ Then the lock, which is the state the app is in every time you open it after tha
 read still works and the window still shows the balance; the password is what buys the ability to
 sign. It locks itself after fifteen minutes with nobody at the window and when the machine sleeps.
 
-`npm run keygen` still exists and mints RAW UNENCRYPTED keys for development. It is not the setup
-path, and running it before the first launch is a mistake rather than a step: a file it writes
-reads as `needs_migration` in the app, and the migration screen is what turns it into a keystore.
+`npm run keygen` still exists and mints one RAW UNENCRYPTED EVM key for development. It is not
+the setup path, and running it before the first launch is a mistake rather than a step: a file it
+writes reads as `needs_migration` in the app, and the migration screen is what turns it into a
+keystore.
 
-It prints public addresses only. No branch of it prints a private key. It refuses to overwrite an
-existing key file, because silently replacing a funded key loses the funds with it:
+It prints the public address only. No branch of it prints a private key. It refuses to overwrite
+an existing key file, because silently replacing a funded key loses the funds with it:
 
     npm run keygen -- --force     # deliberate replacement
 
-The window prints the same addresses on the receive screen. Copy them into `config.local.json` at
-the repo root. That file is gitignored and
-merges over `config.json` key by key, so the addresses stay on your machine:
+A wallet made in the window needs no config at all: the keystore is the address book. An install
+that only reads names its one EVM address, which is the NEAR Intents account id and the
+Hyperliquid account, in `config.local.json` at the repo root. That file is gitignored and merges
+over `config.json` key by key, so the address stays on your machine:
 
     {
       "addresses": {
-        "evm": ["0x..."],
-        "solana": ["..."],
-        "near": ["..."]
+        "evm": "0x..."
       }
     }
 
-Fund the addresses. Every rail needs native gas on the chain it runs on, and balances read zero
-until funds land. A NEAR implicit account exists the moment it is funded, so the first transfer
-to it is what creates it. Then:
+An older file that lists `evm`, `solana` and `near` arrays still loads: the first `evm` entry is
+the address, and the other two are ignored, because nothing here signs with those keys any more.
+
+Money comes in through the deposit card in the window (the NEAR Intents bridge address for the
+network you pick), never by sending to this address on a chain. Then:
 
     npm run tauri dev
 

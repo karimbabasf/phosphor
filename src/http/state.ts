@@ -146,7 +146,7 @@ export function buildState(ctx: Ctx): unknown {
     lock: {
       state: ctx.keystore.state(),
       idleLocksInSec: ctx.session.idleLocksInSec(),
-      addresses: lockAddresses.addresses,
+      addresses: { evm: lockAddresses.addresses.evm },
       verified: lockAddresses.verified,
       tampered: lockAddresses.tampered,
     },
@@ -213,7 +213,7 @@ export function buildState(ctx: Ctx): unknown {
       killSwitch: policy?.killSwitch ?? false,
       agentsConnected: ctx.agents.connected(),
       readAt: snapshot.fetchedAt,
-      selfAddresses: [...ctx.cfg.addresses.evm, ...ctx.cfg.addresses.solana, ...ctx.cfg.addresses.near],
+      selfAddresses: ctx.cfg.addresses.evm === undefined ? [] : [ctx.cfg.addresses.evm],
       prices: ctx.prices.readings,
       // The assistant's half of the history: the same events the pro screen's log
       // carries, rendered as sentences instead of as log lines. See buildActions.
@@ -301,7 +301,7 @@ export function transactionsPayload(ctx: Ctx): { entries: ReturnType<typeof buil
   const entries = buildTransactions({
     proposals: ctx.proposals.list(),
     events: ctx.audit.tail(LOG_LIMIT_MAX),
-    selfAddresses: [...ctx.cfg.addresses.evm, ...ctx.cfg.addresses.solana, ...ctx.cfg.addresses.near],
+    selfAddresses: ctx.cfg.addresses.evm === undefined ? [] : [ctx.cfg.addresses.evm],
   });
   return { entries };
 }

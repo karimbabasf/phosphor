@@ -80,7 +80,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
   const cfg: AppConfig = {
     mode,
     port: 0,
-    addresses: { evm: [], solana: [], near: [] },
+    addresses: {},
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath,
@@ -330,7 +330,7 @@ test('import takes twelve words, refuses a bad phrase, and lands the known addre
   }
 });
 
-test('receive answers while locked, with a warning per chain and no key anywhere', async () => {
+test('receive answers while locked with the one EVM address, a warning per network and no key anywhere', async () => {
   const b = await boot();
   try {
     const empty = await b.get('/api/receive');
@@ -342,12 +342,11 @@ test('receive answers while locked, with a warning per chain and no key anywhere
     const out = await b.get('/api/receive');
     assert.equal(out.json.state, 'locked');
     const ids = out.json.chains.map((c: { id: string }) => c.id);
-    assert.deepEqual(ids, ['eth', 'base', 'arb', 'sol', 'near']);
+    assert.deepEqual(ids, ['eth', 'base', 'arb'], 'the Solana and NEAR keys the file seals are not addresses this app names any more');
     for (const chain of out.json.chains) {
-      assert.ok(typeof chain.address === 'string' && chain.address.length > 0);
-      assert.ok(chain.warning.length > 0, 'every chain says what it does not accept');
+      assert.equal(chain.address, VECTOR_EVM, 'the three EVM networks share the one address');
+      assert.ok(chain.warning.length > 0, 'every network says what this address is');
     }
-    assert.equal(out.json.chains[0].address, VECTOR_EVM);
   } finally {
     await b.close();
   }
@@ -496,15 +495,14 @@ test('a reveal nonce cannot be spent from another origin', async () => {
   }
 });
 
-test('revealing the private keys hands back all three and nothing else', async () => {
+test('revealing the private keys hands back the EVM key and nothing else', async () => {
   const b = await boot();
   try {
     await b.post('/api/wallet/import', { token: b.token, password: PASSWORD, mnemonic: VECTOR });
     const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
     const out = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
     assert.match(out.json.keys.evm, /^0x[0-9a-f]{64}$/);
-    assert.ok(out.json.keys.solana.length > 0);
-    assert.match(out.json.keys.near, /^ed25519:/);
+    assert.deepEqual(Object.keys(out.json.keys), ['evm'], 'the Solana and NEAR keys the file seals sign nothing here and are not shown');
     assert.equal(out.json.keys.password, undefined);
   } finally {
     await b.close();

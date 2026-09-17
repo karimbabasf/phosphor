@@ -112,7 +112,7 @@ export async function bootChartServer(
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: ['0xself'], solana: [], near: [] },
+    addresses: { evm: '0xself' },
     candleProducts: ['BTC-USD', 'ETH-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),

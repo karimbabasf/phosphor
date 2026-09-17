@@ -95,7 +95,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: [SELF], solana: [], near: [] },
+    addresses: { evm: SELF },
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),

@@ -83,7 +83,7 @@ function setup() {
     mode: 'demo',
     keysPath,
     port: 4177,
-    addresses: { evm: [], solana: [], near: [] },
+    addresses: {},
     candleProducts: [],
     dataDir,
   };
@@ -191,10 +191,10 @@ test('a second click while the dialog is up is refused, and a click while nothin
   const bare = createVaultRelay({ transportKey: null });
   const svc2 = createProposalService({
     ...(h as unknown as { svc: never }),
-    cfg: { mode: 'demo', keysPath: h.keystore.path().replace(/keys\.enc\.json$/, 'keys.json'), port: 4177, addresses: { evm: [], solana: [], near: [] }, candleProducts: [], dataDir: path.dirname(path.dirname(h.keystore.path())) },
+    cfg: { mode: 'demo', keysPath: h.keystore.path().replace(/keys\.enc\.json$/, 'keys.json'), port: 4177, addresses: {}, candleProducts: [], dataDir: path.dirname(path.dirname(h.keystore.path())) },
     audit: h.audit,
     store: h.store,
-    ledger: createLedger({ mode: 'demo', keysPath: '', port: 0, addresses: { evm: [], solana: [], near: [] }, candleProducts: [], dataDir: path.dirname(path.dirname(h.keystore.path())) }),
+    ledger: createLedger({ mode: 'demo', keysPath: '', port: 0, addresses: {}, candleProducts: [], dataDir: path.dirname(path.dirname(h.keystore.path())) }),
     riskRows,
     dataDir: path.dirname(path.dirname(h.keystore.path())),
     vault: bare,

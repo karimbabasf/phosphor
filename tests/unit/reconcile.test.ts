@@ -42,7 +42,7 @@ function setup(): Harness {
     dataDir: dir,
     port: 0,
     keysPath: path.join(dir, 'keys.json'),
-    addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
+    addresses: { evm: '0x1111111111111111111111111111111111111111' },
     candleProducts: ['BTC-USD'],
   } as unknown as AppConfig;
 

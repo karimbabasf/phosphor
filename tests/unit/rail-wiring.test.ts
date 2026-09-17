@@ -133,7 +133,7 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
   const cfg: AppConfig = {
     mode: 'live', // demo mode owns no rails at all; that is its own test below
     port: 4177,
-    addresses: { evm: [SELF_EVM], solana: [], near: [] },
+    addresses: { evm: SELF_EVM },
     candleProducts: [],
     dataDir,
     keysPath: '/tmp/phosphor-rail-wiring-keys.json', // never read: the spy rail signs nothing
@@ -500,7 +500,7 @@ function cfgFor(mode: AppConfig['mode']): AppConfig {
   return {
     mode,
     port: 4177,
-    addresses: { evm: [SELF_EVM], solana: [], near: [] },
+    addresses: { evm: SELF_EVM },
     candleProducts: [],
     dataDir: '/tmp/phosphor-rail-wiring-cfg',
     keysPath: '/tmp/phosphor-rail-wiring-keys.json',

@@ -399,7 +399,7 @@ const tradeInfo = createInfoClient({ baseUrl: HL_BASE_URL });
    spot poll, the venue answered 422, and the Trade tab said "No route to the venue" until a
    restart. The config address is the fallback for an install that only reads. */
 function hlUser(): string {
-  return intentsAccountId(cfg) ?? cfg.addresses.evm[0] ?? '';
+  return intentsAccountId(cfg) ?? cfg.addresses.evm ?? '';
 }
 
 function productFor(coin: string): string {

@@ -8,7 +8,6 @@
 import crypto from 'node:crypto';
 import type {
   AppConfig,
-  ChainId,
   ClientKey,
   LedgerSnapshot,
   Policy,
@@ -36,8 +35,6 @@ import type { TradeDeps } from '../trade/rail.ts';
 import type { OneClickLookup, VenueCredited } from './reconcile.ts';
 import { withReservation } from './reservation.ts';
 
-export const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
-const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
 const SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // A registry with no rails in it. Fail closed: a wiring layer that forgets to pass one
@@ -319,42 +316,22 @@ export function outcomeOf(p: Proposal, plan?: PlanFate | null): ProposalOutcome 
    in the window writes no config.local.json at all, and until 2026-09-16 every proposal builder
    read the book from config alone, so a brand new user could deposit and then never swap, send
    or withdraw: "We hold no EVM address" on the first thing they asked for. */
-export function ownBook(ctx: PCtx): AppConfig['addresses'] {
-  const report = ctx.keystore?.addressReport();
-  const own = report?.addresses;
-  const first = (a: string | null | undefined, rest: string[]): string[] => {
-    const out = typeof a === 'string' && a.trim() !== '' ? [a] : [];
-    for (const r of rest) if (!out.some((x) => x.toLowerCase() === r.toLowerCase())) out.push(r);
-    return out;
-  };
-  return {
-    evm: first(own?.evm, ctx.cfg.addresses.evm),
-    solana: first(own?.solana, ctx.cfg.addresses.solana),
-    near: first(own?.near, ctx.cfg.addresses.near),
-  };
+export function ownBook(ctx: PCtx): { evm: string[] } {
+  const own = ctx.keystore?.addressReport().addresses.evm;
+  const evm: string[] = typeof own === 'string' && own.trim() !== '' ? [own] : [];
+  const configured = ctx.cfg.addresses.evm;
+  if (configured !== undefined && !evm.some((x) => x.toLowerCase() === configured.toLowerCase())) evm.push(configured);
+  return { evm };
 }
 
 // Addresses we own: the book above, plus the account the verifier read names, which is how a
 // demo ledger (no keystore, no config) still knows whose money it shows.
 export function selfAddresses(ctx: PCtx): string[] {
   const set = new Set<string>();
-  const book = ownBook(ctx);
-  for (const a of [...book.evm, ...book.solana, ...book.near]) set.add(a.toLowerCase());
+  for (const a of ownBook(ctx).evm) set.add(a.toLowerCase());
   const read = ctx.ledger.intents();
   for (const h of read?.holdings ?? []) set.add(h.accountId.toLowerCase());
   return [...set];
-}
-
-// The address this app owns on a chain. eth, base and arb share one evm address; the verifier
-// read's account is the same address and stands in when neither the keystore nor config has
-// one (demo mode).
-export function recipientFor(ctx: PCtx, chain: ChainId): string | null {
-  const book = ownBook(ctx);
-  if (EVM_CHAINS.includes(chain)) {
-    return book.evm[0] ?? ctx.ledger.intents()?.holdings[0]?.accountId ?? null;
-  }
-  if (chain === 'sol') return book.solana[0] ?? null;
-  return book.near[0] ?? null;
 }
 
 export function buildCtx(ctx: PCtx, snapshot: LedgerSnapshot, policy: Policy | null): EngineCtx {

@@ -29,7 +29,7 @@ const cfg = loadConfig(root);
 const amountArg = process.argv.indexOf('--amount');
 const amount = amountArg > -1 ? Number(process.argv[amountArg + 1]) : 10;
 
-const configured = cfg.addresses.evm[0];
+const configured = cfg.addresses.evm;
 if (configured === undefined) {
   console.error('no EVM address configured, so there is no trading account to quote against');
   process.exit(1);

@@ -1,12 +1,8 @@
 {
-  "_comment": "Committed template. Real addresses go in config.local.json, which is gitignored and merged over this file key by key. Private keys never appear in either: they live at keysPath, default ~/.phosphor/keys.json, outside the working copy.",
+  "_comment": "Committed template. A read-only install names its one EVM address (the NEAR Intents account id) as addresses.evm in config.local.json, which is gitignored and merged over this file key by key. A wallet made in the window needs no config at all. Private keys never appear in either: they live at keysPath, default ~/.phosphor/keys.json, outside the working copy.",
   "mode": "live",
   "port": 4177,
-  "addresses": {
-    "evm": [],
-    "solana": [],
-    "near": []
-  },
+  "addresses": {},
   "candleProducts": ["BTC-USD", "ETH-USD", "SOL-USD", "NEAR-USD", "HYPE-USD", "ARB-USD", "AVAX-USD"],
   "_skills": "Which files in skills/ a connecting agent is told to use. Names only, no .md. Everything in skills/ is installed; only what is listed here is live. Empty means the agent runs on the connect-time rules alone.",
   "skills": ["phosphor-analysis", "phosphor-hunt"],

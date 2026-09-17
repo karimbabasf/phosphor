@@ -627,10 +627,9 @@
     });
   }
 
-  /* The wallet's own key on that network. The EVM one is the account id on
-     NEAR Intents and Hyperliquid, so it may be copied; the Solana and NEAR
-     keys have no rail out of them, so a deposit sent to one would be
-     stranded, and the row says so and offers no Copy. */
+  /* The wallet's own key on that network: the EVM address, which is the
+     account id on NEAR Intents and Hyperliquid, so it may be copied. On any
+     other network the wallet has no key of its own, and the row says so. */
   function renderKey() {
     var host = refs.keyRow;
     if (!host) return;
@@ -642,7 +641,7 @@
     }
     var n = networkOf(network) || { name: String(network) };
     host.appendChild(dom.el('p', 'label', 'Wallet key address on ' + n.name));
-    var own = network === 'eth' || network === 'base' || network === 'arb' || network === 'sol' || network === 'near';
+    var own = network === 'eth' || network === 'base' || network === 'arb';
     if (!own) {
       host.appendChild(dom.el('p', 'body dim', 'This wallet has no key of its own on ' + n.name + '. Money sent there arrives through the bridge address above.'));
       return;
@@ -654,18 +653,15 @@
       return;
     }
     var verified = addresses.verified === true;
-    var evm = network === 'eth' || network === 'base' || network === 'arb';
     var head = dom.el('div', 'hstack-2 wrap');
     head.appendChild(chip(verified ? 'Verified' : 'Unverified', verified ? 'up' : 'warn'));
-    head.appendChild(dom.el('span', 'meta', evm
-      ? 'Your account id on NEAR Intents and Hyperliquid.'
-      : 'Not a deposit address: nothing moves money out of it. Use Show the address.'));
+    head.appendChild(dom.el('span', 'meta', 'Your account id on NEAR Intents and Hyperliquid.'));
     host.appendChild(head);
     host.appendChild(chunked(chain.address));
     if (!verified) {
       host.appendChild(dom.el('p', 'meta', 'Read from the file, not from your keys. It is verified once this Mac opens the wallet.'));
     }
-    if (evm && verified) {
+    if (verified) {
       var tools = dom.el('div', 'hstack-2 wrap');
       var said = dom.el('span', 'meta');
       said.setAttribute('role', 'status');
@@ -770,8 +766,7 @@
     flow.appendChild(grid);
 
     if (phrase.paths) {
-      flow.appendChild(dom.el('p', 'meta', 'Derivation paths, for checking in another wallet: EVM ' + phrase.paths.evm
-        + ', Solana ' + phrase.paths.solana + ', NEAR ' + phrase.paths.near + '.'));
+      flow.appendChild(dom.el('p', 'meta', 'Derivation path, for checking in another wallet: EVM ' + phrase.paths.evm + '.'));
     }
 
     var tools = dom.el('div', 'screen-actions wrap');

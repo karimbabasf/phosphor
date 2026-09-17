@@ -70,7 +70,7 @@ function setup() {
     cfg: {
       mode: 'demo',
       port: 4177,
-      addresses: { evm: [], solana: [], near: [] },
+      addresses: {},
       candleProducts: [],
       dataDir,
       keysPath: path.join(dataDir, 'keys.json'),

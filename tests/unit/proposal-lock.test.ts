@@ -137,7 +137,7 @@ function setup(rail: Rail | null, clickAboveUsd = 1_000_000): { svc: ProposalSer
     dataDir: dir,
     port: 0,
     keysPath: path.join(dir, 'keys.json'),
-    addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
+    addresses: { evm: '0x1111111111111111111111111111111111111111' },
     candleProducts: ['BTC-USD'],
   } as unknown as AppConfig;
 

@@ -1,15 +1,20 @@
-// Raw key generation for developers. Mints one fresh keypair per rail (EVM secp256k1,
-// NEAR ed25519, Solana ed25519), writes them to keysPath (default ~/.phosphor/keys.json,
-// mode 0600, directory 0700), and prints public addresses only. Run: npm run keygen.
+// Raw key generation for developers. Mints one fresh EVM secp256k1 keypair, writes it to
+// keysPath (default ~/.phosphor/keys.json, mode 0600, directory 0700), and prints the public
+// address only. Run: npm run keygen.
+//
+// One key, because this app signs with one: the EVM key is the NEAR Intents account id and the
+// Hyperliquid signer. The NEAR and Solana ed25519 keys this script used to mint beside it signed
+// nothing after the chain wallets went (2026-09-16); a wallet made in the window still derives
+// them from the mnemonic and seals them in the file, and that format is untouched.
 //
 // SUPERSEDED by wallet creation inside the app, which is where a person should make a wallet.
-// This script exists for a developer who wants raw keys on disk and knows what that costs.
+// This script exists for a developer who wants a raw key on disk and knows what that costs.
 //
-// READ THIS BEFORE RUNNING IT. The keys it writes are generated on a laptop, stored
-// UNENCRYPTED at rest behind nothing but file permissions, and handled by a program that also
-// talks to the network. Anything that can read your home directory can spend what these
-// addresses hold. The app's own wallet creation encrypts the key set behind a password; this
-// script does not. Whatever you put behind these keys, you are accepting that.
+// READ THIS BEFORE RUNNING IT. The key it writes is generated on a laptop, stored UNENCRYPTED
+// at rest behind nothing but file permissions, and handled by a program that also talks to the
+// network. Anything that can read your home directory can spend what this address holds. The
+// app's own wallet creation encrypts the key behind a password; this script does not. Whatever
+// you put behind this key, you are accepting that.
 //
 // keysPath comes from src/config.ts, which refuses any path inside the working copy. A key
 // file inside a git working copy is one `git add -f` from being published; one outside it
@@ -21,67 +26,27 @@
 // no keccak256. It ships 'sha3-256', which is NIST FIPS 202: same Keccak-f[1600] permutation,
 // different padding byte (0x06 rather than 0x01), so it returns a different digest and an
 // address derived from it is an address nobody holds the key to. Funds sent there are gone,
-// and nothing about the wrong address looks wrong. viem is the same library the three rails
-// sign with, so there is exactly one derivation path in this codebase rather than two that
-// have to agree.
-//
-// base58 comes from src/chain/near.ts, beside the decoder that reads these files back. It used
-// to be vendored here, which was one more place a base58 bug could differ from the app's. It is
-// still verified against published vectors at startup, as is every other step: selfCheck() runs
-// before any key is generated, so a broken primitive stops the program rather than printing an
-// address that no private key opens.
+// and nothing about the wrong address looks wrong. viem is the same library the rails sign
+// with, so there is exactly one derivation path in this codebase rather than two that have to
+// agree. selfCheck() runs before any key is generated, so a broken primitive stops the program
+// rather than printing an address that no private key opens.
 
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
-// The encoder lives in src, beside the decoder that reads these files back. This script had its
-// own copy, which is one more place a base58 bug could differ from the app's.
-import { base58Encode } from '../src/chain/near.ts';
 import { loadConfig } from '../src/config.ts';
 
 // ---------- key material ----------
 
 type EvmKeys = { address: string; privateKey: string };
-type NearKeys = { accountId: string; publicKey: string; secretKey: string };
-type SolanaKeys = { address: string; secretKey: string };
 
 function generateEvm(): EvmKeys {
   // viem draws the scalar from a CSPRNG and returns the EIP-55 cased address. Nothing here
   // touches keccak directly, which is the point: one library owns the derivation.
   const privateKey = generatePrivateKey();
   return { address: privateKeyToAccount(privateKey).address, privateKey };
-}
-
-function ed25519Pair(): { seed: Buffer; publicKey: Buffer } {
-  const pair = crypto.generateKeyPairSync('ed25519');
-  const priv = pair.privateKey.export({ format: 'jwk' });
-  const pub = pair.publicKey.export({ format: 'jwk' });
-  if (typeof priv.d !== 'string' || typeof pub.x !== 'string') {
-    throw new Error('ed25519 key export produced no seed or no public key');
-  }
-  return { seed: Buffer.from(priv.d, 'base64url'), publicKey: Buffer.from(pub.x, 'base64url') };
-}
-
-function generateNear(): NearKeys {
-  const { seed, publicKey } = ed25519Pair();
-  return {
-    // An implicit account id is the hex of the public key, and it exists the moment it is funded.
-    accountId: publicKey.toString('hex'),
-    publicKey: 'ed25519:' + base58Encode(publicKey),
-    secretKey: 'ed25519:' + base58Encode(Buffer.concat([seed, publicKey])),
-  };
-}
-
-function generateSolana(): SolanaKeys {
-  const { seed, publicKey } = ed25519Pair();
-  return {
-    address: base58Encode(publicKey),
-    // 64 bytes, seed || public, which is what every Solana tool means by a secret key.
-    secretKey: base58Encode(Buffer.concat([seed, publicKey])),
-  };
 }
 
 // ---------- self check ----------
@@ -101,24 +66,6 @@ function selfCheck(): void {
     privateKeyToAccount('0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318').address,
     '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23',
   );
-
-  expect('base58("Hello World!")', base58Encode(Buffer.from('Hello World!')), '2NEpo7TZRRrLZSi2U');
-  expect('base58(leading zero bytes)', base58Encode(Buffer.from('0000287fb4cd', 'hex')), '11233QC4');
-
-  // RFC 8032 test vector 1, seed to public key. Covers the ed25519 export path that NEAR and
-  // Solana both depend on, the same way the vector above covers the EVM one.
-  const pkcs8 = Buffer.concat([
-    Buffer.from('302e020100300506032b657004220420', 'hex'),
-    Buffer.from('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60', 'hex'),
-  ]);
-  const edPub = crypto
-    .createPublicKey(crypto.createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' }))
-    .export({ format: 'jwk' });
-  expect(
-    'ed25519 rfc8032 vector 1',
-    Buffer.from(String(edPub.x), 'base64url').toString('hex'),
-    'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a',
-  );
 }
 
 // ---------- main ----------
@@ -136,24 +83,20 @@ function main(): void {
     // Overwriting a funded key loses the funds with it, so the refusal is the default and
     // --force is the deliberate act.
     console.error(`refusing to overwrite ${keysPath}`);
-    console.error('A key file is already there. Overwriting it destroys whatever those addresses hold.');
+    console.error('A key file is already there. Overwriting it destroys whatever this address holds.');
     console.error('Move it aside, or re-run with --force if you really mean to replace it.');
     process.exit(1);
   }
 
   const evm = generateEvm();
-  const near = generateNear();
-  const solana = generateSolana();
 
   const file = {
     version: 1,
     createdAt: new Date().toISOString(),
     _comment:
-      'Unencrypted keys on disk, protected by file permissions alone. Anything that can read this ' +
-      'file can spend what these addresses hold. Regenerate with: npm run keygen -- --force',
+      'Unencrypted key on disk, protected by file permissions alone. Anything that can read this ' +
+      'file can spend what this address holds. Regenerate with: npm run keygen -- --force',
     evm,
-    near,
-    solana,
   };
 
   fs.mkdirSync(path.dirname(keysPath), { recursive: true, mode: 0o700 });
@@ -165,25 +108,19 @@ function main(): void {
 
   // Everything below is public. No branch of this program prints a private key.
   console.log('');
-  console.log('KEYS GENERATED, UNENCRYPTED ON DISK. File permissions are the only thing protecting them.');
+  console.log('KEY GENERATED, UNENCRYPTED ON DISK. File permissions are the only thing protecting it.');
   console.log(`written to ${keysPath} (file 0600, directory 0700)`);
   console.log('');
   console.log(`  EVM      ${evm.address}`);
-  console.log(`  NEAR     ${near.accountId}`);
-  console.log(`           ${near.publicKey}`);
-  console.log(`  SOLANA   ${solana.address}`);
   console.log('');
-  console.log('Paste into config.local.json (gitignored, create it if missing):');
+  console.log('This address is your NEAR Intents account id and your Hyperliquid account. Money comes in');
+  console.log('through the deposit card in the window, never by sending to this address on a chain.');
   console.log('');
-  console.log(
-    JSON.stringify(
-      { addresses: { evm: [evm.address], solana: [solana.address], near: [near.accountId] } },
-      null,
-      2,
-    ),
-  );
+  console.log('Paste into config.local.json (gitignored, create it if missing) for a read-only install:');
   console.log('');
-  console.log('Then fund them from the faucets listed in the README, and run: npm run sweep');
+  console.log(JSON.stringify({ addresses: { evm: evm.address } }, null, 2));
+  console.log('');
+  console.log('Then run: npm run sweep');
 }
 
 // Only generate when run as the entry point, so this file can be imported without minting a new

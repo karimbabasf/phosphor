@@ -191,7 +191,7 @@ test('loadConfig reads config.json, applies no overrides, and creates dataDir', 
     JSON.stringify({
       mode: 'demo',
       port: 4177,
-      addresses: { evm: [], solana: [], near: [] },
+      addresses: {},
       candleProducts: ['BTC-USD'],
       dataDir: 'state',
     }),
@@ -211,7 +211,7 @@ test('loadConfig applies ACC_PORT, ACC_MODE, ACC_DATA_DIR env overrides', () => 
     JSON.stringify({
       mode: 'demo',
       port: 4177,
-      addresses: { evm: [], solana: [], near: [] },
+      addresses: {},
       candleProducts: [],
       dataDir: 'state',
     }),

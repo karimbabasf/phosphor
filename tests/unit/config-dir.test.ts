@@ -60,7 +60,7 @@ test('PHOSPHOR_CONFIG_DIR moves config.local.json out of the root', () => {
   const cfg = withEnv({ PHOSPHOR_CONFIG_DIR: support, PHOSPHOR_KEYS: KEYS }, () => loadConfig(root));
 
   assert.equal(cfg.port, 6000);
-  assert.deepEqual(cfg.addresses.evm, ['0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045']);
+  assert.equal(cfg.addresses.evm, '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045');
 });
 
 test('the override wins outright: a stale config.local.json left in the root is not read', () => {

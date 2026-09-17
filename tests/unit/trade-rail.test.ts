@@ -96,7 +96,7 @@ function setup(over: { clickUsd?: number; kill?: boolean } = {}) {
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,
-    addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
+    addresses: { evm: '0x1111111111111111111111111111111111111111' },
     candleProducts: ['ETH-USD'],
     dataDir,
     keysPath: '/tmp/phosphor-trade-rail-keys.json',
@@ -274,7 +274,7 @@ test('without a trading surface every trade proposal refuses by name', async () 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-trade-rail-none-'));
   savePolicy(dataDir, seededPolicy());
   const svc = createProposalService({
-    cfg: { mode: 'demo', port: 4177, addresses: { evm: [], solana: [], near: [] }, candleProducts: [], dataDir, keysPath: '/tmp/none' },
+    cfg: { mode: 'demo', port: 4177, addresses: {}, candleProducts: [], dataDir, keysPath: '/tmp/none' },
     audit: createAudit(dataDir),
     store: createStore(dataDir),
     ledger: { snapshot: () => loadDemoLedger(), intents: () => undefined, refresh: async () => loadDemoLedger(), hyperliquid: () => undefined },

@@ -181,7 +181,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any }
   const toasts: string[] = [];
   const confirms: Any[] = [];
   const answer: Any = {
-    reveal: { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0", solana: "m/44'/501'/0'/0'", near: "m/44'/397'/0'" } },
+    reveal: { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" } },
     proven: (words: Any[]) => (words.every((w) => WORDS[w.index] === w.word) ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' }),
     forget: { ok: true },
     restore: { ok: true, addresses: {} },
@@ -235,7 +235,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any }
     chunks: (address: string) => [address.slice(0, 4), address.slice(4, -4), address.slice(-4)],
   };
   sandbox.PhosphorApi = {
-    receive: () => Promise.resolve({ data: options.receive ?? { chains: [{ id: 'eth', name: 'Ethereum', address: EVM }, { id: 'base', name: 'Base', address: EVM }, { id: 'sol', name: 'Solana', address: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin' }, { id: 'near', name: 'NEAR', address: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90' }], state: 'unlocked', verified: true, tampered: false } }),
+    receive: () => Promise.resolve({ data: options.receive ?? { chains: [{ id: 'eth', name: 'Ethereum', address: EVM }, { id: 'base', name: 'Base', address: EVM }, { id: 'arb', name: 'Arbitrum', address: EVM }], state: 'unlocked', verified: true, tampered: false } }),
     intentsReceive: () => Promise.resolve({ data: { networks: [{ id: 'eth', address: EVM, accepts: [{ symbol: 'USDC' }] }, { id: 'sol', address: 'SOLADDR', accepts: [{ symbol: 'SOL' }] }] } }),
     vaultReveal: () => { calls.push({ route: '/api/vault/reveal' }); return Promise.resolve(answer.reveal); },
     vaultBackupProven: (words: Any[]) => { calls.push({ route: '/api/vault/backup-proven', words }); return Promise.resolve(answer.proven(words)); },
@@ -305,7 +305,8 @@ test('Reveal posts /api/vault/reveal, shows the 24 words once, with Print and wi
   const labels = find(panel, 'button').map((b: Any) => b.textContent);
   assert.ok(labels.includes('Print'), 'no Print');
   assert.equal(labels.some((l: string) => /copy/i.test(l)), false, 'a Copy button on the phrase');
-  assert.ok(textOf(panel).some((t) => t.includes("m/44'/501'/0'/0'")), 'the derivation paths are not stated');
+  assert.ok(textOf(panel).some((t) => t.includes("m/44'/60'/0'/0/0")), 'the derivation path is not stated');
+  assert.equal(textOf(panel).some((t) => t.includes("m/44'/501'")), false, 'a Solana path the wallet no longer signs with');
 });
 
 test('Print prints a sheet that holds only the numbered words, and takes it away after', async () => {
@@ -526,14 +527,15 @@ test('the wallet\'s own key on the network in the menu sits behind the developer
   assert.deepEqual(world.calls.find((c) => c.route === 'copy'), { route: 'copy', address: EVM });
   assert.ok(textOf(key).includes('Address copied, ends in ...0e1d'));
 
-  // Solana and NEAR keys have no rail out of them: no Copy, and the row says so.
+  // The wallet has no key of its own on Solana any more: no address, no Copy, and the row
+  // points at the bridge address above.
   find(card, '.netsel')[0].click();
   find(card, '.netsel-menu')[0].dispatch('click', { target: find(card, '.netsel-option')[3] });
   const sol = find(card, '.vault-key')[0];
   assert.ok(textOf(sol).includes('Wallet key address on Solana'));
-  assert.equal(buttonNamed(sol, 'Copy'), undefined, 'a Copy button on the Solana key');
-  assert.ok(textOf(sol).some((t) => t.startsWith('Not a deposit address')));
-  assert.equal(find(sol, '.sr-only')[0].textContent, '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin');
+  assert.equal(buttonNamed(sol, 'Copy'), undefined, 'a Copy button on the Solana row');
+  assert.ok(textOf(sol).some((t) => t.startsWith('This wallet has no key of its own on Solana')));
+  assert.equal(find(sol, '.sr-only').length, 0, 'no Solana address is shown');
 
   const locked = build({ receive: { chains: [{ id: 'eth', name: 'Ethereum', address: EVM }], state: 'locked', verified: false, tampered: false } });
   await flush();

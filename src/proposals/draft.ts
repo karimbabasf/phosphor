@@ -16,7 +16,7 @@ import { evaluate } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import type { RailDraft, RailKind } from '../rails/index.ts';
-import { buildCtx, errText, mergePatch, newProposal, ownBook, recipientFor } from './lifecycle.ts';
+import { buildCtx, errText, mergePatch, newProposal, ownBook } from './lifecycle.ts';
 import { land } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
 
@@ -109,7 +109,7 @@ export function resolve<T>(fn: () => T, problems: string[], fallback: T): T {
 // own rows last (demo mode). No wallet means nothing can be proposed, and the refusal says
 // the one thing to do about it.
 export function ourEvmAddress(ctx: PCtx, problems: string[]): string {
-  const found = ownBook(ctx).evm[0] ?? recipientFor(ctx, 'eth');
+  const found = ownBook(ctx).evm[0] ?? ctx.ledger.intents()?.holdings[0]?.accountId ?? null;
   if (found === null) {
     problems.push('Make a wallet first.');
     return '';

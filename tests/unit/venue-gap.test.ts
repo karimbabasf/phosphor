@@ -44,7 +44,7 @@ function setup(policy: Policy) {
     mode: 'demo',
     keysPath: path.join(dataDir, 'keys.json'),
     port: 4177,
-    addresses: { evm: [], solana: [], near: [] },
+    addresses: {},
     candleProducts: [],
     dataDir,
   };

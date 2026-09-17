@@ -400,22 +400,23 @@ export function handleRevealFetch(ctx: Ctx, nonce: string, req: http.IncomingMes
   sendJson(res, 200, {
     ok: true,
     what: 'keys',
+    // The EVM key alone: it is the intents account and the Hyperliquid signer. The Solana and
+    // NEAR keys the file still seals sign nothing in this app, so they are not shown.
     keys: {
       evm: secret.keys.evm?.privateKey ?? null,
-      solana: secret.keys.solana?.secretKey ?? null,
-      near: secret.keys.near?.secretKey ?? null,
     },
   });
 }
 
 // ---------- receive ----------
 
-const CHAIN_NAMES: Array<{ id: string; name: string; of: 'evm' | 'solana' | 'near'; warning: string }> = [
-  { id: 'eth', name: 'Ethereum', of: 'evm', warning: 'Ethereum, Base and Arbitrum share this address. Send only what the network you picked supports.' },
-  { id: 'base', name: 'Base', of: 'evm', warning: 'Ethereum, Base and Arbitrum share this address. Send only what the network you picked supports.' },
-  { id: 'arb', name: 'Arbitrum', of: 'evm', warning: 'Ethereum, Base and Arbitrum share this address. Send only what the network you picked supports.' },
-  { id: 'sol', name: 'Solana', of: 'solana', warning: 'Solana only. Anything sent here from another network is lost.' },
-  { id: 'near', name: 'NEAR', of: 'near', warning: 'NEAR only. This account exists once something is sent to it.' },
+// The one address this app owns, named for each EVM network it is the same string on. It is
+// the account id on NEAR Intents and Hyperliquid, which is what the vault screen shows it as;
+// money comes in through the bridge address (handleIntentsReceive), never here.
+const CHAIN_NAMES: Array<{ id: string; name: string; of: 'evm'; warning: string }> = [
+  { id: 'eth', name: 'Ethereum', of: 'evm', warning: 'Ethereum, Base and Arbitrum share this address. It is your account id, not a deposit address.' },
+  { id: 'base', name: 'Base', of: 'evm', warning: 'Ethereum, Base and Arbitrum share this address. It is your account id, not a deposit address.' },
+  { id: 'arb', name: 'Arbitrum', of: 'evm', warning: 'Ethereum, Base and Arbitrum share this address. It is your account id, not a deposit address.' },
 ];
 
 /* Works while locked, and that is the feature: money arriving is the one thing a person should

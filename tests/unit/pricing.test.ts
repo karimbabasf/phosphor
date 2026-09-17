@@ -98,7 +98,7 @@ test('a failed price fetch keeps the old timestamp, so the value ages out of use
   const cfg = {
     mode: 'live',
     port: 0,
-    addresses: { evm: [], solana: [], near: [] },
+    addresses: {},
     candleProducts: [],
     dataDir: os.tmpdir(),
     keysPath: nodePath.join(os.tmpdir(), 'phosphor-pricing-keys', 'keys.json'),

@@ -223,7 +223,7 @@ export async function handleVaultReveal(ctx: Ctx, req: http.IncomingMessage, res
     ok: true,
     words: revealed.mnemonic.split(' '),
     // Stated beside the words so a person checking them in another wallet knows where to look.
-    paths: { evm: "m/44'/60'/0'/0/0", solana: "m/44'/501'/0'/0'", near: "m/44'/397'/0'" },
+    paths: { evm: "m/44'/60'/0'/0/0" },
   });
 }
 

@@ -106,7 +106,7 @@ export function makeCtx(over: HarnessOptions = {}): Harness {
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,
-    addresses: { evm: [SELF_EVM], solana: [], near: [] },
+    addresses: { evm: SELF_EVM },
     candleProducts: [],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),

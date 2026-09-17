@@ -95,7 +95,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: ['0xself'], solana: [], near: [] },
+    addresses: { evm: '0xself' },
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),

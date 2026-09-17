@@ -124,7 +124,7 @@ function setup(result: RailResult | ((ledger: ReturnType<typeof fakeLedger>) => 
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,
-    addresses: { evm: [SELF_EVM], solana: [], near: [] },
+    addresses: { evm: SELF_EVM },
     candleProducts: [],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),

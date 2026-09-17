@@ -32,7 +32,7 @@ function root(local: Record<string, unknown> | null, base?: Record<string, unkno
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-schema-'));
   fs.writeFileSync(
     path.join(dir, 'config.json'),
-    JSON.stringify(base ?? { mode: 'live', port: 4177, addresses: { evm: [], solana: [], near: [] }, dataDir: 'state' }),
+    JSON.stringify(base ?? { mode: 'live', port: 4177, addresses: {}, dataDir: 'state' }),
   );
   if (local !== null) fs.writeFileSync(path.join(dir, 'config.local.json'), JSON.stringify(local));
   return dir;
@@ -62,21 +62,21 @@ test('the message names the file the key is in, so the owner knows which one to 
 
 test('an unknown key in the committed template fails just as hard', () => {
   assert.throws(
-    () => load(null, { mode: 'live', addresses: { evm: [], solana: [], near: [] }, slippageTolerance: 500 }),
+    () => load(null, { mode: 'live', addresses: {}, slippageTolerance: 500 }),
     /slippageTolerance/,
   );
 });
 
 test('a documentation key beginning with an underscore is not an unknown key', () => {
-  const cfg = load({ _comment: 'real addresses live here', addresses: { evm: [EVM], solana: [], near: [] } });
-  assert.deepEqual(cfg.addresses.evm, [EVM]);
+  const cfg = load({ _comment: 'real addresses live here', addresses: { evm: EVM } });
+  assert.equal(cfg.addresses.evm, EVM);
 });
 
 test('every key the app actually reads still loads', () => {
   const cfg = load({
     mode: 'demo',
     port: 4200,
-    addresses: { evm: [EVM], solana: [SOL], near: ['phosphor.near'] },
+    addresses: { evm: EVM },
     candleProducts: ['ETH-USD'],
     dataDir: 'state',
     skills: ['phosphor-analysis'],
@@ -98,41 +98,29 @@ test('a key of the wrong type is refused rather than coerced', () => {
 
 // ---------- addresses ----------
 
-test('a .testnet account in addresses.near is refused at load', () => {
-  assert.throws(
-    () => load({ mode: 'live', addresses: { evm: [], solana: [], near: ['phosphor.testnet'] } }),
-    /phosphor\.testnet/,
-  );
-});
-
-test('and the refusal says it is the mainnet rule, since the account is syntactically fine', () => {
-  assert.throws(
-    () => load({ mode: 'live', addresses: { evm: [], solana: [], near: ['phosphor.testnet'] } }),
-    /mainnet/,
-  );
-});
-
-test('a named mainnet account and an implicit one both load', () => {
-  const cfg = load({ mode: 'live', addresses: { evm: [], solana: [], near: ['phosphor.near', NEAR_IMPLICIT] } });
-  assert.deepEqual(cfg.addresses.near, ['phosphor.near', NEAR_IMPLICIT]);
+test('the one address is the EVM account, checked for its shape', () => {
+  const cfg = load({ addresses: { evm: EVM } });
+  assert.deepEqual(cfg.addresses, { evm: EVM });
 });
 
 test('a malformed EVM address is refused at load', () => {
-  assert.throws(() => load({ addresses: { evm: [EVM.slice(0, -2)], solana: [], near: [] } }), /not an EVM address/);
+  assert.throws(() => load({ addresses: { evm: EVM.slice(0, -2) } }), /not an EVM address/);
+  assert.throws(() => load({ addresses: { evm: SOL } }), /not an EVM address/);
+  assert.throws(() => load({ addresses: { evm: '' } }), /empty/);
 });
 
-test('a Solana address with a character dropped is refused at load', () => {
-  assert.throws(() => load({ addresses: { evm: [], solana: [SOL.slice(0, -1)], near: [] } }), /Solana/);
-});
-
-test('an address on the wrong family is refused, both ways round', () => {
-  assert.throws(() => load({ addresses: { evm: [SOL], solana: [], near: [] } }), /not an EVM address/);
-  assert.throws(() => load({ addresses: { evm: [], solana: [EVM], near: [] } }), /Solana/);
+test('an address book written before the chain wallets went still loads, and only the EVM entry is carried', () => {
+  // The old shape: one list per chain. The first EVM entry is the account; Solana and NEAR
+  // signed nothing after 2026-09-16 and are accepted so the file loads, then ignored.
+  const cfg = load({ addresses: { evm: [EVM], solana: [SOL], near: ['phosphor.near', NEAR_IMPLICIT] } });
+  assert.deepEqual(cfg.addresses, { evm: EVM });
+  const empty = load({ addresses: { evm: [], solana: [], near: [] } });
+  assert.deepEqual(empty.addresses, {});
 });
 
 test('an empty address book is the safe default and loads', () => {
-  const cfg = load({ addresses: { evm: [], solana: [], near: [] } });
-  assert.deepEqual(cfg.addresses, { evm: [], solana: [], near: [] });
+  const cfg = load({ addresses: {} });
+  assert.deepEqual(cfg.addresses, {});
 });
 
 test('the committed template at the repo root loads unchanged', () => {

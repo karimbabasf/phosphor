@@ -78,7 +78,7 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
   const cfg: AppConfig = {
     mode: opts.mode ?? 'demo',
     port: 0,
-    addresses: { evm: [], solana: [], near: [] },
+    addresses: {},
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath,
@@ -506,7 +506,7 @@ test('with no shell relaying, the enclave verbs say so and the password path is 
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, kdf: fast });
   const token = crypto.randomBytes(32).toString('hex');
-  const cfg: AppConfig = { mode: 'demo', port: 0, addresses: { evm: [], solana: [], near: [] }, candleProducts: [], dataDir, keysPath };
+  const cfg: AppConfig = { mode: 'demo', port: 0, addresses: {}, candleProducts: [], dataDir, keysPath };
   const server = createServer({
     cfg,
     token,
