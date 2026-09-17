@@ -33,7 +33,6 @@ const riskRows = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'd
 
 function happyPolicy(): Policy {
   const p = defaultPolicy();
-  delete p.composition.minNativeGasUsd.near;
   p.sentences = renderSentences(p);
   return p;
 }

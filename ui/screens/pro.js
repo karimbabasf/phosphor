@@ -43,10 +43,6 @@
     intents: 'NEAR Intents', hyperliquid: 'Hyperliquid'
   };
 
-  /* The mark a chain wears on a chip: its own network mark where one exists
-     (ui/logos), else its native coin. */
-  var CHAIN_MARKS = { eth: 'ETH', base: 'BASE', arb: 'ARB', sol: 'SOL', near: 'NEAR' };
-
   /* Allowlist entries that are venues rather than addresses. The policy stores
      the id it checks against; the window shows the name a person knows it by. */
   var VENUE_NAMES = {
@@ -57,9 +53,9 @@
 
   /* One icon per kind of rule, from the window's own set (ui/design/icons.js),
      so a person can tell an ask from a refusal before reading it: a clock for
-     what waits on them, a slashed circle for what is refused, a lock for what
-     is held back, an arrow out for where money may go, stop for the switch. */
-  var RULE_ICONS = { ask: 'waiting', refuse: 'refused', keep: 'lock', pay: 'send', kill: 'stop' };
+     what waits on them, a slashed circle for what is refused, an arrow out for
+     where money may go, stop for the switch. */
+  var RULE_ICONS = { ask: 'waiting', refuse: 'refused', pay: 'send', kill: 'stop' };
 
   /* One icon from the window's set (ui/design/icons.js). */
   function icon(name, className) {
@@ -790,7 +786,7 @@
 
   /* Rules, grouped by what they do and in the order a person needs them: what
      gets asked, what gets refused (at once, over a day, and anything else the
-     engine enforces), what is held back for gas, and where money may go. Each
+     engine enforces), and where money may go. Each
      one is the server's own sentence (src/policy/render.ts) said in the app's
      voice, so the card and the assistant never disagree about a number. A rule
      that is not set is not drawn, which is what "no limits unless specified"
@@ -876,31 +872,6 @@
       refuses.push(other.node);
     }
 
-    /* THE GAS FLOORS ARE ONE RULE, NOT FOUR.
-       They arrive as one sentence per chain, and four lines that differ in two
-       words each are four lines nobody reads. One rule, and under it one chip
-       per chain wearing the chain's mark and its floor, can be taken in at a
-       glance. */
-    var keeps = [];
-    if (rules.gas.length) {
-      var gas = rule('keep', rules.gas.length === 1
-        ? 'Keeps gas back on ' + chainName(rules.gas[0].chain) + '.'
-        : 'Keeps gas back on each chain.');
-      gas.node.dataset.rule = 'gas';
-      var chips = dom.el('div', 'gas-chips');
-      for (var g = 0; g < rules.gas.length; g += 1) {
-        var chip = dom.el('span', 'chip gas-chip');
-        var chain = String(rules.gas[g].chain || '').toLowerCase();
-        var mark = dom.el('span', 'gas-chip-mark');
-        mark.appendChild(logo(CHAIN_MARKS[chain] || chain.toUpperCase(), 16));
-        chip.appendChild(mark);
-        chip.appendChild(dom.el('span', 'gas-chip-text', chainName(chain) + ' ' + rules.gas[g].amount));
-        chips.appendChild(chip);
-      }
-      gas.text.appendChild(chips);
-      keeps.push(gas.node);
-    }
-
     /* The destination allowlist existed in the policy engine with no way to
        see it. This is where it lives: the rule names the venues and counts the
        wallets, and the addresses fold under it. An address is checked
@@ -954,7 +925,6 @@
 
     drawn += group('ask', 'Asks first', asks);
     drawn += group('refuse', 'Refuses', refuses);
-    drawn += group('keep', 'Keeps', keeps);
     drawn += group('pay', 'Pays only', pays);
 
     if (!drawn) {
@@ -1011,8 +981,7 @@
   }
 
   /* One rule row: the icon, the sentence, and room on the right for the one
-     figure a rule may carry. The sentence is a span of its own so a second
-     line (the gas chips) can sit under it. */
+     figure a rule may carry. */
   function rule(kind, text, tag) {
     var node = dom.el(tag || 'div', 'rule');
     var mark = dom.el('span', 'rule-glyph');
@@ -1025,10 +994,10 @@
   }
 
   /* What the sentences say, by shape. The three caps are always sent by the
-     server and always render; gas floors and the rest render only when set.
-     Any sentence with a shape this card does not know is kept whole. */
+     server and always render; the rest render only when set. Any sentence
+     with a shape this card does not know is kept whole. */
   function parseRules(sentences, policy) {
-    var out = { ask: '', perTx: '', perDay: '', gas: [], other: [], kill: false };
+    var out = { ask: '', perTx: '', perDay: '', other: [], kill: false };
     for (var i = 0; i < sentences.length; i += 1) {
       var line = String(sentences[i]).trim();
       var found;
@@ -1036,7 +1005,6 @@
       if ((found = /^ask me before anything above (\$[\d,]+(?:\.\d+)?)\.?$/i.exec(line))) out.ask = found[1];
       else if ((found = /^refuse any single transaction above (\$[\d,]+(?:\.\d+)?)\.?$/i.exec(line))) out.perTx = found[1];
       else if ((found = /^refuse more than (\$[\d,]+(?:\.\d+)?) in any 24 hours\.?$/i.exec(line))) out.perDay = found[1];
-      else if ((found = /^keep at least (.+) of gas on (\w+)\.?$/i.exec(line))) out.gas.push({ amount: found[1], chain: found[2] });
       else if (/^kill switch on/i.test(line)) out.kill = true;
       else if (line) out.other.push(line);
     }

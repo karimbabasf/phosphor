@@ -82,11 +82,8 @@ function liveLedgerOn(_dir: string): Ledger {
   };
 }
 
-// The demo fixture's NEAR account holds $0.003 against the default $0.50 gas floor, so the
-// shipped policy refuses to move its USDT at all. The floors go, and nothing else does.
 function permissivePolicy(): Policy {
   const p = defaultPolicy();
-  p.composition.minNativeGasUsd = {};
   p.sentences = renderSentences(p);
   return p;
 }

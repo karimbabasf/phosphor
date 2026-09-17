@@ -105,8 +105,7 @@ export type CompositionView = {
 // reader to look for it on NEAR where nothing will be found.
 //
 // Deliberately a DISPLAY axis only. LedgerSnapshot.chainStatus and everything the policy
-// engine reads stay strictly ChainId, so adding this cannot reach the per-chain gas floors
-// or the outbound rules. See the header of src/ledger/index.ts on adding an axis.
+// engine reads stay strictly ChainId, so adding this cannot reach the outbound rules. See the header of src/ledger/index.ts on adding an axis.
 export type WalletPlace = ChainId | 'intents' | 'hyperliquid';
 
 export type WalletRow = {
@@ -167,7 +166,6 @@ export type Policy = {
   composition: {
     maxIssuerShare: Record<string, number>; // key 'default' is the catch-all, 0..1
     maxFreezableShare: number; // 0..1
-    minNativeGasUsd: Partial<Record<ChainId, number>>;
     forbiddenIssuers: string[];
   };
   sentences: string[]; // plain-English rules as authored; UI renders these, never JSON

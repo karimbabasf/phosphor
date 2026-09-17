@@ -32,13 +32,8 @@ function readFile(p: string): string {
   return fs.readFileSync(p, 'utf8');
 }
 
-// The demo fixture's near account holds 0.001 NEAR ($0.003) against the default $0.50 gas
-// floor, so under the shipped default policy the engine refuses to move its USDT (asserted in
-// its own test below). The execution-path cases drop that one floor so they can reach the
-// signing step at all.
 function happyPolicy(): Policy {
   const p = defaultPolicy();
-  delete p.composition.minNativeGasUsd.near;
   p.sentences = renderSentences(p);
   return p;
 }
@@ -421,19 +416,6 @@ test('a corrupt policy file refuses every propose', async () => {
   assert.equal(change.status, 'policy_refused');
   assert.ok(change.verdict.outcome === 'refuse' && change.verdict.rule === 'policy_unreadable');
   assert.ok(h.eventTypes().filter(t => t === 'policy_refused').length >= 2);
-});
-
-test('the default policy refuses to move the stranded near balance', async () => {
-  const h = setup({ policy: defaultPolicy() });
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT' });
-
-  assert.equal(p.status, 'policy_refused');
-  assert.ok(p.verdict.outcome === 'refuse' && p.verdict.rule === 'min_native_gas');
-  assert.equal(h.usdtOn('eth'), 9200);
-
-  // The same call succeeds once the gas-poor chain is left out of the plan.
-  const narrowed = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', fromChains: ['arb', 'sol'] });
-  assert.equal(narrowed.status, 'pending');
 });
 
 test('a quoter failure becomes a refusal carrying the solver message verbatim', async () => {

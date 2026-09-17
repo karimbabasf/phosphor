@@ -416,14 +416,14 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
    sentence in the headline and "This does not move any money. It changes a rule." below it. The
    agent writes both halves of that: the patch AND the sentence beside it. So a patch setting the
    click threshold to a billion dollars and replacing the destination allowlist, described as
-   "raise the gas floor on base", produced a card that named neither. One click and every later
+   "cap the freezable share", produced a card that named neither. One click and every later
    proposal executed with no human in it.
 
    The app already renders the policy as deterministic sentences (src/policy/render.ts) and
    already computes the before and after pair at src/proposals/draft.ts. Nothing displayed it.
    These lines are that diff, and they are facts rather than prose because facts are the lines
    this screen may not drop. Every removal gets its own line: mergePatch REPLACES the destination
-   allowlist, the gas floors and the forbidden issuers rather than merging them, so the deletions
+   allowlist and the forbidden issuers rather than merging them, so the deletions
    are the part a reader would otherwise never see. */
 function ruleChangeFacts(simulation: SimulationResult | null): string[] {
   const diff = simulation?.policyDiff;

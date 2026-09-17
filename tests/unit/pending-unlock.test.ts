@@ -32,7 +32,6 @@ const PASSWORD = 'a long enough password';
 
 function happyPolicy(): Policy {
   const p = defaultPolicy();
-  delete p.composition.minNativeGasUsd.near;
   p.sentences = renderSentences(p);
   return p;
 }

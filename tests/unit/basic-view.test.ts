@@ -457,7 +457,7 @@ test('a rule change lists every rule it removes and every rule it adds', () => {
     patch: { outbound: { humanClickAboveUsd: 1_000_000_000 } },
     // The lie. The patch does something else entirely and this is the only thing the card used
     // to carry about it.
-    sentence: 'raise the gas floor on base',
+    sentence: 'cap the freezable share at half',
   };
   const view = buildBasic(
     baseInput({
@@ -467,9 +467,9 @@ test('a rule change lists every rule it removes and every rule it adds', () => {
           kind: 'policy_change',
           simulation: {
             ok: true,
-            summary: 'the agent asked for: raise the gas floor on base',
+            summary: 'the agent asked for: cap the freezable share at half',
             policyDiff: {
-              before: ['Ask me before anything above $100.', 'Keep at least $25 of gas on base.', 'Never move funds into: acme.'],
+              before: ['Ask me before anything above $100.', 'No more than 50% of holdings may be freezable.', 'Never move funds into: acme.'],
               after: ['Ask me before anything above $1,000,000,000.'],
             },
           },
@@ -480,7 +480,7 @@ test('a rule change lists every rule it removes and every rule it adds', () => {
 
   const facts = view.ask!.facts.join('\n');
   assert.match(facts, /removed: "Ask me before anything above \$100\."/);
-  assert.match(facts, /removed: "Keep at least \$25 of gas on base\."/, 'a deleted gas floor is a removal, and mergePatch deletes them wholesale');
+  assert.match(facts, /removed: "No more than 50% of holdings may be freezable\."/, 'a deleted cap is a removal');
   assert.match(facts, /removed: "Never move funds into: acme\."/, 'so is a deleted forbidden issuer');
   assert.match(facts, /added: "Ask me before anything above \$1,000,000,000\."/);
 });

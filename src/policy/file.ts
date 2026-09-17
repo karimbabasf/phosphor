@@ -26,7 +26,6 @@ const policySchema = z.object({
   composition: z.object({
     maxIssuerShare: z.record(z.number()),
     maxFreezableShare: z.number(),
-    minNativeGasUsd: z.record(z.number()),
     forbiddenIssuers: z.array(z.string()),
   }),
   sentences: z.array(z.string()),
@@ -48,6 +47,15 @@ export function loadPolicy(dataDir: string): Policy | null {
     // here: loadPolicy never writes, and the value lands on disk the next time any change saves.
     if (policy.outbound.autoApproveDailyUsd === undefined) {
       policy.outbound.autoApproveDailyUsd = 5 * policy.outbound.humanClickAboveUsd;
+    }
+    // A file from before the per-chain gas floors went still carries them and the "Keep at
+    // least ... of gas" sentences they rendered. The key is dropped and the sentences re-rendered
+    // from what is left, so the retired rule never shows again; the clean shape reaches disk at
+    // the next save.
+    const composition = policy.composition as Record<string, unknown>;
+    if ('minNativeGasUsd' in composition) {
+      delete composition.minNativeGasUsd;
+      policy.sentences = renderSentences(policy);
     }
     return policy;
   } catch {
@@ -75,7 +83,6 @@ export function defaultPolicy(): Policy {
     composition: {
       maxIssuerShare: { default: 1 },
       maxFreezableShare: 1,
-      minNativeGasUsd: { eth: 5, base: 1, arb: 1, sol: 2, near: 0.5 },
       forbiddenIssuers: [],
     },
     sentences: [],

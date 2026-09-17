@@ -56,3 +56,19 @@ test('a patch may raise the ceiling within the tenfold rule and no further', () 
   const loaded = loadPolicy(dir);
   assert.equal(loaded?.outbound.autoApproveDailyUsd, 500);
 });
+
+test('a policy file from before the gas floors went loads with the key dropped and no gas sentence', () => {
+  const dir = tmpDir();
+  const p = defaultPolicy();
+  const old = {
+    ...p,
+    composition: { ...p.composition, minNativeGasUsd: { eth: 5, base: 1, arb: 1, sol: 2, near: 0.5 } },
+    sentences: [...p.sentences, 'Keep at least $5 of gas on eth.', 'Keep at least $1 of gas on base.'],
+  };
+  fs.writeFileSync(path.join(dir, 'policy.json'), JSON.stringify(old));
+  const loaded = loadPolicy(dir);
+  assert.ok(loaded !== null, 'an old file still loads: null would refuse every write');
+  assert.equal('minNativeGasUsd' in loaded.composition, false, 'the retired key is dropped, not carried forward');
+  assert.ok(!loaded.sentences.some((s) => /of gas on/i.test(s)), loaded.sentences.join(' | '));
+  assert.ok(!renderSentences(loaded).some((s) => /of gas on/i.test(s)));
+});

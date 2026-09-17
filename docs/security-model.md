@@ -60,7 +60,7 @@ The chain stops at the first refusal, in this order:
 7. Rolling session cap (`max_per_session`)
 8. Forbidden issuer for the symbol being moved (`forbidden_issuer`)
 9. Post-move composition: issuer share caps (`max_issuer_share`), freezable cap
-   (`max_freezable_share`), per-chain gas floors (`min_native_gas`)
+   (`max_freezable_share`)
 10. Above the click threshold, so `needs_approval`
 11. Otherwise `allow`
 

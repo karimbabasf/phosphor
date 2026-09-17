@@ -130,7 +130,6 @@ export function mergePatch(base: Policy, patch: PolicyPatch): Policy {
     composition: {
       maxIssuerShare: { ...base.composition.maxIssuerShare },
       maxFreezableShare: base.composition.maxFreezableShare,
-      minNativeGasUsd: { ...base.composition.minNativeGasUsd },
       forbiddenIssuers: [...base.composition.forbiddenIssuers],
     },
     sentences: [...base.sentences],
@@ -149,7 +148,6 @@ export function mergePatch(base: Policy, patch: PolicyPatch): Policy {
   if (c) {
     if (c.maxIssuerShare !== undefined) next.composition.maxIssuerShare = { ...c.maxIssuerShare };
     if (c.maxFreezableShare !== undefined) next.composition.maxFreezableShare = c.maxFreezableShare;
-    if (c.minNativeGasUsd !== undefined) next.composition.minNativeGasUsd = { ...c.minNativeGasUsd };
     if (c.forbiddenIssuers !== undefined) next.composition.forbiddenIssuers = [...c.forbiddenIssuers];
   }
 

@@ -127,10 +127,7 @@ test('a fund move whose legs outlive the reply cap answers with the executing ro
     describe: () => 'a signer that waits for the test',
     send: (leg) => new Promise((resolve) => waiting.push(() => resolve({ ok: true, txid: `0x${leg.fromChain}` }))),
   };
-  // The demo fixture's NEAR account holds $0.003 against the default gas floor, which would
-  // refuse the move at the draft; the floors go, and nothing else does.
   const policy = defaultPolicy();
-  policy.composition.minNativeGasUsd = {};
   // Every cap out of the way: the four USDT legs total near twenty thousand dollars, and the
   // question here is the clock, not the budget.
   policy.outbound = { ...policy.outbound, maxPerTransactionUsd: 1e6, maxPerSessionUsd: 1e6, humanClickAboveUsd: 1e6, autoApproveDailyUsd: 1e6, destinationAllowlist: venueAllowlist() };

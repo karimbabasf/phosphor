@@ -203,7 +203,7 @@ const cases: Case[] = [
   { name: 'negative limit is an invalid patch', draft: policyChange({ outbound: { maxPerTransactionUsd: -1 } }), out: 'refuse', rule: 'invalid_patch' },
   { name: 'share above 1 is an invalid patch', draft: policyChange({ composition: { maxFreezableShare: 1.5 } }), out: 'refuse', rule: 'invalid_patch' },
   { name: 'unknown key is an invalid patch', draft: rawPolicyChange({ outbound: { simulateBeforeSign: false } }), out: 'refuse', rule: 'invalid_patch' },
-  { name: 'unknown chain in the gas floors is an invalid patch', draft: rawPolicyChange({ composition: { minNativeGasUsd: { ethereum: 5 } } }), out: 'refuse', rule: 'invalid_patch' },
+  { name: 'a retired composition key is an invalid patch', draft: rawPolicyChange({ composition: { minNativeGasUsd: { eth: 5 } } }), out: 'refuse', rule: 'invalid_patch' },
   { name: 'non-numeric limit is an invalid patch', draft: rawPolicyChange({ outbound: { maxPerSessionUsd: '50000' } }), out: 'refuse', rule: 'invalid_patch' },
 
   // ---- rule 4: simulation ----
@@ -362,32 +362,6 @@ const cases: Case[] = [
     draft: consolidate(200),
     out: 'refuse',
     rule: 'max_freezable_share',
-  },
-  {
-    name: 'min native gas',
-    policyMut: p => {
-      p.composition.minNativeGasUsd.eth = 999999;
-    },
-    draft: consolidate(200, { fromChain: 'eth', toChain: 'base', gasNativeUsd: GAS_ETH }),
-    out: 'refuse',
-    rule: 'min_native_gas',
-  },
-  {
-    name: 'the gas floor covers the destination chain too',
-    policyMut: p => {
-      p.composition.minNativeGasUsd.base = 999999;
-    },
-    draft: consolidate(200, { fromChain: 'eth', toChain: 'base', gasNativeUsd: GAS_ETH }),
-    out: 'refuse',
-    rule: 'min_native_gas',
-  },
-  // The near account holds 0.001 NEAR ($0.0031) against a $0.50 floor: it cannot pay for its
-  // own transfer, so the default policy refuses to move its $950 of USDT.
-  {
-    name: 'the stranded near balance cannot be moved under the default gas floor',
-    draft: consolidate(950, { fromChain: 'near', from: SELF_NEAR, gasNativeUsd: 0.0155 }),
-    out: 'refuse',
-    rule: 'min_native_gas',
   },
 
   // ---- rules 10 and 11 ----

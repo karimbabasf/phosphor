@@ -226,7 +226,7 @@ engine returns exactly one of three verdicts, with no fourth outcome and no over
 The rule chain runs in a fixed order and stops at the first refusal: unreadable policy, kill switch,
 then (for fund moves) legs present, leg amounts sane, every leg simulated, destination is one of our
 own addresses or on the allowlist, per-transaction cap, rolling session cap, forbidden issuer, then
-the post-move composition (issuer share caps, freezable cap, per-chain gas floors). Composition
+the post-move composition (issuer share caps, freezable cap). Composition
 checks judge the resulting state rather than the delta, so a portfolio already past a cap cannot
 make further moves until a human changes the policy.
 
@@ -253,20 +253,16 @@ what the app shows is what the engine enforces:
     Refuse any single transaction above $10,000.
     Refuse more than $25,000 in any 24 hours.
     Ask me before anything above $100.
-    Keep at least $5 of gas on eth.
-    Keep at least $1 of gas on base.
-    Keep at least $1 of gas on arb.
-    Keep at least $2 of gas on sol.
-    Keep at least $0.50 of gas on near.
+    Ask me once auto-approved moves pass $500 in 24 hours.
     Tether may not exceed 30% of holdings.
     No more than 20% of holdings may be freezable.
     KILL SWITCH ON: all writes refused.
 
-The first eight lines are the shipped defaults. The last three appear only once authored.
+The first four lines are the shipped defaults. The last three appear only once authored.
 
-Limits that are meaningful at their default (transaction cap, session cap, click threshold, gas
-floors) always render. Opt-in restrictions render only once set, because "no issuer may exceed 100%"
-says nothing. The kill switch, when on, always renders last.
+Limits that are meaningful at their default (transaction cap, session cap, click threshold, the
+auto-approved daily ceiling) always render. Opt-in restrictions render only once set, because "no
+issuer may exceed 100%" says nothing. The kill switch, when on, always renders last.
 
 ## First run
 

@@ -16,7 +16,6 @@ import { z } from 'zod';
 import { classify } from '../composition.ts';
 import { isRailKind } from '../rails/kinds.ts';
 import type {
-  ChainId,
   CompositionView,
   LedgerSnapshot,
   Policy,
@@ -37,8 +36,6 @@ export type EngineCtx = {
   autoApprovedSpentUsd?: number;
   selfAddresses: string[];
 };
-
-const CHAIN_IDS = ['eth', 'base', 'arb', 'sol', 'near'] as const;
 
 // Structural shape of a PolicyPatch on the wire. Strict everywhere: an unknown key is an
 // invalid patch rather than a silently ignored one, since a patch that half applies is worse
@@ -66,7 +63,6 @@ const patchSchema = z
       .object({
         maxIssuerShare: z.record(z.string(), shareField).optional(),
         maxFreezableShare: shareField.optional(),
-        minNativeGasUsd: z.record(z.enum(CHAIN_IDS), usdField).optional(),
         forbiddenIssuers: z.array(z.string()).optional(),
       })
       .strict()
@@ -82,7 +78,7 @@ const UNPATCHABLE = ['killSwitch', 'version', 'sentences'];
 
    A policy change is the one draft that removes the controls on every draft after it, and until
    now the only thing standing in front of it was a click on a card that named the change in the
-   agent's own words. `humanClickAboveUsd: 1e9` with the sentence "raise the gas floor on base"
+   agent's own words. `humanClickAboveUsd: 1e9` with the sentence "cap the freezable share"
    came back needs_approval, so the whole attack was one click on a card that said "Change your
    limits" and nothing else. The card now renders the diff (src/view/basic.ts), and these three
    rules are the half that does not depend on anybody reading it.
@@ -90,7 +86,7 @@ const UNPATCHABLE = ['killSwitch', 'version', 'sentences'];
    They are RELATIVE to the policy in force rather than absolute, because an absolute dollar
    ceiling is a number nobody can justify: it is wrong for a wallet holding $500 and wrong for
    one holding $5m. Ten times is a wall a legitimate change walks up to in steps, each of them
-   read and clicked, and it is a wall an "adjust the gas floor" patch never touches. */
+   read and clicked, and it is a wall an "adjust the freezable cap" patch never touches. */
 const MAX_RAISE_FACTOR = 10;
 
 /* A patch that names no rule at all. `{}` is what a caller sends when it forgets the field:
@@ -108,8 +104,8 @@ function patchNamesNothing(patch: PolicyPatch): boolean {
   );
 }
 
-// The three that get looser as they get bigger. The share fields are already bounded at 1 by
-// their own schema, and the gas floors get SAFER as they rise, so neither belongs here.
+// The caps that get looser as they get bigger. The share fields are already bounded at 1 by
+// their own schema, so they do not belong here.
 const RAISABLE_CAPS = ['maxPerTransactionUsd', 'maxPerSessionUsd', 'humanClickAboveUsd', 'autoApproveDailyUsd'] as const;
 
 function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdict | null {
@@ -437,14 +433,6 @@ export function applyLegs(snapshot: LedgerSnapshot, legs: TransferLeg[], selfAdd
   };
 }
 
-function nativeUsdByChain(snapshot: LedgerSnapshot): Map<ChainId, number> {
-  const out = new Map<ChainId, number>();
-  for (const h of snapshot.holdings) {
-    if (h.native) out.set(h.chain, (out.get(h.chain) ?? 0) + h.usd);
-  }
-  return out;
-}
-
 // Rule 3. A policy change is the one draft that can never be auto-executed.
 function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change' }>, policy: Policy, reasons: string[]): Verdict {
   const patch = draft.patch as unknown as Record<string, unknown>;
@@ -678,24 +666,6 @@ export function evaluate(draft: WriteDraft, ctx: EngineCtx): Verdict {
     );
   }
 
-  const postNative = nativeUsdByChain(post);
-  const touched: ChainId[] = [];
-  for (const leg of legs) {
-    if (!touched.includes(leg.fromChain)) touched.push(leg.fromChain);
-    if (!touched.includes(leg.toChain)) touched.push(leg.toChain);
-  }
-  for (const chain of touched) {
-    const floor = policy.composition.minNativeGasUsd[chain];
-    if (floor === undefined) continue;
-    const left = postNative.get(chain) ?? 0;
-    if (left < floor) {
-      return refusal(
-        reasons,
-        'min_native_gas',
-        `After this move ${chain} would hold ${money(left)} of gas, below the ${money(floor)} floor.`,
-      );
-    }
-  }
   reasons.push(`Post-move composition stays inside every cap.`);
 
   // 10 and 11.
