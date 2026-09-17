@@ -266,10 +266,22 @@ async function evmActivity(network: ChainNetwork, address: string, deps: ChainDe
     // Blockscout files an EIP-7702 delegation under is_contract; it is an account that signs,
     // not a contract, and a send to it is a send to a person.
     const delegated = i.proxy_type === 'eip7702';
+    let txCount = num(c.transactions_count);
+    // A zero count is the one answer worth a second source: Base's Blockscout answered 0 for
+    // an address holding 3 ETH and ten tokens (2026-09-17), and "never used" is the sentence a
+    // sender acts on. The chain's own nonce cannot say 0 for an address that has ever sent.
+    if (txCount === null || txCount === 0) {
+      try {
+        const nonce = await (deps.reader ?? reader)(spec.evm as NonNullable<typeof spec.evm>).getTransactionCount({ address: address as `0x${string}` });
+        txCount = Math.max(txCount ?? 0, nonce);
+      } catch {
+        // The indexer's count stands, and the RPC's silence is not a fact about the address.
+      }
+    }
     return {
       ...base,
       ok: true,
-      txCount: num(c.transactions_count),
+      txCount,
       balance: { amount: units(i.coin_balance, spec.decimals) ?? '0', symbol: spec.symbol },
       isContract: i.is_contract === true && !delegated,
     };
@@ -708,7 +720,11 @@ function intentsRow(row: Record<string, unknown>): IntentsRow | null {
   const hash = idText(row.transaction_hash);
   const tokenId = idText(row.token_id);
   if (hash === null || tokenId === null) return null;
-  const meta = rec(row.token_meta);
+  // NearBlocks puts the symbol and decimals under base_meta (verified live 2026-09-17), and
+  // some rows carried them under token_meta earlier in the day. Either.
+  const base = rec(row.base_meta);
+  const tokenMeta = rec(row.token_meta);
+  const meta = { symbol: base.symbol ?? tokenMeta.symbol, decimals: base.decimals ?? tokenMeta.decimals };
   const decimals = num(meta.decimals);
   const raw = big(row.delta_amount);
   const delta = raw === null ? '0' : decimals === null ? raw.toString() : formatUnits(raw, decimals);

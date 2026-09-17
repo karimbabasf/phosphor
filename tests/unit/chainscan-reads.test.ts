@@ -138,6 +138,20 @@ test('when Blockscout is down the EVM summary falls back to the RPC reader, and 
   const contract = await addressActivity('base', VITALIK, deps({ 'base.blockscout.com': () => new Response('x', { status: 503 }) }, [], { reader: reader({ code: '0x6080604052' }) }));
   assert.equal(contract.isContract, true);
 
+  // The indexer's zero count is checked against the chain's nonce: Base's Blockscout answered
+  // 0 for a heavily used address, and "never used" is the sentence a sender acts on.
+  const zero = await addressActivity('base', VITALIK, deps({
+    [`base.blockscout.com/api/v2/addresses/${VITALIK}`]: () => json({ coin_balance: '3128758081503178532', is_contract: false }),
+    [`base.blockscout.com/api/v2/addresses/${VITALIK}/counters`]: () => json({ transactions_count: '0' }),
+  }, [], { reader: reader({ nonce: 41 }) }));
+  assert.equal(zero.source, 'blockscout');
+  assert.equal(zero.txCount, 41, 'a zero count from the indexer defers to the nonce');
+  const stillZero = await addressActivity('base', VITALIK, deps({
+    [`base.blockscout.com/api/v2/addresses/${VITALIK}`]: () => json({ coin_balance: '0', is_contract: false }),
+    [`base.blockscout.com/api/v2/addresses/${VITALIK}/counters`]: () => json({ transactions_count: '0' }),
+  }, [], { reader: reader({ nonce: 0 }) }));
+  assert.equal(stillZero.txCount, 0);
+
   // An address the indexer has never seen is a fresh address, not a failure.
   const fresh = await addressActivity('arbitrum', VITALIK, deps({}, [], { reader: reader() }));
   assert.equal(fresh.ok, true);
@@ -340,21 +354,24 @@ test('NEAR transactions and one transaction come from NearBlocks with the named 
 
 test('intents activity lists MINT, BURN and TRANSFER rows with signed deltas, capped and stripped', async () => {
   const seen: string[] = [];
-  const mt = (cause: string, delta: string, symbol = 'SOL', decimals = 9) => ({
+  // The live shape (2026-09-17): symbol and decimals under base_meta, token_meta without them.
+  // The third row carries them under token_meta instead, the shape seen earlier that day.
+  const mt = (cause: string, delta: string, symbol = 'SOL', decimals = 9, where: 'base_meta' | 'token_meta' = 'base_meta') => ({
     affected_account_id: INTENTS_USER,
     involved_account_id: '07a2c4e8ff1bee',
     cause,
     delta_amount: delta,
     contract_account_id: 'intents.near',
     token_id: 'nep141:sol.omft.near',
-    token_meta: { symbol, decimals, name: 'Solana', icon: 'data:image/svg+xml;base64,' + 'A'.repeat(5000) },
+    base_meta: where === 'base_meta' ? { symbol, decimals, name: 'Solana', icon: 'data:image/svg+xml;base64,' + 'A'.repeat(5000) } : { contract: 'intents.near' },
+    token_meta: where === 'token_meta' ? { symbol, decimals } : { contract: 'intents.near', media: null, title: null, token: 'nep141:sol.omft.near' },
     transaction_hash: 'GU64UecpKZXhvpFZQKJDg2iU7wVNsdsbDSRLfamPE1VU',
     block_timestamp: '1789624633305833296',
   });
   const d = deps({
     [`api.nearblocks.io/v3/accounts/${INTENTS_USER}/mt-txns`]: (url) => {
       assert.ok(url.includes('contract=intents.near'));
-      return json({ data: [mt('MINT', '44468348081'), mt('BURN', '-1000000000'), mt('TRANSFER', '5', '<b>USDC</b> visit evil.tld now ' + 'Z'.repeat(40), 6)], meta: { next_page: 'eyJ' } });
+      return json({ data: [mt('MINT', '44468348081'), mt('BURN', '-1000000000'), mt('TRANSFER', '5', '<b>USDC</b> visit evil.tld now ' + 'Z'.repeat(40), 6, 'token_meta')], meta: { next_page: 'eyJ' } });
     },
   }, seen);
   const r = await intentsActivity(INTENTS_USER, 25, d);

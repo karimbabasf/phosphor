@@ -11,7 +11,7 @@
 // log: the one place a key touches a string that leaves this module is the URL, and scrub()
 // takes it back out of any message built from one.
 
-import { READ_TIMEOUT_MS, withTimeout } from '../net.ts';
+import { isTimeout, READ_TIMEOUT_MS, withTimeout } from '../net.ts';
 import { HOSTS, NEARBLOCKS_HOST } from './networks.ts';
 
 export type ChainKeys = { blockscoutApiKey?: string; nearblocksApiKey?: string };
@@ -202,8 +202,7 @@ export async function chainFetch(url: string, opts: ChainFetchOptions, deps: Cha
         headers,
       });
     } catch (err) {
-      const name = err instanceof Error ? err.name : '';
-      if (name === 'TimeoutError' || name === 'AbortError') throw new Error(`timed out after ${Math.min(READ_TIMEOUT_MS, remaining)}ms`);
+      if (isTimeout(err)) throw new Error(`timed out after ${Math.min(READ_TIMEOUT_MS, remaining)}ms`);
       throw new Error(scrub(err instanceof Error ? err.message : String(err)));
     }
 
