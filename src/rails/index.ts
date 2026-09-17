@@ -24,6 +24,7 @@ import { hypercoreDepositRail } from './hypercore-deposit.ts';
 import { hypercoreWithdrawRail } from './hypercore-withdraw.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { intentsSendRail } from './intents-send.ts';
+import { intentsPayRail } from './intents-pay.ts';
 import { HYPERLIQUID_PERPS_COUNTERPARTY, tradeRail } from '../trade/rail.ts';
 import type { TradeDeps } from '../trade/rail.ts';
 import { isRailDraft, isRailKind, RAIL_KINDS } from './kinds.ts';
@@ -75,10 +76,16 @@ export function createRails(deps: RailDeps): RailRegistry {
       keysPath: deps.cfg.keysPath,
       client,
     }) as Rail,
-    // The one rail whose destination is another account: the policy allowlist blesses it,
-    // the click is never skipped, and the receiver's balance is read back as the proof.
+    // The two rails whose destination is somebody else's: a send stays inside the verifier and
+    // reads the receiver's balance back as the proof; a pay leaves it for an address on a real
+    // chain and carries the payout hash. Neither is ever skipped past the click.
     intents_send: intentsSendRail({
       keysPath: deps.cfg.keysPath,
+      client,
+    }) as Rail,
+    intents_pay: intentsPayRail({
+      keysPath: deps.cfg.keysPath,
+      tokens: deps.tokens,
       client,
     }) as Rail,
     trade: tradeRail(deps.trade) as Rail,

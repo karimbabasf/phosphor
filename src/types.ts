@@ -5,6 +5,8 @@
 import type { PocketRead } from './ledger/settle.ts';
 import type { Plan } from './trade/plan.ts';
 import type { PlanRisk } from './trade/risk.ts';
+import type { AddressActivity } from './chainscan/index.ts';
+import type { ChainNetwork } from './chainscan/networks.ts';
 
 export type ChainId = 'eth' | 'base' | 'arb' | 'sol' | 'near';
 export type Mode = 'demo' | 'live';
@@ -243,9 +245,23 @@ export type HlDepositDraft = {
 // action rather than a chain transaction or an intent: one spotSend from the venue account to
 // an address 1Click mints for the quote. `to` is our own account inside intents.near and is
 // never a caller's; a draft naming anything else is refused by the rail and by the engine.
-// A balance inside intents.near moving to ANOTHER account inside the same verifier: the one
-// draft whose `to` is not this app's own wallet. It is held to the destination allowlist by the
-// policy engine and always waits for a click; see the header of src/rails/intents-send.ts.
+// What the app knows about the receiver of a send at propose time, so the card can say "First
+// send to this address" or "Sent here 3 times" and the simulation can say whether the address
+// has ever been used. `known`, `count` and `lastAt` come from the recipients book
+// (src/recipients.ts, written on approval); `activity` is the public chain read at propose time
+// and null when it could not be made; `ownAddress` is the app's own EVM address on that chain.
+export type SendRecipient = {
+  known: boolean;
+  count: number;
+  lastAt: string | null;
+  activity: AddressActivity | null;
+  ownAddress: boolean;
+};
+
+// A balance inside intents.near moving to ANOTHER account inside the same verifier: the one of
+// the two send drafts whose money never touches a chain. Since 2026-09-17 the receiver is not
+// allowlisted: the gate is the card and the Touch ID sentence that name the account, and the
+// send always waits for a click; see the header of src/rails/intents-send.ts.
 export type IntentsSendDraft = {
   kind: 'intents_send';
   symbol: string;
@@ -256,6 +272,28 @@ export type IntentsSendDraft = {
   from: string; // our account id inside intents.near: the EVM address, lowercased
   to: string; // the receiver's intents account id, as the verifier keys it
   counterparty: string; // must be on the policy allowlist
+  recipient?: SendRecipient; // absent on rows written before the recipients book existed
+};
+
+// A balance inside intents.near paid out to an address on a real chain: a friend's wallet on
+// Ethereum, a Solana account, our own wallet on Base. The one draft whose money leaves the
+// verifier for an address this app may hold no key for, so the address is decoded rather than
+// matched, the chain is named, the payout is always a click and a Touch ID that names the
+// receiver, and the quote echo binds the recipient before anything is signed. See the header
+// of src/rails/intents-pay.ts.
+export type IntentsPayDraft = {
+  kind: 'intents_pay';
+  symbol: string;
+  originAsset: string; // the 1Click asset id of the flavor held inside the verifier
+  network: ChainNetwork; // the real chain the payout lands on
+  amount: number;
+  amountUsd: number;
+  minReceived: number; // the least that may arrive on the chain, in `symbol`
+  from: string; // our account id inside intents.near: the EVM address, lowercased
+  to: string; // the receiver's address as the chain spells it (EIP-55 on an EVM chain)
+  toChecksum: 'valid' | 'lowercase' | null; // whether the caller's spelling carried a checksum (EVM only)
+  counterparty: string; // must be on the policy allowlist
+  recipient: SendRecipient;
 };
 
 export type HlWithdrawDraft = {
@@ -308,6 +346,7 @@ export type WriteDraft =
   | HlDepositDraft
   | HlWithdrawDraft
   | IntentsSendDraft
+  | IntentsPayDraft
   | TradeDraft;
 
 // One rail per feature, each owning exactly one module under src/rails/. The dispatch
@@ -381,7 +420,22 @@ export type SimulationResult = {
   summary: string; // human-readable, rendered in the approval gate
   postComposition?: CompositionView; // fund moves: composition after the move
   policyDiff?: { before: string[]; after: string[] }; // policy changes: sentences before/after
+  send?: SendSimulation; // the two send rails: the facts the send card draws
   error?: string;
+};
+
+// What a send simulation learned from the dry quote and the chain, as fields rather than as a
+// sentence, so the send card (ui/screens/sendcard.js) and the Basic view draw the same numbers
+// the rail checked. Every string is formatted in `symbol` units the way the quote formats them.
+export type SendSimulation = {
+  destinationAsset: string; // the 1Click id the receiver is paid in
+  arrives: string; // the quote's amountOut
+  arrivesAtLeast: string; // the quote's minAmountOut, the floor the rail will hold the live quote to
+  feeUsd: number | null; // amountInUsd minus amountOutUsd, when the quote priced both
+  bridgeFee: string | null; // the flat withdrawFee inside `arrives`, chain payouts only
+  etaSeconds: number | null;
+  activity: string; // the receiver sentence: what the chain or the verifier says about the address
+  explorer: string | null; // the receiver's page on the chain's explorer, chain payouts only
 };
 
 export type ProposalStatus =
@@ -702,6 +756,13 @@ export type HlDepositParams = { amount: number; symbol?: string; clientKey?: Cli
 // One number. The venue account, the intents account credited, the floor and the counterparty
 // are all the app's; there is no field for a destination, which is the whole point.
 export type HlWithdrawParams = { amount: number; clientKey?: ClientKey };
+
+// One send door for both send drafts. `where` is 'intents' (the money stays inside the verifier,
+// an intents_send draft) or a chain network id (it is paid out on that chain, an intents_pay
+// draft); the door refuses anything else and there is no default. `note` is the agent's own
+// words about the receiver: kept as data on the recipients book row and in the audit line, and
+// never drawn on the card, because the agent does not get to label the address it is paying.
+export type SendParams = { to: string; symbol: string; amount: number; where: string; note?: string; clientKey?: ClientKey };
 
 export type IntentsSendParams = { to: string; symbol: string; amount: number; clientKey?: ClientKey };
 

@@ -363,7 +363,7 @@ function postPositions(draft: RailDraft, ctx: EngineCtx): Position[] {
   if (draft.kind === 'swap') {
     take(draft.fromSymbol, draft.amountUsd);
     give(draft.toSymbol, 'intents', draft.amountUsd);
-  } else if (draft.kind === 'intents_send') {
+  } else if (draft.kind === 'intents_send' || draft.kind === 'intents_pay') {
     take(draft.symbol, draft.amountUsd);
   }
   return positions;
