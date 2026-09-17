@@ -27,13 +27,11 @@
      "swapping"), because that word is the entire difference between them. */
   var TOOL_PHRASES = {
     /* reading */
-    balances: 'reading your balances',
     wallet: 'reading your wallet',
     composition: 'checking what you hold',
     policy_show: 'reading the policy',
     proposal_status: 'checking the approval',
     market_search: 'looking up a market',
-    gas_report: 'checking gas',
     log_tail: 'reading the log',
     /* The one tool that leaves this machine, and the row says so in its own
        words beside the phrase. A person watching their wallet app reach the
@@ -42,6 +40,11 @@
     skill: 'reading its instructions',
     trade_read: 'reading the account',
     deposit: 'showing a deposit address',
+    /* public chain data, read only */
+    chain_address: 'looking up an address',
+    chain_transactions: 'reading an address\'s history',
+    chain_transaction: 'reading a transaction',
+    intents_activity: 'reading the NEAR Intents history',
     /* the chart */
     chart_read: 'reading the chart',
     chart_scan: 'scanning the timeframes',
@@ -61,22 +64,17 @@
        the row (ARG_FIELDS), so the row says what was noted. */
     profile_learned: 'noting for next time that you now understand',
     /* asking. None of these moves anything: each puts a request in the gate. */
-    propose_consolidate: 'asking to consolidate',
     propose_swap: 'asking to swap',
-    propose_intents_deposit: 'asking to deposit',
-    propose_intents_withdraw: 'asking to withdraw',
-    propose_intents_send: 'asking to send to another account',
+    propose_send: 'asking to send',
     propose_trade: 'proposing a trade',
     propose_trade_change: 'proposing a change',
     propose_hl_deposit: 'asking to fund trading',
     propose_hl_withdraw: 'asking to bring collateral back',
     propose_policy_change: 'asking to change a rule',
     /* doing, once a human has said yes */
-    consolidate: 'consolidating',
     swap: 'swapping',
-    intents_deposit: 'depositing',
-    intents_withdraw: 'withdrawing',
-    intents_send: 'sending to another account',
+    intents_send: 'sending inside NEAR Intents',
+    intents_pay: 'paying out',
     trade: 'opening a trade',
     trade_change: 'changing a trade',
     hl_deposit: 'funding trading',

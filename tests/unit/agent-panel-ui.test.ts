@@ -119,8 +119,9 @@ test('a tool that only asks never reads as a tool that did it', () => {
   // is the entire difference between asking and moving money.
   assert.equal(agent.toolLabel('propose_swap'), 'asking to swap');
   assert.equal(agent.toolLabel('swap'), 'swapping');
-  assert.equal(agent.toolLabel('propose_intents_withdraw'), 'asking to withdraw');
-  assert.equal(agent.toolLabel('intents_withdraw'), 'withdrawing');
+  assert.equal(agent.toolLabel('propose_send'), 'asking to send');
+  assert.equal(agent.toolLabel('intents_send'), 'sending inside NEAR Intents');
+  assert.equal(agent.toolLabel('intents_pay'), 'paying out');
   assert.equal(agent.toolLabel('propose_trade'), 'proposing a trade');
   assert.equal(agent.toolLabel('trade'), 'opening a trade');
   assert.equal(agent.toolLabel('propose_trade_change'), 'proposing a change');
@@ -131,10 +132,12 @@ test('a tool that only asks never reads as a tool that did it', () => {
 });
 
 test('every tool the server offers has a phrase, not an id', () => {
-  // A step row printing `gas_report` is the window handing a person the tool
+  // A step row printing `chain_address` is the window handing a person the tool
   // surface instead of the answer, and the table is the only place that fixes it.
   const agent = load();
-  assert.equal(agent.toolLabel('gas_report'), 'checking gas');
+  assert.equal(agent.toolLabel('chain_address'), 'looking up an address');
+  assert.equal(agent.toolLabel('chain_transaction'), 'reading a transaction');
+  assert.equal(agent.toolLabel('intents_activity'), 'reading the NEAR Intents history');
   assert.equal(agent.toolLabel('set_theme'), 'recolouring the window');
 });
 

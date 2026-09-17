@@ -402,14 +402,14 @@ test('a data card opens by default and stays where the person left it', () => {
 test('a folded turn names its calls under the chevron, and lights no dot', () => {
   const world = build();
   world.ask('what do I hold');
-  world.emit({ kind: 'tool', name: 'mcp__phosphor__balances', input: {} });
-  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__balances', ok: true });
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__wallet', ok: true });
   world.emit({ kind: 'tool', name: 'mcp__phosphor__chart_read', input: { product: 'BTC-USD' } });
   world.emit({ kind: 'turn_end', error: false, turns: 1 });
   const fold = all(world.host, 'steps-fold')[0];
   assert.equal(fold.hidden, false);
   assert.ok(all(fold, 'steps-fold-label')[0].textContent.startsWith('2 steps'), fold.textContent);
-  assert.equal(all(fold, 'steps-fold-names')[0].textContent, 'reading your balances, reading the chart');
+  assert.equal(all(fold, 'steps-fold-names')[0].textContent, 'reading your wallet, reading the chart');
   assert.equal(all(fold, 'steps-chevron').length, 1, 'no chevron on the fold');
   assert.equal(all(fold, 'step-dot').length, 0, 'a dot on the fold');
 });

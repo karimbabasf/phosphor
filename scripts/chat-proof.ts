@@ -383,9 +383,9 @@ async function extras(page: Json, emit: string, shots: string[]): Promise<void> 
   await send(driver({ kind: 'said', text: 'Draw the levels on ETH' }));
   await sleep(80);
   await send(driver({ kind: 'tool', name: 'mcp__phosphor__chart_draw', input: { product: 'ETH-USD' } }));
-  await sleep(1400);
+  await sleep(1600);
   await shoot('panel-beam-flight.png');
-  await sleep(3200);
+  await sleep(3700);
   await shoot('panel-beam-landed.png');
   await send(driver({ kind: 'tool_result', name: 'mcp__phosphor__chart_draw', ok: true }));
   await send(driver({ kind: 'text', text: 'Done: support at 2,410 and the range top at 2,560 are on the chart.' }));

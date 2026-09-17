@@ -6,13 +6,14 @@
 // are asserted one at a time rather than as a blob, because a wrong row is the
 // failure and the test should name it.
 //
-// Three rules carry weight beyond the table. A tool that only asks lands amber,
-// because amber in this window means a person has to click. The one tool that
-// leaves this machine is marked, so the trace can send its light out of the
-// window and back rather than across it. And the beam flies for WRITES only:
-// a tool that changes what the window shows, or asks a person to click. A
-// read lights nothing, because a panel that lit on every balance read was
-// a window flashing for an agent thinking, and the agent thinks constantly.
+// Three rules carry weight beyond the table. A tool that only asks lands amber
+// on the dock, because amber in this window means a person has to click and
+// the dock is where the click is. The one tool that leaves this machine is
+// marked, so the trace can send its light out of the window and back rather
+// than across it. And the beam flies for WRITES only: a tool that changes what
+// the window shows, or asks a person to click. A read lights nothing, because
+// a panel that lit on every wallet read was a window flashing for an agent
+// thinking, and the agent thinks constantly.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,7 +36,7 @@ type World = {
   trace: Any;
   step: (detail: Any) => void;
   frame: (type: string, payload: Any) => void;
-  ledger: (value: Any) => void;
+  wallet: (value: Any) => void;
   calls: Any[];
 };
 
@@ -82,36 +83,44 @@ function build(): World {
     trace: sandbox.PhosphorTrace,
     step: (detail: Any) => listeners['phosphor:step']({ detail }),
     frame: (type: string, payload: Any) => streams[type] && streams[type](payload),
-    ledger: (value: Any) => slices['ledger'] && slices['ledger'](value),
+    wallet: (value: Any) => slices['wallet'] && slices['wallet'](value),
     calls,
   };
 }
 
 const READS: Array<[string, string]> = [
-  ['balances', 'holdings'],
   ['wallet', 'holdings'],
   ['composition', 'holdings'],
-  ['gas_report', 'holdings'],
+  ['watch', 'holdings'],
   ['policy_show', 'rules'],
   ['trade_plan', 'chart'],
   ['proposal_status', 'activity'],
   ['log_tail', 'activity'],
+  ['deposit', 'moneyin'],
   ['chart_snapshot', 'chart'],
   ['market_search', 'chart'],
   ['chart_layout', 'chart'],
-  ['watch', 'chart'],
   ['chart_draw', 'chart'],
   ['chart_read', 'chart'],
+  ['chart_scan', 'chart'],
   ['chart_batch', 'chart'],
   ['trade_overlay', 'chart'],
   ['trade_highlight', 'chart'],
+  ['trade_focus', 'chart'],
+  ['trade_clear', 'chart'],
   ['trade_read', 'position'],
+  ['trade_batch', 'position'],
   ['switch', 'tabs'],
   ['set_theme', 'window'],
   ['start', 'assistant'],
   ['skill', 'assistant'],
+  ['profile_learned', 'assistant'],
   ['agent_roster', 'assistant'],
   ['agent_spawn', 'assistant'],
+  ['chain_address', 'assistant'],
+  ['chain_transactions', 'assistant'],
+  ['chain_transaction', 'assistant'],
+  ['intents_activity', 'assistant'],
 ];
 
 for (const [tool, id] of READS) {
@@ -121,21 +130,17 @@ for (const [tool, id] of READS) {
   });
 }
 
-const ASKS: Array<[string, string]> = [
-  ['propose_swap', 'holdings'],
-  ['propose_consolidate', 'holdings'],
-  ['propose_intents_withdraw', 'holdings'],
-  ['propose_policy_change', 'rules'],
-  ['propose_trade', 'position'],
-  ['propose_trade_change', 'position'],
-  ['propose_intents_deposit', 'moneyin'],
-  ['propose_hl_deposit', 'account'],
+/* Every ask flies to the dock: that is where the person's click is. The panel the request
+   would touch is lit by the dock itself, amber, through surfaceForProposal. */
+const ASKS: string[] = [
+  'propose_swap', 'propose_send', 'propose_policy_change', 'propose_trade', 'propose_trade_change',
+  'propose_hl_deposit', 'propose_hl_withdraw',
 ];
 
-for (const [tool, id] of ASKS) {
-  test(`${tool} lands amber on ${id}`, () => {
+for (const tool of ASKS) {
+  test(`${tool} lands amber on the dock`, () => {
     const world = build();
-    assert.deepEqual(plain(world.trace.surfaceOf(tool)), { id, tone: 'wait', leaves: false });
+    assert.deepEqual(plain(world.trace.surfaceOf(tool)), { id: 'dock', tone: 'wait', leaves: false });
   });
 }
 
@@ -144,7 +149,9 @@ test('the tools that move money land where the money moved, in the assistant col
   // Not amber: by the time these run a person has already clicked, so nothing
   // is waiting on them and amber would be asking a second time.
   assert.deepEqual(plain(world.trace.surfaceOf('swap')), { id: 'holdings', tone: 'glow', leaves: false });
-  assert.deepEqual(plain(world.trace.surfaceOf('intents_deposit')), { id: 'moneyin', tone: 'glow', leaves: false });
+  assert.deepEqual(plain(world.trace.surfaceOf('intents_send')), { id: 'holdings', tone: 'glow', leaves: false });
+  assert.deepEqual(plain(world.trace.surfaceOf('intents_pay')), { id: 'holdings', tone: 'glow', leaves: false });
+  assert.deepEqual(plain(world.trace.surfaceOf('hl_deposit')), { id: 'account', tone: 'glow', leaves: false });
   assert.deepEqual(plain(world.trace.surfaceOf('trade')), { id: 'position', tone: 'glow', leaves: false });
 });
 
@@ -157,13 +164,15 @@ test('the one tool that leaves this machine is marked', () => {
 
 test('the server prefix is stripped and a tool nobody has mapped lands on the assistant', () => {
   const world = build();
-  assert.equal(world.trace.surfaceOf('mcp__phosphor__balances').id, 'holdings');
+  assert.equal(world.trace.surfaceOf('mcp__phosphor__wallet').id, 'holdings');
   assert.equal(world.trace.surfaceOf('some_new_tool').id, 'assistant');
-  // Earning left the window with the capability. A yield tool is now a tool
-  // nobody has mapped, which lights the assistant rather than a panel that is
-  // no longer on either deck.
+  // The chains left the window with the legacy pocket. A tool for one of them is now a tool
+  // nobody has mapped, which lights the assistant rather than a panel that is no longer on
+  // either deck; an ask for one still goes to the dock, because asking is asking.
+  assert.equal(world.trace.surfaceOf('balances').id, 'assistant');
+  assert.equal(world.trace.surfaceOf('gas_report').id, 'assistant');
   assert.equal(world.trace.surfaceOf('yield_read').id, 'assistant');
-  assert.equal(world.trace.surfaceOf('propose_yield_deposit').id, 'assistant');
+  assert.equal(world.trace.surfaceOf('propose_yield_deposit').id, 'dock');
   // The historic table is for proposal kinds and must not put a live tool back on the map.
   assert.equal(world.trace.surfaceOf('yield_deposit').id, 'assistant');
   assert.equal(world.trace.surfaceOf('lp_add').id, 'assistant');
@@ -176,10 +185,10 @@ test('the server prefix is stripped and a tool nobody has mapped lands on the as
 test('a proposal card lands on the panel its kind belongs to', () => {
   const world = build();
   assert.equal(world.trace.surfaceForProposal('swap'), 'holdings');
-  assert.equal(world.trace.surfaceForProposal('consolidate'), 'holdings');
-  assert.equal(world.trace.surfaceForProposal('intents_withdraw'), 'holdings');
-  assert.equal(world.trace.surfaceForProposal('intents_deposit'), 'moneyin');
+  assert.equal(world.trace.surfaceForProposal('intents_send'), 'holdings');
+  assert.equal(world.trace.surfaceForProposal('intents_pay'), 'holdings');
   assert.equal(world.trace.surfaceForProposal('hl_deposit'), 'account');
+  assert.equal(world.trace.surfaceForProposal('hl_withdraw'), 'account');
   assert.equal(world.trace.surfaceForProposal('policy_change'), 'rules');
   assert.equal(world.trace.surfaceForProposal('trade'), 'position');
   assert.equal(world.trace.surfaceForProposal('mandate_arm'), 'rules');
@@ -217,9 +226,11 @@ const WRITES: Array<[string, string, string]> = [
   ['trade_clear', 'chart', 'glow'],
   ['set_theme', 'window', 'glow'],
   ['switch', 'tabs', 'glow'],
-  ['propose_trade', 'position', 'wait'],
-  ['propose_swap', 'holdings', 'wait'],
-  ['propose_hl_deposit', 'account', 'wait'],
+  ['watch', 'holdings', 'glow'],
+  ['propose_trade', 'dock', 'wait'],
+  ['propose_swap', 'dock', 'wait'],
+  ['propose_send', 'dock', 'wait'],
+  ['propose_hl_deposit', 'dock', 'wait'],
 ];
 
 for (const [tool, id, tone] of WRITES) {
@@ -235,9 +246,10 @@ for (const [tool, id, tone] of WRITES) {
 }
 
 const QUIET: string[] = [
-  'balances', 'wallet', 'composition', 'gas_report', 'policy_show', 'proposal_status', 'log_tail',
+  'wallet', 'composition', 'policy_show', 'proposal_status', 'log_tail', 'deposit',
   'chart_read', 'chart_scan', 'chart_batch', 'chart_snapshot', 'market_search', 'trade_read', 'trade_batch',
-  'start', 'skill', 'agent_roster', 'agent_board', 'agent_jobs', 'watch', 'some_new_tool', 'constructor',
+  'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity',
+  'start', 'skill', 'agent_roster', 'agent_board', 'agent_jobs', 'some_new_tool', 'constructor',
 ];
 
 for (const tool of QUIET) {
@@ -266,12 +278,12 @@ test('an errored step releases rose on the surface the tool was aimed at', () =>
   world.step({ id: 's2', name: 'propose_swap', state: 'live', node: null });
   world.calls.length = 0;
   world.step({ id: 's2', name: 'propose_swap', state: 'error', node: null });
-  assert.deepEqual(world.calls, [{ call: 'release', id: 'holdings', ok: false }]);
+  assert.deepEqual(world.calls, [{ call: 'release', id: 'dock', ok: false }]);
 });
 
 test('a result for a step nobody opened releases nothing', () => {
   const world = build();
-  world.step({ id: 'ghost', name: 'balances', state: 'done', node: null });
+  world.step({ id: 'ghost', name: 'wallet', state: 'done', node: null });
   assert.deepEqual(world.calls, []);
 });
 
@@ -302,48 +314,47 @@ test('what changed after an execution glows on its own', () => {
   world.frame('transactions', { type: 'transactions' });
   assert.deepEqual(world.calls, [{ call: 'decay', id: 'activity' }]);
   world.calls.length = 0;
-  const held = (amount: number, usd: number) => ({
-    holdings: [{ chain: 'base', tokenId: 'usdc', symbol: 'USDC', amount, usd }],
-    chainStatus: { base: { ok: true, fetchedAt: '' } },
-    prices: { ETH: usd },
+  const held = (quantity: number, valueUsd: number) => ({
+    rows: [{ kind: 'intents', chain: 'intents', tokenId: 'nep141:usdc.near', symbol: 'USDC', quantity, valueUsd, priceUsd: 1 }],
+    totalUsd: valueUsd,
+    stale: [],
   });
   // The first call is the subscription handing over what it already had, which
   // is not a change and must not light anything.
-  world.ledger(held(10, 10));
+  world.wallet(held(10, 10));
   assert.deepEqual(world.calls, []);
-  world.ledger(held(12, 12));
+  world.wallet(held(12, 12));
   assert.deepEqual(world.calls, [{ call: 'decay', id: 'holdings' }]);
 });
 
 test('a price that moved is not money arriving', () => {
-  /* The subscription was on the whole ledger slice, which carries prices and the dollar values
+  /* The subscription used to be on the raw ledger, which carries prices and the dollar values
      they produce. Those move on every price poll and the hub pushes up to 8 frames a second with
      a trading feed live, so the holdings panel flashed for a reading of the market rather than
      for anything that happened to this wallet. On the basic screen it looked like a fault. */
   const world = build();
   const priced = (usd: number) => ({
-    holdings: [{ chain: 'base', tokenId: 'weth', symbol: 'ETH', amount: 0.5, usd }],
-    chainStatus: { base: { ok: true, fetchedAt: '2026-09-08T00:00:00Z' } },
-    prices: { ETH: usd * 2 },
-    priceAsOf: { ETH: Date.now() },
+    rows: [{ kind: 'intents', chain: 'intents', tokenId: 'nep141:eth.omft.near', symbol: 'ETH', quantity: 0.5, valueUsd: usd, priceUsd: usd * 2 }],
+    totalUsd: usd,
+    stale: [],
   });
-  world.ledger(priced(1000));
+  world.wallet(priced(1000));
   world.calls.length = 0;
-  world.ledger(priced(1001));
-  world.ledger(priced(999));
+  world.wallet(priced(1001));
+  world.wallet(priced(999));
   assert.deepEqual(world.calls, [], 'the holdings panel lit for a price tick');
 });
 
-test('a chain going stale is a change worth seeing', () => {
+test('a pocket going stale is a change worth seeing', () => {
   const world = build();
-  const rows = (ok: boolean) => ({
-    holdings: [{ chain: 'base', tokenId: 'usdc', symbol: 'USDC', amount: 3, usd: 3 }],
-    chainStatus: { base: { ok, fetchedAt: '' } },
-    prices: {},
+  const rows = (stale: string[]) => ({
+    rows: [{ kind: 'intents', chain: 'intents', tokenId: 'nep141:usdc.near', symbol: 'USDC', quantity: 3, valueUsd: 3, priceUsd: 1 }],
+    totalUsd: 3,
+    stale,
   });
-  world.ledger(rows(true));
+  world.wallet(rows([]));
   world.calls.length = 0;
-  world.ledger(rows(false));
+  world.wallet(rows(['intents']));
   assert.deepEqual(world.calls, [{ call: 'decay', id: 'holdings' }]);
 });
 

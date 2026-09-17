@@ -28,49 +28,66 @@
 
   /* Section 6 of the beam design, one row per surface. The verbs that move
      money sit beside the verbs that ask, deliberately: they land on the same
-     panel and only the tone differs. */
+     panel and only the tone differs. Audited against the tool registry on
+     2026-09-16: every read lands where its answer is shown, every write where
+     it draws, and every propose verb on the dock, where the click is (see
+     idFor). Money lives in two pockets now, NEAR Intents and Hyperliquid, so
+     nothing here names a chain. */
   var SURFACE = {
-    /* what you hold */
-    balances: 'holdings',
+    /* what you hold: the Money card */
     wallet: 'holdings',
     composition: 'holdings',
-    gas_report: 'holdings',
+    watch: 'holdings',
     swap: 'holdings',
-    consolidate: 'holdings',
-    intents_withdraw: 'holdings',
     intents_send: 'holdings',
+    intents_pay: 'holdings',
     /* the rules */
     policy_show: 'rules',
     policy_change: 'rules',
-    trade: 'position',
-    trade_change: 'position',
     /* what happened */
     proposal_status: 'activity',
     log_tail: 'activity',
     /* money in */
-    intents_deposit: 'moneyin',
+    deposit: 'moneyin',
     /* the trading account */
     hl_deposit: 'account',
     hl_withdraw: 'account',
+    trade: 'position',
+    trade_change: 'position',
     trade_read: 'position',
-    trade_plan: 'chart',
-    propose_trade: 'position',
-    propose_trade_change: 'position',
+    trade_batch: 'position',
     /* the chart */
     market_search: 'chart',
+    chart_read: 'chart',
+    chart_scan: 'chart',
+    chart_batch: 'chart',
     chart_draw: 'chart',
     chart_snapshot: 'chart',
     chart_layout: 'chart',
-    watch: 'chart',
+    trade_plan: 'chart',
+    trade_focus: 'chart',
+    trade_highlight: 'chart',
+    trade_overlay: 'chart',
+    trade_clear: 'chart',
     /* the window itself */
     switch: 'tabs',
     set_theme: 'window',
-    /* the assistant's own head */
+    /* the assistant's own head: what it reads for itself, and the public
+       chain data it looks up, which is shown in its own words */
     start: 'assistant',
     skill: 'assistant',
     profile_learned: 'assistant',
-    research: 'assistant'
+    research: 'assistant',
+    chain_address: 'assistant',
+    chain_transactions: 'assistant',
+    chain_transaction: 'assistant',
+    intents_activity: 'assistant'
   };
+
+  /* Where every propose verb lands: the dock, which is where the click is.
+     The world surface the request would touch is lit separately, amber, by
+     the dock itself (ui/screens/decision.js reads surfaceForProposal). */
+  var DOCK = 'dock';
 
   /* The one tool that leaves this machine. Its light goes out through the top
      of the window and comes back, rather than crossing to a panel, because
@@ -94,7 +111,8 @@
     trade_focus: true,
     trade_clear: true,
     set_theme: true,
-    switch: true
+    switch: true,
+    watch: true
   };
 
   function writes(id) {
@@ -114,15 +132,13 @@
 
   function idFor(name) {
     var id = String(name || '').replace(/^mcp__phosphor__/, '');
+    /* Asking lands on the dock, whatever is being asked: that is where the
+       person's click is, and the flight is the app pointing at it. */
+    if (id.indexOf('propose_') === 0) return DOCK;
     var hit = lookup(id);
     if (hit) return hit;
-    /* Asking to do a thing lands where doing it lands. */
-    if (id.indexOf('propose_') === 0) {
-      hit = lookup(id.slice('propose_'.length));
-      if (hit) return hit;
-    }
     if (id.indexOf('chart_') === 0 || id.indexOf('trade_') === 0) return 'chart';
-    if (id.indexOf('agent_') === 0) return 'assistant';
+    if (id.indexOf('agent_') === 0 || id.indexOf('chain_') === 0) return 'assistant';
     /* A tool nobody has mapped still came from the assistant, so it lights the
        assistant rather than nothing. */
     return 'assistant';
@@ -184,29 +200,27 @@
     return lookup(id) || (typeof historic === 'string' ? historic : 'assistant');
   }
 
-  /* The positions in a ledger snapshot as one comparable string: chain, token
-     and amount, and nothing that a price can move. A chain that went stale
-     counts, because a wallet the app can no longer read is a change worth
-     seeing. Sorted, so the order the chains answered in is not a change. */
+  /* The positions in the wallet report as one comparable string: where, which
+     token and how much, and nothing that a price can move. A pocket that went
+     stale counts, because a balance the app can no longer read is a change
+     worth seeing. Sorted, so the order the pockets answered in is not a
+     change. */
   function positionsOf(slice) {
     if (!slice || typeof slice !== 'object') return '';
-    var rows = [];
-    var holdings = slice.holdings;
-    if (Array.isArray(holdings)) {
-      for (var i = 0; i < holdings.length; i += 1) {
-        var row = holdings[i] || {};
-        rows.push(String(row.chain) + '/' + String(row.tokenId) + '=' + String(row.amount));
+    var out = [];
+    var rows = slice.rows;
+    if (Array.isArray(rows)) {
+      for (var i = 0; i < rows.length; i += 1) {
+        var row = rows[i] || {};
+        out.push(String(row.chain) + '/' + String(row.tokenId) + '=' + String(row.quantity));
       }
     }
-    var status = slice.chainStatus;
-    if (status && typeof status === 'object') {
-      for (var chain in status) {
-        if (!Object.prototype.hasOwnProperty.call(status, chain)) continue;
-        rows.push(chain + ':' + (status[chain] && status[chain].ok ? 'ok' : 'stale'));
-      }
+    var stale = slice.stale;
+    if (Array.isArray(stale)) {
+      for (var j = 0; j < stale.length; j += 1) out.push(String(stale[j]) + ':stale');
     }
-    rows.sort();
-    return rows.join('|');
+    out.sort();
+    return out.join('|');
   }
 
   /* ---------------------------------------------------------------- steps */
@@ -279,21 +293,22 @@
        subscription handing over what it already had, which is not a change.
 
        WHAT COUNTS AS MONEY ARRIVING, and this is the whole bug that was here.
-       The subscription was on the `ledger` slice, which carries prices and the
-       dollar value they produce. Those move on every price poll, and the state
-       hub pushes up to 8 frames a second with a trading feed live, so the
-       holdings panel lit for a reading of the market rather than for anything
-       that happened to this wallet. On the basic screen, where holdings is the
-       biggest thing on the page, it looked like a fault.
+       The subscription used to be on the raw ledger, which carries prices and
+       the dollar value they produce. Those move on every price poll, and the
+       state hub pushes up to 8 frames a second with a trading feed live, so
+       the holdings panel lit for a reading of the market rather than for
+       anything that happened to this wallet. On the basic screen, where
+       holdings is the biggest thing on the page, it looked like a fault.
 
        A price is not a transaction. What is compared is the position itself:
-       which chain, which token, and how much of it is held. A number on screen
+       which pocket, which token, and how much of it is held, read off the
+       wallet report the window draws (src/wallet.ts rows). A number on screen
        that moved because Ether moved still updates, it just does not announce
        itself as an event. */
     var store = window.PhosphorState;
     if (store) {
       var held = null;
-      store.select('ledger', function (slice) {
+      store.select('wallet', function (slice) {
         var next = positionsOf(slice);
         var first = held === null;
         var changed = held !== next;
