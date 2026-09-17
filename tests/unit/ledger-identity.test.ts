@@ -127,36 +127,50 @@ test('a wallet created after the ledger was built is read on the next refresh, n
   assert.equal(ledger.hyperliquid()?.account, account);
 });
 
-test('the deposit watch lands a deposit for a wallet created after the ledger was built', async () => {
+test('the deposit watch credits a deposit for a wallet created after the ledger was built', async () => {
   const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-ledger-')), 'keys.json');
   const store = createKeystore({ keysPath, kdf: fast });
   useKeystore(store);
   const world = fakeWorld();
   const ledger = createLedger(liveConfig(keysPath), { fetchImpl: world.fetchImpl });
   const frames: Array<{ phase: string; amount: number | null }> = [];
+  let refreshes = 0;
   const watch = createDepositWatch({
     ledger,
     sse: { broadcast: (frame) => frames.push(frame as { phase: string; amount: number | null }) },
     // The same resolver src/server.ts hands the watch: the keystore's header, per call.
     account: () => walletAddresses().evm?.toLowerCase() ?? null,
+    // The seam main.ts hands it, counted: the ledger is read once to take the baseline and once
+    // when the money is credited, never per tick.
+    refresh: () => {
+      refreshes += 1;
+      return ledger.refresh().then(() => undefined);
+    },
     recent: async () => [],
+    fetchImpl: world.fetchImpl,
     pollMs: 5,
   });
 
-  // The card goes up before the wallet exists, then the wallet is made, then the money lands.
-  const shown = watch.show('eth', 'USDC', null);
-  assert.equal(shown.baseline, 0);
+  // The wallet is made after the ledger was built and before the ledger has read anyone, then
+  // the card goes up, then the money lands.
   await store.importWallet(PASSWORD, { mnemonic: VECTOR });
+  assert.equal(ledger.intents(), undefined, 'the ledger has not read this wallet yet');
+  const shown = watch.show('eth', 'USDC', null, { assetId: ETH_USDC, decimals: 6, contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' });
+  assert.equal(shown.baseline, 0);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(watch.current()?.phase, 'watching', 'nothing has landed');
   world.holdings.set(ETH_USDC, '5000000');
 
   const deadline = Date.now() + 5_000;
-  while (watch.current()?.phase !== 'landed' && Date.now() < deadline) {
+  while (watch.current()?.phase !== 'credited' && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   watch.stop();
 
-  const landed = watch.current();
-  assert.equal(landed?.phase, 'landed', `the watch never saw the deposit: ${JSON.stringify(frames)}`);
-  assert.equal(landed?.amount, 5);
-  assert.ok(frames.some((f) => f.phase === 'landed' && f.amount === 5), 'the window was told');
+  const credited = watch.current();
+  assert.equal(credited?.phase, 'credited', `the watch never saw the deposit: ${JSON.stringify(frames)}`);
+  assert.equal(credited?.amount, 5);
+  assert.ok(frames.some((f) => f.phase === 'credited' && f.amount === 5), 'the window was told');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(refreshes, 2, 'one refresh for the baseline, one when the money was credited');
 });

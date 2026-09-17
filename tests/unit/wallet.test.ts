@@ -134,14 +134,24 @@ test('a verifier balance counts toward the total, which is the bug that started 
   closeTo(after.rows.reduce((s, r) => s + r.share, 0), 1, 0.0001);
 });
 
-test('a failed verifier read is stale, never an absent row', () => {
-  const wallet = buildWallet(loadDemoLedger(), {
-    holdings: [],
-    ok: false,
-    fetchedAt: 'now',
-    error: 'rpc down',
-  });
-  assert.ok(wallet.stale.includes('intents'), 'showing no row would claim the deposit is gone');
+test('one failed verifier read is a miss; two in a row are stale, never an absent row, and the reason travels', () => {
+  const once = buildWallet(loadDemoLedger(), { holdings: [INTENTS_ETH], ok: false, fetchedAt: 'now', error: 'rpc down', failures: 1 });
+  assert.equal(once.stale.includes('intents'), false, 'one miss in twenty reads a minute was flashing the warning');
+  assert.equal(once.rows.some(r => r.kind === 'intents'), true, 'the last good holdings stay on screen');
+
+  const twice = buildWallet(loadDemoLedger(), { holdings: [INTENTS_ETH], ok: false, fetchedAt: 'now', error: 'rpc down', failures: 2 });
+  assert.ok(twice.stale.includes('intents'), 'showing no row would claim the deposit is gone');
+  assert.equal(twice.staleWhy?.intents, 'rpc down');
+  assert.equal(twice.rows.some(r => r.kind === 'intents'), true, 'stale is a badge on the row, not the absence of it');
+});
+
+test('holdings nobody has re-read for two idle periods are stale even when the last read was fine', () => {
+  const now = Date.parse('2026-09-16T12:00:00.000Z');
+  const old = { holdings: [], ok: true, fetchedAt: new Date(now - 60_000).toISOString(), failures: 0 };
+  assert.ok(buildWallet(loadDemoLedger(), old, undefined, now).stale.includes('intents'));
+  assert.match(buildWallet(loadDemoLedger(), old, undefined, now).staleWhy?.intents ?? '', /last read 60 s ago/);
+  const fresh = { ...old, fetchedAt: new Date(now - 10_000).toISOString() };
+  assert.equal(buildWallet(loadDemoLedger(), fresh, undefined, now).stale.includes('intents'), false);
 });
 
 test('a wallet that never asked the verifier does not claim it went stale', () => {
@@ -260,6 +270,11 @@ test('an empty trading account is not a row, and a failed venue read is stale ra
   const empty = buildWallet(loadDemoLedger(), undefined, { ...HL_READ, collateralUsdc: 0, availableUsdc: 0 });
   assert.equal(empty.rows.some(r => r.kind === 'hyperliquid'), false);
   assert.equal(empty.stale.includes('hyperliquid'), false);
+  // A new account starts at $0 there. "1 empty, not listed" on a fresh wallet was this row.
+  assert.equal(empty.emptyCount, buildWallet(loadDemoLedger()).emptyCount, 'an unfunded trading account is not an empty holding');
+  assert.deepEqual(empty.hyperliquid, { funded: false }, 'the report says so instead');
+  assert.deepEqual(buildWallet(loadDemoLedger(), undefined, HL_READ).hyperliquid, { funded: true });
+  assert.equal(buildWallet(loadDemoLedger()).hyperliquid, undefined, 'a venue never asked has nothing to say');
 
   const failed = buildWallet(loadDemoLedger(), undefined, { ...HL_READ, ok: false, error: 'info down' });
   assert.ok(failed.stale.includes('hyperliquid'), 'showing no row would claim the collateral is gone');

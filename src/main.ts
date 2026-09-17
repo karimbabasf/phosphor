@@ -26,7 +26,7 @@ import { renderSentences } from './policy/render.ts';
 import { missingVenues, proposeVenueGap } from './policy/venues.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
 import { usdcCreditedSince } from './rails/hl-user-signed.ts';
-import { createLedger, intentsAccountId } from './ledger/index.ts';
+import { createLedger, intentsAccountId, REFRESH_PERIOD_MS } from './ledger/index.ts';
 import { oneClickClient, oneClickQuoter, syntheticQuoter, stubSigner, type OneClickStatus, type TokensFile } from './intents.ts';
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
@@ -713,6 +713,7 @@ const server = createServer({
   audit,
   store,
   ledger,
+  refreshLedger: refreshNow,
   riskRows,
   market,
   proposals,
@@ -869,11 +870,14 @@ server.listen(cfg.port, '127.0.0.1', () => {
 // balance that changed waited up to 30s to be read and then up to another 15s for the SSE
 // heartbeat to mention it: 45s worst case to see money that had already arrived. The read
 // now pushes as soon as it lands, and the poll is the floor rather than the mechanism.
-const REFRESH_IDLE_MS = 15_000;
+// The period lives with the ledger, because the wallet report's idea of "too old" is two of it.
+const REFRESH_IDLE_MS = REFRESH_PERIOD_MS;
 
 // Two refreshes at once would be two sets of RPC calls racing to write the same snapshot,
 // and the loser's answer is the older one. A caller arriving mid-flight joins the read
-// already running instead of starting a second.
+// already running instead of starting a second. This is THE seam: the deposit watch gets it
+// through createServer (refreshLedger) rather than refreshing the ledger on its own, which
+// is how a 3 s watch loop and this 15 s loop used to race each other into a flashing warning.
 let refreshing: Promise<void> | null = null;
 
 function refreshNow(): Promise<void> {

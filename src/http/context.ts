@@ -174,6 +174,11 @@ export type ServerDeps = {
   audit: Audit;
   store: Store;
   ledger: Ledger;
+  /* The one refresh seam, refreshNow in src/main.ts: joins a read already in flight instead of
+     starting a second, and broadcasts state when it lands. The deposit watch calls it when
+     money is credited. Optional because every test in this repo builds a server without
+     main.ts; absent, the watch refreshes the ledger itself and broadcasts. */
+  refreshLedger?: () => Promise<void>;
   riskRows: RiskRow[];
   market: MarketData;
   proposals: ProposalService;

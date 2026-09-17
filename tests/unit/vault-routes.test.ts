@@ -71,7 +71,7 @@ function network(id: string, address: string, accepts: Array<{ symbol: string; m
     unavailable: null,
     sharedWith: [],
     warning: `${net.name} only.`,
-    accepts: accepts.map((a) => ({ ...a, minimum: { shown: true, amount: a.minDepositHuman, usd: null } })),
+    accepts: accepts.map((a) => ({ ...a, assetId: `nep141:${id}-${a.symbol.toLowerCase()}.omft.near`, minimum: { shown: true, amount: a.minDepositHuman, usd: null } })),
   };
 }
 

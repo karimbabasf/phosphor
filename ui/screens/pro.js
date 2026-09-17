@@ -468,6 +468,9 @@
     setMeta(refs.money, moneySummary(coins));
 
     var notes = [];
+    /* An unfunded trading account (wallet.hyperliquid.funded false) is not counted here and
+       prints nothing: a new account starts at $0 there, and "1 empty, not listed" over a fresh
+       wallet was that row. */
     if (wallet.emptyCount) notes.push(wallet.emptyCount + ' empty, not listed');
     /* Dust is money, so the total above already holds it; the note is what keeps a hidden row
        from reading as a vanished one. */
@@ -475,9 +478,14 @@
       notes.push(wallet.dustCount + (wallet.dustCount === 1 ? ' tiny balance' : ' tiny balances') + ' under a cent, in the total, not listed');
     }
     /* Per-chain staleness badges are gone from every row that reads fine. Only
-       a place that actually failed is named, and it is named in words. */
+       a place that actually failed is named, and it is named in words, with the
+       reason the read gave when it gave one. The backend waits for two misses in
+       a row before it names the verifier, so this line no longer flashes on one. */
     if (stale.length) {
-      notes.push('Could not check ' + stale.map(chainName).join(', ') + '. Holdings there are unknown, not zero.');
+      var why = wallet.staleWhy || {};
+      notes.push('Could not check ' + stale.map(function (place) {
+        return chainName(place) + (why[place] ? ' (' + why[place] + ')' : '');
+      }).join(', ') + '. Holdings there are unknown, not zero.');
     }
     dom.setText(refs.emptyNote, notes.join('. '));
     dom.setHidden(refs.emptyNote, !notes.length);

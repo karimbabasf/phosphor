@@ -467,12 +467,6 @@
 
   /* ---------- the watcher line ---------- */
 
-  function landedWords(deposit) {
-    var symbol = deposit.symbol || '';
-    return 'Landed: ' + (typeof deposit.amount === 'number' ? dom.qty(deposit.amount) + ' ' + symbol : symbol)
-      + (typeof deposit.ms === 'number' ? ' in ' + Math.max(1, Math.round(deposit.ms / 1000)) + ' s' : '');
-  }
-
   function elapsed(startedAt) {
     var then = new Date(startedAt).getTime();
     if (!isFinite(then)) return '0:00';
@@ -480,6 +474,147 @@
     var minutes = Math.floor(seconds / 60);
     var rest = seconds % 60;
     return minutes + ':' + (rest < 10 ? '0' : '') + rest;
+  }
+
+  function shortAddress(address) {
+    var text = String(address || '');
+    if (text.length <= 14) return text;
+    return text.slice(0, 6) + '...' + text.slice(-4);
+  }
+
+  function seconds(ms) {
+    return String(Math.max(1, Math.round(ms / 1000)));
+  }
+
+  /* What the line says for a frame: plain words, with every number marked so it
+     can be set in the mono face. A part is a string or { mono: '0:42' }. The
+     phases come from src/vault/watch.ts: watching (this app asking), seen (the
+     bridge saw the transfer arrive, confirming), bridged (the bridge is done,
+     the verifier is crediting), credited (the balance went up), stopped. */
+  function watcherParts(deposit) {
+    var symbol = deposit.symbol || '';
+    var network = networkName(deposit.chain);
+    var amount = typeof deposit.amount === 'number' ? [{ mono: dom.qty(deposit.amount) }, ' ' + symbol] : null;
+    if (deposit.phase === 'watching') {
+      var where = deposit.address ? ['Watching ' + network + ' for a deposit to ', { mono: shortAddress(deposit.address) }] : ['Watching ' + network + ' for your deposit'];
+      return where.concat([', ', { mono: elapsed(deposit.startedAt) }]);
+    }
+    if (deposit.phase === 'seen') {
+      var parts = ['Seen on ' + network + ': '].concat(amount || ['a deposit']);
+      if (typeof deposit.confirmations === 'number') {
+        return parts.concat([', ', { mono: String(deposit.confirmations) }, deposit.confirmations === 1 ? ' confirmation' : ' confirmations']);
+      }
+      return parts.concat([', confirming']);
+    }
+    if (deposit.phase === 'bridged') {
+      return ['Bridged into NEAR Intents: '].concat(amount || ['your deposit']).concat([', crediting']);
+    }
+    if (deposit.phase === 'credited') {
+      var landed = typeof deposit.ms === 'number' ? ['Landed in ', { mono: seconds(deposit.ms) }, ' s: '] : ['Landed: '];
+      return landed.concat(amount || [symbol]).concat([' is in your balance']);
+    }
+    return ['Stopped watching.'];
+  }
+
+  /* One renderer for every surface that shows a watch: the picker's address
+     step and the first run's money step draw the same line off the same frame,
+     so a deposit reads the same wherever the person is standing. The mark
+     carries the phase (a breathing dot, then the check), the words say it, the
+     hash is a link to the explorer, and the last read failure sits under it in
+     the quiet face. The clock runs only while watching. `stop: false` leaves
+     the Stop button off, for a surface that has nowhere to put it. */
+  function watcherLine(host, options) {
+    var opts = options || {};
+    var node = dom.el('div', 'deposit-watch');
+    node.setAttribute('role', 'status');
+    node.hidden = true;
+    var mark = dom.el('span', 'deposit-watch-mark');
+    node.appendChild(mark);
+    var body = dom.el('div', 'deposit-watch-body');
+    var text = dom.el('span', 'body deposit-watch-text');
+    body.appendChild(text);
+    var link = dom.el('a', 'deposit-watch-link', 'View');
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.hidden = true;
+    body.appendChild(link);
+    var note = dom.el('span', 'meta deposit-watch-note');
+    note.hidden = true;
+    body.appendChild(note);
+    node.appendChild(body);
+    var stop = null;
+    if (opts.stop !== false) {
+      stop = button('Stop watching', 'btn-quiet btn-sm');
+      dom.on(stop, 'click', function () {
+        window.PhosphorShell.setPending(stop, true, 'Stopping');
+        api.depositStop()
+          .catch(function (err) { window.PhosphorToast.show(net.readable(err), 'down'); })
+          .finally(function () { window.PhosphorShell.setPending(stop, false); });
+      });
+      node.appendChild(stop);
+    }
+    host.appendChild(node);
+
+    var tick = 0;
+    var markPhase = null;
+    var last = null;
+
+    function drawMark(phase) {
+      if (markPhase === phase) return;
+      markPhase = phase;
+      dom.clear(mark);
+      mark.appendChild(phase === 'credited' ? icon('done', 'deposit-watch-check') : dom.el('span', 'dot'));
+    }
+
+    function write(parts) {
+      dom.clear(text);
+      for (var i = 0; i < parts.length; i += 1) {
+        var part = parts[i];
+        text.appendChild(typeof part === 'string' ? dom.el('span', '', part) : dom.el('span', 'mono', part.mono));
+      }
+    }
+
+    function startTick() {
+      if (tick) return;
+      tick = window.setInterval(function () { if (last) render(last); }, 1000);
+    }
+
+    function stopTick() {
+      if (!tick) return;
+      window.clearInterval(tick);
+      tick = 0;
+    }
+
+    function render(deposit) {
+      if (!deposit || typeof deposit.phase !== 'string') {
+        last = null;
+        node.hidden = true;
+        stopTick();
+        return;
+      }
+      last = deposit;
+      node.hidden = false;
+      node.dataset.phase = deposit.phase;
+      write(watcherParts(deposit));
+      var url = typeof deposit.explorerUrl === 'string' && /^https:\/\//.test(deposit.explorerUrl) ? deposit.explorerUrl : null;
+      link.hidden = url === null;
+      if (url !== null) link.href = url;
+      var why = typeof deposit.error === 'string' && deposit.error !== '' ? deposit.error : null;
+      note.hidden = why === null;
+      dom.setText(note, why === null ? '' : why);
+      drawMark(deposit.phase);
+      if (stop) dom.setHidden(stop, deposit.phase === 'credited' || deposit.phase === 'stopped');
+      if (deposit.phase === 'watching') startTick();
+      else stopTick();
+    }
+
+    function destroy() {
+      stopTick();
+      last = null;
+      if (node.parentNode) node.parentNode.removeChild(node);
+    }
+
+    return { node: node, text: text, stop: stop, render: render, destroy: destroy };
   }
 
   /* ---------- the component ---------- */
@@ -1028,22 +1163,8 @@
       var body = dom.el('div', 'deposit-body');
       node.appendChild(body);
 
-      var watch = dom.el('div', 'deposit-watch');
-      watch.setAttribute('role', 'status');
-      watch.hidden = true;
-      watch.appendChild(dom.el('span', 'dot'));
-      var watchText = dom.el('span', 'body deposit-watch-text');
-      watch.appendChild(watchText);
-      var stop = button('Stop watching', 'btn-quiet btn-sm');
-      dom.on(stop, 'click', function () {
-        window.PhosphorShell.setPending(stop, true, 'Stopping');
-        api.depositStop()
-          .catch(function (err) { window.PhosphorToast.show(net.readable(err), 'down'); })
-          .finally(function () { window.PhosphorShell.setPending(stop, false); });
-      });
-      watch.appendChild(stop);
-      node.appendChild(watch);
-      state.watch = { node: watch, text: watchText, stop: stop };
+      if (state.watch) state.watch.destroy();
+      state.watch = watcherLine(node);
 
       show('address', node);
       skeleton(body);
@@ -1322,10 +1443,7 @@
         })
         .catch(function (err) {
           if (!state.alive || !state.watch) return;
-          state.watch.node.hidden = false;
-          state.watch.node.dataset.phase = 'stopped';
-          dom.setText(state.watch.text, 'Not watching for this deposit: ' + net.readable(err));
-          state.watch.stop.hidden = true;
+          state.watch.render({ phase: 'stopped', chain: n.id, symbol: symbol, error: 'Not watching for this deposit: ' + net.readable(err) });
         });
     }
 
@@ -1335,53 +1453,18 @@
       renderWatcher(live && state.deposit && live.startedAt === state.deposit.startedAt ? live : state.deposit);
     }
 
+    /* The line follows the watch this step started and no other: a frame for a
+       watch begun elsewhere (another network, the agent's card) hides it. */
     function renderWatcher(deposit) {
       if (!state.watch || !state.alive) return;
-      var watch = state.watch;
-      if (!deposit || !state.watchStart || deposit.startedAt !== state.watchStart) {
-        watch.node.hidden = true;
-        stopTick();
-        return;
-      }
-      watch.node.hidden = false;
-      watch.node.dataset.phase = deposit.phase;
-      var symbol = deposit.symbol || state.symbol || '';
-      var text = '';
-      if (deposit.phase === 'watching') {
-        text = 'Watching for your deposit, ' + elapsed(deposit.startedAt);
-        startTick();
-      } else if (deposit.phase === 'seen') {
-        text = 'Seen on ' + networkWords(deposit.chain) + ': '
-          + (typeof deposit.amount === 'number' ? dom.qty(deposit.amount) + ' ' + symbol : 'a deposit') + ', confirming';
-        stopTick();
-      } else if (deposit.phase === 'landed') {
-        text = landedWords(Object.assign({}, deposit, { symbol: symbol }));
-        stopTick();
-      } else {
-        text = 'Stopped watching.';
-        stopTick();
-      }
-      dom.setText(watch.text, text);
-      dom.setHidden(watch.stop, deposit.phase !== 'watching' && deposit.phase !== 'seen');
-    }
-
-    function startTick() {
-      if (state.tick) return;
-      state.tick = window.setInterval(function () {
-        var snapshot = store.get() || {};
-        renderWatcher(snapshot.deposit || null);
-      }, 1000);
-    }
-
-    function stopTick() {
-      if (!state.tick) return;
-      window.clearInterval(state.tick);
-      state.tick = 0;
+      var mine = deposit && state.watchStart && deposit.startedAt === state.watchStart;
+      state.watch.render(mine ? Object.assign({}, deposit, { symbol: deposit.symbol || state.symbol || '' }) : null);
     }
 
     function destroy() {
       state.alive = false;
-      stopTick();
+      if (state.watch) state.watch.destroy();
+      state.watch = null;
       if (state.copiedTimer) window.clearTimeout(state.copiedTimer);
       if (state.unsubscribe) state.unsubscribe();
       state.unsubscribe = null;
@@ -1448,6 +1531,8 @@
     addressBlock: addressBlock,
     drawChecked: drawChecked,
     copyChecked: copyChecked,
-    sameBytes: sameBytes
+    sameBytes: sameBytes,
+    watcherLine: watcherLine,
+    watcherParts: watcherParts
   };
 })();

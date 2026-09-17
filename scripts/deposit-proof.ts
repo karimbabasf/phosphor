@@ -8,8 +8,12 @@
 // the Vault tab, the Vault tab with the developer switch on, and the deposit card the Vault
 // tab opens, at 1280 x 800 and 2560 x 1440, into docs/screenshots/deposit/.
 //
+// The address step is also shot with the watcher line in the seen and credited phases, frames put
+// on the window's store for the watch the backend started when the address was drawn.
+//
 // Fixture data only: the demo wallet on a temp directory, never the live one. Run:
 //   node scripts/deposit-proof.ts
+// PROOF_OUT names another directory for the pictures.
 // PROOF_LIVE_BRIDGE=1 skips the fixture and lets the demo backend ask the real bridge for the
 // demo wallet's addresses on every network it credits (read-only calls, thirty-odd of them),
 // which is the one way to see the whole network list drawn from real rows.
@@ -28,7 +32,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
-const SHOTS = path.join(ROOT, 'docs', 'screenshots', 'deposit');
+const SHOTS = process.env.PROOF_OUT ?? path.join(ROOT, 'docs', 'screenshots', 'deposit');
 
 type Json = any;
 
@@ -242,6 +246,32 @@ async function main(): Promise<void> {
       await showFold();
       await sleep(500);
       await shoot('stage3');
+
+      /* The watcher line under the address, in the phases a deposit goes through. The backend's
+         own watch (started when the address was drawn) is frozen on the store, and frames for
+         the same watch are put there the way the SSE frame would be; /api/state answers are
+         marked not fresh meanwhile so a heartbeat cannot put the backend's frame back. */
+      await page.waitForFunction('!!(window.PhosphorState.get() || {}).deposit', { timeout: 10_000 });
+      await page.evaluate(`(function () {
+        window.__proofState = window.PhosphorApi.state;
+        window.PhosphorApi.state = function (o) { return window.__proofState(o).then(function (r) { return Object.assign({}, r, { fresh: false }); }); };
+      })()`);
+      const TX = '0x9c1e7b2d4f60a8c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1';
+      const watched: Array<[string, Json]> = [
+        ['seen', { phase: 'seen', amount: 5, txHash: TX, explorerUrl: `https://basescan.org/tx/${TX}`, confirmations: 3, ms: 12_000, error: null }],
+        ['credited', { phase: 'credited', amount: 5, txHash: TX, explorerUrl: `https://basescan.org/tx/${TX}`, confirmations: 12, ms: 41_000, error: null }],
+      ];
+      for (const [name, frame] of watched) {
+        await page.evaluate(`(function (frame) {
+          var s = window.PhosphorState;
+          var state = s.get() || {};
+          s.put(Object.assign({}, state, { deposit: Object.assign({}, state.deposit, frame) }));
+        })(${JSON.stringify(frame)})`);
+        await showFold();
+        await sleep(350);
+        await shoot(`stage3-${name}`);
+      }
+      await page.evaluate('window.PhosphorApi.state = window.__proofState');
 
       // The Vault tab, then with the developer switch on, then the card it opens.
       /* The trade strip: the price block and the deck at its floor. */

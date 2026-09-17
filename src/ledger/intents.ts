@@ -21,9 +21,16 @@
 // Read only. Two view calls, no signing, nothing here can move money.
 
 import type { OneClickToken } from '../intents.ts';
-import { readTimeout } from '../net.ts';
+import { READ_TIMEOUT_MS, readTimeout } from '../net.ts';
 
 export const INTENTS_VERIFIER = 'intents.near';
+
+// The ledger's idle cadence (src/main.ts polls on it), kept beside the one rule that depends on
+// it: how old a verifier read may be before the wallet report calls it unread. Two idle periods
+// plus one read budget, so a second attempt still in flight does not turn a single miss into a
+// warning on the screen.
+export const REFRESH_PERIOD_MS = 15_000;
+export const INTENTS_UNREAD_AFTER_MS = REFRESH_PERIOD_MS * 2 + READ_TIMEOUT_MS;
 
 // A page of enumeration, and a ceiling on how many pages we will walk. An account holding
 // more than this is not a case this app can produce, and an unbounded loop against a
@@ -47,9 +54,29 @@ export type IntentsHolding = {
 export type IntentsRead = {
   holdings: IntentsHolding[];
   ok: boolean;
+  // When the holdings above were read. A failed read that kept the last good holdings keeps
+  // their stamp too, so this always says how old the numbers on screen are.
   fetchedAt: string;
   error?: string;
+  // Failed reads in a row, 0 after a good one. Optional only for hand-built reads in tests;
+  // the ledger always writes it. See intentsUnreadWhy for what the count buys.
+  failures?: number;
 };
+
+/* Why the wallet report should say the verifier could not be checked, or null while there is
+   nothing worth saying. One miss is a miss: the ledger is read every few seconds, a public RPC
+   drops one call in twenty on a bad afternoon, and a warning that follows every single miss
+   flashes on and off over a balance that is perfectly readable (the Money card, 2026-09-16).
+   Two misses in a row are a pattern. So are holdings nobody has re-read for two idle periods,
+   whatever the last read said: a number nobody is refreshing is not a number to act on. A stamp
+   the reader cannot parse says nothing about age, so only the count can mark it. */
+export function intentsUnreadWhy(read: IntentsRead, now: number = Date.now()): string | null {
+  const failures = read.failures ?? (read.ok ? 0 : 1);
+  if (failures >= 2) return read.error ?? 'the verifier did not answer twice in a row';
+  const at = Date.parse(read.fetchedAt);
+  if (Number.isFinite(at) && now - at > INTENTS_UNREAD_AFTER_MS) return `last read ${Math.round((now - at) / 1000)} s ago`;
+  return null;
+}
 
 type ViewResult = { result: number[] };
 

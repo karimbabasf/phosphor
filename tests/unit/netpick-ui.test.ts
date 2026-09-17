@@ -423,7 +423,7 @@ test('the address step draws one address after its checks, starts the watch, and
   const watch = find(world.host, '.deposit-watch')[0];
   assert.equal(watch.hidden, false);
   assert.equal(watch.dataset.phase, 'watching');
-  assert.ok(find(watch, '.deposit-watch-text')[0].textContent.startsWith('Watching for your deposit, '));
+  assert.ok(find(watch, '.deposit-watch-text')[0].textContent.startsWith('Watching Base for a deposit to '), find(watch, '.deposit-watch-text')[0].textContent);
   // The watch is started through the deposit card when it is loaded, so the card can absorb the echo.
   const viaCard = build({ ack: true, withDeposit: true });
   viaCard.render({ stage: 'address', network: 'sol' });

@@ -287,7 +287,7 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
 }
 
 function frame(overrides: Any = {}): Any {
-  return Object.assign({ phase: 'watching', chain: 'eth', symbol: 'USDC', address: ADDRESS, startedAt: '2026-09-14T10:00:00.000Z', baseline: 0, amount: null, txHash: null, ms: null }, overrides);
+  return Object.assign({ phase: 'watching', chain: 'eth', symbol: 'USDC', address: ADDRESS, startedAt: '2026-09-14T10:00:00.000Z', baseline: 0, amount: null, txHash: null, explorerUrl: null, confirmations: null, ms: null, error: null }, overrides);
 }
 
 /* ---------- the source ---------- */
@@ -460,28 +460,55 @@ test('a row click posts /api/deposit/show with the chain, the asset and the addr
 
 /* ---------- the watcher ---------- */
 
-test('the watcher moves through watching, seen and landed, with the time it took', async () => {
+test('the watcher moves through watching, seen, bridged and credited, with the hash, the confirmations and the time it took', async () => {
   const world = build();
   world.deposit.onFrame(frame());
   await flush();
   const dialog = world.dialog();
   const watch = find(dialog, '.deposit-watch')[0];
   const line = (): string => find(dialog, '.deposit-watch-text')[0].textContent;
+  const link = find(dialog, '.deposit-watch-link')[0];
+  const note = find(dialog, '.deposit-watch-note')[0];
+  const stop = find(watch, 'button')[0];
   const base = world.store.get();
 
   world.store.put(Object.assign({}, base, { deposit: frame() }));
   assert.equal(watch.dataset.phase, 'watching');
-  assert.ok(line().startsWith('Watching for your deposit, '), line());
+  assert.ok(line().startsWith('Watching Ethereum for a deposit to 0x7d4e...0e1d, '), line());
+  assert.equal(link.hidden, true, 'nothing to link to yet');
+  assert.equal(note.hidden, true);
+  assert.equal(stop.hidden, false);
 
-  world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'seen', amount: 5, txHash: 'abc', ms: 12000 }) }));
+  world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'seen', amount: 5, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', confirmations: 2, ms: 12000 }) }));
   assert.equal(watch.dataset.phase, 'seen');
-  assert.equal(line(), 'Seen on Ethereum (ERC-20): 5 USDC, confirming');
+  assert.equal(line(), 'Seen on Ethereum: 5 USDC, 2 confirmations');
+  assert.equal(link.hidden, false, 'the hash is a link');
+  assert.equal(link.href, 'https://etherscan.io/tx/0xabc');
+  assert.equal(stop.hidden, false);
 
-  world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'landed', amount: 5, txHash: 'abc', ms: 41000 }) }));
-  assert.equal(watch.dataset.phase, 'landed');
-  assert.equal(line(), 'Landed: 5 USDC in 41 s');
-  const stop = find(watch, 'button')[0];
+  world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'seen', amount: 5, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', confirmations: null, ms: 12000 }) }));
+  assert.equal(line(), 'Seen on Ethereum: 5 USDC, confirming', 'no count yet reads as confirming, never as zero');
+
+  world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'bridged', amount: 5, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', ms: 30000 }) }));
+  assert.equal(watch.dataset.phase, 'bridged');
+  assert.equal(line(), 'Bridged into NEAR Intents: 5 USDC, crediting');
+
+  world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'credited', amount: 5, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', ms: 41000 }) }));
+  assert.equal(watch.dataset.phase, 'credited');
+  assert.equal(line(), 'Landed in 41 s: 5 USDC is in your balance');
   assert.equal(stop.hidden, true, 'Stop is offered after the money landed');
+  assert.ok(find(watch, '.deposit-watch-check').length === 1, 'the check replaces the dot');
+
+  // A read that keeps failing is said under the line, and clears when it works.
+  world.store.put(Object.assign({}, base, { deposit: frame({ error: 'The verifier is not answering, retrying' }) }));
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, 'The verifier is not answering, retrying');
+  world.store.put(Object.assign({}, base, { deposit: frame({ error: null }) }));
+  assert.equal(note.hidden, true);
+
+  // A link that is not https never becomes one.
+  world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'seen', txHash: '0xabc', explorerUrl: 'javascript:alert(1)' }) }));
+  assert.equal(link.hidden, true);
 });
 
 test('closing the card stops nothing; only Stop posts /api/deposit/stop', async () => {
@@ -513,13 +540,13 @@ test('a second frame for the same watch does not reopen a card the person closed
 
 /* ---------- the backup card ---------- */
 
-test('the first landed deposit on a wallet that is not backed up opens the backup card, once', async () => {
+test('the first credited deposit on a wallet that is not backed up opens the backup card, once', async () => {
   const world = build({ vault: { custody: 'secure-enclave', backedUp: false } });
   world.deposit.onFrame(frame());
   await flush();
   const dialog = world.dialog();
   const base = world.store.get();
-  const landed = frame({ phase: 'landed', amount: 5, ms: 41000 });
+  const landed = frame({ phase: 'credited', amount: 5, ms: 41000 });
   world.store.put(Object.assign({}, base, { deposit: landed }));
   const backup = find(dialog, '.deposit-backup')[0];
   assert.equal(backup.hidden, false, 'no backup card on the first landed deposit');
@@ -540,11 +567,11 @@ test('the first landed deposit on a wallet that is not backed up opens the backu
   assert.equal(world.card(), null, 'a second backup card for the same watch');
 });
 
-test('a landed deposit on a wallet that is backed up asks for nothing', async () => {
+test('a credited deposit on a wallet that is backed up asks for nothing', async () => {
   const world = build({ vault: { custody: 'secure-enclave', backedUp: true } });
   world.deposit.onFrame(frame());
   await flush();
-  world.store.put(Object.assign({}, world.store.get(), { deposit: frame({ phase: 'landed', amount: 5, ms: 41000 }) }));
+  world.store.put(Object.assign({}, world.store.get(), { deposit: frame({ phase: 'credited', amount: 5, ms: 41000 }) }));
   assert.equal(find(world.dialog(), '.deposit-backup')[0].hidden, true);
   assert.equal(world.card(), null);
 });
@@ -554,7 +581,7 @@ test('money that lands after the card was closed is said once, as a toast', asyn
   world.deposit.onFrame(frame());
   await flush();
   world.deposit.close();
-  const landed = frame({ phase: 'landed', amount: 5, ms: 41000 });
+  const landed = frame({ phase: 'credited', amount: 5, ms: 41000 });
   world.store.put(Object.assign({}, world.store.get(), { deposit: landed }));
   assert.deepEqual(world.toasts, ['Landed: 5 USDC in 41 s']);
   world.store.put(Object.assign({}, world.store.get(), { deposit: Object.assign({}, landed, { ms: 42000 }) }));
