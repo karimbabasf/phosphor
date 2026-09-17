@@ -292,7 +292,9 @@ export async function proposeSend(ctx: PCtx, params: SendParams): Promise<Propos
     to,
     toChecksum,
     counterparty: INTENTS_PAY_COUNTERPARTY,
-    recipient: await recipientOf(ctx, network, to, to === '' ? null : network, ownAddress, params.note),
+    // The chain is asked only about a draft that can still be sent: a refused one is a sentence,
+    // not a lookup.
+    recipient: await recipientOf(ctx, network, to, to === '' || problems.length > 0 ? null : network, ownAddress, params.note),
   };
   return problems.length > 0
     ? refuseDraft(ctx, 'intents_pay', draft, problems, params.clientKey)
