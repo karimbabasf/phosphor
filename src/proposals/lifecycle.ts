@@ -319,7 +319,9 @@ export function outcomeOf(p: Proposal, plan?: PlanFate | null): ProposalOutcome 
 export function ownBook(ctx: PCtx): { evm: string[] } {
   const own = ctx.keystore?.addressReport().addresses.evm;
   const evm: string[] = typeof own === 'string' && own.trim() !== '' ? [own] : [];
-  const configured = ctx.cfg.addresses.evm;
+  // A demo owns nothing but its fixture: a developer's config.local.json beside the repo
+  // must not become the demo's identity, or a test drafts from the real wallet's address.
+  const configured = ctx.cfg.mode === 'demo' ? undefined : ctx.cfg.addresses.evm;
   if (configured !== undefined && !evm.some((x) => x.toLowerCase() === configured.toLowerCase())) evm.push(configured);
   return { evm };
 }
