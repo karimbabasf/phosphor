@@ -19,11 +19,17 @@
 
 import type { Candle } from '../types.ts';
 import type { Catalog, MarketRef } from './catalog.ts';
-import { chooseBase } from './aggregate.ts';
+import { chooseBase, foldsInto } from './aggregate.ts';
 import { readTimeout } from '../net.ts';
 
 // What each venue will answer to natively. Anything else is folded from one of these.
-export const HYPERLIQUID_NATIVES = [60, 180, 300, 900, 1800, 3600, 7200, 14_400, 28_800, 43_200, 86_400, 259_200, 604_800];
+//
+// Hyperliquid also serves "1w" and "1M", and neither is fetched. Its week opens on the epoch's
+// Thursday and its month is a thirty day bucket (measured 2026-09-16: opens on 2026-08-05 and
+// 2026-09-04), so a chart drawn from them would disagree with the Monday weeks and calendar
+// months every other chart shows and the live fold would put a Monday bucket beside a Thursday
+// one. Both fold exactly from the day, which is what the day is here for.
+export const HYPERLIQUID_NATIVES = [60, 180, 300, 900, 1800, 3600, 7200, 14_400, 28_800, 43_200, 86_400, 259_200];
 export const COINBASE_NATIVES = [60, 300, 900, 3600, 21_600, 86_400];
 
 const COINBASE_MAX_ROWS = 300;
@@ -48,7 +54,7 @@ export function planBase(ref: MarketRef | null, targetSec: number): BasePlan {
   const natives = ref?.provider === 'coinbase' ? COINBASE_NATIVES : HYPERLIQUID_NATIVES;
   const base = chooseBase(wanted, natives) ?? MIN_BASE_SEC;
 
-  const note = wanted % base === 0 ? null : `${wanted}s does not divide evenly by ${base}s, buckets may straddle`;
+  const note = foldsInto(base, wanted) ? null : `${wanted}s does not divide evenly by ${base}s, buckets may straddle`;
   return { baseSec: base, provider: ref?.provider ?? 'hyperliquid', ref, note };
 }
 
@@ -135,11 +141,9 @@ export function createProviders(deps: ProviderDeps) {
       .sort((a, b) => a.t - b.t);
   }
 
-  /* Hyperliquid's own spelling, which is not the same as the obvious one. A week is "1w"
-     in its enum and never "7d": asking for 7d gets an empty array rather than an error,
-     which is how this shipped as a blank weekly chart the first time. */
+  /* Hyperliquid's own spelling of the natives above: asking for an interval outside its enum
+     gets a 422 rather than an empty array. */
   const intervalLabel = (sec: number): string => {
-    if (sec === 604_800) return '1w';
     if (sec % 86_400 === 0) return `${sec / 86_400}d`;
     if (sec % 3600 === 0) return `${sec / 3600}h`;
     return `${sec / 60}m`;
@@ -149,9 +153,10 @@ export function createProviders(deps: ProviderDeps) {
      `provider` is the venue the store keyed this series under, so the routing here has to
      agree with it exactly: resolving the product freely and landing somewhere else would
      write one venue's bars under another venue's key, which is the splice the store's own
-     keyOf comment exists to prevent. */
-  async function fetchWindow(product: string, baseSec: number, bars: number, provider: string): Promise<Candle[]> {
-    const nowSec = Math.floor(now() / 1000);
+     keyOf comment exists to prevent. `endSec` is where the window ends, for the store's
+     backfill behind the oldest bar it holds; absent, it ends now. */
+  async function fetchWindow(product: string, baseSec: number, bars: number, provider: string, endSec?: number): Promise<Candle[]> {
+    const nowSec = endSec ?? Math.floor(now() / 1000);
     const ref =
       provider === 'coinbase' || provider === 'hyperliquid'
         ? deps.catalog.resolveOn(product, provider)

@@ -8,17 +8,17 @@
 
    So there is one column. Everything that wants a line on the left feeds an
    item {y, text, tone} in here, and one pass places them: from y 16, on a
-   13 px pitch, pushed down and never up past a neighbour, lifted back on
-   screen if the stack runs off the bottom, and cut at eight with a line that
-   says how many more there were. Order is kept, so the label above still
-   belongs to the line above.
+   13 px pitch, eight pixels in from the left edge, pushed down and never up
+   past a neighbour, lifted back on screen if the stack runs off the bottom,
+   and cut at eight with a line that says how many more there were. Order is
+   kept, so the label above still belongs to the line above.
 
    Plain browser script like the engine beside it: no imports, no framework.
    Nothing here touches the DOM or the tokens; the engine passes the ink. */
 
 'use strict';
 
-var LABEL_X = 5;
+var LABEL_X = 8;
 var LABEL_TOP = 16;
 var LABEL_PITCH = 13;
 var LABEL_MAX = 8;
@@ -27,7 +27,9 @@ var LABEL_GLYPH_W = 8;
 
 /* Place a list of wanted items. Each item carries the y it would like, and
    either `text` or `parts` ([{text, tone}] for a line in more than one ink;
-   a part may carry `glyph` instead of `text`, see labelGlyph).
+   a part may carry `glyph` instead of `text`, see labelGlyph, and a `width`
+   to advance by whatever it measures, so a column of prices holds still
+   while the digits under it tick).
    Returns the placed items in draw order, each with labelY, plus the count
    that did not fit. Pure: the same input places the same way every frame. */
 function labelLayout(items, top, bottom) {
@@ -101,17 +103,27 @@ function labelDraw(ctx, placed, inkOf, pad) {
 }
 
 function labelPartWidth(ctx, part) {
-  return part.glyph ? LABEL_GLYPH_W : ctx.measureText(part.text).width;
+  var measured = part.glyph ? LABEL_GLYPH_W : ctx.measureText(part.text).width;
+  return typeof part.width === 'number' && part.width > measured ? part.width : measured;
 }
 
 /* A part drawn rather than typed, so no font decides what a cross or an
    arrow looks like: `close` is the cross that removes a line, a 1.5 px stroke;
-   `up` and `down` are filled triangles saying which edge a label went off.
+   `up` and `down` are filled triangles saying which edge a label went off;
+   `agent` is the dot that marks an object the agent drew, in the agent's own
+   ink, where the word [agent] used to be typed in front of every label.
    Seven pixels wide, centred on the middle of the text beside it (four above
    the baseline), in the ink the part asked for. */
 function labelGlyph(ctx, name, x, baseline, ink) {
   var cx = x + LABEL_GLYPH_W / 2;
   var cy = baseline - 4;
+  if (name === 'agent') {
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
   if (name === 'close') {
     ctx.strokeStyle = ink;
     ctx.lineWidth = 1.5;

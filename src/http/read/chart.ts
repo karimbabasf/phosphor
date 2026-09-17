@@ -96,7 +96,7 @@ export const chartReads: ReadTable = {
     const view = ctx.chart.state().view;
     const product = typeof args.product === 'string' && args.product.trim().length > 0 ? args.product.trim().toUpperCase() : view.product;
     const asked = Array.isArray(args.timeframes) ? args.timeframes : ['5m', '15m', '1h', '4h', '1d'];
-    // TIMEFRAMES is the button bar (1m to 1d), not the set of legal timeframes. Matching only
+    // TIMEFRAMES is the button bar (1m to 1M), not the set of legal timeframes. Matching only
     // against it and then snapping the miss meant `1w` fell to snapTimeframe(Number('1w')),
     // and Number('1w') is NaN, so every comparison in the snap was false and it returned the
     // FIRST entry: 1m. A weekly scan silently answered with a minute chart, labelled as if

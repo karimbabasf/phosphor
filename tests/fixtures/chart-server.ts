@@ -53,10 +53,11 @@ export function fakeCatalog(): Catalog {
 }
 
 // Bars ending on the current minute, a gentle sine over a rising drift, so every indicator
-// has something to compute and the newest bar is never stale.
-export function syntheticBars(product: string, baseSec: number, bars: number, nowMs = Date.now()): Candle[] {
+// has something to compute and the newest bar is never stale. `endMs` is the newest bar's
+// window, so a backfill asks for the bars before the ones it holds and gets exactly those.
+export function syntheticBars(product: string, baseSec: number, bars: number, endMs = Date.now()): Candle[] {
   const seed = product.charCodeAt(0) * 10;
-  const end = Math.floor(nowMs / 1000 / baseSec) * baseSec;
+  const end = Math.floor(endMs / 1000 / baseSec) * baseSec;
   const out: Candle[] = [];
   for (let i = bars - 1; i >= 0; i--) {
     const t = end - i * baseSec;
@@ -72,7 +73,7 @@ export type ChartHarness = {
   close: () => Promise<void>;
   view: (mode: ViewMode) => void;
   setPlans: (plans: unknown[]) => void;
-  fetches: () => { product: string; baseSec: number; startedAt: number; endedAt: number }[];
+  fetches: () => { product: string; baseSec: number; bars: number; endSec: number | null; startedAt: number; endedAt: number }[];
   mcp: (body: unknown) => Promise<{ status: number; json: any }>;
   post: (route: string, body: unknown, headers?: Record<string, string>) => Promise<{ status: number; json: any }>;
   get: (route: string) => Promise<{ status: number; json: any }>;
@@ -94,6 +95,8 @@ export async function bootChartServer(
     indicators?: Record<string, string | Buffer>;
     // A fake socket factory switches the live rail on; without one the fixture dials nothing.
     liveSocket?: (url: string) => LiveSocket;
+    // Where the venue's history begins: no bar opens before it. Absent, the venue is bottomless.
+    oldestSec?: number;
   } = {},
 ): Promise<ChartHarness> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chart-'));
@@ -107,7 +110,7 @@ export async function bootChartServer(
   const store = createStore(dataDir);
   let view: ViewMode = opts.view ?? 'trade';
   let plans: unknown[] = [];
-  const fetches: { product: string; baseSec: number; startedAt: number; endedAt: number }[] = [];
+  const fetches: { product: string; baseSec: number; bars: number; endSec: number | null; startedAt: number; endedAt: number }[] = [];
 
   const cfg: AppConfig = {
     mode: 'demo',
@@ -120,12 +123,13 @@ export async function bootChartServer(
 
   const token = 'a'.repeat(48);
   const marketStore = createMarketStore({
-    fetchWindow: async (product, baseSec, bars) => {
-      const row = { product, baseSec, startedAt: Date.now(), endedAt: 0 };
+    fetchWindow: async (product, baseSec, bars, _provider, endSec) => {
+      const row = { product, baseSec, bars, endSec: endSec ?? null, startedAt: Date.now(), endedAt: 0 };
       fetches.push(row);
       if (opts.fetchDelayMs !== undefined) await new Promise((r) => setTimeout(r, opts.fetchDelayMs));
       row.endedAt = Date.now();
-      return syntheticBars(product, baseSec, bars);
+      const made = syntheticBars(product, baseSec, bars, endSec === undefined ? Date.now() : endSec * 1000);
+      return opts.oldestSec === undefined ? made : made.filter((c) => c.t >= (opts.oldestSec as number));
     },
   });
   const market = createMarketData({

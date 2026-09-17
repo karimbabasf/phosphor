@@ -212,6 +212,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     ledger: deps.ledger,
     sse,
     account: () => keystore.addressReport().addresses.evm?.toLowerCase() ?? null,
+    refresh:
+      deps.refreshLedger ??
+      (async () => {
+        await deps.ledger.refresh();
+        sse.broadcastState();
+      }),
   });
   const session =
     deps.session ??

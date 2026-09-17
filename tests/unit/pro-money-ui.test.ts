@@ -248,3 +248,24 @@ test('the same number rounded differently is not a change', () => {
   const usdc = withClass(moneyOf(host), 'holding').find((r) => r.dataset.coin === 'USDC')!;
   assert.equal(usdc.getAttribute('data-changed'), null);
 });
+
+test('the Money head says where the money is, in the two pockets, and never that a chain is unread', () => {
+  const { host, render } = boot();
+  const rows = [
+    { symbol: 'USDC', kind: 'intents', chain: 'intents', quantity: 2500, valueUsd: 2500, share: 0.5 },
+    { symbol: 'ETH', kind: 'intents', chain: 'intents', quantity: 0.4, valueUsd: 1000, share: 0.2 },
+    { symbol: 'USDC', kind: 'hyperliquid', chain: 'hyperliquid', quantity: 50, valueUsd: 50, share: 0.01 },
+  ];
+  const state = wallet(rows);
+  // The stale list is the old chain status; the sentence no longer reads it.
+  state.wallet.stale = ['base'];
+  render(state);
+  const head = withClass(moneyOf(host), 'card-head')[0]!;
+  const meta = withClass(head, 'card-meta')[0]!;
+  assert.equal(meta.textContent, '2 coins, in NEAR Intents and on Hyperliquid');
+  assert.equal(head.getAttribute('data-lead'), 'true', 'the total is not in the head');
+  assert.equal(withClass(head, 'card-lead')[0]!.textContent, '$3,550.00');
+
+  render(wallet(rows.slice(0, 2)));
+  assert.equal(meta.textContent, '2 coins, in NEAR Intents');
+});

@@ -101,7 +101,7 @@
 
     <aside class="conversation" id="conversation" aria-label="Your assistant" data-surface="assistant">
       <div class="conversation-body" id="conversation-body"></div>
-      <div class="dock" id="overlay" role="region" aria-label="Waiting for you" hidden>
+      <div class="dock" id="overlay" role="region" aria-label="Waiting for you" data-surface="dock" hidden>
         <div class="dock-card" id="overlay-card"></div>
       </div>
       <div class="composer-host" id="composer-host"></div>
@@ -124,7 +124,7 @@
 <div class="screen" id="screen-firstrun" hidden></div>
 <div class="screen" id="screen-migrate" hidden></div>
 
-<canvas id="beam" class="beam-layer" aria-hidden="true"></canvas>
+<div id="beam" class="beam-layer" aria-hidden="true"></div>
 
 <script src="./vendor/motion-13.3.0.js" defer></script>
 <script src="./design/motion.js" defer></script>

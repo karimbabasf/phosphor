@@ -51,7 +51,7 @@
   var toastedFor = null;
 
   function sayLanded(deposit) {
-    if (!deposit || deposit.phase !== 'landed') return;
+    if (!deposit || deposit.phase !== 'credited') return;
     if (isOpen() && current && current.startedAt === deposit.startedAt) return;
     if (toastedFor === deposit.startedAt) return;
     toastedFor = deposit.startedAt;
@@ -209,7 +209,7 @@
      the same one, and where the person is: inside this card while it is open,
      on the dock when it is not. */
   function maybeBackupPrompt(deposit) {
-    if (!deposit || deposit.phase !== 'landed') return;
+    if (!deposit || deposit.phase !== 'credited') return;
     var state = store.get() || {};
     var vault = state.vault || {};
     if (vault.backedUp !== false) return;

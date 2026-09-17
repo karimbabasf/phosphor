@@ -81,9 +81,16 @@ test('every key the app actually reads still loads', () => {
     dataDir: 'state',
     skills: ['phosphor-analysis'],
     driver: { autostart: false },
+    chainscan: { blockscoutApiKey: 'bs-key', nearblocksApiKey: 'nb-key' },
   });
   assert.equal(cfg.port, 4200);
   assert.deepEqual(cfg.candleProducts, ['ETH-USD']);
+  assert.deepEqual(cfg.chainscan, { blockscoutApiKey: 'bs-key', nearblocksApiKey: 'nb-key' });
+});
+
+test('a chain lookup key nobody knows is refused, and no key at all is the default', () => {
+  assert.throws(() => load({ chainscan: { etherscanApiKey: 'x' } }), /chainscan.*etherscanApiKey/);
+  assert.equal(load({}).chainscan, undefined);
 });
 
 test('a config written before the consolidate path went still loads', () => {

@@ -321,7 +321,8 @@ export async function poaSupportedTokens(fetchImpl: typeof fetch = fetch): Promi
   }
 }
 
-export type PoaDeposit = { txHash: string; amount: string; status: string; asset: string };
+// `amount` is in base units; `decimals` is the row's own scale when the bridge sent one.
+export type PoaDeposit = { txHash: string; amount: string; status: string; asset: string; decimals?: number };
 
 /* What the bridge has SEEN, which is not the same question as what the verifier has CREDITED.
    The settled truth is mt_batch_balance_of in src/ledger/intents.ts, and that is what the wallet
@@ -335,26 +336,41 @@ export async function poaRecentDeposits(
   fetchImpl: typeof fetch = fetch,
   limit = 10,
 ): Promise<PoaDeposit[]> {
-  const network = bridgeKeyOf(chain);
-  if (network === undefined) return [];
   try {
-    const body = (await rpc(
-      'recent_deposits',
-      [{ account_id: accountId.toLowerCase(), chain: network, limit }],
-      fetchImpl,
-    )) as { result?: { deposits?: unknown } };
-    const rows = body.result?.deposits;
-    if (!Array.isArray(rows)) return [];
-    return rows.map((row) => {
-      const r = row as Record<string, unknown>;
-      return {
-        txHash: typeof r.tx_hash === 'string' ? r.tx_hash : '',
-        amount: typeof r.amount === 'string' ? r.amount : String(r.amount ?? ''),
-        status: typeof r.status === 'string' ? r.status : 'unknown',
-        asset: typeof r.defuse_asset_identifier === 'string' ? r.defuse_asset_identifier : '',
-      };
-    });
+    return await poaRecentDepositsOrThrow(accountId, chain, fetchImpl, limit);
   } catch {
     return [];
   }
+}
+
+/* The same read for a caller that has to tell a failure from an empty list: the deposit watch
+   remembers which rows were already complete when it began, and a first poll that failed must
+   not read as "none were". Throws where poaRecentDeposits returns []; an unknown chain is still
+   an empty list, because that is an answer. */
+export async function poaRecentDepositsOrThrow(
+  accountId: string,
+  chain: string,
+  fetchImpl: typeof fetch = fetch,
+  limit = 10,
+): Promise<PoaDeposit[]> {
+  const network = bridgeKeyOf(chain);
+  if (network === undefined) return [];
+  const body = (await rpc(
+    'recent_deposits',
+    [{ account_id: accountId.toLowerCase(), chain: network, limit }],
+    fetchImpl,
+  )) as { result?: { deposits?: unknown }; error?: unknown };
+  if (body.error !== undefined) throw new Error(`poa bridge recent_deposits: ${errorSaid(body.error)}`);
+  const rows = body.result?.deposits;
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      txHash: typeof r.tx_hash === 'string' ? r.tx_hash : '',
+      amount: typeof r.amount === 'string' ? r.amount : String(r.amount ?? ''),
+      status: typeof r.status === 'string' ? r.status : 'unknown',
+      asset: typeof r.defuse_asset_identifier === 'string' ? r.defuse_asset_identifier : '',
+      ...(typeof r.decimals === 'number' && Number.isInteger(r.decimals) ? { decimals: r.decimals } : {}),
+    };
+  });
 }

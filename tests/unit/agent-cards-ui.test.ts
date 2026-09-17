@@ -191,11 +191,11 @@ function build() {
   };
 }
 
-const BALANCES = {
+const WALLET = {
   totalUsd: 29.6,
-  holdings: [
-    { chain: 'base', symbol: 'USDC', amount: 25.9, usd: 25.9, native: false },
-    { chain: 'sol', symbol: 'SOL', amount: 0.02, usd: 3.7, native: true },
+  rows: [
+    { kind: 'intents', chain: 'intents', symbol: 'USDC', quantity: 25.9, valueUsd: 25.9, native: false },
+    { kind: 'intents', chain: 'intents', symbol: 'SOL', quantity: 0.02, valueUsd: 3.7, native: true },
   ],
 };
 
@@ -217,7 +217,7 @@ test('kindFor names the card by the tool, prefix or not, and falls back to the f
   const world = build();
   const kindFor = world.cards.kindFor as (name: string, data?: unknown) => string;
   assert.equal(kindFor('mcp__phosphor__wallet'), 'balance');
-  assert.equal(kindFor('balances'), 'balance');
+  assert.equal(kindFor('wallet'), 'balance');
   assert.equal(kindFor('trade_read'), 'position');
   assert.equal(kindFor('mcp__phosphor__trade_batch'), 'position');
   assert.equal(kindFor('propose_swap'), 'move');
@@ -226,15 +226,15 @@ test('kindFor names the card by the tool, prefix or not, and falls back to the f
   assert.equal(kindFor('deposit'), 'deposit');
   assert.equal(kindFor('watch', { chain: 'base', asset: 'USDC', watching: 'watching' }), 'deposit');
   assert.equal(kindFor('watch', { ok: true, coins: ['BTC', 'ETH'] }), 'kv');
-  assert.equal(kindFor('gas_report'), 'kv');
+  assert.equal(kindFor('policy_show'), 'kv');
 });
 
 test('a tool_data event draws a card under the steps that produced it, and the next call folds on its own', () => {
   const world = build();
   world.ask('what do I hold');
-  world.emit({ kind: 'tool', name: 'mcp__phosphor__balances', input: {} });
-  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__balances', ok: true });
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__balances', input: {}, data: BALANCES });
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__wallet', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: WALLET });
   world.emit({ kind: 'tool', name: 'mcp__phosphor__trade_read', input: {} });
   const kinds = world.blocks().map((b) => b.className);
   assert.deepEqual(kinds, ['chat-row chat-said', 'steps-block', 'chat-card', 'steps-block'], kinds.join(' | '));
@@ -390,7 +390,7 @@ test('a receipt folds: the newest opens, the ones before it close, and the head 
 test('a data card opens by default and stays where the person left it', () => {
   const world = build();
   world.ask('balance');
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__balances', input: {}, data: BALANCES });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: WALLET });
   const card = world.cardNodes('balance')[0];
   assert.equal(card.getAttribute('data-open'), 'true');
   fire(all(card, 'tcard-head')[0], 'click');
@@ -402,14 +402,14 @@ test('a data card opens by default and stays where the person left it', () => {
 test('a folded turn names its calls under the chevron, and lights no dot', () => {
   const world = build();
   world.ask('what do I hold');
-  world.emit({ kind: 'tool', name: 'mcp__phosphor__balances', input: {} });
-  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__balances', ok: true });
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__wallet', ok: true });
   world.emit({ kind: 'tool', name: 'mcp__phosphor__chart_read', input: { product: 'BTC-USD' } });
   world.emit({ kind: 'turn_end', error: false, turns: 1 });
   const fold = all(world.host, 'steps-fold')[0];
   assert.equal(fold.hidden, false);
   assert.ok(all(fold, 'steps-fold-label')[0].textContent.startsWith('2 steps'), fold.textContent);
-  assert.equal(all(fold, 'steps-fold-names')[0].textContent, 'reading your balances, reading the chart');
+  assert.equal(all(fold, 'steps-fold-names')[0].textContent, 'reading your wallet, reading the chart');
   assert.equal(all(fold, 'steps-chevron').length, 1, 'no chevron on the fold');
   assert.equal(all(fold, 'step-dot').length, 0, 'a dot on the fold');
 });
@@ -449,4 +449,46 @@ test('cards.js builds nothing that decides anything and writes no markup', () =>
   assert.equal(/\.innerHTML\s*=|insertAdjacentHTML|outerHTML|document\.write/.test(CARDS_SOURCE), false, 'cards.js writes markup');
   const buttons = CARDS_SOURCE.match(/dom\.el\('button'[^\n]*/g) ?? [];
   assert.deepEqual(buttons.map((b) => b.trim()), ["dom.el('button', 'btn btn-ghost btn-sm tcard-open');"], 'an unknown button site in cards.js');
+});
+
+test('a chain_address answer is a small data block through the facts card, and its step row says the call left the machine', () => {
+  // src/chainscan (feat/chainscan) puts chain_address on TOOL_DATA_TOOLS. No card of its own:
+  // the generic facts card takes the payload, the long address wraps, the counts are mono, the
+  // nested balance flattens to two facts, and the token list is counted rather than dumped.
+  const world = build();
+  world.ask('who is this address');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__chain_address', input: { network: 'ethereum', address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' } });
+  const step = all(world.host, 'step')[0];
+  assert.ok(step, 'no step row');
+  assert.equal(all(step, 'step-leaves')[0].textContent, 'leaves this computer', 'a chain read did not say it left the machine');
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__chain_address', ok: true });
+  world.emit({
+    kind: 'tool_data',
+    name: 'mcp__phosphor__chain_address',
+    input: { network: 'ethereum', address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' },
+    data: {
+      network: 'ethereum',
+      address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+      ok: true,
+      txCount: 1842,
+      balance: { amount: '0.51', symbol: 'ETH' },
+      isContract: false,
+      lastSeen: '2026-09-12T10:00:00Z',
+      source: 'eth.blockscout.com',
+      tokens: [{ symbol: 'USDC', amount: '12.5' }, { symbol: 'DAI', amount: '3' }],
+    },
+  });
+  const card = world.cardNodes('kv')[0];
+  assert.ok(card, 'no facts card was drawn for chain_address');
+  const keys = all(card, 'tcard-kv-key').map((n) => n.textContent);
+  const values = all(card, 'tcard-kv-value');
+  const value = (key: string): Any => values[keys.indexOf(key)];
+  assert.ok(keys.includes('address'), keys.join(' | '));
+  assert.equal(value('address').textContent, '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045');
+  assert.equal(value('tx count').textContent, '1842');
+  assert.ok(value('tx count').className.includes('mono'), 'the count is not in the mono face');
+  assert.equal(value('balance amount').textContent, '0.51');
+  assert.equal(value('balance symbol').textContent, 'ETH');
+  assert.equal(value('is contract').textContent, 'no');
+  assert.equal(value('tokens').textContent, '2 items');
 });

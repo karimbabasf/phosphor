@@ -75,6 +75,13 @@ const configSchema = z
       })
       .strict()
       .optional(),
+    chainscan: z
+      .object({
+        blockscoutApiKey: z.string().optional(),
+        nearblocksApiKey: z.string().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -276,6 +283,7 @@ export function loadConfig(root?: string): AppConfig {
     dataDir,
     keysPath,
   };
+  if (parsed.chainscan !== undefined) cfg.chainscan = parsed.chainscan;
 
   // After the merge, because config.local.json overrides the template key by key and it is the
   // merged book every other module reads. The file named is the local one when it carries an

@@ -253,8 +253,11 @@
 
 /* ---------- the folds ---------- */
 
-/* A fold is a card shut: the head is the control, with the same title and meta
-   as an open card, and the chevron says it opens.
+/* A fold is a card shut: one row, the title at the left and one line of
+   summary at the right with the chevron after it, and the chevron says it
+   opens. The row is a size down from an open card's head (15 over 18): what
+   is shut is secondary to what is open, and a row that reads as a heading
+   with nothing under it reads as a broken card.
 
    THE WHOLE CARD IS THE CONTROL WHILE IT IS SHUT. The head used to take a
    wash of its own under the pointer, inset by the card's padding, which drew
@@ -264,21 +267,39 @@
    nothing inside it. Open, the head is a row like any other: the title
    brightens under the pointer and nothing is painted. */
 .fold {
+  /* The card's 24 px inset stays at the sides and goes at the top: the row
+     is the head's own 16 above and below, nothing more. */
+  padding-top: 0;
   overflow: hidden;
   transition: border-color var(--dur-press) var(--ease-out),
               background-color var(--dur-press) var(--ease-out);
 }
 
-.fold-head {
+/* 16 above and below the row, the card's own inset at the sides, and the
+   title and the summary centred on one line rather than on a baseline: the
+   chevron sits on the line too, and a baseline would drop it. Two classes
+   deep, because pro.css (loaded after this file) sets the shared head's
+   padding and alignment on .card-head alone. */
+.fold > .fold-head {
   width: 100%;
+  align-items: center;
+  padding: var(--s-4) var(--card-x);
   border-bottom: 0;
   background: transparent;
   cursor: pointer;
 }
 
-/* Shut, the head is the card's last row, so it carries the 16 under it. */
-.fold:not([data-open="true"]) > .fold-head {
-  padding-bottom: var(--s-4);
+.fold > .fold-head .card-title {
+  font-size: var(--fs-15);
+  line-height: 1.35;
+}
+
+/* The summary: Sora 13 in the second tone, with any number in it in the
+   mono face (basic.js builds the Activity line from spans). */
+.fold > .fold-head .card-meta {
+  font-size: var(--fs-13);
+  line-height: 1.35;
+  color: var(--text-2);
 }
 
 .fold-head-right {
@@ -293,7 +314,7 @@
     border-color: var(--line-strong);
     background: var(--bg-2);
   }
-  .fold-head:hover .card-meta { color: var(--text-2); }
+  .fold-head:hover .card-meta { color: var(--text); }
   .fold-head:hover .fold-mark { color: var(--text-2); }
 }
 
@@ -303,6 +324,8 @@
   border-radius: var(--radius-sm);
 }
 
+/* The chevron turns over in 200 ms as the fold opens, on the window's own
+   ease-out, and turns back on the way shut. */
 .fold-mark {
   width: 16px;
   height: 16px;
@@ -310,7 +333,7 @@
   display: grid;
   place-items: center;
   color: var(--text-3);
-  transition: transform var(--dur-enter) var(--ease-out),
+  transition: transform 200ms var(--ease-out),
               color var(--dur-press) var(--ease-out);
 }
 
@@ -324,18 +347,44 @@
   border-bottom: 1px solid var(--line);
 }
 
-/* Open, the body breathes: 20 above the first line, 24 under the last. */
+/* THE TRACK. The body sits on one grid row that is nothing while the fold
+   is shut and its own height once open, and the row's size is what moves
+   over the 200 ms, so the card grows to fit rather than popping. The clip
+   between them is what lets the row reach nothing: it has no padding of its
+   own to hold the row open, and it hides what the row cannot show yet. Shut,
+   the track is invisible and inert (basic.js sets the attribute), so a
+   person tabbing down the column never lands behind a shut fold. */
+.fold-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition: grid-template-rows 200ms var(--ease-out),
+              visibility 0s linear 200ms;
+}
+
+.fold[data-open="true"] > .fold-reveal {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  transition-delay: 0s, 0s;
+}
+
+.fold-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Open, the body breathes: 24 above the first line, 24 under the last. */
 .fold-body {
   padding: var(--s-5) var(--card-x) var(--s-5);
 }
 
-.fold[data-surface="moneyin"] > .fold-body {
+.fold[data-surface="moneyin"] .fold-body {
   padding-top: var(--s-4);
 }
 
 /* The Activity fold: the rows sit flush under the head, the filters (once
    "See all" opens them) above the rows on the card's ground. */
-.fold[data-surface="activity"] > .fold-body {
+.fold[data-surface="activity"] .fold-body {
   display: flex;
   flex-direction: column;
   padding-top: 0;
@@ -344,4 +393,12 @@
 .fold[data-surface="activity"] .activity-filters {
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--line);
+}
+
+/* ---------- reduced motion ---------- */
+
+/* The fold opens at once and the chevron simply points the other way. */
+@media (prefers-reduced-motion: reduce) {
+  .fold-reveal,
+  .fold-mark { transition: none; }
 }

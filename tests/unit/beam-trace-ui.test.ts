@@ -12,11 +12,14 @@ import { createContext, runInContext } from 'node:vm';
 
 const ROOT = new URL('../../', import.meta.url);
 const TRACE = readFileSync(new URL('ui/beam/trace.js', ROOT), 'utf8');
+const BEAM = readFileSync(new URL('ui/beam/beam.js', ROOT), 'utf8');
 
 type Trace = {
   surfaceOf: (name: string, input?: Record<string, unknown>) => { id: string; tone: string; leaves: boolean };
   surfaceForProposal: (kind: string) => string;
 };
+
+type Any = Record<string, any>;
 
 /* trace.js is an IIFE that assigns window.PhosphorTrace and reads window.PhosphorBeam lazily, so a
    bare window is enough to read the routing table without a beam or a DOM. */
@@ -47,42 +50,151 @@ function surfaceIds(): Set<string> {
   return ids;
 }
 
-test('every write and every proposal lands on a surface the window carries', () => {
+/* The whole tool surface the driver is allowed (src/mcp.ts) after the 2026-09-16 pass: reads and
+   writes alike, because a read routes to a surface too, so a card or a later write knows where it
+   belongs. The chain reads and propose_send are routed here before their tools land, so the
+   beam is right the day they do. */
+const TOOLS = [
+  'skill', 'start', 'wallet', 'deposit', 'composition', 'policy_show', 'log_tail', 'proposal_status',
+  'chart_read', 'chart_scan', 'chart_snapshot', 'market_search', 'research', 'chart_batch',
+  'set_theme', 'chart_draw', 'chart_layout', 'trade_read', 'trade_batch', 'trade_focus',
+  'trade_highlight', 'trade_overlay', 'trade_clear', 'trade_plan', 'switch', 'watch',
+  'agent_roster', 'agent_board', 'agent_jobs', 'agent_post', 'agent_spawn', 'profile_learned',
+  'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity',
+  'propose_policy_change', 'propose_swap', 'propose_send', 'propose_trade', 'propose_trade_change',
+  'propose_hl_deposit', 'propose_hl_withdraw',
+];
+
+/* The kinds a proposal can carry, which the dock lights through surfaceForProposal. */
+const KINDS = ['swap', 'intents_send', 'intents_pay', 'trade', 'trade_change', 'hl_deposit', 'hl_withdraw', 'policy_change'];
+
+/* A window that carries every surface id the sources name, one element each, resolved through
+   the real beam.js. That is the test the table has to pass: not that a row names an id that
+   looks right, but that the beam, handed that id, finds an element to land on. */
+function fixture(ids: Set<string>): { beam: Any; el: (id: string) => Any } {
+  const nodes = new Map<string, Any>();
+  function makeEl(id: string, surface: string | null, parent: Any | null): Any {
+    const el: Any = {
+      id,
+      tagName: 'div',
+      attrs: Object.create(null) as Any,
+      children: [] as Any[],
+      parentNode: parent,
+      isConnected: true,
+      style: { setProperty() {} },
+      setAttribute(name: string, value: string) { el.attrs[name] = String(value); },
+      getAttribute(name: string) { return Object.prototype.hasOwnProperty.call(el.attrs, name) ? el.attrs[name] : null; },
+      removeAttribute(name: string) { delete el.attrs[name]; },
+      appendChild(child: Any) { child.parentNode = el; el.children.push(child); return child; },
+      removeChild(child: Any) { const at = el.children.indexOf(child); if (at >= 0) el.children.splice(at, 1); return child; },
+      getBoundingClientRect() { return { left: 10, top: 20, width: 300, height: 200 }; },
+    };
+    if (surface) el.setAttribute('data-surface', surface);
+    if (parent) parent.appendChild(el);
+    nodes.set(id, el);
+    return el;
+  }
+  const body = makeEl('body', null, null);
+  const stage = makeEl('stage', 'window', body);
+  const conversation = makeEl('conversation', 'assistant', stage);
+  makeEl('agent-status', null, conversation);
+  const topbar = makeEl('topbar', null, body);
+  const view = makeEl('view-basic', null, stage);
+  view.setAttribute('data-active', 'true');
+  for (const id of ids) {
+    if (id === 'window' || id === 'assistant' || id === 'tabs') continue;
+    if (id.startsWith('tab-')) {
+      const tab = makeEl(id, id, topbar);
+      if (id === 'tab-basic') tab.setAttribute('aria-selected', 'true');
+      continue;
+    }
+    makeEl(`surface-${id}`, id, id === 'dock' ? conversation : view);
+  }
+  function matchAll(selector: string): Any[] {
+    const attr = /^\[data-surface="([^"]*)"\]$/.exec(selector);
+    const out: Any[] = [];
+    if (attr) {
+      nodes.forEach((node) => { if (node.getAttribute('data-surface') === attr[1]) out.push(node); });
+    } else if (selector === '.tab[aria-selected="true"]') {
+      nodes.forEach((node) => { if (node.getAttribute('aria-selected') === 'true') out.push(node); });
+    }
+    return out;
+  }
+  const doc: Any = {
+    body,
+    documentElement: makeEl('html', null, null),
+    getElementById: (id: string) => nodes.get(id) || null,
+    querySelector: (selector: string) => matchAll(selector)[0] || null,
+    querySelectorAll: matchAll,
+    createElement: (tag: string) => makeEl(`made-${tag}-${nodes.size}`, null, null),
+    addEventListener() {},
+  };
+  const sandbox: Any = { console, performance: { now: () => 0 }, getComputedStyle: () => ({ getPropertyValue: () => '' }) };
+  sandbox.window = sandbox;
+  sandbox.document = doc;
+  sandbox.location = { search: '' };
+  sandbox.setTimeout = () => 0;
+  sandbox.clearTimeout = () => {};
+  sandbox.PhosphorMotion = { reduced: () => true, animate: () => ({ finished: Promise.resolve(), stop() {} }) };
+  createContext(sandbox);
+  runInContext(BEAM, sandbox, { filename: 'ui/beam/beam.js' });
+  return { beam: sandbox.PhosphorBeam, el: (id: string) => nodes.get(id) as Any };
+}
+
+test('every tool lands on a surface the window carries, and the beam finds an element for it', () => {
   const trace = load();
   const ids = surfaceIds();
-  // The trade deck is landing in its own branch; the beam falls back to the chart until it does,
-  // so 'position' is a legitimate target even before the markup carries it.
-  ids.add('position');
-
-  // The whole tool surface the driver is allowed (src/mcp.ts), reads and writes alike: a read
-  // routes to a surface too, so a card or a later write knows where it belongs.
-  const tools = [
-    'balances', 'wallet', 'composition', 'gas_report', 'swap', 'consolidate', 'intents_withdraw',
-    'policy_show', 'policy_change', 'trade', 'trade_change', 'trade_read', 'trade_plan',
-    'proposal_status', 'log_tail', 'intents_deposit', 'hl_deposit', 'hl_withdraw',
-    'market_search', 'chart_draw', 'chart_read', 'chart_scan', 'chart_snapshot', 'chart_layout',
-    'chart_batch', 'watch', 'switch', 'set_theme', 'start', 'skill', 'profile_learned', 'research',
-    'propose_swap', 'propose_consolidate', 'propose_intents_deposit', 'propose_intents_withdraw',
-    'propose_hl_deposit', 'propose_hl_withdraw', 'propose_trade', 'propose_trade_change',
-    'propose_policy_change', 'agent_spawn', 'agent_roster', 'agent_post',
-  ];
-  for (const tool of tools) {
+  const world = fixture(ids);
+  for (const tool of TOOLS) {
     const where = trace.surfaceOf(tool);
     assert.ok(where.id, `${tool} routed to nothing`);
     const resolvable = ids.has(where.id) || /^tab-(basic|pro|trade|vault)$/.test(where.id);
     assert.ok(resolvable, `${tool} routed to "${where.id}", which no surface carries`);
+    assert.ok(world.beam.surface(where.id), `${tool} routed to "${where.id}", which the beam cannot find`);
+  }
+  for (const kind of KINDS) {
+    const id = trace.surfaceForProposal(kind);
+    assert.ok(ids.has(id), `proposal kind ${kind} lights "${id}", which no surface carries`);
+    assert.ok(world.beam.surface(id), `proposal kind ${kind} lights "${id}", which the beam cannot find`);
   }
 });
 
-test('a proposal and the tool that asked for it read the same row', () => {
+test('the reads land where their answer is shown, the chain reads on the assistant', () => {
   const trace = load();
-  // propose_swap is swap with a person in front of it, so the card and the light point at one place.
-  assert.equal(trace.surfaceOf('propose_swap').id, trace.surfaceOf('swap').id);
-  assert.equal(trace.surfaceOf('propose_swap').id, 'holdings');
+  assert.equal(trace.surfaceOf('wallet').id, 'holdings');
+  assert.equal(trace.surfaceOf('composition').id, 'holdings');
+  assert.equal(trace.surfaceOf('watch').id, 'holdings');
+  assert.equal(trace.surfaceOf('policy_show').id, 'rules');
+  assert.equal(trace.surfaceOf('log_tail').id, 'activity');
+  assert.equal(trace.surfaceOf('proposal_status').id, 'activity');
+  assert.equal(trace.surfaceOf('deposit').id, 'moneyin');
+  assert.equal(trace.surfaceOf('trade_read').id, 'position');
+  assert.equal(trace.surfaceOf('trade_batch').id, 'position');
+  for (const tool of ['chart_read', 'chart_scan', 'chart_batch', 'chart_draw', 'chart_layout', 'chart_snapshot', 'market_search', 'trade_focus', 'trade_highlight', 'trade_overlay', 'trade_clear', 'trade_plan']) {
+    assert.equal(trace.surfaceOf(tool).id, 'chart', tool);
+  }
+  for (const tool of ['chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity', 'skill', 'start', 'profile_learned', 'agent_roster', 'agent_post']) {
+    assert.equal(trace.surfaceOf(tool).id, 'assistant', tool);
+  }
+  assert.equal(trace.surfaceOf('set_theme').id, 'window');
+});
+
+test('every propose verb flies to the dock, and the proposal it makes lights the panel it would touch', () => {
+  const trace = load();
+  // The flight goes where the click is. The dock then lights the world surface the request would
+  // touch, amber, through surfaceForProposal (ui/screens/decision.js), so a swap waiting for a yes
+  // points at the dock and rings the Money card.
+  for (const tool of ['propose_swap', 'propose_send', 'propose_trade', 'propose_trade_change', 'propose_hl_deposit', 'propose_hl_withdraw', 'propose_policy_change']) {
+    assert.equal(trace.surfaceOf(tool).id, 'dock', tool);
+  }
   assert.equal(trace.surfaceForProposal('swap'), 'holdings');
-  // Trades land on the trade deck.
-  assert.equal(trace.surfaceOf('propose_trade').id, 'position');
+  assert.equal(trace.surfaceForProposal('intents_send'), 'holdings');
+  assert.equal(trace.surfaceForProposal('intents_pay'), 'holdings');
   assert.equal(trace.surfaceForProposal('trade'), 'position');
+  assert.equal(trace.surfaceForProposal('trade_change'), 'position');
+  assert.equal(trace.surfaceForProposal('hl_deposit'), 'account');
+  assert.equal(trace.surfaceForProposal('hl_withdraw'), 'account');
+  assert.equal(trace.surfaceForProposal('policy_change'), 'rules');
   assert.equal(trace.surfaceOf('trade').id, 'position');
 });
 
@@ -107,11 +219,13 @@ test('switch lights the tab it is going TO, read from the tool argument, not the
   assert.equal(trace.surfaceOf('switch', { mode: 'sideways' }).id, 'tabs');
 });
 
-test('the one tool that leaves this machine says so, and an unknown tool lands on the assistant', () => {
+test('the tools that leave this machine say so, and an unknown tool lands on the assistant', () => {
   const trace = load();
-  assert.equal(trace.surfaceOf('research').leaves, true);
-  assert.equal(trace.surfaceOf('research').id, 'assistant');
-  assert.equal(trace.surfaceOf('balances').leaves, false);
+  for (const tool of ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity']) {
+    assert.equal(trace.surfaceOf(tool).leaves, true, tool);
+    assert.equal(trace.surfaceOf(tool).id, 'assistant', tool);
+  }
+  assert.equal(trace.surfaceOf('wallet').leaves, false);
   // A tool id from a model that no row knows still comes from the assistant, so it lights there.
   assert.equal(trace.surfaceOf('some_tool_added_next_release').id, 'assistant');
   // An id that names an Object member is not a surface.

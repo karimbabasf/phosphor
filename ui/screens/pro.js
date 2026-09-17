@@ -461,9 +461,12 @@
     /* The total is the head of the card, so it is the first thing read rather
        than a sum under a list. */
     setLead(refs.money, dom.usd(wallet.totalUsd || 0));
-    setMeta(refs.money, moneySummary(coins, wallet, common));
+    setMeta(refs.money, moneySummary(coins));
 
     var notes = [];
+    /* An unfunded trading account (wallet.hyperliquid.funded false) is not counted here and
+       prints nothing: a new account starts at $0 there, and "1 empty, not listed" over a fresh
+       wallet was that row. */
     if (wallet.emptyCount) notes.push(wallet.emptyCount + ' empty, not listed');
     /* Dust is money, so the total above already holds it; the note is what keeps a hidden row
        from reading as a vanished one. */
@@ -471,9 +474,14 @@
       notes.push(wallet.dustCount + (wallet.dustCount === 1 ? ' tiny balance' : ' tiny balances') + ' under a cent, in the total, not listed');
     }
     /* Per-chain staleness badges are gone from every row that reads fine. Only
-       a place that actually failed is named, and it is named in words. */
+       a place that actually failed is named, and it is named in words, with the
+       reason the read gave when it gave one. The backend waits for two misses in
+       a row before it names the verifier, so this line no longer flashes on one. */
     if (stale.length) {
-      notes.push('Could not check ' + stale.map(chainName).join(', ') + '. Holdings there are unknown, not zero.');
+      var why = wallet.staleWhy || {};
+      notes.push('Could not check ' + stale.map(function (place) {
+        return chainName(place) + (why[place] ? ' (' + why[place] + ')' : '');
+      }).join(', ') + '. Holdings there are unknown, not zero.');
     }
     dom.setText(refs.emptyNote, notes.join('. '));
     dom.setHidden(refs.emptyNote, !notes.length);
@@ -599,25 +607,33 @@
     return found;
   }
 
-  /* The coins, counted, plus anything the panel could not price. An unpriced
-     row is named in the meta rather than left for somebody to spot in the
-     list, because it is the one thing on this panel that makes the total wrong. */
-  function moneySummary(coins, wallet, common) {
+  /* The coins, counted, then where they are: the two pockets this app holds
+     money in, named only when they hold some ("in NEAR Intents", "on
+     Hyperliquid"), plus anything the panel could not price. An unpriced row
+     is named in the meta rather than left for somebody to spot in the list,
+     because it is the one thing on this panel that makes the total wrong.
+     Nothing here reads the chain status: a pocket the app could not read is
+     the wallet report's business (src/wallet.ts), not this sentence's. */
+  function moneySummary(coins) {
     if (!coins.length) return 'Nothing held';
     var unpriced = [];
+    var pockets = [];
     for (var i = 0; i < coins.length; i += 1) {
       if (!coins[i].priced) unpriced.push(coins[i].symbol);
+      for (var j = 0; j < coins[i].places.length; j += 1) {
+        var where = placeName(coins[i].places[j]);
+        if (pockets.indexOf(where) === -1) pockets.push(where);
+      }
     }
     var parts = [coins.length === 1 ? '1 coin' : coins.length + ' coins'];
-    if (common) parts.push('all in ' + common);
-    var places = 0;
-    for (var j = 0; j < coins.length; j += 1) places += coins[j].places.length;
-    if (!common && places > coins.length) parts.push(places + ' places');
-    if (Array.isArray(wallet.stale) && wallet.stale.length) {
-      var unreadNames = [];
-      for (var u = 0; u < wallet.stale.length; u += 1) unreadNames.push(chainName(wallet.stale[u]));
-      parts.push(unreadNames.join(', ') + ' unread');
+    var phrased = [];
+    for (var k = 0; k < pockets.length; k += 1) {
+      phrased.push((pockets[k] === 'NEAR Intents' ? 'in ' : 'on ') + pockets[k]);
     }
+    /* Two pockets are named; a wallet spread wider than that is counted,
+       because a list of five "and on" is a sentence nobody reads. */
+    if (phrased.length > 2) parts.push(pockets.length + ' places');
+    else if (phrased.length) parts.push(phrased.join(' and '));
     if (unpriced.length) parts.push(unpriced.join(', ') + ' not priced');
     return parts.join(', ');
   }

@@ -71,12 +71,12 @@ test('a whitelisted read reaches the window as data, and a tool off the list sen
 });
 
 test('the list is an allow list: the vault, the keys and every unknown tool are off it', () => {
-  for (const name of ['wallet', 'trade_read', 'trade_batch', 'deposit', 'watch', 'receipts', 'proposal_status']) {
+  for (const name of ['wallet', 'trade_read', 'trade_batch', 'deposit', 'watch', 'receipts', 'proposal_status', 'chain_address']) {
     assert.ok(isToolDataTool(`mcp__phosphor__${name}`), `${name} is on the list`);
   }
   assert.ok(isToolDataTool('mcp__phosphor__propose_swap'));
   assert.ok(isToolDataTool('mcp__phosphor__propose_trade'));
-  for (const name of ['policy_show', 'log_tail', 'chart_read', 'chart_snapshot', 'vault_status', 'vault_export', 'keys', 'start', 'skill', 'research']) {
+  for (const name of ['policy_show', 'log_tail', 'chart_read', 'chart_snapshot', 'vault_status', 'vault_export', 'keys', 'start', 'skill', 'research', 'chain_transactions', 'chain_transaction', 'intents_activity']) {
     assert.equal(isToolDataTool(`mcp__phosphor__${name}`), false, `${name} must not reach the window as data`);
   }
 });

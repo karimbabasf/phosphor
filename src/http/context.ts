@@ -46,7 +46,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const PROJECT_DIR = path.join(__dirname, '..', '..');
 
 export const LOG_LIMIT_MAX = 2000;
-export const CANDLE_LIMIT_MAX = 2000; // matches LIMITS.historyMax: the widest window the chart allows
+export const CANDLE_LIMIT_MAX = 5000; // one page of history: what the deep venue answers in one call
 
 // How far back the basic screen's "what the assistant did" list is willing to look for
 // five distinct sentences. Runs collapse, so an assistant that read the wallet two
@@ -90,7 +90,7 @@ export const READ_TOOLS: readonly string[] = [
   'chart_snapshot',
   'chart_batch',
   'market_search',
-  // The one tool that leaves this machine. It is a read like the others because that is all it
+  // The first tool that leaves this machine. It is a read like the others because that is all it
   // is: the APP fetches from a fixed allowlist and hands back text. The agent never gets a URL
   // it can point anywhere, which is the whole reason this is a Phosphor tool and not WebFetch.
   'research',
@@ -101,6 +101,13 @@ export const READ_TOOLS: readonly string[] = [
   'agent_roster',
   'agent_board',
   'agent_jobs',
+  // Public chain data: an address, its transactions, one transaction, an account's intents
+  // ledger. Reads that leave the machine the way research does: fixed hosts, a closed network
+  // enum, an address or hash that passes its shape before a URL exists, answers that are data.
+  'chain_address',
+  'chain_transactions',
+  'chain_transaction',
+  'intents_activity',
 ];
 // Chart writes. They move no money, so they never reach the proposal path and never wait on
 // an approval. They are still audited like every other op: an agent that can change what the
@@ -166,6 +173,11 @@ export type ServerDeps = {
   audit: Audit;
   store: Store;
   ledger: Ledger;
+  /* The one refresh seam, refreshNow in src/main.ts: joins a read already in flight instead of
+     starting a second, and broadcasts state when it lands. The deposit watch calls it when
+     money is credited. Optional because every test in this repo builds a server without
+     main.ts; absent, the watch refreshes the ledger itself and broadcasts. */
+  refreshLedger?: () => Promise<void>;
   riskRows: RiskRow[];
   market: MarketData;
   proposals: ProposalService;

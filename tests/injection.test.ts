@@ -58,7 +58,8 @@ const SELF = ['0x1111111111111111111111111111111111111111', '1111111111111111111
 
 // Argument names that would let an agent name where the money goes. A rail tool's only
 // address-shaped argument is a chain, an enum of the five chain ids, and the app resolves that
-// to one of our own addresses. There is no free-text destination anywhere on the surface.
+// to one of our own addresses. There is no free-text destination anywhere on the surface. The
+// two chain reads carry `address` as what to look up, which the walk below allows by name.
 const RECIPIENT_FIELDS = ['to', 'recipient', 'destination', 'address', 'toaddress', 'dest', 'payee'];
 
 let dataDir = '';
@@ -288,6 +289,16 @@ type ListedTool = { name: string; inputSchema: unknown };
    drives it through the door with a hostile account and holds it to that. */
 const DESTINATION_TOOL = 'propose_intents_send';
 
+/* THE READS THAT CARRY AN ADDRESS AS A LOOKUP KEY (2026-09-16). chain_address and
+   chain_transactions look up public data about an address; the field names what to read, not
+   where money goes, and a read tool has no path to a rail. They are still held to an exact
+   argument set, so a third field cannot appear on them, and `address` stays refused on every
+   propose tool and every other read. */
+const LOOKUP_TOOLS: Readonly<Record<string, readonly string[]>> = {
+  chain_address: ['address', 'network'],
+  chain_transactions: ['address', 'limit', 'network'],
+};
+
 function assertNoExfiltrationTarget(tools: ListedTool[]): void {
   for (const tool of tools) {
     const names = [...propertyNames(tool.inputSchema)].map(n => n.toLowerCase());
@@ -295,6 +306,16 @@ function assertNoExfiltrationTarget(tools: ListedTool[]): void {
       assert.deepEqual(names.filter((n) => RECIPIENT_FIELDS.includes(n)), ['to'], `${DESTINATION_TOOL} carries a second recipient-shaped field`);
       assert.deepEqual(names.sort(), ['amount', 'symbol', 'to'], `${DESTINATION_TOOL} grew an argument`);
       assert.deepEqual(openBags(tool.inputSchema), [], `tool ${tool.name} carries an open bag of arguments`);
+      continue;
+    }
+    const lookup = LOOKUP_TOOLS[tool.name];
+    if (lookup !== undefined) {
+      assert.ok(!tool.name.startsWith('propose_'), `${tool.name} is a propose tool and cannot be a lookup`);
+      assert.deepEqual(names.sort(), [...lookup], `${tool.name} grew an argument`);
+      assert.deepEqual(names.filter((n) => RECIPIENT_FIELDS.includes(n)), ['address'], `${tool.name} carries a recipient-shaped field other than its lookup key`);
+      assert.deepEqual(openBags(tool.inputSchema), [], `tool ${tool.name} carries an open bag of arguments`);
+      const schemaText = JSON.stringify(tool.inputSchema);
+      assert.doesNotMatch(schemaText, /recipient|destination/i, `tool ${tool.name} schema names a destination`);
       continue;
     }
     for (const field of RECIPIENT_FIELDS) {
@@ -354,6 +375,36 @@ test('the one tool with a destination field never executes on its own, and a hos
       assert.equal(String(draft.from).toLowerCase(), SELF[0].toLowerCase());
     }
   }
+});
+
+/* THE CHAIN READS TAKE A SHAPE, NEVER A URL. A lookup key that fails its network's shape is
+   refused at the door with the reason, before any host is named: a URL, a hostile sentence, a
+   network off the enum and an address on the wrong network all come back as a refusal and
+   nothing else. Only malformed inputs are driven here, so this suite never leaves the machine;
+   the well-formed paths run over an injected fetch in tests/unit/chainscan-*.test.ts. */
+test('the chain reads refuse anything that is not an address or a hash of the named network, and never a URL', async () => {
+  assert.ok(client !== null);
+  const hostile = JSON.parse(fs.readFileSync(path.join(ROOT, 'tests', 'fixtures', 'hostile.json'), 'utf8')) as { sentences: string[] };
+  const refused = async (tool: string, args: Record<string, unknown>, why: RegExp): Promise<void> => {
+    const r = await callTool(tool, args);
+    const text = typeof r === 'string' ? r : JSON.stringify(r);
+    assert.ok(!/"ok":true/.test(text), `${tool} answered ${JSON.stringify(args)} as a lookup`);
+    assert.match(text, why, `${tool} ${JSON.stringify(args)}: ${text.slice(0, 200)}`);
+  };
+  for (const bad of ['https://eth.blockscout.com/api/v2/addresses/0x1', 'evil.tld/../0x1', hostile.sentences[0], '', SELF[1]]) {
+    await refused('chain_address', { network: 'ethereum', address: bad }, /not an address on Ethereum|no address given/);
+    await refused('chain_transactions', { network: 'base', address: bad }, /not an address on Base|no address given/);
+  }
+  // Well-formed hex with one capital moved: a checksum that no longer matches is a typo, refused.
+  await refused('chain_address', { network: 'ethereum', address: '0xD8dA6BF26964aF9D7eEd9e03E53415D37aA96045' }, /checksum/);
+  await refused('chain_transaction', { network: 'solana', hash: 'https://solscan.io/tx/abc' }, /not a Solana transaction signature/);
+  await refused('chain_transaction', { network: 'bitcoin', hash: SELF[0] }, /not a Bitcoin transaction id/);
+  await refused('intents_activity', { account: 'https://api.nearblocks.io/v3/accounts/x' }, /not a NEAR account id/);
+  await refused('intents_activity', { account: hostile.sentences[1] }, /not a NEAR account id/);
+  // A network off the enum is refused by the schema before the app is asked at all.
+  const off = await callTool('chain_address', { network: 'evil.tld', address: SELF[0] });
+  const offText = typeof off === 'string' ? off : JSON.stringify(off);
+  assert.ok(!/"ok":true/.test(offText), 'a network off the enum was looked up');
 });
 
 /* A SPAWNED WORKER'S DOOR IS NARROWER THAN ITS PARENT'S, and this is the assertion that whole

@@ -720,21 +720,64 @@ button.token-row[disabled] {
   border-radius: var(--radius-xs);
 }
 
-/* The watcher, one line. The dot carries the phase: breathing while it waits,
-   amber once something is seen and not yet confirmed, the up colour when the
-   money has landed, and quiet when the watch was stopped. */
+/* The watcher, one line, drawn by netpick.js watcherLine wherever a watch is
+   shown. The mark carries the phase: a dot breathing while it waits, amber once
+   the bridge has seen the transfer, the ink while it is being credited, and the
+   check in the up colour when the money is in the balance; quiet when the watch
+   was stopped. The words carry the numbers in the mono face, a hash is a link,
+   and a read that keeps failing sits under the line in the quiet face. */
 .deposit-watch {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--s-2);
   padding-top: var(--s-3);
   border-top: 1px solid var(--line);
   color: var(--text-2);
 }
 
-.deposit-watch-text {
+.deposit-watch-mark {
+  display: inline-flex;
+  align-items: center;
+  height: 1.5em;
+  flex: 0 0 auto;
+}
+
+.deposit-watch-body {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--s-2);
+  row-gap: var(--s-1);
+}
+
+.deposit-watch-text {
+  min-width: 0;
+}
+
+.deposit-watch-text .mono {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.deposit-watch-link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+
+.deposit-watch-link:hover { text-decoration-thickness: 2px; }
+
+.deposit-watch-note {
+  flex-basis: 100%;
+}
+
+.deposit-watch-check {
+  width: 1.1em;
+  height: 1.1em;
+  color: var(--up);
 }
 
 .deposit-watch[data-phase="watching"] .dot {
@@ -744,8 +787,12 @@ button.token-row[disabled] {
 
 .deposit-watch[data-phase="seen"] { color: var(--text); }
 .deposit-watch[data-phase="seen"] .dot { color: var(--warn); }
-.deposit-watch[data-phase="landed"] { color: var(--text); }
-.deposit-watch[data-phase="landed"] .dot { color: var(--up); }
+.deposit-watch[data-phase="bridged"] { color: var(--text); }
+.deposit-watch[data-phase="bridged"] .dot {
+  color: var(--ink);
+  animation: feedpulse 1800ms var(--ease-in-out) infinite;
+}
+.deposit-watch[data-phase="credited"] { color: var(--text); }
 .deposit-watch[data-phase="stopped"] .dot { color: var(--text-3); }
 
 /* ---------- the deposit card ---------- */

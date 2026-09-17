@@ -23,6 +23,7 @@ const MOTION = read('../../ui/design/motion.js');
 const DEVMODE = read('../../ui/design/devmode.js');
 const DEVMODE_CSS = read('../../ui/design/devmode.css');
 const FIELD = read('../../ui/design/field.js');
+const NETPICK = read('../../ui/screens/netpick.js');
 const FIRSTRUN = read('../../ui/screens/firstrun.js');
 
 /* ---------- a DOM small enough to read ---------- */
@@ -199,7 +200,9 @@ type World = {
   animations: Any[];
 };
 
-type Options = { motion?: 'real' | 'none'; devmode?: boolean; field?: boolean; fakeMotion?: boolean; reduced?: boolean; netpick?: boolean };
+type Options = { motion?: 'real' | 'none'; devmode?: boolean; field?: boolean; fakeMotion?: boolean; reduced?: boolean; netpick?: boolean; watcher?: boolean };
+
+const MNEMONIC = 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' ');
 
 function build(state: Any, opts: Options = {}): World {
   const nodes: Record<string, Any> = {};
@@ -228,6 +231,8 @@ function build(state: Any, opts: Options = {}): World {
     localStorage: { getItem: (k: string) => (k in storage ? storage[k] : null), setItem: (k: string, v: string) => { storage[k] = v; } },
     setTimeout: (fn: () => void) => { setTimeout(fn, 0); return 1; },
     clearTimeout() {},
+    setInterval: () => 1,
+    clearInterval() {},
     addEventListener() {},
     removeEventListener() {},
     requestAnimationFrame: (fn: (now: number) => void) => { frames.push(fn); rafId += 1; return rafId; },
@@ -256,7 +261,7 @@ function build(state: Any, opts: Options = {}): World {
   sandbox.PhosphorApi = {
     vaultCreate: () => { calls.push({ route: '/api/vault/create' }); return Promise.resolve({ ok: true, addresses: { evm: '0xabc' } }); },
     vaultRestore: () => Promise.resolve({ ok: true, addresses: {} }),
-    walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: [], addresses: {} }); },
+    walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: MNEMONIC.slice(), addresses: {} }); },
     walletImport: () => Promise.resolve({ ok: true, addresses: {} }),
     connection: () => Promise.resolve({ missing: true }),
     driver: () => Promise.resolve({}),
@@ -268,6 +273,16 @@ function build(state: Any, opts: Options = {}): World {
   if (opts.motion === 'real') runInContext(MOTION, sandbox, { filename: 'ui/design/motion.js' });
   if (opts.devmode) runInContext(DEVMODE, sandbox, { filename: 'ui/design/devmode.js' });
   if (opts.field) runInContext(FIELD, sandbox, { filename: 'ui/design/field.js' });
+  /* The real picker, for its watcher line (the money step draws it), with the addresses step's
+     render swapped for the recording stub so no address is fetched. */
+  if (opts.watcher) {
+    runInContext(NETPICK, sandbox, { filename: 'ui/screens/netpick.js' });
+    sandbox.PhosphorNetPick.render = (host: Any, options: Any) => {
+      calls.push({ route: 'netpick.render', options });
+      host.appendChild(makeNode('div'));
+      return { destroy: () => { calls.push({ route: 'netpick.destroy' }); } };
+    };
+  }
   runInContext(FIRSTRUN, sandbox, { filename: 'ui/screens/firstrun.js' });
 
   sandbox.PhosphorState.put(state);
@@ -538,4 +553,112 @@ test('without the picker the addresses step falls back to the plain address list
   buttonNamed(screen, 'Create wallet').click();
   await flush();
   assert.ok(world.calls.some((c) => c.route === 'moneyin.render'));
+});
+
+/* ---------- the money step ---------- */
+
+/* The software flow to its sixth step: welcome, choose, a password, the words (ticked), three of
+   them typed back, the addresses, then Add money. */
+async function toMoney(world: World): Promise<Any> {
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  buttonNamed(screen, 'Get started').click();
+  buttonNamed(screen, 'Continue').click();
+  const fields = find(screen, 'input.input');
+  fields[0].value = 'longenough';
+  fields[1].value = 'longenough';
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  assert.ok(textOf(screen).includes('Save your recovery words'));
+  const box = find(screen, 'input').find((n: Any) => n.type === 'checkbox') as Any;
+  box.checked = true;
+  box.dispatch('change');
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Prove it'));
+  const typed = find(screen, 'input.input');
+  typed[0].value = MNEMONIC[2];
+  typed[1].value = MNEMONIC[6];
+  typed[2].value = MNEMONIC[10];
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Your addresses'));
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Add money'));
+  return screen;
+}
+
+function depositFrame(overrides: Any = {}): Any {
+  return Object.assign({
+    phase: 'watching', chain: 'eth', symbol: 'USDC', address: '0x7d4e1f0a2c9b8e6d3f5a1c7b9e0d2f4a6c8b0e1d',
+    startedAt: '2026-09-16T10:00:00.000Z', baseline: 0, amount: null, txHash: null, explorerUrl: null, confirmations: null, ms: null, error: null,
+  }, overrides);
+}
+
+test('the money step draws the watch live: every phase renders its line off the deposit frame, and Continue turns primary when the money is credited', async () => {
+  const world = firstRun(SOFTWARE, { watcher: true });
+  const screen = await toMoney(world);
+  const store = world.sandbox.PhosphorState;
+  const line = (): string => find(screen, '.deposit-watch-text')[0].textContent;
+  const watch = find(screen, '.deposit-watch')[0];
+  const cont = buttonNamed(screen, 'Continue');
+  assert.ok(buttonNamed(screen, 'Do this later'), 'the way out stays');
+  assert.equal(find(watch, 'button').length, 0, 'no Stop on the money step: the picker has it');
+  assert.equal(watch.hidden, true, 'no watch, no line');
+  const idle = find(screen, '.money-idle')[0];
+  assert.equal(idle.hidden, false, 'and the step says why');
+  assert.ok(idle.textContent.startsWith('No address has been shown yet.'));
+  assert.equal(cont.className, 'btn btn-ghost btn-lg', 'nothing to continue to yet');
+  assert.ok(textOf(screen).includes('$0.00'));
+  assert.equal(find(screen, '.spinner').length, 0, 'the spinner is gone');
+
+  store.put(Object.assign({}, store.get(), { deposit: depositFrame() }));
+  assert.equal(watch.hidden, false);
+  assert.equal(watch.dataset.phase, 'watching');
+  assert.ok(line().startsWith('Watching Ethereum for a deposit to 0x7d4e...0e1d, '), line());
+  assert.equal(idle.hidden, true);
+  assert.equal(find(find(screen, '.deposit-watch-text')[0], '.mono').length, 2, 'the address and the clock are set in the mono face');
+  assert.equal(cont.className, 'btn btn-ghost btn-lg');
+
+  store.put(Object.assign({}, store.get(), { deposit: depositFrame({ phase: 'seen', amount: 0.0011, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', confirmations: 2, ms: 12000 }) }));
+  assert.equal(line(), 'Seen on Ethereum: 0.0011 USDC, 2 confirmations');
+  assert.equal(find(screen, '.deposit-watch-link')[0].href, 'https://etherscan.io/tx/0xabc');
+
+  store.put(Object.assign({}, store.get(), { deposit: depositFrame({ phase: 'bridged', amount: 0.0011, txHash: '0xabc', ms: 30000 }) }));
+  assert.equal(line(), 'Bridged into NEAR Intents: 0.0011 USDC, crediting');
+  assert.equal(cont.className, 'btn btn-ghost btn-lg', 'bridged is not landed');
+
+  store.put(Object.assign({}, store.get(), { deposit: depositFrame({ phase: 'credited', amount: 0.0011, txHash: '0xabc', ms: 74000 }) }));
+  assert.equal(watch.dataset.phase, 'credited');
+  assert.equal(line(), 'Landed in 74 s: 0.0011 USDC is in your balance');
+  assert.equal(find(watch, '.deposit-watch-check').length, 1, 'the green check');
+  assert.equal(cont.className, 'btn btn-primary btn-lg', 'credited turns Continue primary');
+  assert.ok(textOf(screen).includes('Your money is here.'));
+
+  // The total follows the wallet slice, on its own.
+  store.put(Object.assign({}, store.get(), { wallet: { totalUsd: 1.1 } }));
+  assert.ok(textOf(screen).includes('$1.10'));
+
+  cont.click();
+  assert.ok(textOf(screen).includes('Connect your assistant'));
+  assert.equal(find(screen, '.deposit-watch').length, 0, 'the line went down with the step');
+  // A frame after the step is gone reaches nothing.
+  store.put(Object.assign({}, store.get(), { deposit: depositFrame({ phase: 'stopped' }) }));
+  assert.ok(textOf(screen).includes('Connect your assistant'));
+});
+
+test('the money step says when a read keeps failing, and is primary at once when money is already in', async () => {
+  const world = firstRun(SOFTWARE, { watcher: true });
+  const screen = await toMoney(world);
+  const store = world.sandbox.PhosphorState;
+  store.put(Object.assign({}, store.get(), { deposit: depositFrame({ error: 'The verifier is not answering, retrying' }) }));
+  const note = find(screen, '.deposit-watch-note')[0];
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, 'The verifier is not answering, retrying');
+  assert.equal(buttonNamed(screen, 'Continue').className, 'btn btn-ghost btn-lg');
+
+  const funded = firstRun(SOFTWARE, { watcher: true });
+  funded.sandbox.PhosphorState.put(Object.assign({}, funded.sandbox.PhosphorState.get(), { wallet: { totalUsd: 25.5 } }));
+  const fundedScreen = await toMoney(funded);
+  assert.ok(textOf(fundedScreen).includes('$25.50'));
+  assert.ok(textOf(fundedScreen).includes('Your money is here.'));
+  assert.equal(buttonNamed(fundedScreen, 'Continue').className, 'btn btn-primary btn-lg');
 });

@@ -74,7 +74,7 @@ test('the chart store draws custom:<slug> through its resolver like any built-in
   const warmup = warmupBars(spec, normaliseParams(spec, { length: 50 }).params);
   assert.equal(warmup, 50);
   const view = chart.state().view;
-  const expected = Math.min(LIMITS.historyMax, Math.max(LIMITS.historyFloor, Math.ceil(view.barCount + Math.max(0, view.panOffset) + LIMITS.fetchMargin + warmup)));
+  const expected = Math.min(LIMITS.historyMax, Math.ceil(view.barCount + Math.max(0, view.panOffset) + LIMITS.fetchMargin + warmup));
   assert.equal(chart.historyNeeded(), expected);
 
   assert.equal(chart.removeIndicator('custom:rsi').ok, true);

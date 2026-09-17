@@ -73,6 +73,16 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'chart_batch',
   'market_search',
   'research',
+  // Chain lookups (2026-09-16): four reads whose answers come from off the machine, held to the
+  // same shape as research. The network is a closed enum, the address or hash has to pass its
+  // shape before a URL exists, the hosts are fixed in src/chainscan/networks.ts, and every string
+  // that comes back is data. Two of them carry `address`, and the property walk in
+  // tests/injection.test.ts allows it on exactly those two as a lookup key: a read cannot pay
+  // anyone, and the field never reaches a rail.
+  'chain_address',
+  'chain_transactions',
+  'chain_transaction',
+  'intents_activity',
   // The chart's one write. View, indicators, presets, levels, marks, lines and zones in one
   // call, with `clear` scoped to the caller's own work: ten tools used to do this one call
   // each, and every one of those was a model turn. Withheld from a worker, as is the layout:

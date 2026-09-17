@@ -6,7 +6,7 @@ import type http from 'node:http';
 
 import type { Candle } from '../types.ts';
 import type { PriceReading } from '../view/basic.ts';
-import { buildCompactRead, buildRead, LIMITS as CHART_LIMITS, TIMEFRAMES, timeframeLabel } from '../chart.ts';
+import { buildCompactRead, buildRead, LIMITS as CHART_LIMITS, MAX_TIMEFRAME_SEC, TIMEFRAMES, timeframeLabel } from '../chart.ts';
 import type { ChartGeometry, ChartIndicator, ChartState, ProviderChoice } from '../chart.ts';
 import { PROVIDER_CHOICES } from '../chart.ts';
 import type { ChartSlot, ChartStore } from '../charts.ts';
@@ -95,6 +95,11 @@ type CandleLoad = {
   // How far behind the venue that socket runs, only while it is the one carrying the price.
   // On any other feed state the number would be about a socket that is not serving the chart.
   latencyMs: number | null;
+  // Older bars are on their way in behind the ones held; the venue has nothing older than
+  // `oldestSec`. The window draws "loading older bars" and "history begins here" from these.
+  backfilling: boolean;
+  exhaustedBack: boolean;
+  oldestSec: number | null;
   note: string | null;
 };
 
@@ -128,6 +133,9 @@ function readCandles(
     filling: held.filling,
     feed,
     latencyMs: feed === 'live' ? ctx.market.liveLatencyMs(held.source) : null,
+    backfilling: held.backfilling,
+    exhaustedBack: held.exhaustedBack,
+    oldestSec: held.oldestSec,
     note: held.note,
   };
 }
@@ -146,14 +154,36 @@ export async function loadCandles(
   return readCandles(ctx, product, granularitySec, limit, provider);
 }
 
+// The one candle route. `before=<open time>` is the window panning into history: the `limit`
+// bars older than that moment, from the cache and then the venue, with the venue's floor in a
+// header so the window knows when to stop asking. `provider` pins the venue the way the chart's
+// view does, so a backfill lands in the series the chart is drawing from.
 export async function sendCandles(ctx: Ctx, url: URL, res: http.ServerResponse): Promise<void> {
   const product = url.searchParams.get('product') ?? ctx.cfg.candleProducts[0] ?? 'BTC-USD';
-  const granularity = intParam(url.searchParams.get('granularity'), 60, 86400);
+  const granularity = intParam(url.searchParams.get('granularity'), 60, MAX_TIMEFRAME_SEC);
   const limit = intParam(url.searchParams.get('limit'), 120, CANDLE_LIMIT_MAX);
+  const providerRaw = String(url.searchParams.get('provider') ?? 'auto').trim().toLowerCase();
+  const provider: ProviderChoice = PROVIDER_CHOICES.includes(providerRaw as ProviderChoice) ? (providerRaw as ProviderChoice) : 'auto';
+  const beforeRaw = url.searchParams.get('before');
+  const before = beforeRaw === null ? null : Number.parseInt(beforeRaw, 10);
+  if (before !== null && !(Number.isFinite(before) && before > 0)) return fail(res, 400, 'before must be a unix time in seconds');
   try {
-    const load = await loadCandles(ctx, product, granularity, limit);
     // Body is Candle[] per the contract; the staleness marker the chart region
     // needs rides in headers so the body shape stays exactly what was specified.
+    if (before !== null) {
+      const older = await ctx.market.before(product, granularity, before, limit, provider);
+      const body = JSON.stringify(older.candles);
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store',
+        'x-candle-exhausted-back': String(older.exhaustedBack),
+        'x-candle-oldest': older.oldestSec === null ? '' : String(older.oldestSec),
+      });
+      res.end(body);
+      return;
+    }
+    const load = await loadCandles(ctx, product, granularity, limit, provider);
     const body = JSON.stringify(load.candles);
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
@@ -163,6 +193,8 @@ export async function sendCandles(ctx: Ctx, url: URL, res: http.ServerResponse):
       'x-candle-stale': String(load.stale),
       'x-candle-fetched-at': load.fetchedAt,
       'x-candle-built': load.built,
+      'x-candle-exhausted-back': String(load.exhaustedBack),
+      'x-candle-oldest': load.oldestSec === null ? '' : String(load.oldestSec),
     });
     res.end(body);
   } catch (err) {
@@ -297,6 +329,50 @@ export function slotParam(raw: string | null): number | null {
   return /^[0-3]$/.test(raw) ? Number(raw) : null;
 }
 
+// The ?part= of GET /api/chart: absent or `full` is the whole payload, `markup` is everything
+// but the candles, and anything else is null for the route to refuse by name.
+export type ChartPart = 'full' | 'markup';
+
+export function partParam(raw: string | null): ChartPart | null {
+  if (raw === null || raw === 'full') return 'full';
+  return raw === 'markup' ? 'markup' : null;
+}
+
+/* Which series the indicator values in a payload were computed over: its first and last open
+   time and its length. The window holds candles of its own, older ones backfilled behind the left
+   edge and newer ones folded in off the live rail, so a value at index k of a plot is not the
+   value of ITS bar k. It finds `first` in what it holds and lays the plot down from there, and
+   asks for the full part when the series is not one it has. `candlesRev` is the same fact as one
+   number: it moves when the series does, and a markup part whose candlesRev the window already
+   holds moved no candle. The forming bar's prices are deliberately not in it, or every live tick
+   would make the next markup part look like a new series. */
+type SeriesMark = { first: number | null; last: number | null; count: number };
+
+function seriesOf(candles: readonly Candle[]): SeriesMark {
+  const first = candles[0];
+  const last = candles[candles.length - 1];
+  return { first: first === undefined ? null : first.t, last: last === undefined ? null : last.t, count: candles.length };
+}
+
+// Seven significant digits per plot value, the precision the agent's read already uses. A raw
+// double prints as seventeen characters and the values are most of a payload's bytes: at two
+// thousand bars the momentum preset alone was 180 KB of them, and nothing on a canvas can show
+// the tenth digit of an RSI.
+function sevenDigits(v: number | null): number | null {
+  return v === null || !Number.isFinite(v) ? null : Number(v.toPrecision(7));
+}
+
+// FNV-1a over the series identity, as a 31-bit number the window can compare with ===.
+function candlesRevOf(product: string, granularitySec: number, source: string, series: SeriesMark): number {
+  const text = `${source}|${product}|${granularitySec}|${series.count}|${series.first ?? ''}|${series.last ?? ''}`;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 1;
+}
+
 // Everything the renderer needs in one round trip: the view, the candles, and every
 // indicator series already computed. The browser draws plots generically and never has to
 // know what an RSI is, which is what keeps the two sides from disagreeing.
@@ -304,7 +380,12 @@ export function slotParam(raw: string | null): number | null {
 // `slot` picks which of the charts: 0 is the primary and the default, 1 to 3 are the
 // comparison charts a layout put up. A slot no layout has filled answers null, and the route
 // turns that into a 404 rather than drawing the primary under another chart's name.
-export function chartPayload(ctx: Ctx, slot = 0): unknown | null {
+//
+// `part` is what the window asks for on a chart frame: `markup` is this payload without the
+// candles. A level, a line or a study landing used to cost the window the whole candle array
+// again, three to four hundred kilobytes to draw one dotted line, and the candles it already
+// held were the same bytes. The window keeps its candles and lays the new markup over them.
+export function chartPayload(ctx: Ctx, slot = 0, part: ChartPart = 'full'): unknown | null {
   const held = ctx.charts.slot(slot);
   if (held === null) return null;
   const chart = held.store;
@@ -322,12 +403,15 @@ export function chartPayload(ctx: Ctx, slot = 0): unknown | null {
       ? `no candles for ${state.view.product} at ${String(state.view.granularitySec)}s, and none are being fetched`
       : null;
   const computed = computeIndicators(ctx, state, load.candles);
+  const series = seriesOf(load.candles);
   return {
     slot,
     rev: state.rev,
     lastDriver: state.lastDriver,
     view: state.view,
-    candles: load.candles,
+    ...(part === 'full' ? { candles: load.candles } : {}),
+    candlesRev: candlesRevOf(state.view.product, state.view.granularitySec, load.source, series),
+    series,
     meta: {
       source: load.source,
       stale: load.stale,
@@ -336,6 +420,9 @@ export function chartPayload(ctx: Ctx, slot = 0): unknown | null {
       filling: load.filling,
       feed: load.feed,
       latencyMs: load.latencyMs,
+      backfilling: load.backfilling,
+      exhaustedBack: load.exhaustedBack,
+      oldest: load.oldestSec,
       note: load.note,
       error,
     },
@@ -345,7 +432,7 @@ export function chartPayload(ctx: Ctx, slot = 0): unknown | null {
       label: indicator.label,
       pane: indicator.pane,
       source: indicator.source,
-      plots: result.plots,
+      plots: result.plots.map((plot) => ({ ...plot, values: plot.values.map(sevenDigits) })),
       guides: result.guides,
       range: result.range,
       state: result.state,

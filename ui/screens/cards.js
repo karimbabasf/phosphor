@@ -60,7 +60,6 @@
   /* The cards, by the tool that answered. */
   var KINDS = {
     wallet: 'balance',
-    balances: 'balance',
     trade_read: 'position',
     trade_batch: 'position',
     proposal_status: 'move',
@@ -321,18 +320,16 @@
 
   /* ---------- the balance card ---------- */
 
-  /* One row per thing held, from either read: `wallet` rows carry a place and a
-     value, `balances` holdings carry a chain and a usd. Both become the same
-     row so the card does not care which the assistant called. */
+  /* One row per thing held, off the wallet report's rows (src/wallet.ts): a
+     place, a quantity and a value. */
   function holdingsOf(data) {
-    var source = Array.isArray(data.rows) ? data.rows : (Array.isArray(data.holdings) ? data.holdings : []);
-    var parts = split(source);
+    var parts = split(Array.isArray(data.rows) ? data.rows : []);
     var out = [];
     for (var i = 0; i < parts.rows.length; i += 1) {
       var h = parts.rows[i];
       if (!isObject(h)) continue;
-      var quantity = num(h.quantity !== undefined ? h.quantity : h.amount);
-      var usd = num(h.valueUsd !== undefined ? h.valueUsd : h.usd);
+      var quantity = num(h.quantity);
+      var usd = num(h.valueUsd);
       if (quantity === null && usd === null) continue;
       out.push({
         symbol: String(h.symbol || '?'),
