@@ -75,12 +75,20 @@ export type DrawingStoreOptions = {
      primary's line of the same name. */
   counters?: Record<string, number>;
   prefix?: string;
+  /* Told after anything here changes, with who did it. This store has no revision of its own:
+     the chart's is the one the window watches (src/chart.ts `touch`), and until the chart heard
+     about a line landing here, the frame announcing it carried the OLD revision, the window read
+     that as the echo of its own last write and dropped it, and the line waited for the next
+     unrelated refetch. Removals report as the human's, the same way the chart store's own clear
+     does. */
+  onChange?: (source: Drawing['source'], by: string | null) => void;
 };
 
 export function createDrawingStore(opts?: DrawingStoreOptions): DrawingStore {
   const max = opts?.max ?? DRAWINGS_MAX;
   const now = opts?.now ?? (() => Date.now());
   const prefix = opts?.prefix ?? '';
+  const onChange = opts?.onChange ?? (() => {});
   const items = new Map<string, Drawing>();
   const counters: Record<string, number> = opts?.counters ?? {};
   let heldIds = new Set<string>();
@@ -109,11 +117,16 @@ export function createDrawingStore(opts?: DrawingStoreOptions): DrawingStore {
       const full: Drawing = { ...d, id: nextId(d.kind), createdAt: now() };
       items.set(full.id, full);
       evictIfNeeded();
+      onChange(full.source, full.by ?? null);
       return full;
     },
     get: (id) => items.get(id),
     list: () => [...items.values()],
-    remove: (id) => !heldIds.has(id) && items.delete(id),
+    remove(id) {
+      const removed = !heldIds.has(id) && items.delete(id);
+      if (removed) onChange('human', null);
+      return removed;
+    },
     clear(source, by) {
       let n = 0;
       for (const [id, d] of [...items.entries()]) {
@@ -123,6 +136,7 @@ export function createDrawingStore(opts?: DrawingStoreOptions): DrawingStore {
         items.delete(id);
         n += 1;
       }
+      if (n > 0) onChange('human', null);
       return n;
     },
     sweepForeign(product) {
@@ -137,6 +151,7 @@ export function createDrawingStore(opts?: DrawingStoreOptions): DrawingStore {
         items.delete(id);
         n += 1;
       }
+      if (n > 0) onChange('human', null);
       return n;
     },
     hold(ids) {

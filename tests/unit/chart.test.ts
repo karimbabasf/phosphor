@@ -151,26 +151,27 @@ test('every change bumps the revision, and reporting geometry does not', () => {
   assert.equal(chart.rev(), start + 1);
 });
 
-test('history fetched covers the longest indicator warmup', () => {
+test('history served covers the window, the pan and the longest indicator warmup, and no more', () => {
   const chart = createChartStore('BTC-USD');
   chart.setView({ barCount: 120 }, 'human');
   chart.addIndicator({ type: 'ema', params: { period: 200 } }, 'agent');
 
-  // The promise is that a 200 period line does not start in the middle of the screen.
-  // It used to be kept by fetching exactly the window plus the warmup, which meant the
-  // whole chart only ever held about 150 bars and a pan to the left ran off the end of
-  // the data. The floor keeps the same promise with room behind the left edge.
-  assert.ok(chart.historyNeeded() >= 120 + 200, 'the window and the warmup both fit');
-  assert.ok(chart.historyNeeded() >= LIMITS.historyFloor, 'and there is history behind the left edge');
+  // The promise is that a 200 period line does not start in the middle of the screen. The
+  // series the payload carries follows the view: a floor of fifteen hundred bars used to sit
+  // under it, which was two hundred kilobytes of indicator values per refresh to draw a
+  // screen that used a tenth of them. Depth behind the left edge is the backfill's job now.
+  assert.equal(chart.historyNeeded(), 120 + LIMITS.fetchMargin + 200, 'the window, the margin and the warmup');
+  chart.setView({ panOffset: 300 }, 'human');
+  assert.equal(chart.historyNeeded(), 120 + 300 + LIMITS.fetchMargin + 200, 'a pan back is served too');
   assert.ok(chart.historyNeeded() <= LIMITS.historyMax);
 });
 
-test('history fetched still grows when a warmup asks for more than the floor', () => {
+test('history served still grows with the warmup on a wide window', () => {
   const chart = createChartStore('BTC-USD');
   chart.setView({ barCount: 1600 }, 'human');
   const plain = chart.historyNeeded();
   chart.addIndicator({ type: 'ema', params: { period: 200 } }, 'agent');
-  assert.ok(chart.historyNeeded() > plain, 'past the floor the warmup still moves the number');
+  assert.ok(chart.historyNeeded() > plain, 'the warmup still moves the number');
   assert.ok(chart.historyNeeded() <= LIMITS.historyMax);
 });
 

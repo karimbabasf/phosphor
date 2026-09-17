@@ -167,12 +167,8 @@ export const LIMITS = {
   barCountDefault: 120,
   panMax: 400,
   historyMax: 2000,
-  // The floor exists because asking only for what is on screen is what made history look
-  // broken. The default window is 120 bars, so the old request was about 150, and a pan to
-  // the left ran off the end of the data within one gesture. The rails serve two thousand
-  // bars in one call, the cache keeps them, and the fill happens behind the render, so
-  // depth now costs a background request rather than a wait.
-  historyFloor: 1500,
+  // Bars served beyond the left edge of the window, so a small pan does not run off the data
+  // before the backfill behind it lands.
   fetchMargin: 30,
   maxOverlays: 8,
   maxPanes: 3,
@@ -285,6 +281,10 @@ export function createChartStore(
   setLevel(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   setMark(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   clear(what: string, by?: string | null): Outcome;
+  // A change to what the chart shows that was made outside this store: a line or a zone landing
+  // in src/drawings.ts. It moves the revision exactly as a level does, because the window watches
+  // one number and a frame carrying the old one is dropped as the echo of its own last write.
+  touch(source: Source, by?: string | null): void;
   setGeometry(geometry: ChartGeometry): void;
   agentObjects(): number;
   // `drawings` is the drawing store's list, handed in because the sloped objects live there
@@ -684,8 +684,13 @@ export function createChartStore(
     };
   }
 
-  // Bars to fetch: the window, the pan, a margin, and the longest indicator warmup so an
-  // overlay is drawn all the way to the left edge instead of starting mid screen.
+  // Bars to serve: the window, the pan, a margin, and the longest indicator warmup so an
+  // overlay is drawn all the way to the left edge instead of starting mid screen. It follows
+  // the view rather than sitting on a floor: the payload carries this many candles and this
+  // many values per indicator plot, so a floor of fifteen hundred bars under a 120-bar window
+  // was two hundred kilobytes of series on every refresh to draw a screen that used a tenth of
+  // it. The depth the window can pan into is a separate question, answered by the paged
+  // backfill behind the left edge, not by what one payload carries.
   function historyNeeded(): number {
     let warmup = 0;
     for (const ind of state.indicators) {
@@ -695,7 +700,7 @@ export function createChartStore(
       if (need > warmup) warmup = need;
     }
     const want = state.view.barCount + Math.max(0, state.view.panOffset) + LIMITS.fetchMargin + warmup;
-    return Math.min(LIMITS.historyMax, Math.max(LIMITS.historyFloor, Math.ceil(want)));
+    return Math.min(LIMITS.historyMax, Math.max(LIMITS.barCountMin, Math.ceil(want)));
   }
 
   return {
@@ -708,6 +713,9 @@ export function createChartStore(
     setLevel,
     setMark,
     clear,
+    touch(source: Source, by?: string | null): void {
+      bump(source, by);
+    },
     housekeeping,
     setGeometry(geometry: ChartGeometry): void {
       // Geometry is a report about the renderer, not a change to the chart, so it does not

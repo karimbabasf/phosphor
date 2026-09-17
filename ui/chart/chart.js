@@ -185,6 +185,12 @@ var CHART = {
   rev: 0,
   view: { product: '', provider: 'auto', granularitySec: 60, barCount: 120, panOffset: 0, priceScale: { mode: 'auto' } },
   candles: [],
+  /* The series the indicator values on screen were computed over, as the server names it: its
+     first and last open time and its length, plus the same fact hashed to one number. The array
+     above is not that series: it keeps older bars backfilled behind the left edge and newer ones
+     folded in off the live rail. See applyChart for how a plot is laid over it. */
+  candlesRev: 0,
+  series: null,
   /* What the candles on screen actually are, which is not always what the controls ask for.
      The view is a request and can run ahead of the data by a round trip, or sit on an
      instrument the server has stopped serving. The legend names this instead, so a price
@@ -215,7 +221,14 @@ var CHART_HITS = []; // clickable rectangles built while drawing the hud
 var CHART_DIRTY = { scene: false, hud: false };
 var CHART_FRAME = 0;
 var CHART_SIZE = { w: 0, h: 0, dpr: 0 };
-var CHART_FETCH = { inflight: false, at: 0, queued: false };
+/* `at` is the last FULL fetch: the floor poll and the candle nudge read it to decide whether the
+   candles are due, and a markup part refreshes no candle. A queued refresh is the widest part
+   anyone asked for while the wire was busy. */
+var CHART_FETCH = { inflight: false, at: 0, queued: false, queuedPart: '' };
+/* Candles the window keeps at most. Well past anything one payload carries: the array grows by
+   backfill behind the left edge and by live bars at the right, and only the oldest go when it
+   is over, and only while the window sits at the live edge. */
+var CHART_KEEP_MAX = 50000;
 var CHART_PUSH = null; // debounce timer for writing the view back
 /* Writes of ours that are on the wire. A payload that left the server before our write
    arrived cannot answer it, so it is not allowed to overrule the hand that just moved. */
@@ -1873,16 +1886,22 @@ function timeframeOf(sec) {
 
 /* ---------- talking to the server ---------- */
 
-async function refreshChart() {
+/* `opts.part` is which part of the payload to ask for. The markup part is the answer to a chart
+   frame: the view, the studies, the levels, the marks and the drawings, without the candles the
+   window already holds. Everything else (a nudge, a gesture, the floor poll) asks for the whole
+   thing. */
+async function refreshChart(opts) {
+  var part = opts && opts.part === 'markup' ? 'markup' : 'full';
   if (CHART_FETCH.inflight) {
     CHART_FETCH.queued = true;
+    if (part === 'full' || CHART_FETCH.queuedPart === '') CHART_FETCH.queuedPart = part;
     return;
   }
   CHART_FETCH.inflight = true;
-  CHART_FETCH.at = Date.now();
+  if (part === 'full') CHART_FETCH.at = Date.now();
   chartBusy(true);
   try {
-    var res = await fetch('/api/chart', { headers: { accept: 'application/json' } });
+    var res = await fetch(part === 'markup' ? '/api/chart?part=markup' : '/api/chart', { headers: { accept: 'application/json' } });
     if (!res.ok) throw new Error('chart returned ' + res.status);
     var payload = await res.json();
     applyChart(payload);
@@ -1893,8 +1912,10 @@ async function refreshChart() {
     CHART_FETCH.inflight = false;
     chartBusy(false);
     if (CHART_FETCH.queued) {
+      var next = CHART_FETCH.queuedPart;
       CHART_FETCH.queued = false;
-      void refreshChart();
+      CHART_FETCH.queuedPart = '';
+      void refreshChart({ part: next });
     }
   }
 }
@@ -1924,6 +1945,80 @@ function chartIdentityDiffers(view) {
   );
 }
 
+/* Where a bar opening at `tSec` sits in a series sorted by open time, or -1. Exact: a bar the
+   array does not hold is not a bar it can lay a value on. */
+function indexOfExact(candles, tSec) {
+  var lo = 0;
+  var hi = candles.length - 1;
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1;
+    var t = candles[mid].t;
+    if (t === tSec) return mid;
+    if (t < tSec) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return -1;
+}
+
+/* Whether the candles held are the series a markup part's values were computed over, and
+   where that series starts in them. Null when they are not: another market, another bar
+   length, a venue that changed, or a bar the server has and this window does not. The window
+   answers null by asking for the full part rather than drawing a plot one bar off. */
+function markupOffset(payload) {
+  var series = payload.series;
+  var view = payload.view;
+  if (!series || !view || !CHART.dataView) return null;
+  if (view.product !== CHART.dataView.product || view.granularitySec !== CHART.dataView.granularitySec) return null;
+  if (payload.meta && CHART.meta.source && payload.meta.source !== CHART.meta.source) return null;
+  if (series.count === 0) return CHART.candles.length === 0 ? 0 : null;
+  var first = indexOfExact(CHART.candles, series.first);
+  var last = indexOfExact(CHART.candles, series.last);
+  if (first < 0 || last < 0 || last - first + 1 !== series.count) return null;
+  return first;
+}
+
+/* A payload's candles over the ones held. The bars older than the payload's first stay: they
+   were backfilled behind the left edge on purpose, and a window that dropped them on every
+   refresh would jump to the right the moment a study was added. A different market shares
+   nothing with the old one, so its candles replace the array outright. */
+function mergeCandles(held, incoming, sameIdentity) {
+  if (!sameIdentity || !held.length || !incoming.length) return incoming;
+  var firstT = incoming[0].t;
+  var keep = 0;
+  while (keep < held.length && held[keep].t < firstT) keep += 1;
+  return keep === 0 ? incoming : held.slice(0, keep).concat(incoming);
+}
+
+/* Lay each plot down over the candles held, starting at `offset`: value k of a plot is the
+   value of bar k of the series it was computed over, which is bar offset + k here. The common
+   case, the same series, is the arrays as they came. */
+function rebaseIndicators(list, offset, total) {
+  if (offset === 0) return list;
+  function shift(values) {
+    var out = new Array(total);
+    for (var i = 0; i < total; i++) out[i] = null;
+    for (var k = 0; k < values.length && offset + k < total; k++) out[offset + k] = values[k];
+    return out;
+  }
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var ind = list[i];
+    var plots = [];
+    for (var p = 0; p < (ind.plots || []).length; p++) {
+      var plot = ind.plots[p];
+      var copy = {};
+      for (var key in plot) if (Object.prototype.hasOwnProperty.call(plot, key)) copy[key] = plot[key];
+      copy.values = shift(plot.values || []);
+      plots.push(copy);
+    }
+    var next = {};
+    for (var field in ind) if (Object.prototype.hasOwnProperty.call(ind, field)) next[field] = ind[field];
+    next.plots = plots;
+    out.push(next);
+  }
+  return out;
+}
+
 function applyChart(payload) {
   // The server has now been heard from, so writing our view back is safe.
   CHART_READY = true;
@@ -1931,10 +2026,27 @@ function applyChart(payload) {
   // the tag's ease are both about one series, and carrying either across would fold one
   // market's volume into another's bar and slide the tag between two unrelated prices.
   var wasIdentity = CHART.dataView ? CHART.dataView.product + '|' + CHART.dataView.granularitySec : '';
+  var sameIdentity = Boolean(payload.view) && payload.view.product + '|' + payload.view.granularitySec === wasIdentity;
+  var offset = 0;
+  if (payload.candles) {
+    CHART.candles = mergeCandles(CHART.candles, payload.candles, sameIdentity);
+    if (CHART.view.panOffset <= 0 && CHART.candles.length > CHART_KEEP_MAX) CHART.candles = CHART.candles.slice(-CHART_KEEP_MAX);
+    offset = payload.series ? Math.max(0, indexOfExact(CHART.candles, payload.series.first)) : 0;
+  } else {
+    // The markup part. It was computed over a series; if that is not the one held here, the
+    // whole payload is the answer, and this one is not applied half way.
+    var found = markupOffset(payload);
+    if (found === null) {
+      void refreshChart({ part: 'full' });
+      return;
+    }
+    offset = found;
+  }
   CHART.rev = payload.rev;
-  CHART.candles = payload.candles || [];
+  CHART.candlesRev = typeof payload.candlesRev === 'number' ? payload.candlesRev : CHART.candlesRev;
+  CHART.series = payload.series || CHART.series;
   CHART.meta = payload.meta || CHART.meta;
-  CHART.indicators = payload.indicators || [];
+  CHART.indicators = rebaseIndicators(payload.indicators || [], offset, CHART.candles.length);
   CHART.levels = payload.levels || [];
   CHART.marks = payload.marks || [];
   CHART.drawings = payload.drawings || [];
@@ -2098,9 +2210,10 @@ function chartGeometry() {
 }
 
 function chartPushed(rev) {
-  // Our own echo. Anything newer came from an agent and has to repaint.
+  // Our own echo. Anything newer came from an agent and has to repaint. What moved is the
+  // markup, so the markup is what is fetched: the candles under it are the same bytes.
   if (typeof rev === 'number' && rev <= CHART_MY_REV) return;
-  void refreshChart();
+  void refreshChart({ part: 'markup' });
 }
 
 /* ---------- the snapshot ----------

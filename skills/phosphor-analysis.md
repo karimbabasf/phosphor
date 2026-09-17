@@ -93,10 +93,10 @@ already on. A gate nothing ever clears is not conservative, it is broken.
 dollars divided by stop distance.
 
 **9. Mark the chart.** SESSION and DEEP, not optional. One `chart_draw` on the trigger
-timeframe: `clear: "mine"` first, `view` with 200 to 400 bars, `indicators` the plan used and
-no others, `levels` labelled with what they are rather than their price, `marks` on the bar the
-thesis turns on, `lines` and `zones` the plan depends on. It answers with a digest, so it needs
-no `chart_read` after it.
+timeframe, everything for the idea in that one call: `clear: "mine"` first, `view` with 200 to
+400 bars, `indicators` the plan used and no others, `levels` labelled with what they are rather
+than their price, `marks` on the bar the thesis turns on, `lines` and `zones` the plan depends
+on. It answers with a digest, so it needs no `chart_read` after it.
 
 **10. Draw the idea.** `trade_plan` with the plan: symbol, side, sizeUsd, leverage, entry, stop,
 target, the `when` conditions, a note. It is drawn on the chart and listed under Waiting as an

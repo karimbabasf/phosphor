@@ -756,7 +756,9 @@ registerLeadView(
   'chart_draw',
   [
     'Draws on the chart: the whole markup in ONE call. Applied in this order: clear, view, indicators,',
-    'levels, marks, lines, zones. Omit anything you are not changing. Returns a digest of the chart as it',
+    'levels, marks, lines, zones. Every field takes a list, so draw everything for one idea in one call:',
+    'its levels, lines, zones and marks together. The window repaints once per call, and a markup split',
+    'over several calls lands piece by piece. Omit anything you are not changing. Returns a digest of the chart as it',
     'now stands (product, timeframe, last price, each indicator with its last values and state line, the',
     'counts of what is drawn) plus `refused`, one line per entry that could not be applied. One bad entry',
     'never stops the rest, so read `refused` rather than assuming everything landed.',

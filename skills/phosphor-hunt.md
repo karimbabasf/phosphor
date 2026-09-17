@@ -173,8 +173,9 @@ and wait, and do not spawn a fourth.
 ## Marking the chart
 
 Draw only the winner, on its trigger timeframe. One marked chart is a tool; four half-marked
-charts are a mess nobody reads. One `chart_draw` with `clear: "mine"` before a new thesis. Then
-one line saying what you drew. The batching rules and `$ref` are in phosphor-analysis.
+charts are a mess nobody reads. One `chart_draw` with `clear: "mine"` before a new thesis, and
+everything for that thesis (levels, lines, zones, marks) in that one call. Then one line saying
+what you drew. The batching rules and `$ref` are in phosphor-analysis.
 
 ## The board
 
