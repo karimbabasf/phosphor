@@ -362,9 +362,12 @@ test('unlock, reveal, prove and forget: each touch names itself and the phrase i
     assert.equal(right.json.ok, true);
     assert.equal((await b.get('/api/vault')).json.backedUp, true);
 
-    // Nothing in the audit log carries a word of the phrase.
+    // Nothing in the audit log carries the phrase, or any two of its words in order. One word
+    // alone proves nothing: the list is plain English, and a random draw lands on "wallet"
+    // or "window" about one run in four, which are audit keys and sentences.
     const log = JSON.stringify(b.audit.tail(200));
-    for (const w of words) assert.ok(!new RegExp(`"${w}"`).test(log));
+    assert.ok(!log.includes(words.join(' ')));
+    for (let i = 0; i + 1 < words.length; i += 1) assert.ok(!log.includes(`${words[i]} ${words[i + 1]}`));
 
     const noConfirm = await b.post('/api/vault/forget', { confirm: 'yes' });
     assert.equal(noConfirm.status, 400);

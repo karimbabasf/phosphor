@@ -20,6 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
@@ -114,19 +115,24 @@ function request(port: number, route: string, rawBody?: string): Promise<{ statu
   });
 }
 
-// A port that no other file in this suite is using. The suite stands up real servers, so a
-// collision is a flake nobody can reproduce; this keeps each case on its own number.
-let nextPort = 4520;
-function takePort(): number {
-  nextPort += 1;
-  return nextPort;
+// A port nothing else on this machine is using. The suite stands up real servers, and six
+// worktrees running it at once collided on a fixed number; the kernel hands out a free one.
+function takePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const port = (probe.address() as net.AddressInfo).port;
+      probe.close(() => resolve(port));
+    });
+  });
 }
 
 // ---------- 1. crash and restart ----------
 
 test('a SIGKILL mid-run loses nothing that was already written', async () => {
   const dir = tmpDir();
-  const port = takePort();
+  const port = await takePort();
   const first = await boot(dir, port);
 
   // A proposal, made through the real MCP door, and settled before the kill.
@@ -186,7 +192,7 @@ test('a proposal stranded mid-execution comes back as an unknown outcome, not as
   store.put(stranded('with-hash', 50, ['0x' + 'c'.repeat(64)]));
   store.put(stranded('no-hash', 700, []));
 
-  const port = takePort();
+  const port = await takePort();
   const app = await boot(dir, port);
   try {
     const out = await request(port, '/api/state');
@@ -216,7 +222,7 @@ test('a damaged proposals.json refuses the boot by name rather than starting emp
   fs.writeFileSync(path.join(dir, 'proposals.json'), '[{"id":"a","kind":"conso');
 
   const child = spawn(process.execPath, [path.join(ROOT, 'src/main.ts')], {
-    env: { ...process.env, PHOSPHOR_MODE: 'demo', PHOSPHOR_PORT: String(takePort()), PHOSPHOR_DATA_DIR: dir },
+    env: { ...process.env, PHOSPHOR_MODE: 'demo', PHOSPHOR_PORT: String(await takePort()), PHOSPHOR_DATA_DIR: dir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';
@@ -248,7 +254,7 @@ test('a torn audit line does not stop the app answering', async () => {
   audit.append('app_start', 'a real line');
   fs.appendFileSync(path.join(dir, 'audit.jsonl'), '{"ts":"2026-09-01T00:00:00.000Z","type":"app_st');
 
-  const port = takePort();
+  const port = await takePort();
   const app = await boot(dir, port);
   try {
     const out = await request(port, '/api/log?limit=10');
@@ -292,7 +298,7 @@ function policyThatBinds(dir: string): void {
 test('two agents proposing the same thing in one tick: one lands, the other is told about it', async () => {
   const dir = tmpDir();
   policyThatBinds(dir);
-  const port = takePort();
+  const port = await takePort();
   const app = await boot(dir, port);
   try {
     // A rule change: the one kind demo mode can land (every money rail is off there), and the
@@ -329,7 +335,7 @@ test('two agents proposing the same thing in one tick: one lands, the other is t
 test('a proposal refused at the boundary leaves no claim behind for the next agent', async () => {
   const dir = tmpDir();
   policyThatBinds(dir);
-  const port = takePort();
+  const port = await takePort();
   const app = await boot(dir, port);
   try {
     const bad = JSON.stringify({
@@ -351,7 +357,7 @@ test('a proposal refused at the boundary leaves no claim behind for the next age
 
 test('concurrent approvals of one proposal decide it exactly once', async () => {
   const dir = tmpDir();
-  const port = takePort();
+  const port = await takePort();
   const app = await boot(dir, port);
   try {
     const made = await request(
@@ -381,7 +387,7 @@ test('concurrent approvals of one proposal decide it exactly once', async () => 
 
 test('a read and a write arriving together both answer', async () => {
   const dir = tmpDir();
-  const port = takePort();
+  const port = await takePort();
   const app = await boot(dir, port);
   try {
     const [state, kill] = await Promise.all([
