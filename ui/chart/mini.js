@@ -225,6 +225,7 @@
       if (list[i].sec === sec) return String(list[i].label);
     }
     if (!isFinite(sec)) return '';
+    if (sec === 2629746) return '1M';
     if (sec % 604800 === 0) return sec / 604800 + 'w';
     if (sec % 86400 === 0) return sec / 86400 + 'd';
     if (sec % 3600 === 0) return sec / 3600 + 'h';

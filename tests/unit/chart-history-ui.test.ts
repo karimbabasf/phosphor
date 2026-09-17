@@ -222,3 +222,41 @@ test('a backfill that lands after the market changed is dropped, not prepended t
   await settle();
   assert.equal(s.CHART.candles.length, 50, 'the older BTC bars never reached the SOL chart');
 });
+
+// ---------- the week and the month ----------
+
+test('a live minute frame folds into the forming month bar, and a new month opens a new bar', () => {
+  const s = loadChartUi();
+  const sep = Date.parse('2026-09-01T00:00:00Z') / 1000;
+  s.CHART_READY = true;
+  s.CHART.candles = [{ t: sep, o: 100, h: 110, l: 95, c: 105, v: 1000 }];
+  s.CHART.view = { product: 'BTC-USD', provider: 'auto', granularitySec: s.MONTH_SEC, barCount: 12, panOffset: 0, priceScale: { mode: 'auto' } };
+  s.CHART.dataView = { product: 'BTC-USD', granularitySec: s.MONTH_SEC };
+  s.CHART.meta = { source: 'hyperliquid', stale: false, built: 'candles', error: null };
+
+  const midSep = Date.parse('2026-09-16T12:00:00Z') / 1000;
+  s.candleLive({ type: 'candle', product: 'BTC-USD', provider: 'hyperliquid', baseSec: 60, candle: { t: midSep, o: 106, h: 112, l: 104, c: 111, v: 7 } });
+  assert.equal(s.CHART.candles.length, 1, 'the same month, the same bar');
+  const bar = s.CHART.candles[0];
+  assert.equal(bar.t, sep);
+  assert.equal(bar.o, 100, 'the month keeps its open');
+  assert.equal(bar.h, 112);
+  assert.equal(bar.l, 95);
+  assert.equal(bar.c, 111);
+  assert.equal(bar.v, 1007);
+
+  const octFirst = Date.parse('2026-10-01T00:05:00Z') / 1000;
+  s.candleLive({ type: 'candle', product: 'BTC-USD', provider: 'hyperliquid', baseSec: 60, candle: { t: octFirst, o: 111, h: 113, l: 110, c: 112, v: 3 } });
+  assert.equal(s.CHART.candles.length, 2, 'October is a new bar');
+  assert.equal(s.CHART.candles[1].t, Date.parse('2026-10-01T00:00:00Z') / 1000, 'opened on the first at UTC midnight');
+  assert.equal(s.liveBucket(Date.parse('2026-02-15T12:00:00Z') / 1000, s.MONTH_SEC), Date.parse('2026-02-01T00:00:00Z') / 1000);
+  assert.equal(s.bucketCloseOf(Date.parse('2026-02-01T00:00:00Z') / 1000, s.MONTH_SEC), Date.parse('2026-03-01T00:00:00Z') / 1000);
+});
+
+test('the week and the month print by name off the bar and off it', () => {
+  const s = loadChartUi();
+  s.CHART.timeframes = [];
+  assert.equal(s.timeframeOf(604800), '1w');
+  assert.equal(s.timeframeOf(s.MONTH_SEC), '1M');
+  assert.equal(s.timeframeOf(60), '1m');
+});

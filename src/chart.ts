@@ -18,7 +18,7 @@ import { lineAt } from './analysis/trendline.ts';
 import { indicatorSpec, normaliseParams, warmupBars, pctChange } from './indicators.ts';
 import { atr as wilderAtr } from './analysis/regime.ts';
 import type { IndicatorResult, IndicatorSpec } from './indicators.ts';
-import { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe } from './market/aggregate.ts';
+import { bucketEnd, MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, MONTH_SEC, parseTimeframe, formatTimeframe, servable } from './market/aggregate.ts';
 
 export type PriceScale = { mode: 'auto' } | { mode: 'manual'; low: number; high: number };
 
@@ -143,8 +143,10 @@ export type Housekeeping = {
 };
 
 // The timeframe vocabulary lives in the market layer, because that is what has to serve it.
-export { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, parseTimeframe, formatTimeframe };
+export { MAX_TIMEFRAME_SEC, MIN_TIMEFRAME_SEC, MONTH_SEC, parseTimeframe, formatTimeframe };
 
+// The button bar. 1w folds from days so it opens on Monday; 1M is a calendar month, its
+// seconds a sentinel the market layer answers with the calendar (src/market/aggregate.ts).
 export const TIMEFRAMES: readonly { label: string; sec: number }[] = [
   { label: '1m', sec: 60 },
   { label: '5m', sec: 300 },
@@ -154,6 +156,8 @@ export const TIMEFRAMES: readonly { label: string; sec: number }[] = [
   { label: '4h', sec: 14400 },
   { label: '8h', sec: 28800 },
   { label: '1d', sec: 86400 },
+  { label: '1w', sec: 604800 },
+  { label: '1M', sec: MONTH_SEC },
 ];
 
 // The window squeezes and pans as far as the cache can hold, not to a round number. What the
@@ -192,11 +196,12 @@ export function timeframeLabel(sec: number): string {
 /* One entry of a chart_scan timeframe list, resolved to seconds, or null if it is not a
    timeframe at all.
  *
- * The button-bar list stops at 1d, so matching against TIMEFRAMES alone cannot see `1w`. The
- * scan handler used to fall back to snapTimeframe(Number(entry)) for a miss, and Number('1w')
- * is NaN: every comparison inside the snap is then false, so it returned the first entry in the
- * list and a weekly scan silently answered with a MINUTE chart under whatever label was asked
- * for. Nothing downstream could tell that the higher timeframe had never been read.
+ * The button-bar list is not the set of legal timeframes (7m, 90m and 2h are not on it), so
+ * matching against TIMEFRAMES alone cannot see them. The scan handler used to fall back to
+ * snapTimeframe(Number(entry)) for a miss, and Number('7m') is NaN: every comparison inside the
+ * snap is then false, so it returned the first entry in the list and the scan silently answered
+ * with a MINUTE chart under whatever label was asked for. Nothing downstream could tell that the
+ * higher timeframe had never been read.
  *
  * Null rather than a nearest guess, because the caller needs to be able to say "that is not a
  * timeframe" out loud. Snapping is right for a number that is merely unservable (47 seconds);
@@ -391,15 +396,15 @@ export function createChartStore(
       }
     }
 
-    // Any timeframe from a second to a week, not just the twelve on the button bar.
-    // The twelve are what a hand can click; an agent asked for 7m or 90s and used to be
+    // Any timeframe from a minute to a month, not just the ten on the button bar.
+    // The ten are what a hand can click; an agent asked for 7m or 90s and used to be
     // refused or silently snapped to something it did not ask for. The market layer folds
     // a base interval the venue does serve into whatever was requested, so the enum is a
     // convenience now and not a constraint. See src/market/aggregate.ts.
     if (typeof patch.granularitySec === 'number' && Number.isFinite(patch.granularitySec)) {
       const asked = Math.floor(patch.granularitySec);
-      if (asked < MIN_TIMEFRAME_SEC || asked > MAX_TIMEFRAME_SEC) {
-        return { ok: false, notes, error: `timeframe out of range: ${asked}s. between 1m and 1w` };
+      if (asked < MIN_TIMEFRAME_SEC || !servable(asked)) {
+        return { ok: false, notes, error: `timeframe out of range: ${asked}s. between 1m and 1w, or 1M` };
       }
       if (asked !== view.granularitySec) {
         view.granularitySec = asked;
@@ -411,7 +416,7 @@ export function createChartStore(
         return {
           ok: false,
           notes,
-          error: `unknown timeframe: ${patch.timeframe}. use a count and a unit, like 7m, 4h or 1w`,
+          error: `unknown timeframe: ${patch.timeframe}. use a count and a unit, like 7m, 4h, 1w or 1M`,
         };
       }
       if (parsed < MIN_TIMEFRAME_SEC) {
@@ -838,7 +843,7 @@ export function digestSeries(candles: Candle[], granularitySec: number, nowSec: 
     atr,
     atrPct: newest.c > 0 ? (atr / newest.c) * 100 : null,
     trend,
-    barClosesInSec: Math.max(0, newest.t + granularitySec - nowSec),
+    barClosesInSec: Math.max(0, bucketEnd(newest.t, granularitySec) - nowSec),
     newestBarTime: isoOf(newest.t),
   };
 }
@@ -906,7 +911,7 @@ export function buildRead(args: ReadArgs): unknown {
       live: view.panOffset <= 0,
       from: firstBar === null ? null : { epochSec: firstBar.t, iso: isoOf(firstBar.t) },
       to: lastBar === null ? null : { epochSec: lastBar.t, iso: isoOf(lastBar.t) },
-      spansSec: firstBar !== null && lastBar !== null ? lastBar.t + view.granularitySec - firstBar.t : null,
+      spansSec: firstBar !== null && lastBar !== null ? bucketEnd(lastBar.t, view.granularitySec) - firstBar.t : null,
     },
 
     price: {
@@ -936,7 +941,7 @@ export function buildRead(args: ReadArgs): unknown {
             c: newest.c,
             v: newest.v,
             direction: newest.c >= newest.o ? 'up' : 'down',
-            closesInSec: Math.max(0, newest.t + view.granularitySec - nowSec),
+            closesInSec: Math.max(0, bucketEnd(newest.t, view.granularitySec) - nowSec),
           },
 
     indicators: computed.map(({ indicator, result }) => ({
@@ -1058,7 +1063,7 @@ export function buildCompactRead(args: ReadArgs & { chart: number }): unknown {
             l: short(newest.l),
             c: short(newest.c),
             v: short(newest.v),
-            closesInSec: Math.max(0, newest.t + view.granularitySec - nowSec),
+            closesInSec: Math.max(0, bucketEnd(newest.t, view.granularitySec) - nowSec),
           },
     indicators: args.computed.map(({ indicator, result }) => ({
       id: indicator.id,

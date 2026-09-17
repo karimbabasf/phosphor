@@ -1862,7 +1862,7 @@ function drawLastPrice(ctx, L) {
       // as a rule that has nearly emptied.
       ctx.fillStyle = lineInk(0.9);
       ctx.fillRect(left, ruleTop, wide, 2);
-      var run = clampNum(closesIn / CHART.view.granularitySec, 0, 1) * wide;
+      var run = clampNum(closesIn / barSpanOf(last.t, CHART.view.granularitySec), 0, 1) * wide;
       ctx.fillStyle = up ? accent(0.45) : danger(0.55);
       ctx.fillRect(left, ruleTop, Math.max(1, Math.round(run)), 2);
     }
@@ -2066,8 +2066,9 @@ function timeframeOf(sec) {
   for (var i = 0; i < CHART.timeframes.length; i++) {
     if (CHART.timeframes[i].sec === sec) return CHART.timeframes[i].label;
   }
-  // Anything off the button bar, which an agent can now ask for: 7m, 2h, 1w. Falling
+  // Anything off the button bar, which an agent can now ask for: 7m, 2h, 3d. Falling
   // straight to seconds printed a weekly chart as "604800s".
+  if (sec === MONTH_SEC) return '1M';
   if (sec % 604800 === 0) return sec / 604800 + 'w';
   if (sec % 86400 === 0) return sec / 86400 + 'd';
   if (sec % 3600 === 0) return sec / 3600 + 'h';
@@ -2294,7 +2295,7 @@ function applyChart(payload) {
   }
 
   var last = CHART.candles.length ? CHART.candles[CHART.candles.length - 1] : null;
-  CHART.meta.barCloseSec = last ? Math.max(0, last.t + CHART.view.granularitySec - Date.now() / 1000) : null;
+  CHART.meta.barCloseSec = last ? Math.max(0, bucketCloseOf(last.t, CHART.view.granularitySec) - Date.now() / 1000) : null;
   // The fallback rail moves the tag too. A REST refresh is slower than a socket frame and it
   // teleports harder, so it is the path that most needs the ease.
   if (last && isIdentity === wasIdentity) startPriceTween(last.c);
@@ -2522,13 +2523,33 @@ var CHART_LIVE = null;
 var CHART_LIVE_HELD = null;
 
 /* Which bucket a moment belongs to. The same arithmetic as bucketStart in
-   src/market/aggregate.ts, week offset included: epoch second zero was a Thursday, so weeks
-   carry an offset to open on Monday and a chart that skips it disagrees with every venue. */
+   src/market/aggregate.ts: a month opens on the first at UTC midnight, and weeks carry an
+   offset to open on Monday, because epoch second zero was a Thursday and a chart that skips
+   the offset disagrees with every venue. */
 function liveBucket(tSec, stepSec) {
+  if (stepSec === MONTH_SEC) {
+    var d = new Date(tSec * 1000);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000;
+  }
   if (stepSec >= 604800 && stepSec % 604800 === 0) {
     return Math.floor((tSec - 345600) / stepSec) * stepSec + 345600;
   }
   return Math.floor(tSec / stepSec) * stepSec;
+}
+
+/* When the bar opening at `openSec` closes: the next first of the month for a month bar, one
+   step on for every other. Mirrors bucketEnd in src/market/aggregate.ts. */
+function bucketCloseOf(openSec, stepSec) {
+  if (stepSec === MONTH_SEC) {
+    var d = new Date(openSec * 1000);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000;
+  }
+  return openSec + stepSec;
+}
+
+/* How long the bar under the tag lasts, for the countdown's rule. */
+function barSpanOf(openSec, stepSec) {
+  return bucketCloseOf(openSec, stepSec) - openSec;
 }
 
 function liveFrameMatches(frame) {
@@ -2539,8 +2560,9 @@ function liveFrameMatches(frame) {
   var step = CHART.dataView.granularitySec;
   if (!(step > 0) || !(frame.baseSec > 0)) return false;
   // A base that does not divide the bucket cannot be folded into it without straddling, and
-  // a bar built from bars that straddle it is a price that never traded.
-  return step % frame.baseSec === 0;
+  // a bar built from bars that straddle it is a price that never traded. A month is whole
+  // days, so any base that divides a day folds into it.
+  return step === MONTH_SEC ? 86400 % frame.baseSec === 0 : step % frame.baseSec === 0;
 }
 
 function candleLive(frame) {
@@ -2601,7 +2623,7 @@ function applyLiveCandle(frame) {
   }
 
   var newest = CHART.candles[CHART.candles.length - 1];
-  CHART.meta.barCloseSec = Math.max(0, newest.t + step - Date.now() / 1000);
+  CHART.meta.barCloseSec = Math.max(0, bucketCloseOf(newest.t, step) - Date.now() / 1000);
   startPriceTween(newest.c);
   chartInvalidate(true);
 }
@@ -3148,7 +3170,7 @@ function wireChart() {
   // event, and it only touches the hud.
   setInterval(function () {
     var last = CHART.candles.length ? CHART.candles[CHART.candles.length - 1] : null;
-    CHART.meta.barCloseSec = last ? Math.max(0, last.t + CHART.view.granularitySec - Date.now() / 1000) : null;
+    CHART.meta.barCloseSec = last ? Math.max(0, bucketCloseOf(last.t, CHART.view.granularitySec) - Date.now() / 1000) : null;
     chartInvalidate(false);
   }, 1000);
 }

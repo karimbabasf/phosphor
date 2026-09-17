@@ -17,7 +17,7 @@
 // Coinbase spot and second candles bucketed from trades.
 
 import type { Candle } from '../types.ts';
-import { aggregate, baseBarsNeeded, bucketStart } from './aggregate.ts';
+import { aggregate, baseBarsNeeded, bucketStart, foldsInto } from './aggregate.ts';
 
 // `endSec` is the newest open time wanted, for a window behind the ones held. Absent, the
 // window ends now, which is every fill that is not a backfill.
@@ -226,7 +226,7 @@ export function createMarketStore(options: MarketStoreOptions) {
       if (!key.startsWith(prefix)) continue;
       const held = Number(key.slice(prefix.length));
       if (!Number.isFinite(held) || held >= baseSec || held <= fromSec) continue;
-      if (targetSec % held !== 0 || entry.candles.length === 0) continue;
+      if (!foldsInto(held, targetSec) || entry.candles.length === 0) continue;
       fromSec = held;
       source = entry;
     }

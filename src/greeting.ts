@@ -199,7 +199,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
   {
     group: 'shape the chart',
     items: [
-      { tool: 'chart_draw view:', does: 'product, timeframe (1m to 1w, including 7m), bars on screen, venue.' },
+      { tool: 'chart_draw view:', does: 'product, timeframe (1m to 1M, including 7m), bars on screen, venue.' },
       {
         tool: 'chart_draw view: provider',
         does: 'auto (prefers Hyperliquid, where this app executes), hyperliquid, or coinbase. A venue that does not list the product is refused by name, never served from the other one.',

@@ -19,7 +19,7 @@ export const marketReads: ReadTable = {
       match: exact,
       candidates: ctx.market.search(query, limit),
       catalogLoadedAt: ctx.market.catalogLoadedAt(),
-      note: 'Any of these can be charted on any timeframe from 1m to 1w.',
+      note: 'Any of these can be charted on any timeframe from 1m to 1M.',
     });
   },
   /* Market news, and the only place in this app where an agent's question causes a request to

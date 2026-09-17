@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { bootChartServer } from '../fixtures/chart-server.ts';
-import { LIMITS } from '../../src/chart.ts';
+import { LIMITS, MONTH_SEC } from '../../src/chart.ts';
 
 type Bar = { t: number };
 
@@ -130,6 +130,52 @@ test('before must be a time, and the route still serves the newest window withou
     assert.equal(plain.headers.get('x-candle-exhausted-back'), 'false');
     const week = await fetch(`${h.url}/api/candles?product=ETH-USD&granularity=604800&limit=5`);
     assert.equal(week.status, 200, 'the granularity clamp reaches the top of the timeframe range');
+  } finally {
+    await h.close();
+  }
+});
+
+// ---------- the week and the month ----------
+
+test('the button bar serves ten timeframes, ending in a Monday week and a calendar month', async () => {
+  const h = await bootChartServer();
+  try {
+    await h.mcp({ op: 'read', tool: 'chart_read', session: 'a', args: {} });
+    const payload = await h.get('/api/chart');
+    assert.deepEqual(
+      payload.json.timeframes.map((tf: { label: string }) => tf.label),
+      ['1m', '5m', '15m', '30m', '1h', '4h', '8h', '1d', '1w', '1M'],
+    );
+
+    const week = await h.mcp({ op: 'view', tool: 'chart_draw', session: 'a', args: { view: { timeframe: '1w', bars: 20 } } });
+    assert.equal(week.status, 200, JSON.stringify(week.json));
+    assert.equal(week.json.timeframe, '1w');
+    const weekly = await h.get('/api/chart');
+    assert.ok(weekly.json.candles.length >= 20, `weekly bars: ${weekly.json.candles.length}`);
+    for (const bar of weekly.json.candles) assert.equal(new Date(bar.t * 1000).getUTCDay(), 1, 'a week opens on Monday');
+    // Folded from days, never fetched as the venue's own Thursday week.
+    assert.ok(h.fetches().every((f) => f.baseSec !== 604800), JSON.stringify(h.fetches().map((f) => f.baseSec)));
+
+    const month = await h.mcp({ op: 'view', tool: 'chart_draw', session: 'a', args: { view: { timeframe: '1M', bars: 12 } } });
+    assert.equal(month.status, 200, JSON.stringify(month.json));
+    assert.equal(month.json.timeframe, '1M');
+    const monthly = await h.get('/api/chart');
+    assert.equal(monthly.json.view.granularitySec, MONTH_SEC);
+    assert.ok(monthly.json.candles.length >= 12, `monthly bars: ${monthly.json.candles.length}`);
+    for (const bar of monthly.json.candles) {
+      assert.equal(new Date(bar.t * 1000).toISOString().slice(8), '01T00:00:00.000Z', 'a month opens on the first at UTC midnight');
+    }
+    assert.ok(h.fetches().every((f) => f.baseSec <= 86400), 'the month is built from days');
+
+    const read = await h.mcp({ op: 'read', tool: 'chart_read', session: 'a', args: { full: true } });
+    assert.equal(read.json.timeframe, '1M');
+    const newest = read.json.currentBar;
+    const open = new Date(newest.openTime.epochSec * 1000);
+    const closesAt = Date.UTC(open.getUTCFullYear(), open.getUTCMonth() + 1, 1) / 1000;
+    assert.ok(Math.abs(Date.now() / 1000 + newest.closesInSec - closesAt) <= 5, 'the forming month closes on the next first');
+
+    const minutes = await h.mcp({ op: 'view', tool: 'chart_draw', session: 'a', args: { view: { timeframe: '1m' } } });
+    assert.equal(minutes.json.timeframe, '1m', 'lower case m is still a minute');
   } finally {
     await h.close();
   }
