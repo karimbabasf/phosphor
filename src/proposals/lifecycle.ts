@@ -338,11 +338,32 @@ export function outcomeOf(p: Proposal, plan?: PlanFate | null): ProposalOutcome 
   return { state, sentence, ...money };
 }
 
-// Addresses we own: whatever the ledger reports holdings for, plus anything configured.
+/* The address book this app owns: the keystore's own addresses first, because the key is the
+   truth and a config entry can go stale, then whatever config.local.json lists. A wallet made
+   in the window writes no config.local.json at all, and until 2026-09-16 every proposal builder
+   read the book from config alone, so a brand new user could deposit and then never swap, send
+   or withdraw: "We hold no EVM address" on the first thing they asked for. */
+export function ownBook(ctx: PCtx): AppConfig['addresses'] {
+  const report = ctx.keystore?.addressReport();
+  const own = report?.addresses;
+  const first = (a: string | null | undefined, rest: string[]): string[] => {
+    const out = typeof a === 'string' && a.trim() !== '' ? [a] : [];
+    for (const r of rest) if (!out.some((x) => x.toLowerCase() === r.toLowerCase())) out.push(r);
+    return out;
+  };
+  return {
+    evm: first(own?.evm, ctx.cfg.addresses.evm),
+    solana: first(own?.solana, ctx.cfg.addresses.solana),
+    near: first(own?.near, ctx.cfg.addresses.near),
+  };
+}
+
+// Addresses we own: whatever the ledger reports holdings for, plus the book above.
 export function selfAddresses(ctx: PCtx, snapshot: LedgerSnapshot): string[] {
   const set = new Set<string>();
   for (const h of snapshot.holdings) set.add(h.address.toLowerCase());
-  for (const a of [...ctx.cfg.addresses.evm, ...ctx.cfg.addresses.solana, ...ctx.cfg.addresses.near]) set.add(a.toLowerCase());
+  const book = ownBook(ctx);
+  for (const a of [...book.evm, ...book.solana, ...book.near]) set.add(a.toLowerCase());
   return [...set];
 }
 
@@ -352,13 +373,14 @@ export function recipientFor(ctx: PCtx, chain: ChainId, snapshot: LedgerSnapshot
   const onChain = snapshot.holdings.find(h => h.chain === chain);
   if (onChain) return onChain.address;
 
+  const book = ownBook(ctx);
   if (EVM_CHAINS.includes(chain)) {
     const sibling = snapshot.holdings.find(h => EVM_CHAINS.includes(h.chain));
     if (sibling) return sibling.address;
-    return ctx.cfg.addresses.evm[0] ?? null;
+    return book.evm[0] ?? null;
   }
-  if (chain === 'sol') return ctx.cfg.addresses.solana[0] ?? null;
-  return ctx.cfg.addresses.near[0] ?? null;
+  if (chain === 'sol') return book.solana[0] ?? null;
+  return book.near[0] ?? null;
 }
 
 export function buildCtx(ctx: PCtx, snapshot: LedgerSnapshot, policy: Policy | null): EngineCtx {

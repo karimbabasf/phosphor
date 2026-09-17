@@ -61,6 +61,12 @@ export const INTENTS_SEND_COUNTERPARTY = INTENTS_VERIFIER;
 // percent is a quote worth refusing and reading.
 export const SEND_MAX_LOSS_BPS = 100;
 
+// The slippage tolerance the quote is asked for. A same-asset send has no price to slip
+// against, so the only thing between the amount and the guarantee is the solver's fee; asking
+// for the default 100 bps put the guarantee 125 bps under the amount and the one percent
+// floor refused an honest quote (live, 2026-09-16). Ten, as the HyperCore rail asks.
+export const SEND_SLIPPAGE_BPS = 10;
+
 export function minReceivedForSend(amount: number): number {
   return amount * (1 - SEND_MAX_LOSS_BPS / 10_000);
 }
@@ -253,6 +259,7 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
         account: owner,
         recipient: p.to,
         recipientType: 'INTENTS',
+        slippageToleranceBps: SEND_SLIPPAGE_BPS,
       });
       const lines = priceLines(draft, p, response.quote);
       const problems = [...checkQuote(draft, p, response.quote), ...quoteEchoProblems(response.raw, echoWant(draft, p))];
@@ -284,6 +291,7 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
         minOutBase: p.minReceivedBase,
         recipient: p.to,
         recipientType: 'INTENTS',
+        slippageToleranceBps: SEND_SLIPPAGE_BPS,
         echo: echoWant(draft, p),
         checkQuote: (quote) => checkQuote(draft, p, quote),
       },
