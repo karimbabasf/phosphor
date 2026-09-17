@@ -75,7 +75,11 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
 | `log_tail` | Most recent audit lines, newest first |
 | `proposal_status` | Status, verdict and simulation result for a proposal id |
-| `research` | The one read that leaves this machine. The APP fetches from a fixed allowlist of documentation hosts and hands back text; the agent never gets a URL it can point anywhere, which is the whole reason this is a Phosphor tool and not a general web fetch |
+| `research` | The first read that leaves this machine. The APP fetches from a fixed allowlist of documentation hosts and hands back text; the agent never gets a URL it can point anywhere, which is the whole reason this is a Phosphor tool and not a general web fetch |
+| `chain_address` | What an address holds and has done on one network (`ethereum`, `base`, `arbitrum`, `solana`, `near`, `bitcoin`): native balance, transaction count, contract or not (an EIP-7702 delegation reads as an account), last activity where the chain exposes it, up to ten token balances, an explorer link. The address has to pass its network's shape first; a wrong EIP-55 checksum is refused, not repaired. See "Chain lookups" below |
+| `chain_transactions` | The most recent transactions of an address on one network, newest first, at most 25: hash, time, from, to, value, status, method name. Raw inputs never come back |
+| `chain_transaction` | One transaction by hash: the same fields plus fee, block and confirmations |
+| `intents_activity` | What an account has moved inside NEAR Intents, from NearBlocks: `MINT` rows are deposits in, `BURN` rows withdrawals out, `TRANSFER` rows swap legs and sends, each with token, signed amount and hash. No account means this app's own, and `own` says which. When NearBlocks is down it falls back to the verifier's own views and answers balances only, marked `partial: true` |
 | `gas_report` | What the app has spent on gas over a window, split by action, chain, rail kind and venue, plus gas as basis points of the value moved. An aggregation of receipts the history surface already read, so it makes no chain call. The four remainders (pending, unknown, unpriced, intent-settled) and the reverted line are counted separately and named in the tool description, because a total that drops what it could not count is a wrong number said confidently |
 
 | Write tool | Does |
@@ -179,6 +183,39 @@ the server after the label the agent supplied, agent lines are dotted where a hu
 and the chart bar carries a count with a one-click clear. An agent can never alter a candle, and a
 price line it draws is excluded from the automatic price fit, so one absurd level cannot flatten
 the chart into a hairline.
+
+## Chain lookups
+
+`chain_address`, `chain_transactions`, `chain_transaction` and `intents_activity` read public
+chain data, and they are the reads besides `research` whose answers come from off this machine.
+The module is `src/chainscan/`, and it is the only place the backend builds a chain-explorer
+URL. The agent supplies a network from a closed enum and an address or a hash, never a URL.
+The address or hash has to pass its network's shape before a URL exists (EIP-55 checked when
+mixed case, base58 decoded to 32 bytes for Solana, NEAR named or implicit ids, Bitcoin bech32
+or base58check by format), and a value that fails is refused with the reason, never repaired.
+
+Every request goes through one fetch: https only, the host compared character for character
+against a fixed table (`eth.blockscout.com`, `base.blockscout.com`, `arbitrum.blockscout.com`,
+`api.mainnet-beta.solana.com`, `free.rpc.fastnear.com`, `api.nearblocks.io`, `mempool.space`),
+a deadline on every request and thirty seconds on the whole call, redirects followed by hand
+and re-checked, a byte cap (256 KB, 2 MB for the EVM and Bitcoin transaction lists) past which
+the body is refused rather than truncated, a per-host token bucket under each source's
+published limit (Blockscout 2 per second, NearBlocks 1 per 2 seconds, the Solana RPC 5 per
+second) and a 60 second cache by URL. When Blockscout is down an EVM address falls back to the
+viem reader on the public RPC (balance, nonce, code; `0xef0100` code is a delegated account,
+not a contract). When NearBlocks is down `intents_activity` falls back to `mt_tokens_for_owner`
+and `mt_batch_balance_of` on `intents.near` and answers balances only, marked partial.
+
+Everything that comes back is text a stranger could have written: a token name, a memo, a
+method name. Every such string is stripped of control and invisible characters and angle
+brackets, capped at 32 characters, and the answer carries a fixed note saying that names inside
+it are data. Raw inputs, decoded inputs, logs, inner instructions, scripts and icon data URIs
+are dropped before anything is returned. Amounts are decimal strings scaled by the asset's
+decimals. Unpriced ERC-20 rows whose name reads like an advertisement are hidden.
+
+Keys are optional and raise the rate limit only: `chainscan.blockscoutApiKey` and
+`chainscan.nearblocksApiKey` in `config.local.json`. Each rides only to the host it was issued
+for, and neither is ever written to a log or an error.
 
 ## Where the gas went
 
