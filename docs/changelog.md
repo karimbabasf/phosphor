@@ -1,0 +1,160 @@
+# Changelog
+
+What changed in each version of Phosphor, newest first, written from the git history of the
+[repository](https://github.com/karimbabasf/phosphor). The top entry is the version these pages
+describe, and a test fails the suite when it is not the version in `package.json`. Versions
+without a git tag say so.
+
+## 0.6.0
+
+Released 2026-09-17, the new-user pass. Not tagged at the time of writing.
+
+- The chain era leaves: the product is two pockets, the NEAR Intents balance and the Hyperliquid
+  collateral, and nothing signs a chain transaction any more.
+- One send tool, `propose_send`, replaces `propose_intents_send`: where the money lands is
+  required, the agent's read-back is required, every send waits for a click and a Touch ID that
+  names the receiver, and a recipients book remembers who you have paid before.
+- Payouts on the asset's own chain through the bridge, with the receiver bound in the quote and a
+  mistyped address refused before any quote.
+- Four read-only chain lookup tools: `chain_address`, `chain_transactions`, `chain_transaction`
+  and `intents_activity`.
+- Preflight: gas on Arbitrum, fee cover, venue, balance and deadline are checked before any intent
+  is signed; a move that cannot clear holds and retries for fifteen minutes; the checks fold open
+  on the receipt and the send card.
+- The deposit watch reports seen, bridged and credited, and the bridge address is shape-checked,
+  confirmed twice and pinned per account and network before it is drawn.
+- Audit fixes: proposal rows are sealed in memory and a row rewritten on disk is refused at the
+  click, the finger and the unlock; every string an agent sends has a ceiling; the Touch ID
+  sentence shows eight characters of each end of the receiver.
+- The chart backfills to the venue's own window, gains 1w and 1M and a calendar axis; the license
+  becomes FSL-1.1-MIT with an MIT future license.
+
+## 0.5.2
+
+Released 2026-09-16, the Money in pass.
+
+- Money in shows six network tiles in one row over a search of every network the bridge
+  credits, then token rows with their minimums that copy their contract.
+- Money in credits every network the bridge does, minimums are said straight, and the Hyperliquid
+  funding rail refuses what the venue would lose.
+- The backup card is raised at every start while the phrase is not proven backed up.
+- Security review fixes: a memo network draws no bare QR, a price can never hide a real minimum,
+  and Copy names what it copied.
+- The README says what Phosphor is, how to install it, how to connect an agent and how to test it.
+
+## 0.5.1
+
+Released 2026-09-15, the hardening build.
+
+- The agent's door takes this boot's seat secret on every call, and a hand-started proxy reads
+  it off `agent.secret` in the data directory.
+- Every rail verifies the bridge's signature over a live quote before it trusts a deposit
+  address, and a deposit that could confirm after its deadline is refused.
+- Three answers, not two: a move the venue confirmed but the balance has not shown is settling,
+  then Not confirmed, never failed; the card carries Reconcile and Got it; a Hyperliquid deposit
+  stays unconfirmed until the account's own ledger shows the credit.
+- After an ambiguous outcome a rail never signs again, a same-session repeat is refused, and the
+  proxy says a proposal may be executing instead of calling a slow answer "not running".
+- Auto-approved moves have a daily ceiling of their own; past it, the next one waits for a click.
+- A propose answers within twenty seconds with the row as it stands while the rail keeps running.
+- The first run, the deposit steps, the assistant panel with its cards and receipts, and window
+  scaling from 960 by 700 up are rebuilt; a wallet created after boot is read without a restart.
+
+## 0.5.0
+
+Released 2026-09-15.
+
+- The vault: keys behind the Secure Enclave, a version 2 keystore with the data key wrapped to
+  the enclave, Touch ID to unlock and one touch per click-tier move.
+- The Vault tab, the first run and the lock screen on the enclave; restore from twelve or
+  twenty-four words; a foreign enclave key is named apart from a damaged file.
+- The deposit card draws a QR code it has decoded back, and the `deposit` tool hands the agent a
+  fingerprint of the address only.
+- The window foundation: the Sora face, tokens, drawn icons, real token logos, motion; dark only.
+- Trades and bots become receipts; the receipt card and Activity rows as statement lines.
+- The Pro and Basic cards are rebuilt, the trade strip and the deck (Open, Waiting, Done) land,
+  panes can be hidden, and the control window opens maximized.
+
+## 0.4.4
+
+Released 2026-09-14, the UI pass.
+
+- One money grammar shared by every surface: a price tag, a figure, a transaction row, a rule
+  and a status line, with digits that roll.
+- The top bar's right side is one quiet line of state and one control; Freeze everything is the
+  last thing in the bar.
+- The trade deck sits under the chart: three columns, a price tag, figures as stats and a tape.
+- The Limits panel becomes a Policy card, one row per rule in the app's voice.
+- The tab you click is written to the server, and every answer on the agent's door names the
+  screen the window is on.
+- A first move typed on a quiet column starts the assistant with the question waiting.
+
+## 0.4.3
+
+Released 2026-09-14.
+
+- An update installs only the version it was announced as: the download must be the versioned
+  GitHub asset, the signed bundle must carry that version, and it must be newer than what runs.
+- An update waits for no proposal to be executing, and locks the wallet with a reason the audit
+  log keeps before the backend stops.
+- The site is out of the update loop: one endpoint, GitHub.
+
+## 0.4.2
+
+Released 2026-09-14.
+
+- The update offer is Phosphor's own window, not a system alert, with a progress bar for the
+  download.
+- Release notes ship from the tag message.
+- The brand mark is drawn from geometry rather than traced.
+
+## 0.4.1
+
+Released 2026-09-14.
+
+- The release that proves 0.4.0 can update itself: a local 0.4.0 found 0.4.1, showed the offer,
+  installed on the click and relaunched.
+- The release gate runs the tests that decide what ships.
+- The release guards run after the enclave sidecar is staged.
+
+## 0.4.0
+
+Released 2026-09-14, the first disk image. A month of work sits between 0.3.0 and this tag.
+
+- Builds a DMG and carries the updater's public key; a test fails when the three version files
+  disagree; the macOS floor is 13.5.
+- The trading layer: Hyperliquid analysis, plans the venue holds, and the runner, the only
+  process that places an order.
+- Start your assistant: the app starts a headless Claude Code session locked to its own tools.
+- The agent team: a roster, a board and workers; the operator profile.
+- The keys move into an encrypted envelope with a scrypt wrap and a header that reads while
+  locked; the wallet auto-locks; Freeze everything is called that everywhere.
+- The window rebuilt around the conversation and the beam; the Basic screen; the chart engine.
+- Funding the trading account from the intents balance, and a way back with a withdrawal.
+- Hardening: slippage floors on every venue, a ceiling on policy patches, reserved roster seats.
+
+## 0.3.0
+
+Released 2026-08-12. No git tag.
+
+- The security model says what the agent can now do: choose which surface an approval happens
+  on, with every switch audited.
+- Documentation for the tool surface and the approval flow.
+- What is not claimed is stated too, because the overstated version is the one people quote.
+
+## 0.2.0
+
+Released 2026-08-11.
+
+- The left column is a wallet: token, chain, quantity, price, value, share.
+- Three rails behind the policy engine: swap, liquidity provide and withdraw, and a Hyperliquid
+  bridge deposit, each run end to end on Arbitrum Sepolia.
+- The tool surface grows from nine tools to thirteen, and signing lives in one module.
+
+## 0.1.0
+
+Released 2026-08-11. No git tag.
+
+- The first build: a stablecoin viewer with one write path and a stubbed signer.
+- The scaffold, the state layer, the read stack and the first rails.
+- The project is named Phosphor.

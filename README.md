@@ -60,6 +60,9 @@ Claude Code at a source checkout instead of the installed app, run this from the
 
 ## Docs
 
+User documentation: [phosphor.karimbabasf.com/docs](https://phosphor.karimbabasf.com/docs).
+Source: [docs/README.md](docs/README.md).
+
 - [Architecture](docs/architecture.md): the two-process topology, module map, data flow and
   failure modes.
 - [Security model](docs/security-model.md): the trust boundary, the three verdicts, fail-closed
@@ -70,5 +73,8 @@ Claude Code at a source checkout instead of the installed app, run this from the
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The fonts and the token logos carry their own notices in
-`ui/fonts/OFL.txt` and `ui/logos/LICENSE.md`.
+Functional Source License 1.1 with an MIT future license (FSL-1.1-MIT). See [LICENSE](LICENSE).
+The code is open to read, run, change and audit. What it does not allow is offering Phosphor, or
+a product that does what Phosphor does, to other people as a commercial product or service. Each
+version becomes MIT two years after its release. The fonts and the token logos carry their own
+notices in `ui/fonts/OFL.txt` and `ui/logos/LICENSE.md`.

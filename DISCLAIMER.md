@@ -2,14 +2,14 @@
 
 Read this before you point phosphor at real money.
 
-This document supplements the [MIT license](LICENSE). Where the two disagree, the license governs.
+This document supplements the [license](LICENSE) (FSL-1.1-MIT). Where the two disagree, the license governs.
 
 ## No warranty and no liability
 
 The software is provided "as is", with no warranty of any kind. The author is not liable for any
 loss, claim or damage arising from the software or from its use, including lost funds. This is the
-plain-English version of the two capitalised paragraphs in [LICENSE](LICENSE), and those paragraphs
-are the ones that count.
+plain-English version of the Disclaimer section in [LICENSE](LICENSE), and that section is the one
+that counts.
 
 ## Your keys, your money, and no undo
 

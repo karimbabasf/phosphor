@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Phosphor: local stablecoin control app driven by any MCP agent. The app is the car, the agent is the person with the key.",
+  "license": "FSL-1.1-MIT",
   "scripts": {
     "app": "node src/main.ts",
     "mcp": "node src/mcp.ts",

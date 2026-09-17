@@ -561,4 +561,4 @@ tool surface still works.
 
 A denied bare tool name is removed from the model's context, so an operator has no editor to be
 talked into using, in any permission mode. It is not installed at `.claude/settings.json`, so your
-own development sessions in this directory are untouched. Detail in [operator/README.md](operator/README.md).
+own development sessions in this directory are untouched. Detail in [operator/README.md](../operator/README.md).
