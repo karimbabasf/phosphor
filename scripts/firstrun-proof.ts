@@ -12,10 +12,16 @@
 // In demo mode the Secure Enclave reports not ready, so the software flow is what shows: the
 // welcome, Create or bring a wallet, then Set a password, which is the create step there.
 //
+// The software flow is then driven through to Add money at the small size, and that step is
+// shot with no watch, then with a deposit frame in each of its phases (watching, seen, bridged,
+// credited) put on the window's store the way the SSE frame would put it, so the line the step
+// draws for each can be looked at without waiting on a chain.
+//
 // Fixture data only: a temp directory, never the live wallet. Run:
 //   node scripts/firstrun-proof.ts
-// playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy. Without
-// playwright's own Chromium installed, point PROOF_BROWSER at a Chromium binary (Brave's, say).
+// PROOF_OUT names another directory for the pictures. playwright-core is not a dependency of
+// this repo; point PLAYWRIGHT_CORE at a copy. Without playwright's own Chromium installed, point
+// PROOF_BROWSER at a Chromium binary (Brave's, say).
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -29,7 +35,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
-const SHOTS = path.join(ROOT, 'docs', 'screenshots', 'firstrun');
+const SHOTS = process.env.PROOF_OUT ?? path.join(ROOT, 'docs', 'screenshots', 'firstrun');
 
 type Json = any;
 
@@ -159,8 +165,82 @@ async function main(): Promise<void> {
     await sleep(400);
   }
 
+  const title = async (page: Json): Promise<string> =>
+    String(await page.evaluate('(document.querySelector("#screen-firstrun .screen-body h1") || {}).textContent'));
+
+  // From the password step to Add money: the wallet is made by the demo backend, its words are
+  // read off the page and three of them typed back, the addresses step is passed.
+  async function toMoney(page: Json): Promise<void> {
+    await page.evaluate(`(function () {
+      var fields = document.querySelectorAll('#screen-firstrun .screen-body input.input');
+      fields[0].value = 'proof-password-1';
+      fields[1].value = 'proof-password-1';
+    })()`);
+    await page.click('#screen-firstrun .screen-body .btn-primary');
+    await page.waitForFunction('(document.querySelector("#screen-firstrun .screen-body h1") || {}).textContent === "Save your recovery words"', { timeout: 10_000 });
+    const words = (await page.evaluate('Array.from(document.querySelectorAll("#screen-firstrun .screen-body .body.mono")).map(function (n) { return n.textContent; })')) as string[];
+    if (words.length !== 12) throw new Error(`expected twelve words on the page, saw ${words.length}`);
+    await page.click('#screen-firstrun .screen-body input[type="checkbox"]');
+    await sleep(100);
+    await page.click('#screen-firstrun .screen-body .btn-primary');
+    await sleep(400);
+    if ((await title(page)) !== 'Prove it') throw new Error(`expected Prove it, saw ${await title(page)}`);
+    await page.evaluate(`(function (w) {
+      var fields = document.querySelectorAll('#screen-firstrun .screen-body input.input');
+      fields[0].value = w[2]; fields[1].value = w[6]; fields[2].value = w[10];
+    })(${JSON.stringify(words)})`);
+    await page.click('#screen-firstrun .screen-body .btn-primary');
+    await sleep(400);
+    if ((await title(page)) !== 'Your addresses') throw new Error(`expected Your addresses, saw ${await title(page)}`);
+    await page.click('#screen-firstrun .screen-body .screen-actions .btn-lg');
+    await sleep(500);
+    if ((await title(page)) !== 'Add money') throw new Error(`expected Add money, saw ${await title(page)}`);
+  }
+
+  /* The state the money step reads, put on the store the way shell.js puts a frame there. The
+     demo ledger holds fifty thousand dollars, so the total is set to what a first deposit looks
+     like; and every /api/state answer is marked not fresh from here on, so a heartbeat between
+     the put and the shot cannot put the backend's own (empty) watch back over the frame. */
+  async function freezeState(page: Json): Promise<void> {
+    await page.evaluate(`(function () {
+      var real = window.PhosphorApi.state;
+      window.PhosphorApi.state = function (o) { return real(o).then(function (r) { return Object.assign({}, r, { fresh: false }); }); };
+    })()`);
+  }
+
+  async function putMoney(page: Json, frame: Json | null, totalUsd: number): Promise<void> {
+    await page.evaluate(`(function (frame, total) {
+      var s = window.PhosphorState;
+      var state = s.get() || {};
+      s.put(Object.assign({}, state, { deposit: frame, wallet: Object.assign({}, state.wallet || {}, { totalUsd: total }) }));
+    })(${JSON.stringify(frame)}, ${String(totalUsd)})`);
+    await sleep(350);
+  }
+
+  const DEPOSIT_ADDRESS = '0x8f3c2a91e6b74d0c5f1a9e2b3c4d5e6f7a8b9c0d';
+  const depositFrame = (overrides: Json): Json =>
+    Object.assign(
+      {
+        phase: 'watching',
+        chain: 'eth',
+        symbol: 'ETH',
+        address: DEPOSIT_ADDRESS,
+        startedAt: new Date(Date.now() - 42_000).toISOString(),
+        baseline: 0,
+        amount: null,
+        txHash: null,
+        explorerUrl: null,
+        confirmations: null,
+        ms: null,
+        error: null,
+      },
+      overrides,
+    );
+
   try {
-    for (const size of [{ w: 1280, h: 800, dpr: 2 }, { w: 2560, h: 1440, dpr: 1 }]) {
+    // The large size first: the small one goes on to make the wallet, and a window opened after
+    // that would not land on the welcome.
+    for (const size of [{ w: 2560, h: 1440, dpr: 1 }, { w: 1280, h: 800, dpr: 2 }]) {
       const tag = `${size.w}x${size.h}`;
       const page = await open(size.w, size.h, size.dpr);
       await shoot(page, `welcome-${tag}`);
@@ -176,6 +256,26 @@ async function main(): Promise<void> {
         await shoot(page, `create-developer-${tag}`);
         results[`create-developer-${tag}`] = await page.evaluate(MEASURE);
         await page.evaluate('window.PhosphorDev.set(false)');
+
+        // Add money, with no watch and then in each phase of one.
+        await toMoney(page);
+        await freezeState(page);
+        await putMoney(page, null, 0);
+        await shoot(page, `money-idle-${tag}`);
+        results[`money-idle-${tag}`] = await page.evaluate(MEASURE);
+        const TX = '0x9c1e7b2d4f60a8c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a9c1';
+        const phases: Array<[string, Json, number]> = [
+          ['watching', depositFrame({}), 0],
+          ['seen', depositFrame({ phase: 'seen', amount: 0.0011, txHash: TX, explorerUrl: `https://etherscan.io/tx/${TX}`, confirmations: 2, ms: 12_000 }), 0],
+          ['bridged', depositFrame({ phase: 'bridged', amount: 0.0011, txHash: TX, explorerUrl: `https://etherscan.io/tx/${TX}`, confirmations: 12, ms: 48_000 }), 0],
+          ['credited', depositFrame({ phase: 'credited', amount: 0.0011, txHash: TX, explorerUrl: `https://etherscan.io/tx/${TX}`, confirmations: 12, ms: 74_000 }), 3.74],
+          ['error', depositFrame({ error: 'The verifier is not answering, retrying' }), 0],
+        ];
+        for (const [name, frame, total] of phases) {
+          await putMoney(page, frame, total);
+          await shoot(page, `money-${name}-${tag}`);
+          results[`money-${name}-${tag}`] = await page.evaluate(MEASURE);
+        }
       }
       await page.close();
     }

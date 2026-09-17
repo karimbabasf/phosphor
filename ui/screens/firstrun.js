@@ -349,7 +349,10 @@
       row.appendChild(skip);
       dom.on(skip, 'click', function () { next(); });
     }
-    var primary = dom.el('button', 'btn btn-primary btn-lg');
+    /* `quiet` draws the primary as a ghost: a step that is waiting on the world
+       (money landing) has no action to press yet, and the caller turns it
+       primary the moment there is one. */
+    var primary = dom.el('button', opts.quiet ? 'btn btn-ghost btn-lg' : 'btn btn-primary btn-lg');
     primary.appendChild(dom.el('span', 'btn-label', primaryLabel));
     if (opts.disabled) primary.disabled = true;
     row.appendChild(primary);
@@ -765,29 +768,53 @@
     actions('Continue', function () { next(); });
   }
 
-  /* 6 */
+  /* 6. The money step is the deposit watch, live, not a spinner: the same line
+     the picker draws (netpick.js watcherLine) off the same `deposit` frame, and
+     the total off the `wallet` slice, both redrawn on every change while the
+     step is up. Continue stays quiet until the money is in the balance, then
+     turns primary; "Do this later" stays. Karim, 2026-09-16: "if the only user
+     feedback is a timer, it is freaky, especially if it looks like it hasn't
+     landed till you skip that step and actually go to the dashboard." */
   function screenMoney() {
     card.appendChild(dom.el('h1', 'title', 'Add money'));
-    var state = window.PhosphorState.get() || {};
-    var total = (state.wallet && state.wallet.totalUsd) || 0;
     var value = dom.el('p', 'balance mono');
-    dom.setText(value, dom.usd(total));
     card.appendChild(value);
-    card.appendChild(dom.el('p', 'body dim', total > 0
-      ? 'Your money is here.'
-      : 'Send anything to one of your addresses and it will appear here.'));
-
-    if (total === 0) {
-      var waiting = dom.el('div', 'hstack-2');
-      waiting.appendChild(dom.el('span', 'spinner'));
-      waiting.appendChild(dom.el('span', 'meta', 'Watching for a deposit'));
-      card.appendChild(waiting);
-    }
-
-    actions('Continue', function () { go(7); }, {
-      skip: 'Do this later'
+    var lead = dom.el('p', 'body dim');
+    card.appendChild(lead);
+    var pick = window.PhosphorNetPick;
+    var line = pick && typeof pick.watcherLine === 'function' ? pick.watcherLine(card, { stop: false }) : null;
+    var idle = dom.el('p', 'meta money-idle');
+    dom.setText(idle, 'No address has been shown yet. Go back to pick a network, or do this later.');
+    idle.hidden = true;
+    card.appendChild(idle);
+    var primary = actions('Continue', function () { go(7); }, {
+      skip: 'Do this later',
+      quiet: true
     });
     card.appendChild(dom.el('p', 'meta', 'You can do this later. Your assistant cannot do anything useful until you do.'));
+
+    function paint() {
+      var state = store.get() || {};
+      var total = (state.wallet && state.wallet.totalUsd) || 0;
+      var deposit = state.deposit && typeof state.deposit.phase === 'string' ? state.deposit : null;
+      var landed = total > 0 || !!(deposit && deposit.phase === 'credited');
+      dom.setText(value, dom.usd(total));
+      dom.setText(lead, landed ? 'Your money is here.' : 'Send anything to one of your addresses and it will appear here.');
+      if (line) line.render(deposit);
+      dom.setHidden(idle, landed || !!deposit);
+      primary.className = landed ? 'btn btn-primary btn-lg' : 'btn btn-ghost btn-lg';
+    }
+
+    var offDeposit = store.select('deposit', paint);
+    var offWallet = store.select('wallet', paint);
+    paint();
+    stepHandle = {
+      destroy: function () {
+        offDeposit();
+        offWallet();
+        if (line) line.destroy();
+      }
+    };
   }
 
   /* 7 */
