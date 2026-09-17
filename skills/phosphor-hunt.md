@@ -28,7 +28,7 @@ What is in scope, and is the point:
   **A priced plan is the deliverable, not a step toward execution.**
 
 What is out of scope, permanently, unless the human says the word in that moment:
-- Any `propose_*` tool. Swap, deposit, withdraw, consolidate, trade, policy change. All of them.
+- Any `propose_*` tool. Swap, deposit, withdraw, trade, policy change. All of them.
 - Asking whether to place it. "Want me to size this up", "shall I propose the swap", "ready when
   you are" and every polite variant. **The offer is the interruption he asked to stop.**
 - Writing code. No bot, no strategy file, no backtest script, no automation of the plan. A plan

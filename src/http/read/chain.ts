@@ -11,7 +11,7 @@
 // answer is that nothing could be read, which is different from having asked wrongly.
 
 import { fail, intParam, sendJson } from '../respond.ts';
-import { evmAddress } from '../../chain/evm.ts';
+import { evmAddress } from '../../keystore/index.ts';
 import { addressSummary, CHAIN_NETWORKS, DEFAULT_LIMIT, intentsActivity, isChainNetwork, MAX_LIMIT, transaction, transactions, validateAddress, validateHash } from '../../chainscan/index.ts';
 import type { ChainDeps } from '../../chainscan/index.ts';
 import type { Ctx, ReadTable } from '../context.ts';
@@ -23,7 +23,7 @@ function ownAccount(ctx: Ctx): string | null {
   try {
     return evmAddress(ctx.cfg.keysPath).toLowerCase();
   } catch {
-    const configured = ctx.cfg.addresses.evm[0];
+    const configured = ctx.cfg.addresses.evm;
     return typeof configured === 'string' && configured.trim() !== '' ? configured.trim().toLowerCase() : null;
   }
 }

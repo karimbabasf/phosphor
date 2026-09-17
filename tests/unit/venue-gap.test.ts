@@ -21,7 +21,6 @@ import { createStore } from '../../src/store.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 import { defaultPolicy, loadPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
 import { missingVenues, proposeVenueGap, venueGapSentence } from '../../src/policy/venues.ts';
@@ -45,8 +44,7 @@ function setup(policy: Policy) {
     mode: 'demo',
     keysPath: path.join(dataDir, 'keys.json'),
     port: 4177,
-    addresses: { evm: [], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: {},
     candleProducts: [],
     dataDir,
   };
@@ -59,8 +57,6 @@ function setup(policy: Policy) {
     store,
     ledger: createLedger(cfg),
     riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir,
   });
 

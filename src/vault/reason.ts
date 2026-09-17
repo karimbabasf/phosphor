@@ -38,20 +38,12 @@ function describe(draft: WriteDraft): string {
   switch (draft.kind) {
     case 'swap':
       return `Swap ${amount(draft.amountIn, draft.fromSymbol)} to ${clean(draft.toSymbol)} (${usd(draft.amountUsd)})`;
-    case 'intents_deposit':
-      return `Deposit ${amount(draft.amount, draft.symbol)} from ${clean(draft.chain)} into NEAR Intents (${usd(draft.amountUsd)})`;
-    case 'intents_withdraw':
-      return `Withdraw ${amount(draft.amount, draft.symbol)} from NEAR Intents to ${clean(draft.chain)} (${usd(draft.amountUsd)})`;
     case 'intents_send':
       return `Send ${amount(draft.amount, draft.symbol)} inside NEAR Intents to another account (${usd(draft.amountUsd)})`;
     case 'hl_deposit':
       return `Move ${amount(draft.amount, draft.symbol)} into Hyperliquid (${usd(draft.amountUsd)})`;
     case 'hl_withdraw':
       return `Withdraw ${amount(draft.amount, draft.symbol)} out of Hyperliquid (${usd(draft.amountUsd)})`;
-    case 'consolidate':
-      return `Consolidate ${clean(draft.symbol)} onto ${clean(draft.toChain)} (${usd(draft.totalUsd)})`;
-    case 'transfer':
-      return `Transfer ${amount(draft.leg.amount, draft.leg.symbol)} (${usd(draft.leg.amountUsd)})`;
     case 'policy_change':
       return 'Change the policy that limits what the agent may do';
     case 'trade':

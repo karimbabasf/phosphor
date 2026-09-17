@@ -19,7 +19,6 @@ import { createStore } from '../../src/store.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { createKeystore, useKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
@@ -33,7 +32,6 @@ const riskRows = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'd
 
 function happyPolicy(): Policy {
   const p = defaultPolicy();
-  delete p.composition.minNativeGasUsd.near;
   p.sentences = renderSentences(p);
   return p;
 }
@@ -85,8 +83,7 @@ function setup() {
     mode: 'demo',
     keysPath,
     port: 4177,
-    addresses: { evm: [], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: {},
     candleProducts: [],
     dataDir,
   };
@@ -101,7 +98,7 @@ function setup() {
   const enclave = fakeEnclave();
   keystore.createWithEnclave(enclave.ref);
   keystore.lock();
-  const svc = createProposalService({ cfg, audit, store, ledger, riskRows, quoter: syntheticQuoter(), signer: stubSigner(), dataDir, vault, keystore });
+  const svc = createProposalService({ cfg, audit, store, ledger, riskRows, dataDir, vault, keystore });
   return { audit, store, svc, keystore, vault, transport, enclave };
 }
 
@@ -119,15 +116,15 @@ async function attach(h: ReturnType<typeof setup>): Promise<void> {
 test('a click on an enclave wallet waits for a finger, and the finger approves exactly that proposal', async () => {
   const h = setup();
   await attach(h);
-  const big = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
-  assert.equal(big.status, 'pending', 'a large move waits for a click even while locked: the touch will open the wallet');
+  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' });
+  assert.equal(big.status, 'pending', 'a click-tier proposal waits for a click even while locked: the touch will open the wallet');
   assert.equal(big.verdict.outcome, 'needs_approval');
 
   const clicked = await h.svc.approve(big.id);
   assert.equal(clicked.status, 'awaiting_touch');
   assert.equal(h.keystore.state(), 'locked', 'nothing is open until the enclave answers');
   assert.equal(h.vault.waiting()?.op, 'unwrap');
-  assert.match(h.vault.waiting()?.reason ?? '', /^Approve: Consolidate USDT onto ETH/);
+  assert.match(h.vault.waiting()?.reason ?? '', /^Approve: Change the policy/);
 
   const request = await playShell(h.vault, h.enclave.priv, h.transport);
   assert.equal(request.id, `approve:${big.id}`, 'the request is named after the proposal it approves');
@@ -146,7 +143,7 @@ test('a click on an enclave wallet waits for a finger, and the finger approves e
 test('a cancelled dialog puts the proposal back to pending and signs nothing', async () => {
   const h = setup();
   await attach(h);
-  const big = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' });
   const clicked = await h.svc.approve(big.id);
   assert.equal(clicked.status, 'awaiting_touch');
 
@@ -173,7 +170,7 @@ test('an open session still asks for the finger on every click-tier move', async
   const dek = seUnwrapWithSoftwareKey({ ephemeralPublicKey: request0.ephemeralPublicKey, ciphertext: request0.ciphertext }, h.enclave.priv, Buffer.from(request0.aad, 'base64'));
   assert.deepEqual(h.keystore.unlockWithDataKey(dek), { ok: true });
 
-  const big = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' });
   const clicked = await h.svc.approve(big.id);
   assert.equal(clicked.status, 'awaiting_touch', 'open or shut, a click-tier move gets its own dialog');
   await playShell(h.vault, h.enclave.priv, h.transport);
@@ -184,7 +181,7 @@ test('an open session still asks for the finger on every click-tier move', async
 test('a second click while the dialog is up is refused, and a click while nothing relays queues the old way', async () => {
   const h = setup();
   await attach(h);
-  const big = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' });
   await h.svc.approve(big.id);
   await assert.rejects(h.svc.approve(big.id), /pending/);
   await playShell(h.vault, h.enclave.priv, h.transport, true);
@@ -194,13 +191,11 @@ test('a second click while the dialog is up is refused, and a click while nothin
   const bare = createVaultRelay({ transportKey: null });
   const svc2 = createProposalService({
     ...(h as unknown as { svc: never }),
-    cfg: { mode: 'demo', keysPath: h.keystore.path().replace(/keys\.enc\.json$/, 'keys.json'), port: 4177, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir: path.dirname(path.dirname(h.keystore.path())) },
+    cfg: { mode: 'demo', keysPath: h.keystore.path().replace(/keys\.enc\.json$/, 'keys.json'), port: 4177, addresses: {}, candleProducts: [], dataDir: path.dirname(path.dirname(h.keystore.path())) },
     audit: h.audit,
     store: h.store,
-    ledger: createLedger({ mode: 'demo', keysPath: '', port: 0, addresses: { evm: [], solana: [], near: [] }, economicTransferUsd: 10, candleProducts: [], dataDir: path.dirname(path.dirname(h.keystore.path())) }),
+    ledger: createLedger({ mode: 'demo', keysPath: '', port: 0, addresses: {}, candleProducts: [], dataDir: path.dirname(path.dirname(h.keystore.path())) }),
     riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir: path.dirname(path.dirname(h.keystore.path())),
     vault: bare,
     keystore: h.keystore,

@@ -31,7 +31,6 @@ import type {
   BasicTone,
   BasicView,
   ChainId,
-  ChainStatus,
   LogEvent,
   Proposal,
   SimulationResult,
@@ -54,7 +53,8 @@ export type BasicInput = {
   policyReadable: boolean;
   killSwitch: boolean;
   agentsConnected: number;
-  chainStatus: Record<ChainId, ChainStatus>;
+  // When the ledger's last read started, ISO. Held against the newest executed proposal.
+  readAt: string;
   // Needed to tell "your own wallet" from any other address without guessing.
   // Guessing is what F2 did.
   selfAddresses: string[];
@@ -131,13 +131,9 @@ function isSelf(address: string, selfAddresses: string[]): boolean {
 
 // ---------- freshness ----------
 
-function newestFetchAt(chainStatus: Record<ChainId, ChainStatus>): number {
-  let newest = 0;
-  for (const status of Object.values(chainStatus ?? {})) {
-    const t = Date.parse(status?.fetchedAt ?? '');
-    if (Number.isFinite(t) && t > newest) newest = t;
-  }
-  return newest;
+function readAtMs(readAt: string): number {
+  const t = Date.parse(readAt ?? '');
+  return Number.isFinite(t) ? t : 0;
 }
 
 // A row after which the balance may differ from the last read: anything that went through,
@@ -181,16 +177,19 @@ function newestUnconfirmed(proposals: Proposal[]): Proposal | null {
 // ---------- the ask ----------
 
 /* THE KINDS THIS APP NO LONGER BUILDS, AND WHY EVERY SWITCH BELOW STILL ANSWERS FOR THEM.
-   lp_add, lp_remove, yield_deposit and yield_withdraw were real rails. state/proposals.json
-   holds executed and refused rows naming them, and the money they moved was real. This screen
-   renders that history, so a row it dropped or threw on would be this app telling its owner
-   something did not happen when it did. Nothing can propose one of these again; every one of
-   them can still be read back.
+   lp_add, lp_remove, yield_deposit and yield_withdraw were real rails, consolidate and
+   transfer were the chain-era fund moves, and intents_deposit and intents_withdraw moved
+   between a chain wallet and the verifier. state/proposals.json holds executed and refused rows
+   naming them, and the money they moved was real. This screen renders that history, so a row it
+   dropped or threw on would be this app telling its owner something did not happen when it did.
+   Nothing can propose one of these again; every one of them can still be read back.
    `kindOf` exists because draft.kind no longer includes the retired names, so TypeScript calls
    the comparison unreachable and refuses it. Reading the same field as a string is the honest
    way to say "this value is wider at rest than the live type is". `retired` is the matching
    read for the fields those drafts carried. */
-const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'mandate_arm'];
+const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'mandate_arm', 'consolidate', 'transfer', 'intents_deposit', 'intents_withdraw'];
+
+type RetiredLeg = { fromChain?: ChainId; toChain?: ChainId; symbol?: string; amountUsd?: number; to?: string };
 
 type RetiredDraft = {
   chain?: ChainId;
@@ -199,8 +198,14 @@ type RetiredDraft = {
   token0?: { symbol: string };
   token1?: { symbol: string };
   counterparty?: string;
+  to?: string;
   maxNotionalUsd?: number;
   maxLossUsd?: number;
+  // consolidate and transfer, the chain-era fund moves.
+  toChain?: ChainId;
+  totalUsd?: number;
+  legs?: RetiredLeg[];
+  leg?: RetiredLeg;
 };
 
 function kindOf(draft: WriteDraft): string {
@@ -216,8 +221,8 @@ function isRetired(draft: WriteDraft): boolean {
 }
 
 export function amountUsdOf(draft: WriteDraft): number {
-  if (draft.kind === 'consolidate') return draft.totalUsd;
-  if (draft.kind === 'transfer') return draft.leg.amountUsd;
+  if (kindOf(draft) === 'consolidate') return retired(draft).totalUsd ?? 0;
+  if (kindOf(draft) === 'transfer') return retired(draft).leg?.amountUsd ?? 0;
   if (draft.kind === 'policy_change') return 0;
   // Every retired kind carried amountUsd too, so the same read serves them.
   return (draft as { amountUsd?: number }).amountUsd ?? 0;
@@ -226,28 +231,31 @@ export function amountUsdOf(draft: WriteDraft): number {
 function symbolsOf(draft: WriteDraft): string[] {
   const out: string[] = [];
   if (draft.kind === 'swap') out.push(draft.fromSymbol, draft.toSymbol);
-  // Both intents kinds carry one symbol. The deposit was missing here, so its "What is
+  // Every one-symbol kind. The retired intents deposit was missing here once, so its "What is
   // involved" line came out blank on the one screen a human approves money from.
-  else if (draft.kind === 'hl_deposit' || draft.kind === 'hl_withdraw' || draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw' || draft.kind === 'intents_send')
+  else if (draft.kind === 'hl_deposit' || draft.kind === 'hl_withdraw' || draft.kind === 'intents_send')
     out.push(draft.symbol);
+  else if (kindOf(draft) === 'intents_deposit' || kindOf(draft) === 'intents_withdraw')
+    out.push(retired(draft).symbol ?? '');
   else if (kindOf(draft) === 'lp_add')
     out.push(retired(draft).token0?.symbol ?? '', retired(draft).token1?.symbol ?? '');
-  else if (kindOf(draft) === 'yield_deposit' || kindOf(draft) === 'yield_withdraw')
+  else if (kindOf(draft) === 'yield_deposit' || kindOf(draft) === 'yield_withdraw' || kindOf(draft) === 'consolidate')
     out.push(retired(draft).symbol ?? '');
-  else if (draft.kind === 'consolidate') out.push(draft.symbol);
-  else if (draft.kind === 'transfer') out.push(draft.leg.symbol);
+  else if (kindOf(draft) === 'transfer') out.push(retired(draft).leg?.symbol ?? '');
   return [...new Set(out.filter((s) => (s ?? '').length > 0))];
 }
 
 function chainsOf(draft: WriteDraft): string[] {
   const out: string[] = [];
-  if (draft.kind === 'swap') out.push(draft.chain, draft.toChain);
-  else if (draft.kind === 'intents_deposit' || draft.kind === 'intents_withdraw') out.push(draft.chain);
+  // A swap moves nothing between chains: both legs sit inside NEAR Intents, and chain and
+  // toChain name the assets' home chains, which the headline already says. Nothing to list.
+  if (draft.kind === 'swap') return [];
+  if (kindOf(draft) === 'intents_deposit' || kindOf(draft) === 'intents_withdraw') out.push(retired(draft).chain ?? '');
   // A Hyperliquid deposit starts inside the verifier and lands on the venue; neither is a
   // chain the wallet reads, and both are named in the headline, so the chain line stays empty.
+  else if (kindOf(draft) === 'consolidate') out.push(retired(draft).toChain ?? '', ...(retired(draft).legs ?? []).map((l) => l.fromChain ?? ''));
+  else if (kindOf(draft) === 'transfer') out.push(retired(draft).leg?.fromChain ?? '', retired(draft).leg?.toChain ?? '');
   else if (isRetired(draft)) out.push(retired(draft).chain ?? '');
-  else if (draft.kind === 'consolidate') out.push(draft.toChain, ...draft.legs.map((l) => l.fromChain));
-  else if (draft.kind === 'transfer') out.push(draft.leg.fromChain, draft.leg.toChain);
   return [...new Set(out)];
 }
 
@@ -278,21 +286,22 @@ function destinationsOf(proposal: Proposal, selfAddresses: string[]): BasicDesti
     push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own NEAR Intents balance' : NOT_YOURS, 'app');
   } else if (isRetired(draft)) {
     push(retired(draft).counterparty ?? '', 'the contract this app kept on its approved list', 'app');
-  } else if (draft.kind === 'intents_withdraw') {
-    // The one draft that pays out to an ordinary address on a chain. Basic exists to say
+  } else if (kindOf(draft) === 'intents_withdraw') {
+    // The retired draft that paid out to an ordinary address on a chain. Basic exists to say
     // whose address that is, so it says it here rather than showing a withdrawal with no
     // destination at all.
-    push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
+    const to = retired(draft).to ?? '';
+    push(to, isSelf(to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
   } else if (draft.kind === 'intents_send') {
     // The one draft MEANT to name somebody else's account. It is said as exactly that, so
     // the person clicking reads the whole account they are paying and knows it is not theirs.
     push(draft.to, isSelf(draft.to, selfAddresses) ? 'your own NEAR Intents balance' : 'the NEAR Intents account you are sending to, on your approved list', 'app');
-  } else if (draft.kind === 'transfer') {
-    const to = draft.leg.to;
+  } else if (kindOf(draft) === 'transfer') {
+    const to = retired(draft).leg?.to ?? '';
     push(to, isSelf(to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
-  } else if (draft.kind === 'consolidate') {
-    for (const leg of draft.legs) {
-      push(leg.to, isSelf(leg.to, selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
+  } else if (kindOf(draft) === 'consolidate') {
+    for (const leg of retired(draft).legs ?? []) {
+      push(leg.to ?? '', isSelf(leg.to ?? '', selfAddresses) ? 'your own wallet' : NOT_YOURS, 'app');
     }
   }
 
@@ -323,11 +332,11 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
   if (draft.kind === 'hl_withdraw') {
     return `It wants to bring ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} back out of your Hyperliquid trading account into the NEAR trading service.`;
   }
-  if (draft.kind === 'intents_deposit') {
-    return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} into a NEAR account this app holds for you, ready to trade.`;
+  if (kindOf(draft) === 'intents_deposit') {
+    return `It wants to move ${amountClause(amountUsd)}your ${plainSymbol(retired(draft).symbol ?? '')} into a NEAR account this app holds for you, ready to trade.`;
   }
-  if (draft.kind === 'intents_withdraw') {
-    return `It wants to bring ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} back out of the NEAR trading service and into your ${plainChain(draft.chain)} wallet.`;
+  if (kindOf(draft) === 'intents_withdraw') {
+    return `It wants to bring ${amountClause(amountUsd)}your ${plainSymbol(retired(draft).symbol ?? '')} back out of the NEAR trading service and into your ${plainChain(retired(draft).chain ?? '')} wallet.`;
   }
   if (draft.kind === 'intents_send') {
     return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} inside the NEAR trading service to another account, ${draft.to}. That account is on your approved list, and the money will belong to whoever holds its key.`;
@@ -341,11 +350,11 @@ function askHeadline(draft: WriteDraft, amountUsd: number): string {
     const worth = amountUsd > 0 ? `, worth about ${money(amountUsd)}` : '';
     return `It wants to take ${pct}% of one of your pool positions back out${worth}.`;
   }
-  if (draft.kind === 'consolidate') {
-    return `It wants to gather ${amountClause(amountUsd)}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
+  if (kindOf(draft) === 'consolidate') {
+    return `It wants to gather ${amountClause(amountUsd)}your ${plainSymbol(retired(draft).symbol ?? '')} onto ${plainChain(retired(draft).toChain ?? '')}.`;
   }
-  if (draft.kind === 'transfer') {
-    return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(draft.leg.symbol)} to another address.`;
+  if (kindOf(draft) === 'transfer') {
+    return `It wants to send ${amountClause(amountUsd)}your ${plainSymbol(retired(draft).leg?.symbol ?? '')} to another address.`;
   }
   // A trade puts collateral at stake and names the loss that ends it. Those two numbers are
   // the whole ask, so they are the sentence.
@@ -388,11 +397,11 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   // Deliberately not "it stays in your wallet". It does not: it leaves the wallet and is
   // held for this app by the NEAR Intents contract, and getting it back on chain is a
   // separate action. Saying so is the difference between an informed click and a surprise.
-  if (draft.kind === 'intents_deposit')
+  if (kindOf(draft) === 'intents_deposit')
     return 'The money stays yours, but it leaves your wallet and is held by the NEAR trading service. Bringing it back is a separate step.';
   // The one kind where money ARRIVES. Falling through to the transfer line would have told
   // this reader they were about to have less, which is the opposite of what happens.
-  if (draft.kind === 'intents_withdraw')
+  if (kindOf(draft) === 'intents_withdraw')
     return 'The money comes back into your own wallet, where you can spend it directly again.';
   if (draft.kind === 'intents_send')
     return 'The money leaves your balance for good and lands in the other account. There is no way to take it back from here.';
@@ -401,7 +410,7 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
   if (kindOf(draft) === 'yield_deposit')
     return `${money(amountUsd)} moves into a lending pool and starts earning. It is still yours and there is no lock: you can take it back whenever you want.`;
   if (kindOf(draft) === 'yield_withdraw') return 'The money comes back into your own wallet, with whatever it earned.';
-  if (draft.kind === 'consolidate') return 'The money stays yours. It moves onto one chain.';
+  if (kindOf(draft) === 'consolidate') return 'The money stays yours. It moves onto one chain.';
   if (draft.kind === 'trade') return 'The money stays in your trading account. Only the amount at stake can be lost, and the stop is on the exchange itself.';
   if (kindOf(draft) === 'mandate_arm') return 'This was standing permission from an older build. Nothing moves now.';
   // A transfer is the only kind that genuinely leaves, so it is the only one allowed to
@@ -416,14 +425,14 @@ function askAfterLine(draft: WriteDraft, totalUsd: number | null, amountUsd: num
    sentence in the headline and "This does not move any money. It changes a rule." below it. The
    agent writes both halves of that: the patch AND the sentence beside it. So a patch setting the
    click threshold to a billion dollars and replacing the destination allowlist, described as
-   "raise the gas floor on base", produced a card that named neither. One click and every later
+   "cap the freezable share", produced a card that named neither. One click and every later
    proposal executed with no human in it.
 
    The app already renders the policy as deterministic sentences (src/policy/render.ts) and
    already computes the before and after pair at src/proposals/draft.ts. Nothing displayed it.
    These lines are that diff, and they are facts rather than prose because facts are the lines
    this screen may not drop. Every removal gets its own line: mergePatch REPLACES the destination
-   allowlist, the gas floors and the forbidden issuers rather than merging them, so the deletions
+   allowlist and the forbidden issuers rather than merging them, so the deletions
    are the part a reader would otherwise never see. */
 function ruleChangeFacts(simulation: SimulationResult | null): string[] {
   const diff = simulation?.policyDiff;
@@ -601,11 +610,11 @@ export function didHeadline(draft: WriteDraft, amountUsd: number): string {
   /* The two rails that now carry nearly all of it, and neither had a sentence: both fell
      through to the safety-rules line at the bottom, so a NEAR Intents deposit read as
      "Changed one of your safety rules." on this screen and on every receipt. */
-  if (draft.kind === 'intents_deposit') {
-    return `Moved ${amt}your ${plainSymbol(draft.symbol)} from ${plainChain(draft.chain)} into NEAR Intents.`;
+  if (kindOf(draft) === 'intents_deposit') {
+    return `Moved ${amt}your ${plainSymbol(retired(draft).symbol ?? '')} from ${plainChain(retired(draft).chain ?? '')} into NEAR Intents.`;
   }
-  if (draft.kind === 'intents_withdraw') {
-    return `Brought ${amt}your ${plainSymbol(draft.symbol)} out of NEAR Intents onto ${plainChain(draft.chain)}.`;
+  if (kindOf(draft) === 'intents_withdraw') {
+    return `Brought ${amt}your ${plainSymbol(retired(draft).symbol ?? '')} out of NEAR Intents onto ${plainChain(retired(draft).chain ?? '')}.`;
   }
   if (draft.kind === 'intents_send') {
     return `Sent ${amt}your ${plainSymbol(draft.symbol)} inside NEAR Intents to ${draft.to}.`;
@@ -614,8 +623,8 @@ export function didHeadline(draft: WriteDraft, amountUsd: number): string {
   if (kindOf(draft) === 'lp_remove') return 'Took money back out of a pool.';
   if (kindOf(draft) === 'yield_deposit') return `Put ${amt}your money somewhere it earns interest.`;
   if (kindOf(draft) === 'yield_withdraw') return 'Brought your money back out of the place it was earning interest.';
-  if (draft.kind === 'consolidate') return `Gathered ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}.`;
-  if (draft.kind === 'transfer') return `Sent ${amt}your ${plainSymbol(draft.leg.symbol)} to another address.`;
+  if (kindOf(draft) === 'consolidate') return `Gathered ${amt}your ${plainSymbol(retired(draft).symbol ?? '')} onto ${plainChain(retired(draft).toChain ?? '')}.`;
+  if (kindOf(draft) === 'transfer') return `Sent ${amt}your ${plainSymbol(retired(draft).leg?.symbol ?? '')} to another address.`;
   /* The venue rows. An approved plan is a bot from the moment the click lands: the runner
      places the entry and manages the exits without asking again, so the receipt says what
      was armed, in the plan's own figures. The fill is not here, because the proposal never
@@ -678,11 +687,11 @@ function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
   }
   if (draft.kind === 'hl_deposit') return `moving ${amt}your ${plainSymbol(draft.symbol)} to your Hyperliquid trading account`;
   if (draft.kind === 'hl_withdraw') return `bringing ${amt}your ${plainSymbol(draft.symbol)} back out of your Hyperliquid trading account`;
-  if (draft.kind === 'intents_deposit') {
-    return `moving ${amt}your ${plainSymbol(draft.symbol)} from ${plainChain(draft.chain)} into NEAR Intents`;
+  if (kindOf(draft) === 'intents_deposit') {
+    return `moving ${amt}your ${plainSymbol(retired(draft).symbol ?? '')} from ${plainChain(retired(draft).chain ?? '')} into NEAR Intents`;
   }
-  if (draft.kind === 'intents_withdraw') {
-    return `bringing ${amt}your ${plainSymbol(draft.symbol)} out of NEAR Intents onto ${plainChain(draft.chain)}`;
+  if (kindOf(draft) === 'intents_withdraw') {
+    return `bringing ${amt}your ${plainSymbol(retired(draft).symbol ?? '')} out of NEAR Intents onto ${plainChain(retired(draft).chain ?? '')}`;
   }
   if (draft.kind === 'intents_send') {
     return `sending ${amt}your ${plainSymbol(draft.symbol)} inside NEAR Intents to ${draft.to}`;
@@ -691,8 +700,8 @@ function wantedPhrase(draft: WriteDraft, amountUsd: number): string {
   if (kindOf(draft) === 'lp_remove') return 'taking money back out of a pool';
   if (kindOf(draft) === 'yield_deposit') return `putting ${amt}your money somewhere it earns interest`;
   if (kindOf(draft) === 'yield_withdraw') return 'bringing your money back out of the place it was earning interest';
-  if (draft.kind === 'consolidate') return `gathering ${amt}your ${plainSymbol(draft.symbol)} onto ${plainChain(draft.toChain)}`;
-  if (draft.kind === 'transfer') return `sending ${amt}your ${plainSymbol(draft.leg.symbol)} to another address`;
+  if (kindOf(draft) === 'consolidate') return `gathering ${amt}your ${plainSymbol(retired(draft).symbol ?? '')} onto ${plainChain(retired(draft).toChain ?? '')}`;
+  if (kindOf(draft) === 'transfer') return `sending ${amt}your ${plainSymbol(retired(draft).leg?.symbol ?? '')} to another address`;
   return 'changing one of your safety rules';
 }
 
@@ -850,7 +859,7 @@ export function buildBasic(input: BasicInput): BasicView {
   // --- what we are willing to say about the balance ---
   const staleChains = wallet.stale ?? [];
   const lastExecution = newestExecutionAt(proposals);
-  const staleAfterWrite = lastExecution > 0 && newestFetchAt(input.chainStatus) < lastExecution;
+  const staleAfterWrite = lastExecution > 0 && readAtMs(input.readAt) < lastExecution;
 
   /* The number and the sentence are two fields, because they land in two places. The hero's
      own slot is set in the balance type, and a sentence there ("checking your new balance", in

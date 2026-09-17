@@ -26,7 +26,6 @@ import { createStore } from '../../src/store.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
 
@@ -96,9 +95,6 @@ function fakeLedger(): Ledger & { setUsdt(amountBase: string | null): void; refr
       for (const fn of listeners) fn();
       return snapshot;
     },
-    applyDemoTransfer: () => {
-      throw new Error('live mode');
-    },
     onRefresh: (fn: () => void) => {
       listeners.add(fn);
       return () => {
@@ -128,8 +124,7 @@ function setup(result: RailResult | ((ledger: ReturnType<typeof fakeLedger>) => 
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,
-    addresses: { evm: [SELF_EVM], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: SELF_EVM },
     candleProducts: [],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -140,11 +135,11 @@ function setup(result: RailResult | ((ledger: ReturnType<typeof fakeLedger>) => 
   for (const p of seed) store.put(p);
   const ledger = fakeLedger();
   const rails = spyRail(typeof result === 'function' ? () => result(ledger) : result);
-  const svc = createProposalService({ cfg, audit, store, ledger, riskRows, quoter: syntheticQuoter(), signer: stubSigner(), rails: rails.registry, dataDir });
+  const svc = createProposalService({ cfg, audit, store, ledger, riskRows, rails: rails.registry, dataDir });
   return { svc, store, ledger, rails, audit, lines: () => audit.tail(50).reverse() };
 }
 
-const swap = { venue: 'oneclick' as const, chain: 'arb' as const, fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: 50, minAmountOut: 49.5 };
+const swap = { chain: 'arb' as const, fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: 50, minAmountOut: 49.5 };
 
 /* A propose under the click threshold answers with the executing row and runs the rail behind
    it (src/proposals/execute.ts executeRail); the settled row is what these tests judge. */
@@ -279,7 +274,7 @@ test('without a rail read, the before and after are the intents pocket as the le
     ledger.setUsdt('104500000');
     return { ok: true, detail: 'spy rail', txids: ['0xintent'] };
   });
-  const p = await landed(h, h.svc.proposeSwap({ ...swap, venue: 'intents-native' as const }));
+  const p = await landed(h, h.svc.proposeSwap(swap));
   assert.equal(p.status, 'executed', p.result?.detail ?? '');
   assert.equal(p.balances?.beforeUsd, 105, '100 USDC and 5 USDT inside the verifier before');
   await drained();

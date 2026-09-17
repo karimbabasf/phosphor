@@ -75,7 +75,6 @@ export type DriverEvent =
    leaving a `{ truncated: n }` marker in the array it shortened, until the answer fits. */
 export const TOOL_DATA_TOOLS: ReadonlySet<string> = new Set([
   'wallet',
-  'balances',
   'trade_read',
   'trade_batch',
   'deposit',

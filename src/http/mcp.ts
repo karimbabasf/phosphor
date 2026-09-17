@@ -17,7 +17,6 @@ import type { JsonBody } from './respond.ts';
 import { agentReads } from './read/agents.ts';
 import { chainReads } from './read/chain.ts';
 import { chartReads } from './read/chart.ts';
-import { gasReads } from './read/gas.ts';
 import { marketReads } from './read/market.ts';
 import { tradeReads } from './read/trade.ts';
 import { walletReads } from './read/wallet.ts';
@@ -36,7 +35,6 @@ const READS: ReadTable = {
   ...marketReads,
   ...chartReads,
   ...agentReads,
-  ...gasReads,
   ...tradeReads,
   ...chainReads,
 };

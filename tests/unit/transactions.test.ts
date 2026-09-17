@@ -80,8 +80,9 @@ test('an executed proposal becomes one row, with the movement it actually made',
   const [entry] = build([swap()]);
   assert.equal(entry.action, 'swap');
   assert.equal(entry.status, 'executed');
-  assert.equal(entry.place, 'eth');
-  assert.equal(entry.toPlace, 'sol');
+  // Both legs inside the verifier: eth and sol are the assets' home chains, not places.
+  assert.equal(entry.place, 'intents');
+  assert.equal(entry.toPlace, 'intents');
   assert.deepEqual(entry.sent, { symbol: 'ETH', amount: 0.0048869082 });
   assert.deepEqual(entry.received, { symbol: 'SOL', amount: 0.121448554 }, 'the fill, read off the rail sentence');
   assert.equal(entry.valueUsd, 9.23);
@@ -199,13 +200,15 @@ test('the quote handle is read off the two sentences the rails write, and off no
   assert.equal(depositHandleOf('the deposit address 0xF121dEAE804852e25a92fe4eB64A0dA405a564c7 has no storage'), null, 'an address after other words is not the handle');
 });
 
-test('a chain hash recorded after the intent hash keeps its explorer', () => {
+test('a row the retired 1Click venue wrote still moves between chains, and its payout hash keeps its explorer', () => {
   const withPayout = swap({
-    draft: { ...(swap().draft as Record<string, unknown>), toChain: 'arb' } as Proposal['draft'],
-    result: { ok: true, detail: 'swapped', txids: ['intentHashHere', EVM_HASH] },
+    draft: { ...(swap().draft as Record<string, unknown>), venue: 'oneclick', toChain: 'arb' } as unknown as Proposal['draft'],
+    result: { ok: true, detail: 'swapped', txids: [EVM_HASH, EVM_HASH] },
   });
   const [entry] = build([withPayout]);
-  assert.equal(entry.hashes[0].kind, 'intent');
+  assert.equal(entry.place, 'eth', 'the origin chain, as the row recorded it');
+  assert.equal(entry.toPlace, 'arb');
+  assert.equal(entry.hashes[0].kind, 'chain');
   assert.equal(entry.hashes[1].kind, 'chain');
   assert.equal(entry.hashes[1].url, 'https://arbiscan.io/tx/' + EVM_HASH, 'the payout landed on arb');
 });
@@ -262,11 +265,6 @@ test('the venue fee is the one the human approved, and is absent when no quote n
   assert.equal(build([swap()])[0].venueFeeUsd, 0.0027);
   const noFee = swap({ simulation: { ok: true, summary: 'no fee line here' } });
   assert.equal(build([noFee])[0].venueFeeUsd, null);
-});
-
-test('gas is unknown until a receipt is read, and unknown is not zero', () => {
-  const [entry] = build([deposit()]);
-  assert.equal(entry.hashes[0].gas, null);
 });
 
 test('a move with no token amount says what it did move', () => {
@@ -500,7 +498,6 @@ test('a venue hash on a trade links to the venue explorer and never goes looking
   assert.equal(row.hashes.length, 1);
   assert.equal(row.hashes[0]?.place, 'hyperliquid');
   assert.equal(row.hashes[0]?.url, explorerTxUrl('hyperliquid', HL_HASH));
-  assert.equal(row.hashes[0]?.gasPending, true, 'the gas reader is asked once, and skips a place with no native symbol');
 });
 
 test('a trade that the venue refused is a failed row, and a pending one is no row', () => {

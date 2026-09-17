@@ -7,11 +7,9 @@
 //
 // Two things are deliberate:
 //
-//   1. 'swap' maps to ONE rail that dispatches on venue. Two venues share the kind
-//      (oneclick cross-chain, intents-native inside the verifier), and the alternative,
-//      keying the registry on kind+venue, would push that pair into every call site. Each
-//      rail still refuses a draft for the other venue on its own (requireVenue in both
-//      modules), so this dispatch is a router, not the check.
+//   1. 'swap' is the intents-native rail and nothing else: a swap is a balance inside the
+//      verifier changing what it holds. The chain-side 1Click venue went with the chain
+//      wallets (2026-09-16); rows it wrote still render as history.
 //
 //   2. Demo mode holds NO rails. The demo ledger is a fixture, not a chain: there is
 //      nothing for a swap to quote against and nothing for a bridge deposit to land in.
@@ -19,15 +17,12 @@
 //      which is better than a rail reaching for an RPC and a private key that the demo
 //      user never meant to involve.
 
-import type { AppConfig, ChainId, Rail, SwapDraft, WriteDraft } from '../types.ts';
-import type { OneClickClient, TokensFile } from '../intents.ts';
-import { oneClickClient } from '../intents.ts';
+import type { AppConfig, ChainId, Rail, WriteDraft } from '../types.ts';
+import type { TokensFile } from '../intents.ts';
+import { ONECLICK_COUNTERPARTY, oneClickClient } from '../intents.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
 import { hypercoreWithdrawRail } from './hypercore-withdraw.ts';
-import { ONECLICK_COUNTERPARTY, oneClickRail } from './oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
-import { intentsDepositRail } from './intents-deposit.ts';
-import { intentsWithdrawRail } from './intents-withdraw.ts';
 import { intentsSendRail } from './intents-send.ts';
 import { HYPERLIQUID_PERPS_COUNTERPARTY, tradeRail } from '../trade/rail.ts';
 import type { TradeDeps } from '../trade/rail.ts';
@@ -41,8 +36,8 @@ export type { RailDraft, RailKind };
 export { isRailDraft, isRailKind, RAIL_KINDS };
 
 export type RailRegistry = {
-  // The rail that owns this draft, or null when none does: consolidate, transfer and
-  // policy_change ride their own paths, and demo mode owns no rails at all.
+  // The rail that owns this draft, or null when none does: policy_change rides its own path,
+  // and demo mode owns no rails at all.
   for(draft: WriteDraft): Rail | null;
   kinds(): RailKind[];
 };
@@ -52,53 +47,6 @@ export type RailDeps = {
   tokens: TokensFile; // data/tokens.json, for the 1Click asset id lookup
   trade: TradeDeps; // the plan runner and the venue facts a plan is priced against
 };
-
-// Refuses by name rather than by silence. There is no fallback venue any more: a swap for a
-// venue this app does not run used to fall through to Uniswap, which meant a draft meant for
-// somewhere else was quietly executed on an on-chain DEX. Naming the venue in the error is
-// what turns "nothing happened" into a sentence a human can act on.
-function unknownSwapVenue(venue: string): Rail<SwapDraft> {
-  const refuse = (): never => {
-    throw new Error(
-      `no rail runs swaps on '${venue}'; this app swaps through 1Click (venue 'oneclick') or ` +
-        "inside the NEAR Intents verifier (venue 'intents-native')",
-    );
-  };
-  return {
-    kind: 'swap',
-    valueUsd: (draft) => draft.amountUsd,
-    simulate: async () => refuse(),
-    execute: async () => refuse(),
-  };
-}
-
-// One rail for kind 'swap', routing on the draft's venue.
-function swapRail(deps: RailDeps, client: OneClickClient): Rail<SwapDraft> {
-  const oneclick = oneClickRail({
-    keysPath: deps.cfg.keysPath,
-    tokens: deps.tokens,
-    client,
-  });
-  const intentsNative = intentsNativeRail({
-    keysPath: deps.cfg.keysPath,
-    tokens: deps.tokens,
-    client,
-  });
-  // Explicit per venue, with no default. Each rail still refuses a draft for another venue on
-  // its own, so this is a router and not the check.
-  const pick = (draft: SwapDraft): Rail<SwapDraft> => {
-    if (draft.venue === 'oneclick') return oneclick;
-    if (draft.venue === 'intents-native') return intentsNative;
-    return unknownSwapVenue(draft.venue);
-  };
-
-  return {
-    kind: 'swap',
-    valueUsd: (draft) => pick(draft).valueUsd(draft),
-    simulate: (draft) => pick(draft).simulate(draft),
-    execute: (draft) => pick(draft).execute(draft),
-  };
-}
 
 export function createRails(deps: RailDeps): RailRegistry {
   if (deps.cfg.mode === 'demo') {
@@ -114,27 +62,17 @@ export function createRails(deps: RailDeps): RailRegistry {
   const client = oneClickClient();
 
   const table: Record<RailKind, Rail> = {
-    swap: swapRail(deps, client) as Rail,
+    swap: intentsNativeRail({
+      keysPath: deps.cfg.keysPath,
+      tokens: deps.tokens,
+      client,
+    }) as Rail,
     hl_deposit: hypercoreDepositRail({
       keysPath: deps.cfg.keysPath,
       client,
     }) as Rail,
     hl_withdraw: hypercoreWithdrawRail({
       keysPath: deps.cfg.keysPath,
-      client,
-    }) as Rail,
-    intents_deposit: intentsDepositRail({
-      keysPath: deps.cfg.keysPath,
-      tokens: deps.tokens,
-      client,
-    }) as Rail,
-    // The only rail that is handed the address book. It pays out to a wallet on a real chain,
-    // so it re-derives the destination from config itself rather than trusting the draft that
-    // reaches it; see the header of intents-withdraw.ts.
-    intents_withdraw: intentsWithdrawRail({
-      keysPath: deps.cfg.keysPath,
-      tokens: deps.tokens,
-      addresses: deps.cfg.addresses,
       client,
     }) as Rail,
     // The one rail whose destination is another account: the policy allowlist blesses it,
@@ -183,7 +121,8 @@ export function venueAllowlist(): string[] {
   // so its counterparty is the verifier, the entry added a few lines down.
 
   // 1Click mints a fresh deposit address per quote, so no address of its own can ever sit
-  // on a static list; the venue string is the allowlist entry (see the comment on
+  // on a static list; the venue string is the allowlist entry, and the Hyperliquid withdraw
+  // rail names it (src/intents.ts).
   out.add(ONECLICK_COUNTERPARTY.toLowerCase());
 
   // The intents-native rail is the opposite case, and it is the reason that rail exists: its

@@ -65,7 +65,6 @@ test('evidence a rail hands back mid-flight is on the row while it is still exec
 
 test('the balance before a move is the wallet total, read from the verifier, not the empty chain holdings', async () => {
   const h = makeCtx({
-    holdings: 'none',
     intentsUsdc: 24.78,
     rails: [railThat('hl_deposit', async () => ({ ok: true, detail: 'funded', txids: ['h2'] }))],
   });
@@ -79,14 +78,13 @@ test('the balance before is null, not zero, when the verifier read failed', asyn
     intents: { ok: false, fetchedAt: new Date().toISOString(), holdings: [], error: 'rpc down' },
     rails: [railThat('swap', async () => ({ ok: true, detail: 'swapped', txids: ['h3'] }))],
   });
-  const p = await landed(h, h.svc.proposeSwap({ venue: 'oneclick', chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 50, minAmountOut: 49 }));
+  const p = await landed(h, h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 50, minAmountOut: 49 }));
   assert.equal(p.status, 'executed', JSON.stringify(p.verdict));
   assert.equal(p.balances?.beforeUsd, null, 'a total the app could not read is not a total of zero');
 });
 
 test('the balance after waits for a ledger read stamped later than the settlement', async () => {
   const h = makeCtx({
-    holdings: 'none',
     intentsUsdc: 30,
     rails: [railThat('hl_deposit', async () => ({ ok: true, detail: 'funded', txids: ['h4'] }))],
   });

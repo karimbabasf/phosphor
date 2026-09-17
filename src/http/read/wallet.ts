@@ -6,7 +6,7 @@ import { buildWallet } from '../../wallet.ts';
 import { buildGreeting } from '../../greeting.ts';
 import { loadProfile } from '../../profile/index.ts';
 import { VERSION } from '../../version.ts';
-import { fail, intParam, round2, sendJson } from '../respond.ts';
+import { fail, intParam, sendJson } from '../respond.ts';
 import { LOG_LIMIT_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
@@ -94,7 +94,7 @@ export const walletReads: ReadTable = {
         totalUsd: wallet.totalUsd,
         // Places actually holding something, which is what "across N chains" means to a
         // reader. Counting configured chains instead would say 5 while 2 hold the money.
-        chainCount: Object.values(wallet.byChain).filter((usd) => usd > 0).length,
+        pocketCount: Object.values(wallet.byChain).filter((usd) => usd > 0).length,
         pendingCount: pending.length,
         clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
         killSwitch: policy?.killSwitch ?? false,
@@ -121,27 +121,9 @@ export const walletReads: ReadTable = {
       backedUp: vault.backedUp,
     });
   },
-  balances: (ctx, _body, _args, res) => {
-    const snapshot = ctx.ledger.snapshot();
-    const composition = classify(snapshot, ctx.riskRows);
-    /* The total is the wallet card's total, pockets and all. It summed snapshot.holdings, which
-       a live refresh keeps empty on purpose (src/ledger/index.ts: the money sits in the verifier
-       and on Hyperliquid), so this tool told the agent the wallet held $0 with every chain ok. */
-    const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
-    sendJson(res, 200, {
-      mode: snapshot.mode,
-      totalStableUsd: round2(composition.totalUsd),
-      totalUsd: round2(wallet.totalUsd),
-      rows: wallet.rows,
-      stale: wallet.stale,
-      holdings: snapshot.holdings,
-      chainStatus: snapshot.chainStatus,
-      prices: snapshot.prices,
-      gas: snapshot.gas,
-    });
-  },
   composition: (ctx, _body, _args, res) => {
-    sendJson(res, 200, classify(ctx.ledger.snapshot(), ctx.riskRows));
+    const wallet = buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid());
+    sendJson(res, 200, classify(wallet.rows, ctx.riskRows));
   },
   wallet: (ctx, _body, _args, res) => {
     const vault = vaultStatus(ctx);

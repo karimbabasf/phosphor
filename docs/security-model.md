@@ -53,19 +53,27 @@ The chain stops at the first refusal, in this order:
 3. Policy changes branch off here: `killSwitch`, `version` and the rendered sentences are not
    patchable at all (`kill_switch_not_patchable`); anything else is schema-checked
    (`invalid_patch`); a valid patch always returns `needs_approval`
-4. Draft has legs (`nothing_to_move`), leg amounts are finite and checkable (`invalid_leg`), every
-   leg carries a quote (`simulation_required`)
-5. Destination is one of our own addresses or on the allowlist (`destination_not_allowed`)
-6. Per-transaction cap, measured per leg (`max_per_transaction`)
-7. Rolling session cap (`max_per_session`)
-8. Forbidden issuer for the symbol being moved (`forbidden_issuer`)
-9. Post-move composition: issuer share caps (`max_issuer_share`), freezable cap
-   (`max_freezable_share`), per-chain gas floors (`min_native_gas`)
-10. Above the click threshold, so `needs_approval`
+4. The draft is a rail this app runs (a swap inside NEAR Intents, a Hyperliquid deposit or
+   withdrawal, a send to another intents account, a trade); any other kind is refused by name
+   (`unknown_kind`)
+5. The amount the app priced is finite and positive (`invalid_amount`)
+6. The venue the funds are handed to is on the allowlist, and the account the proceeds land in is
+   one of our own or on the allowlist (`destination_not_allowed`)
+7. Per-transaction cap (`max_per_transaction`)
+8. Rolling session cap (`max_per_session`)
+9. Composition, over the two pockets (the NEAR Intents balance and the Hyperliquid collateral):
+   the issuer of what the move brings in is not forbidden (`forbidden_issuer`), and the state the
+   move would leave behind is inside the issuer share caps (`max_issuer_share`) and the freezable
+   cap (`max_freezable_share`)
+10. Above the click threshold, so `needs_approval`; and past the auto-approved daily ceiling,
+    `needs_approval` too
 11. Otherwise `allow`
 
+Every rail then simulates before anything is signed, and a simulation that fails is a refusal
+(`simulation_required`), never a pending proposal a person could click.
+
 Two details in there carry weight. Composition rules judge the resulting state rather than the
-delta, so a portfolio already past a cap cannot make further fund moves until a human changes the
+delta, so a portfolio already past a cap cannot make further moves until a human changes the
 policy or the breach clears. And a policy change can never be auto-executed no matter how small or
 how sensible, because a policy change the human did not click is how every other guarantee here
 gets removed.
@@ -139,8 +147,8 @@ the human has to be looking at the same facts.
 
 One thing `basic` deliberately refuses to do: state a balance it cannot back. `totalUsd` goes
 null, and the state line under the number says "Still checking." or "Checking your new balance."
-(`checkingLine`), whenever a chain read failed or the newest `chainStatus.fetchedAt` predates the
-most recent executed proposal. The number's own slot keeps the last read total, or goes empty when
+(`checkingLine`), whenever a pocket read failed or the ledger's `fetchedAt` predates the most
+recent executed proposal. The number's own slot keeps the last read total, or goes empty when
 that total reads as nothing, and never carries the sentence. The ledger cache serves pre-trade
 balances after a write while still reporting `stale: []`, and `basic` is aimed at a reader with
 nothing to cross-check against. The ledger stamps `fetchedAt` at the start of every refresh, so
@@ -157,15 +165,17 @@ Every ambiguous state resolves toward moving nothing.
   that would silently replace whatever restrictions the human had authored with permissive ones.
 - **Missing policy file on first boot**: seeded with defaults, and only then, because absence is not
   corruption.
-- **Failed simulation**: a leg without a quote is refused with `simulation_required`. A write that
-  cannot be simulated is never allowed, so a quoter outage cannot become an unpriced transfer.
+- **Failed simulation**: a rail whose dry quote fails is refused with `simulation_required`. A
+  write that cannot be simulated is never allowed, so a venue outage cannot become an unpriced
+  move.
 - **Failed or erroring quote**: refused with the solver error verbatim, and no retry loop, since a
   retry loop against a failing rail is how one refusal becomes many attempts.
 - **Unclassified assets**: an asset with no row in the risk table counts toward the freezable cap.
   Unknown is treated as dangerous, so a new token cannot dodge a composition limit by not being in
   the table yet.
-- **Stale chain reads**: marked stale with a timestamp rather than shown as zero, because a zero
-  balance silently makes every share calculation wrong in the permissive direction.
+- **Stale pocket reads**: a verifier or venue read that failed keeps the last good rows and is
+  marked stale rather than shown as zero, because a zero balance silently makes every share
+  calculation wrong in the permissive direction.
 
 ## The browser surface
 
@@ -358,25 +368,16 @@ an agent that opens a socket instead, per the boundary above.
 That last test is the one that matters most, because it is the only one that would still catch a
 regression introduced by a future code path nobody thought to write a targeted test for.
 
-## What auth-last still requires
+## What signs, and with what
 
-Live execution is stubbed behind a `Signer` interface and fails with a clear message until keys are
-configured. This ordering is deliberate: the guarantees above were built and tested against a
-synthetic quoter, so no key existed while the policy engine was being written and no bug in it could
-cost anything.
+One key signs everything: the EVM key in the keystore. It signs ERC-191 intents for the NEAR
+Intents rails (`src/rails/intents-native.ts`, `src/rails/intents-send.ts`, `src/rails/intents-spend.ts`)
+and EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). Nothing signs a chain
+transaction: the chain signers that used to live in `src/chain/evm.ts` and `src/chain/near.ts`
+went with the chain wallets (2026-09-16), and those two files now hold only the readers, the
+explorer prefixes, the NEAR RPC and the address rules. The keystore file still seals the Solana
+and NEAR keys a wallet's mnemonic derives, and nothing reads them.
 
-Before any live signing, in this order:
-
-1. **Review `data/risk-table.json`.** Composition policy is only as good as the rows behind it.
-2. **Decide key custody and implement the Signer** (env var, keychain, or hardware) in
-   `src/intents.ts`, against the interface in `src/types.ts`. The stub shows the contract.
-3. **Move `toBaseUnits` to BigInt before signing.** It currently works in floats, which is fine for
-   quoting and display and is not fine for 18-decimal amounts at signing time, where a float rounds
-   and a rounded amount is a wrong amount on chain.
-4. **Real 1Click execution**: non-dry quote returns a deposit address, the Signer sends to it, then
-   poll `/v0/status`. The quote client already exists; only the signing send is missing.
-5. Optional: a 1Click JWT for the lower fee tier.
-
-The policy engine is unchanged by any of it. It already refuses on the same rules whether the
-execution behind it is synthetic or real, which was the point of stubbing the signer rather than the
-policy.
+Every amount that reaches a signature is a BigInt in base units, checked against the quote the
+human approved (`checkIntentPayload`), and the quote itself is checked against the venue's
+signature (`src/quote-signature.ts`) before it is trusted.

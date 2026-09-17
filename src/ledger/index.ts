@@ -1,24 +1,20 @@
-// Ledger orchestrator. Demo mode wraps the static fixture in mutable state so an executed
-// consolidation stays visible across refreshes.
+// Ledger orchestrator. Demo mode serves the static fixture; live mode reads the venues.
 //
-// LIVE MODE READS ONE PLACE, and that is the whole shape of this app now. This app holds money
+// LIVE MODE READS TWO PLACES, and that is the whole shape of this app now. This app holds money
 // in two venues, NEAR Intents and Hyperliquid, and neither of them is a chain balance: an
 // Intents balance is an entry on the verifier's own ledger, and a Hyperliquid balance lives in
-// the trading account, read by src/hl/ where it is traded. The five chains still exist and are
-// still signed for, but as TRANSIT: money crosses them on its way in and on its way out, and it
-// is not held there. So there is no per-chain balance fan-out any more, and chainStatus and gas
-// stay on the snapshot only because every reader of a LedgerSnapshot expects one entry per
-// chain (see the note on emptyChainStatus).
-import type { AppConfig, ChainId, ChainStatus, Holding, LedgerSnapshot, TransferLeg } from '../types.ts';
-import { loadDemoLedger } from './demo.ts';
+// the trading account. Money crosses a chain on its way in (the POA deposit address) and on its
+// way out (a payout), and it is not held there. So there is no per-chain balance fan-out, no
+// chain status and no gas table: the snapshot carries the prices the pocket reads are valued at
+// and the stamp of the pass, and each pocket read carries its own ok flag.
+import type { AppConfig, LedgerSnapshot } from '../types.ts';
+import { loadDemoLedger, loadDemoReads } from './demo.ts';
 import { fetchIntentsHoldings, REFRESH_PERIOD_MS, type IntentsRead } from './intents.ts';
 import { fetchHyperliquidRead, type HlRead } from './hyperliquid.ts';
 import { oneClickClient } from '../intents.ts';
-import { evmAddress } from '../chain/evm.ts';
+import { evmAddress } from '../keystore/index.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
-
-const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 // The verifier lives on NEAR, so this is the one RPC endpoint the ledger still needs. It comes
 // from src/chain/near.ts so the reader and the signer can never point at different endpoints.
@@ -37,7 +33,6 @@ export type Ledger = {
   // What the Hyperliquid account holds. Same contract as intents(): undefined when never asked.
   hyperliquid(): HlRead | undefined;
   refresh(): Promise<LedgerSnapshot>;
-  applyDemoTransfer(leg: TransferLeg): void;
   // Told after every refresh lands, so a proposal waiting to see a balance move can judge the
   // same read the panel is about to show instead of making a read of its own. Returns the
   // unsubscribe. Optional because the tests build many small ledgers by hand and none of them
@@ -68,73 +63,26 @@ function refreshListeners(): { add(fn: () => void): () => void; tell(): void } {
   };
 }
 
-/* Every chain ok, stamped with the moment it was built, once per refresh. There is no per-chain
-   read left to fail, so there is no chain that can go stale: a STALE badge would be reporting on
-   a request nobody made. The five keys stay because chainStatus is a total Record<ChainId, ...>
-   and several readers index it without a guard; an absent key would be a crash where a truthful
-   "nothing to say" is what is meant. The verifier read carries its own ok flag (IntentsRead),
-   and that is the one staleness this app can honestly report. The stamp is still read: see the
-   note at the top of refresh(). */
-function emptyChainStatus(): Record<ChainId, ChainStatus> {
-  const fetchedAt = new Date().toISOString();
-  return Object.fromEntries(ALL_CHAINS.map(c => [c, { ok: true, fetchedAt }])) as Record<ChainId, ChainStatus>;
-}
-
 // ---------- demo mode ----------
 
 function createDemoLedger(): Ledger {
   let current: LedgerSnapshot = loadDemoLedger();
+  let reads = loadDemoReads();
   const listeners = refreshListeners();
-
-  function applyDemoTransfer(leg: TransferLeg): void {
-    const holdings = current.holdings.map(h => ({ ...h }));
-
-    const from = holdings.find(h => h.chain === leg.fromChain && h.symbol === leg.symbol && !h.native);
-    if (from) from.amount = Math.max(0, from.amount - leg.amount);
-
-    const gasHolding = holdings.find(h => h.chain === leg.fromChain && h.native);
-    if (gasHolding) {
-      const nativePrice = current.prices[gasHolding.symbol] ?? 0;
-      const gasUsd = current.gas[leg.fromChain]?.transferCostUsd ?? 0;
-      const gasNativeUnits = nativePrice > 0 ? gasUsd / nativePrice : 0;
-      gasHolding.amount = Math.max(0, gasHolding.amount - gasNativeUnits);
-    }
-
-    const amountOut = leg.quote?.amountOut ?? leg.amount;
-    let to = holdings.find(h => h.chain === leg.toChain && h.symbol === leg.symbol && !h.native);
-    if (!to) {
-      to = {
-        chain: leg.toChain,
-        address: from?.address ?? leg.to,
-        symbol: leg.symbol,
-        tokenId: from?.tokenId ?? leg.symbol,
-        amount: 0,
-        usd: 0,
-        native: false,
-      };
-      holdings.push(to);
-    }
-    to.amount += amountOut;
-
-    for (const h of holdings) {
-      h.usd = h.native ? h.amount * (current.prices[h.symbol] ?? 0) : h.amount;
-    }
-    current = { ...current, holdings };
-  }
 
   return {
     snapshot: () => current,
-    intents: () => undefined, // demo mode signs nothing and deposits nothing
-    hyperliquid: () => undefined,
+    intents: () => reads.intents,
+    hyperliquid: () => reads.hyperliquid,
     // The fixture is static and nothing is re-fetched, but the stamp is a claim about WHEN the
-    // holdings were last read, and src/view/basic.ts holds it against the last fill. See the
+    // balances were last read, and src/view/basic.ts holds it against the last fill. See the
     // live refresh for what a stamp that never moved did to the basic screen.
     refresh: async () => {
-      current = { ...current, chainStatus: emptyChainStatus() };
+      current = { ...current, fetchedAt: new Date().toISOString() };
+      reads = loadDemoReads();
       listeners.tell();
       return current;
     },
-    applyDemoTransfer,
     onRefresh: listeners.add,
   };
 }
@@ -233,12 +181,10 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
   let started = 0;
   let written = 0;
   let current: LedgerSnapshot = {
-    holdings: [],
-    chainStatus: emptyChainStatus(),
     mode: 'live',
+    fetchedAt: new Date().toISOString(),
     prices: {},
     priceAsOf: {},
-    gas: Object.fromEntries(ALL_CHAINS.map(c => [c, { transferCostUsd: 0 }])) as Record<ChainId, { transferCostUsd: number }>,
   };
 
   // A verifier read that fails keeps the last good holdings AND their stamp, counts the miss,
@@ -278,7 +224,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
        said "checking your new balance" and never stopped. The stamp is taken before the reads
        rather than after them because a read that started before a fill can only carry the
        balance from before it, whatever the clock said when the answer came back. */
-    const chainStatus = emptyChainStatus();
+    const fetchedAt = new Date().toISOString();
     const seq = ++started;
     // Started, not awaited: the verifier read does not depend on a price to happen, only to
     // be valued, so the two run together and meet at the end.
@@ -294,21 +240,16 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
     liveIntents = intentsRead;
     liveHl = hlRead;
 
-    /* holdings stays EMPTY on a live snapshot, and that is the fact rather than a gap. What
-       this app owns sits inside the Intents verifier and inside the Hyperliquid account, and
-       both are read here: the verifier through intents(), the trading account through
-       hyperliquid(). A chain balance would be money parked in transit, which is a state this
-       app moves through and does not hold.
-       The prices are still fetched, because the wallet panel prices the verifier's rows off
-       this same table and a stablecoin held only inside the verifier is priced off nothing
-       otherwise. */
+    /* What this app owns sits inside the Intents verifier and inside the Hyperliquid account,
+       and both are read above: the verifier through intents(), the trading account through
+       hyperliquid(). The prices are fetched because the wallet panel prices the verifier's
+       rows off this table, and a stablecoin held only inside the verifier is priced off
+       nothing otherwise. */
     current = {
-      holdings: [],
-      chainStatus,
       mode: 'live',
+      fetchedAt,
       prices: priced.prices,
       priceAsOf: priced.asOf,
-      gas: current.gas,
     };
     listeners.tell();
     return current;
@@ -319,9 +260,6 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
     intents: () => liveIntents,
     hyperliquid: () => liveHl,
     refresh,
-    applyDemoTransfer: () => {
-      throw new Error('applyDemoTransfer is demo-mode only');
-    },
     onRefresh: listeners.add,
   };
 }
@@ -335,4 +273,3 @@ export function createLedger(cfg: AppConfig, deps?: { fetchImpl?: typeof fetch; 
 }
 
 export { REFRESH_PERIOD_MS };
-export type { Holding };

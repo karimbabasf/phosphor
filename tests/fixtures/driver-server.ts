@@ -22,21 +22,13 @@ import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import type { DriverState } from '../../src/driver.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const FETCHED_AT = '2026-08-20T00:00:00.000Z';
 
 function snapshot(): LedgerSnapshot {
-  const status: ChainStatus = { ok: true, fetchedAt: FETCHED_AT };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: FETCHED_AT, prices: {} };
 }
 
 // What the fake agent was asked to do, in order. Assertions read this instead of guessing from
@@ -75,8 +67,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: ['0xself'], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: '0xself' },
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -121,19 +112,15 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => { throw new Error('unused'); },
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
       proposeHlWithdraw: async () => { throw new Error('unused'); },
-      proposeIntentsDeposit: async () => { throw new Error('unused'); },
-      proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsSend: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },
       proposeTradeChange: async () => { throw new Error('unused'); },

@@ -2,21 +2,18 @@
 //
 // It is DERIVED, never a second ledger. The proposal store already holds every write this
 // app has made, and the audit log already holds the hashes those writes produced. This
-// joins the two and adds the three things a person reading a wallet expects and neither
-// source carries: which explorer a hash belongs to, what it cost in gas, and which side of
-// the trade an address is on. Nothing here is authored: every number traces to a proposal,
-// a receipt, or a quote the human approved.
+// joins the two and adds the two things a person reading a wallet expects and neither
+// source carries: which explorer a hash belongs to, and which side of the trade an address
+// is on. Nothing here is authored: every number traces to a proposal or a quote the human
+// approved. Gas is not here: every move settles inside a venue, and a solver pays the gas.
 //
 // Why the audit log for hashes. executeRail logs {id, txids} and stores {ok, detail} on the
 // proposal, so the hashes have historically lived in the log alone. They are now written to
 // the proposal as well (see proposals.ts), because the log is compactable and a compacted
 // log would take the evidence with it. Old records still resolve through the join.
 
-import fs from 'node:fs';
-import path from 'node:path';
 import type { ChainId, DecidedBy, LogEvent, Proposal, RailEvidence, WriteDraft } from './types.ts';
-import { chainSpec, reader } from './chain/evm.ts';
-import { atomicWriteJson } from './fsatomic.ts';
+import { chainSpec } from './chain/evm.ts';
 import { HYPERLIQUID_EXPLORER_ADDRESS, HYPERLIQUID_EXPLORER_TX } from './explorers.ts';
 
 // ---------- explorers ----------
@@ -45,7 +42,7 @@ export type TxPlace = ChainId | 'intents' | 'hyperliquid';
 function evmExplorer(chain: ChainId): { tx: string; address: string } | null {
   try {
     const spec = chainSpec(chain);
-    return { tx: spec.explorerTx, address: spec.explorerTx.replace(/\/tx\/$/, '/address/') };
+    return { tx: spec.explorerTx, address: spec.explorerAddress };
   } catch {
     return null;
   }
@@ -84,24 +81,6 @@ export type TxHash = {
   // of them "tx" is how a reader ends up looking for a fee that never existed.
   kind: 'chain' | 'intent';
   url: string | null;
-  // Filled in by the enricher for EVM hashes, null until then or when the read failed.
-  gas: TxGas | null;
-  // Whether the fee is still coming. False with a null gas means no chain we can reach
-  // knows this hash, which the surface says as "unknown" rather than as "reading".
-  gasPending: boolean;
-};
-
-export type TxGas = {
-  // The chain whose RPC actually returned this receipt, which is the authority on where
-  // the hash lives. It overrides the guess classifyHash made from the draft.
-  place: TxPlace;
-  gasUsed: string; // base units, as a decimal string: a receipt figure, not a rounded one
-  gasPriceWei: string;
-  feeNative: number;
-  feeSymbol: string;
-  feeUsd: number | null;
-  blockNumber: string | null;
-  status: 'success' | 'reverted';
 };
 
 export type TxParty = { label: string; address: string; place: TxPlace; url: string | null; self: boolean };
@@ -155,9 +134,9 @@ const ACTIONS: Record<string, TxEntry['action'] | null | undefined> = {
   intents_deposit: 'deposit',
   intents_withdraw: 'withdraw',
   intents_send: 'transfer',
+  // Retired rails, kept for the rows already on disk.
   transfer: 'transfer',
   consolidate: 'consolidate',
-  // Retired rails, kept for the rows already on disk.
   lp_add: 'lp add',
   lp_remove: 'lp remove',
   // Money leaving the wallet for a lending pool, and coming back from one. Deliberately the
@@ -242,7 +221,7 @@ function classifyHash(
   place: TxPlace,
   toPlace: TxPlace,
 ): { place: TxPlace; kind: TxHash['kind'] } {
-  if (index === 0 && (kind === 'intents_withdraw' || kind === 'intents_send' || kind === 'hl_deposit' || venue === 'intents-native')) {
+  if (index === 0 && (String(kind) === 'intents_withdraw' || kind === 'intents_send' || kind === 'hl_deposit' || venue === 'intents-native')) {
     return { place: 'intents', kind: 'intent' };
   }
   // A hash a trade recorded is the venue's own ledger hash: the venue's explorer resolves
@@ -302,9 +281,9 @@ type Sides = {
 };
 
 /* The shape a retired draft has on disk. Not a live type: nothing builds one of these any
-   more, and this exists so the four kinds the rail table dropped can still be rendered off
-   the rows already written. Every field is optional because it is being read back out of
-   JSON rather than off a draft the type system saw built. */
+   more, and this exists so the kinds the rail table dropped can still be rendered off the
+   rows already written. Every field is optional because it is being read back out of JSON
+   rather than off a draft the type system saw built. */
 type RetiredDraft = {
   kind: string;
   chain?: TxPlace;
@@ -312,14 +291,25 @@ type RetiredDraft = {
   symbol?: string;
   amount?: number;
   amountBase?: string | null;
+  amountUsd?: number;
   liquidityPct?: number;
   token0?: { symbol: string; amount: number };
   token1?: { symbol: string };
   from?: string;
+  to?: string;
+  intentsAccount?: string;
   counterparty?: string;
+  // The chain-era fund moves (gone 2026-09-16): a consolidation gathered one symbol across
+  // legs onto toChain, a transfer was one leg.
+  toChain?: TxPlace;
+  totalUsd?: number;
+  legs?: RetiredLeg[];
+  leg?: RetiredLeg;
 };
 
-const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw'];
+type RetiredLeg = { fromChain?: TxPlace; toChain?: TxPlace; symbol?: string; amount?: number; amountUsd?: number; from?: string; to?: string };
+
+const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'consolidate', 'transfer', 'intents_deposit', 'intents_withdraw'];
 
 /* Historic rows, rendered off what the retired draft actually carries.
    These used to fall through to `default`, which is a quiet way to be wrong: the fallback
@@ -334,6 +324,56 @@ const RETIRED_KINDS = ['lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw']
    `amount` still holds what was quoted, so it is the honest thing to show, and a full exit
    says so in `note` rather than printing a figure that was already stale when written. */
 function retiredSidesOf(draft: RetiredDraft): Sides {
+  // The chain-era fund moves: every field off the legs the row carries, nothing guessed.
+  // The chain moves in and out of the verifier (gone 2026-09-16 with the chain wallets).
+  if (draft.kind === 'intents_deposit') {
+    return {
+      place: draft.chain ?? 'eth',
+      toPlace: 'intents',
+      venue: 'intents.near',
+      sent: draft.symbol === undefined || draft.amount === undefined ? null : { symbol: draft.symbol, amount: draft.amount },
+      from: draft.from,
+      to: draft.intentsAccount,
+      counterparty: draft.counterparty,
+    };
+  }
+  if (draft.kind === 'intents_withdraw') {
+    return {
+      place: 'intents',
+      toPlace: draft.chain ?? 'eth',
+      venue: 'intents.near',
+      sent: draft.symbol === undefined || draft.amount === undefined ? null : { symbol: draft.symbol, amount: draft.amount },
+      from: draft.from,
+      to: draft.to,
+      counterparty: draft.counterparty,
+    };
+  }
+  if (draft.kind === 'transfer') {
+    const leg = draft.leg ?? {};
+    return {
+      place: leg.fromChain ?? 'eth',
+      toPlace: leg.toChain ?? leg.fromChain ?? 'eth',
+      venue: null,
+      sent: leg.symbol === undefined || leg.amount === undefined ? null : { symbol: leg.symbol, amount: leg.amount },
+      from: leg.from,
+      to: leg.to,
+      counterparty: undefined,
+    };
+  }
+  if (draft.kind === 'consolidate') {
+    const legs = draft.legs ?? [];
+    const first = legs[0];
+    const toPlace = draft.toChain ?? 'eth';
+    return {
+      place: first?.fromChain ?? toPlace,
+      toPlace,
+      venue: null,
+      sent: draft.symbol === undefined ? null : { symbol: draft.symbol, amount: legs.reduce((sum, leg) => sum + (leg.amount ?? 0), 0) },
+      from: first?.from,
+      to: first?.to,
+      counterparty: undefined,
+    };
+  }
   const place = draft.chain ?? 'eth';
   const base = { place, toPlace: place, venue: draft.venue ?? null, counterparty: draft.counterparty };
   if (draft.kind === 'lp_add') {
@@ -379,16 +419,22 @@ function sidesOf(draft: WriteDraft): Sides {
     };
   }
   switch (draft.kind) {
-    case 'swap':
+    case 'swap': {
+      // Both legs sit inside the verifier: chain and toChain are the home chains of the two
+      // assets, not places the money went. A row the retired 1Click venue wrote did move
+      // between chains, and it keeps saying so; the venue is read as the string it is.
+      const venue = String(draft.venue);
+      const inside = venue === 'intents-native';
       return {
-        place: draft.chain,
-        toPlace: draft.toChain,
-        venue: draft.venue,
+        place: inside ? 'intents' : draft.chain,
+        toPlace: inside ? 'intents' : draft.toChain,
+        venue,
         sent: { symbol: draft.fromSymbol, amount: draft.amountIn },
         from: draft.from,
         to: draft.to,
         counterparty: draft.counterparty,
       };
+    }
     case 'hl_deposit':
       return {
         // The money leaves the intents balance and lands on the venue. Earlier mechanisms
@@ -402,16 +448,6 @@ function sidesOf(draft: WriteDraft): Sides {
         to: draft.hlAccount,
         counterparty: draft.counterparty,
       };
-    case 'intents_deposit':
-      return {
-        place: draft.chain,
-        toPlace: 'intents',
-        venue: 'intents.near',
-        sent: { symbol: draft.symbol, amount: draft.amount },
-        from: draft.from,
-        to: draft.intentsAccount,
-        counterparty: draft.counterparty,
-      };
     case 'hl_withdraw':
       return {
         // Collateral leaves the venue and lands inside the verifier. The first hash is the
@@ -419,16 +455,6 @@ function sidesOf(draft: WriteDraft): Sides {
         place: 'hyperliquid',
         toPlace: 'intents',
         venue: 'hyperliquid',
-        sent: { symbol: draft.symbol, amount: draft.amount },
-        from: draft.from,
-        to: draft.to,
-        counterparty: draft.counterparty,
-      };
-    case 'intents_withdraw':
-      return {
-        place: 'intents',
-        toPlace: draft.chain,
-        venue: 'intents.near',
         sent: { symbol: draft.symbol, amount: draft.amount },
         from: draft.from,
         to: draft.to,
@@ -445,28 +471,6 @@ function sidesOf(draft: WriteDraft): Sides {
         to: draft.to,
         counterparty: draft.counterparty,
       };
-    case 'transfer':
-      return {
-        place: draft.leg.fromChain,
-        toPlace: draft.leg.toChain,
-        venue: null,
-        sent: { symbol: draft.leg.symbol, amount: draft.leg.amount },
-        from: draft.leg.from,
-        to: draft.leg.to,
-        counterparty: undefined,
-      };
-    case 'consolidate': {
-      const first = draft.legs[0];
-      return {
-        place: first?.fromChain ?? draft.toChain,
-        toPlace: draft.toChain,
-        venue: null,
-        sent: { symbol: draft.symbol, amount: draft.legs.reduce((sum, leg) => sum + leg.amount, 0) },
-        from: first?.from,
-        to: first?.to,
-        counterparty: undefined,
-      };
-    }
     default:
       return { place: 'eth', toPlace: 'eth', venue: null, sent: null, from: undefined, to: undefined, counterparty: undefined };
   }
@@ -486,8 +490,9 @@ function noteOf(draft: WriteDraft): string | null {
 // first; the sentence is read only for rows from before that field existed, and never a
 // figure the sentence calls quoted, because a quote is a promise and not an arrival.
 function receivedOf(draft: WriteDraft, detail: string, evidence: RailEvidence | undefined): { symbol: string; amount: number } | null {
-  if (draft.kind !== 'swap' && draft.kind !== 'intents_withdraw' && draft.kind !== 'intents_deposit') return null;
-  const symbol = draft.kind === 'swap' ? draft.toSymbol : draft.symbol;
+  const kind = String(draft.kind);
+  if (kind !== 'swap' && kind !== 'intents_withdraw' && kind !== 'intents_deposit') return null;
+  const symbol = draft.kind === 'swap' ? draft.toSymbol : ((draft as unknown as RetiredDraft).symbol ?? '');
   const settled = Number(evidence?.settledAmountOut);
   if (typeof evidence?.settledAmountOut === 'string' && Number.isFinite(settled)) return { symbol, amount: settled };
   // Rail sentences are generated by this repo: "swapped X ETH for 0.1214 SOL", "1.9927 USDC
@@ -514,8 +519,10 @@ function round(n: number): number {
 
 function usdOf(draft: WriteDraft): number {
   if (draft.kind === 'policy_change') return 0;
-  if (draft.kind === 'consolidate') return draft.totalUsd;
-  if (draft.kind === 'transfer') return draft.leg.amountUsd;
+  if (RETIRED_KINDS.includes(draft.kind)) {
+    const retired = draft as unknown as RetiredDraft;
+    return retired.totalUsd ?? retired.leg?.amountUsd ?? retired.amountUsd ?? 0;
+  }
   return draft.amountUsd;
 }
 
@@ -544,18 +551,12 @@ export type BuildParams = {
   proposals: Proposal[];
   events: LogEvent[];
   selfAddresses: string[];
-  // Hash -> gas, from the enricher. Absent keys read as "not looked up yet", never as "free".
-  gas?: Map<string, TxGas>;
-  // Hashes the enricher looked for and could not find on any chain it can reach.
-  tried?: Set<string>;
 };
 
 export function buildTransactions(params: BuildParams): TxEntry[] {
   const { proposals, events } = params;
   const fromLog = txidsFromLog(events);
   const selfAddresses = new Set(params.selfAddresses.map(a => a.toLowerCase()));
-  const gas = params.gas ?? new Map<string, TxGas>();
-  const tried = params.tried ?? new Set<string>();
 
   const entries: TxEntry[] = [];
   for (const p of proposals) {
@@ -568,17 +569,11 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
     const swapPage = intentsSwapUrl(depositHandleOf(detail));
     const hashes = hashesFor(p, fromLog).map((hash, index): TxHash => {
       const seen = classifyHash(hash, index, p.draft.kind, sides.venue, sides.place, sides.toPlace);
-      // A receipt outranks the guess: if this hash was read off arb, the row says arb and
-      // the link goes to arbiscan, whatever the draft implied.
-      const receipt = gas.get(hash.toLowerCase()) ?? null;
-      const place = receipt !== null ? receipt.place : seen.place;
       return {
         hash,
-        place,
+        place: seen.place,
         kind: seen.kind,
-        url: seen.kind === 'intent' ? swapPage : explorerTxUrl(place, hash),
-        gas: receipt,
-        gasPending: seen.kind === 'chain' && receipt === null && !tried.has(gasKey(hash)),
+        url: seen.kind === 'intent' ? swapPage : explorerTxUrl(seen.place, hash),
       };
     });
 
@@ -612,110 +607,4 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
   // Newest first: a history is read from the top.
   entries.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
   return entries;
-}
-
-// ---------- gas, read back off the chain ----------
-
-// Keyed by hash alone, not by chain: the whole point of the read is to find out which chain
-// the hash is on, so the key cannot assume the answer.
-function gasKey(hash: string): string {
-  return hash.toLowerCase();
-}
-
-export type GasCache = {
-  get(hash: string): TxGas | null;
-  all(): Map<string, TxGas>;
-  // True once this hash has been looked for and not found: no chain we can reach has it.
-  // A history carrying a hash from a chain this app no longer reads is full of these, and
-  // "we looked and cannot see it" is a different sentence from "we have not looked yet".
-  tried(hash: string): boolean;
-  triedAll(): Set<string>;
-  // Reads receipts for anything not cached yet and returns how many landed. Each hash comes
-  // with the chains it could plausibly be on, tried in order. Never throws: an RPC that will
-  // not answer leaves the fee unknown, which the UI says out loud rather than calling it zero.
-  fill(wanted: Array<{ places: TxPlace[]; hash: string }>, priceOf: (symbol: string) => number): Promise<number>;
-};
-
-const NATIVE_SYMBOL: Partial<Record<TxPlace, string>> = { eth: 'ETH', base: 'ETH', arb: 'ETH' };
-const WEI = 1e18;
-
-// A mined receipt never changes, so the cache is write-once and lives across restarts. It
-// holds nothing private: public hashes and the gas they burned.
-export function createGasCache(params: { dataDir: string }): GasCache {
-  const filePath = path.join(params.dataDir, 'tx-gas.json');
-  const cache = new Map<string, TxGas>();
-  const failed = new Set<string>();
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, TxGas>;
-    for (const [key, value] of Object.entries(raw)) cache.set(key, value);
-  } catch {
-    // no cache yet, or a corrupt one: start empty and rewrite it on the next fill
-  }
-
-  function save(): void {
-    try {
-      atomicWriteJson(filePath, Object.fromEntries(cache));
-    } catch {
-      // a cache that cannot be written is a slower app, not a broken one
-    }
-  }
-
-  // Tries each candidate chain until one has the hash. A chain that does not know a hash
-  // answers with an error, which is the negative result this needs, so at most one extra
-  // round trip settles which chain a payout actually landed on. Cached forever after.
-  async function readOne(places: TxPlace[], hash: string, priceOf: (symbol: string) => number): Promise<boolean> {
-    if (!EVM_HASH.test(hash)) return false;
-    for (const place of places) {
-      const symbol = NATIVE_SYMBOL[place];
-      if (symbol === undefined) continue;
-      try {
-        const receipt = await reader(place as ChainId).getTransactionReceipt({ hash: hash as `0x${string}` });
-        const feeNative = Number(receipt.gasUsed * receipt.effectiveGasPrice) / WEI;
-        const price = priceOf(symbol);
-        cache.set(gasKey(hash), {
-          place,
-          gasUsed: receipt.gasUsed.toString(),
-          gasPriceWei: receipt.effectiveGasPrice.toString(),
-          feeNative,
-          feeSymbol: symbol,
-          feeUsd: price > 0 ? feeNative * price : null,
-          blockNumber: receipt.blockNumber.toString(),
-          status: receipt.status === 'success' ? 'success' : 'reverted',
-        });
-        return true;
-      } catch {
-        // not on this chain, or this chain would not answer: try the next candidate
-      }
-    }
-    // Remembered as unread for this process so a hash nobody can resolve is not retried on
-    // every panel refresh. A restart tries again, which is what makes a temporary RPC
-    // outage recoverable without a cache to clear.
-    failed.add(gasKey(hash));
-    return false;
-  }
-
-  return {
-    get: (hash) => cache.get(gasKey(hash)) ?? null,
-    all: () => new Map(cache),
-    tried: (hash) => failed.has(gasKey(hash)),
-    triedAll: () => new Set(failed),
-    async fill(wanted, priceOf) {
-      const todo = wanted.filter(w => {
-        const key = gasKey(w.hash);
-        return !cache.has(key) && !failed.has(key) && EVM_HASH.test(w.hash);
-      });
-      if (todo.length === 0) return 0;
-      const results = await Promise.all(todo.map(w => readOne(w.places, w.hash, priceOf)));
-      const landed = results.filter(Boolean).length;
-      if (landed > 0) save();
-      return landed;
-    },
-  };
-}
-
-// Which chains a hash could be on, most likely first. Everything EVM this app can reach,
-// with the row's own guess in front of it.
-export function evmCandidates(first: TxPlace): TxPlace[] {
-  return [first, ...EVM_PLACES.filter(p => p !== first)];
 }

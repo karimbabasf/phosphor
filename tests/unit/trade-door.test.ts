@@ -22,7 +22,6 @@ import { createStore } from '../../src/store.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
 import { tradeRail } from '../../src/trade/rail.ts';
@@ -196,8 +195,7 @@ function setup(clickUsd: number) {
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,
-    addresses: { evm: ['0x1111111111111111111111111111111111111111'], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: '0x1111111111111111111111111111111111111111' },
     candleProducts: ['ETH-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -207,9 +205,6 @@ function setup(clickUsd: number) {
     snapshot: () => snapshot,
     intents: () => undefined,
     refresh: async () => snapshot,
-    applyDemoTransfer: () => {
-      throw new Error('never');
-    },
     hyperliquid: () => undefined,
   };
   savePolicy(dataDir, seededPolicy(clickUsd));
@@ -228,8 +223,6 @@ function setup(clickUsd: number) {
     store: createStore(dataDir),
     ledger,
     riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     rails: { for: (draft) => (draft.kind === 'trade' ? (rail as never) : null), kinds: () => ['trade'] },
     trade,
     dataDir,

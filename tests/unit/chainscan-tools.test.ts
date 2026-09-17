@@ -57,7 +57,7 @@ const json = (value: unknown): Response => new Response(JSON.stringify(value), {
 // A ctx with no keystore: the own account falls back to the configured EVM address.
 const OWN = '0x1111111111111111111111111111111111111111';
 function ctx(extra: Record<string, unknown> = {}): Ctx {
-  return { cfg: { keysPath: '/nonexistent/keys.json', addresses: { evm: [OWN], solana: [], near: [] }, ...extra } } as unknown as Ctx;
+  return { cfg: { keysPath: '/nonexistent/keys.json', addresses: { evm: OWN }, ...extra } } as unknown as Ctx;
 }
 
 const VITALIK = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
@@ -142,7 +142,7 @@ test('intents_activity reads this app\'s own account when none is given, lowerca
   assert.ok(seen[1].url.endsWith('limit=3'));
   // No wallet and no configured address: the tool says so rather than looking up nothing.
   const c = captured();
-  await reads.intents_activity(ctx({ addresses: { evm: [], solana: [], near: [] } }), {}, {}, c.res);
+  await reads.intents_activity(ctx({ addresses: {} }), {}, {}, c.res);
   assert.equal(c.status(), 400);
   assert.match(String(c.body().error), /no account/);
 });

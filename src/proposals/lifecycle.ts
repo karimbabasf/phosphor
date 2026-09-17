@@ -8,15 +8,12 @@
 import crypto from 'node:crypto';
 import type {
   AppConfig,
-  ChainId,
   ClientKey,
   LedgerSnapshot,
   Policy,
   PolicyPatch,
   Proposal,
-  Quoter,
   RiskRow,
-  Signer,
   SimulationResult,
   Verdict,
   WriteDraft,
@@ -25,6 +22,7 @@ import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { Ledger } from '../ledger/index.ts';
 import { classify } from '../composition.ts';
+import { buildWallet } from '../wallet.ts';
 import { evaluate } from '../policy/engine.ts';
 import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
@@ -34,11 +32,9 @@ import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { reasonFor } from '../vault/reason.ts';
 import type { RailRegistry } from '../rails/index.ts';
 import type { TradeDeps } from '../trade/rail.ts';
-import type { OneClickLookup, TxLookup, VenueCredited } from './reconcile.ts';
+import type { OneClickLookup, VenueCredited } from './reconcile.ts';
 import { withReservation } from './reservation.ts';
 
-export const ALL_CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
-const EVM_CHAINS: ChainId[] = ['eth', 'base', 'arb'];
 const SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // A registry with no rails in it. Fail closed: a wiring layer that forgets to pass one
@@ -51,18 +47,12 @@ export type ProposalDeps = {
   store: Store;
   ledger: Ledger;
   riskRows: RiskRow[];
-  quoter: Quoter;
-  signer: Signer;
   dataDir: string;
   rails?: RailRegistry; // src/rails/index.ts; absent means no rail can execute
   // The plan runner and the venue facts a plan is priced against. Absent means no trade can
   // be proposed, which is demo mode and every test that builds a service without one.
   trade?: TradeDeps;
   onChange?: () => void;
-  // How a recorded transaction hash is checked against the chain, for reconcile. Defaulted to
-  // the viem readers the rails already use; a test hands in a fake so the four outcomes can be
-  // driven without a network.
-  txLookup?: TxLookup;
   // How a 1Click order is re-checked by its quote handle, for reconcile. Wired from the intents
   // client in src/main.ts; absent means no venue lookup and reconcile falls back to the chain.
   oneClickStatus?: OneClickLookup;
@@ -99,8 +89,6 @@ export function errText(err: unknown): string {
 }
 
 export function totalUsdOf(draft: WriteDraft): number {
-  if (draft.kind === 'consolidate') return draft.totalUsd;
-  if (draft.kind === 'transfer') return draft.leg.amountUsd;
   if (draft.kind === 'policy_change') return 0;
   // Every rail draft carries its own amountUsd, which is what the engine budgets on. A
   // non-finite one never executes (the engine refuses it), so it contributes nothing here.
@@ -113,13 +101,6 @@ export function stableSymbols(rows: RiskRow[]): Set<string> {
   return new Set(rows.map(r => r.symbol.toUpperCase()));
 }
 
-// Same dust rule as cost.ts: below the economic transfer size, or below 3x what it costs to
-// move anything off that chain. Kept local because cost.ts does not export the predicate.
-export function dustThreshold(snapshot: LedgerSnapshot, chain: ChainId, cfg: AppConfig): number {
-  const transferCostUsd = snapshot.gas[chain]?.transferCostUsd ?? 0;
-  return Math.max(cfg.economicTransferUsd, 3 * transferCostUsd);
-}
-
 // Copies only the fields a PolicyPatch is allowed to carry. A spread would let a hostile patch
 // smuggle unknown keys into policy.json, so every field is named.
 export function mergePatch(base: Policy, patch: PolicyPatch): Policy {
@@ -130,7 +111,6 @@ export function mergePatch(base: Policy, patch: PolicyPatch): Policy {
     composition: {
       maxIssuerShare: { ...base.composition.maxIssuerShare },
       maxFreezableShare: base.composition.maxFreezableShare,
-      minNativeGasUsd: { ...base.composition.minNativeGasUsd },
       forbiddenIssuers: [...base.composition.forbiddenIssuers],
     },
     sentences: [...base.sentences],
@@ -149,7 +129,6 @@ export function mergePatch(base: Policy, patch: PolicyPatch): Policy {
   if (c) {
     if (c.maxIssuerShare !== undefined) next.composition.maxIssuerShare = { ...c.maxIssuerShare };
     if (c.maxFreezableShare !== undefined) next.composition.maxFreezableShare = c.maxFreezableShare;
-    if (c.minNativeGasUsd !== undefined) next.composition.minNativeGasUsd = { ...c.minNativeGasUsd };
     if (c.forbiddenIssuers !== undefined) next.composition.forbiddenIssuers = [...c.forbiddenIssuers];
   }
 
@@ -167,8 +146,6 @@ export type PCtx = {
   store: Store;
   ledger: Ledger;
   riskRows: RiskRow[];
-  quoter: Quoter;
-  signer: Signer;
   dataDir: string;
   rails: RailRegistry;
   trade?: TradeDeps;
@@ -178,10 +155,6 @@ export type PCtx = {
   /* land() from execute.ts, wired by the service for the same reason `execute` is: this file is
      the leaf of the directory and importing the module that imports it would be a cycle. */
   land: (p: Proposal) => Promise<Proposal>;
-  // How a recorded transaction hash is checked against the chain, for reconcile. Same
-  // indirection for a different reason: it is a seam, so a test can drive the four outcomes
-  // without a network.
-  txLookup: TxLookup;
   // How a 1Click order is re-checked by its quote handle. Optional: absent falls back to the
   // chain lookup, which is demo mode and every test that does not drive the venue path.
   oneClickStatus?: OneClickLookup;
@@ -343,54 +316,32 @@ export function outcomeOf(p: Proposal, plan?: PlanFate | null): ProposalOutcome 
    in the window writes no config.local.json at all, and until 2026-09-16 every proposal builder
    read the book from config alone, so a brand new user could deposit and then never swap, send
    or withdraw: "We hold no EVM address" on the first thing they asked for. */
-export function ownBook(ctx: PCtx): AppConfig['addresses'] {
-  const report = ctx.keystore?.addressReport();
-  const own = report?.addresses;
-  const first = (a: string | null | undefined, rest: string[]): string[] => {
-    const out = typeof a === 'string' && a.trim() !== '' ? [a] : [];
-    for (const r of rest) if (!out.some((x) => x.toLowerCase() === r.toLowerCase())) out.push(r);
-    return out;
-  };
-  return {
-    evm: first(own?.evm, ctx.cfg.addresses.evm),
-    solana: first(own?.solana, ctx.cfg.addresses.solana),
-    near: first(own?.near, ctx.cfg.addresses.near),
-  };
+export function ownBook(ctx: PCtx): { evm: string[] } {
+  const own = ctx.keystore?.addressReport().addresses.evm;
+  const evm: string[] = typeof own === 'string' && own.trim() !== '' ? [own] : [];
+  const configured = ctx.cfg.addresses.evm;
+  if (configured !== undefined && !evm.some((x) => x.toLowerCase() === configured.toLowerCase())) evm.push(configured);
+  return { evm };
 }
 
-// Addresses we own: whatever the ledger reports holdings for, plus the book above.
-export function selfAddresses(ctx: PCtx, snapshot: LedgerSnapshot): string[] {
+// Addresses we own: the book above, plus the account the verifier read names, which is how a
+// demo ledger (no keystore, no config) still knows whose money it shows.
+export function selfAddresses(ctx: PCtx): string[] {
   const set = new Set<string>();
-  for (const h of snapshot.holdings) set.add(h.address.toLowerCase());
-  const book = ownBook(ctx);
-  for (const a of [...book.evm, ...book.solana, ...book.near]) set.add(a.toLowerCase());
+  for (const a of ownBook(ctx).evm) set.add(a.toLowerCase());
+  const read = ctx.ledger.intents();
+  for (const h of read?.holdings ?? []) set.add(h.accountId.toLowerCase());
   return [...set];
-}
-
-// Where a consolidation lands. eth, base and arb share one evm address, so a holding on any
-// of them names the recipient on the others.
-export function recipientFor(ctx: PCtx, chain: ChainId, snapshot: LedgerSnapshot): string | null {
-  const onChain = snapshot.holdings.find(h => h.chain === chain);
-  if (onChain) return onChain.address;
-
-  const book = ownBook(ctx);
-  if (EVM_CHAINS.includes(chain)) {
-    const sibling = snapshot.holdings.find(h => EVM_CHAINS.includes(h.chain));
-    if (sibling) return sibling.address;
-    return book.evm[0] ?? null;
-  }
-  if (chain === 'sol') return book.solana[0] ?? null;
-  return book.near[0] ?? null;
 }
 
 export function buildCtx(ctx: PCtx, snapshot: LedgerSnapshot, policy: Policy | null): EngineCtx {
   return {
     policy,
-    composition: classify(snapshot, ctx.riskRows),
-    ledger: snapshot,
+    composition: classify(buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid()).rows, ctx.riskRows),
+    riskRows: ctx.riskRows,
     sessionSpentUsd: sessionSpentUsd(ctx),
     autoApprovedSpentUsd: autoApprovedSpentUsd(ctx),
-    selfAddresses: selfAddresses(ctx, snapshot),
+    selfAddresses: selfAddresses(ctx),
   };
 }
 

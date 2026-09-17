@@ -33,10 +33,10 @@ function leftovers(dir: string): string[] {
 function sample(id: string): Proposal {
   return {
     id,
-    kind: 'consolidate',
+    kind: 'policy_change',
     createdAt: new Date().toISOString(),
     status: 'pending',
-    draft: { kind: 'consolidate', legs: [], totalUsd: 0, reason: 'test' } as unknown as Proposal['draft'],
+    draft: { kind: 'policy_change', patch: {}, sentence: 'test' },
     simulation: null,
     verdict: { outcome: 'needs_approval', reasons: ['test'] },
   };

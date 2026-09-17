@@ -22,8 +22,6 @@ import { readViewMode } from '../../src/view/mode.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import type {
   AppConfig,
-  ChainId,
-  ChainStatus,
   LedgerSnapshot,
   Proposal,
   ViewMode,
@@ -32,7 +30,6 @@ import type {
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-viewop-'));
@@ -51,24 +48,30 @@ function seatedAgents() {
 }
 
 function snapshot(): LedgerSnapshot {
-  const fetchedAt = new Date().toISOString();
-  const status: ChainStatus = { ok: true, fetchedAt };
-  return {
-    holdings: [{ chain: 'arb', address: '0xself', symbol: 'USDC', tokenId: '0xusdc', amount: 500, usd: 500, native: false }],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function pendingProposal(id = 'p-pending'): Proposal {
   return {
     id,
-    kind: 'consolidate',
+    kind: 'swap',
     createdAt: new Date().toISOString(),
     status: 'pending',
-    draft: { kind: 'consolidate', legs: [], totalUsd: 250, toChain: 'arb', symbol: 'USDC' },
+    draft: {
+      kind: 'swap',
+      venue: 'intents-native',
+      chain: 'arb',
+      toChain: 'eth',
+      fromSymbol: 'USDC',
+      toSymbol: 'ETH',
+      amountIn: 250,
+      amountUsd: 250,
+      minAmountOut: 0.05,
+      from: '0xself',
+      to: '0xself',
+      counterparty: 'intents.near',
+      quote: null,
+    },
     simulation: null,
     verdict: { outcome: 'needs_approval', reasons: ['above the click threshold'] },
   };
@@ -92,8 +95,7 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: ['0xself'], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: '0xself' },
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -110,19 +112,15 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     // A market layer with no venue behind it: the store answers from an empty cache and
     // never reaches the network, which is what this test wants.
     market: createMarketData({ fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch }),
     proposals: {
-      proposeConsolidate: async () => pendingProposal(),
       proposePolicyChange: async () => pendingProposal(),
       proposeSwap: async () => pendingProposal(),
       proposeHlDeposit: async () => pendingProposal(),
       proposeHlWithdraw: async () => pendingProposal(),
-      proposeIntentsDeposit: async () => pendingProposal(),
-      proposeIntentsWithdraw: async () => pendingProposal(),
       proposeIntentsSend: async () => pendingProposal(),
       proposeTrade: async () => pendingProposal(),
       proposeTradeChange: async () => pendingProposal(),

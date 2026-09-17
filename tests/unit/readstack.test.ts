@@ -1,15 +1,16 @@
-// Task B read stack: ledger (near/demo/index), composition, cost.
-// Fixture-driven only; every fetchImpl here is a mock, no network calls.
+// The read stack: the demo fixture, the composition over the two pockets, and the ledger
+// orchestrator in both modes. Fixture-driven only; every fetchImpl here is a mock, no network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-import type { AppConfig, RiskRow, TransferLeg } from '../../src/types.ts';
-import { loadDemoLedger } from '../../src/ledger/demo.ts';
+import type { AppConfig, RiskRow } from '../../src/types.ts';
+import { demoAccount, loadDemoLedger, loadDemoReads } from '../../src/ledger/demo.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 import { classify } from '../../src/composition.ts';
+import { buildWallet } from '../../src/wallet.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const riskRows = JSON.parse(
@@ -20,8 +21,7 @@ const demoConfig: AppConfig = {
   mode: 'demo',
   keysPath: '/tmp/phosphor-test-keys.json',
   port: 4177,
-  addresses: { evm: [], solana: [], near: [] },
-  economicTransferUsd: 10,
+  addresses: {},
   candleProducts: ['BTC-USD'],
   dataDir: 'state',
 };
@@ -33,99 +33,81 @@ function closeTo(actual: number, expected: number, tolerance: number, msg?: stri
   );
 }
 
-// ---------- demo.ts + composition.ts + cost.ts, against real data/*.json ----------
+function demoRows() {
+  const reads = loadDemoReads();
+  return buildWallet(loadDemoLedger(), reads.intents, reads.hyperliquid).rows;
+}
 
-test('demo snapshot totals the fixture stable usd (re-derived: 49878.15, not the plan draft 49878.25 -- see task report)', () => {
-  const snap = loadDemoLedger();
-  const totalUsd = snap.holdings.filter(h => !h.native).reduce((s, h) => s + h.usd, 0);
-  closeTo(totalUsd, 49878.15, 0.01);
+// ---------- demo.ts + composition.ts, against real data/*.json ----------
+
+test('the demo fixture is one account with ETH, USDC and SOL inside NEAR Intents and 50 USDC on Hyperliquid', () => {
+  const reads = loadDemoReads();
+  assert.deepEqual(reads.intents.holdings.map(h => h.symbol).sort(), ['ETH', 'SOL', 'USDC']);
+  assert.ok(reads.intents.holdings.every(h => h.accountId === demoAccount()), 'every balance is credited to the one demo account');
+  assert.ok(reads.intents.holdings.every(h => typeof h.amountBase === 'string' && /^[0-9]+$/.test(h.amountBase)), 'base units ride beside the UI amount');
+  assert.equal(reads.hyperliquid.collateralUsdc, 50);
+  assert.equal(reads.intents.ok && reads.hyperliquid.ok, true);
 });
 
-test('demo snapshot has all five chains ok and every ChainId present', () => {
+test('the demo snapshot carries the spot prices and a stamp, and nothing held on a chain', () => {
   const snap = loadDemoLedger();
-  for (const chain of ['eth', 'base', 'arb', 'sol', 'near'] as const) {
-    assert.equal(snap.chainStatus[chain].ok, true);
-  }
+  assert.equal(snap.mode, 'demo');
+  assert.ok(snap.prices.ETH > 0 && snap.prices.SOL > 0);
+  assert.ok(Number.isFinite(Date.parse(snap.fetchedAt)));
+  assert.equal('holdings' in snap, false);
 });
 
-test('composition: Circle share is 0.5553 +- 0.001', () => {
-  const snap = loadDemoLedger();
-  const comp = classify(snap, riskRows);
-  closeTo(comp.byIssuer['Circle'], 0.5553, 0.001);
+test('composition: the issued coins are USDC in both pockets, all of it Circle and freezable', () => {
+  const comp = classify(demoRows(), riskRows);
+  closeTo(comp.byIssuer['Circle'], 1, 1e-9);
+  closeTo(comp.freezableShare, 1, 1e-9);
+  assert.deepEqual(comp.rows.map(r => `${r.symbol}@${r.chain}`).sort(), ['USDC@hyperliquid', 'USDC@intents']);
+  closeTo(comp.totalUsd, 1850 + 50, 0.01);
 });
 
-test('composition: freezable share is >= 0.96', () => {
-  const snap = loadDemoLedger();
-  const comp = classify(snap, riskRows);
-  assert.ok(comp.freezableShare >= 0.96, `freezableShare ${comp.freezableShare} should be >= 0.96`);
+test('composition: ETH and SOL have no issuer, so they sit outside the composition the wallet still shows', () => {
+  const rows = demoRows();
+  assert.ok(rows.some(r => r.symbol === 'ETH') && rows.some(r => r.symbol === 'SOL'), 'the wallet shows them');
+  const comp = classify(rows, riskRows);
+  assert.equal(comp.rows.some(r => r.symbol === 'ETH' || r.symbol === 'SOL'), false, 'the composition does not count them');
+  assert.deepEqual(comp.unclassified, []);
 });
 
-test('composition: XUSD is unclassified and counts as freezable (pessimistic default)', () => {
-  const snap = loadDemoLedger();
-  const comp = classify(snap, riskRows);
+test('composition: an issued coin the risk table does not know is unclassified and counts as freezable (pessimistic default)', () => {
+  const rows = [...demoRows(), { kind: 'intents' as const, chain: 'intents' as const, symbol: 'XUSD', tokenId: 'x', quantity: 120, priceUsd: 1, valueUsd: 120, share: 0, native: false }];
+  const comp = classify(rows, riskRows);
   assert.ok(comp.unclassified.includes('XUSD'));
-  const xusdRow = comp.rows.find(r => r.symbol === 'XUSD' && r.chain === 'arb');
-  assert.ok(xusdRow);
-  assert.equal(xusdRow!.freezable, true);
-  assert.equal(xusdRow!.classified, false);
-  assert.equal(xusdRow!.issuer, 'unclassified');
+  const xusd = comp.rows.find(r => r.symbol === 'XUSD');
+  assert.ok(xusd);
+  assert.equal(xusd!.freezable, true);
+  assert.equal(xusd!.classified, false);
+  assert.equal(xusd!.issuer, 'unclassified');
 });
 
 test('composition: rows are sorted by share descending', () => {
-  const snap = loadDemoLedger();
-  const comp = classify(snap, riskRows);
+  const comp = classify(demoRows(), riskRows);
   for (let i = 1; i < comp.rows.length; i++) {
     assert.ok(comp.rows[i - 1].share >= comp.rows[i].share);
   }
 });
 
-// ---------- ledger/index.ts: demo-mode wiring + applyDemoTransfer ----------
+// ---------- ledger/index.ts: demo-mode wiring ----------
 
-test('createLedger demo mode: snapshot matches loadDemoLedger totals', () => {
+test('createLedger demo mode: the pockets are the fixture, so a proposal has something to spend', () => {
   const ledger = createLedger(demoConfig);
-  const snap = ledger.snapshot();
-  const totalUsd = snap.holdings.filter(h => !h.native).reduce((s, h) => s + h.usd, 0);
-  closeTo(totalUsd, 49878.15, 0.01);
-  assert.equal(snap.mode, 'demo');
+  const intents = ledger.intents();
+  assert.ok(intents !== undefined && intents.ok);
+  assert.deepEqual(intents!.holdings.map(h => h.symbol).sort(), ['ETH', 'SOL', 'USDC']);
+  assert.equal(ledger.hyperliquid()?.collateralUsdc, 50);
+  assert.equal(ledger.snapshot().mode, 'demo');
 });
 
 test('createLedger demo mode: refresh() resolves without changing balances', async () => {
   const ledger = createLedger(demoConfig);
-  const before = ledger.snapshot();
-  const after = await ledger.refresh();
-  const totalBefore = before.holdings.filter(h => !h.native).reduce((s, h) => s + h.usd, 0);
-  const totalAfter = after.holdings.filter(h => !h.native).reduce((s, h) => s + h.usd, 0);
-  closeTo(totalAfter, totalBefore, 0.0001);
-});
-
-test('applyDemoTransfer moves balance from source chain to destination chain, net of gas', () => {
-  const ledger = createLedger(demoConfig);
-  const before = ledger.snapshot();
-  const nearUsdtBefore = before.holdings.find(h => h.chain === 'near' && h.symbol === 'USDT')!.amount;
-  const ethUsdtBefore = before.holdings.find(h => h.chain === 'eth' && h.symbol === 'USDT')!.amount;
-  const nearNativeBefore = before.holdings.find(h => h.chain === 'near' && h.native)!.amount;
-
-  const leg: TransferLeg = {
-    fromChain: 'near',
-    toChain: 'eth',
-    symbol: 'USDT',
-    amount: nearUsdtBefore,
-    amountUsd: nearUsdtBefore,
-    from: 'karim-demo.near',
-    to: '0x1111111111111111111111111111111111111111',
-    quote: { amountOut: 949.5, feeUsd: 0.5, timeEstimateSec: 8 },
-    gasNativeUsd: before.gas.near.transferCostUsd,
-  };
-  ledger.applyDemoTransfer(leg);
-  const after = ledger.snapshot();
-
-  closeTo(after.holdings.find(h => h.chain === 'near' && h.symbol === 'USDT')!.amount, 0, 1e-9);
-  closeTo(
-    after.holdings.find(h => h.chain === 'eth' && h.symbol === 'USDT')!.amount,
-    ethUsdtBefore + 949.5,
-    1e-9,
-  );
-  assert.ok(after.holdings.find(h => h.chain === 'near' && h.native)!.amount < nearNativeBefore);
+  const before = buildWallet(ledger.snapshot(), ledger.intents(), ledger.hyperliquid()).totalUsd;
+  await ledger.refresh();
+  const after = buildWallet(ledger.snapshot(), ledger.intents(), ledger.hyperliquid()).totalUsd;
+  closeTo(after, before, 0.0001);
 });
 
 // ---------- ledger/index.ts: live mode failure handling ----------
@@ -134,23 +116,17 @@ const liveConfig: AppConfig = {
   mode: 'live',
   keysPath: '/tmp/phosphor-test-keys.json',
   port: 4177,
-  addresses: {
-    evm: ['0x1111111111111111111111111111111111111111'],
-    solana: ['11111111111111111111111111111111'],
-    near: ['karim-demo.near'],
-  },
-  economicTransferUsd: 10,
+  addresses: { evm: '0x1111111111111111111111111111111111111111' },
   candleProducts: ['BTC-USD'],
   dataDir: 'state',
 };
 
-/* The live ledger reads ONE place now: the intents.near verifier. There is no per-chain balance
-   fan-out left to fail, which is why neither test below looks for a stale chain any more. A chain
-   this app never reads cannot go stale, and a STALE badge on one would be the window reporting on
-   a request nobody made. What can still fail is the verifier read, and that carries its own ok
-   flag on IntentsRead rather than on chainStatus. */
+/* The live ledger reads two places: the intents.near verifier and the Hyperliquid account. Both
+   need a key on disk to name the account, and there is none here, so neither is asked. What is
+   left is the price read, and a price that fails leaves the snapshot without one rather than
+   throwing. */
 
-test('createLedger live mode: a failing fetchImpl leaves the snapshot empty and does not throw', async () => {
+test('createLedger live mode: a failing fetchImpl leaves the snapshot without prices and does not throw', async () => {
   const failFetch = (async () => {
     throw new Error('network down');
   }) as typeof fetch;
@@ -158,10 +134,10 @@ test('createLedger live mode: a failing fetchImpl leaves the snapshot empty and 
   const ledger = createLedger(liveConfig, { fetchImpl: failFetch });
   const snap = await ledger.refresh();
 
-  assert.deepEqual(snap.holdings, []);
-  for (const chain of ['eth', 'base', 'arb', 'sol', 'near'] as const) {
-    assert.equal(snap.chainStatus[chain].ok, true, `${chain} is not read, so it cannot be stale`);
-  }
+  assert.equal(snap.mode, 'live');
+  assert.equal(ledger.intents(), undefined, 'no key, so the verifier is not asked');
+  assert.equal(ledger.hyperliquid(), undefined, 'no key, so the venue is not asked');
+  assert.ok(Number.isFinite(Date.parse(snap.fetchedAt)));
 });
 
 test('createLedger live mode: configured addresses change nothing, because no chain is read', async () => {
@@ -169,8 +145,9 @@ test('createLedger live mode: configured addresses change nothing, because no ch
     new Response(JSON.stringify([[0, 0, 0, 0, 100, 0]]), { status: 200 })) as typeof fetch;
 
   const configured = createLedger(liveConfig, { fetchImpl: okFetch });
-  const unconfigured = createLedger({ ...liveConfig, addresses: { evm: [], solana: [], near: [] } }, { fetchImpl: okFetch });
+  const unconfigured = createLedger({ ...liveConfig, addresses: {} }, { fetchImpl: okFetch });
 
-  assert.deepEqual((await configured.refresh()).holdings, []);
-  assert.deepEqual((await unconfigured.refresh()).holdings, []);
+  assert.deepEqual((await configured.refresh()).prices, (await unconfigured.refresh()).prices);
+  assert.equal(configured.intents(), undefined);
+  assert.equal(unconfigured.intents(), undefined);
 });

@@ -29,20 +29,12 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { createSession } from '../../src/keystore/session.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const PASSWORD = 'a long enough password';
 
 function snapshot(): LedgerSnapshot {
-  const status: ChainStatus = { ok: true, fetchedAt: new Date().toISOString() };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 async function boot() {
@@ -53,8 +45,7 @@ async function boot() {
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: [], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: {},
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath,
@@ -74,19 +65,15 @@ async function boot() {
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => { throw new Error('unused'); },
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
       proposeHlWithdraw: async () => { throw new Error('unused'); },
-      proposeIntentsDeposit: async () => { throw new Error('unused'); },
-      proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsSend: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },
       proposeTradeChange: async () => { throw new Error('unused'); },

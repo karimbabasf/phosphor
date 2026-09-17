@@ -1,30 +1,11 @@
 {
-  "_comment": "Demo-mode fixture portfolio. Numbers chosen so every product surface has something to show: Circle share 55% (a cap the agent authors will flag), 97% freezable, dust on three chains, NEAR balance stranded without gas, one unclassified token (XUSD) to exercise the pessimistic path.",
+  "_comment": "Demo-mode fixture: one account with ETH, USDC and SOL inside NEAR Intents and 50 USDC of Hyperliquid collateral. Numbers chosen so every product surface has something to show: an issuer share a cap can bite on (USDC is Circle, freezable), a priced native beside the dollars, and a funded trading account.",
   "prices": { "ETH": 4520, "SOL": 178, "NEAR": 3.1 },
-  "gasGwei": { "eth": 2.4, "base": 0.06, "arb": 0.03 },
-  "accounts": {
-    "evm": "0x1111111111111111111111111111111111111111",
-    "solana": "11111111111111111111111111111111",
-    "near": "karim-demo.near"
-  },
-  "holdings": [
-    { "chain": "eth", "symbol": "USDC", "amount": 18400 },
-    { "chain": "eth", "symbol": "USDT", "amount": 9200 },
-    { "chain": "eth", "symbol": "USDS", "amount": 1500 },
-    { "chain": "eth", "symbol": "PYUSD", "amount": 800 },
-    { "chain": "eth", "symbol": "ETH", "amount": 0.42, "native": true },
-    { "chain": "arb", "symbol": "USDT", "amount": 6100 },
-    { "chain": "arb", "symbol": "DAI", "amount": 4.3 },
-    { "chain": "arb", "symbol": "XUSD", "amount": 120 },
-    { "chain": "arb", "symbol": "ETH", "amount": 0.004, "native": true },
-    { "chain": "base", "symbol": "USDC", "amount": 5200 },
-    { "chain": "base", "symbol": "DAI", "amount": 2.1 },
-    { "chain": "base", "symbol": "ETH", "amount": 0.0011, "native": true },
-    { "chain": "sol", "symbol": "USDC", "amount": 4100 },
-    { "chain": "sol", "symbol": "USDT", "amount": 3500 },
-    { "chain": "sol", "symbol": "PYUSD", "amount": 1.75 },
-    { "chain": "sol", "symbol": "SOL", "amount": 1.2, "native": true },
-    { "chain": "near", "symbol": "USDT", "amount": 950 },
-    { "chain": "near", "symbol": "NEAR", "amount": 0.001, "native": true }
-  ]
+  "account": "0x1111111111111111111111111111111111111111",
+  "intents": [
+    { "symbol": "ETH", "originChain": "eth", "assetId": "nep141:eth.omft.near", "amount": 0.42, "decimals": 18 },
+    { "symbol": "USDC", "originChain": "eth", "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near", "amount": 1850, "decimals": 6 },
+    { "symbol": "SOL", "originChain": "sol", "assetId": "nep141:sol.omft.near", "amount": 1.2, "decimals": 9 }
+  ],
+  "hyperliquid": { "collateralUsdc": 50, "availableUsdc": 50 }
 }

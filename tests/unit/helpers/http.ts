@@ -44,13 +44,10 @@ function captured(): { res: http.ServerResponse; reply: () => Reply } {
 export function serviceThatAnswers(row: Proposal, settledRow: Proposal = row): ProposalService {
   const answer = async () => row;
   return {
-    proposeConsolidate: answer,
     proposePolicyChange: answer,
     proposeSwap: answer,
     proposeHlDeposit: answer,
     proposeHlWithdraw: answer,
-    proposeIntentsDeposit: answer,
-    proposeIntentsWithdraw: answer,
     proposeIntentsSend: answer,
     proposeTrade: answer,
     proposeTradeChange: answer,

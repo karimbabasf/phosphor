@@ -5,7 +5,7 @@
 //
 // So the card draws one .rule row per rule that is set, in the app's own voice, from the
 // server's sentences (src/policy/render.ts): what gets asked, what gets refused at once, what
-// gets refused over a day, what is held back for gas, where money may go. The one meter on the
+// gets refused over a day, where money may go. The one meter on the
 // card sits under the daily rule and is drawn only while a daily cap exists; the sub line
 // counts only the rules that are drawn. Nothing on the card ever says "$0 of $0".
 //
@@ -175,9 +175,6 @@ const SENTENCES = [
   'Refuse more than $25,000 in any 24 hours.',
   'Ask me before anything above $100.',
   'Additional allowed destinations: 0xabc, 0xdef, oneclick:1click.chaindefuser.com, intents.near.',
-  'Keep at least $1 of gas on base.',
-  'Keep at least $1 of gas on arb.',
-  'Keep at least $0.50 of gas on sol.',
 ];
 
 const POLICY = {
@@ -200,39 +197,38 @@ test('the card is called Policy and keeps the surface the beam aims at', () => {
   assert.equal(panel.dataset.surface, 'rules');
 });
 
-test('five rules, in the app voice, in the order a person needs them', () => {
+test('four rules, in the app voice, in the order a person needs them', () => {
   const { host, render } = boot();
   render({ policy: POLICY, sentences: SENTENCES, dailyLimit: { capUsd: 25_000, spentUsd: 1150.2, resetsAt: null } });
   const panel = panelOf(host);
   const rules = withClass(panel, 'rule');
-  assert.equal(rules.length, 5);
+  assert.equal(rules.length, 4);
   assert.deepEqual(
     rules.map((r) => r.dataset.rule),
-    ['ask', 'refuse', 'daily', 'gas', 'destinations'],
+    ['ask', 'refuse', 'daily', 'destinations'],
   );
   const lines = rules.map((r) => withClass(r, 'rule-line')[0].textContent);
   assert.deepEqual(lines, [
     'Asks you before anything above $100.',
     'Refuses any single transaction above $10,000.',
     'Refuses more than $25,000 in any 24 hours.',
-    'Keeps gas back on each chain.',
     'Pays only 2 wallets of yours, 1Click and NEAR Intents.',
   ]);
-  // The gas floors, one chip per chain under the sentence, each wearing the chain's mark.
-  assert.deepEqual(withClass(rules[3], 'gas-chip-text').map((n) => n.textContent), ['Base $1', 'Arbitrum $1', 'Solana $0.50']);
-  assert.equal(withClass(rules[3], 'gas-chip-mark').length, 3);
+  // Nothing is held back for gas any more: no Keeps group, no chips.
+  assert.equal(withClass(panel, 'gas-chip-text').length, 0);
+  assert.ok(!/gas/i.test(textOf(panel)));
   // Every rule carries its icon, from the set, by what the rule does.
   assert.deepEqual(
     rules.map((r) => withClass(r, 'rule-glyph')[0].childNodes[0].dataset.icon),
-    ['waiting', 'refused', 'refused', 'lock', 'send'],
+    ['waiting', 'refused', 'refused', 'send'],
   );
-  // The rules sit in four groups with a heading each, in the order a person needs them.
+  // The rules sit in three groups with a heading each, in the order a person needs them.
   const groups = withClass(panel, 'rule-group');
-  assert.deepEqual(groups.map((g) => g.dataset.group), ['ask', 'refuse', 'keep', 'pay']);
-  assert.deepEqual(groups.map((g) => textOf(withClass(g, 'rule-group-title')[0])), ['Asks first', 'Refuses', 'Keeps', 'Pays only']);
-  assert.deepEqual(groups.map((g) => withClass(g, 'rule').length), [1, 2, 1, 1]);
+  assert.deepEqual(groups.map((g) => g.dataset.group), ['ask', 'refuse', 'pay']);
+  assert.deepEqual(groups.map((g) => textOf(withClass(g, 'rule-group-title')[0])), ['Asks first', 'Refuses', 'Pays only']);
+  assert.deepEqual(groups.map((g) => withClass(g, 'rule').length), [1, 2, 1]);
   // The sub line counts what is drawn and says what was spent.
-  assert.equal(withClass(panel, 'card-meta')[0].textContent, '5 rules, $1,150.20 spent today');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '4 rules, $1,150.20 spent today');
   // The foot is one line.
   const foot = withClass(panel, 'meta').find((n) => /Ask your assistant/.test(n.textContent))!;
   assert.equal(foot.textContent, 'Ask your assistant to change a rule. Every change waits for your click.');
@@ -257,7 +253,7 @@ test('nothing spent is said in words, and the meter draws no fill', () => {
   const { host, render } = boot();
   render({ policy: POLICY, sentences: SENTENCES, dailyLimit: { capUsd: 25_000, spentUsd: 0, resetsAt: null } });
   const panel = panelOf(host);
-  assert.equal(withClass(panel, 'card-meta')[0].textContent, '5 rules, nothing spent today');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '4 rules, nothing spent today');
   const meter = withClass(panel, 'rule-meter')[0];
   assert.equal(meter.style.getPropertyValue('--used'), '0.00%');
   assert.equal(meter.getAttribute('data-spent'), null);
@@ -270,11 +266,11 @@ test('a policy with no daily cap draws no daily rule, no meter and no zero of ze
   render({ policy: POLICY, sentences, dailyLimit: null });
   const panel = panelOf(host);
   const rules = withClass(panel, 'rule');
-  assert.equal(rules.length, 4);
-  assert.deepEqual(rules.map((r) => r.dataset.rule), ['ask', 'refuse', 'gas', 'destinations']);
+  assert.equal(rules.length, 3);
+  assert.deepEqual(rules.map((r) => r.dataset.rule), ['ask', 'refuse', 'destinations']);
   assert.equal(withClass(panel, 'rule-meter').length, 0);
   assert.equal(withClass(panel, 'rule-figure').length, 0);
-  assert.equal(withClass(panel, 'card-meta')[0].textContent, '4 rules');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '3 rules');
   assert.ok(!/\$0 of \$0/.test(textOf(panel)));
 });
 
@@ -282,9 +278,9 @@ test('a daily sentence with no counter behind it is a rule without a gauge', () 
   const { host, render } = boot();
   render({ policy: POLICY, sentences: SENTENCES, dailyLimit: null });
   const panel = panelOf(host);
-  assert.equal(withClass(panel, 'rule').length, 5);
+  assert.equal(withClass(panel, 'rule').length, 4);
   assert.equal(withClass(panel, 'rule-meter').length, 0);
-  assert.equal(withClass(panel, 'card-meta')[0].textContent, '5 rules');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '4 rules');
 });
 
 test('rules that are not set are not drawn, and the count follows', () => {
@@ -349,14 +345,14 @@ test('a sentence the card does not know the shape of is kept whole under Refuses
   const rules = withClass(panel, 'rule');
   assert.deepEqual(
     rules.map((r) => r.dataset.rule),
-    ['kill', 'ask', 'refuse', 'daily', 'other', 'gas', 'destinations'],
+    ['kill', 'ask', 'refuse', 'daily', 'other', 'destinations'],
   );
   assert.equal(withClass(rules[0], 'rule-line')[0].textContent, 'Refuses everything while the kill switch is on.');
   assert.equal(rules[0].dataset.tone, 'down');
   assert.equal(rules[0].parentNode.className, 'rules', 'the kill switch sits above every group');
   assert.equal(withClass(rules[4], 'rule-line')[0].textContent, 'Never move funds into: Tether.');
   assert.equal(rules[4].parentNode.parentNode.dataset.group, 'refuse', 'a sentence of unknown shape is a refusal');
-  assert.equal(withClass(panel, 'card-meta')[0].textContent, '7 rules, nothing spent today');
+  assert.equal(withClass(panel, 'card-meta')[0].textContent, '6 rules, nothing spent today');
 });
 
 test('no policy at all is said in words, not as an empty box', () => {
@@ -394,5 +390,5 @@ test('a group over five rows folds to its heading and a count, and opens on a cl
   // Under five rows the heading is static.
   const asks = withClass(panelOf(host), 'rule-group').find((g) => g.dataset.group === 'ask')!;
   assert.equal(withClass(asks, 'rule-group-title')[0].tagName, 'h3');
-  assert.equal(withClass(panelOf(host), 'card-meta')[0].textContent, '10 rules');
+  assert.equal(withClass(panelOf(host), 'card-meta')[0].textContent, '9 rules');
 });

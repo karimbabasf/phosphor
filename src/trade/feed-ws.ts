@@ -420,13 +420,15 @@ export function createTradeFeed(deps: {
   }
 
   // Skipped once the account is known to be a plain perp account, where spot backs nothing and
-  // the socket already carries every number the surface shows.
+  // the socket already carries every number the surface shows. Read while the kind is still
+  // unknown: the spot balance is the one reading that can settle an empty account (see
+  // detectUnified), and skipping it while unknown was what kept a fresh install "still reading".
   function maybeReadSpot(): void {
     if (closed) return;
     // The poll is also where a wallet made after boot is noticed: the account channels follow
     // it before the balance is read for it.
     syncAccountSubs();
-    if (clearing !== null && !detectUnified()) return;
+    if (clearing !== null && detectUnified() === false) return;
     void readSpot();
   }
 
@@ -991,9 +993,15 @@ export function createTradeFeed(deps: {
       if (pot <= 0) return true;
       if (available > pot * (1 + POT_SKEW)) return true;
     } else if (pot === 0) {
-      // A zero account value with nothing yet heard from activeAssetData is unreadable: it is
-      // either a flat unified account worth real money or an empty perp one worth nothing.
-      return null;
+      // A zero account value with nothing yet heard from activeAssetData is either a flat
+      // unified account worth real money or an empty account worth nothing, and the spot read
+      // tells them apart: money on the spot side is the first case and stays unknown until
+      // activeAssetData says which book it backs; a completed read holding nothing is the
+      // second, known and empty. A never-funded account used to sit at "unknown" for the life
+      // of the process here, because the spot read was the only reading that could settle it
+      // and this answer was what skipped it.
+      if (spot === null) return null;
+      return spot.totalUsd === null || spot.totalUsd === 0 ? false : null;
     }
     // The only tell that needs no second message, which is what makes it the one that covers the
     // first paint after every reconnect and any account whose coin nobody is watching.

@@ -26,29 +26,20 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import { RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX } from '../../src/http/receipts.ts';
 import type { Receipt } from '../../src/http/receipts.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const SELF = '0x1111111111111111111111111111111111111111';
 
 function snapshot(): LedgerSnapshot {
-  const chainStatus = Object.fromEntries(
-    CHAINS.map((c) => [c, { ok: true, fetchedAt: new Date().toISOString() } as unknown as ChainStatus]),
-  ) as Record<ChainId, ChainStatus>;
-  return {
-    holdings: [],
-    prices: {},
-    gas: {} as LedgerSnapshot['gas'],
-    chainStatus,
-    fetchedAt: new Date().toISOString(),
-  } as unknown as LedgerSnapshot;
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function settled(id: string, status: ProposalStatus, over: Partial<Proposal> = {}): Proposal {
   const at = new Date().toISOString();
   return {
     id,
-    kind: 'intents_deposit',
+    // A retired kind, the shape rows on disk still have.
+    kind: 'intents_deposit' as unknown as Proposal['kind'],
     createdAt: at,
     decidedAt: at,
     decidedBy: 'policy',
@@ -78,8 +69,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: [SELF], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: SELF },
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -94,19 +84,15 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => settled('x', 'executed'),
       proposePolicyChange: async () => settled('x', 'executed'),
       proposeSwap: async () => settled('x', 'executed'),
       proposeHlDeposit: async () => settled('x', 'executed'),
       proposeHlWithdraw: async () => settled('x', 'executed'),
-      proposeIntentsDeposit: async () => settled('x', 'executed'),
-      proposeIntentsWithdraw: async () => settled('x', 'executed'),
       proposeIntentsSend: async () => settled('x', 'executed'),
       proposeTrade: async () => settled('x', 'executed'),
       proposeTradeChange: async () => settled('x', 'executed'),

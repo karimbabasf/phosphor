@@ -1,58 +1,43 @@
-// What the composition panel renders: everything held, the way a normal wallet shows it.
-// Karim, 2026-08-11: "the composition thing should just show what a normal crypto wallet
-// would show". So natives are in; classify() filters them out for the policy engine's
-// purposes, which is a different question.
+// What the wallet panel renders: everything held, the way a normal wallet shows it. Karim,
+// 2026-08-11: "the composition thing should just show what a normal crypto wallet would show".
+// So ETH and SOL are in; classify() leaves them out for the policy engine's purposes, which is
+// a different question.
 //
-// Pure function, no IO. Everything it renders is passed in: the chain readers and the
-// verifier reader own fetching, this owns presentation.
+// Pure function, no IO. Everything it renders is passed in: the verifier reader and the venue
+// reader own fetching, this owns presentation.
 
-import type { ChainId, LedgerSnapshot, WalletPlace, WalletRow, WalletView } from './types.ts';
+import type { LedgerSnapshot, WalletPlace, WalletRow, WalletView } from './types.ts';
 import { intentsUnreadWhy, type IntentsRead } from './ledger/intents.ts';
 import type { HlRead } from './ledger/hyperliquid.ts';
-
-// Price per unit, derived from what the ledger already priced rather than re-fetched.
-// Stables land on ~1.0, natives on spot, and a zero balance cannot divide.
-function unitPrice(amount: number, usd: number): number {
-  return amount > 0 ? usd / amount : 0;
-}
 
 // Below this a balance renders as $0.00, which is where a row stops carrying information.
 const DUST_USD = 0.005;
 
 // `now` is only for the age of the verifier read (see intentsUnreadWhy); a test pins it.
 export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyperliquid?: HlRead, now: number = Date.now()): WalletView {
-  // Symbol -> unit price, learned from the holdings themselves and topped up from the
-  // snapshot's native price table for symbols held only inside a pool.
+  // Symbol -> unit price, from the snapshot's spot table.
   //
-  // KEYED UPPERCASE, AND WETH IS ETH. src/ledger/index.ts prices the wallet's own holdings
-  // through exactly this normalisation and this map did not, so a lookup only landed when the
-  // two sides happened to agree on case. The mapping is not a nicety either: WETH and ETH are
-  // the same dollar behind two contracts, which is the argument priceHoldings already makes.
+  // KEYED UPPERCASE, AND WETH IS ETH. src/ledger/index.ts prices through exactly this
+  // normalisation and this map once did not, so a lookup only landed when the two sides
+  // happened to agree on case. The mapping is not a nicety either: WETH and ETH are the same
+  // dollar behind two contracts.
   const priceBySymbol = new Map<string, number>();
   const key = (symbol: string): string => {
     const upper = String(symbol ?? '').toUpperCase();
     return upper === 'WETH' ? 'ETH' : upper;
   };
-  for (const h of snapshot.holdings) {
-    const price = unitPrice(h.amount, h.usd);
-    if (price > 0) priceBySymbol.set(key(h.symbol), price);
-  }
   for (const [symbol, price] of Object.entries(snapshot.prices)) {
     if (!priceBySymbol.has(key(symbol))) priceBySymbol.set(key(symbol), price);
   }
 
   /* WHY A STABLECOIN FLOOR EXISTS HERE, AND WHY IT IS NOT AN INVENTED PRICE.
-     This map learns prices from what the wallet holds. A balance held ONLY inside the intents
-     verifier is therefore priced off nothing: the snapshot's own price table carries the gas
-     assets, and a stablecoin the wallet does not also hold on some chain appears in neither.
-     Karim, 2026-09-08, looking at his own window: 3.694727 USDC in NEAR Intents, priced at 0,
-     valued at 0, and a total that was $25.90 when it was $29.60. Money he owns, on screen as
-     nothing.
-     The dollar is the assumption src/ledger/index.ts already makes for every non-native
-     holding it has no spot price for, so applying it here is agreeing with the rest of the app
-     rather than making something up. It is deliberately a NAMED LIST and not a guess at what
-     looks like a stablecoin: a token called USDCoin is not a dollar because its name starts
-     the same way, and this figure is added to a total somebody makes decisions against. */
+     The spot table carries the natives. A stablecoin held inside the intents verifier appears
+     in it nowhere, so without this it is priced off nothing. Karim, 2026-09-08, looking at his
+     own window: 3.694727 USDC in NEAR Intents, priced at 0, valued at 0, and a total that was
+     $25.90 when it was $29.60. Money he owns, on screen as nothing.
+     It is deliberately a NAMED LIST and not a guess at what looks like a stablecoin: a token
+     called USDCoin is not a dollar because its name starts the same way, and this figure is
+     added to a total somebody makes decisions against. */
   const DOLLARS = new Set(['USDC', 'USDT', 'DAI', 'USDC.E', 'FRAX', 'PYUSD', 'USDE', 'LUSD', 'TUSD', 'USDP']);
   const priceOf = (symbol: string): number => {
     const found = priceBySymbol.get(key(symbol));
@@ -68,22 +53,9 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
      it does not exist to be asked about. */
   const pricedOf = (symbol: string): boolean => priceOf(symbol) > 0;
 
-  const tokenRows: WalletRow[] = snapshot.holdings.map(h => ({
-    kind: 'token',
-    chain: h.chain,
-    symbol: h.symbol,
-    tokenId: h.tokenId,
-    quantity: h.amount,
-    priceUsd: unitPrice(h.amount, h.usd),
-    valueUsd: h.usd,
-    share: 0, // filled below, once the total is known
-    native: h.native,
-  }));
-
-  // A balance inside the intents.near verifier. It is priced off the same symbol map as
-  // everything else, so ETH held in the verifier and ETH held in the wallet agree about
-  // what an ETH is worth. An asset we have no price for keeps its quantity and values at
-  // zero rather than borrowing a number from somewhere it does not belong.
+  // A balance inside the intents.near verifier, priced off the spot table. An asset we have
+  // no price for keeps its quantity and values at zero rather than borrowing a number from
+  // somewhere it does not belong.
   const intentsRows: WalletRow[] = (intents?.holdings ?? []).map(h => {
     const priceUsd = priceOf(h.symbol);
     return {
@@ -101,12 +73,6 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
     };
   });
 
-  // A wallet lists what you hold. The configured token list is long and most of it is
-  // empty on any given day (19 rows, 14 of them zero, on 2026-08-13), and a list where
-  // three quarters of the lines are 0.0000 buries the five that are real.
-  //
-  // The test is quantity, not value: a token we hold but have no price for is still held,
-  // and dropping it would be the app deciding you own less than you do.
   // The trading account. USDC is the only collateral HyperCore holds, and it is a dollar, so
   // the row prices itself: a venue read never has to wait for the price table.
   const hlRows: WalletRow[] =
@@ -133,10 +99,12 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
         ]
       : [];
 
-  const held = [...tokenRows, ...intentsRows, ...hlRows].filter(r => r.quantity > 0 || r.valueUsd > 0);
+  // A wallet lists what you hold. The test is quantity, not value: a token we hold but have no
+  // price for is still held, and dropping it would be the app deciding you own less than you do.
+  const held = [...intentsRows, ...hlRows].filter(r => r.quantity > 0 || r.valueUsd > 0);
   // The trading account at $0 is where a new account starts, not an empty holding to count:
   // "1 empty, not listed" on a fresh wallet was this row. The report says unfunded instead.
-  const emptyCount = tokenRows.length + intentsRows.length - held.filter(r => r.kind !== 'hyperliquid').length;
+  const emptyCount = intentsRows.length - held.filter(r => r.kind !== 'hyperliquid').length;
 
   // Dust. A priced balance that rounds to $0.00 (0.001 USDC left on a venue after a withdrawal)
   // is money, so the total and the place keep it, but a row reading "$0.00" beside a real one
@@ -156,14 +124,12 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   const byChain: Record<string, number> = {};
   for (const row of held) byChain[row.chain] = (byChain[row.chain] ?? 0) + row.valueUsd;
 
-  const stale: WalletPlace[] = (Object.entries(snapshot.chainStatus) as Array<[ChainId, { ok: boolean }]>)
-    .filter(([, status]) => !status.ok)
-    .map(([chain]) => chain);
+  const stale: WalletPlace[] = [];
   // A verifier read that failed twice in a row, or holdings nobody has re-read for two idle
-  // periods, are stale for the same reason a chain read that failed is: showing no intents
-  // row would claim the deposit is gone. One miss is not (intentsUnreadWhy says why). Only
-  // ever added when a read was actually attempted, so demo mode does not sprout a permanent
-  // STALE badge. The reason goes out beside the place, so the card can say more than "unknown".
+  // periods, are stale: showing no intents row would claim the deposit is gone. One miss is
+  // not (intentsUnreadWhy says why). Only ever added when a read was actually attempted, so a
+  // ledger that never asked does not sprout a permanent STALE badge. The reason goes out
+  // beside the place, so the card can say more than "unknown".
   const staleWhy: Partial<Record<WalletPlace, string>> = {};
   const intentsWhy = intents === undefined ? null : intentsUnreadWhy(intents, now);
   if (intentsWhy !== null) {

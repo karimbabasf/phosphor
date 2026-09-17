@@ -25,7 +25,6 @@ import type { MarketData } from '../market/index.ts';
 import type { TradeService } from '../trade/service.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
 import type { AgentPresence } from '../agents.ts';
-import type { GasCache } from '../transactions.ts';
 import type { createChartStore } from '../chart.ts';
 import type { ChartSlots } from '../charts.ts';
 import type { SnapshotBroker } from '../snapshot.ts';
@@ -62,13 +61,10 @@ export const CHAINS: readonly string[] = ['eth', 'base', 'arb', 'sol', 'near'];
 // kind missing here is a misleading error rather than a dead tool. Keep it in step with the
 // if-chain in the propose handler anyway, since the message is how a caller finds the typo.
 export const PROPOSE_KINDS: readonly string[] = [
-  'consolidate',
   'policy_change',
   'swap',
   'hl_deposit',
   'hl_withdraw',
-  'intents_deposit',
-  'intents_withdraw',
   'intents_send',
   // Two door kinds for one rail kind: a plan, and a change to one that is armed.
   'trade',
@@ -79,7 +75,6 @@ export const READ_TOOLS: readonly string[] = [
   // prints beside it, and the index of everything it can do. A read like any other, so it
   // joins the roster and gets audited exactly as every other call does.
   'start',
-  'balances',
   'composition',
   'wallet',
   // Where money comes IN. Opens the deposit card in the window for one asset on one network and
@@ -106,9 +101,6 @@ export const READ_TOOLS: readonly string[] = [
   'agent_roster',
   'agent_board',
   'agent_jobs',
-  // What this app has spent on gas, grouped. A pure aggregation over the history the
-  // HISTORY overlay already derives, so it reaches no chain of its own.
-  'gas_report',
   // Public chain data: an address, its transactions, one transaction, an account's intents
   // ledger. Reads that leave the machine the way research does: fixed hosts, a closed network
   // enum, an address or hash that passes its shape before a URL exists, answers that are data.
@@ -303,9 +295,6 @@ export type ThemeSlot = { get(): Theme; set(theme: Theme): void };
 // name is a price for the wrong asset.
 export type PriceCache = { coins: string[]; readings: PriceReading[] };
 
-// The receipt reader behind the history panel. `filling` is the one-at-a-time latch.
-export type GasFill = { cache: GasCache; filling: boolean };
-
 /* ServerDeps minus the optional theme pair, because `theme` below is the resolved one and a
    handler reading ctx.getTheme() would crash on the install that did not pass it. The screen
    record is resolved the same way. */
@@ -348,7 +337,6 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   // already there without resolving the claude binary on an install that never spawned one.
   crewIfAny: () => Crew | null;
   prices: PriceCache;
-  gas: GasFill;
   duplicates: DuplicateGuard;
   // One audit line per refused session or client, then silence. See firstRefusal in mcp.ts.
   seats: Set<string>;

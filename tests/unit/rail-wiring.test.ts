@@ -25,7 +25,6 @@ import type {
   AppConfig,
   HlDepositDraft,
   HlWithdrawDraft,
-  IntentsWithdrawDraft,
   LedgerSnapshot,
   Policy,
   Proposal,
@@ -44,13 +43,11 @@ import { createStore } from '../../src/store.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { createRails, venueAllowlist } from '../../src/rails/index.ts';
 import { HYPERCORE_COUNTERPARTY } from '../../src/rails/hypercore-deposit.ts';
-import { ONECLICK_COUNTERPARTY } from '../../src/rails/oneclick.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from '../../src/rails/intents-native.ts';
-import { INTENTS_WITHDRAW_COUNTERPARTY } from '../../src/rails/intents-withdraw.ts';
+import { ONECLICK_COUNTERPARTY } from '../../src/intents.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import { classify } from '../../src/composition.ts';
 
@@ -95,8 +92,6 @@ function spyRails(over: { simulation?: SimulationResult; result?: RailResult } =
     swap: rail('swap'),
     hl_deposit: rail('hl_deposit'),
     hl_withdraw: rail('hl_withdraw'),
-    intents_deposit: rail('intents_deposit'),
-    intents_withdraw: rail('intents_withdraw'),
   };
 
   return {
@@ -104,7 +99,7 @@ function spyRails(over: { simulation?: SimulationResult; result?: RailResult } =
     executed,
     registry: {
       for: (draft) => table[draft.kind] ?? null,
-      kinds: () => ['swap', 'hl_deposit', 'hl_withdraw', 'intents_deposit', 'intents_withdraw'],
+      kinds: () => ['swap', 'hl_deposit', 'hl_withdraw'],
     },
   };
 }
@@ -138,8 +133,7 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
   const cfg: AppConfig = {
     mode: 'live', // demo mode owns no rails at all; that is its own test below
     port: 4177,
-    addresses: { evm: [SELF_EVM], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: SELF_EVM },
     candleProducts: [],
     dataDir,
     keysPath: '/tmp/phosphor-rail-wiring-keys.json', // never read: the spy rail signs nothing
@@ -170,9 +164,6 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
         : over.intents ?? undefined,
     hyperliquid: () => undefined,
     refresh: async () => snapshot,
-    applyDemoTransfer: () => {
-      throw new Error('applyDemoTransfer must never be called in live mode');
-    },
   };
 
   savePolicy(dataDir, over.policy ?? seededPolicy());
@@ -185,8 +176,6 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
     store: createStore(dataDir),
     ledger,
     riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     rails: rails.registry,
     dataDir,
   });
@@ -200,7 +189,7 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
 }
 
 function swapParams(amountIn: number) {
-  return { venue: 'oneclick' as const, chain: 'arb' as const, fromSymbol: 'USDT', toSymbol: 'USDC', amountIn, minAmountOut: amountIn * 0.99 };
+  return { chain: 'arb' as const, fromSymbol: 'USDT', toSymbol: 'USDC', amountIn, minAmountOut: amountIn * 0.99 };
 }
 
 // ---------- the allowlist ----------
@@ -235,11 +224,9 @@ test('every rail draft the service builds names a counterparty the seeded allowl
 
   const swap = await h.svc.proposeSwap(swapParams(50));
   const deposit = await h.svc.proposeHlDeposit({ amount: 50 });
-  const intentsIn = await h.svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 20 });
-  const intentsOut = await h.svc.proposeIntentsWithdraw({ chain: 'arb', symbol: 'USDC', amount: 10 });
   const back = await h.svc.proposeHlWithdraw({ amount: 10 });
 
-  for (const p of [swap, deposit, intentsIn, intentsOut, back]) {
+  for (const p of [swap, deposit, back]) {
     const draft = p.draft as { counterparty?: string };
     const counterparty = (draft.counterparty ?? '').toLowerCase();
     assert.ok(allowed.has(counterparty), `${p.kind} points at ${counterparty}, which the seeded policy does not allow`);
@@ -311,11 +298,10 @@ test('each rail kind reaches its own rail with the draft the service built', asy
 
   await h.svc.proposeSwap(swapParams(50));
   await h.svc.proposeHlDeposit({ amount: 40 });
-  await h.svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 20 });
 
   assert.deepEqual(
     h.rails.executed.map(d => d.kind),
-    ['swap', 'hl_deposit', 'intents_deposit'],
+    ['swap', 'hl_deposit'],
   );
 });
 
@@ -326,8 +312,8 @@ test('the app resolves every address in a rail draft, so the agent names none of
 
   const swap = (await h.svc.proposeSwap(swapParams(500))).draft as SwapDraft;
   assert.equal(swap.from, SELF_EVM);
-  assert.equal(swap.to, SELF_EVM, 'a swap returns to our own wallet');
-  assert.equal(swap.counterparty, ONECLICK_COUNTERPARTY, 'the counterparty is the venue string, not a parameter');
+  assert.equal(swap.to, SELF_EVM, 'a swap is credited to our own account inside the verifier');
+  assert.equal(swap.counterparty, INTENTS_NATIVE_COUNTERPARTY, 'the counterparty is the verifier, not a parameter');
   assert.equal(swap.amountUsd, 500, 'the app prices the draft; the agent cannot declare a smaller number');
 
   const deposit = (await h.svc.proposeHlDeposit({ amount: 40 })).draft as HlDepositDraft;
@@ -336,11 +322,6 @@ test('the app resolves every address in a rail draft, so the agent names none of
   assert.equal(deposit.symbol, 'USDC');
   assert.equal(deposit.from, SELF_EVM.toLowerCase(), 'the verifier account is our EVM address lowercased, derived not passed');
   assert.equal(deposit.hlAccount, SELF_EVM, 'the trading account is ours, resolved by the app');
-
-  const out = (await h.svc.proposeIntentsWithdraw({ chain: 'arb', symbol: 'USDC', amount: 10 })).draft as IntentsWithdrawDraft;
-  assert.equal(out.counterparty, INTENTS_WITHDRAW_COUNTERPARTY);
-  assert.equal(out.from, SELF_EVM.toLowerCase(), 'the verifier account is our EVM address lowercased, derived not passed');
-  assert.equal(out.to, SELF_EVM, 'a withdrawal lands in our own wallet');
 });
 
 // The deposit builder picks the flavor to spend from what the verifier holds, and it refuses
@@ -394,7 +375,6 @@ test('an intents-native swap is credited to our own account, whatever chain the 
   const h = setup();
 
   const p = await h.svc.proposeSwap({
-    venue: 'intents-native',
     chain: 'arb',
     toChain: 'sol',
     fromSymbol: 'USDC',
@@ -424,7 +404,6 @@ test('an intents-native swap is authored by our EVM account even when the origin
   const h = setup();
 
   const p = await h.svc.proposeSwap({
-    venue: 'intents-native',
     chain: 'sol',
     toChain: 'arb',
     fromSymbol: 'SOL',
@@ -441,48 +420,6 @@ test('an intents-native swap is authored by our EVM account even when the origin
     'intents.near derives the owner from the erc191 signer, so a SOL balance in there is owned by the EVM account',
   );
   assert.equal(draft.to, draft.from);
-});
-
-test('a non-intents swap still authors from the origin chain wallet', async () => {
-  const h = setup();
-
-  const p = await h.svc.proposeSwap({
-    venue: 'oneclick',
-    chain: 'sol',
-    toChain: 'arb',
-    fromSymbol: 'SOL',
-    toSymbol: 'USDC',
-    amountIn: 0.12,
-    minAmountOut: 9,
-  });
-  const draft = p.draft as SwapDraft;
-
-  assert.notEqual(
-    draft.from,
-    SELF_EVM,
-    'oneclick really does send SOL from the Solana wallet, so the carve-out must not reach it',
-  );
-});
-
-test('the intents-native carve-out is scoped to that venue and does not follow oneclick', async () => {
-  const h = setup();
-
-  const p = await h.svc.proposeSwap({
-    venue: 'oneclick',
-    chain: 'arb',
-    toChain: 'sol',
-    fromSymbol: 'USDC',
-    toSymbol: 'SOL',
-    amountIn: 9,
-    minAmountOut: 0.1,
-  });
-  const draft = p.draft as SwapDraft;
-
-  assert.notEqual(
-    draft.to,
-    draft.from,
-    'oneclick really does deliver to another chain, so it must still resolve that chain address',
-  );
 });
 
 test('a symbol the app cannot price is refused rather than budgeted at NaN', async () => {
@@ -507,15 +444,13 @@ test('a rail whose counterparty is not on the allowlist is refused outright, nev
 
   const swap = await h.svc.proposeSwap(swapParams(500));
   const deposit = await h.svc.proposeHlDeposit({ amount: 50 });
-  const intentsIn = await h.svc.proposeIntentsDeposit({ chain: 'arb', symbol: 'USDC', amount: 20 });
-  const intentsOut = await h.svc.proposeIntentsWithdraw({ chain: 'arb', symbol: 'USDC', amount: 10 });
 
-  for (const p of [swap, deposit, intentsIn, intentsOut]) {
+  for (const p of [swap, deposit]) {
     assert.equal(p.status, 'policy_refused', `${p.kind} was not refused`);
     assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'destination_not_allowed', `${p.kind} refused for the wrong reason`);
   }
 
-  assert.ok(swap.verdict.reasons.join(' ').includes(ONECLICK_COUNTERPARTY), 'the refusal names the venue it refused');
+  assert.ok(swap.verdict.reasons.join(' ').includes(INTENTS_NATIVE_COUNTERPARTY), 'the refusal names the venue it refused');
   assert.equal(h.rails.simulated.length, 0, 'a refused draft costs no network round trips');
   assert.equal(h.rails.executed.length, 0, 'nothing executed');
 });
@@ -565,8 +500,7 @@ function cfgFor(mode: AppConfig['mode']): AppConfig {
   return {
     mode,
     port: 4177,
-    addresses: { evm: [SELF_EVM], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: SELF_EVM },
     candleProducts: [],
     dataDir: '/tmp/phosphor-rail-wiring-cfg',
     keysPath: '/tmp/phosphor-rail-wiring-keys.json',
@@ -608,16 +542,10 @@ test('the policy engine recognises every kind the registry can dispatch', () => 
     // the engine already routed into evaluateRail. That is the discriminator this test wants.
     const verdict = evaluate({ kind, amountUsd: 0 } as WriteDraft, {
       policy: defaultPolicy(),
-      composition: classify(
-        { holdings: [], chainStatus: {}, mode: 'live', prices: {}, gas: {} } as never,
-        [],
-      ),
-      holdings: [],
+      composition: classify([], []),
       selfAddresses: [],
       sessionSpentUsd: 0,
-      risk: [],
-      prices: {},
-    } as never);
+    });
 
     // The draft is a bare {kind} with no amount, so every kind must refuse. What matters is
     // WHICH refusal: 'nothing_to_move' means the engine never recognised it as a rail at all.
@@ -637,9 +565,7 @@ test('the live registry holds every rail kind and nothing else', () => {
   assert.deepEqual(registry.kinds().sort(), [
     'hl_deposit',
     'hl_withdraw',
-    'intents_deposit',
     'intents_send',
-    'intents_withdraw',
     'swap',
     'trade',
   ]);
@@ -678,11 +604,8 @@ test('demo mode owns no rails, and a rail proposal there refuses instead of reac
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot,
-      applyDemoTransfer: () => {},
     },
     riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     dataDir, // no rails passed
   });
 

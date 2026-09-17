@@ -40,8 +40,7 @@ function liveConfig(keysPath: string): AppConfig {
     mode: 'live',
     keysPath,
     port: 4177,
-    addresses: { evm: [], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: {},
     candleProducts: ['BTC-USD'],
     dataDir: path.dirname(keysPath),
   };

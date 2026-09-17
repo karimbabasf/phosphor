@@ -133,7 +133,7 @@ test('a SIGKILL mid-run loses nothing that was already written', async () => {
   const made = await request(
     port,
     '/api/mcp',
-    JSON.stringify({ op: 'propose', kind: 'consolidate', params: { toChain: 'arb', symbol: 'USDC' }, client: 'failure-test' }),
+    JSON.stringify({ op: 'propose', kind: 'policy_change', params: { patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' }, client: 'failure-test' }),
   );
   assert.equal(made.status, 200, made.body);
   const id = (JSON.parse(made.body) as { id: string }).id;
@@ -164,7 +164,8 @@ test('a proposal stranded mid-execution comes back as an unknown outcome, not as
   // rail's answer leaves behind, and nothing on any surface could act on them.
   const stranded = (id: string, amountUsd: number, txids: string[]): Proposal => ({
     id,
-    kind: 'intents_deposit',
+    // A retired kind, the shape rows on disk still have.
+    kind: 'intents_deposit' as unknown as Proposal['kind'],
     createdAt: new Date().toISOString(),
     decidedAt: new Date().toISOString(),
     decidedBy: 'policy',
@@ -281,74 +282,6 @@ function policyThatBinds(dir: string): void {
   savePolicy(dir, policy);
 }
 
-test('two spends arriving together cannot both take the last of the daily cap', async () => {
-  const dir = tmpDir();
-  policyThatBinds(dir);
-  const port = takePort();
-  const app = await boot(dir, port);
-  try {
-    const move = (session: string, maxTotalUsd: number): string =>
-      JSON.stringify({
-        op: 'propose',
-        kind: 'consolidate',
-        params: { toChain: 'arb', symbol: 'USDC', maxTotalUsd },
-        client: 'racer',
-        session,
-      });
-
-    /* Two different sessions AND two different sizes, so neither the seat nor the duplicate
-       guard is what decides this: the guard fingerprints the kind and the params, so identical
-       ones would be refused as a duplicate and prove nothing about the budget. What has to
-       decide it is the spend queue, which is the mechanism the audit demonstrated broken. */
-    const [a, b] = await Promise.all([
-      request(port, '/api/mcp', move('one', 8_000)),
-      request(port, '/api/mcp', move('two', 8_001)),
-    ]);
-    assert.equal(a.status, 200, a.body);
-    assert.equal(b.status, 200, b.body);
-
-    const state = JSON.parse((await request(port, '/api/state')).body) as {
-      proposals: Proposal[];
-      dailyLimit: { capUsd: number; spentUsd: number } | null;
-    };
-    const executed = state.proposals.filter((p) => p.status === 'executed');
-    const refused = state.proposals.filter((p) => p.status === 'policy_refused');
-
-    assert.equal(executed.length, 1, `exactly one may spend: ${state.proposals.map((p) => p.status).join(', ')}`);
-    assert.equal(refused.length, 1, 'and the other is refused rather than run');
-    assert.match(JSON.stringify(refused[0].verdict), /session|cap|limit/i);
-    assert.ok(
-      (state.dailyLimit?.spentUsd ?? 0) <= (state.dailyLimit?.capUsd ?? 0),
-      `spent ${String(state.dailyLimit?.spentUsd)} against a cap of ${String(state.dailyLimit?.capUsd)}`,
-    );
-  } finally {
-    await app.stop();
-  }
-});
-
-test('two identical proposals from one session: at most one is a spend', async () => {
-  const dir = tmpDir();
-  policyThatBinds(dir);
-  const port = takePort();
-  const app = await boot(dir, port);
-  try {
-    const body = JSON.stringify({
-      op: 'propose',
-      kind: 'consolidate',
-      params: { toChain: 'arb', symbol: 'USDC', maxTotalUsd: 8_000 },
-      client: 'racer',
-      session: 'one-session',
-    });
-    await Promise.all([request(port, '/api/mcp', body), request(port, '/api/mcp', body)]);
-
-    const state = JSON.parse((await request(port, '/api/state')).body) as { proposals: Proposal[] };
-    const executed = state.proposals.filter((p) => p.status === 'executed');
-    assert.equal(executed.length, 1, 'the duplicate does not double the money, whatever the guard did');
-  } finally {
-    await app.stop();
-  }
-});
-
 /* TWO AGENTS, one proposal, the same tick. This is the race the duplicate guard exists for and
    the one it used to lose: handlePropose checked `find` and then awaited the whole proposal
    pipeline before calling `remember`, so two identical requests arriving together both saw an
@@ -362,9 +295,12 @@ test('two agents proposing the same thing in one tick: one lands, the other is t
   const port = takePort();
   const app = await boot(dir, port);
   try {
-    const params = { toChain: 'arb', symbol: 'USDC', maxTotalUsd: 8_000 };
+    // A rule change: the one kind demo mode can land (every money rail is off there), and the
+    // guard fingerprints kind and params the same way for all of them.
+    const sentence = 'ask me above fifty dollars';
+    const params = { patch: { outbound: { humanClickAboveUsd: 50 } }, sentence };
     const asAgent = (session: string): string =>
-      JSON.stringify({ op: 'propose', kind: 'consolidate', params, client: session, session });
+      JSON.stringify({ op: 'propose', kind: 'policy_change', params, client: session, session });
 
     const [a, b] = await Promise.all([
       request(port, '/api/mcp', asAgent('agent-a')),
@@ -375,9 +311,9 @@ test('two agents proposing the same thing in one tick: one lands, the other is t
     assert.deepEqual(statuses, [200, 409], 'one proposal, and the other agent is told why not');
 
     const state = JSON.parse((await request(port, '/api/state')).body) as { proposals: Proposal[] };
-    // Filtered by kind, because a boot on a policy that predates a venue files a policy_change of
-    // its own asking to allow it, and that is not what this test is counting.
-    assert.equal(state.proposals.filter((p) => p.kind === 'consolidate').length, 1, 'one proposal exists, not two');
+    // Filtered by sentence, because a boot on a policy that predates a venue files a policy_change
+    // of its own asking to allow it, and that is not what this test is counting.
+    assert.equal(state.proposals.filter((p) => p.draft.kind === 'policy_change' && p.draft.sentence === sentence).length, 1, 'one proposal exists, not two');
 
     const refused = a.status === 409 ? a : b;
     assert.match(JSON.parse(refused.body).error, /another agent proposed exactly this/);
@@ -421,9 +357,10 @@ test('concurrent approvals of one proposal decide it exactly once', async () => 
     const made = await request(
       port,
       '/api/mcp',
-      JSON.stringify({ op: 'propose', kind: 'consolidate', params: { toChain: 'arb', symbol: 'USDC' }, client: 'racer' }),
+      JSON.stringify({ op: 'propose', kind: 'policy_change', params: { patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' }, client: 'racer' }),
     );
     const proposal = JSON.parse(made.body) as { id: string; status: string };
+    assert.equal(proposal.status, 'pending', made.body);
 
     // Both carry the wrong token: what is under test is that two concurrent decision requests
     // reach one answer rather than two, and the refusal path is the one a test can drive without

@@ -13,68 +13,52 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, Policy, RiskRow } from '../../src/types.ts';
-import { createAudit } from '../../src/audit.ts';
-import { createStore } from '../../src/store.ts';
-import { createLedger } from '../../src/ledger/index.ts';
-import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
+import type { Policy } from '../../src/types.ts';
+import { savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../src/intents.ts';
-import { createProposalService } from '../../src/proposals.ts';
 import { createKeystore, useKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
+import { makeCtx, railThat, seededPolicy } from './helpers/proposals.ts';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const riskRows = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
 const PASSWORD = 'a long enough password';
 
 function happyPolicy(): Policy {
-  const p = defaultPolicy();
-  delete p.composition.minNativeGasUsd.near;
-  p.sentences = renderSentences(p);
-  return p;
+  return seededPolicy();
 }
 
 function fast(): ReturnType<typeof defaultParams> {
   return { ...defaultParams(), N: 2 ** 14 };
 }
 
+/* The service over a scripted Hyperliquid deposit rail and a verifier read big enough for the
+   large move: the lock is global (useKeystore), so the rail sees it the way the app's would. */
 function setup(policy: Policy = happyPolicy()) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-queued-'));
-  const keysPath = path.join(dataDir, 'keys', 'keys.json');
-  const cfg: AppConfig = {
-    mode: 'demo',
-    keysPath,
-    port: 4177,
-    addresses: { evm: [], solana: [], near: [] },
-    economicTransferUsd: 10,
-    candleProducts: [],
-    dataDir,
-  };
-  const audit = createAudit(dataDir);
-  const store = createStore(dataDir);
-  const ledger = createLedger(cfg);
-  savePolicy(dataDir, policy);
+  const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-queued-')), 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, kdf: fast });
   useKeystore(keystore);
-  const svc = createProposalService({ cfg, audit, store, ledger, riskRows, quoter: syntheticQuoter(), signer: stubSigner(), dataDir });
-  return { dataDir, cfg, audit, store, svc, keystore };
+  const rail = railThat('hl_deposit', async () => ({ ok: true, detail: 'credited', txids: ['h1'] }));
+  const h = makeCtx({ rails: [rail], policy, intentsUsdc: 10_000 });
+  return { dataDir: h.dataDir, audit: h.audit, store: h.store, svc: h.svc, keystore };
 }
 
 test.afterEach(() => {
   useKeystore(null);
 });
 
-// A consolidation small enough to be auto-approved with the wallet open. It is the case that
-// matters most: with no lock it EXECUTES with nobody clicking, so a queue that let it through
-// would be money moving with no key and no person.
-// The row once it has landed: a propose answers with the executing row and the demo legs run
-// behind it, and a row that never executed comes back as it is.
+// A deposit small enough to be auto-approved with the wallet open. It is the case that matters
+// most: with no lock it EXECUTES with nobody clicking, so a queue that let it through would be
+// money moving with no key and no person.
+// The row once it has landed: a propose answers with the executing row and the rail runs behind
+// it, and a row that never executed comes back as it is.
 async function smallMove(h: ReturnType<typeof setup>) {
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 50 });
+  const p = await h.svc.proposeHlDeposit({ amount: 50 });
   return await h.svc.settled(p.id, 5000);
+}
+
+// Above the $100 click threshold in the default policy.
+function largeMove(h: ReturnType<typeof setup>) {
+  return h.svc.proposeHlDeposit({ amount: 5000 });
 }
 
 test('a proposal authored while locked is queued, not refused', async () => {
@@ -115,8 +99,7 @@ test('a large one released by unlock lands pending, waiting for a click as it al
   await h.keystore.create(PASSWORD);
   h.keystore.lock();
 
-  // Above the $100 click threshold in the default policy.
-  const queued = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+  const queued = await largeMove(h);
   assert.equal(queued.status, 'pending_unlock');
   assert.equal(queued.verdict.outcome, 'needs_approval');
 
@@ -220,7 +203,7 @@ test('approving while the wallet is locked queues the proposal instead of failin
   await h.keystore.create(PASSWORD);
 
   // Above the click threshold, so it sits pending waiting for a person.
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+  const p = await largeMove(h);
   assert.equal(p.status, 'pending');
 
   // Fifteen idle minutes, and then the click.
@@ -241,7 +224,7 @@ test('approving while the wallet is locked queues the proposal instead of failin
 test('a queued proposal cannot be approved twice: the second click finds it queued, not pending', async () => {
   const h = setup();
   await h.keystore.create(PASSWORD);
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+  const p = await largeMove(h);
   h.keystore.lock();
 
   await h.svc.approve(p.id);
@@ -251,7 +234,7 @@ test('a queued proposal cannot be approved twice: the second click finds it queu
 test('a policy that refuses at click time still refuses, lock or no lock', async () => {
   const h = setup();
   await h.keystore.create(PASSWORD);
-  const p = await h.svc.proposeConsolidate({ toChain: 'eth', symbol: 'USDT', maxTotalUsd: 5000 });
+  const p = await largeMove(h);
 
   const killed = happyPolicy();
   killed.killSwitch = true;
@@ -264,10 +247,9 @@ test('a policy that refuses at click time still refuses, lock or no lock', async
 });
 
 
-/* A demo receipt used to read "balance after: unknown" for a transfer that plainly happened: the
-   demo success path returned without balances and kept { beforeUsd, afterUsd: null } off the
-   executing row, while applyDemoTransfer had already moved the ledger. */
-test('a demo transfer that executed says what it left behind, not "unknown"', async () => {
+/* A receipt used to read "balance after: unknown" for a move that plainly happened: the success
+   path returned without balances and kept { beforeUsd, afterUsd: null } off the executing row. */
+test('a move that executed says what it left behind, not "unknown"', async () => {
   const h = setup();
   await h.keystore.create(PASSWORD);
 

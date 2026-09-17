@@ -201,8 +201,8 @@ test('SIGTERM mid-propose leaves a valid state file and exits clean', async () =
     headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${port}` },
     body: JSON.stringify({
       op: 'propose',
-      kind: 'consolidate',
-      params: { toChain: 'arb', symbol: 'USDC' },
+      kind: 'policy_change',
+      params: { patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' },
       client: 'shutdown-test',
       session: token,
       secret,

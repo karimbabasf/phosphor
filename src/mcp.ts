@@ -372,11 +372,8 @@ server.registerTool(
 // reassurance in a comment beside a fund-moving tool is worse than no comment, because the next
 // person sizes the threshold believing there is a second wall behind it.
 type ProposeKind =
-  | 'consolidate'
   | 'policy_change'
   | 'swap'
-  | 'intents_deposit'
-  | 'intents_withdraw'
   | 'intents_send'
   | 'hl_deposit'
   | 'trade'
@@ -412,20 +409,9 @@ function registerPropose(
   );
 }
 
+// The home chain of an asset, which is how the NEAR Intents token list names one: "USDC from
+// eth" and "USDC from arb" are two ids. Never a place money lands.
 const CHAIN = z.enum(['eth', 'base', 'arb', 'sol', 'near']);
-
-// Where funds may LAND, and where they may be pulled FROM, on the agent's surface.
-//
-// EVM only, for one reason that decides it: this app holds an EVM key and derives its EVM
-// address from it, so it can PROVE the destination is its own. On Solana it holds no key at
-// all and takes the address from config.local.json on trust, which means anyone who can edit
-// that file redirects real money and every other layer agrees with them. NEAR is refused
-// twice inside the app already (src/proposals.ts and src/rails/intents-withdraw.ts) because
-// cfg.addresses.near names an account nobody has signed for.
-//
-// Narrowing the ENUM rather than relying on those refusals makes the limit structural: the
-// argument cannot be expressed, so it cannot be proposed, mistyped or talked into.
-const SELF_CUSTODY_CHAIN = z.enum(['eth', 'base', 'arb']);
 
 // This sentence used to read "Execution only ever happens after a human approves in the
 // app window". That is false below the click threshold, where the policy engine decides
@@ -465,13 +451,8 @@ registerRead(
   {},
 );
 registerRead(
-  'balances',
-  'Returns current holdings across every configured chain, with per-chain staleness. Read-only, changes nothing.',
-  {},
-);
-registerRead(
   'wallet',
-  'Returns everything held the way a wallet shows it: one row per token on a chain, one per balance inside NEAR Intents, and one for the Hyperliquid trading account (free collateral, margin in use, open positions), with quantity, unit price, USD value and share of the total. The three pockets in one read. Read-only, changes nothing.',
+  'Returns everything held the way a wallet shows it: one row per balance inside NEAR Intents and one for the Hyperliquid trading account (free collateral, margin in use, open positions), with quantity, unit price, USD value and share of the total. Both pockets in one read. Read-only, changes nothing.',
   {},
 );
 registerLeadRead(
@@ -526,27 +507,6 @@ registerRead(
 // the whole reason this description is long. An aggregate that silently drops what it could not
 // count reports a smaller number than the truth and calls it the truth, and an agent reading
 // only `totalUsd` will say it out loud with four receipts still being read.
-registerRead(
-  'gas_report',
-  [
-    'What this app has spent on gas: a dollar total, then the same total split by action, by chain,',
-    'by rail kind and by venue, plus gas as basis points of the value actually moved. It groups',
-    'receipts already read for the history surface, so it makes no new chain call and adds no delay.',
-    '',
-    'REPORT THE REMAINDERS OR THE TOTAL IS WRONG. Four counts sit beside it and not one of them means',
-    'zero gas: `pending` receipts are still being read, `unknown` hashes are on no chain this app can',
-    'reach, `unpriced` receipts have gas in native units and no price to convert it, and `intentOnly`',
-    'moves were settled by a solver so they burned none of our gas, which is a fact rather than a gap.',
-    '`reverted` is not a remainder and is worse than one: gas spent, nothing moved, pure loss. Saying',
-    '"$1.42 on gas" while four receipts are pending has told a human a wrong number confidently.',
-    '',
-    'The window filters on settle time, the same order every other surface here uses, and defaults to',
-    '7d. Chain dollars sum to the total; action counts may exceed the movement count, because one',
-    'cross-chain movement burns gas on two chains. Read-only, changes nothing.',
-  ].join(' '),
-  { window: z.enum(['24h', '7d', '30d', 'all']).optional().default('7d') },
-);
-
 // ---------- the chart ----------
 //
 // Reading and driving the chart moves no money, so none of this goes near the approval gate.
@@ -1050,38 +1010,22 @@ registerLeadView(
   },
 );
 
-registerPropose(
-  'propose_consolidate',
-  'consolidate',
-  `Proposes consolidating a stablecoin's scattered balances onto one chain. NOTE: this path has never been run on a live chain. The only execution in the audit log was in demo mode, and its one real attempt refused with nothing_to_move. Treat a clean simulation as untested rather than as proven, and say so when you propose it. ${CANNOT_APPROVE}`,
-  {
-    toChain: CHAIN,
-    symbol: z.string(),
-    fromChains: z.array(CHAIN).optional(),
-    maxTotalUsd: z.number().optional(),
-  },
-);
 registerPropose('propose_policy_change', 'policy_change', `Proposes a change to the app's policy rules. ${ALWAYS_CLICK}`, {
   patch: z.object({}).passthrough(),
   sentence: z.string(),
 });
 
-// The four rail tools. Every one of them names chains, symbols and amounts and nothing
-// else: the wallet the funds leave, the wallet they come back to, and the contract they
-// pass through are all resolved by the app from its own config and its verified
-// deployment tables. There is deliberately no argument on this surface that an agent
-// could point at an address of its choosing.
+// The rail tools. Every one of them names assets and amounts and nothing else: the account
+// the funds leave, the account they land in, and the venue they pass through are all resolved
+// by the app from its own key and its verified venue table. There is deliberately no argument
+// on this surface that an agent could point at an address of its choosing.
 
 registerPropose(
   'propose_swap',
   'swap',
-  `Proposes swapping one token for another. There are two venues, they are not interchangeable, so name the one you mean:
-- 'intents-native': signs an intent over a balance ALREADY inside the intents.near verifier, moving nothing on chain. propose_intents_deposit is the funding step first. On this venue chain/toChain name the ASSET's home chain rather than a wallet, so sol and near are meaningful here.
-- 'oneclick': a cross-chain swap that transfers wallet funds to a per-quote NEAR Intents deposit address. Use for moving between chains.
+  `Proposes swapping one token for another inside NEAR Intents: one signed intent over the balance this app already holds there, moving nothing on any chain. Both legs stay inside NEAR Intents.
 
-Omitting venue means 'oneclick'. There is no on-chain DEX venue: this app swaps through NEAR Intents and nowhere else.
-
-IMPORTANT: for 'intents-native', chain: 'sol' means "the SOL-flavoured balance held in the verifier", not "my Solana wallet". ${CANNOT_APPROVE}`,
+chain and toChain name each ASSET's home chain, which is how the token list tells "USDC from eth" from "USDC from arb"; they are never a wallet or a place the money goes. chain: 'sol' means "the SOL held inside NEAR Intents", not a Solana wallet. Money reaches the balance through the deposit card in the window, never through a tool. ${CANNOT_APPROVE}`,
   {
     chain: CHAIN,
     toChain: CHAIN.optional(),
@@ -1089,38 +1033,6 @@ IMPORTANT: for 'intents-native', chain: 'sol' means "the SOL-flavoured balance h
     toSymbol: z.string(),
     amountIn: z.number(),
     minAmountOut: z.number(),
-    venue: z
-      .enum(['oneclick', 'intents-native'])
-      .optional()
-      .describe(
-        "which rail: 'oneclick' (wallet funds, cross-chain) or 'intents-native' (a balance already inside the verifier). Omitting it means oneclick.",
-      ),
-  },
-);
-
-registerPropose(
-  'propose_intents_deposit',
-  'intents_deposit',
-  `Proposes depositing funds from this app's own wallet into NEAR Intents, where they become a balance held by the intents.near verifier under this app's own account. This is the funding step before propose_swap, which can then swap that balance without moving anything on chain. Leaving symbol out deposits the origin chain's gas asset, so on eth that is native ETH. The asset does not change: this is custody moving, not a swap. Who gets credited is resolved by the app from its own key and cannot be named here.
-
-chain says where the funds LEAVE FROM, so it is a real wallet and is EVM only: this app holds an EVM key and can prove that address is its own. ${CANNOT_APPROVE}`,
-  {
-    chain: SELF_CUSTODY_CHAIN,
-    symbol: z.string().optional(),
-    amount: z.number(),
-  },
-);
-
-registerPropose(
-  'propose_intents_withdraw',
-  'intents_withdraw',
-  `Proposes withdrawing a balance held inside NEAR Intents back out to one of this app's own wallets on a real chain. The reverse of propose_intents_deposit, and the way a balance swapped with propose_swap gets out of the verifier. Leaving symbol out withdraws that chain's gas asset. Which wallet on that chain is ours is read from this app's own config and cannot be named here.
-
-chain says where the money LANDS, so it is EVM only: eth, base or arb. This app derives its EVM address from a key it holds, so it can prove the destination is its own. It has no Solana signer, so a Solana payout would be trusting a config file with real money, and a NEAR payout would go to an account nobody has signed for. ${CANNOT_APPROVE}`,
-  {
-    chain: SELF_CUSTODY_CHAIN,
-    symbol: z.string().optional(),
-    amount: z.number(),
   },
 );
 
@@ -1194,7 +1106,7 @@ registerPropose(
   'hl_deposit',
   `Proposes funding the Hyperliquid perps account from the NEAR Intents balance, so a plan has collateral to trade. This is the step BEFORE propose_trade: a plan against an account holding nothing is refused for lack of free collateral.
 
-The money leaves the intents balance and nowhere else: one signed intent, nothing sent on any chain. If the balance is in a wallet, propose_intents_deposit first. amount is in symbol, which defaults to USDC; the app picks which held flavor it spends. Which Hyperliquid account gets credited is resolved by the app from its own key and cannot be named here.
+The money leaves the intents balance and nowhere else: one signed intent, nothing sent on any chain. amount is in symbol, which defaults to USDC; the app picks which held flavor it spends. Which Hyperliquid account gets credited is resolved by the app from its own key and cannot be named here.
 
 Two numbers decide whether this is worth doing, and both are in the approval summary rather than here, because they are live: the routing fee is close to FLAT, about \$0.32 plus 25 bp, so it is about 3.4 percent on \$10 and about 0.3 percent on \$1000. Below \$7 it is refused, because Hyperliquid does not credit a deposit under 5 USDC delivered (the money is lost, not returned), and 7 in is what guarantees 5 lands after the flat fee while keeping that fee under the 5 percent ceiling; above 5 percent of the deposit it is refused too. If a human asks to fund a small amount, say what the percentage would be before you propose it.
 

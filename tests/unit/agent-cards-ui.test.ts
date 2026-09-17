@@ -191,11 +191,11 @@ function build() {
   };
 }
 
-const BALANCES = {
+const WALLET = {
   totalUsd: 29.6,
-  holdings: [
-    { chain: 'base', symbol: 'USDC', amount: 25.9, usd: 25.9, native: false },
-    { chain: 'sol', symbol: 'SOL', amount: 0.02, usd: 3.7, native: true },
+  rows: [
+    { kind: 'intents', chain: 'intents', symbol: 'USDC', quantity: 25.9, valueUsd: 25.9, native: false },
+    { kind: 'intents', chain: 'intents', symbol: 'SOL', quantity: 0.02, valueUsd: 3.7, native: true },
   ],
 };
 
@@ -217,7 +217,7 @@ test('kindFor names the card by the tool, prefix or not, and falls back to the f
   const world = build();
   const kindFor = world.cards.kindFor as (name: string, data?: unknown) => string;
   assert.equal(kindFor('mcp__phosphor__wallet'), 'balance');
-  assert.equal(kindFor('balances'), 'balance');
+  assert.equal(kindFor('wallet'), 'balance');
   assert.equal(kindFor('trade_read'), 'position');
   assert.equal(kindFor('mcp__phosphor__trade_batch'), 'position');
   assert.equal(kindFor('propose_swap'), 'move');
@@ -226,15 +226,15 @@ test('kindFor names the card by the tool, prefix or not, and falls back to the f
   assert.equal(kindFor('deposit'), 'deposit');
   assert.equal(kindFor('watch', { chain: 'base', asset: 'USDC', watching: 'watching' }), 'deposit');
   assert.equal(kindFor('watch', { ok: true, coins: ['BTC', 'ETH'] }), 'kv');
-  assert.equal(kindFor('gas_report'), 'kv');
+  assert.equal(kindFor('policy_show'), 'kv');
 });
 
 test('a tool_data event draws a card under the steps that produced it, and the next call folds on its own', () => {
   const world = build();
   world.ask('what do I hold');
-  world.emit({ kind: 'tool', name: 'mcp__phosphor__balances', input: {} });
-  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__balances', ok: true });
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__balances', input: {}, data: BALANCES });
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__wallet', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: WALLET });
   world.emit({ kind: 'tool', name: 'mcp__phosphor__trade_read', input: {} });
   const kinds = world.blocks().map((b) => b.className);
   assert.deepEqual(kinds, ['chat-row chat-said', 'steps-block', 'chat-card', 'steps-block'], kinds.join(' | '));
@@ -390,7 +390,7 @@ test('a receipt folds: the newest opens, the ones before it close, and the head 
 test('a data card opens by default and stays where the person left it', () => {
   const world = build();
   world.ask('balance');
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__balances', input: {}, data: BALANCES });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: WALLET });
   const card = world.cardNodes('balance')[0];
   assert.equal(card.getAttribute('data-open'), 'true');
   fire(all(card, 'tcard-head')[0], 'click');

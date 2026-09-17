@@ -1,15 +1,13 @@
 // Turns a Policy into deterministic plain-English sentences. Pure, no IO.
 // Lines that describe a real default-relevant limit (transaction cap, session
-// cap, click threshold, per-chain gas minimums) always render, since those
-// limits are meaningful even at their default value. Lines that describe an
+// cap, click threshold) always render, since those limits are meaningful even
+// at their default value. Lines that describe an
 // opt-in restriction (issuer caps, freezable cap, forbidden issuers, extra
 // destinations) render only when set away from their unrestricted default,
 // since "no issuer may exceed 100%" says nothing. Kill switch, when on,
 // always renders last.
 
-import type { ChainId, Policy } from '../types.ts';
-
-const CHAIN_ORDER: readonly ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
+import type { Policy } from '../types.ts';
 
 function formatUsd(n: number): string {
   const rounded = Math.round(n * 100) / 100;
@@ -36,13 +34,6 @@ export function renderSentences(p: Policy): string[] {
 
   if (p.outbound.destinationAllowlist.length > 0) {
     lines.push(`Additional allowed destinations: ${p.outbound.destinationAllowlist.join(', ')}.`);
-  }
-
-  for (const chain of CHAIN_ORDER) {
-    const usd = p.composition.minNativeGasUsd[chain];
-    if (usd !== undefined && usd > 0) {
-      lines.push(`Keep at least ${formatUsd(usd)} of gas on ${chain}.`);
-    }
   }
 
   const defaultShare = p.composition.maxIssuerShare.default;

@@ -22,25 +22,17 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const VECTOR_EVM = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
 const PASSWORD = 'a long enough password';
 
 function snapshot(): LedgerSnapshot {
-  const status: ChainStatus = { ok: true, fetchedAt: new Date().toISOString() };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function fast(): ReturnType<typeof defaultParams> {
@@ -88,8 +80,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
   const cfg: AppConfig = {
     mode,
     port: 0,
-    addresses: { evm: [], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: {},
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath,
@@ -105,19 +96,15 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => { throw new Error('unused'); },
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
       proposeHlWithdraw: async () => { throw new Error('unused'); },
-      proposeIntentsDeposit: async () => { throw new Error('unused'); },
-      proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsSend: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },
       proposeTradeChange: async () => { throw new Error('unused'); },
@@ -343,7 +330,7 @@ test('import takes twelve words, refuses a bad phrase, and lands the known addre
   }
 });
 
-test('receive answers while locked, with a warning per chain and no key anywhere', async () => {
+test('receive answers while locked with the one EVM address, a warning per network and no key anywhere', async () => {
   const b = await boot();
   try {
     const empty = await b.get('/api/receive');
@@ -355,12 +342,11 @@ test('receive answers while locked, with a warning per chain and no key anywhere
     const out = await b.get('/api/receive');
     assert.equal(out.json.state, 'locked');
     const ids = out.json.chains.map((c: { id: string }) => c.id);
-    assert.deepEqual(ids, ['eth', 'base', 'arb', 'sol', 'near']);
+    assert.deepEqual(ids, ['eth', 'base', 'arb'], 'the Solana and NEAR keys the file seals are not addresses this app names any more');
     for (const chain of out.json.chains) {
-      assert.ok(typeof chain.address === 'string' && chain.address.length > 0);
-      assert.ok(chain.warning.length > 0, 'every chain says what it does not accept');
+      assert.equal(chain.address, VECTOR_EVM, 'the three EVM networks share the one address');
+      assert.ok(chain.warning.length > 0, 'every network says what this address is');
     }
-    assert.equal(out.json.chains[0].address, VECTOR_EVM);
   } finally {
     await b.close();
   }
@@ -509,15 +495,14 @@ test('a reveal nonce cannot be spent from another origin', async () => {
   }
 });
 
-test('revealing the private keys hands back all three and nothing else', async () => {
+test('revealing the private keys hands back the EVM key and nothing else', async () => {
   const b = await boot();
   try {
     await b.post('/api/wallet/import', { token: b.token, password: PASSWORD, mnemonic: VECTOR });
     const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
     const out = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
     assert.match(out.json.keys.evm, /^0x[0-9a-f]{64}$/);
-    assert.ok(out.json.keys.solana.length > 0);
-    assert.match(out.json.keys.near, /^ed25519:/);
+    assert.deepEqual(Object.keys(out.json.keys), ['evm'], 'the Solana and NEAR keys the file seals sign nothing here and are not shown');
     assert.equal(out.json.keys.password, undefined);
   } finally {
     await b.close();
@@ -579,7 +564,7 @@ test('the beacon moves the lock countdown and an agent call does not', async () 
     // Twenty agent reads, back to back. Every one is audited, every one answers, and the
     // countdown must be no further away afterwards than it was before.
     for (let i = 0; i < 20; i += 1) {
-      const out = await b.post('/api/mcp', { op: 'read', tool: 'balances', session: 'agent-1', client: 'test', secret: SEAT });
+      const out = await b.post('/api/mcp', { op: 'read', tool: 'wallet', session: 'agent-1', client: 'test', secret: SEAT });
       assert.equal(out.status, 200, 'the agent can still work while this is being asserted');
     }
     const afterAgent = (await b.get('/api/state')).json.lock.idleLocksInSec as number;

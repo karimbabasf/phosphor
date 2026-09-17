@@ -1,7 +1,7 @@
 // One live-mode proposal service over a scripted rail, for the executor tests.
 //
 // The same shape tests/unit/rail-wiring.test.ts builds by hand: a live ledger over the demo
-// fixture so addresses and prices resolve without an RPC, a verifier read with enough USDC of
+// fixture's prices so a draft can be valued without an RPC, a verifier read with enough USDC of
 // one flavor for a deposit, the venue allowlist seeded, and a rail that runs whatever script the
 // test hands it. Nothing here touches a key or a network.
 
@@ -20,7 +20,6 @@ import { createStore } from '../../../src/store.ts';
 import { loadDemoLedger } from '../../../src/ledger/demo.ts';
 import { defaultPolicy, savePolicy } from '../../../src/policy/file.ts';
 import { renderSentences } from '../../../src/policy/render.ts';
-import { syntheticQuoter, stubSigner } from '../../../src/intents.ts';
 import { createProposalService } from '../../../src/proposals.ts';
 import type { ProposalDeps } from '../../../src/proposals.ts';
 import { isRailKind, venueAllowlist } from '../../../src/rails/index.ts';
@@ -98,9 +97,6 @@ export type HarnessOptions = {
   intentsUsdc?: number;
   // null: the ledger has no verifier read at all.
   intents?: IntentsRead | null;
-  // The chain holdings the snapshot carries: the demo fixture's, or none, which is what a live
-  // refresh writes (src/ledger/index.ts keeps chain wallets as transit and reads nothing).
-  holdings?: 'demo' | 'none';
   // Extra deps handed straight to the service.
   deps?: Partial<ProposalDeps>;
 };
@@ -110,15 +106,13 @@ export function makeCtx(over: HarnessOptions = {}): Harness {
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,
-    addresses: { evm: [SELF_EVM], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: SELF_EVM },
     candleProducts: [],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
   };
 
-  const demo = loadDemoLedger();
-  const snapshot: LedgerSnapshot = { ...demo, mode: 'live', holdings: over.holdings === 'none' ? [] : demo.holdings };
+  const snapshot: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
   const intents = (): IntentsRead | undefined => {
     if (over.intents === null) return undefined;
     if (over.intents !== undefined) return over.intents;
@@ -142,9 +136,6 @@ export function makeCtx(over: HarnessOptions = {}): Harness {
     intents,
     hyperliquid: () => undefined,
     refresh: async () => snapshot,
-    applyDemoTransfer: () => {
-      throw new Error('applyDemoTransfer must never be called in live mode');
-    },
   };
 
   savePolicy(dataDir, over.policy ?? seededPolicy());
@@ -158,8 +149,6 @@ export function makeCtx(over: HarnessOptions = {}): Harness {
     store,
     ledger,
     riskRows,
-    quoter: syntheticQuoter(),
-    signer: stubSigner(),
     rails: { for: (draft) => table.get(draft.kind) ?? null, kinds: () => [...table.keys()].filter(isRailKind) },
     dataDir,
     ...over.deps,

@@ -1,5 +1,5 @@
 // Phosphor app entrypoint: wires config, audit, store, policy, ledger, composition,
-// cost, candles, quoter, signer, proposals and the HTTP server into one process.
+// cost, candles, proposals and the HTTP server into one process.
 // This is the authoritative state owner. The MCP process (src/mcp.ts) is a thin
 // client of the HTTP surface this file boots.
 
@@ -27,7 +27,7 @@ import { missingVenues, proposeVenueGap } from './policy/venues.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
 import { usdcCreditedSince } from './rails/hl-user-signed.ts';
 import { createLedger, intentsAccountId, REFRESH_PERIOD_MS } from './ledger/index.ts';
-import { oneClickClient, oneClickQuoter, syntheticQuoter, stubSigner, type OneClickStatus, type TokensFile } from './intents.ts';
+import { oneClickClient, type OneClickStatus, type TokensFile } from './intents.ts';
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
 import { createProposalService } from './proposals.ts';
@@ -378,8 +378,6 @@ const market = createMarketData({
 void market.refreshCatalog().catch((err: unknown) => {
   console.error(`market catalogue unavailable, falling back to literal product ids: ${String(err)}`);
 });
-const quoter = cfg.mode === 'demo' ? syntheticQuoter() : oneClickQuoter(tokens);
-const signer = stubSigner();
 
 // Owns the plans and the child process that places them. Constructed before the rails
 // because the trade rail only arms, changes and closes through it and holds no state of its own.
@@ -401,7 +399,7 @@ const tradeInfo = createInfoClient({ baseUrl: HL_BASE_URL });
    spot poll, the venue answered 422, and the Trade tab said "No route to the venue" until a
    restart. The config address is the fallback for an install that only reads. */
 function hlUser(): string {
-  return intentsAccountId(cfg) ?? cfg.addresses.evm[0] ?? '';
+  return intentsAccountId(cfg) ?? cfg.addresses.evm ?? '';
 }
 
 function productFor(coin: string): string {
@@ -514,8 +512,6 @@ const proposals = createProposalService({
   store,
   ledger,
   riskRows,
-  quoter,
-  signer,
   rails,
   trade: tradeDeps,
   dataDir: cfg.dataDir,

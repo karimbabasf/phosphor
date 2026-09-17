@@ -22,9 +22,8 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createMarketStore } from '../../src/market/store.ts';
 import type { LiveSocket } from '../../src/market/live.ts';
 import type { Catalog, MarketRef, Provider } from '../../src/market/catalog.ts';
-import type { AppConfig, Candle, ChainId, ChainStatus, LedgerSnapshot, ViewMode } from '../../src/types.ts';
+import type { AppConfig, Candle, LedgerSnapshot, ViewMode } from '../../src/types.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const COINS = ['BTC', 'ETH', 'SOL'];
 
 function ref(symbol: string, provider: Provider = 'hyperliquid'): MarketRef {
@@ -86,15 +85,7 @@ export type ChartHarness = {
 };
 
 function snapshot(): LedgerSnapshot {
-  const fetchedAt = new Date().toISOString();
-  const status: ChainStatus = { ok: true, fetchedAt };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 export async function bootChartServer(
@@ -124,8 +115,7 @@ export async function bootChartServer(
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: ['0xself'], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: '0xself' },
     candleProducts: ['BTC-USD', 'ETH-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -161,16 +151,13 @@ export async function bootChartServer(
     audit,
     store,
     riskRows: [],
-    ledger: { snapshot, intents: () => undefined, refresh: async () => snapshot(), applyDemoTransfer: () => {}, hyperliquid: () => undefined },
+    ledger: { snapshot, intents: () => undefined, refresh: async () => snapshot(), hyperliquid: () => undefined },
     market,
     proposals: {
-      proposeConsolidate: async () => { throw new Error('unused'); },
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },
       proposeHlWithdraw: async () => { throw new Error('unused'); },
-      proposeIntentsDeposit: async () => { throw new Error('unused'); },
-      proposeIntentsWithdraw: async () => { throw new Error('unused'); },
       proposeIntentsSend: async () => { throw new Error('unused'); },
       proposeTrade: async () => { throw new Error('unused'); },
       proposeTradeChange: async () => { throw new Error('unused'); },

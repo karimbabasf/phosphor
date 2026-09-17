@@ -44,7 +44,7 @@ const RESET = '\x1b[0m';
 export type GreetingFacts = {
   view: ViewMode;
   totalUsd: number | null;
-  chainCount: number;
+  pocketCount: number; // how many of the two pockets hold something
   pendingCount: number;
   clickThresholdUsd: number | null;
   killSwitch: boolean;
@@ -71,7 +71,7 @@ function factLines(f: GreetingFacts): string[] {
   const wallet =
     f.totalUsd === null
       ? 'unknown'
-      : `${money(f.totalUsd)} across ${f.chainCount} ${f.chainCount === 1 ? 'chain' : 'chains'}`;
+      : `${money(f.totalUsd)} across ${f.pocketCount} ${f.pocketCount === 1 ? 'pocket' : 'pockets'}`;
   const pending =
     f.pendingCount === 0
       ? 'nothing waiting'
@@ -138,15 +138,10 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     items: [
       { tool: 'wallet', does: 'every balance held, with quantity, price, USD value and share.' },
       { tool: 'deposit', does: 'opens the deposit card in the window for one asset on one network and watches for it to land; you get a fingerprint of the address, never the address.' },
-      { tool: 'balances', does: 'holdings per chain with staleness. Use wallet unless you need the raw per-chain view.' },
-      { tool: 'composition', does: 'stablecoin exposure by issuer and chain, including the freezable share.' },
+      { tool: 'composition', does: 'stablecoin exposure by issuer and pocket, including the freezable share.' },
       { tool: 'policy_show', does: 'the rules currently enforced, as plain-English sentences.' },
       { tool: 'log_tail', does: 'the audit log, newest first: everything attempted, executed and refused.' },
       { tool: 'proposal_status', does: 'what happened to one proposal id.' },
-      {
-        tool: 'gas_report',
-        does: 'what this app has spent on gas, grouped by action and by chain. Read the remainder counts before you state a total: receipts still being read are not zero gas, and a total quoted over them is confidently wrong.',
-      },
     ],
   },
   {
@@ -267,7 +262,6 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
   {
     group: 'move money (proposes only, never executes)',
     items: [
-      { tool: 'propose_intents_deposit', does: 'fund the NEAR Intents balance from this app wallet. The funding step before a swap.' },
       {
         tool: 'propose_hl_deposit',
         does: 'fund the Hyperliquid perps account from the NEAR Intents balance, one signed intent. The funding step before a trade: a plan against an empty account is refused for lack of collateral.',
@@ -277,12 +271,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         does: 'bring collateral back from Hyperliquid into the NEAR Intents balance. Always a human click, refused while a position is open, and it costs a flat 1.2 USDC on top of 25 bp, so say the percentage first.',
       },
       { tool: 'propose_swap', does: 'swap inside NEAR Intents by signing an intent. Nothing moves on chain.' },
-      { tool: 'propose_intents_withdraw', does: 'take a balance back out of Intents to this app wallet on eth, base or arb.' },
       { tool: 'propose_intents_send', does: 'pay an allowlisted intents account; always a click.' },
-      {
-        tool: 'propose_consolidate',
-        does: 'gather one stablecoin\'s scattered balances onto a single chain. UNPROVEN: this path has never run on a live chain, so treat a clean simulation as untested and say so when you propose it.',
-      },
       { tool: 'propose_policy_change', does: 'change the rules themselves. Always waits for a human click.' },
     ],
   },

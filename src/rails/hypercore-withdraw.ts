@@ -48,7 +48,7 @@ import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
-import { ONECLICK_COUNTERPARTY } from './oneclick.ts';
+import { ONECLICK_COUNTERPARTY } from '../intents.ts';
 import { HL_ACTIVATION_FEE_USDC, accountSummary, liveSignPort, spotSend, toAmountString, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS } from './hypercore-deposit.ts';

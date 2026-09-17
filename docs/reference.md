@@ -1,6 +1,6 @@
 # Phosphor reference
 
-The long form of what the README says in short: the tool surface, gas, how a proposal is decided, policy as sentences, the first run, mode and config, keys and signing, the code layout and the operator profile. Everything here describes the code as it is; where it names a count (tools, tests), re-check the number before quoting it.
+The long form of what the README says in short: the tool surface, how a proposal is decided, policy as sentences, the first run, mode and config, keys and signing, the code layout and the operator profile. Everything here describes the code as it is; where it names a count (tools, tests), re-check the number before quoting it.
 
 ## The tool surface
 
@@ -69,9 +69,8 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | Read tool | Returns |
 |---|---|
 | `start` | The greeting, the live state and the index of everything this door opens onto, grouped by intent. `screen` is `{ view, since, by }`: which screen the window is on, since when, and whether a human tab or an agent `switch` put it there. Call it again after a long gap: the network, the wallet and the pending decisions all move |
-| `wallet` | Everything held, one row per balance: place, quantity, price, value, share. Only what is actually held; how many configured tokens came back empty is reported as a count |
-| `balances` | The raw snapshot behind the wallet, with staleness |
-| `composition` | Shares by issuer and chain, freezable share, unclassified holdings |
+| `wallet` | Everything held, one row per balance in the two pockets (the NEAR Intents balance and the Hyperliquid collateral): place, quantity, price, value, share. Only what is actually held; how many pockets came back empty is reported as a count |
+| `composition` | Shares by issuer and pocket, freezable share, unclassified holdings |
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
 | `log_tail` | Most recent audit lines, newest first |
 | `proposal_status` | Status, verdict and simulation result for a proposal id |
@@ -80,25 +79,25 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `chain_transactions` | The most recent transactions of an address on one network, newest first, at most 25: hash, time, from, to, value, status, method name. Raw inputs never come back |
 | `chain_transaction` | One transaction by hash: the same fields plus fee, block and confirmations |
 | `intents_activity` | What an account has moved inside NEAR Intents, from NearBlocks: `MINT` rows are deposits in, `BURN` rows withdrawals out, `TRANSFER` rows swap legs and sends, each with token, signed amount and hash. No account means this app's own, and `own` says which. When NearBlocks is down it falls back to the verifier's own views and answers balances only, marked `partial: true` |
-| `gas_report` | What the app has spent on gas over a window, split by action, chain, rail kind and venue, plus gas as basis points of the value moved. An aggregation of receipts the history surface already read, so it makes no chain call. The four remainders (pending, unknown, unpriced, intent-settled) and the reverted line are counted separately and named in the tool description, because a total that drops what it could not count is a wrong number said confidently |
 
 | Write tool | Does |
 |---|---|
-| `propose_swap` | Swaps one token for another. Venue `oneclick` across chains from the wallet, or `intents-native` inside `intents.near` over an already-deposited balance. Omitting the venue means `oneclick` |
-| `propose_intents_deposit` | Moves funds from this wallet into NEAR Intents, where they become a balance `intents.near` holds under this app's own account. Funds the `intents-native` swap venue. Deposits the chain's gas asset (native ETH) unless a symbol is given |
-| `propose_intents_withdraw` | Brings a balance back out of `intents.near` into one of this app's own wallets on `eth`, `base` or `arb`. The way out of the `intents-native` venue. Withdraws the chain's gas asset unless a symbol is given. Which wallet is ours comes from `config.local.json`, never from the call |
-| `propose_consolidate` | Gathers a token's scattered balances onto one chain. Unproven: this path has never run on a live chain, and the tool description says so, so a clean simulation is not evidence it works |
+| `propose_swap` | Swaps one token for another inside `intents.near`, over the balance the app already holds there: one signed intent, nothing moves on any chain. `chain` and `toChain` name each asset's home chain, never a place money goes |
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_trade` | Arms a plan on Hyperliquid perpetuals, whole or by the id of one drawn with `trade_plan`. Priced at the collateral it puts at stake: the click threshold is the only wall |
 | `propose_trade_change` | Changes an armed plan: a new stop or target, cancel, or close. A change that only takes risk off lands without the wall; one that widens is priced like a new plan |
 | `propose_hl_deposit` | Funds the Hyperliquid perpetuals account from the intents balance: one signed intent, nothing sent on any chain. The account credited is derived from the app's own key |
 | `propose_hl_withdraw` | Brings collateral back from Hyperliquid into the intents balance. One field, the amount; the intents account credited is the app's own. Always waits for a human click and is refused while any position is open |
+| `propose_intents_send` | Pays a balance inside `intents.near` to another intents account, named by `to`: the one tool with a destination field. The receiver is held to the policy allowlist, and the send always waits for a human click |
+| `propose_send` | Coming with the SEND stream: one send tool that replaces `propose_intents_send`, pays out on a real chain or inside NEAR Intents, and always waits for a click and Touch ID |
 
 This door now names exactly the set the app can execute. `propose_lp_add`, `propose_lp_remove`,
 `propose_yield_deposit`, `propose_yield_withdraw`, `yield_read` and `yield_auto` were on it or
-behind it at various points; the rails under all six were removed when the app cut to two venues,
-so there is nothing left to register. What went with them: an on-chain DEX swap venue, both
-liquidity-pool moves and the whole lending loop.
+behind it at various points; the rails under all six were removed when the app cut to two venues.
+`propose_consolidate`, `propose_intents_deposit`, `propose_intents_withdraw`, the `oneclick`
+swap venue, `balances` and `gas_report` went on 2026-09-16 with the chain wallets: nothing is
+held on a chain any more, so there is nothing to gather, deposit from, withdraw to, or pay gas
+for. Rows those tools wrote still render as history.
 
 `propose_hl_deposit` was on that list until 2026-08-20 and is back because the rail underneath it
 changed shape rather than because it was tested more. It used to transfer USDC to Hyperliquid's
@@ -217,39 +216,6 @@ Keys are optional and raise the rate limit only: `chainscan.blockscoutApiKey` an
 `chainscan.nearblocksApiKey` in `config.local.json`. Each rides only to the host it was issued
 for, and neither is ever written to a log or an error.
 
-## Where the gas went
-
-Every movement this app makes burns gas somewhere, the per-transaction figure has always been on
-the row in HISTORY, and nothing added it up. `GET /api/gas` does: a total for the window, what each
-kind of action spent, the same split by chain, and gas as basis points of the value actually moved.
-Agents ask the same question with `gas_report`, and both doors run the same derivation, so the
-human and the agent cannot be told different numbers about the same money.
-
-The `[ GAS ]` deck-bar modal that used to draw this, with a donut and a table on both decks, went
-with the window rebuild: per-transaction fees ride on the Activity rows now, with a total for the
-window. The derivation and both doors onto it are unchanged.
-
-It is an aggregation, not a new read. The receipts come from the same cache the history surface
-fills, so opening GAS after HISTORY costs nothing and opening it first warms the cache for HISTORY.
-No new RPC call, no new store.
-
-The part worth reading is the remainders. An aggregate that silently drops what it cannot count
-reports a smaller number than the truth and calls it the truth, so four categories are counted
-apart and reported, and none of them means zero gas:
-
-    still reading     the receipt has not landed yet
-    unknown           no chain this app can reach has that hash
-    intent-settled    signed, not broadcast, so a solver paid the gas and we paid none
-    unpriced          gas known in native units, no price available to convert it
-
-And one that is not a remainder: **reverted**, in red, because gas spent on a transaction that
-moved nothing is the only figure here that is pure loss. A remainder that is zero prints nothing at
-all: "0 pending" is chrome.
-
-The numbers are the authority. The rings that used to draw their shape, and the labelled canvas
-that read them out, went with the composition donut in the window rebuild: the figures survived the
-drawing of them, because the derivation was never in the canvas.
-
 ## How a proposal gets decided
 
 A write tool builds a draft, simulates it (a quote per leg), and hands it to the policy engine. The
@@ -263,7 +229,7 @@ engine returns exactly one of three verdicts, with no fourth outcome and no over
 The rule chain runs in a fixed order and stops at the first refusal: unreadable policy, kill switch,
 then (for fund moves) legs present, leg amounts sane, every leg simulated, destination is one of our
 own addresses or on the allowlist, per-transaction cap, rolling session cap, forbidden issuer, then
-the post-move composition (issuer share caps, freezable cap, per-chain gas floors). Composition
+the post-move composition (issuer share caps, freezable cap). Composition
 checks judge the resulting state rather than the delta, so a portfolio already past a cap cannot
 make further moves until a human changes the policy.
 
@@ -290,20 +256,16 @@ what the app shows is what the engine enforces:
     Refuse any single transaction above $10,000.
     Refuse more than $25,000 in any 24 hours.
     Ask me before anything above $100.
-    Keep at least $5 of gas on eth.
-    Keep at least $1 of gas on base.
-    Keep at least $1 of gas on arb.
-    Keep at least $2 of gas on sol.
-    Keep at least $0.50 of gas on near.
+    Ask me once auto-approved moves pass $500 in 24 hours.
     Tether may not exceed 30% of holdings.
     No more than 20% of holdings may be freezable.
     KILL SWITCH ON: all writes refused.
 
-The first eight lines are the shipped defaults. The last three appear only once authored.
+The first four lines are the shipped defaults. The last three appear only once authored.
 
-Limits that are meaningful at their default (transaction cap, session cap, click threshold, gas
-floors) always render. Opt-in restrictions render only once set, because "no issuer may exceed 100%"
-says nothing. The kill switch, when on, always renders last.
+Limits that are meaningful at their default (transaction cap, session cap, click threshold, the
+auto-approved daily ceiling) always render. Opt-in restrictions render only once set, because "no
+issuer may exceed 100%" says nothing. The kill switch, when on, always renders last.
 
 ## First run
 
@@ -327,30 +289,32 @@ Then the lock, which is the state the app is in every time you open it after tha
 read still works and the window still shows the balance; the password is what buys the ability to
 sign. It locks itself after fifteen minutes with nobody at the window and when the machine sleeps.
 
-`npm run keygen` still exists and mints RAW UNENCRYPTED keys for development. It is not the setup
-path, and running it before the first launch is a mistake rather than a step: a file it writes
-reads as `needs_migration` in the app, and the migration screen is what turns it into a keystore.
+`npm run keygen` still exists and mints one RAW UNENCRYPTED EVM key for development. It is not
+the setup path, and running it before the first launch is a mistake rather than a step: a file it
+writes reads as `needs_migration` in the app, and the migration screen is what turns it into a
+keystore.
 
-It prints public addresses only. No branch of it prints a private key. It refuses to overwrite an
-existing key file, because silently replacing a funded key loses the funds with it:
+It prints the public address only. No branch of it prints a private key. It refuses to overwrite
+an existing key file, because silently replacing a funded key loses the funds with it:
 
     npm run keygen -- --force     # deliberate replacement
 
-The window prints the same addresses on the receive screen. Copy them into `config.local.json` at
-the repo root. That file is gitignored and
-merges over `config.json` key by key, so the addresses stay on your machine:
+A wallet made in the window needs no config at all: the keystore is the address book. An install
+that only reads names its one EVM address, which is the NEAR Intents account id and the
+Hyperliquid account, in `config.local.json` at the repo root. That file is gitignored and merges
+over `config.json` key by key, so the address stays on your machine:
 
     {
       "addresses": {
-        "evm": ["0x..."],
-        "solana": ["..."],
-        "near": ["..."]
+        "evm": "0x..."
       }
     }
 
-Fund the addresses. Every rail needs native gas on the chain it runs on, and balances read zero
-until funds land. A NEAR implicit account exists the moment it is funded, so the first transfer
-to it is what creates it. Then:
+An older file that lists `evm`, `solana` and `near` arrays still loads: the first `evm` entry is
+the address, and the other two are ignored, because nothing here signs with those keys any more.
+
+Money comes in through the deposit card in the window (the NEAR Intents bridge address for the
+network you pick), never by sending to this address on a chain. Then:
 
     npm run tauri dev
 
@@ -376,16 +340,18 @@ live chain, and there is no setting that points them anywhere else. Nothing here
 
 `mode` is the only axis:
 
-- `live` reads real balances over public RPCs and needs no keys to read.
-- `demo` uses a fixture portfolio and a synthetic quoter, so the whole propose, approve, execute
-  loop runs offline with nothing at stake. It is not a practice mode for real money: it moves
-  nothing, anywhere, ever.
+- `live` reads the two pockets, the NEAR Intents verifier and the Hyperliquid account, and needs
+  no key to read: the account is the address in the keystore's plaintext header.
+- `demo` serves a fixture (ETH, USDC and SOL inside NEAR Intents, 50 USDC of Hyperliquid
+  collateral) and runs no rail, so a proposal there is drafted, priced and ruled on offline with
+  nothing at stake, and refuses at the rail step. It is not a practice mode for real money: it
+  moves nothing, anywhere, ever.
 
 Shipped `config.json` is `mode: "live"`. Demo is no longer the default anywhere. It stays in the
 codebase because the test suite and the e2e proof run against it offline.
 
 `config.json` is a committed template. It carries structure and safe defaults only: port, mode,
-empty address arrays, candle products. No addresses, ever. `config.local.json` carries yours, is
+an empty address book, candle products. No addresses, ever. `config.local.json` carries yours, is
 gitignored, and merges over the template key by key. The environment variables `PHOSPHOR_MODE`,
 `PHOSPHOR_PORT`, `PHOSPHOR_DATA_DIR` and `PHOSPHOR_KEYS` override both.
 
@@ -467,26 +433,17 @@ ships `sha3-256`, which is NIST FIPS 202: the same permutation with a different 
 returns a different digest and an address nobody holds the key to. Nothing about the wrong address
 looks wrong, and funds sent there are gone.
 
-There are two signers, one per chain family, and each is the only place its family is signed for:
-`src/chain/evm.ts` and `src/chain/near.ts`. NEAR is a different curve (ed25519), a different
-serialization (borsh), and a different transaction shape, so it does not fit behind the EVM one.
-It hand-rolls borsh where the EVM signer took a dependency, and the reason the answer differs is
-the failure mode rather than the effort: a wrong keccak silently derives an address nobody owns,
-while a wrong borsh produces a signature that does not verify against the body, so the RPC rejects
-the transaction and nothing moves. `near.ts` self-checks on the same principle as `keygen`, with
-RFC 8032 vector 1, two base58 vectors, sha256 of the empty string, and the borsh integer widths.
+One key signs, and it signs no chain transaction. The EVM key signs ERC-191 intents for the
+NEAR Intents rails (`src/rails/intents-native.ts`, `intents-send.ts`, `intents-spend.ts`) and
+EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). The chain signers that used to
+live in `src/chain/evm.ts` and `src/chain/near.ts` went with the chain wallets on 2026-09-16;
+those files now hold the EVM readers and explorer prefixes, the NEAR RPC, base58 and the account
+id rules. A wallet's mnemonic still derives the Solana and NEAR keys into the sealed file, for
+recovery in another wallet, and nothing here reads them.
 
-Two NEAR bugs were found by signing four real transactions rather than by any vector, both the
-same root cause: `send_tx` returns at `EXECUTED_OPTIMISTIC`, which is ahead of finality, so a read
-at `finality: final` straight afterwards returns the state from before the transaction. It made a
-successful wrap look like a silent failure, and it made a second send reuse a nonce the first had
-already spent. `src/chain/near.ts` carries both fixes and the comments explaining them.
-
-`keygen` therefore checks itself before it generates anything, on every run: the canonical
-Ethereum test key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`,
-RFC 8032 ed25519 vector 1 must derive its published public key, and base58 must reproduce two
-published vectors. Any mismatch stops the program instead of printing an address that no private
-key opens.
+`keygen` checks itself before it generates anything, on every run: the canonical Ethereum test
+key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`. A mismatch
+stops the program instead of printing an address that no private key opens.
 
 ### Code signing, which is configured and not performed
 
@@ -519,7 +476,6 @@ Still open, unrelated to keys:
 
 1. Review `data/risk-table.json` rows and sources (curated, human-owned).
 2. Optional: a JWT for NEAR Intents 1Click, which buys a lower fee tier.
-3. Optional: an indexer key (Etherscan or similar) for historical gas and spread.
 
 ## Latency
 
@@ -553,13 +509,12 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/policy/        engine (pure) + policy file + sentence renderer + the venue gap
     src/proposals.ts   a 92-line door onto src/proposals/
     src/proposals/     the work: lifecycle, execute, draft, rails, trade, reconcile
-    src/rails/         the rail registry: oneclick, intents, hyperliquid
+    src/rails/         the rail registry: intents, hyperliquid
     src/trade/         plan, risk, plans on disk, the watcher, the rail, the surface
     src/runner/        the host (registry, watcher, fills watch) and the child that signs
-    src/gas/           what a movement cost, grouped by action, chain, rail and venue
-    src/chain/         the only places phosphor signs: evm.ts and near.ts
+    src/chain/         the EVM readers and explorer prefixes, the NEAR RPC and account id rules
     src/ledger/        the NEAR Intents verifier read + demo fixtures
-    src/transactions.ts  receipts and the gas cache both doors read
+    src/transactions.ts  the transaction history, derived from the store and the log
     src/role.ts        what the app tells an agent it is, in the MCP handshake
     src/composition.ts risk classification against data/risk-table.json
     src/intents.ts     1Click quotes, synthetic quoter, stub signer

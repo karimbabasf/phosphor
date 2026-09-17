@@ -36,8 +36,9 @@ const BASE = `http://127.0.0.1:${PORT}`;
 // own copy and it was stale for two whole features, because e2e is not part of `npm test`.
 const EXPECTED_TOOLS = [...EXPECTED_TOOLS_SORTED];
 
-const DEMO_TOTAL_STABLE_USD = 49878.15;
-const DEMO_ETH_USDT = 9200;
+// The demo fixture (data/demo-state.json): 1,850 USDC, 0.42 ETH at 4,520 and 1.2 SOL at 178 inside
+// NEAR Intents, plus 50 USDC of Hyperliquid collateral.
+const DEMO_TOTAL_USD = 1850 + 0.42 * 4520 + 1.2 * 178 + 50;
 const NEW_CLICK_SENTENCE = 'Ask me before anything above $500.';
 
 // ---------- checklist ----------
@@ -102,11 +103,6 @@ async function callTool(client: Client, name: string, args: Record<string, unkno
   } catch {
     return text;
   }
-}
-
-function holdingAmount(ledger: Json, chain: string, symbol: string): number {
-  const found = (ledger.holdings as Json[]).find(h => h.chain === chain && h.symbol === symbol && !h.native);
-  return found ? Number(found.amount) : 0;
 }
 
 // ---------- children ----------
@@ -248,11 +244,11 @@ async function run(): Promise<void> {
 
   // ---- reads ----
 
-  const balances = await callTool(client, 'balances');
+  const wallet = await callTool(client, 'wallet');
   check(
-    `balances totals ${DEMO_TOTAL_STABLE_USD} (+- 1)`,
-    Math.abs(Number(balances.totalStableUsd) - DEMO_TOTAL_STABLE_USD) <= 1,
-    `totalStableUsd=${balances.totalStableUsd} holdings=${(balances.holdings as Json[]).length}`,
+    `wallet totals ${DEMO_TOTAL_USD.toFixed(2)} (+- 1) over the two pockets`,
+    Math.abs(Number(wallet.totalUsd) - DEMO_TOTAL_USD) <= 1 && (wallet.rows as Json[]).length === 4,
+    `totalUsd=${wallet.totalUsd} rows=${(wallet.rows as Json[]).length}`,
   );
 
   const composition = await callTool(client, 'composition');
@@ -292,28 +288,17 @@ async function run(): Promise<void> {
   await callTool(client, 'switch', { mode: 'pro' });
   check('it flips back', (await getJson('/api/state')).view === 'pro');
 
-  // ---- the stranded chain refusal is a feature, not a bug ----
-  // Default fromChains sweeps every chain, which includes NEAR, and NEAR deliberately holds
-  // 0.001 NEAR of gas in the demo fixture. The engine refuses the whole proposal rather than
-  // quietly dropping the leg it cannot fund: a partial sweep the human did not ask for is a
-  // worse answer than no sweep at all.
-  const stranded = await callTool(client, 'propose_consolidate', { toChain: 'eth', symbol: 'USDT' });
-  check(
-    'default fromChains refuses the whole sweep on the stranded NEAR leg',
-    stranded.status === 'policy_refused' && stranded.verdict?.rule === 'min_native_gas',
-    `status=${stranded.status} rule=${stranded.verdict?.rule}`,
-  );
-
   // ---- propose, approve, execute ----
+  // A rule change: the one kind demo mode can land, since every money rail is off there, and
+  // it always waits for the click, which is the arc this run has to show end to end.
 
-  const proposal = await callTool(client, 'propose_consolidate', {
-    toChain: 'eth',
-    symbol: 'USDT',
-    fromChains: ['arb', 'sol'],
+  const proposal = await callTool(client, 'propose_policy_change', {
+    patch: { outbound: { humanClickAboveUsd: 90 } },
+    sentence: 'Ask me before anything above $90.',
   });
   const proposalId: string = proposal.id;
   check(
-    'propose_consolidate arb+sol to eth lands pending with a simulation',
+    'propose_policy_change lands pending with a simulation',
     proposal.status === 'pending' && proposal.verdict?.outcome === 'needs_approval' && proposal.simulation?.ok === true,
     `id=${proposalId} status=${proposal.status} verdict=${proposal.verdict?.outcome}`,
   );
@@ -336,20 +321,20 @@ async function run(): Promise<void> {
   check('and the window is where it was asked to be', stillPro.view === 'pro', `view=${stillPro.view}`);
 
   const basicAsk = (stillPro.basic as Json)?.ask as Json | null;
-  const draftUsd = Number((proposal.simulation as Json)?.ok === true ? basicAsk?.amountUsd : NaN);
   check(
-    'the basic view carries the live proposal amount, not just a label',
-    basicAsk !== null && Number.isFinite(draftUsd) && draftUsd > 0 && String(basicAsk?.headline ?? '').includes('$'),
-    `amountUsd=${basicAsk?.amountUsd} headline=${String(basicAsk?.headline ?? '').slice(0, 80)}`,
+    'the basic view carries the live proposal, not just a label',
+    basicAsk !== null && basicAsk?.kind === 'policy_change' && String(basicAsk?.headline ?? '').length > 0,
+    `kind=${basicAsk?.kind} headline=${String(basicAsk?.headline ?? '').slice(0, 80)}`,
   );
 
   const before = await getJson('/api/state');
-  const ethUsdtBefore = holdingAmount(before.ledger, 'eth', 'USDT');
+  const totalBefore = Number((before.wallet as Json)?.totalUsd);
   const pending = (before.proposals as Json[]).find(p => p.id === proposalId);
+  const versionBefore = Number((before.policy as Json)?.version);
   check(
     'app state shows it pending and nothing has moved',
-    pending?.status === 'pending' && Math.abs(ethUsdtBefore - DEMO_ETH_USDT) < 1e-9,
-    `status=${pending?.status} eth USDT=${ethUsdtBefore}`,
+    pending?.status === 'pending' && Math.abs(totalBefore - DEMO_TOTAL_USD) <= 1,
+    `status=${pending?.status} totalUsd=${totalBefore}`,
   );
 
   const token: string = WINDOW_TOKEN;
@@ -358,17 +343,17 @@ async function run(): Promise<void> {
 
   const approved = await postJson('/api/approve', { id: proposalId, token });
   check(
-    'the human click executes the consolidation',
+    'the human click applies the rule change',
     approved.status === 200 && approved.json?.status === 'executed',
     `http ${approved.status} status=${approved.json?.status}`,
   );
 
   const after = await getJson('/api/state');
-  const ethUsdtAfter = holdingAmount(after.ledger, 'eth', 'USDT');
+  const versionAfter = Number((after.policy as Json)?.version);
   check(
-    'eth USDT increased after execution',
-    ethUsdtAfter > ethUsdtBefore,
-    `${ethUsdtBefore} to ${ethUsdtAfter.toFixed(2)}`,
+    'the policy version moved after execution, and the money did not',
+    versionAfter === versionBefore + 1 && Math.abs(Number((after.wallet as Json)?.totalUsd) - totalBefore) < 1e-9,
+    `version ${versionBefore} to ${versionAfter}`,
   );
 
   // The audit log is the product's memory. Order matters as much as content: an executed event
@@ -381,8 +366,8 @@ async function run(): Promise<void> {
     e =>
       e.type === 'tool_call' &&
       e.data?.op === 'propose' &&
-      e.data?.kind === 'consolidate' &&
-      Array.isArray(e.data?.params?.fromChains),
+      e.data?.kind === 'policy_change' &&
+      e.data?.params?.sentence === 'Ask me before anything above $90.',
   );
   const iCreated = at(e => e.type === 'proposal_created' && e.data?.id === proposalId);
   const iApproved = at(e => e.type === 'approved' && e.data?.id === proposalId);
@@ -424,10 +409,9 @@ async function run(): Promise<void> {
   const killOn = await postJson('/api/kill', { on: true, token });
   check('kill switch on', killOn.status === 200 && killOn.json?.killSwitch === true, `http ${killOn.status}`);
 
-  const whileKilled = await callTool(client, 'propose_consolidate', {
-    toChain: 'eth',
-    symbol: 'USDT',
-    fromChains: ['arb', 'sol'],
+  const whileKilled = await callTool(client, 'propose_policy_change', {
+    patch: { outbound: { humanClickAboveUsd: 80 } },
+    sentence: 'Ask me before anything above $80.',
   });
   check(
     'kill switch refuses every write',
@@ -449,54 +433,6 @@ async function run(): Promise<void> {
     'the forged approval is audited as approve_attempt_rejected',
     rejection !== undefined,
     rejection?.msg ?? 'no such event',
-  );
-
-  // ---- the gas report, over the history this run just made ----
-  //
-  // The consolidation above executed, so there is a real movement in the store by now. In
-  // demo mode it has no chain hash to read a receipt from, which is exactly the case the
-  // remainder counters exist for: the total is zero dollars and the report has to say WHY
-  // rather than presenting zero as a measured figure.
-
-  const gas = (await callTool(client, 'gas_report', { window: 'all' })) as Json;
-  check(
-    'gas_report answers with a report, not an error, over the history this run just made',
-    gas?.window === 'all' && typeof gas?.totalUsd === 'number',
-    `window=${String(gas?.window)} totalUsd=${String(gas?.totalUsd)} moveCount=${String(gas?.moveCount)}`,
-  );
-  check(
-    'every dollar the report totals is accounted for by a chain',
-    Array.isArray(gas?.byChain) &&
-      Math.abs(gas.byChain.reduce((sum: number, s: Json) => sum + Number(s.feeUsd), 0) - Number(gas.totalUsd)) < 1e-9,
-    `byChain=${JSON.stringify((gas?.byChain ?? []).map((s: Json) => [s.key, s.feeUsd]))} totalUsd=${String(gas?.totalUsd)}`,
-  );
-  check(
-    'the report carries its remainders, so a zero total can be told from an unmeasured one',
-    gas?.pending !== undefined && gas?.unknown !== undefined && gas?.unpriced !== undefined && gas?.intentOnly !== undefined,
-    `pending=${JSON.stringify(gas?.pending)} unknown=${JSON.stringify(gas?.unknown)} intentOnly=${JSON.stringify(gas?.intentOnly)}`,
-  );
-
-  // Refused twice over, and either refusal is a pass. The shim's zod enum turns it away
-  // before it reaches the app, and the app refuses it again on its own door because
-  // /api/gas is reachable from the window without going through the shim at all. A guard
-  // that only exists in the shim is a guard the browser walks around.
-  let badWindowText = '';
-  try {
-    badWindowText = JSON.stringify(await callTool(client, 'gas_report', { window: 'forever' }));
-  } catch (err) {
-    badWindowText = errText(err);
-  }
-  check(
-    'a window this app does not have is refused by name rather than answered as zero',
-    /24h, 7d, 30d, all/.test(badWindowText) || /Invalid/i.test(badWindowText),
-    badWindowText.slice(0, 110),
-  );
-
-  const badWindowDirect = await getJson('/api/gas?window=forever');
-  check(
-    'and the window\'s own door refuses it too, not only the agent\'s',
-    typeof badWindowDirect?.error === 'string' && /24h, 7d, 30d, all/.test(badWindowDirect.error),
-    String(badWindowDirect?.error ?? JSON.stringify(badWindowDirect)).slice(0, 90),
   );
 }
 

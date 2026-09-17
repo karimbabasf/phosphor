@@ -85,7 +85,6 @@ function ledgerWith(intents: IntentsRead | undefined): Ledger {
     intents: () => intents,
     hyperliquid: () => undefined,
     refresh: async () => snapshot,
-    applyDemoTransfer: () => undefined,
   };
 }
 

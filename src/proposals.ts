@@ -11,8 +11,8 @@
 //
 // This file is the door. The work is in src/proposals/, split by job: lifecycle.ts is what a
 // proposal is and what a click does to it, execute.ts is what actually runs, draft.ts is how a
-// fund move is planned and priced, rails.ts holds the four drafts that move money somewhere
-// else, trade.ts the two that touch a position, and reconcile.ts what becomes of a
+// draft is priced and landed, rails.ts holds the drafts that move money somewhere else,
+// trade.ts the two that touch a position, and reconcile.ts what becomes of a
 // proposal the process died in the middle of. Everything anything outside this directory imports
 // is re-exported here, so no caller changed.
 
@@ -32,9 +32,9 @@ import {
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { finishTouch } from './proposals/lifecycle.ts';
 import { executeApproved, land, watchSettling } from './proposals/execute.ts';
-import { acknowledge, chainTxLookup, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
-import { proposeConsolidate, proposePolicyChange } from './proposals/draft.ts';
-import { proposeHlDeposit, proposeHlWithdraw, proposeIntentsDeposit, proposeIntentsSend, proposeIntentsWithdraw, proposeSwap } from './proposals/rails.ts';
+import { acknowledge, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
+import { proposePolicyChange } from './proposals/draft.ts';
+import { proposeHlDeposit, proposeHlWithdraw, proposeIntentsSend, proposeSwap } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
 
 export type { ProposalDeps };
@@ -50,7 +50,6 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     notify: () => deps.onChange?.(),
     execute: (p: Proposal) => executeApproved(ctx, p),
     land: (p: Proposal) => land(ctx, p),
-    txLookup: deps.txLookup ?? chainTxLookup(),
     afterTouch: (id, result) => serialise(() => finishTouch(ctx, id, result)),
     inflight: new Map(),
   };
@@ -60,13 +59,10 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
   watchSettling(ctx);
 
   return {
-    proposeConsolidate: (p) => serialise(() => proposeConsolidate(ctx, p)),
     proposePolicyChange: (p) => serialise(() => proposePolicyChange(ctx, p)),
     proposeSwap: (p) => serialise(() => proposeSwap(ctx, p)),
     proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(ctx, p)),
     proposeHlWithdraw: (p) => serialise(() => proposeHlWithdraw(ctx, p)),
-    proposeIntentsDeposit: (p) => serialise(() => proposeIntentsDeposit(ctx, p)),
-    proposeIntentsWithdraw: (p) => serialise(() => proposeIntentsWithdraw(ctx, p)),
     proposeIntentsSend: (p) => serialise(() => proposeIntentsSend(ctx, p)),
     proposeTrade: (p) => serialise(() => proposeTrade(ctx, p)),
     proposeTradeChange: (p) => serialise(() => proposeTradeChange(ctx, p)),

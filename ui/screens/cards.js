@@ -60,7 +60,6 @@
   /* The cards, by the tool that answered. */
   var KINDS = {
     wallet: 'balance',
-    balances: 'balance',
     trade_read: 'position',
     trade_batch: 'position',
     proposal_status: 'move',
@@ -77,9 +76,9 @@
     intents_send: 'Send',
     hl_deposit: 'Fund trading',
     hl_withdraw: 'Collateral back',
+    policy_change: 'Rule change',
     consolidate: 'Consolidate',
     transfer: 'Transfer',
-    policy_change: 'Rule change',
     lp_add: 'Add to a pool',
     lp_remove: 'Leave a pool',
     yield_deposit: 'Put to work',
@@ -321,18 +320,16 @@
 
   /* ---------- the balance card ---------- */
 
-  /* One row per thing held, from either read: `wallet` rows carry a place and a
-     value, `balances` holdings carry a chain and a usd. Both become the same
-     row so the card does not care which the assistant called. */
+  /* One row per thing held, off the wallet report's rows (src/wallet.ts): a
+     place, a quantity and a value. */
   function holdingsOf(data) {
-    var source = Array.isArray(data.rows) ? data.rows : (Array.isArray(data.holdings) ? data.holdings : []);
-    var parts = split(source);
+    var parts = split(Array.isArray(data.rows) ? data.rows : []);
     var out = [];
     for (var i = 0; i < parts.rows.length; i += 1) {
       var h = parts.rows[i];
       if (!isObject(h)) continue;
-      var quantity = num(h.quantity !== undefined ? h.quantity : h.amount);
-      var usd = num(h.valueUsd !== undefined ? h.valueUsd : h.usd);
+      var quantity = num(h.quantity);
+      var usd = num(h.valueUsd);
       if (quantity === null && usd === null) continue;
       out.push({
         symbol: String(h.symbol || '?'),
@@ -606,8 +603,10 @@
     var d = draft || {};
     if (kind === 'swap') {
       var q = isObject(d.quote) ? d.quote : null;
-      move.from = { symbol: d.fromSymbol || args.fromSymbol, place: d.chain || args.chain, amount: num(d.amountIn !== undefined ? d.amountIn : args.amountIn) };
-      move.to = { symbol: d.toSymbol || args.toSymbol, place: d.toChain || args.toChain || d.chain || args.chain, amount: q ? num(q.amountOut) : num(args.minAmountOut) };
+      /* Both legs sit inside NEAR Intents: chain and toChain on a swap name the
+         assets' home chains, not places the money goes. */
+      move.from = { symbol: d.fromSymbol || args.fromSymbol, place: 'intents', amount: num(d.amountIn !== undefined ? d.amountIn : args.amountIn) };
+      move.to = { symbol: d.toSymbol || args.toSymbol, place: 'intents', amount: q ? num(q.amountOut) : num(args.minAmountOut) };
       if (q) move.feeUsd = num(q.feeUsd);
       if (!q && num(args.minAmountOut) !== null) move.quote = 'at least ' + dom.qty(num(args.minAmountOut)) + ' ' + String(move.to.symbol || '');
     } else if (kind === 'intents_deposit') {
@@ -627,9 +626,6 @@
     } else if (kind === 'hl_withdraw') {
       move.from = { symbol: 'USDC', place: 'hyperliquid', amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = { symbol: 'USDC', place: 'intents', amount: num(d.minReceived) };
-    } else if (kind === 'consolidate') {
-      move.from = { symbol: d.symbol || args.symbol, place: '', amount: num(d.totalUsd !== undefined ? d.totalUsd : args.maxTotalUsd), usd: true };
-      move.to = { symbol: d.symbol || args.symbol, place: d.toChain || args.toChain, amount: null };
     } else if (kind === 'trade' || kind === 'trade_change') {
       var plan = isObject(d.plan) ? d.plan : (isObject(args.plan) ? args.plan : null);
       if (plan) {
@@ -675,7 +671,7 @@
     }
     text.appendChild(amount);
     var where = leg.place ? chainName(leg.place) : '';
-    var placeText = where ? (role === 'from' ? 'from ' : 'to ') + where : '';
+    var placeText = where ? (leg.place === 'intents' ? 'inside ' : role === 'from' ? 'from ' : 'to ') + where : '';
     if (leg.label) placeText = placeText ? leg.label + ', ' + placeText : leg.label;
     if (placeText) text.appendChild(dom.el('span', 'tcard-leg-place', placeText));
     row.appendChild(text);

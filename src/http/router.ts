@@ -14,7 +14,7 @@ import http from 'node:http';
 import { HOST, hostIsLocal } from './auth.ts';
 import { isDraining } from '../draining.ts';
 import { capLabel, errText, fail, intParam, sendCachedJson, sendJson, serveStatic } from './respond.ts';
-import { buildStateCached, fillGas, gasReport, proposalPage, transactionsPayload } from './state.ts';
+import { buildStateCached, proposalPage, transactionsPayload } from './state.ts';
 import { chartPayload, handleChartWrite, handleSnapshotDelivery, partParam, sendCandles, slotParam } from './chart.ts';
 import { handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
@@ -81,18 +81,7 @@ const GET: Record<string, Route> = {
   },
   '/api/log': (ctx, _req, res, url) =>
     sendJson(res, 200, ctx.audit.tail(intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX))),
-  '/api/transactions': (ctx, _req, res) => {
-    const payload = transactionsPayload(ctx);
-    fillGas(ctx, payload.entries);
-    sendJson(res, 200, payload);
-  },
-  // Same derivation as /api/transactions and the same background fill, so opening GAS
-  // after HISTORY costs nothing and opening it first warms the cache for HISTORY. The
-  // report says how many receipts are still coming rather than counting them as free.
-  '/api/gas': (ctx, _req, res, url) => {
-    const report = gasReport(ctx, url.searchParams.get('window') ?? '7d');
-    sendJson(res, report.status, report.body);
-  },
+  '/api/transactions': (ctx, _req, res) => sendJson(res, 200, transactionsPayload(ctx)),
   '/api/trade': (ctx, _req, res) => sendJson(res, 200, ctx.trade.payload()),
   '/api/driver': (ctx, _req, res) => sendJson(res, 200, ctx.chats.payload()),
   // Money arriving is the one thing nobody should have to unlock for, so this reads the
@@ -108,12 +97,8 @@ const GET: Record<string, Route> = {
   '/api/deposit': (ctx, _req, res) => handleDepositStatus(ctx, res),
   // No token, no secret, and deliberately the only unauthenticated proof of life. See health.ts.
   '/api/health': (ctx, _req, res) => sendHealth(ctx, res),
-  /* One card per action that actually happened. The same background gas fill the history uses,
-     for the same reason: the panel draws immediately with whatever receipts are already read. */
-  '/api/receipts': (ctx, _req, res, url) => {
-    sendReceipts(ctx, url, res);
-    fillGas(ctx, transactionsPayload(ctx).entries);
-  },
+  // One card per action that actually happened.
+  '/api/receipts': (ctx, _req, res, url) => sendReceipts(ctx, url, res),
 };
 
 const POST: Record<string, Route> = {

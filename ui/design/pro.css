@@ -717,41 +717,6 @@ button.rule.opens:focus-visible {
   padding-top: 0;
 }
 
-/* Gas, one chip per chain under the sentence: the chain's mark, its name and
-   the floor, on the raised surface. */
-.gas-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-1);
-  margin-top: var(--s-2);
-}
-
-.gas-chip {
-  height: 26px;
-  padding: 0 var(--s-3) 0 var(--s-2);
-  gap: 6px;
-  font-weight: 500;
-  color: var(--text-2);
-}
-
-.gas-chip-mark {
-  display: flex;
-  width: 16px;
-  height: 16px;
-}
-
-.gas-chip-mark > * {
-  width: 16px;
-  height: 16px;
-}
-
-.gas-chip-text {
-  font-family: var(--font-mono);
-  font-size: var(--fs-12);
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
-}
-
 /* The addresses behind the destinations rule, folded under it and indented
    to its sentence. */
 .allowlist {

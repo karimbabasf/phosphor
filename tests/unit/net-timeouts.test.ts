@@ -12,7 +12,8 @@ import assert from 'node:assert/strict';
 
 import { withTimeout, readTimeout, venueWriteTimeout, isTimeout, READ_TIMEOUT_MS, VENUE_WRITE_TIMEOUT_MS } from '../../src/net.ts';
 import { auditFetchSites } from '../../scripts/fetch-audit.ts';
-import { intentsDepositRail } from '../../src/rails/intents-deposit.ts';
+import { intentsNativeRail } from '../../src/rails/intents-native.ts';
+import { INTENTS_NATIVE_COUNTERPARTY } from '../../src/rails/intents-native.ts';
 import { oneClickClient } from '../../src/intents.ts';
 
 test('the two budgets are ten and thirty seconds, and a write is the longer one', () => {
@@ -73,22 +74,26 @@ test('the 1Click client passes its deadline down and lets a timeout through', as
 });
 
 test('a rail whose venue hangs reports a timeout rather than sitting for five minutes', async () => {
-  const rail = intentsDepositRail({
+  const rail = intentsNativeRail({
     keysPath: '/nonexistent/keys.json',
     tokens: { eth: {}, base: {}, arb: {}, sol: {}, near: {} } as never,
     fetchImpl: hungFetch(),
   });
   const out = await rail.simulate({
-    kind: 'intents_deposit',
+    kind: 'swap',
+    venue: 'intents-native',
     chain: 'eth',
-    symbol: 'ETH',
-    tokenId: 'native',
-    amount: 1,
+    toChain: 'eth',
+    fromSymbol: 'ETH',
+    toSymbol: 'USDC',
+    amountIn: 1,
     amountUsd: 10,
+    minAmountOut: 1,
     from: '0x1111111111111111111111111111111111111111',
-    intentsAccount: '0x1111111111111111111111111111111111111111',
-    counterparty: 'oneclick:1click.chaindefuser.com',
-  } as never);
+    to: '0x1111111111111111111111111111111111111111',
+    counterparty: INTENTS_NATIVE_COUNTERPARTY,
+    quote: null,
+  });
 
   assert.equal(out.ok, false);
   assert.doesNotMatch(String(out.error ?? ''), /no signal was passed/, 'the rail handed the fetch a deadline');

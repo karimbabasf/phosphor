@@ -6,7 +6,6 @@ import type { HlDepositDraft } from '../../src/types.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken } from '../../src/intents.ts';
 import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../../src/rails/intents-native.ts';
 import { INTENTS_VERIFIER } from '../../src/rails/intents-native.ts';
-import { INTENTS_WITHDRAW_COUNTERPARTY } from '../../src/rails/intents-withdraw.ts';
 import type { HlSignPort, HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
 import {
   HYPERCORE_COUNTERPARTY,
@@ -702,8 +701,7 @@ test('a nonsense amount floors at zero rather than at NaN', () => {
   assert.equal(minCreditedFor(-5), 0);
 });
 
-test('the funding venue and the intents withdraw venue are one allowlist entry', () => {
-  assert.equal(HYPERCORE_COUNTERPARTY, INTENTS_WITHDRAW_COUNTERPARTY);
+test('the funding venue is the verifier itself, one allowlist entry', () => {
   assert.equal(HYPERCORE_COUNTERPARTY, INTENTS_VERIFIER);
 });
 

@@ -30,9 +30,8 @@ import {
   STATE_DECIDED_BYTES,
   STATE_DECIDED_KEPT,
 } from '../../src/http/state.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 const SELF = '0x1111111111111111111111111111111111111111';
 
 /* One snapshot object, handed back by reference, because that is what the real ledger does:
@@ -40,16 +39,7 @@ const SELF = '0x1111111111111111111111111111111111111111';
    identity, so a harness that built a fresh object per call would be testing a ledger no install
    has. */
 function buildSnapshot(): LedgerSnapshot {
-  const chainStatus = Object.fromEntries(
-    CHAINS.map((c) => [c, { ok: true, fetchedAt: new Date().toISOString() } as unknown as ChainStatus]),
-  ) as Record<ChainId, ChainStatus>;
-  return {
-    holdings: [],
-    prices: {},
-    gas: {} as LedgerSnapshot['gas'],
-    chainStatus,
-    fetchedAt: new Date().toISOString(),
-  } as unknown as LedgerSnapshot;
+  return { mode: 'demo', prices: {}, fetchedAt: new Date().toISOString() };
 }
 
 const SNAPSHOT = buildSnapshot();
@@ -105,8 +95,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: [SELF], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: SELF },
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -122,19 +111,15 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => SNAPSHOT,
-      applyDemoTransfer: () => {},
     },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => settled,
       proposePolicyChange: async () => settled,
       proposeSwap: async () => settled,
       proposeHlDeposit: async () => settled,
       proposeHlWithdraw: async () => settled,
-      proposeIntentsDeposit: async () => settled,
-      proposeIntentsWithdraw: async () => settled,
       proposeIntentsSend: async () => settled,
       proposeTrade: async () => settled,
       proposeTradeChange: async () => settled,

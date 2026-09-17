@@ -21,24 +21,15 @@ import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
-import type { AppConfig, ChainId, ChainStatus, LedgerSnapshot, Proposal } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts); a test about the door's other
 // walls (Origin, Host, the body type) leaves it out on purpose, because those walls come first.
 const SEAT = 's'.repeat(64);
 
-const CHAINS: ChainId[] = ['eth', 'base', 'arb', 'sol', 'near'];
 
 function snapshot(): LedgerSnapshot {
-  const fetchedAt = new Date().toISOString();
-  const status: ChainStatus = { ok: true, fetchedAt };
-  return {
-    holdings: [],
-    chainStatus: Object.fromEntries(CHAINS.map((c) => [c, status])) as Record<ChainId, ChainStatus>,
-    mode: 'demo',
-    prices: {},
-    gas: Object.fromEntries(CHAINS.map((c) => [c, { transferCostUsd: 0.1 }])) as LedgerSnapshot['gas'],
-  };
+  return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
 }
 
 function builtSwap(): Proposal {
@@ -52,7 +43,7 @@ function builtSwap(): Proposal {
     status: 'pending',
     draft: {
       kind: 'swap',
-      venue: 'oneclick',
+      venue: 'intents-native',
       chain: 'arb',
       toChain: 'sol',
       fromSymbol: 'USDC',
@@ -70,6 +61,9 @@ function builtSwap(): Proposal {
   };
 }
 
+// What the door handed the swap builder last, so a test can see what a stray field did.
+let lastSwapParams: Record<string, unknown> | null = null;
+
 async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-sec-'));
   // Play the shell: the window token arrives in the environment, never over a route.
@@ -77,8 +71,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
-    addresses: { evm: ['0xself'], solana: [], near: [] },
-    economicTransferUsd: 10,
+    addresses: { evm: '0xself' },
     candleProducts: ['BTC-USD'],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
@@ -93,20 +86,19 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       intents: () => undefined,
       hyperliquid: () => undefined,
       refresh: async () => snapshot(),
-      applyDemoTransfer: () => {},
     },
     market: createMarketData({
       fetchImpl: (async () => ({ ok: true, json: async () => [], text: async () => '', headers: new Headers() })) as unknown as typeof fetch,
     }),
     proposals: {
-      proposeConsolidate: async () => builtSwap(),
       proposePolicyChange: async () => builtSwap(),
-      // Only reached when the swap guards pass. A bad venue or amount is refused before here.
-      proposeSwap: async () => builtSwap(),
+      // Only reached when the swap guards pass. A bad amount is refused before here.
+      proposeSwap: async (params) => {
+        lastSwapParams = params as unknown as Record<string, unknown>;
+        return builtSwap();
+      },
       proposeHlDeposit: async () => builtSwap(),
       proposeHlWithdraw: async () => builtSwap(),
-      proposeIntentsDeposit: async () => builtSwap(),
-      proposeIntentsWithdraw: async () => builtSwap(),
       proposeIntentsSend: async () => builtSwap(),
       proposeTrade: async () => builtSwap(),
       proposeTradeChange: async () => builtSwap(),
@@ -258,12 +250,9 @@ test('a body that is not application/json is refused with 415', async () => {
   }
 });
 
-/* S3, the reported bug, and its ending. A cross-chain swap that named no venue used to be
-   refused: the default was an on-chain DEX that could not cross chains, so the caller was told
-   to name one and try again. There is no on-chain venue left, the default crosses chains, and
-   the same call now builds. The refusal is gone because the condition that caused it is gone,
-   not because the guard was loosened. */
-test('a cross-chain swap that names no venue now builds, because the default venue crosses chains', async () => {
+/* A swap between two assets whose home chains differ (USDC from arb into SOL) is an ordinary
+   swap inside NEAR Intents: nothing crosses a chain, and the door builds it. */
+test('a swap between assets from two home chains builds: both legs sit inside NEAR Intents', async () => {
   const h = await boot();
   try {
     const out = await raw(h.url, '/api/mcp', {
@@ -281,38 +270,23 @@ test('a cross-chain swap that names no venue now builds, because the default ven
   }
 });
 
-test('a venue this app does not run is refused by name rather than swapped somewhere else', async () => {
+test('a venue this app does not run cannot route a swap anywhere else: every swap is inside NEAR Intents', async () => {
   const h = await boot();
   try {
-    const out = await raw(h.url, '/api/mcp', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', Origin: h.url },
-      body: JSON.stringify({ secret: SEAT,
-        op: 'propose',
-        kind: 'swap',
-        params: { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 100, minAmountOut: 0.5, venue: 'uniswap-v3' },
-      }),
-    });
-    assert.equal(out.status, 400);
-    assert.match(out.body, /venue must be oneclick or intents-native/);
-  } finally {
-    await h.close();
-  }
-});
-
-test('the same cross-chain swap with venue oneclick passes the guard and builds', async () => {
-  const h = await boot();
-  try {
-    const out = await raw(h.url, '/api/mcp', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', Origin: h.url },
-      body: JSON.stringify({ secret: SEAT,
-        op: 'propose',
-        kind: 'swap',
-        params: { chain: 'arb', toChain: 'sol', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 100, minAmountOut: 0.5, venue: 'oneclick' },
-      }),
-    });
-    assert.equal(out.status, 200, 'a named cross-chain venue must not be refused by the guard');
+    for (const venue of ['uniswap-v3', 'oneclick']) {
+      const out = await raw(h.url, '/api/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Origin: h.url },
+        body: JSON.stringify({ secret: SEAT,
+          op: 'propose',
+          kind: 'swap',
+          params: { chain: 'arb', toChain: 'sol', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 100, minAmountOut: 0.5, venue },
+        }),
+      });
+      assert.equal(out.status, 200, out.body.slice(0, 200));
+      assert.ok(lastSwapParams !== null, 'the builder was reached');
+      assert.equal('venue' in lastSwapParams, false, `a stray venue of ${venue} reached the builder`);
+    }
   } finally {
     await h.close();
   }
@@ -353,7 +327,6 @@ test('no route serves the window token (P0-1)', async () => {
       '/api/chart',
       '/api/log',
       '/api/transactions',
-      '/api/gas',
       '/api/trade',
       '/api/driver',
     ];
@@ -400,8 +373,6 @@ for (const [label, amount] of BAD_AMOUNTS) {
     try {
       const cases: Array<[string, Record<string, unknown>]> = [
         ['hl_deposit', { chain: 'arb', symbol: 'USDC', amount }],
-        ['intents_deposit', { chain: 'arb', symbol: 'USDC', amount }],
-        ['intents_withdraw', { chain: 'arb', symbol: 'USDC', amount }],
         ['swap', { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: amount, minAmountOut: 1 }],
       ];
       for (const [kind, params] of cases) {
@@ -442,7 +413,7 @@ test('an unknown chain is refused rather than silently drafted against ethereum'
     // chainField used to return 'eth' as its sentinel. Every caller checks problems.length
     // first, so it was latent; the point of returning null is that the next branch that forgets
     // cannot spend on the wrong chain.
-    const out = await proposeWith(h.url, 'intents_deposit', { chain: 'polygon', symbol: 'USDC', amount: 10 });
+    const out = await proposeWith(h.url, 'swap', { chain: 'polygon', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 10, minAmountOut: 1 });
     assert.equal(out.status, 400);
     assert.match(out.body, /chain must be one of/);
     assert.doesNotMatch(out.body, /"id"/, 'no proposal was created');
@@ -454,7 +425,7 @@ test('an unknown chain is refused rather than silently drafted against ethereum'
 test('a good amount still gets through, so the bound is a bound and not a wall', async () => {
   const h = await boot();
   try {
-    const out = await proposeWith(h.url, 'intents_deposit', { chain: 'arb', symbol: 'USDC', amount: 10 });
+    const out = await proposeWith(h.url, 'swap', { chain: 'arb', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 10, minAmountOut: 1 });
     assert.equal(out.status, 200, out.body.slice(0, 200));
   } finally {
     await h.close();

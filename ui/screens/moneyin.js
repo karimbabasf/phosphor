@@ -102,11 +102,10 @@
         host.appendChild(grid);
       } else if (material.keys) {
         var list = dom.el('div', 'stack-2');
-        ['evm', 'solana', 'near'].forEach(function (rail) {
-          if (!material.keys[rail]) return;
-          list.appendChild(dom.el('p', 'label', rail === 'evm' ? 'Ethereum, Base and Arbitrum' : (rail === 'solana' ? 'Solana' : 'NEAR')));
-          list.appendChild(dom.el('p', 'addr', material.keys[rail]));
-        });
+        if (material.keys.evm) {
+          list.appendChild(dom.el('p', 'label', 'Ethereum, Base and Arbitrum'));
+          list.appendChild(dom.el('p', 'addr', material.keys.evm));
+        }
         host.appendChild(list);
       }
 
