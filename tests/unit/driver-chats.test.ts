@@ -140,3 +140,33 @@ test('closing a chat stops its agent and takes it off the list', async () => {
     await b.close();
   }
 });
+
+test('Turn off is stop then close: the process is stopped, the chat and its transcript are gone, and the window is told off', async () => {
+  // The window's Turn off sends the two actions in this order. After them the app must answer
+  // /api/driver the way it does before anybody ever started: state off, one chat that does not
+  // exist yet, an empty transcript. Anything else and a reload would bring the old conversation
+  // back under a column that just said it was deleted.
+  const b = await bootDriverServer({ state: 'ready' });
+  try {
+    await b.driver({ action: 'start' });
+    await b.driver({ action: 'prompt', text: 'what do I hold?' });
+    const before = await chats(b.url);
+    const beforeList = before.chats as Array<Record<string, unknown>>;
+    assert.equal((beforeList[0].transcript as unknown[]).length >= 1, true, 'the prompt was not written into the transcript');
+
+    const stopped = await b.driver({ action: 'stop' });
+    assert.equal(stopped.status, 200);
+    const closed = await b.driver({ action: 'close' });
+    assert.equal(closed.status, 200);
+    assert.equal(b.calls.stops >= 1, true, 'the agent was never stopped');
+
+    const after = await chats(b.url);
+    assert.equal(after.state, 'off');
+    const list = after.chats as Array<Record<string, unknown>>;
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, '', 'a chat survived the close');
+    assert.deepEqual(list[0].transcript, [], 'the transcript survived the close');
+  } finally {
+    await b.close();
+  }
+});

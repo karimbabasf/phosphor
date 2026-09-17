@@ -914,32 +914,62 @@ test('a receipt opened anywhere in the window is posted into the thread as the s
   assert.equal(world.cardHidden(), true, 'a card in the thread and the empty card at once');
 });
 
-test('Turn off asks first, on a card of its own, and only the card\'s Turn off quits: the process stops and the chat closes', async () => {
+test('Turn off asks first, on a card of its own, and only the card\'s Turn off quits: the process stops, the chat closes, and the column is empty again', async () => {
   const world = build();
   world.emit({ kind: 'status', state: 'starting' });
   world.emit({ kind: 'status', state: 'ready' });
   world.runTimers();
+  world.type('what do I hold?');
+  world.emit({ kind: 'text', text: 'Two coins.' });
+  world.emit({ kind: 'turn_end', error: false, turns: 1 });
+  world.emit({ kind: 'status', state: 'ready' });
+  assert.equal(world.cardHidden(), true, 'a transcript and the empty card at once');
   world.press('Turn off');
-  assert.deepEqual(world.actions, [], 'the process was stopped before the person confirmed');
+  assert.deepEqual(world.actions, ['prompt'], 'the process was stopped before the person confirmed');
   assert.equal(world.confirms.length, 1, 'no confirmation card');
   const card = world.confirms[0];
   const words = all(card, 'title').map((n) => n.textContent);
-  assert.deepEqual(words, ['Turn your assistant off?']);
+  assert.deepEqual(words, ['Turn off the assistant?']);
+  /* The card says what will happen and what will not. */
+  const body = all(card, 'body')[0].textContent;
+  assert.ok(body.includes('transcript'), 'the card does not say the transcript goes');
+  assert.ok(body.includes('untouched'), 'the card does not say what stays');
   const buttons = all(card, 'btn').map((n) => n.textContent);
-  assert.deepEqual(buttons, ['Keep it on', 'Turn off']);
+  assert.deepEqual(buttons, ['Keep running', 'Turn off']);
 
-  /* Keep it on: the card goes and nothing was sent. */
+  /* Keep running: the card goes and nothing was sent. */
   fire(all(card, 'btn')[0], 'click');
   assert.equal(card.getAttribute('data-done'), 'true');
-  assert.deepEqual(world.actions, []);
+  assert.deepEqual(world.actions, ['prompt']);
+  assert.equal(world.saidRows().length, 1, 'keeping it running lost the transcript');
 
-  /* Turn off on the card: stop, then close, in that order. */
+  /* Turn off on the card: stop, then close, in that order, and then the column is what it was
+     before anybody started: the card with nobody at the wheel, no rows, the head reading Off. */
   world.press('Turn off');
   const again = world.confirms[1];
   fire(all(again, 'btn')[1], 'click');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(world.actions, ['stop', 'close']);
+  assert.deepEqual(world.actions, ['prompt', 'stop', 'close']);
+  assert.equal(world.saidRows().length, 0, 'the old transcript stayed on screen after the quit');
+  assert.equal(world.replyRows().length, 0);
+  assert.equal(world.cardHidden(), false, 'the empty card did not come back');
+  assert.ok(world.card().includes('Nobody is at the wheel'), world.card());
+  assert.equal(world.seat(), 'off');
+  assert.equal(world.actionsHidden(), false, 'the card offers no way to start again');
+  assert.equal(all(world.host, 'status-verb')[0].textContent, 'Off');
+  assert.equal(all(world.composerHost, 'agent-composer')[0].hidden, true, 'the composer stayed open with nobody to talk to');
+});
+
+test('a stop the person did not ask for keeps the transcript under the reason', () => {
+  /* The clear belongs to the quit, not to the stopped frame: a crash arrives as the same state
+     with a reason, and that transcript has to stay under the failure line. */
+  const world = build();
+  world.type('what do I hold?');
+  world.emit({ kind: 'text', text: 'Two coins.' });
+  world.emit({ kind: 'status', state: 'stopped', reason: 'The assistant exited on its own.' });
+  assert.equal(world.saidRows().length, 1, 'an exit the person did not ask for wiped the transcript');
+  assert.equal(world.noteText(), 'The assistant exited on its own.');
 });
 
 /* ---------- scrolling ---------- */

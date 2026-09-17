@@ -882,10 +882,10 @@
     if (!decision || typeof decision.showCard !== 'function') return quitAssistant(node);
     decision.showCard(function (host, done) {
       dom.clear(host);
-      host.appendChild(dom.el('h2', 'title', 'Turn your assistant off?'));
-      host.appendChild(dom.el('p', 'body dim', 'It stops what it is doing and its process quits. Nothing it asked for is approved by this, and you can start it again any time.'));
+      host.appendChild(dom.el('h2', 'title', 'Turn off the assistant?'));
+      host.appendChild(dom.el('p', 'body dim', 'Its transcript on this window is deleted. Your wallet, policy and open positions are untouched.'));
       var actions = dom.el('div', 'dock-actions');
-      var keep = button('btn btn-ghost', 'Keep it on');
+      var keep = button('btn btn-ghost', 'Keep running');
       var off = button('btn btn-danger', 'Turn off');
       actions.appendChild(keep);
       actions.appendChild(off);
@@ -904,12 +904,13 @@
     window.PhosphorShell.setPending(btn, true, 'Turning off');
     api.driver({ action: 'stop', chat: '' })
       .then(function () {
-        /* Stopped is the process gone; closed is the chat gone with it. The
-           column then shows Start, which is what "off" looks like. */
+        /* Stopped is the process gone; closed is the chat gone with it, and
+           its transcript on the server dies with the chat. */
         return api.driver({ action: 'close', chat: '' });
       })
       .then(function () {
         chatId = null;
+        forget();
       })
       .catch(function (err) {
         window.PhosphorToast.show(net.readable(err), 'down');
@@ -917,6 +918,27 @@
       .finally(function () {
         window.PhosphorShell.setPending(btn, false);
       });
+  }
+
+  /* THE COLUMN AFTER A QUIT is the column before anybody started: no rows,
+     the card with nobody at the wheel, the head reading Off. This is the
+     quit's own step and never the stopped frame's, because a crash arrives
+     as the same state with a reason, and that transcript has to stay on
+     screen under the reason (Karim, 2026-09-16: turn off "should take me
+     back to" the empty state). The receipts already seen stay seen, so a
+     card that was posted once is not posted again by the next read. */
+  function forget() {
+    blocks.length = 0;
+    openSteps = null;
+    turn = null;
+    failure = null;
+    queued = null;
+    view = 'card';
+    for (var i = 0; i < mounts.length; i += 1) {
+      mounts[i].unseen = 0;
+      mounts[i].followUntil = 0;
+    }
+    setPhase('idle', 'stopped');
   }
 
   /* Paint which edges of a scroller have more behind them, for the fade
