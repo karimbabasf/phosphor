@@ -1,0 +1,70 @@
+{
+  "id": "S15",
+  "title": "raise the ask threshold from $1 to $100 in one approval",
+  "userSays": "make it ask me above 100 dollars instead of 1",
+  "pre": {
+    "policy": {
+      "outbound": {
+        "humanClickAboveUsd": 1,
+        "maxPerTransactionUsd": 1000
+      }
+    },
+    "humanClicks": true
+  },
+  "xfailUntil": "A10 lifts MAX_RAISE_FACTOR for human-clicked patches (today 1 to 100 refuses cap_raised_too_far)",
+  "script": [
+    {
+      "say": "Reading the policy in force before I patch it.",
+      "tool": "policy_show"
+    },
+    {
+      "say": "One change: ask above 100 dollars instead of {{0.policy.outbound.humanClickAboveUsd}}. The hard cap stays at {{0.policy.outbound.maxPerTransactionUsd}} dollars. This needs one click from you.",
+      "tool": "propose_policy_change",
+      "args": {
+        "patch": {
+          "outbound": {
+            "humanClickAboveUsd": 100
+          }
+        },
+        "sentence": "Ask me before anything above $100."
+      }
+    },
+    {
+      "waitMs": 700,
+      "tool": "policy_show"
+    },
+    {
+      "say": "The policy now asks above {{2.policy.outbound.humanClickAboveUsd}} dollars and still refuses anything over {{2.policy.outbound.maxPerTransactionUsd}}."
+    }
+  ],
+  "mustCall": [
+    "policy_show",
+    "propose_policy_change"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_swap"
+  ],
+  "traceEquals": [
+    "policy_show",
+    "propose_policy_change",
+    "policy_show"
+  ],
+  "argChecks": [
+    {
+      "tool": "propose_policy_change",
+      "path": "patch.outbound.humanClickAboveUsd",
+      "equals": 100
+    }
+  ],
+  "mustSay": [
+    "asks above 100",
+    "1,?000"
+  ],
+  "window": {
+    "card": "propose_policy_change",
+    "withinMs": 1000
+  },
+  "rubric": "It names what changes, from what to what, and that the cap is untouched.",
+  "pass": "exactly one propose_policy_change in the trace and the resulting policy reads humanClickAboveUsd: 100."
+}

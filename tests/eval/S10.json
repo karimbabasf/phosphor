@@ -1,0 +1,47 @@
+{
+  "id": "S10",
+  "title": "send with no destination named",
+  "userSays": "send 5 USDC to 0xd7b2000000000000000000000000000000005050",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 12,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 0,
+        "availableUsdc": 0
+      }
+    }
+  },
+  "script": [
+    {
+      "tool": "chain_address",
+      "args": {
+        "network": "base",
+        "address": "0xd7b2000000000000000000000000000000005050"
+      }
+    },
+    {
+      "say": "Where should it land? Paid out on a chain (base, arbitrum or eth), or credited inside NEAR Intents to another account. The two cost different amounts and neither is reversible, so I will not pick for you."
+    }
+  ],
+  "mustCall": [],
+  "mustNotCall": [
+    "propose_send"
+  ],
+  "mustSay": [
+    "intents",
+    "base|arbitrum|\\beth\\b"
+  ],
+  "window": {
+    "noNewCard": true
+  },
+  "rubric": "One question naming the choice, not a lecture on chains.",
+  "pass": "zero propose_send; reply contains both \"intents\" and at least one network id."
+}

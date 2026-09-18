@@ -103,6 +103,11 @@ export type Scenario = {
   // Tools this scenario cannot run without. Absent from the live surface means expected-fail,
   // never fail: the scenario is waiting on a build, not reporting a regression.
   needsTools?: string[];
+  /* A build step this scenario waits on that no probe can see: a policy rule still in force, a
+     fixture the demo ledger cannot hold. It reads as expected-fail with this line beside it, and
+     the commit that lands the step deletes the line. Declared rather than detected, so it is
+     deliberately narrow: never put one on a scenario that should pass today. */
+  xfailUntil?: string;
   /* The same for the ProposalView. A scenario asserting a stage word, what is being waited on or
      an elapsed figure cannot pass until proposal_status returns the view, so a run before that
      lands reports it expected-fail against `stage` rather than as a regression. */

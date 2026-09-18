@@ -42,6 +42,10 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SCENARIO_DIR = path.join(ROOT, 'tests', 'eval');
 const PREFIX = 'mcp__phosphor__';
 
+// One exit guard per driver, one driver per scenario, and 28 of them. The listeners are real and
+// wanted; the default ceiling of ten is what is wrong here.
+process.setMaxListeners(64);
+
 const args = process.argv.slice(2);
 const LIVE = args.includes('--live');
 const VERBOSE = args.includes('--verbose');
@@ -401,8 +405,13 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   const sawView = statusReads.some((read) => (read.data as Json)?.stage !== undefined);
   const waiting = [...missing];
   if (scenario.needsView === true && !sawView) waiting.push('stage (the ProposalView)');
+  if (scenario.xfailUntil !== undefined) waiting.push(scenario.xfailUntil);
 
-  const status: Result['status'] = verdict.ok ? 'pass' : waiting.length > 0 ? 'xfail' : 'fail';
+  /* A scenario whose tool is not on the surface cannot pass, whatever the three checks say: the
+     call it needed was answered with "not found" and every assertion downstream of it graded a
+     hole. Expected-fail is the only honest word for that, so the tool check outranks the verdict. */
+  const status: Result['status'] =
+    missing.length > 0 ? 'xfail' : verdict.ok ? 'pass' : waiting.length > 0 ? 'xfail' : 'fail';
   return { scenario, status, verdict, missing: waiting, detail };
 }
 

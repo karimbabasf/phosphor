@@ -1,0 +1,135 @@
+{
+  "id": "S3",
+  "title": "\"check again\" after settlement",
+  "userSays": "check again",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 0,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 7.0623,
+        "availableUsdc": 7.0623
+      }
+    },
+    "proposals": [
+      {
+        "id": "ev-s3-deposit",
+        "kind": "hl_deposit",
+        "createdAt": {
+          "agoSec": 200
+        },
+        "status": "executed",
+        "draft": {
+          "kind": "hl_deposit",
+          "symbol": "USDC",
+          "originAsset": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 7.5425,
+          "amountUsd": 7.5425,
+          "minCredited": 7.06233,
+          "from": "0x1111111111111111111111111111111111111111"
+        },
+        "simulation": {
+          "ok": true,
+          "notes": [
+            "quote held"
+          ]
+        },
+        "verdict": {
+          "outcome": "allow",
+          "reasons": [
+            "hl_deposit of $7.54 to intents.near.",
+            "Within every limit."
+          ],
+          "rule": "within_limits"
+        },
+        "decidedBy": "human",
+        "decidedAt": {
+          "agoSec": 198
+        },
+        "balances": {
+          "beforeUsd": 7.5425,
+          "afterUsd": null
+        },
+        "result": {
+          "ok": true,
+          "detail": "Hyperliquid credited 7.0623 USDC.",
+          "txids": [
+            "0xb3f0a2c1d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f"
+          ]
+        },
+        "pocket": {
+          "venue": "hyperliquid",
+          "account": "0x1111111111111111111111111111111111111111",
+          "assetId": "USDC",
+          "symbol": "USDC",
+          "decimals": 6,
+          "before": "0",
+          "after": "7062300",
+          "floor": "7062330"
+        },
+        "settledAt": {
+          "agoSec": 20
+        }
+      }
+    ]
+  },
+  "script": [
+    {
+      "say": "Reading the row, then the balance.",
+      "tool": "proposal_status",
+      "args": {
+        "id": "ev-s3-deposit"
+      }
+    },
+    {
+      "tool": "wallet"
+    },
+    {
+      "say": "Confirmed. {{0.draft.amount}} USDC left NEAR Intents and {{0.result.detail}} Collateral now reads {{1.totalUsd}} USD across both pockets. Total elapsed about 200 s."
+    }
+  ],
+  "mustCall": [
+    "proposal_status",
+    "wallet"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_swap",
+    "propose_hl_deposit",
+    "propose_hl_withdraw",
+    "propose_trade",
+    "propose_trade_change",
+    "propose_policy_change"
+  ],
+  "traceEquals": [
+    "proposal_status",
+    "wallet"
+  ],
+  "ordering": [
+    [
+      "proposal_status",
+      "wallet"
+    ]
+  ],
+  "argChecks": [
+    {
+      "tool": "proposal_status",
+      "path": "id",
+      "equals": "ev-s3-deposit"
+    }
+  ],
+  "mustSay": [
+    "confirmed",
+    "7\\.0623",
+    "\\b\\d+\\s*(s|sec|seconds|m|min)\\b"
+  ],
+  "rubric": "The completion claim cites the read, not the propose reply.",
+  "pass": "trace [proposal_status, wallet]; reply contains the collateral figure from wallet, matched to 4 decimals; no card in the window carries a stage other than the terminal one."
+}
