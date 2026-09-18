@@ -103,6 +103,36 @@
   .tcard-when { display: none; }
 }
 
+/* A state word is a sentence, not a chip: "Waiting for the venue to credit it"
+   does not share a line with a title and a figure in a 390 column. So a head
+   that carries one takes two rows there, and nothing is cut: what it is on top,
+   how much and what it is doing under it. */
+@container (max-width: 520px) {
+  .tcard-head:has(.tcard-state) {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "glyph title   chevron"
+      "glyph figure  state";
+    column-gap: var(--s-2);
+    row-gap: 2px;
+    align-items: center;
+  }
+
+  .tcard-head:has(.tcard-state) > .tcard-glyph:not(.tcard-chevron),
+  .tcard-head:has(.tcard-state) > .icon {
+    grid-area: glyph;
+    align-self: start;
+    margin-top: 2px;
+  }
+
+  .tcard-head:has(.tcard-state) .tcard-title { grid-area: title; }
+  .tcard-head:has(.tcard-state) .tcard-figure { grid-area: figure; justify-self: start; }
+  .tcard-head:has(.tcard-state) .tcard-state { grid-area: state; justify-self: end; }
+  .tcard-head:has(.tcard-state) .tcard-chevron { grid-area: chevron; justify-self: end; }
+  .tcard-head:has(.tcard-state) .tcard-when { display: none; }
+}
+
 /* The chevron points right when the card is closed and down when it is open.
    The turn is the one motion on the head. */
 .tcard-chevron {
@@ -447,6 +477,53 @@
   font-size: var(--fs-12);
   color: var(--text-3);
 }
+
+/* ---------- the state word, and the lines under it ---------- */
+
+/* The state at the right of the head, as a word. No pill, no dot, nothing that
+   breathes: the card is the app's own object and the word is what it is doing.
+   Karim, 2026-09-18, on the old head: noisy, and unclear what each number is. */
+.tcard-state {
+  flex: 0 0 auto;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.tcard-state[data-state="waiting"] { color: var(--warn); }
+.tcard-state[data-state="stalled"] { color: var(--warn); }
+.tcard-state[data-state="confirmed"] { color: var(--up); }
+.tcard-state[data-state="failed"] { color: var(--down); }
+
+/* A label and its figure. The figure is anchored to the right edge, so the one
+   number that ticks takes the gap when it grows a digit rather than pushing the
+   words beside it: the card counts and the layout holds still. */
+.tcard-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding-top: 2px;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+}
+
+.tcard-line-label {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.tcard-line-value {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tcard-line-value[data-tone="up"] { color: var(--up); }
+.tcard-line-value[data-tone="down"] { color: var(--down); }
 
 /* ---------- the status chip ---------- */
 

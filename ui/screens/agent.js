@@ -1954,9 +1954,20 @@
     if (moved) renderAll();
   }
 
-  /* Whether the row says anything the card does not: a new status, a
-     decision, a settlement, or a rail's answer where there was none. */
+  /* Whether the row says anything the card does not. The view is the first
+     question, because it is what the card draws: a stage that moved, or the
+     moment that stage moved, is the whole reason to redraw. The rest catches a
+     row the backend has not built a view for. */
   function liveMoved(shown, live) {
+    var was = shown.view || null;
+    var now = live.view || null;
+    if (!was !== !now) return true;
+    if (was && now) {
+      if (was.stage !== now.stage) return true;
+      if (was.lastChangeAt !== now.lastChangeAt) return true;
+      if ((was.settledAt || null) !== (now.settledAt || null)) return true;
+      if ((was.providerStage || null) !== (now.providerStage || null)) return true;
+    }
     if (shown.status !== live.status) return true;
     if ((shown.decidedAt || null) !== (live.decidedAt || null)) return true;
     if ((shown.settledAt || null) !== (live.settledAt || null)) return true;
