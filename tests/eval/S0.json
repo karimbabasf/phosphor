@@ -1,0 +1,15 @@
+{
+  "id": "S0",
+  "title": "the harness itself: boot, one read, one reply",
+  "userSays": "what have I got?",
+  "pre": {},
+  "script": [
+    { "say": "Reading both pockets.", "tool": "wallet" },
+    { "say": "You hold 1,850 USDC, 0.42 ETH and 1.2 SOL inside NEAR Intents, plus 50 USDC of Hyperliquid collateral." }
+  ],
+  "mustCall": ["wallet"],
+  "mustNotCall": ["propose_send", "propose_swap", "propose_hl_deposit"],
+  "traceEquals": ["wallet"],
+  "mustSay": ["1,850", "50"],
+  "pass": "The harness boots an app, drives a turn through the driver, and grades the trace and the reply."
+}
