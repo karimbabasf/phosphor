@@ -454,6 +454,46 @@ html, body {
   padding: var(--s-5) var(--s-4);
 }
 
+/* A BAR TOO NARROW FOR THREE COLUMNS.
+
+   Under about 900 the three columns cannot all hold their content: the tabs
+   were squeezed to 8 px while their words kept painting, straight through the
+   status lines and the brake beside them. Two rows instead of a squeeze, so
+   every control keeps its word and nothing overlaps. The bar grows by one row
+   rather than shrinking anything a person reaches for, and the brake stays the
+   last thing in it. */
+@media (max-width: 899px) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "brand tabs"
+      "cluster cluster";
+    height: auto;
+    row-gap: var(--s-2);
+    padding-block: var(--s-2);
+  }
+
+  .brand { grid-area: brand; }
+
+  .tabs {
+    grid-area: tabs;
+    justify-self: end;
+  }
+
+  .status-cluster {
+    grid-area: cluster;
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
+  }
+}
+
+/* Narrower still and the name does not fit beside the modes. The mark carries
+   it: it is the thing the app is recognised by, and it is still the whole
+   brand block, so the bar keeps its anchor. */
+@media (max-width: 479px) {
+  .brand-word { display: none; }
+}
+
 /* ---------- Stacked: the world above, the conversation docked below ---------- */
 
 @media (max-width: 959px) {
