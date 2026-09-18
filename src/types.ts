@@ -179,10 +179,16 @@ export type PolicyPatch = {
   composition?: Partial<Policy['composition']>;
 };
 
+/* What the engine decided, why in words, and why in codes.
+   `reasonCodes` is the machine-readable half of `reasons`: a refusal carries its rule, and a
+   needs_approval verdict carries any adjustment the engine made on the way through (today only
+   `threshold_clamped_to_cap`). It is optional because rows already on disk were written without
+   it and because nothing outside the engine mints a verdict with codes; the engine always sets
+   it, so a reader takes `verdict.reasonCodes ?? []` and never has to read the prose. */
 export type Verdict =
-  | { outcome: 'allow'; reasons: string[] }
-  | { outcome: 'needs_approval'; reasons: string[] }
-  | { outcome: 'refuse'; reasons: string[]; rule: string };
+  | { outcome: 'allow'; reasons: string[]; reasonCodes?: string[] }
+  | { outcome: 'needs_approval'; reasons: string[]; reasonCodes?: string[] }
+  | { outcome: 'refuse'; reasons: string[]; rule: string; reasonCodes?: string[] };
 
 // ---------- Writes ----------
 

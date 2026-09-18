@@ -112,26 +112,20 @@ const cases: Case[] = [
 
   // ---- rule 3: policy changes ----
   { name: 'policy change never allows', draft: policyChange({ outbound: { maxPerSessionUsd: 50000 } }), out: 'needs_approval' },
-  /* This row used to assert the opposite, and it was the finding. A patch reading
-     `{ maxPerTransactionUsd: 1e9, humanClickAboveUsd: 1e9 }` came back needs_approval, so the
-     whole of "one click removes the human gate for every proposal after it" was one click on a
-     card that showed neither number. The card renders the diff now (src/view/basic.ts); this is
-     the half that does not depend on anybody reading it. */
+  /* These three rows used to assert a ten-times ceiling on one patch, and it went on 2026-09-18.
+     It was buying a second click on a sentence the human had already read: propose_policy_change
+     never auto-executes at any size, and the card renders the change as a before and after diff
+     of the sentences the policy is actually made of. What it cost was ordinary, since the app
+     ships asking above $1 and setting that to $100 took two approvals of one decision.
+     A loosening of any size is still a click, and it is still one click. */
   {
-    name: 'a patch that raises a limit a hundred thousand times is refused, not merely queued for a click',
+    name: 'a patch that raises both limits together is one decision, so it waits for one click',
     draft: policyChange({ outbound: { maxPerTransactionUsd: 1e9, humanClickAboveUsd: 1e9 } }),
-    out: 'refuse',
-    rule: 'cap_raised_too_far',
+    out: 'needs_approval',
   },
   {
-    name: 'the session cap cannot be lifted past ten times either',
+    name: 'the session cap moves as far as the human says in one patch',
     draft: policyChange({ outbound: { maxPerSessionUsd: 25_000 * 10 + 1 } }),
-    out: 'refuse',
-    rule: 'cap_raised_too_far',
-  },
-  {
-    name: 'a tenfold loosening is still a decision the human makes, so it is queued rather than refused',
-    draft: policyChange({ outbound: { maxPerSessionUsd: 25_000 * 10 } }),
     out: 'needs_approval',
   },
   { name: 'tightening a limit is never refused by the ceiling', draft: policyChange({ outbound: { maxPerTransactionUsd: 1 } }), out: 'needs_approval' },
@@ -142,13 +136,14 @@ const cases: Case[] = [
     rule: 'click_threshold_above_cap',
   },
   {
-    name: 'a limit of zero is a rule that nothing passes, and a patch may not lift it',
+    // Zero used to be a wall a patch could not lift, for the same reason the ten-times rule
+    // existed and with the same answer: the human reads the sentence and clicks.
+    name: 'a limit of zero is lifted by the same one click as any other',
     policyMut: p => {
       p.outbound.humanClickAboveUsd = 0;
     },
     draft: policyChange({ outbound: { humanClickAboveUsd: 500 } }),
-    out: 'refuse',
-    rule: 'cap_raised_from_zero',
+    out: 'needs_approval',
   },
   /* The allowlist is REPLACED rather than merged, so a patch carrying one address deletes every
      other one. Adding is the reason the field exists; a removal dressed as an addition is not. */

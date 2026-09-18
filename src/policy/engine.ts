@@ -71,20 +71,24 @@ const patchSchema = z
 // what the human reads to know what the policy is.
 const UNPATCHABLE = ['killSwitch', 'version', 'sentences'];
 
-/* HOW FAR ONE PATCH MAY MOVE THE WALLS, and why there is a limit at all.
+/* HOW FAR ONE PATCH MAY MOVE THE WALLS, and why the ten-times rule is gone.
 
-   A policy change is the one draft that removes the controls on every draft after it, and until
-   now the only thing standing in front of it was a click on a card that named the change in the
-   agent's own words. `humanClickAboveUsd: 1e9` with the sentence "cap the freezable share"
-   came back needs_approval, so the whole attack was one click on a card that said "Change your
-   limits" and nothing else. The card now renders the diff (src/view/basic.ts), and these three
-   rules are the half that does not depend on anybody reading it.
+   A policy change is the one draft that removes the controls on every draft after it, so for a
+   month one patch could not loosen a limit by more than ten times, and raising one from zero was
+   refused outright. Both rules existed to force a human to read what was happening.
 
-   They are RELATIVE to the policy in force rather than absolute, because an absolute dollar
-   ceiling is a number nobody can justify: it is wrong for a wallet holding $500 and wrong for
-   one holding $5m. Ten times is a wall a legitimate change walks up to in steps, each of them
-   read and clicked, and it is a wall an "adjust the freezable cap" patch never touches. */
-const MAX_RAISE_FACTOR = 10;
+   THEY WERE PAYING FOR SOMETHING ALREADY BOUGHT. propose_policy_change is in ALWAYS_CLICK_TOOLS
+   (src/persona.ts): it never auto-executes at any size, and the card renders the change as a
+   before and after diff of the sentences a person actually reads. So the human read it once and
+   clicked. The staircase bought a second click on the same sentence and nothing else, and what
+   it cost was ordinary: setting the ask threshold from its $1 starting point to $100 took two
+   approvals of the same decision, and the refusal blamed the person for asking plainly.
+
+   WHAT IS LEFT IS THE RULE THAT IS ABOUT COHERENCE RATHER THAN SIZE. A click threshold above the
+   hard cap means nothing ever waits for anybody, and that is not a loosening a person can read
+   off the sentence, because each number looks reasonable on its own. It is checked in both
+   directions now: raising the ask past the cap is refused, and lowering the cap under the ask is
+   clamped rather than refused, because refusing a tightening fails in the wrong direction. */
 
 /* A patch that names no rule at all. `{}` is what a caller sends when it forgets the field:
    asRecord in src/http/respond.ts turns a missing `patch` into an empty object, and the MCP
@@ -101,9 +105,23 @@ function patchNamesNothing(patch: PolicyPatch): boolean {
   );
 }
 
-// The caps that get looser as they get bigger. The share fields are already bounded at 1 by
-// their own schema, so they do not belong here.
-const RAISABLE_CAPS = ['maxPerTransactionUsd', 'maxPerSessionUsd', 'humanClickAboveUsd', 'autoApproveDailyUsd'] as const;
+/* THE ASK IS NEVER ABOVE THE CAP, held in one place and by construction rather than by two
+   guards that could disagree. A patch that lowers the transaction cap under the current ask
+   threshold is a TIGHTENING, and the old guard did not catch it at all: it fired only when the
+   patch raised the ask, so the same incoherent pair reached from the other side went through and
+   the policy quietly stopped ever asking. Refusing it would fail in the wrong direction, so the
+   ask comes down with the cap and the diff says both numbers moved.
+
+   Pure, and called from two places on purpose: the engine evaluates the clamped patch, and the
+   proposal builder stores the clamped patch, so what a person reads on the card is what is
+   applied. Two derivations of this is how a card comes to name a change the file does not make. */
+export function clampPatch(patch: PolicyPatch, policy: Policy): { patch: PolicyPatch; clamped: boolean } {
+  const o = patch.outbound;
+  if (o?.maxPerTransactionUsd === undefined) return { patch, clamped: false };
+  const ask = o.humanClickAboveUsd ?? policy.outbound.humanClickAboveUsd;
+  if (ask <= o.maxPerTransactionUsd) return { patch, clamped: false };
+  return { patch: { ...patch, outbound: { ...o, humanClickAboveUsd: o.maxPerTransactionUsd } }, clamped: true };
+}
 
 function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdict | null {
   const o = patch.outbound;
@@ -112,47 +130,16 @@ function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string
   /* A click threshold above the transaction cap is a click threshold that never fires: every
      move small enough to be allowed at all is then small enough to auto-execute. Checked against
      the cap as it would stand AFTER the patch, and only when the patch is the thing RAISING the
-     threshold. A patch that merely lowers the transaction cap under a threshold it never touched
-     is a tightening, and refusing a tightening is the wrong direction to fail in.
-     First, because it names the specific thing being asked for. Raising the threshold past the
-     cap also trips the ten-times rule below, and "nothing would ever wait for you" is the more
-     useful sentence to hand somebody. */
+     threshold; a patch that lowers the cap instead has already been clamped above. This is the
+     one rule left from the three that used to stand here, and it is the one that is about the
+     two numbers making sense together rather than about how far either of them moved. */
   if (o.humanClickAboveUsd !== undefined && o.humanClickAboveUsd > policy.outbound.humanClickAboveUsd) {
     const perTransaction = o.maxPerTransactionUsd ?? policy.outbound.maxPerTransactionUsd;
     if (o.humanClickAboveUsd > perTransaction) {
       return refusal(
         reasons,
         'click_threshold_above_cap',
-        `This patch would ask for a click above ${money(o.humanClickAboveUsd)} while refusing anything above ${money(perTransaction)}, so nothing would ever wait for you. Lower the click threshold, or raise the transaction limit first.`,
-      );
-    }
-  }
-
-  for (const field of RAISABLE_CAPS) {
-    const next = o[field];
-    if (next === undefined) continue;
-    // autoApproveDailyUsd is the one raisable cap that can be absent on an old policy. A field
-    // that was never set is not one this patch is RAISING, so setting it is not gated by the
-    // raise factor; it is just a value being written for the first time.
-    const current = policy.outbound[field];
-    if (current === undefined) continue;
-    if (next <= current) continue;
-    /* Zero is not a small number here, it is a different policy: humanClickAboveUsd at 0 means
-       every action waits for a person, and maxPerTransactionUsd at 0 means nothing moves. Ten
-       times zero is zero, so raising either is not a step, it is a reversal, and a person writes
-       that in the file themselves. */
-    if (current === 0) {
-      return refusal(
-        reasons,
-        'cap_raised_from_zero',
-        `This patch raises ${field} from ${money(0)} to ${money(next)}. A limit of zero is not a small limit, it is a rule that nothing passes, and lifting it is a decision for the policy file rather than for a patch.`,
-      );
-    }
-    if (next > current * MAX_RAISE_FACTOR) {
-      return refusal(
-        reasons,
-        'cap_raised_too_far',
-        `This patch raises ${field} from ${money(current)} to ${money(next)}, more than ${MAX_RAISE_FACTOR} times. One change may loosen a limit by up to ${MAX_RAISE_FACTOR} times; past that, make it in steps you read each time.`,
+        `This patch would ask for a click above ${money(o.humanClickAboveUsd)} while refusing anything above ${money(perTransaction)}, so nothing would ever wait for you. Lower the click threshold, or raise the transaction limit in the same patch.`,
       );
     }
   }
@@ -200,8 +187,12 @@ function money(usd: number): string {
   return '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/* A refusal carries its rule twice on purpose: `rule` is what it has always been, and
+   `reasonCodes` is the list the agent and the eval grader read, so neither has to parse prose to
+   learn WHY something was refused. Every refusal has exactly one code; a needs_approval verdict
+   can carry several, or none. */
 function refusal(reasons: string[], rule: string, line: string): Verdict {
-  return { outcome: 'refuse', reasons: [...reasons, line], rule };
+  return { outcome: 'refuse', reasons: [...reasons, line], rule, reasonCodes: [rule] };
 }
 
 // The rail kinds (a swap, the Hyperliquid and intents moves, a trade) hand funds to a
@@ -295,11 +286,25 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
     return refusal(reasons, 'nothing_to_change', 'Patch names no rule, so there is nothing to change and nothing to approve.');
   }
 
-  const tooFar = policyChangeCeiling(parsed.data as PolicyPatch, policy, reasons);
-  if (tooFar !== null) return tooFar;
+  // The clamp first, then the coherence rule, because the rule is about the pair of numbers and
+  // the clamp is what makes the pair coherent. The proposal builder clamps the stored patch with
+  // this same function, so the card names both changes.
+  const clamp = clampPatch(parsed.data as PolicyPatch, policy);
+  const codes: string[] = [];
+  if (clamp.clamped) {
+    codes.push('threshold_clamped_to_cap');
+    reasons.push(
+      `The transaction limit is coming down to ${money(clamp.patch.outbound?.maxPerTransactionUsd ?? 0)}, which is under the ` +
+        `${money(policy.outbound.humanClickAboveUsd)} you are asked about, so the ask threshold comes down with it. ` +
+        'Both numbers are in the change below.',
+    );
+  }
+
+  const incoherent = policyChangeCeiling(clamp.patch, policy, reasons);
+  if (incoherent !== null) return incoherent;
 
   reasons.push('Policy changes always require a human click.');
-  return { outcome: 'needs_approval', reasons };
+  return { outcome: 'needs_approval', reasons, reasonCodes: codes };
 }
 
 // Issuer for a symbol: what the composition says it holds, else the risk table, else
