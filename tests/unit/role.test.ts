@@ -83,7 +83,7 @@ test('the role keeps the agent from reading the receipt back out in prose', () =
   // that already shows them.
   const text = role();
   assert.ok(text.includes('say so in one sentence and stop'), 'the rule is gone');
-  assert.ok(text.includes('Do not\nrestate the amounts, the fee, the venue or the id'), 'the four things the card shows are not named');
+  assert.ok(text.includes('already carries the amounts, the fee, the venue and the id'), 'the four things the card shows are not named');
   assert.ok(text.indexOf('say so in one sentence') > text.indexOf('HOW TO ANSWER'), 'the rule is not an answering rule');
 });
 
@@ -100,7 +100,10 @@ test('the role keeps the agent to one line while a proposal waits for the click'
   const rule = text.slice(at, at + 500).replace(/\n/g, ' ');
   assert.ok(rule.includes('your whole reply is one line'), 'the rule does not cap the reply');
   assert.ok(rule.includes('not the amounts, the quote, the floor, the fee or the venue'), 'the five things the card shows are not named');
-  assert.ok(rule.includes('Waiting for you, then Settling, then Confirmed'), 'the rule does not say the card updates itself');
+  // The stage words themselves are not restated here: src/proposals/view.ts owns that table and
+  // the card prints it, so the rule names the two ends and points at the card for the rest.
+  assert.ok(rule.includes('keeps current on its own, through every stage'), 'the rule does not say the card updates itself');
+  assert.ok(!/\bSettling\b/.test(rule), 'the role still names a stage word the stage table retired');
   assert.ok(rule.includes('nothing about what you will do after the click'), 'the second sentence is still allowed');
 });
 
@@ -162,18 +165,28 @@ test('the role is not so long it stops being read', () => {
   // twice and nothing new was argued. This is the index doing what the paragraph above says it
   // does, and the prose rules are the same size they were.
   //
-  // RAISED FROM 15,000 ON 2026-09-18, for three read and view tools landing together, each one
-  // a capability the agent has to know about before its first call: `proposals` (nothing
-  // enumerated, so an agent asked about "my last deposit" had to ask a person for a uuid),
-  // `diagnose` (nothing returned a proposal-scoped log slice or the provider's own last answer)
-  // and `show` (nothing drew an existing thing as a card). Measured 15,167 with the first of the
-  // three in, and they are one sentence each in the index, which generates itself. No prose rule
-  // was added: the rules are the size they were.
+  // RAISED FROM 15,000 ON 2026-09-18, and this time a prose rule did go on, which is the part
+  // worth defending rather than the tool count.
+  //
+  // Three tools landed together, each one a capability the agent has to know about before its
+  // first call: `proposals` (nothing enumerated, so an agent asked about "my last deposit" had to
+  // ask a person for a uuid), `diagnose` (nothing returned a proposal-scoped log slice or the
+  // router's own last answer) and `show` (nothing drew an existing thing as a card). That is one
+  // sentence each in the index, which generates itself: 15,167 measured.
+  //
+  // The paragraph is the answering rule for a pending move, and it is the reason this whole build
+  // exists. Asked "all good?" about real money in flight, the agent answered "still settling,
+  // waiting", which is two words that sound like facts and are not. The rule names the four facts
+  // an answer carries and the phrases that stand in for them, and it came with its own deletion:
+  // the paragraph about reporting a move lost its own list of stage words, which the stage table
+  // in src/proposals/view.ts now owns.
+  //
+  // Measured 16,360. The next paragraph should still come out of something, not go on the end.
   //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 15600, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 16600, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -220,8 +233,7 @@ test('the role gives the agent a voice, and the window draws the numbers', () =>
     'Never paste raw JSON, an error string, or a hash longer than 12 characters',
     '"the venue\nis not answering", not "422 Failed to deserialize"',
     '`switch` for a screen, `deposit` for an address, `trade_focus` for a position or a chart',
-    'say what is confirmed and what is still\nsettling',
-    'never say\n"failed" unless the tool said failed',
+    'Never say\n"failed" unless the tool said failed',
     'wrong-network or lost-funds warning is one plain sentence',
     'No exclamation marks, no emoji, no em dashes and no en\ndashes',
   ]) {
@@ -250,9 +262,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // reads are one group of the index, a name and a first sentence each. 16,400 on 2026-09-17:
   // propose_send replaced propose_intents_send and brought the read-back protocol with it, two
   // sentences and one worked example the agent has to carry, because a send it misunderstood
-  // is money gone. 17,000 on 2026-09-18, the same 600 the plain ceiling above moved by and for
-  // the same three tools. The number is still a ceiling, not a target.
-  assert.ok(text.length < 17000, `the role is ${text.length} characters with a full profile`);
+  // is money gone. 18,000 on 2026-09-18, the same 1,600 the plain ceiling above moved by and for
+  // the same reasons. The number is still a ceiling, not a target.
+  assert.ok(text.length < 18000, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {

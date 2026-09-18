@@ -49,7 +49,10 @@ test('an executed row is confirmed, with the rail sentence and the figures', () 
   assert.deepEqual(out.pocket, { venue: 'intents', symbol: 'USDT', before: '5', after: '104.5' });
 });
 
-test('a settling row is settling, and the word failed appears nowhere', () => {
+/* The lead sentence quotes the stage label the card is printing, so the agent and the window
+   cannot describe the same moment in two different words. "Settling" was a word only this app
+   used and nobody outside it could check. */
+test('a settling row quotes the card\'s own stage label, and the word failed appears nowhere', () => {
   const out = outcomeOf(
     proposal({
       status: 'needs_reconciliation',
@@ -59,7 +62,7 @@ test('a settling row is settling, and the word failed appears nowhere', () => {
     }),
   );
   assert.equal(out.state, 'settling');
-  assert.match(out.sentence, /^Settling: the venue confirmed the move and the balance has not shown it yet/);
+  assert.match(out.sentence, /^Waiting for the venue to credit it: the router confirmed the move/);
   assert.match(out.sentence, /Nothing more is signed until it does/);
   assert.doesNotMatch(out.sentence, /fail/i);
   assert.equal(out.afterUsd, null, 'not read is not zero');

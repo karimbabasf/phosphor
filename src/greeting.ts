@@ -297,7 +297,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       },
       {
         tool: 'propose_trade_change',
-        does: 'change an armed plan: a new stop or target (free if it tightens, priced if it widens), cancel (waiting or placed only), or close at the plan bound.',
+        does: 'change an armed plan: a new stop or target (free if it tightens, priced if it widens), cancel (only a plan whose status is "waiting" or "placed"), or close at the plan bound.',
       },
     ],
   },
