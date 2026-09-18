@@ -64,7 +64,10 @@
     trade_batch: 'position',
     proposal_status: 'move',
     receipts: 'move',
-    deposit: 'deposit'
+    deposit: 'deposit',
+    chain_transaction: 'transaction',
+    chain_transactions: 'transaction',
+    intents_activity: 'transaction'
   };
 
   var TITLES = {
@@ -614,9 +617,10 @@
   /* One label at the left, one figure at the right, in mono. The figure is
      right anchored so a counter that grows a digit takes the gap rather than
      pushing the label, which is what keeps a ticking card still. */
-  function factLine(body, label, value, tone) {
+  function factLine(body, label, value, tone, wrap) {
     if (value === '' || value === null || value === undefined) return null;
     var row = dom.el('div', 'tcard-line');
+    if (wrap) row.setAttribute('data-wrap', 'true');
     row.appendChild(dom.el('span', 'tcard-line-label', label));
     var figure = mono('tcard-line-value', value);
     if (tone) figure.setAttribute('data-tone', tone);
@@ -836,6 +840,7 @@
       open: extra.open,
       onToggle: extra.onToggle
     });
+    if (move.id) parts.card.id = 'card-proposal-' + move.id;
     var body = parts.body;
 
     /* A send draws the shared send card under the head: the same card the
@@ -880,6 +885,188 @@
     if (view.decidedAt) factLine(body, 'You clicked at', clock(view.decidedAt));
     if (view.providerStage) factLine(body, 'The router calls this', String(view.providerStage));
     if (view.correlationId) factLine(body, 'Trace', String(view.correlationId));
+    return parts.card;
+  }
+
+  /* ---------- the transaction card ---------- */
+
+  /* "Show me that transaction" draws this, not a paragraph. Three read tools
+     answer with it (chain_transaction, chain_transactions, intents_activity)
+     and `show` asks for it by name with { card: 'transaction' }, carrying the
+     same fields plus the proposal's view when a proposal is what is being
+     shown. One leg is the one the money is inside right now, and it is the only
+     hash that is a link: the rest are here to be read, not followed. */
+  var CARD_NAMES = { balance: 1, position: 1, move: 1, transaction: 1, deposit: 1, kv: 1 };
+
+  var TX_STATE = {
+    success: ['confirmed', 'Confirmed'],
+    failed: ['failed', 'Failed'],
+    pending: ['running', 'Still going'],
+    unknown: ['running', 'Not known yet']
+  };
+
+  /* NearBlocks' own words for what moved on the intents ledger. */
+  var CAUSE_WORD = { MINT: 'In', BURN: 'Out', TRANSFER: 'Moved' };
+
+  /* The four legs a move can have, in the words a person would use for them. */
+  var LEG_WORD = {
+    origin: 'The chain it left',
+    near: 'On NEAR',
+    intent: 'The intent',
+    destination: 'The chain it lands on'
+  };
+
+  /* An address or a hash rather than the name of a pocket. Either wraps and is
+     never shortened; a pocket's name is a word and sits on one line. */
+  function isAddress(text) {
+    var value = String(text || '');
+    return value.length > 24 && value.indexOf(' ') === -1;
+  }
+
+  function explorerUrl(url) {
+    var send = window.PhosphorSendCard;
+    if (send && typeof send.isExplorerUrl === 'function') return send.isExplorerUrl(url) ? url : null;
+    return null;
+  }
+
+  function linkRow(body, label, text, url) {
+    var row = dom.el('div', 'tcard-line');
+    row.setAttribute('data-wrap', 'true');
+    row.appendChild(dom.el('span', 'tcard-line-label', label));
+    var href = explorerUrl(url);
+    if (!href) {
+      row.appendChild(mono('tcard-line-value', text));
+      body.appendChild(row);
+      return row;
+    }
+    var link = dom.el('a', 'mono tcard-line-value tcard-link');
+    link.href = href;
+    link.target = '_blank';
+    link.rel = 'noreferrer noopener';
+    link.appendChild(dom.el('span', '', text));
+    link.appendChild(icon('external', 'tcard-link-glyph'));
+    row.appendChild(link);
+    body.appendChild(row);
+    return row;
+  }
+
+  /* The leg the money is inside right now, off the view. At most one is true,
+     and a view with none means nothing is in flight. */
+  function runningLeg(view) {
+    var legs = view && Array.isArray(view.txs) ? view.txs : [];
+    for (var i = 0; i < legs.length; i += 1) {
+      if (legs[i] && legs[i].running) return legs[i];
+    }
+    return legs.length ? legs[0] : null;
+  }
+
+  /* One transaction, from whichever of the four answers carried it. */
+  function txOf(data) {
+    var detail = isObject(data.tx) ? data.tx : null;
+    var view = viewOf(data);
+    var leg = runningLeg(view);
+    var money = view && isObject(view.money) ? view.money : {};
+    var hash = String((detail && detail.hash) || (leg && leg.hash) || data.hash || '');
+    var state = view
+      ? { tone: STAGE_TONE[view.stage] || 'running', label: String(view.stageLabel || '') }
+      : (TX_STATE[String(detail && detail.status)] || TX_STATE.unknown);
+    return {
+      hash: hash,
+      network: String((leg && leg.network) || data.network || ''),
+      explorer: (leg && leg.explorer) || data.explorer || null,
+      time: (detail && detail.time) || (view && (view.settledAt || view.lastChangeAt)) || null,
+      state: view ? state : { tone: state[0], label: state[1] },
+      amount: detail && detail.value !== null && detail.value !== undefined ? String(detail.value) : (money.amountIn === undefined ? null : money.amountIn),
+      symbol: String((detail && detail.symbol) || money.symbol || ''),
+      fee: detail && detail.fee ? String(detail.fee) : (money.feeUsd === null || money.feeUsd === undefined ? null : dom.fee(num(money.feeUsd))),
+      from: (money.fromPocket) || (detail && detail.from) || null,
+      to: (money.toPocket) || (detail && detail.to) || null,
+      method: (detail && detail.method) || null,
+      legs: view && Array.isArray(view.txs) ? view.txs : [],
+      running: leg
+    };
+  }
+
+  /* The rows of a list answer, from either shape: a chain's transactions or the
+     intents ledger. One row is a time, what it was, how much, and with whom. */
+  function txRows(data) {
+    var parts = split(Array.isArray(data.rows) ? data.rows : []);
+    var out = [];
+    for (var i = 0; i < parts.rows.length; i += 1) {
+      var r = parts.rows[i];
+      if (!isObject(r)) continue;
+      var intents = typeof r.cause === 'string';
+      out.push({
+        hash: String(r.hash || ''),
+        time: r.time || null,
+        word: intents ? (CAUSE_WORD[r.cause] || String(r.cause)) : (r.method || 'Transfer'),
+        amount: intents ? String(r.delta || '') : (r.value === null || r.value === undefined ? '' : String(r.value)),
+        symbol: String(r.token || r.symbol || ''),
+        other: intents ? r.counterparty : r.to,
+        state: intents ? null : (TX_STATE[String(r.status)] || TX_STATE.unknown)
+      });
+    }
+    return { rows: out, dropped: parts.dropped };
+  }
+
+  function transactionCard(data, extra) {
+    var list = Array.isArray(data.rows);
+    var tx = list ? null : txOf(data);
+    var where = String(data.network || data.account || (tx && tx.network) || '');
+    var title = list
+      ? (typeof data.account === 'string' && data.account ? 'Activity inside NEAR Intents' : 'Transactions on ' + chainName(where))
+      : (tx.method ? String(tx.method) : 'Transaction');
+    var parts = shell('transaction', icon('swap'), title, {
+      state: list ? null : tx.state,
+      amount: list ? '' : (tx.amount === null ? '' : tx.amount + ' ' + tx.symbol),
+      open: extra.open,
+      onToggle: extra.onToggle
+    });
+    if (!list && tx.hash) parts.card.id = 'card-tx-' + tx.hash;
+    var body = parts.body;
+
+    if (data.ok === false) {
+      body.appendChild(dom.el('div', 'tcard-note tcard-note-down', String(data.error || data.note || 'The chain could not be read.')));
+      return parts.card;
+    }
+
+    if (list) {
+      var found = txRows(data);
+      if (!found.rows.length) {
+        emptyLine(body, 'Nothing here yet', String(data.note || ''));
+        return parts.card;
+      }
+      var shown = found.rows.slice(0, MAX_ROWS);
+      for (var i = 0; i < shown.length; i += 1) {
+        var row = shown[i];
+        var line = dom.el('div', 'tcard-line');
+        var left = dom.el('span', 'tcard-line-label');
+        left.appendChild(dom.el('span', '', row.word));
+        if (row.other && !isAddress(row.other)) left.appendChild(mono('tcard-line-other', ' ' + String(row.other)));
+        line.appendChild(left);
+        line.appendChild(mono('tcard-line-value', (row.amount ? row.amount + ' ' + row.symbol : '') + (row.time ? '  ' + clock(row.time) : '')));
+        body.appendChild(line);
+      }
+      moreLine(body, found.rows.length - shown.length + found.dropped, 'rows');
+      return parts.card;
+    }
+
+    /* The pockets in the words the app uses for them, so the question a person
+       actually has, where is my money right now, is answered on the card. */
+    if (tx.from) factLine(body, 'From', chainName(tx.from), null, isAddress(tx.from));
+    if (tx.to) factLine(body, 'To', chainName(tx.to), null, isAddress(tx.to));
+    if (tx.fee) factLine(body, 'Fee', tx.fee);
+    if (tx.time) factLine(body, tx.state.tone === 'confirmed' ? 'Confirmed at' : 'Last moved at', clock(tx.time), tx.state.tone === 'confirmed' ? 'up' : null);
+
+    var running = tx.running;
+    if (running && running.hash) linkRow(body, 'Where it is now', running.hash, running.explorer);
+    else if (tx.hash) linkRow(body, 'Hash', tx.hash, tx.explorer);
+
+    for (var j = 0; j < tx.legs.length; j += 1) {
+      var leg = tx.legs[j];
+      if (!leg || leg === running || !leg.hash) continue;
+      linkRow(body, LEG_WORD[leg.leg] || String(leg.leg), leg.hash, null);
+    }
     return parts.card;
   }
 
@@ -997,6 +1184,8 @@
   function kindFor(toolName, data) {
     var name = bare(toolName);
     if (name.indexOf('propose_') === 0) return 'move';
+    /* `show` names the card it wants, because one tool draws four of them. */
+    if (isObject(data) && typeof data.card === 'string' && CARD_NAMES[data.card]) return data.card;
     if (KINDS[name]) return KINDS[name];
     if (name === 'watch' && isObject(data) && typeof data.chain === 'string' && (data.asset !== undefined || data.watching !== undefined)) return 'deposit';
     return 'kv';
@@ -1011,6 +1200,7 @@
     if (kind === 'balance') return balanceCard(safe, meta);
     if (kind === 'position') return positionCard(safe, meta);
     if (kind === 'move') return moveCard(safe, meta);
+    if (kind === 'transaction') return transactionCard(safe, meta);
     if (kind === 'deposit') return depositCard(safe, meta);
     return kvCard(safe, meta);
   }
