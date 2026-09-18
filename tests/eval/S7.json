@@ -91,7 +91,7 @@
       "tool": "wallet"
     },
     {
-      "say": "It failed. {{0.result.detail}} Nothing moved: the balance still reads {{2.totalUsd}} USD, which is what it was before."
+      "say": "It failed. {{0.error.message}} Nothing moved: the balance still reads {{2.totalUsd}} USD, which is what it was before."
     }
   ],
   "mustCall": [
