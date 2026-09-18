@@ -473,14 +473,24 @@ html, body {
 /* ---------- The decision dock ---------- */
 
 /* Inside the conversation column, between the transcript and the composer, and
-   the one region drawn in amber: a transcript row cannot look like it. */
+   the one region drawn in amber: a transcript row cannot look like it.
+
+   Two parts inside it, whatever card is up: a body that scrolls and a foot that
+   does not. The dock takes up to 62 percent of the column; when a card is
+   taller than that the body scrolls under the foot, and the foot, with No and
+   Yes in it, stays put. macOS hides scrollbars until they are touched, so the
+   body's last lines fade toward the foot while there is more below
+   (data-more on the card, measured by decision.js): that fade is the only
+   sign a person gets that the card goes on. */
 .dock {
   position: relative;
   z-index: 2;
-  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: 62%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
   margin: 0 var(--s-3) var(--s-2);
   border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
   border-radius: var(--radius);
@@ -506,11 +516,60 @@ html, body {
 }
 
 .dock-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  animation: cardin var(--dur-enter) var(--ease-out) both;
+}
+
+.dock-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--s-4);
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  animation: cardin var(--dur-enter) var(--ease-out) both;
+}
+
+/* The fade: the bottom 40 px of the scrolling body thins out while there is
+   more card under it, and comes back solid at the end so the last line is
+   never left half drawn. */
+.dock-card[data-more="true"] .dock-body {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
+}
+
+/* The foot: a hairline in the dock's own amber over the buttons, so the pinned
+   part reads as one card with the body and not as a bar laid over it. Empty
+   (a receipt, a card of somebody else's) it takes no room at all. */
+.dock-foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  border-top: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+}
+
+.dock-foot:empty { display: none; }
+
+.dock[data-state="read"] .dock-foot,
+.dock[data-state="refused"] .dock-foot,
+.dock[data-state="done"] .dock-foot {
+  border-top-color: var(--line);
+}
+
+/* The state word over the headline, in the dock's colour: the one place in the
+   window where amber is text, because the card is the ask. */
+.dock-kicker {
+  color: var(--warn);
+}
+
+.dock[data-state="read"] .dock-kicker {
+  color: var(--text-2);
 }
 
 /* No first, so the harmless answer is the one the hand reaches. They share the
@@ -518,11 +577,25 @@ html, body {
 .dock-actions {
   display: flex;
   gap: var(--s-2);
-  margin-top: var(--s-1);
 }
 
 .dock-actions .btn {
   flex: 1 1 0;
+}
+
+/* The line over the buttons: what went wrong and what to do, red for a click
+   that did not land, amber for a state worth knowing. It is the banner
+   component, one size down, because it sits in the foot beside 36 px buttons. */
+.dock-note {
+  padding: var(--s-2) var(--s-3);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+
+.dock-note[hidden] { display: none; }
+
+.dock-queue {
+  color: var(--text-3);
 }
 
 /* A card that can be put away: the title at the left, one 24 px X at the
@@ -566,12 +639,92 @@ html, body {
   line-height: 1.45;
 }
 
+/* ---------- the venue's report ---------- */
+
+/* The rail's own lines, behind one quiet row: the word, how many lines, a
+   chevron. Closed when the card already carries the numbers as facts, open
+   when these lines are the only disclosure. The same fold as the checks
+   (ui/design/checks.css): height through a grid track, 200 ms. */
+.dock-report {
+  border-top: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
+  padding-top: var(--s-1);
+}
+
+.dock[data-state="read"] .dock-report {
+  border-top-color: var(--line);
+}
+
+.dock-report-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: 32px;
+  padding: var(--s-1) 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-13);
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dock-report-toggle:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.dock-report-count {
+  color: var(--text-3);
+  font-size: var(--fs-12);
+  font-weight: 400;
+}
+
+/* The chevron the checks fold draws, as a mask over the current colour: the
+   stroke and its 20 percent fill in one 16 px box, no extra element kinds on
+   a card whose element kinds are counted. */
+.dock-report-chevron {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  background-color: var(--text-3);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9.5 6l6 6-6 6z' fill='%23000' fill-opacity='0.2'/%3E%3Cpath d='M9.5 6l6 6-6 6' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9.5 6l6 6-6 6z' fill='%23000' fill-opacity='0.2'/%3E%3Cpath d='M9.5 6l6 6-6 6' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 200ms var(--ease-out);
+}
+
+.dock-report[data-open="true"] .dock-report-chevron {
+  transform: rotate(90deg);
+}
+
+.dock-report-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 200ms var(--ease-out);
+}
+
+.dock-report[data-open="false"] .dock-report-fold {
+  grid-template-rows: 0fr;
+}
+
+.dock-report-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* The rail's own report, which arrives as lines rather than a paragraph. */
 .dock-summary {
+  padding: var(--s-1) 0 var(--s-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-2);
-  font-size: var(--fs-13);
+  font-size: var(--fs-12);
+  line-height: 1.5;
 }
 
 /* One address and the answer to "who picked this". An address the venue minted
@@ -590,6 +743,11 @@ html, body {
 @keyframes cardin {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-card { animation: none; }
+  .dock-report-fold, .dock-report-chevron { transition: none; }
 }
 
 /* ---------- The screen cards: first run, lock, migration ---------- */

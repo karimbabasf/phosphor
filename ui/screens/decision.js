@@ -13,6 +13,12 @@
    It draws from the server's pending list and from nothing else. It is the one
    region in the column in amber, so a transcript row cannot impersonate it.
 
+   Two parts, whatever it shows: a body that scrolls and a foot that does not.
+   The buttons, the queue line and any error live in the foot, so they are on
+   screen however long the card above them runs. A card that put Yes and No at
+   the bottom of a scrolling region, behind a scrollbar macOS hides, was a card
+   with no visible way to answer it (2026-09-18).
+
    The policy diff logic is carried over from ui/approvals.js. It is real domain
    logic: a rendered sentence that carries a LIST is why an approval box used to
    fill with addresses, and a reader who has to spot one changed token inside
@@ -39,6 +45,19 @@
   var showing = null;
   var held = null;
   var flashTimer = 0;
+
+  /* A Touch ID dialog that closes without an answer puts the row back to
+     pending and writes nothing on it. The dock remembers which row it last
+     drew waiting on the sensor, so that row's next pending card can say the
+     dialog closed and nothing moved, instead of coming back blank. */
+  var touchSeen = null;
+  var touchNote = null;
+
+  /* A venue id is an enum. The one live venue is already in the headline
+     ("inside NEAR Intents"), so a row naming it again would say the same thing
+     twice and in the rail's spelling; the retired ones that older rows still
+     carry get their words. */
+  var VENUE_WORDS = { 'intents-native': null, 'oneclick': '1Click, on NEAR Intents', 'uniswap-v3': 'Uniswap v3' };
 
   /* ---------- the policy diff, carried over ---------- */
 
@@ -316,11 +335,14 @@
     var diff = sim.policyDiff ? (sim.policyDiff.after || []).length : 0;
     /* A held row redraws on every retry: each one appends its checks. */
     var checks = Array.isArray(p.preflight) ? p.preflight.length : 0;
+    var swap = sim.swap || {};
     return [entry.kind, p.id, p.status, entry.queued, sim.feeUsd, sim.gasUsd, p.heldSince || '', checks,
       sim.priceImpact, sim.amountOut, deposits, diff, sim.summary || '',
+      swap.receives || '', swap.receivesAtLeast || '', swap.feeUsd, swap.etaSeconds,
       (Array.isArray(p.verdict && p.verdict.reasons) ? p.verdict.reasons.join(' ') : ''),
       (p.verdict && p.verdict.reason) || '',
-      p.status === 'awaiting_touch' ? touchReason() : ''].join('|');
+      p.status === 'awaiting_touch' ? touchReason() : '',
+      touchNote === p.id ? 'touch-note' : ''].join('|');
   }
 
   /* What the Touch ID dialog says, as the backend composed it. Shown under the
@@ -332,20 +354,22 @@
   }
 
   function open(next) {
+    if (next.kind === 'ask') noteTouch(next.proposal);
     var keyed = next.kind === 'ask' || next.kind === 'unread' || next.kind === 'held';
     if (keyed && showing && showing.signature === signature(next)) return;
     next.signature = keyed ? signature(next) : null;
     showing = next;
-    dom.clear(refs.card);
+    frame();
     if (next.kind === 'ask') buildAsk(next);
     else if (next.kind === 'held') buildHeld(next.proposal);
     else if (next.kind === 'unread') buildUnread(next.proposal);
     else if (next.kind === 'receipt') buildReceipt(next.receipt);
-    else if (next.kind === 'card') next.build(refs.card, close);
+    else if (next.kind === 'card') next.build(refs.body, close);
     /* Amber means a person still has to answer. A receipt and a recovery card
        are things to read, so they take the quiet edge instead. */
     dom.setAttr(refs.dock, 'data-state', dockState(next.kind));
     dom.setHidden(refs.dock, false);
+    settle();
     window.PhosphorShell.updateField();
     hold(next.proposal);
   }
@@ -357,9 +381,15 @@
 
   function close() {
     showing = null;
+    touchSeen = null;
+    touchNote = null;
     dom.setHidden(refs.dock, true);
     dom.setAttr(refs.dock, 'data-state', null);
+    dom.setAttr(refs.card, 'data-more', null);
     dom.clear(refs.card);
+    refs.body = null;
+    refs.foot = null;
+    refs.note = null;
     hold(null);
     window.PhosphorShell.updateField();
     render();
@@ -401,30 +431,24 @@
     var locked = proposal.status === 'pending_unlock';
     var touching = proposal.status === 'awaiting_touch';
     var send = isSend(draft);
+    var body = refs.body;
+    var foot = refs.foot;
 
     if (send) {
       var sendCard = window.PhosphorSendCard;
-      sendCard.build(refs.card, sendCard.viewOf(proposal), { width: refs.card.clientWidth });
+      sendCard.build(body, sendCard.viewOf(proposal), { width: body.clientWidth });
+      if (locked) body.appendChild(lockBanner());
     } else {
-      buildAskBody(proposal, draft, locked, touching);
+      buildAskBody(body, proposal, draft, locked, touching);
     }
 
-    if (draft.kind === 'policy_change') buildPolicyDiff(proposal);
-
-    var error = dom.el('p', 'body down');
-    error.hidden = true;
-    refs.card.appendChild(error);
+    if (draft.kind === 'policy_change') buildPolicyDiff(body, proposal);
 
     /* A request that arrived while the wallet was shut. It was authored and
        checked against the limits; what is missing is the ability to sign. So the
        card asks for the lock first and does not offer Yes, because a Yes it
        could not act on would be a click that did nothing. */
     if (locked) {
-      var banner = dom.el('div', 'banner');
-      banner.dataset.tone = 'warn';
-      banner.appendChild(dom.el('span', '', 'The app is locked, so this is waiting. Nothing has moved and nothing will until you unlock and decide.'));
-      refs.card.insertBefore(banner, error);
-
       var lockedActions = dom.el('div', 'dock-actions');
       var lockedNo = dom.el('button', 'btn btn-ghost');
       lockedNo.appendChild(dom.el('span', 'btn-label', 'No'));
@@ -432,10 +456,10 @@
       unlock.appendChild(dom.el('span', 'btn-label', 'Unlock'));
       lockedActions.appendChild(lockedNo);
       lockedActions.appendChild(unlock);
-      refs.card.appendChild(lockedActions);
+      foot.appendChild(lockedActions);
 
       dom.on(lockedNo, 'click', function () {
-        decide(api.refuse, proposal.id, [lockedNo, unlock], error, lockedNo, 'Refusing', 'Refused.', REFUSED_MS, null);
+        decide(api.refuse, proposal.id, [lockedNo, unlock], lockedNo, 'Refusing', 'Refused.', REFUSED_MS, null);
       });
       dom.on(unlock, 'click', function () {
         /* The dock steps aside for the lock screen. It comes back on its own:
@@ -449,6 +473,12 @@
       return;
     }
 
+    if (entry.queued > 0) {
+      foot.appendChild(dom.el('p', 'meta dock-queue', entry.queued === 1
+        ? 'One more request after this one.'
+        : entry.queued + ' more requests after this one.'));
+    }
+
     var actions = dom.el('div', 'dock-actions');
     var no = dom.el('button', 'btn btn-ghost');
     no.appendChild(dom.el('span', 'btn-label', 'No'));
@@ -460,7 +490,7 @@
     yes.appendChild(yesLabel);
     actions.appendChild(no);
     actions.appendChild(yes);
-    refs.card.appendChild(actions);
+    foot.appendChild(actions);
 
     /* The click has landed and the system dialog owns the moment. Both buttons
        go dead: a second Yes would be a second ask, and the backend only takes a
@@ -478,22 +508,23 @@
       yes.disabled = true;
       no.disabled = true;
       dom.setAttr(yes, 'data-touch', 'true');
-      refs.card.appendChild(dom.el('p', 'meta touch-reason',
+      foot.appendChild(dom.el('p', 'meta touch-reason',
         touchReason() || 'The Touch ID dialog is up. Confirm it there, or cancel to come back here.'));
       return;
     }
 
-    if (entry.queued > 0) {
-      refs.card.appendChild(dom.el('p', 'meta', entry.queued === 1
-        ? 'One more request after this one.'
-        : entry.queued + ' more requests after this one.'));
+    /* Back from the sensor with no answer: the dialog was cancelled, timed out
+       or the relay died. The row is pending again and the audit log knows why;
+       the person who reached for the sensor gets told here, over live buttons. */
+    if (touchNote === proposal.id) {
+      say('warn', 'Touch ID closed without an answer. Nothing moved. Yes asks again.');
     }
 
     dom.on(yes, 'click', function () {
-      decide(api.approve, proposal.id, [yes, no], error, yes, 'Approving', 'Done.', DONE_MS, proposal.id);
+      decide(api.approve, proposal.id, [yes, no], yes, 'Approving', 'Approved.', DONE_MS, proposal.id);
     });
     dom.on(no, 'click', function () {
-      decide(api.refuse, proposal.id, [yes, no], error, no, 'Refusing', 'Refused.', REFUSED_MS, null);
+      decide(api.refuse, proposal.id, [yes, no], no, 'Refusing', 'Refused.', REFUSED_MS, null);
     });
   }
 
@@ -505,50 +536,44 @@
     return vault.custody === 'secure-enclave';
   }
 
-  function buildAskBody(proposal, draft, locked, touching) {
-    refs.card.appendChild(dom.el('p', 'label', locked ? 'Unlock to decide' : (touching ? 'Confirm on your Mac' : 'Waiting for you')));
-    refs.card.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
+  function buildAskBody(host, proposal, draft, locked, touching) {
+    host.appendChild(dom.el('p', 'label dock-kicker', locked ? 'Unlock to decide' : (touching ? 'Confirm on your Mac' : 'Waiting for you')));
+    host.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
 
     var amount = amountOf(proposal);
     if (amount !== null) {
       var big = dom.el('p', 'headline mono');
       dom.setText(big, dom.usd(amount));
-      refs.card.appendChild(big);
+      host.appendChild(big);
     }
+
+    /* Under the amount and over the facts, where it is read before anything
+       is weighed: the one line that says why this card offers Unlock. */
+    if (locked) host.appendChild(lockBanner());
 
     var facts = dom.el('div', 'facts');
     var sim = proposal.simulation || {};
+    var swap = sim.swap || null;
+    /* A swap's numbers, as the rail checked them: what comes back, the floor it
+       is held to, the fee. These used to be read out of the rail's summary
+       lines, or not read at all, while the fee row said nothing was quoted. */
+    if (swap) {
+      if (swap.receives) addFact(facts, 'You get about', swap.receives + ' ' + (draft.toSymbol || ''), 'up');
+      if (swap.receivesAtLeast) addFact(facts, 'At least', swap.receivesAtLeast + ' ' + (draft.toSymbol || '') + ', or it does not fill');
+    } else if (sim && typeof sim.amountOut === 'number') {
+      addFact(facts, 'You get about', dom.qty(sim.amountOut) + ' ' + (draft.toSymbol || ''), 'up');
+    }
     /* A rule change moves nothing, and a trade's cost is its risk facts, so
-       neither gets "No fee was quoted.", which on those cards reads as a missing
-       number rather than as an absent one. */
+       neither gets a fee row, which on those cards reads as a missing number
+       rather than as an absent one. */
     if (draft.kind !== 'policy_change' && draft.kind !== 'trade' && draft.kind !== 'mandate_arm') {
       addFact(facts, 'What it costs', costLine(proposal));
     }
+    if (swap && typeof swap.etaSeconds === 'number') addFact(facts, 'Takes about', etaWords(swap.etaSeconds));
     if (draft.kind === 'trade') tradeFacts(facts, draft);
-    if (draft.venue) addFact(facts, 'Through', String(draft.venue));
-    if (sim && typeof sim.amountOut === 'number') {
-      addFact(facts, 'You get about', dom.qty(sim.amountOut) + ' ' + (draft.toSymbol || ''));
-    }
-    addFact(facts, 'Why you are being asked', whyLine(proposal));
-    refs.card.appendChild(facts);
-
-    /* The rail's own words about what it is about to do. The backend writes the
-       deposit lines into this string on purpose, with a comment saying the
-       approval gate renders it, and the gate never did.
-
-       A policy change is the one kind held back, and not for tidiness. Its
-       summary is `the agent asked for: <the assistant's sentence>`, so rendering
-       it would put the assistant's own wording at the top of the card that
-       decides whether to trust it, above the diff that says the same thing from
-       the engine. The backend keeps the +/- lines out of the summary for this
-       reason: the diff is the disclosure for that card. */
-    var summary = typeof sim.summary === 'string' ? sim.summary.trim() : '';
-    if (summary && draft.kind !== 'policy_change') {
-      var swrap = dom.el('div', 'stack-2');
-      swrap.appendChild(dom.el('p', 'label', draft.kind === 'trade' ? 'The plan, in full' : 'What the venue reports'));
-      swrap.appendChild(dom.el('p', 'body dock-summary', summary));
-      refs.card.appendChild(swrap);
-    }
+    if (draft.venue) addFact(facts, 'Through', venueWords(draft.venue));
+    addFact(facts, 'Why you are being asked', whyLine(proposal), null, true);
+    host.appendChild(facts);
 
     /* Never abbreviated. This is the field with a track record: an amount that
        was correct while the screen said "your wallet" and the funds went to a
@@ -556,7 +581,8 @@
     var destinations = destinationsOf(proposal);
     if (destinations.length) {
       var dwrap = dom.el('div', 'stack-2 destinations');
-      dwrap.appendChild(dom.el('p', 'label', 'Where it goes'));
+      var stays = destinations.length === 1 && destinations[0].own;
+      dwrap.appendChild(dom.el('p', 'label', stays ? 'Stays in your account' : 'Where it goes'));
       for (var d = 0; d < destinations.length; d += 1) {
         var drow = dom.el('div', 'destination');
         dom.setAttr(drow, 'data-chosen', destinations[d].chosenBy);
@@ -564,8 +590,70 @@
         drow.appendChild(dom.el('p', 'meta', destinations[d].label));
         dwrap.appendChild(drow);
       }
-      refs.card.appendChild(dwrap);
+      host.appendChild(dwrap);
     }
+
+    /* The rail's own words about what it is about to do. The backend writes the
+       deposit lines into this string on purpose, with a comment saying the
+       approval gate renders it, and the gate never did.
+
+       Folded when the card already carries the numbers as facts (a swap), open
+       when these lines are the only disclosure there is (a trade's plan, a
+       funding move). A policy change is the one kind held back, and not for
+       tidiness. Its summary is `the agent asked for: <the assistant's
+       sentence>`, so rendering it would put the assistant's own wording at the
+       top of the card that decides whether to trust it, above the diff that
+       says the same thing from the engine. The backend keeps the +/- lines out
+       of the summary for this reason: the diff is the disclosure for that card. */
+    var summary = typeof sim.summary === 'string' ? sim.summary.trim() : '';
+    if (summary && draft.kind !== 'policy_change') {
+      buildReport(host, draft.kind === 'trade' ? 'The plan, in full' : 'What the venue reports', summary, !swap);
+    }
+  }
+
+  function lockBanner() {
+    var banner = dom.el('div', 'banner');
+    banner.dataset.tone = 'warn';
+    banner.appendChild(dom.el('span', '', 'The app is locked, so this is waiting. Nothing has moved and nothing will until you unlock and decide.'));
+    return banner;
+  }
+
+  /* ---------- the venue's report ---------- */
+
+  /* The rail's lines, whole, behind a toggle that says how many there are. The
+     same fold the checks use: height through a grid track, so it opens as a
+     motion. `open` is the starting state. The text stays one node: a plan's
+     note rides inside the summary, and the card must not lift it out into a
+     line of its own that could pass for a label. */
+  function buildReport(host, word, summary, open) {
+    var count = summary.split('\n').length;
+    var section = dom.el('div', 'dock-report');
+    var toggle = dom.el('button', 'dock-report-toggle');
+    toggle.type = 'button';
+    toggle.appendChild(dom.el('span', 'dock-report-word', word));
+    toggle.appendChild(dom.el('span', 'dock-report-count', count === 1 ? '1 line' : count + ' lines'));
+    toggle.appendChild(dom.el('span', 'dock-report-chevron'));
+    section.appendChild(toggle);
+
+    var fold = dom.el('div', 'dock-report-fold');
+    var inner = dom.el('div', 'dock-report-inner');
+    inner.appendChild(dom.el('p', 'body dock-summary', summary));
+    fold.appendChild(inner);
+    section.appendChild(fold);
+
+    function apply() {
+      dom.setAttr(section, 'data-open', open ? 'true' : 'false');
+      dom.setAttr(toggle, 'aria-expanded', open ? 'true' : 'false');
+    }
+    dom.on(toggle, 'click', function () {
+      open = !open;
+      apply();
+      /* The fold runs for 200 ms; the fade under the body follows it. */
+      settle();
+      window.setTimeout(settle, 240);
+    });
+    apply();
+    host.appendChild(section);
   }
 
   /* ---------- the held row ---------- */
@@ -576,19 +664,20 @@
   function buildHeld(proposal) {
     var draft = proposal.draft || {};
     var sendCard = window.PhosphorSendCard;
+    var host = refs.body;
     if (isSend(draft)) {
-      sendCard.build(refs.card, sendCard.viewOf(proposal), { width: refs.card.clientWidth });
+      sendCard.build(host, sendCard.viewOf(proposal), { width: host.clientWidth });
       return;
     }
-    refs.card.appendChild(dom.el('p', 'label', 'Holding'));
-    refs.card.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
+    host.appendChild(dom.el('p', 'label dock-kicker', 'Holding'));
+    host.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
     var line = dom.el('p', 'body dock-hold');
     dom.setAttr(line, 'data-tone', 'warn');
     dom.setText(line, sendCard && typeof sendCard.heldLine === 'function' ? sendCard.heldLine(proposal) : 'Waiting for the checks to clear. Nothing is signed until they do.');
-    refs.card.appendChild(line);
+    host.appendChild(line);
     var checks = window.PhosphorChecks;
     var preflight = sendCard && typeof sendCard.preflightOf === 'function' ? sendCard.preflightOf(proposal) : null;
-    if (preflight && checks && typeof checks.fold === 'function') checks.fold(refs.card, preflight, {});
+    if (preflight && checks && typeof checks.fold === 'function') checks.fold(host, preflight, {});
   }
 
   /* ---------- the unread outcome ---------- */
@@ -611,24 +700,22 @@
   }
 
   function buildUnread(proposal) {
-    refs.card.appendChild(dom.el('p', 'label', 'Not confirmed.'));
-    refs.card.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
+    var body = refs.body;
+    var foot = refs.foot;
+    body.appendChild(dom.el('p', 'label dock-kicker', 'Not confirmed.'));
+    body.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
 
     var banner = dom.el('div', 'banner');
     banner.dataset.tone = 'warn';
     banner.appendChild(dom.el('span', '', unreadSentence(proposal)));
-    refs.card.appendChild(banner);
+    body.appendChild(banner);
 
     var handle = proposal.result && proposal.result.evidence && proposal.result.evidence.handle;
     if (handle) {
       var where = dom.el('p', 'body dim');
       dom.setText(where, 'Do not send it again. Quote handle ' + handle);
-      refs.card.appendChild(where);
+      body.appendChild(where);
     }
-
-    var error = dom.el('p', 'body down');
-    error.hidden = true;
-    refs.card.appendChild(error);
 
     var actions = dom.el('div', 'dock-actions');
     var again = dom.el('button', 'btn btn-primary');
@@ -637,9 +724,10 @@
     var gotIt = dom.el('button', 'btn');
     gotIt.appendChild(dom.el('span', 'btn-label', 'Got it'));
     actions.appendChild(gotIt);
-    refs.card.appendChild(actions);
+    foot.appendChild(actions);
 
     dom.on(again, 'click', function () {
+      hush();
       window.PhosphorShell.setPending(again, true, 'Checking');
       api.reconcile(proposal.id)
         .then(function (answer) {
@@ -649,8 +737,7 @@
           if (answer && answer.status === 'needs_reconciliation') {
             var said = typeof answer.detail === 'string' && answer.detail.trim() ? answer.detail.trim() : null;
             dom.setText(banner.firstChild, said || unreadSentence(proposal));
-            dom.setText(error, said ? 'Checked again just now. Still unconfirmed, nothing to do here until the venue moves.' : 'Still no answer. Nothing has changed. Do not send it again.');
-            error.hidden = false;
+            say('warn', said ? 'Checked again just now. Still unconfirmed, nothing to do here until the venue moves.' : 'Still no answer. Nothing has changed. Do not send it again.');
             return null;
           }
           return window.PhosphorShell.refresh({}).then(function () {
@@ -659,8 +746,7 @@
           });
         })
         .catch(function (err) {
-          dom.setText(error, net.readable(err));
-          error.hidden = false;
+          say('down', net.readable(err));
         })
         .finally(function () {
           window.PhosphorShell.setPending(again, false);
@@ -668,6 +754,7 @@
     });
 
     dom.on(gotIt, 'click', function () {
+      hush();
       window.PhosphorShell.setPending(gotIt, true, 'Filing');
       api.acknowledge(proposal.id)
         .then(function () {
@@ -677,8 +764,7 @@
           });
         })
         .catch(function (err) {
-          dom.setText(error, net.readable(err));
-          error.hidden = false;
+          say('down', net.readable(err));
         })
         .finally(function () {
           window.PhosphorShell.setPending(gotIt, false);
@@ -688,9 +774,10 @@
 
   /* ---------- deciding ---------- */
 
-  function decide(route, id, buttons, errorNode, pressed, verb, word, ms, receiptId) {
+  function decide(route, id, buttons, pressed, verb, word, ms, receiptId) {
     for (var i = 0; i < buttons.length; i += 1) buttons[i].disabled = true;
-    errorNode.hidden = true;
+    hush();
+    touchNote = null;
     window.PhosphorShell.setPending(pressed, true, verb);
     route(id)
       .then(function (answer) {
@@ -709,11 +796,11 @@
         flash(word, ms, receiptId);
       })
       .catch(function (err) {
-        dom.setText(errorNode, net.readable(err, true));
-        errorNode.hidden = false;
-        /* Re-enable only on failure. A click that landed leaves the buttons
-           dead until the next state frame, so a second click cannot ride on a
-           stale render. */
+        /* The problem and the recovery, in the foot where the buttons are, so
+           a card however long shows it without a scroll. The buttons come back
+           only on failure: a click that landed leaves them dead until the next
+           state frame, so a second click cannot ride on a stale render. */
+        say('down', net.readable(err, true));
         for (var j = 0; j < buttons.length; j += 1) buttons[j].disabled = false;
       })
       .finally(function () {
@@ -728,11 +815,12 @@
     if (flashTimer) window.clearTimeout(flashTimer);
     showing = { kind: 'flash' };
     hold(null);
-    dom.clear(refs.card);
+    frame();
     dom.setAttr(refs.dock, 'data-state', receiptId ? 'done' : 'refused');
-    refs.card.appendChild(dom.el('h2', 'title', word));
+    refs.body.appendChild(dom.el('h2', 'title', word));
     dom.setHidden(refs.dock, false);
     window.PhosphorShell.updateField();
+    settle();
     flashTimer = window.setTimeout(function () {
       flashTimer = 0;
       showing = null;
@@ -763,34 +851,140 @@
     }).catch(function () { close(); });
   }
 
+  /* ---------- the frame: a body that scrolls, a foot that does not ---------- */
+
+  /* Every card the dock draws is built into these two. The body holds what a
+     person reads and scrolls when the card is taller than its share of the
+     column; the foot holds the answer (the note, the queue line, the buttons)
+     and is always on screen. Rebuilt on every open: the reconciler's idea of
+     what is on screen goes with the nodes it named. */
+  function frame() {
+    dom.clear(refs.card);
+    dom.setAttr(refs.card, 'data-more', null);
+    refs.body = dom.el('div', 'dock-body');
+    refs.foot = dom.el('div', 'dock-foot');
+    refs.note = null;
+    refs.card.appendChild(refs.body);
+    refs.card.appendChild(refs.foot);
+    dom.on(refs.body, 'scroll', settle, { passive: true });
+    if (typeof ResizeObserver === 'function') {
+      if (!refs.sizes) refs.sizes = new ResizeObserver(settle);
+      refs.sizes.disconnect();
+      refs.sizes.observe(refs.body);
+    }
+  }
+
+  /* Whether there is more card below the body's bottom edge. The card carries
+     the answer as data-more, and the stylesheet fades the last lines into the
+     foot while it is true: that fade is what tells a person the buttons sit
+     under more card, on a platform whose scrollbars hide until touched. A
+     document without layout (the tests) measures nothing and says nothing. */
+  function settle() {
+    var body = refs.body;
+    if (!body || typeof body.scrollHeight !== 'number') return;
+    var more = body.scrollHeight - body.clientHeight - body.scrollTop > 4;
+    dom.setAttr(refs.card, 'data-more', more ? 'true' : null);
+  }
+
+  /* One line in the foot, above the buttons: the problem and the recovery,
+     red for a click that did not land, amber for a state worth knowing. One
+     node, reused, so two errors in a row do not stack. */
+  function say(tone, text) {
+    var foot = refs.foot;
+    if (!foot) return;
+    if (!refs.note) {
+      refs.note = dom.el('div', 'banner dock-note');
+      refs.note.setAttribute('role', 'status');
+      refs.note.appendChild(dom.el('span', ''));
+      foot.insertBefore(refs.note, foot.firstChild);
+    }
+    dom.setAttr(refs.note, 'data-tone', tone);
+    dom.setText(refs.note.firstChild, text);
+    refs.note.hidden = false;
+  }
+
+  function hush() {
+    if (refs.note) refs.note.hidden = true;
+  }
+
+  /* The dock's memory of the sensor. A row drawn while awaiting_touch that
+     comes back pending is a dialog that closed without an answer. */
+  function noteTouch(proposal) {
+    if (!proposal) return;
+    if (proposal.status === 'awaiting_touch') {
+      touchSeen = proposal.id;
+      return;
+    }
+    if (proposal.status === 'pending' && touchSeen === proposal.id) touchNote = proposal.id;
+    touchSeen = null;
+  }
+
   /* ---------- the card's parts ---------- */
 
-  function addFact(host, label, value) {
+  /* A fact is a label and a value on one grid row, the value on the right. A
+     wide one (a sentence, not a number) takes the row for itself, label over
+     value, so it wraps as prose instead of as a ragged right-aligned column. */
+  function addFact(host, label, value, tone, wide) {
     if (!value) return;
-    var row = dom.el('div', 'fact');
+    var row = dom.el('div', wide ? 'fact fact--wide' : 'fact');
     row.appendChild(dom.el('span', 'label', label));
-    row.appendChild(dom.el('span', 'body', value));
+    var body = dom.el('span', 'body', value);
+    if (tone) dom.setAttr(body, 'data-tone', tone);
+    row.appendChild(body);
     host.appendChild(row);
   }
 
+  /* A fee that can be under a cent keeps its digits (dom.fee); the rest of
+     the card rounds to cents. */
+  function money(value) {
+    return typeof dom.fee === 'function' ? dom.fee(value) : dom.usd(value);
+  }
+
+  function etaWords(seconds) {
+    var s = Math.max(0, Math.round(seconds));
+    if (s < 60) return s + ' seconds';
+    var m = Math.round(s / 60);
+    return m === 1 ? 'a minute' : m + ' minutes';
+  }
+
+  /* The fee row. It reads the swap fields first, then the older slots a
+     simulation might carry. When the rail priced nothing as a number the row
+     says so in those words: "No fee was quoted." sat over a summary line that
+     named the fee, and a card that contradicts itself is a card nobody can
+     check. No simulation at all is its own sentence. */
   function costLine(proposal) {
     var sim = proposal.simulation;
-    if (!sim) return 'Still working out what this costs.';
+    if (!sim) return 'Not quoted.';
+    var swap = sim.swap || {};
     var parts = [];
-    if (typeof sim.feeUsd === 'number') parts.push(dom.usd(sim.feeUsd) + ' in fees');
-    if (typeof sim.gasUsd === 'number') parts.push(dom.usd(sim.gasUsd) + ' in network fees');
+    if (typeof swap.feeUsd === 'number') parts.push(money(swap.feeUsd) + ' in fees');
+    else if (typeof sim.feeUsd === 'number') parts.push(money(sim.feeUsd) + ' in fees');
+    if (typeof sim.gasUsd === 'number') parts.push(money(sim.gasUsd) + ' in network fees');
     if (typeof sim.priceImpact === 'number') parts.push(dom.pct(sim.priceImpact) + ' price impact');
-    return parts.length ? parts.join(', ') : 'No fee was quoted.';
+    if (parts.length) return parts.join(', ');
+    return sim.swap ? 'The venue did not price a fee.' : 'See what the venue reports, below.';
+  }
+
+  function venueWords(venue) {
+    var id = String(venue);
+    if (Object.prototype.hasOwnProperty.call(VENUE_WORDS, id)) return VENUE_WORDS[id];
+    return id.replace(/[-_]+/g, ' ');
   }
 
   /* The engine writes `reasons`, an array, and has since the verdict type was
      written. This asked for `reason` and always fell through to the guess below,
      so a card built on a rule the person had never seen said "your limits say
-     so" instead of naming the rule. */
+     so" instead of naming the rule.
+
+     The array is the engine's trail: a restatement of the move first ("swap of
+     $2.00 to intents.near."), then the rule that fired. The card is asking why,
+     so it shows the rule, which is the last line, and leaves the restatement
+     to the headline that already says it. */
   function whyLine(proposal) {
     var verdict = proposal.verdict || {};
     if (Array.isArray(verdict.reasons) && verdict.reasons.length) {
-      return verdict.reasons.join(' ');
+      var last = String(verdict.reasons[verdict.reasons.length - 1]).trim();
+      return last.charAt(0).toUpperCase() + last.slice(1);
     }
     if (verdict.reason) return String(verdict.reason);
     var amount = amountOf(proposal);
@@ -817,22 +1011,27 @@
   function destinationsOf(proposal) {
     var draft = proposal.draft || {};
     var out = [];
-    pushDestination(out, draft.to, 'app');
-    if (draft.leg) pushDestination(out, draft.leg.to, 'app');
+    /* A swap inside the verifier credits the account it spends from: `to` is
+       `from`. The address still goes on the card in full, but under words that
+       say the money is not leaving, because a full 0x address under "Where it
+       goes" reads as a send to somebody. */
+    var own = typeof draft.from === 'string' ? draft.from.trim().toLowerCase() : '';
+    pushDestination(out, draft.to, 'app', own);
+    if (draft.leg) pushDestination(out, draft.leg.to, 'app', own);
     if (Array.isArray(draft.legs)) {
       for (var l = 0; l < draft.legs.length; l += 1) {
-        pushDestination(out, draft.legs[l] && draft.legs[l].to, 'app');
+        pushDestination(out, draft.legs[l] && draft.legs[l].to, 'app', own);
       }
     }
     var sim = proposal.simulation;
     var deposits = sim && Array.isArray(sim.depositAddresses) ? sim.depositAddresses : [];
     for (var i = 0; i < deposits.length; i += 1) {
-      pushDestination(out, deposits[i] && deposits[i].address, 'venue');
+      pushDestination(out, deposits[i] && deposits[i].address, 'venue', own);
     }
     return out;
   }
 
-  function pushDestination(out, address, chosenBy) {
+  function pushDestination(out, address, chosenBy, own) {
     if (typeof address !== 'string') return;
     var clean = address.trim();
     if (!clean.length) return;
@@ -842,14 +1041,17 @@
          disclosing is the failure this whole function exists to prevent. */
       if (chosenBy === 'venue') {
         out[i].chosenBy = 'venue';
+        out[i].own = false;
         out[i].label = VENUE_CHOSE;
       }
       return;
     }
+    var isOwn = chosenBy === 'app' && !!own && clean.toLowerCase() === own;
     out.push({
       address: clean,
       chosenBy: chosenBy,
-      label: chosenBy === 'venue' ? VENUE_CHOSE : 'the destination this app chose'
+      own: isOwn,
+      label: chosenBy === 'venue' ? VENUE_CHOSE : (isOwn ? 'your NEAR Intents account, the one it spends from' : 'the destination this app chose')
     });
   }
 
@@ -864,7 +1066,7 @@
 
      The store's sentences are the fallback for the before, so a diff still
      renders if a simulation arrives without one. */
-  function buildPolicyDiff(proposal) {
+  function buildPolicyDiff(host, proposal) {
     var state = store.get() || {};
     var draft = proposal.draft || {};
     var sim = proposal.simulation || {};
@@ -901,13 +1103,13 @@
       }
       wrap.appendChild(block);
     }
-    refs.card.appendChild(wrap);
+    host.appendChild(wrap);
   }
 
   /* ---------- the receipt ---------- */
 
   function buildReceipt(receipt) {
-    window.PhosphorReceipt.fill(refs.card, receipt, close);
+    window.PhosphorReceipt.fill(refs.body, receipt, close);
   }
 
   function showReceipt(receipt) {

@@ -634,6 +634,20 @@ test('simulate asks for a dry quote and never generates or signs anything', asyn
   assert.equal(h.signedPayloads.length, 0);
   assert.match(result.summary, /100 USDC -> 99\.85 USDT, entirely inside intents\.near/);
   assert.match(result.summary, /transfers nothing/);
+  // The same figures as fields, for the decision card: what comes back, the floor the live
+  // quote is held to, the fee as the USD gap, the eta. The card drew "No fee was quoted." over
+  // a summary line naming the fee while these were prose only.
+  assert.deepEqual(result.swap, { receives: '99.85', receivesAtLeast: '99.5', feeUsd: 0.16, etaSeconds: 42 });
+});
+
+test('simulate keeps the swap facts on a refused quote, and prices no fee when the quote carries no USD', async () => {
+  const refused = await railOf(harness({ quote: quoteOf({ minAmountOut: '98500000' }) })).simulate(draftOf());
+  assert.equal(refused.ok, false);
+  assert.equal(refused.swap?.receivesAtLeast, '98.5');
+
+  const unpriced = await railOf(harness({ quote: quoteOf({ amountInUsd: undefined, amountOutUsd: undefined }) })).simulate(draftOf());
+  assert.equal(unpriced.ok, true);
+  assert.equal(unpriced.swap?.feeUsd, null);
 });
 
 test('simulate refuses a quote whose floor is below the draft floor', async () => {

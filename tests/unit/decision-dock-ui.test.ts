@@ -143,11 +143,18 @@ function makeNode(tagName: string): Node {
     getAttribute: (name: string) => attrs[name] ?? null,
     hasAttribute: (name: string) => name in attrs,
     removeAttribute: (name: string) => { delete attrs[name]; },
-    addEventListener: () => {},
+    listeners: {} as Record<string, Array<() => void>>,
+    addEventListener(type: string, fn: () => void) {
+      (node.listeners[type] ??= []).push(fn);
+    },
     removeEventListener: () => {},
     focus: () => {},
   };
   return node;
+}
+
+function fire(node: Node, type: string): void {
+  for (const fn of node.listeners[type] ?? []) fn();
 }
 
 /* Every leaf string under a node, which is what the card is: labels, facts,
@@ -175,15 +182,17 @@ function find(node: Node, className: string): Node[] {
   return out;
 }
 
-/* Boots the dock against a state and returns the card it drew. */
-function cardFor(proposal: Record<string, any>, state: Record<string, any> = {}): Node {
+/* Boots the dock against a state and returns the card it drew, with the state
+   it reads (mutable, for a test that moves a row on) and the render the store
+   would call on a frame. `api` stands in for the routes a click takes. */
+function dockFor(proposal: Record<string, any>, state: Record<string, any> = {}, api: Record<string, any> = {}): { card: Node; payload: Record<string, any>; render: () => void } {
   const dock = makeNode('div');
   const card = makeNode('div');
   const payload = Object.assign({ proposals: [proposal] }, state);
   const sandbox: Record<string, any> = {
     window: {
-      PhosphorNet: { readable: (e: any) => String(e) },
-      PhosphorApi: { approve: () => Promise.resolve(), refuse: () => Promise.resolve() },
+      PhosphorNet: { readable: (e: any) => String(e && e.message ? e.message : e) },
+      PhosphorApi: Object.assign({ approve: () => Promise.resolve(), refuse: () => Promise.resolve() }, api),
       PhosphorState: { select: () => {}, get: () => payload },
       PhosphorShell: { updateField: () => {}, setPending: () => {}, refresh: () => Promise.resolve() },
       setTimeout: () => 0,
@@ -207,7 +216,32 @@ function cardFor(proposal: Record<string, any>, state: Record<string, any> = {})
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
   sandbox.window.PhosphorDecision.boot();
   sandbox.window.PhosphorDecision.render();
-  return card;
+  return { card, payload, render: () => sandbox.window.PhosphorDecision.render() };
+}
+
+function cardFor(proposal: Record<string, any>, state: Record<string, any> = {}): Node {
+  return dockFor(proposal, state).card;
+}
+
+const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/* The swap the window showed on 2026-09-18: the rail's numbers arrive as
+   `simulation.swap`, and its summary is the same figures as prose. */
+function swapProposal(over: Record<string, any> = {}): Record<string, any> {
+  const ADDR = '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050';
+  return Object.assign({
+    id: 's1',
+    kind: 'swap',
+    status: 'pending',
+    createdAt: '2026-09-18T17:35:00.000Z',
+    draft: { kind: 'swap', venue: 'intents-native', chain: 'eth', toChain: 'sol', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, amountUsd: 2, minAmountOut: 0.0172, from: ADDR, to: ADDR, counterparty: 'intents.near', quote: null },
+    simulation: {
+      ok: true,
+      summary: 'intents-native: 2 USDC -> 0.017783069 SOL, entirely inside intents.near\nfee $0.0071, eta ~12s, solver floor 17605238 base units, draft floor 0.0172 SOL\nexecution signs one intent with the EVM key and transfers nothing; the balance must already be inside intents.near',
+      swap: { receives: '0.017783069', receivesAtLeast: '0.017605238', feeUsd: 0.0071, etaSeconds: 12 },
+    },
+    verdict: { outcome: 'needs_approval', reasons: ['swap of $2.00 to intents.near.', '$2.00 is above the $1.00 click threshold.'] },
+  }, over);
 }
 
 // B4. 1Click mints a deposit address per quote, so it can never sit on an
@@ -632,3 +666,168 @@ test('a held deposit shows what it is waiting for and the checks, and offers not
   assert.equal(find(card, 'dock-actions').length, 0, 'no Yes, no No');
   assert.ok(!words.includes('Yes') && !words.includes('No'));
 });
+
+/* THE BUTTONS ARE ALWAYS ON SCREEN. The card is two parts: a body that scrolls
+   and a foot that does not, and the foot is where the answer lives. On
+   2026-09-18 a swap card ran past the dock's share of the column and Yes and No
+   sat below the fold, behind a scrollbar macOS hides: a request with no visible
+   way to answer it. */
+test('the answer lives in the foot, under a body that scrolls', () => {
+  const card = cardFor(swapProposal());
+  const body = find(card, 'dock-body');
+  const foot = find(card, 'dock-foot');
+  assert.equal(body.length, 1, 'no body');
+  assert.equal(foot.length, 1, 'no foot');
+  assert.equal(card.childNodes.length, 2, 'the card holds the body and the foot and nothing beside them');
+  assert.ok(find(body[0], 'title').length === 1, 'the headline is in the body');
+  assert.equal(find(body[0], 'btn').length, 0, 'a button is in the scrolling body');
+  assert.equal(find(foot[0], 'btn').length, 2, 'No and Yes are not both in the foot');
+  assert.deepEqual(find(foot[0], 'btn-label').map((l) => l.textContent), ['No', 'Yes']);
+});
+
+/* The swap card says what the rail checked, as numbers under labels, and the
+   rule that fired, not the engine's restatement of the move. It used to read
+   "No fee was quoted." over a summary line naming the fee, "Through:
+   intents-native", the engine's whole trail as the reason, and a full 0x
+   address under "Where it goes" for money that never leaves the account. */
+test('a swap card draws the rail\'s numbers as facts, the deciding rule as the reason, and says the money stays put', () => {
+  const card = cardFor(swapProposal());
+  const facts = Object.fromEntries(find(card, 'fact').map((row) => textOf(row)));
+  assert.equal(facts['You get about'], '0.017783069 SOL');
+  assert.equal(facts['At least'], '0.017605238 SOL, or it does not fill');
+  assert.equal(facts['What it costs'], '$0.0071 in fees');
+  assert.equal(facts['Takes about'], '12 seconds');
+  assert.equal('Through' in facts, false, 'the venue enum is on the card');
+  assert.equal(facts['Why you are being asked'], '$2.00 is above the $1.00 click threshold.');
+  const text = textOf(card);
+  assert.equal(text.some((t) => t.includes('No fee was quoted')), false);
+  assert.equal(text.some((t) => t.includes('swap of $2.00 to intents.near')), false, 'the engine\'s restatement is on the card');
+  assert.equal(text.includes('intents-native'), false, 'the venue id is on the card as its own text');
+  // The account is on the card in full, under words that say nothing leaves it.
+  assert.ok(text.includes('0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050'));
+  assert.ok(text.includes('Stays in your account'));
+  assert.equal(text.includes('Where it goes'), false);
+  assert.ok(text.some((t) => t.includes('your NEAR Intents account, the one it spends from')));
+  // The rail's own lines are still on the card, whole, behind a closed fold.
+  const report = find(card, 'dock-report');
+  assert.equal(report.length, 1);
+  assert.equal(report[0].getAttribute('data-open'), 'false', 'the report is open on a card that already carries the numbers');
+  assert.ok(textOf(report[0]).some((t) => t.includes('solver floor 17605238 base units')));
+  assert.equal(find(card, 'dock-summary').length, 1);
+});
+
+/* A swap to somebody else's address, or an address the venue minted, is never
+   described as staying put. */
+test('only the account the swap spends from is "your account"; anything else keeps its full disclosure', () => {
+  const OTHER = '0x1111111111111111111111111111111111111111';
+  const elsewhere = cardFor(swapProposal({ draft: Object.assign({}, swapProposal().draft, { to: OTHER }) }));
+  const text = textOf(elsewhere);
+  assert.ok(text.includes('Where it goes'));
+  assert.ok(text.includes(OTHER));
+  assert.ok(text.includes('the destination this app chose'));
+  assert.equal(text.includes('Stays in your account'), false);
+});
+
+/* A rail that hands the card no numbers still gets an honest fee row and its
+   lines open, because those lines are the only disclosure there is. */
+test('a card with no structured facts opens the rail\'s report and never claims no fee was quoted', () => {
+  const card = cardFor({
+    id: 'd1',
+    kind: 'hl_deposit',
+    status: 'pending',
+    createdAt: '2026-09-18T17:36:00.000Z',
+    draft: { kind: 'hl_deposit', amount: 10, symbol: 'USDC', amountUsd: 10, hlAccount: '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050', counterparty: 'hyperliquid-perps' },
+    simulation: { ok: true, summary: 'Fund Hyperliquid perps from the intents balance.\n  cost      0.0388 USDC, 0.39 percent of the deposit' },
+    verdict: { outcome: 'needs_approval', reasons: ['hl_deposit of $10.00 to hyperliquid-perps.', '$10.00 is above the $1.00 click threshold.'] },
+  });
+  const facts = Object.fromEntries(find(card, 'fact').map((row) => textOf(row)));
+  assert.equal(facts['What it costs'], 'See what the venue reports, below.');
+  const report = find(card, 'dock-report');
+  assert.equal(report[0]?.getAttribute('data-open'), 'true');
+  assert.ok(textOf(card).some((t) => t.includes('0.0388 USDC')));
+});
+
+/* A CLICK THAT DOES NOT LAND SAYS SO WHERE THE BUTTONS ARE. The error used to
+   be a red line inside the scrolling part of the card, above buttons that
+   were themselves below the fold. Now it is the first thing in the foot, and
+   the buttons come back live under it. */
+test('a Yes that fails puts the problem in the foot and hands the buttons back', async () => {
+  const ui = dockFor(swapProposal(), {}, { approve: () => Promise.reject(new Error('The app is not answering. It may have stopped.')) });
+  const foot = find(ui.card, 'dock-foot')[0];
+  const yes = find(foot, 'btn').find((b) => String(b.className).includes('btn-primary'))!;
+  const no = find(foot, 'btn').find((b) => String(b.className).includes('btn-ghost'))!;
+  assert.equal(find(foot, 'dock-note').length, 0, 'a note is up before anything went wrong');
+  fire(yes, 'click');
+  assert.equal(yes.disabled, true, 'Yes still takes a click while the first one is in flight');
+  assert.equal(no.disabled, true);
+  await tick();
+  await tick();
+  const note = find(foot, 'dock-note');
+  assert.equal(note.length, 1, 'no note in the foot');
+  assert.equal(note[0].hidden, false);
+  assert.equal(note[0].getAttribute('data-tone'), 'down');
+  assert.deepEqual(textOf(note[0]), ['The app is not answering. It may have stopped.']);
+  assert.equal(foot.firstChild, note[0], 'the note is not the first thing in the foot');
+  assert.equal(yes.disabled, false, 'Yes stays dead after a click that did not land');
+  assert.equal(no.disabled, false);
+  assert.equal(find(find(ui.card, 'dock-body')[0], 'dock-note').length, 0, 'the error is in the scrolling body');
+});
+
+/* A TOUCH ID DIALOG THAT CLOSES WITHOUT AN ANSWER puts the row back to pending
+   and writes nothing on it. The person who reached for the sensor came back
+   to a card that looked as if nothing had happened. The dock remembers the row
+   it drew waiting on the sensor and says so on that row's next pending card. */
+test('a row back from Touch ID with no answer says so, over live buttons, until the next click', async () => {
+  const waiting = swapProposal({ status: 'awaiting_touch' });
+  const ui = dockFor(waiting, { vault: { waiting: { id: 'approve:s1', op: 'unwrap', reason: 'Phosphor: Swap 2 USDC for SOL', since: 1 } } });
+  assert.equal(find(ui.card, 'dock-note').length, 0);
+  // The next frame: the same row, pending again, the dialog gone.
+  ui.payload.proposals = [swapProposal()];
+  ui.payload.vault = { waiting: null };
+  ui.render();
+  const foot = find(ui.card, 'dock-foot')[0];
+  const note = find(foot, 'dock-note');
+  assert.equal(note.length, 1, 'the card came back blank');
+  assert.equal(note[0].getAttribute('data-tone'), 'warn');
+  assert.deepEqual(textOf(note[0]), ['Touch ID closed without an answer. Nothing moved. Yes asks again.']);
+  const buttons = find(foot, 'btn');
+  assert.ok(buttons.every((b) => b.disabled === false), 'the buttons are dead on a row that is pending');
+  // A heartbeat that changes nothing keeps the note; the next click clears it.
+  ui.render();
+  assert.equal(find(ui.card, 'dock-note').length, 1);
+  const yes = buttons.find((b) => String(b.className).includes('btn-primary'))!;
+  fire(yes, 'click');
+  assert.equal(find(foot, 'dock-note')[0].hidden, true, 'the note outlived the click');
+  await tick();
+  await tick();
+});
+
+/* A row that was never on the sensor gets no such note. */
+test('a plain pending row carries no Touch ID note', () => {
+  const ui = dockFor(swapProposal());
+  ui.render();
+  assert.equal(find(ui.card, 'dock-note').length, 0);
+});
+
+/* The lock banner sits under the amount, where it is read first, and the
+   queue line sits in the foot with the buttons. */
+test('the lock banner is at the top of the body and the queue line is in the foot', () => {
+  const locked = cardFor(swapProposal({ status: 'pending_unlock' }));
+  const body = find(locked, 'dock-body')[0];
+  const banner = find(body, 'banner')[0];
+  assert.ok(banner, 'no lock banner');
+  const kids = body.childNodes;
+  const amountAt = kids.findIndex((n: Node) => String(n.className).includes('headline'));
+  assert.equal(kids.indexOf(banner), amountAt + 1, 'the banner is not right under the amount');
+  assert.deepEqual(find(find(locked, 'dock-foot')[0], 'btn-label').map((l) => l.textContent), ['No', 'Unlock']);
+
+  const ui = dockFor(swapProposal(), { proposals: [swapProposal(), swapProposal({ id: 's0', createdAt: '2026-09-18T17:00:00.000Z' })] });
+  const foot = find(ui.card, 'dock-foot')[0];
+  assert.deepEqual(find(foot, 'dock-queue').map((q) => q.textContent), ['One more request after this one.']);
+});
+
+test('the dock never claims a click is done; it says approved and lets the receipt say the rest', () => {
+  assert.equal(/'Done\.'/.test(SOURCE), false, 'a Yes is flashed as Done. before the rail has run');
+  assert.ok(SOURCE.includes("'Approving', 'Approved.'"));
+});
+

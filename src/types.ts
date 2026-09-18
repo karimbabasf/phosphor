@@ -459,7 +459,19 @@ export type SimulationResult = {
   postComposition?: CompositionView; // fund moves: composition after the move
   policyDiff?: { before: string[]; after: string[] }; // policy changes: sentences before/after
   send?: SendSimulation; // the two send rails: the facts the send card draws
+  swap?: SwapSimulation; // the swap rail: the facts the decision card draws
   error?: string;
+};
+
+// What a swap simulation learned from the dry quote, as fields rather than as a sentence, so the
+// decision card (ui/screens/decision.js) draws the same numbers the rail checked instead of
+// reading them out of the summary. Amounts are formatted in `toSymbol` units the way the quote
+// formats them.
+export type SwapSimulation = {
+  receives: string; // the quote's amountOut
+  receivesAtLeast: string; // the quote's minAmountOut, the floor the rail will hold the live quote to
+  feeUsd: number | null; // amountInUsd minus amountOutUsd, when the quote priced both
+  etaSeconds: number | null;
 };
 
 // What a send simulation learned from the dry quote and the chain, as fields rather than as a

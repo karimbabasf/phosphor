@@ -22,6 +22,27 @@
   text-align: right;
 }
 
+/* A value with a tone: what arrives is green, the way the send card colours
+   it, and nothing else on a fact row carries a colour. */
+.fact > .body[data-tone="up"] {
+  color: var(--up);
+}
+
+/* A fact that is a sentence, not a number: the whole row, label over value,
+   left-aligned, so it wraps as prose rather than as a ragged right-aligned
+   column against a two-word label. */
+.fact--wide {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  grid-column: 1 / -1;
+  padding-top: var(--s-1);
+}
+
+.fact--wide > .body {
+  text-align: left;
+}
+
 /* ---------- offline ---------- */
 
 .offline-bar {

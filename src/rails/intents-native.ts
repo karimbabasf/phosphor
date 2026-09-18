@@ -43,7 +43,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 
 import { evmAddress } from '../keystore/index.ts';
 import { evmPrivateKey } from '../keystore/index.ts';
-import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft } from '../types.ts';
+import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft, SwapSimulation } from '../types.ts';
 import {
   ONECLICK_BASE,
   ONECLICK_TERMINAL,
@@ -939,6 +939,20 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     ];
   }
 
+  /* The same figures as fields, for the decision card. The card used to read a fee slot no
+     swap simulation ever carried and print "No fee was quoted." over a summary line that
+     named the fee; these are the numbers the rail checked, and the card draws these. */
+  function swapFacts(p: Plan, quote: OneClickQuote): SwapSimulation {
+    const inUsd = Number(quote.amountInUsd);
+    const outUsd = Number(quote.amountOutUsd);
+    return {
+      receives: oneLine(quote.amountOutFormatted, 40),
+      receivesAtLeast: formatUnits(baseUnits(quote.minAmountOut, 'minAmountOut'), p.destDecimals),
+      feeUsd: Number.isFinite(inUsd) && Number.isFinite(outUsd) ? Math.round((inUsd - outUsd) * 10_000) / 10_000 : null,
+      etaSeconds: Number.isFinite(Number(quote.timeEstimate)) ? Number(quote.timeEstimate) : null,
+    };
+  }
+
   function valueUsd(draft: SwapDraft): number {
     return Number.isFinite(draft.amountUsd) ? draft.amountUsd : Infinity;
   }
@@ -963,6 +977,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       });
 
       const lines = priceLines(draft, response.quote);
+      const swap = swapFacts(p, response.quote);
       // Both checks, in both places. simulate ran checkQuote alone and execute added the echo,
       // so a quote priced to another account passed the approval gate and failed after a human
       // had clicked. draft.from is the account here rather than the signer address, because
@@ -971,14 +986,14 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       const problems = [...checkQuote(draft, p, response.quote), ...checkQuoteEcho(p, draft.from, response.raw)];
       if (problems.length > 0) {
         const joined = problems.join('; ');
-        return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined };
+        return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined, swap };
       }
 
       lines.push(
         `execution signs one intent with the EVM key and transfers nothing; the balance must already be ` +
           `inside ${INTENTS_VERIFIER}`,
       );
-      return { ok: true, summary: lines.join('\n') };
+      return { ok: true, summary: lines.join('\n'), swap };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: `intents-native simulation failed: ${message}`, error: message };
