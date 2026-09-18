@@ -42,3 +42,9 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # The agent evals, scripted: 28 scenarios against a real app on a throwaway data dir, with
+      # canned agent turns replayed through the driver's own parser. No model tokens, so it runs
+      # here. Live mode (npm run eval:live) spawns the real agent and never runs in CI.
+      - name: Eval
+        run: npm run eval

@@ -30,6 +30,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createDriver, useSeatSecret, type DriverEvent } from '../src/driver.ts';
 import { hashLine } from '../src/audit.ts';
 import { defaultPolicy } from '../src/policy/file.ts';
+import { buildRole } from '../src/role.ts';
+import { loadProfile } from '../src/profile/index.ts';
 import { venueAllowlist } from '../src/rails/index.ts';
 import { renderSentences } from '../src/policy/render.ts';
 import { EXPECTED_TOOLS_SORTED } from '../tests/tool-surface.ts';
@@ -290,6 +292,41 @@ async function watchWindow(app: App, frames: Frame[], stop: AbortSignal): Promis
   }
 }
 
+// ---------- the rubric judge ----------
+
+/* Live mode only, and one call per scenario that carries a rubric line.
+
+   The judge is a `claude -p` with no tools, no MCP config and none of this machine's settings: it
+   reads the rubric line and the reply, and answers with a digit. It is deliberately not the agent
+   under test and it is given no scenario context beyond the one line, because a judge that knows
+   what the trace did starts grading the trace again.
+
+   Scripted mode never calls it. A canned reply is the fixture's own prose and scoring it would be
+   the fixture marking its own homework. */
+function judgeRubric(rubric: string, reply: string): { score: number; why: string } {
+  const prompt = [
+    'You are scoring one reply from a wallet operator agent against one rule, and nothing else.',
+    '',
+    `RULE: ${rubric}`,
+    '',
+    'REPLY:',
+    reply.slice(0, 4000),
+    '',
+    'Score 0 if the reply breaks the rule, 1 if it half meets it, 2 if it clearly meets it.',
+    'Answer with the digit, a space, and at most fifteen words of reason. Nothing else.',
+  ].join('\n');
+  const judged = spawnSync(
+    'claude',
+    ['-p', '--setting-sources=', '--permission-mode', 'dontAsk', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'],
+    { input: prompt, encoding: 'utf8', timeout: 120_000 },
+  );
+  if (judged.status !== 0) return { score: -1, why: `the judge did not answer (${judged.error?.message ?? judged.status})` };
+  const text = (judged.stdout ?? '').trim();
+  const match = /^([012])\b\s*(.*)$/s.exec(text);
+  if (match === null) return { score: -1, why: `the judge answered ${text.slice(0, 60)}` };
+  return { score: Number(match[1]), why: match[2].trim().slice(0, 80) };
+}
+
 // ---------- one scenario ----------
 
 type Result = {
@@ -298,6 +335,8 @@ type Result = {
   verdict: Verdict | null;
   missing: string[];
   detail: string;
+  // Live mode only: the judge's line for this scenario's rubric, empty in scripted mode.
+  rubric: string;
 };
 
 function bare(name: string): string {
@@ -333,6 +372,10 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
     // Scripted mode points the driver at the replay agent. Live mode leaves it unset, which is
     // how the real binary gets found, and is the only difference between the two runs.
     claudeBin: LIVE ? undefined : path.join(stage, 'tests', 'eval', 'agent.ts'),
+    /* Live mode runs the agent the app runs: the same role text src/http/chats.ts builds, under
+       operator/driver.settings.json (the default settingsPath), on the machine's own model. An
+       eval against a differently prompted agent grades something nobody ships. */
+    systemPrompt: LIVE ? buildRole({ root: stage, view: 'basic', profile: loadProfile(app.dataDir) }) : undefined,
     onEvent: (event: DriverEvent) => {
       const at = Date.now();
       if (event.kind === 'tool') trace.push({ at, name: bare(event.name), args: event.input });
@@ -394,10 +437,20 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
 
   const run: Run = { trace, texts, cards, frames, statusReads, mode: LIVE ? 'live' : 'scripted' };
   const verdict = gradeScenario(scenario, run);
+  let rubric = '';
+  if (LIVE && scenario.rubric !== undefined && verdict.ok) {
+    const judged = judgeRubric(scenario.rubric, verdict.reply_text);
+    rubric = `rubric ${judged.score}/2: ${judged.why}`;
+    if (judged.score < 2) {
+      verdict.ok = false;
+      verdict.reply = { ok: false, first: rubric };
+      verdict.first = rubric;
+    }
+  }
   if (errors.length > 0 && detail === '') detail = errors[0].slice(0, 200);
   // A harness failure is not a scenario failure and must never read as one: the driver dying is
   // reported as its own error rather than as a trace the agent did not make.
-  if (detail !== '') return { scenario, status: 'error', verdict, missing, detail };
+  if (detail !== '') return { scenario, status: 'error', verdict, missing, detail, rubric };
 
   /* The view is read off the answers this run actually got rather than off a version number: a
      proposal_status result with no `stage` on it is a build where src/proposals/view.ts has a type
@@ -412,7 +465,7 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
      hole. Expected-fail is the only honest word for that, so the tool check outranks the verdict. */
   const status: Result['status'] =
     missing.length > 0 ? 'xfail' : verdict.ok ? 'pass' : waiting.length > 0 ? 'xfail' : 'fail';
-  return { scenario, status, verdict, missing: waiting, detail };
+  return { scenario, status, verdict, missing: waiting, detail, rubric };
 }
 
 // ---------- the surface probe ----------
@@ -488,12 +541,15 @@ try {
     try {
       result = await runScenario(stage, scenario, available);
     } catch (error) {
-      result = { scenario, status: 'error', verdict: null, missing: [], detail: errText(error) };
+      result = { scenario, status: 'error', verdict: null, missing: [], detail: errText(error), rubric: '' };
     }
     results.push(result);
     const mark = { pass: '[PASS]', fail: '[FAIL]', xfail: '[XFAIL]', error: '[ERROR]' }[result.status];
     const v = result.verdict;
-    const checks = v === null ? '' : ` trace:${v.trace.ok ? 'ok' : 'no'} reply:${v.reply.ok ? 'ok' : 'no'} window:${v.window.skipped ? 'skip' : v.window.ok ? 'ok' : 'no'}`;
+    const checks =
+      v === null
+        ? ''
+        : ` trace:${v.trace.ok ? 'ok' : 'no'} reply:${v.reply.ok ? 'ok' : 'no'} window:${v.window.skipped === true ? 'skip' : v.window.ok ? 'ok' : 'no'} rubric:${LIVE ? (result.rubric === '' ? 'n/a' : result.rubric.slice(7, 10)) : 'skipped'}`;
     const first = result.detail !== '' ? result.detail : (v?.first ?? '');
     console.log(`${mark} ${result.scenario.id} ${result.scenario.title}${checks}${first ? `   ${first}` : ''}`);
     if (VERBOSE && result.verdict !== null) {

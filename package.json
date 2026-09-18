@@ -26,6 +26,7 @@
     "test": "node --test tests/unit/*.test.ts tests/injection.test.ts tests/lockdown.test.ts",
     "e2e": "node scripts/e2e.ts",
     "eval": "node scripts/eval.ts",
+    "eval:live": "node scripts/eval.ts --live",
     "typecheck": "tsc --noEmit",
     "bundle": "node scripts/bundle-payload.ts",
     "app:build": "npm run bundle && tauri build",
