@@ -282,6 +282,12 @@ A fresh clone carries no keys and no addresses. Creating those two things is the
 **Every address this app holds is a real address holding real money.** There is no practice mode
 and no second world to try it in. Size the first deposit accordingly.
 
+The window opens on the terms of use first, and nothing else opens until they are accepted. The
+acceptance is `state/terms.json` (the version accepted and when, mode 0600) and one
+`terms_accepted` line in the audit log; the version is the date the terms last changed, so a
+change on the site asks once more. The route is `POST /api/terms/accept` with the window token.
+Nothing here is a control: the file gates a screen, not a key.
+
 The wallet is made in the window. Set a password, write down the twelve words it shows once, and
 it writes `keys.enc.json` beside `keysPath`, file mode 0600, in a directory mode 0700. That path
 is outside the working copy on purpose: a key file inside a git working copy is one `git add -f`

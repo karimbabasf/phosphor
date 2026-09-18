@@ -29,9 +29,17 @@ Settings, then Privacy & Security, scroll to Security and click Open Anyway. See
 
 ## First open
 
-The window opens on a welcome screen: "Your money stays on this Mac, under a key only you hold.
-Your assistant does the work, and every move waits for your click." Nothing is uploaded and there
-is no account to make. Click Get started.
+The window opens on the terms: four plain facts (it is alpha and moves real money, your keys are
+yours alone, the venues are not ours, you are 18 or older) and links to the full
+[terms of use](https://phosphor.karimbabasf.com/terms/) and the
+[privacy page](https://phosphor.karimbabasf.com/privacy/), which open in your browser. Nothing
+else opens until you click Accept and continue. The app records the click (the date and the
+version of the terms) in its own state folder and in the audit log, and asks again only when the
+terms change.
+
+Then the welcome: "Your money stays on this Mac, under a key only you hold. Your assistant does
+the work, and every move waits for your click." Nothing is uploaded and there is no account to
+make. Click Get started.
 
 Every address the app makes is a real address that can hold real money. There is no practice
 mode. Size your first deposit as a test.
@@ -116,6 +124,12 @@ Frozen, the policy reads "KILL SWITCH ON: all writes refused." Every proposal is
 press the button again, whatever its size. The app also cancels every order it placed, ends every
 armed plan, and closes the positions those plans opened when it can reach the venue. Money does
 not leave the app. Check the Trade tab afterwards, see [Trading](trading.md).
+
+## The Help menu
+
+Help in the menu bar opens the documentation, a problem report on GitHub, the security page,
+the terms of use and the privacy page, each in your browser. The Phosphor menu beside it has
+Check for Updates and Copy MCP Config.
 
 ## Next
 

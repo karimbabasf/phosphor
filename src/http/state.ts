@@ -154,6 +154,9 @@ export function buildState(ctx: Ctx): unknown {
        Touch ID dialog is waiting on, whether the phrase is proven backed up. The Vault tab, the
        first-run screen and the decision card all read it from here. Never a key. */
     vault: vaultStatus(ctx),
+    /* Whether the terms of use are accepted at their current version. The window shows its
+       terms screen ahead of everything else until this says so. */
+    terms: ctx.terms.get(),
     deposit: ctx.deposits.current(),
     sentences: sentencesOf(policy),
     // Everything still waiting on a person, plus the last 20 decided. The rest is paged behind

@@ -39,6 +39,7 @@ import type { Session } from '../keystore/session.ts';
 import type { VaultRelay } from '../vault/relay.ts';
 import type { IntentsReceiveReport } from './wallet.ts';
 import type { VaultPrefs } from '../vault/prefs.ts';
+import type { Terms } from '../terms.ts';
 import type { DepositWatch } from '../vault/watch.ts';
 import type { JsonBody } from './respond.ts';
 
@@ -309,6 +310,8 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   intentsReceive: () => Promise<IntentsReceiveReport>;
   // What the window remembers about the vault that is not a key: backed up, idle minutes.
   vaultPrefs: VaultPrefs;
+  // Whether the person has accepted the terms of use at their current version. See src/terms.ts.
+  terms: Terms;
   // The deposit watcher: one address at a time, until landed or a day.
   deposits: DepositWatch;
   /* Re-decide everything an agent proposed while the wallet was locked. Wired by the server

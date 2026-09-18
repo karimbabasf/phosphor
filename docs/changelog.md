@@ -9,6 +9,10 @@ without a git tag say so.
 
 Released 2026-09-17, the new-user pass. Not tagged at the time of writing.
 
+- The terms of use are accepted in the window before anything else opens, once per version of
+  the terms; the click is recorded in `state/terms.json` and in the audit log as
+  `terms_accepted`. `POST /api/terms/accept` carries the window token like the vault writes.
+- A Help menu: Documentation, Report a Problem, Report a Security Issue, Terms of Use, Privacy.
 - The chain era leaves: the product is two pockets, the NEAR Intents balance and the Hyperliquid
   collateral, and nothing signs a chain transaction any more.
 - One send tool, `propose_send`, replaces `propose_intents_send`: where the money lands is

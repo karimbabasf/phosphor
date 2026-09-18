@@ -720,6 +720,8 @@ export type LogEvent = {
     | 'approve_attempt_rejected'
     | 'kill_switch'
     | 'policy_changed'
+    // The person accepted the terms of use in the window; data names the version.
+    | 'terms_accepted'
     | 'chain_stale'
     // A view change is a thing an agent did to what a human sees, so the transcript
     // says so. 'view_refused' is HISTORICAL: the switch used to be declined while a

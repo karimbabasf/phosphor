@@ -30,6 +30,15 @@
 
   function render() {
     var whole = store.get() || {};
+    /* The terms come first. While they are not accepted the terms card is what
+       the window shows, and this screen stays down whatever the lock says;
+       the card calls back here when it goes. */
+    var terms = window.PhosphorTerms;
+    if (terms && typeof terms.required === 'function' && terms.required(whole)) {
+      dom.setHidden(refs.host, true);
+      mode = null;
+      return;
+    }
     var lock = whole.lock || {};
     var vault = whole.vault || {};
     var state = lock.state || 'unlocked';
@@ -495,5 +504,5 @@
     if (target) target.focus();
   }
 
-  window.PhosphorLock = { boot: boot, focus: focus };
+  window.PhosphorLock = { boot: boot, focus: focus, render: render };
 })();

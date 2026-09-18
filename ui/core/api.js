@@ -201,6 +201,12 @@
       return net.postJson('/api/vault/prefs', prefs);
     },
 
+    /* The person accepted the terms of use. Carries the window token like the
+       vault writes; the answer is the terms slice the state will carry. */
+    termsAccept: function () {
+      return net.postJson('/api/terms/accept', {});
+    },
+
     /* ---------- money in ---------- */
 
     /* The bridge addresses, one per network, with what each one credits. Never

@@ -41,6 +41,7 @@
     window.PhosphorDeposit.boot();
     window.PhosphorVault.boot();
     window.PhosphorFirstRun.boot();
+    window.PhosphorTerms.boot();
     window.PhosphorLock.boot();
     window.PhosphorShell.boot();
     window.PhosphorAgent.start();

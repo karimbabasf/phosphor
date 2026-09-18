@@ -48,6 +48,17 @@ use backend::{
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
 const COPY_MCP_ID: &str = "copy-mcp-config";
 
+/// The Help menu: five pages on the site and the repository, each opened in the system browser.
+/// The urls are the only ones this menu will ever open, and they live here rather than in any
+/// page, so nothing a page renders can change where a menu item goes.
+const HELP_LINKS: [(&str, &str, &str); 5] = [
+    ("help-docs", "Phosphor Documentation", "https://phosphor.karimbabasf.com/docs/"),
+    ("help-report", "Report a Problem", "https://github.com/karimbabasf/phosphor/issues/new/choose"),
+    ("help-security", "Report a Security Issue", "https://phosphor.karimbabasf.com/security/"),
+    ("help-terms", "Terms of Use", "https://phosphor.karimbabasf.com/terms/"),
+    ("help-privacy", "Privacy", "https://phosphor.karimbabasf.com/privacy/"),
+];
+
 /// How often the supervisor asks whether the backend is still there. Two seconds is well under
 /// the time it takes a person to notice a dead window and long enough that the poll costs
 /// nothing.
@@ -169,12 +180,32 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::select_all(app, None)?,
         ],
     )?;
-    Menu::with_items(app, &[&app_menu, &edit_menu])
+    // Documentation and the problem report first, the two legal pages after a rule. macOS
+    // adds its own search field to a menu titled Help.
+    let help_items = HELP_LINKS
+        .iter()
+        .map(|(id, label, _)| MenuItem::with_id(app, *id, *label, true, None::<&str>))
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let mut help_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::with_capacity(help_items.len() + 1);
+    for (at, item) in help_items.iter().enumerate() {
+        if at == 3 {
+            help_refs.push(&separator);
+        }
+        help_refs.push(item);
+    }
+    let help_menu = Submenu::with_items(app, "Help", true, &help_refs)?;
+    Menu::with_items(app, &[&app_menu, &edit_menu, &help_menu])
 }
 
 fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
     if event.id() == update::CHECK_ID {
         update::check(app.clone(), true);
+        return;
+    }
+    if let Some((_, _, url)) = HELP_LINKS.iter().find(|(id, _, _)| event.id() == *id) {
+        // Same hand-off as a link the page opens: `open` gets the url as one argument, no shell.
+        let _ = std::process::Command::new("open").arg(url).spawn();
         return;
     }
     if event.id() != COPY_MCP_ID {

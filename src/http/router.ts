@@ -19,6 +19,7 @@ import { chartPayload, handleChartWrite, handleSnapshotDelivery, partParam, send
 import { handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
 import { handleMcp } from './mcp.ts';
+import { handleTermsAccept } from './terms.ts';
 import {
   handleActivity,
   handleLock,
@@ -141,6 +142,8 @@ const POST: Record<string, Route> = {
   '/api/vault/migrate': (ctx, req, res) => handleVaultMigrate(ctx, req, res),
   '/api/vault/forget': (ctx, req, res) => handleVaultForget(ctx, req, res),
   '/api/vault/prefs': (ctx, req, res) => handleVaultPrefs(ctx, req, res),
+  // The person accepted the terms of use. Window token, like every write a person makes here.
+  '/api/terms/accept': (ctx, req, res) => handleTermsAccept(ctx, req, res),
   '/api/deposit/show': (ctx, req, res) => handleDepositShow(ctx, req, res),
   '/api/deposit/stop': (ctx, req, res) => handleDepositStop(ctx, req, res),
 };

@@ -32,6 +32,7 @@ import { createSession } from './keystore/session.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { intentsReceiveReport } from './http/wallet.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
+import { createTerms } from './terms.ts';
 import { createDepositWatch } from './vault/watch.ts';
 import { createSseHub } from './http/sse.ts';
 import { createCandlePush } from './market/push.ts';
@@ -208,6 +209,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
      and every bare `npm run app` gets: no enclave, the password path, no behaviour change. */
   const vault = deps.vault ?? createVaultRelay({ transportKey: null });
   const vaultPrefs = createVaultPrefs(cfg.dataDir);
+  const terms = createTerms(cfg.dataDir);
   const deposits = createDepositWatch({
     ledger: deps.ledger,
     sse,
@@ -266,6 +268,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     vault,
     intentsReceive: () => (deps.intentsReceive !== undefined ? deps.intentsReceive() : intentsReceiveReport(ctx)),
     vaultPrefs,
+    terms,
     deposits,
     releaseQueued: () => deps.proposals.releaseQueued(),
     theme: { get: getTheme, set: setTheme },

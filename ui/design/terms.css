@@ -1,0 +1,53 @@
+/* The terms card, before anything else. Owned by ui/screens/terms.js. Wears
+   the first run's clothes (firstrun.css) on the same ink ground, so the two
+   screens a new person meets in a row read as one. */
+
+body[data-terms="true"] #page {
+  visibility: hidden;
+}
+
+#screen-terms {
+  background: var(--bg-0);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+#screen-terms .screen-card {
+  width: min(560px, 92vw);
+  padding: calc(var(--s-6) + var(--s-1)) calc(var(--s-6) + var(--s-2));
+}
+
+#screen-terms .screen-card:focus {
+  outline: none;
+}
+
+.terms-read,
+.terms-note {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: 1.55;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.terms-note {
+  font-size: var(--fs-13);
+  color: var(--text-3);
+}
+
+.terms-link {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--text) 40%, transparent);
+}
+
+.terms-link:hover,
+.terms-link:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+#screen-terms .screen-actions {
+  justify-content: flex-end;
+  margin-top: var(--s-2);
+}
