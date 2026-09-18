@@ -10,8 +10,8 @@
 //   show                 ({ kind, id })              returns { drawn: true, kind, id } and emits the card
 //   card ids             card-proposal-<proposalId>, card-tx-<hash>, dock-ask, #agent-status
 
-import type { WriteDraft } from '../types.js';
-import type { OutcomeState } from './lifecycle.js';
+import type { Proposal, WriteDraft } from '../types.ts';
+import type { OutcomeState } from './lifecycle.ts';
 
 // The app's own phases are lowercase. The provider's phases are 1Click's seven words, byte for
 // byte off GetExecutionStatusResponse, because "settling" is a word nobody outside this app can
@@ -125,3 +125,49 @@ export const DEADLINE_SEC: Record<WriteDraft['kind'], number | null> = Object.fr
     kind === 'policy_change' ? null : Math.max(TYPICAL_SEC[kind] * 8, 600),
   ]),
 ) as Record<WriteDraft['kind'], number | null>;
+
+/* 1Click's words that still describe a wait. SUCCESS is deliberately absent: it means the
+   solver delivered, which is not the same fact as the venue having credited the money, and the
+   transcript this file exists to fix is exactly the gap between those two. A row holding
+   SUCCESS and still open is waiting on the venue, so it reads `crediting`. */
+const PROVIDER_WAITING: ReadonlySet<string> = new Set([
+  'KNOWN_DEPOSIT_TX',
+  'PENDING_DEPOSIT',
+  'INCOMPLETE_DEPOSIT',
+  'PROCESSING',
+  'REFUNDED',
+  'FAILED',
+]);
+
+/* THE ONE MAP FROM A ROW TO A STAGE WORD. Every surface reads this and none of them keeps a
+   second one: the card had its own `STAGES` table and the agent had `outcomeOf`, and the two
+   disagreeing is the bug. Pure: it reads the row and nothing else, so persist() can call it on
+   the row it is about to write and on the row it is replacing. */
+export function stageOf(p: Proposal): ProposalStage {
+  const provider = p.result?.evidence?.providerStage;
+  switch (p.status) {
+    case 'pending':
+      return 'waiting_for_you';
+    case 'pending_unlock':
+      return 'waiting_for_unlock';
+    case 'awaiting_touch':
+      return 'waiting_for_touch';
+    case 'approved':
+      return 'signing';
+    case 'executing':
+      return provider !== undefined && PROVIDER_WAITING.has(provider) ? (provider as ProposalStage) : 'submitting';
+    case 'needs_reconciliation':
+      if (p.stalledAt !== undefined) return 'stalled';
+      return provider !== undefined && PROVIDER_WAITING.has(provider) ? (provider as ProposalStage) : 'crediting';
+    case 'executed':
+      return 'confirmed';
+    case 'failed':
+      return 'failed';
+    // A person clicked no, which is a decision rather than a fault: "Declined". The policy
+    // refusing is the app's own wall and reads "Refused". Two words for two different actors.
+    case 'refused':
+      return 'declined';
+    case 'policy_refused':
+      return 'refused';
+  }
+}

@@ -366,6 +366,11 @@ export type RailEvidence = {
   refundReason?: string;
   settledAmountOut?: string;
   explorerUrl?: string;
+  /* 1Click's own word for where the order is, byte for byte off GetExecutionStatusResponse
+     (PENDING_DEPOSIT, KNOWN_DEPOSIT_TX, INCOMPLETE_DEPOSIT, PROCESSING, SUCCESS, REFUNDED,
+     FAILED). Written on every poll so the stage a person reads is the stage the vendor would
+     confirm, rather than a word only this app uses. */
+  providerStage?: string;
   // The 1Click quote the move paid into, as 1Click signed it: verified before the deposit address
   // was used (src/quote-signature.ts) and kept so a dispute is filed with the vendor's own
   // commitment rather than this app's memory of it.
@@ -559,6 +564,20 @@ export type Proposal = {
   // Set when the preflight first said hold: the row stays approved, nothing is signed, and the
   // executor retries on its own until the checks clear or the hold runs out.
   heldSince?: string;
+  /* WHEN EACH STAGE WAS FIRST ENTERED, and when the stage last changed at all. The row is
+     written many times inside one stage (evidence lands, the preflight lands, a balance is
+     re-read), so "last written" is not "last moved", and a counter on a card that reset on
+     every write would say a deposit had just changed when nothing about it had. Written by
+     persist() in src/proposals/lifecycle.ts, read by proposalView(). Keys are ProposalStage
+     words; the map is absent on rows written before this existed and is backfilled on the
+     next write. */
+  stageAt?: Record<string, string>;
+  lastChangeAt?: string;
+  /* Set by the sweep in src/main.ts when a row passed its deadline with nothing changing. It
+     is a statement that nothing has moved, never a claim that the move failed: the row keeps
+     its status, keeps its charge against the day, and a later credit still settles it forward
+     to executed. Cleared by nothing; the stage that follows a settle wins on its own. */
+  stalledAt?: string;
 };
 
 // ---------- Basic view ----------

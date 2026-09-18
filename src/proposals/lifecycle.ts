@@ -36,6 +36,7 @@ import type { RailRegistry } from '../rails/index.ts';
 import type { TradeDeps } from '../trade/rail.ts';
 import type { OneClickLookup, VenueCredited } from './reconcile.ts';
 import { withReservation } from './reservation.ts';
+import { stageOf } from './view.ts';
 
 const SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -206,9 +207,24 @@ export async function settled(ctx: PCtx, id: string, capMs: number): Promise<Pro
 }
 
 export function persist(ctx: PCtx, p: Proposal): Proposal {
-  ctx.store.put(p);
+  const row = stamped(ctx, p);
+  ctx.store.put(row);
   ctx.notify();
-  return p;
+  return row;
+}
+
+/* THE STAGE CLOCK, and it moves on a stage change rather than on a write.
+   A row is written many times inside one stage: the rail hands over a handle, then a hash, then
+   a preflight, then a balance. A card counting from the last write would reset on each of those
+   and tell somebody their deposit had just moved when nothing about it had. So the stamp moves
+   only when stageOf() reads a different word than it read on the row this one replaces, and a
+   row that has never carried the stamp gets it on its next write whatever else changed. */
+function stamped(ctx: PCtx, p: Proposal): Proposal {
+  const before = ctx.store.get(p.id);
+  const stage = stageOf(p);
+  if (before !== undefined && p.lastChangeAt !== undefined && stageOf(before) === stage) return p;
+  const at = nowIso();
+  return { ...p, stageAt: { ...p.stageAt, [stage]: at }, lastChangeAt: at };
 }
 
 // ---------- the outcome, in the words an agent may repeat ----------
