@@ -7,7 +7,7 @@ without a git tag say so.
 
 ## 0.6.0
 
-Released 2026-09-17, the new-user pass. Not tagged at the time of writing.
+Built 2026-09-17, the new-user pass; tagged v0.6.0 on 2026-09-18.
 
 - The terms of use are accepted in the window before anything else opens, once per version of
   the terms; the click is recorded in `state/terms.json` and in the audit log as
