@@ -1,0 +1,49 @@
+{
+  "id": "S13",
+  "title": "withdraw while a position is open",
+  "userSays": "pull all my collateral back",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 0,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 60,
+        "availableUsdc": 60
+      }
+    }
+  },
+  "xfailUntil": "a Hyperliquid position can be seeded: demo mode has no open positions, so only live mode proves this one",
+  "script": [
+    {
+      "say": "Reading the trading account first.",
+      "tool": "trade_read"
+    },
+    {
+      "say": "You have an ETH long position open and it is using margin, so collateral cannot leave until the position is closed. The engine would refuse a withdraw and burn a click on nothing. Say the word and I will draw the close."
+    }
+  ],
+  "mustCall": [
+    "trade_read"
+  ],
+  "mustNotCall": [
+    "propose_hl_withdraw",
+    "propose_send"
+  ],
+  "mustSay": [
+    "ETH",
+    "position",
+    "close"
+  ],
+  "window": {
+    "noNewCard": true
+  },
+  "rubric": "It names the coin, the size and the distance to liquidation from trade_read, and offers the close.",
+  "pass": "zero propose_hl_withdraw; reply names the open position's coin and size from trade_read."
+}

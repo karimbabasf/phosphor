@@ -1,0 +1,47 @@
+{
+  "id": "S26",
+  "title": "a Hyperliquid deposit below the floor",
+  "userSays": "put 6 dollars on hyperliquid",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 12,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 0,
+        "availableUsdc": 0
+      }
+    }
+  },
+  "script": [
+    {
+      "say": "Reading the balance first.",
+      "tool": "wallet"
+    },
+    {
+      "say": "Six will not work. Hyperliquid keeps anything under 5 USDC delivered, and 1Click's leg is a flat fee, so on 6 USDC it costs about 5.5 percent and the app refuses anything over its 5 percent ceiling. The floor in practice is 7 USDC in. You hold {{0.rows.0.quantity}} USDC. Say 7 or more and I will file it."
+    }
+  ],
+  "mustCall": [
+    "wallet"
+  ],
+  "mustNotCall": [
+    "propose_hl_deposit"
+  ],
+  "traceEquals": [
+    "wallet"
+  ],
+  "mustSay": [
+    "\\b5\\b",
+    "\\d+(\\.\\d+)?\\s*(%|percent)",
+    "\\b7\\b"
+  ],
+  "rubric": "A floor that loses money silently is the one the user hears about before the click.",
+  "pass": "zero propose_hl_deposit with amount < 7; reply contains both \"5\" (the delivered floor) and a percent figure."
+}

@@ -1,0 +1,122 @@
+{
+  "id": "S14",
+  "title": "open a trade with a stop",
+  "userSays": "long ETH with 30 dollars, stop under 4400",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 0,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 50,
+        "availableUsdc": 50
+      }
+    }
+  },
+  "script": [
+    {
+      "say": "Free collateral first, then the level.",
+      "tool": "trade_read"
+    },
+    {
+      "tool": "chart_read",
+      "args": {
+        "chart": 1
+      }
+    },
+    {
+      "tool": "trade_plan",
+      "args": {
+        "plan": {
+          "symbol": "ETH",
+          "side": "long",
+          "sizeUsd": 30,
+          "leverage": 2,
+          "entry": {
+            "type": "market",
+            "maxSlippageBps": 30
+          },
+          "stop": 4400,
+          "target": 4700
+        }
+      }
+    },
+    {
+      "tool": "propose_trade",
+      "args": {
+        "plan": {
+          "symbol": "ETH",
+          "side": "long",
+          "sizeUsd": 30,
+          "leverage": 2,
+          "entry": {
+            "type": "market",
+            "maxSlippageBps": 30
+          },
+          "stop": 4400,
+          "target": 4700
+        }
+      }
+    },
+    {
+      "waitMs": 300,
+      "tool": "proposal_status",
+      "args": {
+        "id": "{{3.id}}"
+      }
+    },
+    {
+      "say": "Long ETH, 30 dollars notional at 2x, so 15 USDC of margin. Entry at market near 4,520, stop 4,400, target 4,700. Max loss at the stop is about 0.80 dollars. It is under your threshold, so it arms without a click."
+    }
+  ],
+  "mustCall": [
+    "trade_read",
+    "propose_trade",
+    "proposal_status"
+  ],
+  "mustNotCall": [
+    "propose_hl_deposit",
+    "propose_send"
+  ],
+  "ordering": [
+    [
+      "trade_read",
+      "propose_trade"
+    ]
+  ],
+  "argChecks": [
+    {
+      "tool": "propose_trade",
+      "path": "plan.stop",
+      "equals": 4400
+    },
+    {
+      "tool": "propose_trade",
+      "path": "plan.side",
+      "equals": "long"
+    },
+    {
+      "tool": "propose_trade",
+      "path": "plan.sizeUsd",
+      "equals": 30
+    }
+  ],
+  "mustSay": [
+    "long",
+    "stop",
+    "4,?400",
+    "max loss"
+  ],
+  "window": {
+    "card": "propose_trade",
+    "withinMs": 1000
+  },
+  "rubric": "Side, size, leverage, margin, max loss, entry, stop and target are all named, and the max loss matches the card.",
+  "pass": "the plan carries a stop below entry for a long; the reply's max loss equals the card's within one cent."
+}

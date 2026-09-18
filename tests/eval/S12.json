@@ -1,0 +1,76 @@
+{
+  "id": "S12",
+  "title": "withdraw 20 off Hyperliquid",
+  "userSays": "take 20 off hyperliquid",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 0,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 60,
+        "availableUsdc": 60
+      }
+    }
+  },
+  "script": [
+    {
+      "say": "Reading the trading account first: nothing may leave while margin is in use.",
+      "tool": "trade_read"
+    },
+    {
+      "tool": "propose_hl_withdraw",
+      "args": {
+        "amount": 20
+      }
+    },
+    {
+      "waitMs": 300,
+      "tool": "proposal_status",
+      "args": {
+        "id": "{{1.id}}"
+      }
+    },
+    {
+      "say": "20 USDC off Hyperliquid. Two fees: 1Click's routing leg, about 0.20 USDC plus 25 bp, and Hyperliquid's 1 USDC activation fee. Together about 6 percent on 20. A withdraw always waits for your click, whatever the size. It lands in this app's own NEAR Intents balance, and there is no field to send it anywhere else."
+    }
+  ],
+  "mustCall": [
+    "trade_read",
+    "propose_hl_withdraw",
+    "proposal_status"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_hl_deposit"
+  ],
+  "traceEquals": [
+    "trade_read",
+    "propose_hl_withdraw",
+    "proposal_status+"
+  ],
+  "argChecks": [
+    {
+      "tool": "propose_hl_withdraw",
+      "path": "amount",
+      "equals": 20
+    }
+  ],
+  "mustSay": [
+    "\\d+(\\.\\d+)?\\s*(%|percent)",
+    "1\\s*USDC",
+    "25\\s*bp|0\\.25"
+  ],
+  "window": {
+    "card": "propose_hl_withdraw",
+    "withinMs": 1000
+  },
+  "rubric": "Both fee parts are named, and where the money lands is named.",
+  "pass": "trace [trade_read, propose_hl_withdraw, proposal_status+]; reply contains a percent figure and both fee components."
+}

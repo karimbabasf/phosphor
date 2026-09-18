@@ -1,0 +1,88 @@
+{
+  "id": "S24",
+  "title": "session start",
+  "userSays": "hey",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 1850,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 50,
+        "availableUsdc": 50
+      }
+    },
+    "proposals": [
+      {
+        "id": "ev-s24-pending",
+        "kind": "policy_change",
+        "createdAt": {
+          "agoSec": 30
+        },
+        "status": "pending",
+        "draft": {
+          "kind": "policy_change",
+          "patch": {
+            "outbound": {
+              "humanClickAboveUsd": 250
+            }
+          },
+          "sentence": "Ask me before anything above $250."
+        },
+        "simulation": {
+          "ok": true,
+          "notes": [
+            "one field changes"
+          ]
+        },
+        "verdict": {
+          "outcome": "needs_approval",
+          "reasons": [
+            "policy_change of $0.00 to intents.near.",
+            "A policy change always waits for a human."
+          ],
+          "rule": "always_click"
+        }
+      }
+    ]
+  },
+  "script": [
+    {
+      "tool": "start"
+    },
+    {
+      "say": "You are holding {{0.facts.totalUsd}} in total. One decision is open: a policy change asking above 250 dollars. The ask threshold today is 100 dollars."
+    }
+  ],
+  "mustCall": [
+    "start"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_swap",
+    "propose_hl_deposit",
+    "propose_hl_withdraw",
+    "propose_trade",
+    "propose_trade_change",
+    "propose_policy_change"
+  ],
+  "traceEquals": [
+    "start"
+  ],
+  "mustSay": [
+    "one decision|1 decision",
+    "250",
+    "100"
+  ],
+  "mustNotSay": [
+    "█"
+  ],
+  "rubric": "Two or three lines: total value, both pockets, the pending decision and its amount, the ask threshold.",
+  "pass": "start is call index 0; reply names the pending count; no banner text in the reply when the transport is the app window."
+}
