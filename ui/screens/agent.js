@@ -152,6 +152,14 @@
     liveLine: 'Tell it what to do. It picks up your wallet, the policy and the chart on your first message.',
     ownTitle: 'Your own agent is at the wheel.',
     ownLine: 'Talk to it from its own terminal. Its moves land in Activity.',
+    /* Attached is not driving. Every Claude Code session on the Mac starts the
+       proxy, and the proxy announces itself on boot, so the roster fills with
+       members that have never made a call (Karim, 2026-09-18, five of them:
+       "this also looks like a bug"). The card says so in those words. */
+    idleTitle: 'Your own agent is connected.',
+    idleLine: 'It has not made a move yet. Talk to it from its terminal; its moves land in Activity.',
+    idleManyTitle: 'Your own agents are connected.',
+    idleManyLine: 'None has made a move yet. Talk to one from its terminal; its moves land in Activity.',
     connectTitle: 'Connect your own agent',
     connectLine: 'Any MCP client can drive Phosphor.',
     connectHint: 'Paste this into your terminal, then send a message from there.',
@@ -400,6 +408,31 @@
      only read while this column knows nobody of its own is at the wheel. */
   function ownAgents() {
     return canStart() ? roster : [];
+  }
+
+  /* The members that have done something. The rest are attached and idle,
+     which the roster folds into one line and the card does not call driving. */
+  function workingAgents() {
+    var out = [];
+    var list = ownAgents();
+    for (var i = 0; i < list.length; i += 1) if (list[i].calls > 0) out.push(list[i]);
+    return out;
+  }
+
+  /* The roster as drawn: one row per member at work, then one quiet row for
+     everyone attached and idle, however many. */
+  function rosterRows() {
+    var list = ownAgents();
+    var rows = workingAgents();
+    var idle = list.length - rows.length;
+    if (idle > 0) {
+      var line;
+      if (rows.length) line = idle + ' more connected, idle';
+      else if (idle === 1) line = '1 connected, no call yet';
+      else line = idle + ' connected, none has made a call yet';
+      rows = rows.concat([{ idle: true, count: idle, name: line, role: '', calls: 0 }]);
+    }
+    return rows;
   }
 
   /* ---------- mount ---------- */
@@ -1356,9 +1389,10 @@
     dom.setText(refs.line, connection.command || '');
     dom.setHidden(refs.connect, !connection.command);
 
-    /* Somebody else's agents, while the built-in one is off. */
-    dom.reconcile(refs.clients, ownAgents(), function (client, i) {
-      return client.name + ':' + i;
+    /* Somebody else's agents, while the built-in one is off: the ones at work
+       by name, and the idle ones as one line. */
+    dom.reconcile(refs.clients, rosterRows(), function (client, i) {
+      return (client.idle ? 'idle' : client.name) + ':' + i;
     }, function () {
       var row = dom.el('div', 'agent-client');
       row.appendChild(dom.el('span', 'dot'));
@@ -1367,6 +1401,13 @@
       return row;
     }, function (row, client) {
       var kids = row.children;
+      if (client.idle) {
+        dom.setAttr(row, 'data-idle', 'true');
+        dom.setText(kids[1], client.name);
+        dom.setText(kids[2], '');
+        return;
+      }
+      dom.setAttr(row, 'data-idle', null);
       dom.setText(kids[1], client.name + ', ' + (client.role === 'analyst' ? 'read only' : 'can ask'));
       dom.setText(kids[2], String(client.calls || 0) + ' calls');
     });
@@ -1448,9 +1489,13 @@
     } else if (seat === 'coming') {
       dom.setText(refs.emptyTitle, COPY.comingTitle);
       dom.setText(refs.emptyNote, COPY.comingLine);
-    } else if (own) {
+    } else if (own && workingAgents().length) {
       dom.setText(refs.emptyTitle, COPY.ownTitle);
       dom.setText(refs.emptyNote, COPY.ownLine);
+    } else if (own) {
+      var many = ownAgents().length > 1;
+      dom.setText(refs.emptyTitle, many ? COPY.idleManyTitle : COPY.idleTitle);
+      dom.setText(refs.emptyNote, many ? COPY.idleManyLine : COPY.idleLine);
     } else {
       dom.setText(refs.emptyTitle, COPY.offTitle);
       dom.setText(refs.emptyNote, COPY.offLine);
@@ -1968,8 +2013,11 @@
     var next = [];
     for (var i = 0; i < members.length; i += 1) {
       var m = members[i] || {};
+      /* The label first: it is the name whoever started the agent gave it for
+         this window (a spawned worker's "Analyst 2"), and the server fills it
+         with the client name when nobody did. */
       next.push({
-        name: String(m.client || m.label || m.session || 'an agent'),
+        name: String(m.label || m.client || m.session || 'an agent'),
         role: String(m.role || ''),
         calls: typeof m.ops === 'number' ? m.ops : 0
       });

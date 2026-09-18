@@ -123,7 +123,27 @@ function seat(): string {
 // seconds costs nothing on loopback and takes the worst-case "still shows connected" from
 // about a minute down to about twelve seconds when an agent is killed outright.
 const HELLO_MS = 5_000;
-const CLIENT = 'phosphor-mcp';
+
+/* WHAT THE ROSTER CALLS THIS PROCESS. The proxy used to name itself, so every row in the
+   window read "phosphor-mcp" whatever had started it, and five Claude Code terminals with the
+   server configured were five identical rows over a card saying an agent was at the wheel
+   (Karim, 2026-09-18: "this also looks like a bug"). The MCP handshake carries the client's own
+   name (clientInfo), so once that has landed the row says "claude-code"; until then, and for a
+   client that sends none, the proxy's own name stands. The hello repeats every HELLO_MS and the
+   app lets a member's client name move on a re-announce, so the rename lands within one beat.
+   It is agent-authored text like every other name on the roster: the app caps and cleans it and
+   the window renders it as text. */
+const PROXY_NAME = 'phosphor-mcp';
+function clientName(): string {
+  let info: { name?: unknown } | undefined;
+  try {
+    info = server.server.getClientVersion();
+  } catch {
+    info = undefined;
+  }
+  const name = typeof info?.name === 'string' ? info.name.replace(/[^A-Za-z0-9 ._-]/g, '').trim().slice(0, 48) : '';
+  return name === '' ? PROXY_NAME : name;
+}
 
 function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }] };
@@ -138,7 +158,7 @@ async function proxy(body: Record<string, unknown>) {
     res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: POST_HEADERS,
-      body: JSON.stringify({ ...body, session: SESSION, client: CLIENT, label: LABEL, parent: PARENT, secret: seat() }),
+      body: JSON.stringify({ ...body, session: SESSION, client: clientName(), label: LABEL, parent: PARENT, secret: seat() }),
       signal: venueWriteTimeout(),
     });
   } catch (err) {
@@ -206,7 +226,7 @@ async function announce(): Promise<void> {
       signal: readTimeout(),
       body: JSON.stringify({
         op: 'hello',
-        client: CLIENT,
+        client: clientName(),
         session: SESSION,
         intervalMs: HELLO_MS,
         secret: seat(),
@@ -1363,5 +1383,11 @@ transport.onclose = () => {
   void sendBye().finally(() => process.exit(0));
 };
 wireShutdown();
-void sendHello();
+// The first hello waits for the handshake to finish, because the handshake is what carries the
+// client's name (clientName above) and a hello sent on connect seated this process under the
+// proxy's own name for a full beat. It lands within milliseconds of connect; the heartbeat covers
+// a client that never completes one.
+server.server.oninitialized = () => {
+  void sendHello();
+};
 setInterval(sendHello, HELLO_MS);

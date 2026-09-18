@@ -551,6 +551,50 @@ test('a client of the person\'s own at the wheel reads Connected in the head, wi
   assert.equal(composer.hidden, true);
 });
 
+test('idle connections fold into one quiet row and are not called an agent at the wheel', () => {
+  // Karim, 2026-09-18, with five rows reading "phosphor-mcp, can ask · 0 calls" over a card
+  // saying "Your own agent is at the wheel": "this also looks like a bug". Every Claude Code
+  // session on the Mac starts the proxy, which announces itself on boot, so the roster held five
+  // members that had never made a call. Attached is not driving.
+  const world = build();
+  world.emit({ kind: 'status', state: 'off' });
+  const verb = all(world.host, 'status-verb')[0];
+  const idle = (n: number) => Array.from({ length: n }, (_, i) => ({ session: 's' + i, client: 'claude-code', label: 'claude-code', role: 'operator', ops: 0 }));
+
+  world.agents(idle(5));
+  assert.equal(verb.textContent, 'Connected', 'five connections are still a connection');
+  let rows = all(world.host, 'agent-client');
+  assert.equal(rows.length, 1, 'five idle connections drew ' + rows.length + ' rows');
+  assert.equal(rows[0].getAttribute('data-idle'), 'true');
+  assert.equal(rows[0].textContent, '5 connected, none has made a call yet');
+  assert.ok(world.card().includes('Your own agents are connected.'), world.card());
+  assert.ok(world.card().includes('None has made a move yet.'), world.card());
+  assert.ok(!world.card().includes('at the wheel'), world.card());
+
+  /* One of them goes to work: it gets its own row, named, and the rest stay folded. */
+  const five = idle(5);
+  five[2] = { ...five[2], ops: 3 };
+  world.agents(five);
+  rows = all(world.host, 'agent-client');
+  assert.equal(rows.length, 2, rows.map((r) => r.textContent).join(' | '));
+  assert.equal(rows[0].textContent, 'claude-code, can ask3 calls');
+  assert.equal(rows[0].getAttribute('data-idle'), null);
+  assert.equal(rows[1].textContent, '4 more connected, idle');
+  assert.ok(world.card().includes('Your own agent is at the wheel.'), world.card());
+
+  /* One idle connection is said in the singular. */
+  world.agents(idle(1));
+  rows = all(world.host, 'agent-client');
+  assert.equal(rows[0].textContent, '1 connected, no call yet');
+  assert.ok(world.card().includes('Your own agent is connected.'), world.card());
+  assert.ok(world.card().includes('It has not made a move yet.'), world.card());
+
+  /* A row is named by its label when it has one, which is how a spawned worker is told apart. */
+  world.agents([{ session: 'w', client: 'claude-code', label: 'Analyst 2', role: 'analyst', ops: 4 }]);
+  rows = all(world.host, 'agent-client');
+  assert.equal(rows[0].textContent, 'Analyst 2, read only4 calls');
+});
+
 test('a first move on a live column asks its question at once', () => {
   const world = build();
   const rows = all(world.host, 'suggest');

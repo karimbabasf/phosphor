@@ -192,6 +192,16 @@
   color: var(--text-3);
 }
 
+/* Attached and idle, folded into one line: present, so the dot stays, but
+   quieter than a member at work. */
+.agent-client[data-idle] {
+  color: var(--text-3);
+}
+
+.agent-client[data-idle] .dot {
+  opacity: 0.5;
+}
+
 /* ---------- the centre: the card, or the sheet ---------- */
 
 .agent-centre {

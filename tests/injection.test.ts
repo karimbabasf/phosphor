@@ -345,6 +345,22 @@ function assertNoExfiltrationTarget(tools: ListedTool[]): void {
   }
 }
 
+test('the roster names a connected client by its own handshake name, never by the proxy', async () => {
+  // The proxy used to announce itself as "phosphor-mcp", so every terminal on the roster read the
+  // same, and five idle Claude Code sessions were five identical rows (Karim, 2026-09-18). The
+  // client's name from the MCP initialize is what the row says now; the proxy's own name is the
+  // fallback for a client that never sent one. A call first, so the hello that renames has landed.
+  await callTool('wallet');
+  const state = (await fetch(`${base}/api/state`).then((r) => r.json())) as {
+    agents?: { members?: Array<{ client?: string; label?: string; ops?: number }> };
+  };
+  const members = state.agents?.members ?? [];
+  const me = members.find((m) => m.client === 'phosphor-injection');
+  assert.ok(me, 'the roster does not name the client: ' + JSON.stringify(members));
+  assert.equal(members.some((m) => m.client === 'phosphor-mcp'), false, 'the proxy still names itself on the roster');
+  assert.ok((me?.ops ?? 0) >= 1, 'the call was not counted');
+});
+
 test('the tool surface cannot express an exfiltration target', async () => {
   assert.ok(client !== null);
   const tools = (await client.listTools()).tools;
