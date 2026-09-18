@@ -221,10 +221,18 @@ export function persist(ctx: PCtx, p: Proposal): Proposal {
    row that has never carried the stamp gets it on its next write whatever else changed. */
 function stamped(ctx: PCtx, p: Proposal): Proposal {
   const before = ctx.store.get(p.id);
+  /* The STORE's history, not the caller's. executeRail holds the row as it was before the rail
+     ran and writes the outcome onto that snapshot, so every stamp the rail's own hooks made in
+     between is in the store and not in the row being handed here. The same reason the executor
+     already re-reads txids and evidence rather than trusting its snapshot. */
+  const history = { ...p.stageAt, ...before?.stageAt };
+  const seen = before?.lastChangeAt ?? p.lastChangeAt;
   const stage = stageOf(p);
-  if (before !== undefined && p.lastChangeAt !== undefined && stageOf(before) === stage) return p;
+  if (before !== undefined && seen !== undefined && stageOf(before) === stage) {
+    return { ...p, stageAt: history, lastChangeAt: seen };
+  }
   const at = nowIso();
-  return { ...p, stageAt: { ...p.stageAt, [stage]: at }, lastChangeAt: at };
+  return { ...p, stageAt: { ...history, [stage]: at }, lastChangeAt: at };
 }
 
 // ---------- the outcome, in the words an agent may repeat ----------

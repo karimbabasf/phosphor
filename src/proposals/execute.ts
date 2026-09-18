@@ -254,6 +254,7 @@ function pickEvidence(e: RailEvidence): RailEvidence {
   if (e.settledAmountOut !== undefined) out.settledAmountOut = e.settledAmountOut;
   if (e.explorerUrl !== undefined) out.explorerUrl = e.explorerUrl;
   if (e.quote !== undefined) out.quote = e.quote;
+  if (e.providerStage !== undefined) out.providerStage = e.providerStage;
   return out;
 }
 

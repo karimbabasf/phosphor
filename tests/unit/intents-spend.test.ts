@@ -318,7 +318,10 @@ test('the executor hears the handle right after the signature and the hash right
     },
   });
   assert.ok(out.submitted);
-  assert.deepEqual(h.calls.order, ['sign', `evidence::${HANDLE}`, 'submit', `evidence:HASH1:${HANDLE}`, 'poll']);
+  // The last pair is the poll and the word it read: every poll tells the executor where 1Click
+  // says the order is, so a five minute wait moves on the card instead of sitting on one stage.
+  assert.deepEqual(h.calls.order, ['sign', `evidence::${HANDLE}`, 'submit', `evidence:HASH1:${HANDLE}`, 'poll', 'evidence::']);
+  assert.equal(heard.at(-1)?.providerStage, 'SUCCESS');
   // The signed quote rides on both, so a row that dies inside the wait still has what 1Click signed.
   const { quote: signedQuote, ...rest } = heard[0] as { quote?: unknown; handle?: string; deadline?: string };
   assert.deepEqual(rest, { handle: HANDLE, deadline: DEADLINE });

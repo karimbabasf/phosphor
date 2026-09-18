@@ -126,15 +126,15 @@ export const DEADLINE_SEC: Record<WriteDraft['kind'], number | null> = Object.fr
   ]),
 ) as Record<WriteDraft['kind'], number | null>;
 
-/* 1Click's words that still describe a wait. SUCCESS is deliberately absent: it means the
-   solver delivered, which is not the same fact as the venue having credited the money, and the
-   transcript this file exists to fix is exactly the gap between those two. A row holding
-   SUCCESS and still open is waiting on the venue, so it reads `crediting`. */
-const PROVIDER_WAITING: ReadonlySet<string> = new Set([
+// 1Click's seven words, as the vendor spells them. A word this app does not recognise is not
+// printed as a stage: the row falls back to its own phase rather than showing a string the
+// stage table has no label for.
+const PROVIDER_STAGES: ReadonlySet<string> = new Set([
   'KNOWN_DEPOSIT_TX',
   'PENDING_DEPOSIT',
   'INCOMPLETE_DEPOSIT',
   'PROCESSING',
+  'SUCCESS',
   'REFUNDED',
   'FAILED',
 ]);
@@ -155,10 +155,15 @@ export function stageOf(p: Proposal): ProposalStage {
     case 'approved':
       return 'signing';
     case 'executing':
-      return provider !== undefined && PROVIDER_WAITING.has(provider) ? (provider as ProposalStage) : 'submitting';
+      return provider !== undefined && PROVIDER_STAGES.has(provider) ? (provider as ProposalStage) : 'submitting';
+    /* The router being done is not the venue having credited the money, and the gap between
+       those two facts is the transcript this file exists to close. So SUCCESS on an open row
+       reads `crediting`, which names what is actually being waited on; every other 1Click word
+       still describes the router's own work and is passed through as the vendor spells it. */
     case 'needs_reconciliation':
       if (p.stalledAt !== undefined) return 'stalled';
-      return provider !== undefined && PROVIDER_WAITING.has(provider) ? (provider as ProposalStage) : 'crediting';
+      if (provider !== undefined && provider !== 'SUCCESS' && PROVIDER_STAGES.has(provider)) return provider as ProposalStage;
+      return 'crediting';
     case 'executed':
       return 'confirmed';
     case 'failed':

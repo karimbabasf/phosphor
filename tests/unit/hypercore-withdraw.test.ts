@@ -706,7 +706,12 @@ test('an unsigned quote is refused before any send, and a signed one lands its r
   assert.ok(quote !== undefined, 'the signed quote is on the result');
   assert.equal(quote.depositAddress, DEPOSIT);
   assert.match(quote.signature, /^ed25519:/);
-  assert.equal(early.length, 1, 'the executor heard about the send before the watch loop');
-  assert.equal(early[0].nonce, String(NOW));
+  assert.equal(early[0].nonce, String(NOW), 'the executor heard about the send before the watch loop');
   assert.deepEqual(early[0].quote, quote);
+  // Then one call per poll, each carrying 1Click's own word for where the order is, so the card
+  // and the agent read the vendor's stage rather than a word only this app uses.
+  assert.deepEqual(
+    early.slice(1).map((e) => e.providerStage),
+    ['SUCCESS'],
+  );
 });
