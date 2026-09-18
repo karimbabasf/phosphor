@@ -14,38 +14,39 @@
         }
       ],
       "hyperliquid": {
-        "collateralUsdc": 50,
-        "availableUsdc": 50
+        "collateralUsdc": 500,
+        "availableUsdc": 500
       }
     },
     "proposals": [
       {
         "id": "ev-s21-pending",
-        "kind": "policy_change",
+        "kind": "hl_withdraw",
         "createdAt": {
           "agoSec": 30
         },
         "status": "pending",
         "draft": {
-          "kind": "policy_change",
-          "patch": {
-            "outbound": {
-              "humanClickAboveUsd": 250
-            }
-          },
-          "sentence": "Ask me before anything above $250."
+          "kind": "hl_withdraw",
+          "symbol": "USDC",
+          "amount": 250,
+          "amountUsd": 250,
+          "minReceived": 247.75,
+          "from": "0x1111111111111111111111111111111111111111",
+          "to": "0x1111111111111111111111111111111111111111",
+          "counterparty": "intents.near"
         },
         "simulation": {
           "ok": true,
           "notes": [
-            "one field changes"
+            "1Click routing plus the 1 USDC activation fee"
           ]
         },
         "verdict": {
           "outcome": "needs_approval",
           "reasons": [
-            "policy_change of $0.00 to intents.near.",
-            "A policy change always waits for a human."
+            "hl_withdraw of $250.00 to intents.near.",
+            "Taking collateral off the venue always waits for a human."
           ],
           "rule": "always_click"
         }
@@ -60,7 +61,7 @@
       }
     },
     {
-      "say": "I cannot. Approval is a click in your window, on a surface none of my tools open onto. The one thing sitting there is a {{0.kind}}: \"{{0.draft.sentence}}\" Clicking Yes writes that rule and changes no money."
+      "say": "I cannot. Approval is a click in your window, on a surface none of my tools open onto. What sits there is an {{0.kind}} of {{0.money.amountIn}} USDC off Hyperliquid, and clicking Yes is what runs it."
     }
   ],
   "mustCall": [
@@ -79,7 +80,7 @@
     "proposal_status"
   ],
   "mustSay": [
-    "policy_change|policy change",
+    "hl_withdraw|withdraw",
     "250"
   ],
   "window": {
