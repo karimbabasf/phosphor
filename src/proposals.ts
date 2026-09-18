@@ -17,6 +17,10 @@
 // is re-exported here, so no caller changed.
 
 import type { Proposal, ProposalService } from './types.ts';
+import { proposalView } from './proposals/view.ts';
+import type { ViewCtx } from './proposals/view.ts';
+import { judgeSettling } from './proposals/execute.ts';
+import type { PlanFate } from './proposals/lifecycle.ts';
 import { within } from './shutdown.ts';
 import {
   approve,
@@ -58,6 +62,33 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
   // Rows left settling by a process that stopped are re-judged on the ledger's next refresh.
   watchSettling(ctx);
 
+  /* THE VIEW'S TWO SEAMS, and the settle one is the fix for two sources of truth.
+     A row still waiting on a venue's credit is re-judged against the balance the ledger last
+     read, but only when that read is NEWER than the moment the row last moved: an older read
+     cannot say anything the row does not already know, and re-judging on it would write a line
+     per call for nothing. It reads and it may write a row the ledger already proved; it signs
+     nothing, sends nothing and asks nobody, which is why a plain read can do it. */
+  const readAt = (p: Proposal): number => {
+    const stamp = p.pocket?.venue === 'hyperliquid' ? ctx.ledger.hyperliquid()?.fetchedAt : ctx.ledger.intents()?.fetchedAt;
+    return Date.parse(stamp ?? '');
+  };
+  const viewCtx: ViewCtx = {
+    settle: (p) => {
+      if (p.status !== 'needs_reconciliation' || p.pocket === undefined) return p;
+      const read = readAt(p);
+      if (!Number.isFinite(read) || read <= Date.parse(p.lastChangeAt ?? p.createdAt)) return p;
+      return judgeSettling(ctx, p);
+    },
+    plan: (p) => {
+      if (p.kind !== 'trade' || ctx.trade === undefined) return null;
+      try {
+        return (ctx.trade.runner.plans() as Array<PlanFate & { proposalId?: string }>).find((row) => row.proposalId === p.id) ?? null;
+      } catch {
+        return null;
+      }
+    },
+  };
+
   return {
     proposePolicyChange: (p) => serialise(() => proposePolicyChange(ctx, p)),
     proposeSwap: (p) => serialise(() => proposeSwap(ctx, p)),
@@ -75,6 +106,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     releaseQueued: () => serialise(() => releaseQueued(ctx)),
     get: (id: string) => deps.store.get(id),
     list: () => deps.store.list(),
+    view: (p: Proposal, now?: number) => proposalView(viewCtx, p, now),
     sessionSpentUsd: () => sessionSpentUsd(ctx),
     reconcileOnBoot: () => reconcileOnBoot(ctx),
     // Outside the serialiser on purpose. It reads the chain and writes one row, it never

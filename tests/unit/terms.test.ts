@@ -24,6 +24,7 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
+import { stubView } from '../fixtures/view.ts';
 
 function tmp(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-terms-'));
@@ -112,6 +113,7 @@ async function boot() {
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

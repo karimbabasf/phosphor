@@ -7,6 +7,7 @@ import type { Plan } from './trade/plan.ts';
 import type { PlanRisk } from './trade/risk.ts';
 import type { AddressActivity } from './chainscan/index.ts';
 import type { ChainNetwork } from './chainscan/networks.ts';
+import type { ProposalView } from './proposals/view.ts';
 
 export type ChainId = 'eth' | 'base' | 'arb' | 'sol' | 'near';
 export type Mode = 'demo' | 'live';
@@ -865,6 +866,12 @@ export type ProposalService = {
   releaseQueued(): Promise<number>;
   get(id: string): Proposal | undefined;
   list(): Proposal[];
+  /* One row as every surface reads it: the stage, what is being waited on, the clocks, the
+     money and the hashes, in one object. The card draws it, /api/state carries it, the agent
+     narrates it, and a row still waiting on a venue is re-judged against the last balance read
+     on the way through. `now` is the clock the elapsed figures are taken against, so two
+     surfaces can be asserted to agree at one instant. See src/proposals/view.ts. */
+  view(p: Proposal, now?: number): ProposalView;
   sessionSpentUsd(): number; // executed fund-moving usd in the last 24h
   // Boot sweep: every row left `executing` by a process that is gone becomes
   // `needs_reconciliation`. Returns what it changed. Ran once, before the port opens.

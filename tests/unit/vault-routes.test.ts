@@ -29,6 +29,7 @@ import { createVaultRelay } from '../../src/vault/relay.ts';
 import { receiveNetworkOf } from '../../src/rails/intents-address.ts';
 import type { IntentsReceiveNetwork } from '../../src/http/wallet.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
+import { stubView } from '../fixtures/view.ts';
 
 
 function snapshot(): LedgerSnapshot {
@@ -123,6 +124,7 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
       sessionSpentUsd: () => 0,
       releaseQueued: async () => {
         releases += 1;
@@ -532,6 +534,7 @@ test('with no shell relaying, the enclave verbs say so and the password path is 
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

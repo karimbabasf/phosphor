@@ -24,6 +24,7 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import type { DriverState } from '../../src/driver.ts';
+import { stubView } from './view.ts';
 
 const FETCHED_AT = '2026-08-20T00:00:00.000Z';
 
@@ -128,6 +129,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

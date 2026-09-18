@@ -31,6 +31,7 @@ import {
   STATE_DECIDED_KEPT,
 } from '../../src/http/state.ts';
 import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
+import { stubView } from '../fixtures/view.ts';
 
 const SELF = '0x1111111111111111111111111111111111111111';
 
@@ -130,6 +131,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
         builds += 1;
         return store.list();
       },
+      view: (p) => stubView(p),
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
