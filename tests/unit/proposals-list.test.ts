@@ -82,6 +82,7 @@ test('kind filters to one rail and an unknown kind is an empty list, never every
 
 test('every row is the same object proposal_status hands back', async () => {
   const [view] = await list([row('d', 'hl_deposit', 1)], {});
+  assert.equal(view.sentence, '5 USDC from NEAR Intents to Hyperliquid');
   assert.equal(view.stage, 'confirmed');
   assert.equal(view.stageLabel, 'Confirmed');
   assert.equal(view.terminal, true);

@@ -17,6 +17,7 @@
    exists to end. */
 import { outcomeOf } from './lifecycle.ts';
 import type { OutcomeState, PlanFate } from './lifecycle.ts';
+import { px } from '../trade/plan.ts';
 import type { Proposal, WriteDraft } from '../types.ts';
 
 // The app's own phases are lowercase. The provider's phases are 1Click's seven words, byte for
@@ -53,6 +54,7 @@ export type TxLeg = {
 export type ProposalView = {
   id: string;
   kind: WriteDraft['kind'];
+  sentence: string; // what the move IS, in one plain line. The card prints it, the agent quotes it.
   stage: ProposalStage;
   stageLabel: string; // the one plain line both surfaces print. Never built twice.
   providerStage: string | null; // 1Click's raw word, null when no provider owns this phase
@@ -246,6 +248,74 @@ function amountInOf(draft: WriteDraft): string | null {
   return typeof amount === 'number' ? String(amount) : null;
 }
 
+/* One bounded line, for the one string on a draft an agent wrote: a policy change's own
+   sentence. It is already what the card and the approval show, and it is DATA here as it is
+   there, so it arrives flattened and capped rather than able to add lines to a card or a
+   reply. Nothing else in this file needs it: every other sentence is built from numbers and
+   enum values the app minted. */
+const MAX_SENTENCE = 200;
+
+function oneLine(raw: string): string {
+  let flat = '';
+  for (const ch of raw) {
+    const code = ch.codePointAt(0) ?? 32;
+    flat += code < 32 || code === 127 ? ' ' : ch;
+  }
+  const tidy = flat.replace(/\s+/g, ' ').trim();
+  return tidy.length > MAX_SENTENCE ? tidy.slice(0, MAX_SENTENCE) + '...' : tidy;
+}
+
+// The amount and the token as the draft holds them, never rounded: "7.54" under a draft that
+// says 7.5425 is a figure nobody agreed to. Null amount (a retired kind, a row written without
+// one) says the token alone rather than the word undefined.
+function moved(draft: WriteDraft): string {
+  const amount = amountInOf(draft);
+  const symbol = symbolOf(draft);
+  return amount === null ? symbol : `${amount} ${symbol}`;
+}
+
+/* THE MOVE IN ONE PLAIN LINE. The card prints it, the agent quotes it when it names a pending
+   move, and neither of them phrases it again: "what is this?" answered twice is the same bug as
+   "what stage is it at?" answered twice.
+
+   Every money line reads the same way, amount then token then the two pockets, so a person who
+   has read one has read them all. A send names its receiver in full: the whole address and
+   whether it lands on a chain or inside NEAR Intents are the two facts a wrong send turns on,
+   and a shortened address is exactly what a substituted one hides behind. */
+export function sentenceOf(draft: WriteDraft): string {
+  switch (draft.kind) {
+    case 'policy_change':
+      return oneLine(draft.sentence);
+    case 'hl_deposit':
+      return `${moved(draft)} from NEAR Intents to Hyperliquid`;
+    case 'hl_withdraw':
+      return `${moved(draft)} from Hyperliquid to NEAR Intents`;
+    // Both legs sit inside the verifier, so the sentence names the two assets rather than two
+    // pockets: a swap changes what the balance holds and moves nothing anywhere.
+    case 'swap':
+      return `${moved(draft)} to ${draft.toSymbol} inside NEAR Intents`;
+    case 'intents_send':
+      return `${moved(draft)} from NEAR Intents to ${draft.to}, inside NEAR Intents`;
+    case 'intents_pay':
+      return `${moved(draft)} from NEAR Intents to ${draft.to}, on ${draft.network}`;
+    case 'trade': {
+      if (draft.op === 'open') {
+        const plan = draft.plan;
+        return `${plan.side === 'long' ? 'Long' : 'Short'} ${plan.symbol}, $${plan.sizeUsd} notional, stop ${px(plan.stop)}`;
+      }
+      if (draft.cancel === true) return `Cancel trade ${draft.id}`;
+      if (draft.close === true) return `Close trade ${draft.id}`;
+      const parts: string[] = [];
+      if (draft.stop !== undefined) parts.push(`stop ${px(draft.stop)}`);
+      if (draft.target !== undefined) parts.push(`target ${px(draft.target)}`);
+      return parts.length === 0 ? `No change to trade ${draft.id}` : `Trade ${draft.id}: ${parts.join(', ')}`;
+    }
+    // A rail this app no longer has still has to read; see pocketsOf.
+    default:
+      return moved(draft);
+  }
+}
+
 /* WHAT ARRIVED, and never a figure this app made up. The venue's settled amount first, because
    that is the only number anybody observed; then the quote the simulation was priced on, which
    is the solver's promise and is what the card drew before the click. Null when neither exists,
@@ -350,6 +420,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
   return {
     id: p.id,
     kind: p.kind,
+    sentence: sentenceOf(p.draft),
     stage,
     stageLabel: STAGE_LABEL[stage],
     providerStage: p.result?.evidence?.providerStage ?? null,

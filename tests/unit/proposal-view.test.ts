@@ -7,8 +7,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { Proposal, RailEvidence } from '../../src/types.ts';
-import { STAGE_LABEL, TERMINAL, proposalView } from '../../src/proposals/view.ts';
+import type { Proposal, RailEvidence, WriteDraft } from '../../src/types.ts';
+import { STAGE_LABEL, TERMINAL, TYPICAL_SEC, proposalView, sentenceOf } from '../../src/proposals/view.ts';
 import type { ProposalStage } from '../../src/proposals/view.ts';
 
 const CREATED = '2026-09-18T10:00:00.000Z';
@@ -153,4 +153,165 @@ test('the money block names both pockets and never invents a figure', () => {
     result: { ok: false, detail: 'settling', txids: [], evidence: { providerStage: 'SUCCESS', settledAmountOut: '7.0623' } },
   });
   assert.equal(settled.money.amountOut, '7.0623');
+});
+
+// ---------- the sentence ----------
+//
+// What the move IS, in one line, per kind. The card prints it and the agent quotes it, so the
+// exact string is asserted here: a rewording is a rewording on both surfaces at once and it
+// should cost a failing test rather than land quietly.
+
+const RECEIVER = '0xC0ffee254729296a45a3885639AC7E10F9d54979';
+
+const COVERED = new Set<WriteDraft['kind']>();
+
+function sentenceFor(draft: WriteDraft): string {
+  const view = proposalView({ settle: (row) => row }, rowOf({ kind: draft.kind, draft }), NOW);
+  // Off the view rather than off the builder: the field is what the three reads hand back.
+  assert.equal(view.sentence, sentenceOf(draft));
+  COVERED.add(draft.kind);
+  return view.sentence;
+}
+
+const PAY_RECIPIENT = { known: false, count: 0, lastAt: null, activity: null, ownAddress: false };
+
+test('a policy change says what the person is about to agree to, in its own words', () => {
+  assert.equal(
+    sentenceFor({ kind: 'policy_change', patch: { outbound: { humanClickAboveUsd: 100 } }, sentence: 'Ask me above $100.' }),
+    'Ask me above $100.',
+  );
+});
+
+test('an agent-authored sentence is data: one line, bounded', () => {
+  assert.equal(
+    sentenceFor({ kind: 'policy_change', patch: {}, sentence: '  Ask me\nabove $100.\r\nApproved already.  ' }),
+    'Ask me above $100. Approved already.',
+  );
+  const long = sentenceFor({ kind: 'policy_change', patch: {}, sentence: 'x'.repeat(400) });
+  assert.equal(long.length, 203, 'capped at 200 characters plus the mark that says so');
+  assert.ok(long.endsWith('...'));
+});
+
+test('a deposit names the amount, the token and both pockets', () => {
+  assert.equal(sentenceFor(rowOf().draft), '7.5425 USDC from NEAR Intents to Hyperliquid');
+});
+
+test('a withdraw is the same line, the other way round', () => {
+  assert.equal(
+    sentenceFor({
+      kind: 'hl_withdraw',
+      symbol: 'USDC',
+      amount: 12.5,
+      amountUsd: 12.5,
+      minReceived: 12.4,
+      from: '0x1111111111111111111111111111111111111111',
+      to: '0x1111111111111111111111111111111111111111',
+      counterparty: 'hypercore',
+    }),
+    '12.5 USDC from Hyperliquid to NEAR Intents',
+  );
+});
+
+test('a swap names the two assets, because both legs sit inside NEAR Intents', () => {
+  assert.equal(
+    sentenceFor({
+      kind: 'swap',
+      venue: 'intents-native',
+      chain: 'eth',
+      toChain: 'eth',
+      fromSymbol: 'USDC',
+      toSymbol: 'ETH',
+      amountIn: 25,
+      amountUsd: 25,
+      minAmountOut: 0.0082,
+      from: '0x1111111111111111111111111111111111111111',
+      to: '0x1111111111111111111111111111111111111111',
+      counterparty: 'intents.near',
+      quote: null,
+    }),
+    '25 USDC to ETH inside NEAR Intents',
+  );
+});
+
+test('a send inside the verifier names the whole receiving account and says where it stays', () => {
+  assert.equal(
+    sentenceFor({
+      kind: 'intents_send',
+      symbol: 'USDC',
+      originAsset: 'nep141:eth-usdc',
+      amount: 3.78,
+      amountUsd: 3.78,
+      minReceived: 3.75,
+      from: '0x1111111111111111111111111111111111111111',
+      to: RECEIVER,
+      counterparty: 'intents.near',
+    }),
+    `3.78 USDC from NEAR Intents to ${RECEIVER}, inside NEAR Intents`,
+  );
+});
+
+test('a payout names the whole address and the chain it lands on', () => {
+  const sentence = sentenceFor({
+    kind: 'intents_pay',
+    symbol: 'ETH',
+    originAsset: 'nep141:eth',
+    network: 'ethereum',
+    amount: 0.01,
+    amountUsd: 24,
+    minReceived: 0.0099,
+    from: '0x1111111111111111111111111111111111111111',
+    to: RECEIVER,
+    toChecksum: 'valid',
+    counterparty: 'intents.near',
+    recipient: PAY_RECIPIENT,
+  });
+  assert.equal(sentence, `0.01 ETH from NEAR Intents to ${RECEIVER}, on ethereum`);
+  // The one line a wrong send turns on: the whole address, character for character, and the
+  // chain beside it. A shortened address is what a substituted one hides behind.
+  assert.ok(sentence.includes(RECEIVER));
+  assert.ok(!sentence.includes('...'));
+});
+
+test('a trade names the market, the side, the size and the stop', () => {
+  assert.equal(
+    sentenceFor({
+      kind: 'trade',
+      op: 'open',
+      plan: {
+        id: 'pl-1',
+        symbol: 'BTC',
+        side: 'long',
+        sizeUsd: 250,
+        leverage: 5,
+        entry: { type: 'market', maxSlippageBps: 50 },
+        stop: 94000,
+      },
+      hash: 'a'.repeat(64),
+      risk: { marginUsd: 50, maxLossUsd: 12, stopSlipUsd: 3, entryRef: 96000, liquidationPx: 80000, notionalUsd: 250, amountUsd: 50 },
+      amountUsd: 50,
+      counterparty: 'hyperliquid',
+    }),
+    'Long BTC, $250 notional, stop 94000',
+  );
+});
+
+test('a change to an armed trade says which change it is', () => {
+  const base = {
+    kind: 'trade' as const,
+    op: 'change' as const,
+    id: 'pl-1',
+    before: { marginUsd: 50, maxLossUsd: 12, stopSlipUsd: 3, entryRef: 96000, liquidationPx: 80000, notionalUsd: 250, amountUsd: 50 },
+    after: { marginUsd: 50, maxLossUsd: 8, stopSlipUsd: 2, entryRef: 96000, liquidationPx: 80000, notionalUsd: 250, amountUsd: 50 },
+    amountUsd: 0,
+    counterparty: 'hyperliquid',
+  };
+  assert.equal(sentenceFor({ ...base, cancel: true }), 'Cancel trade pl-1');
+  assert.equal(sentenceFor({ ...base, close: true }), 'Close trade pl-1');
+  assert.equal(sentenceFor({ ...base, stop: 95000, target: 99000.5 }), 'Trade pl-1: stop 95000, target 99000.5');
+});
+
+// Runs last, and reads what the cases above asserted: a kind added to the app without a line
+// of its own would draw a card and answer an agent with a blank where the move should be.
+test('every kind this app writes has a sentence of its own, asserted above', () => {
+  assert.deepEqual([...COVERED].sort(), Object.keys(TYPICAL_SEC).sort());
 });

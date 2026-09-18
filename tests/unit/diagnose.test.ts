@@ -129,6 +129,7 @@ test('the venue read comes back for a Hyperliquid move and for nothing else', as
 
 test('the view rides along, so one call answers the whole question', async () => {
   const out = await diagnose(ctxWith([row('p1')], []), 'p1');
+  assert.equal(out.body.view.sentence, '7.5425 USDC from NEAR Intents to Hyperliquid');
   assert.equal(out.body.view.stage, 'crediting');
   assert.equal(out.body.view.waitingOn, 'Hyperliquid');
 });

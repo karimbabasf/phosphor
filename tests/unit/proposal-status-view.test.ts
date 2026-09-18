@@ -168,6 +168,7 @@ test('proposal_status and state.proposals[].view are the same object for the sam
     assert.deepEqual(stateRest, toolRest);
     assert.ok(Math.abs(fromState.elapsedSec - fromTool.elapsedSec) <= 1);
 
+    assert.equal(fromTool.sentence, '10 USDC from NEAR Intents to Hyperliquid');
     assert.equal(fromTool.stage, 'PROCESSING');
     assert.equal(fromTool.stageLabel, 'The router is working');
     assert.equal(fromTool.providerStage, 'PROCESSING');
