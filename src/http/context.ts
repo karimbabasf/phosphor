@@ -261,6 +261,8 @@ export type SseHub = {
   clientCount(): number;
   broadcastState(): void;
   broadcastTransactions(): void;
+  // Which proposal moved. The object rides in GET /api/state.proposals[].view; this is the push.
+  broadcastProposal(id: string): void;
   // Which chart moved. The window redraws one slot rather than all four; 0 is the primary.
   broadcastChart(slot?: number): void;
   // Ask the window for a picture of one chart. It answers on POST /api/chart/snapshot with the

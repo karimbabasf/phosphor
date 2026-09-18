@@ -627,11 +627,13 @@ for (const [index, sentence] of hostile.sentences.entries()) {
     assert.equal(refused.json.status, 'refused');
     assert.equal(refused.json.decidedBy, 'human');
 
-    // The agent's own wording is kept verbatim, as the agent's claim, not as a rule.
+    // The row a person said no to reads "Declined" to every surface, and says so in one word.
     const stored = await callTool('proposal_status', { id: proposed.id });
-    assert.equal(stored.draft.sentence, sentence);
-    assert.equal(stored.status, 'refused');
+    assert.equal(stored.stage, 'declined');
+    assert.equal(stored.terminal, true);
+    assert.equal(stored.waitingOn, null);
 
+    // The agent's own wording is kept verbatim, as the agent's claim, not as a rule.
     const audit = auditLines();
     assert.ok(
       audit.some(e => e.type === 'refused' && (e.data as Json)?.id === proposed.id),

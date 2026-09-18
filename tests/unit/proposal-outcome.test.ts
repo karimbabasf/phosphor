@@ -11,6 +11,9 @@ import assert from 'node:assert/strict';
 import type http from 'node:http';
 
 import { outcomeOf } from '../../src/proposals/lifecycle.ts';
+import type { PlanFate } from '../../src/proposals/lifecycle.ts';
+import { proposalView } from '../../src/proposals/view.ts';
+import type { ProposalView } from '../../src/proposals/view.ts';
 import { SETTLING_SENTENCE } from '../../src/ledger/settle.ts';
 import { walletReads } from '../../src/http/read/wallet.ts';
 import type { Ctx } from '../../src/http/context.ts';
@@ -121,7 +124,12 @@ function captured(): { res: http.ServerResponse; body: () => unknown } {
   return { res, body: () => JSON.parse(text) };
 }
 
-test('proposal_status carries the outcome beside the row, and reads a trade plan off the runner', async () => {
+/* proposal_status answers with the ProposalView and nothing beside it. It used to answer with
+   the whole row plus an `outcome` blob, and the card built a second opinion out of the same
+   fields: that pair is what put "Confirmed at 14:20" on screen beside "still settling". The one
+   word an agent may repeat is still here, as `outcome` on the view, next to the stage word both
+   surfaces print. */
+test('proposal_status answers with the view, carrying the stage and the outcome word', async () => {
   const settling = proposal({
     id: 'swap-1',
     status: 'needs_reconciliation',
@@ -134,23 +142,28 @@ test('proposal_status carries the outcome beside the row, and reads a trade plan
     [settling.id, settling],
     [trade.id, trade],
   ]);
+  const plans: PlanFate[] = [{ status: 'placed', confirm: { state: 'unconfirmed', venueStatus: null } }];
   const ctx = {
-    proposals: { get: (id: string) => rows.get(id) },
-    trade: { payload: () => ({ plans: [{ id: 'pl_1', proposalId: 'trade-1', status: 'placed', confirm: { state: 'unconfirmed', venueStatus: null } }] }) },
+    proposals: {
+      get: (id: string) => rows.get(id),
+      view: (p: Proposal) => proposalView({ settle: (row) => row, plan: () => (p.kind === 'trade' ? plans[0] : null) }, p),
+    },
   } as unknown as Ctx;
 
   const a = captured();
   await walletReads.proposal_status(ctx, {}, { id: 'swap-1' }, a.res);
-  const swap = a.body() as { status: string; outcome: { state: string; sentence: string; beforeUsd: number | null; afterUsd: number | null } };
-  assert.equal(swap.status, 'needs_reconciliation', 'the row itself is still there');
-  assert.equal(swap.outcome.state, 'settling');
-  assert.doesNotMatch(swap.outcome.sentence, /fail/i);
-  assert.equal(swap.outcome.beforeUsd, 5);
-  assert.equal(swap.outcome.afterUsd, null);
+  const swap = a.body() as ProposalView;
+  assert.equal(swap.stage, 'crediting');
+  assert.equal(swap.stageLabel, 'Waiting for the venue to credit it');
+  assert.equal(swap.outcome, 'settling');
+  assert.equal(swap.terminal, false);
+  assert.equal(swap.money.beforeUsd, 5);
+  assert.equal(swap.money.afterUsd, null);
+  assert.equal((swap as unknown as { draft?: unknown }).draft, undefined, 'the row itself does not ride along any more');
 
   const b = captured();
   await walletReads.proposal_status(ctx, {}, { id: 'trade-1' }, b.res);
-  const armed = b.body() as { outcome: { state: string; sentence: string } };
-  assert.equal(armed.outcome.state, 'unconfirmed');
-  assert.match(armed.outcome.sentence, /the order may exist/);
+  const armed = b.body() as ProposalView;
+  assert.equal(armed.stage, 'confirmed');
+  assert.equal(armed.outcome, 'unconfirmed', "the plan's own fate is what a trade row reports");
 });

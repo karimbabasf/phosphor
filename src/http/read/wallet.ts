@@ -11,8 +11,6 @@ import { LOG_LIMIT_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
-import { outcomeOf } from '../../proposals/lifecycle.ts';
-import type { PlanFate } from '../../proposals/lifecycle.ts';
 import { RECEIVE_NETWORKS, receiveNetworkOf } from '../../rails/intents-address.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
@@ -216,6 +214,13 @@ export const walletReads: ReadTable = {
   log_tail: (ctx, _body, args, res) => {
     sendJson(res, 200, ctx.audit.tail(intParam(args.limit, 50, LOG_LIMIT_MAX)));
   },
+  /* THE ONE OBJECT, and nothing beside it. This used to answer with the whole row plus an
+     `outcome` blob, and the card built its own second opinion out of the same fields, which is
+     how "Confirmed at 14:20" and "still settling" came to be on screen together. Now both
+     surfaces read the same ProposalView: the stage, the label, what is being waited on, the
+     clocks, the money and the hashes. A row still waiting on a venue is re-judged against the
+     last balance read on the way through, so this read is also what moves a settled row
+     forward. See src/proposals/view.ts. */
   proposal_status: (ctx, _body, args, res) => {
     const id = typeof args.id === 'string' ? args.id : '';
     const proposal = ctx.proposals.get(id);
@@ -223,19 +228,6 @@ export const walletReads: ReadTable = {
       fail(res, 404, `unknown proposal id: ${id}`);
       return;
     }
-    /* `outcome` is the one word the agent may repeat about this row (confirmed, settling,
-       failed, unconfirmed, pending) with a plain sentence and the pocket's before and after,
-       so a settling swap is never reported as failed. A trade proposal's fate is its plan's:
-       the entry is confirmed, unconfirmed or ended on the runner's row, not on this one. */
-    let plan: PlanFate | null = null;
-    if (proposal.kind === 'trade') {
-      try {
-        const plans = (ctx.trade.payload() as { plans?: Array<PlanFate & { proposalId?: string }> }).plans ?? [];
-        plan = plans.find((row) => row.proposalId === proposal.id) ?? null;
-      } catch {
-        plan = null;
-      }
-    }
-    sendJson(res, 200, { ...proposal, outcome: outcomeOf(proposal, plan) });
+    sendJson(res, 200, ctx.proposals.view(proposal));
   },
 };

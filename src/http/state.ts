@@ -159,9 +159,13 @@ export function buildState(ctx: Ctx): unknown {
     terms: ctx.terms.get(),
     deposit: ctx.deposits.current(),
     sentences: sentencesOf(policy),
-    // Everything still waiting on a person, plus the last 20 decided. The rest is paged behind
-    // GET /api/proposals; see the note on STATE_DECIDED_KEPT above.
-    proposals: stateProposals(list),
+    /* Everything still waiting on a person, plus the last 20 decided, each carrying the one
+       object every surface reads. The rest is paged behind GET /api/proposals; see the note on
+       STATE_DECIDED_KEPT above.
+       `view` is what the card draws and it is the SAME object proposal_status hands the agent,
+       built by the same function off the same row, which is the whole of the fix: two surfaces
+       cannot disagree about a stage neither of them derives. */
+    proposals: stateProposals(list).map((p) => ({ ...p, view: ctx.proposals.view(p) })),
     mode: ctx.cfg.mode,
     /* The rolling 24h cap, as a fact rather than a sentence.
        It was already in `sentences` as prose and nowhere as a number, so the window could tell a

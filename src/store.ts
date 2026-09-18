@@ -20,7 +20,10 @@ export type Store = {
   list(): Proposal[];
   get(id: string): Proposal | undefined;
   put(p: Proposal): void;
-  subscribe(fn: () => void): () => void;
+  /* Told after every write, with the row that was written. The id is what lets the SSE hub
+     push a per-proposal frame beside the state one: a window watching one card refetches
+     because that card moved, not because anything anywhere did. */
+  subscribe(fn: (p: Proposal) => void): () => void;
   /* How many writes this process has made, and nothing else. A caller holding a derivation of
      the proposal list (the state payload does) compares this to decide whether the derivation is
      still current, which is a number rather than a subscription and so cannot leak a listener or
@@ -71,7 +74,7 @@ export class CorruptStateError extends Error {
 export function createStore(dataDir: string): Store {
   fs.mkdirSync(dataDir, { recursive: true });
   const filePath = path.join(dataDir, 'proposals.json');
-  const subscribers = new Set<() => void>();
+  const subscribers = new Set<(p: Proposal) => void>();
   let revision = 0;
 
   /* ONCE THIS PROCESS HAS SEEN THE FILE CORRUPT, IT NEVER READS AGAIN.
@@ -269,7 +272,7 @@ export function createStore(dataDir: string): Store {
     // After the write, so a write that throws leaves the seal naming the row still on disk.
     seals.set(p.id, sealOf(p));
     revision += 1;
-    for (const fn of subscribers) fn();
+    for (const fn of subscribers) fn(p);
   }
 
   function intact(id: string): boolean {
@@ -278,7 +281,7 @@ export function createStore(dataDir: string): Store {
     return seals.get(id) === sealOf(row);
   }
 
-  function subscribe(fn: () => void): () => void {
+  function subscribe(fn: (p: Proposal) => void): () => void {
     subscribers.add(fn);
     return () => subscribers.delete(fn);
   }

@@ -8,6 +8,9 @@ import type { PlanRisk } from './trade/risk.ts';
 import type { AddressActivity } from './chainscan/index.ts';
 import type { ChainNetwork } from './chainscan/networks.ts';
 import type { ProposalView } from './proposals/view.ts';
+// Re-exported so every caller reads the one object from the one contract without importing
+// two files to describe one row.
+export type { ProposalStage, ProposalView, TxLeg } from './proposals/view.ts';
 
 export type ChainId = 'eth' | 'base' | 'arb' | 'sol' | 'near';
 export type Mode = 'demo' | 'live';

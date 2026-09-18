@@ -139,10 +139,22 @@ export function createSseHub(deps: {
     activityTimer.unref();
   }
 
+  /* ONE ROW MOVED, and which one. The state and transactions frames say "something changed, come
+     and look at everything"; this says which proposal, so a window drawing one live card
+     refetches because that card moved rather than because anything anywhere did. It carries the
+     id and nothing else, for the same reason every other frame here carries nothing: the object
+     lives in GET /api/state.proposals[].view, and a frame that grew would become a second copy
+     of the truth travelling down a different pipe, which is the bug this whole build exists to
+     end. Not coalesced: a stage change is the thing somebody is watching for. */
+  function broadcastProposal(id: string): void {
+    for (const client of sseClients) sseSend(client, { type: 'proposal', id });
+  }
+
   // A proposal reaching 'executed' is both a balance change and a new line in the history.
-  const offStore = store.subscribe(() => {
+  const offStore = store.subscribe((p) => {
     broadcastState();
     broadcastTransactions();
+    broadcastProposal(p.id);
   });
   // The basic screen's second history list is built from the audit tail, and buildState
   // runs on every broadcast and every heartbeat. audit.tail() re-reads the whole file from
@@ -220,6 +232,7 @@ export function createSseHub(deps: {
     clientCount: () => sseClients.size,
     broadcastState,
     broadcastTransactions,
+    broadcastProposal,
     broadcastChart,
     broadcastSnapshot,
     broadcastTrade,

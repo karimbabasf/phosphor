@@ -204,8 +204,14 @@ function waitingOn(p: Proposal, stage: ProposalStage): string | null {
   }
 }
 
-// Where the money starts and where it lands, named as the two pockets a person holds plus the
-// chain a payout leaves for. A policy change moves nothing, so both are null.
+/* Where the money starts and where it lands, named as the two pockets a person holds plus the
+   chain a payout leaves for. A policy change moves nothing, so both are null.
+
+   RETIRED KINDS STILL HAVE TO RENDER. state/proposals.json holds executed rows naming rails
+   this app no longer has (intents_deposit, lp_add, the two yield moves), every surface reads
+   them, and a lookup that came back undefined for one of those used to throw inside the state
+   build, which is the whole payload gone over a row from a year ago. So every table here is
+   read with a fallback rather than indexed blind. */
 function pocketsOf(draft: WriteDraft): { from: string | null; to: string | null } {
   switch (draft.kind) {
     case 'hl_deposit':
@@ -221,6 +227,8 @@ function pocketsOf(draft: WriteDraft): { from: string | null; to: string | null 
       return { from: 'Hyperliquid', to: 'Hyperliquid' };
     case 'policy_change':
       return { from: null, to: null };
+    default:
+      return { from: null, to: null };
   }
 }
 
@@ -228,12 +236,14 @@ function symbolOf(draft: WriteDraft): string {
   if (draft.kind === 'policy_change') return '';
   if (draft.kind === 'swap') return draft.fromSymbol;
   if (draft.kind === 'trade') return draft.op === 'open' ? draft.plan.symbol : 'USDC';
-  return draft.symbol;
+  const symbol = (draft as { symbol?: unknown }).symbol;
+  return typeof symbol === 'string' ? symbol : '';
 }
 
 function amountInOf(draft: WriteDraft): string | null {
   if (draft.kind === 'policy_change' || draft.kind === 'trade') return null;
-  return String(draft.kind === 'swap' ? draft.amountIn : draft.amount);
+  const amount = draft.kind === 'swap' ? draft.amountIn : (draft as { amount?: unknown }).amount;
+  return typeof amount === 'number' ? String(amount) : null;
 }
 
 /* WHAT ARRIVED, and never a figure this app made up. The venue's settled amount first, because
@@ -304,7 +314,7 @@ function secondsBetween(from: string | undefined, now: number): number {
    somebody decided and the app took the work on. Null for a policy change, which waits on
    nobody once it is clicked. */
 export function deadlineAtOf(p: Proposal): string | null {
-  const seconds = DEADLINE_SEC[p.kind];
+  const seconds = DEADLINE_SEC[p.kind] ?? null;
   if (seconds === null) return null;
   const from = Date.parse(p.decidedAt ?? p.createdAt);
   if (!Number.isFinite(from)) return null;
@@ -336,7 +346,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
   const lastChangeAt = p.lastChangeAt ?? p.createdAt;
   const sinceChangeSec = secondsBetween(lastChangeAt, now);
   const pockets = pocketsOf(p.draft);
-  const typical = TYPICAL_SEC[p.kind];
+  const typical = TYPICAL_SEC[p.kind] ?? null;
   return {
     id: p.id,
     kind: p.kind,
