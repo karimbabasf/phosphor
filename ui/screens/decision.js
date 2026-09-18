@@ -271,9 +271,24 @@
   }
 
   /* Filed rows ("Got it") stay unconfirmed in Activity and in the day's total; the dock
-     just stops asking about them until the venue's word changes and the server unfiles them. */
+     just stops asking about them until the venue's word changes and the server unfiles them.
+     A row that is still moving is not unread yet, however long it has taken: the live card
+     below counts it, and this one only takes over once the view has stopped. */
   function isUnread(p) {
-    return p && p.status === 'needs_reconciliation' && !p.acknowledgedAt;
+    if (!p || p.status !== 'needs_reconciliation' || p.acknowledgedAt) return false;
+    return !p.view || p.view.terminal === true;
+  }
+
+  /* ASK 1: EVERY PENDING MOVE IS ON SCREEN WHILE IT RUNS.
+
+     Karim, 2026-09-18, after approving a deposit: "the window showed no pending
+     or animated feedback anywhere. No way to watch what was happening live."
+     The dock used to go dark the moment a click landed, and the only thing that
+     knew anything was the assistant's last read. A row whose view has not
+     reached an end keeps the dock, drawn as the same card the conversation
+     draws, so the two cannot say different things. */
+  function isLive(p) {
+    return !!(p && p.view && p.view.terminal !== true && !isWaiting(p) && !isHeld(p));
   }
 
   /* A row the preflight is holding: approved, nothing signed, the app retrying
@@ -296,7 +311,7 @@
     /* An answer already given owns the dock until its own timer runs out, and a
        receipt or a recovery card is something a person is reading. */
     if (flashTimer) return;
-    if (showing && showing.kind !== 'ask' && showing.kind !== 'unread' && showing.kind !== 'held') return;
+    if (showing && showing.kind !== 'ask' && showing.kind !== 'unread' && showing.kind !== 'held' && showing.kind !== 'live') return;
 
     var state = store.get() || {};
     var list = Array.isArray(state.proposals) ? state.proposals : [];
@@ -310,6 +325,12 @@
     var held = newestFirst(list.filter(isHeld));
     if (held.length) {
       open({ kind: 'held', proposal: held[0], queued: 0 });
+      return;
+    }
+
+    var live = newestFirst(list.filter(isLive));
+    if (live.length) {
+      open({ kind: 'live', proposal: live[0], queued: 0 });
       return;
     }
 
@@ -336,7 +357,11 @@
     /* A held row redraws on every retry: each one appends its checks. */
     var checks = Array.isArray(p.preflight) ? p.preflight.length : 0;
     var swap = sim.swap || {};
-    return [entry.kind, p.id, p.status, entry.queued, sim.feeUsd, sim.gasUsd, p.heldSince || '', checks,
+    /* The view is what the live card draws, so a stage that moved is a redraw.
+       The counter inside it runs on its own and needs no frame. */
+    var view = p.view || {};
+    return [entry.kind, p.id, p.status, view.stage || '', view.lastChangeAt || '', view.providerStage || '',
+      entry.queued, sim.feeUsd, sim.gasUsd, p.heldSince || '', checks,
       sim.priceImpact, sim.amountOut, deposits, diff, sim.summary || '',
       swap.receives || '', swap.receivesAtLeast || '', swap.feeUsd, swap.etaSeconds,
       (Array.isArray(p.verdict && p.verdict.reasons) ? p.verdict.reasons.join(' ') : ''),
@@ -355,12 +380,13 @@
 
   function open(next) {
     if (next.kind === 'ask') noteTouch(next.proposal);
-    var keyed = next.kind === 'ask' || next.kind === 'unread' || next.kind === 'held';
+    var keyed = next.kind === 'ask' || next.kind === 'unread' || next.kind === 'held' || next.kind === 'live';
     if (keyed && showing && showing.signature === signature(next)) return;
     next.signature = keyed ? signature(next) : null;
     showing = next;
     frame();
     if (next.kind === 'ask') buildAsk(next);
+    else if (next.kind === 'live') buildLive(next.proposal);
     else if (next.kind === 'held') buildHeld(next.proposal);
     else if (next.kind === 'unread') buildUnread(next.proposal);
     else if (next.kind === 'receipt') buildReceipt(next.receipt);
@@ -375,7 +401,7 @@
   }
 
   function dockState(kind) {
-    if (kind === 'receipt' || kind === 'card' || kind === 'held') return 'read';
+    if (kind === 'receipt' || kind === 'card' || kind === 'held' || kind === 'live') return 'read';
     return null;
   }
 
@@ -667,6 +693,29 @@
   /* A send draws its own card, which already carries the hold line and the
      folded checks. Any other kind gets the headline, the same hold line, and
      the checks under it. No buttons: there is nothing to decide. */
+  /* ---------- the live row ---------- */
+
+  /* The same card the conversation draws, in the dock, with nothing to press.
+     One object, one set of words: the card and the assistant read the same view,
+     so they cannot disagree about what stage this is at or when it settled. */
+  function buildLive(proposal) {
+    var host = refs.body;
+    var cards = window.PhosphorCards;
+    var view = proposal.view || {};
+    host.appendChild(dom.el('p', 'label dock-kicker', view.waitingOn ? 'Waiting on ' + String(view.waitingOn) : 'Working'));
+    if (!cards || typeof cards.render !== 'function') {
+      host.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
+      host.appendChild(dom.el('p', 'body', String(view.stageLabel || '')));
+      return;
+    }
+    host.appendChild(cards.render('move', proposal, {
+      name: 'proposal_status',
+      input: { id: proposal.id },
+      at: proposal.createdAt,
+      open: true
+    }));
+  }
+
   function buildHeld(proposal) {
     var draft = proposal.draft || {};
     var sendCard = window.PhosphorSendCard;
@@ -676,7 +725,16 @@
       return;
     }
     host.appendChild(dom.el('p', 'label dock-kicker', 'Holding'));
-    host.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
+    /* The move as a card rather than a headline, so the figures, the stage word
+       and the counter are the same ones the conversation shows. */
+    var cards = window.PhosphorCards;
+    if (proposal.view && cards && typeof cards.render === 'function') {
+      host.appendChild(cards.render('move', proposal, {
+        name: 'proposal_status', input: { id: proposal.id }, at: proposal.createdAt, open: true
+      }));
+    } else {
+      host.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
+    }
     var line = dom.el('p', 'body dock-hold');
     dom.setAttr(line, 'data-tone', 'warn');
     dom.setText(line, sendCard && typeof sendCard.heldLine === 'function' ? sendCard.heldLine(proposal) : 'Waiting for the checks to clear. Nothing is signed until they do.');
