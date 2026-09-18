@@ -242,7 +242,7 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   const submitted = sent.intent;
   tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline, quote: signedQuote });
 
-  const watch = await watchStatus(deps, depositAddress);
+  const watch = await watchStatus(deps, depositAddress, hooks);
 
   return { signed: true, submitted: true, intentHash: submitted.intentHash, depositAddress, deadline, quote, signedQuote, watch };
 }
@@ -250,7 +250,10 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
 // Polls until terminal, out of attempts, or out of time. Never throws once the intent has
 // been submitted: a status endpoint that goes down after the money has moved must not become
 // an unhandled rejection.
-export async function watchStatus(deps: IntentsSpendDeps, depositAddress: string): Promise<OneClickStatus> {
+//
+// Every poll tells the executor which word 1Click used, so the stage on the card is the stage
+// the vendor would confirm and a person watching a five minute wait sees it move.
+export async function watchStatus(deps: IntentsSpendDeps, depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
   const deadline = deps.now() + deps.pollTimeoutMs;
   const maxPolls = Math.max(1, Math.ceil(deps.pollTimeoutMs / deps.pollIntervalMs));
   let last: OneClickStatus = {
@@ -265,6 +268,7 @@ export async function watchStatus(deps: IntentsSpendDeps, depositAddress: string
   for (let attempt = 0; attempt < maxPolls; attempt += 1) {
     try {
       last = await deps.api.status(depositAddress);
+      tell(hooks, { providerStage: last.status });
       if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return last;
     } catch (err) {
       last = { ...last, reported: `status check failed: ${oneLine(errText(err), 80)}` };

@@ -15,6 +15,7 @@ import { createAgents } from '../../../src/agents.ts';
 import { createAudit } from '../../../src/audit.ts';
 import type { Audit } from '../../../src/audit.ts';
 import type { DuplicateGuard } from '../../../src/duplicates.ts';
+import { stubView } from '../../fixtures/view.ts';
 
 export type Reply = { status: number; json: Record<string, unknown> };
 
@@ -56,6 +57,8 @@ export function serviceThatAnswers(row: Proposal, settledRow: Proposal = row): P
     releaseQueued: async () => 0,
     get: (id) => (id === row.id ? settledRow : undefined),
     list: () => [settledRow],
+    view: (p) => stubView(p),
+    markStalled: () => 0,
     sessionSpentUsd: () => 0,
     reconcileOnBoot: () => [],
     reconcileOpen: async () => 0,

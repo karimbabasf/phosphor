@@ -27,6 +27,7 @@ import { createMarketData } from '../../src/market/index.ts';
 import { RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX } from '../../src/http/receipts.ts';
 import type { Receipt } from '../../src/http/receipts.ts';
 import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
+import { stubView } from '../fixtures/view.ts';
 
 const SELF = '0x1111111111111111111111111111111111111111';
 
@@ -100,6 +101,8 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       refuse: async () => settled('x', 'refused'),
       get: (id: string) => store.get(id),
       list: () => store.list(),
+      view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

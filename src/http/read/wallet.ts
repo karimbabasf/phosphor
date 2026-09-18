@@ -11,8 +11,6 @@ import { LOG_LIMIT_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
-import { outcomeOf } from '../../proposals/lifecycle.ts';
-import type { PlanFate } from '../../proposals/lifecycle.ts';
 import { RECEIVE_NETWORKS, receiveNetworkOf } from '../../rails/intents-address.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
@@ -73,6 +71,16 @@ function chainIdOf(raw: string): string | null {
   if (receiveNetworkOf(word) !== undefined) return word;
   return ALIAS_BY_FOLD.get(word) ?? null;
 }
+
+/* How many rows the list hands back, and the ceiling. Ten is what "my last deposit" needs; the
+   cap is what keeps an agent from reading the whole history into a model's context by asking
+   for it. Both are here rather than in the tool description so the door enforces them. */
+export const PROPOSALS_DEFAULT = 10;
+export const PROPOSALS_MAX = 50;
+
+// How much of one row's history comes back. Enough to see the shape of a stuck move, few enough
+// that an agent reads them all rather than summarising the middle away.
+export const DIAGNOSE_LOG_LINES = 40;
 
 const DISCLAIMER =
   'Send a small test amount first and wait for the app to say it landed before sending the rest. Sending on any other network, or any asset not on the accepted list, loses the money: the bridge does not refund.';
@@ -216,6 +224,13 @@ export const walletReads: ReadTable = {
   log_tail: (ctx, _body, args, res) => {
     sendJson(res, 200, ctx.audit.tail(intParam(args.limit, 50, LOG_LIMIT_MAX)));
   },
+  /* THE ONE OBJECT, and nothing beside it. This used to answer with the whole row plus an
+     `outcome` blob, and the card built its own second opinion out of the same fields, which is
+     how "Confirmed at 14:20" and "still settling" came to be on screen together. Now both
+     surfaces read the same ProposalView: the stage, the label, what is being waited on, the
+     clocks, the money and the hashes. A row still waiting on a venue is re-judged against the
+     last balance read on the way through, so this read is also what moves a settled row
+     forward. See src/proposals/view.ts. */
   proposal_status: (ctx, _body, args, res) => {
     const id = typeof args.id === 'string' ? args.id : '';
     const proposal = ctx.proposals.get(id);
@@ -223,19 +238,66 @@ export const walletReads: ReadTable = {
       fail(res, 404, `unknown proposal id: ${id}`);
       return;
     }
-    /* `outcome` is the one word the agent may repeat about this row (confirmed, settling,
-       failed, unconfirmed, pending) with a plain sentence and the pocket's before and after,
-       so a settling swap is never reported as failed. A trade proposal's fate is its plan's:
-       the entry is confirmed, unconfirmed or ended on the runner's row, not on this one. */
-    let plan: PlanFate | null = null;
-    if (proposal.kind === 'trade') {
-      try {
-        const plans = (ctx.trade.payload() as { plans?: Array<PlanFate & { proposalId?: string }> }).plans ?? [];
-        plan = plans.find((row) => row.proposalId === proposal.id) ?? null;
-      } catch {
-        plan = null;
-      }
+    sendJson(res, 200, ctx.proposals.view(proposal));
+  },
+  /* The list, because until now nothing enumerated and proposal_status needed an id. An agent
+     asked "show me my last deposit" had to find one in the audit log or ask the person for it,
+     and asking somebody for a uuid about their own money is the app failing to know its own
+     state. Newest first, capped, and every row is the same view proposal_status hands back. */
+  proposals: (ctx, _body, args, res) => {
+    const kind = typeof args.kind === 'string' ? args.kind.trim() : '';
+    const limit = intParam(args.limit, PROPOSALS_DEFAULT, PROPOSALS_MAX);
+    const now = Date.now();
+    const rows = ctx.proposals
+      .list()
+      .filter((p) => kind === '' || p.kind === kind)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .slice(0, limit);
+    sendJson(res, 200, { proposals: rows.map((p) => ctx.proposals.view(p, now)) });
+  },
+  /* Everything about ONE move in one call, for the question "why is my deposit not there yet".
+     Four things an agent had no way to line up: the view, the audit lines for this row alone
+     (log_tail takes a limit and nothing else, so finding them meant reading everybody's), what
+     the router last said, and what the venue holds right now.
+
+     IT HANDS BACK NOTHING THAT COULD BE PAID TO. The quote handle is a real address on some
+     routes, so it is fingerprinted exactly as the deposit card's is: enough to quote to support,
+     never enough to paste. The quote's own signature and the deposit address 1Click minted stay
+     on the row and off this answer; the correlation id is what a dispute is filed with, and it
+     is not a destination. */
+  diagnose: (ctx, _body, args, res) => {
+    const id = typeof args.id === 'string' ? args.id : '';
+    const proposal = ctx.proposals.get(id);
+    if (proposal === undefined) {
+      fail(res, 404, `unknown proposal id: ${id}`);
+      return;
     }
-    sendJson(res, 200, { ...proposal, outcome: outcomeOf(proposal, plan) });
+    const evidence = proposal.result?.evidence;
+    const provider =
+      evidence === undefined
+        ? null
+        : {
+            stage: evidence.providerStage ?? null,
+            handleFingerprint: evidence.handle === undefined ? null : fingerprint(evidence.handle),
+            correlationId: evidence.quote?.correlationId ?? null,
+            deadline: evidence.deadline ?? null,
+            settledAmountOut: evidence.settledAmountOut ?? null,
+            refundedAmount: evidence.refundedAmount ?? null,
+            refundReason: evidence.refundReason ?? null,
+          };
+    // The far side of a Hyperliquid move, as the ledger last read it. Null for every other kind:
+    // a swap and a send have no venue account, and answering with one anyway would be noise
+    // somebody could mistake for evidence about their own move.
+    const venue = proposal.kind === 'hl_deposit' || proposal.kind === 'hl_withdraw' ? (ctx.ledger.hyperliquid() ?? null) : null;
+    sendJson(res, 200, {
+      view: ctx.proposals.view(proposal),
+      log: ctx.audit
+        .tail(LOG_LIMIT_MAX)
+        .filter((e) => (e.data as { id?: unknown } | undefined)?.id === id || e.msg.includes(id))
+        .slice(0, DIAGNOSE_LOG_LINES)
+        .map((e) => `${e.ts} ${e.type}: ${e.msg}`),
+      provider,
+      venue,
+    });
   },
 };

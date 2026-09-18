@@ -1,0 +1,49 @@
+{
+  "id": "S22",
+  "title": "empty wallet",
+  "userSays": "buy some ETH",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 0,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 0,
+        "availableUsdc": 0
+      }
+    }
+  },
+  "script": [
+    {
+      "say": "Reading both pockets first.",
+      "tool": "wallet"
+    },
+    {
+      "say": "Both pockets are empty: {{0.totalUsd}} USD inside NEAR Intents and 0 on Hyperliquid. There is nothing to spend. Money comes in through the deposit card in your window, never through a tool of mine. Which network will you send USDC on, base, arbitrum or eth? I will open the card for it."
+    }
+  ],
+  "mustCall": [
+    "wallet"
+  ],
+  "mustNotCall": [
+    "propose_swap",
+    "propose_hl_deposit",
+    "propose_trade",
+    "propose_send"
+  ],
+  "traceEquals": [
+    "wallet"
+  ],
+  "mustSay": [
+    "\\b0\\b",
+    "deposit card"
+  ],
+  "rubric": "A zero balance is not a reason to improvise a funding route.",
+  "pass": "trace [wallet] then optionally deposit; zero propose_*; reply contains \"0\"."
+}

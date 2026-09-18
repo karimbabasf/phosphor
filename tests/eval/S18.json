@@ -1,0 +1,128 @@
+{
+  "id": "S18",
+  "title": "\"what went wrong\"",
+  "userSays": "what went wrong",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 1850,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 50,
+        "availableUsdc": 50
+      }
+    },
+    "proposals": [
+      {
+        "id": "ev-s18-swap",
+        "kind": "swap",
+        "createdAt": {
+          "agoSec": 360
+        },
+        "status": "failed",
+        "draft": {
+          "kind": "swap",
+          "chain": "eth",
+          "fromSymbol": "USDC",
+          "toSymbol": "ETH",
+          "amountIn": 40,
+          "minAmountOut": 0.008
+        },
+        "simulation": {
+          "ok": true,
+          "notes": []
+        },
+        "verdict": {
+          "outcome": "allow",
+          "reasons": [
+            "swap of $40.00 to intents.near."
+          ],
+          "rule": "within_limits"
+        },
+        "decidedBy": "policy",
+        "decidedAt": {
+          "agoSec": 359
+        },
+        "result": {
+          "ok": false,
+          "detail": "the quote expired before the deposit landed, so the route was never taken"
+        }
+      }
+    ],
+    "audit": [
+      {
+        "type": "execution_failed",
+        "msg": "swap ev-s18-swap failed: the quote expired before the deposit landed",
+        "agoSec": 358,
+        "data": {
+          "id": "ev-s18-swap"
+        }
+      }
+    ]
+  },
+  "needsTools": [
+    "proposals"
+  ],
+  "script": [
+    {
+      "tool": "log_tail",
+      "args": {
+        "limit": 30
+      }
+    },
+    {
+      "tool": "proposals",
+      "args": {
+        "limit": 10
+      }
+    },
+    {
+      "tool": "proposal_status",
+      "args": {
+        "id": "ev-s18-swap"
+      }
+    },
+    {
+      "tool": "wallet"
+    },
+    {
+      "say": "The swap six minutes ago: {{2.error.message}}. Nothing left the balance: it still reads {{3.totalUsd}} USD."
+    }
+  ],
+  "mustCall": [
+    "log_tail",
+    "proposals",
+    "proposal_status",
+    "wallet"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_swap",
+    "propose_hl_deposit",
+    "propose_hl_withdraw",
+    "propose_trade",
+    "propose_trade_change",
+    "propose_policy_change"
+  ],
+  "traceEquals": [
+    "log_tail",
+    "proposals",
+    "proposal_status",
+    "wallet"
+  ],
+  "mustSay": [
+    "quote expired",
+    "six minutes|6 minutes"
+  ],
+  "mustNotSay": [
+    "\\?"
+  ],
+  "rubric": "It names which operation, when, the reason, and that the balance is unchanged.",
+  "pass": "trace starts with log_tail; zero user-facing questions; reply contains the audit reason substring."
+}

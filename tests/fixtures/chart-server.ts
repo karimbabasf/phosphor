@@ -23,6 +23,7 @@ import { createMarketStore } from '../../src/market/store.ts';
 import type { LiveSocket } from '../../src/market/live.ts';
 import type { Catalog, MarketRef, Provider } from '../../src/market/catalog.ts';
 import type { AppConfig, Candle, LedgerSnapshot, ViewMode } from '../../src/types.ts';
+import { stubView } from './view.ts';
 
 const COINS = ['BTC', 'ETH', 'SOL'];
 
@@ -165,6 +166,8 @@ export async function bootChartServer(
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

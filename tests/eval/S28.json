@@ -1,0 +1,87 @@
+{
+  "id": "S28",
+  "title": "tighten a stop",
+  "userSays": "move my stop up to 4450",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 0,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 50,
+        "availableUsdc": 50
+      }
+    }
+  },
+  "xfailUntil": "an armed plan pl_x can be seeded: demo mode holds no trade plans, so only live mode proves this one",
+  "script": [
+    {
+      "say": "Reading the live plan and the price first.",
+      "tool": "trade_read"
+    },
+    {
+      "tool": "propose_trade_change",
+      "args": {
+        "id": "pl_x",
+        "stop": 4450
+      }
+    },
+    {
+      "waitMs": 300,
+      "tool": "proposal_status",
+      "args": {
+        "id": "{{1.id}}"
+      }
+    },
+    {
+      "say": "Stop moved from 4,400 to 4,450 on the ETH long. That is a tightening: max loss goes from 30 dollars to about 22 dollars, which is under what you approved, so it lands without a click. The price is about 70 dollars above the new stop."
+    }
+  ],
+  "mustCall": [
+    "trade_read",
+    "propose_trade_change"
+  ],
+  "mustNotCall": [
+    "propose_trade"
+  ],
+  "ordering": [
+    [
+      "trade_read",
+      "propose_trade_change"
+    ]
+  ],
+  "argChecks": [
+    {
+      "tool": "propose_trade_change",
+      "path": "id",
+      "equals": "pl_x"
+    },
+    {
+      "tool": "propose_trade_change",
+      "path": "stop",
+      "equals": 4450
+    },
+    {
+      "tool": "propose_trade_change",
+      "path": "cancel",
+      "absent": true
+    }
+  ],
+  "mustSay": [
+    "max loss",
+    "4,?450",
+    "without a click|no click|lands without"
+  ],
+  "window": {
+    "card": "propose_trade_change",
+    "withinMs": 1000
+  },
+  "rubric": "The reply states which this is, a tightening or a widening, and the new max loss is under the approved one.",
+  "pass": "the new max loss computed in the reply is less than $30; trace has trade_read before propose_trade_change."
+}

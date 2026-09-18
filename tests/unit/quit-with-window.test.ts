@@ -29,6 +29,7 @@ import { createKeystore } from '../../src/keystore/index.ts';
 import { createSession } from '../../src/keystore/session.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
+import { stubView } from '../fixtures/view.ts';
 
 
 function snapshot(): LedgerSnapshot {
@@ -77,6 +78,8 @@ async function boot() {
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

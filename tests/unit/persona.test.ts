@@ -64,3 +64,58 @@ test('the persona speaks in the house style: no dashes, no assistant tics', () =
   }
   assert.ok(/Never print a banner/.test(role()));
 });
+
+/* ---------- what an answer about a pending move has to carry ----------
+
+   The transcript that started this build: the human asked "all good?" and got "still settling,
+   waiting". Both words were true and neither was a fact. So the prompt names the four things an
+   answer carries and names the phrases that stand in for them, and both surfaces are held to it
+   here, because a rule that only reaches one of the two is a rule the other agent has never
+   read. */
+
+// The phrases the eval grader bans in a reply, applied to the prompt itself: a prompt that uses
+// the wording it forbids is a prompt teaching the habit it exists to break.
+const BANNED: readonly RegExp[] = [
+  /\bwaiting\b(?!\s+(on|for)\b)/i,
+  /should land/i,
+  /any minute/i,
+  /probably (fine|worked)/i,
+];
+
+test('neither surface uses the wording it tells the agent not to use', () => {
+  for (const [name, text] of [['handshake', handshakeInstructions(ROOT)], ['role', role()]] as const) {
+    for (const banned of BANNED) {
+      // The rules name each phrase once, in quotes, to forbid it. Everything outside the quotes
+      // is the prompt speaking in its own voice, and that is what is checked.
+      const spoken = text.replace(/"[^"]*"/g, '""');
+      assert.equal(banned.test(spoken), false, `${name} uses ${String(banned)} in its own voice`);
+    }
+  }
+});
+
+test('both surfaces name the four facts a pending answer carries, and ban the phrases that replace them', () => {
+  for (const text of [handshakeInstructions(ROOT), role()]) {
+    for (const token of ['the stage in its own words', 'what it is waiting on', 'the seconds so far', 'the typical figure']) {
+      assert.ok(text.includes(token), `missing from the answering rules: ${token}`);
+    }
+    for (const phrase of ['still settling', 'should land', 'any minute', 'probably fine']) {
+      assert.ok(text.includes(`"${phrase}"`), `${phrase} is not named as a phrase to avoid`);
+    }
+    assert.ok(/proposals\b/.test(text) && /diagnose\b/.test(text), 'the two free debugging reads are named');
+  }
+});
+
+test('both surfaces state the two policy numbers as two different jobs, in one line', () => {
+  for (const text of [handshakeInstructions(ROOT), role()]) {
+    assert.match(text, /above the ask threshold a human clicks/i);
+    assert.match(text, /above the hard cap nothing runs at all/i);
+    assert.match(text, /setting the two equal means nothing ever asks/i);
+    assert.match(text, /policy_show/);
+  }
+});
+
+test('a claim that a move is done is tied to a proposal_status read', () => {
+  for (const text of [handshakeInstructions(ROOT), role()]) {
+    assert.match(text, /Say a move is done only with a proposal_status read behind you/);
+  }
+});

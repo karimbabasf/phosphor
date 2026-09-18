@@ -114,9 +114,9 @@ test('no path writes the retired gate_disabled decision', async () => {
 // thing this app exists to prevent.
 test('a policy change never auto-approves', async () => {
   const h = setup();
-  /* $50,000 rather than the $999,999 this used to ask for. A patch may loosen a limit by up to
-     ten times (src/policy/engine.ts, cap_raised_too_far), and a hundredfold jump is now refused
-     rather than queued, which would make this assert the wrong thing about the wrong verdict. */
+  /* $50,000 rather than the $999,999 this used to ask for, and the size no longer decides the
+     verdict either way: the ten-times ceiling went on 2026-09-18 because the tool always waits
+     for a click anyway. What this row asserts is that it waits, at any number. */
   const p = await h.svc.proposePolicyChange({
     patch: { outbound: { maxPerTransactionUsd: 50_000 } },
     sentence: 'Refuse any single transaction above $50,000.',

@@ -141,7 +141,13 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'composition', does: 'stablecoin exposure by issuer and pocket, including the freezable share.' },
       { tool: 'policy_show', does: 'the rules currently enforced, as plain-English sentences.' },
       { tool: 'log_tail', does: 'the audit log, newest first: everything attempted, executed and refused.' },
-      { tool: 'proposal_status', does: 'what happened to one proposal id.' },
+      {
+        tool: 'proposal_status',
+        does: 'where one money move is now, as the object the card is drawing: stage, what it waits on, seconds so far against the typical figure, amounts, hashes, any error. Quote its words.',
+      },
+      { tool: 'proposals', does: 'recent money moves, newest first, each as that same object. Use it when you need a proposal and hold no id.' },
+      { tool: 'diagnose', does: "one move's whole story: its view, its own audit lines, what the router last said, what the venue holds now. For why something is slow or failed." },
+      { tool: 'show', does: 'draws a proposal, a transaction, a position or the deposit card in the window. When somebody asks to SEE a thing, draw it and say one line, never read its fields out loud.' },
     ],
   },
   {
@@ -291,7 +297,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       },
       {
         tool: 'propose_trade_change',
-        does: 'change an armed plan: a new stop or target (free if it tightens, priced if it widens), cancel (waiting or placed only), or close at the plan bound.',
+        does: 'change an armed plan: a new stop or target (free if it tightens, priced if it widens), cancel (only a plan whose status is "waiting" or "placed"), or close at the plan bound.',
       },
     ],
   },

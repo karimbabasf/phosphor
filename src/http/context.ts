@@ -85,6 +85,12 @@ export const READ_TOOLS: readonly string[] = [
   'policy_show',
   'log_tail',
   'proposal_status',
+  // The list behind it, newest first: nothing else enumerates, so an agent asked about "my last
+  // deposit" had to find an id in the log or ask the person for a uuid about their own money.
+  'proposals',
+  // Everything about one move in one call: the view, this row's own audit lines, what the router
+  // last said, what the venue holds now. The answer that makes "why is it not there yet" free.
+  'diagnose',
   'chart_read',
   'chart_scan',
   // A picture of one chart, rendered by the window and handed to the one call waiting for it.
@@ -121,9 +127,18 @@ export const READ_TOOLS: readonly string[] = [
 export const LEAD_ONLY_VIEW_TOOLS: readonly string[] = ['set_theme', 'chart_draw', 'chart_layout', 'trade_plan', 'profile_learned', 'agent_spawn'];
 // The one read a worker never gets: a picture is the window the human is reading, and the proxy
 // withholds it the same way (src/mcp.ts registerLeadView). src/http/mcp.ts refuses it by seat role.
-export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot'];
+/* The reads a worker never gets. A picture is the window the human is reading. The proposal
+   list is the lead's own money timeline: a spawned worker exists to measure something and hand
+   back a paragraph, and enumerating what its parent is in the middle of paying for is not that.
+   The proxy withholds both the same way (src/mcp.ts registerLeadRead); src/http/mcp.ts refuses
+   them by seat role. */
+export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot', 'proposals', 'diagnose'];
 
 export const VIEW_TOOLS: readonly string[] = [
+  /* Draw something that already exists as the app's own card rather than as prose: a proposal, a
+     transaction, a position, the deposit card. It moves no money and it opens no new surface; all
+     it does is change what the human is looking at, which is what this whole list is. */
+  'show',
   // Colour. A write like the rest of this list: it changes what the human sees and moves no
   // money. The one thing it cannot reach is the approval gate's red, which is not a slot.
   'set_theme',
@@ -261,6 +276,8 @@ export type SseHub = {
   clientCount(): number;
   broadcastState(): void;
   broadcastTransactions(): void;
+  // Which proposal moved. The object rides in GET /api/state.proposals[].view; this is the push.
+  broadcastProposal(id: string): void;
   // Which chart moved. The window redraws one slot rather than all four; 0 is the primary.
   broadcastChart(slot?: number): void;
   // Ask the window for a picture of one chart. It answers on POST /api/chart/snapshot with the

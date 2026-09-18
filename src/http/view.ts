@@ -23,6 +23,7 @@ import { isConcept, loadProfile, normalizeConcept, recordLearned } from '../prof
 import type { Outcome } from '../chart.ts';
 import type { ChartSlot } from '../charts.ts';
 import { asRecord, fail, sendJson } from './respond.ts';
+import { CHAIN_NETWORKS, isChainNetwork, transaction, validateHash } from '../chainscan/index.ts';
 import type { JsonBody } from './respond.ts';
 import { chartDigest, resolveIndicator, resolveViewPatch } from './chart.ts';
 import { LEAD_ONLY_VIEW_TOOLS, VIEW_TOOLS } from './context.ts';
@@ -367,7 +368,72 @@ export function linesHeld(ctx: Ctx): Map<string, { id: string; status: string }>
 const LEARNED_PER_SESSION = 10;
 const learnedCounts = new WeakMap<Ctx, Map<string, number>>();
 
+/* DRAW SOMETHING THAT ALREADY EXISTS, as the app's own card rather than as a paragraph.
+   "Show me the transaction" used to come back as prose with a hash pasted in the middle of it,
+   because the window only knew how to draw a tool's own answer and nothing let an agent point
+   at a thing and say "that one". This is that pointer. It moves no money and reads nothing off
+   the machine that a read tool would not: it is on the view door because all it does is change
+   what the human is looking at.
+
+   THE CARD GOES THROUGH THE SAME PIPE A TOOL ANSWER DOES, the driver's tool_data event, so the
+   window draws it with the code it already has and there is no second path to keep in step. A
+   window with no conversation open has nothing to draw into, and the answer says so rather than
+   claiming a card that nobody will see. */
+const SHOW_KINDS = ['proposal', 'transaction', 'position', 'deposit'] as const;
+type ShowKind = (typeof SHOW_KINDS)[number];
+
+function isShowKind(raw: unknown): raw is ShowKind {
+  return typeof raw === 'string' && (SHOW_KINDS as readonly string[]).includes(raw);
+}
+
+async function showBody(ctx: Ctx, kind: ShowKind, id: string, network: unknown): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; reason: string }> {
+  if (kind === 'proposal') {
+    const p = ctx.proposals.get(id);
+    if (p === undefined) return { ok: false, reason: `unknown proposal id: ${id}` };
+    return { ok: true, data: { card: 'proposal', id, view: ctx.proposals.view(p) } };
+  }
+  if (kind === 'transaction') {
+    // The network is not guessable from a hash and a card drawn against the wrong chain is a
+    // confident lie, so it is asked for by name rather than inferred.
+    if (!isChainNetwork(network)) return { ok: false, reason: `a transaction card needs the network it is on: one of ${CHAIN_NETWORKS.join(', ')}` };
+    const check = validateHash(network, id);
+    if (!check.ok) return { ok: false, reason: check.reason };
+    return { ok: true, data: { card: 'transaction', id: check.normalized, tx: await transaction(network, check.normalized, { keys: ctx.cfg.chainscan }) } };
+  }
+  if (kind === 'position') {
+    const read = ctx.trade.read(id) as { positions?: unknown[] };
+    const position = (read.positions ?? [])[0];
+    if (position === undefined) return { ok: false, reason: `no open position in ${id}` };
+    return { ok: true, data: { card: 'position', id, position } };
+  }
+  const deposit = ctx.deposits.current();
+  if (deposit === null) return { ok: false, reason: 'no deposit is being watched: the deposit tool opens that card' };
+  return { ok: true, data: { card: 'deposit', id, deposit } };
+}
+
 const HANDLERS: Record<string, ViewHandler> = {
+  show: async ({ ctx, args, res }): Promise<void> => {
+    const kind = args.kind;
+    if (!isShowKind(kind)) {
+      fail(res, 400, `kind must be one of ${SHOW_KINDS.join(', ')}`);
+      return;
+    }
+    const id = typeof args.id === 'string' ? args.id.trim() : '';
+    if (id === '') {
+      fail(res, 400, `a ${kind} card needs the id of the ${kind} to draw`);
+      return;
+    }
+    const built = await showBody(ctx, kind, id, args.network);
+    if (!built.ok) {
+      fail(res, 404, built.reason);
+      return;
+    }
+    const chats = ctx.chats.all();
+    for (const chat of chats) {
+      ctx.chats.event(chat, { kind: 'tool_data', name: 'show', input: { kind, id }, data: built.data });
+    }
+    sendJson(res, 200, { drawn: chats.length > 0, kind, id, ...(chats.length > 0 ? {} : { reason: 'no conversation is open in the window, so there is nothing to draw into' }) });
+  },
   // ---------- the human's knowledge ----------
   profile_learned: ({ ctx, args, body, res }): void => {
     /* A worker's MCP process never registers this tool, and this is the wall behind that one:

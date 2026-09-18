@@ -12,7 +12,7 @@ import type {
   SimulationResult,
   WriteDraft,
 } from '../types.ts';
-import { evaluate } from '../policy/engine.ts';
+import { clampPatch, evaluate } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import type { RailDraft, RailKind } from '../rails/index.ts';
@@ -192,7 +192,12 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, c
 export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatch; sentence: string; clientKey?: ClientKey }): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
-  const draft: WriteDraft = { kind: 'policy_change', patch: params.patch, sentence: params.sentence };
+  /* The patch that is STORED is the patch that is applied, so the clamp happens here rather than
+     only inside the verdict. A cap lowered under the ask threshold brings the threshold down with
+     it (src/policy/engine.ts, clampPatch), and the diff below is rendered off the same object, so
+     the card names both numbers and the file makes both changes. */
+  const patch = policy === null ? params.patch : clampPatch(params.patch, policy).patch;
+  const draft: WriteDraft = { kind: 'policy_change', patch, sentence: params.sentence };
   const verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
 
   let simulation: SimulationResult;
@@ -201,7 +206,7 @@ export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatc
   } else if (verdict.outcome === 'refuse') {
     simulation = { ok: false, summary: `patch refused: ${verdict.rule}`, error: verdict.rule };
   } else {
-    const after = renderSentences(mergePatch(policy, params.patch));
+    const after = renderSentences(mergePatch(policy, patch));
     // The +/- lines are the UI's to render from policyDiff; keeping them out of
     // summary stops the approval gate showing the same diff twice.
     simulation = {

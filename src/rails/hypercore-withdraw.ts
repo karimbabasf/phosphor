@@ -403,13 +403,16 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
   }
 
-  async function watchStatus(depositAddress: string): Promise<OneClickStatus> {
+  // Every poll tells the executor which word 1Click used, so the stage on the card is the
+  // stage the vendor would confirm rather than a word only this app uses.
+  async function watchStatus(depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
     const deadline = now() + pollTimeoutMs;
     const maxPolls = Math.max(1, Math.ceil(pollTimeoutMs / pollIntervalMs));
     let last: OneClickStatus = { found: false, status: 'PENDING_DEPOSIT', reported: 'not polled', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [] };
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {
       try {
         last = await client.status(depositAddress);
+        tell(hooks, { providerStage: last.status });
         if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return last;
       } catch (err) {
         last = { ...last, reported: `status check failed: ${oneLine(errText(err), 80)}` };
@@ -557,7 +560,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     const railEvidence = (status: OneClickStatus) => ({ ...settledEvidence(status, handle), nonce: String(nonce), quote: signedQuote });
     const hash = ledger ?? '';
 
-    const watch = await watchStatus(depositAddress);
+    const watch = await watchStatus(depositAddress, hooks);
 
     if (watch.status === 'SUCCESS') {
       const proof = await proveBothSides(draft, before, intentsBefore, deliveredAmount(watch, quote.amountOutFormatted));

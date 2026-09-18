@@ -23,6 +23,7 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
+import { stubView } from '../fixtures/view.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
@@ -112,6 +113,8 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => {
         releases += 1;

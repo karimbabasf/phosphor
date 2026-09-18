@@ -516,7 +516,46 @@ registerRead('log_tail', 'Returns the most recent audit log lines, newest first.
 });
 registerRead(
   'proposal_status',
-  'Returns the status, verdict, and simulation result for a proposal id. Read-only, changes nothing.',
+  [
+    'Where one money move is right now, as one object: the stage in a word, the plain label the',
+    "window is showing for it, 1Click's own status word where a router owns the phase, what is",
+    'being waited on (You, Touch ID, 1Click, Hyperliquid), how many seconds it has been going and',
+    'how many since the stage last changed, the typical duration for this kind, the amounts and',
+    'both pockets, every transaction hash with the leg it belongs to, and an error code with a',
+    'sentence when something went wrong. THIS IS THE SAME OBJECT THE CARD IN THE WINDOW IS',
+    'DRAWING, so quote its words rather than inventing your own: if you say a different stage',
+    'than the card, one of you is wrong and it is you. Call it before saying anything is done.',
+    'Read-only: it changes no money, though a row still waiting on a venue is re-judged against',
+    'the latest balance on the way through, which is how a settled move settles itself.',
+  ].join(' '),
+  { id: z.string() },
+);
+registerLeadRead(
+  'proposals',
+  [
+    'Recent money moves, newest first, each the same object proposal_status returns. Use it when',
+    'you need a proposal and do not hold its id ("show me my last deposit", "what went wrong"):',
+    'never ask the person for a uuid about their own money. limit defaults to 10, max 50; kind',
+    'filters to one of hl_deposit, hl_withdraw, swap, intents_send, intents_pay, trade,',
+    'policy_change. Read-only, changes nothing.',
+  ].join(' '),
+  {
+    limit: z.number().int().optional().describe('rows to return, 1 to 50, default 10'),
+    kind: z.string().optional().describe('one proposal kind to filter to'),
+  },
+);
+registerLeadRead(
+  'diagnose',
+  [
+    'Everything about ONE money move in one call, for "why is it not there yet": the same view',
+    "proposal_status returns, this row's own audit lines (log_tail has no filter, so finding them",
+    'otherwise means reading everybody\'s), what 1Click last reported about it, and what the',
+    'Hyperliquid account holds right now on a deposit or a withdrawal. Reach for it before you',
+    'guess about a slow or a failed move, and say what it shows rather than reassuring anyone.',
+    'It asks no permission and needs none: it moves nothing. The quote handle comes back as a',
+    'fingerprint and never as an address, and nothing in the answer is a place money can be sent.',
+    'Read-only, changes nothing.',
+  ].join(' '),
   { id: z.string() },
 );
 
@@ -726,6 +765,27 @@ registerRead(
 function registerView(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
   server.registerTool(name, { description, inputSchema: shape }, async (args) => proxy({ op: 'view', tool: name, args }));
 }
+
+registerView(
+  'show',
+  [
+    'Draws something that already exists as a card in the window: a proposal, a transaction, an',
+    'open position, or the deposit card. Reach for it whenever somebody asks to SEE a thing',
+    '("show me the transaction", "show me my last deposit"): the window draws the figures, and',
+    'you say one line about what it is showing rather than reading its fields back out loud.',
+    "kind: proposal (id is the proposal id), transaction (id is the hash, and network says which",
+    'chain it is on, because a card drawn against the wrong chain is a confident lie), position',
+    '(id is the coin), deposit (the card the deposit tool opened).',
+    'It moves no money and asks no permission; all it changes is what the human is looking at.',
+    'It answers drawn:false when no conversation is open in the window, which is not a failure,',
+    'only nowhere to draw.',
+  ].join(' '),
+  {
+    kind: z.enum(['proposal', 'transaction', 'position', 'deposit']).describe('what to draw'),
+    id: z.string().describe('the proposal id, the transaction hash, or the coin'),
+    network: z.enum(CHAIN_NETWORKS as [string, ...string[]]).optional().describe('for a transaction: the network the hash is on'),
+  },
+);
 
 /* The window itself, and who it belongs to.
    Which screen the human is looking at, which coins it tracks and what colour it is are the

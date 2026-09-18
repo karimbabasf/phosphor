@@ -27,6 +27,17 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'log_tail',
   'policy_show',
   'proposal_status',
+  /* The list behind proposal_status, which needs an id that nothing else produced: an agent
+     asked about "my last deposit" had to fish one out of the audit log or ask the person for a
+     uuid about their own money. Lead only, like the deposit card: a spawned worker measures
+     something and reports, and enumerating what its parent is in the middle of paying for is
+     not that. */
+  'proposals',
+  /* One move's whole story in one call: the view, this row's audit lines, what the router last
+     said, what the venue holds now. Lead only for the same reason `proposals` is. It hands back
+     no address: the quote handle is fingerprinted, and the quote's own signature and the deposit
+     address 1Click minted stay on the row, so nothing here can be reused as a destination. */
+  'diagnose',
   'propose_policy_change',
   // The rails. Each moves funds through a contract and none takes an address: the property
   // walk in tests/injection.test.ts is what holds that to be true.
@@ -115,6 +126,11 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'trade_clear',
   // A plan drawn as an idea. It has no authority and moves nothing; "go" arms it by id.
   'trade_plan',
+  /* Draws something that already exists as a card: a proposal, a transaction, a position, the
+     deposit card. "Show me the transaction" used to come back as prose with a hash pasted in the
+     middle of it. It reads what a read tool would and writes nothing but the window, which is
+     why it is a view tool and not a read: what it changes is what the human is looking at. */
+  'show',
   // The team. Phosphor allowed one agent at a time until 2026-08-21 and now seats several, so
   // these five exist to keep a roster from being a crowd: who is here, a board they write one
   // line each to, and workers one of them can put on a piece of work.
@@ -158,6 +174,9 @@ export const WORKER_WITHHELD: readonly string[] = [
   'chart_layout',
   'chart_snapshot',
   'deposit',
+  // The lead's own money timeline, and one row's whole story. A worker has no business in either.
+  'proposals',
+  'diagnose',
   // A worker has no human in its session to have taught anything to.
   'profile_learned',
   ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),

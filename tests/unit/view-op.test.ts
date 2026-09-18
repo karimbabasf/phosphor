@@ -26,6 +26,7 @@ import type {
   Proposal,
   ViewMode,
 } from '../../src/types.ts';
+import { stubView } from '../fixtures/view.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
@@ -128,6 +129,8 @@ async function boot(opts: { view?: ViewMode; proposals?: Proposal[] } = {}): Pro
       refuse: async () => pendingProposal(),
       get: (id: string) => list.find((p) => p.id === id),
       list: () => list,
+      view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

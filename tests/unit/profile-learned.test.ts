@@ -27,6 +27,7 @@ import { VIEW_TOOLS } from '../../src/http/context.ts';
 import { EXPECTED_TOOLS, WORKER_WITHHELD } from '../tool-surface.ts';
 import { bootDriverServer } from '../fixtures/driver-server.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
+import { stubView } from '../fixtures/view.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
@@ -82,6 +83,8 @@ async function boot(): Promise<Harness> {
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

@@ -7,6 +7,10 @@ import type { Plan } from './trade/plan.ts';
 import type { PlanRisk } from './trade/risk.ts';
 import type { AddressActivity } from './chainscan/index.ts';
 import type { ChainNetwork } from './chainscan/networks.ts';
+import type { ProposalView } from './proposals/view.ts';
+// Re-exported so every caller reads the one object from the one contract without importing
+// two files to describe one row.
+export type { ProposalStage, ProposalView, TxLeg } from './proposals/view.ts';
 
 export type ChainId = 'eth' | 'base' | 'arb' | 'sol' | 'near';
 export type Mode = 'demo' | 'live';
@@ -175,10 +179,16 @@ export type PolicyPatch = {
   composition?: Partial<Policy['composition']>;
 };
 
+/* What the engine decided, why in words, and why in codes.
+   `reasonCodes` is the machine-readable half of `reasons`: a refusal carries its rule, and a
+   needs_approval verdict carries any adjustment the engine made on the way through (today only
+   `threshold_clamped_to_cap`). It is optional because rows already on disk were written without
+   it and because nothing outside the engine mints a verdict with codes; the engine always sets
+   it, so a reader takes `verdict.reasonCodes ?? []` and never has to read the prose. */
 export type Verdict =
-  | { outcome: 'allow'; reasons: string[] }
-  | { outcome: 'needs_approval'; reasons: string[] }
-  | { outcome: 'refuse'; reasons: string[]; rule: string };
+  | { outcome: 'allow'; reasons: string[]; reasonCodes?: string[] }
+  | { outcome: 'needs_approval'; reasons: string[]; reasonCodes?: string[] }
+  | { outcome: 'refuse'; reasons: string[]; rule: string; reasonCodes?: string[] };
 
 // ---------- Writes ----------
 
@@ -366,6 +376,11 @@ export type RailEvidence = {
   refundReason?: string;
   settledAmountOut?: string;
   explorerUrl?: string;
+  /* 1Click's own word for where the order is, byte for byte off GetExecutionStatusResponse
+     (PENDING_DEPOSIT, KNOWN_DEPOSIT_TX, INCOMPLETE_DEPOSIT, PROCESSING, SUCCESS, REFUNDED,
+     FAILED). Written on every poll so the stage a person reads is the stage the vendor would
+     confirm, rather than a word only this app uses. */
+  providerStage?: string;
   // The 1Click quote the move paid into, as 1Click signed it: verified before the deposit address
   // was used (src/quote-signature.ts) and kept so a dispute is filed with the vendor's own
   // commitment rather than this app's memory of it.
@@ -559,6 +574,20 @@ export type Proposal = {
   // Set when the preflight first said hold: the row stays approved, nothing is signed, and the
   // executor retries on its own until the checks clear or the hold runs out.
   heldSince?: string;
+  /* WHEN EACH STAGE WAS FIRST ENTERED, and when the stage last changed at all. The row is
+     written many times inside one stage (evidence lands, the preflight lands, a balance is
+     re-read), so "last written" is not "last moved", and a counter on a card that reset on
+     every write would say a deposit had just changed when nothing about it had. Written by
+     persist() in src/proposals/lifecycle.ts, read by proposalView(). Keys are ProposalStage
+     words; the map is absent on rows written before this existed and is backfilled on the
+     next write. */
+  stageAt?: Record<string, string>;
+  lastChangeAt?: string;
+  /* Set by the sweep in src/main.ts when a row passed its deadline with nothing changing. It
+     is a statement that nothing has moved, never a claim that the move failed: the row keeps
+     its status, keeps its charge against the day, and a later credit still settles it forward
+     to executed. Cleared by nothing; the stage that follows a settle wins on its own. */
+  stalledAt?: string;
 };
 
 // ---------- Basic view ----------
@@ -846,6 +875,16 @@ export type ProposalService = {
   releaseQueued(): Promise<number>;
   get(id: string): Proposal | undefined;
   list(): Proposal[];
+  /* One row as every surface reads it: the stage, what is being waited on, the clocks, the
+     money and the hashes, in one object. The card draws it, /api/state carries it, the agent
+     narrates it, and a row still waiting on a venue is re-judged against the last balance read
+     on the way through. `now` is the clock the elapsed figures are taken against, so two
+     surfaces can be asserted to agree at one instant. See src/proposals/view.ts. */
+  view(p: Proposal, now?: number): ProposalView;
+  /* Mark every row that passed its deadline with nothing changing. Returns how many moved. A
+     stall is a statement that nothing has changed, never a claim that the move failed: the
+     status underneath is untouched and a later credit still settles the row forward. */
+  markStalled(now?: number): number;
   sessionSpentUsd(): number; // executed fund-moving usd in the last 24h
   // Boot sweep: every row left `executing` by a process that is gone becomes
   // `needs_reconciliation`. Returns what it changed. Ran once, before the port opens.

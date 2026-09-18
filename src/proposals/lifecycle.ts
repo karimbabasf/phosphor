@@ -36,6 +36,7 @@ import type { RailRegistry } from '../rails/index.ts';
 import type { TradeDeps } from '../trade/rail.ts';
 import type { OneClickLookup, VenueCredited } from './reconcile.ts';
 import { withReservation } from './reservation.ts';
+import { STAGE_LABEL, stageOf } from './view.ts';
 
 const SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -206,9 +207,36 @@ export async function settled(ctx: PCtx, id: string, capMs: number): Promise<Pro
 }
 
 export function persist(ctx: PCtx, p: Proposal): Proposal {
-  ctx.store.put(p);
+  const row = stamped(ctx, p);
+  ctx.store.put(row);
   ctx.notify();
-  return p;
+  return row;
+}
+
+/* THE STAGE CLOCK, and it moves on a stage change rather than on a write.
+   A row is written many times inside one stage: the rail hands over a handle, then a hash, then
+   a preflight, then a balance. A card counting from the last write would reset on each of those
+   and tell somebody their deposit had just moved when nothing about it had. So the stamp moves
+   only when stageOf() reads a different word than it read on the row this one replaces, and a
+   row that has never carried the stamp gets it on its next write whatever else changed. */
+function stamped(ctx: PCtx, p: Proposal): Proposal {
+  const before = ctx.store.get(p.id);
+  /* The STORE's history, not the caller's. executeRail holds the row as it was before the rail
+     ran and writes the outcome onto that snapshot, so every stamp the rail's own hooks made in
+     between is in the store and not in the row being handed here. The same reason the executor
+     already re-reads txids and evidence rather than trusting its snapshot. */
+  const history = { ...p.stageAt, ...before?.stageAt };
+  const seen = before?.lastChangeAt ?? p.lastChangeAt;
+  const stage = stageOf(p);
+  if (before !== undefined && seen !== undefined && stageOf(before) === stage) {
+    return { ...p, stageAt: history, lastChangeAt: seen };
+  }
+  const at = nowIso();
+  /* A stall records WHEN IT WAS NOTICED and deliberately does not move the clock. It is the
+     statement that nothing has changed, so the counter a person is watching keeps running from
+     the last real change: resetting it to zero at the moment we call the row late is the one
+     number that would make "late" mean nothing. */
+  return { ...p, stageAt: { ...history, [stage]: at }, lastChangeAt: stage === 'stalled' ? (seen ?? at) : at };
 }
 
 // ---------- the outcome, in the words an agent may repeat ----------
@@ -241,13 +269,32 @@ export type PlanFate = {
   confirm?: { state: 'filled' | 'resting' | 'canceled' | 'rejected' | 'unconfirmed'; venueStatus: string | null };
 };
 
-const LEAD: Record<OutcomeState, string> = {
-  confirmed: 'Confirmed.',
-  settling: 'Settling: the venue confirmed the move and the balance has not shown it yet. Nothing more is signed until it does.',
-  failed: 'Failed.',
-  unconfirmed: 'Unconfirmed: the move was started and its outcome is not known yet. Do not send it again; read it again instead.',
-  pending: 'Not executed yet.',
-};
+/* The lead sentence QUOTES THE STAGE LABEL rather than naming a state of its own. "Settling" was
+   a word only this app used: nobody outside it could check it, the card printed something else
+   for the same row, and a person read the two and could not tell which was true. The label comes
+   off the one table every surface reads, so the sentence and the card cannot say different
+   things about the same moment.
+
+   A FUNCTION RATHER THAN A CONST, and that is load-bearing. view.ts imports this file for
+   OutcomeState and this file imports view.ts for the stage table, which the two hoisted
+   functions resolve happily; a const that READ the table while this module was being evaluated
+   did not, because whichever of the pair Node reaches first finds the other's consts empty. It
+   threw "Cannot access STAGE_LABEL before initialization" on boot and nowhere in the tests, which
+   import view.ts first. Read it when a sentence is built and the cycle is nothing. */
+function lead(state: OutcomeState): string {
+  switch (state) {
+    case 'confirmed':
+      return `${STAGE_LABEL.confirmed}.`;
+    case 'settling':
+      return `${STAGE_LABEL.crediting}: the router confirmed the move and the balance has not shown it yet. Nothing more is signed until it does.`;
+    case 'failed':
+      return `${STAGE_LABEL.failed}.`;
+    case 'unconfirmed':
+      return 'Unconfirmed: the move was started and its outcome is not known yet. Do not send it again; read it again instead.';
+    case 'pending':
+      return 'Not executed yet.';
+  }
+}
 
 function unitsOf(base: string, decimals: number): string {
   const digits = base.replace(/^-/, '').padStart(decimals + 1, '0');
@@ -261,17 +308,17 @@ function tradeState(plan: PlanFate): { state: OutcomeState; sentence: string } {
   if (plan.status === 'open') return { state: 'confirmed', sentence: 'Confirmed. The entry filled and the position is open with its exits resting.' };
   if (plan.status === 'placed') {
     const c = plan.confirm;
-    if (c === undefined) return { state: 'unconfirmed', sentence: `${LEAD.unconfirmed} The entry was sent and the venue has not been read back for it yet.` };
-    if (c.state === 'unconfirmed') return { state: 'unconfirmed', sentence: `${LEAD.unconfirmed} The venue did not answer for the entry inside the read-back window; the order may exist.` };
+    if (c === undefined) return { state: 'unconfirmed', sentence: `${lead('unconfirmed')} The entry was sent and the venue has not been read back for it yet.` };
+    if (c.state === 'unconfirmed') return { state: 'unconfirmed', sentence: `${lead('unconfirmed')} The venue did not answer for the entry inside the read-back window; the order may exist.` };
     return { state: 'confirmed', sentence: `Confirmed. The venue reports the entry ${c.venueStatus ?? c.state}.` };
   }
   if (plan.status === 'done') {
     const reason = plan.endReason ?? 'closed';
-    if (reason.startsWith('failed:')) return { state: 'failed', sentence: `${LEAD.failed} ${reason.slice('failed:'.length)}` };
-    if (reason === 'cancelled' || reason === 'expired') return { state: 'failed', sentence: `${LEAD.failed} The plan ended ${reason} and no position was taken.` };
+    if (reason.startsWith('failed:')) return { state: 'failed', sentence: `${lead('failed')} ${reason.slice('failed:'.length)}` };
+    if (reason === 'cancelled' || reason === 'expired') return { state: 'failed', sentence: `${lead('failed')} The plan ended ${reason} and no position was taken.` };
     return { state: 'confirmed', sentence: `Confirmed. The trade ran and ended ${reason}.` };
   }
-  return { state: 'pending', sentence: `${LEAD.pending} The plan is an idea and has no authority.` };
+  return { state: 'pending', sentence: `${lead('pending')} The plan is an idea and has no authority.` };
 }
 
 export function outcomeOf(p: Proposal, plan?: PlanFate | null): ProposalOutcome {
@@ -295,33 +342,33 @@ export function outcomeOf(p: Proposal, plan?: PlanFate | null): ProposalOutcome 
         ({ state, sentence } = tradeState(plan));
       } else {
         state = 'confirmed';
-        sentence = `${LEAD.confirmed} ${detail}`.trim();
+        sentence = `${lead('confirmed')} ${detail}`.trim();
       }
       break;
     case 'needs_reconciliation':
       // A settling row carries the pocket the rail read; a row the boot sweep stranded does
       // not, and for that one the honest word is unconfirmed.
       state = p.pocket !== undefined ? 'settling' : 'unconfirmed';
-      sentence = `${LEAD[state]} ${detail}`.trim();
+      sentence = `${lead(state)} ${detail}`.trim();
       break;
     case 'executing':
       state = 'unconfirmed';
-      sentence = `${LEAD.unconfirmed} The rail is still running.`;
+      sentence = `${lead('unconfirmed')} The rail is still running.`;
       break;
     case 'failed':
       state = 'failed';
-      sentence = `${LEAD.failed} ${detail}`.trim();
+      sentence = `${lead('failed')} ${detail}`.trim();
       break;
     case 'refused':
     case 'policy_refused':
       state = 'failed';
-      sentence = `${LEAD.failed} The proposal was refused${p.status === 'policy_refused' ? ' by policy' : ''} and nothing was signed.`;
+      sentence = `${lead('failed')} The proposal was refused${p.status === 'policy_refused' ? ' by policy' : ''} and nothing was signed.`;
       break;
     default:
       state = 'pending';
       sentence = p.heldSince !== undefined
-        ? `${LEAD.pending} The proposal is approved and held: the checks in front of the signature have not cleared, it is tried again every half minute, and nothing is signed until they do.`
-        : `${LEAD.pending} The proposal is ${p.status.replace(/_/g, ' ')}.`;
+        ? `${lead('pending')} The proposal is approved and held: the checks in front of the signature have not cleared, it is tried again every half minute, and nothing is signed until they do.`
+        : `${lead('pending')} The proposal is ${p.status.replace(/_/g, ' ')}.`;
   }
   return { state, sentence, ...money };
 }

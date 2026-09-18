@@ -27,6 +27,7 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import type { IntentsRead } from '../../src/ledger/intents.ts';
+import { stubView } from '../fixtures/view.ts';
 
 // Fixed, unlike the fixture in security-hardening.test.ts, which stamps a fresh timestamp on
 // every call. A moving timestamp would change the bytes on every request and make an ETag
@@ -76,6 +77,8 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       refuse: async () => { throw new Error('unused'); },
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

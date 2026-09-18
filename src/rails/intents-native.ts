@@ -1095,7 +1095,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline, quote: signedQuote });
     const evidence = `intent ${submitted.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
-    const watch = await watchStatus(depositAddress);
+    const watch = await watchStatus(depositAddress, hooks);
 
     if (watch.status === 'SUCCESS') {
       /* SUCCESS from the venue is the venue's word. What arrived is a number this app can read,
@@ -1230,8 +1230,9 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   }
 
   // Same contract as the oneclick rail's watcher: polls until terminal, out of attempts or
-  // out of time, and never throws once the intent has been submitted.
-  async function watchStatus(depositAddress: string): Promise<OneClickStatus> {
+  // out of time, and never throws once the intent has been submitted. Every poll tells the
+  // executor which word 1Click used, so the stage on the card is the vendor's own.
+  async function watchStatus(depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
     const client = api as IntentsApiPort;
     const deadline = now() + pollTimeoutMs;
     let last: OneClickStatus = {
@@ -1252,6 +1253,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     for (let attempt = 0; now() < deadline && waited < pollTimeoutMs; attempt += 1) {
       try {
         last = await client.status(depositAddress);
+        tell(hooks, { providerStage: last.status });
         if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return last;
       } catch (err) {
         last = { ...last, reported: `status check failed: ${oneLine(errText(err), 80)}` };

@@ -22,6 +22,7 @@ import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
+import { stubView } from '../fixtures/view.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts); a test about the door's other
 // walls (Origin, Host, the body type) leaves it out on purpose, because those walls come first.
@@ -106,6 +107,8 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       refuse: async () => builtSwap(),
       get: () => undefined,
       list: () => [],
+      view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
