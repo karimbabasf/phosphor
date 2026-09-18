@@ -92,7 +92,7 @@
       "tool": "wallet"
     },
     {
-      "say": "The swap six minutes ago. {{2.result.detail}}. Nothing left the balance: it still reads {{3.totalUsd}} USD."
+      "say": "The swap six minutes ago: {{2.error.message}}. Nothing left the balance: it still reads {{3.totalUsd}} USD."
     }
   ],
   "mustCall": [
