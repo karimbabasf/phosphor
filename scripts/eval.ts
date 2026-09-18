@@ -27,10 +27,13 @@ import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { createDriver, type DriverEvent } from '../src/driver.ts';
+import { createDriver, useSeatSecret, type DriverEvent } from '../src/driver.ts';
 import { hashLine } from '../src/audit.ts';
+import { defaultPolicy } from '../src/policy/file.ts';
+import { venueAllowlist } from '../src/rails/index.ts';
+import { renderSentences } from '../src/policy/render.ts';
 import { EXPECTED_TOOLS_SORTED } from '../tests/tool-surface.ts';
-import { loadScenarios, type Scenario } from '../tests/eval/schema.ts';
+import { loadScenarios, turnsOf, type Scenario } from '../tests/eval/schema.ts';
 import { gradeScenario, type Card, type Frame, type Run, type StatusRead, type Verdict } from '../tests/eval/grade.ts';
 
 type Json = any;
@@ -120,6 +123,18 @@ function resolveStamps(value: unknown, now: number): unknown {
   return out;
 }
 
+function mergeDeep(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    const current = out[key];
+    out[key] =
+      value !== null && typeof value === 'object' && !Array.isArray(value) && current !== null && typeof current === 'object' && !Array.isArray(current)
+        ? mergeDeep(current as Record<string, unknown>, value as Record<string, unknown>)
+        : value;
+  }
+  return out;
+}
+
 function seedDataDir(dataDir: string, scenario: Scenario): void {
   const now = Date.now();
   fs.mkdirSync(dataDir, { recursive: true });
@@ -128,7 +143,13 @@ function seedDataDir(dataDir: string, scenario: Scenario): void {
     fs.writeFileSync(path.join(dataDir, 'proposals.json'), `${JSON.stringify(rows, null, 2)}\n`);
   }
   if (scenario.pre.policy !== undefined) {
-    fs.writeFileSync(path.join(dataDir, 'policy.json'), `${JSON.stringify(scenario.pre.policy, null, 2)}\n`);
+    // Merged over the file main.ts would have seeded, allowlist and sentences included, so a
+    // scenario that names one threshold does not silently rewrite every other rule.
+    const seeded = defaultPolicy();
+    seeded.outbound.destinationAllowlist = venueAllowlist();
+    const merged = mergeDeep(seeded as unknown as Record<string, unknown>, scenario.pre.policy);
+    (merged as Json).sentences = renderSentences(merged as Json);
+    fs.writeFileSync(path.join(dataDir, 'policy.json'), `${JSON.stringify(merged, null, 2)}\n`);
   }
   const lines = scenario.pre.audit ?? [];
   if (lines.length > 0) {
@@ -284,6 +305,12 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   const app = await bootApp(stage, scenario);
   fs.writeFileSync(path.join(stage, '.eval-scenario.json'), JSON.stringify(scenario));
 
+  /* The seat this boot minted. src/mcp.ts refuses every op without it, and the driver reads it
+     from this module rather than from the environment, because the app normally IS this process.
+     Here the app is a child, so the secret is read off its data directory and handed over. */
+  const seat = path.join(app.dataDir, 'agent.secret');
+  if (fs.existsSync(seat)) useSeatSecret(fs.readFileSync(seat, 'utf8').trim());
+
   const frames: Frame[] = [];
   const controller = new AbortController();
   const window = watchWindow(app, frames, controller.signal);
@@ -339,10 +366,17 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   try {
     driver.start();
     await sleep(250);
-    driver.send(scenario.userSays);
-    const until = Date.now() + (LIVE ? 240_000 : 60_000);
-    while (!ended && errors.length === 0 && Date.now() < until) await sleep(100);
-    if (!ended && errors.length === 0) detail = 'the turn did not end inside its budget';
+    // Scripted mode plays the whole exchange off one turn, because the script already carries
+    // what the human's second sentence led to. Live mode feeds every turn and waits for each.
+    const turns = LIVE ? turnsOf(scenario) : turnsOf(scenario).slice(0, 1);
+    for (const turn of turns) {
+      ended = false;
+      driver.send(turn);
+      const until = Date.now() + (LIVE ? 240_000 : 60_000);
+      while (!ended && errors.length === 0 && Date.now() < until) await sleep(100);
+      if (!ended && errors.length === 0) detail = 'the turn did not end inside its budget';
+      if (detail !== '' || errors.length > 0) break;
+    }
     // The last SSE frame trails the last tool call, so the window is given a moment to say so.
     await sleep(400);
   } catch (error) {
@@ -361,8 +395,15 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   // reported as its own error rather than as a trace the agent did not make.
   if (detail !== '') return { scenario, status: 'error', verdict, missing, detail };
 
-  const status: Result['status'] = verdict.ok ? 'pass' : missing.length > 0 ? 'xfail' : 'fail';
-  return { scenario, status, verdict, missing, detail };
+  /* The view is read off the answers this run actually got rather than off a version number: a
+     proposal_status result with no `stage` on it is a build where src/proposals/view.ts has a type
+     and no builder yet. */
+  const sawView = statusReads.some((read) => (read.data as Json)?.stage !== undefined);
+  const waiting = [...missing];
+  if (scenario.needsView === true && !sawView) waiting.push('stage (the ProposalView)');
+
+  const status: Result['status'] = verdict.ok ? 'pass' : waiting.length > 0 ? 'xfail' : 'fail';
+  return { scenario, status, verdict, missing: waiting, detail };
 }
 
 // ---------- the surface probe ----------
@@ -431,7 +472,10 @@ try {
     const checks = v === null ? '' : ` trace:${v.trace.ok ? 'ok' : 'no'} reply:${v.reply.ok ? 'ok' : 'no'} window:${v.window.skipped ? 'skip' : v.window.ok ? 'ok' : 'no'}`;
     const first = result.detail !== '' ? result.detail : (v?.first ?? '');
     console.log(`${mark} ${result.scenario.id} ${result.scenario.title}${checks}${first ? `   ${first}` : ''}`);
-    if (VERBOSE && result.verdict !== null) console.log(`        trace: ${result.verdict.calls.join(', ')}`);
+    if (VERBOSE && result.verdict !== null) {
+      console.log(`        trace: ${result.verdict.calls.join(', ')}`);
+      console.log(`        reply: ${result.verdict.reply_text.replace(/\n/g, ' | ').slice(0, 900)}`);
+    }
   }
 } finally {
   fs.rmSync(stage, { recursive: true, force: true });

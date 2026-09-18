@@ -61,6 +61,25 @@ function scenarioFile(): Scenario {
   return JSON.parse(fs.readFileSync(file, 'utf8')) as Scenario;
 }
 
+/* WHAT MAKES A CANNED REPLY WORTH GRADING.
+
+   A `say` line written out by hand would pass its own regex forever, which grades the fixture
+   and nothing else. So a `say` may carry `{{2.money.amountIn}}`: step 2's real answer, at that
+   path, as the app returned it a moment ago. The figures in a scripted reply are therefore the
+   app's own, and a scenario asserting /7\.5425 USDC/ fails the day the app stops saying 7.5425.
+   A path that resolves to nothing becomes `?`, which fails the assertion rather than hiding. */
+function fill(text: string, results: unknown[]): string {
+  return text.replace(/\{\{(\d+)\.([\w.[\]]+)\}\}/g, (_whole, index: string, dotted: string) => {
+    let cursor: unknown = results[Number(index)];
+    for (const key of dotted.split('.')) {
+      if (cursor === null || typeof cursor !== 'object') return '?';
+      cursor = (cursor as Record<string, unknown>)[key];
+    }
+    if (cursor === null || cursor === undefined) return '?';
+    return typeof cursor === 'string' ? cursor : JSON.stringify(cursor);
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -88,7 +107,7 @@ function firstTurn(): Promise<string> {
   });
 }
 
-async function callTool(client: Client, step: Step): Promise<{ text: string; ok: boolean }> {
+async function callTool(client: Client, step: Step, args: Record<string, unknown>): Promise<{ text: string; ok: boolean }> {
   if (step.inject?.error !== undefined) return { text: step.inject.error, ok: false };
   if (step.inject?.result !== undefined) return { text: JSON.stringify(step.inject.result), ok: true };
   try {
@@ -97,7 +116,7 @@ async function callTool(client: Client, step: Step): Promise<{ text: string; ok:
     // this call does not.
     const res = (await client.callTool({
       name: step.tool ?? '',
-      arguments: step.args ?? {},
+      arguments: args,
     })) as { content?: Array<{ type: string; text?: string }>; isError?: boolean };
     const text = (res.content ?? []).map((block) => block.text ?? '').join('');
     return { text, ok: res.isError !== true };
@@ -133,18 +152,30 @@ emit({
 await firstTurn();
 
 let calls = 0;
+const results: unknown[] = [];
 for (const [index, step] of scenario.script.entries()) {
   if (step.waitMs !== undefined && step.waitMs > 0) await sleep(step.waitMs);
   const content: Array<Record<string, unknown>> = [];
-  if (step.say !== undefined) content.push({ type: 'text', text: step.say });
+  if (step.say !== undefined) content.push({ type: 'text', text: fill(step.say, results) });
   const id = `toolu_eval_${index}`;
+  // An argument can name an earlier answer the same way a `say` can, which is the only way a
+  // fixture reaches a proposal id: the app mints it at run time and no file can hold it.
+  const args = JSON.parse(fill(JSON.stringify(step.args ?? {}), results)) as Record<string, unknown>;
   if (step.tool !== undefined) {
-    content.push({ type: 'tool_use', id, name: `${PREFIX}${step.tool}`, input: step.args ?? {} });
+    content.push({ type: 'tool_use', id, name: `${PREFIX}${step.tool}`, input: args });
   }
   if (content.length > 0) emit({ type: 'assistant', message: { role: 'assistant', content } });
-  if (step.tool === undefined) continue;
+  if (step.tool === undefined) {
+    results.push(null);
+    continue;
+  }
   calls += 1;
-  const result = await callTool(client, step);
+  const result = await callTool(client, step, args);
+  try {
+    results.push(JSON.parse(result.text));
+  } catch {
+    results.push(result.text);
+  }
   emit({
     type: 'user',
     message: {

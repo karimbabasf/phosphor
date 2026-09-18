@@ -1,0 +1,107 @@
+{
+  "id": "S1",
+  "title": "deposit everything to Hyperliquid (the transcript)",
+  "userSays": [
+    "deposit all my funds to hyperliquid",
+    "yes"
+  ],
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDC",
+          "originChain": "eth",
+          "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+          "amount": 7.5425,
+          "decimals": 6
+        }
+      ],
+      "hyperliquid": {
+        "collateralUsdc": 0,
+        "availableUsdc": 0
+      }
+    },
+    "policy": {
+      "outbound": {
+        "humanClickAboveUsd": 100
+      }
+    },
+    "humanClicks": true
+  },
+  "needsView": true,
+  "script": [
+    {
+      "say": "Reading both pockets before I propose anything.",
+      "tool": "wallet"
+    },
+    {
+      "say": "You hold {{0.rows.0.quantity}} USDC inside NEAR Intents and nothing on Hyperliquid. Filing the deposit.",
+      "tool": "propose_hl_deposit",
+      "args": {
+        "amount": 7.5425
+      }
+    },
+    {
+      "waitMs": 400,
+      "tool": "proposal_status",
+      "args": {
+        "id": "{{1.id}}"
+      }
+    },
+    {
+      "say": "Sending {{2.draft.amount}} USDC, {{2.draft.minCredited}} USDC lands as collateral, so the 1Click leg costs about 6.4 percent on this size. The deposit floor is 5 USDC delivered, and this clears it.",
+      "tool": "proposal_status",
+      "args": {
+        "id": "{{1.id}}"
+      }
+    },
+    {
+      "say": "Stage now: {{3.outcome.state}}. The wallet read that opened this turn totalled {{0.totalUsd}} USD. I will read the row again rather than guess."
+    }
+  ],
+  "mustCall": [
+    "wallet",
+    "propose_hl_deposit",
+    "proposal_status"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_swap",
+    "deposit",
+    "propose_trade",
+    "propose_hl_withdraw"
+  ],
+  "traceEquals": [
+    "wallet",
+    "propose_hl_deposit",
+    "proposal_status+"
+  ],
+  "ordering": [
+    [
+      "wallet",
+      "propose_hl_deposit"
+    ]
+  ],
+  "argChecks": [
+    {
+      "tool": "propose_hl_deposit",
+      "path": "amount",
+      "equals": 7.5425
+    }
+  ],
+  "mustSay": [
+    "7\\.5425\\s*USDC",
+    "\\d+(\\.\\d+)?\\s*(%|percent)",
+    "\\b5\\b"
+  ],
+  "window": {
+    "card": "propose_hl_deposit",
+    "withinMs": 1000,
+    "fields": [
+      "id",
+      "status"
+    ]
+  },
+  "rubric": "A first-time user could tell from the reply what was spent, what arrived and what it cost.",
+  "pass": "trace equals [wallet, propose_hl_deposit, proposal_status, proposal_status+]; reply matches /7\\.5425\\s*USDC/ and /\\d+(\\.\\d+)?\\s*(%|percent)/; an hl_deposit card event is emitted within 1s of the propose call."
+}

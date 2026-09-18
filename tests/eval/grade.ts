@@ -25,7 +25,7 @@ export type Run = {
 };
 
 export type Check = { ok: boolean; first: string; skipped?: boolean };
-export type Verdict = { ok: boolean; trace: Check; reply: Check; window: Check; first: string; calls: string[] };
+export type Verdict = { ok: boolean; trace: Check; reply: Check; window: Check; first: string; calls: string[]; reply_text: string };
 
 const pass = (): Check => ({ ok: true, first: '' });
 const fail = (first: string): Check => ({ ok: false, first });
@@ -171,5 +171,13 @@ export function gradeScenario(scenario: Scenario, run: Run): Verdict {
   const window = gradeWindow(scenario, run);
   const ok = trace.ok && reply.ok && window.ok;
   const first = !trace.ok ? trace.first : !reply.ok ? reply.first : !window.ok ? window.first : '';
-  return { ok, trace, reply, window, first, calls: run.trace.map((call) => call.name) };
+  return {
+    ok,
+    trace,
+    reply,
+    window,
+    first,
+    calls: run.trace.map((call) => call.name),
+    reply_text: run.texts.map((entry) => entry.text).join('\n'),
+  };
 }

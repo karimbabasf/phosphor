@@ -94,11 +94,19 @@ export type WindowExpect = {
 export type Scenario = {
   id: string;
   title: string;
-  userSays: string;
+  /* What the human types. A list where the scenario needs a second turn, which is every read-back:
+     S1's "yes" after the fee, S8's "yes" after the address. Live mode feeds them one at a time and
+     waits for each turn to end. Scripted mode sends only the first, because the canned script
+     already carries what the whole exchange came to. */
+  userSays: string | string[];
   pre: Precondition;
   // Tools this scenario cannot run without. Absent from the live surface means expected-fail,
   // never fail: the scenario is waiting on a build, not reporting a regression.
   needsTools?: string[];
+  /* The same for the ProposalView. A scenario asserting a stage word, what is being waited on or
+     an elapsed figure cannot pass until proposal_status returns the view, so a run before that
+     lands reports it expected-fail against `stage` rather than as a regression. */
+  needsView?: boolean;
   script: Step[];
   mustCall: string[];
   mustNotCall: string[];
@@ -118,6 +126,10 @@ export type Scenario = {
 };
 
 const REQUIRED = ['id', 'title', 'userSays', 'pre', 'script', 'mustCall', 'mustNotCall', 'pass'] as const;
+
+export function turnsOf(scenario: Scenario): string[] {
+  return Array.isArray(scenario.userSays) ? scenario.userSays : [scenario.userSays];
+}
 
 export function validate(raw: unknown, source: string): Scenario {
   if (raw === null || typeof raw !== 'object') throw new Error(`${source}: not an object`);
