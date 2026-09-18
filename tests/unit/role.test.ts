@@ -162,10 +162,18 @@ test('the role is not so long it stops being read', () => {
   // twice and nothing new was argued. This is the index doing what the paragraph above says it
   // does, and the prose rules are the same size they were.
   //
+  // RAISED FROM 15,000 ON 2026-09-18, for three read and view tools landing together, each one
+  // a capability the agent has to know about before its first call: `proposals` (nothing
+  // enumerated, so an agent asked about "my last deposit" had to ask a person for a uuid),
+  // `diagnose` (nothing returned a proposal-scoped log slice or the provider's own last answer)
+  // and `show` (nothing drew an existing thing as a card). Measured 15,167 with the first of the
+  // three in, and they are one sentence each in the index, which generates itself. No prose rule
+  // was added: the rules are the size they were.
+  //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 15000, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 15600, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -242,8 +250,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // reads are one group of the index, a name and a first sentence each. 16,400 on 2026-09-17:
   // propose_send replaced propose_intents_send and brought the read-back protocol with it, two
   // sentences and one worked example the agent has to carry, because a send it misunderstood
-  // is money gone. The number is still a ceiling, not a target.
-  assert.ok(text.length < 16400, `the role is ${text.length} characters with a full profile`);
+  // is money gone. 17,000 on 2026-09-18, the same 600 the plain ceiling above moved by and for
+  // the same three tools. The number is still a ceiling, not a target.
+  assert.ok(text.length < 17000, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {

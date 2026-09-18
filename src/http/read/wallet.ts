@@ -72,6 +72,12 @@ function chainIdOf(raw: string): string | null {
   return ALIAS_BY_FOLD.get(word) ?? null;
 }
 
+/* How many rows the list hands back, and the ceiling. Ten is what "my last deposit" needs; the
+   cap is what keeps an agent from reading the whole history into a model's context by asking
+   for it. Both are here rather than in the tool description so the door enforces them. */
+export const PROPOSALS_DEFAULT = 10;
+export const PROPOSALS_MAX = 50;
+
 const DISCLAIMER =
   'Send a small test amount first and wait for the app to say it landed before sending the rest. Sending on any other network, or any asset not on the accepted list, loses the money: the bridge does not refund.';
 
@@ -229,5 +235,20 @@ export const walletReads: ReadTable = {
       return;
     }
     sendJson(res, 200, ctx.proposals.view(proposal));
+  },
+  /* The list, because until now nothing enumerated and proposal_status needed an id. An agent
+     asked "show me my last deposit" had to find one in the audit log or ask the person for it,
+     and asking somebody for a uuid about their own money is the app failing to know its own
+     state. Newest first, capped, and every row is the same view proposal_status hands back. */
+  proposals: (ctx, _body, args, res) => {
+    const kind = typeof args.kind === 'string' ? args.kind.trim() : '';
+    const limit = intParam(args.limit, PROPOSALS_DEFAULT, PROPOSALS_MAX);
+    const now = Date.now();
+    const rows = ctx.proposals
+      .list()
+      .filter((p) => kind === '' || p.kind === kind)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .slice(0, limit);
+    sendJson(res, 200, { proposals: rows.map((p) => ctx.proposals.view(p, now)) });
   },
 };

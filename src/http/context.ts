@@ -85,6 +85,9 @@ export const READ_TOOLS: readonly string[] = [
   'policy_show',
   'log_tail',
   'proposal_status',
+  // The list behind it, newest first: nothing else enumerates, so an agent asked about "my last
+  // deposit" had to find an id in the log or ask the person for a uuid about their own money.
+  'proposals',
   'chart_read',
   'chart_scan',
   // A picture of one chart, rendered by the window and handed to the one call waiting for it.
@@ -121,7 +124,12 @@ export const READ_TOOLS: readonly string[] = [
 export const LEAD_ONLY_VIEW_TOOLS: readonly string[] = ['set_theme', 'chart_draw', 'chart_layout', 'trade_plan', 'profile_learned', 'agent_spawn'];
 // The one read a worker never gets: a picture is the window the human is reading, and the proxy
 // withholds it the same way (src/mcp.ts registerLeadView). src/http/mcp.ts refuses it by seat role.
-export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot'];
+/* The reads a worker never gets. A picture is the window the human is reading. The proposal
+   list is the lead's own money timeline: a spawned worker exists to measure something and hand
+   back a paragraph, and enumerating what its parent is in the middle of paying for is not that.
+   The proxy withholds both the same way (src/mcp.ts registerLeadRead); src/http/mcp.ts refuses
+   them by seat role. */
+export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot', 'proposals'];
 
 export const VIEW_TOOLS: readonly string[] = [
   // Colour. A write like the rest of this list: it changes what the human sees and moves no

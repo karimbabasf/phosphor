@@ -141,7 +141,11 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'composition', does: 'stablecoin exposure by issuer and pocket, including the freezable share.' },
       { tool: 'policy_show', does: 'the rules currently enforced, as plain-English sentences.' },
       { tool: 'log_tail', does: 'the audit log, newest first: everything attempted, executed and refused.' },
-      { tool: 'proposal_status', does: 'what happened to one proposal id.' },
+      {
+        tool: 'proposal_status',
+        does: 'where one money move is now, as the object the card is drawing: stage, what it waits on, seconds so far against the typical figure, amounts, hashes, any error. Quote its words.',
+      },
+      { tool: 'proposals', does: 'recent money moves, newest first, each as that same object. Use it when you need a proposal and hold no id.' },
     ],
   },
   {

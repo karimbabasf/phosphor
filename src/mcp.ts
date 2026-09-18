@@ -516,8 +516,33 @@ registerRead('log_tail', 'Returns the most recent audit log lines, newest first.
 });
 registerRead(
   'proposal_status',
-  'Returns the status, verdict, and simulation result for a proposal id. Read-only, changes nothing.',
+  [
+    'Where one money move is right now, as one object: the stage in a word, the plain label the',
+    "window is showing for it, 1Click's own status word where a router owns the phase, what is",
+    'being waited on (You, Touch ID, 1Click, Hyperliquid), how many seconds it has been going and',
+    'how many since the stage last changed, the typical duration for this kind, the amounts and',
+    'both pockets, every transaction hash with the leg it belongs to, and an error code with a',
+    'sentence when something went wrong. THIS IS THE SAME OBJECT THE CARD IN THE WINDOW IS',
+    'DRAWING, so quote its words rather than inventing your own: if you say a different stage',
+    'than the card, one of you is wrong and it is you. Call it before saying anything is done.',
+    'Read-only: it changes no money, though a row still waiting on a venue is re-judged against',
+    'the latest balance on the way through, which is how a settled move settles itself.',
+  ].join(' '),
   { id: z.string() },
+);
+registerLeadRead(
+  'proposals',
+  [
+    'Recent money moves, newest first, each the same object proposal_status returns. Use it when',
+    'you need a proposal and do not hold its id ("show me my last deposit", "what went wrong"):',
+    'never ask the person for a uuid about their own money. limit defaults to 10, max 50; kind',
+    'filters to one of hl_deposit, hl_withdraw, swap, intents_send, intents_pay, trade,',
+    'policy_change. Read-only, changes nothing.',
+  ].join(' '),
+  {
+    limit: z.number().int().optional().describe('rows to return, 1 to 50, default 10'),
+    kind: z.string().optional().describe('one proposal kind to filter to'),
+  },
 );
 
 // The gas bill. An aggregation of receipts this app has already read for the history surface,

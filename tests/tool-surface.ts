@@ -27,6 +27,12 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'log_tail',
   'policy_show',
   'proposal_status',
+  /* The list behind proposal_status, which needs an id that nothing else produced: an agent
+     asked about "my last deposit" had to fish one out of the audit log or ask the person for a
+     uuid about their own money. Lead only, like the deposit card: a spawned worker measures
+     something and reports, and enumerating what its parent is in the middle of paying for is
+     not that. */
+  'proposals',
   'propose_policy_change',
   // The rails. Each moves funds through a contract and none takes an address: the property
   // walk in tests/injection.test.ts is what holds that to be true.
@@ -158,6 +164,8 @@ export const WORKER_WITHHELD: readonly string[] = [
   'chart_layout',
   'chart_snapshot',
   'deposit',
+  // The lead's own money timeline. A worker has no business enumerating it.
+  'proposals',
   // A worker has no human in its session to have taught anything to.
   'profile_learned',
   ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),
