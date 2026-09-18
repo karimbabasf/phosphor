@@ -101,6 +101,15 @@ function stageRepo(): string {
   }
   fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(stage, 'node_modules'));
   fs.chmodSync(path.join(stage, 'tests', 'eval', 'agent.ts'), 0o755);
+  fs.chmodSync(path.join(stage, 'tests', 'eval', 'idle-agent.ts'), 0o755);
+  /* The conversation door, pointed somewhere harmless. runScenario opens a chat so a `show`
+     card has a window to land in, and src/http/chats.ts starts a child for every chat it makes.
+     Left unset that child is the real claude binary on this machine, which is a second model
+     beside the one under test and a subscription being spent by a test run. */
+  const cfgPath = path.join(stage, 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as Record<string, unknown>;
+  cfg.driver = { claudeBin: path.join(stage, 'tests', 'eval', 'idle-agent.ts') };
+  fs.writeFileSync(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`);
   return stage;
 }
 
@@ -250,7 +259,7 @@ async function bootApp(stage: string, scenario: Scenario): Promise<App> {
 // Every SSE frame, and the proposal rows /api/state carried when it arrived. The frame is the
 // signal and the state is the truth, which is the shape src/http/sse.ts fixed on purpose, so a
 // window check that read only frames would be reading half of it.
-async function watchWindow(app: App, frames: Frame[], stop: AbortSignal): Promise<void> {
+async function watchWindow(app: App, frames: Frame[], cards: Card[], stop: AbortSignal): Promise<void> {
   let res: Response;
   try {
     res = await fetch(`${app.base}/api/events`, { signal: stop });
@@ -277,6 +286,16 @@ async function watchWindow(app: App, frames: Frame[], stop: AbortSignal): Promis
           continue;
         }
         const at = Date.now();
+        /* A card the app pushed rather than the agent's own answer carrying one. `show` is the
+           one tool whose card is written into the conversation by src/http/view.ts, so the
+           driver's onEvent below never sees it: the window reads it off this frame and so does
+           the grader. */
+        if (String(payload.type ?? '') === 'driver') {
+          const event = (payload as { event?: { kind?: unknown; name?: unknown; data?: unknown } }).event;
+          if (event !== undefined && event.kind === 'tool_data' && typeof event.name === 'string') {
+            cards.push({ at, name: bare(event.name), data: event.data });
+          }
+        }
         let proposals: Json[] = [];
         try {
           const state = (await (await fetch(`${app.base}/api/state`)).json()) as Json;
@@ -355,11 +374,22 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   if (fs.existsSync(seat)) useSeatSecret(fs.readFileSync(seat, 'utf8').trim());
 
   const frames: Frame[] = [];
+  const cards: Card[] = [];
   const controller = new AbortController();
-  const window = watchWindow(app, frames, controller.signal);
+  const window = watchWindow(app, frames, cards, controller.signal);
+
+  /* THE CONVERSATION THE CARD LANDS IN, opened through the app's own door before the turn runs.
+     A person asking to see a transaction is typing into a conversation, so one is always open
+     for them; this harness drives the agent from outside the app, so none was, and every `show`
+     answered drawn:false against a window nobody is looking at that way. The child this starts
+     is tests/eval/idle-agent.ts (see stageRepo), which holds the seat and says nothing. */
+  await fetch(`${app.base}/api/driver`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: app.base },
+    body: JSON.stringify({ action: 'open', token: app.token }),
+  }).catch(() => undefined);
 
   const trace: Run['trace'] = [];
-  const cards: Card[] = [];
   const texts: Run['texts'] = [];
   const statusReads: StatusRead[] = [];
   const errors: string[] = [];
