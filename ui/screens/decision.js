@@ -452,6 +452,7 @@
       var lockedActions = dom.el('div', 'dock-actions');
       var lockedNo = dom.el('button', 'btn btn-ghost');
       lockedNo.appendChild(dom.el('span', 'btn-label', 'No'));
+      dom.setAttr(lockedNo, 'data-pending-label', 'Refusing');
       var unlock = dom.el('button', 'btn btn-primary');
       unlock.appendChild(dom.el('span', 'btn-label', 'Unlock'));
       lockedActions.appendChild(lockedNo);
@@ -459,7 +460,7 @@
       foot.appendChild(lockedActions);
 
       dom.on(lockedNo, 'click', function () {
-        decide(api.refuse, proposal.id, [lockedNo, unlock], lockedNo, 'Refusing', 'Refused.', REFUSED_MS, null);
+        decide(api.refuse, proposal.id, [lockedNo, unlock], lockedNo, 'Refused.', REFUSED_MS, null);
       });
       dom.on(unlock, 'click', function () {
         /* The dock steps aside for the lock screen. It comes back on its own:
@@ -482,12 +483,14 @@
     var actions = dom.el('div', 'dock-actions');
     var no = dom.el('button', 'btn btn-ghost');
     no.appendChild(dom.el('span', 'btn-label', 'No'));
+    dom.setAttr(no, 'data-pending-label', 'Refusing');
     var yes = dom.el('button', 'btn btn-primary');
     /* On a send the primary says what the click starts: the Touch ID dialog
        that names the receiver, on an enclave wallet, and plain approval on a
        password wallet. Every other ask keeps its one-word Yes. */
     var yesLabel = dom.el('span', 'btn-label', send ? (enclave() ? 'Approve, then Touch ID' : 'Approve') : 'Yes');
     yes.appendChild(yesLabel);
+    dom.setAttr(yes, 'data-pending-label', 'Approving');
     actions.appendChild(no);
     actions.appendChild(yes);
     foot.appendChild(actions);
@@ -499,6 +502,9 @@
        back on the next frame, as approved or as pending again. */
     if (touching) {
       if (send) {
+        /* The button is the waiting state now, so it stops reserving room for
+           a swap it will not make and holds the fingerprint beside the word. */
+        dom.setAttr(yes, 'data-pending-label', null);
         dom.clear(yes);
         yes.appendChild(window.PhosphorSendCard.fingerprint());
         yes.appendChild(dom.el('span', 'btn-label', 'Waiting for Touch ID'));
@@ -521,10 +527,10 @@
     }
 
     dom.on(yes, 'click', function () {
-      decide(api.approve, proposal.id, [yes, no], yes, 'Approving', 'Approved.', DONE_MS, proposal.id);
+      decide(api.approve, proposal.id, [yes, no], yes, 'Approved.', DONE_MS, proposal.id);
     });
     dom.on(no, 'click', function () {
-      decide(api.refuse, proposal.id, [yes, no], no, 'Refusing', 'Refused.', REFUSED_MS, null);
+      decide(api.refuse, proposal.id, [yes, no], no, 'Refused.', REFUSED_MS, null);
     });
   }
 
@@ -720,15 +726,17 @@
     var actions = dom.el('div', 'dock-actions');
     var again = dom.el('button', 'btn btn-primary');
     again.appendChild(dom.el('span', 'btn-label', 'Reconcile'));
+    dom.setAttr(again, 'data-pending-label', 'Checking');
     actions.appendChild(again);
     var gotIt = dom.el('button', 'btn');
     gotIt.appendChild(dom.el('span', 'btn-label', 'Got it'));
+    dom.setAttr(gotIt, 'data-pending-label', 'Filing');
     actions.appendChild(gotIt);
     foot.appendChild(actions);
 
     dom.on(again, 'click', function () {
       hush();
-      window.PhosphorShell.setPending(again, true, 'Checking');
+      window.PhosphorShell.setPending(again, true);
       api.reconcile(proposal.id)
         .then(function (answer) {
           /* Still unconfirmed is an answer, and the card stays up on it: closing would look
@@ -755,7 +763,7 @@
 
     dom.on(gotIt, 'click', function () {
       hush();
-      window.PhosphorShell.setPending(gotIt, true, 'Filing');
+      window.PhosphorShell.setPending(gotIt, true);
       api.acknowledge(proposal.id)
         .then(function () {
           return window.PhosphorShell.refresh({}).then(function () {
@@ -774,11 +782,11 @@
 
   /* ---------- deciding ---------- */
 
-  function decide(route, id, buttons, pressed, verb, word, ms, receiptId) {
+  function decide(route, id, buttons, pressed, word, ms, receiptId) {
     for (var i = 0; i < buttons.length; i += 1) buttons[i].disabled = true;
     hush();
     touchNote = null;
-    window.PhosphorShell.setPending(pressed, true, verb);
+    window.PhosphorShell.setPending(pressed, true);
     route(id)
       .then(function (answer) {
         return window.PhosphorShell.refresh({}).then(function () { return answer; });

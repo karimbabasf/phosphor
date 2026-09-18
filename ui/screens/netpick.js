@@ -277,10 +277,11 @@
     return dom.el('span', 'icon ' + (className || ''));
   }
 
-  function button(label, kind) {
+  function button(label, kind, pending) {
     var node = dom.el('button', 'btn ' + (kind || 'btn-ghost'));
     node.type = 'button';
     node.appendChild(dom.el('span', 'btn-label', label));
+    if (pending) dom.setAttr(node, 'data-pending-label', pending);
     return node;
   }
 
@@ -544,9 +545,9 @@
     node.appendChild(body);
     var stop = null;
     if (opts.stop !== false) {
-      stop = button('Stop watching', 'btn-quiet btn-sm');
+      stop = button('Stop watching', 'btn-quiet btn-sm', 'Stopping');
       dom.on(stop, 'click', function () {
-        window.PhosphorShell.setPending(stop, true, 'Stopping');
+        window.PhosphorShell.setPending(stop, true);
         api.depositStop()
           .catch(function (err) { window.PhosphorToast.show(net.readable(err), 'down'); })
           .finally(function () { window.PhosphorShell.setPending(stop, false); });
@@ -1397,7 +1398,7 @@
         : 'The address is shown only once the wallet is unlocked, so it comes from your keys and not from a file anything could edit.'));
 
       var actions = dom.el('div', 'screen-actions');
-      var go = button(enclave ? 'Touch ID to show the address' : 'Unlock to show the address', 'btn-primary');
+      var go = button(enclave ? 'Touch ID to show the address' : 'Unlock to show the address', 'btn-primary', 'Waiting for Touch ID');
       actions.appendChild(go);
       body.appendChild(actions);
 
@@ -1412,7 +1413,7 @@
           return;
         }
         error.hidden = true;
-        window.PhosphorShell.setPending(go, true, 'Waiting for Touch ID');
+        window.PhosphorShell.setPending(go, true);
         api.vaultUnlock('address')
           .then(function (answer) {
             if (answer && answer.ok === false) {

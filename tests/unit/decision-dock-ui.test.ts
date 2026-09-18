@@ -828,6 +828,7 @@ test('the lock banner is at the top of the body and the queue line is in the foo
 
 test('the dock never claims a click is done; it says approved and lets the receipt say the rest', () => {
   assert.equal(/'Done\.'/.test(SOURCE), false, 'a Yes is flashed as Done. before the rail has run');
-  assert.ok(SOURCE.includes("'Approving', 'Approved.'"));
+  assert.ok(SOURCE.includes("'data-pending-label', 'Approving'"));
+  assert.ok(SOURCE.includes("yes, 'Approved.'"));
 });
 

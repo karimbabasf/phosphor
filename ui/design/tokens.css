@@ -96,6 +96,10 @@
   --radius-xl: 24px;
   --radius-pill: 999px;
 
+  /* The spinner names its size here because a waiting button reserves room for
+     it before either of them is drawn (components.css, the pending swap). */
+  --spinner-size: 14px;
+
   /* Motion */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);

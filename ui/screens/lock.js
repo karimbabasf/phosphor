@@ -265,6 +265,7 @@
     label.appendChild(dom.el('span', '', 'Unlock'));
     append(label, icon('chevron-right', 'lock-arrow'));
     unlock.appendChild(label);
+    dom.setAttr(unlock, 'data-pending-label', 'Unlocking');
     form.appendChild(unlock);
     card.appendChild(form);
 
@@ -284,7 +285,7 @@
       if (!password || inFlight) return;
       error.hidden = true;
       inFlight = true;
-      window.PhosphorShell.setPending(unlock, true, 'Unlocking');
+      window.PhosphorShell.setPending(unlock, true);
       api.unlock(password)
         .then(function (answer) {
           if (answer && answer.ok === false) {
@@ -332,6 +333,7 @@
     append(label, icon('unlock', 'icon-20'));
     label.appendChild(dom.el('span', '', 'Unlock with Touch ID'));
     unlock.appendChild(label);
+    dom.setAttr(unlock, 'data-pending-label', 'Waiting for Touch ID');
     actions.appendChild(unlock);
     actions.appendChild(error);
     card.appendChild(actions);
@@ -345,7 +347,7 @@
       if (inFlight) return;
       inFlight = true;
       error.hidden = true;
-      window.PhosphorShell.setPending(unlock, true, 'Waiting for Touch ID');
+      window.PhosphorShell.setPending(unlock, true);
       api.vaultUnlock()
         .then(function (answer) {
           if (answer && answer.ok === false) {
@@ -428,6 +430,7 @@
     var go = dom.el('button', 'btn btn-primary btn-lg');
     go.type = 'submit';
     go.appendChild(dom.el('span', 'btn-label', 'Encrypt now'));
+    dom.setAttr(go, 'data-pending-label', 'Encrypting your keys');
     actions.appendChild(go);
     form.appendChild(actions);
     card.appendChild(form);
@@ -447,7 +450,7 @@
         return;
       }
       error.hidden = true;
-      window.PhosphorShell.setPending(go, true, 'Encrypting your keys');
+      window.PhosphorShell.setPending(go, true);
       api.walletMigrate(first.value)
         .then(function (answer) {
           if (answer && answer.ok === false) {

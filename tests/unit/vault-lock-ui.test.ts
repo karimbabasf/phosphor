@@ -284,7 +284,7 @@ test('an enclave wallet locks to one button and never a password field', async (
   };
   buttons[0].click();
   assert.equal(buttons[0].disabled, true, 'the button took a second click while the dialog was up');
-  assert.equal(buttons[0].pendingLabel, 'Waiting for Touch ID');
+  assert.equal(buttons[0].getAttribute('data-pending-label'), 'Waiting for Touch ID');
   const post = world.calls.find((c) => c.route === '/api/vault/unlock');
   assert.ok(post, 'nothing was posted');
   assert.equal(post.purpose, undefined);
@@ -430,7 +430,7 @@ test('with the enclave ready, the first run is the welcome, Create wallet, the a
   assert.ok(textOf(screen).some((t) => t.startsWith('Locked by this Mac')), 'the enclave create screen does not say where the key is held');
 
   buttons[0].click();
-  assert.equal(buttons[0].pendingLabel, 'Waiting for Touch ID');
+  assert.equal(buttons[0].getAttribute('data-pending-label'), 'Waiting for Touch ID');
   await flush();
   assert.ok(world.calls.some((c) => c.route === '/api/vault/create'));
   assert.equal(world.calls.some((c) => c.route === '/api/wallet/create'), false, 'the password route was posted');

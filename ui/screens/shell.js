@@ -356,6 +356,9 @@
       var frozen = !!(state.policy && state.policy.killSwitch);
       dom.setText(refs.freeze.querySelector('.btn-label'),
         frozen ? 'Everything is frozen' : 'Freeze everything');
+      /* Both faces move with the state: the word on the button and the word it
+         waits under are the same fact, read in two tenses. */
+      dom.setAttr(refs.freeze, 'data-pending-label', frozen ? 'Unfreezing' : 'Freezing');
       dom.setAttr(refs.freeze, 'data-frozen', frozen ? 'true' : null);
     }
 
@@ -488,7 +491,7 @@
   }
 
   function doFreeze(on) {
-    setPending(refs.freeze, true, on ? 'Freezing' : 'Unfreezing');
+    setPending(refs.freeze, true);
     api.kill(on)
       .then(function () { return refresh({}); })
       .catch(function (err) {
@@ -497,8 +500,8 @@
       .finally(function () { setPending(refs.freeze, false); });
   }
 
-  /* A pending button keeps its width, swaps its label for the progress verb and
-     stops accepting the press. Every wait in this window goes through here.
+  /* A pending button swaps its label for the progress verb and stops accepting
+     the press. Every wait in this window goes through here.
 
      `disabled` is the half that was missing, and it mattered most on Unlock.
      That request does not answer until every proposal queued behind the lock has
@@ -506,19 +509,16 @@
      frozen and the natural thing to do was press it again. The dataset flag and
      aria-busy said "working" to a screen reader and to the stylesheet and to
      nothing else: the button still took the click. */
-  function setPending(button, pending, label) {
+  function setPending(button, pending) {
     if (!button) return;
     if (pending) {
-      var box = button.getBoundingClientRect();
-      if (box.width) button.style.minWidth = Math.ceil(box.width) + 'px';
       var slot = button.querySelector('.btn-pending');
       if (!slot) {
         slot = dom.el('span', 'btn-pending');
         slot.appendChild(dom.el('span', 'spinner'));
-        slot.appendChild(dom.el('span', 'btn-pending-label'));
+        slot.appendChild(dom.el('span', 'btn-pending-label', button.getAttribute('data-pending-label') || 'Working'));
         button.appendChild(slot);
       }
-      dom.setText(slot.querySelector('.btn-pending-label'), label || 'Working');
       button.dataset.pending = 'true';
       button.setAttribute('aria-busy', 'true');
       button.disabled = true;
@@ -527,7 +527,6 @@
     delete button.dataset.pending;
     button.removeAttribute('aria-busy');
     button.disabled = false;
-    button.style.minWidth = '';
   }
 
   window.PhosphorShell = {

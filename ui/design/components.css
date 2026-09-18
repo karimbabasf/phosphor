@@ -94,24 +94,62 @@
 }
 
 /* A pending button keeps its width, swaps its label for the progress verb and
-   stops accepting the press. It never collapses and never jumps. */
-.btn[data-pending="true"] {
+   stops accepting the press. It never collapses and never jumps.
+
+   A pressable that can wait names the word it will wait under, as
+   data-pending-label where the button is built. Both faces then land in one
+   grid cell, and the word itself is measured by a hidden ::before, so the box
+   is as wide as the wider of the two from the first paint. The verb used to be
+   appended on the press and positioned absolute, which left it out of the
+   sizing: "Waiting for Touch ID" on a Create button ran straight through the
+   border. The reserve is a pseudo-element rather than a node so the resting
+   button still reads as its own label, to a screen reader and to anything else
+   that asks what it says. Keyed on the element and the attribute rather than on
+   .btn, because two chips wait as well: the retry in the conversation head and
+   the frost choices in the vault. */
+[data-pending="true"] {
   pointer-events: none;
   opacity: 0.72;
 }
 
-.btn[data-pending="true"] .btn-label {
+button[data-pending-label] {
+  display: grid;
+  grid-template-areas: "swap";
+  align-items: center;
+  justify-items: center;
+}
+
+button[data-pending-label] > *,
+button[data-pending-label]::before {
+  grid-area: swap;
+}
+
+button[data-pending-label]::before {
+  content: attr(data-pending-label);
+  padding-inline-start: calc(var(--spinner-size) + var(--s-2));
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Everything that is not the waiting face leaves, whatever it is called: most
+   pressables hold a .btn-label, the two chips hold a bare span. */
+[data-pending="true"] > :not(.btn-pending) {
   filter: blur(2px);
   opacity: 0;
 }
 
-.btn-label {
+button[data-pending-label] > :not(.btn-pending) {
   transition: filter var(--dur-swap) var(--ease-out),
               opacity var(--dur-swap) var(--ease-out);
 }
 
+.btn-face {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
 .btn-pending {
-  position: absolute;
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
@@ -119,12 +157,8 @@
   transition: opacity var(--dur-swap) var(--ease-out);
 }
 
-.btn[data-pending="true"] .btn-pending {
+[data-pending="true"] .btn-pending {
   opacity: 1;
-}
-
-.btn:has(.btn-pending) {
-  position: relative;
 }
 
 /* ---------- Icon ----------
@@ -183,8 +217,8 @@
 /* ---------- Spinner ---------- */
 
 .spinner {
-  width: 14px;
-  height: 14px;
+  width: var(--spinner-size);
+  height: var(--spinner-size);
   flex: 0 0 auto;
   border-radius: 50%;
   border: 1.5px solid color-mix(in srgb, currentColor 26%, transparent);

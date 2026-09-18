@@ -404,10 +404,13 @@
   function recheckButton(receipt, error, onClose) {
     var recheck = dom.el('button', 'btn btn-ghost');
     recheck.type = 'button';
-    recheck.appendChild(icon('retry'));
-    recheck.appendChild(dom.el('span', 'btn-label', 'Check it again'));
+    var face = dom.el('span', 'btn-face');
+    face.appendChild(icon('retry'));
+    face.appendChild(dom.el('span', 'btn-label', 'Check it again'));
+    recheck.appendChild(face);
+    dom.setAttr(recheck, 'data-pending-label', 'Checking');
     dom.on(recheck, 'click', function () {
-      window.PhosphorShell.setPending(recheck, true, 'Checking');
+      window.PhosphorShell.setPending(recheck, true);
       api.reconcile(receipt.id)
         .then(function (answer) {
           var status = answer && answer.status;
@@ -560,9 +563,10 @@
     if (unknown) {
       var recheck = dom.el('button', 'btn btn-primary');
       recheck.appendChild(dom.el('span', 'btn-label', 'Check it again'));
+      dom.setAttr(recheck, 'data-pending-label', 'Checking');
       actions.appendChild(recheck);
       dom.on(recheck, 'click', function () {
-        window.PhosphorShell.setPending(recheck, true, 'Checking');
+        window.PhosphorShell.setPending(recheck, true);
         api.reconcile(receipt.id)
           .then(function (answer) {
             var status = answer && answer.status;

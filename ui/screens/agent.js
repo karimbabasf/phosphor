@@ -451,11 +451,12 @@
     return node;
   }
 
-  function button(className, label, title) {
+  function button(className, label, title, pending) {
     var btn = dom.el('button', className);
     btn.type = 'button';
     if (title) btn.title = title;
     btn.appendChild(dom.el('span', 'btn-label', label));
+    if (pending) dom.setAttr(btn, 'data-pending-label', pending);
     return btn;
   }
 
@@ -494,8 +495,8 @@
        scrolled away under a transcript. Stopping an answer is the composer's
        button, where the answer was sent from. */
     var controls = dom.el('div', 'agent-controls');
-    var start = button('btn btn-primary btn-sm', 'Start your assistant');
-    var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off');
+    var start = button('btn btn-primary btn-sm', 'Start your assistant', '', 'Starting');
+    var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off', 'Turning off');
     controls.appendChild(start);
     controls.appendChild(stopAgent);
     /* The pane's own hide control (ui/split.js, drawn by trade.css), last in
@@ -517,7 +518,7 @@
     var note = dom.el('div', 'agent-note');
     note.setAttribute('role', 'status');
     var noteText = dom.el('span', 'agent-note-text');
-    var retry = button('chip agent-retry', 'Retry');
+    var retry = button('chip agent-retry', 'Retry', '', 'Starting');
     note.appendChild(noteText);
     note.appendChild(retry);
     note.hidden = true;
@@ -559,7 +560,7 @@
     emptyInner.appendChild(emptyTitle);
     emptyInner.appendChild(emptyNote);
     var emptyActions = dom.el('div', 'agent-empty-actions');
-    var startBig = button('btn btn-primary', 'Start your assistant');
+    var startBig = button('btn btn-primary', 'Start your assistant', '', 'Starting');
     var connectBtn = button('btn btn-ghost', 'Connect your own');
     emptyActions.appendChild(startBig);
     emptyActions.appendChild(connectBtn);
@@ -883,7 +884,7 @@
     chatId = null;
     failure = null;
     setPhase('starting', 'starting');
-    window.PhosphorShell.setPending(btn, true, 'Starting');
+    window.PhosphorShell.setPending(btn, true);
     api.driver({ action: 'start', chat: '' })
       .catch(function (err) {
         fail(net.readable(err), '');
@@ -905,7 +906,7 @@
       return;
     }
     var btn = node.refs.send;
-    window.PhosphorShell.setPending(btn, true, 'Stopping');
+    window.PhosphorShell.setPending(btn, true);
     api.driver({ action: action, chat: '' })
       .catch(function (err) {
         window.PhosphorToast.show(net.readable(err), 'down');
@@ -939,7 +940,7 @@
 
   function quitAssistant(node) {
     var btn = node.refs.stopAgent;
-    window.PhosphorShell.setPending(btn, true, 'Turning off');
+    window.PhosphorShell.setPending(btn, true);
     api.driver({ action: 'stop', chat: '' })
       .then(function () {
         /* Stopped is the process gone; closed is the chat gone with it, and

@@ -82,10 +82,11 @@
     return { node: node, body: body, right: right };
   }
 
-  function button(label, kind) {
+  function button(label, kind, pending) {
     var node = dom.el('button', 'btn ' + (kind || 'btn-ghost'));
     node.type = 'button';
     node.appendChild(dom.el('span', 'btn-label', label));
+    if (pending) dom.setAttr(node, 'data-pending-label', pending);
     return node;
   }
 
@@ -156,7 +157,7 @@
     refs.recoveryHelp = dom.el('p', 'meta');
     recovery.body.appendChild(refs.recoveryHelp);
     var recoveryActions = dom.el('div', 'hstack-2 wrap');
-    refs.reveal = button('Reveal recovery phrase', 'btn-primary');
+    refs.reveal = button('Reveal recovery phrase', 'btn-primary', 'Waiting for Touch ID');
     refs.restore = button('Restore from a phrase', 'btn-ghost');
     recoveryActions.appendChild(refs.reveal);
     recoveryActions.appendChild(refs.restore);
@@ -215,6 +216,7 @@
       c.type = 'button';
       c.setAttribute('aria-pressed', 'false');
       c.appendChild(dom.el('span', '', minutes + ' minutes'));
+      dom.setAttr(c, 'data-pending-label', 'Saving');
       dom.on(c, 'click', function () { setIdle(minutes, c); });
       refs.idleChips[minutes] = c;
       refs.idleRow.appendChild(c);
@@ -240,7 +242,7 @@
     refs.forgetError.hidden = true;
     danger.body.appendChild(refs.forgetError);
     var dangerActions = dom.el('div', 'hstack-2');
-    refs.forget = button('Forget this wallet', 'btn-danger');
+    refs.forget = button('Forget this wallet', 'btn-danger', 'Waiting for Touch ID');
     refs.forget.disabled = true;
     dangerActions.appendChild(refs.forget);
     danger.body.appendChild(dangerActions);
@@ -402,7 +404,7 @@
   }
 
   function setIdle(minutes, node) {
-    window.PhosphorShell.setPending(node, true, 'Saving');
+    window.PhosphorShell.setPending(node, true);
     api.vaultPrefs({ idleMinutes: minutes })
       .then(function (answer) {
         if (answer && answer.ok === false) throw new Error(answer.error || 'That did not work.');
@@ -722,7 +724,7 @@
     var vault = state.vault || {};
     if (vault.custody !== 'secure-enclave') return;
     refs.reveal.disabled = true;
-    window.PhosphorShell.setPending(refs.reveal, true, 'Waiting for Touch ID');
+    window.PhosphorShell.setPending(refs.reveal, true);
     api.vaultReveal()
       .then(function (answer) {
         if (answer && answer.ok === false) {
@@ -847,7 +849,7 @@
 
     var tools = dom.el('div', 'screen-actions wrap');
     var back = button('Show the words again', 'btn-ghost');
-    var prove = button('Prove it', 'btn-primary');
+    var prove = button('Prove it', 'btn-primary', 'Checking');
     tools.appendChild(back);
     tools.appendChild(prove);
     flow.appendChild(tools);
@@ -865,7 +867,7 @@
         words.push({ index: Number(inputs[i].dataset.index), word: value });
       }
       error.hidden = true;
-      window.PhosphorShell.setPending(prove, true, 'Checking');
+      window.PhosphorShell.setPending(prove, true);
       api.vaultBackupProven(words)
         .then(function (answer) {
           if (answer && answer.ok === false) {
@@ -918,7 +920,7 @@
 
     var tools = dom.el('div', 'screen-actions wrap');
     var cancel = button('Cancel', 'btn-ghost');
-    var go = button('Restore', 'btn-primary');
+    var go = button('Restore', 'btn-primary', 'Restoring');
     tools.appendChild(cancel);
     tools.appendChild(go);
     flow.appendChild(tools);
@@ -940,7 +942,7 @@
         tone: 'down'
       }).then(function (yes) {
         if (!yes) return;
-        window.PhosphorShell.setPending(go, true, 'Restoring');
+        window.PhosphorShell.setPending(go, true);
         return api.vaultRestore(words.join(' '))
           .then(function (answer) {
             if (answer && answer.ok === false) {
@@ -983,7 +985,7 @@
       tone: 'down'
     }).then(function (yes) {
       if (!yes) return;
-      window.PhosphorShell.setPending(refs.forget, true, 'Waiting for Touch ID');
+      window.PhosphorShell.setPending(refs.forget, true);
       return api.vaultForget()
         .then(function (answer) {
           if (answer && answer.ok === false) {
@@ -1054,6 +1056,7 @@
     var go = dom.el('button', 'btn btn-primary btn-lg');
     go.type = 'submit';
     go.appendChild(dom.el('span', 'btn-label', 'Move my keys'));
+    dom.setAttr(go, 'data-pending-label', 'Waiting for Touch ID');
     actions.appendChild(later);
     actions.appendChild(go);
     form.appendChild(actions);
@@ -1073,7 +1076,7 @@
       event.preventDefault();
       if (!input.value) return;
       error.hidden = true;
-      window.PhosphorShell.setPending(go, true, 'Waiting for Touch ID');
+      window.PhosphorShell.setPending(go, true);
       api.vaultMigrate(input.value)
         .then(function (answer) {
           if (answer && answer.ok === false) {

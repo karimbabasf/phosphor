@@ -185,7 +185,7 @@ body[data-firstrun="true"] #page {
 
 /* While the unlock is in flight the button swaps its word rather than
    cross-fading it: "Unlock" leaves and the spinner with "Unlocking" takes its
-   place in the flow, so the two never read at once. */
+   place, so the two never read at once. */
 .lock-unlock .btn-label,
 .lock-unlock .btn-pending {
   transition: none;
@@ -196,7 +196,6 @@ body[data-firstrun="true"] #page {
 }
 
 .lock-unlock .btn-pending {
-  position: static;
   display: none;
 }
 
