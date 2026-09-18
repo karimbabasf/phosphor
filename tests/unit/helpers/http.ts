@@ -58,6 +58,7 @@ export function serviceThatAnswers(row: Proposal, settledRow: Proposal = row): P
     get: (id) => (id === row.id ? settledRow : undefined),
     list: () => [settledRow],
     view: (p) => stubView(p),
+    markStalled: () => 0,
     sessionSpentUsd: () => 0,
     reconcileOnBoot: () => [],
     reconcileOpen: async () => 0,

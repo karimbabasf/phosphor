@@ -79,6 +79,7 @@ async function boot() {
       get: () => undefined,
       list: () => [],
       view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

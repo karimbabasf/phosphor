@@ -114,6 +114,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
       get: () => undefined,
       list: () => [],
       view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => {
         releases += 1;

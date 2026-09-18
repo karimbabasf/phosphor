@@ -872,6 +872,10 @@ export type ProposalService = {
      on the way through. `now` is the clock the elapsed figures are taken against, so two
      surfaces can be asserted to agree at one instant. See src/proposals/view.ts. */
   view(p: Proposal, now?: number): ProposalView;
+  /* Mark every row that passed its deadline with nothing changing. Returns how many moved. A
+     stall is a statement that nothing has changed, never a claim that the move failed: the
+     status underneath is untouched and a later credit still settles the row forward. */
+  markStalled(now?: number): number;
   sessionSpentUsd(): number; // executed fund-moving usd in the last 24h
   // Boot sweep: every row left `executing` by a process that is gone becomes
   // `needs_reconciliation`. Returns what it changed. Ran once, before the port opens.

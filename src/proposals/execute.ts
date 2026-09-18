@@ -13,6 +13,8 @@ import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
 import { buildWallet } from '../wallet.ts';
 import type { PCtx } from './lifecycle.ts';
+import { TERMINAL, deadlineAtOf, stageOf } from './view.ts';
+import type { ProposalStage } from './view.ts';
 
 // Single exit for a freshly evaluated proposal. This is the only place a proposal can become
 // executed without a human, and only on verdict allow.
@@ -572,6 +574,40 @@ export function judgeSettling(ctx: PCtx, p: Proposal): Proposal {
   ctx.audit.append('executed', `${p.id}: ${detail}`, { id: p.id, txids });
   return persist(ctx, { ...p, status: 'executed', settledAt: nowIso(), pocket: settled, balances, result: { ok: true, detail, txids, ...kept } });
 }
+
+/* THE ROW SAYS SO ITSELF WHEN IT IS LATE, rather than counting up forever under a word that
+   stopped being true. Every money kind carries a deadline of eight times its typical duration
+   with a ten minute floor (DEADLINE_SEC), measured from the decision, and a row past it with
+   nothing having changed goes to `stalled`.
+
+   IT IS NOT A FAILURE AND IT IS NOT FINAL. Nothing is refunded, nothing is retried, and the
+   status underneath is untouched, so the same balance read that would have settled the row
+   still settles it: `stalled` is terminal in the sense that the app has stopped expecting the
+   venue, and it moves forward to `confirmed` the moment the money shows. Claiming a failure
+   here is how a person comes to send a second copy of a move that was merely slow.
+
+   ROWS WAITING ON A PERSON ARE NEVER LATE. A card nobody has clicked is doing exactly what it
+   is for, however long it sits there, so the three human stages are skipped by name. */
+export function markStalled(ctx: PCtx, now: number = Date.now()): number {
+  let marked = 0;
+  for (const p of ctx.store.list()) {
+    if (p.stalledAt !== undefined) continue;
+    const stage = stageOf(p);
+    if (TERMINAL.has(stage) || WAITS_ON_A_PERSON.has(stage)) continue;
+    const deadline = Date.parse(deadlineAtOf(p) ?? '');
+    if (!Number.isFinite(deadline) || now <= deadline) continue;
+    ctx.audit.append('error', `${p.id}: nothing has changed since ${p.lastChangeAt ?? p.createdAt} and it is past its deadline, so it is marked late`, {
+      id: p.id,
+      stage,
+      deadlineAt: deadlineAtOf(p),
+    });
+    persist(ctx, { ...p, stalledAt: new Date(now).toISOString() });
+    marked += 1;
+  }
+  return marked;
+}
+
+const WAITS_ON_A_PERSON: ReadonlySet<ProposalStage> = new Set<ProposalStage>(['waiting_for_you', 'waiting_for_unlock', 'waiting_for_touch']);
 
 /* One fresh ledger read, then the judgment above. What the scheduled sweep uses: a balance
    that has not moved writes nothing, so a row can sit settling for days without collecting a

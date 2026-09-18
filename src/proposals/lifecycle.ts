@@ -232,7 +232,11 @@ function stamped(ctx: PCtx, p: Proposal): Proposal {
     return { ...p, stageAt: history, lastChangeAt: seen };
   }
   const at = nowIso();
-  return { ...p, stageAt: { ...history, [stage]: at }, lastChangeAt: at };
+  /* A stall records WHEN IT WAS NOTICED and deliberately does not move the clock. It is the
+     statement that nothing has changed, so the counter a person is watching keeps running from
+     the last real change: resetting it to zero at the moment we call the row late is the one
+     number that would make "late" mean nothing. */
+  return { ...p, stageAt: { ...history, [stage]: at }, lastChangeAt: stage === 'stalled' ? (seen ?? at) : at };
 }
 
 // ---------- the outcome, in the words an agent may repeat ----------

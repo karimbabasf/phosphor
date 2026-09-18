@@ -125,6 +125,7 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
       get: () => undefined,
       list: () => [],
       view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => {
         releases += 1;
@@ -535,6 +536,7 @@ test('with no shell relaying, the enclave verbs say so and the password path is 
       get: () => undefined,
       list: () => [],
       view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

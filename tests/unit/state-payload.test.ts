@@ -132,6 +132,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
         return store.list();
       },
       view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],

@@ -35,7 +35,7 @@ import {
 } from './proposals/lifecycle.ts';
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { finishTouch } from './proposals/lifecycle.ts';
-import { executeApproved, land, watchSettling } from './proposals/execute.ts';
+import { executeApproved, land, markStalled, watchSettling } from './proposals/execute.ts';
 import { acknowledge, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
 import { proposePolicyChange } from './proposals/draft.ts';
 import { proposeHlDeposit, proposeHlWithdraw, proposeSend, proposeSwap } from './proposals/rails.ts';
@@ -107,6 +107,9 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     get: (id: string) => deps.store.get(id),
     list: () => deps.store.list(),
     view: (p: Proposal, now?: number) => proposalView(viewCtx, p, now),
+    // Outside the serialiser, like reconcile: it writes a stamp on rows nobody is executing
+    // and reserves no budget, so holding the spend queue open for it buys nothing.
+    markStalled: (now?: number) => markStalled(ctx, now),
     sessionSpentUsd: () => sessionSpentUsd(ctx),
     reconcileOnBoot: () => reconcileOnBoot(ctx),
     // Outside the serialiser on purpose. It reads the chain and writes one row, it never

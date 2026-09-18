@@ -575,6 +575,21 @@ function sweepOpenProposals(): void {
 sweepOpenProposals();
 setInterval(sweepOpenProposals, RECONCILE_SWEEP_MS).unref?.();
 
+/* And a faster tick that asks nothing of anybody: a row past its deadline with nothing having
+   changed says so itself. The venue sweep above reads 1Click over the network and runs every
+   ten minutes for that reason; this reads the rows already on disk, so it can run often enough
+   that "late" appears on the card near the minute it becomes true rather than nine minutes
+   after. It writes a stamp and never a verdict: the status underneath is untouched and a later
+   credit still settles the row forward. */
+const STALL_SWEEP_MS = 30_000;
+setInterval(() => {
+  try {
+    proposals.markStalled();
+  } catch (err) {
+    audit.append('error', `the stall sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}, STALL_SWEEP_MS).unref?.();
+
 // Who is driving, plural. The roster, the roles and the per-member TTL live in
 // src/agents.ts; what lives here is the sweep that turns a silent expiry into a line in the
 // log and a push to the window.

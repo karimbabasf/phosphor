@@ -108,6 +108,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       get: () => undefined,
       list: () => [],
       view: (p) => stubView(p),
+      markStalled: () => 0,
       sessionSpentUsd: () => 0,
       releaseQueued: async () => 0,
       reconcileOnBoot: () => [],
