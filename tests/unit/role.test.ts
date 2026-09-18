@@ -87,6 +87,23 @@ test('the role keeps the agent from reading the receipt back out in prose', () =
   assert.ok(text.indexOf('say so in one sentence') > text.indexOf('HOW TO ANSWER'), 'the rule is not an answering rule');
 });
 
+test('the role keeps the agent to one line while a proposal waits for the click', () => {
+  // The propose reply reaches the window as a card (src/driver.ts tool_data, ui/screens/cards.js
+  // moveCard) and that card now follows the row to Confirmed on its own. Karim, 2026-09-18, on
+  // the paragraph under it: "the response of the agent looks like too much, not formatted and me
+  // as a user it just looks like a blob of text". The rule for a landed move existed; the one
+  // for a waiting move did not, and VERIFY's "quote those numbers" filled the gap with the whole
+  // quote read back in prose.
+  const text = role();
+  const at = text.indexOf('A move is a card the window draws and keeps current on its own');
+  assert.ok(at > text.indexOf('HOW TO ANSWER'), 'the rule is missing or is not an answering rule');
+  const rule = text.slice(at, at + 500).replace(/\n/g, ' ');
+  assert.ok(rule.includes('your whole reply is one line'), 'the rule does not cap the reply');
+  assert.ok(rule.includes('not the amounts, the quote, the floor, the fee or the venue'), 'the five things the card shows are not named');
+  assert.ok(rule.includes('Waiting for you, then Settling, then Confirmed'), 'the rule does not say the card updates itself');
+  assert.ok(rule.includes('nothing about what you will do after the click'), 'the second sentence is still allowed');
+});
+
 test('the role tells the agent not to spend a turn orienting itself', () => {
   // The whole reason the index is prefilled. If this line goes, the mandatory `start` call
   // comes back and every session pays two model turns before the human is answered.
@@ -195,8 +212,8 @@ test('the role gives the agent a voice, and the window draws the numbers', () =>
     'Never paste raw JSON, an error string, or a hash longer than 12 characters',
     '"the venue\nis not answering", not "422 Failed to deserialize"',
     '`switch` for a screen, `deposit` for an address, `trade_focus` for a position or a chart',
-    'say what is confirmed and what is still settling',
-    'Never say\n"failed" unless the tool said failed',
+    'say what is confirmed and what is still\nsettling',
+    'never say\n"failed" unless the tool said failed',
     'wrong-network or lost-funds warning is one plain sentence',
     'No exclamation marks, no emoji, no em dashes and no en\ndashes',
   ]) {

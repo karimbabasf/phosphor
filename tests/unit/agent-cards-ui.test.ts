@@ -110,6 +110,7 @@ function build() {
   const host = make('div');
   const composerHost = make('div');
   const timers: Array<() => void> = [];
+  const sliceHandlers: Record<string, Array<(value: unknown, whole: unknown) => void>> = {};
 
   const sandbox: Record<string, unknown> = {
     console,
@@ -155,7 +156,7 @@ function build() {
     PhosphorIcons: { svg: (name: string, className: string) => { const n = make('svg'); n.className = 'icon ' + (className || ''); n.setAttribute('data-icon', name); return n; } },
     PhosphorMarks: { logo: (symbol: string) => { const n = make('span'); n.className = 'logo'; n.setAttribute('data-token', String(symbol).toUpperCase()); return n; } },
     PhosphorMotion: { reduced: () => false, spring: () => 'linear' },
-    PhosphorState: { select: () => () => {} },
+    PhosphorState: { select: (key: string, handler: (value: unknown, whole: unknown) => void) => { (sliceHandlers[key] ??= []).push(handler); return () => {}; } },
     PhosphorDeposit: { open: (opts: unknown) => { opened.push(opts); return Promise.resolve(null); } },
   };
   sandbox.window = win;
@@ -185,6 +186,8 @@ function build() {
     ask(text: string) { input.value = text; fire(composer, 'submit'); },
     receipts: (list: unknown[]) => { for (const handler of receiptHandlers) handler(list, 'ready'); },
     bus: (type: string, payload: unknown) => { for (const handler of busHandlers[type] ?? []) handler(payload); },
+    /* A state frame's proposals slice, as ui/core/state.js hands it to whoever selected it. */
+    proposals: (list: unknown[]) => { for (const handler of sliceHandlers.proposals ?? []) handler(list, { proposals: list }); },
     blocks: () => all(host, 'transcript')[0].children as Any[],
     cardNodes: (kind?: string) => byAttr(host, 'data-card', kind),
     send: () => all(composerHost, 'composer-send')[0],
@@ -312,6 +315,63 @@ test('a proposed swap is a pending card that becomes confirmed when read back, a
   chip = all(card, 'tcard-chip')[0];
   assert.equal(chip.getAttribute('data-state'), 'failed');
   assert.ok(card.textContent.includes('Never more than $50 in one move.'), 'the reason is not on the card: ' + card.textContent);
+});
+
+test('a move card follows its proposal: the chip moves with the state frame, in place, and a folded card stays folded', () => {
+  // Karim, 2026-09-18, with a swap card still reading "Waiting for you" after he had clicked
+  // approve and the swap had landed: "i already approved the swap and after approval it shows me
+  // this". The card was a snapshot of the propose reply. Now it reads the proposals slice every
+  // state frame and redraws itself when its row's status moves.
+  const world = build();
+  world.ask('swap 2 usdc to sol');
+  const input = { chain: 'intents', toChain: 'intents', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.0172 };
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: { id: 'p9', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap 2 USDC for about 0.0178 SOL' } } });
+  world.emit({ kind: 'text', text: 'Proposed. It is waiting for your click in the window.' });
+  world.emit({ kind: 'turn_end', error: false, turns: 1 });
+  assert.equal(world.cardNodes('move').length, 1);
+  assert.equal(all(world.cardNodes('move')[0], 'tcard-chip')[0].textContent, 'Waiting for you');
+  const before = world.blocks().map((b) => b.className);
+
+  const row = (status: string, extra: Record<string, unknown> = {}) => ({
+    id: 'p9', kind: 'swap', status, createdAt: '2026-09-18T10:35:00Z',
+    draft: { kind: 'swap', venue: 'intents-native', chain: 'intents', toChain: 'intents', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, amountUsd: 2, minAmountOut: 0.0172, quote: { amountOut: 0.0178, feeUsd: 0.01, timeEstimateSec: 5 } },
+    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' },
+    ...extra,
+  });
+  // Somebody else's row moves nothing here.
+  world.proposals([{ ...row('executed'), id: 'other' }]);
+  assert.equal(all(world.cardNodes('move')[0], 'tcard-chip')[0].textContent, 'Waiting for you');
+
+  world.proposals([row('awaiting_touch')]);
+  let card = world.cardNodes('move')[0];
+  assert.equal(all(card, 'tcard-chip')[0].textContent, 'Touch ID');
+  assert.equal(world.cardNodes('move').length, 1, 'the card was appended rather than redrawn');
+
+  world.proposals([row('executed', { decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: true, detail: 'done', txids: ['abc'] } })]);
+  card = world.cardNodes('move')[0];
+  const chip = all(card, 'tcard-chip')[0];
+  assert.equal(chip.getAttribute('data-state'), 'confirmed');
+  assert.equal(chip.textContent, 'Confirmed');
+  assert.ok(card.textContent.includes('0.0178') && card.textContent.includes('fee $0.01'), 'the live draft did not reach the card: ' + card.textContent);
+  assert.ok(card.textContent.includes('Confirmed at'), card.textContent);
+  assert.deepEqual(world.blocks().map((b) => b.className), before, 'the redraw moved rows around');
+
+  // The same frame again is nothing new, and a card the person closed stays closed across a redraw.
+  const fold = world.cards.foldOf(card);
+  fold.setOpen(false);
+  world.proposals([row('executed', { decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: true, detail: 'done', txids: ['abc'] } })]);
+  assert.equal(world.cards.foldOf(world.cardNodes('move')[0]).isOpen(), false);
+  assert.equal(world.cardNodes('move').length, 1);
+});
+
+test('a move card that was refused by the human says so once the frame says so', () => {
+  const world = build();
+  world.ask('swap 2 usdc to sol');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { chain: 'intents', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.0172 }, data: { id: 'p3', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' } } });
+  world.proposals([{ id: 'p3', kind: 'swap', status: 'refused', createdAt: '2026-09-18T10:35:00Z', decidedAt: '2026-09-18T10:35:30Z', decidedBy: 'human', draft: { kind: 'swap', chain: 'intents', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.0172 }, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: null }]);
+  const card = world.cardNodes('move')[0];
+  assert.equal(all(card, 'tcard-chip')[0].textContent, 'Declined');
+  assert.ok(card.textContent.includes('You said no.'), card.textContent);
 });
 
 test('the deposit card names the network, the tail of the address, the watch state, and opens the real card', () => {

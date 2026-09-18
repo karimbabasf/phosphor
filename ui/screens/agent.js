@@ -1524,6 +1524,7 @@
     if (block.type === 'card') {
       var host = dom.el('div', 'chat-card');
       if (cards && typeof cards.render === 'function') host.appendChild(cards.render(block.kind, block.data, foldOptions(block)));
+      host.__rev = block.rev;
       return host;
     }
     if (block.type === 'steps') {
@@ -1569,8 +1570,18 @@
 
   function updateBlock(node, row, block, now, primary) {
     if (block.type === 'receipt' || block.type === 'card') {
-      /* The shell keeps its own open flag and the block keeps the truth. */
       var cards = window.PhosphorCards;
+      /* A card whose data moved under it (onProposals) is drawn again inside
+         the same host, so it keeps its row and its key while its chip and its
+         clock change. Everything else about a card is settled when it lands. */
+      if (block.type === 'card' && row.__rev !== block.rev && cards && typeof cards.render === 'function') {
+        var fresh = cards.render(block.kind, block.data, foldOptions(block));
+        var stale = row.firstChild;
+        row.insertBefore(fresh, stale);
+        if (stale) row.removeChild(stale);
+        row.__rev = block.rev;
+      }
+      /* The shell keeps its own open flag and the block keeps the truth. */
       var fold = cards && typeof cards.foldOf === 'function' ? cards.foldOf(block.type === 'card' ? row.firstChild : row) : null;
       if (fold && fold.isOpen() !== (block.open !== false)) fold.setOpen(block.open !== false);
       return;
@@ -1863,6 +1874,51 @@
     }
   }
 
+  /* THE MOVE CARD FOLLOWS ITS PROPOSAL.
+
+     A propose answers once, with the row as it was filed: pending. The card
+     drawn from that answer used to keep saying "Waiting for you" after the
+     person had clicked and the swap had landed (Karim, 2026-09-18: "i already
+     approved the swap and after approval it shows me this"). The window
+     already receives every waiting row and the twenty most recent decided ones
+     on each state frame (src/http/state.ts, the proposals slice), so a card
+     that names a proposal id takes its row from there: the chip moves from
+     Waiting for you through Touch ID and Settling to Confirmed or Declined, the
+     legs pick up the draft's quote, and the clock becomes the decision's.
+     The card is redrawn in place (updateBlock), never appended, and the
+     person's fold stays where they left it. A row that has left the slice is
+     already decided and its card already says so. */
+  function onProposals(list) {
+    if (!Array.isArray(list) || !list.length) return;
+    var byId = Object.create(null);
+    for (var i = 0; i < list.length; i += 1) {
+      var p = list[i];
+      if (p && typeof p.id === 'string') byId[p.id] = p;
+    }
+    var moved = false;
+    for (var j = 0; j < blocks.length; j += 1) {
+      var block = blocks[j];
+      if (block.type !== 'card' || block.kind !== 'move' || !block.data || typeof block.data.id !== 'string') continue;
+      var live = byId[block.data.id];
+      if (!live || !liveMoved(block.data, live)) continue;
+      block.data = live;
+      block.rev = (block.rev || 0) + 1;
+      moved = true;
+    }
+    if (moved) renderAll();
+  }
+
+  /* Whether the row says anything the card does not: a new status, a
+     decision, a settlement, or a rail's answer where there was none. */
+  function liveMoved(shown, live) {
+    if (shown.status !== live.status) return true;
+    if ((shown.decidedAt || null) !== (live.decidedAt || null)) return true;
+    if ((shown.settledAt || null) !== (live.settledAt || null)) return true;
+    if (!shown.draft && live.draft) return true;
+    if (!shown.result && live.result) return true;
+    return false;
+  }
+
   function receiptWhen(receipt) {
     var when = receiptAt(receipt);
     return when > 0 ? when : Date.now();
@@ -1960,7 +2016,10 @@
     }).catch(function () { /* the sheet hides its offer when there is none */ });
 
     var store = window.PhosphorState;
-    if (store && typeof store.select === 'function') store.select('agents', onAgents);
+    if (store && typeof store.select === 'function') {
+      store.select('agents', onAgents);
+      store.select('proposals', onProposals);
+    }
 
     /* The receipts, read once now to learn what already happened and then on
        every transactions frame (ui/screens/receipts.js), so a move that lands
