@@ -7,6 +7,7 @@
 //
 // Nothing here knows about a model. Both modes hand it the same Run.
 
+import { TERMINAL, type ProposalStage } from '../../src/proposals/view.ts';
 import type { Scenario } from './schema.ts';
 
 export type Call = { at: number; name: string; args: unknown };
@@ -157,10 +158,114 @@ export function gradeReply(scenario: Scenario, run: Run): Check {
 
 // ---------- window ----------
 
-// Built in C3. Until then every scenario reports its window check skipped rather than passing,
-// so no scenario can go green on two checks out of three.
-export function gradeWindow(_scenario: Scenario, _run: Run): Check {
-  return { ok: true, first: '', skipped: true };
+/* Terminal statuses as the app writes them on the row, for a build where the view is not there
+   yet. The view's own TERMINAL set is imported rather than copied, so the day a stage is added to
+   src/proposals/view.ts this grader learns it in the same commit. */
+const TERMINAL_STATUS: ReadonlySet<string> = new Set(['executed', 'failed', 'refused', 'policy_refused']);
+const TERMINAL_OUTCOME: ReadonlySet<string> = new Set(['confirmed', 'failed']);
+
+// What one record says about one proposal: whether it reads terminal, and the stage word it used.
+// Reads the view first and falls back to the row, so the same check grades both builds.
+export function stateOf(row: unknown): { id: string; terminal: boolean | null; stage: string | null } {
+  const r = (row ?? {}) as Record<string, unknown>;
+  const view = (r.view ?? (typeof r.stage === 'string' ? r : null)) as Record<string, unknown> | null;
+  const id = typeof r.id === 'string' ? r.id : '';
+  if (view !== null && typeof view.stage === 'string') {
+    const stage = view.stage as ProposalStage;
+    const terminal = typeof view.terminal === 'boolean' ? view.terminal : TERMINAL.has(stage);
+    return { id, terminal, stage };
+  }
+  const outcome = (r.outcome ?? null) as Record<string, unknown> | null;
+  if (outcome !== null && typeof outcome.state === 'string') {
+    return { id, terminal: TERMINAL_OUTCOME.has(outcome.state), stage: outcome.state };
+  }
+  if (typeof r.status === 'string') return { id, terminal: TERMINAL_STATUS.has(r.status), stage: r.status };
+  return { id, terminal: null, stage: null };
+}
+
+/* THE TRANSCRIPT RULE, which is the bug this whole build exists to close.
+
+   The card said "Confirmed at 14:20" while the agent said "still settling". So: take every
+   proposal_status the agent read, find the window state the human was looking at when it read,
+   and refuse a window that had already gone terminal while the read had not.
+
+   Only that direction is a failure. A window still showing `crediting` a moment after the read
+   came back confirmed is a push in flight, which is the normal case and not a second truth. */
+function transcriptRule(run: Run): Check {
+  for (const read of run.statusReads) {
+    const said = stateOf(read.data);
+    if (said.id === '' || said.terminal !== false) continue;
+    const seen = [...run.frames].filter((frame) => frame.at <= read.at).pop();
+    if (seen === undefined) continue;
+    const row = seen.proposals.find((entry) => (entry as { id?: unknown }).id === said.id);
+    if (row === undefined) continue;
+    const drawn = stateOf(row);
+    if (drawn.terminal === true) {
+      return fail(
+        `the window read ${drawn.stage} for ${said.id} while proposal_status read ${said.stage} a moment later`,
+      );
+    }
+  }
+  return pass();
+}
+
+/* The other half of the same rule: a sentence may not name a stage the window had not reached.
+   It needs a stage word on the row to compare against, so it reports skipped on a build whose
+   /api/state carries no view rather than passing on nothing. */
+function sentenceRule(run: Run): Check {
+  const stages = new Set<string>();
+  for (const frame of run.frames) for (const row of frame.proposals) {
+    const drawn = stateOf(row);
+    if (drawn.stage !== null && (row as Record<string, unknown>).view !== undefined) stages.add(drawn.stage);
+  }
+  if (stages.size === 0) return { ok: true, first: '', skipped: true };
+  for (const text of run.texts) {
+    for (const stage of stages) {
+      if (!new RegExp(`\\b${stage}\\b`, 'i').test(text.text)) continue;
+      const reached = run.frames.some(
+        (frame) => frame.at <= text.at && frame.proposals.some((row) => stateOf(row).stage === stage),
+      );
+      if (!reached) return fail(`the agent named the stage ${stage} before any frame had reached it`);
+    }
+  }
+  return pass();
+}
+
+// A card the window can draw. Reads and proposes both send one; "nothing new" in a scenario means
+// no card a person has to act on, which is a propose, a draw or a deposit address.
+const DECISION_CARDS = (name: string): boolean => name.startsWith('propose_') || name === 'show' || name === 'deposit';
+
+export function gradeWindow(scenario: Scenario, run: Run): Check {
+  const transcript = transcriptRule(run);
+  if (!transcript.ok) return transcript;
+  const sentences = sentenceRule(run);
+  if (!sentences.ok) return sentences;
+
+  const want = scenario.window;
+  // Skipped means nothing in this check could be judged: no card expectation, and no stage on the
+  // row to hold a sentence against. A card check that ran and passed is a pass, not a skip.
+  const judged = want !== undefined && (want.card !== undefined || want.noNewCard === true);
+  if (want === undefined) return { ok: true, first: '', skipped: sentences.skipped === true };
+
+  if (want.noNewCard === true) {
+    const drawn = run.cards.find((card) => DECISION_CARDS(card.name));
+    if (drawn !== undefined) return fail(`the window drew a ${drawn.name} card, and this scenario draws nothing new`);
+  }
+
+  if (want.card !== undefined) {
+    const card = run.cards.find((entry) => entry.name === want.card);
+    if (card === undefined) return fail(`no ${want.card} card reached the window`);
+    const call = run.trace.find((entry) => entry.name === want.card);
+    const budget = want.withinMs ?? 1000;
+    if (call !== undefined && card.at - call.at > budget) {
+      return fail(`the ${want.card} card reached the window ${card.at - call.at} ms after the call, over ${budget}`);
+    }
+    for (const field of want.fields ?? []) {
+      if (at(card.data, field) === undefined) return fail(`the ${want.card} card carries no ${field}`);
+    }
+  }
+
+  return { ok: true, first: '', skipped: !judged && sentences.skipped === true };
 }
 
 // ---------- the verdict ----------

@@ -17,7 +17,7 @@
 // scenario's balances cannot be set any other way). Nothing here touches ~/.phosphor, the real
 // keystore, or the installed app's ports.
 
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -449,6 +449,21 @@ if (scenarios.length === 0) {
   console.log('no scenarios matched');
   process.exit(1);
 }
+
+/* The grader is graded first. It is the one thing in this run with no independent check on it:
+   every scenario's verdict comes from it, so a grader that passes everything would turn the whole
+   suite green while proving nothing. tests/eval/grade.test.ts feeds it a passing and a failing run
+   per check, and this run stops here if any of them is wrong. */
+const graderTests = spawnSync(process.execPath, ['--test', path.join(SCENARIO_DIR, 'grade.test.ts')], {
+  cwd: ROOT,
+  encoding: 'utf8',
+});
+if (graderTests.status !== 0) {
+  console.log('[FAIL] the grader\'s own tests do not pass, so no scenario verdict below would mean anything');
+  console.log(`${graderTests.stdout ?? ''}${graderTests.stderr ?? ''}`.slice(-2000));
+  process.exit(1);
+}
+console.log(`grader self-test: ${/pass (\d+)/.exec(graderTests.stdout ?? '')?.[1] ?? '?'} checks pass`);
 
 const stage = stageRepo();
 console.log(`PHOSPHOR EVAL: ${scenarios.length} scenario(s), ${LIVE ? 'live' : 'scripted'} mode`);
