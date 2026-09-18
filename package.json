@@ -5,6 +5,15 @@
   "type": "module",
   "description": "Phosphor: local stablecoin control app driven by any MCP agent. The app is the car, the agent is the person with the key.",
   "license": "FSL-1.1-MIT",
+  "author": "Karim Baba",
+  "homepage": "https://phosphor.karimbabasf.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/karimbabasf/phosphor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/karimbabasf/phosphor/issues"
+  },
   "scripts": {
     "app": "node src/main.ts",
     "mcp": "node src/mcp.ts",

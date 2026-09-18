@@ -1,0 +1,53 @@
+name: Bug report
+description: Something the app did that it should not have, or did not do that it should have.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If this could move, expose or lose funds, stop and use [private reporting](https://github.com/karimbabasf/phosphor/security/advisories/new) instead. Never paste a key, a seed, a seat secret or a full address you care about.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Phosphor > About Phosphor, or the commit if you run from source.
+      placeholder: 0.6.0
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options:
+        - Start your assistant (the app's own Claude Code)
+        - Claude Code, connected by hand
+        - Codex
+        - Another MCP client
+        - No agent involved
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      description: The exact steps, in order.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Include the sentence the app or the policy engine showed, word for word.
+    validations:
+      required: true
+  - type: textarea
+    id: state
+    attributes:
+      label: Live state
+      description: Network, gate state and the relevant policy rule, if you know them.

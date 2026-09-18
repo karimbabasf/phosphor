@@ -1,5 +1,10 @@
 # Phosphor
 
+[![Tests](https://github.com/karimbabasf/phosphor/actions/workflows/ci.yml/badge.svg)](https://github.com/karimbabasf/phosphor/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/karimbabasf/phosphor/actions/workflows/dynamic/github-code-scanning/codeql/badge.svg)](https://github.com/karimbabasf/phosphor/security/code-scanning)
+[![Release](https://img.shields.io/github/v/release/karimbabasf/phosphor?label=release&color=1f7a3a)](https://github.com/karimbabasf/phosphor/releases/latest)
+[![License](https://img.shields.io/badge/license-FSL--1.1--MIT-1f7a3a)](LICENSE)
+
 Phosphor is a local Mac app that holds your keys, your venue connections and your rules. Any MCP
 agent (Claude Code, Codex, anything that speaks MCP) drives it: the agent reads your money, prices
 a move and proposes it. The agent can never approve. Every execution takes a click in the app
