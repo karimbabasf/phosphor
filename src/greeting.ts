@@ -146,6 +146,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         does: 'where one money move is now, as the object the card is drawing: stage, what it waits on, seconds so far against the typical figure, amounts, hashes, any error. Quote its words.',
       },
       { tool: 'proposals', does: 'recent money moves, newest first, each as that same object. Use it when you need a proposal and hold no id.' },
+      { tool: 'diagnose', does: "one move's whole story: its view, its own audit lines, what the router last said, what the venue holds now. For why something is slow or failed." },
     ],
   },
   {

@@ -544,6 +544,20 @@ registerLeadRead(
     kind: z.string().optional().describe('one proposal kind to filter to'),
   },
 );
+registerLeadRead(
+  'diagnose',
+  [
+    'Everything about ONE money move in one call, for "why is it not there yet": the same view',
+    "proposal_status returns, this row's own audit lines (log_tail has no filter, so finding them",
+    'otherwise means reading everybody\'s), what 1Click last reported about it, and what the',
+    'Hyperliquid account holds right now on a deposit or a withdrawal. Reach for it before you',
+    'guess about a slow or a failed move, and say what it shows rather than reassuring anyone.',
+    'It asks no permission and needs none: it moves nothing. The quote handle comes back as a',
+    'fingerprint and never as an address, and nothing in the answer is a place money can be sent.',
+    'Read-only, changes nothing.',
+  ].join(' '),
+  { id: z.string() },
+);
 
 // The gas bill. An aggregation of receipts this app has already read for the history surface,
 // which is why it makes no chain call of its own and costs nothing after HISTORY has been open.

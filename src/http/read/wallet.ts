@@ -78,6 +78,10 @@ function chainIdOf(raw: string): string | null {
 export const PROPOSALS_DEFAULT = 10;
 export const PROPOSALS_MAX = 50;
 
+// How much of one row's history comes back. Enough to see the shape of a stuck move, few enough
+// that an agent reads them all rather than summarising the middle away.
+export const DIAGNOSE_LOG_LINES = 40;
+
 const DISCLAIMER =
   'Send a small test amount first and wait for the app to say it landed before sending the rest. Sending on any other network, or any asset not on the accepted list, loses the money: the bridge does not refund.';
 
@@ -250,5 +254,50 @@ export const walletReads: ReadTable = {
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .slice(0, limit);
     sendJson(res, 200, { proposals: rows.map((p) => ctx.proposals.view(p, now)) });
+  },
+  /* Everything about ONE move in one call, for the question "why is my deposit not there yet".
+     Four things an agent had no way to line up: the view, the audit lines for this row alone
+     (log_tail takes a limit and nothing else, so finding them meant reading everybody's), what
+     the router last said, and what the venue holds right now.
+
+     IT HANDS BACK NOTHING THAT COULD BE PAID TO. The quote handle is a real address on some
+     routes, so it is fingerprinted exactly as the deposit card's is: enough to quote to support,
+     never enough to paste. The quote's own signature and the deposit address 1Click minted stay
+     on the row and off this answer; the correlation id is what a dispute is filed with, and it
+     is not a destination. */
+  diagnose: (ctx, _body, args, res) => {
+    const id = typeof args.id === 'string' ? args.id : '';
+    const proposal = ctx.proposals.get(id);
+    if (proposal === undefined) {
+      fail(res, 404, `unknown proposal id: ${id}`);
+      return;
+    }
+    const evidence = proposal.result?.evidence;
+    const provider =
+      evidence === undefined
+        ? null
+        : {
+            stage: evidence.providerStage ?? null,
+            handleFingerprint: evidence.handle === undefined ? null : fingerprint(evidence.handle),
+            correlationId: evidence.quote?.correlationId ?? null,
+            deadline: evidence.deadline ?? null,
+            settledAmountOut: evidence.settledAmountOut ?? null,
+            refundedAmount: evidence.refundedAmount ?? null,
+            refundReason: evidence.refundReason ?? null,
+          };
+    // The far side of a Hyperliquid move, as the ledger last read it. Null for every other kind:
+    // a swap and a send have no venue account, and answering with one anyway would be noise
+    // somebody could mistake for evidence about their own move.
+    const venue = proposal.kind === 'hl_deposit' || proposal.kind === 'hl_withdraw' ? (ctx.ledger.hyperliquid() ?? null) : null;
+    sendJson(res, 200, {
+      view: ctx.proposals.view(proposal),
+      log: ctx.audit
+        .tail(LOG_LIMIT_MAX)
+        .filter((e) => (e.data as { id?: unknown } | undefined)?.id === id || e.msg.includes(id))
+        .slice(0, DIAGNOSE_LOG_LINES)
+        .map((e) => `${e.ts} ${e.type}: ${e.msg}`),
+      provider,
+      venue,
+    });
   },
 };

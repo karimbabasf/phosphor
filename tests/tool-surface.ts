@@ -33,6 +33,11 @@ export const EXPECTED_TOOLS: readonly string[] = [
      something and reports, and enumerating what its parent is in the middle of paying for is
      not that. */
   'proposals',
+  /* One move's whole story in one call: the view, this row's audit lines, what the router last
+     said, what the venue holds now. Lead only for the same reason `proposals` is. It hands back
+     no address: the quote handle is fingerprinted, and the quote's own signature and the deposit
+     address 1Click minted stay on the row, so nothing here can be reused as a destination. */
+  'diagnose',
   'propose_policy_change',
   // The rails. Each moves funds through a contract and none takes an address: the property
   // walk in tests/injection.test.ts is what holds that to be true.
@@ -164,8 +169,9 @@ export const WORKER_WITHHELD: readonly string[] = [
   'chart_layout',
   'chart_snapshot',
   'deposit',
-  // The lead's own money timeline. A worker has no business enumerating it.
+  // The lead's own money timeline, and one row's whole story. A worker has no business in either.
   'proposals',
+  'diagnose',
   // A worker has no human in its session to have taught anything to.
   'profile_learned',
   ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),

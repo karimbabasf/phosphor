@@ -88,6 +88,9 @@ export const READ_TOOLS: readonly string[] = [
   // The list behind it, newest first: nothing else enumerates, so an agent asked about "my last
   // deposit" had to find an id in the log or ask the person for a uuid about their own money.
   'proposals',
+  // Everything about one move in one call: the view, this row's own audit lines, what the router
+  // last said, what the venue holds now. The answer that makes "why is it not there yet" free.
+  'diagnose',
   'chart_read',
   'chart_scan',
   // A picture of one chart, rendered by the window and handed to the one call waiting for it.
@@ -129,7 +132,7 @@ export const LEAD_ONLY_VIEW_TOOLS: readonly string[] = ['set_theme', 'chart_draw
    back a paragraph, and enumerating what its parent is in the middle of paying for is not that.
    The proxy withholds both the same way (src/mcp.ts registerLeadRead); src/http/mcp.ts refuses
    them by seat role. */
-export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot', 'proposals'];
+export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot', 'proposals', 'diagnose'];
 
 export const VIEW_TOOLS: readonly string[] = [
   // Colour. A write like the rest of this list: it changes what the human sees and moves no
