@@ -147,6 +147,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       },
       { tool: 'proposals', does: 'recent money moves, newest first, each as that same object. Use it when you need a proposal and hold no id.' },
       { tool: 'diagnose', does: "one move's whole story: its view, its own audit lines, what the router last said, what the venue holds now. For why something is slow or failed." },
+      { tool: 'show', does: 'draws a proposal, a transaction, a position or the deposit card in the window. When somebody asks to SEE a thing, draw it and say one line, never read its fields out loud.' },
     ],
   },
   {

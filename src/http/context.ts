@@ -135,6 +135,10 @@ export const LEAD_ONLY_VIEW_TOOLS: readonly string[] = ['set_theme', 'chart_draw
 export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot', 'proposals', 'diagnose'];
 
 export const VIEW_TOOLS: readonly string[] = [
+  /* Draw something that already exists as the app's own card rather than as prose: a proposal, a
+     transaction, a position, the deposit card. It moves no money and it opens no new surface; all
+     it does is change what the human is looking at, which is what this whole list is. */
+  'show',
   // Colour. A write like the rest of this list: it changes what the human sees and moves no
   // money. The one thing it cannot reach is the approval gate's red, which is not a slot.
   'set_theme',

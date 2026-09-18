@@ -766,6 +766,27 @@ function registerView(name: string, description: string, shape: Record<string, z
   server.registerTool(name, { description, inputSchema: shape }, async (args) => proxy({ op: 'view', tool: name, args }));
 }
 
+registerView(
+  'show',
+  [
+    'Draws something that already exists as a card in the window: a proposal, a transaction, an',
+    'open position, or the deposit card. Reach for it whenever somebody asks to SEE a thing',
+    '("show me the transaction", "show me my last deposit"): the window draws the figures, and',
+    'you say one line about what it is showing rather than reading its fields back out loud.',
+    "kind: proposal (id is the proposal id), transaction (id is the hash, and network says which",
+    'chain it is on, because a card drawn against the wrong chain is a confident lie), position',
+    '(id is the coin), deposit (the card the deposit tool opened).',
+    'It moves no money and asks no permission; all it changes is what the human is looking at.',
+    'It answers drawn:false when no conversation is open in the window, which is not a failure,',
+    'only nowhere to draw.',
+  ].join(' '),
+  {
+    kind: z.enum(['proposal', 'transaction', 'position', 'deposit']).describe('what to draw'),
+    id: z.string().describe('the proposal id, the transaction hash, or the coin'),
+    network: z.enum(CHAIN_NETWORKS as [string, ...string[]]).optional().describe('for a transaction: the network the hash is on'),
+  },
+);
+
 /* The window itself, and who it belongs to.
    Which screen the human is looking at, which coins it tracks and what colour it is are the
    LEAD's business, not a spawned worker's. A worker exists to measure something and hand back a

@@ -17,12 +17,12 @@ import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
 import { createTradeView } from '../../src/trade/view.ts';
-import { createAgents } from '../../src/agents.ts';
+import { MAX_AGENTS, createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
-import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
 import type { DriverState } from '../../src/driver.ts';
 import { stubView } from './view.ts';
 
@@ -56,6 +56,12 @@ export interface Booted {
 
 export type BootOptions = {
   autostart?: boolean;
+  /* The seat secret every /api/mcp op carries (src/http/mcp.ts). Absent leaves the roster with
+     its own, which is what every test that only drives /api/driver wants; a test that calls a
+     tool through the real door sets it and sends the same string. */
+  seat?: string;
+  // Rows the proposal stub answers with, for a test about a tool that reads one.
+  proposals?: Proposal[];
   // What the fake driver reports. `thinking` is the state an interrupt is meaningful in, so a
   // test that wants one sets it here rather than trying to get the fake into it by other means.
   state?: DriverState;
@@ -76,7 +82,8 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
 
   const calls: DriverCalls = { starts: 0, sends: [], interrupts: 0, stops: 0 };
   const state: DriverState = opts.state ?? 'ready';
-  const agents = createAgents();
+  const agents = opts.seat === undefined ? createAgents() : createAgents(Date.now, MAX_AGENTS, { secret: opts.seat });
+  const rows = opts.proposals ?? [];
 
   // The window token arrives in the environment, so a test that wants to decide anything plays
   // the shell and puts one there before the server reads it.
@@ -127,8 +134,8 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
       proposeTradeChange: async () => { throw new Error('unused'); },
       approve: async () => { throw new Error('unused'); },
       refuse: async () => { throw new Error('unused'); },
-      get: () => undefined,
-      list: () => [],
+      get: (id: string) => rows.find((p) => p.id === id),
+      list: () => rows,
       view: (p) => stubView(p),
       markStalled: () => 0,
       sessionSpentUsd: () => 0,

@@ -126,6 +126,11 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'trade_clear',
   // A plan drawn as an idea. It has no authority and moves nothing; "go" arms it by id.
   'trade_plan',
+  /* Draws something that already exists as a card: a proposal, a transaction, a position, the
+     deposit card. "Show me the transaction" used to come back as prose with a hash pasted in the
+     middle of it. It reads what a read tool would and writes nothing but the window, which is
+     why it is a view tool and not a read: what it changes is what the human is looking at. */
+  'show',
   // The team. Phosphor allowed one agent at a time until 2026-08-21 and now seats several, so
   // these five exist to keep a roster from being a crowd: who is here, a board they write one
   // line each to, and workers one of them can put on a piece of work.
