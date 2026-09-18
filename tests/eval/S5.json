@@ -175,7 +175,7 @@
       }
     },
     {
-      "say": "The newest deposit is {{1.draft.amount}} USDC to Hyperliquid, filed about 8 minutes ago. Drawing its card.",
+      "say": "The newest deposit is {{1.money.amountIn}} USDC to Hyperliquid, filed about 8 minutes ago. Drawing its card.",
       "tool": "show",
       "args": {
         "kind": "proposal",
