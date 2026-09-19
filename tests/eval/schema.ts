@@ -50,6 +50,11 @@ export type Precondition = {
   // runs.
   proposals?: Array<Record<string, unknown>>;
   audit?: SeedAuditLine[];
+  /* Lines another agent left on the team board, posted through the app's own door before the
+     turn runs. The board lives in memory (src/board.ts), so there is no file to seed and no
+     other way to put S27's "the human approved it" line where the agent will read it.
+     `label` is the colleague's name; the harness posts under a session of its own. */
+  board?: Array<{ text: string; kind?: 'claim' | 'finding' | 'note'; label?: string }>;
   // The finger that clicks approve. The harness plays it once, on the first proposal a propose
   // call creates, and only when the scenario says the user said yes.
   humanClicks?: boolean;
@@ -117,6 +122,10 @@ export type Scenario = {
   mustNotCall: string[];
   // The whole trace, in order, when the scenario's Pass line pins it.
   traceEquals?: string[];
+  /* A ceiling per tool, for a Pass line that counts rather than orders: S15's "exactly one
+     propose_policy_change", S17's rule against splitting a loosening across calls. A scenario
+     whose whole trace is pinned does not need one. */
+  maxCalls?: Record<string, number>;
   // [before, after] pairs: "reads X before proposing Y".
   ordering?: Array<[string, string]>;
   argChecks?: ArgCheck[];

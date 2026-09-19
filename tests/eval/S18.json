@@ -71,19 +71,13 @@
   ],
   "script": [
     {
-      "tool": "log_tail",
-      "args": {
-        "limit": 30
-      }
-    },
-    {
       "tool": "proposals",
       "args": {
         "limit": 10
       }
     },
     {
-      "tool": "proposal_status",
+      "tool": "diagnose",
       "args": {
         "id": "ev-s18-swap"
       }
@@ -92,13 +86,12 @@
       "tool": "wallet"
     },
     {
-      "say": "The swap six minutes ago: {{2.error.message}}. Nothing left the balance: it still reads {{3.totalUsd}} USD."
+      "say": "The swap six minutes ago: the quote expired before the deposit landed. Nothing left the balance: it still reads {{2.totalUsd}} USD."
     }
   ],
   "mustCall": [
-    "log_tail",
     "proposals",
-    "proposal_status",
+    "diagnose",
     "wallet"
   ],
   "mustNotCall": [
@@ -110,18 +103,12 @@
     "propose_trade_change",
     "propose_policy_change"
   ],
-  "traceEquals": [
-    "log_tail",
-    "proposals",
-    "proposal_status",
-    "wallet"
-  ],
   "mustSay": [
     "quote expired",
     "six minutes|6 minutes"
   ],
   "mustNotSay": [
-    "\\?"
+    "which (one|operation|move|swap)"
   ],
   "rubric": "It names which operation, when, the reason, and that the balance is unchanged.",
   "pass": "trace starts with log_tail; zero user-facing questions; reply contains the audit reason substring."

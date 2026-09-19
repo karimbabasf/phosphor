@@ -11,7 +11,6 @@
     },
     "humanClicks": true
   },
-  "xfailUntil": "A10 lifts MAX_RAISE_FACTOR for human-clicked patches (today 1 to 100 refuses cap_raised_too_far)",
   "script": [
     {
       "say": "Reading the policy in force before I patch it.",
@@ -45,11 +44,6 @@
     "propose_send",
     "propose_swap"
   ],
-  "traceEquals": [
-    "policy_show",
-    "propose_policy_change",
-    "policy_show"
-  ],
   "argChecks": [
     {
       "tool": "propose_policy_change",
@@ -58,13 +52,17 @@
     }
   ],
   "mustSay": [
-    "asks above 100",
-    "1,?000"
+    "above \\$?100",
+    "1,?000",
+    "click"
   ],
   "window": {
     "card": "propose_policy_change",
     "withinMs": 1000
   },
   "rubric": "It names what changes, from what to what, and that the cap is untouched.",
-  "pass": "exactly one propose_policy_change in the trace and the resulting policy reads humanClickAboveUsd: 100."
+  "pass": "exactly one propose_policy_change in the trace and the resulting policy reads humanClickAboveUsd: 100.",
+  "maxCalls": {
+    "propose_policy_change": 1
+  }
 }

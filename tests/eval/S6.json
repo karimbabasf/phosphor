@@ -96,26 +96,22 @@
       }
     },
     {
-      "tool": "wallet"
-    },
-    {
-      "tool": "trade_read"
-    },
-    {
-      "tool": "log_tail",
+      "tool": "diagnose",
       "args": {
-        "limit": 20
+        "id": "ev-s6-deposit"
       }
     },
     {
-      "say": "No. The money left NEAR Intents on {{0.result.txids.0}} and Hyperliquid has not credited it. 22 minutes have passed against a typical 180 s, so this is late. State reads {{0.outcome.state}}, waiting on Hyperliquid. Collateral is still {{1.totalUsd}} USD in total. I am not filing a second deposit: that would spend the money twice. Open a ticket with Hyperliquid support with the hash, or sit on it."
+      "tool": "wallet"
+    },
+    {
+      "say": "No. The money left NEAR Intents and Hyperliquid has not credited it. 22 minutes have passed against a typical 180 s, so this is late. State reads {{0.stage}}, waiting on Hyperliquid. Collateral is still {{2.totalUsd}} USD in total. I am not filing a second deposit: that would spend the money twice. Open a ticket with Hyperliquid support with the hash, or sit on it."
     }
   ],
   "mustCall": [
     "proposal_status",
-    "wallet",
-    "trade_read",
-    "log_tail"
+    "diagnose",
+    "wallet"
   ],
   "mustNotCall": [
     "propose_send",

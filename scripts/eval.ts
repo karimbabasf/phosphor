@@ -371,7 +371,26 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
      from this module rather than from the environment, because the app normally IS this process.
      Here the app is a child, so the secret is read off its data directory and handed over. */
   const seat = path.join(app.dataDir, 'agent.secret');
-  if (fs.existsSync(seat)) useSeatSecret(fs.readFileSync(seat, 'utf8').trim());
+  const secret = fs.existsSync(seat) ? fs.readFileSync(seat, 'utf8').trim() : '';
+  if (secret !== '') useSeatSecret(secret);
+
+  /* THE COLLEAGUE'S LINES, written through /api/mcp under a session of the harness's own. The
+     board is memory only, so a fixture cannot seed it the way it seeds proposals or the audit
+     log, and S27 is exactly the scenario that needs one there before the agent reads it. */
+  for (const post of scenario.pre.board ?? []) {
+    await fetch(`${app.base}/api/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: app.base },
+      body: JSON.stringify({
+        op: 'agent_post',
+        args: { kind: post.kind ?? 'note', text: post.text },
+        session: 'eval-colleague',
+        client: post.label ?? 'colleague',
+        label: post.label ?? 'colleague',
+        secret,
+      }),
+    }).catch(() => undefined);
+  }
 
   const frames: Frame[] = [];
   const cards: Card[] = [];
@@ -416,11 +435,17 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
       if (event.kind === 'tool_data') {
         const name = bare(event.name);
         cards.push({ at, name, data: event.data });
-        if (name === 'proposal_status') statusReads.push({ at, data: event.data });
+        /* Every read that hands back a ProposalView feeds the transcript rule, not just the one
+           that reads a single row. proposals is the page and diagnose is the row plus why it is
+           stuck; an agent quoting either against a window that had already gone terminal is the
+           same two-sources-of-truth bug, so the rule has to see all three. */
+        const row = event.data as Json;
+        if (name === 'proposal_status') statusReads.push({ at, data: row });
+        if (name === 'proposals') for (const entry of (row?.proposals as Json[]) ?? []) statusReads.push({ at, data: entry });
+        if (name === 'diagnose' && row?.view !== undefined) statusReads.push({ at, data: row.view });
         // The finger. It clicks once, on the first pending proposal a propose call created, and
         // only where the scenario says the user said yes. Everything else about approval is the
         // app's: the token never leaves this process and no route serves it.
-        const row = event.data as Json;
         if (
           scenario.pre.humanClicks === true &&
           !clicked &&
@@ -456,6 +481,17 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
     }
     // The last SSE frame trails the last tool call, so the window is given a moment to say so.
     await sleep(400);
+    /* THE CLOSING FRAME, read straight off /api/state rather than off an event. watchWindow only
+       records a state when an SSE frame wakes it, so a row written in the same tick as the last
+       frame (a propose the policy refuses outright is the common one) is pushed and fetched in
+       the wrong order and never appears in any frame at all. The window has it; the record did
+       not, and the sentence rule was failing agents for naming a stage the record had missed. */
+    try {
+      const state = (await (await fetch(`${app.base}/api/state`)).json()) as Json;
+      frames.push({ at: Date.now(), type: 'final', payload: null, proposals: (state.proposals as Json[]) ?? [] });
+    } catch {
+      // The app is going down, which is not a window failure.
+    }
   } catch (error) {
     detail = errText(error);
   } finally {

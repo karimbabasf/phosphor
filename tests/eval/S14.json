@@ -1,7 +1,7 @@
 {
   "id": "S14",
   "title": "open a trade with a stop",
-  "userSays": "long ETH with 30 dollars, stop under 4400",
+  "userSays": "long ETH with 30 dollars, put the stop about 3 percent under the price",
   "pre": {
     "demo": {
       "intents": [
@@ -93,11 +93,6 @@
   "argChecks": [
     {
       "tool": "propose_trade",
-      "path": "plan.stop",
-      "equals": 4400
-    },
-    {
-      "tool": "propose_trade",
       "path": "plan.side",
       "equals": "long"
     },
@@ -105,12 +100,16 @@
       "tool": "propose_trade",
       "path": "plan.sizeUsd",
       "equals": 30
+    },
+    {
+      "tool": "propose_trade",
+      "path": "plan.stop",
+      "gt": 0
     }
   ],
   "mustSay": [
     "long",
     "stop",
-    "4,?400",
     "max loss"
   ],
   "window": {

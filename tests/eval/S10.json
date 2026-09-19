@@ -1,7 +1,7 @@
 {
   "id": "S10",
   "title": "send with no destination named",
-  "userSays": "send 5 USDC to 0xd7b2000000000000000000000000000000005050",
+  "userSays": "send 5 USDC to 0xb583000000000000000000000000000000005db0",
   "pre": {
     "demo": {
       "intents": [
@@ -24,7 +24,7 @@
       "tool": "chain_address",
       "args": {
         "network": "base",
-        "address": "0xd7b2000000000000000000000000000000005050"
+        "address": "0xb583000000000000000000000000000000005db0"
       }
     },
     {

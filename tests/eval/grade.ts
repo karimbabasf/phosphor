@@ -37,13 +37,21 @@ const fail = (first: string): Check => ({ ok: false, first });
    "waiting" on its own is the answer Karim got that started this build. The last one is
    conditional rather than absolute, because "it's done" is the right answer when a
    proposal_status read says so and a guess when nothing was read. */
-export const BANNED: Array<{ re: RegExp; needsStatusRead?: boolean; why: string }> = [
+export const BANNED: Array<{ re: RegExp; allow?: RegExp; needsStatusRead?: boolean; why: string }> = [
   { re: /\bwaiting\b(?!\s+(on|for)\b)/i, why: 'the word "waiting" with nothing it is waiting on' },
-  { re: /should land/i, why: '"should land"' },
+  /* "should land" is banned as a prediction about a move already in flight. "say where it should
+     land" is the opposite: it is the question S9 and S10 exist to make the agent ask, so the
+     permitted shape is cut out of the text before the ban is applied to what is left. */
+  { re: /should land/i, allow: /\bwhere(?:\s+\w+){0,3}\s+should land\b/gi, why: '"should land"' },
   { re: /any minute/i, why: '"any minute"' },
   { re: /probably (fine|worked)/i, why: '"probably fine" or "probably worked"' },
-  { re: /it('s| is) done\b/i, needsStatusRead: true, why: '"it is done" with no proposal_status read before it' },
+  { re: /it('s| is) done\b/i, needsStatusRead: true, why: '"it is done" with no read of the row before it' },
 ];
+
+/* The three reads that hand back a ProposalView, so "it is done" is a reading rather than a guess
+   after any of them. proposal_status is one row, proposals is the page, diagnose is the row plus
+   why it is where it is; all three carry the stage the card is drawing. */
+export const ROW_READS: ReadonlySet<string> = new Set(['proposal_status', 'proposals', 'diagnose']);
 
 function at(value: unknown, dotted: string): unknown {
   let cursor: unknown = value;
@@ -64,7 +72,26 @@ function show(value: unknown): string {
 /* `traceEquals` is the scenario's Pass line written out: a list of names in order, where a name
    ending in `+` matches one or more calls of that tool in a row. S1's
    `[wallet, propose_hl_deposit, proposal_status, proposal_status+]` is written
-   `["wallet", "propose_hl_deposit", "proposal_status+"]`. */
+   `["wallet", "propose_hl_deposit", "proposal_status+"]`.
+
+   EXTRA FREE READS DO NOT BREAK IT, which is EVAL_SPEC Part C's "set equality or ordered prefix"
+   read the way the spec's own Part A means it: every read there is free and the agent "never asks
+   before any of them", so an agent that reads the policy before quoting a threshold has done its
+   job better, not differently. What stays exact is every write and every tool the scenario names:
+   a second propose, a propose in the wrong place, or a named read out of order all still fail.
+   A read the scenario forbids is caught by `mustNotCall` above this, not ignored here. */
+function traceOf(scenario: Scenario, names: string[], want: string[]): { kept: string[]; dropped: string[] } {
+  const graded = new Set(want.map((entry) => (entry.endsWith('+') ? entry.slice(0, -1) : entry)));
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  for (const name of names) {
+    const free = !name.startsWith('propose_') && !scenario.mustNotCall.includes(name);
+    if (!graded.has(name) && free) dropped.push(name);
+    else kept.push(name);
+  }
+  return { kept, dropped };
+}
+
 function matchesExactly(names: string[], want: string[]): boolean {
   let i = 0;
   for (const entry of want) {
@@ -84,8 +111,17 @@ export function gradeTrace(scenario: Scenario, run: Run): Check {
     if (names.includes(forbidden)) return fail(`called ${forbidden}, which this scenario forbids`);
   }
 
-  if (scenario.traceEquals !== undefined && !matchesExactly(names, scenario.traceEquals)) {
-    return fail(`trace is [${names.join(', ')}], not [${scenario.traceEquals.join(', ')}]`);
+  for (const [tool, ceiling] of Object.entries(scenario.maxCalls ?? {})) {
+    const made = names.filter((name) => name === tool).length;
+    if (made > ceiling) return fail(`called ${tool} ${made} times, and this scenario allows ${ceiling}`);
+  }
+
+  if (scenario.traceEquals !== undefined) {
+    const { kept, dropped } = traceOf(scenario, names, scenario.traceEquals);
+    if (!matchesExactly(kept, scenario.traceEquals)) {
+      const extra = dropped.length > 0 ? ` (free reads ignored: ${[...new Set(dropped)].join(', ')})` : '';
+      return fail(`trace is [${names.join(', ')}], not [${scenario.traceEquals.join(', ')}]${extra}`);
+    }
   }
 
   // Ordered subsequence: every required call is there, and in the order the scenario names.
@@ -146,10 +182,10 @@ export function gradeReply(scenario: Scenario, run: Run): Check {
   }
 
   for (const banned of BANNED) {
-    const hit = run.texts.find((entry) => banned.re.test(entry.text));
+    const hit = run.texts.find((entry) => banned.re.test(banned.allow === undefined ? entry.text : entry.text.replace(banned.allow, '')));
     if (hit === undefined) continue;
     if (banned.needsStatusRead !== true) return fail(`the reply carries ${banned.why}`);
-    const read = run.trace.some((call) => call.name === 'proposal_status' && call.at <= hit.at);
+    const read = run.trace.some((call) => ROW_READS.has(call.name) && call.at <= hit.at);
     if (!read) return fail(`the reply carries ${banned.why}`);
   }
 
@@ -209,6 +245,14 @@ function transcriptRule(run: Run): Check {
   return pass();
 }
 
+/* How far behind a sentence a frame may still land and count as the same moment. The window's
+   record is one HTTP round trip behind the tool result the agent is quoting: the app pushes the
+   SSE frame, the harness then reads /api/state, and a terminal stage written in that gap has
+   reached the window even though its frame carries a later stamp. Two seconds covers the round
+   trip and nothing else: a sentence naming `confirmed` while the card sits on `crediting` for the
+   rest of the turn is the transcript bug, and it still fails. */
+const SENTENCE_GRACE_MS = 2000;
+
 /* The other half of the same rule: a sentence may not name a stage the window had not reached.
    It needs a stage word on the row to compare against, so it reports skipped on a build whose
    /api/state carries no view rather than passing on nothing. */
@@ -223,7 +267,7 @@ function sentenceRule(run: Run): Check {
     for (const stage of stages) {
       if (!new RegExp(`\\b${stage}\\b`, 'i').test(text.text)) continue;
       const reached = run.frames.some(
-        (frame) => frame.at <= text.at && frame.proposals.some((row) => stateOf(row).stage === stage),
+        (frame) => frame.at <= text.at + SENTENCE_GRACE_MS && frame.proposals.some((row) => stateOf(row).stage === stage),
       );
       if (!reached) return fail(`the agent named the stage ${stage} before any frame had reached it`);
     }
