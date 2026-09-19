@@ -1,35 +1,40 @@
 /* The assistant panel: the conversation column (ui/screens/agent.js) and the
-   beam that points from it (ui/beam). Flat panel on the column's own ground.
+   light it leaves on a surface. Flat panel on the column's own ground.
    Nothing in here glows except the mark while the assistant is live, and the
-   surfaces the beam lands on.
+   surfaces it touches.
 
    Type is Sora (--font-ui) with numbers in Geist Mono, on the foundation's
    scale. */
 
 /* ---------- the head ---------- */
 
+/* The name and the control on the first line, the status line under them
+   across the whole head. It used to share the name's column, which is the head
+   minus the control, and a tool phrase was cut to "Asking to fun..." with 150
+   px of empty head beside it. A state word is never abbreviated. */
 .agent-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--s-3);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name    controls"
+    "status  status";
+  align-items: start;
+  column-gap: var(--s-3);
+  row-gap: var(--s-1);
   flex: 0 0 auto;
   min-height: 32px;
+  /* The settle ring grows to 1.6 around the light and the column's body clips
+     its own overflow, so the head keeps a little room above it and never clips
+     inside that. Measured at 1100: the grown ring lands 5 px inside the body's
+     left edge and 44 px inside its top, so it is a ring and not a crescent. */
+  padding-top: var(--s-1);
+  overflow: visible;
 }
 
-/* The name and the seat light on one line while the light has one word to
-   say ("Assistant  . Ready"). At work the verb is a tool phrase, so the line
-   drops under the name and gets the full width rather than trimming "Reading
-   the chart" to three letters beside the control. The wrap is the flex row's
-   own: nothing is measured. */
-.agent-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s-1) var(--s-3);
-  min-width: 0;
-  flex: 1 1 auto;
-}
+.agent-title { display: contents; }
+.agent-name { grid-area: name; }
+.agent-status { grid-area: status; }
+.agent-controls { grid-area: controls; }
 
 .agent-name {
   flex: 0 0 auto;
@@ -51,32 +56,59 @@
 }
 
 .agent-status {
-  flex: 1 1 auto;
   min-width: 0;
 }
 
 /* The status line's colours by state. The grammar in components.css paints
-   the dot in the beam colour; here it is a hollow ring until somebody is at
+   the dot in the window's own light; here it is a hollow ring until somebody is at
    the wheel (a filled grey dot at the same gap read as a middle-dot between
    "Assistant" and "Off"), half lit while one comes up, rose when the start
    failed. The verb reads in the second text tone at rest and in the first
    while the assistant is at work. */
-.agent-status > .status-dot {
+/* NOTHING MOVES BUT THE WORDS.
+
+   The app's own mark at 14 px, hollow while nobody is at the wheel and solid
+   in the window's light while somebody is. It has two states and no animation
+   of any kind. What says the assistant is working is the verb, which is the
+   tool's own words ("reading your wallet", "asking to fund trading"), and the
+   clock beside it, which counts. A word that changes and a number that ticks
+   are motion that means something; a light that breathes is not.
+
+   Karim, 2026-09-18, on the light that was here: buggy, glitchy, unappealing. */
+.agent-status > .status-light {
   position: relative;
-  transition: background-color var(--dur-enter) var(--ease-out),
-              box-shadow var(--dur-enter) var(--ease-out);
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--text-3);
+  transition: color var(--dur-enter) var(--ease-out);
 }
 
-.agent-status[data-state="off"] > .status-dot {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--text-3);
+.status-mark {
+  grid-area: 1 / 1;
+  width: 14px;
+  height: 14px;
+  display: block;
+  opacity: 0.55;
+  transition: opacity var(--dur-enter) var(--ease-out);
 }
-/* Somebody's own agent attached over MCP, the built-in one off: a filled dot
-   in the ink, still, because the seat is taken but nothing of ours is at work. */
-.agent-status[data-state="connected"] > .status-dot { background: var(--ink); box-shadow: none; }
-.agent-status[data-state="starting"] > .status-dot { background: color-mix(in srgb, var(--beam) 60%, var(--text-3)); }
-.agent-status[data-state="error"] > .status-dot,
-.agent-status[data-failed="true"] > .status-dot { background: var(--down); box-shadow: none; }
+
+.agent-status[data-state="working"] > .status-light,
+.agent-status[data-state="starting"] > .status-light,
+.agent-status[data-state="ready"] > .status-light,
+.agent-status[data-state="connected"] > .status-light { color: var(--live); }
+
+.agent-status[data-state="working"] .status-mark,
+.agent-status[data-state="ready"] .status-mark,
+.agent-status[data-state="connected"] .status-mark { opacity: 1; }
+
+.agent-status[data-state="error"] > .status-light,
+.agent-status[data-failed="true"] > .status-light { color: var(--down); }
+
+.agent-status[data-state="error"] .status-mark,
+.agent-status[data-failed="true"] .status-mark { opacity: 1; }
 
 .agent-status > .status-verb {
   color: var(--text-2);
@@ -85,42 +117,26 @@
 
 .agent-status[data-state="error"] > .status-verb { color: var(--down); }
 
-/* At work: the dot breathes, and it is the one animation running in the
-   window while the assistant works (one infinite animation on screen at
-   most, none while idle). It breathes on transform and opacity only, for
-   both attributes that light this line: data-state from the column,
-   data-live from the beam while it holds a surface, so a read that never
-   fires the beam and a write that does look the same from the head. The
-   verb steps up to the first text tone and holds. */
-.agent-status[data-state="working"] > .status-dot,
-.agent-status[data-state="starting"] > .status-dot,
-.agent-status[data-live="true"] > .status-dot {
-  animation: seat-breathe 1.8s var(--ease-in-out) infinite;
-  box-shadow: none;
-}
-
-@keyframes seat-breathe {
-  0%   { transform: scale(1); opacity: 1; }
-  50%  { transform: scale(1.35); opacity: 0.55; }
-  100% { transform: scale(1); opacity: 1; }
-}
-
-.agent-status[data-state="working"] > .status-verb,
-.agent-status[data-live="true"] > .status-verb {
-  animation: none;
-  background: none;
+.agent-status[data-state="working"] > .status-verb {
   color: var(--text);
 }
 
+/* The clock is the one thing that moves. Tabular figures, so a number that
+   gains a digit moves nothing beside it. */
+.agent-status > .status-elapsed {
+  font-variant-numeric: tabular-nums;
+}
+
 /* The ring the settle leaves behind (agent.js settleRing): a hairline of the
-   beam colour around the dot, transparent until the Web Animations API runs
+   the window's light around the dot, transparent until the Web Animations API runs
    it once. Larger than the dot so the 1.6 scale it grows to is a ring a
    person can see and not a dot that twitched. */
 .status-ring {
   position: absolute;
+  grid-area: 1 / 1;
   inset: -4px;
   border-radius: 50%;
-  border: 1px solid var(--beam);
+  border: 1px solid var(--live);
   opacity: 0;
   pointer-events: none;
 }
@@ -234,13 +250,13 @@
 /* THE SEAT. The mark above the headline, 40 px of the window's own light,
    and the only thing on this card a person can read from across the room.
    Muted when nobody is there, waking while one comes up, lit with one soft
-   glow once one is. Muted is the beam colour at forty percent rather than
+   glow once one is. Muted is that light at forty percent rather than
    grey: an unlit phosphor is still the colour it will light in. */
 .agent-seat {
   width: 36px;
   height: 40px;
   margin-bottom: var(--s-1);
-  color: var(--beam);
+  color: var(--live);
   opacity: 0.4;
   transition: color var(--dur-enter) var(--ease-out),
               opacity var(--dur-enter) var(--ease-out),
@@ -254,18 +270,18 @@
 }
 
 .agent-seat[data-seat="coming"] {
-  color: color-mix(in srgb, var(--beam) 60%, var(--text-3));
+  color: color-mix(in srgb, var(--live) 60%, var(--text-3));
   opacity: 0.7;
 }
 
 .agent-seat[data-seat="live"] {
-  color: var(--beam);
+  color: var(--live);
   opacity: 1;
-  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--beam) 55%, transparent));
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--live) 55%, transparent));
 }
 
 .agent-seat[data-seat="own"] {
-  color: var(--beam);
+  color: var(--live);
   opacity: 0.85;
 }
 
@@ -487,28 +503,36 @@
    below on the window's spring (the tokens motion.js seeds on the root) and
    leaves the way it came. Off, it is not in the way and not in the tab
    order: visibility carries both. */
+/* A BAR ON THE EDGE, NOT A PILL OVER IT.
+
+   This was a pill floating in the middle of the column on a drop shadow,
+   springing up from a 0.92 scale: a floating shadowed pill, which is on the
+   list of things this window does not draw. It is a bar docked to the
+   transcript's bottom edge now, the full width of the column, with a hairline
+   above it and no shadow. It arrives by sliding up from under its own edge and
+   nothing scales. */
 .jump-latest {
   position: absolute;
-  left: 50%;
-  bottom: var(--s-3);
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 3;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  min-width: 32px;
+  gap: var(--s-2);
   height: 32px;
-  padding: 0 var(--s-2);
-  border: 1px solid var(--agent-edge);
-  border-radius: var(--radius-pill);
+  padding: 0 var(--s-3);
+  border: 0;
+  border-top: 1px solid var(--agent-edge);
+  border-radius: 0;
   background: color-mix(in srgb, var(--agent) 14%, var(--bg-1));
   color: var(--agent);
-  box-shadow: var(--lift-sm);
   cursor: pointer;
   visibility: hidden;
   opacity: 0;
-  transform: translate(-50%, 12px) scale(0.92);
-  transition: transform var(--dur-spring, 300ms) var(--ease-spring, var(--ease-out)),
+  transform: translateY(100%);
+  transition: transform var(--dur-enter) var(--ease-out),
               opacity var(--dur-press) var(--ease-out),
               visibility 0s linear var(--dur-press);
 }
@@ -516,18 +540,14 @@
 .jump-latest[data-on="true"] {
   visibility: visible;
   opacity: 1;
-  transform: translate(-50%, 0) scale(1);
+  transform: translateY(0);
   transition-delay: 0s, 0s, 0s;
 }
 
+/* The bar is wide enough to say what it does, so it says it. */
 .jump-latest .btn-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+  font-size: var(--fs-13);
+  font-weight: 500;
 }
 
 .jump-latest .jump-glyph {
@@ -899,7 +919,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--beam);
+  background: var(--live);
   opacity: 0.5;
   align-self: start;
   margin-top: 8px;
@@ -912,7 +932,7 @@
    under a head that pulsed was two clocks for one call. */
 .step[data-state="live"] .step-dot {
   opacity: 1;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--beam) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 18%, transparent);
   animation: none;
 }
 
@@ -938,7 +958,7 @@
 .step-args {
   font-family: var(--font-mono);
   font-size: var(--fs-12);
-  color: color-mix(in srgb, var(--beam) 62%, var(--text-3));
+  color: color-mix(in srgb, var(--live) 62%, var(--text-3));
 }
 
 .step-args::before,
@@ -1160,26 +1180,26 @@
   }
 }
 
-/* ---------- surfaces: where the beam lands ---------- */
+/* ---------- surfaces: where the assistant is working ---------- */
 
 /* Any element with data-surface can carry the edge. The edge is a layer whose
    OPACITY moves, never a shadow that animates: in at 160 ms, out over 400 ms.
    The tone is the assistant's light by default, amber for a proposal waiting
-   on a person, rose for a tool that failed. ui/beam/beam.js writes the
-   attributes and never touches a style property of the surface.
+   on a person, rose for a tool that failed. The window writes the attributes
+   and never touches a style property of the surface.
 
    It is one hairline inside the element's own edge and nothing more. The
    bloom that used to sit outside it, fading over two and a half seconds,
    read as a scanner and went on 2026-09-16 with the canvas streak; the
-   moment of arrival is the ring in the beam layer below, and while a call is
-   open the seat light in the head is what says "working". Inside the edge
+   moment of arrival is the ring on the status line, and while a call is open
+   the status line in the head is what says "working". Inside the edge
    means a surface that clips its overflow (a fold, the conversation column)
    still shows all of it. */
 [data-surface] {
   position: relative;
-  --glow-c: var(--beam);
-  /* The edge's own clock. beam.js keeps the tone attribute for the out
-     half, so a rose edge fading stays rose the whole way (EDGE_OUT_MS). */
+  --glow-c: var(--live);
+  /* The edge's own clock. The tone attribute is kept through the out half, so
+     a rose edge fading stays rose the whole way. */
   --dur-edge-in: 160ms;
   --dur-edge-out: 400ms;
 }
@@ -1214,65 +1234,6 @@
   box-shadow: inset 0 0 0 1px var(--glow-c);
 }
 
-/* THE BEAM LAYER. One fixed layer over the whole window, pointer transparent,
-   that holds the dot while it flies and the ring while it breathes. Nothing
-   in it is ever there at rest. */
-.beam-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-/* The dot: 8 px of the tone with a little light around it, placed at the
-   layer's origin and moved by motion.dev on its transform, so the flight
-   costs the window no layout. It is drawn transparent; the flight brings it
-   up out of the step row and puts it out again as the ring takes over. */
-.beam-dot {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 8px;
-  height: 8px;
-  margin: -4px 0 0 -4px;
-  border-radius: 50%;
-  background: var(--beam);
-  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--beam) 55%, transparent);
-  opacity: 0;
-  will-change: transform, opacity;
-}
-
-.beam-dot[data-tone="wait"] {
-  background: var(--warn);
-  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--warn) 55%, transparent);
-}
-
-.beam-dot[data-tone="down"] {
-  background: var(--down);
-  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--down) 55%, transparent);
-}
-
-/* The ring: a 2 px stroke the size of the panel it landed on, on the
-   panel's own corners, read off the custom properties the beam sets.
-   motion.dev breathes it (scale 1 to 1.06, twice) and fades it. */
-.beam-ring {
-  position: absolute;
-  left: var(--beam-x);
-  top: var(--beam-y);
-  width: var(--beam-w);
-  height: var(--beam-h);
-  box-sizing: border-box;
-  border: 2px solid var(--beam);
-  border-radius: var(--beam-r, var(--radius-lg));
-  opacity: 0;
-  transform-origin: center;
-  will-change: transform, opacity;
-}
-
-.beam-ring[data-tone="wait"] { border-color: var(--warn); }
-.beam-ring[data-tone="down"] { border-color: var(--down); }
-
 /* ---------- reduced motion ---------- */
 
 /* The seat light stops breathing and holds a still ring, the settle ring
@@ -1284,22 +1245,15 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-status[data-state="working"] > .status-dot,
-  .agent-status[data-state="starting"] > .status-dot,
-  .agent-status[data-live="true"] > .status-dot {
-    animation: none;
-    opacity: 1;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--beam) 18%, transparent);
-  }
   .suggest { animation-name: suggest-in-still; }
   .agent-connect { animation: none; }
   .composer-send:active:not(:disabled) { transform: none; }
   /* The edge keeps a short fade: it is the one motion that carries meaning.
-     The dot never flies and the ring only fades (beam.js checks). */
+     Nothing travels; the edge only fades. */
   [data-surface]::after { transition-duration: 200ms !important; }
-  /* The pill fades in where it sits rather than springing up. */
+  /* The bar fades in where it sits rather than sliding up. */
   .jump-latest {
-    transform: translate(-50%, 0) scale(1);
+    transform: translateY(0);
     transition: opacity var(--dur-press) var(--ease-out), visibility 0s linear var(--dur-press);
   }
   .jump-latest[data-on="true"] { transition-delay: 0s, 0s; }

@@ -31,7 +31,7 @@
 
   /* State colour. Phosphor green is the action colour, the direction up, and the
      assistant's own light: the app is named for one colour on graphite, so the
-     three are one decision. --beam is that light in the window (the flight, the
+     three are one decision. --live is that light in the window (the flight, the
      glow, the step dots, the glyph) and follows the accent slot. --agent stays
      what it has always been on the chart: the levels, marks and lines the
      assistant drew, told apart from the person's by colour. */
@@ -41,7 +41,7 @@
   --down: #FF5A6E;
   --warn: #F5B942;
   --agent: #B79CFF;
-  --beam: var(--ink);
+  --live: var(--ink);
 
   /* Where the afterglow settles before it reaches the ground. */
   --glow-ash: #0F3A1E;
@@ -54,8 +54,8 @@
   --warn-wash: rgba(245, 185, 66, 0.14);
   --agent-wash: rgba(183, 156, 255, 0.13);
   --agent-edge: rgba(183, 156, 255, 0.28);
-  --beam-edge: var(--ink-edge);
-  --beam-glow: 0 0 5px var(--beam);
+  --live-edge: var(--ink-edge);
+  --live-glow: 0 0 5px var(--live);
 
   /* Type */
   --font-ui: "Sora", ui-sans-serif, system-ui, sans-serif;
@@ -107,7 +107,6 @@
   --dur-enter: 220ms;
   --dur-swap: 180ms;
   --dur-number: 300ms;
-  --dur-beam: 320ms;
   --dur-glow-in: 120ms;
   --dur-glow-out: 2400ms;
 

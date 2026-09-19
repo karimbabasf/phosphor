@@ -468,8 +468,12 @@
       root.appendChild(hold);
     }
 
-    root.appendChild(route(view));
+    /* The fee and the time come before the route, because the route carries the
+       address and the address is tall. They used to sit under it, which at 1440
+       put them below the dock's own scroll cut: the one number a person checks
+       before saying yes was never on screen without scrolling for it. */
     root.appendChild(facts(view));
+    root.appendChild(route(view));
     root.appendChild(recipientLine(view));
 
     if (view.refusedWhy) {

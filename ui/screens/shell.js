@@ -73,7 +73,7 @@
 
   /* ---------- the one page-load moment ---------- */
 
-  /* A single beam sweeps the topbar's hairline. Once, after first paint, never
+  /* A single light sweeps the topbar's hairline. Once, after first paint, never
      again in the session, and not under reduced motion. */
   function bootSweep() {
     if (!refs.topbar || window.PhosphorMotion.reduced()) return;

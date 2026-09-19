@@ -421,22 +421,20 @@
     render();
   }
 
-  /* The world surface this request would touch holds an amber glow while the
-     card is up, so the thing being decided is lit in the place it lives. Both
-     halves are guarded: the beam is a separate file and the dock is the half a
-     person cannot do without. */
+  /* The dock holds an amber edge while a card is up, so the thing being decided
+     is lit in the place it lives. The edge is one attribute on the surface
+     (design/agent.css draws it), written here rather than by a separate layer
+     that used to fly a dot to it. */
   function hold(proposal) {
-    var trace = window.PhosphorTrace;
-    var beam = window.PhosphorBeam;
-    var want = null;
-    if (proposal && trace && typeof trace.surfaceForProposal === 'function') {
-      var draft = proposal.draft || {};
-      want = trace.surfaceForProposal(draft.kind || proposal.kind) || null;
-    }
+    var want = proposal ? refs.dock : null;
     if (want === held) return;
-    if (beam && typeof beam.wait === 'function') {
-      if (held) beam.wait(held, false);
-      if (want) beam.wait(want, true);
+    if (held) {
+      dom.setAttr(held, 'data-glow', null);
+      dom.setAttr(held, 'data-glow-tone', null);
+    }
+    if (want) {
+      dom.setAttr(want, 'data-glow-tone', 'wait');
+      dom.setAttr(want, 'data-glow', 'on');
     }
     held = want;
   }
@@ -462,6 +460,8 @@
 
     if (send) {
       var sendCard = window.PhosphorSendCard;
+      body.id = 'dock-ask';
+      body.appendChild(dom.el('p', 'label dock-kicker', locked ? 'Unlock to decide' : (touching ? 'Confirm on your Mac' : 'Waiting for you')));
       sendCard.build(body, sendCard.viewOf(proposal), { width: body.clientWidth });
       if (locked) body.appendChild(lockBanner());
     } else {
@@ -517,6 +517,9 @@
     var yesLabel = dom.el('span', 'btn-label', send ? (enclave() ? 'Approve, then Touch ID' : 'Approve') : 'Yes');
     yes.appendChild(yesLabel);
     dom.setAttr(yes, 'data-pending-label', 'Approving');
+    /* The one thing in the window that breathes, and only while the answer is
+       the person's to give: design/components.css draws it. */
+    if (!locked && !touching) dom.setAttr(yes, 'data-live', 'true');
     actions.appendChild(no);
     actions.appendChild(yes);
     foot.appendChild(actions);
@@ -568,48 +571,101 @@
     return vault.custody === 'secure-enclave';
   }
 
-  function buildAskBody(host, proposal, draft, locked, touching) {
-    host.appendChild(dom.el('p', 'label dock-kicker', locked ? 'Unlock to decide' : (touching ? 'Confirm on your Mac' : 'Waiting for you')));
-    host.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
+  /* THE ASK IS THE CARD.
 
-    var amount = amountOf(proposal);
-    if (amount !== null) {
-      var big = dom.el('p', 'headline mono');
-      dom.setText(big, dom.usd(amount));
-      host.appendChild(big);
+     Karim, 2026-09-18: the confirmation cards are "too noisy, badly formatted".
+     The dock had its own grammar, so the same move looked like one thing while
+     it was being decided and another thing while it ran.
+
+     One shape for both. The dock draws the move card (screens/cards.js), with
+     its two pockets, its figures in mono and its state word, and adds only what
+     the decision needs: the fee, when the quote runs out, the address in full,
+     and the two buttons. Everything the venue said folds. */
+  function isObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function quoteOf(proposal) {
+    var sim = proposal.simulation || {};
+    return sim.quote && typeof sim.quote === 'object' ? sim.quote : null;
+  }
+
+  function expiryWords(quote) {
+    if (!quote || !quote.expiresAt) return '';
+    var left = Math.round((new Date(quote.expiresAt).getTime() - Date.now()) / 1000);
+    if (!isFinite(left)) return '';
+    if (left <= 0) return 'expired';
+    return left < 90 ? left + 's' : Math.round(left / 60) + 'm';
+  }
+
+  /* The card wants a view. A proposal waiting on a person has not moved yet, so
+     the window builds the one the backend would: waiting_for_you, the draft's
+     own figures, and the quote's fee frozen as it was drawn. */
+  function askView(proposal, draft) {
+    /* The backend builds this for every row on the state frame, and it is the
+       one that carries the sentence and the real clocks. The window only builds
+       its own for a propose answer that has not reached a state frame yet. */
+    if (isObject(proposal.view)) return proposal.view;
+    var quote = quoteOf(proposal) || {};
+    var sim = proposal.simulation || {};
+    return {
+      sentence: headlineOf(proposal),
+      id: proposal.id, kind: draft.kind, stage: 'waiting_for_you',
+      stageLabel: 'Waiting for you', providerStage: null, waitingOn: 'You',
+      terminal: false, outcome: 'pending',
+      createdAt: proposal.createdAt, decidedAt: null, settledAt: null,
+      lastChangeAt: proposal.createdAt, elapsedSec: 0, sinceChangeSec: 0,
+      typicalSec: typeof quote.etaSeconds === 'number' ? quote.etaSeconds : null,
+      deadlineAt: null, correlationId: quote.handle || null, error: null, txs: [],
+      money: {
+        symbol: String(draft.symbol || draft.fromSymbol || ''),
+        amountIn: typeof draft.amount === 'number' ? dom.qty(draft.amount) : null,
+        feeUsd: typeof sim.feeUsd === 'number' ? sim.feeUsd : null,
+        amountOut: typeof quote.amountOut === 'number' ? dom.qty(quote.amountOut) : null,
+        fromPocket: null, toPocket: null, beforeUsd: null, afterUsd: null
+      }
+    };
+  }
+
+  function buildAskBody(host, proposal, draft, locked, touching) {
+    host.id = 'dock-ask';
+    var cards = window.PhosphorCards;
+
+    /* No kicker above the card. The dock's own amber edge says a person is being
+       waited on, and the card says it again in its state word: three times in
+       one card was the noise this rewrite exists to cut. The two states the
+       edge cannot say get one line, because they are instructions. */
+    if (locked || touching) {
+      host.appendChild(dom.el('p', 'label dock-kicker', locked ? 'Unlock to decide' : 'Confirm on your Mac'));
     }
 
-    /* Under the amount and over the facts, where it is read before anything
-       is weighed: the one line that says why this card offers Unlock. */
+    var view = askView(proposal, draft);
+    if (cards && typeof cards.render === 'function') {
+      var row = Object.assign({}, proposal, { view: view });
+      host.appendChild(cards.render('move', row, {
+        name: 'proposal_status', input: { id: proposal.id }, at: proposal.createdAt, open: true
+      }));
+    } else {
+      host.appendChild(dom.el('h2', 'title', view.sentence || headlineOf(proposal)));
+    }
+
     if (locked) host.appendChild(lockBanner());
 
-    var facts = dom.el('div', 'facts');
-    var sim = proposal.simulation || {};
-    var swap = sim.swap || null;
-    /* A swap's numbers, as the rail checked them: what comes back, the floor it
-       is held to, the fee. These used to be read out of the rail's summary
-       lines, or not read at all, while the fee row said nothing was quoted. */
-    if (swap) {
-      if (swap.receives) addFact(facts, 'You get about', swap.receives + ' ' + (draft.toSymbol || ''), 'up');
-      if (swap.receivesAtLeast) addFact(facts, 'At least', swap.receivesAtLeast + ' ' + (draft.toSymbol || '') + ', or it does not fill');
-    } else if (sim && typeof sim.amountOut === 'number') {
-      addFact(facts, 'You get about', dom.qty(sim.amountOut) + ' ' + (draft.toSymbol || ''), 'up');
+    var left = expiryWords(quoteOf(proposal));
+    if (left) {
+      var note = dom.el('p', 'meta ask-expiry', left === 'expired'
+        ? 'This quote has run out. Yes asks for a fresh one.'
+        : 'This quote holds for ' + left + '.');
+      if (left === 'expired') dom.setAttr(note, 'data-tone', 'down');
+      host.appendChild(note);
     }
-    /* A rule change moves nothing, and a trade's cost is its risk facts, so
-       neither gets a fee row, which on those cards reads as a missing number
-       rather than as an absent one. */
-    if (draft.kind !== 'policy_change' && draft.kind !== 'trade' && draft.kind !== 'mandate_arm') {
-      addFact(facts, 'What it costs', costLine(proposal));
-    }
-    if (swap && typeof swap.etaSeconds === 'number') addFact(facts, 'Takes about', etaWords(swap.etaSeconds));
-    if (draft.kind === 'trade') tradeFacts(facts, draft);
-    if (draft.venue) addFact(facts, 'Through', venueWords(draft.venue));
-    addFact(facts, 'Why you are being asked', whyLine(proposal), null, true);
-    host.appendChild(facts);
 
-    /* Never abbreviated. This is the field with a track record: an amount that
-       was correct while the screen said "your wallet" and the funds went to a
-       solver-chosen address. */
+    if (draft.kind === 'trade' || draft.kind === 'trade_change') {
+      var risk = dom.el('div', 'facts');
+      tradeFacts(risk, draft);
+      host.appendChild(risk);
+    }
+
     var destinations = destinationsOf(proposal);
     if (destinations.length) {
       var dwrap = dom.el('div', 'stack-2 destinations');
@@ -625,22 +681,12 @@
       host.appendChild(dwrap);
     }
 
-    /* The rail's own words about what it is about to do. The backend writes the
-       deposit lines into this string on purpose, with a comment saying the
-       approval gate renders it, and the gate never did.
-
-       Folded when the card already carries the numbers as facts (a swap), open
-       when these lines are the only disclosure there is (a trade's plan, a
-       funding move). A policy change is the one kind held back, and not for
-       tidiness. Its summary is `the agent asked for: <the assistant's
-       sentence>`, so rendering it would put the assistant's own wording at the
-       top of the card that decides whether to trust it, above the diff that
-       says the same thing from the engine. The backend keeps the +/- lines out
-       of the summary for this reason: the diff is the disclosure for that card. */
-    var summary = typeof sim.summary === 'string' ? sim.summary.trim() : '';
-    if (summary && draft.kind !== 'policy_change') {
-      buildReport(host, draft.kind === 'trade' ? 'The plan, in full' : 'What the venue reports', summary, !swap);
-    }
+    var more = [];
+    more.push('Why you are being asked: ' + whyLine(proposal));
+    if (draft.venue) more.push('Through ' + venueWords(draft.venue));
+    var summary = typeof (proposal.simulation || {}).summary === 'string' ? proposal.simulation.summary.trim() : '';
+    if (summary && draft.kind !== 'policy_change') more.push(summary);
+    if (more.length) buildReport(host, 'The rest of it', more.join('\n'), false);
   }
 
   function lockBanner() {

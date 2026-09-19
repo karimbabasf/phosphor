@@ -7,9 +7,9 @@
    that decides anything. An approval is a physical click on the dock below,
    which is drawn from server state, so a transcript row cannot impersonate one.
 
-   The column never calls the beam either. Every step row dispatches
-   phosphor:step on window and ui/beam/trace.js decides what lights up, so the
-   transcript keeps working in a window where the beam file is not there.
+   The column lights nothing itself either. Every step row dispatches
+   phosphor:step on window and whatever is listening decides what lights up, so
+   the transcript keeps working with no listener at all.
 
    The look lives in ui/design/agent.css. This file writes state as attributes
    and text, never as style. */
@@ -245,7 +245,7 @@
   }
 
   /* The scalar arguments of a call, kept beside the row for the trace: the
-     screen a `switch` moved to is the one thing the beam has to know that the
+     screen a `switch` moved to is the one thing a listener has to know that the
      phrase does not say. Nothing nested is kept. */
   function scalarArgs(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
@@ -305,7 +305,7 @@
 
   /* WHICH CONVERSATION THIS COLUMN IS. The stream carries every chat's events
      and the app opens up to four, so an untagged reader printed another
-     conversation's tool calls into this one and fired the beam for work this
+     conversation's tool calls into this one and lit the window for work this
      agent never did. The column adopts the first chat it hears from and
      ignores the rest. */
   var chatId = null;
@@ -470,14 +470,14 @@
     title.appendChild(dom.el('span', 'agent-name', 'Assistant'));
     /* THE SEAT LIGHT. One status line beside the name, in the shared grammar
        (components.css): a 6 px dot, the verb, and the seconds. The dot is
-       still while nobody is working and breathes while a call is open; the
-       verb is the state word until a tool runs, and then the tool's own
-       words. The id is how the beam finds it: ui/beam/beam.js sets data-live
-       on it while it holds a surface, and this file never writes that
-       attribute. */
+       the app's own mark, hollow while nobody is at the wheel and solid while
+       somebody is, and it never moves. What says "working" is the verb, which
+       is the tool's own words, and the clock beside it, which counts. */
     var status = dom.el('div', 'status-line agent-status');
     status.id = 'agent-status';
-    var dot = dom.el('span', 'status-dot');
+    var dot = dom.el('span', 'status-light');
+    var mark = dom.mark('status-mark');
+    if (mark) dot.appendChild(mark);
     var ring = dom.el('span', 'status-ring');
     ring.setAttribute('aria-hidden', 'true');
     dot.appendChild(ring);
@@ -1133,9 +1133,11 @@
 
   /* One decimal up to a hundred seconds, whole seconds above it. A research call
      that ran for two minutes reads as a number rather than as a stopwatch. */
+  /* A tenth of a second up to a minute, which is where a person is watching the
+     number, and whole seconds after that, where they are watching the stage. */
   function secondsText(ms) {
     var s = Math.max(0, ms) / 1000;
-    return (s < 100 ? s.toFixed(1) : String(Math.round(s))) + ' s';
+    return (s < 60 ? s.toFixed(1) : String(Math.round(s))) + ' s';
   }
 
   function anyError(block) {
@@ -1302,9 +1304,9 @@
     tickerCheck();
   }
 
-  /* The step event carries the row's own dot, so the beam has something to fly
-     from. It goes out after the render that built the row and from the first
-     mount only: one tool call is one flight however many columns are on screen. */
+  /* The step event carries the row's own dot, so a listener has something to
+     point at. It goes out after the render that built the row and from the first
+     mount only: one tool call is one event however many columns are on screen. */
   function flushSteps() {
     for (var i = 0; i < announced.length; i += 1) {
       announceStep(announced[i].step, announced[i].dot);

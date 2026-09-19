@@ -146,7 +146,7 @@
        have limits unless specified." So a rule that is not set is not drawn,
        the count in the meta counts only what is drawn, and the one meter on
        the card sits under the one rule it belongs to. The surface keeps its
-       id, because the beam finds it by name. */
+       id, because the surface is found by name. */
     var limits = card('Policy', 'rules', 'card-policy');
     var limitsRules = dom.el('div', 'rules');
     var limitsFoot = dom.el('div', 'rules-foot');

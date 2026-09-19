@@ -656,6 +656,7 @@
        one tool, propose_send, drafts either of two kinds and the tool name cannot say which. */
     var sendFacts = isObject(data.send) ? data.send : null;
     var kind = String((draft && draft.kind) || data.kind || (sendFacts && sendFacts.kind) || bare(name).replace(/^propose_/, '') || 'move');
+    var view = viewOf(data);
     var state = stateOf(data);
     var move = {
       kind: kind,
@@ -677,11 +678,14 @@
     var result = isObject(data.result) ? data.result : null;
     if (sim && typeof sim.summary === 'string') move.summary = sim.summary;
     if (typeof data.headline === 'string') move.summary = data.headline;
+    /* The view's own line wins over anything the window would compose: one
+       sentence per move, written once, printed by the card and quoted by the
+       assistant, so the two cannot describe the same move differently. */
+    if (view && typeof view.sentence === 'string' && view.sentence) move.summary = view.sentence;
 
     /* The reason a move did not happen, in the plainest words on hand: the view's
        own error, the rule that refused it, the simulation that failed, or the
        rail's line. The stage word above already says that it stopped. */
-    var view = viewOf(data);
     if (view && isObject(view.error) && view.error.message) move.reason = String(view.error.message);
     else if (move.stage === 'failed') {
       if (status === 'policy_refused' && verdict && Array.isArray(verdict.reasons) && verdict.reasons.length) move.reason = String(verdict.reasons[0]);
@@ -709,7 +713,12 @@
       move.from = { symbol: d.fromSymbol || args.fromSymbol, place: 'intents', amount: num(d.amountIn !== undefined ? d.amountIn : args.amountIn) };
       move.to = { symbol: d.toSymbol || args.toSymbol, place: 'intents', amount: q ? num(q.amountOut) : num(args.minAmountOut) };
       if (q) move.feeUsd = num(q.feeUsd);
-      if (!q && num(args.minAmountOut) !== null) move.quote = 'at least ' + dom.qty(num(args.minAmountOut)) + ' ' + String(move.to.symbol || '');
+      /* The floor the fill is held to. It is the protection on a swap, so it
+         stays on the card whether the rail quoted it or the draft named it. */
+      var floor = sim && isObject(sim.swap) && sim.swap.receivesAtLeast ? String(sim.swap.receivesAtLeast) : null;
+      if (floor === null && num(args.minAmountOut) !== null) floor = dom.qty(num(args.minAmountOut));
+      if (floor === null && d.minAmountOut !== undefined && num(d.minAmountOut) !== null) floor = dom.qty(num(d.minAmountOut));
+      if (floor !== null) move.quote = 'at least ' + floor + ' ' + String(move.to.symbol || '');
     } else if (kind === 'intents_deposit') {
       move.from = { symbol: d.symbol || args.symbol, place: d.chain || args.chain, amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.minCredited) };
@@ -736,10 +745,15 @@
       var plan = isObject(d.plan) ? d.plan : (isObject(args.plan) ? args.plan : null);
       if (plan) {
         move.title = (plan.side === 'short' ? 'Short ' : 'Long ') + String(plan.symbol || '');
-        move.from = { symbol: 'USDC', place: 'hyperliquid', amount: num(plan.sizeUsd), usd: true, label: 'size' };
+        /* The collateral, not the notional. The figure that leads a trade card is
+           the one the policy governs and the one that can be lost; the notional
+           is a multiple of it and reads beside that multiple. */
+        var stake = num(d.amountUsd !== undefined ? d.amountUsd : (isObject(d.risk) ? d.risk.marginUsd : null));
+        move.from = { symbol: 'USDC', place: 'hyperliquid', amount: stake === null ? num(plan.sizeUsd) : stake, usd: true, label: 'at stake' };
         var stop = num(plan.stop);
         var target = num(plan.target);
         var bits = [];
+        if (num(plan.sizeUsd) !== null) bits.push(dom.usd(num(plan.sizeUsd)) + ' notional');
         if (num(plan.leverage) !== null) bits.push(num(plan.leverage) + 'x');
         if (stop !== null) bits.push('stop ' + dom.qty(stop));
         if (target !== null) bits.push('target ' + dom.qty(target));
@@ -858,7 +872,10 @@
       if (legs.from) rows.appendChild(legRow(legs.from, 'from'));
       if (legs.to) rows.appendChild(legRow(legs.to, 'to'));
       body.appendChild(rows);
-    } else if (move.summary) {
+    }
+    /* The sentence, unless both pockets are already drawn: a card that shows what
+       left and what lands does not need a line saying the same thing again. */
+    if (move.summary && !(legs.from && legs.to)) {
       body.appendChild(dom.el('div', 'tcard-sentence', move.summary));
     }
 
@@ -896,7 +913,29 @@
      same fields plus the proposal's view when a proposal is what is being
      shown. One leg is the one the money is inside right now, and it is the only
      hash that is a link: the rest are here to be read, not followed. */
-  var CARD_NAMES = { balance: 1, position: 1, move: 1, transaction: 1, deposit: 1, kv: 1 };
+  /* `show` hands the window a card by name and nests the thing to draw under
+     it (src/http/view.ts showBody). One place unwraps that, so every builder
+     below reads the shape its own tool answers with and none of them knows
+     `show` exists.
+
+     The nesting is easy to get wrong in the direction that matters: `show`'s
+     transaction payload carries the whole chain read under `tx`, not the one
+     transaction inside it, so the builder wants `data.tx` hoisted and not
+     read a level too shallow. */
+  var SHOWN = { proposal: 'move', transaction: 'transaction', position: 'position', deposit: 'deposit' };
+
+  function shownCard(data) {
+    if (!isObject(data) || typeof data.card !== 'string' || !SHOWN[data.card]) return null;
+    if (data.card === 'proposal') {
+      var view = isObject(data.view) ? data.view : {};
+      return { kind: 'move', data: { id: data.id, kind: view.kind, view: data.view } };
+    }
+    if (data.card === 'transaction') {
+      return { kind: 'transaction', data: isObject(data.tx) ? data.tx : { ok: false, error: 'The chain did not answer.' } };
+    }
+    if (data.card === 'position') return { kind: 'position', data: { positions: [data.position] } };
+    return { kind: 'deposit', data: isObject(data.deposit) ? data.deposit : {} };
+  }
 
   var TX_STATE = {
     success: ['confirmed', 'Confirmed'],
@@ -1185,7 +1224,8 @@
     var name = bare(toolName);
     if (name.indexOf('propose_') === 0) return 'move';
     /* `show` names the card it wants, because one tool draws four of them. */
-    if (isObject(data) && typeof data.card === 'string' && CARD_NAMES[data.card]) return data.card;
+    var shown = shownCard(data);
+    if (shown) return shown.kind;
     if (KINDS[name]) return KINDS[name];
     if (name === 'watch' && isObject(data) && typeof data.chain === 'string' && (data.asset !== undefined || data.watching !== undefined)) return 'deposit';
     return 'kv';
@@ -1196,6 +1236,11 @@
      when a person toggles it. All optional. */
   function render(kind, data, extra) {
     var safe = isObject(data) ? data : {};
+    var shown = shownCard(safe);
+    if (shown) {
+      kind = shown.kind;
+      safe = shown.data;
+    }
     var meta = extra || {};
     if (kind === 'balance') return balanceCard(safe, meta);
     if (kind === 'position') return positionCard(safe, meta);

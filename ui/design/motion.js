@@ -301,7 +301,7 @@
     return springDur;
   }
 
-  /* THE ONE DOOR TO motion.dev. Every authored moment (the beam's flight, the
+  /* THE ONE DOOR TO motion.dev. Every authored moment (the topbar sweep, the
      jump down a transcript, a ring that breathes) goes through here rather
      than reaching for window.Motion, so a page that failed to load the
      vendored file, and the unit harness that never has it, still get an

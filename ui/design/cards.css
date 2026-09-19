@@ -583,19 +583,14 @@
   height: 14px;
 }
 
-/* A dot that breathes while the world is still deciding. Quiet: the seat
-   light in the head breathes at the same pace, and nothing else does. */
+/* The dot the deposit and position chips still carry. It is a dot and nothing
+   more: the breath it used to have was an infinite pulse on a status dot, and
+   it ran against a keyframes name that never existed. */
 .tcard-chip-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
-  animation: card-breathe 1.8s ease-in-out infinite;
-}
-
-@keyframes tcard-breathe {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
 }
 
 .tcard-chip[data-state="pending"],
@@ -605,8 +600,8 @@
 }
 
 .tcard-chip[data-state="watching"] {
-  color: var(--beam);
-  border-color: var(--beam-edge);
+  color: var(--live);
+  border-color: var(--live-edge);
 }
 
 .tcard-chip[data-state="confirmed"],

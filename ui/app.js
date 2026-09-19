@@ -45,7 +45,6 @@
     window.PhosphorLock.boot();
     window.PhosphorShell.boot();
     window.PhosphorAgent.start();
-    if (window.PhosphorTrace) window.PhosphorTrace.start();
   }
 
   if (document.readyState === 'loading') {

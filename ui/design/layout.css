@@ -45,7 +45,7 @@ html, body {
   min-width: 0;
 }
 
-/* The one page-load moment: a beam sweeps the topbar's hairline once. The
+/* The one page-load moment: a light sweeps the topbar's hairline once. The
    shell adds data-boot after first paint and removes it when the sweep is
    done, so nothing repeats. */
 .topbar::after {
@@ -55,7 +55,7 @@ html, body {
   bottom: -1px;
   height: 1px;
   width: 22%;
-  background: linear-gradient(90deg, transparent, var(--beam), transparent);
+  background: linear-gradient(90deg, transparent, var(--live), transparent);
   opacity: 0;
   transform: translateX(-100%);
   pointer-events: none;
@@ -98,13 +98,6 @@ html, body {
   letter-spacing: -0.01em;
   line-height: 1;
   color: var(--text);
-}
-
-/* The breath the conversation column's seat takes while the assistant comes
-   up (screens.css). */
-@keyframes breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
 }
 
 /* The mode switch: a segmented control whose indicator slides between the
@@ -162,7 +155,7 @@ html, body {
 /* A tab is also a surface: a tool aimed at a mode that is not on screen lands
    on its word. */
 .tab[data-glow="on"] {
-  color: var(--beam);
+  color: var(--live);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -510,6 +503,45 @@ html, body {
   .world { order: 1; }
 }
 
+/* The ask draws the move card, so the dock says the same thing the transcript
+   says about the same move.
+
+   ONE BOX, NOT TWO. Inside the dock the card keeps its rows and gives up its
+   own edge: the amber border around the dock is already the alert, and a grey
+   card border 8 px inside it read as a second one. The rows keep their own
+   hairlines, which is what tells them apart. */
+#dock-ask .tcard {
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+
+#dock-ask .tcard-head {
+  cursor: default;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+#dock-ask .tcard-body { padding-left: 0; padding-right: 0; }
+
+/* The head says the move and its state. The amount is on the row below it, so
+   printing it here as well was the same number twice in 40 px. */
+#dock-ask .tcard-figure { display: none; }
+
+/* ONE NUMBER LEADS. What leaves is the figure the decision is about, so it is
+   the size of a figure. What arrives stays at body size under it. */
+#dock-ask .tcard-leg[data-leg="from"] .tcard-leg-amount {
+  font-size: var(--fs-28);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+#dock-ask .tcard-leg[data-leg="from"] .tcard-leg-symbol {
+  font-size: var(--fs-16);
+}
+
+.ask-expiry[data-tone="down"] { color: var(--down); }
+
 /* ---------- The decision dock ---------- */
 
 /* Inside the conversation column, between the transcript and the composer, and
@@ -563,7 +595,10 @@ html, body {
   animation: cardin var(--dur-enter) var(--ease-out) both;
 }
 
+/* The cards inside the dock size themselves against this column rather than
+   against a width somebody measured while the dock was still hidden. */
 .dock-body {
+  container-type: inline-size;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;

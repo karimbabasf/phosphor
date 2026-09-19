@@ -117,13 +117,16 @@
 }
 
 /* The mark and the name on one 20 px line, so every node and every arrow
-   shares a top edge whatever wraps under it. */
+   shares a top edge whatever wraps under it. Inside the dock the column can be
+   310 px, and a chain name beside a mark used to push the node past the card's
+   edge rather than wrap inside it. */
 .sendcard-node-head {
   display: flex;
   align-items: flex-start;
   gap: var(--s-2);
   min-height: 20px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .sendcard-node-head .logo {
@@ -153,8 +156,10 @@
   align-self: flex-start;
   flex: 0 0 auto;
   width: 16px;
+  min-width: 0;
   height: 20px;
   color: var(--text-3);
+  overflow-wrap: anywhere;
 }
 
 .sendcard-arrow svg {
@@ -187,8 +192,11 @@
 
 .sendcard-address-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--s-1);
+  min-width: 0;
   margin-top: var(--s-1);
+  overflow-wrap: anywhere;
 }
 
 .sendcard-address-actions .icon {
@@ -200,7 +208,14 @@
   text-decoration: none;
 }
 
-/* Stacked: the three nodes on top of each other, the arrows pointing down. */
+/* Stacked: the three nodes on top of each other, the arrows pointing down.
+
+   The class is set from a measured width (screens/sendcard.js layout), and in
+   the dock that measurement is taken while the dock is still hidden, so it is
+   zero and the card stayed wide in a 335 px column: the chain name and the
+   arrow printed straight through the card's edge at 390 and 1100. The same
+   rules run off the column the card is actually in, so nothing has to be
+   measured for them to be right. */
 .sendcard--stacked .sendcard-route {
   flex-direction: column;
   align-items: stretch;
@@ -218,6 +233,23 @@
 
 .sendcard--stacked .sendcard-arrow svg {
   transform: rotate(90deg);
+}
+
+@container (max-width: 560px) {
+  .sendcard-route {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sendcard-node[data-node="via"] .sendcard-node-name--small { white-space: normal; }
+
+  .sendcard-arrow {
+    width: 16px;
+    height: 16px;
+    margin-left: 2px;
+  }
+
+  .sendcard-arrow svg { transform: rotate(90deg); }
 }
 
 /* ---------- the (i) ---------- */
