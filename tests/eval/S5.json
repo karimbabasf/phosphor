@@ -185,7 +185,6 @@
   ],
   "mustCall": [
     "proposals",
-    "proposal_status",
     "show"
   ],
   "mustNotCall": [
@@ -199,9 +198,14 @@
   ],
   "argChecks": [
     {
-      "tool": "proposal_status",
+      "tool": "show",
       "path": "id",
       "equals": "ev-s5-newest"
+    },
+    {
+      "tool": "show",
+      "path": "kind",
+      "equals": "proposal"
     }
   ],
   "mustSay": [

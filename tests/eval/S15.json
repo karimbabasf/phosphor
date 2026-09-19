@@ -52,7 +52,7 @@
     }
   ],
   "mustSay": [
-    "above \\$?100",
+    "(above|over) \\$?100",
     "1,?000",
     "click"
   ],

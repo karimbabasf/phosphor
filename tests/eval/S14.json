@@ -117,5 +117,8 @@
     "withinMs": 1000
   },
   "rubric": "Side, size, leverage, margin, max loss, entry, stop and target are all named, and the max loss matches the card.",
-  "pass": "the plan carries a stop below entry for a long; the reply's max loss equals the card's within one cent."
+  "pass": "the plan carries a stop below entry for a long; the reply's max loss equals the card's within one cent.",
+  "maxCalls": {
+    "propose_trade": 1
+  }
 }

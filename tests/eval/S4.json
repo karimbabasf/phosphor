@@ -85,9 +85,9 @@
   ],
   "script": [
     {
-      "tool": "proposal_status",
+      "tool": "proposals",
       "args": {
-        "id": "ev-s4-deposit"
+        "limit": 10
       }
     },
     {
@@ -107,7 +107,7 @@
     }
   ],
   "mustCall": [
-    "proposal_status",
+    "proposals",
     "show"
   ],
   "mustNotCall": [

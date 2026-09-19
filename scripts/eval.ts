@@ -382,7 +382,8 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: app.base },
       body: JSON.stringify({
-        op: 'agent_post',
+        op: 'view',
+        tool: 'agent_post',
         args: { kind: post.kind ?? 'note', text: post.text },
         session: 'eval-colleague',
         client: post.label ?? 'colleague',
@@ -396,6 +397,22 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   const cards: Card[] = [];
   const controller = new AbortController();
   const window = watchWindow(app, frames, cards, controller.signal);
+  /* AND A POLL BESIDE IT, because a record built only on events is not a timeline. watchWindow
+     wakes on an SSE frame and then fetches the state, so a row written in the same tick as its
+     own frame is fetched before it exists and never appears at all; the sentence rule was
+     failing agents for naming a stage the record had missed rather than one the window had not
+     reached. Half a second is well under the second the card checks already allow. */
+  const poll = setInterval(() => {
+    void (async () => {
+      const at = Date.now();
+      try {
+        const state = (await (await fetch(`${app.base}/api/state`)).json()) as Json;
+        frames.push({ at, type: 'poll', payload: null, proposals: (state.proposals as Json[]) ?? [] });
+      } catch {
+        // The app is going down, which is not a window failure.
+      }
+    })();
+  }, 500);
 
   /* THE CONVERSATION THE CARD LANDS IN, opened through the app's own door before the turn runs.
      A person asking to see a transaction is typing into a conversation, so one is always open
@@ -495,6 +512,7 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   } catch (error) {
     detail = errText(error);
   } finally {
+    clearInterval(poll);
     driver.stop();
     controller.abort();
     await window.catch(() => undefined);

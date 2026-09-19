@@ -38,7 +38,10 @@ const fail = (first: string): Check => ({ ok: false, first });
    conditional rather than absolute, because "it's done" is the right answer when a
    proposal_status read says so and a guess when nothing was read. */
 export const BANNED: Array<{ re: RegExp; allow?: RegExp; needsStatusRead?: boolean; why: string }> = [
-  { re: /\bwaiting\b(?!\s+(on|for)\b)/i, why: 'the word "waiting" with nothing it is waiting on' },
+  /* The shape this bans is "still settling, waiting": the word ENDING the claim with no object.
+     "waiting on 1Click" names one, and so does "the move waiting is the 250 USDC withdrawal",
+     where the object is the noun in front of it, so the ban bites only at a clause boundary. */
+  { re: /\bwaiting\b(?!\s+(on|for)\b)(?=\s*[.,;:!?]|\s*$)/i, why: 'the word "waiting" with nothing it is waiting on' },
   /* "should land" is banned as a prediction about a move already in flight. "say where it should
      land" is the opposite: it is the question S9 and S10 exist to make the agent ask, so the
      permitted shape is cut out of the text before the ban is applied to what is left. */
@@ -104,8 +107,19 @@ function matchesExactly(names: string[], want: string[]): boolean {
   return i === names.length;
 }
 
+/* trade_batch carrying an account, positions or plans op IS the read of the trading book, and it
+   is one round trip rather than two, which is what the role tells the agent to prefer. A scenario
+   asking for trade_read is asking for that read, not for that spelling of it; a trade_batch that
+   only asked venue_health is not it and keeps its own name. */
+function canonical(call: Call): string {
+  if (call.name !== 'trade_batch') return call.name;
+  const ops = (call.args as { ops?: Array<{ op?: unknown }> } | null)?.ops ?? [];
+  const reads = new Set(['account', 'positions', 'plans']);
+  return ops.some((entry) => typeof entry?.op === 'string' && reads.has(entry.op)) ? 'trade_read' : call.name;
+}
+
 export function gradeTrace(scenario: Scenario, run: Run): Check {
-  const names = run.trace.map((call) => call.name);
+  const names = run.trace.map(canonical);
 
   for (const forbidden of scenario.mustNotCall) {
     if (names.includes(forbidden)) return fail(`called ${forbidden}, which this scenario forbids`);
