@@ -922,6 +922,8 @@ test('a move that ends says so on the dock before the dock goes', () => {
   const text = textOf(d.card).join(' ');
   assert.ok(text.includes('Confirmed'), 'the end state is what the dock is left showing');
   assert.equal(text.includes('Waiting for the venue'), false, 'and not the stage before it');
+  assert.ok(text.includes('Done'), 'and the line above it agrees');
+  assert.equal(text.includes('Working'), false, '"Working" over a confirmed card is the dock disagreeing with itself');
   assert.ok(SOURCE.includes('ENDED_MS'), 'the beat has a named length');
 });
 

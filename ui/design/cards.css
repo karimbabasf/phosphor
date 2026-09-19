@@ -108,12 +108,16 @@
    that carries one takes two rows there, and nothing is cut: what it is on top,
    how much and what it is doing under it. */
 @container (max-width: 520px) {
+  /* Four columns, and the title spans two of them. With three, the state word and the chevron
+     shared the last column, so "Late, nothing has changed" on the second row set the width of
+     the title's own cell on the first and "Fund trading" was drawn as "Fund trad...". The title
+     runs to the chevron now and the state takes what is left beside the figure. */
   .tcard-head:has(.tcard-state) {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-columns: 20px auto minmax(0, 1fr) auto;
     grid-template-areas:
-      "glyph title   chevron"
-      "glyph figure  state";
+      "glyph title   title  chevron"
+      "glyph figure  state  state";
     column-gap: var(--s-2);
     row-gap: 2px;
     align-items: center;

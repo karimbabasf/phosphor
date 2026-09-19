@@ -572,3 +572,18 @@ test('a chain_address answer is a small data block through the facts card, and i
   assert.equal(value('is contract').textContent, 'no');
   assert.equal(value('tokens').textContent, '2 items');
 });
+
+/* The head's own layout, asserted on the stylesheet because a jsdom-free DOM has no widths.
+   2026-09-19, photographing the stalled card at 1100: the card read "Fund trad..." because the
+   state word and the chevron shared the last column, so a long state ("Late, nothing has
+   changed") set the width of the title's cell on the row above it. The title spans to the
+   chevron now. */
+test('a state word never takes the title\'s room: the two-row head gives the title both middle columns', () => {
+  const css = readFileSync(new URL('../../ui/design/cards.css', import.meta.url), 'utf8');
+  const block = css.slice(css.indexOf('.tcard-head:has(.tcard-state) {'));
+  const areas = block.slice(block.indexOf('grid-template-areas'), block.indexOf(';', block.indexOf('grid-template-areas')));
+  assert.match(areas, /"glyph title\s+title\s+chevron"/, 'the title does not span to the chevron');
+  assert.match(areas, /"glyph figure\s+state\s+state"/, 'the state does not take the width left beside the figure');
+  const columns = block.slice(block.indexOf('grid-template-columns'), block.indexOf(';', block.indexOf('grid-template-columns')));
+  assert.match(columns, /20px auto minmax\(0, 1fr\) auto/, 'the head is not four columns');
+});

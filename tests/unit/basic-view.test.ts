@@ -180,6 +180,45 @@ test('a balance read before the last execution is not stated as fact', () => {
   assert.match(view.headline, /Checking your new balance/);
 });
 
+/* 2026-09-19, watching a real deposit settle at 1440: for the three seconds between the credit
+   and the next balance read, the panel said "Nothing here yet. Open Money in and send something
+   to one of your addresses." to somebody holding $4,010 who had just deposited $250. The list
+   was emptied on the same condition that nulls the total, and the two are not the same question:
+   a place that could not be read leaves a list that lies about what is there, while a read taken
+   a moment before the write is the truth as of a moment ago, with a line under it saying so. */
+test('a read that predates the last write still lists what it read; a place that could not be read does not', () => {
+  const held = {
+    rows: [{ kind: 'intents' as const, chain: 'intents' as const, symbol: 'USDC', tokenId: 'usdc', quantity: 1850, priceUsd: 1, valueUsd: 1850, share: 1, native: false }],
+    totalUsd: 1850,
+    byChain: { intents: 1850 },
+    stale: [],
+    emptyCount: 0,
+    dustCount: 0,
+    dustUsd: 0,
+  };
+  const checking = buildBasic(
+    baseInput({
+      wallet: held,
+      proposals: [proposal({ status: 'executed', decidedAt: T2 })],
+      readAt: T0,
+    }),
+  );
+  assert.equal(checking.totalUsd, null, 'the total is still unstated');
+  assert.equal(checking.checkingLine, 'Checking your new balance.');
+  assert.ok(checking.holdings.length > 0, 'the panel still shows what the last read held');
+
+  const unread = buildBasic(
+    baseInput({
+      wallet: { ...held, stale: ['intents'] },
+      proposals: [proposal({ status: 'executed', decidedAt: T0 })],
+      readAt: T2,
+    }),
+  );
+  assert.equal(unread.totalUsd, null);
+  assert.equal(unread.checkingLine, 'Still checking.');
+  assert.deepEqual(unread.holdings, [], 'a list missing a place is not shown at all');
+});
+
 test('a balance read after the last execution is stated normally', () => {
   const view = buildBasic(
     baseInput({

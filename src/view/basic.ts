@@ -1029,10 +1029,16 @@ export function buildBasic(input: BasicInput): BasicView {
     warning,
     agentLine,
     footer,
-    // Tied to the same condition that nulls the total. A holdings list with a chain
-    // missing from it looks exactly like the holdings list of someone who owns less,
-    // and this reader has nothing to check it against.
-    holdings: buildHoldings(wallet, totalUsd === null),
+    /* EMPTIED WHEN A PLACE COULD NOT BE READ, and only then. A holdings list with a chain
+       missing from it looks exactly like the holdings list of someone who owns less, and this
+       reader has nothing to check it against.
+       A read that merely predates the last write is a different thing: every place answered,
+       the figures are the ones from a moment ago, and the line under the total already says the
+       new balance is being checked. Tied to `totalUsd === null` this emptied that list too, so
+       a person who had just deposited $250 watched the panel say "Nothing here yet. Open Money
+       in and send something to one of your addresses." for the three seconds around the settle.
+       Seen at 1440 on 2026-09-19 while photographing the stages. */
+    holdings: buildHoldings(wallet, staleChains.length > 0),
     prices: buildPrices(input.prices),
     recent: buildRecent(proposals),
     actions: buildActions(input.events),

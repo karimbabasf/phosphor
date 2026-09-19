@@ -965,11 +965,23 @@
   /* The same card the conversation draws, in the dock, with nothing to press.
      One object, one set of words: the card and the assistant read the same view,
      so they cannot disagree about what stage this is at or when it settled. */
+  function liveKicker(view) {
+    if (view.waitingOn) return 'Waiting on ' + String(view.waitingOn);
+    if (view.stage === 'stalled') return 'Still watching';
+    if (view.stage === 'confirmed') return 'Done';
+    if (view.terminal === true) return 'Ended';
+    return 'Working';
+  }
+
   function buildLive(proposal) {
     var host = refs.body;
     var cards = window.PhosphorCards;
     var view = proposal.view || {};
-    host.appendChild(dom.el('p', 'label dock-kicker', view.waitingOn ? 'Waiting on ' + String(view.waitingOn) : 'Working'));
+    /* The kicker says what the dock is doing with this row, so it has to end when the row does:
+       it read "Working" over a card that said Confirmed for the beat an ended card holds. A
+       stalled row is the exception in both directions: nobody is being waited on and it is not
+       finished either, because the next balance read still settles it. */
+    host.appendChild(dom.el('p', 'label dock-kicker', liveKicker(view)));
     if (!cards || typeof cards.render !== 'function') {
       host.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
       host.appendChild(dom.el('p', 'body', String(view.stageLabel || '')));
