@@ -26,7 +26,7 @@ function boot(opts: { autostart: boolean; seat: string }): Promise<Booted> {
   return bootDriverServer({ ...opts, proposals: [PENDING] });
 }
 
-type Frame = { type?: string; event?: { kind?: string; name?: string; data?: { card?: string; id?: string } } };
+type Frame = { type?: string; chat?: string; event?: { kind?: string; name?: string; data?: { card?: string; id?: string } } };
 
 // One SSE stream, collecting frames until the test stops caring. The window's own EventSource
 // reads exactly this.
@@ -62,11 +62,11 @@ function listen(url: string): { frames: Frame[]; stop: () => void } {
   return { frames, stop: () => controller.abort() };
 }
 
-async function view(app: Booted, args: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
+async function view(app: Booted, args: Record<string, unknown>, session?: string): Promise<{ status: number; body: Record<string, unknown> }> {
   const res = await fetch(`${app.url}/api/mcp`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: app.url },
-    body: JSON.stringify({ secret: SEAT, op: 'view', tool: 'show', args }),
+    body: JSON.stringify({ secret: SEAT, op: 'view', tool: 'show', args, ...(session === undefined ? {} : { session }) }),
   });
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
@@ -135,6 +135,53 @@ test('an unknown kind and an empty id are both 400s that say what is wanted', as
     const id = await view(app, { kind: 'proposal', id: '   ' });
     assert.equal(id.status, 400);
   } finally {
+    await app.close();
+  }
+});
+
+/* ---------- one conversation, the caller's ----------
+
+   This drew into every open conversation for a day. Two agents in two chats means one agent's
+   card appearing in front of a person reading the other's, and the card is what an approval
+   rests on. A chat carries the seat id of the child inside it and every call that child makes
+   carries the same id, so the two match exactly. */
+
+test('the card lands in the calling seat’s own conversation and nowhere else', async () => {
+  const app = await boot({ autostart: true, seat: SEAT });
+  const stream = listen(app.url);
+  try {
+    // A second conversation beside the one autostart opened.
+    const opened = await app.driver({ action: 'open' });
+    assert.equal(opened.status, 200);
+    const chats = await app.chats();
+    assert.equal(chats.length, 2, 'two conversations are open');
+
+    const out = await view(app, { kind: 'proposal', id: PENDING.id }, chats[1].session);
+    assert.equal(out.body.drawn, true);
+    assert.equal(out.body.reason, undefined, 'a seat with its own conversation is not told about somebody else’s');
+
+    const frame = await cardWithin(stream.frames, 1000);
+    assert.ok(frame !== undefined);
+    assert.equal(frame.chat, chats[1].id, 'the card went to the caller’s chat');
+    const drawn = stream.frames.filter((f) => f.event?.kind === 'tool_data' && f.event.name === 'show');
+    assert.equal(drawn.length, 1, 'exactly one conversation was drawn into');
+  } finally {
+    stream.stop();
+    await app.close();
+  }
+});
+
+test('an outside client with no conversation draws into the window’s own, and is told so', async () => {
+  const app = await boot({ autostart: true, seat: SEAT });
+  const stream = listen(app.url);
+  try {
+    const out = await view(app, { kind: 'proposal', id: PENDING.id }, 'a-terminal-agent-with-no-chat');
+    assert.equal(out.body.drawn, true);
+    assert.match(String(out.body.reason ?? ''), /conversation the window is showing/);
+    const frame = await cardWithin(stream.frames, 1000);
+    assert.equal(frame?.chat, (await app.chats())[0].id);
+  } finally {
+    stream.stop();
     await app.close();
   }
 });

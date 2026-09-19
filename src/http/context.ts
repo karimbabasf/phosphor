@@ -117,23 +117,23 @@ export const READ_TOOLS: readonly string[] = [
   'chain_transaction',
   'intents_activity',
 ];
-// Chart writes. They move no money, so they never reach the proposal path and never wait on
-// an approval. They are still audited like every other op: an agent that can change what the
-// human sees while that human approves a transfer is a surface, not a decoration.
-// View tools a worker never gets. The proxy withholds their registration (src/mcp.ts
-// registerLeadView) and src/http/view.ts refuses them by seat role, so a worker cannot draw on
-// the chart a human is reading, arrange it, put an idea on it, recolour the window, or write into
-// the operator's next role text.
-export const LEAD_ONLY_VIEW_TOOLS: readonly string[] = ['set_theme', 'chart_draw', 'chart_layout', 'trade_plan', 'profile_learned', 'agent_spawn'];
-// The one read a worker never gets: a picture is the window the human is reading, and the proxy
-// withholds it the same way (src/mcp.ts registerLeadView). src/http/mcp.ts refuses it by seat role.
 /* The reads a worker never gets. A picture is the window the human is reading. The proposal
-   list is the lead's own money timeline: a spawned worker exists to measure something and hand
-   back a paragraph, and enumerating what its parent is in the middle of paying for is not that.
-   The proxy withholds both the same way (src/mcp.ts registerLeadRead); src/http/mcp.ts refuses
-   them by seat role. */
+   list is the lead's own money timeline, and one row's whole story with it: a spawned worker
+   exists to measure something and hand back a paragraph, and enumerating what its parent is in
+   the middle of paying for is not that. The proxy withholds all three the same way (src/mcp.ts
+   registerLeadRead); src/http/mcp.ts refuses them by seat role. */
 export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot', 'proposals', 'diagnose'];
 
+/* The one view a worker keeps, and therefore the whole of what LEAD_ONLY_VIEW_TOOLS is not.
+   A board post writes one line to a log every agent and the human read; it does not touch the
+   screen a human is deciding on, and src/crew.ts's contract for a worker rests on it. Everything
+   else on the view door moves what the human is looking at, so the derived list below is the
+   rest of VIEW_TOOLS and cannot fall behind it: src/mcp.ts withholds them structurally
+   (registerView) and src/http/view.ts refuses them again by seat role. */
+export const WORKER_VIEW_TOOLS: readonly string[] = ['agent_post'];
+/* The window's writes. They move no money, so they never reach the proposal path and never wait
+   on an approval. They are still audited like every other op: an agent that can change what the
+   human sees while that human approves a transfer is a surface, not a decoration. */
 export const VIEW_TOOLS: readonly string[] = [
   /* Draw something that already exists as the app's own card rather than as prose: a proposal, a
      transaction, a position, the deposit card. It moves no money and it opens no new surface; all
@@ -165,6 +165,11 @@ export const VIEW_TOOLS: readonly string[] = [
   // the next role text is built from. No money, no approval, audited, ten per session.
   'profile_learned',
 ];
+
+// Every view tool but the board post: derived, so a tool added above is withheld from a worker
+// by default and a list cannot fall behind the one it is meant to mirror.
+export const LEAD_ONLY_VIEW_TOOLS: readonly string[] = VIEW_TOOLS.filter((t) => !WORKER_VIEW_TOOLS.includes(t));
+
 // Human-only controls on the trading window. Each one only ever reduces exposure, which is why
 // none of them waits on an approval and none is reachable from the agent's door.
 export const TRADE_ACTIONS: readonly string[] = ['cancel', 'close', 'flatten'];
@@ -262,6 +267,10 @@ export type ChartStore = ReturnType<typeof createChartStore>;
 // roster, and the transcript a reloading window comes back to. See the seats note in chats.ts.
 export type Chat = {
   id: string;
+  /* The seat id the child in this conversation carries on every call it makes, minted by the
+     registry and handed to the driver. It is what makes a card addressable to the conversation
+     that asked for it rather than fanned into all of them. */
+  session: string;
   label: string;
   driver: Driver;
   transcript: Array<DriverEvent & { at: number }>;

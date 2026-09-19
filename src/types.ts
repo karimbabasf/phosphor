@@ -185,9 +185,15 @@ export type PolicyPatch = {
    `threshold_clamped_to_cap`). It is optional because rows already on disk were written without
    it and because nothing outside the engine mints a verdict with codes; the engine always sets
    it, so a reader takes `verdict.reasonCodes ?? []` and never has to read the prose. */
+/* What a policy change moves, per money axis, so the card can print before and after for each
+   one instead of a sentence somebody has to take on trust. `factor` is how far the number went,
+   which is the one thing two figures do not show at a glance; null where the old value was zero.
+   Only on a policy_change verdict, and only for the axes that actually moved. */
+export type PolicyAxisChange = { axis: string; before: number; after: number; factor: number | null };
+
 export type Verdict =
   | { outcome: 'allow'; reasons: string[]; reasonCodes?: string[] }
-  | { outcome: 'needs_approval'; reasons: string[]; reasonCodes?: string[] }
+  | { outcome: 'needs_approval'; reasons: string[]; reasonCodes?: string[]; changes?: PolicyAxisChange[] }
   | { outcome: 'refuse'; reasons: string[]; rule: string; reasonCodes?: string[] };
 
 // ---------- Writes ----------

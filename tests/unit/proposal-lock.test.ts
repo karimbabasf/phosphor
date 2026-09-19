@@ -176,7 +176,7 @@ test('a rail whose status poll hangs does not hold a refuse on another proposal'
   const { svc } = setup(rail, 50);
 
   // One proposal that will sit pending, so there is something to refuse.
-  const pending = await svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 60 } }, sentence: 'ask me above sixty' });
+  const pending = await svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 60 } }, sentence: 'Ask me above $60.' });
   assert.equal(pending.status, 'pending');
 
   // And one that goes straight into the hung rail. Not awaited: it never finishes.
@@ -214,7 +214,7 @@ test('a rail whose status poll hangs does not hold the next propose either', asy
   await new Promise((r) => setTimeout(r, 100));
 
   const started = Date.now();
-  await svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 60 } }, sentence: 'ask me above sixty' });
+  await svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 60 } }, sentence: 'Ask me above $60.' });
   const elapsed = Date.now() - started;
   assert.ok(elapsed < 1_000, `propose took ${elapsed}ms behind a hung rail`);
 

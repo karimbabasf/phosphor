@@ -272,7 +272,17 @@ export function createStore(dataDir: string): Store {
     // After the write, so a write that throws leaves the seal naming the row still on disk.
     seals.set(p.id, sealOf(p));
     revision += 1;
-    for (const fn of subscribers) fn(p);
+    /* A subscriber that throws is its own problem. There are three of them now (the state push,
+       the history push and the per-proposal frame) and they run inside put(), so an exception in
+       one used to skip the rest AND propagate out of the write that had already reached disk:
+       the row was saved and the caller was told it failed. */
+    for (const fn of subscribers) {
+      try {
+        fn(p);
+      } catch {
+        // reported by whatever the subscriber was feeding, not by the store
+      }
+    }
   }
 
   function intact(id: string): boolean {
