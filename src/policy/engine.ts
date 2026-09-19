@@ -263,13 +263,26 @@ export function policyChanges(patch: PolicyPatch, policy: Policy): PolicyAxisCha
 
 // Every figure the patch is about: the before and after of each axis it names, which is wider
 // than the axes it moves, because naming one at the value it already holds is honest.
+/* Which dollar figures a truthful sentence about this change may contain.
+
+   A moved axis contributes both of its figures, the one it leaves and the one it takes, because
+   "from $1 to $100" is how a person writes a change.
+
+   AN UNMOVED AXIS CONTRIBUTES THE ONE IT ALREADY HAS, and that is what this rule got wrong until
+   2026-09-19. "Ask me before anything above $100. The hard cap stays at $1,000." is a true
+   sentence: after the click the cap IS $1,000, the reader is agreeing to nothing they are not
+   getting, and the figure is the reason the change is safe to make. The engine refused it as a
+   figure the change is not about, the agent rewrote the sentence without it and resent, and the
+   live eval read that as two proposes for one decision. What the rule is for is a figure that is
+   neither of those things: the $40,000,000 in the fund, a cap the patch does not set, a number
+   put in the sentence to make the click feel smaller. Those are still refused. */
 function figuresInPlay(patch: PolicyPatch, policy: Policy): Set<number> {
   const allowed = new Set<number>();
   for (const axis of MONEY_AXES) {
+    const current = policy.outbound[axis] ?? 0;
     const after = patch.outbound?.[axis];
-    if (after === undefined) continue;
-    allowed.add(after);
-    allowed.add(policy.outbound[axis] ?? 0);
+    allowed.add(current);
+    if (after !== undefined) allowed.add(after);
   }
   return allowed;
 }

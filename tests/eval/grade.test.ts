@@ -364,3 +364,27 @@ test('schema: the figure floor refuses a pattern with no figure in it', () => {
     assert.doesNotThrow(() => validate({ ...base, mustSayFigures: [ok] }, 'S1.json'), `${ok} is a figure and was refused`);
   }
 });
+
+test('trace: one corrected resend after a form refusal is forgiven, and a resend after an answer is not', () => {
+  const s = scenario({ maxCalls: { propose_policy_change: 1 }, resendAfter: ['sentence_mismatch'] });
+  const twice = [call('propose_policy_change'), call('propose_policy_change')];
+
+  // The engine would not read the sentence, so the human was never asked: one resend is one decision.
+  const formError = run({
+    trace: twice,
+    cards: [{ at: T0, name: 'propose_policy_change', data: { id: 'p1', status: 'refused', verdict: { rule: 'sentence_mismatch' } } }],
+  });
+  assert.equal(gradeTrace(s, formError).ok, true);
+
+  // The engine answered the question. Sending it again is the agent arguing with the app.
+  const answered = run({
+    trace: twice,
+    cards: [{ at: T0, name: 'propose_policy_change', data: { id: 'p1', status: 'policy_refused', verdict: { rule: 'never_asks' } } }],
+  });
+  assert.equal(gradeTrace(s, answered).ok, false);
+  assert.match(gradeTrace(s, answered).first, /allows 1/);
+
+  // And a scenario that names no forgiven code forgives nothing.
+  const strict = scenario({ maxCalls: { propose_policy_change: 1 } });
+  assert.equal(gradeTrace(strict, formError).ok, false);
+});

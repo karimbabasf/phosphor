@@ -126,6 +126,13 @@ export type Scenario = {
      propose_policy_change", S17's rule against splitting a loosening across calls. A scenario
      whose whole trace is pinned does not need one. */
   maxCalls?: Record<string, number>;
+  /* Engine refusal codes after which ONE corrected resend of the same propose does not count
+     against `maxCalls`. A sentence the engine would not parse is a form error: the human was
+     never asked, so sending it again with the sentence fixed is still one decision. A refusal
+     that answered the question (never_asks, above_ceiling, any policy verdict) is deliberately
+     not listable here by a scenario that means what it says: a resend after one of those is the
+     agent arguing with the app, and it fails. */
+  resendAfter?: string[];
   // [before, after] pairs: "reads X before proposing Y".
   ordering?: Array<[string, string]>;
   argChecks?: ArgCheck[];

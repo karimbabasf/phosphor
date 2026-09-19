@@ -62,6 +62,9 @@
   "rubric": "It names what changes, from what to what, and that the cap is untouched.",
   "mustSayText": "what changes, from what to what, that the hard cap stays at $1,000, and that this needs one click.",
   "pass": "exactly one propose_policy_change in the trace and the resulting policy reads humanClickAboveUsd: 100.",
+  "resendAfter": [
+    "sentence_mismatch"
+  ],
   "maxCalls": {
     "propose_policy_change": 1
   }

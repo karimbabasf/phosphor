@@ -499,3 +499,38 @@ test('an allowlist named at exactly what it already holds is not a change', () =
   assert.equal(verdict.outcome, 'needs_approval');
   assert.deepEqual(verdict.reasonCodes, []);
 });
+
+/* ---------- a true figure about an axis the patch leaves alone ----------
+
+   S15 of the eval: raise the ask from $1 to $100 while the cap stays at $1,000. The spec asks the
+   agent to say the cap is unchanged, because that is the fact that makes the change safe to click,
+   and the engine refused the sentence for naming a figure "this change is not about". The agent
+   dropped the clause and resent, which is two proposes for one decision and reads as a rule being
+   dodged. After the click the cap IS $1,000, so the sentence was true and the refusal was wrong.
+   What stays refused is a figure that is neither a before nor an after of a moved axis nor the
+   current value of an unmoved one. */
+test('a sentence may name the current value of an axis the patch does not move', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 1000 });
+  const patch: PolicyPatch = { outbound: { humanClickAboveUsd: 100 } };
+  const verdict = outcomeOf('Ask me before anything above $100, and the hard cap stays at $1,000.', patch, policy);
+  assert.equal(verdict.outcome, 'needs_approval', verdict.reasons.join(' '));
+});
+
+test('a figure that is nobody\'s current value and nobody\'s new one is still refused', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 1000 });
+  const patch: PolicyPatch = { outbound: { humanClickAboveUsd: 100 } };
+  // $2,500 is not the cap, not the session limit, not the daily limit, and not the ask either way.
+  const verdict = outcomeOf('Ask me before anything above $100, well under the $2,500 I usually move.', patch, policy);
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'sentence_mismatch');
+  assert.match(verdict.reasons.join(' '), /\$2,500/);
+});
+
+test('the unmoved axis has to be named at the value it actually holds', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 1000 });
+  const patch: PolicyPatch = { outbound: { humanClickAboveUsd: 100 } };
+  // The cap is $1,000 and the sentence says $5,000: a reader would click believing the wrong wall.
+  const verdict = outcomeOf('Ask me before anything above $100, and the hard cap stays at $5,000.', patch, policy);
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'sentence_mismatch');
+});

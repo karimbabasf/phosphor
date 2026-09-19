@@ -149,7 +149,7 @@ test('both surfaces carry the figure rules, and say the figures outrank the rule
   // read past it and answered "you hold $1,900 across two pockets" with neither pocket's figure.
   for (const text of [handshakeInstructions(ROOT), role()]) {
     assert.match(text, /both figures AND the total/);
-    assert.match(text, /never the total on its own and never the two without it/);
+    assert.match(text, /never the total alone and never the two without it/);
   }
 });
 

@@ -77,21 +77,38 @@ export type RoleOptions = {
    live eval is where that shows up as the agent picking the wrong one. It did not, over three
    runs. If it starts to, the answer is a gloss on the few pairs that need one and not on all 56. */
 function capabilityIndex(): string {
-  const width = 96;
-  const lines: string[] = [];
+  const width = 108;
+  const seen = new Set<string>();
+  const names: string[] = [];
   for (const group of CAPABILITIES) {
-    let line = `${group.group.toUpperCase()}:`;
     for (const item of group.items) {
-      const next = `${line} ${item.tool},`;
-      if (next.length > width) {
-        lines.push(line);
-        line = `  ${item.tool},`;
-      } else {
-        line = next;
-      }
+      /* One entry per TOOL, in the order src/greeting.ts groups them, and without the group
+         headings. CAPABILITIES lists the argument forms separately (`chart_draw levels:` beside
+         `chart_draw`) because the greeting explains each one; a map needs the name once, and the
+         arguments are the tool's own description talking.
+
+         The headings went on 2026-09-19 to pay for four rules the eval asked for, and the order
+         they imposed is still here: the reads, the money, the chart and the team arrive in their
+         families. If tool SELECTION ever starts failing in the live trace, they come back first
+         and something else pays. It has not: the trace has been the passing half of this suite. */
+      const tool = item.tool.split(' ')[0];
+      if (seen.has(tool)) continue;
+      seen.add(tool);
+      names.push(tool);
     }
-    lines.push(line.replace(/,$/, ''));
   }
+  const lines: string[] = [];
+  let line = '';
+  for (const tool of names) {
+    const next = line === '' ? tool : `${line}, ${tool}`;
+    if (next.length > width) {
+      lines.push(`${line},`);
+      line = tool;
+    } else {
+      line = next;
+    }
+  }
+  if (line !== '') lines.push(line);
   return lines.join('\n');
 }
 
@@ -206,9 +223,9 @@ export function buildRole(opts: RoleOptions): string {
     'Asked how to put money in, the question back names two things: which coin, and which network.',
     '"Where are you sending from" is not the second one.',
     '',
-    'Refusing THEM is two short sentences: what you will not do, and what you need instead. No third',
-    'sentence, no clause explaining the rule, no paragraph. The app refusing a move is the opposite',
-    'case and it keeps its figures, which is the rule above.',
+    'Refusing THEM is two short sentences: what you will not do, and what you need instead, and',
+    'nothing else. Not the list of chains, not what you will do after they answer, not the rule that',
+    'made you say it. The app refusing a MOVE is the opposite case and it keeps its figures, above.',
     '',
     'Never a table. Pipes and dashes are a spreadsheet, not an answer: two options are two sentences.',
     '',
@@ -225,7 +242,8 @@ export function buildRole(opts: RoleOptions): string {
     '`watch` for the coins on the basic screen, and `show` to draw a proposal, a transaction, a',
     'position or a deposit they already have. Then, in ONE sentence with no preamble, name which one',
     'you drew and the figure or the time that answers what they asked: "your last deposit, 7.5425 USDC',
-    'into Hyperliquid, about eight minutes ago, is on screen". Not the rest of the card.',
+    'into Hyperliquid, about eight minutes ago, is on screen". Drawing a card is not reporting a move:',
+    'the card carries the hash and the fields, so your sentence carries which one and then stops.',
     '',
     'Write with commas, colons and parentheses. No exclamation marks, no emoji, no em dashes and no en',
     'dashes anywhere, ever.',
