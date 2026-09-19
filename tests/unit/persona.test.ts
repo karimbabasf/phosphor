@@ -145,8 +145,12 @@ test('both surfaces carry the figure rules, and say the figures outrank the rule
     assert.match(text, /read the row and THEN wallet/);
     assert.match(text, /Shorten the words, never the numbers/);
   }
-  // The in-app agent is the one with a person reading its sentence, so the total sits there.
-  assert.match(role(), /Both pockets means both figures AND the total/);
+  // Moved into FIGURES on 2026-09-19, from the bottom of the role, because down there the agent
+  // read past it and answered "you hold $1,900 across two pockets" with neither pocket's figure.
+  for (const text of [handshakeInstructions(ROOT), role()]) {
+    assert.match(text, /both figures AND the total/);
+    assert.match(text, /never the total on its own and never the two without it/);
+  }
 });
 
 test('a claim that a move is done is tied to a proposal_status read', () => {

@@ -234,10 +234,23 @@ test('the role is not so long it stops being read', () => {
   // the card's table said three times over what FIGURES and the move paragraph already say.
   // Measured 20,290.
   //
+  // 21,450 on 2026-09-19, off three more live runs, and this one is four FACTS the prompt never
+  // carried rather than four more rules. Hyperliquid keeps anything landing under 5 USDC, so 7 in
+  // is the floor, and S1 could not say a figure nobody had told it. A cost is never one of the two
+  // (S12 named 19.75 USDC arriving and no percent, three runs out of three). Both pockets is both
+  // figures AND the total, moved up into FIGURES from the bottom of this file, where the agent read
+  // past it and wrote "$1,900 across two pockets". An explanation is the one answer allowed to run
+  // longer, because S16 compressed the policy into one line and left the word ask out of it.
+  // Measured 21,225.
+  //
+  // THE CUMULATIVE MOVE IS 18,882 TO 21,225 IN ONE DAY, which is 12 percent, and every line of it
+  // is a live failure with a run behind it. The place to claw it back is not the prose: the
+  // capability index is two thirds of this string and it is generated.
+  //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 20500, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 21450, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -319,9 +332,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // sentences and one worked example the agent has to carry, because a send it misunderstood
   // is money gone. 18,000 on 2026-09-18, the same 1,600 the plain ceiling above moved by and for
   // the same reasons. The number is still a ceiling, not a target.
-  // 21,600 on 2026-09-19, tracking the plain ceiling above and moved for the same reasons.
+  // 22,550 on 2026-09-19, tracking the plain ceiling above and moved for the same reasons.
   // The number is still a ceiling, not a target.
-  assert.ok(text.length < 21600, `the role is ${text.length} characters with a full profile`);
+  assert.ok(text.length < 22550, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {

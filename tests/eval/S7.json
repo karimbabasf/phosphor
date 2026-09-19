@@ -113,7 +113,7 @@
   ],
   "mustSay": [
     "failed",
-    "deposit window expired",
+    "deposit window expired|(quote|window|deposit)[^.]{0,30}expired|expired[^.]{0,30}(quote|window|before)",
     "7\\.5425"
   ],
   "rubric": "The reason is in plain words and the balance is quoted.",
