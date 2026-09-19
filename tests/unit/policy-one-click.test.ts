@@ -34,8 +34,18 @@ function ctxOf(policy: Policy): EngineCtx {
   };
 }
 
-function change(patch: PolicyPatch, sentence = 'Change my limits.'): WriteDraft {
-  return { kind: 'policy_change', patch, sentence };
+/* The sentence names every figure the patch moves, built from the patch, because the engine
+   refuses one that does not (sentence_mismatch, its own tests below). Every other row here is
+   about a different rule and should not be tripping over this one. */
+function saying(patch: PolicyPatch): string {
+  const figures = Object.values(patch.outbound ?? {})
+    .filter((v): v is number => typeof v === 'number')
+    .map((v) => `$${v}`);
+  return figures.length === 0 ? 'Change my limits.' : `Change my limits to ${figures.join(', ')}.`;
+}
+
+function change(patch: PolicyPatch, sentence?: string): WriteDraft {
+  return { kind: 'policy_change', patch, sentence: sentence ?? saying(patch) };
 }
 
 function verdictOf(policy: Policy, patch: PolicyPatch): Verdict {
@@ -46,7 +56,10 @@ test('one dollar to a hundred lands in one patch, with no refusal and no stairca
   const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 1000 });
   const verdict = verdictOf(policy, { outbound: { humanClickAboveUsd: 100 } });
   assert.equal(verdict.outcome, 'needs_approval');
-  assert.deepEqual(verdict.reasonCodes, []);
+  assert.deepEqual(verdict.reasonCodes, ['limits_changed']);
+  assert.deepEqual(verdict.outcome === 'needs_approval' && verdict.changes, [
+    { axis: 'humanClickAboveUsd', before: 1, after: 100, factor: 100 },
+  ]);
   assert.equal(verdict.reasons.some((r) => /times/.test(r)), false, 'no raise-factor sentence survives');
 });
 
@@ -92,7 +105,10 @@ test('a cap lowered that stays above the ask is an ordinary tightening', () => {
   const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
   const verdict = verdictOf(policy, { outbound: { maxPerTransactionUsd: 500 } });
   assert.equal(verdict.outcome, 'needs_approval');
-  assert.deepEqual(verdict.reasonCodes, []);
+  assert.deepEqual(verdict.reasonCodes, ['limits_changed']);
+  assert.deepEqual(verdict.outcome === 'needs_approval' && verdict.changes, [
+    { axis: 'maxPerTransactionUsd', before: 1000, after: 500, factor: 0.5 },
+  ]);
 });
 
 test('the pair is read off the post-patch policy, whichever axis the patch names', () => {
@@ -183,4 +199,81 @@ test('the ceiling holds the swap the audit walked through, before and after a cl
   });
   assert.equal(verdict.outcome, 'refuse', 'the patch that removed every wall in one click');
   assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'above_ceiling');
+});
+
+/* ---------- the click on a lie ----------
+
+   The card shows the agent's sentence and the file gets the agent's patch, and nothing held the
+   two together: the audit carried "adjust the freezable cap" over a patch that set every money
+   limit to nine quadrillion dollars. A person read a sentence about issuer exposure and would
+   have clicked away every spending wall in the app. */
+
+test('a sentence that does not name the figure it changes is refused', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 });
+  const verdict = evaluate(change({ outbound: { maxPerTransactionUsd: 900_000 } }, 'adjust the freezable cap'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'sentence_mismatch');
+  assert.deepEqual(verdict.reasonCodes, ['sentence_mismatch']);
+  assert.match(verdict.reasons.join(' '), /maxPerTransactionUsd at \$900,000\.00/);
+});
+
+test('every changed axis has to be in the sentence, not just one of them', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 });
+  const half = evaluate(
+    change({ outbound: { maxPerTransactionUsd: 5000, maxPerSessionUsd: 9000 } }, 'Refuse anything above $5000.'),
+    ctxOf(policy),
+  );
+  assert.equal(half.outcome, 'refuse');
+  assert.match(half.reasons.join(' '), /maxPerSessionUsd/);
+  assert.doesNotMatch(half.reasons.join(' '), /maxPerTransactionUsd at/);
+
+  const both = evaluate(
+    change({ outbound: { maxPerTransactionUsd: 5000, maxPerSessionUsd: 9000 } }, 'Refuse anything above $5000, and $9000 in a day.'),
+    ctxOf(policy),
+  );
+  assert.equal(both.outcome, 'needs_approval');
+});
+
+test('the figure is read past dollars, commas and cents, and not past a longer number', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100_000 });
+  const patch = { outbound: { humanClickAboveUsd: 1000 } };
+  for (const said of ['Ask me above $1,000.', 'Ask me above 1000.', 'Ask me above $1,000.00.', 'ask above $1000 please']) {
+    assert.equal(evaluate(change(patch, said), ctxOf(policy)).outcome, 'needs_approval', said);
+  }
+  // A sentence naming a different number does not name this one, whatever digits it shares.
+  for (const said of ['Ask me above $10,000.', 'Ask me above $100.', 'Ask me above $21000.']) {
+    assert.equal(evaluate(change(patch, said), ctxOf(policy)).outcome, 'refuse', said);
+  }
+});
+
+test('an accepted change carries the axes it moved, with the factor, for the card to print', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 1000, autoApproveDailyUsd: 0 });
+  const verdict = evaluate(
+    change({ outbound: { humanClickAboveUsd: 100, autoApproveDailyUsd: 500 } }, 'Ask me above $100, and stop at $500 a day.'),
+    ctxOf(policy),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, ['limits_changed']);
+  assert.deepEqual(verdict.outcome === 'needs_approval' && verdict.changes, [
+    { axis: 'humanClickAboveUsd', before: 1, after: 100, factor: 100 },
+    // Every multiple of nothing is nothing, so a limit that was zero has no factor.
+    { axis: 'autoApproveDailyUsd', before: 0, after: 500, factor: null },
+  ]);
+});
+
+test('an axis named at the value it already has is not a change and needs no sentence', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  const verdict = evaluate(change({ outbound: { humanClickAboveUsd: 100, maxPerSessionUsd: 9000 } }, 'Hold a day to $9000.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.outcome === 'needs_approval' && verdict.changes, [
+    { axis: 'maxPerSessionUsd', before: 25000, after: 9000, factor: 0.36 },
+  ]);
+});
+
+test('a patch that moves no money limit carries no limits_changed and needs no figure', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  const verdict = evaluate(change({ composition: { maxFreezableShare: 0.5 } }, 'Cap the freezable share at half.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, []);
+  assert.deepEqual(verdict.outcome === 'needs_approval' && verdict.changes, []);
 });

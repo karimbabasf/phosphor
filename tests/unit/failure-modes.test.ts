@@ -139,7 +139,7 @@ test('a SIGKILL mid-run loses nothing that was already written', async () => {
   const made = await request(
     port,
     '/api/mcp',
-    JSON.stringify({ op: 'propose', kind: 'policy_change', params: { patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' }, client: 'failure-test' }),
+    JSON.stringify({ op: 'propose', kind: 'policy_change', params: { patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'Ask me above $50.' }, client: 'failure-test' }),
   );
   assert.equal(made.status, 200, made.body);
   const id = (JSON.parse(made.body) as { id: string }).id;
@@ -303,7 +303,7 @@ test('two agents proposing the same thing in one tick: one lands, the other is t
   try {
     // A rule change: the one kind demo mode can land (every money rail is off there), and the
     // guard fingerprints kind and params the same way for all of them.
-    const sentence = 'ask me above fifty dollars';
+    const sentence = 'Ask me above $50.';
     const params = { patch: { outbound: { humanClickAboveUsd: 50 } }, sentence };
     const asAgent = (session: string): string =>
       JSON.stringify({ op: 'propose', kind: 'policy_change', params, client: session, session });
@@ -363,7 +363,7 @@ test('concurrent approvals of one proposal decide it exactly once', async () => 
     const made = await request(
       port,
       '/api/mcp',
-      JSON.stringify({ op: 'propose', kind: 'policy_change', params: { patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' }, client: 'racer' }),
+      JSON.stringify({ op: 'propose', kind: 'policy_change', params: { patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'Ask me above $50.' }, client: 'racer' }),
     );
     const proposal = JSON.parse(made.body) as { id: string; status: string };
     assert.equal(proposal.status, 'pending', made.body);

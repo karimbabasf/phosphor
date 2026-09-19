@@ -60,8 +60,19 @@ function deposit(usd: number): HlDepositDraft {
   };
 }
 
-function policyChange(patch: PolicyPatch, sentence = 'A rule the agent wrote.'): WriteDraft {
-  return { kind: 'policy_change', patch, sentence };
+/* The sentence NAMES EVERY FIGURE the patch moves, built from the patch itself, because the
+   engine refuses a change whose sentence is about something else (sentence_mismatch). Every row
+   below is about some other rule, so the sentence is generated rather than written: a row that
+   wants to test the sentence rule passes its own. */
+function saying(patch: PolicyPatch): string {
+  const figures = Object.values(patch.outbound ?? {})
+    .filter((v): v is number => typeof v === 'number')
+    .map((v) => `$${v}`);
+  return figures.length === 0 ? 'A rule the agent wrote.' : `A rule the agent wrote: ${figures.join(', ')}.`;
+}
+
+function policyChange(patch: PolicyPatch, sentence?: string): WriteDraft {
+  return { kind: 'policy_change', patch, sentence: sentence ?? saying(patch) };
 }
 
 // The agent controls the wire format, so a patch can carry keys PolicyPatch forbids.

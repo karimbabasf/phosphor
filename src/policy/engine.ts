@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { isRailKind } from '../rails/kinds.ts';
 import { classify } from '../composition.ts';
 import type { Position } from '../composition.ts';
-import type { CompositionView, Policy, PolicyPatch, RiskRow, Verdict, WriteDraft } from '../types.ts';
+import type { CompositionView, Policy, PolicyAxisChange, PolicyPatch, RiskRow, Verdict, WriteDraft } from '../types.ts';
 
 export type EngineCtx = {
   policy: Policy | null;
@@ -102,6 +102,60 @@ const UNPATCHABLE = ['killSwitch', 'version', 'sentences'];
 function patchNamesNothing(patch: PolicyPatch): boolean {
   return [patch.outbound, patch.composition].every(
     group => group === undefined || Object.values(group).every(value => value === undefined),
+  );
+}
+
+/* WHAT A CLICK IS ACTUALLY AGREEING TO, and the check that the sentence is about it.
+
+   The card shows the agent's own sentence. The file gets the agent's patch. Nothing held the
+   two together, so the audit's one-click walk carried the sentence "adjust the freezable cap"
+   over a patch that set every money limit to nine quadrillion dollars: a person read a sentence
+   about issuer exposure and clicked away every spending wall in the app. The rendered diff is a
+   compensating control on a surface this file does not own, and it is the only one there was.
+
+   So every money axis the patch moves has to be NAMED IN THE SENTENCE, with its new figure.
+   That is a cheap thing for an honest patch to satisfy, since the sentence exists to describe
+   the change, and it is not satisfiable at all by a sentence about something else.
+
+   THE MATCH IS DELIBERATELY FORGIVING ABOUT SPELLING and strict about the number. Dollars,
+   thousands separators and trailing cents are stripped from the sentence before the figure is
+   looked for, so "$1,000", "1000" and "$1,000.00" all name a thousand; the boundary check is
+   what keeps "$1,000" from counting as naming a hundred. */
+function namesFigure(sentence: string, value: number): boolean {
+  const plain = sentence.replace(/[$,]/g, '');
+  return [String(value), value.toFixed(2)].some((spelling) => {
+    const pattern = new RegExp(`(?<![\\d.])${spelling.replace(/\./g, '\\.')}(?!\\d)`);
+    return pattern.test(plain);
+  });
+}
+
+/* The money axes, before and after, for the card to print. `factor` is how far the number moved,
+   which is the one thing a reader cannot get from two figures at a glance ("$1 to $100" and
+   "$10,000 to $1,000,000" read the same until you count the zeros). Null where the old value was
+   zero, because every multiple of nothing is nothing. */
+const MONEY_AXES = ['maxPerTransactionUsd', 'maxPerSessionUsd', 'humanClickAboveUsd', 'autoApproveDailyUsd'] as const;
+
+export function policyChanges(patch: PolicyPatch, policy: Policy): PolicyAxisChange[] {
+  const o = patch.outbound;
+  if (o === undefined) return [];
+  const out: PolicyAxisChange[] = [];
+  for (const axis of MONEY_AXES) {
+    const after = o[axis];
+    if (after === undefined) continue;
+    const before = policy.outbound[axis] ?? 0;
+    if (after === before) continue;
+    out.push({ axis, before, after, factor: before > 0 ? Math.round((after / before) * 100) / 100 : null });
+  }
+  return out;
+}
+
+function sentenceMismatch(changes: PolicyAxisChange[], sentence: string, reasons: string[]): Verdict | null {
+  const unsaid = changes.filter((c) => !namesFigure(sentence, c.after));
+  if (unsaid.length === 0) return null;
+  return refusal(
+    reasons,
+    'sentence_mismatch',
+    `The sentence on this change does not name ${unsaid.map((c) => `${c.axis} at ${money(c.after)}`).join(', ')}, so a person clicking it would be agreeing to something it does not say. Write the sentence the change actually makes, with every figure in it.`,
   );
 }
 
@@ -340,8 +394,22 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
   const incoherent = policyChangeCeiling(wanted, policy, reasons);
   if (incoherent !== null) return incoherent;
 
+  /* The sentence last, so a patch refused on its numbers is refused for its numbers rather than
+     for how it was described. What survives to here is a coherent change under every wall, and
+     the only question left is whether the sentence a person will read is about it. */
+  const changes = policyChanges(wanted, policy);
+  const lying = sentenceMismatch(changes, draft.sentence, reasons);
+  if (lying !== null) return lying;
+
   reasons.push('Policy changes always require a human click.');
-  return { outcome: 'needs_approval', reasons, reasonCodes: [] };
+  return {
+    outcome: 'needs_approval',
+    reasons,
+    // `limits_changed` says money limits moved, so it rides only when some did: a patch that
+    // only touches composition changes no limit and says so by carrying neither.
+    reasonCodes: changes.length > 0 ? ['limits_changed'] : [],
+    changes,
+  };
 }
 
 // Issuer for a symbol: what the composition says it holds, else the risk table, else
