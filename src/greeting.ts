@@ -46,6 +46,9 @@ export type GreetingFacts = {
   totalUsd: number | null;
   pocketCount: number; // how many of the two pockets hold something
   pendingCount: number;
+  // Moves already running: clicked, executed, not yet settled. A greeting that counts only
+  // decisions says "nothing waiting" over money in flight.
+  inFlightCount?: number;
   clickThresholdUsd: number | null;
   killSwitch: boolean;
   tradingAllowed: boolean;
@@ -72,10 +75,10 @@ function factLines(f: GreetingFacts): string[] {
     f.totalUsd === null
       ? 'unknown'
       : `${money(f.totalUsd)} across ${f.pocketCount} ${f.pocketCount === 1 ? 'pocket' : 'pockets'}`;
-  const pending =
-    f.pendingCount === 0
-      ? 'nothing waiting'
-      : `${f.pendingCount} awaiting a human click`;
+  const moving = f.inFlightCount ?? 0;
+  const clicks = f.pendingCount === 0 ? '' : `${f.pendingCount} awaiting a human click`;
+  const running = moving === 0 ? '' : `${moving} still running`;
+  const pending = clicks === '' && running === '' ? 'nothing waiting' : [clicks, running].filter((part) => part !== '').join(', ');
   const gate =
     f.killSwitch
       ? 'KILL SWITCH ON, every write refused'

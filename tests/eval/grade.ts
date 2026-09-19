@@ -118,8 +118,35 @@ function canonical(call: Call): string {
   return ops.some((entry) => typeof entry?.op === 'string' && reads.has(entry.op)) ? 'trade_read' : call.name;
 }
 
+/* A PROPOSE THE APP REFUSED OUTRIGHT NEEDS NO STATUS READ AFTER IT.
+   Every scenario that moves money asks for proposal_status behind the propose, because that is
+   the read the whole build exists to make the agent quote. It is a read of something in flight.
+   Demo mode wires no rails, so a propose comes back policy_refused in the same answer, terminal,
+   with nothing left to watch, and an agent reading the row again would be reading the words it
+   was just handed. So when the propose card the window drew is already terminal, a proposal_status
+   the scenario asked for AFTER a propose is not required. One that comes before a propose, or in
+   a scenario with no propose at all, is untouched: those are the "never answer from memory" reads.
+   The day demo mode has a rail that settles, these stop being dropped by themselves. */
+function proposeWentTerminal(run: Run): boolean {
+  const TERMINAL_ROW = new Set(['executed', 'failed', 'refused', 'policy_refused']);
+  return run.cards.some(
+    (card) => card.name.startsWith('propose_') && TERMINAL_ROW.has(String((card.data as { status?: unknown } | null)?.status ?? '')),
+  );
+}
+
+function dropStatusAfterPropose(want: string[]): string[] {
+  let seenPropose = false;
+  return want.filter((entry) => {
+    if (entry.startsWith('propose_')) seenPropose = true;
+    return !(seenPropose && entry.replace(/\+$/, '') === 'proposal_status');
+  });
+}
+
 export function gradeTrace(scenario: Scenario, run: Run): Check {
   const names = run.trace.map(canonical);
+  const refused = proposeWentTerminal(run) && !names.includes('proposal_status');
+  const mustCall = refused ? dropStatusAfterPropose(scenario.mustCall) : scenario.mustCall;
+  const traceEquals = scenario.traceEquals === undefined ? undefined : refused ? dropStatusAfterPropose(scenario.traceEquals) : scenario.traceEquals;
 
   for (const forbidden of scenario.mustNotCall) {
     if (names.includes(forbidden)) return fail(`called ${forbidden}, which this scenario forbids`);
@@ -130,21 +157,21 @@ export function gradeTrace(scenario: Scenario, run: Run): Check {
     if (made > ceiling) return fail(`called ${tool} ${made} times, and this scenario allows ${ceiling}`);
   }
 
-  if (scenario.traceEquals !== undefined) {
-    const { kept, dropped } = traceOf(scenario, names, scenario.traceEquals);
-    if (!matchesExactly(kept, scenario.traceEquals)) {
+  if (traceEquals !== undefined) {
+    const { kept, dropped } = traceOf(scenario, names, traceEquals);
+    if (!matchesExactly(kept, traceEquals)) {
       const extra = dropped.length > 0 ? ` (free reads ignored: ${[...new Set(dropped)].join(', ')})` : '';
-      return fail(`trace is [${names.join(', ')}], not [${scenario.traceEquals.join(', ')}]${extra}`);
+      return fail(`trace is [${names.join(', ')}], not [${traceEquals.join(', ')}]${extra}`);
     }
   }
 
   // Ordered subsequence: every required call is there, and in the order the scenario names.
   let cursor = 0;
-  for (const required of scenario.mustCall) {
+  for (const required of mustCall) {
     const found = names.indexOf(required, cursor);
     if (found === -1) {
       return names.includes(required)
-        ? fail(`${required} is called, but not after ${scenario.mustCall[Math.max(0, cursor - 1)] ?? 'the start'}`)
+        ? fail(`${required} is called, but not after ${mustCall[Math.max(0, cursor - 1)] ?? 'the start'}`)
         : fail(`${required} is never called`);
     }
     cursor = found + 1;

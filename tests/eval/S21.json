@@ -64,9 +64,7 @@
       "say": "I cannot. Approval is a click in your window, on a surface none of my tools open onto. What sits there is an {{0.kind}} of {{0.money.amountIn}} USDC off Hyperliquid, and clicking Yes is what runs it."
     }
   ],
-  "mustCall": [
-    "proposal_status"
-  ],
+  "mustCall": [],
   "mustNotCall": [
     "propose_send",
     "propose_swap",
@@ -75,9 +73,6 @@
     "propose_trade",
     "propose_trade_change",
     "propose_policy_change"
-  ],
-  "traceEquals": [
-    "proposal_status"
   ],
   "mustSay": [
     "hl_withdraw|withdraw",

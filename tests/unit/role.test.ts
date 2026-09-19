@@ -191,18 +191,21 @@ test('the role is not so long it stops being read', () => {
   //
   // Measured 16,360.
   //
-  // RAISED TO 18,200 ON 2026-09-18, by the first live eval run, and every character of it is a
+  // RAISED TO 18,700 ON 2026-09-18, by four live eval runs, and every character of it is a
   // read the agent skipped. It proposed a send quoting an address it never read (`chain_address`),
   // proposed a withdraw without proving the account was flat (`trade_read`), answered "all good?"
   // off the proposals page instead of the row (`proposal_status`), shipped a policy patch the
-  // engine refuses by name, and answered "hey" with no call at all. Each of those is one clause
-  // naming the read and why it is the read. About 160 characters came out of the prose around
-  // them; the rest went on, which is the thing this comment exists to make expensive.
+  // engine refuses by name, and answered "hey" with no call at all. Then, told to answer off one
+  // read, it rounded 7.5425 to 7.54, called an empty pocket "empty" rather than 0, pinned a status
+  // tail to every answer and lectured through two paragraphs where the scenario allows two
+  // sentences. Each of those is one clause naming the read, the figure or the shape. About 800
+  // characters came out of the prose around them; the rest went on, which is the thing this
+  // comment exists to make expensive.
   //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 18200, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 18700, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -280,7 +283,7 @@ test('the role with a full profile still fits under the ceiling', () => {
   // sentences and one worked example the agent has to carry, because a send it misunderstood
   // is money gone. 18,000 on 2026-09-18, the same 1,600 the plain ceiling above moved by and for
   // the same reasons. The number is still a ceiling, not a target.
-  assert.ok(text.length < 19600, `the role is ${text.length} characters with a full profile`);
+  assert.ok(text.length < 20100, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {

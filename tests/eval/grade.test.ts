@@ -322,3 +322,25 @@ test('trace: maxCalls counts a tool the Pass line allows once', () => {
   assert.equal(verdict.ok, false);
   assert.match(verdict.first, /2 times, and this scenario allows 1/);
 });
+
+test('trace: a status read after a propose the app refused outright is not required', () => {
+  const s = scenario({
+    mustCall: ['wallet', 'propose_swap', 'proposal_status'],
+    traceEquals: ['wallet', 'propose_swap', 'proposal_status+'],
+  });
+  const refused = run({
+    trace: [call('wallet'), call('propose_swap')],
+    cards: [{ at: T0, name: 'propose_swap', data: { id: 'p1', status: 'policy_refused' } }],
+  });
+  assert.equal(gradeTrace(s, refused).ok, true);
+
+  // A propose the app took is still watched, and a scenario with no propose is untouched.
+  const pending = run({
+    trace: [call('wallet'), call('propose_swap')],
+    cards: [{ at: T0, name: 'propose_swap', data: { id: 'p1', status: 'pending' } }],
+  });
+  assert.equal(gradeTrace(s, pending).ok, false);
+
+  const readOnly = scenario({ mustCall: ['proposal_status'] });
+  assert.equal(gradeTrace(readOnly, run({ trace: [call('proposals')] })).ok, false);
+});

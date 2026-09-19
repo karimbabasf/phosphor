@@ -95,6 +95,26 @@ export const walletReads: ReadTable = {
     const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
     const policy = ctx.getPolicy();
     const pending = ctx.proposals.list().filter((p) => p.status === 'pending');
+    /* AND WHAT IS ALREADY MOVING, which is not the same question and was missing from this
+       answer. `pending` is a decision waiting for a finger; a deposit the human already clicked
+       is `executed` and settling, and neither this payload nor the greeting's PENDING line could
+       see one. So an agent asked "all good?" while real money was in flight read "nothing
+       waiting" here and said "all quiet". That is the transcript this build exists to close,
+       coming out of the orientation read rather than out of the status read. */
+    const inFlight = ctx.proposals
+      .list()
+      .filter((p) => p.status !== 'pending')
+      .map((p) => ({ proposal: p, view: ctx.proposals.view(p) }))
+      .filter(({ view }) => !view.terminal)
+      .map(({ proposal, view }) => ({
+        id: proposal.id,
+        kind: proposal.kind,
+        stage: view.stage,
+        stageLabel: view.stageLabel,
+        waitingOn: view.waitingOn,
+        elapsedSec: view.elapsedSec,
+        typicalSec: view.typicalSec,
+      }));
     const holder = ctx.agents.holder();
     const greeting = buildGreeting(
       {
@@ -104,6 +124,7 @@ export const walletReads: ReadTable = {
         // reader. Counting configured chains instead would say 5 while 2 hold the money.
         pocketCount: Object.values(wallet.byChain).filter((usd) => usd > 0).length,
         pendingCount: pending.length,
+        inFlightCount: inFlight.length,
         clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
         killSwitch: policy?.killSwitch ?? false,
         tradingAllowed: true,
@@ -121,6 +142,8 @@ export const walletReads: ReadTable = {
       // last switch, because the human's tabs move the window too.
       screen: ctx.getScreen(),
       pending: pending.map((p) => p.id),
+      // One line per move already running, so the first read of a session cannot miss one.
+      inFlight,
       stale: wallet.stale,
       /* The vault's facts an agent should carry: how the keys are held, and whether the
          recovery phrase is proven backed up. A balance with no backup is the one thing the
