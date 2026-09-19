@@ -18,7 +18,7 @@
 import { outcomeOf } from './lifecycle.ts';
 import type { OutcomeState, PlanFate } from './lifecycle.ts';
 import { px } from '../trade/plan.ts';
-import type { Proposal, WriteDraft } from '../types.ts';
+import type { PolicyAxisChange, Proposal, WriteDraft } from '../types.ts';
 
 // The app's own phases are lowercase. The provider's phases are 1Click's seven words, byte for
 // byte off GetExecutionStatusResponse, because "settling" is a word nobody outside this app can
@@ -55,11 +55,22 @@ export type ProposalView = {
   id: string;
   kind: WriteDraft['kind'];
   sentence: string; // what the move IS, in one plain line. The card prints it, the agent quotes it.
+  /* A policy change's money axes, before and after, from the verdict the engine wrote. The
+     sentence above is the AGENT's words and this is the app's own arithmetic beside them, so a
+     card can show what the change actually does rather than what it was called. Empty for every
+     other kind, and for a policy change that moves no money limit. */
+  changes: PolicyAxisChange[];
   stage: ProposalStage;
   stageLabel: string; // the one plain line both surfaces print. Never built twice.
   providerStage: string | null; // 1Click's raw word, null when no provider owns this phase
   waitingOn: string | null; // 'You', 'Touch ID', '1Click', 'Hyperliquid', null when terminal
   terminal: boolean;
+  /* True on `stalled` alone. The row is terminal in the sense that the app has stopped expecting
+     the venue, and it is NOT finished: the same balance read that would have settled it still
+     settles it forward to confirmed. The two facts sit beside each other because `terminal: true`
+     under "Late, nothing has changed" reads as "this is over", and the thing a reader does next
+     on that reading is send a second copy of a move that was merely slow. */
+  settlesForward: boolean;
   outcome: OutcomeState;
   createdAt: string;
   decidedAt: string | null;
@@ -421,11 +432,13 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     id: p.id,
     kind: p.kind,
     sentence: sentenceOf(p.draft),
+    changes: p.verdict.outcome === 'needs_approval' ? (p.verdict.changes ?? []) : [],
     stage,
     stageLabel: STAGE_LABEL[stage],
     providerStage: p.result?.evidence?.providerStage ?? null,
     waitingOn: waitingOn(p, stage),
     terminal: TERMINAL.has(stage),
+    settlesForward: stage === 'stalled',
     outcome: outcomeOf(p, ctx.plan?.(p) ?? null).state,
     createdAt: p.createdAt,
     decidedAt: p.decidedAt ?? null,

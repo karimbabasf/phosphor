@@ -116,7 +116,7 @@ async function attach(h: ReturnType<typeof setup>): Promise<void> {
 test('a click on an enclave wallet waits for a finger, and the finger approves exactly that proposal', async () => {
   const h = setup();
   await attach(h);
-  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' });
+  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'Ask me above $50.' });
   assert.equal(big.status, 'pending', 'a click-tier proposal waits for a click even while locked: the touch will open the wallet');
   assert.equal(big.verdict.outcome, 'needs_approval');
 
@@ -143,7 +143,7 @@ test('a click on an enclave wallet waits for a finger, and the finger approves e
 test('a cancelled dialog puts the proposal back to pending and signs nothing', async () => {
   const h = setup();
   await attach(h);
-  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' });
+  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'Ask me above $50.' });
   const clicked = await h.svc.approve(big.id);
   assert.equal(clicked.status, 'awaiting_touch');
 
@@ -170,7 +170,7 @@ test('an open session still asks for the finger on every click-tier move', async
   const dek = seUnwrapWithSoftwareKey({ ephemeralPublicKey: request0.ephemeralPublicKey, ciphertext: request0.ciphertext }, h.enclave.priv, Buffer.from(request0.aad, 'base64'));
   assert.deepEqual(h.keystore.unlockWithDataKey(dek), { ok: true });
 
-  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' });
+  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'Ask me above $50.' });
   const clicked = await h.svc.approve(big.id);
   assert.equal(clicked.status, 'awaiting_touch', 'open or shut, a click-tier move gets its own dialog');
   await playShell(h.vault, h.enclave.priv, h.transport);
@@ -181,7 +181,7 @@ test('an open session still asks for the finger on every click-tier move', async
 test('a second click while the dialog is up is refused, and a click while nothing relays queues the old way', async () => {
   const h = setup();
   await attach(h);
-  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' });
+  const big = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'Ask me above $50.' });
   await h.svc.approve(big.id);
   await assert.rejects(h.svc.approve(big.id), /pending/);
   await playShell(h.vault, h.enclave.priv, h.transport, true);

@@ -207,7 +207,7 @@ test('a finger on a row that was rewritten on disk while the dialog was up signs
   assert.equal(await vault.next(0), null);
   assert.equal(vault.attached(), true);
 
-  const p = await svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'ask me above fifty dollars' });
+  const p = await svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 50 } }, sentence: 'Ask me above $50.' });
   const clicked = await svc.approve(p.id);
   assert.equal(clicked.status, 'awaiting_touch');
   const before = loadPolicy(dataDir);

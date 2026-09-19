@@ -60,8 +60,19 @@ function deposit(usd: number): HlDepositDraft {
   };
 }
 
-function policyChange(patch: PolicyPatch, sentence = 'A rule the agent wrote.'): WriteDraft {
-  return { kind: 'policy_change', patch, sentence };
+/* The sentence NAMES EVERY FIGURE the patch moves, built from the patch itself, because the
+   engine refuses a change whose sentence is about something else (sentence_mismatch). Every row
+   below is about some other rule, so the sentence is generated rather than written: a row that
+   wants to test the sentence rule passes its own. */
+function saying(patch: PolicyPatch): string {
+  const figures = Object.values(patch.outbound ?? {})
+    .filter((v): v is number => typeof v === 'number')
+    .map((v) => `$${v}`);
+  return figures.length === 0 ? 'A rule the agent wrote.' : `A rule the agent wrote: ${figures.join(', ')}.`;
+}
+
+function policyChange(patch: PolicyPatch, sentence?: string): WriteDraft {
+  return { kind: 'policy_change', patch, sentence: sentence ?? saying(patch) };
 }
 
 // The agent controls the wire format, so a patch can carry keys PolicyPatch forbids.
@@ -119,8 +130,22 @@ const cases: Case[] = [
      ships asking above $1 and setting that to $100 took two approvals of one decision.
      A loosening of any size is still a click, and it is still one click. */
   {
-    name: 'a patch that raises both limits together is one decision, so it waits for one click',
-    draft: policyChange({ outbound: { maxPerTransactionUsd: 1e9, humanClickAboveUsd: 1e9 } }),
+    // Both at the same number is the collided pair, whatever the number is. 1e9 would also be
+    // past the per-axis ceiling, so this sits under it to name the rule it is about.
+    name: 'a patch that raises both limits to the same figure would leave a policy that never asks',
+    draft: policyChange({ outbound: { maxPerTransactionUsd: 500_000, humanClickAboveUsd: 500_000 } }),
+    out: 'refuse',
+    rule: 'never_asks',
+  },
+  {
+    name: 'a figure past the axis ceiling is refused whatever else the patch says',
+    draft: policyChange({ outbound: { maxPerTransactionUsd: 1e9 } }),
+    out: 'refuse',
+    rule: 'above_ceiling',
+  },
+  {
+    name: 'the same patch with the ask under the new cap is one decision, so it waits for one click',
+    draft: policyChange({ outbound: { maxPerTransactionUsd: 500_000, humanClickAboveUsd: 100_000 } }),
     out: 'needs_approval',
   },
   {
@@ -128,12 +153,14 @@ const cases: Case[] = [
     draft: policyChange({ outbound: { maxPerSessionUsd: 25_000 * 10 + 1 } }),
     out: 'needs_approval',
   },
-  { name: 'tightening a limit is never refused by the ceiling', draft: policyChange({ outbound: { maxPerTransactionUsd: 1 } }), out: 'needs_approval' },
+  // A tightening is ordinary, as long as it leaves the ask under the cap. The default policy asks
+  // above $100, so a cap of $1 would be the collided pair and is refused on that rule alone.
+  { name: 'tightening a limit is never refused for being a tightening', draft: policyChange({ outbound: { maxPerTransactionUsd: 5000 } }), out: 'needs_approval' },
   {
-    name: 'a click threshold above the transaction cap would mean nothing ever waits for a person',
+    name: 'a click threshold above the transaction cap would mean nothing ever asks a person',
     draft: policyChange({ outbound: { humanClickAboveUsd: 20_000 } }),
     out: 'refuse',
-    rule: 'click_threshold_above_cap',
+    rule: 'never_asks',
   },
   {
     // Zero used to be a wall a patch could not lift, for the same reason the ten-times rule

@@ -3,6 +3,8 @@
 // not). Everything here used to be a `chats` Map and six functions inside the createServer
 // closure; the registry is the same code with the closure's reads named as arguments.
 
+import crypto from 'node:crypto';
+
 import type { AppConfig } from '../types.ts';
 import type { Audit } from '../audit.ts';
 import type { AgentPresence } from '../agents.ts';
@@ -83,7 +85,12 @@ export function createChatRegistry(deps: {
   function makeChat(): Chat {
     chatSeq += 1;
     const id = `c${chatSeq}`;
-    const chat = { id, label: `AGENT ${chatSeq}`, transcript: [] } as Partial<Chat> as Chat;
+    /* THE SEAT THIS CONVERSATION OWNS, minted here and handed to the child, because a card has
+       to be addressable to the conversation that asked for it. It cannot be read back off the
+       driver afterwards: `status().sessionId` is Claude Code's own id once the init event lands.
+       Every call this child makes carries it as `session` on /api/mcp. */
+    const session = crypto.randomUUID();
+    const chat = { id, session, label: `AGENT ${chatSeq}`, transcript: [] } as Partial<Chat> as Chat;
     chat.driver = makeDriver
       ? makeDriver()
       : createDriver({
@@ -94,6 +101,7 @@ export function createChatRegistry(deps: {
                through the window can tell four attached agents apart. Without it every one of
                them is called after the client that started it and they are all the same client. */
             label: chat.label,
+            session: chat.session,
             /* Unset by default, and that is a measured decision rather than an omission. Pinning
                a faster model looked like the obvious speed win and it is not one: over six runs
                of two canonical chart prompts, all three models were correct every time, and the
@@ -202,11 +210,15 @@ export function createChatRegistry(deps: {
     const open = [...chats.values()].map((chat) => ({
       id: chat.id,
       label: chat.label,
+      // The seat the child in this conversation carries. The window reads it to tell which
+      // conversation a card was addressed to; the roster on /api/state already names the same
+      // ids, and a session id is not a credential (the seat secret is).
+      session: chat.session,
       ...chat.driver.status(),
       transcript: chat.transcript,
     }));
     if (open.length === 0) {
-      open.push({ id: '', label: 'AGENT 1', state: 'off' as const, sessionId: '', running: false, transcript: [] });
+      open.push({ id: '', label: 'AGENT 1', session: '', state: 'off' as const, sessionId: '', running: false, transcript: [] });
     }
     // The flat fields are the first chat's, kept beside the list so anything reading the older
     // single-seat shape still reads something true rather than undefined.

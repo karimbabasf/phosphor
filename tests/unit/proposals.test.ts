@@ -292,7 +292,7 @@ test('a policy change is pending, then applies on approval', async () => {
 
 test('a policy change never auto-executes, however small', async () => {
   const h = setup();
-  const p = await h.svc.proposePolicyChange({ patch: { outbound: { maxPerSessionUsd: 1 } }, sentence: 'Tiny session cap.' });
+  const p = await h.svc.proposePolicyChange({ patch: { outbound: { maxPerSessionUsd: 1 } }, sentence: 'Cap a session at $1.' });
   assert.equal(p.status, 'pending');
   assert.equal(loadPolicy(h.dataDir)?.outbound.maxPerSessionUsd, 25000);
 });
