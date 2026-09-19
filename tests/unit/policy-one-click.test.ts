@@ -5,14 +5,16 @@
 // the human had already read and clicked, because propose_policy_change never auto-executes at
 // any size. Going from the $1 the app ships with to $100 took two approvals of one decision.
 //
-// What is left is the rule about the two numbers making sense together, and it now fires in
-// both directions: the ask can never be above the cap, and a cap coming down under the ask
-// brings the ask with it rather than being refused for tightening.
+// What is left is the rule about the two numbers making sense together, read off the pair the
+// patch would LEAVE in the file: the ask has to end up strictly under the cap, whichever axis
+// the patch names and whichever way each one moved, or nothing would ever ask. A patch that
+// would collide is refused rather than rewritten, because a patch nobody wrote is a patch
+// nobody clicked; the pair goes in one patch, which is still one click.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { clampPatch, evaluate } from '../../src/policy/engine.ts';
+import { evaluate } from '../../src/policy/engine.ts';
 import type { EngineCtx } from '../../src/policy/engine.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import type { Policy, PolicyPatch, Verdict, WriteDraft } from '../../src/types.ts';
@@ -54,13 +56,13 @@ test('a limit raised from zero is a patch like any other now', () => {
   assert.equal(verdict.outcome, 'needs_approval');
 });
 
-test('an ask above the cap is still refused, because nothing would ever wait for anybody', () => {
+test('an ask above the cap is refused, because nothing would ever ask anybody', () => {
   const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
   const verdict = verdictOf(policy, { outbound: { humanClickAboveUsd: 5000 } });
   assert.equal(verdict.outcome, 'refuse');
-  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'click_threshold_above_cap');
-  assert.deepEqual(verdict.reasonCodes, ['click_threshold_above_cap']);
-  assert.match(verdict.reasons.join(' '), /nothing would ever wait for you/);
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'never_asks');
+  assert.deepEqual(verdict.reasonCodes, ['never_asks']);
+  assert.match(verdict.reasons.join(' '), /means nothing ever asks you/);
 });
 
 test('raising both in one patch is coherent and lands', () => {
@@ -69,33 +71,38 @@ test('raising both in one patch is coherent and lands', () => {
   assert.equal(verdict.outcome, 'needs_approval');
 });
 
-test('a cap lowered under the ask clamps the ask and says so in a code', () => {
+test('a cap lowered under the ask is refused, and the refusal names both numbers and the fix', () => {
   const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
   const verdict = verdictOf(policy, { outbound: { maxPerTransactionUsd: 50 } });
-  assert.equal(verdict.outcome, 'needs_approval', 'refusing a tightening fails in the wrong direction');
-  assert.deepEqual(verdict.reasonCodes, ['threshold_clamped_to_cap']);
-  assert.match(verdict.reasons.join(' '), /ask threshold comes down with it/);
-
-  // The clamp is the patch that gets stored and applied, not a sentence beside it.
-  const clamped = clampPatch({ outbound: { maxPerTransactionUsd: 50 } }, policy);
-  assert.equal(clamped.clamped, true);
-  assert.equal(clamped.patch.outbound?.humanClickAboveUsd, 50);
-  assert.equal(clamped.patch.outbound?.maxPerTransactionUsd, 50);
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'never_asks');
+  assert.deepEqual(verdict.reasonCodes, ['never_asks']);
+  const said = verdict.reasons.join(' ');
+  assert.match(said, /Asking above \$100\.00 and refusing above \$50\.00/);
+  assert.match(said, /Put the ask below the cap, both in the same patch/);
 });
 
-test('a cap lowered that stays above the ask changes nothing about the ask', () => {
+test('the patch the agent wrote is the patch that is judged, never one the app rewrote', () => {
   const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
-  const out = clampPatch({ outbound: { maxPerTransactionUsd: 500 } }, policy);
-  assert.equal(out.clamped, false);
-  assert.equal(out.patch.outbound?.humanClickAboveUsd, undefined);
-  assert.deepEqual(verdictOf(policy, { outbound: { maxPerTransactionUsd: 500 } }).reasonCodes, []);
+  // Both numbers, coherent: this is the shape the refusal above tells the agent to send.
+  assert.equal(verdictOf(policy, { outbound: { maxPerTransactionUsd: 50, humanClickAboveUsd: 25 } }).outcome, 'needs_approval');
 });
 
-test('a patch naming both, with the ask above the new cap, is clamped rather than refused', () => {
+test('a cap lowered that stays above the ask is an ordinary tightening', () => {
   const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
-  const out = clampPatch({ outbound: { maxPerTransactionUsd: 200, humanClickAboveUsd: 900 } }, policy);
-  assert.equal(out.clamped, true);
-  assert.equal(out.patch.outbound?.humanClickAboveUsd, 200);
+  const verdict = verdictOf(policy, { outbound: { maxPerTransactionUsd: 500 } });
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, []);
+});
+
+test('the pair is read off the post-patch policy, whichever axis the patch names', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  // Raising the ask to meet an untouched cap collides.
+  assert.equal(verdictOf(policy, { outbound: { humanClickAboveUsd: 1000 } }).outcome, 'refuse');
+  // Equal is a collision: at cap == ask the middle band is empty.
+  assert.equal(verdictOf(policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 1000 }), { outbound: { maxPerTransactionUsd: 1 } }).outcome, 'refuse');
+  // One below it is not.
+  assert.equal(verdictOf(policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 1000 }), { outbound: { maxPerTransactionUsd: 2 } }).outcome, 'needs_approval');
 });
 
 test('the kill switch, the version and the sentences are still unreachable from a patch', () => {
@@ -115,6 +122,19 @@ test('an allowlist that drops an address is still refused, and its code says whi
 });
 
 test('a policy change still always waits for a click', () => {
-  const policy = policyWith({ humanClickAboveUsd: 1_000_000, maxPerTransactionUsd: 1_000_000 });
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
   assert.equal(verdictOf(policy, { outbound: { maxPerSessionUsd: 25 } }).outcome, 'needs_approval');
+});
+
+/* A policy already in the collided state refuses every patch until the pair is fixed, including
+   one that names neither number. That is the rule doing its job rather than a gap in it: a file
+   where nothing ever asks is the state this refuses to leave in place, and the sentence names
+   both numbers and the fix, so the way out is always one patch away. */
+test('a policy that already collides refuses any patch until the pair is fixed', () => {
+  const stuck = policyWith({ humanClickAboveUsd: 1000, maxPerTransactionUsd: 1000 });
+  const unrelated = verdictOf(stuck, { outbound: { maxPerSessionUsd: 25 } });
+  assert.equal(unrelated.outcome, 'refuse');
+  assert.deepEqual(unrelated.reasonCodes, ['never_asks']);
+  // And the way out is one patch that puts the ask under the cap.
+  assert.equal(verdictOf(stuck, { outbound: { humanClickAboveUsd: 100 } }).outcome, 'needs_approval');
 });

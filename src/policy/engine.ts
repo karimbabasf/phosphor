@@ -105,44 +105,44 @@ function patchNamesNothing(patch: PolicyPatch): boolean {
   );
 }
 
-/* THE ASK IS NEVER ABOVE THE CAP, held in one place and by construction rather than by two
-   guards that could disagree. A patch that lowers the transaction cap under the current ask
-   threshold is a TIGHTENING, and the old guard did not catch it at all: it fired only when the
-   patch raised the ask, so the same incoherent pair reached from the other side went through and
-   the policy quietly stopped ever asking. Refusing it would fail in the wrong direction, so the
-   ask comes down with the cap and the diff says both numbers moved.
+/* NOTHING EVER ASKS, CHECKED ON THE POLICY THE PATCH WOULD LEAVE BEHIND.
 
-   Pure, and called from two places on purpose: the engine evaluates the clamped patch, and the
-   proposal builder stores the clamped patch, so what a person reads on the card is what is
-   applied. Two derivations of this is how a card comes to name a change the file does not make. */
-export function clampPatch(patch: PolicyPatch, policy: Policy): { patch: PolicyPatch; clamped: boolean } {
-  const o = patch.outbound;
-  if (o?.maxPerTransactionUsd === undefined) return { patch, clamped: false };
+   The ask threshold decides `allow` against `needs_approval`, and the hard cap decides
+   `needs_approval` against `refuse`. Set the ask at or above the cap and the middle band is
+   empty: every move small enough to be allowed at all is also small enough to run with nobody
+   watching. That is the one policy state a person cannot read off either number on its own,
+   because each of them looks reasonable alone.
+
+   IT IS THE POST-PATCH PAIR, not the direction of travel. The guard this replaces fired only
+   when a patch RAISED the ask, so the identical collision reached by lowering the cap went
+   straight through and the policy quietly stopped asking. This reads the two numbers the patch
+   would leave in the file, whichever axis it names and whichever way each one moved.
+
+   AND IT REFUSES RATHER THAN CLAMPING. The clamp that stood here for a day rewrote the ask down
+   to the new cap and called it a tightening, which turned `{cap: 1000, ask: 2000}` against a
+   $100 cap into a tenfold LOOSENING landing on cap == ask == 1000: the exact state this rule
+   exists to prevent, reported in a sentence that was false in both halves. A patch nobody wrote
+   is not a patch anybody clicked. The refusal names both numbers and the fix, and the pair goes
+   in one patch, which is still one click. */
+function collides(cap: number, ask: number): boolean {
+  return ask >= cap;
+}
+
+function neverAsks(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdict | null {
+  const o = patch.outbound ?? {};
+  const cap = o.maxPerTransactionUsd ?? policy.outbound.maxPerTransactionUsd;
   const ask = o.humanClickAboveUsd ?? policy.outbound.humanClickAboveUsd;
-  if (ask <= o.maxPerTransactionUsd) return { patch, clamped: false };
-  return { patch: { ...patch, outbound: { ...o, humanClickAboveUsd: o.maxPerTransactionUsd } }, clamped: true };
+  if (!collides(cap, ask)) return null;
+  return refusal(
+    reasons,
+    'never_asks',
+    `Asking above ${money(ask)} and refusing above ${money(cap)} means nothing ever asks you: everything small enough to be allowed is also small enough to run on its own. Put the ask below the cap, both in the same patch.`,
+  );
 }
 
 function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdict | null {
   const o = patch.outbound;
   if (o === undefined) return null;
-
-  /* A click threshold above the transaction cap is a click threshold that never fires: every
-     move small enough to be allowed at all is then small enough to auto-execute. Checked against
-     the cap as it would stand AFTER the patch, and only when the patch is the thing RAISING the
-     threshold; a patch that lowers the cap instead has already been clamped above. This is the
-     one rule left from the three that used to stand here, and it is the one that is about the
-     two numbers making sense together rather than about how far either of them moved. */
-  if (o.humanClickAboveUsd !== undefined && o.humanClickAboveUsd > policy.outbound.humanClickAboveUsd) {
-    const perTransaction = o.maxPerTransactionUsd ?? policy.outbound.maxPerTransactionUsd;
-    if (o.humanClickAboveUsd > perTransaction) {
-      return refusal(
-        reasons,
-        'click_threshold_above_cap',
-        `This patch would ask for a click above ${money(o.humanClickAboveUsd)} while refusing anything above ${money(perTransaction)}, so nothing would ever wait for you. Lower the click threshold, or raise the transaction limit in the same patch.`,
-      );
-    }
-  }
 
   /* The allowlist is REPLACED rather than merged (see mergePatch), so a patch carrying one
      address deletes every other one. Adding is fine and is the reason the field exists;
@@ -286,25 +286,18 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
     return refusal(reasons, 'nothing_to_change', 'Patch names no rule, so there is nothing to change and nothing to approve.');
   }
 
-  // The clamp first, then the coherence rule, because the rule is about the pair of numbers and
-  // the clamp is what makes the pair coherent. The proposal builder clamps the stored patch with
-  // this same function, so the card names both changes.
-  const clamp = clampPatch(parsed.data as PolicyPatch, policy);
-  const codes: string[] = [];
-  if (clamp.clamped) {
-    codes.push('threshold_clamped_to_cap');
-    reasons.push(
-      `The transaction limit is coming down to ${money(clamp.patch.outbound?.maxPerTransactionUsd ?? 0)}, which is under the ` +
-        `${money(policy.outbound.humanClickAboveUsd)} you are asked about, so the ask threshold comes down with it. ` +
-        'Both numbers are in the change below.',
-    );
-  }
+  const wanted = parsed.data as PolicyPatch;
 
-  const incoherent = policyChangeCeiling(clamp.patch, policy, reasons);
+  // The pair the patch would leave in the file, before anything else about it is judged: a
+  // policy that never asks is the one outcome no later rule can make safe.
+  const empty = neverAsks(wanted, policy, reasons);
+  if (empty !== null) return empty;
+
+  const incoherent = policyChangeCeiling(wanted, policy, reasons);
   if (incoherent !== null) return incoherent;
 
   reasons.push('Policy changes always require a human click.');
-  return { outcome: 'needs_approval', reasons, reasonCodes: codes };
+  return { outcome: 'needs_approval', reasons, reasonCodes: [] };
 }
 
 // Issuer for a symbol: what the composition says it holds, else the risk table, else

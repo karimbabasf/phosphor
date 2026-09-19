@@ -119,8 +119,15 @@ const cases: Case[] = [
      ships asking above $1 and setting that to $100 took two approvals of one decision.
      A loosening of any size is still a click, and it is still one click. */
   {
-    name: 'a patch that raises both limits together is one decision, so it waits for one click',
+    // Both at the same number is the collided pair, whatever the number is.
+    name: 'a patch that raises both limits to the same figure would leave a policy that never asks',
     draft: policyChange({ outbound: { maxPerTransactionUsd: 1e9, humanClickAboveUsd: 1e9 } }),
+    out: 'refuse',
+    rule: 'never_asks',
+  },
+  {
+    name: 'the same patch with the ask under the new cap is one decision, so it waits for one click',
+    draft: policyChange({ outbound: { maxPerTransactionUsd: 1e6, humanClickAboveUsd: 1e5 } }),
     out: 'needs_approval',
   },
   {
@@ -128,12 +135,14 @@ const cases: Case[] = [
     draft: policyChange({ outbound: { maxPerSessionUsd: 25_000 * 10 + 1 } }),
     out: 'needs_approval',
   },
-  { name: 'tightening a limit is never refused by the ceiling', draft: policyChange({ outbound: { maxPerTransactionUsd: 1 } }), out: 'needs_approval' },
+  // A tightening is ordinary, as long as it leaves the ask under the cap. The default policy asks
+  // above $100, so a cap of $1 would be the collided pair and is refused on that rule alone.
+  { name: 'tightening a limit is never refused for being a tightening', draft: policyChange({ outbound: { maxPerTransactionUsd: 5000 } }), out: 'needs_approval' },
   {
-    name: 'a click threshold above the transaction cap would mean nothing ever waits for a person',
+    name: 'a click threshold above the transaction cap would mean nothing ever asks a person',
     draft: policyChange({ outbound: { humanClickAboveUsd: 20_000 } }),
     out: 'refuse',
-    rule: 'click_threshold_above_cap',
+    rule: 'never_asks',
   },
   {
     // Zero used to be a wall a patch could not lift, for the same reason the ten-times rule

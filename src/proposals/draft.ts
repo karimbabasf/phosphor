@@ -12,7 +12,7 @@ import type {
   SimulationResult,
   WriteDraft,
 } from '../types.ts';
-import { clampPatch, evaluate } from '../policy/engine.ts';
+import { evaluate } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import type { RailDraft, RailKind } from '../rails/index.ts';
@@ -192,11 +192,12 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, c
 export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatch; sentence: string; clientKey?: ClientKey }): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
-  /* The patch that is STORED is the patch that is applied, so the clamp happens here rather than
-     only inside the verdict. A cap lowered under the ask threshold brings the threshold down with
-     it (src/policy/engine.ts, clampPatch), and the diff below is rendered off the same object, so
-     the card names both numbers and the file makes both changes. */
-  const patch = policy === null ? params.patch : clampPatch(params.patch, policy).patch;
+  /* THE PATCH THE AGENT WROTE, unchanged. It was rewritten here for a day, to bring the ask
+     threshold down with a falling cap, and that was wrong in the way that matters: what the
+     human clicked was then not what the agent had asked for, and the card described a change
+     nobody had written. The engine refuses a pair that would collide instead, and the agent
+     proposes both numbers in one patch. */
+  const patch = params.patch;
   const draft: WriteDraft = { kind: 'policy_change', patch, sentence: params.sentence };
   const verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
 
