@@ -1077,6 +1077,26 @@ test('a plan note written to look like an approval is stored as a note and forge
   assert.equal(since.some((e) => e.type === 'approved'), false, 'something was approved with nobody at the window');
 });
 
+/* A TOOL DESCRIPTION IS A PROMISE THE AGENT PLANS AROUND, so a false one is worse than none.
+   diagnose said "No address comes back whole" and "nothing in the answer is a place money can
+   be sent". The fingerprinting landed on one projection of four: the log lines. The view, the
+   venue reading and the verdict reasons all carry the app's own receiving address whole, and
+   the same reasons reach an agent through a propose reply, through proposals and through
+   log_tail as well. The address is the app's own, so this is disclosure to a steered agent
+   rather than theft, and fingerprinting it everywhere would cost the person the one field that
+   tells them where their own money went. The description is what changes. */
+test('the diagnose description does not promise an answer with no address in it', async () => {
+  assert.ok(client !== null);
+  const tools = (await client.listTools()).tools;
+  const diagnose = tools.find((t) => t.name === 'diagnose');
+  assert.ok(diagnose, 'diagnose is not on the surface');
+  const said = diagnose?.description ?? '';
+  assert.doesNotMatch(said, /No address comes back whole/i, 'the claim the fix did not make true');
+  assert.doesNotMatch(said, /nothing in the answer is a place money can be sent/i);
+  assert.match(said, /the app's own addresses/i, 'the description does not say what can come back');
+  assert.match(said, /never a handle, quote signature or key/i, 'the description does not say what cannot');
+});
+
 test('the direct session says goodbye', async () => {
   const bye = await direct({ op: 'bye' });
   assert.equal(bye.status, 200);
