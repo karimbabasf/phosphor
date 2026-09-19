@@ -277,3 +277,96 @@ test('a patch that moves no money limit carries no limits_changed and needs no f
   assert.deepEqual(verdict.reasonCodes, []);
   assert.deepEqual(verdict.outcome === 'needs_approval' && verdict.changes, []);
 });
+
+/* ---------- the sentence is ABOUT the change, not merely touching its digits ----------
+
+   `namesFigure` asks one question: does this string contain these digits anywhere. The re-audit
+   walked five sentences past it, every one VERIFIED as needs_approval against a patch that took
+   the cap to $1,000,000 and the ask to $999,999 from a wallet holding $100 and $1:
+
+     1. the two axes swapped, so the reader agrees to the wrong number on each
+     2. the figures used as the FROM side, so a 10,000x loosening reads as a tightening
+     3. the figure pushed past three hundred spaces, off the end of the line a person reads
+     4. the figure pushed past five newlines, same effect
+     5. the figure written with zero-width characters through it, present to the regex, absent
+        to the eye
+
+   The digits were all there. None of those sentences describes the change. Three rules answer
+   the three different lies: the sentence has to be one line a person can actually read, every
+   dollar figure in it has to be a figure this patch is about, and where a clause names one axis
+   the figures in it have to belong to that axis. */
+
+const BIG = { outbound: { maxPerTransactionUsd: 1_000_000, humanClickAboveUsd: 999_999 } };
+const SMALL = () => policyWith({ maxPerTransactionUsd: 100, humanClickAboveUsd: 1 });
+
+function outcomeOf(sentence: string, patch: PolicyPatch = BIG, policy = SMALL()): Verdict {
+  return evaluate(change(patch, sentence), ctxOf(policy));
+}
+
+test('the five sentences the re-audit walked past the figure check are refused', () => {
+  const bypasses: Array<[string, string]> = [
+    ['axes swapped', 'Raise the ask to $1,000,000 and the cap to $999,999.'],
+    ['figures as the from side', 'Lower the cap from $1,000,000 to $100 and the ask from $999,999 to $1.'],
+    ['buried past three hundred spaces', `Tidy the limits.${' '.repeat(300)}Cap $1,000,000, ask $999,999.`],
+    ['buried past five newlines', 'Tidy the limits.\n\n\n\n\nCap $1,000,000, ask $999,999.'],
+    ['written with zero-width characters', 'Cap $1,000,000​, ask $999,999​.​'],
+  ];
+  for (const [label, sentence] of bypasses) {
+    const verdict = outcomeOf(sentence);
+    assert.equal(verdict.outcome, 'refuse', label);
+    assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'sentence_mismatch', label);
+    assert.deepEqual(verdict.reasonCodes, ['sentence_mismatch'], label);
+  }
+});
+
+test('the sentences a person would actually write still pass', () => {
+  const ok: Array<[PolicyPatch, Policy, string]> = [
+    [
+      { outbound: { humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 50 }),
+      'Ask me above $100 and refuse anything above $1,000',
+    ],
+    [
+      { outbound: { maxPerTransactionUsd: 1000 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 }),
+      'Raise the cap from $100 to $1,000',
+    ],
+    [
+      { outbound: { maxPerTransactionUsd: 100 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 1000 }),
+      'Lower the cap from $1,000 to $100',
+    ],
+    [
+      { outbound: { humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 50 }),
+      'Change my limits to $100 and $1,000.',
+    ],
+    [
+      { outbound: { humanClickAboveUsd: 250 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100_000 }),
+      'Ask me before anything above $250.00.',
+    ],
+    [
+      { outbound: { maxPerSessionUsd: 9000, autoApproveDailyUsd: 500 } },
+      policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 }),
+      'Hold a session to $9,000 and stop auto-approving past $500 a day.',
+    ],
+  ];
+  for (const [patch, policy, sentence] of ok) {
+    assert.equal(outcomeOf(sentence, patch, policy).outcome, 'needs_approval', sentence);
+  }
+});
+
+test('a figure the patch is not about has no business in the sentence', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 });
+  const verdict = outcomeOf('Raise the cap to $1,000,000, a rounding error next to the $40,000,000 in the fund.', { outbound: { maxPerTransactionUsd: 1_000_000 } }, policy);
+  assert.equal(verdict.outcome, 'refuse');
+  assert.match(verdict.reasons.join(' '), /\$40,000,000/);
+});
+
+test('a raise written as a fall is refused: the after figure cannot come first', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 });
+  const verdict = outcomeOf('Lower the cap from $1,000 to $100.', { outbound: { maxPerTransactionUsd: 1000 } }, policy);
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'sentence_mismatch');
+});
