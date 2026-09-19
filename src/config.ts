@@ -211,12 +211,32 @@ function holdsWallet(keysPath: string): boolean {
   return fs.existsSync(keysPath) || fs.existsSync(keystorePathFor(keysPath));
 }
 
-function defaultKeysPath(baseDir: string, dataDir: string): string {
-  /* PHOSPHOR_APP_DATA=1 is the installed app saying this data directory is its own rather than
+function defaultKeysPath(baseDir: string, dataDir: string, mode: Mode): string {
+  /* A DEMO BOOT HAS ITS OWN WALLET AND NEVER LOOKS FOR THE REAL ONE, whatever the data
+     directory is and whatever the flag below says. The re-audit's probe set PHOSPHOR_APP_DATA=1
+     against a throwaway data dir in demo mode, and the backend opened the real ~/.phosphor
+     keystore header and reported `locked` on it. Nothing decrypted, since unlocking needs Touch
+     ID and demo refuses migrate and shred, so what leaked was the file's existence, its state
+     and its addresses. It still made the guarantee in keystore/store.ts false in the one case
+     that comment names. A demo process is a throwaway, and a throwaway does not get to know
+     whether the real wallet is there.
+
+     PHOSPHOR_APP_DATA=1 is the installed app saying this data directory is its own rather than
      one somebody pointed at. It sits under Application Support and so is not the repo default,
      but the wallet it opens is the same wallet it has always opened, and moving that on upgrade
      would be an installed app coming up as though it had no keys. Set in src-tauri/backend.rs
-     and nowhere else. */
+     and nowhere else, and it means the installed LIVE app: an installed app in demo mode is not
+     the installed app's wallet. */
+  if (mode === 'demo') {
+    /* The default data directory sits inside the working copy, and a key file inside the working
+       copy is refused outright a few lines below, so demo needs somewhere of its own to land.
+       ~/.phosphor-demo is a different directory from ~/.phosphor, not a corner of it: the live
+       resolver above never probes it, and somebody checking which wallets exist on this machine
+       can tell the two apart by name. Nothing is written there unless a demo run makes a key. */
+    const inRepo = dataDir === path.resolve(baseDir, DEFAULT_DATA_DIR);
+    if (!inRepo) return path.join(dataDir, 'keys.json');
+    return path.join(os.homedir(), '.phosphor-demo', path.basename(baseDir) || 'default', 'keys.json');
+  }
   const ownDataDir = dataDir === path.resolve(baseDir, DEFAULT_DATA_DIR) || env('PHOSPHOR_APP_DATA') === '1';
   if (!ownDataDir) {
     return path.join(dataDir, 'keys.json');
@@ -298,7 +318,7 @@ export function loadConfig(root?: string): AppConfig {
   const dataDirInput = env('PHOSPHOR_DATA_DIR', 'ACC_DATA_DIR') ?? parsed.dataDir ?? DEFAULT_DATA_DIR;
   const dataDir = path.resolve(baseDir, dataDirInput);
 
-  const keysInput = env('PHOSPHOR_KEYS') ?? parsed.keysPath ?? defaultKeysPath(baseDir, dataDir);
+  const keysInput = env('PHOSPHOR_KEYS') ?? parsed.keysPath ?? defaultKeysPath(baseDir, dataDir, mode);
   const keysPath = path.resolve(keysInput.replace(/^~(?=$|\/)/, os.homedir()));
   assertOutsideRepo(keysPath, baseDir);
 

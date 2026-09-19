@@ -286,3 +286,102 @@ test('a key file genuinely outside the working copy is still allowed', () => {
   const root = scratch('phosphor-root-');
   assert.doesNotThrow(() => assertOutsideRepo(path.join(scratch('phosphor-home-'), '.phosphor', 'keys.json'), root));
 });
+
+/* PHOSPHOR_APP_DATA IS A LIVE-MODE FLAG, because what it says is "this data directory belongs
+   to the installed app", and an installed app in demo mode is not the installed app's wallet.
+
+   The re-audit's own probe set it against a throwaway data dir in demo mode and the backend
+   opened the real ~/.phosphor keystore header and reported `locked` on it. Nothing decrypted,
+   and the exposure stops at the file's existence, its state and its addresses, because
+   unlocking needs Touch ID and demo refuses migrate and shred. It still made the store.ts
+   comment false in the one case it names: a demo backend on a throwaway data dir could see the
+   real wallet after all. The flag now needs live mode beside it, and demo resolves the key file
+   inside whatever data directory it was given, always. */
+test('a demo boot never reaches the real home wallet, whatever PHOSPHOR_APP_DATA says', () => {
+  const home = homeWithLegacyKeys();
+  const root = repo();
+  const support = scratch('phosphor-support-');
+
+  const cfg = withEnv(
+    {
+      HOME: home,
+      PHOSPHOR_KEYS: undefined,
+      PHOSPHOR_MODE: 'demo',
+      PHOSPHOR_DATA_DIR: path.join(support, 'state'),
+      PHOSPHOR_CONFIG_DIR: support,
+      PHOSPHOR_APP_DATA: '1',
+    },
+    () => loadConfig(root),
+  );
+
+  assert.equal(cfg.keysPath, path.join(support, 'state', 'keys.json'));
+  assert.doesNotMatch(cfg.keysPath, /\.phosphor/, 'a demo boot resolved into the real key directory');
+});
+
+test('the same holds when demo comes from the config file rather than the environment', () => {
+  const home = homeWithLegacyKeys();
+  const root = scratch('phosphor-repo-');
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ port: 4177, mode: 'demo' }));
+  const support = scratch('phosphor-support-');
+
+  const cfg = withEnv(
+    {
+      HOME: home,
+      PHOSPHOR_KEYS: undefined,
+      PHOSPHOR_MODE: undefined,
+      ACC_MODE: undefined,
+      PHOSPHOR_DATA_DIR: path.join(support, 'state'),
+      PHOSPHOR_CONFIG_DIR: support,
+      PHOSPHOR_APP_DATA: '1',
+    },
+    () => loadConfig(root),
+  );
+
+  assert.equal(cfg.keysPath, path.join(support, 'state', 'keys.json'));
+});
+
+/* The other half of the same flag, and the reason this is not just "ignore the variable in
+   demo": a demo boot on the app's OWN default data directory must not reach the real wallet
+   either, since the data directory is not what makes the wallet real. That directory sits
+   inside the working copy and a key file inside the working copy is refused outright, so demo
+   lands in ~/.phosphor-demo, which is a different directory from ~/.phosphor rather than a
+   corner of it. */
+test('a demo boot on the default data directory gets a demo wallet, not the real one', () => {
+  const home = homeWithLegacyKeys();
+  const root = repo();
+
+  const cfg = withEnv(
+    {
+      HOME: home,
+      PHOSPHOR_KEYS: undefined,
+      PHOSPHOR_MODE: 'demo',
+      PHOSPHOR_DATA_DIR: undefined,
+      PHOSPHOR_CONFIG_DIR: undefined,
+      PHOSPHOR_APP_DATA: undefined,
+    },
+    () => loadConfig(root),
+  );
+
+  assert.equal(cfg.keysPath, path.join(home, '.phosphor-demo', path.basename(root), 'keys.json'));
+  assert.equal(fs.existsSync(path.join(home, '.phosphor-demo')), false, 'a demo boot created a directory just by resolving a path');
+});
+
+test('live mode is untouched: the installed app still opens the wallet it has always opened', () => {
+  const home = homeWithLegacyKeys();
+  const root = repo();
+  const support = scratch('phosphor-support-');
+
+  const cfg = withEnv(
+    {
+      HOME: home,
+      PHOSPHOR_KEYS: undefined,
+      PHOSPHOR_MODE: 'live',
+      PHOSPHOR_DATA_DIR: path.join(support, 'state'),
+      PHOSPHOR_CONFIG_DIR: support,
+      PHOSPHOR_APP_DATA: '1',
+    },
+    () => loadConfig(root),
+  );
+
+  assert.equal(cfg.keysPath, path.join(home, '.phosphor', 'keys.json'));
+});
