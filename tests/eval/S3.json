@@ -128,7 +128,7 @@
   "mustSay": [
     "confirmed",
     "7\\.0623",
-    "\\b\\d+\\s*(s|sec|seconds|m|min)\\b"
+    "\\b(\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s*(s|secs?|seconds?|m|mins?|minutes?|h|hours?)\\b"
   ],
   "rubric": "The completion claim cites the read, not the propose reply.",
   "mustSayText": "confirmed, the credited amount, the collateral now, the total elapsed. Says \"not confirmed yet\" only when the read says so.",

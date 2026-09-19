@@ -44,8 +44,11 @@ export const BANNED: Array<{ re: RegExp; allow?: RegExp; needsStatusRead?: boole
   { re: /\bwaiting\b(?!\s+(on|for)\b)(?=\s*[.,;:!?]|\s*$)/i, why: 'the word "waiting" with nothing it is waiting on' },
   /* "should land" is banned as a prediction about a move already in flight. "say where it should
      land" is the opposite: it is the question S9 and S10 exist to make the agent ask, so the
-     permitted shape is cut out of the text before the ban is applied to what is left. */
-  { re: /should land/i, allow: /\bwhere(?:\s+\w+){0,3}\s+should land\b/gi, why: '"should land"' },
+     permitted shape is cut out of the text before the ban is applied to what is left. It is
+     "whether" as often as "where" ("say whether the 2 USDC should land on a chain or inside NEAR
+     Intents"), and the subject between the two can be a figure with a token after it, so the
+     allowance takes both words and a longer gap. */
+  { re: /should land/i, allow: /\b(where|whether)(?:\s+[\w,.$]+){0,6}\s+should land\b/gi, why: '"should land"' },
   { re: /any minute/i, why: '"any minute"' },
   { re: /probably (fine|worked)/i, why: '"probably fine" or "probably worked"' },
   { re: /it('s| is) done\b/i, needsStatusRead: true, why: '"it is done" with no read of the row before it' },

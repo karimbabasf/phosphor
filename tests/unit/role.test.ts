@@ -224,12 +224,20 @@ test('the role is not so long it stops being read', () => {
   // cut, and four clauses it replaces came out of this file (rounding, read-in-this-turn,
   // profile_learned, and the list of what NOT to say beside a card). The rest is three reads the
   // agent skipped: proposal_status after a propose, wallet after the row, and the backup nudge it
-  // tailed onto answers nobody asked it for. 1,210 characters, measured 20,092.
+  // tailed onto answers nobody asked it for.
+  //
+  // 20,500 the same day, after three live runs of that build named four more shapes: the session
+  // opening is two or three LINES and not paragraphs, naming an attack is one line, the whole
+  // explanation is written out before profile_learned is called (the agent ended a turn on
+  // "recorded that" twice), and a withdraw names both fee parts even when the card's estimate
+  // leaves one out. It came with its own deletion: the sentence telling the agent not to repeat
+  // the card's table said three times over what FIGURES and the move paragraph already say.
+  // Measured 20,290.
   //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 20300, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 20500, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -271,10 +279,10 @@ test('the role gives the agent a voice, and the window draws the numbers', () =>
     'Lead with the outcome in one sentence',
     /* Was "name the one number that matters and do not repeat the table in prose". One number was
        the wrong instruction for a move that has four (the amount, the fee, the percent and where
-       it lands), and the agent duly picked one and dropped the rest. The rule against repeating
-       the card's table stands; the count came off it. */
-    'do not repeat the table in prose:\nsay the figures that answer the question',
-    'Numbers keep\ntheir unit and their sign',
+       it lands), and the agent duly picked one and dropped the rest. The rest of that sentence
+       said three times over what FIGURES and the move paragraph already say, so it came out and
+       only the part neither of them carries is left. */
+    'Numbers keep their unit and their sign',
     'One next step at most, phrased as an offer',
     'A short answer carries no headings',
     'Never paste raw JSON, an error string, or a hash longer than 12 characters',
@@ -311,9 +319,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // sentences and one worked example the agent has to carry, because a send it misunderstood
   // is money gone. 18,000 on 2026-09-18, the same 1,600 the plain ceiling above moved by and for
   // the same reasons. The number is still a ceiling, not a target.
-  // 21,400 on 2026-09-19, the same 1,210 the plain ceiling above moved by and for the same
-  // reasons. The number is still a ceiling, not a target.
-  assert.ok(text.length < 21400, `the role is ${text.length} characters with a full profile`);
+  // 21,600 on 2026-09-19, tracking the plain ceiling above and moved for the same reasons.
+  // The number is still a ceiling, not a target.
+  assert.ok(text.length < 21600, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {
