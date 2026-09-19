@@ -116,6 +116,10 @@ const childEnv = {
   ACC_PORT: String(PORT),
   ACC_MODE: 'demo',
   ACC_DATA_DIR: dataDir,
+  // The demo rail walks its stages in about 25 seconds, which is the point of it (src/rails/
+  // demo.ts). A fifth of that is still every stage, one after the other, and it keeps this run
+  // under a minute.
+  PHOSPHOR_DEMO_STAGE_SCALE: '0.2',
 };
 
 // stdin is a pipe now, because the window token goes down it as the first line.
@@ -433,6 +437,53 @@ async function run(): Promise<void> {
     'the forged approval is audited as approve_attempt_rejected',
     rejection !== undefined,
     rejection?.msg ?? 'no such event',
+  );
+
+  // ---- the money rail, end to end ----
+  //
+  // Demo mode holds the demo rails (src/rails/demo.ts), so a deposit can be watched through
+  // every stage a real one reports without real money. The claim under test is the one the
+  // card and the agent both read: one row, one stage at a time, in order, ending confirmed
+  // with the balance moved. The click is still a click: $600 is over the $500 threshold the
+  // rule change above put in force.
+
+  const deposit = await callTool(client, 'propose_hl_deposit', { amount: 600 });
+  check(
+    'propose_hl_deposit in demo mode lands pending, with a rail behind it',
+    deposit.status === 'pending' && deposit.verdict?.outcome === 'needs_approval' && deposit.simulation?.ok === true,
+    `id=${deposit.id} status=${deposit.status} verdict=${deposit.verdict?.outcome}`,
+  );
+
+  const hlBefore = Number(((await callTool(client, 'wallet')).rows as Json[]).find(r => r.kind === 'hyperliquid')?.valueUsd ?? 0);
+  // Fired, not awaited: the approve route answers once the row lands or once the twenty second
+  // propose cap runs out, exactly as a live deposit does, so waiting here would miss the walk.
+  const clicking = postJson('/api/approve', { id: deposit.id, token });
+  const stages: string[] = [];
+  const untilSettled = Date.now() + 40_000;
+  let settledView: Json = null;
+  while (Date.now() < untilSettled) {
+    const view = await callTool(client, 'proposal_status', { id: deposit.id });
+    if (stages[stages.length - 1] !== view.stage) stages.push(view.stage);
+    settledView = view;
+    if (view.terminal === true) break;
+    await sleep(250);
+  }
+  await clicking;
+
+  check(
+    'the approved deposit walks every stage in order and lands confirmed',
+    stages.join(' -> ') === 'submitting -> KNOWN_DEPOSIT_TX -> PENDING_DEPOSIT -> PROCESSING -> SUCCESS -> crediting -> confirmed' &&
+      settledView?.settledAt !== null &&
+      settledView?.waitingOn === null,
+    stages.join(' -> '),
+  );
+
+  const hlAfter = Number(((await callTool(client, 'wallet')).rows as Json[]).find(r => r.kind === 'hyperliquid')?.valueUsd ?? 0);
+  const credited = 600 - (0.3 + (600 * 25) / 10_000);
+  check(
+    'and the wallet reads the move back, credited less the fee the card showed',
+    Math.abs(hlAfter - (hlBefore + credited)) < 0.01 && settledView?.money?.amountOut === String(credited),
+    `hyperliquid $${hlBefore.toFixed(2)} to $${hlAfter.toFixed(2)}, amountOut=${settledView?.money?.amountOut}`,
   );
 }
 

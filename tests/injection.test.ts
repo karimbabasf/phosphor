@@ -395,17 +395,27 @@ test('the one tool with a destination field never executes on its own, and a hos
     assert.ok(row?.draft, `proposal ${id} is not in the store`);
     return row.draft;
   };
-  // The attacker's account, a stranger's address, our own account, and garbage, on both sides
-  // of `where`: none executes, none gets a verdict other than refuse in a demo that holds
-  // nothing, and the draft never carries an account the door was not handed. The kind on the
-  // row is decided by `where` and by nothing the receiver string could say.
+  /* The attacker's account, a stranger's address, our own account, and garbage, on both sides
+     of `where`: none executes and none is decided by anything but a person. A receiver the app
+     cannot read is refused outright; one it can read waits for a click, at any size and with no
+     allowlist anywhere. `allow` is the outcome that must never appear, because it is the only
+     one that reaches a signature without a human. The draft never carries an account the door
+     was not handed, and the kind on the row is decided by `where` and by nothing the receiver
+     string could say. */
   for (const [where, kind] of [['intents', 'intents_send'], ['ethereum', 'intents_pay']] as const) {
     for (const to of [hostile.attacker, '0x9999999999999999999999999999999999999999', SELF[0], 'not an account', '']) {
       const r = await callTool('propose_send', { to, symbol: 'USDC', amount: 1, where, confirmed: true });
       const text = typeof r === 'string' ? r : JSON.stringify(r);
       assert.ok(!/"status":"executed"/.test(text), `a send to ${JSON.stringify(to)} on ${where} executed`);
       if (typeof r === 'object' && r !== null && typeof (r as { id?: unknown }).id === 'string') {
-        assert.equal((r as { verdict?: { outcome?: string } }).verdict?.outcome, 'refuse', `a send to ${JSON.stringify(to)} on ${where} was not refused: ${text.slice(0, 200)}`);
+        const outcome = (r as { verdict?: { outcome?: string } }).verdict?.outcome;
+        const status = (r as { status?: string }).status;
+        assert.notEqual(outcome, 'allow', `a send to ${JSON.stringify(to)} on ${where} was allowed: ${text.slice(0, 200)}`);
+        assert.equal(
+          outcome === 'refuse' ? status === 'policy_refused' : status === 'pending',
+          true,
+          `a send to ${JSON.stringify(to)} on ${where} landed ${status} under ${outcome}: ${text.slice(0, 200)}`,
+        );
         const draft = stored((r as { id: string }).id);
         assert.equal(draft.kind, kind);
         assert.equal(String(draft.from).toLowerCase(), SELF[0].toLowerCase());

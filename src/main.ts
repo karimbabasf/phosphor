@@ -25,6 +25,7 @@ import { loadPolicy, savePolicy, defaultPolicy } from './policy/file.ts';
 import { renderSentences } from './policy/render.ts';
 import { missingVenues, proposeVenueGap } from './policy/venues.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
+import { demoStallSweep } from './rails/demo.ts';
 import { usdcCreditedSince } from './rails/hl-user-signed.ts';
 import { createLedger, intentsAccountId, REFRESH_PERIOD_MS } from './ledger/index.ts';
 import { oneClickClient, type OneClickStatus, type TokensFile } from './intents.ts';
@@ -467,10 +468,18 @@ const tradeDeps: TradeDeps = {
   free: () => tradeService?.free() ?? null,
 };
 
-// The dispatch table for swap, hyperliquid deposit and LP add/remove. Empty in demo
-// mode, where there is a fixture and no chain, so a rail proposal refuses rather than
-// reaching for an RPC and a private key.
-const rails = createRails({ cfg, tokens, trade: tradeDeps, prices: () => ledger.snapshot().prices });
+/* The dispatch table for swap, the two Hyperliquid moves and the two sends. In demo mode it
+   holds the demo rails instead (src/rails/demo.ts): the same five kinds, walking the same
+   stages against the fixture, signing nothing and reaching for no chain. `refresh` is theirs:
+   a demo move changes the fixture's balances and the row waiting on them is judged against the
+   read that shows it. */
+const rails = createRails({
+  cfg,
+  tokens,
+  trade: tradeDeps,
+  prices: () => ledger.snapshot().prices,
+  refresh: () => ledger.refresh(),
+});
 
 /* How reconcile re-checks a 1Click order by the quote handle a rail recorded. The same client
    the rails hold; only the read is used here, and it never signs. Absent in demo mode, where
@@ -581,10 +590,16 @@ setInterval(sweepOpenProposals, RECONCILE_SWEEP_MS).unref?.();
    that "late" appears on the card near the minute it becomes true rather than nine minutes
    after. It writes a stamp and never a verdict: the status underneath is untouched and a later
    credit still settles the row forward. */
-const STALL_SWEEP_MS = 30_000;
+/* Demo mode can be told to call a row late in seconds rather than in the ten minutes a real
+   move is given, so the stalled card can be looked at without waiting out a real deadline. It
+   is the sweep's clock that moves, never DEADLINE_SEC: the shipped table is what a mainnet
+   install runs on and nothing here can reach it. Null in every other mode, whatever the
+   environment says (src/rails/demo.ts). */
+const demoStall = demoStallSweep(cfg);
+const STALL_SWEEP_MS = demoStall?.everyMs ?? 30_000;
 setInterval(() => {
   try {
-    proposals.markStalled();
+    proposals.markStalled(demoStall?.now());
   } catch (err) {
     audit.append('error', `the stall sweep failed: ${err instanceof Error ? err.message : String(err)}`);
   }

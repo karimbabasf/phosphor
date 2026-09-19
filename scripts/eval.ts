@@ -62,6 +62,18 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/* How fast the demo money rail walks its stages here (src/rails/demo.ts). It takes about
+   twenty five seconds by default, which is the point of it and far too long for a graded turn:
+   a propose that auto-approves holds its reply until the rail answers, so the card in the
+   conversation would arrive a walk later. A fiftieth of that is still every stage in order.
+   An env var set outside this script wins, so a scenario that wants to watch a real pending
+   stage can ask for one: PHOSPHOR_DEMO_STAGE_SCALE=1 node scripts/eval.ts.
+   The other two knobs (PHOSPHOR_DEMO_STALL, PHOSPHOR_DEMO_DEADLINE_SEC) are not set here:
+   a scenario that wants a stalled row seeds one through `pre.proposals`. */
+function demoRailSpeed(): Record<string, string> {
+  return { PHOSPHOR_DEMO_STAGE_SCALE: process.env.PHOSPHOR_DEMO_STAGE_SCALE ?? '0.02' };
+}
+
 function cleanEnv(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (typeof value === 'string') out[key] = value;
@@ -212,7 +224,7 @@ async function bootApp(stage: string, scenario: Scenario): Promise<App> {
   const output: string[] = [];
   const child = spawn(process.execPath, ['src/main.ts'], {
     cwd: stage,
-    env: { ...cleanEnv(), ACC_PORT: String(port), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir },
+    env: { ...cleanEnv(), ACC_PORT: String(port), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir, ...demoRailSpeed() },
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as AppProcess;
   child.stdin.write(`${token}\n`);
@@ -577,7 +589,7 @@ async function probeTools(stage: string): Promise<Set<string>> {
     command: process.execPath,
     args: [path.join(stage, 'src', 'mcp.ts')],
     cwd: stage,
-    env: { ...cleanEnv(), ACC_PORT: String(app.port), ACC_MODE: 'demo', ACC_DATA_DIR: app.dataDir },
+    env: { ...cleanEnv(), ACC_PORT: String(app.port), ACC_MODE: 'demo', ACC_DATA_DIR: app.dataDir, ...demoRailSpeed() },
   });
   const client = new Client({ name: 'phosphor-eval-probe', version: '0.1.0' });
   await client.connect(transport);

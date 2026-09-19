@@ -45,6 +45,7 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { createRails, venueAllowlist } from '../../src/rails/index.ts';
+import { isDemoRail } from '../../src/rails/demo.ts';
 import { HYPERCORE_COUNTERPARTY } from '../../src/rails/hypercore-deposit.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from '../../src/rails/intents-native.ts';
 import { ONECLICK_COUNTERPARTY } from '../../src/intents.ts';
@@ -586,13 +587,18 @@ test('the live registry holds every rail kind and nothing else', () => {
   assert.equal(swapRail.kind, 'swap');
 });
 
-test('demo mode owns no rails, and a rail proposal there refuses instead of reaching for a key', async () => {
+test('demo mode owns the demo rails and no live one, and a service with no registry still refuses', async () => {
   const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
   const registry = createRails({ cfg: cfgFor('demo'), tokens, trade: stubTrade });
-  assert.deepEqual(registry.kinds(), []);
-  assert.equal(registry.for({ kind: 'swap' } as WriteDraft), null);
+  // The five money kinds, walked against the fixture. A trade is not one of them: a position
+  // needs the venue's own book and a fixture has none.
+  assert.deepEqual([...registry.kinds()].sort(), ['hl_deposit', 'hl_withdraw', 'intents_pay', 'intents_send', 'swap']);
+  assert.equal(registry.for({ kind: 'trade' } as WriteDraft), null);
+  for (const kind of registry.kinds()) {
+    assert.equal(isDemoRail(registry.for({ kind } as WriteDraft)), true, `${kind} in demo mode is not the demo rail`);
+  }
 
-  // The proposal service default is the same shape: no registry means no rail can execute.
+  // The proposal service default is the other shape: no registry means no rail can execute.
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-rail-norails-'));
   savePolicy(dataDir, seededPolicy());
   const snapshot: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };

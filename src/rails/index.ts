@@ -11,15 +11,16 @@
 //      verifier changing what it holds. The chain-side 1Click venue went with the chain
 //      wallets (2026-09-16); rows it wrote still render as history.
 //
-//   2. Demo mode holds NO rails. The demo ledger is a fixture, not a chain: there is
-//      nothing for a swap to quote against and nothing for a bridge deposit to land in.
-//      An empty registry makes every rail proposal refuse with a reason that says so,
-//      which is better than a rail reaching for an RPC and a private key that the demo
-//      user never meant to involve.
+//   2. Demo mode holds NO LIVE rails. The demo ledger is a fixture, not a chain, so nothing
+//      here may reach for an RPC and a private key that the demo user never meant to involve.
+//      It holds the demo rails instead (./demo.ts): five kinds that sign nothing, send
+//      nothing and walk the stages a real rail reports, against the fixture's own balances.
+//      They are built here and only here, and only under this mode.
 
 import type { AppConfig, ChainId, Rail, WriteDraft } from '../types.ts';
 import type { TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY, oneClickClient } from '../intents.ts';
+import { demoRails } from './demo.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
 import { hypercoreWithdrawRail } from './hypercore-withdraw.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
@@ -39,7 +40,7 @@ export { isRailDraft, isRailKind, RAIL_KINDS };
 
 export type RailRegistry = {
   // The rail that owns this draft, or null when none does: policy_change rides its own path,
-  // and demo mode owns no rails at all.
+  // and a trade needs a runner no fixture has.
   for(draft: WriteDraft): Rail | null;
   kinds(): RailKind[];
 };
@@ -51,11 +52,15 @@ export type RailDeps = {
   // The ledger's prices, for the preflight's fee check (gas priced in dollars). Absent means
   // the check cannot price gas and says so; it never holds on a missing price.
   prices?: () => Record<string, number>;
+  // One ledger read, for the demo rails alone: a demo move changes the fixture's balances and
+  // the settling row has to be judged against the read that shows it. Absent means a demo move
+  // waits for the app's own poll instead.
+  refresh?: () => Promise<unknown>;
 };
 
 export function createRails(deps: RailDeps): RailRegistry {
   if (deps.cfg.mode === 'demo') {
-    return { for: () => null, kinds: () => [] };
+    return demoRails({ cfg: deps.cfg, refresh: deps.refresh ?? (async () => undefined) });
   }
 
   /* ONE 1Click client for every rail that talks to 1Click, built here and injected.
