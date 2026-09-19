@@ -243,14 +243,22 @@ test('the role is not so long it stops being read', () => {
   // longer, because S16 compressed the policy into one line and left the word ask out of it.
   // Measured 21,225.
   //
-  // THE CUMULATIVE MOVE IS 18,882 TO 21,225 IN ONE DAY, which is 12 percent, and every line of it
-  // is a live failure with a run behind it. The place to claw it back is not the prose: the
-  // capability index is two thirds of this string and it is generated.
+  // 21,950 the same evening, to undo what the line above caused. Told to name where money lands
+  // and what it costs, the agent reached for "about 7.22 USDC should land", which is on the eval's
+  // banned list as a forecast, and it cost S1, S8 and S9 in one run. So an expected amount is what
+  // the quote says ("the quote puts 7.22 USDC in the account"), the simulation notes are where a
+  // cost's parts come from, and "the app keeps watching" belongs to a move past its typical figure
+  // rather than to every move in flight, where it is reassurance with no number. Measured 21,738.
+  //
+  // THE CUMULATIVE MOVE IS 18,882 TO 21,738 IN ONE DAY, which is 15 percent, and every line of it
+  // is a live failure with a run behind it. It is also four raises in a day, which is the number
+  // worth arguing with. The place to claw it back is not the prose: the capability index is two
+  // thirds of this string and it is generated.
   //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 21450, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 21950, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -332,9 +340,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // sentences and one worked example the agent has to carry, because a send it misunderstood
   // is money gone. 18,000 on 2026-09-18, the same 1,600 the plain ceiling above moved by and for
   // the same reasons. The number is still a ceiling, not a target.
-  // 22,550 on 2026-09-19, tracking the plain ceiling above and moved for the same reasons.
+  // 23,050 on 2026-09-19, tracking the plain ceiling above and moved for the same reasons.
   // The number is still a ceiling, not a target.
-  assert.ok(text.length < 22550, `the role is ${text.length} characters with a full profile`);
+  assert.ok(text.length < 23050, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {

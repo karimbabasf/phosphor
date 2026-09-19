@@ -46,9 +46,10 @@ export const BANNED: Array<{ re: RegExp; allow?: RegExp; needsStatusRead?: boole
      land" is the opposite: it is the question S9 and S10 exist to make the agent ask, so the
      permitted shape is cut out of the text before the ban is applied to what is left. It is
      "whether" as often as "where" ("say whether the 2 USDC should land on a chain or inside NEAR
-     Intents"), and the subject between the two can be a figure with a token after it, so the
-     allowance takes both words and a longer gap. */
-  { re: /should land/i, allow: /\b(where|whether)(?:\s+[\w,.$]+){0,6}\s+should land\b/gi, why: '"should land"' },
+     Intents"), and "which network it should land on" is the same question with the noun in front
+     of it, so the allowance takes all three words and a longer gap. What stays banned is the
+     forecast about a move already in flight, which is every use of it with no question attached. */
+  { re: /should land/i, allow: /\b(where|whether|which)(?:\s+[\w,.$]+){0,6}\s+should land\b/gi, why: '"should land"' },
   { re: /any minute/i, why: '"any minute"' },
   { re: /probably (fine|worked)/i, why: '"probably fine" or "probably worked"' },
   { re: /it('s| is) done\b/i, needsStatusRead: true, why: '"it is done" with no read of the row before it' },

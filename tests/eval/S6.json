@@ -124,7 +124,7 @@
   ],
   "mustSay": [
     "22\\s*m|22 minutes",
-    "180|3 minutes",
+    "180|(3|three)\\s*min",
     "late"
   ],
   "mustNotSay": [
