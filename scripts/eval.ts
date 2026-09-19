@@ -62,16 +62,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/* How fast the demo money rail walks its stages here (src/rails/demo.ts). It takes about
-   twenty five seconds by default, which is the point of it and far too long for a graded turn:
-   a propose that auto-approves holds its reply until the rail answers, so the card in the
-   conversation would arrive a walk later. A fiftieth of that is still every stage in order.
-   An env var set outside this script wins, so a scenario that wants to watch a real pending
-   stage can ask for one: PHOSPHOR_DEMO_STAGE_SCALE=1 node scripts/eval.ts.
+/* How fast the demo money rail walks its stages here (src/rails/demo.ts): at its own speed, about
+   twenty five seconds, which is what a scenario is meant to be graded against. It ran at a
+   fiftieth of that while a propose held its reply until the rail answered, because the card in
+   the conversation arrived a whole walk after the call and S1's one second window could not be
+   met. The reply is the decision now, so the card lands at once whatever the rail is doing, and
+   a scenario that waits on a stage is waiting on the real thing.
+   An env var set outside this script still wins, for a faster sweep of the graders themselves.
    The other two knobs (PHOSPHOR_DEMO_STALL, PHOSPHOR_DEMO_DEADLINE_SEC) are not set here:
    a scenario that wants a stalled row seeds one through `pre.proposals`. */
 function demoRailSpeed(): Record<string, string> {
-  return { PHOSPHOR_DEMO_STAGE_SCALE: process.env.PHOSPHOR_DEMO_STAGE_SCALE ?? '0.02' };
+  return { PHOSPHOR_DEMO_STAGE_SCALE: process.env.PHOSPHOR_DEMO_STAGE_SCALE ?? '1' };
 }
 
 function cleanEnv(): Record<string, string> {

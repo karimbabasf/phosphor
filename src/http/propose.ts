@@ -15,21 +15,24 @@ import type { JsonBody } from './respond.ts';
 import { CHAINS, PROPOSE_KINDS } from './context.ts';
 import type { Ctx } from './context.ts';
 
-/* How long a propose holds its reply open for the rail. Under the proxy's thirty second budget
-   with room for the reply to travel, and the whole of the fix for 2026-09-15: a rail that ran
-   43 s answered nothing, the proxy said the app was not running, the agent proposed again, and
-   "deposit $10" moved $20. Past this the reply carries the `executing` row and says where the
-   answer will appear. */
-export const PROPOSE_REPLY_CAP_MS = 20_000;
+/* THE REPLY IS THE DECISION, NEVER THE SETTLEMENT.
+   This used to wait up to twenty seconds for the rail before answering, so the card in the
+   conversation appeared that long after the agent's call: Karim clicked, then watched nothing
+   happen. The decision is made the moment the policy allows or the person clicks, and the
+   executor has the `executing` row on disk before the rail's first network call. That row, with
+   its view, is the answer. The card draws on it and moves from there on the per-proposal SSE
+   frame, so the window shows the stage while the venue is still working.
+   The 2026-09-15 incident this replaces is still covered, and harder than before: no propose
+   reply ever outlives the proxy's thirty second budget, because none of them waits at all. */
 
 // What the agent gets back from any propose: the id to poll, what the policy decided, what
-// the simulation said, and what the rail said if it has answered. Never the draft itself, so
-// the app's resolved addresses are not echoed to the caller that was deliberately not allowed
-// to name them. The one exception is a send (sendFacts below): the receiver is the address the
-// caller itself named, so echoing it as the chain spells it gives nothing away, and the card in
-// the conversation needs that spelling rather than the argument. The rail's sentence rides along
-// because it is the one that says "do not send this again", and a reply that carried only the
-// status word left the agent reading `failed` as a cue to retry.
+// the simulation said, the view the card draws, and what the rail said if it has answered.
+// Never the draft itself, so the app's resolved addresses are not echoed to the caller that was
+// deliberately not allowed to name them. The one exception is a send (sendFacts below): the
+// receiver is the address the caller itself named, so echoing it as the chain spells it gives
+// nothing away, and the card in the conversation needs that spelling rather than the argument.
+// The rail's sentence rides along because it is the one that says "do not send this again", and
+// a reply that carried only the status word left the agent reading `failed` as a cue to retry.
 function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): void {
   ctx.sse.broadcastState();
   sendJson(res, 200, {
@@ -37,9 +40,10 @@ function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): v
     status: proposal.status,
     verdict: proposal.verdict,
     simulation: proposal.simulation,
+    view: ctx.proposals.view(proposal),
     ...(proposal.result === undefined ? {} : { result: proposal.result }),
     ...sendFacts(proposal),
-    ...(proposal.status === 'executing' ? { next: 'executing: read proposal_status until it settles' } : {}),
+    ...(proposal.status === 'executing' ? { next: 'executing: the window is drawing it; read proposal_status for the stage and the settled amount' } : {}),
   });
 }
 
@@ -207,7 +211,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         existing: existing.id,
         clientKey: key,
       });
-      sendProposal(ctx, res, await ctx.proposals.settled(existing.id, PROPOSE_REPLY_CAP_MS));
+      sendProposal(ctx, res, existing);
       return;
     }
   }
@@ -257,12 +261,12 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
   let landed = false;
   const problems: string[] = [];
 
-  // The id is remembered before the wait, so a repeat arriving during it is told which row it
-  // is repeating; the reply is the row as it stands when the rail answers or the cap runs out.
-  const respond = async (proposal: Proposal): Promise<void> => {
+  // The id is remembered before the reply goes out, so a repeat arriving while the rail runs is
+  // told which row it is repeating rather than doubling it.
+  const respond = (proposal: Proposal): void => {
     landed = true;
     ctx.duplicates.remember(kind, params, session, proposal.id);
-    sendProposal(ctx, res, await ctx.proposals.settled(proposal.id, PROPOSE_REPLY_CAP_MS));
+    sendProposal(ctx, res, proposal);
   };
 
   try {
@@ -290,7 +294,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      await respond(
+      respond(
         await ctx.proposals.proposeSwap({
           chain,
           toChain,
@@ -323,7 +327,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      await respond(await ctx.proposals.proposeTrade({ plan, planId, by: session, clientKey }));
+      respond(await ctx.proposals.proposeTrade({ plan, planId, by: session, clientKey }));
       return;
     }
     if (kind === 'trade_change') {
@@ -336,7 +340,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      await respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close, clientKey }));
+      respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close, clientKey }));
       return;
     }
     if (kind === 'hl_deposit') {
@@ -348,7 +352,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      await respond(await ctx.proposals.proposeHlDeposit({ symbol, amount, clientKey }));
+      respond(await ctx.proposals.proposeHlDeposit({ symbol, amount, clientKey }));
       return;
     }
     if (kind === 'hl_withdraw') {
@@ -359,7 +363,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      await respond(await ctx.proposals.proposeHlWithdraw({ amount, clientKey }));
+      respond(await ctx.proposals.proposeHlWithdraw({ amount, clientKey }));
       return;
     }
     if (kind === 'send') {
@@ -384,7 +388,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      await respond(await ctx.proposals.proposeSend({ to, symbol, amount, where, note, clientKey }));
+      respond(await ctx.proposals.proposeSend({ to, symbol, amount, where, note, clientKey }));
       return;
     }
     if (kind === 'policy_change') {
@@ -395,7 +399,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, `sentence is ${sentence.length} characters, over the ${SENTENCE_MAX} this field takes`);
         return;
       }
-      await respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence, clientKey }));
+      respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence, clientKey }));
       return;
     }
     fail(res, 400, `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}`);

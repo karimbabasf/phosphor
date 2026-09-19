@@ -116,10 +116,15 @@ test('the same session repeating while the first is still running is refused wit
   assert.match(String(again.json.error), /proposal_status/);
   assert.equal(h.store.list().length, 1, 'one row, not two');
 
-  slow.release({ ok: true, detail: 'done', txids: ['h1'] });
+  // The first reply is the decision, so it is already in hand while the rail is out: it says
+  // `executing` and the settled row appears on the store when the rail answers.
   const reply = await first;
-  assert.equal(reply.json.status, 'executed');
+  assert.equal(reply.json.status, 'executing');
   assert.equal(again.json.duplicate, reply.json.id);
+
+  slow.release({ ok: true, detail: 'done', txids: ['h1'] });
+  await h.svc.settle(5_000);
+  assert.equal(h.store.get(String(reply.json.id))?.status, 'executed');
 });
 
 /* The window holds for an UNCONFIRMED first move too. needs_reconciliation read as terminal, so
@@ -132,7 +137,9 @@ test('a same-session repeat of a move that landed unconfirmed is refused with th
   const door = makeHttp({ proposals: h.svc, dataDir: h.dataDir });
   const first = await door.post('hl_deposit', { amount: 10 }, 'agent-a');
   assert.equal(first.status, 200, JSON.stringify(first.json));
-  assert.equal(first.json.status, 'needs_reconciliation');
+  assert.equal(first.json.status, 'executing', 'the reply is the decision, and the rail answers behind it');
+  await h.svc.settle(5_000);
+  assert.equal(h.store.get(String(first.json.id))?.status, 'needs_reconciliation');
 
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   const again = await door.post('hl_deposit', { amount: 10 }, 'agent-a');
