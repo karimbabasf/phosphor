@@ -38,6 +38,7 @@ function load(): Sandbox {
     },
     document: { createElement: () => ({}), getElementById: () => null, addEventListener: () => {} },
     console,
+    URL,
   };
   createContext(sandbox);
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
@@ -204,15 +205,20 @@ function dockFor(proposal: Record<string, any>, state: Record<string, any> = {},
       addEventListener: () => {},
     },
     console,
+    URL,
   };
   sandbox.document.createElementNS = (_ns: string, tag: string) => makeNode(tag);
   createContext(sandbox);
+  runInContext(readFileSync(new URL('../../ui/core/links.js', import.meta.url), 'utf8'), sandbox,
+    { filename: 'ui/core/links.js' });
   runInContext(readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8'), sandbox,
     { filename: 'ui/core/dom.js' });
   runInContext(readFileSync(new URL('../../ui/screens/checks.js', import.meta.url), 'utf8'), sandbox,
     { filename: 'ui/screens/checks.js' });
   runInContext(readFileSync(new URL('../../ui/screens/sendcard.js', import.meta.url), 'utf8'), sandbox,
     { filename: 'ui/screens/sendcard.js' });
+  runInContext(readFileSync(new URL('../../ui/screens/cards.js', import.meta.url), 'utf8'), sandbox,
+    { filename: 'ui/screens/cards.js' });
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
   sandbox.window.PhosphorDecision.boot();
   sandbox.window.PhosphorDecision.render();
@@ -354,7 +360,7 @@ test('a trade reads as a sentence with its risk facts, and a change shows old an
   assert.ok(text.includes('66000'), 'the target');
   assert.ok(text.some((t) => t.includes('61570.12')), 'the liquidation');
   assert.equal(text.some((t) => t.includes('No fee was quoted')), false, 'a trade card carries no empty fee line');
-  assert.ok(text.includes('The plan, in full'));
+  assert.ok(text.includes('The rest of it'), 'the rail\'s lines are behind the one fold');
 
   const change = cardFor({
     id: 'p5',
@@ -412,7 +418,9 @@ test('an open trade card carries every risk fact the spec names, each under its 
   assert.equal(byLabel['Target'], '3000');
   assert.equal(byLabel['Liquidation near'], '3789.47');
   assert.equal(byLabel['Expires'], '2026-09-12T10:00:00.000Z');
-  assert.ok('Why you are being asked' in byLabel);
+  assert.equal('Why you are being asked' in byLabel, false, 'the rule is a fact beside the risk again');
+  assert.ok(textOf(card).some((t) => t.includes('Why you are being asked: $60.00 is above the $10.00 click threshold.')),
+    'the rule that stopped it is behind the fold');
   assert.equal('What it costs' in byLabel, false, 'a trade card carries no fee line');
   const text = textOf(card);
   assert.ok(text.includes('Open a short on ETH'));
@@ -497,10 +505,11 @@ test('a hostile symbol and note reach the trade card as text only', () => {
     for (const child of n.childNodes) walk(child);
   };
   walk(card);
-  assert.deepEqual([...tags].sort(), ['button', 'div', 'h2', 'p', 'span'], 'the card built an element it never builds');
+  assert.deepEqual([...tags].sort(), ['button', 'div', 'p', 'path', 'section', 'span', 'svg'],
+    'the card built an element it never builds');
   const text = textOf(card);
   assert.ok(text.includes('Open a long on ' + symbol), 'the symbol is one text node, markup and all');
-  assert.ok(text.includes(summary), 'the summary is one text node, the note inside it');
+  assert.ok(text.some((t) => t.includes(summary)), 'the summary is one text node, the note inside it');
   // Nothing on the card says who decided: the assistant's note is under the rail's summary,
   // and the only labels are the card's own.
   const labels = find(card, 'label').map((n) => n.textContent);
@@ -672,17 +681,28 @@ test('a held deposit shows what it is waiting for and the checks, and offers not
    2026-09-18 a swap card ran past the dock's share of the column and Yes and No
    sat below the fold, behind a scrollbar macOS hides: a request with no visible
    way to answer it. */
-test('the answer lives in the foot, under a body that scrolls', () => {
+/* THE ANSWER COMES AFTER THE FACTS. The buttons used to live in the foot, which
+   does not scroll, so at 390 a live Yes sat under a card whose address and whose
+   rule diff were both below the fold. They are in the body now, under the facts,
+   in the same scroll, and the fold of secondary lines comes after them. */
+test('the answer comes after the facts, in the same scroll as them', () => {
   const card = cardFor(swapProposal());
   const body = find(card, 'dock-body');
   const foot = find(card, 'dock-foot');
   assert.equal(body.length, 1, 'no body');
   assert.equal(foot.length, 1, 'no foot');
   assert.equal(card.childNodes.length, 2, 'the card holds the body and the foot and nothing beside them');
-  assert.ok(find(body[0], 'title').length === 1, 'the headline is in the body');
-  assert.equal(find(body[0], 'btn').length, 0, 'a button is in the scrolling body');
-  assert.equal(find(foot[0], 'btn').length, 2, 'No and Yes are not both in the foot');
-  assert.deepEqual(find(foot[0], 'btn-label').map((l) => l.textContent), ['No', 'Yes']);
+  assert.ok(find(body[0], 'tcard-title').length === 1, 'the move card is in the body');
+  assert.equal(find(foot[0], 'btn').length, 0, 'a button is pinned over the facts in the foot');
+  const kids = body[0].childNodes;
+  const actionsAt = kids.findIndex((n: Node) => String(n.className).includes('dock-actions'));
+  const cardAt = kids.findIndex((n: Node) => String(n.className).includes('tcard'));
+  const whereAt = kids.findIndex((n: Node) => String(n.className).includes('destinations'));
+  assert.ok(actionsAt > cardAt, 'the answer comes before the move it is about');
+  assert.ok(whereAt === -1 || actionsAt > whereAt, 'the answer comes before the address it sends to');
+  const foldAt = kids.findIndex((n: Node) => String(n.className).includes('dock-report'));
+  assert.ok(foldAt === -1 || foldAt > actionsAt, 'the fold of secondary lines is above the answer');
+  assert.deepEqual(find(body[0], 'btn-label').map((l) => l.textContent), ['No', 'Yes']);
 });
 
 /* The swap card says what the rail checked, as numbers under labels, and the
@@ -692,14 +712,15 @@ test('the answer lives in the foot, under a body that scrolls', () => {
    address under "Where it goes" for money that never leaves the account. */
 test('a swap card draws the rail\'s numbers as facts, the deciding rule as the reason, and says the money stays put', () => {
   const card = cardFor(swapProposal());
-  const facts = Object.fromEntries(find(card, 'fact').map((row) => textOf(row)));
-  assert.equal(facts['You get about'], '0.017783069 SOL');
-  assert.equal(facts['At least'], '0.017605238 SOL, or it does not fill');
-  assert.equal(facts['What it costs'], '$0.0071 in fees');
-  assert.equal(facts['Takes about'], '12 seconds');
-  assert.equal('Through' in facts, false, 'the venue enum is on the card');
-  assert.equal(facts['Why you are being asked'], '$2.00 is above the $1.00 click threshold.');
   const text = textOf(card);
+  /* The rail's numbers are the card's own rows now: what leaves, what arrives,
+     and the fee beside them. The labelled facts block is gone. */
+  assert.equal(find(card, 'fact').length, 0, 'the old facts block is still drawn');
+  assert.ok(text.some((t) => t.includes('0.017783069')), 'what arrives is on the card');
+  assert.ok(text.some((t) => t.includes('fee $0.0071')), 'the fee is on the card');
+  assert.ok(text.some((t) => t.includes('at least 0.017605238 SOL')), 'the floor is on the card');
+  assert.ok(text.some((t) => t.includes('Why you are being asked: $2.00 is above the $1.00 click threshold.')),
+    'the rule that stopped it is behind the fold');
   assert.equal(text.some((t) => t.includes('No fee was quoted')), false);
   assert.equal(text.some((t) => t.includes('swap of $2.00 to intents.near')), false, 'the engine\'s restatement is on the card');
   assert.equal(text.includes('intents-native'), false, 'the venue id is on the card as its own text');
@@ -740,10 +761,12 @@ test('a card with no structured facts opens the rail\'s report and never claims 
     simulation: { ok: true, summary: 'Fund Hyperliquid perps from the intents balance.\n  cost      0.0388 USDC, 0.39 percent of the deposit' },
     verdict: { outcome: 'needs_approval', reasons: ['hl_deposit of $10.00 to hyperliquid-perps.', '$10.00 is above the $1.00 click threshold.'] },
   });
-  const facts = Object.fromEntries(find(card, 'fact').map((row) => textOf(row)));
-  assert.equal(facts['What it costs'], 'See what the venue reports, below.');
+  /* A rail that priced nothing gets no fee row at all rather than a row saying
+     a fee was not quoted, and its own lines are the disclosure. */
+  assert.equal(find(card, 'fact').length, 0, 'the old facts block is still drawn');
+  assert.equal(textOf(card).some((t) => /No fee was quoted/.test(t)), false);
   const report = find(card, 'dock-report');
-  assert.equal(report[0]?.getAttribute('data-open'), 'true');
+  assert.equal(report.length, 1, 'the rail\'s lines have nowhere to be read');
   assert.ok(textOf(card).some((t) => t.includes('0.0388 USDC')));
 });
 
@@ -754,8 +777,9 @@ test('a card with no structured facts opens the rail\'s report and never claims 
 test('a Yes that fails puts the problem in the foot and hands the buttons back', async () => {
   const ui = dockFor(swapProposal(), {}, { approve: () => Promise.reject(new Error('The app is not answering. It may have stopped.')) });
   const foot = find(ui.card, 'dock-foot')[0];
-  const yes = find(foot, 'btn').find((b) => String(b.className).includes('btn-primary'))!;
-  const no = find(foot, 'btn').find((b) => String(b.className).includes('btn-ghost'))!;
+  const body = find(ui.card, 'dock-body')[0];
+  const yes = find(body, 'btn').find((b) => String(b.className).includes('btn-primary'))!;
+  const no = find(body, 'btn').find((b) => String(b.className).includes('btn-ghost'))!;
   assert.equal(find(foot, 'dock-note').length, 0, 'a note is up before anything went wrong');
   fire(yes, 'click');
   assert.equal(yes.disabled, true, 'Yes still takes a click while the first one is in flight');
@@ -770,7 +794,7 @@ test('a Yes that fails puts the problem in the foot and hands the buttons back',
   assert.equal(foot.firstChild, note[0], 'the note is not the first thing in the foot');
   assert.equal(yes.disabled, false, 'Yes stays dead after a click that did not land');
   assert.equal(no.disabled, false);
-  assert.equal(find(find(ui.card, 'dock-body')[0], 'dock-note').length, 0, 'the error is in the scrolling body');
+  assert.equal(find(body, 'dock-note').length, 0, 'the error scrolled away with the buttons');
 });
 
 /* A TOUCH ID DIALOG THAT CLOSES WITHOUT AN ANSWER puts the row back to pending
@@ -790,7 +814,7 @@ test('a row back from Touch ID with no answer says so, over live buttons, until 
   assert.equal(note.length, 1, 'the card came back blank');
   assert.equal(note[0].getAttribute('data-tone'), 'warn');
   assert.deepEqual(textOf(note[0]), ['Touch ID closed without an answer. Nothing moved. Yes asks again.']);
-  const buttons = find(foot, 'btn');
+  const buttons = find(find(ui.card, 'dock-body')[0], 'btn');
   assert.ok(buttons.every((b) => b.disabled === false), 'the buttons are dead on a row that is pending');
   // A heartbeat that changes nothing keeps the note; the next click clears it.
   ui.render();
@@ -817,17 +841,24 @@ test('the lock banner is at the top of the body and the queue line is in the foo
   const banner = find(body, 'banner')[0];
   assert.ok(banner, 'no lock banner');
   const kids = body.childNodes;
-  const amountAt = kids.findIndex((n: Node) => String(n.className).includes('headline'));
-  assert.equal(kids.indexOf(banner), amountAt + 1, 'the banner is not right under the amount');
-  assert.deepEqual(find(find(locked, 'dock-foot')[0], 'btn-label').map((l) => l.textContent), ['No', 'Unlock']);
+  const cardAt = kids.findIndex((n: Node) => String(n.className).includes('tcard'));
+  assert.ok(cardAt >= 0, 'the move card is not in the body');
+  assert.equal(kids.indexOf(banner), cardAt + 1, 'the banner is not right under the move it is about');
+  assert.deepEqual(find(body, 'btn-label').map((l) => l.textContent), ['No', 'Unlock']);
 
+  /* Everything else waiting is one line at the top of the card, and it is the
+     only way another request reaches the card. */
   const ui = dockFor(swapProposal(), { proposals: [swapProposal(), swapProposal({ id: 's0', createdAt: '2026-09-18T17:00:00.000Z' })] });
-  const foot = find(ui.card, 'dock-foot')[0];
-  assert.deepEqual(find(foot, 'dock-queue').map((q) => q.textContent), ['One more request after this one.']);
+  const askBody = find(ui.card, 'dock-body')[0];
+  const next = find(askBody, 'dock-next');
+  assert.equal(next.length, 1, 'nothing says another request is waiting');
+  assert.ok(textOf(next[0]).some((t) => t.includes('1 more waiting, next')), textOf(next[0]).join(' | '));
+  assert.equal(askBody.childNodes.indexOf(next[0]), 0, 'the waiting line is not the first thing in the card');
 });
 
 test('the dock never claims a click is done; it says approved and lets the receipt say the rest', () => {
   assert.equal(/'Done\.'/.test(SOURCE), false, 'a Yes is flashed as Done. before the rail has run');
-  assert.ok(SOURCE.includes("'Approving', 'Approved.'"));
+  assert.ok(SOURCE.includes("'data-pending-label', 'Approving'"));
+  assert.ok(SOURCE.includes("yes, 'Approved.'"));
 });
 

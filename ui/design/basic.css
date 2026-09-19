@@ -224,7 +224,7 @@
   inset: 0 calc(-1 * var(--s-2));
   z-index: -1;
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--coin, var(--beam)) 8%, transparent);
+  background: color-mix(in srgb, var(--coin, var(--live)) 8%, transparent);
   opacity: 0;
   pointer-events: none;
   transition: opacity 600ms var(--ease-out);

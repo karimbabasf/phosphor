@@ -354,6 +354,10 @@
        primary the moment there is one. */
     var primary = dom.el('button', opts.quiet ? 'btn btn-ghost btn-lg' : 'btn btn-primary btn-lg');
     primary.appendChild(dom.el('span', 'btn-label', primaryLabel));
+    /* The word the step waits under, reserved here so the box is already wide
+       enough for it: "Waiting for Touch ID" on a Create button used to run
+       straight through the border. */
+    if (opts.pending) dom.setAttr(primary, 'data-pending-label', opts.pending);
     if (opts.disabled) primary.disabled = true;
     row.appendChild(primary);
     dom.on(primary, 'click', function () { onPrimary(primary); });
@@ -518,7 +522,7 @@
 
     actions('Create wallet', function (button) {
       error.hidden = true;
-      window.PhosphorShell.setPending(button, true, 'Waiting for Touch ID');
+      window.PhosphorShell.setPending(button, true);
       api.vaultCreate()
         .then(function (answer) {
           if (answer && answer.ok === false) {
@@ -530,7 +534,7 @@
         })
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    }, { back: false });
+    }, { back: false, pending: 'Waiting for Touch ID' });
     card.appendChild(dom.el('p', 'meta', 'One Touch ID confirms it. Nothing to write down yet.'));
   }
 
@@ -552,7 +556,7 @@
         return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
       }
       error.hidden = true;
-      window.PhosphorShell.setPending(button, true, 'Restoring your wallet');
+      window.PhosphorShell.setPending(button, true);
       api.vaultRestore(words.join(' '))
         .then(function (answer) {
           if (answer && answer.ok === false) {
@@ -565,7 +569,7 @@
         })
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    }, { back: false });
+    }, { back: false, pending: 'Restoring your wallet' });
   }
 
   /* 1 */
@@ -625,7 +629,7 @@
       draft.password = one.input.value;
       if (draft.path === 'import') return go(5);
 
-      window.PhosphorShell.setPending(button, true, 'Making your wallet');
+      window.PhosphorShell.setPending(button, true);
       api.walletCreate(draft.password)
         .then(function (answer) {
           if (answer && answer.ok === false) {
@@ -641,7 +645,7 @@
         })
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    });
+    }, { pending: 'Making your wallet' });
   }
 
   /* 3 */
@@ -740,7 +744,7 @@
       var words = f.input.value.trim().split(/\s+/);
       if (words.length !== 12) return fail(error, 'That is ' + words.length + ' words. It should be twelve.');
       error.hidden = true;
-      window.PhosphorShell.setPending(button, true, 'Bringing your wallet in');
+      window.PhosphorShell.setPending(button, true);
       api.walletImport({ password: draft.password, mnemonic: words.join(' ') })
         .then(function (answer) {
           if (answer && answer.ok === false) {
@@ -752,7 +756,7 @@
         })
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    });
+    }, { pending: 'Bringing your wallet in' });
   }
 
   /* 5. The address picker when the window has one, the plain address list
@@ -825,6 +829,7 @@
     built.appendChild(dom.el('p', 'title-sm', 'Use the one built in'));
     var start = dom.el('button', 'btn btn-primary');
     start.appendChild(dom.el('span', 'btn-label', 'Start it'));
+    dom.setAttr(start, 'data-pending-label', 'Starting');
     built.appendChild(start);
     built.appendChild(dom.el('p', 'meta', 'This uses the Claude subscription already on this computer. Phosphor never sees your login.'));
     card.appendChild(built);
@@ -869,7 +874,7 @@
       });
     });
     dom.on(start, 'click', function () {
-      window.PhosphorShell.setPending(start, true, 'Starting');
+      window.PhosphorShell.setPending(start, true);
       api.driver({ action: 'start', chat: '' })
         .catch(function (err) { window.PhosphorToast.show(net.readable(err), 'down'); })
         .finally(function () { window.PhosphorShell.setPending(start, false); });

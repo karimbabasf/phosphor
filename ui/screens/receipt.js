@@ -161,8 +161,13 @@
     return text.slice(0, 6) + '...' + text.slice(-4);
   }
 
+  /* https alone was the whole check here, so any https host the server named
+     became a link the desktop shell handed to the browser. It is the one list
+     the rest of the window uses now (core/net.js), suffix matched. */
   function isHttps(url) {
-    return typeof url === 'string' && /^https:\/\//.test(url);
+    var links = window.PhosphorLinks;
+    if (!links || typeof links.explorerUrl !== 'function') return false;
+    return links.explorerUrl(url) !== null;
   }
 
   function whenText(iso) {
@@ -284,8 +289,9 @@
   }
 
   /* The server names the explorer on every txid it serves (src/explorers.ts). A
-     fill mapped on the client carries the url alone, so the same table is here for
-     that one case. */
+     fill mapped on the client carries the url alone, so the names are here for
+     that one case. Which hosts are linkable at all is core/net.js's list; this
+     one only says what to call them. */
   var EXPLORER_HOSTS = [
     ['basescan.org', 'Basescan'],
     ['arbiscan.io', 'Arbiscan'],
@@ -404,10 +410,13 @@
   function recheckButton(receipt, error, onClose) {
     var recheck = dom.el('button', 'btn btn-ghost');
     recheck.type = 'button';
-    recheck.appendChild(icon('retry'));
-    recheck.appendChild(dom.el('span', 'btn-label', 'Check it again'));
+    var face = dom.el('span', 'btn-face');
+    face.appendChild(icon('retry'));
+    face.appendChild(dom.el('span', 'btn-label', 'Check it again'));
+    recheck.appendChild(face);
+    dom.setAttr(recheck, 'data-pending-label', 'Checking');
     dom.on(recheck, 'click', function () {
-      window.PhosphorShell.setPending(recheck, true, 'Checking');
+      window.PhosphorShell.setPending(recheck, true);
       api.reconcile(receipt.id)
         .then(function (answer) {
           var status = answer && answer.status;
@@ -560,9 +569,10 @@
     if (unknown) {
       var recheck = dom.el('button', 'btn btn-primary');
       recheck.appendChild(dom.el('span', 'btn-label', 'Check it again'));
+      dom.setAttr(recheck, 'data-pending-label', 'Checking');
       actions.appendChild(recheck);
       dom.on(recheck, 'click', function () {
-        window.PhosphorShell.setPending(recheck, true, 'Checking');
+        window.PhosphorShell.setPending(recheck, true);
         api.reconcile(receipt.id)
           .then(function (answer) {
             var status = answer && answer.status;

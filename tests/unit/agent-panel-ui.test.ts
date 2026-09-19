@@ -95,13 +95,14 @@ test('the panel builds no control that decides anything', () => {
   assert.equal(/\bapprove\b|\brefuse\b/i.test(SOURCE), false, 'the panel names an approval route');
 });
 
-test('the column never reaches for the beam itself', () => {
-  // The step row dispatches phosphor:step and ui/beam/trace.js decides what
-  // lights up. Wiring the column straight to the beam would make the transcript
-  // stop working the day the beam file is not there, and the transcript is the
-  // half a person cannot do without.
-  assert.ok(SOURCE.includes('phosphor:step'), 'the column dispatches no step event');
+test('the column lights nothing outside itself', () => {
+  // It used to dispatch phosphor:step for the beam to read. The beam is gone and
+  // nothing listened after it, so the event went too: a window event with no
+  // listener is a path that cannot be read and cannot be tested. The column
+  // still reaches for nothing: it writes its own attributes and text and stops.
+  assert.equal(SOURCE.includes('phosphor:step'), false, 'the column dispatches a step event nobody reads');
   assert.equal(SOURCE.includes('PhosphorBeam'), false, 'the column calls the beam directly');
+  assert.equal(SOURCE.includes('PhosphorTrace'), false, 'the column calls the trace directly');
 });
 
 test('the phase is readable before a frame has arrived', () => {

@@ -7,9 +7,9 @@
    that decides anything. An approval is a physical click on the dock below,
    which is drawn from server state, so a transcript row cannot impersonate one.
 
-   The column never calls the beam either. Every step row dispatches
-   phosphor:step on window and ui/beam/trace.js decides what lights up, so the
-   transcript keeps working in a window where the beam file is not there.
+   The column lights nothing itself either, and it no longer announces its
+   steps: the beam that listened for them is gone, and a window event with no
+   listener is a path that cannot be read and cannot be tested.
 
    The look lives in ui/design/agent.css. This file writes state as attributes
    and text, never as style. */
@@ -245,7 +245,7 @@
   }
 
   /* The scalar arguments of a call, kept beside the row for the trace: the
-     screen a `switch` moved to is the one thing the beam has to know that the
+     screen a `switch` moved to is the one thing a listener has to know that the
      phrase does not say. Nothing nested is kept. */
   function scalarArgs(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
@@ -268,7 +268,6 @@
   var roster = [];
   var openSteps = null;
   var ticker = 0;
-  var announced = [];
 
   /* WHAT THE CENTRE SHOWS while there is no transcript: the card, or the
      connect sheet in its place. The sheet is the only thing that ever holds
@@ -305,7 +304,7 @@
 
   /* WHICH CONVERSATION THIS COLUMN IS. The stream carries every chat's events
      and the app opens up to four, so an untagged reader printed another
-     conversation's tool calls into this one and fired the beam for work this
+     conversation's tool calls into this one and lit the window for work this
      agent never did. The column adopts the first chat it hears from and
      ignores the rest. */
   var chatId = null;
@@ -451,11 +450,12 @@
     return node;
   }
 
-  function button(className, label, title) {
+  function button(className, label, title, pending) {
     var btn = dom.el('button', className);
     btn.type = 'button';
     if (title) btn.title = title;
     btn.appendChild(dom.el('span', 'btn-label', label));
+    if (pending) dom.setAttr(btn, 'data-pending-label', pending);
     return btn;
   }
 
@@ -469,14 +469,14 @@
     title.appendChild(dom.el('span', 'agent-name', 'Assistant'));
     /* THE SEAT LIGHT. One status line beside the name, in the shared grammar
        (components.css): a 6 px dot, the verb, and the seconds. The dot is
-       still while nobody is working and breathes while a call is open; the
-       verb is the state word until a tool runs, and then the tool's own
-       words. The id is how the beam finds it: ui/beam/beam.js sets data-live
-       on it while it holds a surface, and this file never writes that
-       attribute. */
+       the app's own mark, hollow while nobody is at the wheel and solid while
+       somebody is, and it never moves. What says "working" is the verb, which
+       is the tool's own words, and the clock beside it, which counts. */
     var status = dom.el('div', 'status-line agent-status');
     status.id = 'agent-status';
-    var dot = dom.el('span', 'status-dot');
+    var dot = dom.el('span', 'status-light');
+    var mark = dom.mark('status-mark');
+    if (mark) dot.appendChild(mark);
     var ring = dom.el('span', 'status-ring');
     ring.setAttribute('aria-hidden', 'true');
     dot.appendChild(ring);
@@ -494,8 +494,8 @@
        scrolled away under a transcript. Stopping an answer is the composer's
        button, where the answer was sent from. */
     var controls = dom.el('div', 'agent-controls');
-    var start = button('btn btn-primary btn-sm', 'Start your assistant');
-    var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off');
+    var start = button('btn btn-primary btn-sm', 'Start your assistant', '', 'Starting');
+    var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off', 'Turning off');
     controls.appendChild(start);
     controls.appendChild(stopAgent);
     /* The pane's own hide control (ui/split.js, drawn by trade.css), last in
@@ -517,7 +517,7 @@
     var note = dom.el('div', 'agent-note');
     note.setAttribute('role', 'status');
     var noteText = dom.el('span', 'agent-note-text');
-    var retry = button('chip agent-retry', 'Retry');
+    var retry = button('chip agent-retry', 'Retry', '', 'Starting');
     note.appendChild(noteText);
     note.appendChild(retry);
     note.hidden = true;
@@ -559,7 +559,7 @@
     emptyInner.appendChild(emptyTitle);
     emptyInner.appendChild(emptyNote);
     var emptyActions = dom.el('div', 'agent-empty-actions');
-    var startBig = button('btn btn-primary', 'Start your assistant');
+    var startBig = button('btn btn-primary', 'Start your assistant', '', 'Starting');
     var connectBtn = button('btn btn-ghost', 'Connect your own');
     emptyActions.appendChild(startBig);
     emptyActions.appendChild(connectBtn);
@@ -883,7 +883,7 @@
     chatId = null;
     failure = null;
     setPhase('starting', 'starting');
-    window.PhosphorShell.setPending(btn, true, 'Starting');
+    window.PhosphorShell.setPending(btn, true);
     api.driver({ action: 'start', chat: '' })
       .catch(function (err) {
         fail(net.readable(err), '');
@@ -905,7 +905,7 @@
       return;
     }
     var btn = node.refs.send;
-    window.PhosphorShell.setPending(btn, true, 'Stopping');
+    window.PhosphorShell.setPending(btn, true);
     api.driver({ action: action, chat: '' })
       .catch(function (err) {
         window.PhosphorToast.show(net.readable(err), 'down');
@@ -939,7 +939,7 @@
 
   function quitAssistant(node) {
     var btn = node.refs.stopAgent;
-    window.PhosphorShell.setPending(btn, true, 'Turning off');
+    window.PhosphorShell.setPending(btn, true);
     api.driver({ action: 'stop', chat: '' })
       .then(function () {
         /* Stopped is the process gone; closed is the chat gone with it, and
@@ -1103,8 +1103,7 @@
       leaves: leavesMachine(name),
       state: 'live',
       startedAt: at,
-      endedAt: null,
-      announce: true
+      endedAt: null
     };
     block.steps.push(step);
     return step;
@@ -1119,7 +1118,6 @@
       if (step.name !== name) continue;
       step.state = ok === false ? 'error' : 'done';
       step.endedAt = at;
-      step.announce = true;
       return step;
     }
     return null;
@@ -1132,9 +1130,11 @@
 
   /* One decimal up to a hundred seconds, whole seconds above it. A research call
      that ran for two minutes reads as a number rather than as a stopwatch. */
+  /* A tenth of a second up to a minute, which is where a person is watching the
+     number, and whole seconds after that, where they are watching the stage. */
   function secondsText(ms) {
     var s = Math.max(0, ms) / 1000;
-    return (s < 100 ? s.toFixed(1) : String(Math.round(s))) + ' s';
+    return (s < 60 ? s.toFixed(1) : String(Math.round(s))) + ' s';
   }
 
   function anyError(block) {
@@ -1281,13 +1281,6 @@
     }
   }
 
-  function announceStep(step, dot) {
-    if (typeof CustomEvent !== 'function' || typeof window.dispatchEvent !== 'function') return;
-    window.dispatchEvent(new CustomEvent('phosphor:step', {
-      detail: { id: step.id, name: step.name, state: step.state, node: dot, input: step.input }
-    }));
-  }
-
   /* ---------- render ---------- */
 
   /* Set by the one render that must end at the bottom whatever the scroll
@@ -1297,18 +1290,7 @@
   function renderAll() {
     for (var i = 0; i < mounts.length; i += 1) render(mounts[i], i === 0);
     jumpAll = false;
-    flushSteps();
     tickerCheck();
-  }
-
-  /* The step event carries the row's own dot, so the beam has something to fly
-     from. It goes out after the render that built the row and from the first
-     mount only: one tool call is one flight however many columns are on screen. */
-  function flushSteps() {
-    for (var i = 0; i < announced.length; i += 1) {
-      announceStep(announced[i].step, announced[i].dot);
-    }
-    announced.length = 0;
   }
 
   function render(node, primary) {
@@ -1724,10 +1706,6 @@
          for the head, and the row's own time lands with the result. */
       dom.setText(time, step.state === 'live' ? '' : secondsText(elapsedOf(step, now)));
       if (step.state === 'live') node.live.push(step);
-      if (primary && step.announce) {
-        step.announce = false;
-        announced.push({ step: step, dot: dot });
-      }
     });
   }
 
@@ -1953,9 +1931,20 @@
     if (moved) renderAll();
   }
 
-  /* Whether the row says anything the card does not: a new status, a
-     decision, a settlement, or a rail's answer where there was none. */
+  /* Whether the row says anything the card does not. The view is the first
+     question, because it is what the card draws: a stage that moved, or the
+     moment that stage moved, is the whole reason to redraw. The rest catches a
+     row the backend has not built a view for. */
   function liveMoved(shown, live) {
+    var was = shown.view || null;
+    var now = live.view || null;
+    if (!was !== !now) return true;
+    if (was && now) {
+      if (was.stage !== now.stage) return true;
+      if (was.lastChangeAt !== now.lastChangeAt) return true;
+      if ((was.settledAt || null) !== (now.settledAt || null)) return true;
+      if ((was.providerStage || null) !== (now.providerStage || null)) return true;
+    }
     if (shown.status !== live.status) return true;
     if ((shown.decidedAt || null) !== (live.decidedAt || null)) return true;
     if ((shown.settledAt || null) !== (live.settledAt || null)) return true;
@@ -1998,8 +1987,7 @@
         if (step.state !== 'live') continue;
         step.state = 'done';
         step.endedAt = Date.now();
-        step.announce = true;
-      }
+        }
       block.done = true;
       block.folded = true;
     }

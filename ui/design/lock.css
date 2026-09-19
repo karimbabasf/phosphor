@@ -7,14 +7,14 @@
    until the password is in, and the bar goes with it. A filter on a container
    re-blurs on every repaint under it and locked is the state an unattended app
    sits in longest, so the cost is bounded: nothing behind the lock paints
-   every frame (the afterglow field that used to went on 2026-09-15, and the
-   beam only runs while a flight is in the air), so the blur is rasterised
+   every frame (the afterglow field that used to went on 2026-09-15, and nothing
+   travels over the window any more), so the blur is rasterised
    once and again only when a price ticks. What is blurred is also taken out
    of reach: no pointer, no
    selection, and lock.js marks the page inert so neither the keyboard nor a
    screen reader can walk into it, which puts Freeze behind the password too.
    #page is the only thing filtered, and nothing fixed lives inside it (the
-   beam canvas, the toasts and the screens are its siblings), so the filter
+   toasts and the screens are its siblings), so the filter
    re-anchors nothing. The release is lock.js's own moment, played with
    motion.dev, so there is no transition here to fight it. */
 body[data-locked="true"] #page {
@@ -185,7 +185,7 @@ body[data-firstrun="true"] #page {
 
 /* While the unlock is in flight the button swaps its word rather than
    cross-fading it: "Unlock" leaves and the spinner with "Unlocking" takes its
-   place in the flow, so the two never read at once. */
+   place, so the two never read at once. */
 .lock-unlock .btn-label,
 .lock-unlock .btn-pending {
   transition: none;
@@ -196,7 +196,6 @@ body[data-firstrun="true"] #page {
 }
 
 .lock-unlock .btn-pending {
-  position: static;
   display: none;
 }
 

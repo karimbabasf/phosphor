@@ -172,8 +172,7 @@
     /* The deck keeps the class name trade-rail: the spotlight, the stylesheet
        and the tests all read it, and a rename would buy nothing they can see. */
     var deck = dom.el('div', 'trade-rail');
-    /* The beam's surface for everything about positions and plans
-       (ui/beam/trace.js routes trade, trade_read, propose_trade here). */
+    /* The surface that lights for everything about positions and plans. */
     deck.dataset.surface = 'position';
     deck.appendChild(buildTabs());
 

@@ -29,6 +29,8 @@ type Node = {
   removeAttribute(name: string): void;
   firstChild: Node | null;
   removeChild(c: Node): void;
+  addEventListener(type: string, fn: () => void): void;
+  querySelector(sel: string): Node | null;
 };
 
 function node(tag: string): Node {
@@ -50,6 +52,9 @@ function node(tag: string): Node {
       else n.children.splice(at, 0, c);
       return c;
     },
+    // The move card the ask draws wires a click and a key on its own head.
+    addEventListener: () => {},
+    querySelector: () => null,
     hasAttribute: (name) => name in n.attrs,
     getAttribute: (name) => n.attrs[name] ?? null,
     setAttribute(name, value) {
@@ -118,8 +123,15 @@ function load(proposals: unknown[]): { card: Node; render: () => void } {
       addEventListener: () => {},
     },
     console,
+    URL,
   };
   createContext(sandbox);
+  runInContext(readFileSync(new URL('../../ui/core/links.js', import.meta.url), 'utf8'), sandbox,
+    { filename: 'ui/core/links.js' });
+  runInContext(readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8'), sandbox,
+    { filename: 'ui/core/dom.js' });
+  runInContext(readFileSync(new URL('../../ui/screens/cards.js', import.meta.url), 'utf8'), sandbox,
+    { filename: 'ui/screens/cards.js' });
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
   const decision = (sandbox.window as { PhosphorDecision: { boot: () => void; render: () => void } }).PhosphorDecision;
   decision.boot();
@@ -228,6 +240,11 @@ test('a note in the plan reaches the card only through the summary text, never a
   assert.equal(rows.filter((r) => r.label === 'Stop').length, 1);
   assert.equal(rows.find((r) => r.label === 'Stop')?.body, '97');
   assert.equal(rows.filter((r) => r.label === 'Max loss at the stop')[0]?.body, '$61.80 with fees');
+  /* The rail's lines, the note inside them, are one text node behind the closed
+     fold. The note is never lifted out into a label of its own, which is what
+     would let an assistant's wording pass for the card's. */
   const summary = texts(ui.card).find((t) => t.includes('Note:'));
-  assert.ok(summary !== undefined && summary.startsWith('Long ETH.'), 'the note sits inside the plan-in-full block under its own label');
+  assert.ok(summary !== undefined && summary.includes('Long ETH.\nNote: Stop 1: max loss $0.00'),
+    'the note sits inside the rail\'s own lines, whole');
+  assert.equal(rows.some((r) => /note/i.test(r.label)), false, 'the note became a fact of its own');
 });

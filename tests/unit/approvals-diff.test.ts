@@ -83,18 +83,27 @@ test('a removed destination is reported as removed', () => {
   assert.deepEqual(plain(entries[0].gained), []);
 });
 
-test('a rule that is not a list is still printed whole, which is the safe direction', () => {
+/* A USD cap line carries no colon and no comma list, so the label pass cannot
+   pair it. It used to print as a removal and then an addition, for a reader to
+   pair by eye; four raised caps gave four of each. It pairs on the sentence's
+   own opening words instead, and prints as one line: what it was, then what it
+   becomes. Nothing is hidden either way. */
+test('a rule that is not a list pairs on its opening words and prints old beside new', () => {
   const before = ['Ask me before anything above $100.'];
   const after = ['Ask me before anything above $500.'];
   const entries = APPROVALS.refineDiff(APPROVALS.diffOf(before, after));
-  // No colon and no comma list, so there is nothing to reduce and nothing is hidden.
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].kind, 'swapped');
+  assert.match(entries[0].before, /\$100/);
+  assert.match(entries[0].after, /\$500/);
+});
+
+test('two rules that share no opening words are still printed whole', () => {
+  const before = ['Ask me before anything above $100.'];
+  const after = ['Refuse any single transaction above $500.'];
+  const entries = APPROVALS.refineDiff(APPROVALS.diffOf(before, after));
   assert.equal(entries.length, 2);
-  assert.deepEqual(
-    plain(entries.map((e: any) => e.sign)),
-    ['-', '+'],
-  );
-  assert.match(entries[0].text, /\$100/);
-  assert.match(entries[1].text, /\$500/);
+  assert.deepEqual(plain(entries.map((e: any) => e.sign)), ['-', '+']);
 });
 
 test('a rule added outright, with no rule it replaces, is printed whole', () => {

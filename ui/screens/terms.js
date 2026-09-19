@@ -117,6 +117,7 @@
     var row = dom.el('div', 'screen-actions');
     button = dom.el('button', 'btn btn-primary btn-lg');
     button.appendChild(dom.el('span', 'btn-label', 'Accept and continue'));
+    dom.setAttr(button, 'data-pending-label', 'Saving');
     row.appendChild(button);
     body.appendChild(row);
     dom.on(button, 'click', accept);
@@ -148,7 +149,7 @@
   function accept() {
     if (!button || button.disabled) return;
     var shell = window.PhosphorShell;
-    if (shell && typeof shell.setPending === 'function') shell.setPending(button, true, 'Saving');
+    if (shell && typeof shell.setPending === 'function') shell.setPending(button, true);
     else button.disabled = true;
     dom.setText(note, 'Saving your answer.');
     api.termsAccept().then(function (answer) {
@@ -165,7 +166,7 @@
   function fail(reason) {
     if (!button) return;
     var shell = window.PhosphorShell;
-    if (shell && typeof shell.setPending === 'function') shell.setPending(button, false, '');
+    if (shell && typeof shell.setPending === 'function') shell.setPending(button, false);
     else button.disabled = false;
     dom.setText(note, reason);
   }

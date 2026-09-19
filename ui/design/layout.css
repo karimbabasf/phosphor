@@ -45,7 +45,7 @@ html, body {
   min-width: 0;
 }
 
-/* The one page-load moment: a beam sweeps the topbar's hairline once. The
+/* The one page-load moment: a light sweeps the topbar's hairline once. The
    shell adds data-boot after first paint and removes it when the sweep is
    done, so nothing repeats. */
 .topbar::after {
@@ -55,7 +55,7 @@ html, body {
   bottom: -1px;
   height: 1px;
   width: 22%;
-  background: linear-gradient(90deg, transparent, var(--beam), transparent);
+  background: linear-gradient(90deg, transparent, var(--live), transparent);
   opacity: 0;
   transform: translateX(-100%);
   pointer-events: none;
@@ -98,13 +98,6 @@ html, body {
   letter-spacing: -0.01em;
   line-height: 1;
   color: var(--text);
-}
-
-/* The breath the conversation column's seat takes while the assistant comes
-   up (screens.css). */
-@keyframes breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
 }
 
 /* The mode switch: a segmented control whose indicator slides between the
@@ -162,7 +155,7 @@ html, body {
 /* A tab is also a surface: a tool aimed at a mode that is not on screen lands
    on its word. */
 .tab[data-glow="on"] {
-  color: var(--beam);
+  color: var(--live);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -454,6 +447,46 @@ html, body {
   padding: var(--s-5) var(--s-4);
 }
 
+/* A BAR TOO NARROW FOR THREE COLUMNS.
+
+   Under about 900 the three columns cannot all hold their content: the tabs
+   were squeezed to 8 px while their words kept painting, straight through the
+   status lines and the brake beside them. Two rows instead of a squeeze, so
+   every control keeps its word and nothing overlaps. The bar grows by one row
+   rather than shrinking anything a person reaches for, and the brake stays the
+   last thing in it. */
+@media (max-width: 899px) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "brand tabs"
+      "cluster cluster";
+    height: auto;
+    row-gap: var(--s-2);
+    padding-block: var(--s-2);
+  }
+
+  .brand { grid-area: brand; }
+
+  .tabs {
+    grid-area: tabs;
+    justify-self: end;
+  }
+
+  .status-cluster {
+    grid-area: cluster;
+    flex-wrap: wrap;
+    row-gap: var(--s-2);
+  }
+}
+
+/* Narrower still and the name does not fit beside the modes. The mark carries
+   it: it is the thing the app is recognised by, and it is still the whole
+   brand block, so the bar keeps its anchor. */
+@media (max-width: 479px) {
+  .brand-word { display: none; }
+}
+
 /* ---------- Stacked: the world above, the conversation docked below ---------- */
 
 @media (max-width: 959px) {
@@ -469,6 +502,128 @@ html, body {
   .split-v { order: 2; cursor: row-resize; }
   .world { order: 1; }
 }
+
+/* The ask draws the move card, so the dock says the same thing the transcript
+   says about the same move.
+
+   ONE BOX, NOT TWO. Inside the dock the card keeps its rows and gives up its
+   own edge: the amber border around the dock is already the alert, and a grey
+   card border 8 px inside it read as a second one. The rows keep their own
+   hairlines, which is what tells them apart. */
+#dock-ask .tcard {
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+
+#dock-ask .tcard-head {
+  cursor: default;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+#dock-ask .tcard-body { padding-left: 0; padding-right: 0; }
+
+/* The head says the move and its state. The amount is on the row below it, so
+   printing it here as well was the same number twice in 40 px. */
+#dock-ask .tcard-figure { display: none; }
+
+/* ONE NUMBER LEADS. What leaves is the figure the decision is about, so it is
+   the size of a figure. What arrives stays at body size under it. */
+#dock-ask .tcard-leg[data-leg="from"] .tcard-leg-amount {
+  font-size: var(--fs-28);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+#dock-ask .tcard-leg[data-leg="from"] .tcard-leg-symbol {
+  font-size: var(--fs-16);
+}
+
+.ask-expiry[data-tone="down"] { color: var(--down); }
+
+/* One axis the change moves: what it is at the left, what it was and what it
+   becomes at the right, in mono, with the multiple when the jump is ten times
+   or more. Four raised caps used to print as four removals and then four
+   additions, to pair by eye. */
+.axis-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--s-3);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+}
+
+.axis-name {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+/* The row wraps, the figures never do: $10,000 breaking across two lines as
+   "$10,00" and "0" is a number that reads as a different number. The label takes
+   its own line when the column is too narrow to hold both. */
+.axis-figures {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-left: auto;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.axis-figures > span { white-space: nowrap; }
+
+.axis-before { color: var(--text-3); }
+.axis-to { color: var(--text-3); }
+.axis-after { color: var(--text); }
+.axis-after[data-tone="down"] { color: var(--down); }
+.axis-after[data-tone="up"] { color: var(--up); }
+.axis-name.down { color: var(--down); }
+.axis-after.up { color: var(--up); }
+
+.axis-factor {
+  color: var(--down);
+  font-weight: 500;
+}
+
+/* The agent's own wording, under the app's arithmetic and named as the agent's. */
+.dock-said .body { color: var(--text-2); }
+
+/* Everything else that is waiting, as one line at the top of the card. It is the
+   only way another request reaches the card, and it takes a tap. */
+.dock-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: 28px;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  cursor: pointer;
+  transition: border-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dock-next:hover { border-color: var(--line-strong); color: var(--text); }
+}
+
+.dock-next:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* The answer sits in the body now, so the foot only exists when something has
+   to stay on screen whatever the scroll. */
+.dock-foot:empty { display: none; }
 
 /* ---------- The decision dock ---------- */
 
@@ -523,7 +678,10 @@ html, body {
   animation: cardin var(--dur-enter) var(--ease-out) both;
 }
 
+/* The cards inside the dock size themselves against this column rather than
+   against a width somebody measured while the dock was still hidden. */
 .dock-body {
+  container-type: inline-size;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;

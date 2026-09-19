@@ -81,6 +81,33 @@
   --btn-edge: color-mix(in srgb, var(--down) 40%, transparent);
 }
 
+/* THE ONE THING ON THE PAGE THAT BREATHES.
+
+   A ring just outside the live button's edge, 2.6 seconds, with the fill
+   lifting a shade under it. It runs on the dock's Approve or Yes and nowhere
+   else, and only while the answer is the person's to give: the moment the
+   click lands the button is disabled and the breath stops.
+
+   The button never changes size. The ring is a shadow spread outside the box
+   and the lift is the fill stepping, so nothing on the card moves while it
+   runs. Karim, 2026-09-18, on what went: an infinite scale pulse on a status
+   dot. This is neither a pulse nor a dot; it is the window asking once, slowly,
+   on the thing it is asking about. */
+.btn-primary[data-live="true"]:not(:disabled) {
+  animation: ask-breathe 2600ms var(--ease-in-out) infinite;
+}
+
+@keyframes ask-breathe {
+  0%, 100% {
+    background: var(--ink);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ink) 26%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, #FFFFFF 12%, var(--ink));
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--ink) 20%, transparent);
+  }
+}
+
 .btn-lg {
   min-height: 44px;
   padding: 0 var(--s-5);
@@ -94,24 +121,62 @@
 }
 
 /* A pending button keeps its width, swaps its label for the progress verb and
-   stops accepting the press. It never collapses and never jumps. */
-.btn[data-pending="true"] {
+   stops accepting the press. It never collapses and never jumps.
+
+   A pressable that can wait names the word it will wait under, as
+   data-pending-label where the button is built. Both faces then land in one
+   grid cell, and the word itself is measured by a hidden ::before, so the box
+   is as wide as the wider of the two from the first paint. The verb used to be
+   appended on the press and positioned absolute, which left it out of the
+   sizing: "Waiting for Touch ID" on a Create button ran straight through the
+   border. The reserve is a pseudo-element rather than a node so the resting
+   button still reads as its own label, to a screen reader and to anything else
+   that asks what it says. Keyed on the element and the attribute rather than on
+   .btn, because two chips wait as well: the retry in the conversation head and
+   the frost choices in the vault. */
+[data-pending="true"] {
   pointer-events: none;
   opacity: 0.72;
 }
 
-.btn[data-pending="true"] .btn-label {
+button[data-pending-label] {
+  display: grid;
+  grid-template-areas: "swap";
+  align-items: center;
+  justify-items: center;
+}
+
+button[data-pending-label] > *,
+button[data-pending-label]::before {
+  grid-area: swap;
+}
+
+button[data-pending-label]::before {
+  content: attr(data-pending-label);
+  padding-inline-start: calc(var(--spinner-size) + var(--s-2));
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Everything that is not the waiting face leaves, whatever it is called: most
+   pressables hold a .btn-label, the two chips hold a bare span. */
+[data-pending="true"] > :not(.btn-pending) {
   filter: blur(2px);
   opacity: 0;
 }
 
-.btn-label {
+button[data-pending-label] > :not(.btn-pending) {
   transition: filter var(--dur-swap) var(--ease-out),
               opacity var(--dur-swap) var(--ease-out);
 }
 
+.btn-face {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
 .btn-pending {
-  position: absolute;
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
@@ -119,12 +184,8 @@
   transition: opacity var(--dur-swap) var(--ease-out);
 }
 
-.btn[data-pending="true"] .btn-pending {
+[data-pending="true"] .btn-pending {
   opacity: 1;
-}
-
-.btn:has(.btn-pending) {
-  position: relative;
 }
 
 /* ---------- Icon ----------
@@ -183,8 +244,8 @@
 /* ---------- Spinner ---------- */
 
 .spinner {
-  width: 14px;
-  height: 14px;
+  width: var(--spinner-size);
+  height: var(--spinner-size);
   flex: 0 0 auto;
   border-radius: 50%;
   border: 1.5px solid color-mix(in srgb, currentColor 26%, transparent);
@@ -333,7 +394,7 @@
 
 /* A row whose value just changed carries the afterglow for a moment. */
 .row[data-changed="true"] {
-  background: color-mix(in srgb, var(--beam) 7%, transparent);
+  background: color-mix(in srgb, var(--live) 7%, transparent);
   transition: background-color var(--dur-glow-out) var(--ease-out);
 }
 
@@ -411,7 +472,7 @@ button.chip:active {
 }
 
 .chip[data-tone="agent"] { color: var(--agent); border-color: var(--agent-edge); }
-.chip[data-tone="beam"] { color: var(--beam); border-color: var(--beam-edge); }
+.chip[data-tone="live"] { color: var(--live); border-color: var(--live-edge); }
 .chip[data-tone="warn"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 34%, transparent); }
 .chip[data-tone="down"] { color: var(--down); border-color: color-mix(in srgb, var(--down) 34%, transparent); }
 .chip[data-tone="up"] { color: var(--up); border-color: color-mix(in srgb, var(--up) 34%, transparent); }
@@ -880,11 +941,9 @@ textarea.input {
 .tx[data-dense="true"] > .tx-sub { display: none; }
 
 /* THE STATUS LINE. What the assistant is doing right now, as a line rather
-   than a sweep: a 6 px phosphor dot that breathes while work is in flight,
-   the verb beside it in the text colour, and the seconds elapsed in mono. The
-   dot settles to a still point when the turn ends. The breath is the one
-   animation, on transform and opacity only, and it stops under reduced
-   motion (the block at the foot of this file). */
+   than a sweep: a mark or a dot, the verb beside it in the text colour, and the
+   seconds elapsed in mono. Nothing on it pulses. The word changes and the clock
+   counts, and those are the two things that carry the state. */
 .status-line {
   display: inline-flex;
   align-items: center;
@@ -900,19 +959,10 @@ textarea.input {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--beam);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--beam) 40%, transparent);
+  background: var(--live);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 40%, transparent);
 }
 
-.status-line[data-live="true"] > .status-dot {
-  animation: status-breathe 1.8s var(--ease-in-out) infinite;
-}
-
-@keyframes status-breathe {
-  0%   { transform: scale(1); opacity: 1; }
-  50%  { transform: scale(1.3); opacity: 0.7; }
-  100% { transform: scale(1); opacity: 1; }
-}
 
 .status-line > .status-verb {
   color: var(--text);
@@ -922,12 +972,28 @@ textarea.input {
   white-space: nowrap;
 }
 
+/* THE CLOCK. On the assistant's line it is the only thing that moves, so it
+   reads as a figure rather than as a footnote: the second text tone at body
+   size, the app's mono, tabular figures, and a slot wide enough for the longest
+   value it can hold, right aligned. 9.9 s becoming 10.0 s moves nothing. */
 .status-line > .status-elapsed {
   flex: 0 0 auto;
+  min-width: 5ch;
+  text-align: right;
   font-family: var(--font-mono);
-  font-size: var(--fs-12);
-  color: var(--text-3);
+  font-size: var(--fs-13);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
+}
+
+/* The live button keeps its ring and stops asking: a still edge at the breath's
+   own strength, so the state is readable and nothing moves. */
+@media (prefers-reduced-motion: reduce) {
+  .btn-primary[data-live="true"]:not(:disabled) {
+    animation: none;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ink) 20%, transparent);
+  }
 }
 
 /* ---------- Reduced motion: opacity only, and the field freezes ---------- */
