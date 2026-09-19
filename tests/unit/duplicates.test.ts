@@ -196,3 +196,48 @@ test('an unconfirmed row with evidence still holds its claim, and one with none 
   assert.equal(stillInFlight(row({ status: 'needs_reconciliation', result: { ok: false, detail: 'x', evidence: { handle: 'dep-1' } } })), true, 'so is a handle');
   assert.equal(stillInFlight(row({ status: 'needs_reconciliation', result: { ok: false, detail: 'x', evidence: { nonce: '7' } } })), true, 'and a nonce');
 });
+
+/* THE WINDOW DOES NOT RUN OUT UNDER MONEY THAT IS STILL MOVING.
+
+   stillInFlight already held an unconfirmed row that carries a hash, a handle or a nonce, and
+   the sweep deleted the entry at ninety seconds anyway. The deposit deadline table runs to 1440
+   seconds, so a row that is needs_reconciliation at t=120 s no longer collided at all, and what
+   the agent reads on that row is `terminal: true`. After that the only things standing between
+   an agent and a second send of the same money were the reply sentence and its own judgement.
+
+   Ninety seconds stays what it is for every settled row, which is what keeps the window from
+   ever being the reason a person cannot repeat an action they meant to repeat. */
+test('a claim on a row that is still in flight outlives the window', () => {
+  let now = 1_000_000;
+  const live = new Set<string>(['prop-1']);
+  const guard = createDuplicateGuard(() => now, undefined, { inFlight: (id) => live.has(id) });
+  guard.remember('hl_deposit', SWAP, 'agent-a', 'prop-1');
+
+  now += DUPLICATE_MS * 16; // past the 1440 s deposit deadline, let alone ninety seconds
+  assert.equal(guard.find('hl_deposit', SWAP, 'agent-a')?.id, 'prop-1', 'the sender walked through its own unsettled move');
+  assert.equal(guard.find('hl_deposit', SWAP, 'agent-b')?.id, 'prop-1', 'a second agent walked through it');
+
+  live.delete('prop-1');
+  assert.equal(guard.find('hl_deposit', SWAP, 'agent-b'), null, 'and once it settles the window is long over');
+  assert.equal(guard.size(), 0, 'the entry is gone rather than merely ignored');
+});
+
+test('the cap evicts a settled entry before an unsettled one', () => {
+  let now = 1_000_000;
+  const guard = createDuplicateGuard(() => now, undefined, { inFlight: (id) => id === 'prop-0' });
+  guard.remember('hl_deposit', { ...SWAP, amountIn: 0 }, 'agent-a', 'prop-0');
+  for (let i = 1; i < 500; i++) guard.remember('swap', { ...SWAP, amountIn: i }, 'agent-a', `prop-${i}`);
+
+  assert.ok(guard.size() <= 201, `the guard is holding ${guard.size()} entries`);
+  assert.equal(guard.find('hl_deposit', { ...SWAP, amountIn: 0 }, 'agent-b')?.id, 'prop-0', 'the unsettled claim was evicted by noise');
+});
+
+test('a draft that died without calling forget still lets go of its fingerprint', () => {
+  let now = 1_000_000;
+  const guard = createDuplicateGuard(() => now, undefined, { inFlight: () => true });
+  guard.remember('swap', SWAP, 'agent-a', '');
+  assert.ok(guard.find('swap', SWAP, 'agent-b'), 'a fresh claim blocks, as it should');
+  now += DUPLICATE_MS + 1;
+  assert.equal(guard.find('swap', SWAP, 'agent-b'), null, 'a claim with no row behind it held on past the window');
+  assert.equal(guard.size(), 0);
+});

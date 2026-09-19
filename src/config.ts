@@ -51,9 +51,13 @@ const addressBookSchema = z
   })
   .strict();
 
+// The only two modes there are. Named once so the file schema and the environment override
+// below cannot drift into accepting different sets.
+const MODES = ['live', 'demo'] as const;
+
 const configSchema = z
   .object({
-    mode: z.enum(['live', 'demo']).optional(),
+    mode: z.enum(MODES).optional(),
     port: z.number().int().positive().optional(),
     addresses: addressBookSchema.optional(),
     // Retired with the consolidate path (2026-09-16). Accepted so a config.local.json written
@@ -147,6 +151,32 @@ function env(...names: string[]): string | undefined {
   return undefined;
 }
 
+/* THE MODE FROM THE ENVIRONMENT, THROUGH THE SAME ENUM AS THE FILE.
+
+   This was a bare cast, and a cast checks nothing at runtime. The damage is that the two halves
+   of the app read the mode with opposite polarity: every demo gate asks `=== 'demo'` and the
+   four safety readings in main.ts ask `=== 'live'`. So a spelling that is neither, ACC_MODE=Demo
+   from a typo or a shell that upper-cased it, took the live branch everywhere while failing the
+   live branch in main.ts: real rails, real ledger, real keystore, with the venue-credited check,
+   the one-click status, the intents prices and the recipient history all undefined. A deposit
+   then settles on the solver's word alone and a send card shows no history for the receiver.
+
+   There is no safe guess to make here. A mode nobody recognises means the operator believes
+   something about this process that is not true, so it refuses to start and says so. */
+function modeFromEnv(): Mode | undefined {
+  const raw = env('PHOSPHOR_MODE', 'ACC_MODE');
+  if (raw === undefined) return undefined; // env() already reads an empty string as absent
+  const mode = MODES.find((candidate) => candidate === raw);
+  if (mode === undefined) {
+    throw new Error(
+      `PHOSPHOR_MODE/ACC_MODE is "${raw}", which is not a mode. It must be exactly ${MODES.join(' or ')}, ` +
+        'lower case. Spelling it any other way would start the live rails, the live ledger and the ' +
+        'real keystore with four safety checks switched off, so this refuses to start instead.',
+    );
+  }
+  return mode;
+}
+
 // The data directory the app runs on when nobody says otherwise. Named because the key file
 // resolver below has to be able to recognise it.
 const DEFAULT_DATA_DIR = 'state';
@@ -181,12 +211,32 @@ function holdsWallet(keysPath: string): boolean {
   return fs.existsSync(keysPath) || fs.existsSync(keystorePathFor(keysPath));
 }
 
-function defaultKeysPath(baseDir: string, dataDir: string): string {
-  /* PHOSPHOR_APP_DATA=1 is the installed app saying this data directory is its own rather than
+function defaultKeysPath(baseDir: string, dataDir: string, mode: Mode): string {
+  /* A DEMO BOOT HAS ITS OWN WALLET AND NEVER LOOKS FOR THE REAL ONE, whatever the data
+     directory is and whatever the flag below says. The re-audit's probe set PHOSPHOR_APP_DATA=1
+     against a throwaway data dir in demo mode, and the backend opened the real ~/.phosphor
+     keystore header and reported `locked` on it. Nothing decrypted, since unlocking needs Touch
+     ID and demo refuses migrate and shred, so what leaked was the file's existence, its state
+     and its addresses. It still made the guarantee in keystore/store.ts false in the one case
+     that comment names. A demo process is a throwaway, and a throwaway does not get to know
+     whether the real wallet is there.
+
+     PHOSPHOR_APP_DATA=1 is the installed app saying this data directory is its own rather than
      one somebody pointed at. It sits under Application Support and so is not the repo default,
      but the wallet it opens is the same wallet it has always opened, and moving that on upgrade
      would be an installed app coming up as though it had no keys. Set in src-tauri/backend.rs
-     and nowhere else. */
+     and nowhere else, and it means the installed LIVE app: an installed app in demo mode is not
+     the installed app's wallet. */
+  if (mode === 'demo') {
+    /* The default data directory sits inside the working copy, and a key file inside the working
+       copy is refused outright a few lines below, so demo needs somewhere of its own to land.
+       ~/.phosphor-demo is a different directory from ~/.phosphor, not a corner of it: the live
+       resolver above never probes it, and somebody checking which wallets exist on this machine
+       can tell the two apart by name. Nothing is written there unless a demo run makes a key. */
+    const inRepo = dataDir === path.resolve(baseDir, DEFAULT_DATA_DIR);
+    if (!inRepo) return path.join(dataDir, 'keys.json');
+    return path.join(os.homedir(), '.phosphor-demo', path.basename(baseDir) || 'default', 'keys.json');
+  }
   const ownDataDir = dataDir === path.resolve(baseDir, DEFAULT_DATA_DIR) || env('PHOSPHOR_APP_DATA') === '1';
   if (!ownDataDir) {
     return path.join(dataDir, 'keys.json');
@@ -260,7 +310,7 @@ export function loadConfig(root?: string): AppConfig {
     addresses: { ...(base.addresses ?? {}), ...(local.addresses ?? {}) },
   };
 
-  const mode = (env('PHOSPHOR_MODE', 'ACC_MODE') as Mode | undefined) ?? parsed.mode ?? 'live';
+  const mode = modeFromEnv() ?? parsed.mode ?? 'live';
 
 
   const portRaw = env('PHOSPHOR_PORT', 'ACC_PORT');
@@ -268,7 +318,7 @@ export function loadConfig(root?: string): AppConfig {
   const dataDirInput = env('PHOSPHOR_DATA_DIR', 'ACC_DATA_DIR') ?? parsed.dataDir ?? DEFAULT_DATA_DIR;
   const dataDir = path.resolve(baseDir, dataDirInput);
 
-  const keysInput = env('PHOSPHOR_KEYS') ?? parsed.keysPath ?? defaultKeysPath(baseDir, dataDir);
+  const keysInput = env('PHOSPHOR_KEYS') ?? parsed.keysPath ?? defaultKeysPath(baseDir, dataDir, mode);
   const keysPath = path.resolve(keysInput.replace(/^~(?=$|\/)/, os.homedir()));
   assertOutsideRepo(keysPath, baseDir);
 

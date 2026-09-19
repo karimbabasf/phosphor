@@ -274,6 +274,228 @@ test('a patch that moves no money limit carries no limits_changed and needs no f
   const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
   const verdict = evaluate(change({ composition: { maxFreezableShare: 0.5 } }, 'Cap the freezable share at half.'), ctxOf(policy));
   assert.equal(verdict.outcome, 'needs_approval');
-  assert.deepEqual(verdict.reasonCodes, []);
+  assert.deepEqual(verdict.reasonCodes, ['composition_changed'], 'no money limit moved, so no limits_changed');
   assert.deepEqual(verdict.outcome === 'needs_approval' && verdict.changes, []);
+});
+
+/* ---------- the sentence is ABOUT the change, not merely touching its digits ----------
+
+   `namesFigure` asks one question: does this string contain these digits anywhere. The re-audit
+   walked five sentences past it, every one VERIFIED as needs_approval against a patch that took
+   the cap to $1,000,000 and the ask to $999,999 from a wallet holding $100 and $1:
+
+     1. the two axes swapped, so the reader agrees to the wrong number on each
+     2. the figures used as the FROM side, so a 10,000x loosening reads as a tightening
+     3. the figure pushed past three hundred spaces, off the end of the line a person reads
+     4. the figure pushed past five newlines, same effect
+     5. the figure written with zero-width characters through it, present to the regex, absent
+        to the eye
+
+   The digits were all there. None of those sentences describes the change. Three rules answer
+   the three different lies: the sentence has to be one line a person can actually read, every
+   dollar figure in it has to be a figure this patch is about, and where a clause names one axis
+   the figures in it have to belong to that axis. */
+
+const BIG = { outbound: { maxPerTransactionUsd: 1_000_000, humanClickAboveUsd: 999_999 } };
+const SMALL = () => policyWith({ maxPerTransactionUsd: 100, humanClickAboveUsd: 1 });
+
+function outcomeOf(sentence: string, patch: PolicyPatch = BIG, policy = SMALL()): Verdict {
+  return evaluate(change(patch, sentence), ctxOf(policy));
+}
+
+test('the five sentences the re-audit walked past the figure check are refused', () => {
+  const bypasses: Array<[string, string]> = [
+    ['axes swapped', 'Raise the ask to $1,000,000 and the cap to $999,999.'],
+    ['figures as the from side', 'Lower the cap from $1,000,000 to $100 and the ask from $999,999 to $1.'],
+    ['buried past three hundred spaces', `Tidy the limits.${' '.repeat(300)}Cap $1,000,000, ask $999,999.`],
+    ['buried past five newlines', 'Tidy the limits.\n\n\n\n\nCap $1,000,000, ask $999,999.'],
+    ['written with zero-width characters', 'Cap $1,000,000​, ask $999,999​.​'],
+  ];
+  for (const [label, sentence] of bypasses) {
+    const verdict = outcomeOf(sentence);
+    assert.equal(verdict.outcome, 'refuse', label);
+    assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'sentence_mismatch', label);
+    assert.deepEqual(verdict.reasonCodes, ['sentence_mismatch'], label);
+  }
+});
+
+test('the sentences a person would actually write still pass', () => {
+  const ok: Array<[PolicyPatch, Policy, string]> = [
+    [
+      { outbound: { humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 50 }),
+      'Ask me above $100 and refuse anything above $1,000',
+    ],
+    [
+      { outbound: { maxPerTransactionUsd: 1000 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 }),
+      'Raise the cap from $100 to $1,000',
+    ],
+    [
+      { outbound: { maxPerTransactionUsd: 100 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 1000 }),
+      'Lower the cap from $1,000 to $100',
+    ],
+    [
+      { outbound: { humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 50 }),
+      'Change my limits to $100 and $1,000.',
+    ],
+    [
+      { outbound: { humanClickAboveUsd: 250 } },
+      policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100_000 }),
+      'Ask me before anything above $250.00.',
+    ],
+    [
+      { outbound: { maxPerSessionUsd: 9000, autoApproveDailyUsd: 500 } },
+      policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 }),
+      'Hold a session to $9,000 and stop auto-approving past $500 a day.',
+    ],
+  ];
+  for (const [patch, policy, sentence] of ok) {
+    assert.equal(outcomeOf(sentence, patch, policy).outcome, 'needs_approval', sentence);
+  }
+});
+
+test('a figure the patch is not about has no business in the sentence', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 });
+  const verdict = outcomeOf('Raise the cap to $1,000,000, a rounding error next to the $40,000,000 in the fund.', { outbound: { maxPerTransactionUsd: 1_000_000 } }, policy);
+  assert.equal(verdict.outcome, 'refuse');
+  assert.match(verdict.reasons.join(' '), /\$40,000,000/);
+});
+
+test('a raise written as a fall is refused: the after figure cannot come first', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 });
+  const verdict = outcomeOf('Lower the cap from $1,000 to $100.', { outbound: { maxPerTransactionUsd: 1000 } }, policy);
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'sentence_mismatch');
+});
+
+/* ---------- the other two lists ----------
+
+   mergePatch REPLACES maxIssuerShare and forbiddenIssuers wholesale, exactly as it replaces
+   destinationAllowlist, and only the allowlist had a rule about it. So `{forbiddenIssuers: []}`
+   erased every forbidden issuer and `{maxIssuerShare: {default: 1}}` erased every named cap,
+   both unrefused and both a removal dressed as a setting. Every list field in a patch gets the
+   same rule: add what you like, take nothing away. */
+
+function compositionWith(over: Partial<Policy['composition']>): Policy {
+  const p = defaultPolicy();
+  p.composition = { ...p.composition, ...over };
+  return p;
+}
+
+test('a patch that erases the forbidden issuer list is refused', () => {
+  const policy = compositionWith({ forbiddenIssuers: ['tether', 'someissuer'] });
+  const verdict = evaluate(change({ composition: { forbiddenIssuers: [] } }, 'Tidy the issuer list.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'forbidden_issuers_shortened');
+  assert.match(verdict.reasons.join(' '), /tether/);
+});
+
+test('a patch that drops one forbidden issuer while keeping the rest is refused too', () => {
+  const policy = compositionWith({ forbiddenIssuers: ['tether', 'someissuer'] });
+  const verdict = evaluate(change({ composition: { forbiddenIssuers: ['tether'] } }, 'Keep tether forbidden.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.match(verdict.reasons.join(' '), /someissuer/);
+});
+
+test('adding a forbidden issuer is the reason the field exists, and still lands', () => {
+  const policy = compositionWith({ forbiddenIssuers: ['tether'] });
+  const verdict = evaluate(
+    change({ composition: { forbiddenIssuers: ['tether', 'someissuer'] } }, 'Forbid someissuer as well.'),
+    ctxOf(policy),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+});
+
+test('a patch that erases a named issuer cap is refused', () => {
+  const policy = compositionWith({ maxIssuerShare: { default: 1, tether: 0.2 } });
+  const verdict = evaluate(change({ composition: { maxIssuerShare: { default: 1 } } }, 'Set the default share to one.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'issuer_caps_dropped');
+  assert.match(verdict.reasons.join(' '), /tether/);
+});
+
+test('a named issuer cap may be raised, lowered or added, because the figure is on the card', () => {
+  const policy = compositionWith({ maxIssuerShare: { default: 1, tether: 0.2 } });
+  const shares: Array<Record<string, number>> = [{ default: 1, tether: 0.9 }, { default: 1, tether: 0.1 }, { default: 1, tether: 0.2, circle: 0.5 }];
+  for (const share of shares) {
+    const verdict = evaluate(change({ composition: { maxIssuerShare: share } }, 'Move the issuer shares.'), ctxOf(policy));
+    assert.equal(verdict.outcome, 'needs_approval', JSON.stringify(share));
+  }
+});
+
+test('the allowlist rule still fires on a composition-only patch path', () => {
+  const policy = policyWith({});
+  policy.outbound.destinationAllowlist = ['0xabc'];
+  const verdict = evaluate(change({ outbound: { destinationAllowlist: [] } }, 'Tidy the venue list.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'allowlist_shortened');
+});
+
+/* ---------- a change that is not a money limit still says so ----------
+
+   A composition or allowlist patch came back with reasonCodes: [] and changes: [], the same
+   shape a patch that moves nothing produces. The reader with nothing else to go on was the
+   rendered-sentence diff, which is the surface decision.js calls the "spot one changed token in
+   twenty lines of hex" problem. A code costs nothing and says which kind of change this is. The
+   axis rows themselves are a card change and are not here: changes[] is money, before, after and
+   a factor, and a share is none of those. */
+
+test('a composition patch carries a code of its own instead of nothing at all', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  const verdict = evaluate(
+    change({ composition: { maxFreezableShare: 1, maxIssuerShare: { default: 1, tether: 0.4 } } }, 'No change to any spending limit.'),
+    ctxOf(policy),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, ['composition_changed']);
+});
+
+/* The re-audit's own probe D10, and the answer it did not have: that patch names the freezable
+   share, the issuer shares and the forbidden issuers at exactly the values the default policy
+   already holds. It changes nothing, and it now says nothing rather than looking like a change
+   with no code on it. */
+test('a composition patch naming what the policy already holds is not a change', () => {
+  const verdict = evaluate(
+    change(
+      { composition: { maxFreezableShare: 1, maxIssuerShare: { default: 1 }, forbiddenIssuers: [] } },
+      'No change to any spending limit.',
+    ),
+    ctxOf(defaultPolicy()),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, []);
+});
+
+test('an allowlist addition carries its own code', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  const verdict = evaluate(
+    change({ outbound: { destinationAllowlist: ['0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef'] } }, 'Tidy the venue list.'),
+    ctxOf(policy),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, ['allowlist_changed']);
+});
+
+test('a patch that moves limits and the allowlist at once carries both codes', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 });
+  const verdict = evaluate(
+    change(
+      { outbound: { maxPerTransactionUsd: 1000, destinationAllowlist: ['0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef'] } },
+      'Refuse anything above $1,000.',
+    ),
+    ctxOf(policy),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, ['limits_changed', 'allowlist_changed']);
+});
+
+test('an allowlist named at exactly what it already holds is not a change', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  policy.outbound.destinationAllowlist = ['0xabc'];
+  const verdict = evaluate(change({ outbound: { destinationAllowlist: ['0xABC'] } }, 'Leave the venue list alone.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, []);
 });

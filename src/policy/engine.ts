@@ -120,20 +120,132 @@ function patchNamesNothing(patch: PolicyPatch): boolean {
    THE MATCH IS DELIBERATELY FORGIVING ABOUT SPELLING and strict about the number. Dollars,
    thousands separators and trailing cents are stripped from the sentence before the figure is
    looked for, so "$1,000", "1000" and "$1,000.00" all name a thousand; the boundary check is
-   what keeps "$1,000" from counting as naming a hundred. */
-function namesFigure(sentence: string, value: number): boolean {
-  const plain = sentence.replace(/[$,]/g, '');
-  return [String(value), value.toFixed(2)].some((spelling) => {
-    const pattern = new RegExp(`(?<![\\d.])${spelling.replace(/\./g, '\\.')}(?!\\d)`);
-    return pattern.test(plain);
-  });
+   what keeps "$1,000" from counting as naming a hundred.
+
+   CONTAINMENT IS NOT ABOUTNESS, and the re-audit walked five sentences through the gap. Every
+   one of them carried the right digits over a patch that took the cap to $1,000,000 and the ask
+   to $999,999 from a wallet holding $100 and $1:
+
+     1. the two axes swapped, so the reader agrees to the wrong figure on each
+     2. the figures used as the FROM side, so a 10,000x loosening reads as a tightening
+     3. the figure pushed past three hundred spaces, off the end of the line a person reads
+     4. the figure pushed past five newlines, the same effect
+     5. the figure written with zero-width characters around it, there to the regex and not to
+        the eye
+
+   So three rules stand beside the containment one, each answering a different lie, and all four
+   report as sentence_mismatch because they are one question asked four ways. */
+
+// The sentence as the matcher reads it: thousands separators out of the figures, dollar signs
+// turned into spaces. Every position below is a position in THIS string and never in the
+// original, so they stay comparable to each other.
+function plainOf(sentence: string): string {
+  return sentence.replace(/(?<=\d),(?=\d{3}(?!\d))/g, '').replace(/\$/g, ' ');
 }
+
+// Where a figure is, not merely whether it is. Both spellings can land on the same index
+// ("1000" inside "1000.00"), so the set is deduplicated before it is read as an order.
+function figurePositions(plain: string, value: number): number[] {
+  const found = new Set<number>();
+  for (const spelling of [String(value), value.toFixed(2)]) {
+    const pattern = new RegExp(`(?<![\\d.])${spelling.replace(/\./g, '\\.')}(?!\\d)`, 'g');
+    for (const match of plain.matchAll(pattern)) found.add(match.index);
+  }
+  return [...found].sort((a, b) => a - b);
+}
+
+function namesFigure(sentence: string, value: number): boolean {
+  return figurePositions(plainOf(sentence), value).length > 0;
+}
+
+/* RULE ONE: the sentence has to be one line a person can read.
+
+   A figure three hundred spaces along, or five newlines down, is in the string and off the card.
+   A figure with zero-width or bidi characters through it is on the card and not on the screen.
+   Neither is a spelling an honest sentence needs, and both are cheap to state as a shape:
+   printable characters, single spaces, one line. */
+// Zero-width and direction marks are \p{Cf}, and so is the soft hyphen. Every newline and
+// every line separator is \p{Cc}, \p{Zl} or \p{Zp}.
+const HIDDEN_CHARACTER = /\p{Cf}/u;
+const CONTROL_CHARACTER = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+const WIDE_GAP = /[^\S\n]{3,}/u;
+
+function unreadable(sentence: string): string | null {
+  if (HIDDEN_CHARACTER.test(sentence)) return 'it holds characters that are in the text and not on the screen (zero-width or direction marks)';
+  if (CONTROL_CHARACTER.test(sentence)) return 'it is more than one line, and only the first line is read before a click';
+  if (WIDE_GAP.test(sentence)) return 'it holds a run of blank space long enough to push a figure off the line a person reads';
+  return null;
+}
+
+/* RULE TWO: every dollar figure in the sentence is a figure this patch is about.
+
+   A true figure beside a false one is still a sentence that misleads: "$1,000,000, a rounding
+   error next to the $40,000,000 in the fund" names what it changes and frames it as something
+   else. The allowed set is the before and after of every axis the patch NAMES, which is wider
+   than the axes it moves: naming an axis at the value it already holds is honest.
+
+   Only figures written as money are checked, because a sentence says "in 24 hours" and "10x"
+   and means neither as a sum. A decoy written without its dollar sign is not caught here, and
+   reads as a count rather than an amount, which is the trade this rule makes on purpose. */
+const DOLLAR_FIGURE = /\$\s*(\d[\d,]*(?:\.\d+)?)/g;
+
+function foreignFigures(sentence: string, allowed: Set<number>): number[] {
+  const out: number[] = [];
+  for (const match of sentence.matchAll(DOLLAR_FIGURE)) {
+    const value = Number(match[1].replace(/,/g, ''));
+    if (!Number.isFinite(value) || allowed.has(value)) continue;
+    if (!out.includes(value)) out.push(value);
+  }
+  return out;
+}
+
+/* RULE THREE: a clause that names one axis carries that axis's figures.
+
+   "Raise the ask to $1,000,000 and the cap to $999,999" over a patch that does the opposite
+   holds every digit and agrees the reader to the wrong number on both. The vocabulary is
+   deliberately short and non-overlapping: a word that could mean two axes ("day" is in both the
+   session limit and the auto-approve limit, "refuse" is in none of them by name) is left out
+   rather than guessed at, and a clause naming nothing is left alone. The rule only fires where
+   a clause names ANOTHER moved axis and not this one, so it cannot refuse a sentence that never
+   tried to say which axis is which. */
+const AXIS_WORDS: Readonly<Record<MoneyAxis, RegExp>> = {
+  maxPerTransactionUsd: /\bcaps?\b|\btransactions?\b|\bat once\b|\bsingle\b/i,
+  humanClickAboveUsd: /\basks?\b|\basking\b|\bclicks?\b/i,
+  maxPerSessionUsd: /\bsessions?\b/i,
+  autoApproveDailyUsd: /auto-?approv|\bdaily\b/i,
+};
+
+// A period between digits is a decimal point, never the end of a clause.
+const CLAUSE_BREAK = /(?<!\d)\.(?!\d)|[;:!?,]|\band\b|\bthen\b|\bbut\b/gi;
+
+function clauseAround(plain: string, index: number): string {
+  let start = 0;
+  let end = plain.length;
+  for (const match of plain.matchAll(CLAUSE_BREAK)) {
+    const after = match.index + match[0].length;
+    if (after <= index) start = after;
+    else if (match.index > index) {
+      end = match.index;
+      break;
+    }
+  }
+  return plain.slice(start, end);
+}
+
+/* RULE FOUR: a change is not stated backwards.
+
+   "Lower the cap from $1,000,000 to $100" over a raise TO $1,000,000 names both figures and
+   reads as the opposite of what it does. So where both figures of an axis are in the sentence
+   and the AFTER comes first, the text between them has to say that the later one is the old
+   value. "Set the cap to $1,000, up from $100" says it; " to " does not. */
+const BACKWARD_REFERENCE = /\bup from\b|\bdown from\b|\bwas\b|\bpreviously\b|\binstead of\b|\brather than\b|\bcurrently\b|\btoday\b|\bbefore\b/i;
 
 /* The money axes, before and after, for the card to print. `factor` is how far the number moved,
    which is the one thing a reader cannot get from two figures at a glance ("$1 to $100" and
    "$10,000 to $1,000,000" read the same until you count the zeros). Null where the old value was
    zero, because every multiple of nothing is nothing. */
 const MONEY_AXES = ['maxPerTransactionUsd', 'maxPerSessionUsd', 'humanClickAboveUsd', 'autoApproveDailyUsd'] as const;
+type MoneyAxis = (typeof MONEY_AXES)[number];
 
 export function policyChanges(patch: PolicyPatch, policy: Policy): PolicyAxisChange[] {
   const o = patch.outbound;
@@ -149,14 +261,69 @@ export function policyChanges(patch: PolicyPatch, policy: Policy): PolicyAxisCha
   return out;
 }
 
-function sentenceMismatch(changes: PolicyAxisChange[], sentence: string, reasons: string[]): Verdict | null {
+// Every figure the patch is about: the before and after of each axis it names, which is wider
+// than the axes it moves, because naming one at the value it already holds is honest.
+function figuresInPlay(patch: PolicyPatch, policy: Policy): Set<number> {
+  const allowed = new Set<number>();
+  for (const axis of MONEY_AXES) {
+    const after = patch.outbound?.[axis];
+    if (after === undefined) continue;
+    allowed.add(after);
+    allowed.add(policy.outbound[axis] ?? 0);
+  }
+  return allowed;
+}
+
+function sentenceMismatch(
+  changes: PolicyAxisChange[],
+  sentence: string,
+  patch: PolicyPatch,
+  policy: Policy,
+  reasons: string[],
+): Verdict | null {
+  if (changes.length === 0) return null;
+  const no = (why: string): Verdict =>
+    refusal(reasons, 'sentence_mismatch', `${why} A person clicking this would be agreeing to something the sentence does not say. Write the sentence the change actually makes, on one line, with every figure in it and nothing else in dollars.`);
+
+  const shape = unreadable(sentence);
+  if (shape !== null) return no(`The sentence on this change cannot be read as written: ${shape}.`);
+
   const unsaid = changes.filter((c) => !namesFigure(sentence, c.after));
-  if (unsaid.length === 0) return null;
-  return refusal(
-    reasons,
-    'sentence_mismatch',
-    `The sentence on this change does not name ${unsaid.map((c) => `${c.axis} at ${money(c.after)}`).join(', ')}, so a person clicking it would be agreeing to something it does not say. Write the sentence the change actually makes, with every figure in it.`,
-  );
+  if (unsaid.length > 0) {
+    return no(`The sentence on this change does not name ${unsaid.map((c) => `${c.axis} at ${money(c.after)}`).join(', ')}.`);
+  }
+
+  const foreign = foreignFigures(sentence, figuresInPlay(patch, policy));
+  if (foreign.length > 0) {
+    return no(`The sentence on this change names ${foreign.map(money).join(', ')}, which this change is not about.`);
+  }
+
+  const plain = plainOf(sentence);
+  const moved = new Set(changes.map((c) => c.axis));
+  for (const change of changes) {
+    const axis = change.axis as MoneyAxis;
+    const here = figurePositions(plain, change.after);
+
+    // The clause this figure sits in speaks for another axis this patch moves, and not for this
+    // one, so the two have been swapped in prose.
+    for (const at of here) {
+      const clause = clauseAround(plain, at);
+      if (AXIS_WORDS[axis].test(clause)) continue;
+      const other = [...moved].find((name) => name !== axis && AXIS_WORDS[name as MoneyAxis].test(clause));
+      if (other !== undefined) {
+        return no(`The sentence puts ${money(change.after)} in a clause about ${other}, but it is the new ${axis}.`);
+      }
+    }
+
+    // Both figures are here and the new one comes first, with nothing between them saying the
+    // later one is the old value. That reads as the change running the other way.
+    if (change.before <= 0) continue;
+    const was = figurePositions(plain, change.before);
+    if (was.length === 0 || here[0] > was[0]) continue;
+    if (BACKWARD_REFERENCE.test(plain.slice(here[0], was[0]))) continue;
+    return no(`The sentence puts ${axis} at ${money(change.before)} after ${money(change.after)}, which reads as a move to ${money(change.before)} when it is a move to ${money(change.after)}.`);
+  }
+  return null;
 }
 
 /* THE CEILING NO CLICK CAN PASS, per axis, in dollars.
@@ -233,22 +400,54 @@ function neverAsks(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdi
   );
 }
 
+/* EVERY LIST FIELD IN A PATCH IS REPLACED, SO EVERY ONE OF THEM GETS THE SAME RULE.
+
+   mergePatch (proposals/lifecycle.ts) replaces destinationAllowlist, maxIssuerShare and
+   forbiddenIssuers wholesale, so a patch carrying one entry deletes all the others. Only the
+   allowlist had a rule about it, which left `{composition: {forbiddenIssuers: []}}` erasing
+   every forbidden issuer and `{composition: {maxIssuerShare: {default: 1}}}` erasing every
+   named cap, both unrefused. A removal dressed as a setting is the shape a diff read in a hurry
+   is most likely to miss, and it is a loosening in all three cases.
+
+   Adding is fine and is the reason each field exists. So is moving a figure that stays on the
+   card, which is why a named issuer share may be raised or lowered and only its DISAPPEARANCE
+   is refused. Removing an entry is a decision for the policy file. */
+function dropped<T>(before: readonly T[], after: readonly T[], key: (v: T) => string): T[] {
+  const kept = new Set(after.map(key));
+  return before.filter((v) => !kept.has(key(v)));
+}
+
 function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdict | null {
   const o = patch.outbound;
-  if (o === undefined) return null;
-
-  /* The allowlist is REPLACED rather than merged (see mergePatch), so a patch carrying one
-     address deletes every other one. Adding is fine and is the reason the field exists;
-     dropping an address a person put there is a removal dressed as an addition, and it is the
-     removals that a diff read in a hurry is most likely to miss. */
-  if (o.destinationAllowlist !== undefined) {
-    const next = new Set(o.destinationAllowlist.map(lower));
-    const dropped = policy.outbound.destinationAllowlist.filter(a => !next.has(lower(a)));
-    if (dropped.length > 0) {
+  if (o?.destinationAllowlist !== undefined) {
+    const gone = dropped(policy.outbound.destinationAllowlist, o.destinationAllowlist, lower);
+    if (gone.length > 0) {
       return refusal(
         reasons,
         'allowlist_shortened',
-        `This patch drops ${dropped.length} allowed destination(s) (${dropped.join(', ')}). A patch may add destinations; removing one is a decision for the policy file.`,
+        `This patch drops ${gone.length} allowed destination(s) (${gone.join(', ')}). A patch may add destinations; removing one is a decision for the policy file.`,
+      );
+    }
+  }
+
+  const c = patch.composition;
+  if (c?.forbiddenIssuers !== undefined) {
+    const gone = dropped(policy.composition.forbiddenIssuers, c.forbiddenIssuers, lower);
+    if (gone.length > 0) {
+      return refusal(
+        reasons,
+        'forbidden_issuers_shortened',
+        `This patch drops ${gone.length} forbidden issuer(s) (${gone.join(', ')}), which lets this app hold them again. A patch may add forbidden issuers; removing one is a decision for the policy file.`,
+      );
+    }
+  }
+  if (c?.maxIssuerShare !== undefined) {
+    const gone = dropped(Object.keys(policy.composition.maxIssuerShare), Object.keys(c.maxIssuerShare), lower);
+    if (gone.length > 0) {
+      return refusal(
+        reasons,
+        'issuer_caps_dropped',
+        `This patch drops the share cap on ${gone.length} issuer(s) (${gone.join(', ')}), which removes the wall rather than moving it. A patch may add a cap or change one; removing one is a decision for the policy file.`,
       );
     }
   }
@@ -258,6 +457,35 @@ function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string
 
 function lower(s: string): string {
   return s.toLowerCase();
+}
+
+// What kind of change this is, for a reader that should not have to parse prose. A list or a
+// share named at exactly what the policy already holds is not a change and says nothing.
+function policyChangeCodes(patch: PolicyPatch, policy: Policy, changes: PolicyAxisChange[]): string[] {
+  const codes: string[] = [];
+  if (changes.length > 0) codes.push('limits_changed');
+
+  const c = patch.composition;
+  const movedComposition =
+    (c?.maxFreezableShare !== undefined && c.maxFreezableShare !== policy.composition.maxFreezableShare) ||
+    (c?.forbiddenIssuers !== undefined && !sameList(c.forbiddenIssuers, policy.composition.forbiddenIssuers)) ||
+    (c?.maxIssuerShare !== undefined && !sameShares(c.maxIssuerShare, policy.composition.maxIssuerShare));
+  if (movedComposition) codes.push('composition_changed');
+
+  const list = patch.outbound?.destinationAllowlist;
+  if (list !== undefined && !sameList(list, policy.outbound.destinationAllowlist)) codes.push('allowlist_changed');
+  return codes;
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  const left = [...new Set(a.map(lower))].sort();
+  const right = [...new Set(b.map(lower))].sort();
+  return left.length === right.length && left.every((v, i) => v === right[i]);
+}
+
+function sameShares(a: Record<string, number>, b: Record<string, number>): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].every((k) => a[k] === b[k]);
 }
 
 /* ---------- who counts as one of our own addresses ----------
@@ -398,16 +626,20 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
      for how it was described. What survives to here is a coherent change under every wall, and
      the only question left is whether the sentence a person will read is about it. */
   const changes = policyChanges(wanted, policy);
-  const lying = sentenceMismatch(changes, draft.sentence, reasons);
+  const lying = sentenceMismatch(changes, draft.sentence, wanted, policy, reasons);
   if (lying !== null) return lying;
 
   reasons.push('Policy changes always require a human click.');
   return {
     outcome: 'needs_approval',
     reasons,
-    // `limits_changed` says money limits moved, so it rides only when some did: a patch that
-    // only touches composition changes no limit and says so by carrying neither.
-    reasonCodes: changes.length > 0 ? ['limits_changed'] : [],
+    /* `limits_changed` says money limits moved, so it rides only when some did. The other two
+       say what a patch that moves no limit is actually doing: a composition or allowlist change
+       used to come back with no code and no changes[], the same shape as a patch that moves
+       nothing, leaving the rendered-sentence diff as the only reader. The axis rows themselves
+       stay out of changes[], which is money with a before, an after and a factor, and a share is
+       none of those. */
+    reasonCodes: policyChangeCodes(wanted, policy, changes),
     changes,
   };
 }

@@ -34,9 +34,11 @@ export const EXPECTED_TOOLS: readonly string[] = [
      not that. */
   'proposals',
   /* One move's whole story in one call: the view, this row's audit lines, what the router last
-     said, what the venue holds now. Lead only for the same reason `proposals` is. It hands back
-     no address: the quote handle is fingerprinted, and the quote's own signature and the deposit
-     address 1Click minted stay on the row, so nothing here can be reused as a destination. */
+     said, what the venue holds now. Lead only for the same reason `proposals` is. The view, the
+     venue reading and the verdict reasons can carry this app's OWN addresses, which is what
+     tells a person where their money sits; the quote handle is fingerprinted, the log lines have
+     theirs fingerprinted, and the quote's own signature and the deposit address 1Click minted
+     stay on the row, so nothing here can be reused as a destination. */
   'diagnose',
   'propose_policy_change',
   // The rails. Each moves funds through a contract and none takes an address: the property

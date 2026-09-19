@@ -51,9 +51,11 @@ const MAX_FAILURES = 5;
 const BACKOFF_MS = 30_000;
 
 /* DEMO MODE NEVER DESTROYS A KEY FILE, and this is the second lock on a door the config file
-   already shut. The first lock is that keysPath now comes from the data directory, so a demo
-   backend on a throwaway data dir has its own empty wallet and cannot see the real one. This
-   one holds even when a demo process is pointed at a real key file by hand: migration shreds
+   already shut. The first lock is that a demo boot resolves its own key file and never the real
+   one: inside the data directory it was given, or in ~/.phosphor-demo when that directory is
+   the repo default, and never in ~/.phosphor whatever PHOSPHOR_APP_DATA says (config.ts
+   defaultKeysPath). This one holds even when a demo process is pointed at a real key file by
+   hand, which PHOSPHOR_KEYS still allows on purpose: migration shreds
    the plaintext file AND every backup beside it, and that is not something a throwaway
    instance may ever do.
    The mode is read from the environment here because destroyPlaintext is a free function with

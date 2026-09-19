@@ -110,15 +110,36 @@ export function createDuplicateGuard(now: () => number = Date.now, windowMs = DU
   // empty id (still drafting) or a row the store says is not terminal is still in flight.
   const inFlight: InFlight = deps.inFlight ?? (() => false);
 
+  /* THE WINDOW DOES NOT RUN OUT UNDER MONEY THAT IS STILL MOVING. stillInFlight already held an
+     unconfirmed row carrying a hash, a handle or a nonce, and this swept the entry away at
+     ninety seconds regardless. The deposit deadline table runs to 1440 seconds, so a row sitting
+     at needs_reconciliation from t=120 s stopped colliding at all, and what an agent reads on
+     that row is `terminal: true`. The reply sentence and the agent's own judgement were the only
+     things left between it and a second send of the same money.
+     Ninety seconds is unchanged for every settled row, which is what keeps this from ever being
+     the reason a person cannot repeat an action they meant to repeat. */
+  function expired(entry: { at: number; id: string }, at: number): boolean {
+    if (at - entry.at <= windowMs) return false;
+    // A claim with no id yet is a draft, which is a state that lasts a tick. Past the window it
+    // is a draft that died without calling forget, and it goes: there is no row to ask about it,
+    // and a fingerprint held forever by a proposal that never existed blocks the honest retry.
+    return entry.id === '' || !inFlight(entry.id);
+  }
+
   function sweep(): void {
     const at = now();
-    for (const [key, entry] of seen) if (at - entry.at > windowMs) seen.delete(key);
-    // Oldest first, because a Map iterates in insertion order and the oldest is the one whose
-    // race is furthest in the past.
-    while (seen.size > MAX_TRACKED) {
-      const oldest = seen.keys().next();
-      if (oldest.done) break;
-      seen.delete(oldest.value);
+    for (const [key, entry] of seen) if (expired(entry, at)) seen.delete(key);
+    /* Oldest first, because a Map iterates in insertion order and the oldest is the one whose
+       race is furthest in the past. A row still in flight is skipped on the first pass: the cap
+       is here so noise cannot grow the map without bound, and an unsettled claim is not noise.
+       It can still be evicted if every entry is unsettled, because a bound that a caller can
+       lift is not a bound. */
+    for (const keepLive of [true, false]) {
+      for (const [key, entry] of seen) {
+        if (seen.size <= MAX_TRACKED) return;
+        if (keepLive && entry.id !== '' && inFlight(entry.id)) continue;
+        seen.delete(key);
+      }
     }
   }
 

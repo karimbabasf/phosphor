@@ -106,7 +106,16 @@ const PARENT = process.env.PHOSPHOR_PARENT ?? '';
    tool call, on a file this process may not be able to see at all, in which case the app's
    refusal says where it should have been.
    It is not a role and it is not an authorisation. The role is decided by the seat, the tools this
-   process registers are decided by PHOSPHOR_ROLE below, and a proposal still needs a human click. */
+   process registers are decided by PHOSPHOR_ROLE below, and a proposal still needs a human click.
+
+   WHAT IT DOES NOT STOP, because the comment above reads stronger than the thing is. The file is
+   mode 0600, and http/auth.ts names a same-user local process as the attacker this app is built
+   against: that process can read a 0600 file, present the secret on a session string that never
+   said hello, and be seated `operator` with the full lead surface. The window token is kept off
+   the environment for exactly that reason and this is not the same kind of wall. What it buys is
+   that the seating is visible rather than silent: agent_connected in the audit log, a row on the
+   roster and the presence light in the window. The wall that holds is the human click, which no
+   seat reaches. */
 const SEAT_ENV = process.env.PHOSPHOR_SEAT ?? '';
 const SEAT_FILE = seatSecretPath(resolveDataDir());
 
@@ -552,9 +561,11 @@ registerLeadRead(
     'otherwise means reading everybody\'s), what 1Click last reported about it, and what the',
     'Hyperliquid account holds right now on a deposit or a withdrawal. Reach for it before you',
     'guess about a slow or a failed move, and say what it shows rather than reassuring anyone.',
-    'It asks no permission and needs none: it moves nothing. No address comes back whole: the',
-    'quote handle is a fingerprint and the log lines have theirs fingerprinted too, so nothing in',
-    'the answer is a place money can be sent. Read-only, changes nothing.',
+    'It asks no permission and needs none: it moves nothing. The view, the venue reading and the',
+    "verdict reasons may carry the app's own addresses, never a handle, quote signature or key:",
+    'the quote handle is a fingerprint, the log lines have theirs fingerprinted, and the deposit',
+    "address 1Click minted stays on the row. So what comes back can say where this app's own",
+    'money sits, and it cannot be reused to send money anywhere. Read-only, changes nothing.',
   ].join(' '),
   { id: z.string() },
 );

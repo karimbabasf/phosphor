@@ -180,7 +180,11 @@ useIdentityValue(handshake[1] ?? '');
    (`npm run mcp`, the `claude mcp` registration) has no childEnv to get it from. So it is written
    to <dataDir>/agent.secret before the port opens, owner-readable only, one line, and rewritten
    on every boot so a copy taken from an earlier run opens nothing. src/mcp.ts reads it from there
-   when PHOSPHOR_SEAT is absent. */
+   when PHOSPHOR_SEAT is absent.
+   Mode 0600 keeps out another account on this Mac and nothing else. The attacker http/auth.ts
+   names, a process this same user owns, reads it and takes a seat; what that costs it is a line
+   in the audit log, a row on the roster and the presence light. The seat is not the wall. The
+   human click is, and no seat reaches one. src/mcp.ts says the same thing where it reads this. */
 const seatSecret = (handshake[2] ?? '').length >= 32 ? (handshake[2] as string) : mintToken();
 useSeatSecret(seatSecret);
 atomicWrite(seatSecretPath(cfg.dataDir), `${seatSecret}\n`, { mode: 0o600 });
