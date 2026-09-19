@@ -219,8 +219,12 @@ export function gradeReply(scenario: Scenario, run: Run): Check {
   const reply = run.texts.map((entry) => entry.text).join('\n');
   if (reply.trim() === '') return fail('the agent said nothing');
 
-  for (const pattern of scenario.mustSay ?? []) {
-    if (!new RegExp(pattern, 'i').test(reply)) return fail(`the reply does not match ${pattern}`);
+  /* Figures only. What a reply has to SAY is graded by the judge against the spec's own Must say
+     line, because the agent writes the fact in its own words and a regex cannot read those. What a
+     reply has to COUNT is graded here, exactly, because a figure has one correct form and the
+     whole build exists to stop the agent rounding it. */
+  for (const pattern of scenario.mustSayFigures ?? []) {
+    if (!new RegExp(pattern, 'i').test(reply)) return fail(`the reply carries no figure matching ${pattern}`);
   }
   for (const pattern of scenario.mustNotSay ?? []) {
     if (new RegExp(pattern, 'i').test(reply)) return fail(`the reply matches ${pattern}, which this scenario forbids`);

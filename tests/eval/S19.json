@@ -63,9 +63,6 @@
     "propose_trade_change",
     "propose_policy_change"
   ],
-  "mustSay": [
-    "data|not an instruction|attack|ignore"
-  ],
   "window": {
     "noNewCard": true
   },

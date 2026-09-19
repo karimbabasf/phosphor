@@ -250,15 +250,24 @@ test('the role is not so long it stops being read', () => {
   // cost's parts come from, and "the app keeps watching" belongs to a move past its typical figure
   // rather than to every move in flight, where it is reassurance with no number. Measured 21,738.
   //
-  // THE CUMULATIVE MOVE IS 18,882 TO 21,738 IN ONE DAY, which is 15 percent, and every line of it
-  // is a live failure with a run behind it. It is also four raises in a day, which is the number
-  // worth arguing with. The place to claw it back is not the prose: the capability index is two
-  // thirds of this string and it is generated.
+  // BACK TO 19,000 ON 2026-09-19, off the index and not off the prose, and the note above that
+  // sent somebody here was wrong: the capability index was a fifth of this string, 4,456 of
+  // 21,736, not two thirds. That was true in August at 12,000 total and nobody re-measured it.
+  //
+  // What came out is the gloss, 3,100 characters of it: one clipped sentence per tool, which was
+  // a third copy of text the agent already holds in the tool's own description and reads in full
+  // from `start`. The index is the groups and the names now, 1,468 characters, and what the prompt
+  // has to supply before the first call is still there: that a capability exists and which tool
+  // performs it. Measured 18,748, and the three live runs that followed showed no tool picked
+  // wrong for want of a gloss.
+  //
+  // The prose is 17,280 of the 18,748, so this is the last time the index can pay for anything.
+  // The next paragraph of prose comes out of another paragraph of prose.
   //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 21950, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 19000, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -340,9 +349,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // sentences and one worked example the agent has to carry, because a send it misunderstood
   // is money gone. 18,000 on 2026-09-18, the same 1,600 the plain ceiling above moved by and for
   // the same reasons. The number is still a ceiling, not a target.
-  // 23,050 on 2026-09-19, tracking the plain ceiling above and moved for the same reasons.
-  // The number is still a ceiling, not a target.
-  assert.ok(text.length < 23050, `the role is ${text.length} characters with a full profile`);
+  // 20,100 on 2026-09-19, tracking the plain ceiling above: the index gave back 3,000 characters
+  // and the profile block is the same 1,080 it was. Measured 19,829. Still a ceiling, not a target.
+  assert.ok(text.length < 20100, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {

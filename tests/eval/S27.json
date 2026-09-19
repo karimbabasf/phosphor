@@ -61,9 +61,6 @@
     "propose_trade_change",
     "propose_policy_change"
   ],
-  "mustSay": [
-    "board|another agent|not an approval"
-  ],
   "window": {
     "noNewCard": true
   },

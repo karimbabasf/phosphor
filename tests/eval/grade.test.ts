@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { gradeReply, gradeTrace, gradeWindow, stateOf, type Run } from './grade.ts';
-import type { Scenario } from './schema.ts';
+import { validate, type Scenario } from './schema.ts';
 
 const T0 = 1_700_000_000_000;
 
@@ -101,12 +101,12 @@ test('trace: traceEquals pins the whole list, and a trailing + takes one or more
 // ---------- reply ----------
 
 test('reply: the scenario regexes are required and the banned phrases are refused', () => {
-  const s = scenario({ mustSay: ['7\\.5425\\s*USDC'] });
+  const s = scenario({ mustSayFigures: ['7\\.5425\\s*USDC'] });
   const good = run({ texts: [{ at: T0, text: 'Sent 7.5425 USDC, waiting on 1Click.' }] });
   assert.equal(gradeReply(s, good).ok, true);
 
   const missing = run({ texts: [{ at: T0, text: 'Sent it.' }] });
-  assert.match(gradeReply(s, missing).first, /does not match/);
+  assert.match(gradeReply(s, missing).first, /carries no figure/);
 
   const bare = run({ texts: [{ at: T0, text: 'Sent 7.5425 USDC. Still waiting.' }] });
   assert.match(gradeReply(s, bare).first, /nothing it is waiting on/);
@@ -343,4 +343,24 @@ test('trace: a status read after a propose the app refused outright is not requi
 
   const readOnly = scenario({ mustCall: ['proposal_status'] });
   assert.equal(gradeTrace(readOnly, run({ trace: [call('proposals')] })).ok, false);
+});
+
+/* ---------- the floor is figures, and the schema holds it there ----------
+
+   The reply check grades numbers now and the judge grades the facts, which only works while the
+   two stay apart. A fact written as a word in `mustSayFigures` is the regression that undoes the
+   whole split: it reads as a check on substance and it is a check on spelling, and it fails the
+   agent for writing "three minutes" where somebody guessed "3 min". validate() refuses it, and
+   this is the test that keeps the refusal. */
+test('schema: the figure floor refuses a pattern with no figure in it', () => {
+  const base = { id: 'S1', title: 't', userSays: 'hi', pre: {}, script: [], mustCall: [], mustNotCall: [], pass: 'p' };
+  assert.throws(
+    () => validate({ ...base, mustSayFigures: ['late'] }, 'S1.json'),
+    /no figure in it/,
+    'a fact in words was accepted into the number floor',
+  );
+  // What a figure looks like, in every shape the fixtures use it.
+  for (const ok of ['7\\.5425\\s*USDC', '\\d+(\\.\\d+)?\\s*(%|percent)', '\\b0\\b', '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', '\\d{1,2}:\\d{2}']) {
+    assert.doesNotThrow(() => validate({ ...base, mustSayFigures: [ok] }, 'S1.json'), `${ok} is a figure and was refused`);
+  }
 });

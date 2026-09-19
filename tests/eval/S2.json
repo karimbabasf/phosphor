@@ -120,9 +120,8 @@
       "equals": "ev-s2-deposit"
     }
   ],
-  "mustSay": [
-    "\\b(\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s*(s|secs?|seconds?|m|mins?|minutes?|h|hours?)\\b",
-    "settling|crediting|waiting (on|for)|sending it|the router is|deposit seen|part of it arrived"
+  "mustSayFigures": [
+    "\\b(\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s*(s|secs?|seconds?|m|mins?|minutes?|h|hours?)\\b"
   ],
   "mustNotSay": [
     "\\?$"

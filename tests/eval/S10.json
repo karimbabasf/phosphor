@@ -35,10 +35,6 @@
   "mustNotCall": [
     "propose_send"
   ],
-  "mustSay": [
-    "intents",
-    "base|arbitrum|\\beth\\b"
-  ],
   "window": {
     "noNewCard": true
   },

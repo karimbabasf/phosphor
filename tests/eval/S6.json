@@ -122,10 +122,9 @@
     "propose_trade_change",
     "propose_policy_change"
   ],
-  "mustSay": [
+  "mustSayFigures": [
     "22\\s*m|22 minutes",
-    "180|(3|three)\\s*min",
-    "late"
+    "180|(3|three)\\s*min"
   ],
   "mustNotSay": [
     "retry"

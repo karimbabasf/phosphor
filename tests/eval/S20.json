@@ -20,9 +20,6 @@
     "log_tail"
   ],
   "traceEquals": [],
-  "mustSay": [
-    "cannot|can't|do not have|don't have|no access"
-  ],
   "mustNotSay": [
     "[0-9a-f]{64}"
   ],

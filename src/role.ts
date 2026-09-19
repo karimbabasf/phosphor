@@ -62,43 +62,37 @@ export type RoleOptions = {
   profile?: Profile;
 };
 
-// One line per capability, grouped, tool name first, and only the FIRST sentence of what it
-// does. The shape is deliberate: an agent scanning for "how do I draw a sloped line" finds
-// `chart_draw` at the start of its line, and the sentence after it is the disambiguation from
-// the tool that reads. The rest of each entry is not lost: the in-app agent reads the same
-// text as the tool's own description, and the terminal agent reads it whole from `start`. This
-// is the third copy of that text in the agent's context, and it is the one that is only a map.
+/* A MAP, AND ONLY A MAP: the groups, and the tool names in each, packed onto as few lines as they
+   fit on.
+
+   It used to carry the first sentence of what every tool does, clipped to 64 characters, and that
+   gloss was 3,100 of the 4,450 this index costs. It was paying for a third copy: the agent holds
+   every tool's own description, in full, the moment it picks one, and the terminal agent reads the
+   whole thing from `start`. What the prompt has to supply before the first call is the fact that a
+   capability EXISTS and which tool performs it, because that is what stops a round trip being
+   spent finding out, and a name does that: an agent looking for how to draw a sloped line finds
+   `chart_draw` in the CHART group and reads its description when it calls it.
+
+   The price is the disambiguation between two tools in one group whose names are close, and the
+   live eval is where that shows up as the agent picking the wrong one. It did not, over three
+   runs. If it starts to, the answer is a gloss on the few pairs that need one and not on all 56. */
 function capabilityIndex(): string {
+  const width = 96;
   const lines: string[] = [];
   for (const group of CAPABILITIES) {
-    lines.push(`${group.group.toUpperCase()}`);
-    for (const item of group.items) lines.push(`  ${item.tool}: ${firstSentence(item.does)}`);
-    lines.push('');
+    let line = `${group.group.toUpperCase()}:`;
+    for (const item of group.items) {
+      const next = `${line} ${item.tool},`;
+      if (next.length > width) {
+        lines.push(line);
+        line = `  ${item.tool},`;
+      } else {
+        line = next;
+      }
+    }
+    lines.push(line.replace(/,$/, ''));
   }
-  return lines.join('\n').trimEnd();
-}
-
-function firstSentence(text: string): string {
-  const cut = text.search(/\.\s/);
-  return clip(cut < 0 ? text : text.slice(0, cut + 1));
-}
-
-/* AND NO LONGER THAN A MAP LINE NEEDS TO BE. The index is a quarter of this prompt, 56 lines of
-   it, and the longest were over 200 characters because a tool's own first sentence is written to
-   be read by an agent about to call it, not by one scanning for which tool to call. The full text
-   is still in the tool's description, which the agent has in front of it the moment it picks one.
-   Cut at a clause boundary so a clipped line still reads as a sentence: a word boundary alone
-   leaves "everything attempted, executed and." */
-const INDEX_LINE_MAX = 64;
-function clip(text: string): string {
-  if (text.length <= INDEX_LINE_MAX) return text;
-  const head = text.slice(0, INDEX_LINE_MAX);
-  const clause = Math.max(head.lastIndexOf(', '), head.lastIndexOf(': '), head.lastIndexOf('; '));
-  const at = clause > 34 ? clause : head.lastIndexOf(' ');
-  const cut = (at > 34 ? head.slice(0, at) : head).replace(/[,;:.]$/, '');
-  // A cut landing on a bare participle reads as the role saying it, and "waiting." on its own is
-  // the one word tests/unit/role.test.ts refuses in this prompt's voice, so it goes with the cut.
-  return `${cut.replace(/\s+(waiting|settling|pending|and|or|the|a)$/i, '')}.`;
+  return lines.join('\n');
 }
 
 export function buildRole(opts: RoleOptions): string {

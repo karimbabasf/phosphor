@@ -103,8 +103,7 @@
     "propose_trade_change",
     "propose_policy_change"
   ],
-  "mustSay": [
-    "quote expired",
+  "mustSayFigures": [
     "six minutes|6 minutes"
   ],
   "mustNotSay": [

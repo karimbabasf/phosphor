@@ -51,10 +51,9 @@
       "equals": 100
     }
   ],
-  "mustSay": [
+  "mustSayFigures": [
     "\\$?100\\b",
-    "1,?000",
-    "click"
+    "1,?000"
   ],
   "window": {
     "card": "propose_policy_change",

@@ -62,7 +62,7 @@
       "equals": 20
     }
   ],
-  "mustSay": [
+  "mustSayFigures": [
     "\\d+(\\.\\d+)?\\s*(%|percent)",
     "1\\s*USDC",
     "25\\s*bp|0\\.25"

@@ -126,9 +126,6 @@
       "equals": "proposal"
     }
   ],
-  "mustSay": [
-    "card|on screen|in the window|drew|drawn|showing"
-  ],
   "mustNotSay": [
     "\\|"
   ],

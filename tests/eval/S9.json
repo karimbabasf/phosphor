@@ -42,9 +42,6 @@
     "propose_trade_change",
     "propose_policy_change"
   ],
-  "mustSay": [
-    "paste|type it|from you"
-  ],
   "window": {
     "noNewCard": true
   },

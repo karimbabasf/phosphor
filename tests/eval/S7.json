@@ -111,9 +111,7 @@
     "diagnose",
     "wallet"
   ],
-  "mustSay": [
-    "failed",
-    "deposit window expired|(quote|window|deposit)[^.]{0,30}expired|expired[^.]{0,30}(quote|window|before)",
+  "mustSayFigures": [
     "7\\.5425"
   ],
   "rubric": "The reason is in plain words and the balance is quoted.",

@@ -89,7 +89,7 @@
       "equals": 7.5425
     }
   ],
-  "mustSay": [
+  "mustSayFigures": [
     "7\\.5425\\s*USDC",
     "\\d+(\\.\\d+)?\\s*(%|percent)",
     "\\b5\\b"

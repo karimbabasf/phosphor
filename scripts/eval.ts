@@ -372,24 +372,31 @@ function judgePrompt(scenario: Scenario, texts: Array<{ text: string; turn?: num
     '',
     `RULE: ${scenario.rubric ?? ''}`,
     '',
-    scenario.mustSayText === undefined ? '' : `FOR CONTEXT ONLY, the facts a separate check has already graded by regex: ${scenario.mustSayText}`,
+    `THE FACTS it had to carry: ${scenario.mustSayText ?? '(none named)'}`,
     '',
     `PHRASES BANNED IN ANY REPLY: ${BANNED.map((banned) => banned.why).join('; ')}.`,
     '',
-    'Those facts are not yours to score. They are here so you can see which parts of the reply are',
-    'required, and they are checked elsewhere: never mark a reply down for one that is missing, and',
-    'never mark it down for carrying them or for being longer because it did. Score the RULE and',
-    'nothing else. A reply that meets the rule and uses no banned phrase is a 2, however long it is,',
-    'unless the rule is itself about length or shape, and then that is the rule and you judge it.',
+    'You are scoring two things separately.',
+    'FACTS: is each fact above present, in whatever words the agent chose. A fact said in a',
+    'paraphrase is present, and so is one said in different words or a different order: you are',
+    'reading for substance, not for a form of words. A fact left out, or replaced by something',
+    'vaguer than the spec asked for, is missing. The exact figures are checked by machine against',
+    'the same line, so do not verify arithmetic and do not mark a number down for its formatting.',
+    'RULE: does the reply meet the rule above. Length is only a fault where the rule is about',
+    'length or shape; otherwise a longer reply that meets the rule is a 2.',
     '',
     answers.slice(0, 6000),
     '',
-    'Score 0 if the reply breaks the rule, 1 if it half meets it, 2 if it clearly meets it.',
-    'Answer with the digit, a space, and at most fifteen words of reason. Nothing else.',
+    'Answer with TWO digits and a reason, in exactly this shape: "<facts> <rule> <reason>".',
+    'Each digit is 0, 1 or 2. Facts: 2 every fact is there, 1 one or two missing, 0 most missing.',
+    'Rule: 2 clearly meets it, 1 half meets it, 0 breaks it. At most fifteen words of reason,',
+    'naming what is missing when either digit is not 2. Nothing else.',
   ].join('\n');
 }
 
-function castVote(prompt: string): Promise<{ score: number; why: string }> {
+type Vote = { facts: number; rule: number; why: string };
+
+function castVote(prompt: string): Promise<Vote> {
   return new Promise((resolve) => {
     const child = spawn(
       'claude',
@@ -398,7 +405,7 @@ function castVote(prompt: string): Promise<{ score: number; why: string }> {
     );
     let out = '';
     let done = false;
-    const finish = (value: { score: number; why: string }): void => {
+    const finish = (value: Vote): void => {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -406,32 +413,44 @@ function castVote(prompt: string): Promise<{ score: number; why: string }> {
     };
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      finish({ score: -1, why: 'the judge did not answer inside 150 s' });
+      finish({ facts: -1, rule: -1, why: 'the judge did not answer inside 150 s' });
     }, 150_000);
     child.stdout.on('data', (chunk: Buffer) => {
       out += chunk.toString();
     });
     child.stderr.on('data', () => undefined);
-    child.on('error', (error) => finish({ score: -1, why: `the judge did not start (${error.message})` }));
+    child.on('error', (error) => finish({ facts: -1, rule: -1, why: `the judge did not start (${error.message})` }));
     child.on('close', (code) => {
-      if (code !== 0) return finish({ score: -1, why: `the judge exited ${code}` });
+      if (code !== 0) return finish({ facts: -1, rule: -1, why: `the judge exited ${code}` });
       const text = out.trim();
-      const match = /^([012])\b\s*(.*)$/s.exec(text);
-      finish(match === null ? { score: -1, why: `the judge answered ${text.slice(0, 60)}` } : { score: Number(match[1]), why: match[2].trim().slice(0, 80) });
+      const match = /^([012])[\s,]+([012])\b\s*(.*)$/s.exec(text);
+      finish(
+        match === null
+          ? { facts: -1, rule: -1, why: `the judge answered ${text.slice(0, 60)}` }
+          : { facts: Number(match[1]), rule: Number(match[2]), why: match[3].trim().slice(0, 80) },
+      );
     });
     child.stdin.end(prompt);
   });
 }
 
-async function judgeRubric(scenario: Scenario, texts: Array<{ text: string; turn?: number }>): Promise<{ score: number; why: string }> {
+/* The median of the votes that answered, per digit. Three votes and two agreeing is a majority;
+   three that disagree land on the middle one, which is the point of an odd number. */
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+async function judgeReply(scenario: Scenario, texts: Array<{ text: string; turn?: number }>): Promise<{ facts: number; rule: number; why: string }> {
   const prompt = judgePrompt(scenario, texts);
   const cast = await Promise.all(Array.from({ length: JUDGE_VOTES }, () => castVote(prompt)));
-  const answered = cast.filter((vote) => vote.score >= 0);
-  if (answered.length === 0) return { score: -1, why: cast[0]?.why ?? 'no judge answered' };
-  const scores = answered.map((vote) => vote.score).sort((a, b) => a - b);
-  const score = scores[Math.floor(scores.length / 2)];
-  const spoke = answered.find((vote) => vote.score === score) ?? answered[0];
-  return { score, why: `${scores.join('')} ${spoke.why}`.slice(0, 84) };
+  const answered = cast.filter((vote) => vote.facts >= 0 && vote.rule >= 0);
+  if (answered.length === 0) return { facts: -1, rule: -1, why: cast[0]?.why ?? 'no judge answered' };
+  const facts = median(answered.map((vote) => vote.facts));
+  const rule = median(answered.map((vote) => vote.rule));
+  const spoke = answered.find((vote) => vote.facts === facts && vote.rule === rule) ?? answered.find((vote) => vote.facts === facts) ?? answered[0];
+  const votes = answered.map((vote) => `${vote.facts}${vote.rule}`).join('/');
+  return { facts, rule, why: `${votes} ${spoke.why}`.slice(0, 92) };
 }
 
 // ---------- one scenario ----------
@@ -612,10 +631,15 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   const run: Run = { trace, texts, cards, frames, statusReads, mode: LIVE ? 'live' : 'scripted' };
   const verdict = gradeScenario(scenario, run);
   let rubric = '';
-  if (LIVE && scenario.rubric !== undefined && verdict.ok) {
-    const judged = await judgeRubric(scenario, texts);
-    rubric = `rubric ${judged.score}/2: ${judged.why}`;
-    if (judged.score < 2) {
+  /* The judge reads the reply twice over, for the facts the spec demanded and for the rule, and
+     both have to come back 2. The facts half is what the reply regexes used to do and could not:
+     the agent writes a fact in its own words and a pattern can only recognise the words somebody
+     guessed in advance. What stays a regex is the figures, in gradeReply above, where there is one
+     correct answer and paraphrase is not a thing a number does. */
+  if (LIVE && verdict.ok && (scenario.rubric !== undefined || scenario.mustSayText !== undefined)) {
+    const judged = await judgeReply(scenario, texts);
+    rubric = `judge f${judged.facts}/r${judged.rule}: ${judged.why}`;
+    if (judged.facts < 2 || judged.rule < 2) {
       verdict.ok = false;
       verdict.reply = { ok: false, first: rubric };
       verdict.first = rubric;
@@ -794,7 +818,7 @@ async function runSuite(pass: number): Promise<Result[]> {
       const checks =
         v === null
           ? ''
-          : ` trace:${v.trace.ok ? 'ok' : 'no'} reply:${v.reply.ok ? 'ok' : 'no'} window:${v.window.skipped === true ? 'skip' : v.window.ok ? 'ok' : 'no'} rubric:${LIVE ? (result.rubric === '' ? 'n/a' : result.rubric.slice(7, 10)) : 'skipped'}`;
+          : ` trace:${v.trace.ok ? 'ok' : 'no'} reply:${v.reply.ok ? 'ok' : 'no'} window:${v.window.skipped === true ? 'skip' : v.window.ok ? 'ok' : 'no'} judge:${LIVE ? (result.rubric === '' ? 'n/a' : (/f\d\/r\d/.exec(result.rubric)?.[0] ?? '?')) : 'skipped'}`;
       const first = result.detail !== '' ? result.detail : (v?.first ?? '');
       console.log(`${mark} ${result.scenario.id} ${result.scenario.title}${checks}${first ? `   ${first}` : ''}`);
       if (VERBOSE && result.verdict !== null) {

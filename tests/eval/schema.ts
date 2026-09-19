@@ -130,16 +130,23 @@ export type Scenario = {
   ordering?: Array<[string, string]>;
   argChecks?: ArgCheck[];
   // Regex sources applied to the joined assistant text.
-  mustSay?: string[];
+  /* THE NUMBER FLOOR, and only numbers. Regexes applied to the joined assistant text for the
+     figures a reply cannot paraphrase its way out of: an amount, a fee, a percent, a hash, an
+     address, an elapsed or typical figure, exact and unrounded. Everything else a reply has to
+     carry is prose, it lives in `mustSayText`, and the judge grades it in whatever words the agent
+     chose. That split is the whole of this pass: a regex asking for a FACT was failing replies that
+     carried the fact and spelled it differently (S3 answered "3 minutes end to end" and the pattern
+     could only match "3 min"), and no amount of widening fixes a check that is literal by nature.
+     validate() refuses a pattern here with no digit in it, so prose cannot creep back. */
+  mustSayFigures?: string[];
   mustNotSay?: string[];
   window?: WindowExpect;
   // Scored 0 to 2 by a judge in live mode, skipped in scripted mode.
   rubric?: string;
-  /* The scenario's "Must say" line out of EVAL_SPEC Part B, word for word, handed to that judge
-     beside the rubric. Given the rubric alone a judge grades tone: it marked a reply down for
-     being two sentences rather than one while every figure the spec asked for was in it. With
-     the facts in front of it, length on its own stops being a verdict. The regexes in `mustSay`
-     are the same line made machine readable and they stay the hard check; this is the prose. */
+  /* The scenario's "Must say" line out of EVAL_SPEC Part B, word for word. THE JUDGE GRADES THIS,
+     semantically: is each fact in the reply, in whatever words the agent chose. It is not context
+     any more, it is half the verdict, and the figures inside it are the other half, checked by
+     `mustSayFigures` above so the judge is never asked to do arithmetic. */
   mustSayText?: string;
   // The spec's own Pass line, printed beside a failure so the reader sees the bar.
   pass: string;
@@ -161,13 +168,24 @@ export function validate(raw: unknown, source: string): Scenario {
   if (!Array.isArray(s.mustCall) || !Array.isArray(s.mustNotCall)) {
     throw new Error(`${source}: mustCall and mustNotCall are lists`);
   }
-  for (const source_ of ['mustSay', 'mustNotSay'] as const) {
+  for (const source_ of ['mustSayFigures', 'mustNotSay'] as const) {
     for (const pattern of (s[source_] as string[] | undefined) ?? []) {
       try {
         new RegExp(pattern, 'i');
       } catch (error) {
         throw new Error(`${source}: ${source_} carries an unreadable regex ${pattern}: ${String(error)}`);
       }
+    }
+  }
+  /* The floor is numbers. A pattern with no digit in it is a fact written as a word, and a fact
+     written as a word is what the judge reads, because the agent will write it some other way and
+     be right. This refuses the regression rather than documenting it. */
+  for (const pattern of (s.mustSayFigures as string[] | undefined) ?? []) {
+    // A figure is a digit or the digit class. The count inside a repetition is neither, so
+    // `[^.]{0,30}expired` is a fact in words wearing two numbers and it is refused like the rest.
+    const spans = pattern.replace(/\{\d+(?:,\d*)?\}/g, '');
+    if (!/\\d/.test(pattern) && !/\d/.test(spans)) {
+      throw new Error(`${source}: mustSayFigures carries ${pattern}, which has no figure in it. Facts in words go in mustSayText, which the judge grades.`);
     }
   }
   return raw as Scenario;

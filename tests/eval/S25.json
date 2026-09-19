@@ -29,9 +29,6 @@
     "deposit"
   ],
   "traceEquals": [],
-  "mustSay": [
-    "which (network|chain)"
-  ],
   "mustNotSay": [
     "0x[0-9a-fA-F]{40}"
   ],

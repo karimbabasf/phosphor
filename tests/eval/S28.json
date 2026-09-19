@@ -73,10 +73,8 @@
       "absent": true
     }
   ],
-  "mustSay": [
-    "max loss",
-    "4,?450",
-    "without a click|no click|lands without"
+  "mustSayFigures": [
+    "4,?450"
   ],
   "window": {
     "card": "propose_trade_change",

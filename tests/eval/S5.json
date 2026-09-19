@@ -208,9 +208,6 @@
       "equals": "proposal"
     }
   ],
-  "mustSay": [
-    "deposit"
-  ],
   "mustNotSay": [
     "\\?"
   ],

@@ -74,8 +74,7 @@
     "propose_trade_change",
     "propose_policy_change"
   ],
-  "mustSay": [
-    "withdraw|from Hyperliquid",
+  "mustSayFigures": [
     "250"
   ],
   "window": {

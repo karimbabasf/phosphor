@@ -108,11 +108,6 @@
       "gt": 0
     }
   ],
-  "mustSay": [
-    "long",
-    "stop",
-    "max loss|at risk|most you could lose"
-  ],
   "window": {
     "card": "propose_trade",
     "withinMs": 1000

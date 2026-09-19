@@ -36,11 +36,6 @@
     "propose_hl_withdraw",
     "propose_send"
   ],
-  "mustSay": [
-    "ETH",
-    "position",
-    "close"
-  ],
   "window": {
     "noNewCard": true
   },

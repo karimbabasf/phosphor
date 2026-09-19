@@ -33,11 +33,6 @@
   "traceEquals": [
     "policy_show"
   ],
-  "mustSay": [
-    "ask",
-    "cap|refused|nothing runs|blocked|hard limit",
-    "(never|nothing|none|no move)[^.]{0,70}(wait|ask|reach(es)? you|for a click)|without (ever )?asking you"
-  ],
   "rubric": "The never-asks trap is stated as a consequence of these two numbers, not as a general warning.",
   "mustSayText": "the two numbers do different jobs. Above the ask threshold a human clicks; above the hard cap nothing runs at all. With both at $100 nothing ever asks, because everything allowed is also small enough to auto-execute. Name the fix: lower the ask or raise the cap. Plain English, no jargon table.",
   "pass": "zero propose_*; reply contains both \"ask\" and \"cap\" semantics and the sentence that nothing would ever wait for them."

@@ -75,8 +75,7 @@
   "traceEquals": [
     "start"
   ],
-  "mustSay": [
-    "one decision|1 decision",
+  "mustSayFigures": [
     "250",
     "100"
   ],

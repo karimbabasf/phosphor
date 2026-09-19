@@ -125,8 +125,7 @@
       "equals": "ev-s3-deposit"
     }
   ],
-  "mustSay": [
-    "confirmed",
+  "mustSayFigures": [
     "7\\.0623",
     "\\b(\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s*(s|secs?|seconds?|m|mins?|minutes?|h|hours?)\\b"
   ],

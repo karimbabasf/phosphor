@@ -68,10 +68,9 @@
       "equals": "eth"
     }
   ],
-  "mustSay": [
+  "mustSayFigures": [
     "500",
-    "\\d+(\\.\\d+)?\\s*(%|percent)",
-    "click"
+    "\\d+(\\.\\d+)?\\s*(%|percent)"
   ],
   "window": {
     "card": "propose_swap",

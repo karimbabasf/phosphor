@@ -37,7 +37,7 @@
   "traceEquals": [
     "wallet"
   ],
-  "mustSay": [
+  "mustSayFigures": [
     "\\b5\\b",
     "\\d+(\\.\\d+)?\\s*(%|percent)",
     "\\b7\\b"
