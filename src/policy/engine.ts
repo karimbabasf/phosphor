@@ -400,22 +400,54 @@ function neverAsks(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdi
   );
 }
 
+/* EVERY LIST FIELD IN A PATCH IS REPLACED, SO EVERY ONE OF THEM GETS THE SAME RULE.
+
+   mergePatch (proposals/lifecycle.ts) replaces destinationAllowlist, maxIssuerShare and
+   forbiddenIssuers wholesale, so a patch carrying one entry deletes all the others. Only the
+   allowlist had a rule about it, which left `{composition: {forbiddenIssuers: []}}` erasing
+   every forbidden issuer and `{composition: {maxIssuerShare: {default: 1}}}` erasing every
+   named cap, both unrefused. A removal dressed as a setting is the shape a diff read in a hurry
+   is most likely to miss, and it is a loosening in all three cases.
+
+   Adding is fine and is the reason each field exists. So is moving a figure that stays on the
+   card, which is why a named issuer share may be raised or lowered and only its DISAPPEARANCE
+   is refused. Removing an entry is a decision for the policy file. */
+function dropped<T>(before: readonly T[], after: readonly T[], key: (v: T) => string): T[] {
+  const kept = new Set(after.map(key));
+  return before.filter((v) => !kept.has(key(v)));
+}
+
 function policyChangeCeiling(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdict | null {
   const o = patch.outbound;
-  if (o === undefined) return null;
-
-  /* The allowlist is REPLACED rather than merged (see mergePatch), so a patch carrying one
-     address deletes every other one. Adding is fine and is the reason the field exists;
-     dropping an address a person put there is a removal dressed as an addition, and it is the
-     removals that a diff read in a hurry is most likely to miss. */
-  if (o.destinationAllowlist !== undefined) {
-    const next = new Set(o.destinationAllowlist.map(lower));
-    const dropped = policy.outbound.destinationAllowlist.filter(a => !next.has(lower(a)));
-    if (dropped.length > 0) {
+  if (o?.destinationAllowlist !== undefined) {
+    const gone = dropped(policy.outbound.destinationAllowlist, o.destinationAllowlist, lower);
+    if (gone.length > 0) {
       return refusal(
         reasons,
         'allowlist_shortened',
-        `This patch drops ${dropped.length} allowed destination(s) (${dropped.join(', ')}). A patch may add destinations; removing one is a decision for the policy file.`,
+        `This patch drops ${gone.length} allowed destination(s) (${gone.join(', ')}). A patch may add destinations; removing one is a decision for the policy file.`,
+      );
+    }
+  }
+
+  const c = patch.composition;
+  if (c?.forbiddenIssuers !== undefined) {
+    const gone = dropped(policy.composition.forbiddenIssuers, c.forbiddenIssuers, lower);
+    if (gone.length > 0) {
+      return refusal(
+        reasons,
+        'forbidden_issuers_shortened',
+        `This patch drops ${gone.length} forbidden issuer(s) (${gone.join(', ')}), which lets this app hold them again. A patch may add forbidden issuers; removing one is a decision for the policy file.`,
+      );
+    }
+  }
+  if (c?.maxIssuerShare !== undefined) {
+    const gone = dropped(Object.keys(policy.composition.maxIssuerShare), Object.keys(c.maxIssuerShare), lower);
+    if (gone.length > 0) {
+      return refusal(
+        reasons,
+        'issuer_caps_dropped',
+        `This patch drops the share cap on ${gone.length} issuer(s) (${gone.join(', ')}), which removes the wall rather than moving it. A patch may add a cap or change one; removing one is a decision for the policy file.`,
       );
     }
   }

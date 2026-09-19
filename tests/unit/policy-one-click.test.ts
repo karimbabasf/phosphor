@@ -370,3 +370,66 @@ test('a raise written as a fall is refused: the after figure cannot come first',
   assert.equal(verdict.outcome, 'refuse');
   assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'sentence_mismatch');
 });
+
+/* ---------- the other two lists ----------
+
+   mergePatch REPLACES maxIssuerShare and forbiddenIssuers wholesale, exactly as it replaces
+   destinationAllowlist, and only the allowlist had a rule about it. So `{forbiddenIssuers: []}`
+   erased every forbidden issuer and `{maxIssuerShare: {default: 1}}` erased every named cap,
+   both unrefused and both a removal dressed as a setting. Every list field in a patch gets the
+   same rule: add what you like, take nothing away. */
+
+function compositionWith(over: Partial<Policy['composition']>): Policy {
+  const p = defaultPolicy();
+  p.composition = { ...p.composition, ...over };
+  return p;
+}
+
+test('a patch that erases the forbidden issuer list is refused', () => {
+  const policy = compositionWith({ forbiddenIssuers: ['tether', 'someissuer'] });
+  const verdict = evaluate(change({ composition: { forbiddenIssuers: [] } }, 'Tidy the issuer list.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'forbidden_issuers_shortened');
+  assert.match(verdict.reasons.join(' '), /tether/);
+});
+
+test('a patch that drops one forbidden issuer while keeping the rest is refused too', () => {
+  const policy = compositionWith({ forbiddenIssuers: ['tether', 'someissuer'] });
+  const verdict = evaluate(change({ composition: { forbiddenIssuers: ['tether'] } }, 'Keep tether forbidden.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.match(verdict.reasons.join(' '), /someissuer/);
+});
+
+test('adding a forbidden issuer is the reason the field exists, and still lands', () => {
+  const policy = compositionWith({ forbiddenIssuers: ['tether'] });
+  const verdict = evaluate(
+    change({ composition: { forbiddenIssuers: ['tether', 'someissuer'] } }, 'Forbid someissuer as well.'),
+    ctxOf(policy),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+});
+
+test('a patch that erases a named issuer cap is refused', () => {
+  const policy = compositionWith({ maxIssuerShare: { default: 1, tether: 0.2 } });
+  const verdict = evaluate(change({ composition: { maxIssuerShare: { default: 1 } } }, 'Set the default share to one.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'issuer_caps_dropped');
+  assert.match(verdict.reasons.join(' '), /tether/);
+});
+
+test('a named issuer cap may be raised, lowered or added, because the figure is on the card', () => {
+  const policy = compositionWith({ maxIssuerShare: { default: 1, tether: 0.2 } });
+  const shares: Array<Record<string, number>> = [{ default: 1, tether: 0.9 }, { default: 1, tether: 0.1 }, { default: 1, tether: 0.2, circle: 0.5 }];
+  for (const share of shares) {
+    const verdict = evaluate(change({ composition: { maxIssuerShare: share } }, 'Move the issuer shares.'), ctxOf(policy));
+    assert.equal(verdict.outcome, 'needs_approval', JSON.stringify(share));
+  }
+});
+
+test('the allowlist rule still fires on a composition-only patch path', () => {
+  const policy = policyWith({});
+  policy.outbound.destinationAllowlist = ['0xabc'];
+  const verdict = evaluate(change({ outbound: { destinationAllowlist: [] } }, 'Tidy the venue list.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'allowlist_shortened');
+});
