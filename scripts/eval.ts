@@ -36,7 +36,7 @@ import { venueAllowlist } from '../src/rails/index.ts';
 import { renderSentences } from '../src/policy/render.ts';
 import { EXPECTED_TOOLS_SORTED } from '../tests/tool-surface.ts';
 import { loadScenarios, turnsOf, type Scenario } from '../tests/eval/schema.ts';
-import { gradeScenario, type Card, type Frame, type Run, type StatusRead, type Verdict } from '../tests/eval/grade.ts';
+import { BANNED, gradeScenario, type Card, type Frame, type Run, type StatusRead, type Verdict } from '../tests/eval/grade.ts';
 
 type Json = any;
 
@@ -316,7 +316,12 @@ async function watchWindow(app: App, frames: Frame[], cards: Card[], stop: Abort
         } catch {
           // The app is going down, which is not a window failure.
         }
-        frames.push({ at, type: String(payload.type ?? ''), payload, proposals });
+        /* STAMPED WHEN THE STATE ANSWERED, not when the frame woke this reader. The rows below
+           are what /api/state held after a round trip, so a stamp taken before it dates a later
+           state to an earlier second and the transcript rule reads a terminal row as having been
+           on the window before the agent's read of the same row. That is a failure the harness
+           manufactured, and it moved with the machine's load rather than with the code. */
+        frames.push({ at: Date.now(), type: String(payload.type ?? ''), payload, proposals });
       }
     }
   } catch {
@@ -326,16 +331,30 @@ async function watchWindow(app: App, frames: Frame[], cards: Card[], stop: Abort
 
 // ---------- the rubric judge ----------
 
-/* Live mode only, and one call per scenario that carries a rubric line.
+/* Live mode only, and three independent votes per scenario that carries a rubric line.
 
    The judge is a `claude -p` with no tools, no MCP config and none of this machine's settings: it
-   reads the rubric line and the reply, and answers with a digit. It is deliberately not the agent
-   under test and it is given no scenario context beyond the one line, because a judge that knows
-   what the trace did starts grading the trace again.
+   reads the rule, the facts the spec demanded of that reply, the phrases the grader bans, and the
+   reply itself, then answers with a digit. It is deliberately not the agent under test, and it is
+   still told nothing about the trace, because a judge that knows what the calls were starts
+   grading the calls again.
+
+   THREE VOTES, AND THE MIDDLE ONE IS THE SCORE. A single shot was the least repeatable thing in
+   this suite: the same reply scored 2 in one run and 1 in the next with nothing between them, and
+   at run 6 four of the nine failures were the judge alone. The votes are cast at once, against one
+   prompt, and the median stands, so neither one harsh read nor one generous one decides a scenario.
+
+   AND IT IS TOLD WHAT THE REPLY HAD TO CARRY. Handed the rubric line by itself, the judge graded
+   tone: it marked a reply down as a "mini-lecture" for being two sentences while every fact the
+   spec asked for was inside them. The spec's own Must say line goes in verbatim, and the prompt
+   says that a reply carrying every one of those facts is a 2 unless the rule is itself about
+   length. Judgment stays the judge's; the bar stops moving.
 
    Scripted mode never calls it. A canned reply is the fixture's own prose and scoring it would be
    the fixture marking its own homework. */
-function judgeRubric(rubric: string, texts: Array<{ text: string; turn?: number }>): { score: number; why: string } {
+const JUDGE_VOTES = 3;
+
+function judgePrompt(scenario: Scenario, texts: Array<{ text: string; turn?: number }>): string {
   const turns = new Map<number, string[]>();
   for (const entry of texts) {
     const key = entry.turn ?? 0;
@@ -345,29 +364,73 @@ function judgeRubric(rubric: string, texts: Array<{ text: string; turn?: number 
     .sort((a, b) => a[0] - b[0])
     .map(([index, parts], position) => `ANSWER ${position + 1}${turns.size > 1 ? ` (to the person's message ${index + 1})` : ''}:\n${parts.join('\n')}`)
     .join('\n\n');
-  const prompt = [
+  return [
     'You are scoring one reply from a wallet operator agent against one rule, and nothing else.',
     turns.size > 1
       ? 'The agent answered the person more than once. Each ANSWER below is one separate reply, read on its own at the time it was written, so judge a rule about length or shape against a single answer and never against all of them stacked together.'
       : '',
     '',
-    `RULE: ${rubric}`,
+    `RULE: ${scenario.rubric ?? ''}`,
+    '',
+    scenario.mustSayText === undefined ? '' : `THE FACTS THIS REPLY HAD TO CARRY, from the specification: ${scenario.mustSayText}`,
+    '',
+    `PHRASES BANNED IN ANY REPLY: ${BANNED.map((banned) => banned.why).join('; ')}.`,
+    '',
+    'How to score. A reply that carries every fact above and uses none of those phrases is a 2,',
+    'even when it is longer than you would have written it. Mark it down only for a fact that is',
+    'missing, a figure that is wrong, a banned phrase, or the rule itself being broken. Where the',
+    'rule is about length or shape, that is the rule and you judge it.',
     '',
     answers.slice(0, 6000),
     '',
     'Score 0 if the reply breaks the rule, 1 if it half meets it, 2 if it clearly meets it.',
     'Answer with the digit, a space, and at most fifteen words of reason. Nothing else.',
   ].join('\n');
-  const judged = spawnSync(
-    'claude',
-    ['-p', '--setting-sources=', '--permission-mode', 'dontAsk', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'],
-    { input: prompt, encoding: 'utf8', timeout: 120_000 },
-  );
-  if (judged.status !== 0) return { score: -1, why: `the judge did not answer (${judged.error?.message ?? judged.status})` };
-  const text = (judged.stdout ?? '').trim();
-  const match = /^([012])\b\s*(.*)$/s.exec(text);
-  if (match === null) return { score: -1, why: `the judge answered ${text.slice(0, 60)}` };
-  return { score: Number(match[1]), why: match[2].trim().slice(0, 80) };
+}
+
+function castVote(prompt: string): Promise<{ score: number; why: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(
+      'claude',
+      ['-p', '--setting-sources=', '--permission-mode', 'dontAsk', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}'],
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    let out = '';
+    let done = false;
+    const finish = (value: { score: number; why: string }): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish({ score: -1, why: 'the judge did not answer inside 150 s' });
+    }, 150_000);
+    child.stdout.on('data', (chunk: Buffer) => {
+      out += chunk.toString();
+    });
+    child.stderr.on('data', () => undefined);
+    child.on('error', (error) => finish({ score: -1, why: `the judge did not start (${error.message})` }));
+    child.on('close', (code) => {
+      if (code !== 0) return finish({ score: -1, why: `the judge exited ${code}` });
+      const text = out.trim();
+      const match = /^([012])\b\s*(.*)$/s.exec(text);
+      finish(match === null ? { score: -1, why: `the judge answered ${text.slice(0, 60)}` } : { score: Number(match[1]), why: match[2].trim().slice(0, 80) });
+    });
+    child.stdin.end(prompt);
+  });
+}
+
+async function judgeRubric(scenario: Scenario, texts: Array<{ text: string; turn?: number }>): Promise<{ score: number; why: string }> {
+  const prompt = judgePrompt(scenario, texts);
+  const cast = await Promise.all(Array.from({ length: JUDGE_VOTES }, () => castVote(prompt)));
+  const answered = cast.filter((vote) => vote.score >= 0);
+  if (answered.length === 0) return { score: -1, why: cast[0]?.why ?? 'no judge answered' };
+  const scores = answered.map((vote) => vote.score).sort((a, b) => a - b);
+  const score = scores[Math.floor(scores.length / 2)];
+  const spoke = answered.find((vote) => vote.score === score) ?? answered[0];
+  return { score, why: `${scores.join('')} ${spoke.why}`.slice(0, 84) };
 }
 
 // ---------- one scenario ----------
@@ -428,10 +491,10 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
      reached. Half a second is well under the second the card checks already allow. */
   const poll = setInterval(() => {
     void (async () => {
-      const at = Date.now();
       try {
         const state = (await (await fetch(`${app.base}/api/state`)).json()) as Json;
-        frames.push({ at, type: 'poll', payload: null, proposals: (state.proposals as Json[]) ?? [] });
+        // Stamped on the answer, for the reason watchWindow gives above.
+        frames.push({ at: Date.now(), type: 'poll', payload: null, proposals: (state.proposals as Json[]) ?? [] });
       } catch {
         // The app is going down, which is not a window failure.
       }
@@ -549,7 +612,7 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   const verdict = gradeScenario(scenario, run);
   let rubric = '';
   if (LIVE && scenario.rubric !== undefined && verdict.ok) {
-    const judged = judgeRubric(scenario.rubric, texts);
+    const judged = await judgeRubric(scenario, texts);
     rubric = `rubric ${judged.score}/2: ${judged.why}`;
     if (judged.score < 2) {
       verdict.ok = false;
@@ -614,6 +677,62 @@ async function probeTools(stage: string): Promise<Set<string>> {
   return new Set(names);
 }
 
+// ---------- one eval at a time ----------
+
+/* NO TWO RUNS AT ONCE, AND RUN 1 OF THE FIRST LIVE PASS IS WHY. A launch that did not detach was
+   relaunched, both processes ran, and the output file held two interleaved runs whose summary
+   line disagreed with a mid-run read of the other. Nothing here stopped it: ports come from
+   freePort and data dirs from mkdtemp, so two runs never collide on a resource and never learn
+   about each other. They collide on the machine, which is 28 apps, 28 agents and the judge's
+   votes competing for it, and that load IS the timing every flaky scenario lives in. So a run
+   takes a lock and a second one refuses to start, naming the pid that holds it.
+
+   The lock carries a pid rather than a flag, so a run killed outright leaves a file the next run
+   steps over instead of a deadlock somebody has to clear by hand. */
+const LOCK = path.join(os.tmpdir(), 'phosphor-eval.lock');
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function takeLock(): void {
+  if (fs.existsSync(LOCK)) {
+    let held: { pid?: number; started?: string; mode?: string } = {};
+    try {
+      held = JSON.parse(fs.readFileSync(LOCK, 'utf8')) as typeof held;
+    } catch {
+      held = {};
+    }
+    if (typeof held.pid === 'number' && held.pid !== process.pid && alive(held.pid)) {
+      console.log(`[FAIL] another eval already holds this machine: pid ${held.pid}, ${held.mode ?? 'unknown'} mode, started ${held.started ?? 'unknown'}`);
+      console.log('Two runs share the load and the output, which is how a run came out interleaved once. Wait for it, or kill that pid.');
+      process.exit(2);
+    }
+    fs.rmSync(LOCK, { force: true });
+  }
+  fs.writeFileSync(LOCK, `${JSON.stringify({ pid: process.pid, started: new Date().toISOString(), mode: LIVE ? 'live' : 'scripted' })}\n`);
+  const drop = (): void => {
+    try {
+      const held = JSON.parse(fs.readFileSync(LOCK, 'utf8')) as { pid?: number };
+      if (held.pid === process.pid) fs.rmSync(LOCK, { force: true });
+    } catch {
+      // somebody else's lock, or already gone
+    }
+  };
+  process.on('exit', drop);
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(signal, () => {
+      drop();
+      process.exit(130);
+    });
+  }
+}
+
 // ---------- the run ----------
 
 const scenarios = loadScenarios(SCENARIO_DIR, ONLY);
@@ -621,6 +740,20 @@ if (scenarios.length === 0) {
   console.log('no scenarios matched');
   process.exit(1);
 }
+
+/* HOW MANY TIMES THE WHOLE SUITE RUNS. One live run is a sample, not a gate: across six runs of
+   the first pass only one scenario of the 28 passed every time, and thirteen passed a run and
+   failed a later one. A scenario is green here when it passes every run of the same build, and
+   the suite is green when every scenario is green or a declared expected-fail. Three is the
+   number the lead set. Scripted mode is deterministic and defaults to one. */
+const RUNS = (() => {
+  const at = args.indexOf('--runs');
+  if (at === -1) return LIVE ? 3 : 1;
+  const asked = Number(args[at + 1]);
+  return Number.isInteger(asked) && asked > 0 && asked <= 10 ? asked : 1;
+})();
+
+takeLock();
 
 /* The grader is graded first. It is the one thing in this run with no independent check on it:
    every scenario's verdict comes from it, so a grader that passes everything would turn the whole
@@ -637,73 +770,123 @@ if (graderTests.status !== 0) {
 }
 console.log(`grader self-test: ${/pass (\d+)/.exec(graderTests.stdout ?? '')?.[1] ?? '?'} checks pass`);
 
-const stage = stageRepo();
-console.log(`PHOSPHOR EVAL: ${scenarios.length} scenario(s), ${LIVE ? 'live' : 'scripted'} mode`);
-console.log(`staged repo ${stage}`);
-console.log('');
-
-const results: Result[] = [];
-let available = new Set<string>();
-try {
-  available = await probeTools(stage);
-  for (const scenario of scenarios) {
-    let result: Result;
-    try {
-      result = await runScenario(stage, scenario, available);
-    } catch (error) {
-      result = { scenario, status: 'error', verdict: null, missing: [], detail: errText(error), rubric: '' };
+async function runSuite(pass: number): Promise<Result[]> {
+  // A stage per run rather than one for all of them: a scenario writes data/demo-state.json into
+  // it, so a run reusing a stage starts on the last scenario of the run before it.
+  const stage = stageRepo();
+  console.log(`PHOSPHOR EVAL: ${scenarios.length} scenario(s), ${LIVE ? 'live' : 'scripted'} mode, run ${pass} of ${RUNS}`);
+  console.log(`staged repo ${stage}`);
+  console.log('');
+  const results: Result[] = [];
+  try {
+    const available = await probeTools(stage);
+    for (const scenario of scenarios) {
+      let result: Result;
+      try {
+        result = await runScenario(stage, scenario, available);
+      } catch (error) {
+        result = { scenario, status: 'error', verdict: null, missing: [], detail: errText(error), rubric: '' };
+      }
+      results.push(result);
+      const mark = { pass: '[PASS]', fail: '[FAIL]', xfail: '[XFAIL]', error: '[ERROR]' }[result.status];
+      const v = result.verdict;
+      const checks =
+        v === null
+          ? ''
+          : ` trace:${v.trace.ok ? 'ok' : 'no'} reply:${v.reply.ok ? 'ok' : 'no'} window:${v.window.skipped === true ? 'skip' : v.window.ok ? 'ok' : 'no'} rubric:${LIVE ? (result.rubric === '' ? 'n/a' : result.rubric.slice(7, 10)) : 'skipped'}`;
+      const first = result.detail !== '' ? result.detail : (v?.first ?? '');
+      console.log(`${mark} ${result.scenario.id} ${result.scenario.title}${checks}${first ? `   ${first}` : ''}`);
+      if (VERBOSE && result.verdict !== null) {
+        console.log(`        trace: ${result.verdict.calls.join(', ')}`);
+        console.log(`        reply: ${result.verdict.reply_text.replace(/\n/g, ' | ').slice(0, 900)}`);
+      }
     }
-    results.push(result);
-    const mark = { pass: '[PASS]', fail: '[FAIL]', xfail: '[XFAIL]', error: '[ERROR]' }[result.status];
-    const v = result.verdict;
-    const checks =
-      v === null
-        ? ''
-        : ` trace:${v.trace.ok ? 'ok' : 'no'} reply:${v.reply.ok ? 'ok' : 'no'} window:${v.window.skipped === true ? 'skip' : v.window.ok ? 'ok' : 'no'} rubric:${LIVE ? (result.rubric === '' ? 'n/a' : result.rubric.slice(7, 10)) : 'skipped'}`;
-    const first = result.detail !== '' ? result.detail : (v?.first ?? '');
-    console.log(`${mark} ${result.scenario.id} ${result.scenario.title}${checks}${first ? `   ${first}` : ''}`);
-    if (VERBOSE && result.verdict !== null) {
-      console.log(`        trace: ${result.verdict.calls.join(', ')}`);
-      console.log(`        reply: ${result.verdict.reply_text.replace(/\n/g, ' | ').slice(0, 900)}`);
-    }
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
   }
-} finally {
-  fs.rmSync(stage, { recursive: true, force: true });
+  return results;
 }
 
-// ---------- the table ----------
-
-const counts = {
-  pass: results.filter((r) => r.status === 'pass').length,
-  fail: results.filter((r) => r.status === 'fail').length,
-  xfail: results.filter((r) => r.status === 'xfail').length,
-  error: results.filter((r) => r.status === 'error').length,
-};
-
-console.log('');
-console.log('='.repeat(96));
-console.log(`${'id'.padEnd(5)}${'mode'.padEnd(10)}${'result'.padEnd(8)}${'failing check'.padEnd(16)}first failing assertion`);
-console.log('-'.repeat(96));
-for (const result of results) {
-  const v = result.verdict;
-  const failing =
-    result.status === 'error' || v === null
-      ? 'harness'
-      : !v.trace.ok
-        ? 'trace'
-        : !v.reply.ok
-          ? 'reply'
-          : !v.window.ok && v.window.skipped !== true
-            ? 'window'
-            : '';
-  const note = result.status === 'xfail' ? `waiting on ${result.missing.join(', ')}` : (v?.first ?? result.detail);
+function report(results: Result[]): void {
+  console.log('');
+  console.log('='.repeat(96));
+  console.log(`${'id'.padEnd(5)}${'mode'.padEnd(10)}${'result'.padEnd(8)}${'failing check'.padEnd(16)}first failing assertion`);
+  console.log('-'.repeat(96));
+  for (const result of results) {
+    const v = result.verdict;
+    const failing =
+      result.status === 'error' || v === null
+        ? 'harness'
+        : !v.trace.ok
+          ? 'trace'
+          : !v.reply.ok
+            ? 'reply'
+            : !v.window.ok && v.window.skipped !== true
+              ? 'window'
+              : '';
+    const note = result.status === 'xfail' ? `waiting on ${result.missing.join(', ')}` : (v?.first ?? result.detail);
+    console.log(
+      `${result.scenario.id.padEnd(5)}${(LIVE ? 'live' : 'scripted').padEnd(10)}${result.status.padEnd(8)}${failing.padEnd(16)}${note.slice(0, 44)}`,
+    );
+  }
+  const counts = {
+    pass: results.filter((r) => r.status === 'pass').length,
+    fail: results.filter((r) => r.status === 'fail').length,
+    xfail: results.filter((r) => r.status === 'xfail').length,
+    error: results.filter((r) => r.status === 'error').length,
+  };
+  console.log('='.repeat(96));
   console.log(
-    `${result.scenario.id.padEnd(5)}${(LIVE ? 'live' : 'scripted').padEnd(10)}${result.status.padEnd(8)}${failing.padEnd(16)}${note.slice(0, 44)}`,
+    `${results.length} scenarios: ${counts.pass} pass, ${counts.fail} fail, ${counts.xfail} xfail, ${counts.error} error`,
   );
 }
-console.log('='.repeat(96));
-console.log(
-  `${results.length} scenarios: ${counts.pass} pass, ${counts.fail} fail, ${counts.xfail} xfail, ${counts.error} error`,
-);
 
-process.exit(counts.fail + counts.error > 0 ? 1 : 0);
+const passes: Result[][] = [];
+for (let pass = 1; pass <= RUNS; pass += 1) {
+  const results = await runSuite(pass);
+  passes.push(results);
+  report(results);
+}
+
+/* ---------- what green means across the runs ----------
+
+   A scenario is green when it passes every run, or is an expected-fail in every run. Anything
+   that passed once and failed once is neither, and it reads as flaky here rather than as a pass,
+   because a gate that a rerun can talk out of is not a gate. */
+if (RUNS > 1) {
+  const verdicts = new Map<string, string[]>();
+  for (const results of passes) for (const result of results) {
+    verdicts.set(result.scenario.id, [...(verdicts.get(result.scenario.id) ?? []), result.status]);
+  }
+  const short: Record<string, string> = { pass: 'P', fail: 'F', xfail: 'X', error: 'E' };
+  console.log('');
+  console.log('='.repeat(96));
+  console.log(`ACROSS ${RUNS} RUNS of the same build, ${LIVE ? 'live' : 'scripted'} mode`);
+  console.log(`${'id'.padEnd(5)}${'runs'.padEnd(10)}${'pass'.padEnd(7)}${'green'.padEnd(8)}last failing assertion`);
+  console.log('-'.repeat(96));
+  let green = 0;
+  let flaky = 0;
+  for (const scenario of scenarios) {
+    const seen = verdicts.get(scenario.id) ?? [];
+    const passed = seen.filter((status) => status === 'pass').length;
+    const allPass = seen.length === RUNS && passed === RUNS;
+    const allXfail = seen.length === RUNS && seen.every((status) => status === 'xfail');
+    const isGreen = allPass || allXfail;
+    if (isGreen) green += 1;
+    else if (passed > 0) flaky += 1;
+    const last = [...passes].reverse().flatMap((results) => results.filter((r) => r.scenario.id === scenario.id));
+    const worst = last.find((r) => r.status === 'fail' || r.status === 'error') ?? last[0];
+    const note = isGreen ? (allXfail ? `xfail: ${worst?.missing.join(', ') ?? ''}` : '') : (worst?.verdict?.first ?? worst?.detail ?? '');
+    console.log(
+      `${scenario.id.padEnd(5)}${seen.map((status) => short[status]).join('').padEnd(10)}${`${passed}/${RUNS}`.padEnd(7)}${(isGreen ? 'yes' : 'no').padEnd(8)}${note.slice(0, 46)}`,
+    );
+  }
+  console.log('='.repeat(96));
+  console.log(
+    `${scenarios.length} scenarios over ${RUNS} runs: ${green} green (passed every run or expected-fail every run), ${scenarios.length - green} not, of which ${flaky} passed at least one run and failed another`,
+  );
+  process.exit(green === scenarios.length ? 0 : 1);
+}
+
+const counts = passes[0].filter((r) => r.status === 'fail' || r.status === 'error').length;
+process.exit(counts > 0 ? 1 : 0);

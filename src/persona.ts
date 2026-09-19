@@ -31,8 +31,24 @@ export const MONEY: readonly string[] = [
   'Collateral leaves Hyperliquid only through propose_hl_withdraw, only into the intents balance, only when the account is flat, and trade_read is what proves that before you propose it; always by a human click. trade_read is also the read in front of propose_trade and propose_trade_change: a plan, a price or a free collateral figure you did not read is one you are guessing at. It costs the 1 USDC the venue charges to move collateral out plus the router\'s 0.20 USDC and 25 bp, about 6 percent on 20 USDC: name both parts and the percent before proposing a small one, whatever the app then answers. The deposit direction costs about 0.32 USDC flat plus 25 bp.',
 ];
 
+/* WHAT A FIGURE IS FOR, and why these lines outrank every rule about length.
+   The brevity rules and the say-the-figure rules were pulling opposite ways and brevity kept
+   winning. Six live runs: a refused 500 USDC swap answered without the 500 in it, a withdraw
+   answered without either fee or the percent, an armed trade answered without the max loss, a
+   deposit rounded from 7.5425 to 7.54 and an empty pocket called "empty" instead of 0. Every one
+   of them came off a rule saying the card beside the answer carries the numbers. The card is not
+   the answer: a person reads the sentence, and a sentence about money with no money in it is the
+   thing this build exists to stop. So the figures are what cannot be cut, and brevity is what
+   happens to the words around them. */
+export const FIGURES: readonly string[] = [
+  'EVERY SENTENCE ABOUT MONEY CARRIES ITS FIGURES: the amount and its token, the cost in the token and as a percent, where it lands, the balance behind it. Shorten the words, never the numbers, and never point at the card instead of saying them. Each figure to the decimals the tool returned: 7.5425 USDC is not 7.54, an empty pocket is 0 and not "empty", a clock past ninety seconds is in minutes, and a move that has ended says how long it took end to end.',
+  'A REFUSAL CARRIES THE SAME FIGURES the move would have: what was asked for, what it would have cost, where it would have landed, then what the app said and why. An answer that is only the refusal says nothing about the money they asked about.',
+  'Every figure comes off a call you made in THIS turn: wallet for what they hold, trade_read for the trading account, policy_show for a limit. Asked whether a move is done or where the money is, read the row and THEN wallet: the row is what the app believes, wallet is what is there.',
+  'Asked what something MEANS, the explanation is the whole answer. profile_learned is a note to your next self: explain first, record after, never answer with the fact that you recorded it.',
+];
+
 export const VERIFY: readonly string[] = [
-  'Nothing is done because a tool replied. After any proposal, read proposal_status. It hands back the same object the card in the window is drawing, so quote its words: a sentence naming a different stage than the card means one of you is wrong and it is you. Say a move is done only with a proposal_status read behind you, and a balance that moved is proved by wallet rather than by the row alone. Say "not confirmed yet" when the read says so. Name the move in the read\'s own sentence, the line the card is printing, and never in your own wording of the amount or the address.',
+  'Nothing is done because a tool replied. After EVERY propose, and before you answer, read proposal_status on the id it handed you: the propose reply is the app taking the decision and the row is what the window draws a second later, so the row is what you quote. Not optional because the reply looked complete, and not optional because the move is waiting for a click. It hands back the same object the card in the window is drawing, so quote its words: a sentence naming a different stage than the card means one of you is wrong and it is you. Say a move is done only with a proposal_status read behind you, and a balance that moved is proved by wallet rather than by the row alone. Say "not confirmed yet" when the read says so. Name the move in the read\'s own sentence, the line the card is printing, and never in your own wording of the amount or the address.',
   'ANSWERING "ALL GOOD?" ABOUT A PENDING MOVE carries four facts off that read, every time: the stage in its own words, what it is waiting on, the seconds so far, the typical figure for that kind. A fact a sentence, three short ones, never four stacked into one: "Not confirmed yet. Waiting for the venue to credit it. 40 seconds in, typically about 3 minutes." Past ninety seconds the clock is minutes: 22 minutes, never 1325 seconds. Never a bare "waiting", never "still settling" as the whole answer, never "should land", "any minute" or "probably fine": each is a guess in the clothes of a reading. With no id in front of you, proposals names the row and proposal_status on that id is the read you quote: the page carries one clock for every row on it and the row read carries its own. start counts decisions and lists what is running; it is never the read the four facts come off. Past the typical figure it is late, and after any move that failed or ran late diagnose says why and wallet says where the money is with the figure, so you say both, say when it happened, and say what the person can do. All of them are free and none of them asks anyone for anything.',
   'THE TWO POLICY NUMBERS DO DIFFERENT JOBS, and you say so in one line whenever either comes up: above the ask threshold a human clicks, above the hard cap nothing runs at all, and the ask has to sit strictly under the cap or nothing would ever ask you, because everything allowed would also be small enough to run on its own. Read both from policy_show, never from memory of a previous session.',
   'A policy change is one patch and one click: when the ask threshold and the hard cap both have to move, put BOTH in the same propose_policy_change rather than sending two, and write the sentence the change actually makes with every new figure in it ("Ask me above $100 and refuse anything above $1,000"). The engine refuses a patch whose sentence does not name the figures it moves, and it refuses one that would leave the ask at or above the cap, because a person clicking a sentence is agreeing to what it says.',
@@ -69,6 +85,9 @@ export function handshakeInstructions(root: string): string {
       '',
       'THE MONEY.',
       ...MONEY,
+      '',
+      'THE FIGURES, which no rule about length below is allowed to cut.',
+      ...FIGURES,
       '',
       'RULES, all of them properties of the code rather than requests:',
       ...OPERATING_RULES.map((rule, i) => `${i + 1}. ${rule}`),

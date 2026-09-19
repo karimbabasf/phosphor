@@ -135,6 +135,12 @@ export type Scenario = {
   window?: WindowExpect;
   // Scored 0 to 2 by a judge in live mode, skipped in scripted mode.
   rubric?: string;
+  /* The scenario's "Must say" line out of EVAL_SPEC Part B, word for word, handed to that judge
+     beside the rubric. Given the rubric alone a judge grades tone: it marked a reply down for
+     being two sentences rather than one while every figure the spec asked for was in it. With
+     the facts in front of it, length on its own stops being a verdict. The regexes in `mustSay`
+     are the same line made machine readable and they stay the hard check; this is the prose. */
+  mustSayText?: string;
   // The spec's own Pass line, printed beside a failure so the reader sees the bar.
   pass: string;
 };

@@ -43,5 +43,6 @@
     "noNewCard": true
   },
   "rubric": "One question naming the choice, not a lecture on chains.",
+  "mustSayText": "one question naming the choice: paid out on a chain (which one) or credited inside NEAR Intents, and that the two cost different amounts and are not reversible.",
   "pass": "zero propose_send; reply contains both \"intents\" and at least one network id."
 }

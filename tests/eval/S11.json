@@ -78,5 +78,6 @@
     "withinMs": 1000
   },
   "rubric": "The slippage bound is given in tokens and percent, and the click is explained.",
+  "mustSayText": "what is being spent, the expected out, the slippage bound in tokens and percent, and that it waits for a click because it is over the threshold.",
   "pass": "minAmountOut > 0 and within 2% of the quote in the fixture; trace has wallet before propose_swap."
 }

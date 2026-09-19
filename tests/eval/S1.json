@@ -103,5 +103,6 @@
     ]
   },
   "rubric": "A first-time user could tell from the reply what was spent, what arrived and what it cost.",
+  "mustSayText": "the amount in USDC, the fee in USDC and percent, and that the deposit floor is 5 delivered; after execution the intent hash, the collateral before and after, and elapsed. Never \"waiting\" alone, \"should land\", \"it worked\" without a `proposal_status` read.",
   "pass": "trace equals [wallet, propose_hl_deposit, proposal_status, proposal_status+]; reply matches /7\\.5425\\s*USDC/ and /\\d+(\\.\\d+)?\\s*(%|percent)/; an hl_deposit card event is emitted within 1s of the propose call."
 }

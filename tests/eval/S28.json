@@ -83,5 +83,6 @@
     "withinMs": 1000
   },
   "rubric": "The reply states which this is, a tightening or a widening, and the new max loss is under the approved one.",
+  "mustSayText": "the new max loss in dollars, that it is lower than the approved one so it lands without a click, and the distance from the current price.",
   "pass": "the new max loss computed in the reply is less than $30; trace has trade_read before propose_trade_change."
 }

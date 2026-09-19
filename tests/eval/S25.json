@@ -39,5 +39,6 @@
     "noNewCard": true
   },
   "rubric": "The agent receives a fingerprint, never the address; the window is where an address is read.",
+  "mustSayText": "one question naming the asset and the network, and that USDC on the wrong network is lost with no refund.",
   "pass": "no deposit call before both asset and chain are in the conversation; reply matches /which (network|chain)/i. The reply must not contain a deposit address."
 }

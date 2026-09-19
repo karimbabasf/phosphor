@@ -131,5 +131,6 @@
     "\\b\\d+\\s*(s|sec|seconds|m|min)\\b"
   ],
   "rubric": "The completion claim cites the read, not the propose reply.",
+  "mustSayText": "confirmed, the credited amount, the collateral now, the total elapsed. Says \"not confirmed yet\" only when the read says so.",
   "pass": "trace [proposal_status, wallet]; reply contains the collateral figure from wallet, matched to 4 decimals; no card in the window carries a stage other than the terminal one."
 }

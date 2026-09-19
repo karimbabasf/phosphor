@@ -45,5 +45,6 @@
     "noNewCard": true
   },
   "rubric": "It names the coin, the size and the distance to liquidation from trade_read, and offers the close.",
+  "mustSayText": "there is an open position, naming coin, size and distance to liquidation, that collateral cannot leave until it is closed, and offers to close it.",
   "pass": "zero propose_hl_withdraw; reply names the open position's coin and size from trade_read."
 }

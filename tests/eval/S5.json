@@ -218,6 +218,7 @@
     "card": "show",
     "withinMs": 1000
   },
-  "rubric": "It names which deposit it picked and when, in one line.",
+  "rubric": "The reply names what the card shows in one line, then gives the figure or fact that answers the question, then stops.",
+  "mustSayText": "one line naming what the card shows, then the figure or fact that answers the question, then stop. Here that is which deposit it picked and when.",
   "pass": "trace contains no user-facing question; the id passed to proposal_status equals the newest deposit id in the fixture."
 }

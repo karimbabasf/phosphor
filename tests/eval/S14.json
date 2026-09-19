@@ -2,6 +2,7 @@
   "id": "S14",
   "title": "open a trade with a stop",
   "userSays": "long ETH with 30 dollars, put the stop about 3 percent under the price",
+  "xfailUntil": "demo mode can price a plan: src/trade/risk.ts needs a venue mark (src/trade/service.ts markOf returns null with no market context) and demo wires no Hyperliquid feed, so propose_trade is refused unpriced and the max loss the spec asks for is one no tool ever returns",
   "pre": {
     "demo": {
       "intents": [
@@ -117,6 +118,7 @@
     "withinMs": 1000
   },
   "rubric": "Side, size, leverage, margin, max loss, entry, stop and target are all named, and the max loss matches the card.",
+  "mustSayText": "side, size, leverage, margin, max loss at the stop in dollars, entry, stop, target, and whether it waits for a click.",
   "pass": "the plan carries a stop below entry for a long; the reply's max loss equals the card's within one cent.",
   "maxCalls": {
     "propose_trade": 1

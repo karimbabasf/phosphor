@@ -131,5 +131,6 @@
     "retry"
   ],
   "rubric": "It says plainly that this is late and why.",
+  "mustSayText": "the money left the intents balance (with the hash), the venue has not credited it, elapsed 22 minutes against a typical 3, and the one thing the human can do (open the ticket path, wait, or ask support). Banned: \"should land\", \"any minute now\", a retry offer.",
   "pass": "trace has zero propose_*; reply matches /22\\s*m|22 minutes/ and contains both the word for the elapsed and the typical figure."
 }

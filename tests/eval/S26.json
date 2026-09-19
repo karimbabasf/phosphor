@@ -43,5 +43,6 @@
     "\\b7\\b"
   ],
   "rubric": "A floor that loses money silently is the one the user hears about before the click.",
+  "mustSayText": "the minimum is 7 USDC in (5 must land or Hyperliquid keeps it), the flat fee on 6 would be about 5.5%, and the 5% ceiling refuses it. Offers 7 or more.",
   "pass": "zero propose_hl_deposit with amount < 7; reply contains both \"5\" (the delivered floor) and a percent figure."
 }

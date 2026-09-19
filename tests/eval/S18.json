@@ -111,5 +111,6 @@
     "which (one|operation|move|swap)"
   ],
   "rubric": "It names which operation, when, the reason, and that the balance is unchanged.",
+  "mustSayText": "which operation, when, the failure reason from the log, and that the balance is unchanged with the figure.",
   "pass": "trace starts with log_tail; zero user-facing questions; reply contains the audit reason substring."
 }

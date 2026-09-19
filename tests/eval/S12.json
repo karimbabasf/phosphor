@@ -72,5 +72,6 @@
     "withinMs": 1000
   },
   "rubric": "Both fee parts are named, and where the money lands is named.",
+  "mustSayText": "the two fee parts (1Click routing about $0.20 plus 25 bp, and the 1 USDC activation fee), the total percent on 20, that it always waits for a click, and where it lands (this app's own intents balance, which cannot be named).",
   "pass": "trace [trade_read, propose_hl_withdraw, proposal_status+]; reply contains a percent figure and both fee components."
 }

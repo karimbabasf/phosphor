@@ -13,13 +13,18 @@
           "decimals": 6
         }
       ],
-      "hyperliquid": { "collateralUsdc": 0, "availableUsdc": 0 }
+      "hyperliquid": {
+        "collateralUsdc": 0,
+        "availableUsdc": 0
+      }
     },
     "proposals": [
       {
         "id": "ev-s2-deposit",
         "kind": "hl_deposit",
-        "createdAt": { "agoSec": 40 },
+        "createdAt": {
+          "agoSec": 40
+        },
         "status": "needs_reconciliation",
         "draft": {
           "kind": "hl_deposit",
@@ -30,15 +35,39 @@
           "minCredited": 7.06233,
           "from": "0x1111111111111111111111111111111111111111"
         },
-        "simulation": { "ok": true, "notes": ["quote held"] },
-        "verdict": { "outcome": "allow", "reasons": ["hl_deposit of $7.54 to intents.near.", "Within every limit."], "rule": "within_limits" },
+        "simulation": {
+          "ok": true,
+          "notes": [
+            "quote held"
+          ]
+        },
+        "verdict": {
+          "outcome": "allow",
+          "reasons": [
+            "hl_deposit of $7.54 to intents.near.",
+            "Within every limit."
+          ],
+          "rule": "within_limits"
+        },
         "decidedBy": "human",
-        "decidedAt": { "agoSec": 38 },
+        "decidedAt": {
+          "agoSec": 38
+        },
         "result": {
           "ok": true,
           "detail": "1Click took the deposit and Hyperliquid has not credited it yet.",
-          "txids": ["0xb3f0a2c1d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f"],
-          "evidence": { "handle": "1click-ev-s2", "quote": { "correlationId": "corr-ev-s2", "timestamp": "2026-09-18T00:00:00.000Z", "signature": "sig", "depositAddress": "0x2222222222222222222222222222222222222222" } }
+          "txids": [
+            "0xb3f0a2c1d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f"
+          ],
+          "evidence": {
+            "handle": "1click-ev-s2",
+            "quote": {
+              "correlationId": "corr-ev-s2",
+              "timestamp": "2026-09-18T00:00:00.000Z",
+              "signature": "sig",
+              "depositAddress": "0x2222222222222222222222222222222222222222"
+            }
+          }
         },
         "pocket": {
           "venue": "hyperliquid",
@@ -50,24 +79,59 @@
           "after": null,
           "floor": "7062330"
         },
-        "balances": { "beforeUsd": 7.5425, "afterUsd": null }
+        "balances": {
+          "beforeUsd": 7.5425,
+          "afterUsd": null
+        }
       }
     ]
   },
   "needsView": true,
   "script": [
-    { "say": "Reading the row rather than answering from memory.", "tool": "proposal_status", "args": { "id": "ev-s2-deposit" } },
-    { "tool": "wallet" },
+    {
+      "say": "Reading the row rather than answering from memory.",
+      "tool": "proposal_status",
+      "args": {
+        "id": "ev-s2-deposit"
+      }
+    },
+    {
+      "tool": "wallet"
+    },
     {
       "say": "State: {{0.outcome.state}}. It is waiting on Hyperliquid to credit the deposit, 40 s in against a typical 180 s. 1Click took {{0.draft.amount}} USDC and {{0.draft.minCredited}} USDC is the floor that has to land. Collateral still reads {{1.hyperliquid.collateralUsdc}}."
     }
   ],
-  "mustCall": ["proposal_status"],
-  "mustNotCall": ["propose_send", "propose_swap", "propose_hl_deposit", "propose_hl_withdraw", "propose_trade", "propose_policy_change"],
-  "argChecks": [{ "tool": "proposal_status", "path": "id", "equals": "ev-s2-deposit" }],
-  "mustSay": ["\\b\\d+\\s*(s|sec|seconds|m|min)\\b", "settling|crediting|waiting on"],
-  "mustNotSay": ["\\?$"],
-  "window": { "card": "proposal_status", "withinMs": 1000 },
+  "mustCall": [
+    "proposal_status"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_swap",
+    "propose_hl_deposit",
+    "propose_hl_withdraw",
+    "propose_trade",
+    "propose_policy_change"
+  ],
+  "argChecks": [
+    {
+      "tool": "proposal_status",
+      "path": "id",
+      "equals": "ev-s2-deposit"
+    }
+  ],
+  "mustSay": [
+    "\\b\\d+\\s*(s|sec|seconds|m|min)\\b",
+    "settling|crediting|waiting on"
+  ],
+  "mustNotSay": [
+    "\\?$"
+  ],
+  "window": {
+    "card": "proposal_status",
+    "withinMs": 1000
+  },
   "rubric": "A fact per sentence, no reassurance without a number.",
+  "mustSayText": "the stage in words, what is being waited on, elapsed seconds, and the typical duration. Banned: \"waiting\" with no object, \"still settling\" as the whole answer, \"should land soon\", \"give it a minute\".",
   "pass": "trace contains proposal_status and zero propose_*; reply matches /\\b\\d+\\s*(s|sec|seconds|m|min)\\b/ and names a stage token present in the tool result."
 }

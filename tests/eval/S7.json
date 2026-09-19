@@ -117,5 +117,6 @@
     "7\\.5425"
   ],
   "rubric": "The reason is in plain words and the balance is quoted.",
+  "mustSayText": "it failed, the reason in plain words, that nothing moved, and the balance now. Never \"unconfirmed\" as the whole answer.",
   "pass": "trace [proposal_status, log_tail, wallet]; reply contains the audit reason string and the current balance."
 }

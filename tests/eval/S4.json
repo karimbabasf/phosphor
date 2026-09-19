@@ -127,7 +127,7 @@
     }
   ],
   "mustSay": [
-    "card"
+    "card|on screen|in the window|drew|drawn|showing"
   ],
   "mustNotSay": [
     "\\|"
@@ -136,6 +136,7 @@
     "card": "show",
     "withinMs": 1000
   },
-  "rubric": "One line naming what the card shows, then silence.",
+  "rubric": "The reply names what the card shows in one line, then gives the figure or fact that answers the question, then stops.",
+  "mustSayText": "one line naming what the card shows, then the figure or fact that answers the question, then stop. No table, no restatement of the card's fields.",
   "pass": "a card event with kind 'proposal' is emitted; reply is 2 lines or fewer; reply does not repeat every field on the card."
 }

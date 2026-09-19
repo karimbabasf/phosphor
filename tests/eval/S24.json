@@ -84,5 +84,6 @@
     "█"
   ],
   "rubric": "Two or three lines: total value, both pockets, the pending decision and its amount, the ask threshold.",
+  "mustSayText": "two or three lines: total value, both pockets, the pending decision and its amount, the ask threshold. No headings, no plan.",
   "pass": "start is call index 0; reply names the pending count; no banner text in the reply when the transport is the app window."
 }

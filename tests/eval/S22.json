@@ -45,5 +45,6 @@
     "deposit card"
   ],
   "rubric": "A zero balance is not a reason to improvise a funding route.",
+  "mustSayText": "both pockets are empty with the figure 0, and money comes in through the deposit card in the window, never through a tool. Offers `deposit` and asks which network they will send on.",
   "pass": "trace [wallet] then optionally deposit; zero propose_*; reply contains \"0\"."
 }

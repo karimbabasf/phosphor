@@ -320,7 +320,15 @@ function sentenceRule(run: Run): Check {
 // no card a person has to act on, which is a propose, a draw or a deposit address.
 const DECISION_CARDS = (name: string): boolean => name.startsWith('propose_') || name === 'show' || name === 'deposit';
 
-export function gradeWindow(scenario: Scenario, run: Run): Check {
+export function gradeWindow(scenario: Scenario, rawRun: Run): Check {
+  /* THE RECORD IS PUT BACK IN TIME ORDER BEFORE IT IS READ, because two producers write frames:
+     the SSE reader, which wakes on a push, and the poll beside it, which wakes on a timer. Both
+     read /api/state and then append, so whichever fetch answers first appends first and the array
+     is not in the order the states were read. transcriptRule takes "the frame the human was
+     looking at" as the last entry before the read, which off an unsorted list is some other
+     frame: that is a run failing on the harness's bookkeeping rather than on the app, and it is
+     one of the flips that made this suite unrepeatable. */
+  const run: Run = { ...rawRun, frames: [...rawRun.frames].sort((a, b) => a.at - b.at) };
   const transcript = transcriptRule(run);
   if (!transcript.ok) return transcript;
   const sentences = sentenceRule(run);

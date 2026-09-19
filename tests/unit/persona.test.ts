@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ALWAYS_CLICK_TOOLS, IDENTITY, MONEY, OPERATING_RULES, VERIFY, handshakeInstructions } from '../../src/persona.ts';
+import { ALWAYS_CLICK_TOOLS, FIGURES, IDENTITY, MONEY, OPERATING_RULES, VERIFY, handshakeInstructions } from '../../src/persona.ts';
 import { buildRole } from '../../src/role.ts';
 import { greetingRules } from '../../src/greeting.ts';
 
@@ -14,7 +14,20 @@ import { greetingRules } from '../../src/greeting.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
-const STALE = ['withdraw3', 'liquidity pool', 'different page', 'one way in', 'One way in', 'holds no Solana key', 'any chain this app signs for'];
+/* The last entry is not a stale fact but a rule that lost: it told the agent that the card beside
+   its answer already carried the amounts, the quote, the floor, the fee and the venue, and the
+   agent duly answered a refused 500 USDC swap without the 500 in it. FIGURES replaced it, and it
+   is listed here so it cannot quietly come back. */
+const STALE = [
+  'withdraw3',
+  'liquidity pool',
+  'different page',
+  'one way in',
+  'One way in',
+  'holds no Solana key',
+  'any chain this app signs for',
+  'the quote, the floor, the fee or the venue',
+];
 
 const EM_DASH = '—';
 const EN_DASH = '–';
@@ -116,6 +129,24 @@ test('both surfaces state the two policy numbers as two different jobs, in one l
     assert.match(text, /nothing would ever ask you/i);
     assert.match(text, /policy_show/);
   }
+});
+
+/* ---------- the figures outrank every rule about length ----------
+
+   Both surfaces told the agent to say the figures and, further down the same text, that the card
+   beside its answer already carried them. Brevity won every time it was measured. FIGURES is the
+   one block that settles it, so both surfaces carry it whole, it sits above the rules it outranks,
+   and the clause it replaced is in STALE above. */
+test('both surfaces carry the figure rules, and say the figures outrank the rules about length', () => {
+  for (const text of [handshakeInstructions(ROOT), role()]) {
+    for (const line of FIGURES) assert.ok(text.includes(line), `missing from the figure rules: ${line.slice(0, 60)}`);
+    assert.match(text, /7\.5425 USDC is not 7\.54/);
+    assert.match(text, /A REFUSAL CARRIES THE SAME FIGURES/);
+    assert.match(text, /read the row and THEN wallet/);
+    assert.match(text, /Shorten the words, never the numbers/);
+  }
+  // The in-app agent is the one with a person reading its sentence, so the total sits there.
+  assert.match(role(), /Both pockets means both figures AND the total/);
 });
 
 test('a claim that a move is done is tied to a proposal_status read', () => {

@@ -81,9 +81,15 @@ test('the role keeps the agent from reading the receipt back out in prose', () =
   // createReceiptCard). Karim, 2026-09-14: "when trades happen I dont want to see this".
   // Without this rule the agent prints Sold / Received / Fee / Where and the id under the card
   // that already shows them.
+  /* NARROWED ON 2026-09-19, because the old rule said the card "already carries the amounts, the
+     fee, the venue and the id" and the agent read that as permission to leave them out of the
+     sentence. It did: a landed move reported with no figure in it at all. What Karim objected to
+     was the receipt printed back as a list under a card printing the same list, so that is what
+     this now pins: one sentence, and the figure that changed is in it. */
   const text = role();
-  assert.ok(text.includes('say so in one sentence and stop'), 'the rule is gone');
-  assert.ok(text.includes('already carries the amounts, the fee, the venue and the id'), 'the four things the card shows are not named');
+  assert.ok(text.includes('say so in one sentence'), 'the rule is gone');
+  assert.ok(text.includes('with the figure that changed'), 'the landed move has no figure in its sentence');
+  assert.ok(text.includes('never the card\'s whole table told again'), 'the rule against reprinting the card is gone');
   assert.ok(text.indexOf('say so in one sentence') > text.indexOf('HOW TO ANSWER'), 'the rule is not an answering rule');
 });
 
@@ -97,14 +103,21 @@ test('the role keeps the agent to one line while a proposal waits for the click'
   const text = role();
   const at = text.indexOf('A move is a card the window draws and keeps current on its own');
   assert.ok(at > text.indexOf('HOW TO ANSWER'), 'the rule is missing or is not an answering rule');
-  const rule = text.slice(at, at + 500).replace(/\n/g, ' ');
-  assert.ok(rule.includes('your whole reply is one line'), 'the rule does not cap the reply');
-  assert.ok(rule.includes('not the amounts, the quote, the floor, the fee or the venue'), 'the five things the card shows are not named');
+  /* REWRITTEN ON 2026-09-19. The rule used to cap the reply at one line and then list the five
+     things it must NOT carry: the amounts, the quote, the floor, the fee and the venue. Karim's
+     complaint was a blob of text under a card, and the cap answered it by deleting the money. Six
+     live runs: a 500 USDC swap answered without the 500 in it, a withdraw without either fee or
+     the percent. So the cap is a shape now, one or two sentences and never a paragraph, and what
+     goes in them is the figures. The ban that stands is on telling the card's whole table again. */
+  const rule = text.slice(at, at + 520).replace(/\n/g, ' ');
+  assert.ok(rule.includes('One or two sentences of that, never a paragraph'), 'the rule does not cap the reply');
+  assert.ok(rule.includes('what it costs in the token and as a percent'), 'the money is not in the waiting reply');
+  assert.ok(rule.includes('where it lands, and whether it waits'), 'the destination and the click are not named');
   // The stage words themselves are not restated here: src/proposals/view.ts owns that table and
   // the card prints it, so the rule names the two ends and points at the card for the rest.
   assert.ok(rule.includes('keeps current on its own, through every stage'), 'the rule does not say the card updates itself');
   assert.ok(!/\bSettling\b/.test(rule), 'the role still names a stage word the stage table retired');
-  assert.ok(rule.includes('nothing about what you will do after the click'), 'the second sentence is still allowed');
+  assert.ok(rule.includes('never a plan for after the click'), 'the reply may still narrate what happens next');
 });
 
 test('the role opens a session on `start` and never spends a later call re-orienting', () => {
@@ -202,10 +215,21 @@ test('the role is not so long it stops being read', () => {
   // characters came out of the prose around them; the rest went on, which is the thing this
   // comment exists to make expensive.
   //
+  // RAISED TO 20,300 ON 2026-09-19, and this one settles a fight between two rules rather than
+  // adding a rule. The prompt told the agent to say the figures and, forty lines later, told it
+  // that the card beside its answer already carried the amounts, the quote, the floor, the fee
+  // and the venue. Brevity won every time it was measured: a refused 500 USDC swap answered with
+  // no 500 in it, a withdraw with neither fee nor the percent, a landed deposit with no elapsed.
+  // FIGURES in src/persona.ts is now one block both surfaces carry that no rule about length may
+  // cut, and four clauses it replaces came out of this file (rounding, read-in-this-turn,
+  // profile_learned, and the list of what NOT to say beside a card). The rest is three reads the
+  // agent skipped: proposal_status after a propose, wallet after the row, and the backup nudge it
+  // tailed onto answers nobody asked it for. 1,210 characters, measured 20,092.
+  //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 19000, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 20300, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -245,15 +269,19 @@ test('the role gives the agent a voice, and the window draws the numbers', () =>
     'calm, precise, a little dry',
     'Never a debug\nlog',
     'Lead with the outcome in one sentence',
-    'name the one number that matters\nand do not repeat the table in prose',
-    'Numbers keep their unit and their sign',
+    /* Was "name the one number that matters and do not repeat the table in prose". One number was
+       the wrong instruction for a move that has four (the amount, the fee, the percent and where
+       it lands), and the agent duly picked one and dropped the rest. The rule against repeating
+       the card's table stands; the count came off it. */
+    'do not repeat the table in prose:\nsay the figures that answer the question',
+    'Numbers keep\ntheir unit and their sign',
     'One next step at most, phrased as an offer',
     'A short answer carries no headings',
     'Never paste raw JSON, an error string, or a hash longer than 12 characters',
     '"the venue\nis not answering", not "422 Failed to deserialize"',
     '`switch` for a screen, `deposit` for an address, `trade_focus` for a position or a chart',
-    'Never say\n"failed" unless the tool said failed',
-    'wrong-network or lost-funds warning is one plain sentence',
+    'Never say "failed" unless the tool said failed',
+    'wrong-network or\nlost-funds warning is one plain sentence',
     'No exclamation marks, no emoji, no em dashes and no en\ndashes',
   ]) {
     assert.ok(text.includes(rule), `the voice lost: ${rule}`);
@@ -265,7 +293,7 @@ test('the role gives the agent a voice, and the window draws the numbers', () =>
   /* The rules that are not about tone stay. */
   assert.ok(text.includes('Act first, then report'));
   assert.ok(text.includes('Prefer one call to four'));
-  assert.ok(text.includes('Do not\nestimate money'));
+  assert.ok(text.includes('never\nestimate money'));
   assert.equal(/!/.test(text.slice(answer, team).replace(/[^!]*!==[^!]*/g, '')), false, 'an exclamation mark in the answering rules');
 });
 
@@ -283,7 +311,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // sentences and one worked example the agent has to carry, because a send it misunderstood
   // is money gone. 18,000 on 2026-09-18, the same 1,600 the plain ceiling above moved by and for
   // the same reasons. The number is still a ceiling, not a target.
-  assert.ok(text.length < 20400, `the role is ${text.length} characters with a full profile`);
+  // 21,400 on 2026-09-19, the same 1,210 the plain ceiling above moved by and for the same
+  // reasons. The number is still a ceiling, not a target.
+  assert.ok(text.length < 21400, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {
