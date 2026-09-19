@@ -5,6 +5,61 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.7.0
+
+Built 2026-09-19, the live-truth pass; tagged v0.7.0 on 2026-09-19.
+
+- One object for every move. `src/proposals/view.ts` builds the `ProposalView` that the card
+  draws, the agent reads and `/api/state` carries: stage, what it is waiting on, elapsed time,
+  time since the stage last changed, the typical duration, the settle time, every transaction leg
+  and the error. `proposal_status` returns it. Two copies of that truth disagreeing (a card that
+  said "Confirmed at 14:20" while the agent said "still settling") is the bug this ends.
+- Stages use the router's own words. A move reads `KNOWN_DEPOSIT_TX`, `PENDING_DEPOSIT`,
+  `INCOMPLETE_DEPOSIT`, `PROCESSING`, `SUCCESS` as 1Click reports them, then `crediting` while
+  the venue credits it, then `confirmed` at the settle time. "Settling" is gone.
+- A late move says so on its own. Eight typical durations after the click (ten minutes at least)
+  a move that has not changed flips to `stalled`, "Late, nothing has changed", and keeps settling
+  forward the moment the venue credits it. Nothing waits forever without a word.
+- The card appears the moment the agent proposes. The propose reply answers on the decision with
+  the view attached, where it used to hold for up to twenty seconds waiting for settlement.
+- The backend no longer freezes as money lands. One deposit used to write hundreds of audit lines
+  in a burst and the app answered nothing for up to twenty seconds at the exact moment the human
+  asked "all good?". The settle writes its row before it logs, and a ledger refresh cannot
+  re-enter itself.
+- Three read-only tools that need no approval: `proposals` lists recent moves newest first,
+  `diagnose` returns the view plus the move's own log lines and the router's and venue's status,
+  `show` draws a proposal, a transaction, a position or the deposit card in the window. The
+  orientation read `start` now names what is in flight and what is waiting, with amounts.
+- The agent answers "all good?" with facts: the stage, what it is waiting on, elapsed against
+  typical, the transaction hash. Never a bare "waiting".
+- Policy in one click. The ten-times-per-step rule is gone: a limit moves to what the sentence
+  says in one approval. The ask threshold must sit strictly under the hard cap or the change is
+  refused (`never_asks`), a sentence that does not name every figure it moves is refused
+  (`sentence_mismatch`), no click can set a limit above $1,000,000 per transaction or
+  $10,000,000 per day or session (`above_ceiling`), and an accepted change carries before and
+  after for every axis.
+- The approval card is the move card: the amount that leaves, in mono, the two pockets, the fee,
+  the sentence the app wrote, elapsed against typical, then No and Yes after the facts at every
+  width. On a rule change the app writes the headline and the arithmetic and quotes the agent's
+  words under them as the agent's. The dock holds the card it drew until it is answered; newer
+  asks wait behind one line.
+- The assistant's activity indicator is the verb and the clock: what it is doing and for how
+  long. The beam, the seat light and every looping pulse are deleted. The one thing that breathes
+  is the button waiting on a click.
+- Every button reserves the width of its waiting word, so "Waiting for Touch ID" never runs out
+  of its box. Twenty-six sites.
+- A demo money rail walks every stage on a timer, so the live card can be seen without real
+  money; nothing of it is reachable on mainnet.
+- An eval suite for the agent: 28 scenarios graded on the tool-call trace, the reply and the
+  window's events, in a scripted mode that runs in CI without a model and a live mode that
+  drives the real agent.
+- Every link the window draws goes through one allowlist, `ui/core/links.js`, which writes the
+  anchor itself; a receipt no longer hides a waiting request, and receipts reach the dock again
+  (they had not since 2026-09-15).
+- A mode the app does not have refuses to boot: the mode override in the environment is checked
+  like the config file, so a typo cannot run live rails with the live checks off. A demo boot
+  never resolves the real key file, whatever the environment says.
+
 ## 0.6.0
 
 Built 2026-09-17, the new-user pass; tagged v0.6.0 on 2026-09-18.
