@@ -131,10 +131,44 @@
         unchanged: afterItems.length - gained.length
       });
     }
-    for (var k = 0; k < added.length; k += 1) {
-      if (!usedAdded[k]) out.push({ kind: 'line', sign: '+', text: added[k] });
+    /* A USD cap line carries no colon (src/policy/render.ts), so the pass above
+       cannot pair it and four raised caps printed as four removals and then four
+       additions, to pair by eye at the bottom of a scrolling card. Anything left
+       over pairs on the sentence's own opening words instead, and prints as one
+       line: what it was, then what it becomes. */
+    var leftover = [];
+    for (var k = 0; k < added.length; k += 1) if (!usedAdded[k]) leftover.push(added[k]);
+    var loose = [];
+    for (var m = 0; m < out.length; m += 1) {
+      if (out[m].kind !== 'line' || out[m].sign !== '-') continue;
+      var mate = -1;
+      for (var n = 0; n < leftover.length; n += 1) {
+        if (leftover[n] !== null && sharePrefix(out[m].text, leftover[n])) {
+          mate = n;
+          break;
+        }
+      }
+      if (mate === -1) continue;
+      out[m] = { kind: 'swapped', before: out[m].text, after: leftover[mate] };
+      leftover[mate] = null;
     }
-    return out;
+    for (var q = 0; q < leftover.length; q += 1) {
+      if (leftover[q] !== null) loose.push({ kind: 'line', sign: '+', text: leftover[q] });
+    }
+    return out.concat(loose);
+  }
+
+  /* Two sentences about the same rule open with the same words and differ at the
+     figure: "Refuse any single transaction above $100." against "... above
+     $10,000.". Twelve characters is past every opening verb this app writes and
+     short enough that a rule with one clause still matches. */
+  var PREFIX_CHARS = 12;
+
+  function sharePrefix(a, b) {
+    var x = String(a);
+    var y = String(b);
+    if (x.length < PREFIX_CHARS || y.length < PREFIX_CHARS) return false;
+    return x.slice(0, PREFIX_CHARS) === y.slice(0, PREFIX_CHARS);
   }
 
   /* ---------- headline ---------- */
@@ -307,6 +341,13 @@
     });
   }
 
+  /* The row the dock is holding, and the moment its buttons come back after a
+     replacement. Both live here rather than on the entry, because they outlive
+     any one card. */
+  var pinned = null;
+  var armAt = 0;
+  var lastDrawn = null;
+
   function render() {
     /* An answer already given owns the dock until its own timer runs out, and a
        receipt or a recovery card is something a person is reading. */
@@ -316,11 +357,27 @@
     var state = store.get() || {};
     var list = Array.isArray(state.proposals) ? state.proposals : [];
 
+    /* THE DOCK DOES NOT SWAP A CARD UNDER THE READER.
+
+       It used to draw the newest waiting row, so a second request arriving while
+       somebody read the first replaced it in place: the amount, the address and
+       the kind all changed under a live Yes, with nothing saying so. A person
+       reaching for the button approved a request they had never seen.
+
+       The row the dock drew is pinned until it is answered or leaves the list.
+       Anything newer is counted, and the count is a line at the top of the card
+       that moves to the next one when it is tapped. */
     var waiting = newestFirst(list.filter(isWaiting));
     if (waiting.length) {
-      open({ kind: 'ask', proposal: waiting[0], queued: waiting.length - 1 });
+      var at = 0;
+      for (var w = 0; w < waiting.length; w += 1) {
+        if (waiting[w].id === pinned) at = w;
+      }
+      pinned = waiting[at].id;
+      open({ kind: 'ask', proposal: waiting[at], queued: waiting.length - 1 });
       return;
     }
+    pinned = null;
 
     var held = newestFirst(list.filter(isHeld));
     if (held.length) {
@@ -380,6 +437,9 @@
 
   function open(next) {
     if (next.kind === 'ask') noteTouch(next.proposal);
+    var drawing = next.proposal ? String(next.proposal.id) : null;
+    if (drawing !== null && lastDrawn !== null && drawing !== lastDrawn) armAt = Date.now() + REARM_MS;
+    if (drawing !== null) lastDrawn = drawing;
     var keyed = next.kind === 'ask' || next.kind === 'unread' || next.kind === 'held' || next.kind === 'live';
     if (keyed && showing && showing.signature === signature(next)) return;
     next.signature = keyed ? signature(next) : null;
@@ -449,6 +509,10 @@
     return (draft.kind === 'intents_send' || draft.kind === 'intents_pay') && !!window.PhosphorSendCard;
   }
 
+  /* Long enough that a tap already on its way down lands on nothing, short
+     enough that a person who meant to press does not notice. */
+  var REARM_MS = 600;
+
   function buildAsk(entry) {
     var proposal = entry.proposal;
     var draft = proposal.draft || {};
@@ -456,8 +520,31 @@
     var touching = proposal.status === 'awaiting_touch';
     var send = isSend(draft);
     var body = refs.body;
-    var foot = refs.foot;
+    /* THE ANSWER COMES AFTER THE FACTS.
 
+       The buttons used to live in the foot, which does not scroll, so at 390 a
+       live Yes sat under a card whose recipient address and whose rule diff were
+       both below the fold: the one control that mattered was reachable without
+       reading the one fact that decided it. They are in the body now, in flow,
+       under the amount, the pockets, the address and the changes. A person at
+       390 scrolls past the address to reach Yes. The foot keeps what has to stay
+       on screen whatever the scroll: what went wrong with a click. */
+    var foot = body;
+
+    /* One quiet line, at the top, for everything else that is waiting. It is the
+       only way another request reaches this card, and it takes a tap. */
+    if (entry.queued > 0) {
+      var next = dom.el('button', 'dock-next');
+      next.type = 'button';
+      next.appendChild(dom.el('span', '', entry.queued === 1
+        ? '1 more waiting, next'
+        : entry.queued + ' more waiting, next'));
+      next.appendChild(dom.el('span', 'chev'));
+      dom.on(next, 'click', function () { showNext(proposal.id); });
+      body.appendChild(next);
+    }
+
+    var rest = [];
     if (send) {
       var sendCard = window.PhosphorSendCard;
       body.id = 'dock-ask';
@@ -465,10 +552,8 @@
       sendCard.build(body, sendCard.viewOf(proposal), { width: body.clientWidth });
       if (locked) body.appendChild(lockBanner());
     } else {
-      buildAskBody(body, proposal, draft, locked, touching);
+      rest = buildAskBody(body, proposal, draft, locked, touching) || [];
     }
-
-    if (draft.kind === 'policy_change') buildPolicyDiff(body, proposal);
 
     /* A request that arrived while the wallet was shut. It was authored and
        checked against the limits; what is missing is the ability to sign. So the
@@ -500,12 +585,6 @@
       return;
     }
 
-    if (entry.queued > 0) {
-      foot.appendChild(dom.el('p', 'meta dock-queue', entry.queued === 1
-        ? 'One more request after this one.'
-        : entry.queued + ' more requests after this one.'));
-    }
-
     var actions = dom.el('div', 'dock-actions');
     var no = dom.el('button', 'btn btn-ghost');
     no.appendChild(dom.el('span', 'btn-label', 'No'));
@@ -523,6 +602,22 @@
     actions.appendChild(no);
     actions.appendChild(yes);
     foot.appendChild(actions);
+    /* The secondary lines come under the answer, closed. */
+    if (rest.length) buildReport(body, 'The rest of it', rest.join('\n'), false);
+
+    /* A card that has just replaced another one holds its buttons for 600 ms,
+       so a tap already on its way down cannot land on a request nobody read.
+       See render(): the dock pins a row, and this covers the moment it lets go. */
+    if (armAt > Date.now()) {
+      yes.disabled = true;
+      no.disabled = true;
+      var wait = armAt - Date.now();
+      window.setTimeout(function () {
+        if (!yes.isConnected) return;
+        yes.disabled = false;
+        no.disabled = false;
+      }, wait);
+    }
 
     /* The click has landed and the system dialog owns the moment. Both buttons
        go dead: a second Yes would be a second ask, and the backend only takes a
@@ -561,6 +656,23 @@
     dom.on(no, 'click', function () {
       decide(api.refuse, proposal.id, [yes, no], no, 'Refused.', REFUSED_MS, null);
     });
+  }
+
+  /* The reader asked for the next one. The pin moves on, the card is rebuilt
+     from the next state frame's rows, and its buttons come back after the
+     re-arm like any other replacement. */
+  function showNext(currentId) {
+    var state = store.get() || {};
+    var list = Array.isArray(state.proposals) ? state.proposals : [];
+    var waiting = newestFirst(list.filter(isWaiting));
+    if (waiting.length < 2) return;
+    var at = 0;
+    for (var i = 0; i < waiting.length; i += 1) {
+      if (waiting[i].id === currentId) at = i;
+    }
+    pinned = waiting[(at + 1) % waiting.length].id;
+    showing = null;
+    render();
   }
 
   /* Whether this wallet asks for a finger on a click: the vault slice says
@@ -627,6 +739,59 @@
     };
   }
 
+  /* THE APP'S OWN WORDS FOR THE MONEY AXES. The engine names them as fields;
+     these are the same limits in the words the Basic screen already uses. */
+  var AXIS_WORDS = {
+    humanClickAboveUsd: 'Asks you above',
+    maxPerTransactionUsd: 'Refuses above, at once',
+    maxPerSessionUsd: 'Refuses above, in a day',
+    autoApproveDailyUsd: 'Asks again once auto-approved moves pass'
+  };
+
+  /* THE APP'S OWN ARITHMETIC, BESIDE THE AGENT'S WORDS.
+
+     One row per axis the patch moves, off verdict.changes: what it is, what it
+     was, what it becomes, and the multiple when the jump is ten times or more.
+     The engine computes these from the patch and the policy in force, so this
+     is the one part of a rule-change card the agent cannot write. */
+  function buildChanges(host, changes) {
+    if (!Array.isArray(changes) || !changes.length) return false;
+    var wrap = dom.el('div', 'stack-2 policy-diff');
+    wrap.appendChild(dom.el('p', 'label', 'What changes'));
+    for (var i = 0; i < changes.length; i += 1) {
+      var c = changes[i];
+      if (!c || typeof c.axis !== 'string') continue;
+      var row = dom.el('div', 'axis-row');
+      row.appendChild(dom.el('span', 'axis-name', AXIS_WORDS[c.axis] || c.axis));
+      var figures = dom.el('span', 'axis-figures');
+      figures.appendChild(dom.el('span', 'mono axis-before', dom.usd(c.before, 0)));
+      figures.appendChild(dom.el('span', 'axis-to', 'to'));
+      var after = dom.el('span', 'mono axis-after', dom.usd(c.after, 0));
+      dom.setAttr(after, 'data-tone', c.after > c.before ? 'down' : 'up');
+      figures.appendChild(after);
+      /* Ten times or more is the jump a person has to be told about in one
+         word, because four figures apart read as four figures. */
+      if (typeof c.factor === 'number' && c.factor >= 10) {
+        figures.appendChild(dom.el('span', 'mono axis-factor', Math.round(c.factor) + 'x'));
+      }
+      row.appendChild(figures);
+      wrap.appendChild(row);
+    }
+    host.appendChild(wrap);
+    return true;
+  }
+
+  /* The agent's sentence, under the app's arithmetic and named as the agent's.
+     It used to be the first line on the card, which put the wording of the
+     thing being judged above the judgement. */
+  function buildSaid(host, sentence) {
+    if (typeof sentence !== 'string' || sentence.trim() === '') return;
+    var wrap = dom.el('div', 'stack-2 dock-said');
+    wrap.appendChild(dom.el('p', 'label', 'The assistant said'));
+    wrap.appendChild(dom.el('p', 'body dim', sentence));
+    host.appendChild(wrap);
+  }
+
   function buildAskBody(host, proposal, draft, locked, touching) {
     host.id = 'dock-ask';
     var cards = window.PhosphorCards;
@@ -640,13 +805,24 @@
     }
 
     var view = askView(proposal, draft);
+    /* A rule change's first line is the app's, always. Every other kind keeps
+       view.sentence, because the backend builds that one out of the draft's own
+       fields; only a policy change's sentence is text the agent typed. */
+    var policy = draft.kind === 'policy_change';
+    var shown = policy ? Object.assign({}, view, { sentence: headlineOf(proposal) }) : view;
     if (cards && typeof cards.render === 'function') {
-      var row = Object.assign({}, proposal, { view: view });
+      var row = Object.assign({}, proposal, { view: shown });
       host.appendChild(cards.render('move', row, {
         name: 'proposal_status', input: { id: proposal.id }, at: proposal.createdAt, open: true
       }));
     } else {
-      host.appendChild(dom.el('h2', 'title', view.sentence || headlineOf(proposal)));
+      host.appendChild(dom.el('h2', 'title', shown.sentence || headlineOf(proposal)));
+    }
+
+    /* The arithmetic first, then the words that asked for it. */
+    if (policy) {
+      if (!buildChanges(host, view.changes)) buildPolicyDiff(host, proposal);
+      buildSaid(host, view.sentence);
     }
 
     if (locked) host.appendChild(lockBanner());
@@ -681,12 +857,14 @@
       host.appendChild(dwrap);
     }
 
+    /* Handed back rather than drawn, because the fold holds only the secondary
+       lines and it belongs under the answer, not between the facts and it. */
     var more = [];
     more.push('Why you are being asked: ' + whyLine(proposal));
     if (draft.venue) more.push('Through ' + venueWords(draft.venue));
     var summary = typeof (proposal.simulation || {}).summary === 'string' ? proposal.simulation.summary.trim() : '';
     if (summary && draft.kind !== 'policy_change') more.push(summary);
-    if (more.length) buildReport(host, 'The rest of it', more.join('\n'), false);
+    return more;
   }
 
   function lockBanner() {
@@ -1196,6 +1374,16 @@
     wrap.appendChild(dom.el('p', 'label', 'What changes'));
     for (var i = 0; i < entries.length; i += 1) {
       var entry = entries[i];
+      if (entry.kind === 'swapped') {
+        var swapped = dom.el('div', 'axis-row');
+        swapped.appendChild(dom.el('span', 'axis-name down', entry.before));
+        var toWrap = dom.el('span', 'axis-figures');
+        toWrap.appendChild(dom.el('span', 'axis-to', 'to'));
+        toWrap.appendChild(dom.el('span', 'axis-after up', entry.after));
+        swapped.appendChild(toWrap);
+        wrap.appendChild(swapped);
+        continue;
+      }
       if (entry.kind === 'line') {
         var line = dom.el('p', 'body ' + (entry.sign === '+' ? 'up' : 'down'));
         dom.setText(line, (entry.sign === '+' ? 'Added: ' : 'Removed: ') + entry.text);

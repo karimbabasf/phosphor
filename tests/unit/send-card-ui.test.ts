@@ -18,6 +18,7 @@ const read = (p: string): string => readFileSync(new URL(p, import.meta.url), 'u
 const SENDCARD = read('../../ui/screens/sendcard.js');
 const DECISION = read('../../ui/screens/decision.js');
 const CARDS = read('../../ui/screens/cards.js');
+const LINKS = read('../../ui/core/links.js');
 const CHECKS = read('../../ui/screens/checks.js');
 
 type Node = {
@@ -196,8 +197,10 @@ function loadDock(proposals: unknown[], vault: Record<string, unknown> = {}) {
       addEventListener: () => {},
     },
     console,
+    URL,
   };
   createContext(sandbox);
+  runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(CHECKS, sandbox, { filename: 'ui/screens/checks.js' });
   runInContext(SENDCARD, sandbox, { filename: 'ui/screens/sendcard.js' });
   runInContext(DECISION, sandbox, { filename: 'ui/screens/decision.js' });
@@ -449,8 +452,10 @@ test('the thread draws the send card from the reply\'s send facts, not from the 
     navigator: {},
     document: { createElement: (tag: string) => node(tag), createElementNS: (_ns: string, tag: string) => node(tag), addEventListener: () => {} },
     console,
+    URL,
   };
   createContext(sandbox);
+  runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(SENDCARD, sandbox, { filename: 'ui/screens/sendcard.js' });
   runInContext(CARDS, sandbox, { filename: 'ui/screens/cards.js' });
   const cards = (sandbox.window as { PhosphorCards: { render: (kind: string, data: unknown, extra: unknown) => Node; kindFor: (name: string) => string } }).PhosphorCards;

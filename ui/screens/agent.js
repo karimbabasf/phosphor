@@ -7,9 +7,9 @@
    that decides anything. An approval is a physical click on the dock below,
    which is drawn from server state, so a transcript row cannot impersonate one.
 
-   The column lights nothing itself either. Every step row dispatches
-   phosphor:step on window and whatever is listening decides what lights up, so
-   the transcript keeps working with no listener at all.
+   The column lights nothing itself either, and it no longer announces its
+   steps: the beam that listened for them is gone, and a window event with no
+   listener is a path that cannot be read and cannot be tested.
 
    The look lives in ui/design/agent.css. This file writes state as attributes
    and text, never as style. */
@@ -268,7 +268,6 @@
   var roster = [];
   var openSteps = null;
   var ticker = 0;
-  var announced = [];
 
   /* WHAT THE CENTRE SHOWS while there is no transcript: the card, or the
      connect sheet in its place. The sheet is the only thing that ever holds
@@ -1104,8 +1103,7 @@
       leaves: leavesMachine(name),
       state: 'live',
       startedAt: at,
-      endedAt: null,
-      announce: true
+      endedAt: null
     };
     block.steps.push(step);
     return step;
@@ -1120,7 +1118,6 @@
       if (step.name !== name) continue;
       step.state = ok === false ? 'error' : 'done';
       step.endedAt = at;
-      step.announce = true;
       return step;
     }
     return null;
@@ -1284,13 +1281,6 @@
     }
   }
 
-  function announceStep(step, dot) {
-    if (typeof CustomEvent !== 'function' || typeof window.dispatchEvent !== 'function') return;
-    window.dispatchEvent(new CustomEvent('phosphor:step', {
-      detail: { id: step.id, name: step.name, state: step.state, node: dot, input: step.input }
-    }));
-  }
-
   /* ---------- render ---------- */
 
   /* Set by the one render that must end at the bottom whatever the scroll
@@ -1300,18 +1290,7 @@
   function renderAll() {
     for (var i = 0; i < mounts.length; i += 1) render(mounts[i], i === 0);
     jumpAll = false;
-    flushSteps();
     tickerCheck();
-  }
-
-  /* The step event carries the row's own dot, so a listener has something to
-     point at. It goes out after the render that built the row and from the first
-     mount only: one tool call is one event however many columns are on screen. */
-  function flushSteps() {
-    for (var i = 0; i < announced.length; i += 1) {
-      announceStep(announced[i].step, announced[i].dot);
-    }
-    announced.length = 0;
   }
 
   function render(node, primary) {
@@ -1727,10 +1706,6 @@
          for the head, and the row's own time lands with the result. */
       dom.setText(time, step.state === 'live' ? '' : secondsText(elapsedOf(step, now)));
       if (step.state === 'live') node.live.push(step);
-      if (primary && step.announce) {
-        step.announce = false;
-        announced.push({ step: step, dot: dot });
-      }
     });
   }
 
@@ -2012,8 +1987,7 @@
         if (step.state !== 'live') continue;
         step.state = 'done';
         step.endedAt = Date.now();
-        step.announce = true;
-      }
+        }
       block.done = true;
       block.folded = true;
     }

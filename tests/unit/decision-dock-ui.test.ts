@@ -38,6 +38,7 @@ function load(): Sandbox {
     },
     document: { createElement: () => ({}), getElementById: () => null, addEventListener: () => {} },
     console,
+    URL,
   };
   createContext(sandbox);
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
@@ -204,9 +205,12 @@ function dockFor(proposal: Record<string, any>, state: Record<string, any> = {},
       addEventListener: () => {},
     },
     console,
+    URL,
   };
   sandbox.document.createElementNS = (_ns: string, tag: string) => makeNode(tag);
   createContext(sandbox);
+  runInContext(readFileSync(new URL('../../ui/core/links.js', import.meta.url), 'utf8'), sandbox,
+    { filename: 'ui/core/links.js' });
   runInContext(readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8'), sandbox,
     { filename: 'ui/core/dom.js' });
   runInContext(readFileSync(new URL('../../ui/screens/checks.js', import.meta.url), 'utf8'), sandbox,
@@ -677,7 +681,11 @@ test('a held deposit shows what it is waiting for and the checks, and offers not
    2026-09-18 a swap card ran past the dock's share of the column and Yes and No
    sat below the fold, behind a scrollbar macOS hides: a request with no visible
    way to answer it. */
-test('the answer lives in the foot, under a body that scrolls', () => {
+/* THE ANSWER COMES AFTER THE FACTS. The buttons used to live in the foot, which
+   does not scroll, so at 390 a live Yes sat under a card whose address and whose
+   rule diff were both below the fold. They are in the body now, under the facts,
+   in the same scroll, and the fold of secondary lines comes after them. */
+test('the answer comes after the facts, in the same scroll as them', () => {
   const card = cardFor(swapProposal());
   const body = find(card, 'dock-body');
   const foot = find(card, 'dock-foot');
@@ -685,9 +693,16 @@ test('the answer lives in the foot, under a body that scrolls', () => {
   assert.equal(foot.length, 1, 'no foot');
   assert.equal(card.childNodes.length, 2, 'the card holds the body and the foot and nothing beside them');
   assert.ok(find(body[0], 'tcard-title').length === 1, 'the move card is in the body');
-  assert.equal(find(body[0], 'btn').length, 0, 'a button is in the scrolling body');
-  assert.equal(find(foot[0], 'btn').length, 2, 'No and Yes are not both in the foot');
-  assert.deepEqual(find(foot[0], 'btn-label').map((l) => l.textContent), ['No', 'Yes']);
+  assert.equal(find(foot[0], 'btn').length, 0, 'a button is pinned over the facts in the foot');
+  const kids = body[0].childNodes;
+  const actionsAt = kids.findIndex((n: Node) => String(n.className).includes('dock-actions'));
+  const cardAt = kids.findIndex((n: Node) => String(n.className).includes('tcard'));
+  const whereAt = kids.findIndex((n: Node) => String(n.className).includes('destinations'));
+  assert.ok(actionsAt > cardAt, 'the answer comes before the move it is about');
+  assert.ok(whereAt === -1 || actionsAt > whereAt, 'the answer comes before the address it sends to');
+  const foldAt = kids.findIndex((n: Node) => String(n.className).includes('dock-report'));
+  assert.ok(foldAt === -1 || foldAt > actionsAt, 'the fold of secondary lines is above the answer');
+  assert.deepEqual(find(body[0], 'btn-label').map((l) => l.textContent), ['No', 'Yes']);
 });
 
 /* The swap card says what the rail checked, as numbers under labels, and the
@@ -762,8 +777,9 @@ test('a card with no structured facts opens the rail\'s report and never claims 
 test('a Yes that fails puts the problem in the foot and hands the buttons back', async () => {
   const ui = dockFor(swapProposal(), {}, { approve: () => Promise.reject(new Error('The app is not answering. It may have stopped.')) });
   const foot = find(ui.card, 'dock-foot')[0];
-  const yes = find(foot, 'btn').find((b) => String(b.className).includes('btn-primary'))!;
-  const no = find(foot, 'btn').find((b) => String(b.className).includes('btn-ghost'))!;
+  const body = find(ui.card, 'dock-body')[0];
+  const yes = find(body, 'btn').find((b) => String(b.className).includes('btn-primary'))!;
+  const no = find(body, 'btn').find((b) => String(b.className).includes('btn-ghost'))!;
   assert.equal(find(foot, 'dock-note').length, 0, 'a note is up before anything went wrong');
   fire(yes, 'click');
   assert.equal(yes.disabled, true, 'Yes still takes a click while the first one is in flight');
@@ -778,7 +794,7 @@ test('a Yes that fails puts the problem in the foot and hands the buttons back',
   assert.equal(foot.firstChild, note[0], 'the note is not the first thing in the foot');
   assert.equal(yes.disabled, false, 'Yes stays dead after a click that did not land');
   assert.equal(no.disabled, false);
-  assert.equal(find(find(ui.card, 'dock-body')[0], 'dock-note').length, 0, 'the error is in the scrolling body');
+  assert.equal(find(body, 'dock-note').length, 0, 'the error scrolled away with the buttons');
 });
 
 /* A TOUCH ID DIALOG THAT CLOSES WITHOUT AN ANSWER puts the row back to pending
@@ -798,7 +814,7 @@ test('a row back from Touch ID with no answer says so, over live buttons, until 
   assert.equal(note.length, 1, 'the card came back blank');
   assert.equal(note[0].getAttribute('data-tone'), 'warn');
   assert.deepEqual(textOf(note[0]), ['Touch ID closed without an answer. Nothing moved. Yes asks again.']);
-  const buttons = find(foot, 'btn');
+  const buttons = find(find(ui.card, 'dock-body')[0], 'btn');
   assert.ok(buttons.every((b) => b.disabled === false), 'the buttons are dead on a row that is pending');
   // A heartbeat that changes nothing keeps the note; the next click clears it.
   ui.render();
@@ -828,11 +844,16 @@ test('the lock banner is at the top of the body and the queue line is in the foo
   const cardAt = kids.findIndex((n: Node) => String(n.className).includes('tcard'));
   assert.ok(cardAt >= 0, 'the move card is not in the body');
   assert.equal(kids.indexOf(banner), cardAt + 1, 'the banner is not right under the move it is about');
-  assert.deepEqual(find(find(locked, 'dock-foot')[0], 'btn-label').map((l) => l.textContent), ['No', 'Unlock']);
+  assert.deepEqual(find(body, 'btn-label').map((l) => l.textContent), ['No', 'Unlock']);
 
+  /* Everything else waiting is one line at the top of the card, and it is the
+     only way another request reaches the card. */
   const ui = dockFor(swapProposal(), { proposals: [swapProposal(), swapProposal({ id: 's0', createdAt: '2026-09-18T17:00:00.000Z' })] });
-  const foot = find(ui.card, 'dock-foot')[0];
-  assert.deepEqual(find(foot, 'dock-queue').map((q) => q.textContent), ['One more request after this one.']);
+  const askBody = find(ui.card, 'dock-body')[0];
+  const next = find(askBody, 'dock-next');
+  assert.equal(next.length, 1, 'nothing says another request is waiting');
+  assert.ok(textOf(next[0]).some((t) => t.includes('1 more waiting, next')), textOf(next[0]).join(' | '));
+  assert.equal(askBody.childNodes.indexOf(next[0]), 0, 'the waiting line is not the first thing in the card');
 });
 
 test('the dock never claims a click is done; it says approved and lets the receipt say the rest', () => {

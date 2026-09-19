@@ -39,7 +39,6 @@
   /* Only a url the server built (src/chainscan) and only for one of these
      hosts reaches an <a>: this is the one place the card hands the system
      browser a string. */
-  var EXPLORER_HOSTS = ['etherscan.io', 'basescan.org', 'arbiscan.io', 'solscan.io', 'nearblocks.io', 'mempool.space'];
 
   var BRIDGE_TIP = '1Click sends it out for you; if it cannot, the money comes back to your balance.';
   var ARRIVES_TIP = 'The least the solver may deliver. The app refuses the live quote if it promises less.';
@@ -220,10 +219,13 @@
     return d.getDate() + ' ' + months[d.getMonth()];
   }
 
+  /* One list for the whole window (core/net.js). This file kept its own, six
+     hosts on an exact match, so a hash on a subdomain or on either of the two
+     newer explorers came back from the server as a link and printed as text. */
   function isExplorerUrl(url) {
-    if (typeof url !== 'string' || url.indexOf('https://') !== 0) return false;
-    var host = url.slice(8).split('/')[0].toLowerCase();
-    return EXPLORER_HOSTS.indexOf(host) !== -1;
+    var links = window.PhosphorLinks;
+    if (!links || typeof links.explorerUrl !== 'function') return false;
+    return links.explorerUrl(url) !== null;
   }
 
   /* ---------- small parts ---------- */

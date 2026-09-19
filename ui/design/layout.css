@@ -542,6 +542,89 @@ html, body {
 
 .ask-expiry[data-tone="down"] { color: var(--down); }
 
+/* One axis the change moves: what it is at the left, what it was and what it
+   becomes at the right, in mono, with the multiple when the jump is ten times
+   or more. Four raised caps used to print as four removals and then four
+   additions, to pair by eye. */
+.axis-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--s-3);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+}
+
+.axis-name {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+/* The row wraps, the figures never do: $10,000 breaking across two lines as
+   "$10,00" and "0" is a number that reads as a different number. The label takes
+   its own line when the column is too narrow to hold both. */
+.axis-figures {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-left: auto;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.axis-figures > span { white-space: nowrap; }
+
+.axis-before { color: var(--text-3); }
+.axis-to { color: var(--text-3); }
+.axis-after { color: var(--text); }
+.axis-after[data-tone="down"] { color: var(--down); }
+.axis-after[data-tone="up"] { color: var(--up); }
+.axis-name.down { color: var(--down); }
+.axis-after.up { color: var(--up); }
+
+.axis-factor {
+  color: var(--down);
+  font-weight: 500;
+}
+
+/* The agent's own wording, under the app's arithmetic and named as the agent's. */
+.dock-said .body { color: var(--text-2); }
+
+/* Everything else that is waiting, as one line at the top of the card. It is the
+   only way another request reaches the card, and it takes a tap. */
+.dock-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: 28px;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  cursor: pointer;
+  transition: border-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dock-next:hover { border-color: var(--line-strong); color: var(--text); }
+}
+
+.dock-next:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* The answer sits in the body now, so the foot only exists when something has
+   to stay on screen whatever the scroll. */
+.dock-foot:empty { display: none; }
+
 /* ---------- The decision dock ---------- */
 
 /* Inside the conversation column, between the transcript and the composer, and

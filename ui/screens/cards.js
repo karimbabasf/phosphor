@@ -772,7 +772,14 @@
       if (isObject(data.received)) move.to = { symbol: data.received.symbol, place: data.toChain, amount: num(data.received.amount) };
       move.feeUsd = num(data.feesUsd);
     }
-    if (kind === 'policy_change') move.summary = String(d.sentence || args.sentence || move.summary || '');
+    /* A rule change's sentence is the one string on a proposal that the agent
+       types rather than the app composes, so the view's line wins wherever there
+       is one and the draft's own words are the fallback for a payload with no
+       view. The dock passes the app's fixed line in that slot, and the dock is
+       the card that decides whether to trust what the agent wrote. */
+    if (kind === 'policy_change' && !(view && view.sentence)) {
+      move.summary = String(d.sentence || args.sentence || move.summary || '');
+    }
     return move;
   }
 
@@ -861,7 +868,13 @@
        dock asks with, minus its buttons. The tool answer carries no draft, so
        the send view comes from the reply's `send` facts and the tool's arguments. */
     var sendCard = window.PhosphorSendCard;
-    if ((move.kind === 'intents_pay' || move.kind === 'intents_send') && sendCard) {
+    /* The send card is built from a draft or from a propose reply's own facts.
+       `show` carries neither, only { card, id, view }, so drawing it there put
+       "Being quoted" in every slot and a Copy button on an address it did not
+       have. A payload with no draft and no send facts draws the pockets below
+       like any other move. */
+    var sendable = isObject(data.draft) || isObject(data.send);
+    if ((move.kind === 'intents_pay' || move.kind === 'intents_send') && sendCard && sendable) {
       sendCard.build(body, isObject(data.draft) ? sendCard.viewOf(data) : sendCard.viewOfToolData(extra.input, data), {});
       if (view) liveLine(body, view);
       return parts.card;
@@ -963,9 +976,8 @@
   }
 
   function explorerUrl(url) {
-    var send = window.PhosphorSendCard;
-    if (send && typeof send.isExplorerUrl === 'function') return send.isExplorerUrl(url) ? url : null;
-    return null;
+    var links = window.PhosphorLinks;
+    return links && typeof links.explorerUrl === 'function' ? links.explorerUrl(url) : null;
   }
 
   function linkRow(body, label, text, url) {

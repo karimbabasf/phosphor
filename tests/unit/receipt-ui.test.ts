@@ -16,6 +16,7 @@ import { createContext, runInContext } from 'node:vm';
 type Any = Record<string, any>;
 
 const DOM = readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8');
+const LINKS = readFileSync(new URL('../../ui/core/links.js', import.meta.url), 'utf8');
 const MARKS = readFileSync(new URL('../../ui/design/marks.js', import.meta.url), 'utf8');
 const RECEIPT = readFileSync(new URL('../../ui/screens/receipt.js', import.meta.url), 'utf8');
 const CHECKS = readFileSync(new URL('../../ui/screens/checks.js', import.meta.url), 'utf8');
@@ -185,6 +186,7 @@ function boot(over: { reduced?: boolean; motion?: boolean } = {}): Rig {
     },
   };
   const ctx = createContext({ window, document, navigator, console, Promise, URL });
+  runInContext(LINKS, ctx);
   runInContext(DOM, ctx);
   runInContext(MARKS, ctx);
   runInContext(CHECKS, ctx);

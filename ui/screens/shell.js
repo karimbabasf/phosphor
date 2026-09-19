@@ -243,6 +243,11 @@
 
     events.on('state', function () { refresh({}); });
     events.on('reattach', function () { refresh({}); });
+    /* One proposal moved. The object rides in /api/state, never on the frame
+       (src/http/sse.ts), so the frame is only the push and this is the read it
+       asks for. Nothing listened for it before, so a card counting a stage out
+       waited on the debounced state frame behind it. */
+    events.on('proposal', function () { refresh({}); });
     events.on('lock', function (frame) {
       var state = store.get() || {};
       if (frame && frame.state) {

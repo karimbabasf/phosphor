@@ -123,8 +123,11 @@ function load(proposals: unknown[]): { card: Node; render: () => void } {
       addEventListener: () => {},
     },
     console,
+    URL,
   };
   createContext(sandbox);
+  runInContext(readFileSync(new URL('../../ui/core/links.js', import.meta.url), 'utf8'), sandbox,
+    { filename: 'ui/core/links.js' });
   runInContext(readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8'), sandbox,
     { filename: 'ui/core/dom.js' });
   runInContext(readFileSync(new URL('../../ui/screens/cards.js', import.meta.url), 'utf8'), sandbox,

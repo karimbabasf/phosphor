@@ -114,6 +114,7 @@ function build() {
 
   const sandbox: Record<string, unknown> = {
     console,
+    URL,
     navigator: {},
     document: {
       createElement: (tag: string) => make(tag),
