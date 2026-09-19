@@ -65,6 +65,12 @@ export type ProposalView = {
   providerStage: string | null; // 1Click's raw word, null when no provider owns this phase
   waitingOn: string | null; // 'You', 'Touch ID', '1Click', 'Hyperliquid', null when terminal
   terminal: boolean;
+  /* True on `stalled` alone. The row is terminal in the sense that the app has stopped expecting
+     the venue, and it is NOT finished: the same balance read that would have settled it still
+     settles it forward to confirmed. The two facts sit beside each other because `terminal: true`
+     under "Late, nothing has changed" reads as "this is over", and the thing a reader does next
+     on that reading is send a second copy of a move that was merely slow. */
+  settlesForward: boolean;
   outcome: OutcomeState;
   createdAt: string;
   decidedAt: string | null;
@@ -432,6 +438,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     providerStage: p.result?.evidence?.providerStage ?? null,
     waitingOn: waitingOn(p, stage),
     terminal: TERMINAL.has(stage),
+    settlesForward: stage === 'stalled',
     outcome: outcomeOf(p, ctx.plan?.(p) ?? null).state,
     createdAt: p.createdAt,
     decidedAt: p.decidedAt ?? null,

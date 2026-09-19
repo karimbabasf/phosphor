@@ -330,7 +330,12 @@ export function outcomeOf(p: Proposal, plan?: PlanFate | null): ProposalOutcome 
           venue: p.pocket.venue,
           symbol: p.pocket.symbol,
           before: unitsOf(p.pocket.before, p.pocket.decimals),
-          after: p.pocket.after === null ? null : unitsOf(p.pocket.after, p.pocket.decimals),
+          /* `== null` catches undefined as well as null, and the difference is a whole payload.
+             PocketRead.after is a required `string | null`, so only a row from an older build or
+             a hand-edited proposals.json arrives without it, and that row made every /api/state
+             throw inside unitsOf. A pocket nobody re-read and a pocket read as nothing are the
+             same fact to a reader either way. */
+          after: p.pocket.after == null ? null : unitsOf(p.pocket.after, p.pocket.decimals),
         };
   const money = { beforeUsd: p.balances?.beforeUsd ?? null, afterUsd: p.balances?.afterUsd ?? null, pocket };
 

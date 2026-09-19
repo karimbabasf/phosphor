@@ -24,6 +24,9 @@ import type { Outcome } from '../chart.ts';
 import type { ChartSlot } from '../charts.ts';
 import { asRecord, fail, sendJson } from './respond.ts';
 import { CHAIN_NETWORKS, isChainNetwork, transaction, validateHash } from '../chainscan/index.ts';
+// Flattened and capped before a caller's own string reaches an agent transcript or a terminal:
+// an error message is not somewhere control characters or escape codes belong.
+import { oneLine } from '../intents.ts';
 import type { JsonBody } from './respond.ts';
 import { chartDigest, resolveIndicator, resolveViewPatch } from './chart.ts';
 import { LEAD_ONLY_VIEW_TOOLS, VIEW_TOOLS } from './context.ts';
@@ -389,7 +392,7 @@ function isShowKind(raw: unknown): raw is ShowKind {
 async function showBody(ctx: Ctx, kind: ShowKind, id: string, network: unknown): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; reason: string }> {
   if (kind === 'proposal') {
     const p = ctx.proposals.get(id);
-    if (p === undefined) return { ok: false, reason: `unknown proposal id: ${id}` };
+    if (p === undefined) return { ok: false, reason: `unknown proposal id: ${oneLine(id, 120)}` };
     return { ok: true, data: { card: 'proposal', id, view: ctx.proposals.view(p) } };
   }
   if (kind === 'transaction') {
@@ -403,7 +406,7 @@ async function showBody(ctx: Ctx, kind: ShowKind, id: string, network: unknown):
   if (kind === 'position') {
     const read = ctx.trade.read(id) as { positions?: unknown[] };
     const position = (read.positions ?? [])[0];
-    if (position === undefined) return { ok: false, reason: `no open position in ${id}` };
+    if (position === undefined) return { ok: false, reason: `no open position in ${oneLine(id, 120)}` };
     return { ok: true, data: { card: 'position', id, position } };
   }
   const deposit = ctx.deposits.current();

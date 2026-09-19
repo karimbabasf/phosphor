@@ -552,9 +552,9 @@ registerLeadRead(
     'otherwise means reading everybody\'s), what 1Click last reported about it, and what the',
     'Hyperliquid account holds right now on a deposit or a withdrawal. Reach for it before you',
     'guess about a slow or a failed move, and say what it shows rather than reassuring anyone.',
-    'It asks no permission and needs none: it moves nothing. The quote handle comes back as a',
-    'fingerprint and never as an address, and nothing in the answer is a place money can be sent.',
-    'Read-only, changes nothing.',
+    'It asks no permission and needs none: it moves nothing. No address comes back whole: the',
+    'quote handle is a fingerprint and the log lines have theirs fingerprinted too, so nothing in',
+    'the answer is a place money can be sent. Read-only, changes nothing.',
   ].join(' '),
   { id: z.string() },
 );

@@ -592,6 +592,12 @@ export function markStalled(ctx: PCtx, now: number = Date.now()): number {
   let marked = 0;
   for (const p of ctx.store.list()) {
     if (p.stalledAt !== undefined) continue;
+    /* Only a row that would actually READ as stalled. stageOf returns `stalled` for a row waiting
+       on a venue's credit and for nothing else, so stamping an approved or executing row wrote an
+       audit line saying a move was late and then changed nothing anybody could see. A row still
+       inside its rail is not late in a way this sweep can speak to: the rail's own timeout is
+       what lands it, and that is the thing that produces a row this sweep can then judge. */
+    if (p.status !== 'needs_reconciliation') continue;
     const stage = stageOf(p);
     if (TERMINAL.has(stage) || WAITS_ON_A_PERSON.has(stage)) continue;
     const deadline = Date.parse(deadlineAtOf(p) ?? '');

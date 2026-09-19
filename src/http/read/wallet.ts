@@ -12,6 +12,7 @@ import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
 import { RECEIVE_NETWORKS, receiveNetworkOf } from '../../rails/intents-address.ts';
+import { oneLine } from '../../intents.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
    paste. The window shows the whole string, off a Touch ID open, and that is the only place
@@ -81,6 +82,20 @@ export const PROPOSALS_MAX = 50;
 // How much of one row's history comes back. Enough to see the shape of a stuck move, few enough
 // that an agent reads them all rather than summarising the middle away.
 export const DIAGNOSE_LOG_LINES = 40;
+
+/* ADDRESSES OUT OF THE LOG LINES, because this tool says there is no address in its answer and
+   that has to be true of every field in it. `provider` fingerprints the quote handle and the log
+   projection did not, so a handle the rails write into an audit message (proposals/reconcile.ts)
+   came straight back whole. It is not a new channel, since log_tail already hands every agent the
+   same lines, but a guarantee that is false in one field is worth less than no guarantee.
+
+   Only the EVM address shape, exactly forty hex digits. A transaction hash is sixty-four and is
+   left alone: it is evidence a person needs in full and it is not a place money can be sent. */
+const EVM_ADDRESS = /0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
+
+export function withoutAddresses(line: string): string {
+  return line.replace(EVM_ADDRESS, (match) => fingerprint(match));
+}
 
 const DISCLAIMER =
   'Send a small test amount first and wait for the app to say it landed before sending the rest. Sending on any other network, or any asset not on the accepted list, loses the money: the bridge does not refund.';
@@ -235,7 +250,10 @@ export const walletReads: ReadTable = {
     const id = typeof args.id === 'string' ? args.id : '';
     const proposal = ctx.proposals.get(id);
     if (proposal === undefined) {
-      fail(res, 404, `unknown proposal id: ${id}`);
+      // Flattened and capped: the id is the caller's string, it comes back in a sentence an
+      // agent reads and a terminal may print, and control characters and escape codes are not
+      // something an error message should be able to carry there.
+      fail(res, 404, `unknown proposal id: ${oneLine(id, 120)}`);
       return;
     }
     sendJson(res, 200, ctx.proposals.view(proposal));
@@ -269,7 +287,7 @@ export const walletReads: ReadTable = {
     const id = typeof args.id === 'string' ? args.id : '';
     const proposal = ctx.proposals.get(id);
     if (proposal === undefined) {
-      fail(res, 404, `unknown proposal id: ${id}`);
+      fail(res, 404, `unknown proposal id: ${oneLine(id, 120)}`);
       return;
     }
     const evidence = proposal.result?.evidence;
@@ -291,11 +309,15 @@ export const walletReads: ReadTable = {
     const venue = proposal.kind === 'hl_deposit' || proposal.kind === 'hl_withdraw' ? (ctx.ledger.hyperliquid() ?? null) : null;
     sendJson(res, 200, {
       view: ctx.proposals.view(proposal),
+      /* THIS ROW'S LINES, by the id the app wrote into the event, never by the id appearing
+         somewhere in the sentence. A substring match handed back another row's history whenever
+         one line happened to mention this one, which is the opposite of what a tool called
+         diagnose is for. */
       log: ctx.audit
         .tail(LOG_LIMIT_MAX)
-        .filter((e) => (e.data as { id?: unknown } | undefined)?.id === id || e.msg.includes(id))
+        .filter((e) => (e.data as { id?: unknown } | undefined)?.id === id)
         .slice(0, DIAGNOSE_LOG_LINES)
-        .map((e) => `${e.ts} ${e.type}: ${e.msg}`),
+        .map((e) => withoutAddresses(`${e.ts} ${e.type}: ${e.msg}`)),
       provider,
       venue,
     });

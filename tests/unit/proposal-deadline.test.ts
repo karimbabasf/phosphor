@@ -84,3 +84,33 @@ test('a row is marked late once, not once per sweep', async () => {
   assert.equal(h.svc.markStalled(late), 1);
   assert.equal(h.svc.markStalled(late + 60_000), 0);
 });
+
+test('a stalled row says it still settles forward, so terminal is never read as finished', async () => {
+  const { h, row } = await creditingRow();
+  const late = Date.parse(row.decidedAt ?? row.createdAt) + (DEADLINE_SEC.hl_deposit as number) * 1000 + 1000;
+  assert.equal(h.svc.markStalled(late), 1);
+
+  const view = h.svc.view(h.svc.get(row.id) as Proposal, late);
+  assert.equal(view.terminal, true, 'the app has stopped expecting the venue');
+  assert.equal(view.settlesForward, true, 'and it is not finished: a credit still settles it');
+
+  // Every other terminal stage is finished, and says so.
+  const declined = await (async () => {
+    const other = makeCtx({ rails: [railThat('hl_withdraw', async () => ({ ok: true, detail: 'unused' }))] });
+    const pending = await other.svc.proposeHlWithdraw({ amount: 20 });
+    await other.svc.refuse(pending.id);
+    return other.svc.view(other.svc.get(pending.id) as Proposal);
+  })();
+  assert.equal(declined.terminal, true);
+  assert.equal(declined.settlesForward, false);
+});
+
+test('the sweep stamps only a row that would read as stalled, not one still inside its rail', async () => {
+  const h = makeCtx({ rails: [railThat('hl_withdraw', async () => ({ ok: true, detail: 'done' }))] });
+  const pending = await h.svc.proposeHlWithdraw({ amount: 20 });
+  // An approved row whose deadline has passed: it waits on the wallet, not on a venue, and
+  // stamping it wrote an audit line saying a move was late while changing nothing visible.
+  const long = Date.parse(pending.createdAt) + 86_400_000;
+  assert.equal(h.svc.markStalled(long), 0);
+  assert.equal(h.audit.tail(200).some((e) => e.msg.includes('marked late')), false);
+});
