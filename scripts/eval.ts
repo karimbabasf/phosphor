@@ -322,14 +322,25 @@ async function watchWindow(app: App, frames: Frame[], cards: Card[], stop: Abort
 
    Scripted mode never calls it. A canned reply is the fixture's own prose and scoring it would be
    the fixture marking its own homework. */
-function judgeRubric(rubric: string, reply: string): { score: number; why: string } {
+function judgeRubric(rubric: string, texts: Array<{ text: string; turn?: number }>): { score: number; why: string } {
+  const turns = new Map<number, string[]>();
+  for (const entry of texts) {
+    const key = entry.turn ?? 0;
+    turns.set(key, [...(turns.get(key) ?? []), entry.text]);
+  }
+  const answers = [...turns.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([index, parts], position) => `ANSWER ${position + 1}${turns.size > 1 ? ` (to the person's message ${index + 1})` : ''}:\n${parts.join('\n')}`)
+    .join('\n\n');
   const prompt = [
     'You are scoring one reply from a wallet operator agent against one rule, and nothing else.',
+    turns.size > 1
+      ? 'The agent answered the person more than once. Each ANSWER below is one separate reply, read on its own at the time it was written, so judge a rule about length or shape against a single answer and never against all of them stacked together.'
+      : '',
     '',
     `RULE: ${rubric}`,
     '',
-    'REPLY:',
-    reply.slice(0, 4000),
+    answers.slice(0, 6000),
     '',
     'Score 0 if the reply breaks the rule, 1 if it half meets it, 2 if it clearly meets it.',
     'Answer with the digit, a space, and at most fifteen words of reason. Nothing else.',
@@ -431,6 +442,7 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   const errors: string[] = [];
   let ended = false;
   let clicked = false;
+  let turnIndex = 0;
 
   const driver = createDriver({
     repo: stage,
@@ -445,7 +457,7 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
     onEvent: (event: DriverEvent) => {
       const at = Date.now();
       if (event.kind === 'tool') trace.push({ at, name: bare(event.name), args: event.input });
-      if (event.kind === 'text') texts.push({ at, text: event.text });
+      if (event.kind === 'text') texts.push({ at, text: event.text, turn: turnIndex });
       if (event.kind === 'error') errors.push(event.message);
       if (event.kind === 'status' && event.state === 'failed') errors.push(event.detail ?? 'driver failed');
       if (event.kind === 'turn_end') ended = true;
@@ -488,8 +500,9 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
     // Scripted mode plays the whole exchange off one turn, because the script already carries
     // what the human's second sentence led to. Live mode feeds every turn and waits for each.
     const turns = LIVE ? turnsOf(scenario) : turnsOf(scenario).slice(0, 1);
-    for (const turn of turns) {
+    for (const [index, turn] of turns.entries()) {
       ended = false;
+      turnIndex = index;
       driver.send(turn);
       const until = Date.now() + (LIVE ? 240_000 : 60_000);
       while (!ended && errors.length === 0 && Date.now() < until) await sleep(100);
@@ -523,7 +536,7 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   const verdict = gradeScenario(scenario, run);
   let rubric = '';
   if (LIVE && scenario.rubric !== undefined && verdict.ok) {
-    const judged = judgeRubric(scenario.rubric, verdict.reply_text);
+    const judged = judgeRubric(scenario.rubric, texts);
     rubric = `rubric ${judged.score}/2: ${judged.why}`;
     if (judged.score < 2) {
       verdict.ok = false;

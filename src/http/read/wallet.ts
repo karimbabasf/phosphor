@@ -141,7 +141,14 @@ export const walletReads: ReadTable = {
       // in the banner say the same view; this is the record an agent can hold against its own
       // last switch, because the human's tabs move the window too.
       screen: ctx.getScreen(),
-      pending: pending.map((p) => p.id),
+      /* The decisions waiting, and what each one IS. This was a list of ids, which is a list an
+         agent cannot say anything about: asked what is waiting it answered "one decision" and had
+         to spend a second read to learn it was $250 of policy change. The row's own view already
+         carries the line the card is printing, so it comes back with the id. */
+      pending: pending.map((p) => {
+        const view = ctx.proposals.view(p);
+        return { id: p.id, kind: p.kind, what: view.sentence, amountIn: view.money.amountIn, symbol: view.money.symbol, line: view.stageLabel };
+      }),
       // One line per move already running, so the first read of a session cannot miss one.
       inFlight,
       stale: wallet.stale,

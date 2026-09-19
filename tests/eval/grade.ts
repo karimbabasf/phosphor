@@ -11,7 +11,7 @@ import { TERMINAL, type ProposalStage } from '../../src/proposals/view.ts';
 import type { Scenario } from './schema.ts';
 
 export type Call = { at: number; name: string; args: unknown };
-export type Text = { at: number; text: string };
+export type Text = { at: number; text: string; turn?: number };
 export type Card = { at: number; name: string; data: unknown };
 export type StatusRead = { at: number; data: unknown };
 export type Frame = { at: number; type: string; payload: unknown; proposals: Array<Record<string, unknown>> };
