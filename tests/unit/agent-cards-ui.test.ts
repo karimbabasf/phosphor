@@ -586,4 +586,8 @@ test('a state word never takes the title\'s room: the two-row head gives the tit
   assert.match(areas, /"glyph figure\s+state\s+state"/, 'the state does not take the width left beside the figure');
   const columns = block.slice(block.indexOf('grid-template-columns'), block.indexOf(';', block.indexOf('grid-template-columns')));
   assert.match(columns, /20px auto minmax\(0, 1fr\) auto/, 'the head is not four columns');
+  /* And the sentence wraps in its cell. Held to one line and anchored right, a state longer
+     than the room beside the figure slid over it: "250 USDaiting for the venue to credit it". */
+  const state = block.slice(block.indexOf('.tcard-state {', block.indexOf('grid-area: state') - 200));
+  assert.match(state.slice(0, 220), /white-space: normal/, 'the state word is still held to one line');
 });

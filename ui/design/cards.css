@@ -132,7 +132,16 @@
 
   .tcard-head:has(.tcard-state) .tcard-title { grid-area: title; }
   .tcard-head:has(.tcard-state) .tcard-figure { grid-area: figure; justify-self: start; }
-  .tcard-head:has(.tcard-state) .tcard-state { grid-area: state; justify-self: end; }
+  /* The sentence WRAPS here rather than staying on one line. Anchored to the right edge and
+     held to one line, a state longer than the room left beside the figure slid over it and the
+     card read "250 USDaiting for the venue to credit it". */
+  .tcard-head:has(.tcard-state) .tcard-state {
+    grid-area: state;
+    justify-self: end;
+    min-width: 0;
+    white-space: normal;
+    text-align: right;
+  }
   .tcard-head:has(.tcard-state) .tcard-chevron { grid-area: chevron; justify-self: end; }
   .tcard-head:has(.tcard-state) .tcard-when { display: none; }
 }
