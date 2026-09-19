@@ -459,6 +459,35 @@ function lower(s: string): string {
   return s.toLowerCase();
 }
 
+// What kind of change this is, for a reader that should not have to parse prose. A list or a
+// share named at exactly what the policy already holds is not a change and says nothing.
+function policyChangeCodes(patch: PolicyPatch, policy: Policy, changes: PolicyAxisChange[]): string[] {
+  const codes: string[] = [];
+  if (changes.length > 0) codes.push('limits_changed');
+
+  const c = patch.composition;
+  const movedComposition =
+    (c?.maxFreezableShare !== undefined && c.maxFreezableShare !== policy.composition.maxFreezableShare) ||
+    (c?.forbiddenIssuers !== undefined && !sameList(c.forbiddenIssuers, policy.composition.forbiddenIssuers)) ||
+    (c?.maxIssuerShare !== undefined && !sameShares(c.maxIssuerShare, policy.composition.maxIssuerShare));
+  if (movedComposition) codes.push('composition_changed');
+
+  const list = patch.outbound?.destinationAllowlist;
+  if (list !== undefined && !sameList(list, policy.outbound.destinationAllowlist)) codes.push('allowlist_changed');
+  return codes;
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  const left = [...new Set(a.map(lower))].sort();
+  const right = [...new Set(b.map(lower))].sort();
+  return left.length === right.length && left.every((v, i) => v === right[i]);
+}
+
+function sameShares(a: Record<string, number>, b: Record<string, number>): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys].every((k) => a[k] === b[k]);
+}
+
 /* ---------- who counts as one of our own addresses ----------
 
    One lowercased set. Every address here is an EVM address (two legitimate spellings of the
@@ -604,9 +633,13 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
   return {
     outcome: 'needs_approval',
     reasons,
-    // `limits_changed` says money limits moved, so it rides only when some did: a patch that
-    // only touches composition changes no limit and says so by carrying neither.
-    reasonCodes: changes.length > 0 ? ['limits_changed'] : [],
+    /* `limits_changed` says money limits moved, so it rides only when some did. The other two
+       say what a patch that moves no limit is actually doing: a composition or allowlist change
+       used to come back with no code and no changes[], the same shape as a patch that moves
+       nothing, leaving the rendered-sentence diff as the only reader. The axis rows themselves
+       stay out of changes[], which is money with a before, an after and a factor, and a share is
+       none of those. */
+    reasonCodes: policyChangeCodes(wanted, policy, changes),
     changes,
   };
 }

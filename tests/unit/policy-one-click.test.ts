@@ -274,7 +274,7 @@ test('a patch that moves no money limit carries no limits_changed and needs no f
   const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
   const verdict = evaluate(change({ composition: { maxFreezableShare: 0.5 } }, 'Cap the freezable share at half.'), ctxOf(policy));
   assert.equal(verdict.outcome, 'needs_approval');
-  assert.deepEqual(verdict.reasonCodes, []);
+  assert.deepEqual(verdict.reasonCodes, ['composition_changed'], 'no money limit moved, so no limits_changed');
   assert.deepEqual(verdict.outcome === 'needs_approval' && verdict.changes, []);
 });
 
@@ -432,4 +432,70 @@ test('the allowlist rule still fires on a composition-only patch path', () => {
   const verdict = evaluate(change({ outbound: { destinationAllowlist: [] } }, 'Tidy the venue list.'), ctxOf(policy));
   assert.equal(verdict.outcome, 'refuse');
   assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'allowlist_shortened');
+});
+
+/* ---------- a change that is not a money limit still says so ----------
+
+   A composition or allowlist patch came back with reasonCodes: [] and changes: [], the same
+   shape a patch that moves nothing produces. The reader with nothing else to go on was the
+   rendered-sentence diff, which is the surface decision.js calls the "spot one changed token in
+   twenty lines of hex" problem. A code costs nothing and says which kind of change this is. The
+   axis rows themselves are a card change and are not here: changes[] is money, before, after and
+   a factor, and a share is none of those. */
+
+test('a composition patch carries a code of its own instead of nothing at all', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  const verdict = evaluate(
+    change({ composition: { maxFreezableShare: 1, maxIssuerShare: { default: 1, tether: 0.4 } } }, 'No change to any spending limit.'),
+    ctxOf(policy),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, ['composition_changed']);
+});
+
+/* The re-audit's own probe D10, and the answer it did not have: that patch names the freezable
+   share, the issuer shares and the forbidden issuers at exactly the values the default policy
+   already holds. It changes nothing, and it now says nothing rather than looking like a change
+   with no code on it. */
+test('a composition patch naming what the policy already holds is not a change', () => {
+  const verdict = evaluate(
+    change(
+      { composition: { maxFreezableShare: 1, maxIssuerShare: { default: 1 }, forbiddenIssuers: [] } },
+      'No change to any spending limit.',
+    ),
+    ctxOf(defaultPolicy()),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, []);
+});
+
+test('an allowlist addition carries its own code', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  const verdict = evaluate(
+    change({ outbound: { destinationAllowlist: ['0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef'] } }, 'Tidy the venue list.'),
+    ctxOf(policy),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, ['allowlist_changed']);
+});
+
+test('a patch that moves limits and the allowlist at once carries both codes', () => {
+  const policy = policyWith({ humanClickAboveUsd: 1, maxPerTransactionUsd: 100 });
+  const verdict = evaluate(
+    change(
+      { outbound: { maxPerTransactionUsd: 1000, destinationAllowlist: ['0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef'] } },
+      'Refuse anything above $1,000.',
+    ),
+    ctxOf(policy),
+  );
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, ['limits_changed', 'allowlist_changed']);
+});
+
+test('an allowlist named at exactly what it already holds is not a change', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  policy.outbound.destinationAllowlist = ['0xabc'];
+  const verdict = evaluate(change({ outbound: { destinationAllowlist: ['0xABC'] } }, 'Leave the venue list alone.'), ctxOf(policy));
+  assert.equal(verdict.outcome, 'needs_approval');
+  assert.deepEqual(verdict.reasonCodes, []);
 });
