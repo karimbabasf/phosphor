@@ -109,7 +109,11 @@ test('both surfaces state the two policy numbers as two different jobs, in one l
   for (const text of [handshakeInstructions(ROOT), role()]) {
     assert.match(text, /above the ask threshold a human clicks/i);
     assert.match(text, /above the hard cap nothing runs at all/i);
-    assert.match(text, /setting the two equal means nothing ever asks/i);
+    /* Was "setting the two equal means nothing ever asks", which described a trap the human had to
+       spot. The engine refuses that patch by name now (never_asks, feat/live-truth-a), so the rule
+       states the constraint rather than the consequence: the ask sits STRICTLY under the cap. */
+    assert.match(text, /the ask has to sit strictly under the cap/i);
+    assert.match(text, /nothing would ever ask you/i);
     assert.match(text, /policy_show/);
   }
 });

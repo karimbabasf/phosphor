@@ -89,7 +89,7 @@ function firstSentence(text: string): string {
    is still in the tool's description, which the agent has in front of it the moment it picks one.
    Cut at a clause boundary so a clipped line still reads as a sentence: a word boundary alone
    leaves "everything attempted, executed and." */
-const INDEX_LINE_MAX = 78;
+const INDEX_LINE_MAX = 64;
 function clip(text: string): string {
   if (text.length <= INDEX_LINE_MAX) return text;
   const head = text.slice(0, INDEX_LINE_MAX);
