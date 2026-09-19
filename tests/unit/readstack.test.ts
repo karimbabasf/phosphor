@@ -49,6 +49,23 @@ test('the demo fixture is one account with ETH, USDC and SOL inside NEAR Intents
   assert.equal(reads.intents.ok && reads.hyperliquid.ok, true);
 });
 
+/* THE FIXTURE IS THIS WALLET'S, NOT THE FILE'S ACCOUNT.
+   Found while photographing the money stages: a demo deposit made by a wallet created in the
+   app walked every stage, was credited, and then sat in `crediting` until its deadline flipped
+   it to `stalled`. judgeSettling matches the row's pocket (the draft's account, which is the
+   keystore's) against the venue read's account (the fixture's, 0x1111...), they never matched,
+   so the balance that had moved was never read as this row's. Every read the fixture stands in
+   for is attributed to the wallet asking. */
+test('the demo reads are credited to the wallet that holds them, and the file account is the fallback', () => {
+  const mine = '0x2222222222222222222222222222222222222222';
+  const reads = loadDemoReads(mine);
+  assert.equal(reads.hyperliquid.account, mine, 'the trading account read names this wallet');
+  assert.ok(reads.intents.holdings.every(h => h.accountId === mine), 'and so does every balance inside the verifier');
+  assert.equal(reads.hyperliquid.collateralUsdc, loadDemoReads().hyperliquid.collateralUsdc, 'the figures come from the fixture either way');
+  assert.equal(loadDemoReads().hyperliquid.account, demoAccount(), 'no wallet yet keeps the account named in the file');
+  assert.equal(loadDemoReads(null).hyperliquid.account, demoAccount());
+});
+
 test('the demo snapshot carries the spot prices and a stamp, and nothing held on a chain', () => {
   const snap = loadDemoLedger();
   assert.equal(snap.mode, 'demo');

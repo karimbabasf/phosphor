@@ -540,39 +540,53 @@ function units(base: bigint, decimals: number): string {
    not risen is still settling and the row is left exactly as it was. Returns the row as it
    stands afterwards. */
 export function judgeSettling(ctx: PCtx, p: Proposal): Proposal {
-  const pocket = p.pocket;
-  if (p.status !== 'needs_reconciliation' || pocket === undefined) return p;
+  /* THE STORE'S ROW, NEVER THE CALLER'S. Every caller hands a row it read a moment ago, and the
+     one that matters (watchSettling) hands a whole page of them, so a row settled while that
+     page was being walked was settled again off the stale copy. With the re-entrant refresh
+     below that made it a storm: 820 audit lines for one deposit in 103 ms, the log 2.8 MB in a
+     quarter of an hour, and the app answering nothing for 13 s at the exact moment the money
+     landed. A settle is idempotent now: the second pass reads `executed` and stops. */
+  const row = ctx.store.get(p.id) ?? p;
+  const pocket = row.pocket;
+  if (row.status !== 'needs_reconciliation' || pocket === undefined) return row;
   const after = pocketBalance(ctx, pocket);
-  if (after === null) return p;
+  if (after === null) return row;
   const before = BigInt(pocket.before);
   const floor = BigInt(pocket.floor);
   const delta = after - before;
-  if (delta <= 0n) return p;
+  if (delta <= 0n) return row;
 
   const place = pocket.venue === 'intents' ? 'inside intents.near' : 'on the Hyperliquid account';
-  const txids = p.result?.txids ?? [];
+  const txids = row.result?.txids ?? [];
   // The handle, nonce and quote the rail recorded stay on the row: a settle by the balance adds
   // a verdict, it does not forget what a later question to the venue would go by.
-  const kept = p.result?.evidence === undefined ? {} : { evidence: p.result.evidence };
+  const kept = row.result?.evidence === undefined ? {} : { evidence: row.result.evidence };
   const settled = { ...pocket, after: after.toString() };
   const balances = {
-    beforeUsd: p.balances?.beforeUsd ?? pocketPriced(ctx, settled, settled.before),
+    beforeUsd: row.balances?.beforeUsd ?? pocketPriced(ctx, settled, settled.before),
     afterUsd: pocketPriced(ctx, settled, settled.after),
   };
+  /* THE ROW BEFORE THE LOG LINE, and that order is the rest of the fix above. An audit append
+     tells its subscribers, one of them re-reads the ledger, and a ledger that tells its own
+     listeners synchronously lands back here (src/main.ts, audit.subscribe -> refreshNow). Logged
+     first, the row this was about had not been written yet, so every one of those passes settled
+     it again. Written first, the next pass reads `executed` at the top and stops. */
   if (delta < floor) {
     const detail =
       `A later read shows the balance ${place} rose by ${units(delta, pocket.decimals)} ${pocket.symbol}, below the ` +
       `${units(floor, pocket.decimals)} ${pocket.symbol} floor this move was approved with (${units(before, pocket.decimals)} before, ` +
       `${units(after, pocket.decimals)} after). Read the balance for ${pocket.account} before signing another.`;
-    ctx.audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id, txids });
-    return persist(ctx, { ...p, status: 'failed', settledAt: nowIso(), pocket: settled, balances, result: { ok: false, detail, txids, ...kept } });
+    const short = persist(ctx, { ...row, status: 'failed', settledAt: nowIso(), pocket: settled, balances, result: { ok: false, detail, txids, ...kept } });
+    ctx.audit.append('execution_failed', `${row.id}: ${detail}`, { id: row.id, txids });
+    return short;
   }
   const detail =
     `confirmed on a later read: the balance ${place} rose by ${units(delta, pocket.decimals)} ${pocket.symbol} ` +
     `(${units(before, pocket.decimals)} before, ${units(after, pocket.decimals)} after), at or above the ` +
     `${units(floor, pocket.decimals)} ${pocket.symbol} floor this move was approved with.`;
-  ctx.audit.append('executed', `${p.id}: ${detail}`, { id: p.id, txids });
-  return persist(ctx, { ...p, status: 'executed', settledAt: nowIso(), pocket: settled, balances, result: { ok: true, detail, txids, ...kept } });
+  const done = persist(ctx, { ...row, status: 'executed', settledAt: nowIso(), pocket: settled, balances, result: { ok: true, detail, txids, ...kept } });
+  ctx.audit.append('executed', `${row.id}: ${detail}`, { id: row.id, txids });
+  return done;
 }
 
 /* THE ROW SAYS SO ITSELF WHEN IT IS LATE, rather than counting up forever under a word that

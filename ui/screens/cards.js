@@ -911,7 +911,12 @@
     /* A stalled row is terminal and still counting: the whole statement it makes
        is that nothing has changed for this long. Every other end stops the clock. */
     if (!view.terminal || view.stage === 'stalled') liveLine(body, view);
-    if (view.settledAt) factLine(body, 'Confirmed at', clock(view.settledAt), 'up');
+    /* "Confirmed at" belongs to a move that was confirmed. A refusal, a failure and a refund
+       all carry the moment they ended, and the word for that is not confirmed. */
+    if (view.settledAt) {
+      var done = view.stage === 'confirmed';
+      factLine(body, done ? 'Confirmed at' : 'Ended at', clock(view.settledAt), done ? 'up' : null);
+    }
     if (view.decidedAt) factLine(body, 'You clicked at', clock(view.decidedAt));
     if (view.providerStage) factLine(body, 'The router calls this', String(view.providerStage));
     if (view.correlationId) factLine(body, 'Trace', String(view.correlationId));

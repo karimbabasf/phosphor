@@ -100,6 +100,26 @@ test('the clocks count from the row and the stage, not from the last write', () 
   assert.equal(view.typicalSec, 180);
 });
 
+/* KARIM'S TRANSCRIPT, the second half: the card said "Confirmed at 14:20" while the assistant
+   said the deposit was still settling. The row is stamped when the RAIL stops answering, which
+   is before the venue has shown the money, so a row still crediting carried a settle time and
+   the card printed it. A move that has not ended has no time it ended at. */
+test('a settle time exists once the move has ended, and never while it is still being credited', () => {
+  const crediting = proposalView(
+    { settle: (row) => row },
+    { ...rowOf({ status: 'needs_reconciliation', pocket: POCKET, settledAt: '2026-09-18T10:01:30.000Z' }), result: { ok: false, detail: 'the router is done', evidence: { providerStage: 'SUCCESS' } as RailEvidence } },
+    NOW,
+  );
+  assert.equal(crediting.stage, 'crediting');
+  assert.equal(crediting.settledAt, null, 'a row waiting on the venue has not settled');
+
+  assert.equal(CASES.confirmed().settledAt, '2026-09-18T10:01:30.000Z', 'a confirmed row says when');
+
+  const stalled = CASES.stalled();
+  assert.equal(stalled.settlesForward, true);
+  assert.equal(stalled.settledAt, null, 'late is not ended, so there is no time it ended at');
+});
+
 test('a policy change has no typical duration and no deadline', () => {
   const view = proposalView(
     { settle: (row) => row },

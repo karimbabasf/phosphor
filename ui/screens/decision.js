@@ -347,15 +347,37 @@
   var pinned = null;
   var armAt = 0;
   var lastDrawn = null;
+  /* The row the dock is watching move, and when it ended. Both outlive any one card, like the
+     pin above: the card is rebuilt on every frame and the beat is about the row. */
+  var watched = null;
+  var endedAt = 0;
+  var endedTimer = 0;
+  // How long the finished card holds the dock. Long enough to read one line and a figure.
+  var ENDED_MS = 6000;
+
+  function rowById(list, id) {
+    for (var i = 0; i < list.length; i += 1) {
+      if (list[i] && list[i].id === id) return list[i];
+    }
+    return null;
+  }
 
   function render() {
     /* An answer already given owns the dock until its own timer runs out, and a
-       receipt or a recovery card is something a person is reading. */
+       receipt is something a person is reading. */
     if (flashTimer) return;
-    if (showing && showing.kind !== 'ask' && showing.kind !== 'unread' && showing.kind !== 'held' && showing.kind !== 'live') return;
 
     var state = store.get() || {};
     var list = Array.isArray(state.proposals) ? state.proposals : [];
+
+    /* A REQUEST OUTRANKS A REMINDER. The backup nudge borrows this slot through
+       showCard, and it held it: a $250 deposit filed while it was up drew
+       nothing, the topbar said "1 waiting", and the dock showed a card about a
+       recovery phrase. A decision somebody has to make is never behind a
+       reminder. Everything else in the slot keeps it until it closes itself. */
+    if (showing && showing.kind !== 'ask' && showing.kind !== 'unread' && showing.kind !== 'held' && showing.kind !== 'live') {
+      if (showing.kind !== 'card' || !list.some(isWaiting)) return;
+    }
 
     /* THE DOCK DOES NOT SWAP A CARD UNDER THE READER.
 
@@ -387,9 +409,30 @@
 
     var live = newestFirst(list.filter(isLive));
     if (live.length) {
+      watched = live[0].id;
+      endedAt = 0;
       open({ kind: 'live', proposal: live[0], queued: 0 });
       return;
     }
+
+    /* THE LAST BEAT, and it is the one the person is waiting for. The live card was dropped on
+       the frame that ended the move: the last thing on screen said "Waiting for the venue to
+       credit it" and then the dock went dark, which reads as the app losing interest at the
+       exact moment the money landed. The row the dock was watching holds it for a few seconds
+       once it ends, drawn in its end state (Confirmed, Failed, Late), and then the dock goes.
+       An ask outranks it: this sits below the waiting branch on purpose. */
+    var ended = watched === null ? null : rowById(list, watched);
+    if (ended && ended.view && ended.view.terminal === true) {
+      if (!endedAt) endedAt = Date.now();
+      if (Date.now() - endedAt < ENDED_MS) {
+        if (endedTimer) window.clearTimeout(endedTimer);
+        endedTimer = window.setTimeout(function () { endedTimer = 0; render(); }, ENDED_MS);
+        open({ kind: 'live', proposal: ended, queued: 0 });
+        return;
+      }
+    }
+    watched = null;
+    endedAt = 0;
 
     var unread = newestFirst(list.filter(isUnread));
     if (unread.length) {

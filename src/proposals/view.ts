@@ -442,7 +442,13 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     outcome: outcomeOf(p, ctx.plan?.(p) ?? null).state,
     createdAt: p.createdAt,
     decidedAt: p.decidedAt ?? null,
-    settledAt: p.settledAt ?? null,
+    /* WHEN IT ENDED, and null while it has not. The row is stamped the moment the rail stops
+       answering, which is BEFORE the venue has shown the money: a row in `crediting` carries a
+       stamp and is not settled. The card prints this as "Confirmed at", so it read "Confirmed
+       at 14:20" over a move the agent was still calling unfinished, which is the pair of clocks
+       out of order from Karim's transcript. `stalled` carries none for the same reason: it
+       settles forward, so it has not ended either. */
+    settledAt: TERMINAL.has(stage) && stage !== 'stalled' ? (p.settledAt ?? null) : null,
     lastChangeAt,
     elapsedSec: secondsBetween(p.createdAt, now),
     sinceChangeSec,

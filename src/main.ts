@@ -916,9 +916,20 @@ const REFRESH_IDLE_MS = REFRESH_PERIOD_MS;
 // is how a 3 s watch loop and this 15 s loop used to race each other into a flashing warning.
 let refreshing: Promise<void> | null = null;
 
+/* THE GUARD IS ARMED BEFORE THE READ, not after it. `refreshing = ledger.refresh()...` assigns
+   only once refresh() has returned, and a refresh is not always asynchronous: demo mode tells
+   its listeners inside the call. One of those listeners settles a proposal, settling writes an
+   audit line, and the subscriber below turns an `executed` line back into a refresh, which
+   arrived here while `refreshing` was still null and started another pass. 820 settles of one
+   deposit in 103 ms, and the app answered nothing for thirteen seconds at the moment the money
+   landed. */
 function refreshNow(): Promise<void> {
   if (refreshing !== null) return refreshing;
-  refreshing = ledger
+  let finished: () => void = () => {};
+  refreshing = new Promise<void>(resolve => {
+    finished = resolve;
+  });
+  void ledger
     .refresh()
     .then(() => {
       server.broadcastState();
@@ -926,6 +937,7 @@ function refreshNow(): Promise<void> {
     .catch(() => undefined)
     .finally(() => {
       refreshing = null;
+      finished();
     });
   return refreshing;
 }

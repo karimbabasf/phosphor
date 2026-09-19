@@ -65,9 +65,11 @@ function refreshListeners(): { add(fn: () => void): () => void; tell(): void } {
 
 // ---------- demo mode ----------
 
-function createDemoLedger(): Ledger {
+function createDemoLedger(cfg: AppConfig): Ledger {
+  /* The keystore's address on every read, not the fixture's, and read again on each refresh
+     because the wallet may be made after this ledger is (first run). See loadDemoReads. */
   let current: LedgerSnapshot = loadDemoLedger();
-  let reads = loadDemoReads();
+  let reads = loadDemoReads(intentsAccountId(cfg));
   const listeners = refreshListeners();
 
   return {
@@ -79,7 +81,7 @@ function createDemoLedger(): Ledger {
     // live refresh for what a stamp that never moved did to the basic screen.
     refresh: async () => {
       current = { ...current, fetchedAt: new Date().toISOString() };
-      reads = loadDemoReads();
+      reads = loadDemoReads(intentsAccountId(cfg));
       listeners.tell();
       return current;
     },
@@ -269,7 +271,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
 export function createLedger(cfg: AppConfig, deps?: { fetchImpl?: typeof fetch; log?: (line: string) => void }): Ledger {
   const fetchImpl = deps?.fetchImpl ?? fetch;
   const log = deps?.log ?? ((line: string) => console.error(line));
-  return cfg.mode === 'demo' ? createDemoLedger() : createLiveLedger(cfg, fetchImpl, log);
+  return cfg.mode === 'demo' ? createDemoLedger(cfg) : createLiveLedger(cfg, fetchImpl, log);
 }
 
 export { REFRESH_PERIOD_MS };

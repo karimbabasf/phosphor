@@ -102,11 +102,20 @@ export function demoAvailableUsdc(): number {
 
 // ---------- the two pocket reads ----------
 
-// Both ok and stamped now: a fixture has nothing to fail.
-export function loadDemoReads(): { intents: IntentsRead; hyperliquid: HlRead } {
+/* Both ok and stamped now: a fixture has nothing to fail.
+
+   `owner` is the address this app's own keystore holds, and the fixture is attributed to it
+   rather than to the address written in the file. The fixture stands in for THIS wallet's
+   balances, and anything that matches a balance to an account (judgeSettling's pocket read, the
+   recipients book, a venue read beside a draft) is holding the app's address in its hand. Left
+   as the file's address, a demo deposit could never settle: the draft named the wallet's
+   account, the read named the fixture's, they did not match, and a row that had been credited
+   sat in `crediting` until its deadline flipped it to `stalled`. Absent (no wallet yet, or a
+   test calling this bare) keeps the file's own account. */
+export function loadDemoReads(owner?: string | null): { intents: IntentsRead; hyperliquid: HlRead } {
   const raw = readFixture();
   const fetchedAt = new Date().toISOString();
-  const account = raw.account.toLowerCase();
+  const account = (owner ?? raw.account).toLowerCase();
   const assetIds = new Set([...raw.intents.map((h) => h.assetId), ...movedIntents.keys()]);
   return {
     intents: {
@@ -128,7 +137,7 @@ export function loadDemoReads(): { intents: IntentsRead; hyperliquid: HlRead } {
     hyperliquid: {
       ok: true,
       fetchedAt,
-      account: raw.account,
+      account,
       collateralUsdc: Math.max(0, raw.hyperliquid.collateralUsdc + movedHyperliquidUsdc),
       availableUsdc: demoAvailableUsdc(),
       marginUsedUsd: 0,

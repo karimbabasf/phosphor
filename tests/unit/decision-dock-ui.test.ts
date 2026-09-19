@@ -186,7 +186,7 @@ function find(node: Node, className: string): Node[] {
 /* Boots the dock against a state and returns the card it drew, with the state
    it reads (mutable, for a test that moves a row on) and the render the store
    would call on a frame. `api` stands in for the routes a click takes. */
-function dockFor(proposal: Record<string, any>, state: Record<string, any> = {}, api: Record<string, any> = {}): { card: Node; payload: Record<string, any>; render: () => void } {
+function dockFor(proposal: Record<string, any>, state: Record<string, any> = {}, api: Record<string, any> = {}): { card: Node; payload: Record<string, any>; render: () => void; dock: Record<string, any> } {
   const dock = makeNode('div');
   const card = makeNode('div');
   const payload = Object.assign({ proposals: [proposal] }, state);
@@ -222,7 +222,7 @@ function dockFor(proposal: Record<string, any>, state: Record<string, any> = {},
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
   sandbox.window.PhosphorDecision.boot();
   sandbox.window.PhosphorDecision.render();
-  return { card, payload, render: () => sandbox.window.PhosphorDecision.render() };
+  return { card, payload, render: () => sandbox.window.PhosphorDecision.render(), dock: sandbox.window.PhosphorDecision };
 }
 
 function cardFor(proposal: Record<string, any>, state: Record<string, any> = {}): Node {
@@ -854,6 +854,75 @@ test('the lock banner is at the top of the body and the queue line is in the foo
   assert.equal(next.length, 1, 'nothing says another request is waiting');
   assert.ok(textOf(next[0]).some((t) => t.includes('1 more waiting, next')), textOf(next[0]).join(' | '));
   assert.equal(askBody.childNodes.indexOf(next[0]), 0, 'the waiting line is not the first thing in the card');
+});
+
+/* 2026-09-19, found while photographing the money stages against a real backend: a $250 deposit
+   was filed, the topbar said "1 waiting", and the dock showed "You have money in. Back up now."
+   The backup nudge borrows this slot through showCard, and render() returned early on anything
+   that was not a request, so the ask never drew. A decision is never behind a reminder. */
+test('a request outranks the reminder that borrowed the dock, and the reminder keeps it when nothing is waiting', () => {
+  const d = dockFor(swapProposal());
+  assert.ok(textOf(d.card).includes('Yes'), 'the ask is up to begin with');
+
+  d.dock.showCard(function (host: Node) {
+    host.appendChild({ ...makeNode('h2'), children: [] } as unknown as Node);
+    host.appendChild(makeNode('p'));
+    (host.children[0] as Node).textContent = 'You have money in. Back up now.';
+  });
+  assert.equal(textOf(d.card).includes('Yes'), false, 'the reminder has the slot');
+
+  d.render();
+  assert.ok(textOf(d.card).includes('Yes'), 'the next frame puts the request back');
+
+  // Nothing waiting: the reminder is left alone.
+  const quiet = dockFor({ ...swapProposal(), status: 'executed' });
+  quiet.dock.showCard(function (host: Node) {
+    const line = makeNode('p');
+    line.textContent = 'Back up now.';
+    host.appendChild(line);
+  });
+  quiet.render();
+  assert.ok(textOf(quiet.card).join(' ').includes('Back up now.'), 'the reminder keeps the dock with nothing to decide');
+});
+
+/* The card was dropped on the frame that ended the move, so the last thing on screen said
+   "Waiting for the venue to credit it" and then the dock went dark at the exact moment the money
+   landed. The row the dock is watching holds it for a beat in its end state. */
+test('a move that ends says so on the dock before the dock goes', () => {
+  const moving = {
+    id: 'm1',
+    kind: 'hl_deposit',
+    status: 'executing',
+    createdAt: '2026-09-19T10:00:00.000Z',
+    decidedAt: '2026-09-19T10:00:05.000Z',
+    draft: { kind: 'hl_deposit', symbol: 'USDC', amount: 250, amountUsd: 250 },
+    simulation: { ok: true, summary: 'Fund Hyperliquid perps from the intents balance.' },
+    verdict: { outcome: 'allow', reasons: ['Within every limit.'] },
+    view: {
+      id: 'm1', kind: 'hl_deposit', sentence: 'Move 250 USDC from NEAR Intents to Hyperliquid.', changes: [],
+      stage: 'crediting', stageLabel: 'Waiting for the venue to credit it', providerStage: 'SUCCESS',
+      waitingOn: 'Hyperliquid', terminal: false, settlesForward: false, outcome: 'settling',
+      createdAt: '2026-09-19T10:00:00.000Z', decidedAt: '2026-09-19T10:00:05.000Z', settledAt: null,
+      lastChangeAt: '2026-09-19T10:00:20.000Z', elapsedSec: 25, sinceChangeSec: 5, typicalSec: 180,
+      deadlineAt: null, money: { symbol: 'USDC', amountIn: '250', feeUsd: null, amountOut: '249.075', fromPocket: 'NEAR Intents', toPocket: 'Hyperliquid', beforeUsd: null, afterUsd: null },
+      txs: [], correlationId: null, error: null,
+    },
+  };
+  const d = dockFor(moving);
+  assert.ok(textOf(d.card).join(' ').includes('Waiting for the venue to credit it'), 'the live card is up');
+
+  const done = {
+    ...moving,
+    status: 'executed',
+    settledAt: '2026-09-19T10:00:41.000Z',
+    view: { ...moving.view, stage: 'confirmed', stageLabel: 'Confirmed', waitingOn: null, terminal: true, outcome: 'confirmed', settledAt: '2026-09-19T10:00:41.000Z' },
+  };
+  d.payload.proposals = [done];
+  d.render();
+  const text = textOf(d.card).join(' ');
+  assert.ok(text.includes('Confirmed'), 'the end state is what the dock is left showing');
+  assert.equal(text.includes('Waiting for the venue'), false, 'and not the stage before it');
+  assert.ok(SOURCE.includes('ENDED_MS'), 'the beat has a named length');
 });
 
 test('the dock never claims a click is done; it says approved and lets the receipt say the rest', () => {
