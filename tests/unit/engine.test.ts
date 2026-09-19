@@ -119,15 +119,22 @@ const cases: Case[] = [
      ships asking above $1 and setting that to $100 took two approvals of one decision.
      A loosening of any size is still a click, and it is still one click. */
   {
-    // Both at the same number is the collided pair, whatever the number is.
+    // Both at the same number is the collided pair, whatever the number is. 1e9 would also be
+    // past the per-axis ceiling, so this sits under it to name the rule it is about.
     name: 'a patch that raises both limits to the same figure would leave a policy that never asks',
-    draft: policyChange({ outbound: { maxPerTransactionUsd: 1e9, humanClickAboveUsd: 1e9 } }),
+    draft: policyChange({ outbound: { maxPerTransactionUsd: 500_000, humanClickAboveUsd: 500_000 } }),
     out: 'refuse',
     rule: 'never_asks',
   },
   {
+    name: 'a figure past the axis ceiling is refused whatever else the patch says',
+    draft: policyChange({ outbound: { maxPerTransactionUsd: 1e9 } }),
+    out: 'refuse',
+    rule: 'above_ceiling',
+  },
+  {
     name: 'the same patch with the ask under the new cap is one decision, so it waits for one click',
-    draft: policyChange({ outbound: { maxPerTransactionUsd: 1e6, humanClickAboveUsd: 1e5 } }),
+    draft: policyChange({ outbound: { maxPerTransactionUsd: 500_000, humanClickAboveUsd: 100_000 } }),
     out: 'needs_approval',
   },
   {

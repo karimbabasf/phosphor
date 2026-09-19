@@ -105,6 +105,45 @@ function patchNamesNothing(patch: PolicyPatch): boolean {
   );
 }
 
+/* THE CEILING NO CLICK CAN PASS, per axis, in dollars.
+
+   Every other rule here bounds a patch against the policy in force, which means a determined
+   sequence of clicks walks anywhere: the walls are relative, so each step looks small beside the
+   one before it. This one is absolute. Above it the patch is refused however it is worded and
+   however many times it is asked, and the only way past is a person opening policy.json in an
+   editor, which is a different act from clicking yes on a card an agent wrote.
+
+   The numbers are the largest figure each axis could carry and still be a wallet somebody is
+   operating by hand rather than a limit that has stopped meaning anything. A person who wants
+   more edits the policy file. */
+export const AXIS_CEILING_USD: Readonly<Record<'maxPerTransactionUsd' | 'maxPerSessionUsd' | 'humanClickAboveUsd' | 'autoApproveDailyUsd', number>> = {
+  maxPerTransactionUsd: 1_000_000,
+  // The ask threshold lives under the cap by the rule below, so this is a second wall behind
+  // that one rather than a different number to reason about.
+  humanClickAboveUsd: 1_000_000,
+  maxPerSessionUsd: 10_000_000,
+  autoApproveDailyUsd: 10_000_000,
+};
+
+function aboveCeiling(patch: PolicyPatch, reasons: string[]): Verdict | null {
+  const o = patch.outbound;
+  if (o === undefined) return null;
+  for (const [axis, ceiling] of Object.entries(AXIS_CEILING_USD) as Array<[keyof typeof AXIS_CEILING_USD, number]>) {
+    const next = o[axis];
+    if (next === undefined) continue;
+    // Finite is already the schema's job; it is asserted again because this is the wall that is
+    // supposed to hold when something upstream of it does not.
+    if (!Number.isFinite(next) || next > ceiling) {
+      return refusal(
+        reasons,
+        'above_ceiling',
+        `${axis} cannot go past ${money(ceiling)} through a patch, and this asks for ${money(next)}. That ceiling is not a rule a click can move: a person edits policy.json to go higher.`,
+      );
+    }
+  }
+  return null;
+}
+
 /* NOTHING EVER ASKS, CHECKED ON THE POLICY THE PATCH WOULD LEAVE BEHIND.
 
    The ask threshold decides `allow` against `needs_approval`, and the hard cap decides
@@ -288,8 +327,13 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
 
   const wanted = parsed.data as PolicyPatch;
 
-  // The pair the patch would leave in the file, before anything else about it is judged: a
-  // policy that never asks is the one outcome no later rule can make safe.
+  // The absolute wall first: a figure past it is refused whatever else the patch is doing, and
+  // no rule under it can make a number that large safe.
+  const tooBig = aboveCeiling(wanted, reasons);
+  if (tooBig !== null) return tooBig;
+
+  // Then the pair the patch would leave in the file: a policy that never asks is the one
+  // outcome no later rule can make safe either.
   const empty = neverAsks(wanted, policy, reasons);
   if (empty !== null) return empty;
 

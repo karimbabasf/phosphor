@@ -14,7 +14,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { evaluate } from '../../src/policy/engine.ts';
+import { AXIS_CEILING_USD, evaluate } from '../../src/policy/engine.ts';
 import type { EngineCtx } from '../../src/policy/engine.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import type { Policy, PolicyPatch, Verdict, WriteDraft } from '../../src/types.ts';
@@ -137,4 +137,50 @@ test('a policy that already collides refuses any patch until the pair is fixed',
   assert.deepEqual(unrelated.reasonCodes, ['never_asks']);
   // And the way out is one patch that puts the ask under the cap.
   assert.equal(verdictOf(stuck, { outbound: { humanClickAboveUsd: 100 } }).outcome, 'needs_approval');
+});
+
+/* ---------- the ceiling no click can pass ----------
+
+   Every other rule bounds a patch against the policy in force, so a determined sequence of
+   clicks walks anywhere: each step looks small beside the one before it. The audit walked it in
+   ONE step, with all four axes at Number.MAX_SAFE_INTEGER and the sentence "adjust the freezable
+   cap", and a $5,000,000 swap went from refused to `allow` on a single click. */
+
+test('an axis past its ceiling is refused, whatever else the patch is doing', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  const verdict = verdictOf(policy, {
+    outbound: {
+      maxPerTransactionUsd: Number.MAX_SAFE_INTEGER,
+      maxPerSessionUsd: Number.MAX_SAFE_INTEGER,
+      humanClickAboveUsd: Number.MAX_SAFE_INTEGER,
+      autoApproveDailyUsd: Number.MAX_SAFE_INTEGER,
+    },
+  });
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'above_ceiling');
+  assert.deepEqual(verdict.reasonCodes, ['above_ceiling']);
+  assert.match(verdict.reasons.join(' '), /a person edits policy\.json to go higher/);
+});
+
+test('each axis is bounded by its own ceiling, one dollar either side of it', () => {
+  const policy = policyWith({ humanClickAboveUsd: 100, maxPerTransactionUsd: 1000 });
+  for (const [axis, ceiling] of Object.entries(AXIS_CEILING_USD)) {
+    const over = verdictOf(policy, { outbound: { [axis]: ceiling + 1 } as Record<string, number> });
+    assert.equal(over.outcome, 'refuse', `${axis} at the ceiling plus one`);
+    assert.equal(over.outcome === 'refuse' && over.rule, 'above_ceiling', axis);
+  }
+  // At the ceiling exactly, the cap is allowed through; the ask is then refused for colliding
+  // with a cap it cannot exceed, which is the rule above doing its job rather than this one.
+  assert.equal(verdictOf(policy, { outbound: { maxPerTransactionUsd: AXIS_CEILING_USD.maxPerTransactionUsd } }).outcome, 'needs_approval');
+  assert.equal(verdictOf(policy, { outbound: { maxPerSessionUsd: AXIS_CEILING_USD.maxPerSessionUsd } }).outcome, 'needs_approval');
+});
+
+test('the ceiling holds the swap the audit walked through, before and after a click', () => {
+  // The audit's exact path: one patch, one click, then a $5,000,000 swap reaching `allow`.
+  const policy = policyWith({ maxPerTransactionUsd: 100, maxPerSessionUsd: 500, humanClickAboveUsd: 1, autoApproveDailyUsd: 50 });
+  const verdict = verdictOf(policy, {
+    outbound: { maxPerTransactionUsd: 9007199254740991, maxPerSessionUsd: 9007199254740991, humanClickAboveUsd: 9007199254740991, autoApproveDailyUsd: 9007199254740991 },
+  });
+  assert.equal(verdict.outcome, 'refuse', 'the patch that removed every wall in one click');
+  assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'above_ceiling');
 });
