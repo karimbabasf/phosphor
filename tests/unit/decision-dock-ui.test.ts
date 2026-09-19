@@ -228,7 +228,7 @@ const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve)
 /* The swap the window showed on 2026-09-18: the rail's numbers arrive as
    `simulation.swap`, and its summary is the same figures as prose. */
 function swapProposal(over: Record<string, any> = {}): Record<string, any> {
-  const ADDR = '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050';
+  const ADDR = '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0';
   return Object.assign({
     id: 's1',
     kind: 'swap',
@@ -704,7 +704,7 @@ test('a swap card draws the rail\'s numbers as facts, the deciding rule as the r
   assert.equal(text.some((t) => t.includes('swap of $2.00 to intents.near')), false, 'the engine\'s restatement is on the card');
   assert.equal(text.includes('intents-native'), false, 'the venue id is on the card as its own text');
   // The account is on the card in full, under words that say nothing leaves it.
-  assert.ok(text.includes('0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050'));
+  assert.ok(text.includes('0xb583f41992Cd21b2F2345e194a36D33684BB5DB0'));
   assert.ok(text.includes('Stays in your account'));
   assert.equal(text.includes('Where it goes'), false);
   assert.ok(text.some((t) => t.includes('your NEAR Intents account, the one it spends from')));
@@ -736,7 +736,7 @@ test('a card with no structured facts opens the rail\'s report and never claims 
     kind: 'hl_deposit',
     status: 'pending',
     createdAt: '2026-09-18T17:36:00.000Z',
-    draft: { kind: 'hl_deposit', amount: 10, symbol: 'USDC', amountUsd: 10, hlAccount: '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050', counterparty: 'hyperliquid-perps' },
+    draft: { kind: 'hl_deposit', amount: 10, symbol: 'USDC', amountUsd: 10, hlAccount: '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0', counterparty: 'hyperliquid-perps' },
     simulation: { ok: true, summary: 'Fund Hyperliquid perps from the intents balance.\n  cost      0.0388 USDC, 0.39 percent of the deposit' },
     verdict: { outcome: 'needs_approval', reasons: ['hl_deposit of $10.00 to hyperliquid-perps.', '$10.00 is above the $1.00 click threshold.'] },
   });

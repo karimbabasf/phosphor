@@ -216,7 +216,7 @@ async function recipientOf(ctx: PCtx, where: string, address: string, network: C
   };
 }
 
-// "Send 3.78 USDC to 0xd7b2...5050 inside NEAR Intents", or "Pay 0.01 ETH to 0xd7b2...5050 on
+// "Send 3.78 USDC to 0xb583...5DB0 inside NEAR Intents", or "Pay 0.01 ETH to 0xb583...5DB0 on
 // Ethereum". One door, two drafts, and `where` decides which with no default: 'intents' keeps
 // the money inside the verifier (an intents_send draft, the same asset arriving in another
 // intents account), a network id pays it out on that chain (an intents_pay draft, the money

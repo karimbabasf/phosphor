@@ -31,7 +31,7 @@ import { makeCtx, railThat } from './helpers/proposals.ts';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const riskRows = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
 
-const FRIEND = '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050';
+const FRIEND = '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0';
 const ATTACKER = '0x9999999999999999999999999999999999999999';
 
 // The local hand: rewrite one row in proposals.json in place, the way something that is not

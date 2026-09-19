@@ -146,7 +146,7 @@ function payDraft(over: Partial<IntentsPayDraft> = {}): IntentsPayDraft {
     minReceived: 9.7,
     fee: null,
     from: OWNER,
-    to: '0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050',
+    to: '0xb583f41992cd21b2f2345e194a36d33684bb5db0',
     toChecksum: 'valid',
     counterparty: 'intents.near',
     recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },

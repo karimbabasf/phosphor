@@ -10,7 +10,7 @@ import type { Preflight, Proposal, RailResult, WriteDraft } from '../../src/type
 import { loadPolicy, savePolicy } from '../../src/policy/file.ts';
 import { makeCtx, railThat } from './helpers/proposals.ts';
 
-const FRIEND = '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050';
+const FRIEND = '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0';
 const ATTACKER = '0x9999999999999999999999999999999999999999';
 
 function preflightOf(verdict: Preflight['verdict']): Preflight {

@@ -108,7 +108,7 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    stays in the app's own custody) and never to money leaving it. On an enclave wallet the click
    puts up a Touch ID dialog whose sentence (`src/vault/reason.ts`) names the amount, the receiver
    shortened to its two ends (eight characters each, beyond what a vanity generator matches) and
-   the chain: "Pay 0.01 ETH to 0xd7b2de...1D4d5050 on Ethereum ($24.40)".
+   the chain: "Pay 0.01 ETH to 0xb583f4...84BB5DB0 on Ethereum ($24.40)".
    The sentence is composed from the draft's fields; an address field that is not shaped like an
    address is said as "an address", never echoed.
 4. **The echo.** The signed intent hands the balance to a solver handle and says nothing about the

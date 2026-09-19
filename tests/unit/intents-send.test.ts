@@ -23,7 +23,7 @@ import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
 const OWNER = getAddress('0x1111111111111111111111111111111111111111');
 const ACCOUNT = OWNER.toLowerCase();
-const FRIEND = getAddress('0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050');
+const FRIEND = getAddress('0xb583f41992Cd21b2F2345e194a36D33684BB5DB0');
 const FRIEND_ID = FRIEND.toLowerCase();
 const HANDLE = 'a7d101a893efccc5e560badd89b55325c99a4da76f2ec584d6a355415e388058';
 
@@ -192,11 +192,11 @@ test('an intents account is an EVM address, lowercased as the verifier keys it, 
   assert.deepEqual(intentsAccountProblem(FRIEND), { ok: true, id: FRIEND_ID });
   assert.deepEqual(intentsAccountProblem(FRIEND_ID), { ok: true, id: FRIEND_ID });
   assert.deepEqual(intentsAccountProblem('  alice.near '), { ok: true, id: 'alice.near' });
-  const bad = intentsAccountProblem('0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d505');
+  const bad = intentsAccountProblem('0xb583f41992Cd21b2F2345e194a36D33684BB5DB');
   assert.equal(bad.ok, false);
   assert.match(bad.ok ? '' : bad.problem, /not an EVM address/);
   // One character changed in a checksummed address fails its checksum: a typo, not an account.
-  const typo = intentsAccountProblem('0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5051');
+  const typo = intentsAccountProblem('0xb583f41992Cd21b2F2345e194a36D33684BB5DB1');
   assert.equal(typo.ok, false);
   assert.match(typo.ok ? '' : typo.problem, /checksum/);
   assert.equal(intentsAccountProblem('').ok, false);
@@ -237,7 +237,7 @@ test('the dry quote is asked for the same asset both ways, credited inside inten
   assert.equal(q.amount, AMOUNT_BASE.toString());
   assert.equal(q.recipient, FRIEND_ID);
   assert.equal(q.recipientType, 'INTENTS');
-  assert.match(sim.summary, /credited to 0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050 inside the same verifier/);
+  assert.match(sim.summary, /credited to 0xb583f41992cd21b2f2345e194a36d33684bb5db0 inside the same verifier/);
   assert.match(sim.summary, /always waits for your click/);
   // The facts the send card draws, and the receiver's balance read at simulate time as its sentence.
   assert.equal(sim.send?.arrivesAtLeast, '3.747626');
@@ -285,7 +285,7 @@ test('execute signs the transfer 1click generated, submits it, and proves the re
   assert.equal(calls.submitted[0]?.signature, 'secp256k1:SIGNATURE');
   // The receiver's balance, read before the quote and after the success, both for the friend.
   assert.deepEqual(reads, [{ account: FRIEND_ID, asset: USDC_ASSET }, { account: FRIEND_ID, asset: USDC_ASSET }]);
-  assert.match(result.detail, /sent 3.775899 USDC from 0x1111.* to 0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050 inside intents.near/);
+  assert.match(result.detail, /sent 3.775899 USDC from 0x1111.* to 0xb583f41992cd21b2f2345e194a36d33684bb5db0 inside intents.near/);
   assert.match(result.detail, /now holds 3766459 base units more of USDC/);
   assert.deepEqual(result.txids, ['HASH123', 'NearTx1']);
 });
