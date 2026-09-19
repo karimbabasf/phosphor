@@ -20,7 +20,7 @@ import { readRecipients, recipientFor, recipientKey, recordRecipient } from '../
 import { makeCtx, railThat, landed, SELF_EVM } from './helpers/proposals.ts';
 import { makeHttp } from './helpers/http.ts';
 
-const FRIEND = '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050';
+const FRIEND = '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0';
 const SOL_FRIEND = 'DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy';
 
 function activityOf(over: Partial<AddressActivity> = {}): AddressActivity {
@@ -104,7 +104,7 @@ test('where has no default: a send with no place named, or a place off the list,
 
 test('a typo in the address is refused for the place it is going, and the reason says which', async () => {
   const h = makeCtx({ rails: rails().list });
-  const typo = await h.svc.proposeSend({ to: '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5051', symbol: 'USDC', amount: 20, where: 'ethereum' });
+  const typo = await h.svc.proposeSend({ to: '0xb583f41992Cd21b2F2345e194a36D33684BB5DB1', symbol: 'USDC', amount: 20, where: 'ethereum' });
   assert.equal(typo.status, 'policy_refused');
   assert.match(typo.verdict.reasons.join(' '), /checksum/);
   const wrongChain = await h.svc.proposeSend({ to: SOL_FRIEND, symbol: 'USDC', amount: 20, where: 'ethereum' });
@@ -200,14 +200,14 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
       recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
     } as IntentsPayDraft,
   });
-  assert.equal(pay, 'Approve: Pay 0.01 ETH to 0xd7b2de...1D4d5050 on Ethereum ($24.40)');
+  assert.equal(pay, 'Approve: Pay 0.01 ETH to 0xb583f4...84BB5DB0 on Ethereum ($24.40)');
   const send = reasonFor({
     draft: {
       kind: 'intents_send', symbol: 'USDC', originAsset: 'nep141:usdc.near', amount: 3.7, amountUsd: 3.7, minReceived: 3.66,
       from: SELF_EVM.toLowerCase(), to: FRIEND.toLowerCase(), counterparty: 'intents.near',
     } as IntentsSendDraft,
   });
-  assert.equal(send, 'Approve: Send 3.7 USDC inside NEAR Intents to 0xd7b2de...1d4d5050 ($3.70)');
+  assert.equal(send, 'Approve: Send 3.7 USDC inside NEAR Intents to 0xb583f4...84bb5db0 ($3.70)');
   const sol = reasonFor({
     draft: {
       kind: 'intents_pay', symbol: 'SOL', originAsset: 'nep141:sol.omft.near', network: 'solana', amount: 1234.5, amountUsd: 260000,
@@ -222,12 +222,12 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
   const vanity = reasonFor({
     draft: {
       kind: 'intents_pay', symbol: 'ETH', originAsset: 'nep141:eth.omft.near', network: 'ethereum', amount: 0.01, amountUsd: 24.4,
-      minReceived: 0.0097, from: SELF_EVM.toLowerCase(), to: '0xd7b2' + 'ff' + '0'.repeat(26) + 'ffff' + '5050', toChecksum: null, counterparty: 'intents.near',
+      minReceived: 0.0097, from: SELF_EVM.toLowerCase(), to: '0xb583' + 'ff' + '0'.repeat(26) + 'ffff' + '5db0', toChecksum: null, counterparty: 'intents.near',
       recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
     } as IntentsPayDraft,
   });
   assert.notEqual(vanity, pay, 'an address sharing the six-and-four ends reads the same as the real one');
-  assert.match(vanity, /to 0xd7b2ff\.\.\.ffff5050 on Ethereum/);
+  assert.match(vanity, /to 0xb583ff\.\.\.ffff5db0 on Ethereum/);
   const named = reasonFor({
     draft: {
       kind: 'intents_send', symbol: 'USDC', originAsset: 'nep141:usdc.near', amount: 3.7, amountUsd: 3.7, minReceived: 3.66,

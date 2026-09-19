@@ -79,7 +79,7 @@ least, the fee with the bridge's flat part named, and what the chain says about 
 ### The Touch ID sentence
 
 On an enclave wallet the click puts up a Touch ID dialog whose sentence the app composes from the
-proposal's own fields, for example "Approve: Pay 0.01 ETH to 0xd7b2de58...1D4d5050 on Ethereum
+proposal's own fields, for example "Approve: Pay 0.01 ETH to 0xb583f419...84BB5DB0 on Ethereum
 ($24.40)". The receiver is shortened to eight characters at each end. Check them against the
 address you gave, then confirm. The agent's words never reach this dialog.
 

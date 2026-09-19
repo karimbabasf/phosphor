@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { ownBook } from '../../src/proposals/lifecycle.ts';
 import type { PCtx } from '../../src/proposals/lifecycle.ts';
 
-const REAL = '0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050';
+const REAL = '0xb583f41992cd21b2f2345e194a36d33684bb5db0';
 const KEY = '0x2222222222222222222222222222222222222222';
 
 function ctx(mode: 'demo' | 'live', keystoreEvm?: string): PCtx {

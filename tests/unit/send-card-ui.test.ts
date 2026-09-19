@@ -218,7 +218,7 @@ function loadDock(proposals: unknown[], vault: Record<string, unknown> = {}) {
   };
 }
 
-const FRIEND = '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050';
+const FRIEND = '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0';
 
 function payProposal(over: Record<string, unknown> = {}, draftOver: Record<string, unknown> = {}) {
   return {
@@ -286,7 +286,7 @@ test('the dock draws the send card: the head, the route with the full address in
 
   // The address, whole, in groups of four, and the normalised spelling on the node.
   const groups = all(root, 'sendcard-group').map((g) => g.textContent);
-  assert.deepEqual(groups, ['0xd7', 'b2de', '5862', '008D', '949d', 'D6e5', 'd70D', '4c68', 'Ad1D', '4d50', '50']);
+  assert.deepEqual(groups, ['0xb5', '83f4', '1992', 'Cd21', 'b2F2', '345e', '194a', '36D3', '3684', 'BB5D', 'B0']);
   assert.equal(groups.join(''), FRIEND);
   assert.equal(all(root, 'sendcard-address')[0]?.getAttribute('data-address'), FRIEND);
 
@@ -398,7 +398,7 @@ test('the dock\'s buttons around a send say what the click starts, and go dead w
   labels = all(password.card, 'btn-label').map((l) => l.textContent);
   assert.deepEqual(labels.filter((l) => l !== 'Copy' && l !== 'Explorer'), ['No', 'Approve']);
 
-  const touching = loadDock([payProposal({ status: 'awaiting_touch' })], { custody: 'secure-enclave', waiting: { reason: 'Approve: Pay 0.01 ETH to 0xd7b2...5050 on Ethereum ($24.40)' } });
+  const touching = loadDock([payProposal({ status: 'awaiting_touch' })], { custody: 'secure-enclave', waiting: { reason: 'Approve: Pay 0.01 ETH to 0xb583...5DB0 on Ethereum ($24.40)' } });
   touching.render();
   const primary = all(touching.card, 'btn-primary')[0]!;
   assert.equal(primary.disabled, true);
@@ -406,7 +406,7 @@ test('the dock\'s buttons around a send say what the click starts, and go dead w
   assert.equal(all(primary, 'sendcard-finger').length, 1, 'no fingerprint on the waiting button');
   assert.equal(all(primary, 'btn-label')[0]?.textContent, 'Waiting for Touch ID');
   assert.equal(all(touching.card, 'sendcard-status')[0]?.textContent, 'Touch ID');
-  assert.equal(all(touching.card, 'touch-reason')[0]?.textContent, 'Approve: Pay 0.01 ETH to 0xd7b2...5050 on Ethereum ($24.40)');
+  assert.equal(all(touching.card, 'touch-reason')[0]?.textContent, 'Approve: Pay 0.01 ETH to 0xb583...5DB0 on Ethereum ($24.40)');
 
   // The yes is the dock's: clicking it approves that proposal and nothing in the card does.
   const yes = all(enclave.card, 'btn-primary')[0]!;

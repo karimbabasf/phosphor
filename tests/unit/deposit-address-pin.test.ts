@@ -21,7 +21,7 @@ import type { Ctx } from '../../src/http/context.ts';
 
 type Any = Record<string, any>;
 
-const EVM = '0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050';
+const EVM = '0xb583f41992cd21b2f2345e194a36d33684bb5db0';
 const OTHER_EVM = '0x9999999999999999999999999999999999999999';
 
 function shaped(chain: string): string {
@@ -177,7 +177,7 @@ test('depositAddressProblem rules by the chain where it knows one and by plainne
   const btc = receiveNetworkOf('btc')!;
   const xrp = receiveNetworkOf('xrp')!;
   assert.equal(depositAddressProblem(eth, EVM), null);
-  assert.match(String(depositAddressProblem(eth, '0xD7b2de5862008D949dD6e5d70D4c68Ad1D4d5050')), /checksum/);
+  assert.match(String(depositAddressProblem(eth, '0xB583f41992Cd21b2F2345e194a36D33684BB5DB0')), /checksum/);
   assert.match(String(depositAddressProblem(eth, 'deposit-for-you.near')), /expected 0x followed by 40 hex/);
   assert.equal(depositAddressProblem(sol, shaped('sol:mainnet')), null);
   assert.match(String(depositAddressProblem(sol, EVM)), /not a Solana address/);

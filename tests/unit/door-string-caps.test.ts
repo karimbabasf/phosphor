@@ -21,7 +21,7 @@ import { capStrings, oversizeString } from '../../src/http/respond.ts';
 import type { Ctx } from '../../src/http/context.ts';
 import { makeHttp, serviceThatAnswers } from './helpers/http.ts';
 
-const FRIEND = '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050';
+const FRIEND = '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0';
 
 function row(): Proposal {
   return {

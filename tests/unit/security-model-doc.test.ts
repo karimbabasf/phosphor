@@ -106,7 +106,7 @@ test('the Sends section describes the gate the code has', () => {
 
   const reason = fs.readFileSync(path.join(ROOT, 'src', 'vault', 'reason.ts'), 'utf8');
   assert.match(reason, /case 'intents_pay':[\s\S]*?shortAddress\(draft\.to\)/, 'the Touch ID sentence for a payout does not name the receiver');
-  assert.ok(DOC.includes('Pay 0.01 ETH to 0xd7b2de...1D4d5050 on Ethereum ($24.40)'), 'the documented dialog sentence has to be the one the code writes');
+  assert.ok(DOC.includes('Pay 0.01 ETH to 0xb583f4...84BB5DB0 on Ethereum ($24.40)'), 'the documented dialog sentence has to be the one the code writes');
 
   const door = fs.readFileSync(path.join(ROOT, 'src', 'http', 'propose.ts'), 'utf8');
   assert.match(door, /params\.confirmed !== true/, 'the door no longer holds confirmed to true');

@@ -122,9 +122,9 @@ test('a chain that routes by memo is asked again in memo mode and the memo is ca
 
 test('the account id is lowercased before it is sent', async () => {
   const { fetchImpl, calls } = replying({ result: { address: '0xabc' } });
-  await intentsDepositAddress('0xD7B2DE5862008D949DD6E5D70D4C68AD1D4D5050', 'eth', fetchImpl);
+  await intentsDepositAddress('0xB583F41992CD21B2F2345E194A36D33684BB5DB0', 'eth', fetchImpl);
   const sent = calls[0]!.params[0] as { account_id: string };
-  assert.equal(sent.account_id, '0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050');
+  assert.equal(sent.account_id, '0xb583f41992cd21b2f2345e194a36d33684bb5db0');
 });
 
 test('an error from the bridge names the network and what it said', async () => {

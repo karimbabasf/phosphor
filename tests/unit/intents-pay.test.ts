@@ -27,7 +27,7 @@ import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
 const OWNER = getAddress('0x1111111111111111111111111111111111111111');
 const ACCOUNT = OWNER.toLowerCase();
-const FRIEND = getAddress('0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050');
+const FRIEND = getAddress('0xb583f41992Cd21b2F2345e194a36D33684BB5DB0');
 const HANDLE = 'a7d101a893efccc5e560badd89b55325c99a4da76f2ec584d6a355415e388058';
 const PAYOUT_TX = '0x' + 'ab'.repeat(32);
 
@@ -276,9 +276,9 @@ test('a draft spending somebody else\'s balance, a wrong counterparty, or an unl
 
 test('a receiver that is not an address on the named chain is refused before a quote is asked for', async () => {
   const { rail, calls } = railOf();
-  assert.match(await refusal(rail, draftOf({ to: '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d505' })), /not an address on Ethereum/);
+  assert.match(await refusal(rail, draftOf({ to: '0xb583f41992Cd21b2F2345e194a36D33684BB5DB' })), /not an address on Ethereum/);
   // One character changed in a checksummed address fails its checksum: a typo, not a wallet.
-  assert.match(await refusal(rail, draftOf({ to: '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5051' })), /checksum/);
+  assert.match(await refusal(rail, draftOf({ to: '0xb583f41992Cd21b2F2345e194a36D33684BB5DB1' })), /checksum/);
   assert.match(await refusal(rail, draftOf({ to: 'alice.near' })), /not an address on Ethereum/);
   assert.equal(calls.quotes.length, 0);
 });
@@ -345,7 +345,7 @@ test('the dry quote asks for a chain payout of the same asset, to the receiver a
   assert.equal(q.recipient, FRIEND, 'the checksummed spelling goes to the API as it is');
   assert.equal(q.recipientType, 'DESTINATION_CHAIN');
   assert.equal(q.slippageToleranceBps, 10, 'a same-asset payout has no price to slip against');
-  assert.match(sim.summary, /0\.00994 ETH paid out to 0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050 on Ethereum/);
+  assert.match(sim.summary, /0\.00994 ETH paid out to 0xb583f41992Cd21b2F2345e194a36D33684BB5DB0 on Ethereum/);
   assert.match(sim.summary, /0\.000035 ETH is the bridge's flat fee/);
   assert.match(sim.summary, /This address has 42 transactions on Ethereum and holds 0\.51 ETH\./);
   assert.match(sim.summary, /always waits for your click/);
@@ -413,7 +413,7 @@ test('execute signs the transfer 1click generated once, submits it, and reports 
   assert.equal(calls.submitted[0]?.signature, 'secp256k1:SIGNATURE');
   // The receiver read before the quote and after the success, both on the named chain.
   assert.deepEqual(reads, [{ network: 'ethereum', address: FRIEND }, { network: 'ethereum', address: FRIEND }]);
-  assert.match(result.detail, /paid 0\.01 ETH from intents\.near to 0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050 on Ethereum/);
+  assert.match(result.detail, /paid 0\.01 ETH from intents\.near to 0xb583f41992Cd21b2F2345e194a36D33684BB5DB0 on Ethereum/);
   assert.match(result.detail, /0\.00994 ETH arrived/);
   assert.match(result.detail, new RegExp(`payout ${PAYOUT_TX} \\(https://etherscan\\.io/tx/${PAYOUT_TX}\\)`));
   assert.match(result.detail, /ETH balance 0\.51 -> 0\.51994/);
