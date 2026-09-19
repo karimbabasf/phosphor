@@ -1191,6 +1191,10 @@
      is worth waiting a few seconds for. */
   function flash(word, ms, receiptId) {
     if (flashTimer) window.clearTimeout(flashTimer);
+    /* Whatever takes the dock from a receipt keeps it, and this takes it too: the frame that
+       lands while the answer is in flight can put a parked receipt back before the flash is
+       called, and the flash would then be the thing that lost it. */
+    if (showing && showing.kind === 'receipt') parked = showing;
     showing = { kind: 'flash' };
     hold(null);
     frame();
@@ -1215,15 +1219,11 @@
      longer than the beat, and Activity has the row either way. */
   function showReceiptFor(id) {
     var receipts = window.PhosphorReceipts;
-    if (!receipts || typeof receipts.load !== 'function') {
+    if (!receipts || typeof receipts.find !== 'function') {
       close();
       return;
     }
-    receipts.load().then(function (list) {
-      var found = null;
-      for (var i = 0; i < (list || []).length; i += 1) {
-        if (list[i] && list[i].id === id) { found = list[i]; break; }
-      }
+    receipts.find(id).then(function (found) {
       if (found) showReceipt(found);
       else close();
     }).catch(function () { close(); });

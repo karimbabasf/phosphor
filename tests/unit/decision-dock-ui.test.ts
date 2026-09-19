@@ -186,9 +186,10 @@ function find(node: Node, className: string): Node[] {
 /* Boots the dock against a state and returns the card it drew, with the state
    it reads (mutable, for a test that moves a row on) and the render the store
    would call on a frame. `api` stands in for the routes a click takes. */
-function dockFor(proposal: Record<string, any>, state: Record<string, any> = {}, api: Record<string, any> = {}): { card: Node; payload: Record<string, any>; render: () => void; dock: Record<string, any>; sandbox: Record<string, any> } {
+function dockFor(proposal: Record<string, any>, state: Record<string, any> = {}, api: Record<string, any> = {}): { card: Node; payload: Record<string, any>; render: () => void; dock: Record<string, any>; sandbox: Record<string, any>; flush: () => void } {
   const dock = makeNode('div');
   const card = makeNode('div');
+  const timers: Array<() => void> = [];
   const payload = Object.assign({ proposals: [proposal] }, state);
   /* The card measures its own body to decide whether the answer needs a scroll. The count is
      here so a test can see the dock let go of a body it has dropped. */
@@ -213,7 +214,9 @@ function dockFor(proposal: Record<string, any>, state: Record<string, any> = {},
           host.appendChild(line);
         },
       },
-      setTimeout: () => 0,
+      /* Recorded rather than run: the dock's timers are the re-arm and the answer flash, and a
+         test that wants one fires it with flush(). */
+      setTimeout: (fn: () => void) => timers.push(fn),
       clearTimeout: () => {},
     },
     document: {
@@ -239,7 +242,14 @@ function dockFor(proposal: Record<string, any>, state: Record<string, any> = {},
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
   sandbox.window.PhosphorDecision.boot();
   sandbox.window.PhosphorDecision.render();
-  return { card, payload, render: () => sandbox.window.PhosphorDecision.render(), dock: sandbox.window.PhosphorDecision, sandbox };
+  return {
+    card,
+    payload,
+    render: () => sandbox.window.PhosphorDecision.render(),
+    dock: sandbox.window.PhosphorDecision,
+    sandbox,
+    flush: () => { const due = timers.splice(0, timers.length); for (const fn of due) fn(); },
+  };
 }
 
 function cardFor(proposal: Record<string, any>, state: Record<string, any> = {}): Node {
@@ -925,6 +935,31 @@ test('a request takes the dock from a receipt, and the receipt comes back once i
   assert.ok(textOf(d.card).join(' ').includes('Receipt r1'), 'the receipt did not come back');
 });
 
+/* Found on the running app: the receipt came back for one frame and then went. The state frame
+   that lands while the refuse is in flight is a render, and it put the receipt back before the
+   answer flash was ever called; the flash then took the dock and nothing was holding the receipt
+   any more. Whatever takes the dock from a receipt keeps it, the flash included. */
+test('the answer flash keeps the receipt it covers instead of eating it on the way past', async () => {
+  const settled = { ...swapProposal(), id: 'done', status: 'executed' };
+  const d = dockFor(settled, {}, { refuse: () => Promise.resolve() });
+  d.dock.showReceipt({ id: 'r1' });
+  d.payload.proposals = [settled, swapProposal()];
+  d.render();
+  const no = find(d.card, 'btn-label').find((l) => l.textContent === 'No')?.parentNode as Node;
+  assert.ok(no, 'no No on the card');
+
+  fire(no, 'click');
+  // The refreshed frame lands before the flash does, and it has nothing left to ask about.
+  d.payload.proposals = [settled, { ...swapProposal(), status: 'refused' }];
+  d.render();
+  assert.ok(textOf(d.card).join(' ').includes('Receipt r1'), 'the receipt is not back on the answered frame');
+
+  await tick();
+  assert.ok(textOf(d.card).join(' ').includes('Refused.'), 'the answer flash never drew');
+  d.flush();
+  assert.ok(textOf(d.card).join(' ').includes('Receipt r1'), 'the flash ate the receipt it covered');
+});
+
 /* It comes back only while it is still the thing that just happened. Past its own beat the
    person has read it, or stopped caring, and the dock is better off dark. */
 test('a receipt that waited longer than its beat is dropped rather than redrawn', () => {
@@ -1035,6 +1070,22 @@ test('a rule change with no state frame yet says its headline once', () => {
   const said = textOf(card).filter((t) => t === 'Change your limits');
   assert.equal(said.length, 1, 'the headline is on the card ' + said.length + ' times');
   assert.equal(textOf(card).includes('The assistant said'), false, 'the card quotes a sentence it wrote itself');
+});
+
+/* Two files have to agree on a name, and on 2026-09-15 they stopped: the Activity list became a
+   mounted component and PhosphorReceipts.load went with it, while the dock kept calling it. The
+   call fell through to close(), so every approval since has flashed "Approved." and then drawn
+   nothing. Nothing failed, which is why it sat there. */
+test('the name the dock asks the receipts module for is one that module exports', () => {
+  const RECEIPTS = readFileSync(new URL('../../ui/screens/receipts.js', import.meta.url), 'utf8');
+  const asked = [...SOURCE.matchAll(/\breceipts\.([A-Za-z_]\w*)/g)].map((m) => m[1]);
+  assert.ok(asked.length > 0, 'the dock asks the receipts module for nothing, so this test is not looking at it');
+  const exported = /window\.PhosphorReceipts\s*=\s*\{([\s\S]*?)\n\s*\};/.exec(RECEIPTS)?.[1] ?? '';
+  assert.ok(exported !== '', 'the receipts module does not export an object this test can read');
+  for (const name of new Set(asked)) {
+    assert.match(exported, new RegExp('\\b' + name + '\\s*:'),
+      `decision.js calls receipts.${name}, which ui/screens/receipts.js does not export`);
+  }
 });
 
 test('the dock never claims a click is done; it says approved and lets the receipt say the rest', () => {
