@@ -538,6 +538,9 @@
     dom.setAttr(refs.dock, 'data-state', null);
     dom.setAttr(refs.card, 'data-more', null);
     dom.clear(refs.card);
+    /* The body it was measuring is gone, so the observer goes with it rather than
+       pointing at a detached node until the next card is built. */
+    if (refs.sizes) refs.sizes.disconnect();
     refs.body = null;
     refs.foot = null;
     refs.note = null;
@@ -884,10 +887,13 @@
       host.appendChild(dom.el('h2', 'title', shown.sentence || headlineOf(proposal)));
     }
 
-    /* The arithmetic first, then the words that asked for it. */
+    /* The arithmetic first, then the words that asked for it. Before the row's first state
+       frame the window builds the view itself (askView) and its sentence IS this headline,
+       so there is nothing the assistant said yet to quote and the card would say the same
+       line twice. */
     if (policy) {
       if (!buildChanges(host, view.changes)) buildPolicyDiff(host, proposal);
-      buildSaid(host, view.sentence);
+      if (view.sentence !== shown.sentence) buildSaid(host, view.sentence);
     }
 
     if (locked) host.appendChild(lockBanner());
@@ -1142,6 +1148,11 @@
   /* ---------- deciding ---------- */
 
   function decide(route, id, buttons, pressed, word, ms, receiptId) {
+    /* The button is the gate, so the gate reads its own state. A click event can be
+       dispatched at a button that is off and no pointer or key can reach one, which makes
+       this a belt over script already inside the page; the re-arm and the Touch ID wait both
+       work by turning these off, and neither should be answerable from a stale handler. */
+    if (pressed && pressed.disabled) return;
     for (var i = 0; i < buttons.length; i += 1) buttons[i].disabled = true;
     hush();
     touchNote = null;

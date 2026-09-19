@@ -190,7 +190,15 @@ function dockFor(proposal: Record<string, any>, state: Record<string, any> = {},
   const dock = makeNode('div');
   const card = makeNode('div');
   const payload = Object.assign({ proposals: [proposal] }, state);
+  /* The card measures its own body to decide whether the answer needs a scroll. The count is
+     here so a test can see the dock let go of a body it has dropped. */
+  class Sizes {
+    static observing = false;
+    observe(): void { Sizes.observing = true; }
+    disconnect(): void { Sizes.observing = false; }
+  }
   const sandbox: Record<string, any> = {
+    ResizeObserver: Sizes,
     window: {
       PhosphorNet: { readable: (e: any) => String(e && e.message ? e.message : e) },
       PhosphorApi: Object.assign({ approve: () => Promise.resolve(), refuse: () => Promise.resolve() }, api),
@@ -977,6 +985,56 @@ test('a move that ends says so on the dock before the dock goes', () => {
   assert.ok(text.includes('Done'), 'and the line above it agrees');
   assert.equal(text.includes('Working'), false, '"Working" over a confirmed card is the dock disagreeing with itself');
   assert.ok(SOURCE.includes('ENDED_MS'), 'the beat has a named length');
+});
+
+/* The re-arm and the Touch ID wait both work by turning the buttons off, and a click event can
+   be dispatched at a button that is off. No pointer and no key reaches one, so this is a belt
+   over script already inside the page, but the button is the gate and the gate reads its own
+   state rather than trusting the event that woke it. */
+test('a click dispatched at a dead Yes decides nothing', () => {
+  let approvals = 0;
+  const d = dockFor(swapProposal(), {}, { approve: () => { approvals += 1; return Promise.resolve(); } });
+  const yes = find(d.card, 'btn-primary')[0];
+  assert.ok(yes, 'no Yes on the card');
+  fire(yes, 'click');
+  assert.equal(approvals, 1, 'a live Yes does not approve');
+
+  // A second row takes the pin, which puts the new card's buttons through the re-arm.
+  d.payload.proposals = [swapProposal({ id: 's2', createdAt: '2026-09-18T17:40:00.000Z' })];
+  d.render();
+  const rearmed = find(d.card, 'btn-primary')[0];
+  assert.equal(rearmed.disabled, true, 'the swapped card came up live');
+  fire(rearmed, 'click');
+  assert.equal(approvals, 1, 'a dead Yes approved');
+});
+
+/* close() dropped the body the observer was watching and left the observer on it, so one
+   ResizeObserver pointed at a detached node until the next card was built. */
+test('closing the dock lets go of the body it was measuring', () => {
+  // Nothing pending, so the close is the end of it: a dock with a waiting row redraws it.
+  const d = dockFor({ ...swapProposal(), status: 'executed' });
+  d.dock.showReceipt({ id: 'r1' });
+  assert.equal(d.sandbox.ResizeObserver.observing, true, 'the card is not being measured');
+  d.dock.close();
+  assert.equal(d.sandbox.ResizeObserver.observing, false, 'the dock still watches a body it has dropped');
+});
+
+/* Before a row's first state frame the window builds its own view, and that view's sentence is
+   the app's headline: there is nothing the assistant said yet. The card printed it as the title
+   and again under "The assistant said". */
+test('a rule change with no state frame yet says its headline once', () => {
+  const card = cardFor({
+    id: 'p1',
+    kind: 'policy_change',
+    status: 'pending',
+    createdAt: '2026-09-19T11:00:00.000Z',
+    draft: { kind: 'policy_change', patch: { perTxUsd: 5000 }, sentence: 'Change your limits' },
+    simulation: { ok: true, policyDiff: { before: [], after: [] } },
+    verdict: { outcome: 'needs_approval', reasons: ['A rule change always asks.'], changes: [] },
+  });
+  const said = textOf(card).filter((t) => t === 'Change your limits');
+  assert.equal(said.length, 1, 'the headline is on the card ' + said.length + ' times');
+  assert.equal(textOf(card).includes('The assistant said'), false, 'the card quotes a sentence it wrote itself');
 });
 
 test('the dock never claims a click is done; it says approved and lets the receipt say the rest', () => {
