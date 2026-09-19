@@ -136,3 +136,57 @@ test('the committed template at the repo root loads unchanged', () => {
   const cfg = load(null, template);
   assert.equal(cfg.mode, 'live');
 });
+
+// ---------- the mode, from the environment ----------
+
+/* The config file's mode goes through z.enum(['live','demo']). The environment override did
+   not: it was a bare cast, so ACC_MODE=Demo was carried as a Mode nothing would ever match.
+   That matters because the two halves of the app read the mode with opposite polarity. Every
+   demo gate asks `=== 'demo'` and every safety reading in main.ts asks `=== 'live'`, so a third
+   spelling boots the live rails, the live ledger and the real keystore with the venue-credited
+   check, the one-click status, the intents prices and the recipient history all switched off. A
+   deposit would then settle on the solver's word alone. One typo in a shell, four safety
+   readings gone and nothing said. */
+function loadWithMode(value: string | undefined, name = 'ACC_MODE') {
+  const dir = root(null);
+  const saved = new Map<string, string | undefined>();
+  for (const key of ['PHOSPHOR_KEYS', 'ACC_MODE', 'PHOSPHOR_MODE']) saved.set(key, process.env[key]);
+  delete process.env.ACC_MODE;
+  delete process.env.PHOSPHOR_MODE;
+  process.env.PHOSPHOR_KEYS = path.join(os.tmpdir(), 'phosphor-schema-keys', 'keys.json');
+  if (value !== undefined) process.env[name] = value;
+  try {
+    return loadConfig(dir);
+  } finally {
+    for (const [key, previous] of saved) {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    }
+  }
+}
+
+test('a mode the app does not have refuses to boot rather than becoming a third mode', () => {
+  assert.throws(() => loadWithMode('Demo'), /Demo/);
+  assert.throws(() => loadWithMode('Demo'), /live.*demo|demo.*live/);
+});
+
+test('the same refusal on the other spellings and the other variable name', () => {
+  for (const bad of ['LIVE', 'Live', 'DEMO', 'prod', 'demo ', 'test']) {
+    assert.throws(() => loadWithMode(bad), /not a mode|PHOSPHOR_MODE|ACC_MODE/, `${bad} booted`);
+  }
+  assert.throws(() => loadWithMode('Demo', 'PHOSPHOR_MODE'), /Demo/);
+});
+
+test('the two real modes still come through the environment', () => {
+  assert.equal(loadWithMode('demo').mode, 'demo');
+  assert.equal(loadWithMode('live').mode, 'live');
+  assert.equal(loadWithMode('demo', 'PHOSPHOR_MODE').mode, 'demo');
+});
+
+/* An empty variable is a shell mistake, `ACC_MODE=$SOMETHING_UNSET`, and env() has always read
+   an empty string as absent. It stays absent here, which lands on the config file and so on
+   live: all the gates on, no demo state, nothing moved by the typo. Fail closed. */
+test('an empty mode is absent, which is the live default, not a third mode', () => {
+  assert.equal(loadWithMode('').mode, 'live');
+  assert.equal(loadWithMode(undefined).mode, 'live');
+});

@@ -51,9 +51,13 @@ const addressBookSchema = z
   })
   .strict();
 
+// The only two modes there are. Named once so the file schema and the environment override
+// below cannot drift into accepting different sets.
+const MODES = ['live', 'demo'] as const;
+
 const configSchema = z
   .object({
-    mode: z.enum(['live', 'demo']).optional(),
+    mode: z.enum(MODES).optional(),
     port: z.number().int().positive().optional(),
     addresses: addressBookSchema.optional(),
     // Retired with the consolidate path (2026-09-16). Accepted so a config.local.json written
@@ -145,6 +149,32 @@ function env(...names: string[]): string | undefined {
     if (value !== undefined && value !== '') return value;
   }
   return undefined;
+}
+
+/* THE MODE FROM THE ENVIRONMENT, THROUGH THE SAME ENUM AS THE FILE.
+
+   This was a bare cast, and a cast checks nothing at runtime. The damage is that the two halves
+   of the app read the mode with opposite polarity: every demo gate asks `=== 'demo'` and the
+   four safety readings in main.ts ask `=== 'live'`. So a spelling that is neither, ACC_MODE=Demo
+   from a typo or a shell that upper-cased it, took the live branch everywhere while failing the
+   live branch in main.ts: real rails, real ledger, real keystore, with the venue-credited check,
+   the one-click status, the intents prices and the recipient history all undefined. A deposit
+   then settles on the solver's word alone and a send card shows no history for the receiver.
+
+   There is no safe guess to make here. A mode nobody recognises means the operator believes
+   something about this process that is not true, so it refuses to start and says so. */
+function modeFromEnv(): Mode | undefined {
+  const raw = env('PHOSPHOR_MODE', 'ACC_MODE');
+  if (raw === undefined) return undefined; // env() already reads an empty string as absent
+  const mode = MODES.find((candidate) => candidate === raw);
+  if (mode === undefined) {
+    throw new Error(
+      `PHOSPHOR_MODE/ACC_MODE is "${raw}", which is not a mode. It must be exactly ${MODES.join(' or ')}, ` +
+        'lower case. Spelling it any other way would start the live rails, the live ledger and the ' +
+        'real keystore with four safety checks switched off, so this refuses to start instead.',
+    );
+  }
+  return mode;
 }
 
 // The data directory the app runs on when nobody says otherwise. Named because the key file
@@ -260,7 +290,7 @@ export function loadConfig(root?: string): AppConfig {
     addresses: { ...(base.addresses ?? {}), ...(local.addresses ?? {}) },
   };
 
-  const mode = (env('PHOSPHOR_MODE', 'ACC_MODE') as Mode | undefined) ?? parsed.mode ?? 'live';
+  const mode = modeFromEnv() ?? parsed.mode ?? 'live';
 
 
   const portRaw = env('PHOSPHOR_PORT', 'ACC_PORT');
