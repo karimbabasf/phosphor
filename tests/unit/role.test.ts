@@ -107,10 +107,18 @@ test('the role keeps the agent to one line while a proposal waits for the click'
   assert.ok(rule.includes('nothing about what you will do after the click'), 'the second sentence is still allowed');
 });
 
-test('the role tells the agent not to spend a turn orienting itself', () => {
-  // The whole reason the index is prefilled. If this line goes, the mandatory `start` call
-  // comes back and every session pays two model turns before the human is answered.
-  assert.ok(role().includes('do not spend a call on `start`'));
+test('the role opens a session on `start` and never spends a later call re-orienting', () => {
+  /* The index is prefilled so no call is ever spent finding out what this app can do, and that
+     half has not moved. The other half was wrong and the first live eval run found it: told not
+     to call `start`, the agent answered "hey" with "Hello. You are on the basic screen" and made
+     no call at all, because the live state is deliberately not in this text (see RoleOptions) and
+     it had been told the one read that carries it was a waste. `start` returns the wallet, the
+     threshold, the pending decision and the screen in ONE call, so it is the cheap answer to the
+     first turn, not the expensive one. */
+  const text = role();
+  assert.ok(text.includes('never spend a call finding out'), 'the index is no longer stated as prefilled');
+  assert.ok(text.includes('a session opens on `start`'), 'the first call of a session is not named');
+  assert.ok(text.includes('never `start` again to find your feet'), 'nothing stops it re-orienting every turn');
 });
 
 test('the role says where the window is when it knows, and says nothing when it does not', () => {
@@ -181,12 +189,20 @@ test('the role is not so long it stops being read', () => {
   // the paragraph about reporting a move lost its own list of stage words, which the stage table
   // in src/proposals/view.ts now owns.
   //
-  // Measured 16,360. The next paragraph should still come out of something, not go on the end.
+  // Measured 16,360.
+  //
+  // RAISED TO 17,800 ON 2026-09-18, by the first live eval run, and every character of it is a
+  // read the agent skipped. It proposed a send quoting an address it never read (`chain_address`),
+  // proposed a withdraw without proving the account was flat (`trade_read`), answered "all good?"
+  // off the proposals page instead of the row (`proposal_status`), shipped a policy patch the
+  // engine refuses by name, and answered "hey" with no call at all. Each of those is one clause
+  // naming the read and why it is the read. About 160 characters came out of the prose around
+  // them; the rest went on, which is the thing this comment exists to make expensive.
   //
   // The next paragraph should come out of something, not go on the end.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 16600, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 17800, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -264,7 +280,7 @@ test('the role with a full profile still fits under the ceiling', () => {
   // sentences and one worked example the agent has to carry, because a send it misunderstood
   // is money gone. 18,000 on 2026-09-18, the same 1,600 the plain ceiling above moved by and for
   // the same reasons. The number is still a ceiling, not a target.
-  assert.ok(text.length < 18000, `the role is ${text.length} characters with a full profile`);
+  assert.ok(text.length < 19200, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {
