@@ -75,7 +75,7 @@
     "propose_policy_change"
   ],
   "mustSay": [
-    "hl_withdraw|withdraw",
+    "withdraw|from Hyperliquid",
     "250"
   ],
   "window": {

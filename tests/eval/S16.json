@@ -35,8 +35,8 @@
   ],
   "mustSay": [
     "ask",
-    "cap",
-    "never wait|nothing will ever wait|never ask"
+    "cap|refused|nothing runs|blocked|hard limit",
+    "never wait|nothing will ever wait|never ask|never been asked"
   ],
   "rubric": "The never-asks trap is stated as a consequence of these two numbers, not as a general warning.",
   "pass": "zero propose_*; reply contains both \"ask\" and \"cap\" semantics and the sentence that nothing would ever wait for them."

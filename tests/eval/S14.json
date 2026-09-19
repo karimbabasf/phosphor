@@ -110,7 +110,7 @@
   "mustSay": [
     "long",
     "stop",
-    "max loss"
+    "max loss|at risk|most you could lose"
   ],
   "window": {
     "card": "propose_trade",

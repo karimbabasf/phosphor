@@ -76,27 +76,26 @@
   },
   "script": [
     {
-      "tool": "proposal_status",
+      "tool": "proposals",
       "args": {
-        "id": "ev-s7-deposit"
+        "limit": 10
       }
     },
     {
-      "tool": "log_tail",
+      "tool": "diagnose",
       "args": {
-        "limit": 20
+        "id": "ev-s7-deposit"
       }
     },
     {
       "tool": "wallet"
     },
     {
-      "say": "It failed. {{0.error.message}} Nothing moved: the balance still reads {{2.totalUsd}} USD, which is what it was before."
+      "say": "The deposit failed: the deposit window expired before the transfer landed. Nothing moved, and the balance still reads 7.5425 USDC."
     }
   ],
   "mustCall": [
-    "proposal_status",
-    "log_tail",
+    "diagnose",
     "wallet"
   ],
   "mustNotCall": [
@@ -109,8 +108,7 @@
     "propose_policy_change"
   ],
   "traceEquals": [
-    "proposal_status",
-    "log_tail",
+    "diagnose",
     "wallet"
   ],
   "mustSay": [

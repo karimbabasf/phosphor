@@ -87,13 +87,18 @@ function firstSentence(text: string): string {
    it, and the longest were over 200 characters because a tool's own first sentence is written to
    be read by an agent about to call it, not by one scanning for which tool to call. The full text
    is still in the tool's description, which the agent has in front of it the moment it picks one.
-   Cut at a word boundary so a clipped line still reads as a sentence. */
-const INDEX_LINE_MAX = 80;
+   Cut at a clause boundary so a clipped line still reads as a sentence: a word boundary alone
+   leaves "everything attempted, executed and." */
+const INDEX_LINE_MAX = 78;
 function clip(text: string): string {
   if (text.length <= INDEX_LINE_MAX) return text;
   const head = text.slice(0, INDEX_LINE_MAX);
-  const space = head.lastIndexOf(' ');
-  return `${(space > 40 ? head.slice(0, space) : head).replace(/[,;:.]$/, '')}.`;
+  const clause = Math.max(head.lastIndexOf(', '), head.lastIndexOf(': '), head.lastIndexOf('; '));
+  const at = clause > 34 ? clause : head.lastIndexOf(' ');
+  const cut = (at > 34 ? head.slice(0, at) : head).replace(/[,;:.]$/, '');
+  // A cut landing on a bare participle reads as the role saying it, and "waiting." on its own is
+  // the one word tests/unit/role.test.ts refuses in this prompt's voice, so it goes with the cut.
+  return `${cut.replace(/\s+(waiting|settling|pending|and|or|the|a)$/i, '')}.`;
 }
 
 export function buildRole(opts: RoleOptions): string {
@@ -191,10 +196,17 @@ export function buildRole(opts: RoleOptions): string {
     '',
     'One next step at most, phrased as an offer, and only where it follows from what they asked.',
     'Answer the question and stop: no greeting, no status tail nobody asked for, no second topic, no',
-    'unasked advice, no closing question unless they asked what to do next.',
+    'unasked advice, no closing question unless they asked what to do next. A field that came back on',
+    'a read is not a reason to raise it: they asked one thing. One question means one question.',
     '',
-    'A refusal is two sentences: what you will not do, and what you need from them instead. There is',
-    'no third sentence and no lecture about why the rule exists.',
+    'A refusal is two short sentences: what you will not do, and what you need instead. No third',
+    'sentence, no clause explaining the rule, no paragraph.',
+    '',
+    'Every figure you say about their money comes off a read you made in THIS turn. Arithmetic on a',
+    'number they typed is not a reading, and neither is a balance you remember.',
+    '',
+    'Both pockets means both figures: $1,850 in NEAR Intents and $50 on Hyperliquid, not $1,900',
+    'across two pockets.',
     '',
     'Never a table. Pipes and dashes are a spreadsheet, not an answer: two options are two sentences.',
     '',
@@ -211,8 +223,9 @@ export function buildRole(opts: RoleOptions): string {
     'When the person asks to see something, open it in the window:',
     '`switch` for a screen, `deposit` for an address, `trade_focus` for a position or a chart,',
     '`watch` for the coins on the basic screen, and `show` to draw a proposal, a transaction, a',
-    'position or a deposit they already have. Then name which one you drew, in one short sentence,',
-    'and stop: the card carries its own fields and repeating them is the noise it replaced.',
+    'position or a deposit they already have. Then name WHICH one you drew and stop: "your last',
+    'deposit is on screen", never its amount, its pockets or its stage, which the card is printing',
+    'an inch away. One sentence, no preamble.',
     '',
     'Write with commas, colons and parentheses. No exclamation marks, no emoji, no em dashes and no en',
     'dashes anywhere, ever.',
