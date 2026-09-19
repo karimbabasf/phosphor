@@ -14,6 +14,7 @@ import { createContext, runInContext } from 'node:vm';
 type Any = Record<string, any>;
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
+const LINKS = read('../../ui/core/links.js');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
 const TERMS = read('../../ui/screens/terms.js');
@@ -125,6 +126,7 @@ function build(state: Any, opts: { lock?: boolean } = {}): World {
   };
   const sandbox: Any = {
     console,
+    URL,
     document: doc,
     Promise,
     setTimeout: (fn: () => void) => { setTimeout(fn, 0); return 1; },
@@ -153,6 +155,7 @@ function build(state: Any, opts: { lock?: boolean } = {}): World {
   };
 
   createContext(sandbox);
+  runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
   runInContext(TERMS, sandbox, { filename: 'ui/screens/terms.js' });
@@ -190,7 +193,10 @@ test('the terms card is up before anything else while the terms are not accepted
   assert.equal(find(screen, '.terms-fact').length, 4, 'four facts');
 
   const links = find(screen, 'a');
-  assert.deepEqual(links.map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel')]), [
+  // The href is written by ui/core/links.js, as a property, the way the rest of the window's
+  // links are; the stub below does not reflect a property onto its attribute the way a real
+  // anchor does, so the destination is read off the property here.
+  assert.deepEqual(links.map((a) => [a.textContent, a.href ?? null, a.getAttribute('target'), a.getAttribute('rel')]), [
     ['Terms of use', 'https://phosphor.karimbabasf.com/terms/', '_blank', 'noopener'],
     ['Privacy page', 'https://phosphor.karimbabasf.com/privacy/', '_blank', 'noopener'],
   ]);

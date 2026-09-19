@@ -162,12 +162,11 @@
   }
 
   /* https alone was the whole check here, so any https host the server named
-     became a link the desktop shell handed to the browser. It is the one list
-     the rest of the window uses now (core/net.js), suffix matched. */
-  function isHttps(url) {
+     became a link the desktop shell handed to the browser. The one list writes
+     the href now (core/links.js), and says whether it wrote one. */
+  function setHref(anchor, url) {
     var links = window.PhosphorLinks;
-    if (!links || typeof links.explorerUrl !== 'function') return false;
-    return links.explorerUrl(url) !== null;
+    return !!links && typeof links.setHref === 'function' && links.setHref(anchor, url);
   }
 
   function whenText(iso) {
@@ -276,9 +275,8 @@
   function viewButton(txids) {
     for (var i = 0; i < txids.length; i += 1) {
       var tx = txids[i];
-      if (!isHttps(tx.url)) continue;
       var link = dom.el('a', 'btn btn-primary receipt-view');
-      link.href = tx.url;
+      if (!setHref(link, tx.url)) continue;
       link.target = '_blank';
       link.rel = 'noreferrer noopener';
       link.appendChild(dom.el('span', 'btn-label', 'View on ' + (tx.explorer || explorerNameOf(tx.url))));
@@ -628,9 +626,8 @@
     top.appendChild(copy);
     row.appendChild(top);
     row.appendChild(dom.el('p', 'hash addr', tx.hash));
-    if (tx.url) {
-      var link = dom.el('a', 'meta', 'Open in a block explorer');
-      link.href = tx.url;
+    var link = dom.el('a', 'meta', 'Open in a block explorer');
+    if (setHref(link, tx.url)) {
       link.target = '_blank';
       link.rel = 'noreferrer noopener';
       row.appendChild(link);

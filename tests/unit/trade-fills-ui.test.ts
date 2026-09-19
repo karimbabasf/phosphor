@@ -413,6 +413,7 @@ async function renderPayload(data: unknown, opts: Options = {}): Promise<World> 
   const docListeners: Record<string, Array<(ev: unknown) => void>> = {};
   const sandbox: Record<string, any> = {
     console,
+    URL,
     setTimeout: setTimer,
     clearTimeout: clearTimer,
     document: {
@@ -485,7 +486,7 @@ async function renderPayload(data: unknown, opts: Options = {}): Promise<World> 
   sandbox.globalThis = sandbox;
   createContext(sandbox);
 
-  for (const file of ['../../ui/core/dom.js', '../../ui/screens/trade.js']) {
+  for (const file of ['../../ui/core/links.js', '../../ui/core/dom.js', '../../ui/screens/trade.js']) {
     runInContext(readFileSync(new URL(file, import.meta.url), 'utf8'), sandbox, { filename: file });
   }
   sandbox.window.PhosphorTrade.boot();

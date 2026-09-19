@@ -42,6 +42,12 @@
   var mounted = false;
   var data = null;
 
+  /* The one list writes every href in this window (core/links.js). */
+  function setHref(anchor, url) {
+    var links = window.PhosphorLinks;
+    return !!links && typeof links.setHref === 'function' && links.setHref(anchor, url);
+  }
+
   /* The seven overlays the server knows (src/trade/view.ts OVERLAYS), in the
      order the Layers popover lists them, each as a sentence case word. */
   var OVERLAYS = [
@@ -1615,9 +1621,8 @@
      the row's own link, so a click on it does not also open the receipt. */
   function paintLink(cell, url) {
     dom.clear(cell);
-    if (!url) return;
     var link = dom.el('a', 'tx-open');
-    link.href = url;
+    if (!setHref(link, url)) return;
     link.target = '_blank';
     link.rel = 'noreferrer noopener';
     link.setAttribute('aria-label', 'View on Hyperliquid');

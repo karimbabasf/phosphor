@@ -17,6 +17,7 @@ import { createContext, runInContext } from 'node:vm';
 type Any = Record<string, any>;
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
+const LINKS = read('../../ui/core/links.js');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
 const MOTION = read('../../ui/design/motion.js');
@@ -225,6 +226,7 @@ function build(state: Any, opts: Options = {}): World {
   let rafId = 0;
   const sandbox: Any = {
     console,
+    URL,
     document: doc,
     performance,
     Promise,
@@ -268,6 +270,7 @@ function build(state: Any, opts: Options = {}): World {
   };
 
   createContext(sandbox);
+  runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
   if (opts.motion === 'real') runInContext(MOTION, sandbox, { filename: 'ui/design/motion.js' });

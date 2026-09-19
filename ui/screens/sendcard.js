@@ -222,10 +222,9 @@
   /* One list for the whole window (core/net.js). This file kept its own, six
      hosts on an exact match, so a hash on a subdomain or on either of the two
      newer explorers came back from the server as a link and printed as text. */
-  function isExplorerUrl(url) {
+  function setHref(anchor, url) {
     var links = window.PhosphorLinks;
-    if (!links || typeof links.explorerUrl !== 'function') return false;
-    return links.explorerUrl(url) !== null;
+    return !!links && typeof links.setHref === 'function' && links.setHref(anchor, url);
   }
 
   /* ---------- small parts ---------- */
@@ -365,9 +364,8 @@
     actions.appendChild(copy);
 
     var explorer = view.send ? view.send.explorer : null;
-    if (isExplorerUrl(explorer)) {
-      var link = dom.el('a', 'btn btn-quiet btn-sm sendcard-explorer');
-      link.href = explorer;
+    var link = dom.el('a', 'btn btn-quiet btn-sm sendcard-explorer');
+    if (setHref(link, explorer)) {
       link.target = '_blank';
       link.rel = 'noreferrer noopener';
       link.appendChild(dom.el('span', 'btn-label', 'Explorer'));
@@ -518,7 +516,6 @@
     groupsOf: groupsOf,
     fingerprint: fingerprint,
     networkName: networkName,
-    isExplorerUrl: isExplorerUrl,
     STACK_BELOW: STACK_BELOW
   };
 })();
