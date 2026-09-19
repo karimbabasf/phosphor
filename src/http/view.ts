@@ -412,7 +412,7 @@ async function showBody(ctx: Ctx, kind: ShowKind, id: string, network: unknown):
 }
 
 const HANDLERS: Record<string, ViewHandler> = {
-  show: async ({ ctx, args, res }): Promise<void> => {
+  show: async ({ ctx, args, body, res }): Promise<void> => {
     const kind = args.kind;
     if (!isShowKind(kind)) {
       fail(res, 400, `kind must be one of ${SHOW_KINDS.join(', ')}`);
@@ -428,12 +428,32 @@ const HANDLERS: Record<string, ViewHandler> = {
       fail(res, 404, built.reason);
       return;
     }
-    const chats = ctx.chats.all();
-    for (const chat of chats) {
-      ctx.chats.event(chat, { kind: 'tool_data', name: 'show', input: { kind, id }, data: built.data });
+
+    /* ONE CONVERSATION, THE CALLER'S. This drew into every open conversation for a day, which
+       put an agent's card in front of a person who was reading a different agent's, and the card
+       is what an approval rests on. A chat carries the seat id of the child inside it, and every
+       call that child makes carries the same id, so the two match exactly.
+
+       An outside MCP client (a terminal agent) belongs to no conversation and is not nobody: it
+       draws into the one the window is showing, and the reply says that is what happened, so the
+       caller knows its card landed somewhere it is not watching. */
+    const session = typeof body.session === 'string' ? body.session : '';
+    const open = ctx.chats.all();
+    const own = open.find((chat) => chat.session === session);
+    const target = own ?? open[0];
+    if (target === undefined) {
+      sendJson(res, 200, { drawn: false, kind, id, reason: 'no conversation is open in the window, so there is nothing to draw into' });
+      return;
     }
-    sendJson(res, 200, { drawn: chats.length > 0, kind, id, ...(chats.length > 0 ? {} : { reason: 'no conversation is open in the window, so there is nothing to draw into' }) });
+    ctx.chats.event(target, { kind: 'tool_data', name: 'show', input: { kind, id }, data: built.data });
+    sendJson(res, 200, {
+      drawn: true,
+      kind,
+      id,
+      ...(own === undefined ? { reason: `drawn into the conversation the window is showing (${target.label}), because this seat has none of its own` } : {}),
+    });
   },
+
   // ---------- the human's knowledge ----------
   profile_learned: ({ ctx, args, body, res }): void => {
     /* A worker's MCP process never registers this tool, and this is the wall behind that one:

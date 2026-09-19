@@ -177,6 +177,17 @@ export const WORKER_WITHHELD: readonly string[] = [
   // The lead's own money timeline, and one row's whole story. A worker has no business in either.
   'proposals',
   'diagnose',
+  /* Every window control, and the rule is now the helper rather than this list: src/mcp.ts
+     registerView withholds a view tool from a worker unless it goes through registerTeamView,
+     which is agent_post alone. `show` and the four trading overlays are here because they were
+     registered through the ungated helper and a worker held them: a worker that can draw a
+     proposal card into the conversation a human is mid-approval in is moving the surface the
+     approval rests on, which is the same argument that withheld chart_draw and the snapshot. */
+  'show',
+  'trade_focus',
+  'trade_highlight',
+  'trade_overlay',
+  'trade_clear',
   // A worker has no human in its session to have taught anything to.
   'profile_learned',
   ...EXPECTED_TOOLS.filter((t) => t.startsWith('propose_')),

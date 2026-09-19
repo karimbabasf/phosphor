@@ -52,6 +52,10 @@ export interface Booted {
   // POST /api/driver with the token filled in. Returns status and parsed body together, because
   // a 409 with a message is as much of a result here as a 200.
   driver: (body: Record<string, unknown>) => Promise<{ status: number; body: Record<string, unknown> }>;
+  /* The open conversations, in the order they were opened, read off the same route the window
+     reads: each one's id and the seat id its child carries on every call it makes. A test about
+     a card being addressed to ONE conversation needs both halves. */
+  chats: () => Promise<Array<{ id: string; session: string }>>;
 }
 
 export type BootOptions = {
@@ -100,6 +104,10 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
         .split('\n')
         .filter((l) => l.trim() !== ''),
     token: async () => windowToken,
+    chats: async () => {
+      const res = await fetch(`${booted.url}/api/driver`);
+      return ((await res.json()) as { chats?: Array<{ id: string; session: string }> }).chats ?? [];
+    },
     driver: async (body) => {
       const res = await fetch(`${booted.url}/api/driver`, {
         method: 'POST',

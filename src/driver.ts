@@ -204,6 +204,12 @@ export type DriverOptions = {
   role?: 'operator' | 'analyst';
   label?: string;
   parent?: string;
+  /* The seat id this child announces to the app, chosen by whoever is starting it rather than
+     minted here. A caller that has to know WHICH seat is this child's (the chat registry, so a
+     card can be addressed to the conversation that asked for it) cannot read it back afterwards:
+     `status().sessionId` is overwritten by Claude Code's own id on the init event. Absent mints
+     one, which is every caller that does not care. */
+  session?: string;
   /* Which lockdown file to run under. Left unset it is operator/driver.settings.json, and
      nothing in this app currently sets it: workers deliberately run under the SAME file. One
      lockdown, one test that checks it against the live Claude Code release
@@ -682,7 +688,7 @@ export function createDriver(opts: DriverOptions) {
       return;
     }
 
-    sessionId = randomUUID();
+    sessionId = opts.session ?? randomUUID();
     pendingPrompt = opts.systemPrompt ?? '';
     const argv = buildArgv({
       repo: opts.repo,

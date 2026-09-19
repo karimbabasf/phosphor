@@ -317,7 +317,7 @@ function registerRead(name: string, description: string, shape: Record<string, z
 
 /* A read the lead holds and a worker does not. The snapshot is one: it asks the window the human
    is looking at to render, which is the lead's business for the same reason the window controls
-   are (see registerLeadView). Not registered rather than refused. */
+   are (see registerView). Not registered rather than refused. */
 function registerLeadRead(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
   if (ROLE === 'analyst') return;
   registerRead(name, description, shape);
@@ -762,7 +762,26 @@ registerRead(
   },
 );
 
+/* A VIEW TOOL IS THE LEAD'S BY DEFAULT, and that default is the fix for a real hole rather than
+   tidiness. `show` was registered through a helper with no role gate and a worker therefore held
+   it, so hostile text steering a spawned worker's brief could draw a proposal card into the
+   conversation a human was mid-approval in. The card is what the approval rests on.
+
+   Every window control was already withheld one at a time (the chart, the layout, the snapshot,
+   the theme, a drawn plan); `show` and the four trading overlays were the ones nobody had got to,
+   and a list you have to remember to add to is a list that loses an entry eventually. So the
+   gate is the helper: a view tool is not registered for a worker unless it is registered through
+   registerTeamView below, which is one tool and says why. Not registered rather than refused,
+   like every other absence in this file. */
 function registerView(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
+  if (ROLE === 'analyst') return;
+  registerTeamView(name, description, shape);
+}
+
+/* The one view a worker keeps. A board post writes one line to a log every agent and the human
+   read; it does not touch the screen a human is deciding on, and src/crew.ts's whole contract
+   rests on it ("it reads, measures, draws on the chart and posts to the board"). */
+function registerTeamView(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
   server.registerTool(name, { description, inputSchema: shape }, async (args) => proxy({ op: 'view', tool: name, args }));
 }
 
@@ -787,18 +806,7 @@ registerView(
   },
 );
 
-/* The window itself, and who it belongs to.
-   Which screen the human is looking at, which coins it tracks and what colour it is are the
-   LEAD's business, not a spawned worker's. A worker exists to measure something and hand back a
-   paragraph; one that navigated the window mid-sentence would be the app arguing with itself in
-   front of a person who asked one agent a question. Not registered rather than refused, for the
-   reason every other absence in this file is: an absent tool cannot be talked into existing. */
-function registerLeadView(name: string, description: string, shape: Record<string, z.ZodTypeAny>): void {
-  if (ROLE === 'analyst') return;
-  registerView(name, description, shape);
-}
-
-registerLeadView(
+registerView(
   'set_theme',
   [
     'Recolours the window: five named slots on top of its one colourway.',
@@ -839,7 +847,7 @@ const INDICATOR = z.object({
   params: z.record(z.number()).optional().describe('for example {"period": 50}; defaults apply when omitted'),
 });
 
-registerLeadView(
+registerView(
   'chart_draw',
   [
     'Draws on the chart: the whole markup in ONE call. Applied in this order: clear, view, indicators,',
@@ -910,7 +918,7 @@ registerLeadView(
   },
 );
 
-registerLeadView(
+registerView(
   'chart_layout',
   [
     'Puts one to four charts side by side. The first is the primary: the full chart the human interacts',
@@ -1064,7 +1072,7 @@ const PLAN = z.object({
   note: z.string().optional().describe('one line, 120 characters, no semicolons'),
 });
 
-registerLeadView(
+registerView(
   'trade_plan',
   [
     'Draws a plan on the chart as an IDEA and lists it under Waiting. No authority, no policy: nothing',
@@ -1364,7 +1372,7 @@ registerRead(
   { stop: z.string().optional().describe('a job id to stop, for example w1') },
 );
 
-registerView(
+registerTeamView(
   'agent_post',
   [
     'Writes one line to the board every agent driving this app reads, and the human reads it too.',
@@ -1384,8 +1392,8 @@ registerView(
    check inside the handler can be wrong, and an absent tool cannot be. The failure it prevents
    is a chain of models each spawning three more, which is a bill and a machine full of Claude
    Code processes before anybody notices, and there is no analysis that needs the third level.
-   The window controls are withheld from a worker for a different reason; see registerLeadView. */
-if (ROLE !== 'analyst') {
+   The window controls are withheld from a worker for a different reason; see registerView. */
+{
   registerView(
     'agent_spawn',
     [
@@ -1416,7 +1424,7 @@ if (ROLE !== 'analyst') {
 
 /* The knowledge profile's one write. A lead tool, not a worker's: a worker has no human in its
    session to have taught anything to. */
-registerLeadView(
+registerView(
   'profile_learned',
   [
     'Records ONE concept you just explained to the human, so the next session does not explain it',
