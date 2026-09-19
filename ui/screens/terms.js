@@ -134,10 +134,14 @@
 
   /* A real link, so it reads as one and opens with Enter. The shell hands a
      new-window request for an https url to the system browser and denies the
-     window itself (main.rs open_in_browser); nothing else can come out of it. */
+     window itself (main.rs open_in_browser); nothing else can come out of it.
+     The url arrives on the state frame like everything else, so the one list
+     writes it (core/links.js), against the product's own hosts. A url off that
+     list leaves the words on the card without a link under them. */
   function link(href, label) {
     var a = dom.el('a', 'terms-link', label);
-    a.setAttribute('href', href);
+    var links = window.PhosphorLinks;
+    if (!links || typeof links.setSiteHref !== 'function' || !links.setSiteHref(a, href)) return a;
     a.setAttribute('target', '_blank');
     a.setAttribute('rel', 'noopener');
     return a;

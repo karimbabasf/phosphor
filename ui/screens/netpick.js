@@ -42,6 +42,12 @@
   var EASE = [0.16, 1, 0.3, 1];
   var COPIED_MS = 1500;
 
+  /* The one list writes every href in this window (core/links.js). */
+  function setHref(anchor, url) {
+    var links = window.PhosphorLinks;
+    return !!links && typeof links.setHref === 'function' && links.setHref(anchor, url);
+  }
+
   /* The six networks an exchange withdraw screen lists first, each with its
      brand colour, for the one row of tiles: the five the app has always
      credited and Bitcoin. Every other network comes off the report, where the
@@ -597,9 +603,10 @@
       node.hidden = false;
       node.dataset.phase = deposit.phase;
       write(watcherParts(deposit));
-      var url = typeof deposit.explorerUrl === 'string' && /^https:\/\//.test(deposit.explorerUrl) ? deposit.explorerUrl : null;
-      link.hidden = url === null;
-      if (url !== null) link.href = url;
+      /* One node, repainted every phase. The list clears the href when the read
+         has no url yet, so the View button cannot be left pointing at the phase
+         before this one. */
+      link.hidden = !setHref(link, deposit.explorerUrl);
       var why = typeof deposit.error === 'string' && deposit.error !== '' ? deposit.error : null;
       note.hidden = why === null;
       dom.setText(note, why === null ? '' : why);

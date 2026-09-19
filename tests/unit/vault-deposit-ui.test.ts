@@ -18,6 +18,7 @@ import { createContext, runInContext } from 'node:vm';
 type Any = Record<string, any>;
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
+const LINKS = read('../../ui/core/links.js');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
 const QR = read('../../ui/vendor/qrcode.js');
@@ -219,6 +220,7 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
 
   const sandbox: Any = {
     console,
+    URL,
     document: doc,
     setTimeout: (fn: () => void) => { setTimeout(fn, 0); return 1; },
     clearTimeout() {},
@@ -260,6 +262,7 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
   };
 
   createContext(sandbox);
+  runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
   runInContext(QR, sandbox, { filename: 'ui/vendor/qrcode.js' });

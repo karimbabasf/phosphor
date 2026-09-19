@@ -186,17 +186,37 @@ function find(node: Node, className: string): Node[] {
 /* Boots the dock against a state and returns the card it drew, with the state
    it reads (mutable, for a test that moves a row on) and the render the store
    would call on a frame. `api` stands in for the routes a click takes. */
-function dockFor(proposal: Record<string, any>, state: Record<string, any> = {}, api: Record<string, any> = {}): { card: Node; payload: Record<string, any>; render: () => void; dock: Record<string, any> } {
+function dockFor(proposal: Record<string, any>, state: Record<string, any> = {}, api: Record<string, any> = {}): { card: Node; payload: Record<string, any>; render: () => void; dock: Record<string, any>; sandbox: Record<string, any>; flush: () => void } {
   const dock = makeNode('div');
   const card = makeNode('div');
+  const timers: Array<() => void> = [];
   const payload = Object.assign({ proposals: [proposal] }, state);
+  /* The card measures its own body to decide whether the answer needs a scroll. The count is
+     here so a test can see the dock let go of a body it has dropped. */
+  class Sizes {
+    static observing = false;
+    observe(): void { Sizes.observing = true; }
+    disconnect(): void { Sizes.observing = false; }
+  }
   const sandbox: Record<string, any> = {
+    ResizeObserver: Sizes,
     window: {
       PhosphorNet: { readable: (e: any) => String(e && e.message ? e.message : e) },
       PhosphorApi: Object.assign({ approve: () => Promise.resolve(), refuse: () => Promise.resolve() }, api),
       PhosphorState: { select: () => {}, get: () => payload },
       PhosphorShell: { updateField: () => {}, setPending: () => {}, refresh: () => Promise.resolve() },
-      setTimeout: () => 0,
+      /* The receipt card is its own screen (ui/screens/receipt.js) and is asserted there.
+         The dock only decides whether it is on the slot, so a line naming the row is enough. */
+      PhosphorReceipt: {
+        fill: (host: Node, receipt: Record<string, any>) => {
+          const line = makeNode('p');
+          line.textContent = 'Receipt ' + receipt.id;
+          host.appendChild(line);
+        },
+      },
+      /* Recorded rather than run: the dock's timers are the re-arm and the answer flash, and a
+         test that wants one fires it with flush(). */
+      setTimeout: (fn: () => void) => timers.push(fn),
       clearTimeout: () => {},
     },
     document: {
@@ -222,7 +242,14 @@ function dockFor(proposal: Record<string, any>, state: Record<string, any> = {},
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
   sandbox.window.PhosphorDecision.boot();
   sandbox.window.PhosphorDecision.render();
-  return { card, payload, render: () => sandbox.window.PhosphorDecision.render(), dock: sandbox.window.PhosphorDecision };
+  return {
+    card,
+    payload,
+    render: () => sandbox.window.PhosphorDecision.render(),
+    dock: sandbox.window.PhosphorDecision,
+    sandbox,
+    flush: () => { const due = timers.splice(0, timers.length); for (const fn of due) fn(); },
+  };
 }
 
 function cardFor(proposal: Record<string, any>, state: Record<string, any> = {}): Node {
@@ -885,6 +912,74 @@ test('a request outranks the reminder that borrowed the dock, and the reminder k
   assert.ok(textOf(quiet.card).join(' ').includes('Back up now.'), 'the reminder keeps the dock with nothing to decide');
 });
 
+/* 2026-09-19, the same class on the path that runs after every approval. A Yes that settles ends
+   in flash() -> showReceiptFor() -> a receipt on the slot, and the receipt closes only on its own
+   Close button, so a request filed while one was up drew nothing for as long as nobody clicked.
+   The nudge was given its escape above and the receipt was not. */
+test('a request takes the dock from a receipt, and the receipt comes back once it is answered', () => {
+  const settled = { ...swapProposal(), id: 'done', status: 'executed' };
+  const d = dockFor(settled);
+  d.dock.showReceipt({ id: 'r1' });
+  assert.ok(textOf(d.card).join(' ').includes('Receipt r1'), 'the receipt is not up to begin with');
+
+  // A $40,000 ask lands while it is being read.
+  d.payload.proposals = [settled, swapProposal()];
+  d.render();
+  const asking = textOf(d.card).join(' ');
+  assert.ok(asking.includes('Yes'), 'the ask never drew: the receipt held the dock');
+  assert.equal(asking.includes('Receipt r1'), false, 'the receipt is still on the slot');
+
+  // Answered. The thing the person was reading comes back.
+  d.payload.proposals = [settled, { ...swapProposal(), status: 'refused' }];
+  d.render();
+  assert.ok(textOf(d.card).join(' ').includes('Receipt r1'), 'the receipt did not come back');
+});
+
+/* Found on the running app: the receipt came back for one frame and then went. The state frame
+   that lands while the refuse is in flight is a render, and it put the receipt back before the
+   answer flash was ever called; the flash then took the dock and nothing was holding the receipt
+   any more. Whatever takes the dock from a receipt keeps it, the flash included. */
+test('the answer flash keeps the receipt it covers instead of eating it on the way past', async () => {
+  const settled = { ...swapProposal(), id: 'done', status: 'executed' };
+  const d = dockFor(settled, {}, { refuse: () => Promise.resolve() });
+  d.dock.showReceipt({ id: 'r1' });
+  d.payload.proposals = [settled, swapProposal()];
+  d.render();
+  const no = find(d.card, 'btn-label').find((l) => l.textContent === 'No')?.parentNode as Node;
+  assert.ok(no, 'no No on the card');
+
+  fire(no, 'click');
+  // The refreshed frame lands before the flash does, and it has nothing left to ask about.
+  d.payload.proposals = [settled, { ...swapProposal(), status: 'refused' }];
+  d.render();
+  assert.ok(textOf(d.card).join(' ').includes('Receipt r1'), 'the receipt is not back on the answered frame');
+
+  await tick();
+  assert.ok(textOf(d.card).join(' ').includes('Refused.'), 'the answer flash never drew');
+  d.flush();
+  assert.ok(textOf(d.card).join(' ').includes('Receipt r1'), 'the flash ate the receipt it covered');
+});
+
+/* It comes back only while it is still the thing that just happened. Past its own beat the
+   person has read it, or stopped caring, and the dock is better off dark. */
+test('a receipt that waited longer than its beat is dropped rather than redrawn', () => {
+  const settled = { ...swapProposal(), id: 'done', status: 'executed' };
+  const d = dockFor(settled);
+  d.dock.showReceipt({ id: 'r1' });
+
+  d.payload.proposals = [settled, swapProposal()];
+  d.render();
+  assert.ok(textOf(d.card).join(' ').includes('Yes'), 'the ask never drew');
+
+  class Later extends Date {
+    static now(): number { return Date.now() + 20000; }
+  }
+  d.sandbox.Date = Later;
+  d.payload.proposals = [settled, { ...swapProposal(), status: 'refused' }];
+  d.render();
+  assert.deepEqual(textOf(d.card), [], 'a receipt from twenty seconds ago came back');
+});
+
 /* The card was dropped on the frame that ended the move, so the last thing on screen said
    "Waiting for the venue to credit it" and then the dock went dark at the exact moment the money
    landed. The row the dock is watching holds it for a beat in its end state. */
@@ -925,6 +1020,72 @@ test('a move that ends says so on the dock before the dock goes', () => {
   assert.ok(text.includes('Done'), 'and the line above it agrees');
   assert.equal(text.includes('Working'), false, '"Working" over a confirmed card is the dock disagreeing with itself');
   assert.ok(SOURCE.includes('ENDED_MS'), 'the beat has a named length');
+});
+
+/* The re-arm and the Touch ID wait both work by turning the buttons off, and a click event can
+   be dispatched at a button that is off. No pointer and no key reaches one, so this is a belt
+   over script already inside the page, but the button is the gate and the gate reads its own
+   state rather than trusting the event that woke it. */
+test('a click dispatched at a dead Yes decides nothing', () => {
+  let approvals = 0;
+  const d = dockFor(swapProposal(), {}, { approve: () => { approvals += 1; return Promise.resolve(); } });
+  const yes = find(d.card, 'btn-primary')[0];
+  assert.ok(yes, 'no Yes on the card');
+  fire(yes, 'click');
+  assert.equal(approvals, 1, 'a live Yes does not approve');
+
+  // A second row takes the pin, which puts the new card's buttons through the re-arm.
+  d.payload.proposals = [swapProposal({ id: 's2', createdAt: '2026-09-18T17:40:00.000Z' })];
+  d.render();
+  const rearmed = find(d.card, 'btn-primary')[0];
+  assert.equal(rearmed.disabled, true, 'the swapped card came up live');
+  fire(rearmed, 'click');
+  assert.equal(approvals, 1, 'a dead Yes approved');
+});
+
+/* close() dropped the body the observer was watching and left the observer on it, so one
+   ResizeObserver pointed at a detached node until the next card was built. */
+test('closing the dock lets go of the body it was measuring', () => {
+  // Nothing pending, so the close is the end of it: a dock with a waiting row redraws it.
+  const d = dockFor({ ...swapProposal(), status: 'executed' });
+  d.dock.showReceipt({ id: 'r1' });
+  assert.equal(d.sandbox.ResizeObserver.observing, true, 'the card is not being measured');
+  d.dock.close();
+  assert.equal(d.sandbox.ResizeObserver.observing, false, 'the dock still watches a body it has dropped');
+});
+
+/* Before a row's first state frame the window builds its own view, and that view's sentence is
+   the app's headline: there is nothing the assistant said yet. The card printed it as the title
+   and again under "The assistant said". */
+test('a rule change with no state frame yet says its headline once', () => {
+  const card = cardFor({
+    id: 'p1',
+    kind: 'policy_change',
+    status: 'pending',
+    createdAt: '2026-09-19T11:00:00.000Z',
+    draft: { kind: 'policy_change', patch: { perTxUsd: 5000 }, sentence: 'Change your limits' },
+    simulation: { ok: true, policyDiff: { before: [], after: [] } },
+    verdict: { outcome: 'needs_approval', reasons: ['A rule change always asks.'], changes: [] },
+  });
+  const said = textOf(card).filter((t) => t === 'Change your limits');
+  assert.equal(said.length, 1, 'the headline is on the card ' + said.length + ' times');
+  assert.equal(textOf(card).includes('The assistant said'), false, 'the card quotes a sentence it wrote itself');
+});
+
+/* Two files have to agree on a name, and on 2026-09-15 they stopped: the Activity list became a
+   mounted component and PhosphorReceipts.load went with it, while the dock kept calling it. The
+   call fell through to close(), so every approval since has flashed "Approved." and then drawn
+   nothing. Nothing failed, which is why it sat there. */
+test('the name the dock asks the receipts module for is one that module exports', () => {
+  const RECEIPTS = readFileSync(new URL('../../ui/screens/receipts.js', import.meta.url), 'utf8');
+  const asked = [...SOURCE.matchAll(/\breceipts\.([A-Za-z_]\w*)/g)].map((m) => m[1]);
+  assert.ok(asked.length > 0, 'the dock asks the receipts module for nothing, so this test is not looking at it');
+  const exported = /window\.PhosphorReceipts\s*=\s*\{([\s\S]*?)\n\s*\};/.exec(RECEIPTS)?.[1] ?? '';
+  assert.ok(exported !== '', 'the receipts module does not export an object this test can read');
+  for (const name of new Set(asked)) {
+    assert.match(exported, new RegExp('\\b' + name + '\\s*:'),
+      `decision.js calls receipts.${name}, which ui/screens/receipts.js does not export`);
+  }
 });
 
 test('the dock never claims a click is done; it says approved and lets the receipt say the rest', () => {

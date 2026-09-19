@@ -985,6 +985,11 @@
     return links && typeof links.explorerUrl === 'function' ? links.explorerUrl(url) : null;
   }
 
+  function setHref(anchor, url) {
+    var links = window.PhosphorLinks;
+    return !!links && typeof links.setHref === 'function' && links.setHref(anchor, url);
+  }
+
   function linkRow(body, label, text, url) {
     var row = dom.el('div', 'tcard-line');
     row.setAttribute('data-wrap', 'true');
@@ -996,7 +1001,7 @@
       return row;
     }
     var link = dom.el('a', 'mono tcard-line-value tcard-link');
-    link.href = href;
+    setHref(link, url);
     link.target = '_blank';
     link.rel = 'noreferrer noopener';
     link.appendChild(dom.el('span', '', text));

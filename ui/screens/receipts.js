@@ -154,7 +154,34 @@
     return net.getJson('/api/receipts?' + params.join('&'), { busy: 'activity', label: 'Reading what happened' });
   }
 
-  function take(it, result) {
+  /* ONE RECEIPT, BY ID, FOR THE DOCK.
+
+     A Yes that settles ends with the dock opening the row it just decided
+     (screens/decision.js showReceiptFor). That used to call a module level
+     load(); when this file became a mounted component the module kept only
+     list(), and the dock's call fell through to its own close(), so from
+     2026-09-15 every approval flashed "Approved." and then drew nothing.
+     Nothing threw, which is why it sat there.
+
+     The list above is a component with its own chips, cursor and depth, so the
+     dock gets its own read of the newest page rather than a handle on whichever
+     instance happens to be mounted. A row that is not on that page, a read that
+     fails and an empty id all come back null: the dock closes, and Activity has
+     the row either way. */
+  function find(id) {
+    if (typeof id !== 'string' || id === '') return Promise.resolve(null);
+    return net.getJson('/api/receipts?limit=' + PAGE, { busy: 'activity', label: 'Reading what happened' })
+      .then(function (result) {
+        var rows = take(result).receipts;
+        for (var i = 0; i < rows.length; i += 1) {
+          if (rows[i] && rows[i].id === id) return rows[i];
+        }
+        return null;
+      })
+      .catch(function () { return null; });
+  }
+
+  function take(result) {
     var data = (result && result.data) || {};
     var receipts = Array.isArray(data.receipts) ? data.receipts : [];
     return {
@@ -176,7 +203,7 @@
     return read(it, 0, depth)
       .then(function (result) {
         if (seq !== it.seq) return it.rows;
-        var got = take(it, result);
+        var got = take(result);
         it.rows = got.receipts;
         it.total = got.total;
         it.hasMore = got.hasMore;
@@ -205,7 +232,7 @@
     read(it, before, PAGE)
       .then(function (result) {
         if (seq !== it.seq) return;
-        var got = take(it, result);
+        var got = take(result);
         it.rows = it.rows.concat(got.receipts);
         it.total = got.total;
         it.hasMore = got.hasMore;
@@ -385,6 +412,7 @@
 
   window.PhosphorReceipts = {
     list: list,
+    find: find,
     WINDOWS: WINDOWS,
     KINDS: KINDS
   };

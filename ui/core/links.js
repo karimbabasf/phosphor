@@ -13,9 +13,17 @@
    URL parser rather than from the string, so an @, a backslash or a second
    scheme cannot smuggle one host past as another.
 
+   It is also the one place in ui/ that writes an href, and tests/unit/ui-links
+   holds the window to that. Asking the list and then writing the anchor
+   yourself is how the three disagreeing checks happened in the first place: the
+   receipt kept a second link that checked nothing, in the same file as the one
+   that was fixed, and nobody saw it for a release. A screen now hands over the
+   anchor and the string the server sent, and a url off the list leaves the
+   anchor with no href at all.
+
    Its own file, with nothing else in it and no side effect on load, because the
-   three screens that ask it the question are loaded in three different orders
-   and each of their tests builds its own window. */
+   screens that ask it the question are loaded in several different orders and
+   each of their tests builds its own window. */
 (function () {
   'use strict';
 
@@ -30,9 +38,14 @@
     'app.hyperliquid.xyz'
   ];
 
-  /* The url when it is one this window opens, and null otherwise. Callers hand
-     the answer straight to an href, so null is the only refusal there is. */
-  function explorerUrl(url) {
+  /* The product's own pages, which the terms card links to off the same server
+     frame as everything else. A separate list: an explorer is not the terms
+     page, and a link to the terms page is not a link to a chain. */
+  var SITES = [
+    'phosphor.karimbabasf.com'
+  ];
+
+  function onList(url, hosts) {
     if (typeof url !== 'string' || url.slice(0, 8).toLowerCase() !== 'https://') return null;
     var host = '';
     try {
@@ -42,15 +55,51 @@
     } catch (err) {
       return null;
     }
-    for (var i = 0; i < HOSTS.length; i += 1) {
-      var known = HOSTS[i];
+    for (var i = 0; i < hosts.length; i += 1) {
+      var known = hosts[i];
       if (host === known || host.slice(-(known.length + 1)) === '.' + known) return url;
     }
     return null;
   }
 
+  /* The url when it is one this window opens, and null otherwise. A caller that
+     only wants to know whether there is somewhere to go asks these; a caller
+     with an anchor in hand uses the two below. */
+  function explorerUrl(url) {
+    return onList(url, HOSTS);
+  }
+
+  function siteUrl(url) {
+    return onList(url, SITES);
+  }
+
+  /* Refusing has to clear the attribute rather than skip it: an anchor being
+     repainted (the deposit watcher reuses one node for every phase) would
+     otherwise keep pointing at the url it was last given. */
+  function write(anchor, safe) {
+    if (safe === null) {
+      anchor.removeAttribute('href');
+      return false;
+    }
+    anchor.href = safe;
+    return true;
+  }
+
+  /* Writes the href and says whether it did. */
+  function setHref(anchor, url) {
+    return write(anchor, explorerUrl(url));
+  }
+
+  function setSiteHref(anchor, url) {
+    return write(anchor, siteUrl(url));
+  }
+
   window.PhosphorLinks = {
     explorerUrl: explorerUrl,
-    hosts: HOSTS
+    siteUrl: siteUrl,
+    setHref: setHref,
+    setSiteHref: setSiteHref,
+    hosts: HOSTS,
+    sites: SITES
   };
 })();
