@@ -45,6 +45,9 @@
   var showing = null;
   var held = null;
   var flashTimer = 0;
+  /* A receipt the dock put down to take a waiting request, kept whole so it can
+     go back up with the moment it first drew. See render(). */
+  var parked = null;
 
   /* A Touch ID dialog that closes without an answer puts the row back to
      pending and writes nothing on it. The dock remembers which row it last
@@ -370,13 +373,19 @@
     var state = store.get() || {};
     var list = Array.isArray(state.proposals) ? state.proposals : [];
 
-    /* A REQUEST OUTRANKS A REMINDER. The backup nudge borrows this slot through
-       showCard, and it held it: a $250 deposit filed while it was up drew
-       nothing, the topbar said "1 waiting", and the dock showed a card about a
-       recovery phrase. A decision somebody has to make is never behind a
-       reminder. Everything else in the slot keeps it until it closes itself. */
+    /* A REQUEST OUTRANKS ANYTHING THERE IS TO READ. The backup nudge borrows this
+       slot through showCard, and it held it: a $250 deposit filed while it was up
+       drew nothing, the topbar said "1 waiting", and the dock showed a card about
+       a recovery phrase. The receipt is the same class with a longer reach: every
+       approval that settles ends in one (flash -> showReceiptFor), and it closes
+       on its own Close button alone, so a waiting ask stayed off screen for as
+       long as nobody clicked. Both step aside here and the receipt is kept, so
+       the person gets back what they were reading. Everything else in the slot
+       keeps it until it closes itself. */
     if (showing && showing.kind !== 'ask' && showing.kind !== 'unread' && showing.kind !== 'held' && showing.kind !== 'live') {
-      if (showing.kind !== 'card' || !list.some(isWaiting)) return;
+      var yields = showing.kind === 'card' || showing.kind === 'receipt';
+      if (!yields || !list.some(isWaiting)) return;
+      if (showing.kind === 'receipt') parked = showing;
     }
 
     /* THE DOCK DOES NOT SWAP A CARD UNDER THE READER.
@@ -400,6 +409,19 @@
       return;
     }
     pinned = null;
+
+    /* The receipt that stepped aside above, back now the request is answered.
+       It keeps the moment it first drew: past the beat a receipt is given
+       (DONE_MS, the flash it comes out of) the person has read it or has moved
+       on, and putting it back would be the dock talking about old news. */
+    if (parked) {
+      var back = parked;
+      parked = null;
+      if (Date.now() - back.at < DONE_MS) {
+        open({ kind: 'receipt', receipt: back.receipt, at: back.at, queued: 0 });
+        return;
+      }
+    }
 
     var held = newestFirst(list.filter(isHeld));
     if (held.length) {
@@ -1467,8 +1489,11 @@
     window.PhosphorReceipt.fill(refs.body, receipt, close);
   }
 
+  /* A newer receipt is the one the person just earned, so it replaces any older
+     one still parked rather than queueing behind it. */
   function showReceipt(receipt) {
-    open({ kind: 'receipt', receipt: receipt, queued: 0 });
+    parked = null;
+    open({ kind: 'receipt', receipt: receipt, at: Date.now(), queued: 0 });
   }
 
   /* The same slot, filled by a caller. A request still outranks it: render()
