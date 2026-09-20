@@ -284,3 +284,10 @@ test('wNEAR is priced off the NEAR spot: the wrapper is the same coin, as WETH i
   closeTo(row!.priceUsd, 3.5, 0.0001);
   closeTo(row!.valueUsd, 7, 0.0001);
 });
+
+test('the wallet names what it could not price, so a total is never read as the whole', () => {
+  const held = { accountId: '0xabc', assetId: 'nep141:kat.token0.near', symbol: 'NearKat', originChain: 'near', amount: 900, decimals: 18 };
+  const wallet = buildWallet(loadDemoLedger(), { holdings: [held], ok: true, fetchedAt: 'now' });
+  assert.deepEqual(wallet.unpriced, ['NearKat']);
+  assert.deepEqual(buildWallet(loadDemoLedger(), { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' }).unpriced, []);
+});

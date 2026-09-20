@@ -259,6 +259,32 @@ test('an empty wallet says so in words, with the way in', () => {
   assert.ok(card.textContent.includes('deposit address'), card.textContent);
 });
 
+test('a wallet holding something the app cannot price never reads as $0.00', () => {
+  // Karim's window, 2026-09-20: "What you hold $0.00 ... wNEAR 2.0097 not priced ... Total
+  // $0.00" over seven dollars. The row said so; the head and the total did not.
+  const world = build();
+  world.ask('balance');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: {
+    totalUsd: 0, byChain: {}, stale: [], emptyCount: 0, unpriced: ['wNEAR'],
+    rows: [{ kind: 'intents', chain: 'intents', symbol: 'wNEAR', quantity: 2.0097, valueUsd: 0, priced: false, native: false }],
+  } });
+  let card = world.cardNodes('balance')[0];
+  assert.equal(all(card, 'tcard-figure')[0].textContent, 'not priced');
+  assert.equal(all(card, 'tcard-total-value')[0].textContent, 'not priced');
+  assert.ok(card.textContent.includes('wNEAR not priced'), card.textContent);
+
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: {
+    totalUsd: 7.01, byChain: { intents: 7.01 }, stale: [], emptyCount: 0, unpriced: ['wNEAR'],
+    rows: [
+      { kind: 'intents', chain: 'intents', symbol: 'USDC', quantity: 7.01, valueUsd: 7.01, priced: true, native: false },
+      { kind: 'intents', chain: 'intents', symbol: 'wNEAR', quantity: 2.0097, valueUsd: 0, priced: false, native: false },
+    ],
+  } });
+  card = world.cardNodes('balance')[1];
+  assert.equal(all(card, 'tcard-figure')[0].textContent, 'at least $7.01');
+  assert.equal(all(card, 'tcard-total-value')[0].textContent, 'at least $7.01');
+});
+
 test('the position card leads with up or down, tones each side, and lists what closed', () => {
   const world = build();
   world.ask('how am I doing');

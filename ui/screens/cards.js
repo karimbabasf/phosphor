@@ -367,6 +367,14 @@
     return { rows: out, dropped: parts.dropped };
   }
 
+  /* The dollar figure for a wallet with something in it the app could not price. A number
+     alone over an unpriced holding reads as "you have nothing" (Karim's window, 2026-09-20:
+     $0.00 over 2.0097 wNEAR), so the figure says what it is: a floor, or no figure at all. */
+  function totalText(total, unpriced) {
+    if (!unpriced.length) return dom.usd(total);
+    return total > 0 ? 'at least ' + dom.usd(total) : 'not priced';
+  }
+
   function balanceCard(data, extra) {
     var held = holdingsOf(data);
     var total = num(data.totalUsd);
@@ -374,8 +382,12 @@
       total = 0;
       for (var t = 0; t < held.rows.length; t += 1) total += held.rows[t].usd;
     }
+    var unpriced = Array.isArray(data.unpriced) ? data.unpriced.map(String) : [];
+    if (!unpriced.length) {
+      for (var u = 0; u < held.rows.length; u += 1) if (!held.rows[u].priced) unpriced.push(held.rows[u].symbol);
+    }
     var parts = shell('balance', glyph('wallet'), 'What you hold', {
-      amount: held.rows.length ? dom.usd(total) : '',
+      amount: held.rows.length ? totalText(total, unpriced) : '',
       at: extra.at,
       open: extra.open,
       onToggle: extra.onToggle
@@ -406,8 +418,9 @@
 
     var foot = dom.el('div', 'tcard-total');
     foot.appendChild(dom.el('span', 'tcard-total-label', 'Total'));
-    foot.appendChild(mono('tcard-total-value', dom.usd(total)));
+    foot.appendChild(mono('tcard-total-value', totalText(total, unpriced)));
     body.appendChild(foot);
+    if (unpriced.length) body.appendChild(dom.el('div', 'tcard-note', unpriced.join(', ') + ' not priced, so the total leaves it out.'));
 
     var stale = Array.isArray(data.stale) ? data.stale : [];
     if (stale.length) {

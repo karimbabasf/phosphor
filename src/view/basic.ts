@@ -930,7 +930,12 @@ export function buildBasic(input: BasicInput): BasicView {
     totalUsd = null;
     checkingLine = 'Checking your new balance.';
   }
-  const totalLine = totalUsd === null && wallet.totalUsd === 0 ? '' : money(wallet.totalUsd);
+  /* A holding the app has no price for is left out of totalUsd, so the number alone would
+     read as the whole and a wallet of 2.0097 wNEAR read "$0.00" (2026-09-20). The slot says
+     what the figure is: a floor over what is priced, or no figure at all. */
+  const unpriced = wallet.unpriced ?? [];
+  let totalLine = totalUsd === null && wallet.totalUsd === 0 ? '' : money(wallet.totalUsd);
+  if (unpriced.length > 0) totalLine = wallet.totalUsd > 0 ? `at least ${money(wallet.totalUsd)}` : 'not priced';
 
   const placeCount = Object.keys(wallet.byChain ?? {}).length;
   let placesLine: string;
@@ -945,6 +950,7 @@ export function buildBasic(input: BasicInput): BasicView {
     const abnormal = killSwitch || !policyReadable;
     placesLine = `spread across ${placeCount} ${placeCount === 1 ? 'place' : 'places'}.${abnormal ? '' : ' all normal.'}`;
   }
+  if (unpriced.length > 0) placesLine += ` ${unpriced.join(', ')} not priced, so the total leaves it out.`;
 
   // --- state ---
   const pending = newestBy(proposals, ['pending']);

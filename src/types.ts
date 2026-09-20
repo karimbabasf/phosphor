@@ -144,6 +144,10 @@ export type WalletView = {
   // The count and the sum let a card say "1 tiny balance, not listed" instead of hiding money.
   dustCount: number;
   dustUsd: number;
+  // The symbols held that the app has no price for, in row order. totalUsd leaves them out,
+  // so a head or a total that prints the number alone over one of these reads as "you have
+  // nothing" (Karim, 2026-09-20: $0.00 over 2.0097 wNEAR). A card names them instead.
+  unpriced: string[];
   // The trading account, when it was read: funded or not. Unfunded is where a new account
   // starts, so it is never counted as an empty holding.
   hyperliquid?: { funded: boolean };

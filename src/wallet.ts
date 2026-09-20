@@ -140,5 +140,7 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   }
   const hl = hyperliquid !== undefined && hyperliquid.ok ? { funded: hyperliquid.collateralUsdc > 0 } : undefined;
 
-  return { rows, totalUsd, byChain, stale, staleWhy, emptyCount, dustCount, dustUsd, hyperliquid: hl };
+  const unpriced = rows.filter(r => r.priced === false).map(r => r.symbol);
+
+  return { rows, totalUsd, byChain, stale, staleWhy, emptyCount, dustCount, dustUsd, unpriced, hyperliquid: hl };
 }

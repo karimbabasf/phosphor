@@ -32,7 +32,7 @@ const T2 = '2026-08-12T12:00:00.000Z';
 
 function baseInput(over: Partial<BasicInput> = {}): BasicInput {
   return {
-    wallet: { rows: [], totalUsd: 2341.08, byChain: { arb: 2000, eth: 341.08 }, stale: [], emptyCount: 0, dustCount: 0, dustUsd: 0 },
+    wallet: { rows: [], totalUsd: 2341.08, byChain: { arb: 2000, eth: 341.08 }, stale: [], emptyCount: 0, dustCount: 0, dustUsd: 0, unpriced: [] },
     proposals: [],
     policyReadable: true,
     killSwitch: false,
@@ -104,7 +104,7 @@ const ELEVEN: Array<[string, BasicInput]> = [
   ['kill switch', baseInput({ killSwitch: true })],
   ['policy unreadable', baseInput({ policyReadable: false })],
   ['no agent', baseInput({ agentsConnected: 0 })],
-  ['chain read failed', baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'], emptyCount: 0, dustCount: 0, dustUsd: 0 } })],
+  ['chain read failed', baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'], emptyCount: 0, dustCount: 0, dustUsd: 0, unpriced: [] } })],
 ];
 
 test('every one of the eleven states produces copy', () => {
@@ -148,7 +148,7 @@ test('a policy refusal says what was tried, that it was stopped, and that money 
 // ---------- what it refuses to say ----------
 
 test('a stale chain shows no number at all, never a zero', () => {
-  const view = buildBasic(baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'], emptyCount: 0, dustCount: 0, dustUsd: 0 } }));
+  const view = buildBasic(baseInput({ wallet: { rows: [], totalUsd: 0, byChain: {}, stale: ['near'], emptyCount: 0, dustCount: 0, dustUsd: 0, unpriced: [] } }));
   assert.equal(view.totalUsd, null);
   // The words go under the number, never into its slot: the slot is empty here because
   // the unknown total reads as nothing, and an empty slot beats a zero standing in for it.
@@ -158,10 +158,22 @@ test('a stale chain shows no number at all, never a zero', () => {
 
 test('a stale chain keeps the last read total in the slot when there is one', () => {
   const row = walletRow({ chain: 'arb', quantity: 2000, valueUsd: 2000, share: 1 });
-  const view = buildBasic(baseInput({ wallet: { rows: [row], totalUsd: 2000, byChain: { arb: 2000 }, stale: ['near'], emptyCount: 0, dustCount: 0, dustUsd: 0 } }));
+  const view = buildBasic(baseInput({ wallet: { rows: [row], totalUsd: 2000, byChain: { arb: 2000 }, stale: ['near'], emptyCount: 0, dustCount: 0, dustUsd: 0, unpriced: [] } }));
   assert.equal(view.totalUsd, null, 'the number is not fact while a place is unread');
   assert.match(view.totalLine, /2,000\.00/);
   assert.equal(view.checkingLine, 'Still checking.');
+});
+
+test('a holding the app cannot price keeps the hero from reading as a whole number', () => {
+  // The chat card of 2026-09-20 read "$0.00" over 2.0097 wNEAR; the basic screen's hero
+  // prints the same total, so it says what the number is: a floor, or no figure at all.
+  const priced = walletRow({ chain: 'intents', symbol: 'USDC', quantity: 7.01, valueUsd: 7.01, share: 1 });
+  const dark = walletRow({ chain: 'intents', symbol: 'wNEAR', quantity: 2.0097, valueUsd: 0, priceUsd: 0, share: 0, priced: false });
+  const some = buildBasic(baseInput({ wallet: { rows: [priced, dark], totalUsd: 7.01, byChain: { intents: 7.01 }, stale: [], emptyCount: 0, dustCount: 0, dustUsd: 0, unpriced: ['wNEAR'] } }));
+  assert.equal(some.totalLine, 'at least $7.01');
+  assert.match(some.placesLine, /wNEAR not priced/);
+  const none = buildBasic(baseInput({ wallet: { rows: [dark], totalUsd: 0, byChain: { intents: 0 }, stale: [], emptyCount: 0, dustCount: 0, dustUsd: 0, unpriced: ['wNEAR'] } }));
+  assert.equal(none.totalLine, 'not priced');
 });
 
 test('a balance read before the last execution is not stated as fact', () => {
@@ -194,7 +206,7 @@ test('a read that predates the last write still lists what it read; a place that
     stale: [],
     emptyCount: 0,
     dustCount: 0,
-    dustUsd: 0,
+    dustUsd: 0, unpriced: [],
   };
   const checking = buildBasic(
     baseInput({
@@ -680,7 +692,7 @@ test('one row per thing owned, not one per chain', () => {
         stale: [],
         emptyCount: 0,
         dustCount: 0,
-        dustUsd: 0,
+        dustUsd: 0, unpriced: [],
       },
     }),
   );
@@ -699,12 +711,12 @@ test('holdings go empty exactly when the total goes unknown', () => {
   const rows = [walletRow({ valueUsd: 100, quantity: 100 })];
 
   const stale = buildBasic(
-    baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: ['near'], emptyCount: 0, dustCount: 0, dustUsd: 0 } }),
+    baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: ['near'], emptyCount: 0, dustCount: 0, dustUsd: 0, unpriced: [] } }),
   );
   assert.equal(stale.totalUsd, null);
   assert.deepEqual(stale.holdings, [], 'a partial list is worse than no list');
 
-  const fine = buildBasic(baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: [], emptyCount: 0, dustCount: 0, dustUsd: 0 } }));
+  const fine = buildBasic(baseInput({ wallet: { rows, totalUsd: 100, byChain: { base: 100 }, stale: [], emptyCount: 0, dustCount: 0, dustUsd: 0, unpriced: [] } }));
   assert.equal(fine.holdings.length, 1);
 });
 
