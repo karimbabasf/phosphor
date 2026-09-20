@@ -113,6 +113,18 @@ test('a move the agent read back after it ended is not told again', () => {
   assert.equal(w.sent.length, 0);
 });
 
+test('the proposals page and diagnose count as having seen the ending too', () => {
+  for (const data of [{ proposals: [{ id: 'w1', stage: 'failed' }] }, { view: { id: 'w1', stage: 'failed' }, audit: [] }]) {
+    const w = world('thinking');
+    w.write(failed());
+    w.tick(2_000);
+    w.chat.transcript.push({ kind: 'tool_data', name: 'mcp__phosphor__proposals', input: {}, data, at: T0 + 33_000 } as never);
+    w.setState('ready');
+    w.notices.flush(w.chat);
+    assert.equal(w.sent.length, 0, JSON.stringify(data));
+  }
+});
+
 test('a row still running, a row nobody proposed, and a row from another seat say nothing', () => {
   const w = world('ready');
   w.write(row({ status: 'approved' }));

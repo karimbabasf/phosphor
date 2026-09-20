@@ -88,15 +88,22 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     );
   }
 
+  /* Whether a tool's answer carried this row after it ended: proposal_status and a propose answer
+     with the id at the top, diagnose with it under `view`, the proposals page with it in the
+     list. The same three shapes the eval harness reads a status off (scripts/eval.ts). */
+  function carries(data: unknown, id: string): boolean {
+    if (data === null || typeof data !== 'object') return false;
+    const row = data as { id?: unknown; view?: { id?: unknown } | null; proposals?: unknown };
+    if (row.id === id) return true;
+    if (row.view !== null && typeof row.view === 'object' && row.view?.id === id) return true;
+    if (Array.isArray(row.proposals)) return row.proposals.some((entry) => carries(entry, id));
+    return Array.isArray(data) && data.some((entry) => carries(entry, id));
+  }
+
   function seen(chat: Chat, notice: Notice): boolean {
     for (const event of chat.transcript) {
       if (event.kind !== 'tool_data' || event.at < notice.at - SEEN_SLACK_MS) continue;
-      const data = event.data as { id?: unknown } | Array<{ id?: unknown }> | null;
-      if (Array.isArray(data)) {
-        if (data.some((row) => row !== null && typeof row === 'object' && row.id === notice.id)) return true;
-      } else if (data !== null && typeof data === 'object' && data.id === notice.id) {
-        return true;
-      }
+      if (carries(event.data, notice.id)) return true;
     }
     return false;
   }
