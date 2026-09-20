@@ -134,6 +134,20 @@ test('a confirmed move is told too, naming what arrived', () => {
   assert.match(w.sent[0], /2\.0097006159115414 wNEAR arrived/);
 });
 
+test('a late row is told once as late and again when it settles, because stalled settles forward', () => {
+  const w = world('ready');
+  const late = row({ id: 'd1', status: 'needs_reconciliation', stalledAt: new Date(T0 + 600_000).toISOString(), decidedBy: 'human', decidedAt: new Date(T0).toISOString(),
+    result: { ok: false, detail: 'polling', txids: ['0xintent'], evidence: { providerStage: 'PENDING_DEPOSIT', handle: 'h1' } } });
+  w.write(late);
+  assert.equal(w.sent.length, 1);
+  assert.match(w.sent[0], /Late, nothing has changed/);
+  w.write(late);
+  assert.equal(w.sent.length, 1, 'the same lateness twice');
+  w.write({ ...late, status: 'executed', settledAt: new Date(T0 + 900_000).toISOString(), result: { ok: true, detail: 'credited', txids: ['0xintent'] } });
+  assert.equal(w.sent.length, 2);
+  assert.match(w.sent[1], /has ended: Confirmed/);
+});
+
 test('an agent that is gone is not an error, and the notice is dropped', () => {
   const w = world('failed');
   w.write(failed());

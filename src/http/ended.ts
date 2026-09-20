@@ -43,8 +43,8 @@ export type EndedNotices = {
 
 type Notice = { id: string; text: string; at: number };
 
-// How many endings this process remembers having told. Beyond it the oldest are forgotten,
-// which risks a repeat about a row a thousand endings old and nothing worse.
+// How many endings this process remembers having told, as row and stage. Beyond it the oldest
+// are forgotten, which risks a repeat about a row a thousand endings old and nothing worse.
 const TOLD_MAX = 1000;
 
 // A read that landed this close to the row's ending still counts as having seen it: the
@@ -112,12 +112,16 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
   }
 
   function onWrite(p: Proposal): void {
-    if (typeof p.by !== 'string' || told.has(p.id)) return;
+    if (typeof p.by !== 'string') return;
     const v = deps.view(p);
     if (!v.terminal) return;
+    /* Keyed by the ending, not the row: `stalled` is terminal and settles forward, so a row told
+       as late is told again when the credit lands, and never twice for the same lateness. */
+    const key = `${p.id}:${v.stage}`;
+    if (told.has(key)) return;
     const chat = deps.chats().find((c) => c.session === p.by);
     if (chat === undefined) return;
-    remember(p.id);
+    remember(key);
     const notice: Notice = { id: p.id, text: words(p, v), at: now() };
     const state = chat.driver.status().state;
     if (state === 'ready') {
