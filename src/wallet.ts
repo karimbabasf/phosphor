@@ -9,6 +9,7 @@
 import type { LedgerSnapshot, WalletPlace, WalletRow, WalletView } from './types.ts';
 import { intentsUnreadWhy, type IntentsRead } from './ledger/intents.ts';
 import type { HlRead } from './ledger/hyperliquid.ts';
+import { pricedAs } from './proposals/draft.ts';
 
 // Below this a balance renders as $0.00, which is where a row stops carrying information.
 const DUST_USD = 0.005;
@@ -17,15 +18,12 @@ const DUST_USD = 0.005;
 export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyperliquid?: HlRead, now: number = Date.now()): WalletView {
   // Symbol -> unit price, from the snapshot's spot table.
   //
-  // KEYED UPPERCASE, AND WETH IS ETH. src/ledger/index.ts prices through exactly this
-  // normalisation and this map once did not, so a lookup only landed when the two sides
-  // happened to agree on case. The mapping is not a nicety either: WETH and ETH are the same
-  // dollar behind two contracts.
+  // KEYED UPPERCASE, AND A WRAPPER IS ITS COIN. src/ledger/index.ts prices through exactly
+  // this normalisation and this map once did not, so a lookup only landed when the two sides
+  // happened to agree on case. The wrapper table is the engine's (pricedAs), so what the window
+  // values and what the policy governs can never disagree about wNEAR or WETH.
   const priceBySymbol = new Map<string, number>();
-  const key = (symbol: string): string => {
-    const upper = String(symbol ?? '').toUpperCase();
-    return upper === 'WETH' ? 'ETH' : upper;
-  };
+  const key = (symbol: string): string => pricedAs(String(symbol ?? ''));
   for (const [symbol, price] of Object.entries(snapshot.prices)) {
     if (!priceBySymbol.has(key(symbol))) priceBySymbol.set(key(symbol), price);
   }

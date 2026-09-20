@@ -119,3 +119,10 @@ test('a failed price fetch keeps the old timestamp, so the value ages out of use
   assert.equal(second.prices.ETH, 3000, 'the last known price is still shown, which is right for a display');
   assert.equal(second.priceAsOf?.ETH, stampedAt, 'and it carries the time it was read, not the time it was reused');
 });
+
+test('wNEAR prices as NEAR, so a swap out of it is governed rather than refused as Infinity', () => {
+  const base = loadDemoLedger();
+  const snapshot = { ...base, prices: { ...base.prices, NEAR: 3.48 }, priceAsOf: { NEAR: Date.now() } };
+  assert.equal(priceOf(ctx, 'wNEAR', snapshot), 3.48);
+  assert.equal(usdOf(ctx, 'wNEAR', 2, snapshot), 6.96);
+});

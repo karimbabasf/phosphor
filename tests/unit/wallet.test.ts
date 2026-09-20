@@ -271,3 +271,16 @@ test('a balance the app could not price is never dust, however small', () => {
   assert.equal(row.priced, false);
   assert.equal(wallet.dustCount, 0, 'an unpriced holding never joins the dust');
 });
+
+test('wNEAR is priced off the NEAR spot: the wrapper is the same coin, as WETH is ETH', () => {
+  // Karim, 2026-09-20: 2.0097 wNEAR swapped into NEAR Intents read "not priced", the wallet
+  // total read $0.00 over seven dollars, and the next swap out was refused as unbounded.
+  const snap = { ...loadDemoLedger(), prices: { ...loadDemoLedger().prices, NEAR: 3.5 } };
+  const held = { accountId: '0xabc', assetId: 'nep141:wrap.near', symbol: 'wNEAR', originChain: 'near', amount: 2, decimals: 24 };
+  const wallet = buildWallet(snap, { holdings: [held], ok: true, fetchedAt: 'now' });
+  const row = wallet.rows.find(r => r.symbol === 'wNEAR');
+  assert.ok(row, 'the holding is a row');
+  assert.equal(row!.priced, true);
+  closeTo(row!.priceUsd, 3.5, 0.0001);
+  closeTo(row!.valueUsd, 7, 0.0001);
+});

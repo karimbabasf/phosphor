@@ -49,6 +49,17 @@ function priceIsFresh(snapshot: LedgerSnapshot, symbol: string): boolean {
   return Date.now() - asOf <= PRICE_STALENESS_MS;
 }
 
+/* A wrapper is the coin it wraps, priced. WETH is ETH behind an ERC-20, wNEAR is NEAR behind
+   wrap.near, and the spot table only carries the natives. Keyed uppercase because the wallet and
+   the engine both look up through this and used to disagree on case. Karim, 2026-09-20: 2.0097
+   wNEAR sat in NEAR Intents "not priced", the wallet read $0.00 over seven dollars, and the swap
+   out of it was refused as an unbounded amount. One table, both readers. */
+const WRAPPED_AS: Record<string, string> = { WETH: 'ETH', WNEAR: 'NEAR' };
+export function pricedAs(symbol: string): string {
+  const upper = symbol.toUpperCase();
+  return WRAPPED_AS[upper] ?? upper;
+}
+
 // What one unit of a symbol is worth, from what the app already knows: the risk table
 // (stables are 1.0 everywhere in this app), then the ledger's own holdings, then the
 // native spot table. null means this app cannot honestly price it.
@@ -66,8 +77,7 @@ export function priceOf(ctx: PCtx, symbol: string, snapshot: LedgerSnapshot): nu
   // meaningless. Observed live 2026-08-12: a 0.01 WETH swap (~$18.80) was governed as
   // $0.01, meaning 10 WETH (~$18,800) would have passed a $10,000 per-transaction cap.
   //
-  // WETH is ETH wrapped: one dollar value, two contracts.
-  const key = upper === 'WETH' ? 'ETH' : upper;
+  const key = pricedAs(upper);
   const spot = snapshot.prices[key];
   if (typeof spot === 'number' && Number.isFinite(spot) && spot > 0) {
     return priceIsFresh(snapshot, key) ? spot : null;
