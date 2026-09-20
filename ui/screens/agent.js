@@ -1814,9 +1814,24 @@
       var cards = window.PhosphorCards;
       if (!cards || typeof cards.kindFor !== 'function') return;
       openSteps = null;
+      var kind = cards.kindFor(event.name, event.data);
+      /* A move already on the thread is updated where it stands. The agent reads a proposal
+         back the moment it has proposed it, and the read used to draw the same card a second
+         time under "checking the approval", so every move took twice the scroll (Karim's
+         transcript, 2026-09-20). The card follows the state frame anyway; the read only
+         carries a fuller row, which the card takes. */
+      var shown = kind === 'move' ? moveBlockFor(event.data) : null;
+      if (shown) {
+        shown.data = event.data;
+        shown.input = shown.input || event.input;
+        shown.rev = (shown.rev || 0) + 1;
+        shown.open = true;
+        if (!replay) renderAll();
+        return;
+      }
       pushBlock({
         type: 'card',
-        kind: cards.kindFor(event.name, event.data),
+        kind: kind,
         name: event.name,
         input: event.input,
         data: event.data,
@@ -1929,6 +1944,18 @@
       moved = true;
     }
     if (moved) renderAll();
+  }
+
+  /* The move card on the thread for a row, by id, or null. The newest wins if a
+     transcript somehow carries two. */
+  function moveBlockFor(data) {
+    var id = data && typeof data.id === 'string' ? data.id : null;
+    if (id === null) return null;
+    for (var i = blocks.length - 1; i >= 0; i -= 1) {
+      var block = blocks[i];
+      if (block.type === 'card' && block.kind === 'move' && block.data && block.data.id === id) return block;
+    }
+    return null;
   }
 
   /* Whether the row says anything the card does not. The view is the first

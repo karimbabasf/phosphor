@@ -287,7 +287,10 @@ test('a batch read is the same card', () => {
   assert.equal(all(card, 'tcard-position').length, 2);
 });
 
-test('a proposed swap is a pending card that becomes confirmed when read back, and says why when it fails', () => {
+test('a proposed swap is one card, which the read-back updates in place, and a refusal says why', () => {
+  // Every move drew twice in the transcript of 2026-09-20: once for the propose, once for the
+  // proposal_status the agent read straight after, the same card under "checking the
+  // approval". The read updates the card that is already there.
   const world = build();
   world.ask('swap 0.05 sol to usdc');
   const input = { chain: 'intents', toChain: 'intents', fromSymbol: 'SOL', toSymbol: 'USDC', amountIn: 0.05, minAmountOut: 4.9 };
@@ -305,14 +308,16 @@ test('a proposed swap is a pending card that becomes confirmed when read back, a
     draft: { kind: 'swap', venue: 'intents-native', chain: 'intents', toChain: 'intents', fromSymbol: 'SOL', toSymbol: 'USDC', amountIn: 0.05, amountUsd: 5, minAmountOut: 4.9, quote: { amountOut: 4.98, feeUsd: 0.02, timeEstimateSec: 5 } },
     verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' }, result: { ok: true, detail: 'done', txids: ['abc'] },
   } });
-  card = world.cardNodes('move')[1];
+  assert.equal(world.cardNodes('move').length, 1, 'the read-back drew a second card for the same move');
+  card = world.cardNodes('move')[0];
   chip = all(card, 'tcard-state')[0];
   assert.equal(chip.getAttribute('data-state'), 'confirmed');
   assert.equal(chip.textContent, 'Confirmed');
   assert.ok(card.textContent.includes('4.98') && card.textContent.includes('fee $0.02'), card.textContent);
 
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: { id: 'p2', status: 'policy_refused', verdict: { outcome: 'refuse', reasons: ['Never more than $50 in one move.'], rule: 'maxPerTransactionUsd' }, simulation: null } });
-  card = world.cardNodes('move')[2];
+  assert.equal(world.cardNodes('move').length, 2, 'a different move is its own card');
+  card = world.cardNodes('move')[1];
   chip = all(card, 'tcard-state')[0];
   assert.equal(chip.getAttribute('data-state'), 'failed');
   assert.ok(card.textContent.includes('Never more than $50 in one move.'), 'the reason is not on the card: ' + card.textContent);
