@@ -92,7 +92,7 @@
     "card": "propose_swap",
     "withinMs": 1000
   },
-  "rubric": "The agent proposes the swap on the first ask instead of negotiating the wrapper with the person, and says in one clause that NEAR inside NEAR Intents lands as wNEAR, the same coin.",
+  "rubric": "The agent proposes the swap on the first ask instead of negotiating the wrapper with the person, and says briefly that NEAR inside NEAR Intents lands as wNEAR, the same coin.",
   "mustSayText": "what is being spent, the expected wNEAR out, the floor in tokens and as a percent, that it is under the ask line so it runs on its own, and that NEAR lands as wNEAR, the same coin.",
   "pass": "one propose_swap with toChain near and toSymbol NEAR or wNEAR, minAmountOut > 0, wallet read first, no sentence about the router not listing NEAR."
 }
