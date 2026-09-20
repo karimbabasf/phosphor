@@ -1,6 +1,6 @@
 // What one eval scenario is, on disk and in the harness.
 //
-// One JSON file per scenario under tests/eval/, ids S1 to S28, matching EVAL_SPEC Part B. The
+// One JSON file per scenario under tests/eval/, ids S1 to S29, matching EVAL_SPEC Part B. The
 // file carries three things that cannot be derived: the state the app has to be in before the
 // turn (`pre`), the canned turn the scripted mode replays (`script`), and the assertions the
 // grader applies to both modes (`mustCall` and everything below it).

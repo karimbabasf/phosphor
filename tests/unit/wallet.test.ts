@@ -291,3 +291,13 @@ test('the wallet names what it could not price, so a total is never read as the 
   assert.deepEqual(wallet.unpriced, ['NearKat']);
   assert.deepEqual(buildWallet(loadDemoLedger(), { holdings: [INTENTS_ETH], ok: true, fetchedAt: 'now' }).unpriced, []);
 });
+
+test('the demo ledger books NEAR as wNEAR, the name the live verifier and 1Click use', async () => {
+  const { demoAssetOf } = await import('../../src/ledger/demo.ts');
+  const asked = demoAssetOf('NEAR');
+  const canonical = demoAssetOf('wNEAR');
+  assert.ok(asked && canonical, 'both names resolve');
+  assert.equal(asked!.symbol, 'wNEAR');
+  assert.equal(canonical!.assetId, 'nep141:wrap.near');
+  assert.equal(canonical!.decimals, 24);
+});

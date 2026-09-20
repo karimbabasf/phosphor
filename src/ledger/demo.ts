@@ -88,8 +88,13 @@ export function demoAssetOf(symbol: string): DemoHolding | null {
   return known === undefined ? null : { ...known, amount: 0 };
 }
 
+// NEAR inside the verifier is wrap.near, which the live token list and the wallet row call wNEAR
+// (src/intents.ts, canonicalSymbol). Both names land on the one holding so the demo books what
+// the live app books.
+const WNEAR: DemoHolding = { symbol: 'wNEAR', originChain: 'near', assetId: 'nep141:wrap.near', amount: 0, decimals: 24 };
 const UNHELD_ASSETS: Record<string, DemoHolding> = {
-  NEAR: { symbol: 'NEAR', originChain: 'near', assetId: 'nep141:wrap.near', amount: 0, decimals: 24 },
+  NEAR: WNEAR,
+  WNEAR,
 };
 
 /* What the trading account has free, fixture plus moves. The account is unified, so this is

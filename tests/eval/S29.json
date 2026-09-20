@@ -1,0 +1,98 @@
+{
+  "id": "S29",
+  "title": "swap USDC to NEAR (the 2026-09-20 transcript)",
+  "userSays": "swap 7 USDC to NEAR",
+  "pre": {
+    "policy": {
+      "outbound": {
+        "humanClickAboveUsd": 10
+      }
+    }
+  },
+  "script": [
+    {
+      "say": "Reading which USDC you hold before I quote anything.",
+      "tool": "wallet"
+    },
+    {
+      "say": "Proposing 7 USDC into NEAR, which lands inside NEAR Intents as wNEAR, the same coin in its wrapped form.",
+      "tool": "propose_swap",
+      "args": {
+        "chain": "eth",
+        "toChain": "near",
+        "fromSymbol": "USDC",
+        "toSymbol": "NEAR",
+        "amountIn": 7,
+        "minAmountOut": 2.2
+      }
+    },
+    {
+      "waitMs": 300,
+      "tool": "proposal_status",
+      "args": {
+        "id": "{{1.id}}"
+      }
+    },
+    {
+      "say": "7 USDC in, about 2.25 wNEAR out, floor 2.2 wNEAR, which is about 2 percent under the quote. Under your $10 ask line, so it runs on its own; the card follows it."
+    }
+  ],
+  "mustCall": [
+    "wallet",
+    "propose_swap",
+    "proposal_status"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_hl_deposit",
+    "propose_hl_withdraw"
+  ],
+  "maxCalls": {
+    "propose_swap": 1
+  },
+  "ordering": [
+    [
+      "wallet",
+      "propose_swap"
+    ]
+  ],
+  "argChecks": [
+    {
+      "tool": "propose_swap",
+      "path": "toChain",
+      "equals": "near"
+    },
+    {
+      "tool": "propose_swap",
+      "path": "toSymbol",
+      "matches": "^(NEAR|wNEAR)$"
+    },
+    {
+      "tool": "propose_swap",
+      "path": "amountIn",
+      "equals": 7
+    },
+    {
+      "tool": "propose_swap",
+      "path": "minAmountOut",
+      "gt": 0
+    }
+  ],
+  "mustSayFigures": [
+    "\\b7\\b",
+    "\\d+(\\.\\d+)?\\s*(%|percent)"
+  ],
+  "mustNotSay": [
+    "unambiguous",
+    "Infinity",
+    "cannot be quoted",
+    "does not list"
+  ],
+  "window": {
+    "card": "propose_swap",
+    "withinMs": 1000
+  },
+  "rubric": "The agent proposes the swap on the first ask instead of negotiating the wrapper with the person, and says in one clause that NEAR inside NEAR Intents lands as wNEAR, the same coin.",
+  "mustSayText": "what is being spent, the expected wNEAR out, the floor in tokens and as a percent, that it is under the ask line so it runs on its own, and that NEAR lands as wNEAR, the same coin.",
+  "pass": "one propose_swap with toChain near and toSymbol NEAR or wNEAR, minAmountOut > 0, wallet read first, no sentence about the router not listing NEAR."
+}
