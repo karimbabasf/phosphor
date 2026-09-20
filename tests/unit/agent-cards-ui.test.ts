@@ -357,10 +357,10 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
     view: {
       id: 'p9', kind: 'swap', stage: 'confirmed', stageLabel: 'Confirmed', providerStage: 'SUCCESS',
       waitingOn: null, terminal: true, outcome: 'confirmed',
-      createdAt: '2026-09-18T10:35:00Z', decidedAt: '2026-09-18T10:36:00Z', settledAt: '2026-09-18T10:38:10Z',
+      createdAt: '2026-09-18T10:35:00Z', decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', settledAt: '2026-09-18T10:38:10Z',
       lastChangeAt: '2026-09-18T10:38:10Z', elapsedSec: 190, sinceChangeSec: 0, typicalSec: 45,
       deadlineAt: null, correlationId: 'corr-9', error: null, txs: [],
-      money: { symbol: 'USDC', amountIn: '2', feeUsd: '0.01', amountOut: '0.0178', fromPocket: 'NEAR Intents', toPocket: 'NEAR Intents', beforeUsd: null, afterUsd: null },
+      money: { symbol: 'USDC', toSymbol: 'SOL', amountIn: '2', feeUsd: '0.01', amountOut: '0.0178', fromPocket: 'NEAR Intents', toPocket: 'NEAR Intents', beforeUsd: null, afterUsd: null },
     },
   });
   world.proposals([settled]);
@@ -369,6 +369,13 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   assert.equal(chip.getAttribute('data-state'), 'confirmed');
   assert.equal(chip.textContent, 'Confirmed');
   assert.ok(card.textContent.includes('0.0178') && card.textContent.includes('fee $0.01'), 'the live draft did not reach the card: ' + card.textContent);
+  /* The out leg is the coin bought, inside the pocket it sits in. It read "0.0178 USDC" and
+     "to NEAR Intents" off the view's one symbol and its pocket label (Karim, 2026-09-20). */
+  const legs = byAttr(card, 'data-leg');
+  const out = legs.find((n: Any) => n.getAttribute('data-leg') === 'to');
+  assert.ok(out, 'no out leg');
+  assert.ok(out.textContent.includes('0.0178 SOL'), out.textContent);
+  assert.ok(out.textContent.includes('inside NEAR Intents'), out.textContent);
   const lines = all(card, 'tcard-line').map((n: Any) => n.textContent);
   assert.ok(lines.some((t: string) => t.startsWith('Confirmed at')), lines.join(' | '));
   assert.ok(lines.some((t: string) => t.startsWith('You clicked at')), lines.join(' | '));
@@ -382,6 +389,39 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   world.proposals([settled]);
   assert.equal(world.cards.foldOf(world.cardNodes('move')[0]).isOpen(), false);
   assert.equal(world.cardNodes('move').length, 1);
+});
+
+test('a card says who decided: a click is the human\'s, an auto-run is the rules\', a refusal by a rule is nobody\'s click', () => {
+  // The transcript of 2026-09-20: three policy refusals and one $7 swap that ran on its own
+  // under the ask line all read "You clicked at", on the product whose claim is that the
+  // human decides.
+  const world = build();
+  const view = (over: Record<string, unknown>) => ({
+    id: 'p5', kind: 'swap', waitingOn: null, terminal: true, createdAt: '2026-09-20T22:41:00Z',
+    lastChangeAt: '2026-09-20T22:41:15Z', elapsedSec: 15, sinceChangeSec: 0, typicalSec: 45, deadlineAt: null,
+    correlationId: null, error: null, txs: [],
+    money: { symbol: 'USDC', toSymbol: 'wNEAR', amountIn: '7.0069', feeUsd: '0.03', amountOut: '2.0097', fromPocket: 'NEAR Intents', toPocket: 'NEAR Intents', beforeUsd: null, afterUsd: null },
+    ...over,
+  });
+  const row = (status: string, decidedBy: string, extra: Record<string, unknown>) => ({
+    id: 'p5', kind: 'swap', status, createdAt: '2026-09-20T22:41:00Z', decidedAt: '2026-09-20T22:41:00Z', decidedBy,
+    draft: { kind: 'swap', venue: 'intents-native', chain: 'arb', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'wNEAR', amountIn: 7.0069, amountUsd: 7, minAmountOut: 1.9889 },
+    verdict: { outcome: 'allow', reasons: [] }, simulation: { ok: true, summary: 'swap' },
+    ...extra,
+  });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { chain: 'arb', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'wNEAR', amountIn: 7.0069, minAmountOut: 1.9889 }, data: { id: 'p5', status: 'executing', verdict: { outcome: 'allow', reasons: [] }, simulation: { ok: true, summary: 'swap' } } });
+
+  world.proposals([row('executed', 'policy', { settledAt: '2026-09-20T22:41:15Z', result: { ok: true, detail: 'done' },
+    view: view({ stage: 'confirmed', stageLabel: 'Confirmed', outcome: 'confirmed', decidedAt: '2026-09-20T22:41:00Z', decidedBy: 'policy', settledAt: '2026-09-20T22:41:15Z' }) })]);
+  let lines = all(world.cardNodes('move')[0], 'tcard-line').map((n: Any) => n.textContent);
+  assert.ok(lines.some((t: string) => t.startsWith('Your rules allowed it at')), lines.join(' | '));
+  assert.ok(!lines.some((t: string) => t.startsWith('You clicked at')), lines.join(' | '));
+
+  world.proposals([row('policy_refused', 'policy', { verdict: { outcome: 'refuse', reasons: ['This swap cannot be valued in dollars.'], rule: 'invalid_amount' },
+    view: view({ stage: 'refused', stageLabel: 'Refused', outcome: 'refused', decidedAt: '2026-09-20T22:41:00Z', decidedBy: 'policy', settledAt: '2026-09-20T22:41:00Z', error: { code: 'invalid_amount', message: 'This swap cannot be valued in dollars.' } }) })]);
+  lines = all(world.cardNodes('move')[0], 'tcard-line').map((n: Any) => n.textContent);
+  assert.ok(!lines.some((t: string) => t.startsWith('You clicked at') || t.startsWith('Your rules allowed')), lines.join(' | '));
+  assert.ok(lines.some((t: string) => t.startsWith('Ended at')), lines.join(' | '));
 });
 
 test('a move card that was refused by the human says so once the frame says so', () => {

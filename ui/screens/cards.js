@@ -822,17 +822,32 @@
   function viewLegs(view, fallback) {
     var money = isObject(view.money) ? view.money : {};
     var symbol = String(money.symbol || (fallback.from && fallback.from.symbol) || '');
+    /* The coin that arrives is not the coin spent on a swap. Both legs used to read the one
+       symbol, so a confirmed swap into wNEAR said "2.0097 USDC" (2026-09-20). */
+    var toSymbol = String(money.toSymbol || (fallback.to && fallback.to.symbol) || symbol);
     var from = money.amountIn === null || money.amountIn === undefined ? fallback.from : {
       symbol: symbol,
-      place: money.fromPocket || (fallback.from && fallback.from.place) || '',
+      place: pocketId(money.fromPocket) || (fallback.from && fallback.from.place) || '',
       amount: num(money.amountIn)
     };
     var to = money.amountOut === null || money.amountOut === undefined ? fallback.to : {
-      symbol: symbol,
-      place: money.toPocket || (fallback.to && fallback.to.place) || '',
+      symbol: toSymbol,
+      place: pocketId(money.toPocket) || (fallback.to && fallback.to.place) || '',
       amount: num(money.amountOut)
     };
     return { from: from, to: to, feeUsd: money.feeUsd === null || money.feeUsd === undefined ? fallback.feeUsd : num(money.feeUsd) };
+  }
+
+  /* The view names a pocket by its label ("NEAR Intents", "Hyperliquid") and a draft names it
+     by its id; legRow decides "inside" against the id, so a label has to come back to one or
+     the out leg of a swap reads "to NEAR Intents" over money that never left it. */
+  function pocketId(pocket) {
+    if (!pocket) return '';
+    var text = String(pocket);
+    for (var id in CHAIN_NAMES) {
+      if (Object.prototype.hasOwnProperty.call(CHAIN_NAMES, id) && CHAIN_NAMES[id] === text) return id;
+    }
+    return text;
   }
 
   /* The one live line: how long this stage has run, how long it usually takes,
@@ -917,7 +932,12 @@
       var done = view.stage === 'confirmed';
       factLine(body, done ? 'Confirmed at' : 'Ended at', clock(view.settledAt), done ? 'up' : null);
     }
-    if (view.decidedAt) factLine(body, 'You clicked at', clock(view.decidedAt));
+    /* Who decided is the fact, and the clock is only its time. A policy decision carries a
+       decidedAt too (an auto-run under the ask line, a refusal by a rule), and reading the clock
+       alone said the human had clicked on every one of them (Karim's transcript, 2026-09-20).
+       A refusal by a rule names no decider: "Ended at" and the reason above already say it. */
+    if (view.decidedAt && view.decidedBy === 'human') factLine(body, 'You clicked at', clock(view.decidedAt));
+    else if (view.decidedAt && view.decidedBy === 'policy' && view.stage !== 'refused') factLine(body, 'Your rules allowed it at', clock(view.decidedAt));
     if (view.providerStage) factLine(body, 'The router calls this', String(view.providerStage));
     if (view.correlationId) factLine(body, 'Trace', String(view.correlationId));
     return parts.card;

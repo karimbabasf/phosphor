@@ -175,6 +175,28 @@ test('the money block names both pockets and never invents a figure', () => {
   assert.equal(settled.money.amountOut, '7.0623');
 });
 
+test('the view says who decided, so a card never claims a click the policy made', () => {
+  // Karim's transcript, 2026-09-20: three refusals and one auto-run swap all read "You clicked
+  // at", on the product whose claim is that the human decides.
+  assert.equal(viewOf({}).decidedBy, null, 'undecided is nobody');
+  assert.equal(viewOf({ status: 'approved', decidedBy: 'human', decidedAt: '2026-09-18T10:01:30.000Z' }).decidedBy, 'human');
+  assert.equal(viewOf({ status: 'policy_refused', decidedBy: 'policy', decidedAt: '2026-09-18T10:00:01.000Z', verdict: { outcome: 'refuse', reasons: ['no'], rule: 'invalid_amount' } }).decidedBy, 'policy');
+});
+
+test('the money block names the coin that arrives, which on a swap is not the coin spent', () => {
+  const swapped = viewOf({
+    kind: 'swap',
+    draft: {
+      kind: 'swap', venue: 'intents-native', chain: 'arb', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'wNEAR',
+      amountIn: 7.006872, amountUsd: 7, minAmountOut: 1.9889, from: '0x1111111111111111111111111111111111111111',
+      to: '0x1111111111111111111111111111111111111111', counterparty: 'intents-native', quote: null,
+    },
+  });
+  assert.equal(swapped.money.symbol, 'USDC');
+  assert.equal(swapped.money.toSymbol, 'wNEAR');
+  assert.equal(CASES.crediting().money.toSymbol, 'USDC', 'every other kind arrives as what it left');
+});
+
 // ---------- the sentence ----------
 //
 // What the move IS, in one line, per kind. The card prints it and the agent quotes it, so the

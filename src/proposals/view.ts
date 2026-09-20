@@ -74,6 +74,10 @@ export type ProposalView = {
   outcome: OutcomeState;
   createdAt: string;
   decidedAt: string | null;
+  /* Who decided, and it is the fact the "You clicked at" line turns on. A policy decision (an
+     auto-run under the ask line, a refusal by a rule) carries a decidedAt too, and a card that
+     read only the clock said the human had clicked on every one of them. */
+  decidedBy: 'human' | 'policy' | null;
   settledAt: string | null;
   lastChangeAt: string; // when `stage` last changed, not when the row was last written
   elapsedSec: number; // now - createdAt
@@ -81,7 +85,8 @@ export type ProposalView = {
   typicalSec: number | null;
   deadlineAt: string | null; // when this row flips itself to `stalled`; null for kinds with no deadline
   money: {
-    symbol: string;
+    symbol: string; // what is spent
+    toSymbol: string; // what arrives: the bought coin on a swap, the same coin everywhere else
     amountIn: string | null;
     feeUsd: string | null;
     amountOut: string | null;
@@ -251,6 +256,12 @@ function symbolOf(draft: WriteDraft): string {
   if (draft.kind === 'trade') return draft.op === 'open' ? draft.plan.symbol : 'USDC';
   const symbol = (draft as { symbol?: unknown }).symbol;
   return typeof symbol === 'string' ? symbol : '';
+}
+
+// The coin the move lands as. Only a swap changes coins; the card drew its out leg with the
+// spent symbol and printed "2.0097 USDC" over two wNEAR (Karim, 2026-09-20).
+function toSymbolOf(draft: WriteDraft): string {
+  return draft.kind === 'swap' ? draft.toSymbol : symbolOf(draft);
 }
 
 function amountInOf(draft: WriteDraft): string | null {
@@ -442,6 +453,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     outcome: outcomeOf(p, ctx.plan?.(p) ?? null).state,
     createdAt: p.createdAt,
     decidedAt: p.decidedAt ?? null,
+    decidedBy: p.decidedBy === 'human' || p.decidedBy === 'policy' ? p.decidedBy : null,
     /* WHEN IT ENDED, and null while it has not. The row is stamped the moment the rail stops
        answering, which is BEFORE the venue has shown the money: a row in `crediting` carries a
        stamp and is not settled. The card prints this as "Confirmed at", so it read "Confirmed
@@ -456,6 +468,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     deadlineAt: deadlineAtOf(p),
     money: {
       symbol: symbolOf(p.draft),
+      toSymbol: toSymbolOf(p.draft),
       amountIn: amountInOf(p.draft),
       feeUsd: feeUsdOf(p),
       amountOut: amountOutOf(p),
