@@ -966,8 +966,11 @@
        A refusal by a rule names no decider: "Ended at" and the reason above already say it. */
     if (view.decidedAt && view.decidedBy === 'human') factLine(body, 'You clicked at', clock(view.decidedAt));
     else if (view.decidedAt && view.decidedBy === 'policy' && view.stage !== 'refused') factLine(body, 'Your rules allowed it at', clock(view.decidedAt));
-    if (view.providerStage) factLine(body, 'The router calls this', String(view.providerStage));
-    if (view.correlationId) factLine(body, 'Trace', String(view.correlationId));
+    /* The router's own word is evidence on a move that went wrong or is late, and noise under
+       a chip that already says Confirmed. The reference stays whatever happened: it is the
+       handle support asks for. */
+    if (view.providerStage && view.stage !== 'confirmed') factLine(body, 'The router calls this', String(view.providerStage));
+    if (view.correlationId) factLine(body, 'Reference', String(view.correlationId));
     return parts.card;
   }
 

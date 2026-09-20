@@ -411,8 +411,21 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   assert.ok(lines.some((t: string) => t.startsWith('Confirmed at')), lines.join(' | '));
   assert.ok(lines.some((t: string) => t.startsWith('You clicked at')), lines.join(' | '));
   assert.equal(lines.filter((t: string) => t.startsWith('Confirmed at')).length, 1);
-  assert.ok(lines.some((t: string) => t.includes('SUCCESS')), 'the router stage is not in the fold: ' + lines.join(' | '));
+  /* The router's own word is evidence when a move went wrong and noise under a chip that
+     already says Confirmed ("The router calls this SUCCESS", 2026-09-20). The reference stays:
+     it is the handle support asks for, under a plain label. */
+  assert.ok(!lines.some((t: string) => t.includes('SUCCESS')), 'the router word is under a confirmed chip: ' + lines.join(' | '));
+  assert.ok(lines.some((t: string) => t.startsWith('Reference') && t.includes('corr-9')), lines.join(' | '));
+  assert.ok(!lines.some((t: string) => t.startsWith('Trace')), lines.join(' | '));
   assert.deepEqual(world.blocks().map((b) => b.className), before, 'the redraw moved rows around');
+
+  const refunded = row('failed', {
+    decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: false, detail: 'refunded' }, settledAt: '2026-09-18T10:40:00Z',
+    view: { ...settled.view, stage: 'failed', stageLabel: 'Failed', outcome: 'failed', providerStage: 'REFUNDED', settledAt: '2026-09-18T10:40:00Z', error: { code: 'refunded', message: 'The router refunded it.' } },
+  });
+  world.proposals([refunded]);
+  const failedLines = all(world.cardNodes('move')[0], 'tcard-line').map((n: Any) => n.textContent);
+  assert.ok(failedLines.some((t: string) => t.includes('REFUNDED')), 'the router word is evidence on a failed move: ' + failedLines.join(' | '));
 
   // The same frame again is nothing new, and a card the person closed stays closed across a redraw.
   const fold = world.cards.foldOf(card);
