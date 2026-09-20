@@ -290,6 +290,17 @@ test('a rail with a nonsense amount is refused rather than treated as zero', () 
   }
 });
 
+test('an amount the app could not price is refused in words that name the coin, never as Infinity', () => {
+  // Karim, 2026-09-20: "swap declares Infinity USD, which cannot be checked against a limit"
+  // is what the card said over 2.0097 wNEAR the app had no price for.
+  const v = evaluate(swap({ fromSymbol: 'wNEAR', toSymbol: 'ETH', amountUsd: Number.POSITIVE_INFINITY }), ctxWith());
+  assert.equal(v.outcome, 'refuse');
+  const last = v.reasons[v.reasons.length - 1];
+  assert.ok(!/infinity/i.test(last), last);
+  assert.match(last, /no price for wNEAR/);
+  assert.match(last, /cannot be valued in dollars/);
+});
+
 // ---------- the rules that outrank everything ----------
 
 test('the kill switch refuses every rail kind', () => {

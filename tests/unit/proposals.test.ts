@@ -456,3 +456,51 @@ test('a swap into NEAR on near is drafted as wNEAR, the name the wallet and the 
   assert.equal(p.draft.toSymbol, 'wNEAR');
   assert.equal(p.draft.fromSymbol, 'USDC');
 });
+
+// ---------- a swap is valued on whichever side the app can price ----------
+// The engine measures in dollars. USDC into an unpriced token was allowed (the USDC side priced
+// it), and the same token back into ETH was refused as unbounded, although ETH was priced and
+// the quote said how much would arrive: money that could get in and not out (Karim, 2026-09-20).
+
+function quotingSwapRail(receives: string) {
+  const base = railThat('swap', async (): Promise<RailResult> => ({ ok: true, detail: 'swapped', txids: ['0xswap'] }));
+  return {
+    ...base,
+    async simulate() {
+      return { ok: true, summary: `quoted ${receives}`, swap: { receives, receivesAtLeast: receives, feeUsd: 0.02, etaSeconds: 5 } };
+    },
+  };
+}
+
+test('an unpriced token into a priced one is valued off the quote, and lands', async () => {
+  const h = makeCtx({ rails: [quotingSwapRail('5.25')], intentsUsdc: 100_000 });
+  const p = await h.svc.proposeSwap({
+    chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
+    amountIn: 1000, minAmountOut: 5,
+  });
+  assert.ok(p.draft.kind === 'swap');
+  assert.equal(p.draft.amountUsd, 5.25, 'a dollar per USDC, off the quote');
+  assert.notEqual(p.verdict.outcome, 'refuse', JSON.stringify(p.verdict));
+  assert.ok(p.simulation?.ok, 'the quote that priced it rides on the row');
+});
+
+test('a swap with no price on either side is still refused', async () => {
+  const h = makeCtx({ rails: [quotingSwapRail('5')], intentsUsdc: 100_000 });
+  const p = await h.svc.proposeSwap({
+    chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'RIDDLE',
+    amountIn: 1000, minAmountOut: 1,
+  });
+  assert.equal(p.verdict.outcome, 'refuse');
+  assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'invalid_amount');
+});
+
+test('a quote that fails leaves the unpriced swap refused as simulation_required, not as invalid_amount', async () => {
+  const failing = { ...railThat('swap', async (): Promise<RailResult> => ({ ok: false, detail: 'never' })), async simulate() { return { ok: false, summary: 'no route', error: 'no route' }; } };
+  const h = makeCtx({ rails: [failing], intentsUsdc: 100_000 });
+  const p = await h.svc.proposeSwap({
+    chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
+    amountIn: 1000, minAmountOut: 5,
+  });
+  assert.equal(p.verdict.outcome, 'refuse');
+  assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'simulation_required');
+});

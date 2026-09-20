@@ -38,6 +38,7 @@ import type { RailRegistry } from './index.ts';
 import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS } from './hypercore-deposit.ts';
 import { demoAssetOf, demoAvailableUsdc, demoHolding, loadDemoLedger, moveDemoBalance } from '../ledger/demo.ts';
 import type { RailKind } from './kinds.ts';
+import { pricedAs } from '../proposals/draft.ts';
 
 // ---------- the knobs ----------
 
@@ -180,7 +181,7 @@ const DOLLARS = new Set(['USDC', 'USDT', 'DAI', 'USD']);
 function demoPrice(symbol: string): number | null {
   const upper = symbol.trim().toUpperCase();
   if (DOLLARS.has(upper)) return 1;
-  const price = loadDemoLedger().prices[upper === 'WETH' ? 'ETH' : upper];
+  const price = loadDemoLedger().prices[pricedAs(upper)];
   return typeof price === 'number' && price > 0 ? price : null;
 }
 

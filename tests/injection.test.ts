@@ -829,7 +829,9 @@ test('no execution in the audit log lacks a prior approval', () => {
 // XUSD is in the demo fixture and deliberately absent from the risk table, so the app has no
 // price for it. Before 2026-08-12 it was priced at a dollar a token, which is how a 10 WETH move
 // came to be governed as $10. An unpriceable token is one the dollar caps cannot bound, so it
-// is refused rather than guessed at.
+// is refused rather than guessed at. Since 2026-09-20 a swap INTO a priced coin is valued off
+// what the quote says arrives; here the demo quoter cannot price XUSD either, so the quote
+// fails and the refusal is the simulation's. Either way, nothing is worth a dollar by default.
 test('a token the app cannot price is refused, not assumed to be worth a dollar', async () => {
   const refused = await callTool('propose_swap', {
     venue: 'intents-native',
@@ -841,7 +843,8 @@ test('a token the app cannot price is refused, not assumed to be worth a dollar'
   });
 
   assert.equal(refused.verdict.outcome, 'refuse');
-  assert.equal(refused.verdict.rule, 'invalid_amount');
+  assert.ok(['invalid_amount', 'simulation_required'].includes(refused.verdict.rule), refused.verdict.rule);
+  assert.ok(!refused.verdict.reasons.some((r: string) => r.includes('$100.00')), 'priced at a dollar a token');
 });
 
 // ---------- the trade surface, attacked from both sides of the proxy ----------

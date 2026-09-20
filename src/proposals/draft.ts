@@ -9,7 +9,9 @@ import type {
   LedgerSnapshot,
   PolicyPatch,
   Proposal,
+  Rail,
   SimulationResult,
+  SwapDraft,
   WriteDraft,
 } from '../types.ts';
 import { evaluate } from '../policy/engine.ts';
@@ -143,14 +145,47 @@ export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons
 export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, clientKey?: ClientKey): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
+  const rail = ctx.rails.for(draft);
+
+  /* A SWAP IS VALUED ON WHICHEVER SIDE THE APP CAN PRICE. The draft arrives priced off what it
+     spends, and a coin the app has no price for arrives as Infinity. When the coin it BUYS is
+     priced, the dry quote says how much of it arrives, and that is a dollar figure the engine
+     can govern: the quote is the venue's number, never the agent's, and the agent's own floor
+     (minAmountOut) is deliberately not used, because a floor chosen by the caller could be set
+     small to make the move look small. So the quote is fetched before the engine runs, the
+     draft is repriced off it, and the same quote rides on the row. Without this, USDC into an
+     unpriced token was allowed and the same token back into ETH was refused as unbounded:
+     money that could get in and not out (Karim, 2026-09-20, 2.0097 wNEAR). */
+  let simulation: SimulationResult | null = null;
+  if (rail !== null && draft.kind === 'swap' && !Number.isFinite(draft.amountUsd) && priceOf(ctx, draft.toSymbol, snapshot) !== null) {
+    simulation = await simulateSafely(rail, kind, draft);
+    if (!simulation.ok) {
+      return land(ctx, 
+        newProposal(
+          kind,
+          draft,
+          simulation,
+          {
+            outcome: 'refuse',
+            reasons: [
+              `This swap spends ${draft.fromSymbol}, which the app cannot price, so it is valued off what the quote says arrives.`,
+              `Simulation failed, so nothing is signed: ${simulation.error ?? simulation.summary}`,
+            ],
+            rule: 'simulation_required',
+          },
+          clientKey,
+        ),
+      );
+    }
+    draft = pricedOffQuote(ctx, draft, simulation, snapshot);
+  }
 
   // The engine runs first because it is pure and its refusals are terminal. An unlisted
   // venue, the kill switch or a cap breach settles the proposal without spending the
   // round trips a rail simulation costs.
   const verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
-  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, null, verdict, clientKey));
+  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, simulation, verdict, clientKey));
 
-  const rail = ctx.rails.for(draft);
   if (rail === null) {
     return land(ctx, 
       newProposal(
@@ -167,13 +202,7 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, c
     );
   }
 
-  let simulation: SimulationResult;
-  try {
-    simulation = await rail.simulate(draft);
-  } catch (err) {
-    const message = errText(err);
-    simulation = { ok: false, summary: `${kind} simulation threw: ${message}`, error: message };
-  }
+  if (simulation === null) simulation = await simulateSafely(rail, kind, draft);
 
   // policy.outbound.simulateBeforeSign is a constant true and the UI says so, and this is
   // where it is enforced ('simulation_required'). A refusal rather than a pending proposal
@@ -196,6 +225,26 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, c
   }
 
   return land(ctx, newProposal(kind, draft, simulation, verdict, clientKey));
+}
+
+// A rail that throws inside simulate is a failed simulation, not a crashed proposal.
+async function simulateSafely(rail: Rail, kind: RailKind, draft: RailDraft): Promise<SimulationResult> {
+  try {
+    return await rail.simulate(draft);
+  } catch (err) {
+    const message = errText(err);
+    return { ok: false, summary: `${kind} simulation threw: ${message}`, error: message };
+  }
+}
+
+// The swap draft again, valued in dollars off what the quote says arrives times the app's own
+// price for that coin. A quote with no usable figure leaves the draft as it was, unpriced, and
+// the engine refuses it in words.
+function pricedOffQuote(ctx: PCtx, draft: SwapDraft, simulation: SimulationResult, snapshot: LedgerSnapshot): SwapDraft {
+  const receives = Number(simulation.swap?.receives);
+  if (!Number.isFinite(receives) || receives <= 0) return draft;
+  const usd = usdOf(ctx, draft.toSymbol, receives, snapshot);
+  return Number.isFinite(usd) ? { ...draft, amountUsd: usd } : draft;
 }
 
 // ---------- public surface ----------

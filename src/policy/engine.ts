@@ -554,6 +554,16 @@ function isRailDraft(draft: WriteDraft): draft is RailDraft {
 // Where the funds actually go. This is the address the allowlist has to bless, and it is
 // a contract we chose rather than an arbitrary recipient, which is why rails get an
 // allowlist check on the venue instead of the leg-destination check.
+// The coins a rail draft moves, for the sentence that says the app could not price them. A swap
+// names both legs because the service values it off whichever side it can price, so reaching
+// here means neither did.
+function unpricedOf(draft: RailDraft): string {
+  if (draft.kind === 'swap') return `${draft.fromSymbol} or ${draft.toSymbol}`;
+  if (draft.kind === 'trade') return draft.op === 'open' ? draft.plan.symbol : 'USDC';
+  if (draft.kind === 'hl_withdraw') return 'USDC';
+  return draft.symbol;
+}
+
 function counterpartyOf(draft: RailDraft): string {
   return draft.counterparty;
 }
@@ -779,9 +789,19 @@ function compositionProblem(draft: RailDraft, policy: Policy, ctx: EngineCtx, re
 function evaluateRail(draft: RailDraft, policy: Policy, ctx: EngineCtx, reasons: string[]): Verdict {
   const usd = draft.amountUsd;
   const counterparty = counterpartyOf(draft);
-  reasons.push(`${draft.kind} of ${money(usd)} to ${counterparty}.`);
+  reasons.push(Number.isFinite(usd) ? `${draft.kind} of ${money(usd)} to ${counterparty}.` : `${draft.kind} to ${counterparty}, unpriced.`);
 
-  if (!Number.isFinite(usd) || usd <= 0) {
+  /* A draft the proposal service could not price arrives as Infinity (src/proposals/draft.ts,
+     usdOf), never NaN, so that it fails every cap instead of passing all of them. The word for
+     it on a card is not Infinity: it is the coin the app has no price for. */
+  if (!Number.isFinite(usd)) {
+    return refusal(
+      reasons,
+      'invalid_amount',
+      `This ${draft.kind} cannot be valued in dollars: the app has no price for ${unpricedOf(draft)}, so no limit can be checked and it is refused.`,
+    );
+  }
+  if (usd <= 0) {
     return refusal(reasons, 'invalid_amount', `${draft.kind} declares ${usd} USD, which cannot be checked against a limit.`);
   }
 
