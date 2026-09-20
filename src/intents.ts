@@ -97,16 +97,23 @@ export function assetIdFor(
 // of one chain) returns null rather than picking one. A native asset id decides where real
 // money goes, so "the answer was not unique" has to be a refusal and not a coin flip.
 export function nativeAssetIdFor(chain: ChainId, list: OneClickToken[]): string | null {
+  const matches = nativeAssetMatches(chain, list);
+  return matches.length === 1 ? matches[0].assetId : null;
+}
+
+// Every entry claiming to be the gas asset of a chain. Exposed beside the single-answer form so
+// a refusal can say how many it found: zero and two are different facts with different fixes,
+// and "unambiguously" was being said about zero (NEAR on near, 2026-09-20).
+function nativeAssetMatches(chain: ChainId, list: OneClickToken[]): OneClickToken[] {
   const blockchain = CHAIN_TO_BLOCKCHAIN[chain];
   const spec = NATIVE_ASSET[chain];
-  if (spec === undefined) return null;
-  const matches = list.filter(
+  if (spec === undefined) return [];
+  return list.filter(
     (t) =>
       t.blockchain.toLowerCase() === blockchain &&
       t.symbol === spec.symbol &&
       (t.contractAddress === undefined || t.contractAddress === ''),
   );
-  return matches.length === 1 ? matches[0].assetId : null;
 }
 
 // The gas asset per chain. A table in this repo, not a lookup on the wire: an agent naming
@@ -121,9 +128,23 @@ export const NATIVE_ASSET: Partial<Record<ChainId, { symbol: string; decimals: n
   near: { symbol: 'NEAR', decimals: 24 },
 };
 
+/* THE NAME A COIN GOES BY INSIDE THE VERIFIER. NEAR Intents holds NEAR as wrap.near, which
+   1Click lists under the symbol wNEAR and nothing else: there is no native NEAR entry on the
+   list at all (checked live 2026-09-20). A person who says "NEAR" means that coin, so the app
+   books it under the name the venue and the wallet row will use, rather than refusing the one
+   asset a NEAR product is about. The table is per chain and holds only wrappers that ARE the
+   coin: nothing here may map one asset to a different one. */
+const INTENTS_SYMBOL_ALIAS: Partial<Record<ChainId, Record<string, string>>> = {
+  near: { NEAR: 'wNEAR' },
+};
+export function canonicalSymbol(chain: ChainId, symbol: string): string {
+  return INTENTS_SYMBOL_ALIAS[chain]?.[symbol] ?? symbol;
+}
+
 // One place that turns "USDC on base" or "ETH on eth" into the pair a quote needs. The token
 // registry is tried first and the gas-asset table second, so a chain that lists a symbol
-// explicitly always wins over the fallback and no registry entry can be shadowed.
+// explicitly always wins over the fallback and no registry entry can be shadowed. The symbol is
+// canonicalised first, so "NEAR" on near reaches the registry as wNEAR.
 //
 // It exists because both intents rails needed the same two-step lookup and neither could
 // express a gas asset without it: data/tokens.json holds ERC-20 contracts, and a native asset
@@ -132,10 +153,11 @@ export const NATIVE_ASSET: Partial<Record<ChainId, { symbol: string; decimals: n
 // eth_call to the string "native".
 export function resolveAsset(
   chain: ChainId,
-  symbol: string,
+  asked: string,
   tokens: TokensFile,
   list: OneClickToken[],
 ): { assetId: string; decimals: number; native: boolean } {
+  const symbol = canonicalSymbol(chain, asked);
   const registry = tokens[chain]?.[symbol];
   if (registry !== undefined) {
     const assetId = assetIdFor(chain, registry.tokenId, list, registry.decimals);
@@ -145,9 +167,12 @@ export function resolveAsset(
 
   const spec = NATIVE_ASSET[chain];
   if (spec !== undefined && spec.symbol === symbol) {
-    const assetId = nativeAssetIdFor(chain, list);
-    if (assetId === null) throw new Error(`1click does not list native ${symbol} on ${chain} unambiguously`);
-    return { assetId, decimals: spec.decimals, native: true };
+    const matches = nativeAssetMatches(chain, list);
+    if (matches.length === 0) throw new Error(`1click lists no native ${symbol} on ${chain}`);
+    if (matches.length > 1) {
+      throw new Error(`1click lists ${matches.length} native ${symbol} on ${chain}, so the app cannot tell which one is the coin`);
+    }
+    return { assetId: matches[0].assetId, decimals: spec.decimals, native: true };
   }
 
   throw new Error(`no token registry entry for ${symbol} on ${chain}, and it is not that chain's gas asset`);

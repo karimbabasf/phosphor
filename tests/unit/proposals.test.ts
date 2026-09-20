@@ -440,3 +440,19 @@ test('a deposit spends from the app account the ledger reads, lowercased, and cr
   assert.equal(p.draft.hlAccount.toLowerCase(), SELF_EVM.toLowerCase());
   assert.equal(p.draft.originAsset, ETH_USDC_FLAVOR);
 });
+
+// ---------- NEAR inside the verifier is wNEAR ----------
+// 1Click lists the coin on its own chain as nep141:wrap.near under the symbol wNEAR and lists no
+// native NEAR at all, so "swap my USDC to NEAR" was refused before any quote (Karim, 2026-09-20).
+// The door books the coin under the name the wallet row and the venue use.
+
+test('a swap into NEAR on near is drafted as wNEAR, the name the wallet and the venue use', async () => {
+  const h = setup();
+  const p = await h.svc.proposeSwap({
+    chain: 'arb', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'NEAR',
+    amountIn: 7, minAmountOut: 1.9,
+  });
+  assert.ok(p.draft.kind === 'swap');
+  assert.equal(p.draft.toSymbol, 'wNEAR');
+  assert.equal(p.draft.fromSymbol, 'USDC');
+});

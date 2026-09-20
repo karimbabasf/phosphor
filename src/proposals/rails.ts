@@ -29,7 +29,7 @@ import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay } from '../rails/intents-pa
 import { isChainNetwork, validateAddress } from '../chainscan/index.ts';
 import type { ChainNetwork } from '../chainscan/index.ts';
 import { recipientFor } from '../recipients.ts';
-import { oneLine } from '../intents.ts';
+import { canonicalSymbol, oneLine } from '../intents.ts';
 import { ourEvmAddress, ourIntentsAddress, proposeRail, refuseDraft, usdOf } from './draft.ts';
 import type { PCtx } from './lifecycle.ts';
 
@@ -48,15 +48,21 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
   // EVM address for every asset.
   const from = ourIntentsAddress(ctx, problems);
 
+  // The name the verifier and the wallet row use, not the one the agent typed: NEAR inside
+  // intents is wNEAR (src/intents.ts, canonicalSymbol). Booked here so the card, the policy and
+  // the balance watch all read the same word.
+  const fromSymbol = canonicalSymbol(params.chain, params.fromSymbol);
+  const toSymbol = canonicalSymbol(toChain, params.toSymbol);
+
   const draft: SwapDraft = {
     kind: 'swap',
     venue: 'intents-native',
     chain: params.chain,
     toChain,
-    fromSymbol: params.fromSymbol,
-    toSymbol: params.toSymbol,
+    fromSymbol,
+    toSymbol,
     amountIn: params.amountIn,
-    amountUsd: usdOf(ctx, params.fromSymbol, params.amountIn, snapshot),
+    amountUsd: usdOf(ctx, fromSymbol, params.amountIn, snapshot),
     minAmountOut: params.minAmountOut,
     from,
     to: from,
