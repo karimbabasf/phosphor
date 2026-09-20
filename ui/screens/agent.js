@@ -1822,10 +1822,10 @@
          carries a fuller row, which the card takes. */
       var shown = kind === 'move' ? moveBlockFor(event.data) : null;
       if (shown) {
+        /* The fold stays where the person left it, as it does on a state frame. */
         shown.data = event.data;
         shown.input = shown.input || event.input;
         shown.rev = (shown.rev || 0) + 1;
-        shown.open = true;
         if (!replay) renderAll();
         return;
       }

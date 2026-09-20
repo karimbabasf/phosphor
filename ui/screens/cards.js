@@ -801,13 +801,18 @@
     return move;
   }
 
-  /* A floor to six significant figures. It is a promise the rail holds the venue to, so it
-     keeps more places than a balance does, and it is read by a person, so it does not keep all
-     twenty-four of a NEAR figure's. */
+  /* A floor to six significant figures, CUT rather than rounded. It is a promise the rail holds
+     the venue to, so it keeps more places than a balance does and never says more than the
+     rail does: rounding half-up printed 5.934637 as 5.93464, a floor the venue could legally
+     land under (review, 2026-09-20). Read by a person, so it does not keep all twenty-four of
+     a NEAR figure's places either. */
   function floorText(value) {
     var n = Number(value);
     if (!isFinite(n)) return '';
-    return n.toLocaleString('en-US', { maximumSignificantDigits: 6 });
+    if (n === 0) return '0';
+    var scale = Math.pow(10, 5 - Math.floor(Math.log10(Math.abs(n))));
+    var cut = Math.floor(n * scale) / scale;
+    return cut.toLocaleString('en-US', { maximumSignificantDigits: 6 });
   }
 
   function legRow(leg, role) {
@@ -1373,6 +1378,7 @@
     kindFor: kindFor,
     wrapReceipt: wrapReceipt,
     foldOf: foldOf,
+    floorText: floorText,
     glyph: glyph,
     foldNames: foldNames
   };

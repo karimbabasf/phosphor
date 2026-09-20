@@ -491,6 +491,29 @@ test('a floor prints as a quantity, and the out leg of a move that only has a fl
   assert.ok(out.textContent.includes('inside NEAR Intents'), out.textContent);
 });
 
+test('an "at least" figure never prints above the floor it promises', () => {
+  // Review, 2026-09-20: six significant figures rounded half-up, so 5.934637 printed as
+  // 5.93464 and the card promised more than the rail holds the venue to.
+  const world = build();
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { chain: 'arb', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'wNEAR', amountIn: 7, minAmountOut: 5.934637 },
+    data: { id: 'f1', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap', swap: { receives: '6', receivesAtLeast: '5.934637', feeUsd: 0.03, etaSeconds: 45 } } } });
+  const card = world.cardNodes('move')[0];
+  assert.ok(card.textContent.includes('at least 5.93463 wNEAR'), card.textContent);
+  assert.ok(!card.textContent.includes('5.93464'), card.textContent);
+  assert.equal(world.cards.floorText(1234567), '1,234,560');
+  assert.equal(world.cards.floorText(0.000123456789), '0.000123456');
+});
+
+test('a read-back of a move keeps the fold where the person left it', () => {
+  const world = build();
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { chain: 'arb', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.017 },
+    data: { id: 'k1', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' } } });
+  world.cards.foldOf(world.cardNodes('move')[0]).setOpen(false);
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__proposal_status', input: { id: 'k1' }, data: { id: 'k1', kind: 'swap', stage: 'waiting_for_you', stageLabel: 'Waiting for you' } });
+  assert.equal(world.cardNodes('move').length, 1);
+  assert.equal(world.cards.foldOf(world.cardNodes('move')[0]).isOpen(), false, 'the read-back re-opened a card the person closed');
+});
+
 test('a move card that was refused by the human says so once the frame says so', () => {
   const world = build();
   world.ask('swap 2 usdc to sol');
