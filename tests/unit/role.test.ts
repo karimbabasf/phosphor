@@ -280,6 +280,11 @@ test('the role is not so long it stops being read', () => {
   // which is 8,191 characters and the only section big enough to have slack left in it.
   //
   // The next paragraph should come out of something, not go on the end.
+  //
+  // 2026-09-20: it did. The ending notice (src/http/ended.ts) needed the agent told what an
+  // app-authored turn is, 250 characters, and they came out of the start paragraph (its
+  // preamble about text written before the session, the "not two or three paragraphs" echo),
+  // the banner sentence and the refusal paragraph's last clause. Measured 19,491.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
   assert.ok(text.length < 19500, `the role is ${text.length} characters and nobody reads that far`);

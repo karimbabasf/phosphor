@@ -25,8 +25,11 @@ export function createChatRegistry(deps: {
   /* Injected only so a test can drive the start paths without a real Claude Code process
      appearing on the machine. See the note on ServerDeps.makeDriver. */
   makeDriver?: () => Driver;
+  /* Told every time a chat's driver reports ready, which is the one moment an app-authored
+     turn may go down without cutting into an answer. The ending notice (ended.ts) waits on it. */
+  onIdle?: (chat: Chat) => void;
 }): ChatRegistry {
-  const { cfg, audit, agents, getView, sse, makeDriver } = deps;
+  const { cfg, audit, agents, getView, sse, makeDriver, onIdle } = deps;
 
   // THE DRIVER'S SEATS, PLURAL SINCE 2026-08-21.
   //
@@ -80,6 +83,7 @@ export function createChatRegistry(deps: {
     // Tagged with the chat, always. An untagged event was fine when there was one conversation
     // and would print into whichever one the human happened to be looking at now.
     sse.broadcast({ type: 'driver', chat: chat.id, event });
+    if (event.kind === 'status' && event.state === 'ready') onIdle?.(chat);
   }
 
   function makeChat(): Chat {

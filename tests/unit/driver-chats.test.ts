@@ -170,3 +170,46 @@ test('Turn off is stop then close: the process is stopped, the chat and its tran
     await b.close();
   }
 });
+
+// ---------- the ending notice, wired ----------
+// A row that ends after the agent's turn reaches the conversation whose seat proposed it, as
+// one app-authored turn, and no other conversation (src/http/ended.ts).
+
+test('a move that ends is told to the conversation that proposed it, and to no other', async () => {
+  const b = await bootDriverServer({ state: 'ready' });
+  try {
+    await b.driver({ action: 'start' });
+    const second = await b.driver({ action: 'open' });
+    const seats = await b.chats();
+    const target = seats.find((c) => c.id === String(second.body.id));
+    assert.ok(target, 'the second chat is not listed');
+
+    b.store.put({
+      id: 'w1',
+      kind: 'hl_withdraw',
+      createdAt: '2026-09-20T22:31:00.000Z',
+      status: 'failed',
+      decidedBy: 'human',
+      decidedAt: '2026-09-20T22:31:20.000Z',
+      settledAt: '2026-09-20T22:31:21.000Z',
+      by: target!.session,
+      draft: { kind: 'hl_withdraw', symbol: 'USDC', amount: 6.209399, amountUsd: 6.209399, minReceived: 5.93, from: '0x1', to: '0x1', counterparty: 'hypercore-withdraw' },
+      simulation: { ok: true, summary: 'ok' },
+      verdict: { outcome: 'needs_approval', reasons: [] },
+      result: { ok: false, detail: 'spotSend refused by Hyperliquid. Nothing was sent.' },
+    });
+
+    assert.equal(b.calls.sends.length, 1, 'the ending reached the driver once');
+    assert.match(b.calls.sends[0], /withdrawal from Hyperliquid you proposed/);
+    assert.match(b.calls.sends[0], /has ended: Failed/);
+    assert.match(b.calls.sends[0], /\[phosphor: the window is on the pro screen/);
+    const list = (await chats(b.url)).chats as Array<Record<string, unknown>>;
+    for (const c of list) {
+      const said = (c.transcript as Array<Record<string, unknown>>).filter((e) => e.kind === 'said');
+      assert.equal(said.length, 0, 'an app-authored line is not drawn as the human speaking');
+    }
+    assert.ok(b.auditLines().some((l) => l.includes('app to AGENT 2:')), 'the notice is not in the audit log');
+  } finally {
+    await b.close();
+  }
+});

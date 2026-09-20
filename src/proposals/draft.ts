@@ -136,13 +136,17 @@ export function ourIntentsAddress(ctx: PCtx, problems: string[]): string {
   return ourEvmAddress(ctx, problems);
 }
 
-export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[], clientKey?: ClientKey): Promise<Proposal> {
-  return land(ctx, newProposal(kind, draft, null, { outcome: 'refuse', reasons, rule: 'invalid_draft' }, clientKey));
+/* Who is proposing: the idempotency key they chose and the seat they hold. Every propose door
+   passes its params object as this, so a rail never has to know either field by name. */
+export type Origin = { clientKey?: ClientKey; by?: string | null };
+
+export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[], origin?: Origin): Promise<Proposal> {
+  return land(ctx, newProposal(kind, draft, null, { outcome: 'refuse', reasons, rule: 'invalid_draft' }, origin));
 }
 
 // Shared tail for every rail: evaluate, simulate, persist, and execute only if the policy said
 // allow. Nothing here knows which rail it is holding.
-export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, clientKey?: ClientKey): Promise<Proposal> {
+export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, origin?: Origin): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   const rail = ctx.rails.for(draft);
@@ -173,7 +177,7 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, c
             ],
             rule: 'simulation_required',
           },
-          clientKey,
+          origin,
         ),
       );
     }
@@ -184,7 +188,7 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, c
   // venue, the kill switch or a cap breach settles the proposal without spending the
   // round trips a rail simulation costs.
   const verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
-  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, simulation, verdict, clientKey));
+  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, simulation, verdict, origin));
 
   if (rail === null) {
     return land(ctx, 
@@ -197,7 +201,7 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, c
           reasons: [...verdict.reasons, `No ${kind} rail is wired in ${ctx.cfg.mode} mode, so there is nothing to execute.`],
           rule: 'no_rail',
         },
-        clientKey,
+        origin,
       ),
     );
   }
@@ -219,12 +223,12 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, c
           reasons: [...verdict.reasons, `Simulation failed, so nothing is signed: ${simulation.error ?? simulation.summary}`],
           rule: 'simulation_required',
         },
-        clientKey,
+        origin,
       ),
     );
   }
 
-  return land(ctx, newProposal(kind, draft, simulation, verdict, clientKey));
+  return land(ctx, newProposal(kind, draft, simulation, verdict, origin));
 }
 
 // A rail that throws inside simulate is a failed simulation, not a crashed proposal.
@@ -248,7 +252,7 @@ function pricedOffQuote(ctx: PCtx, draft: SwapDraft, simulation: SimulationResul
 }
 
 // ---------- public surface ----------
-export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatch; sentence: string; clientKey?: ClientKey }): Promise<Proposal> {
+export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatch; sentence: string; clientKey?: ClientKey; by?: string }): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   /* THE PATCH THE AGENT WROTE, unchanged. It was rewritten here for a day, to bring the ask
@@ -276,5 +280,5 @@ export async function proposePolicyChange(ctx: PCtx, params: { patch: PolicyPatc
     };
   }
 
-  return land(ctx, newProposal('policy_change', draft, simulation, verdict, params.clientKey));
+  return land(ctx, newProposal('policy_change', draft, simulation, verdict, params));
 }

@@ -37,6 +37,9 @@ import { createDepositWatch } from './vault/watch.ts';
 import { createSseHub } from './http/sse.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
+import { createEndedNotices } from './http/ended.ts';
+import type { EndedNotices } from './http/ended.ts';
+import { screenTag } from './http/mutation.ts';
 import { startPricePolling } from './http/chart.ts';
 import { handle } from './http/router.ts';
 
@@ -160,7 +163,17 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     return crew;
   }
 
-  const chats = createChatRegistry({ cfg, audit, agents, getView, sse, makeDriver: deps.makeDriver });
+  /* The ending notice needs the chats and the chats need it, so it is the one built second and
+     reached through a slot: nothing calls flush before both exist. */
+  let ended: EndedNotices | null = null;
+  const chats = createChatRegistry({ cfg, audit, agents, getView, sse, makeDriver: deps.makeDriver, onIdle: (chat) => ended?.flush(chat) });
+  ended = createEndedNotices({
+    store,
+    chats: () => chats.all(),
+    view: (p) => deps.proposals.view(p),
+    tag: () => screenTag(getView(), trade),
+    audit,
+  });
 
   // Two agents cannot double the same proposal by accident, and one agent cannot repeat its own
   // proposal while it is still running or unconfirmed. `inFlight` is how the guard tells a
@@ -315,6 +328,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     stopSession();
     stopLockFrames();
     clearInterval(priceTimer);
+    ended?.stop();
     chats.stopAll();
   });
 

@@ -561,6 +561,10 @@ export type Proposal = {
   // An idempotency key the proposer chose, with the session, kind and params it is scoped to.
   // A repeat carrying the same key is answered with this row instead of a second one.
   clientKey?: ClientKey;
+  // The seat that proposed it (the agent's session id on the roster), so the app can tell
+  // that conversation when the row ends after its turn (src/http/ended.ts). Absent on a row
+  // the app filed itself or a person filed from the window.
+  by?: string;
   // Set when a person filed an unconfirmed row from the dock ("Got it, waiting on the venue").
   // The row stays needs_reconciliation, keeps counting against the day and keeps its place in
   // Activity; only the dock stops asking. Cleared the moment a re-check changes what the venue
@@ -833,6 +837,7 @@ export type SwapParams = {
   amountIn: number;
   minAmountOut: number; // slippage floor, in toSymbol units
   clientKey?: ClientKey;
+  by?: string;
 };
 
 /* The idempotency key a proposer may send with any propose: 1 to 64 characters of
@@ -852,26 +857,26 @@ export type ClientKey = { key: string; session: string; kind: string; fingerprin
 // The money leaves the intents balance and nowhere else, so there is no chain to name. symbol
 // is the asset spent from that balance and defaults to USDC. The flavor spent, the credited
 // account, the loss floor and the counterparty are all resolved by the app.
-export type HlDepositParams = { amount: number; symbol?: string; clientKey?: ClientKey };
+export type HlDepositParams = { amount: number; symbol?: string; clientKey?: ClientKey; by?: string };
 
 // One number. The venue account, the intents account credited, the floor and the counterparty
 // are all the app's; there is no field for a destination, which is the whole point.
-export type HlWithdrawParams = { amount: number; clientKey?: ClientKey };
+export type HlWithdrawParams = { amount: number; clientKey?: ClientKey; by?: string };
 
 // One send door for both send drafts. `where` is 'intents' (the money stays inside the verifier,
 // an intents_send draft) or a chain network id (it is paid out on that chain, an intents_pay
 // draft); the door refuses anything else and there is no default. `note` is the agent's own
 // words about the receiver: kept as data on the recipients book row and in the audit line, and
 // never drawn on the card, because the agent does not get to label the address it is paying.
-export type SendParams = { to: string; symbol: string; amount: number; where: string; note?: string; clientKey?: ClientKey };
+export type SendParams = { to: string; symbol: string; amount: number; where: string; note?: string; clientKey?: ClientKey; by?: string };
 
 // No address, no recipient, no contract. The agent sends a plan or names one it drew, and
 // everything about WHERE the money is resolves from the app's own config and the venue table.
 export type TradeParams = { plan?: unknown; planId?: string; by?: string | null; clientKey?: ClientKey };
-export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean; clientKey?: ClientKey };
+export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean; clientKey?: ClientKey; by?: string };
 
 export type ProposalService = {
-  proposePolicyChange(params: { patch: PolicyPatch; sentence: string; clientKey?: ClientKey }): Promise<Proposal>;
+  proposePolicyChange(params: { patch: PolicyPatch; sentence: string; clientKey?: ClientKey; by?: string }): Promise<Proposal>;
   proposeSwap(params: SwapParams): Promise<Proposal>;
   proposeHlDeposit(params: HlDepositParams): Promise<Proposal>;
   proposeHlWithdraw(params: HlWithdrawParams): Promise<Proposal>;

@@ -20,6 +20,7 @@ import { createTradeView } from '../../src/trade/view.ts';
 import { MAX_AGENTS, createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
+import type { Store } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
@@ -56,6 +57,9 @@ export interface Booted {
      reads: each one's id and the seat id its child carries on every call it makes. A test about
      a card being addressed to ONE conversation needs both halves. */
   chats: () => Promise<Array<{ id: string; session: string }>>;
+  // The proposal store this server reads, so a test can write a row and watch what the server
+  // does about it (the ending notice, src/http/ended.ts).
+  store: Store;
 }
 
 export type BootOptions = {
@@ -85,7 +89,8 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
   };
 
   const calls: DriverCalls = { starts: 0, sends: [], interrupts: 0, stops: 0 };
-  const state: DriverState = opts.state ?? 'ready';
+  let state: DriverState = opts.state ?? 'ready';
+  const store = createStore(dataDir);
   const agents = opts.seat === undefined ? createAgents() : createAgents(Date.now, MAX_AGENTS, { secret: opts.seat });
   const rows = opts.proposals ?? [];
 
@@ -98,6 +103,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
     close: async () => {},
     calls,
     agents,
+    store,
     auditLines: () =>
       fs
         .readFileSync(path.join(dataDir, 'audit.jsonl'), 'utf8')
@@ -121,7 +127,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
   const server = createServer({
     cfg,
     audit: createAudit(dataDir),
-    store: createStore(dataDir),
+    store,
     riskRows: [],
     ledger: {
       snapshot,

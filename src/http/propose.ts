@@ -303,6 +303,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
           amountIn,
           minAmountOut,
           clientKey,
+          by: session,
         }),
       );
       return;
@@ -340,7 +341,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close, clientKey }));
+      respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close, clientKey, by: session }));
       return;
     }
     if (kind === 'hl_deposit') {
@@ -352,7 +353,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeHlDeposit({ symbol, amount, clientKey }));
+      respond(await ctx.proposals.proposeHlDeposit({ symbol, amount, clientKey, by: session }));
       return;
     }
     if (kind === 'hl_withdraw') {
@@ -363,7 +364,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeHlWithdraw({ amount, clientKey }));
+      respond(await ctx.proposals.proposeHlWithdraw({ amount, clientKey, by: session }));
       return;
     }
     if (kind === 'send') {
@@ -388,7 +389,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeSend({ to, symbol, amount, where, note, clientKey }));
+      respond(await ctx.proposals.proposeSend({ to, symbol, amount, where, note, clientKey, by: session }));
       return;
     }
     if (kind === 'policy_change') {
@@ -399,7 +400,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, `sentence is ${sentence.length} characters, over the ${SENTENCE_MAX} this field takes`);
         return;
       }
-      respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence, clientKey }));
+      respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence, clientKey, by: session }));
       return;
     }
     fail(res, 400, `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}`);
