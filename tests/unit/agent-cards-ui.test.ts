@@ -421,7 +421,7 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
 
   const refunded = row('failed', {
     decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: false, detail: 'refunded' }, settledAt: '2026-09-18T10:40:00Z',
-    view: { ...settled.view, stage: 'failed', stageLabel: 'Failed', outcome: 'failed', providerStage: 'REFUNDED', settledAt: '2026-09-18T10:40:00Z', error: { code: 'refunded', message: 'The router refunded it.' } },
+    view: { ...(settled as Any).view, stage: 'failed', stageLabel: 'Failed', outcome: 'failed', providerStage: 'REFUNDED', settledAt: '2026-09-18T10:40:00Z', error: { code: 'refunded', message: 'The router refunded it.' } },
   });
   world.proposals([refunded]);
   const failedLines = all(world.cardNodes('move')[0], 'tcard-line').map((n: Any) => n.textContent);
