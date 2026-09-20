@@ -28,6 +28,14 @@ test('NEAR on its own chain is booked as wNEAR, the one form 1Click lists', () =
   assert.equal(canonicalSymbol('eth', 'ETH'), 'ETH', 'a real gas asset keeps its name');
 });
 
+test('the alias is read the way every other ticker on this surface is typed: case does not matter', () => {
+  // Review, 2026-09-20: WNEAR and near both fell through to a registry sentence.
+  for (const asked of ['near', 'WNEAR', 'wnear', 'Near']) {
+    assert.equal(canonicalSymbol('near', asked), 'wNEAR', asked);
+    assert.equal(resolveAsset('near', asked, TOKENS, LIST).assetId, 'nep141:wrap.near', asked);
+  }
+});
+
 test('resolveAsset turns NEAR on near into wrap.near with the chain\'s 24 decimals', () => {
   const found = resolveAsset('near', 'NEAR', TOKENS, LIST);
   assert.equal(found.assetId, 'nep141:wrap.near');

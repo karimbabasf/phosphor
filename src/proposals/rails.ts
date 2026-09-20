@@ -29,7 +29,7 @@ import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay } from '../rails/intents-pa
 import { isChainNetwork, validateAddress } from '../chainscan/index.ts';
 import type { ChainNetwork } from '../chainscan/index.ts';
 import { recipientFor } from '../recipients.ts';
-import { canonicalSymbol, oneLine } from '../intents.ts';
+import { canonicalSymbol, heldSymbol, oneLine } from '../intents.ts';
 import { ourEvmAddress, ourIntentsAddress, proposeRail, refuseDraft, usdOf } from './draft.ts';
 import type { PCtx } from './lifecycle.ts';
 
@@ -182,7 +182,7 @@ function heldFlavor(ctx: PCtx, from: string, symbol: string, amount: number, ver
     return '';
   }
   const held = read.holdings
-    .filter((h) => h.symbol.toUpperCase() === symbol && h.amount > 0)
+    .filter((h) => h.symbol.toUpperCase() === symbol.toUpperCase() && h.amount > 0)
     .sort((a, b) => b.amount - a.amount);
   if (held.length === 0) {
     problems.push(`intents.near holds no ${symbol} for ${from}, so there is nothing to ${verb}.`);
@@ -235,7 +235,10 @@ async function recipientOf(ctx: PCtx, where: string, address: string, network: C
 export async function proposeSend(ctx: PCtx, params: SendParams): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const problems: string[] = [];
-  const symbol = String(params.symbol ?? '').trim().toUpperCase();
+  // Uppercased like every ticker on this surface, then aliased: "NEAR" inside the verifier is
+  // the wNEAR row, and the draft carries that name so heldFlavor and the card agree with the
+  // swap that booked it.
+  const symbol = heldSymbol(String(params.symbol ?? '').trim().toUpperCase());
   if (symbol === '') problems.push('The send has to name a symbol: which balance inside intents.near to move.');
   const where = String(params.where ?? '').trim();
 

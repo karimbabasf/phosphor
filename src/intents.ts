@@ -135,10 +135,23 @@ export const NATIVE_ASSET: Partial<Record<ChainId, { symbol: string; decimals: n
    asset a NEAR product is about. The table is per chain and holds only wrappers that ARE the
    coin: nothing here may map one asset to a different one. */
 const INTENTS_SYMBOL_ALIAS: Partial<Record<ChainId, Record<string, string>>> = {
-  near: { NEAR: 'wNEAR' },
+  near: { NEAR: 'wNEAR', WNEAR: 'wNEAR' },
 };
+// Keyed on the uppercased ask, because every other ticker on this surface is read that way
+// and "WNEAR" fell through to a registry sentence when it was not (review, 2026-09-20).
 export function canonicalSymbol(chain: ChainId, symbol: string): string {
-  return INTENTS_SYMBOL_ALIAS[chain]?.[symbol] ?? symbol;
+  return INTENTS_SYMBOL_ALIAS[chain]?.[symbol.toUpperCase()] ?? symbol;
+}
+
+// The name a balance inside the verifier goes by, whatever chain the asker had in mind. The
+// tables are per chain but a held coin has one name, so a send or a payout of "NEAR" finds
+// the wNEAR row the swap booked.
+export function heldSymbol(symbol: string): string {
+  for (const table of Object.values(INTENTS_SYMBOL_ALIAS)) {
+    const hit = table?.[symbol.toUpperCase()];
+    if (hit !== undefined) return hit;
+  }
+  return symbol;
 }
 
 // One place that turns "USDC on base" or "ETH on eth" into the pair a quote needs. The token

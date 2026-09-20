@@ -457,6 +457,22 @@ test('a swap into NEAR on near is drafted as wNEAR, the name the wallet and the 
   assert.equal(p.draft.fromSymbol, 'USDC');
 });
 
+test('a send of NEAR inside intents finds the wNEAR the swap booked', async () => {
+  // Review, 2026-09-20: the swap door booked wNEAR and the send door then said "holds no NEAR".
+  const h = makeCtx({
+    rails: [railThat('intents_send', async (): Promise<RailResult> => ({ ok: true, detail: 'sent', txids: ['0xsend'] }))],
+    intents: {
+      ok: true,
+      fetchedAt: new Date().toISOString(),
+      holdings: [{ accountId: SELF_EVM.toLowerCase(), assetId: 'nep141:wrap.near', symbol: 'wNEAR', originChain: 'near', amount: 2.0097, decimals: 24 }],
+    },
+  });
+  const p = await h.svc.proposeSend({ to: 'alice.near', symbol: 'NEAR', amount: 1, where: 'intents' });
+  assert.ok(p.draft.kind === 'intents_send', JSON.stringify(p.verdict));
+  assert.equal(p.draft.symbol, 'wNEAR');
+  assert.ok(!p.verdict.reasons.some((r) => /holds no NEAR/.test(r)), p.verdict.reasons.join(' | '));
+});
+
 // ---------- a swap is valued on whichever side the app can price ----------
 // The engine measures in dollars. USDC into an unpriced token was allowed (the USDC side priced
 // it), and the same token back into ETH was refused as unbounded, although ETH was priced and
