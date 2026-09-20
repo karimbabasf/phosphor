@@ -459,8 +459,13 @@
     renderComposition(coins);
 
     /* The total is the head of the card, so it is the first thing read rather
-       than a sum under a list. */
-    setLead(refs.money, dom.usd(wallet.totalUsd || 0));
+       than a sum under a list. Over a coin the panel could not price it says
+       what it is, a floor or no figure: $0.00 over 2.0097 wNEAR read as
+       "nothing here" (2026-09-20). */
+    var dark = false;
+    for (var d = 0; d < coins.length; d += 1) if (!coins[d].priced) dark = true;
+    var total = wallet.totalUsd || 0;
+    setLead(refs.money, dark ? (total > 0 ? 'at least ' + dom.usd(total) : 'not priced') : dom.usd(total));
     setMeta(refs.money, moneySummary(coins));
 
     var notes = [];

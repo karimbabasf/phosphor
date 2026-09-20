@@ -269,3 +269,17 @@ test('the Money head says where the money is, in the two pockets, and never that
   render(wallet(rows.slice(0, 2)));
   assert.equal(meta.textContent, '2 coins, in NEAR Intents');
 });
+
+test('the Money head over a holding the panel cannot price is a floor or no figure, never $0.00', () => {
+  // The chat card of 2026-09-20 read $0.00 over 2.0097 wNEAR; the pro head printed the same
+  // total and the meta already named the coin as not priced. The lead says what it is.
+  const { host, render } = boot();
+  const dark = { symbol: 'wNEAR', kind: 'intents', chain: 'intents', quantity: 2.0097, valueUsd: 0, share: 0, priced: false };
+  const priced = { symbol: 'USDC', kind: 'intents', chain: 'intents', quantity: 7.01, valueUsd: 7.01, share: 1 };
+  render(wallet([priced, dark]));
+  const head = withClass(moneyOf(host), 'card-head')[0]!;
+  assert.equal(withClass(head, 'card-lead')[0]!.textContent, 'at least $7.01');
+  assert.ok(withClass(head, 'card-meta')[0]!.textContent.includes('wNEAR not priced'));
+  render(wallet([dark]));
+  assert.equal(withClass(head, 'card-lead')[0]!.textContent, 'not priced');
+});
