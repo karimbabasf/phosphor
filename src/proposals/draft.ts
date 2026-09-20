@@ -151,43 +151,53 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
   const policy = loadPolicy(ctx.dataDir);
   const rail = ctx.rails.for(draft);
 
-  /* A SWAP IS VALUED ON WHICHEVER SIDE THE APP CAN PRICE. The draft arrives priced off what it
-     spends, and a coin the app has no price for arrives as Infinity. When the coin it BUYS is
-     priced, the dry quote says how much of it arrives, and that is a dollar figure the engine
-     can govern: the quote is the venue's number, never the agent's, and the agent's own floor
-     (minAmountOut) is deliberately not used, because a floor chosen by the caller could be set
-     small to make the move look small. So the quote is fetched before the engine runs, the
-     draft is repriced off it, and the same quote rides on the row. Without this, USDC into an
-     unpriced token was allowed and the same token back into ETH was refused as unbounded:
-     money that could get in and not out (Karim, 2026-09-20, 2.0097 wNEAR). */
-  let simulation: SimulationResult | null = null;
-  if (rail !== null && draft.kind === 'swap' && !Number.isFinite(draft.amountUsd) && priceOf(ctx, draft.toSymbol, snapshot) !== null) {
-    simulation = await simulateSafely(rail, kind, draft);
-    if (!simulation.ok) {
-      return land(ctx, 
-        newProposal(
-          kind,
-          draft,
-          simulation,
-          {
-            outcome: 'refuse',
-            reasons: [
-              `This swap spends ${draft.fromSymbol}, which the app cannot price, so it is valued off what the quote says arrives.`,
-              `Simulation failed, so nothing is signed: ${simulation.error ?? simulation.summary}`,
-            ],
-            rule: 'simulation_required',
-          },
-          origin,
-        ),
-      );
-    }
-    draft = pricedOffQuote(ctx, draft, simulation, snapshot);
-  }
-
   // The engine runs first because it is pure and its refusals are terminal. An unlisted
   // venue, the kill switch or a cap breach settles the proposal without spending the
   // round trips a rail simulation costs.
-  const verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
+  let verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
+  let simulation: SimulationResult | null = null;
+
+  /* A SWAP IS VALUED ON WHICHEVER SIDE THE APP CAN PRICE. The draft arrives priced off what it
+     spends, and a coin the app has no price for arrives as Infinity, which the engine refuses
+     as invalid_amount. When the coin it BUYS is priced, the dry quote says how much of it
+     arrives, and that is a dollar figure the engine can govern: the quote is the venue's
+     number, never the agent's, and the agent's own floor (minAmountOut) is deliberately not
+     used, because a floor chosen by the caller could be set small to make the move look small.
+     So on that one refusal the quote is fetched, the draft is repriced off it, the engine runs
+     again, and the same quote rides on the row. Without this, USDC into an unpriced token was
+     allowed and the same token back into ETH was refused as unbounded: money that could get in
+     and not out (Karim, 2026-09-20, 2.0097 wNEAR).
+
+     AND IT ALWAYS WAITS FOR A CLICK. The bought side is bounded by the quote and its floor; the
+     spent side is bounded by nothing the app can see, and a thin route quoting 8 USDC for a
+     holding worth far more would otherwise run on its own under the ask line. A move the app
+     cannot measure stops for a human, whatever its size. */
+  if (
+    verdict.outcome === 'refuse' &&
+    verdict.rule === 'invalid_amount' &&
+    rail !== null &&
+    draft.kind === 'swap' &&
+    !Number.isFinite(draft.amountUsd) &&
+    priceOf(ctx, draft.toSymbol, snapshot) !== null
+  ) {
+    const unpriced = `This swap spends ${draft.fromSymbol}, which the app cannot price, so it is valued off what the quote says arrives.`;
+    simulation = await simulateSafely(rail, kind, draft);
+    const repriced = simulation.ok ? pricedOffQuote(ctx, draft, simulation, snapshot) : draft;
+    if (!simulation.ok || repriced === draft) {
+      const why = simulation.ok ? 'the quote named no amount arriving, so there is nothing to value it by' : (simulation.error ?? simulation.summary);
+      return land(ctx, 
+        newProposal(kind, draft, simulation, { outcome: 'refuse', reasons: [unpriced, `Simulation failed, so nothing is signed: ${why}`], rule: 'simulation_required' }, origin),
+      );
+    }
+    draft = repriced;
+    verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
+    if (verdict.outcome === 'allow') {
+      verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, `${unpriced} A move the app cannot measure waits for your click, whatever the size.`] };
+    } else if (verdict.outcome === 'needs_approval') {
+      verdict = { ...verdict, reasons: [...verdict.reasons, unpriced] };
+    }
+  }
+
   if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, simulation, verdict, origin));
 
   if (rail === null) {
@@ -242,8 +252,8 @@ async function simulateSafely(rail: Rail, kind: RailKind, draft: RailDraft): Pro
 }
 
 // The swap draft again, valued in dollars off what the quote says arrives times the app's own
-// price for that coin. A quote with no usable figure leaves the draft as it was, unpriced, and
-// the engine refuses it in words.
+// price for that coin. A quote with no usable figure returns the draft itself, unchanged, and
+// the caller refuses the move as a failed simulation rather than blaming a price table.
 function pricedOffQuote(ctx: PCtx, draft: SwapDraft, simulation: SimulationResult, snapshot: LedgerSnapshot): SwapDraft {
   const receives = Number(simulation.swap?.receives);
   if (!Number.isFinite(receives) || receives <= 0) return draft;

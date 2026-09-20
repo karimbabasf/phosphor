@@ -484,6 +484,42 @@ test('an unpriced token into a priced one is valued off the quote, and lands', a
   assert.ok(p.simulation?.ok, 'the quote that priced it rides on the row');
 });
 
+test('a swap valued off the quote waits for a click whatever its size, because what it spends is unmeasured', async () => {
+  // Review, 2026-09-20: the bought side is bounded by the quote and its floor, the spent side
+  // by nothing the app can see. A thin route quoting 8 USDC for a holding worth far more
+  // would have run on its own under the ask line. The product's claim is that a move the app
+  // cannot measure stops for a human.
+  const policy = happyPolicy();
+  policy.outbound.humanClickAboveUsd = 100;
+  const h = makeCtx({ rails: [quotingSwapRail('5.25')], intentsUsdc: 100_000, policy });
+  const p = await h.svc.proposeSwap({
+    chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC',
+    amountIn: 1000, minAmountOut: 5,
+  });
+  assert.equal(p.verdict.outcome, 'needs_approval', JSON.stringify(p.verdict));
+  assert.equal(p.status, 'pending');
+  assert.ok(p.verdict.reasons.some((r) => /MYSTERY/.test(r) && /cannot price/.test(r)), p.verdict.reasons.join(' | '));
+});
+
+test('the kill switch refuses an unpriced swap before any quote is asked for', async () => {
+  const policy = happyPolicy();
+  policy.killSwitch = true;
+  let quotes = 0;
+  const rail = { ...quotingSwapRail('5.25'), async simulate() { quotes += 1; return { ok: true, summary: 'quoted', swap: { receives: '5.25', receivesAtLeast: '5.25', feeUsd: 0.02, etaSeconds: 5 } }; } };
+  const h = makeCtx({ rails: [rail], intentsUsdc: 100_000, policy });
+  const p = await h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC', amountIn: 1000, minAmountOut: 5 });
+  assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'kill_switch');
+  assert.equal(quotes, 0, 'a round trip was spent on a move the kill switch refuses');
+});
+
+test('a quote with no usable figure refuses the unpriced swap as a failed simulation, not as a missing USDC price', async () => {
+  const h = makeCtx({ rails: [quotingSwapRail('')], intentsUsdc: 100_000 });
+  const p = await h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'MYSTERY', toSymbol: 'USDC', amountIn: 1000, minAmountOut: 5 });
+  assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'simulation_required');
+  assert.ok(p.verdict.reasons.some((r) => /named no amount/.test(r)), p.verdict.reasons.join(' | '));
+  assert.ok(!p.verdict.reasons.some((r) => /no price for MYSTERY or USDC/.test(r)), 'blamed the price table for USDC');
+});
+
 test('a swap with no price on either side is still refused', async () => {
   const h = makeCtx({ rails: [quotingSwapRail('5')], intentsUsdc: 100_000 });
   const p = await h.svc.proposeSwap({

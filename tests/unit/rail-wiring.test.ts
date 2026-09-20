@@ -426,11 +426,13 @@ test('an intents-native swap is authored by our EVM account even when the origin
 test('a symbol the app cannot price is refused rather than budgeted at NaN', async () => {
   const h = setup();
   // ZZZ is in no risk table, no holding and no price table, so there is no honest USD value
-  // for it. A NaN amountUsd would pass every cap comparison in the engine.
+  // for it. A NaN amountUsd would pass every cap comparison in the engine. Since 2026-09-20 a
+  // swap INTO a priced coin is valued off what the quote says arrives; this spy's quote names
+  // no amount, so the refusal is the simulation's. Either way nothing executes.
   const p = await h.svc.proposeSwap({ ...swapParams(500), fromSymbol: 'ZZZ' });
 
   assert.equal(p.status, 'policy_refused');
-  assert.equal(p.verdict.outcome === 'refuse' ? p.verdict.rule : '', 'invalid_amount');
+  assert.ok(['invalid_amount', 'simulation_required'].includes(p.verdict.outcome === 'refuse' ? p.verdict.rule : ''), JSON.stringify(p.verdict));
   assert.equal(h.rails.executed.length, 0);
 });
 
