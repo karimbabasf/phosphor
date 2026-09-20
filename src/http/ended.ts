@@ -41,15 +41,16 @@ export type EndedNotices = {
   stop(): void;
 };
 
-type Notice = { id: string; text: string; at: number };
+// `seat` is the session the row names, so a notice queued for one agent is never handed to
+// the next one seated in the same conversation after a restart.
+type Notice = { id: string; stage: string; seat: string; text: string; at: number };
+
+// The longest any one interpolated field may be. Venue error bodies run to paragraphs.
+const FIELD_MAX = 200;
 
 // How many endings this process remembers having told, as row and stage. Beyond it the oldest
 // are forgotten, which risks a repeat about a row a thousand endings old and nothing worse.
 const TOLD_MAX = 1000;
-
-// A read that landed this close to the row's ending still counts as having seen it: the
-// store write and the tool's answer are the same moment from two clocks.
-const SEEN_SLACK_MS = 1_000;
 
 const KIND_WORDS: Record<string, string> = {
   swap: 'swap',
@@ -58,9 +59,18 @@ const KIND_WORDS: Record<string, string> = {
   intents_send: 'send',
   intents_pay: 'payout',
   trade: 'trade',
-  trade_change: 'change to a trade',
   policy_change: 'rule change',
 };
+
+/* ONE LINE, NO BRACKETS, BOUNDED. Everything interpolated into the notice is remote text at one
+   remove or another: a venue's error body, a token list's symbol, the venue's settled figure.
+   Inside a tool result the agent reads such text as data. Inside a user turn it does not, and
+   a newline plus a "]" would close the app's fence and let the rest read as a fresh line from
+   somebody else. So every field is flattened, stripped of both brackets and cut. */
+function plain(value: unknown, max: number = FIELD_MAX): string {
+  const text = String(value ?? '').replace(/[\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max)} (cut)` : text;
+}
 
 export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
   const now = deps.now ?? Date.now;
@@ -74,48 +84,63 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     while (toldOrder.length > TOLD_MAX) told.delete(toldOrder.shift() as string);
   }
 
+  // What the move was, in the fewest words that still name it. A rule change is its sentence,
+  // a trade change is its operation, everything else is what it spent.
+  function legs(p: Proposal, v: ProposalView): string {
+    const draft = p.draft;
+    if (draft.kind === 'policy_change') return plain(draft.sentence, 80);
+    if (draft.kind === 'trade' && draft.op !== 'open') return plain(`${draft.op} on ${v.money.symbol}`);
+    const spent = v.money.amountIn === null ? plain(v.money.symbol) : plain(`${v.money.amountIn} ${v.money.symbol}`);
+    if (spent === '') return '';
+    return draft.kind === 'swap' ? `${spent} to ${plain(v.money.toSymbol)}` : spent;
+  }
+
   function words(p: Proposal, v: ProposalView): string {
-    const kind = KIND_WORDS[p.kind] ?? p.kind;
-    const spent = v.money.amountIn === null ? v.money.symbol : `${v.money.amountIn} ${v.money.symbol}`;
-    const legs = p.kind === 'swap' ? `${spent} to ${v.money.toSymbol}` : spent;
-    let ending = `has ended: ${v.stageLabel}.`;
-    if (v.stage === 'confirmed' && v.money.amountOut !== null) ending += ` ${v.money.amountOut} ${v.money.toSymbol} arrived.`;
-    if (v.error !== null) ending += ` ${v.error.message}`;
+    const kind = p.draft.kind === 'trade' && p.draft.op !== 'open' ? 'change to a trade' : (KIND_WORDS[p.kind] ?? plain(p.kind));
+    const what = legs(p, v);
+    const named = what === '' ? `proposal ${plain(p.id)}` : `${what}, proposal ${plain(p.id)}`;
+    let ending = `has ended: ${plain(v.stageLabel)}.`;
+    if (v.stage === 'confirmed' && v.money.amountOut !== null) ending += ` ${plain(v.money.amountOut)} ${plain(v.money.toSymbol)} arrived.`;
+    if (v.error !== null) ending += ` ${plain(v.error.message)}`;
     return (
-      `[phosphor: the ${kind} you proposed (${legs}, proposal ${p.id}) ${ending} ` +
+      `[phosphor: the ${kind} you proposed (${named}) ${ending} ` +
       'Tell the person in one or two plain sentences: what ended, how, and what it means for their money. ' +
       'If they already know, say nothing.]'
     );
   }
 
-  /* Whether a tool's answer carried this row after it ended: proposal_status and a propose answer
-     with the id at the top, diagnose with it under `view`, the proposals page with it in the
-     list. The same three shapes the eval harness reads a status off (scripts/eval.ts). */
-  function carries(data: unknown, id: string): boolean {
+  /* Whether a tool's answer carried this row AT this ending. The stage is the whole test: a
+     read that returned the row still crediting, a moment before the venue credited it, is a
+     read of the row and not of its ending, and dropping the notice on it is exactly the
+     transcript bug this file exists to close. The shapes are the two the driver hands the
+     window (src/driver.ts, TOOL_DATA_TOOLS): proposal_status answers with the view, and a
+     propose answers with the id on top and the view beside it. A read through `proposals` or
+     `diagnose` reaches the window as nothing, so it cannot count here; the agent is told to say
+     nothing when the person already knows, which covers a repeat. */
+  function carries(data: unknown, notice: Notice): boolean {
     if (data === null || typeof data !== 'object') return false;
-    const row = data as { id?: unknown; view?: { id?: unknown } | null; proposals?: unknown };
-    if (row.id === id) return true;
-    if (row.view !== null && typeof row.view === 'object' && row.view?.id === id) return true;
-    if (Array.isArray(row.proposals)) return row.proposals.some((entry) => carries(entry, id));
-    return Array.isArray(data) && data.some((entry) => carries(entry, id));
+    const row = data as { id?: unknown; stage?: unknown; view?: { id?: unknown; stage?: unknown } | null };
+    if (row.id === notice.id && row.stage === notice.stage) return true;
+    const view = row.view;
+    return view !== null && typeof view === 'object' && view?.id === notice.id && view?.stage === notice.stage;
   }
 
   function seen(chat: Chat, notice: Notice): boolean {
-    for (const event of chat.transcript) {
-      if (event.kind !== 'tool_data' || event.at < notice.at - SEEN_SLACK_MS) continue;
-      if (carries(event.data, notice.id)) return true;
-    }
-    return false;
+    return chat.transcript.some((event) => event.kind === 'tool_data' && carries(event.data, notice));
   }
 
-  function send(chat: Chat, notice: Notice): void {
+  // One turn, however many endings it carries: the driver flips to thinking on the first
+  // write, and a second write would land inside that turn.
+  function send(chat: Chat, notices: Notice[]): void {
+    if (notices.length === 0) return;
+    const text = notices.map((n) => n.text).join('\n\n');
     try {
-      chat.driver.send(`${notice.text}\n\n${deps.tag()}`);
+      chat.driver.send(`${text}\n\n${deps.tag()}`);
     } catch {
       // No agent on this seat any more. The card in the window still says what happened.
       return;
     }
-    deps.audit.append('driver_prompt', `app to ${chat.label}: ${notice.text}`, { chat: chat.id, id: notice.id });
+    deps.audit.append('driver_prompt', `app to ${chat.label}: ${text}`, { chat: chat.id, ids: notices.map((n) => n.id) });
   }
 
   function onWrite(p: Proposal): void {
@@ -129,10 +154,10 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     const chat = deps.chats().find((c) => c.session === p.by);
     if (chat === undefined) return;
     remember(key);
-    const notice: Notice = { id: p.id, text: words(p, v), at: now() };
+    const notice: Notice = { id: p.id, stage: v.stage, seat: p.by, text: words(p, v), at: now() };
     const state = chat.driver.status().state;
     if (state === 'ready') {
-      send(chat, notice);
+      send(chat, [notice]);
       return;
     }
     if (state === 'thinking' || state === 'starting') {
@@ -145,9 +170,10 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     const waiting = queued.get(chat.id);
     if (waiting === undefined) return;
     queued.delete(chat.id);
-    for (const notice of waiting) {
-      if (!seen(chat, notice)) send(chat, notice);
-    }
+    send(
+      chat,
+      waiting.filter((notice) => notice.seat === chat.session && !seen(chat, notice)),
+    );
   }
 
   const off = deps.store.subscribe(onWrite);

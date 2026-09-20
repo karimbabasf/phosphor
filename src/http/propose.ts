@@ -152,6 +152,10 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
   const kind = String(body.kind ?? '');
   const params = asRecord(body.params);
   const session = String(body.session ?? 'unnamed-session');
+  // The seat a row records as its proposer: only a seat that was actually named. The
+  // placeholder above keeps the duplicate guard working for a caller with no session and is
+  // not a seat anything could be told on.
+  const by = typeof body.session === 'string' && body.session !== '' ? body.session : undefined;
   /* A worker's MCP process never registers a propose tool, and this is the wall behind that one:
      the app minted the worker's session id and seated it as an analyst, so a raw post from that
      seat is refused by its role before the duplicate guard remembers it or a draft is priced.
@@ -303,7 +307,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
           amountIn,
           minAmountOut,
           clientKey,
-          by: session,
+          by,
         }),
       );
       return;
@@ -328,7 +332,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeTrade({ plan, planId, by: session, clientKey }));
+      respond(await ctx.proposals.proposeTrade({ plan, planId, by, clientKey }));
       return;
     }
     if (kind === 'trade_change') {
@@ -341,7 +345,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close, clientKey, by: session }));
+      respond(await ctx.proposals.proposeTradeChange({ id, stop, target, cancel, close, clientKey, by }));
       return;
     }
     if (kind === 'hl_deposit') {
@@ -353,7 +357,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeHlDeposit({ symbol, amount, clientKey, by: session }));
+      respond(await ctx.proposals.proposeHlDeposit({ symbol, amount, clientKey, by }));
       return;
     }
     if (kind === 'hl_withdraw') {
@@ -364,7 +368,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeHlWithdraw({ amount, clientKey, by: session }));
+      respond(await ctx.proposals.proposeHlWithdraw({ amount, clientKey, by }));
       return;
     }
     if (kind === 'send') {
@@ -389,7 +393,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, problems.join('; '));
         return;
       }
-      respond(await ctx.proposals.proposeSend({ to, symbol, amount, where, note, clientKey, by: session }));
+      respond(await ctx.proposals.proposeSend({ to, symbol, amount, where, note, clientKey, by }));
       return;
     }
     if (kind === 'policy_change') {
@@ -400,7 +404,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
         fail(res, 400, `sentence is ${sentence.length} characters, over the ${SENTENCE_MAX} this field takes`);
         return;
       }
-      respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence, clientKey, by: session }));
+      respond(await ctx.proposals.proposePolicyChange({ patch: asRecord(params.patch), sentence, clientKey, by }));
       return;
     }
     fail(res, 400, `unknown propose kind: ${kind}. known kinds: ${PROPOSE_KINDS.join(', ')}`);
