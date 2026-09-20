@@ -83,6 +83,12 @@ export const HL_ACTIVATION_USDC = HL_ACTIVATION_FEE_USDC;
 // say "you would pay a quarter of it" and be right.
 export const MIN_HL_WITHDRAW_USDC = 5;
 
+// A USDC figure as money: six places, trailing zeros off. A sum of two doubles printed raw put
+// "8.209399000000001 USDC" in front of a person (2026-09-20).
+function usdc(amount: number): string {
+  return Number.isFinite(amount) ? amount.toFixed(6).replace(/\.?0+$/, '') : String(amount);
+}
+
 // What must land inside the verifier. The activation fee is not subtracted here: it never
 // enters the route, the venue takes it from the sender beside the amount.
 export function minReceivedForHlWithdraw(amount: number): number {
@@ -256,7 +262,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     if (sendable < needed) {
       return {
         reasons: [
-          `the account has ${sendable} USDC and the withdrawal needs ${needed} USDC: ${draft.amount} plus the ` +
+          `the account has ${usdc(sendable)} USDC and the withdrawal needs ${usdc(needed)} USDC: ${draft.amount} plus the ` +
             `${HL_ACTIVATION_USDC} USDC activation fee the venue charges the sender for a destination it has never seen`,
         ],
       };

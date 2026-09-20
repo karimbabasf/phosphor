@@ -424,6 +424,29 @@ test('a card says who decided: a click is the human\'s, an auto-run is the rules
   assert.ok(lines.some((t: string) => t.startsWith('Ended at')), lines.join(' | '));
 });
 
+test('a floor prints as a quantity, and the out leg of a move that only has a floor says so', () => {
+  // Two cards from 2026-09-20: a swap floor of 1.988851425812084254220825 wNEAR printed with
+  // all 24 places, and a withdrawal whose out leg was the floor with nothing saying so, while
+  // the agent quoted the expected amount, so the person saw two numbers and no reason.
+  const world = build();
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { chain: 'arb', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'wNEAR', amountIn: 7.0069, minAmountOut: 1.988851425812084254220825 },
+    data: { id: 's1', status: 'executing', verdict: { outcome: 'allow', reasons: [] }, simulation: { ok: true, summary: 'swap', swap: { receives: '2.0089', receivesAtLeast: '1.988851425812084254220825', feeUsd: 0.03, etaSeconds: 45 } } } });
+  let card = world.cardNodes('move')[0];
+  assert.ok(card.textContent.includes('at least 1.98885 wNEAR'), card.textContent);
+  assert.ok(!card.textContent.includes('1.988851425812'), card.textContent);
+
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_hl_withdraw', input: { amount: 6.209399 },
+    data: { id: 'w1', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'withdraw' } } });
+  world.proposals([{ id: 'w1', kind: 'hl_withdraw', status: 'pending', createdAt: '2026-09-20T22:31:00Z',
+    draft: { kind: 'hl_withdraw', symbol: 'USDC', amount: 6.209399, amountUsd: 6.209399, minReceived: 5.934633, from: '0x1', to: '0x1', counterparty: 'hypercore-withdraw' },
+    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'withdraw' } }]);
+  card = world.cardNodes('move')[1];
+  const out = byAttr(card, 'data-leg').find((n: Any) => n.getAttribute('data-leg') === 'to');
+  assert.ok(out, 'no out leg');
+  assert.ok(out.textContent.includes('at least 5.93463 USDC'), out.textContent);
+  assert.ok(out.textContent.includes('inside NEAR Intents'), out.textContent);
+});
+
 test('a move card that was refused by the human says so once the frame says so', () => {
   const world = build();
   world.ask('swap 2 usdc to sol');

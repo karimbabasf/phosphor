@@ -745,7 +745,7 @@ test('a swap card draws the rail\'s numbers as facts, the deciding rule as the r
   assert.equal(find(card, 'fact').length, 0, 'the old facts block is still drawn');
   assert.ok(text.some((t) => t.includes('0.017783069')), 'what arrives is on the card');
   assert.ok(text.some((t) => t.includes('fee $0.0071')), 'the fee is on the card');
-  assert.ok(text.some((t) => t.includes('at least 0.017605238 SOL')), 'the floor is on the card');
+  assert.ok(text.some((t) => t.includes('at least 0.0176052 SOL')), 'the floor is on the card');
   assert.ok(text.some((t) => t.includes('Why you are being asked: $2.00 is above the $1.00 click threshold.')),
     'the rule that stopped it is behind the fold');
   assert.equal(text.some((t) => t.includes('No fee was quoted')), false);

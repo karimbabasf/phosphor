@@ -715,32 +715,37 @@
       if (q) move.feeUsd = num(q.feeUsd);
       /* The floor the fill is held to. It is the protection on a swap, so it
          stays on the card whether the rail quoted it or the draft named it. */
-      var floor = sim && isObject(sim.swap) && sim.swap.receivesAtLeast ? String(sim.swap.receivesAtLeast) : null;
-      if (floor === null && num(args.minAmountOut) !== null) floor = dom.qty(num(args.minAmountOut));
-      if (floor === null && d.minAmountOut !== undefined && num(d.minAmountOut) !== null) floor = dom.qty(num(d.minAmountOut));
+      /* Through floorText whichever source names it: the rail's floor is a string in base
+         precision, and a 24-place wNEAR figure printed whole (2026-09-20). */
+      var floor = sim && isObject(sim.swap) && num(sim.swap.receivesAtLeast) !== null ? floorText(num(sim.swap.receivesAtLeast)) : null;
+      if (floor === null && num(args.minAmountOut) !== null) floor = floorText(num(args.minAmountOut));
+      if (floor === null && d.minAmountOut !== undefined && num(d.minAmountOut) !== null) floor = floorText(num(d.minAmountOut));
       if (floor !== null) move.quote = 'at least ' + floor + ' ' + String(move.to.symbol || '');
     } else if (kind === 'intents_deposit') {
       move.from = { symbol: d.symbol || args.symbol, place: d.chain || args.chain, amount: num(d.amount !== undefined ? d.amount : args.amount) };
-      move.to = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.minCredited) };
+      move.to = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.minCredited), floor: true };
     } else if (kind === 'intents_withdraw') {
       move.from = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
-      move.to = { symbol: d.symbol || args.symbol, place: d.chain || args.chain, amount: num(d.minReceived) };
+      move.to = { symbol: d.symbol || args.symbol, place: d.chain || args.chain, amount: num(d.minReceived), floor: true };
     } else if (kind === 'intents_send') {
       /* Both ends inside intents; the receiver's account is the fact this card exists to show. */
       move.from = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
-      move.to = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.minReceived) };
+      move.to = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.minReceived), floor: true };
       if (d.to || args.to) move.quote = 'to ' + String(d.to || args.to);
     } else if (kind === 'intents_pay') {
       /* Out of intents and onto a chain: the send card draws the address, this is the head. */
       var send = isObject(data.send) ? data.send : {};
       move.from = { symbol: d.symbol || send.symbol || args.symbol, place: 'intents', amount: num(d.amount !== undefined ? d.amount : (send.amount !== undefined ? send.amount : args.amount)) };
-      move.to = { symbol: d.symbol || send.symbol || args.symbol, place: d.network || send.where || args.where, amount: num(d.minReceived) };
+      move.to = { symbol: d.symbol || send.symbol || args.symbol, place: d.network || send.where || args.where, amount: num(d.minReceived), floor: true };
     } else if (kind === 'hl_deposit') {
       move.from = { symbol: d.symbol || args.symbol || 'USDC', place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
-      move.to = { symbol: 'USDC', place: 'hyperliquid', amount: num(d.minCredited) };
+      move.to = { symbol: 'USDC', place: 'hyperliquid', amount: num(d.minCredited), floor: true };
     } else if (kind === 'hl_withdraw') {
+      /* The out leg of every rail below is the FLOOR the rail holds the venue to, not a quote,
+         and it drew as a plain figure while the agent quoted the expected amount: two numbers
+         and no reason on one card (2026-09-20). `floor` makes the leg say "at least". */
       move.from = { symbol: 'USDC', place: 'hyperliquid', amount: num(d.amount !== undefined ? d.amount : args.amount) };
-      move.to = { symbol: 'USDC', place: 'intents', amount: num(d.minReceived) };
+      move.to = { symbol: 'USDC', place: 'intents', amount: num(d.minReceived), floor: true };
     } else if (kind === 'trade' || kind === 'trade_change') {
       var plan = isObject(d.plan) ? d.plan : (isObject(args.plan) ? args.plan : null);
       if (plan) {
@@ -783,6 +788,15 @@
     return move;
   }
 
+  /* A floor to six significant figures. It is a promise the rail holds the venue to, so it
+     keeps more places than a balance does, and it is read by a person, so it does not keep all
+     twenty-four of a NEAR figure's. */
+  function floorText(value) {
+    var n = Number(value);
+    if (!isFinite(n)) return '';
+    return n.toLocaleString('en-US', { maximumSignificantDigits: 6 });
+  }
+
   function legRow(leg, role) {
     var row = dom.el('div', 'tcard-leg');
     row.setAttribute('data-leg', role);
@@ -790,7 +804,8 @@
     var text = dom.el('span', 'tcard-leg-text');
     var amount = dom.el('span', 'tcard-leg-amount');
     if (leg.amount !== null && leg.amount !== undefined) {
-      amount.appendChild(mono('', leg.usd ? dom.usd(leg.amount) : dom.qty(leg.amount)));
+      if (leg.floor) amount.appendChild(dom.el('span', 'tcard-leg-floor', 'at least '));
+      amount.appendChild(mono('', leg.usd ? dom.usd(leg.amount) : (leg.floor ? floorText(leg.amount) : dom.qty(leg.amount))));
       amount.appendChild(dom.el('span', 'tcard-leg-symbol', leg.usd ? String(leg.symbol || '') : ' ' + String(leg.symbol || '')));
     } else {
       amount.appendChild(dom.el('span', 'tcard-leg-symbol', String(leg.symbol || '')));

@@ -463,6 +463,13 @@
   font-weight: 500;
 }
 
+/* "at least" before a floor: the word is quieter than the figure it qualifies. */
+.tcard-leg-floor {
+  font-size: var(--fs-12);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
 .tcard-leg-place {
   font-size: var(--fs-12);
   color: var(--text-3);

@@ -324,6 +324,15 @@ test('a balance short of amount plus the activation fee is refused and says both
   assert.equal(quotes.length, 0);
 });
 
+test('the numbers in a refusal are money, never a float with its rounding error showing', async () => {
+  // Karim's window, 2026-09-20: "the withdrawal needs 8.209399000000001 USDC".
+  const { rail: r } = rail({}, [{ available: 7.209399, spot: 7.209399, perp: 0 }]);
+  const out = await r.simulate(draft({ amount: 7.209399, amountUsd: 7.209399, minReceived: minReceivedForHlWithdraw(7.209399) }));
+  assert.equal(out.ok, false);
+  assert.match(out.summary, /needs 8\.209399 USDC/);
+  assert.doesNotMatch(out.summary, /0000001/);
+});
+
 test('a standard account counts both books and the rail will move perp to spot itself', async () => {
   const { rail: r } = rail({}, [{ available: 0, spot: 2, perp: 20, unified: false }]);
   const out = await r.simulate(draft());
