@@ -246,6 +246,7 @@ const chipTone = (world: World): string | null => find(find(panel(world), '.card
 const sentences = (world: World): string[] => find(panel(world), '.agentpick-sentence').filter(shown).map((n: Any) => n.textContent).filter((t: string) => t !== '');
 const light = (world: World): string | null => find(panel(world), '.agentpick-light')[0].getAttribute('data-state');
 const summary = (world: World): Any => find(panel(world), '.vault-agent')[0];
+const tileOf = (world: World, id: string): Any => find(panel(world), '.agent-tile').find((t: Any) => t.dataset.agent === id) as Any;
 
 /* ---------- the source ---------- */
 
@@ -347,7 +348,7 @@ test('Change draws the same six tiles in the panel over the summary; Done brings
   assert.equal(summary(world).hidden, true, 'the summary is still up under the picker');
   const tiles = find(panel(world), '.agent-tile');
   assert.deepEqual(tiles.map((t: Any) => t.dataset.agent), ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']);
-  assert.equal(tiles.find((t: Any) => t.dataset.agent === 'codex').getAttribute('aria-current'), 'true', 'the picked agent is not current');
+  assert.equal(tileOf(world, 'codex').getAttribute('aria-current'), 'true', 'the picked agent is not current');
   assert.equal(sentences(world).length <= 1, true, 'more than one sentence on the panel');
 
   const before = world.calls.filter((c) => c.action === 'agent-check').length;
@@ -368,12 +369,11 @@ test('a switch the app refuses while an agent is running is that one sentence, a
   world.show('vault');
   await flush();
   buttonNamed(panel(world), 'Change').click();
-  find(panel(world), '.agent-tile').find((t: Any) => t.dataset.agent === 'claude').click();
+  tileOf(world, 'claude').click();
   await flush();
   assert.deepEqual(sentences(world), ['Your assistant is running. Turn it off in the chat, then change it here.']);
-  const tiles = find(panel(world), '.agent-tile');
-  assert.equal(tiles.find((t: Any) => t.dataset.agent === 'codex').getAttribute('aria-current'), 'true');
-  assert.equal(tiles.find((t: Any) => t.dataset.agent === 'claude').getAttribute('aria-current'), null);
+  assert.equal(tileOf(world, 'codex').getAttribute('aria-current'), 'true');
+  assert.equal(tileOf(world, 'claude').getAttribute('aria-current'), null);
   assert.equal(world.toasts.length, 0);
 });
 
@@ -384,7 +384,7 @@ test('a pick that lands is written once, and leaving the tab closes the picker',
   world.show('vault');
   await flush();
   buttonNamed(panel(world), 'Change').click();
-  find(panel(world), '.agent-tile').find((t: Any) => t.dataset.agent === 'hermes').click();
+  tileOf(world, 'hermes').click();
   await flush();
   assert.equal(world.calls.filter((c) => c.action === 'agent-pick').length, 1);
   assert.deepEqual(sentences(world), ['Hermes is signed in: start it in your terminal and it will appear here.']);

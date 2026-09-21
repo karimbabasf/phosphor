@@ -259,7 +259,7 @@ function recorder(answers: Array<{ code: number; stdout?: string; stderr?: strin
 
 test('the registration runs the vendor\'s own mcp add with the same arguments the line shows, without a shell', async () => {
   const { home, env } = bareHome();
-  for (const agent of ['claude', 'codex', 'hermes', 'grok'] as const) {
+  for (const agent of ['claude', 'codex', 'grok'] as const) {
     const { run, calls } = recorder();
     const bin = fixture(`fake-${agent}-logged-in.sh`);
     const done = await registerAgent(agent, SPEC, { env, home, bin, run });
@@ -271,6 +271,31 @@ test('the registration runs the vendor\'s own mcp add with the same arguments th
     // The arguments carry the raw path, unquoted: quoting is for the line a person pastes.
     assert.ok(calls[0].includes(`PHOSPHOR_DATA_DIR=${SPEC.dataDir}`), agent);
   }
+});
+
+test('Hermes is removed before it is written, and its "Enable all tools?" question is answered down stdin', async () => {
+  const { home, env } = bareHome();
+  const calls: Array<{ args: string[]; input?: string }> = [];
+  const run: Run = async (_bin, args, _env, _timeout, input) => {
+    calls.push({ args, input });
+    return { code: 0, stdout: '', stderr: '', timedOut: false };
+  };
+  const done = await registerAgent('hermes', SPEC, { env, home, bin: fixture('fake-hermes-logged-in.sh'), run });
+  assert.equal(done.ok, true);
+  assert.equal(done.wrote, true);
+  assert.deepEqual(calls.map((c) => c.args.slice(0, 2)), [['mcp', 'remove'], ['mcp', 'add']]);
+  assert.equal(calls[0].input, undefined);
+  assert.equal(calls[1].input, 'Y\n');
+  assert.deepEqual(calls[1].args, registrationArgs('hermes', SPEC));
+});
+
+test('a probe gets no stdin: a command that stops to ask a question is not waited on', async () => {
+  const { home, env } = bareHome();
+  const started = Date.now();
+  // The fixture reads a line from stdin before it answers; a closed stdin answers it at once.
+  const check = await checkAgent('codex', { env, home, bin: fixture('fake-agent-asks.sh') });
+  assert.ok(Date.now() - started < 1_500, 'the check waited on a question');
+  assert.equal(check.state, 'installed_and_logged_in');
 });
 
 test('an entry that already exists is removed and written again, so it names this installation', async () => {

@@ -475,7 +475,7 @@ async function atThreshold(world: World): Promise<Any> {
   const screen = world.screen;
   buttonNamed(screen, 'Get started').click();
   // The import path: it skips the words and the prove step, which need a phrase.
-  find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have one')).click();
+  (find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have one')) as Any).click();
   buttonNamed(screen, 'Continue').click(); // choose
   find(screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
   buttonNamed(screen, 'Continue').click(); // password, straight to the addresses

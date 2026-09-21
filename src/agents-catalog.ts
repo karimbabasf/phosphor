@@ -25,7 +25,7 @@
 // config in ~/.grok/config.toml, `grok mcp add` writes the config). docs.x.ai answered 404 for
 // its Grok Build pages on the day this was written, so the shipped README is the source.
 
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -232,7 +232,11 @@ export function findAgentBin(entry: AgentEntry, opts: { env?: NodeJS.ProcessEnv;
 
 /* ---------- running a probe ---------- */
 
-export type Run = (bin: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number) => Promise<RunResult>;
+/* One vendor command, run without a shell, killed at its cap. `input` is what goes down its
+   stdin before the pipe closes; absent, stdin is closed from the start, so a command that
+   stops to ask a question (Hermes's first-run wizard, its "Enable all tools?" prompt) gets an
+   end of file at once instead of waiting on a pipe nobody will write to until the cap kills it. */
+export type Run = (bin: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number, input?: string) => Promise<RunResult>;
 export type RunResult = { code: number | null; stdout: string; stderr: string; timedOut: boolean };
 
 // A probe is a version or a status question. Two and a half seconds is the cap for one, so a
@@ -243,14 +247,52 @@ export const PROBE_TIMEOUT_MS = 2_500;
 // must not import the driver to run a `--version`.
 const PROBE_ENV = ['PATH', 'HOME', 'USER', 'SHELL', 'LANG', 'LC_ALL', 'TMPDIR', 'TERM'] as const;
 
-export const runProbe: Run = (bin, args, env, timeoutMs) =>
+const PROBE_OUTPUT_CAP = 256 * 1024;
+
+export const runProbe: Run = (bin, args, env, timeoutMs, input) =>
   new Promise((resolve) => {
-    execFile(bin, args, { env, timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 256 * 1024, windowsHide: true }, (error, stdout, stderr) => {
-      const err = error as (NodeJS.ErrnoException & { code?: number | string; killed?: boolean; signal?: string }) | null;
-      const timedOut = err !== null && (err.killed === true || err.signal === 'SIGKILL');
-      const code = err === null ? 0 : typeof err.code === 'number' ? err.code : null;
-      resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), timedOut });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let done = false;
+    let child: ReturnType<typeof spawn>;
+    const finish = (code: number | null): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr, timedOut });
+    };
+    try {
+      child = spawn(bin, args, { env, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], windowsHide: true });
+    } catch (error) {
+      resolve({ code: null, stdout: '', stderr: error instanceof Error ? error.message : String(error), timedOut: false });
+      return;
+    }
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+      finish(null);
+    }, timeoutMs);
+    const take = (chunk: Buffer, which: 'out' | 'err'): void => {
+      const text = chunk.toString('utf8');
+      if (which === 'out') stdout = (stdout + text).slice(0, PROBE_OUTPUT_CAP);
+      else stderr = (stderr + text).slice(0, PROBE_OUTPUT_CAP);
+    };
+    child.stdout?.on('data', (chunk: Buffer) => take(chunk, 'out'));
+    child.stderr?.on('data', (chunk: Buffer) => take(chunk, 'err'));
+    child.on('error', (error) => {
+      stderr = `${stderr}${error.message}`;
+      finish(null);
     });
+    child.on('close', (code) => finish(code));
+    if (input !== undefined && child.stdin) {
+      child.stdin.on('error', () => { /* the command left before reading its answer */ });
+      child.stdin.end(input);
+    }
   });
 
 /* The environment a probe runs in: the process's own allow list, the binary's own directory on
@@ -556,12 +598,18 @@ export async function registerAgent(
   if (bin === null) return { ok: false, wrote: false, detail: `${entry.binary} is not installed` };
   const run = opts.run ?? runProbe;
   const probe = probeEnv(entry, bin, env, home);
-  let out = await run(bin, args, probe, REGISTER_TIMEOUT_MS);
+  /* Hermes asks "Enable all N tools? [Y/n/select]" after it has connected and read the tool
+     list, and answers end of file with Cancelled; the app wants every tool it serves enabled,
+     so the answer goes down stdin. An entry that is already there gets a second question first
+     and the one answer lands on the wrong one, so the old entry is removed before the write. */
+  const input = id === 'hermes' ? 'Y\n' : undefined;
+  if (id === 'hermes') await run(bin, removalArgs(id) ?? [], probe, REGISTER_TIMEOUT_MS);
+  let out = await run(bin, args, probe, REGISTER_TIMEOUT_MS, input);
   if (out.code !== 0 && /already exists|already configured|already registered/i.test(`${out.stdout}\n${out.stderr}`)) {
     const removal = removalArgs(id);
     if (removal !== null) {
       await run(bin, removal, probe, REGISTER_TIMEOUT_MS);
-      out = await run(bin, args, probe, REGISTER_TIMEOUT_MS);
+      out = await run(bin, args, probe, REGISTER_TIMEOUT_MS, input);
     }
   }
   if (out.timedOut) return { ok: false, wrote: false, detail: `${entry.binary} mcp add did not finish in ${REGISTER_TIMEOUT_MS / 1000} s` };
