@@ -672,6 +672,13 @@
   padding-top: var(--s-1);
 }
 
+/* The deposit card's one way forward, on the text column: the rows above it
+   start their words after a 20 px mark and a 12 px gap, and the button sits
+   on that same line rather than under the mark. */
+.tcard-open {
+  margin-left: calc(20px + var(--s-3));
+}
+
 .tcard-tail {
   font-size: var(--fs-12);
   color: var(--text);

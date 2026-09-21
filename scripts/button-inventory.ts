@@ -231,8 +231,11 @@ async function render(list: Family[]): Promise<Measure[]> {
   const measures: Measure[] = [];
   const recipes = RECIPES.filter((r) => list.some((f) => f.family === r.family));
   try {
+    // The page itself points at the stylesheets by absolute path, so it lives in the temp
+    // directory: the evidence folder keeps the pictures, the table and the measurements.
+    const pages = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-button-inventory-'));
     for (const width of WIDTHS) {
-      const file = path.join(OUT, `sheet-${width}.html`);
+      const file = path.join(pages, `sheet-${width}.html`);
       fs.writeFileSync(file, sheetHtml(recipes, width));
       const page: Json = await browser.newPage({ viewport: { width: width + 48, height: 900 }, deviceScaleFactor: 2 });
       const noise: string[] = [];

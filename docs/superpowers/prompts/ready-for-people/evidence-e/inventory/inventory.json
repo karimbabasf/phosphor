@@ -1,0 +1,4172 @@
+{
+  "sites": [
+    {
+      "file": "ui/index.html",
+      "line": 55,
+      "family": "tab",
+      "label": "\"Basic\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/index.html",
+      "line": 56,
+      "family": "tab",
+      "label": "\"Pro\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/index.html",
+      "line": 57,
+      "family": "tab",
+      "label": "\"Trade\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/index.html",
+      "line": 58,
+      "family": "tab",
+      "label": "\"Vault\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/index.html",
+      "line": 71,
+      "family": "status-line bar-state",
+      "label": "\"Not backed up\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/index.html",
+      "line": 84,
+      "family": "layout opens",
+      "label": "\"Layout\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/index.html",
+      "line": 92,
+      "family": "btn btn-sm freeze",
+      "label": "\"Freeze everything\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 497,
+      "family": "btn btn-primary btn-sm",
+      "label": "\"Start your assistant\"",
+      "pending": "Starting",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 498,
+      "family": "btn btn-quiet btn-sm",
+      "label": "\"Turn off\"",
+      "pending": "Turning off",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 520,
+      "family": "chip agent-retry",
+      "label": "\"Retry\"",
+      "pending": "Starting",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 562,
+      "family": "btn btn-primary",
+      "label": "\"Start your assistant\"",
+      "pending": "Starting",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 563,
+      "family": "btn btn-ghost",
+      "label": "\"Connect your own\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 576,
+      "family": "chip suggest",
+      "label": "SUGGESTIONS[s] (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 594,
+      "family": "chip connection-copy",
+      "label": "\"Copy\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 604,
+      "family": "btn btn-ghost btn-sm agent-connect-back",
+      "label": "\"Back\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 636,
+      "family": "jump-latest",
+      "label": "\"Jump to latest\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 666,
+      "family": "composer-send",
+      "label": "aria-label \"Send\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 926,
+      "family": "btn btn-ghost",
+      "label": "\"Keep running\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 927,
+      "family": "btn btn-danger",
+      "label": "\"Turn off\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/agent.js",
+      "line": 1559,
+      "family": "steps-fold",
+      "label": "icon chevron",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/basic.js",
+      "line": 194,
+      "family": "fold-head card-head",
+      "label": "title (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/cards.js",
+      "line": 1235,
+      "family": "btn btn-ghost btn-sm tcard-open",
+      "label": "\"Open the deposit card\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/checks.js",
+      "line": 199,
+      "family": "checks-toggle",
+      "label": "\"Checks\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/decision.js",
+      "line": 605,
+      "family": "dock-next",
+      "label": "entry.queued (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/decision.js",
+      "line": 632,
+      "family": "btn btn-ghost",
+      "label": "\"No\"",
+      "pending": "Refusing",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/decision.js",
+      "line": 635,
+      "family": "btn btn-primary",
+      "label": "\"Unlock\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/decision.js",
+      "line": 657,
+      "family": "btn btn-ghost",
+      "label": "\"No\"",
+      "pending": "Refusing",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/decision.js",
+      "line": 660,
+      "family": "btn btn-primary",
+      "label": "send (argument)",
+      "pending": "Approving",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/decision.js",
+      "line": 958,
+      "family": "dock-report-toggle",
+      "label": "word (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/decision.js",
+      "line": 1092,
+      "family": "btn btn-primary",
+      "label": "\"Reconcile\"",
+      "pending": "Checking",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/decision.js",
+      "line": 1096,
+      "family": "btn",
+      "label": "\"Got it\"",
+      "pending": "Filing",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/deposit.js",
+      "line": 175,
+      "family": "btn btn-quiet btn-sm",
+      "label": "\"Close\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/deposit.js",
+      "line": 267,
+      "family": "dock-close",
+      "label": "aria-label \"Not now\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/deposit.js",
+      "line": 278,
+      "family": "btn btn-primary",
+      "label": "\"Back up now\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/feedback.js",
+      "line": 55,
+      "family": "btn btn-ghost",
+      "label": "\"Cancel\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/feedback.js",
+      "line": 57,
+      "family": "btn btn-primary",
+      "label": "\"Yes\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/feedback.js",
+      "line": 149,
+      "family": "btn btn-ghost",
+      "label": "\"Cancel\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/feedback.js",
+      "line": 152,
+      "family": "btn btn-primary",
+      "label": "\"Continue\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 341,
+      "family": "btn btn-ghost",
+      "label": "\"Back\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 347,
+      "family": "btn btn-quiet",
+      "label": "opts.skip (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 355,
+      "family": "btn btn-ghost btn-lg",
+      "label": "primaryLabel (argument)",
+      "pending": null,
+      "disables": true
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 355,
+      "family": "btn btn-primary btn-lg",
+      "label": "primaryLabel (argument)",
+      "pending": null,
+      "disables": true
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 586,
+      "family": "choice",
+      "label": "title (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 666,
+      "family": "btn btn-ghost",
+      "label": "\"Copy\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 668,
+      "family": "btn btn-ghost",
+      "label": "\"Print\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 830,
+      "family": "btn btn-primary",
+      "label": "\"Start it\"",
+      "pending": "Starting",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 844,
+      "family": "btn btn-ghost",
+      "label": "\"Copy\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/firstrun.js",
+      "line": 901,
+      "family": "chip",
+      "label": "built by the caller",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/lock.js",
+      "line": 240,
+      "family": "lock-eye",
+      "label": "aria-label \"Show password\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/lock.js",
+      "line": 261,
+      "family": "btn btn-primary lock-unlock",
+      "label": "\"Unlock\"",
+      "pending": "Unlocking",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/lock.js",
+      "line": 330,
+      "family": "btn btn-primary lock-unlock",
+      "label": "\"Unlock with Touch ID\"",
+      "pending": "Waiting for Touch ID",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/lock.js",
+      "line": 430,
+      "family": "btn btn-primary btn-lg",
+      "label": "\"Encrypt now\"",
+      "pending": "Encrypting your keys",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/lock.js",
+      "line": 491,
+      "family": "btn btn-primary btn-lg",
+      "label": "\"Continue\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/moneyin.js",
+      "line": 113,
+      "family": "btn btn-primary",
+      "label": "\"Done\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/netpick.js",
+      "line": 554,
+      "family": "btn btn-quiet btn-sm",
+      "label": "\"Stop watching\"",
+      "pending": "Stopping",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/netpick.js",
+      "line": 736,
+      "family": "net-tile",
+      "label": "n.name (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/netpick.js",
+      "line": 778,
+      "family": "netpick-link",
+      "label": "built by the caller",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/netpick.js",
+      "line": 868,
+      "family": "net-row",
+      "label": "n.name (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/netpick.js",
+      "line": 920,
+      "family": "netpick-back",
+      "label": "\"Change network\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/netpick.js",
+      "line": 1118,
+      "family": "btn btn-ghost",
+      "label": "\"Show the address\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/netpick.js",
+      "line": 1202,
+      "family": "btn btn-ghost btn-sm",
+      "label": "\"Try again\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/netpick.js",
+      "line": 1315,
+      "family": "btn btn-ghost btn-sm",
+      "label": "\"Copy memo\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/netpick.js",
+      "line": 1356,
+      "family": "netpick-link",
+      "label": "\" \"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/pro.js",
+      "line": 378,
+      "family": "holding-head",
+      "label": "built by the caller",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/pro.js",
+      "line": 979,
+      "family": "rule-group-title opens",
+      "label": "title (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipt.js",
+      "line": 260,
+      "family": "btn btn-quiet btn-sm receipt-copy",
+      "label": "\"Copy\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipt.js",
+      "line": 345,
+      "family": "receipt-close",
+      "label": "aria-label \"Close\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipt.js",
+      "line": 409,
+      "family": "btn btn-ghost",
+      "label": "\"Check it again\"",
+      "pending": "Checking",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipt.js",
+      "line": 568,
+      "family": "btn btn-primary",
+      "label": "\"Check it again\"",
+      "pending": "Checking",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipt.js",
+      "line": 598,
+      "family": "btn btn-ghost",
+      "label": "\"Close\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipt.js",
+      "line": 623,
+      "family": "btn btn-quiet",
+      "label": "\"Copy\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipt.js",
+      "line": 669,
+      "family": "tx receipt-row",
+      "label": "\"\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipts.js",
+      "line": 124,
+      "family": "chip chip-filter",
+      "label": "item.label (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipts.js",
+      "line": 351,
+      "family": "btn btn-ghost activity-more",
+      "label": "\"See all\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/receipts.js",
+      "line": 394,
+      "family": "activity-link",
+      "label": "label (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/sendcard.js",
+      "line": 247,
+      "family": "sendcard-info",
+      "label": "\"i\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/sendcard.js",
+      "line": 358,
+      "family": "btn btn-quiet btn-sm sendcard-copy",
+      "label": "\"Copy\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/shell.js",
+      "line": 478,
+      "family": "check-row layers-row",
+      "label": "pane.label (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/terms.js",
+      "line": 118,
+      "family": "btn btn-primary btn-lg",
+      "label": "\"Accept and continue\"",
+      "pending": "Saving",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/trade.js",
+      "line": 200,
+      "family": "btn btn-ghost btn-sm trade-more",
+      "label": "\"Show more\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/trade.js",
+      "line": 357,
+      "family": "trade-tab",
+      "label": "TABS (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/trade.js",
+      "line": 573,
+      "family": "check-row layers-row",
+      "label": "label (argument)",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/trade.js",
+      "line": 595,
+      "family": "layers opens",
+      "label": "\"Layers\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/trade.js",
+      "line": 668,
+      "family": "trade-symbol opens",
+      "label": "aria-label \"Which market\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/trade.js",
+      "line": 1861,
+      "family": "btn btn-ghost trade-act",
+      "label": "built by the caller",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 137,
+      "family": "btn btn-primary",
+      "label": "\"Move behind the Secure Enclave\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 160,
+      "family": "btn btn-primary",
+      "label": "\"Reveal recovery phrase\"",
+      "pending": "Waiting for Touch ID",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 161,
+      "family": "btn btn-ghost",
+      "label": "\"Restore from a phrase\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 166,
+      "family": "btn btn-ghost",
+      "label": "\"Show my recovery words\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 167,
+      "family": "btn btn-ghost",
+      "label": "\"Save an encrypted backup\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 201,
+      "family": "btn btn-quiet",
+      "label": "\"Your rules\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 215,
+      "family": "chip",
+      "label": "minutes (argument)",
+      "pending": "Saving",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 245,
+      "family": "btn btn-danger",
+      "label": "\"Forget this wallet\"",
+      "pending": "Waiting for Touch ID",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 472,
+      "family": "netsel",
+      "label": "aria-label \"Which network\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 670,
+      "family": "btn btn-ghost btn-sm",
+      "label": "\"Copy\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 775,
+      "family": "btn btn-ghost",
+      "label": "\"Print\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 776,
+      "family": "btn btn-primary",
+      "label": "\"I wrote them down\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 777,
+      "family": "btn btn-quiet",
+      "label": "\"Done\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 851,
+      "family": "btn btn-ghost",
+      "label": "\"Show the words again\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 852,
+      "family": "btn btn-primary",
+      "label": "\"Prove it\"",
+      "pending": "Checking",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 922,
+      "family": "btn btn-ghost",
+      "label": "\"Cancel\"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 923,
+      "family": "btn btn-primary",
+      "label": "\"Restore\"",
+      "pending": "Restoring",
+      "disables": false
+    },
+    {
+      "file": "ui/screens/vault.js",
+      "line": 1056,
+      "family": "btn btn-primary btn-lg",
+      "label": "\"Move my keys\"",
+      "pending": "Waiting for Touch ID",
+      "disables": false
+    },
+    {
+      "file": "ui/split.js",
+      "line": 473,
+      "family": "pane-hide",
+      "label": "aria-label \"Hide the \"",
+      "pending": null,
+      "disables": false
+    },
+    {
+      "file": "ui/split.js",
+      "line": 496,
+      "family": "pane-show",
+      "label": "aria-label \"Show the \"",
+      "pending": null,
+      "disables": false
+    }
+  ],
+  "families": [
+    {
+      "family": "activity-link",
+      "sites": [
+        {
+          "file": "ui/screens/receipts.js",
+          "line": 394,
+          "family": "activity-link",
+          "label": "label (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".activity-link",
+        "hover": ".activity-link:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".activity-link:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn",
+      "sites": [
+        {
+          "file": "ui/screens/decision.js",
+          "line": 1096,
+          "family": "btn",
+          "label": "\"Got it\"",
+          "pending": "Filing",
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": true,
+      "disables": false
+    },
+    {
+      "family": "btn btn-danger",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 927,
+          "family": "btn btn-danger",
+          "label": "\"Turn off\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 245,
+          "family": "btn btn-danger",
+          "label": "\"Forget this wallet\"",
+          "pending": "Waiting for Touch ID",
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": true,
+      "disables": false
+    },
+    {
+      "family": "btn btn-ghost",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 563,
+          "family": "btn btn-ghost",
+          "label": "\"Connect your own\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/agent.js",
+          "line": 926,
+          "family": "btn btn-ghost",
+          "label": "\"Keep running\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/decision.js",
+          "line": 632,
+          "family": "btn btn-ghost",
+          "label": "\"No\"",
+          "pending": "Refusing",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/decision.js",
+          "line": 657,
+          "family": "btn btn-ghost",
+          "label": "\"No\"",
+          "pending": "Refusing",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/feedback.js",
+          "line": 55,
+          "family": "btn btn-ghost",
+          "label": "\"Cancel\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/feedback.js",
+          "line": 149,
+          "family": "btn btn-ghost",
+          "label": "\"Cancel\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 341,
+          "family": "btn btn-ghost",
+          "label": "\"Back\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 666,
+          "family": "btn btn-ghost",
+          "label": "\"Copy\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 668,
+          "family": "btn btn-ghost",
+          "label": "\"Print\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 844,
+          "family": "btn btn-ghost",
+          "label": "\"Copy\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/netpick.js",
+          "line": 1118,
+          "family": "btn btn-ghost",
+          "label": "\"Show the address\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/receipt.js",
+          "line": 409,
+          "family": "btn btn-ghost",
+          "label": "\"Check it again\"",
+          "pending": "Checking",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/receipt.js",
+          "line": 598,
+          "family": "btn btn-ghost",
+          "label": "\"Close\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 161,
+          "family": "btn btn-ghost",
+          "label": "\"Restore from a phrase\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 166,
+          "family": "btn btn-ghost",
+          "label": "\"Show my recovery words\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 167,
+          "family": "btn btn-ghost",
+          "label": "\"Save an encrypted backup\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 775,
+          "family": "btn btn-ghost",
+          "label": "\"Print\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 851,
+          "family": "btn btn-ghost",
+          "label": "\"Show the words again\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 922,
+          "family": "btn btn-ghost",
+          "label": "\"Cancel\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": true,
+      "disables": false
+    },
+    {
+      "family": "btn btn-ghost activity-more",
+      "sites": [
+        {
+          "file": "ui/screens/receipts.js",
+          "line": 351,
+          "family": "btn btn-ghost activity-more",
+          "label": "\"See all\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn btn-ghost btn-lg",
+      "sites": [
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 355,
+          "family": "btn btn-ghost btn-lg",
+          "label": "primaryLabel (argument)",
+          "pending": null,
+          "disables": true
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": true
+    },
+    {
+      "family": "btn btn-ghost btn-sm",
+      "sites": [
+        {
+          "file": "ui/screens/netpick.js",
+          "line": 1202,
+          "family": "btn btn-ghost btn-sm",
+          "label": "\"Try again\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/netpick.js",
+          "line": 1315,
+          "family": "btn btn-ghost btn-sm",
+          "label": "\"Copy memo\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 670,
+          "family": "btn btn-ghost btn-sm",
+          "label": "\"Copy\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn btn-ghost btn-sm agent-connect-back",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 604,
+          "family": "btn btn-ghost btn-sm agent-connect-back",
+          "label": "\"Back\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn btn-ghost btn-sm tcard-open",
+      "sites": [
+        {
+          "file": "ui/screens/cards.js",
+          "line": 1235,
+          "family": "btn btn-ghost btn-sm tcard-open",
+          "label": "\"Open the deposit card\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".tcard-open",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn btn-ghost btn-sm trade-more",
+      "sites": [
+        {
+          "file": "ui/screens/trade.js",
+          "line": 200,
+          "family": "btn btn-ghost btn-sm trade-more",
+          "label": "\"Show more\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn btn-ghost trade-act",
+      "sites": [
+        {
+          "file": "ui/screens/trade.js",
+          "line": 1861,
+          "family": "btn btn-ghost trade-act",
+          "label": "built by the caller",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ".trade-act[data-armed=\"true\"]"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn btn-primary",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 562,
+          "family": "btn btn-primary",
+          "label": "\"Start your assistant\"",
+          "pending": "Starting",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/decision.js",
+          "line": 635,
+          "family": "btn btn-primary",
+          "label": "\"Unlock\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/decision.js",
+          "line": 660,
+          "family": "btn btn-primary",
+          "label": "send (argument)",
+          "pending": "Approving",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/decision.js",
+          "line": 1092,
+          "family": "btn btn-primary",
+          "label": "\"Reconcile\"",
+          "pending": "Checking",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/deposit.js",
+          "line": 278,
+          "family": "btn btn-primary",
+          "label": "\"Back up now\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/feedback.js",
+          "line": 57,
+          "family": "btn btn-primary",
+          "label": "\"Yes\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/feedback.js",
+          "line": 152,
+          "family": "btn btn-primary",
+          "label": "\"Continue\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 830,
+          "family": "btn btn-primary",
+          "label": "\"Start it\"",
+          "pending": "Starting",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/moneyin.js",
+          "line": 113,
+          "family": "btn btn-primary",
+          "label": "\"Done\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/receipt.js",
+          "line": 568,
+          "family": "btn btn-primary",
+          "label": "\"Check it again\"",
+          "pending": "Checking",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 137,
+          "family": "btn btn-primary",
+          "label": "\"Move behind the Secure Enclave\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 160,
+          "family": "btn btn-primary",
+          "label": "\"Reveal recovery phrase\"",
+          "pending": "Waiting for Touch ID",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 776,
+          "family": "btn btn-primary",
+          "label": "\"I wrote them down\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 852,
+          "family": "btn btn-primary",
+          "label": "\"Prove it\"",
+          "pending": "Checking",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 923,
+          "family": "btn btn-primary",
+          "label": "\"Restore\"",
+          "pending": "Restoring",
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": true,
+      "disables": false
+    },
+    {
+      "family": "btn btn-primary btn-lg",
+      "sites": [
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 355,
+          "family": "btn btn-primary btn-lg",
+          "label": "primaryLabel (argument)",
+          "pending": null,
+          "disables": true
+        },
+        {
+          "file": "ui/screens/lock.js",
+          "line": 430,
+          "family": "btn btn-primary btn-lg",
+          "label": "\"Encrypt now\"",
+          "pending": "Encrypting your keys",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/lock.js",
+          "line": 491,
+          "family": "btn btn-primary btn-lg",
+          "label": "\"Continue\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/terms.js",
+          "line": 118,
+          "family": "btn btn-primary btn-lg",
+          "label": "\"Accept and continue\"",
+          "pending": "Saving",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 1056,
+          "family": "btn btn-primary btn-lg",
+          "label": "\"Move my keys\"",
+          "pending": "Waiting for Touch ID",
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": true,
+      "disables": true
+    },
+    {
+      "family": "btn btn-primary btn-sm",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 497,
+          "family": "btn btn-primary btn-sm",
+          "label": "\"Start your assistant\"",
+          "pending": "Starting",
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": true,
+      "disables": false
+    },
+    {
+      "family": "btn btn-primary lock-unlock",
+      "sites": [
+        {
+          "file": "ui/screens/lock.js",
+          "line": 261,
+          "family": "btn btn-primary lock-unlock",
+          "label": "\"Unlock\"",
+          "pending": "Unlocking",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/lock.js",
+          "line": 330,
+          "family": "btn btn-primary lock-unlock",
+          "label": "\"Unlock with Touch ID\"",
+          "pending": "Waiting for Touch ID",
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": true,
+      "disables": false
+    },
+    {
+      "family": "btn btn-quiet",
+      "sites": [
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 347,
+          "family": "btn btn-quiet",
+          "label": "opts.skip (argument)",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/receipt.js",
+          "line": 623,
+          "family": "btn btn-quiet",
+          "label": "\"Copy\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 201,
+          "family": "btn btn-quiet",
+          "label": "\"Your rules\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 777,
+          "family": "btn btn-quiet",
+          "label": "\"Done\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn btn-quiet btn-sm",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 498,
+          "family": "btn btn-quiet btn-sm",
+          "label": "\"Turn off\"",
+          "pending": "Turning off",
+          "disables": false
+        },
+        {
+          "file": "ui/screens/deposit.js",
+          "line": 175,
+          "family": "btn btn-quiet btn-sm",
+          "label": "\"Close\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/netpick.js",
+          "line": 554,
+          "family": "btn btn-quiet btn-sm",
+          "label": "\"Stop watching\"",
+          "pending": "Stopping",
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": true,
+      "disables": false
+    },
+    {
+      "family": "btn btn-quiet btn-sm receipt-copy",
+      "sites": [
+        {
+          "file": "ui/screens/receipt.js",
+          "line": 260,
+          "family": "btn btn-quiet btn-sm receipt-copy",
+          "label": "\"Copy\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ".receipt-close:focus-visible,\n.receipt-copy:focus-visible,\n.receipt-view:focus-visible",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn btn-quiet btn-sm sendcard-copy",
+      "sites": [
+        {
+          "file": "ui/screens/sendcard.js",
+          "line": 358,
+          "family": "btn btn-quiet btn-sm sendcard-copy",
+          "label": "\"Copy\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "btn btn-sm freeze",
+      "sites": [
+        {
+          "file": "ui/index.html",
+          "line": 92,
+          "family": "btn btn-sm freeze",
+          "label": "\"Freeze everything\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".btn",
+        "hover": ".btn:hover:not(:disabled)",
+        "active": ".btn:active:not(:disabled)",
+        "disabled": ".btn:hover:not(:disabled)",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": ".btn:disabled:not([data-pending=\"true\"])",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "check-row layers-row",
+      "sites": [
+        {
+          "file": "ui/screens/shell.js",
+          "line": 478,
+          "family": "check-row layers-row",
+          "label": "pane.label (argument)",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/trade.js",
+          "line": 573,
+          "family": "check-row layers-row",
+          "label": "label (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".check-row",
+        "hover": ".check-row:hover",
+        "active": ".check-row:active",
+        "disabled": "",
+        "focus": ".check-row:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".check-row[aria-checked=\"true\"]"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "checks-toggle",
+      "sites": [
+        {
+          "file": "ui/screens/checks.js",
+          "line": 199,
+          "family": "checks-toggle",
+          "label": "\"Checks\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".checks-toggle",
+        "hover": ".checks-toggle:hover .checks-summary",
+        "active": "",
+        "disabled": "",
+        "focus": ".checks-toggle:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "chip",
+      "sites": [
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 901,
+          "family": "chip",
+          "label": "built by the caller",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/vault.js",
+          "line": 215,
+          "family": "chip",
+          "label": "minutes (argument)",
+          "pending": "Saving",
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".chip",
+        "hover": "",
+        "active": "",
+        "disabled": "",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": true,
+      "disables": false
+    },
+    {
+      "family": "chip agent-retry",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 520,
+          "family": "chip agent-retry",
+          "label": "\"Retry\"",
+          "pending": "Starting",
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".agent-retry",
+        "hover": ".agent-retry:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": true,
+      "disables": false
+    },
+    {
+      "family": "chip chip-filter",
+      "sites": [
+        {
+          "file": "ui/screens/receipts.js",
+          "line": 124,
+          "family": "chip chip-filter",
+          "label": "item.label (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".chip",
+        "hover": ".chip-filter:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".chip-filter:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "chip connection-copy",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 594,
+          "family": "chip connection-copy",
+          "label": "\"Copy\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".connection-copy",
+        "hover": "",
+        "active": "",
+        "disabled": "",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "chip suggest",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 576,
+          "family": "chip suggest",
+          "label": "SUGGESTIONS[s] (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".suggest",
+        "hover": "",
+        "active": "",
+        "disabled": "",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "choice",
+      "sites": [
+        {
+          "file": "ui/screens/firstrun.js",
+          "line": 586,
+          "family": "choice",
+          "label": "title (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".choice",
+        "hover": ".choice:hover",
+        "active": ".choice:active",
+        "disabled": "",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".choice[data-chosen=\"true\"]"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "composer-send",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 666,
+          "family": "composer-send",
+          "label": "aria-label \"Send\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".composer-send",
+        "hover": ".composer-send:hover:not(:disabled)",
+        "active": ".composer-send:active:not(:disabled)",
+        "disabled": ".composer-field[data-armed=\"true\"] .composer-send:not(:disabled)",
+        "focus": ".composer-send:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".composer-field[data-armed=\"true\"] .composer-send:not(:disabled)"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "dock-close",
+      "sites": [
+        {
+          "file": "ui/screens/deposit.js",
+          "line": 267,
+          "family": "dock-close",
+          "label": "aria-label \"Not now\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".dock-close",
+        "hover": ".dock-close:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".dock-close:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "dock-next",
+      "sites": [
+        {
+          "file": "ui/screens/decision.js",
+          "line": 605,
+          "family": "dock-next",
+          "label": "entry.queued (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".dock-next",
+        "hover": ".dock-next:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".dock-next:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "dock-report-toggle",
+      "sites": [
+        {
+          "file": "ui/screens/decision.js",
+          "line": 958,
+          "family": "dock-report-toggle",
+          "label": "word (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".dock-report-toggle",
+        "hover": ".dock-report-toggle:hover .dock-report-count",
+        "active": "",
+        "disabled": "",
+        "focus": ".dock-report-toggle:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "fold-head card-head",
+      "sites": [
+        {
+          "file": "ui/screens/basic.js",
+          "line": 194,
+          "family": "fold-head card-head",
+          "label": "title (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".fold > .fold-head",
+        "hover": ".fold-head:hover .card-meta",
+        "active": "",
+        "disabled": "",
+        "focus": ".fold-head:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".fold[data-open=\"true\"] > .fold-head"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "holding-head",
+      "sites": [
+        {
+          "file": "ui/screens/pro.js",
+          "line": 378,
+          "family": "holding-head",
+          "label": "built by the caller",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".holding-head",
+        "hover": ".holding-head.opens:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".card [data-open=\"true\"] > .chev,\n.card [data-open=\"true\"] > .holding-head > .chev,\n.card [data-open=\"true\"] > .rule-group-title > .chev"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "jump-latest",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 636,
+          "family": "jump-latest",
+          "label": "\"Jump to latest\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".jump-latest",
+        "hover": ".jump-latest:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".jump-latest:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "layers opens",
+      "sites": [
+        {
+          "file": "ui/screens/trade.js",
+          "line": 595,
+          "family": "layers opens",
+          "label": "\"Layers\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".opens",
+        "hover": ".opens:hover",
+        "active": ".opens:active",
+        "disabled": "",
+        "focus": ".opens:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "layout opens",
+      "sites": [
+        {
+          "file": "ui/index.html",
+          "line": 84,
+          "family": "layout opens",
+          "label": "\"Layout\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".opens",
+        "hover": ".opens:hover",
+        "active": ".opens:active",
+        "disabled": "",
+        "focus": ".opens:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "lock-eye",
+      "sites": [
+        {
+          "file": "ui/screens/lock.js",
+          "line": 240,
+          "family": "lock-eye",
+          "label": "aria-label \"Show password\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".lock-eye",
+        "hover": ".lock-eye:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".lock-eye:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".lock-eye[aria-pressed=\"true\"]"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "net-row",
+      "sites": [
+        {
+          "file": "ui/screens/netpick.js",
+          "line": 868,
+          "family": "net-row",
+          "label": "n.name (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".net-row",
+        "hover": ".net-tile:hover .logo[data-token=\"BASE\"],\n.net-tile:focus-visible .logo[data-token=\"BASE\"],\n.net-tile[aria-current=\"true\"] .logo[data-token=\"BASE\"],\n.net-row:hover .logo[data-token=\"BASE\"],\n.net-row:focus-visible .logo[data-token=\"BASE\"]",
+        "active": "",
+        "disabled": "",
+        "focus": ".net-tile:hover .logo[data-token=\"BASE\"],\n.net-tile:focus-visible .logo[data-token=\"BASE\"],\n.net-tile[aria-current=\"true\"] .logo[data-token=\"BASE\"],\n.net-row:hover .logo[data-token=\"BASE\"],\n.net-row:focus-visible .logo[data-token=\"BASE\"]",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".net-tile:hover .logo[data-token=\"BASE\"],\n.net-tile:focus-visible .logo[data-token=\"BASE\"],\n.net-tile[aria-current=\"true\"] .logo[data-token=\"BASE\"],\n.net-row:hover .logo[data-token=\"BASE\"],\n.net-row:focus-visible .logo[data-token=\"BASE\"]"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "net-tile",
+      "sites": [
+        {
+          "file": "ui/screens/netpick.js",
+          "line": 736,
+          "family": "net-tile",
+          "label": "n.name (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".net-tile",
+        "hover": ".net-tile:hover,\n.net-tile:focus-visible,\n.net-tile[aria-current=\"true\"]",
+        "active": ".net-tile:active",
+        "disabled": "",
+        "focus": ".net-tile:hover,\n.net-tile:focus-visible,\n.net-tile[aria-current=\"true\"]",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".net-tile:hover,\n.net-tile:focus-visible,\n.net-tile[aria-current=\"true\"]"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "netpick-back",
+      "sites": [
+        {
+          "file": "ui/screens/netpick.js",
+          "line": 920,
+          "family": "netpick-back",
+          "label": "\"Change network\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".netpick-back",
+        "hover": ".netpick-back:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".netpick-back:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "netpick-link",
+      "sites": [
+        {
+          "file": "ui/screens/netpick.js",
+          "line": 778,
+          "family": "netpick-link",
+          "label": "built by the caller",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/screens/netpick.js",
+          "line": 1356,
+          "family": "netpick-link",
+          "label": "\" \"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".netpick-link",
+        "hover": ".netpick-link:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".netpick-link:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "netsel",
+      "sites": [
+        {
+          "file": "ui/screens/vault.js",
+          "line": 472,
+          "family": "netsel",
+          "label": "aria-label \"Which network\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".netsel",
+        "hover": ".netsel:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".netsel:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".netsel[aria-expanded=\"true\"] .chev-icon"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "pane-hide",
+      "sites": [
+        {
+          "file": "ui/split.js",
+          "line": 473,
+          "family": "pane-hide",
+          "label": "aria-label \"Hide the \"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".pane-hide",
+        "hover": ".pane-hide:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".pane-hide:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "pane-show",
+      "sites": [
+        {
+          "file": "ui/split.js",
+          "line": 496,
+          "family": "pane-show",
+          "label": "aria-label \"Show the \"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".pane-show",
+        "hover": ".pane-show:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".pane-show:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "receipt-close",
+      "sites": [
+        {
+          "file": "ui/screens/receipt.js",
+          "line": 345,
+          "family": "receipt-close",
+          "label": "aria-label \"Close\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".receipt-close",
+        "hover": ".receipt-close:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".receipt-close:focus-visible,\n.receipt-copy:focus-visible,\n.receipt-view:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "rule-group-title opens",
+      "sites": [
+        {
+          "file": "ui/screens/pro.js",
+          "line": 979,
+          "family": "rule-group-title opens",
+          "label": "title (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".opens",
+        "hover": ".opens:hover",
+        "active": ".opens:active",
+        "disabled": "",
+        "focus": ".opens:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".card [data-open=\"true\"] > .chev,\n.card [data-open=\"true\"] > .holding-head > .chev,\n.card [data-open=\"true\"] > .rule-group-title > .chev"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "sendcard-info",
+      "sites": [
+        {
+          "file": "ui/screens/sendcard.js",
+          "line": 247,
+          "family": "sendcard-info",
+          "label": "\"i\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".sendcard-info",
+        "hover": ".sendcard-info:hover,\n.sendcard-info:focus-visible",
+        "active": "",
+        "disabled": "",
+        "focus": ".sendcard-info:hover,\n.sendcard-info:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "status-line bar-state",
+      "sites": [
+        {
+          "file": "ui/index.html",
+          "line": 71,
+          "family": "status-line bar-state",
+          "label": "\"Not backed up\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".status-line",
+        "hover": "",
+        "active": "",
+        "disabled": "",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "steps-fold",
+      "sites": [
+        {
+          "file": "ui/screens/agent.js",
+          "line": 1559,
+          "family": "steps-fold",
+          "label": "icon chevron",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".steps-fold",
+        "hover": ".steps-fold:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".steps-fold:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".steps-fold[aria-expanded=\"true\"] .steps-chevron"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "tab",
+      "sites": [
+        {
+          "file": "ui/index.html",
+          "line": 55,
+          "family": "tab",
+          "label": "\"Basic\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/index.html",
+          "line": 56,
+          "family": "tab",
+          "label": "\"Pro\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/index.html",
+          "line": 57,
+          "family": "tab",
+          "label": "\"Trade\"",
+          "pending": null,
+          "disables": false
+        },
+        {
+          "file": "ui/index.html",
+          "line": 58,
+          "family": "tab",
+          "label": "\"Vault\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".tab",
+        "hover": ".tab:hover",
+        "active": ".tab:active",
+        "disabled": "",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".tab[aria-selected=\"true\"]"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "trade-symbol opens",
+      "sites": [
+        {
+          "file": "ui/screens/trade.js",
+          "line": 668,
+          "family": "trade-symbol opens",
+          "label": "aria-label \"Which market\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".opens",
+        "hover": ".opens:hover",
+        "active": ".opens:active",
+        "disabled": ".trade-symbol[disabled]",
+        "focus": ".opens:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "trade-tab",
+      "sites": [
+        {
+          "file": "ui/screens/trade.js",
+          "line": 357,
+          "family": "trade-tab",
+          "label": "TABS (argument)",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".trade-tab",
+        "hover": ".trade-tab:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ".trade-tab:focus-visible",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ".trade-tab[aria-selected=\"true\"]"
+      },
+      "pending": false,
+      "disables": false
+    },
+    {
+      "family": "tx receipt-row",
+      "sites": [
+        {
+          "file": "ui/screens/receipt.js",
+          "line": 669,
+          "family": "tx receipt-row",
+          "label": "\"\"",
+          "pending": null,
+          "disables": false
+        }
+      ],
+      "states": {
+        "rest": ".tx",
+        "hover": ".activity-rows > .tx.receipt-row:hover",
+        "active": "",
+        "disabled": "",
+        "focus": ":focus-visible (reset.css, every element)",
+        "pending": "[data-pending=\"true\"] (components.css, every element)",
+        "on": ""
+      },
+      "pending": false,
+      "disables": false
+    }
+  ],
+  "measures": [
+    {
+      "family": "btn btn-primary",
+      "width": 860,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 130.875,
+      "minHeight": 36,
+      "labelWidth": 24.171875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 130.875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-primary btn-lg",
+      "width": 860,
+      "floor": 44,
+      "height": 44,
+      "boxWidth": 234.34375,
+      "minHeight": 44,
+      "labelWidth": 105.921875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 234.34375,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-primary btn-sm",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 151.578125,
+      "minHeight": 30,
+      "labelWidth": 125.578125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 151.578125,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-primary lock-unlock",
+      "width": 860,
+      "floor": 36,
+      "height": 48,
+      "boxWidth": 134.0625,
+      "minHeight": 48,
+      "labelWidth": 53.6875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 134.0625,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost",
+      "width": 860,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 118.046875,
+      "minHeight": 36,
+      "labelWidth": 21.21875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 118.046875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-lg",
+      "width": 860,
+      "floor": 44,
+      "height": 44,
+      "boxWidth": 146.6875,
+      "minHeight": 44,
+      "labelWidth": 96.6875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-sm",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 84.375,
+      "minHeight": 30,
+      "labelWidth": 58.375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-sm agent-connect-back",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 57.578125,
+      "minHeight": 30,
+      "labelWidth": 31.578125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-sm tcard-open",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 171.90625,
+      "minHeight": 30,
+      "labelWidth": 145.90625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-sm trade-more",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 57.203125,
+      "minHeight": 30,
+      "labelWidth": 31.203125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost activity-more",
+      "width": 860,
+      "floor": 36,
+      "height": 40,
+      "boxWidth": 113.40625,
+      "minHeight": 40,
+      "labelWidth": 79.40625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost trade-act",
+      "width": 860,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 121,
+      "minHeight": 36,
+      "labelWidth": 95,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-quiet",
+      "width": 860,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 49.46875,
+      "minHeight": 36,
+      "labelWidth": 31.46875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-quiet btn-sm",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 63.421875,
+      "minHeight": 30,
+      "labelWidth": 37.421875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-quiet btn-sm receipt-copy",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 78.734375,
+      "minHeight": 30,
+      "labelWidth": 34.734375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-quiet btn-sm sendcard-copy",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 60.734375,
+      "minHeight": 30,
+      "labelWidth": 34.734375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-danger",
+      "width": 860,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 87.046875,
+      "minHeight": 36,
+      "labelWidth": 53.046875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn",
+      "width": 860,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 94.421875,
+      "minHeight": 36,
+      "labelWidth": 39.828125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 94.421875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-sm freeze",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 138.921875,
+      "minHeight": 30,
+      "labelWidth": 114.921875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 138.921875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "chip",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 94.703125,
+      "minHeight": 30,
+      "labelWidth": 68.703125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 94.703125,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "chip suggest",
+      "width": 860,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 137.09375,
+      "minHeight": 30,
+      "labelWidth": 103.09375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "chip agent-retry",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 98.1875,
+      "minHeight": 30,
+      "labelWidth": 32.765625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 98.1875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "chip connection-copy",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 58.546875,
+      "minHeight": 30,
+      "labelWidth": 32.546875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "jump-latest",
+      "width": 860,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 860,
+      "minHeight": 0,
+      "labelWidth": 95.90625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "chip chip-filter",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 66.40625,
+      "minHeight": 30,
+      "labelWidth": 40.40625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "tab",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 67.53125,
+      "minHeight": 0,
+      "labelWidth": 35.53125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "layout opens",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 84.90625,
+      "minHeight": 0,
+      "labelWidth": 40.90625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "status-line bar-state",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 120.09375,
+      "minHeight": 30,
+      "labelWidth": 90.09375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "composer-send",
+      "width": 860,
+      "floor": 30,
+      "height": 36,
+      "boxWidth": 36,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "steps-fold",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 215.359375,
+      "minHeight": 30,
+      "labelWidth": 44.390625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "fold-head card-head",
+      "width": 860,
+      "floor": 30,
+      "height": 52.25,
+      "boxWidth": 810,
+      "minHeight": 0,
+      "labelWidth": 58.09375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "checks-toggle",
+      "width": 860,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 860,
+      "minHeight": 32,
+      "labelWidth": 49.296875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "dock-next",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 828,
+      "minHeight": 30,
+      "labelWidth": 123.484375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "dock-report-toggle",
+      "width": 860,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 860,
+      "minHeight": 32,
+      "labelWidth": 114.390625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "dock-close",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 30,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "choice",
+      "width": 860,
+      "floor": 30,
+      "height": 79.390625,
+      "boxWidth": 177.4375,
+      "minHeight": 0,
+      "labelWidth": 103.59375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "lock-eye",
+      "width": 860,
+      "floor": 30,
+      "height": 36,
+      "boxWidth": 36,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "net-tile",
+      "width": 860,
+      "floor": 30,
+      "height": 84,
+      "boxWidth": 136.65625,
+      "minHeight": 84,
+      "labelWidth": 55.171875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "netpick-link",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 105.296875,
+      "minHeight": 30,
+      "labelWidth": 81.296875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "net-row",
+      "width": 860,
+      "floor": 30,
+      "height": 51.578125,
+      "boxWidth": 860,
+      "minHeight": 48,
+      "labelWidth": 800,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "netpick-back",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 143.453125,
+      "minHeight": 30,
+      "labelWidth": 109.453125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "netsel",
+      "width": 860,
+      "floor": 30,
+      "height": 40,
+      "boxWidth": 140.921875,
+      "minHeight": 40,
+      "labelWidth": 64.921875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "holding-head",
+      "width": 860,
+      "floor": 30,
+      "height": 53.296875,
+      "boxWidth": 860,
+      "minHeight": 52,
+      "labelWidth": 732.34375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "rule-group-title opens",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 810,
+      "minHeight": 30,
+      "labelWidth": 51.296875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "receipt-close",
+      "width": 860,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 32,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "tx receipt-row",
+      "width": 860,
+      "floor": 30,
+      "height": 66.1875,
+      "boxWidth": 860,
+      "minHeight": 0,
+      "labelWidth": 642,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "activity-link",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 83.625,
+      "minHeight": 30,
+      "labelWidth": 59.625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "sendcard-info",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 30,
+      "minHeight": 0,
+      "labelWidth": 16,
+      "labelLines": 2,
+      "clipped": true,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "trade-tab",
+      "width": 860,
+      "floor": 30,
+      "height": 35,
+      "boxWidth": 91.3125,
+      "minHeight": 0,
+      "labelWidth": 62.21875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "layers opens",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 82.890625,
+      "minHeight": 0,
+      "labelWidth": 38.890625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "trade-symbol opens",
+      "width": 860,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 92.46875,
+      "minHeight": 0,
+      "labelWidth": 30.46875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "check-row layers-row",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 196,
+      "minHeight": 30,
+      "labelWidth": 34.28125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "pane-hide",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 30,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "pane-show",
+      "width": 860,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 30,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-primary",
+      "width": 400,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 130.875,
+      "minHeight": 36,
+      "labelWidth": 24.171875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 130.875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-primary btn-lg",
+      "width": 400,
+      "floor": 44,
+      "height": 44,
+      "boxWidth": 234.34375,
+      "minHeight": 44,
+      "labelWidth": 105.921875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 234.34375,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-primary btn-sm",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 151.578125,
+      "minHeight": 30,
+      "labelWidth": 125.578125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 151.578125,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-primary lock-unlock",
+      "width": 400,
+      "floor": 36,
+      "height": 48,
+      "boxWidth": 134.0625,
+      "minHeight": 48,
+      "labelWidth": 53.6875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 134.0625,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost",
+      "width": 400,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 118.046875,
+      "minHeight": 36,
+      "labelWidth": 21.21875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 118.046875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-lg",
+      "width": 400,
+      "floor": 44,
+      "height": 44,
+      "boxWidth": 146.6875,
+      "minHeight": 44,
+      "labelWidth": 96.6875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-sm",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 84.375,
+      "minHeight": 30,
+      "labelWidth": 58.375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-sm agent-connect-back",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 57.578125,
+      "minHeight": 30,
+      "labelWidth": 31.578125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-sm tcard-open",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 171.90625,
+      "minHeight": 30,
+      "labelWidth": 145.90625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost btn-sm trade-more",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 57.203125,
+      "minHeight": 30,
+      "labelWidth": 31.203125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost activity-more",
+      "width": 400,
+      "floor": 36,
+      "height": 40,
+      "boxWidth": 113.40625,
+      "minHeight": 40,
+      "labelWidth": 79.40625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-ghost trade-act",
+      "width": 400,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 121,
+      "minHeight": 36,
+      "labelWidth": 95,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-quiet",
+      "width": 400,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 49.46875,
+      "minHeight": 36,
+      "labelWidth": 31.46875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-quiet btn-sm",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 63.421875,
+      "minHeight": 30,
+      "labelWidth": 37.421875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-quiet btn-sm receipt-copy",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 78.734375,
+      "minHeight": 30,
+      "labelWidth": 34.734375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-quiet btn-sm sendcard-copy",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 60.734375,
+      "minHeight": 30,
+      "labelWidth": 34.734375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn btn-danger",
+      "width": 400,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 87.046875,
+      "minHeight": 36,
+      "labelWidth": 53.046875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "btn",
+      "width": 400,
+      "floor": 36,
+      "height": 36,
+      "boxWidth": 94.421875,
+      "minHeight": 36,
+      "labelWidth": 39.828125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 94.421875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "btn btn-sm freeze",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 138.921875,
+      "minHeight": 30,
+      "labelWidth": 114.921875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 138.921875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "chip",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 94.703125,
+      "minHeight": 30,
+      "labelWidth": 68.703125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 94.703125,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "chip suggest",
+      "width": 400,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 137.09375,
+      "minHeight": 30,
+      "labelWidth": 103.09375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "chip agent-retry",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 98.1875,
+      "minHeight": 30,
+      "labelWidth": 32.765625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": 98.1875,
+      "pendingBothFaces": false,
+      "pendingOutside": false,
+      "problems": []
+    },
+    {
+      "family": "chip connection-copy",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 58.546875,
+      "minHeight": 30,
+      "labelWidth": 32.546875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "jump-latest",
+      "width": 400,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 400,
+      "minHeight": 0,
+      "labelWidth": 95.90625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "chip chip-filter",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 66.40625,
+      "minHeight": 30,
+      "labelWidth": 40.40625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "tab",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 67.53125,
+      "minHeight": 0,
+      "labelWidth": 35.53125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "layout opens",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 84.90625,
+      "minHeight": 0,
+      "labelWidth": 40.90625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "status-line bar-state",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 120.09375,
+      "minHeight": 30,
+      "labelWidth": 90.09375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "composer-send",
+      "width": 400,
+      "floor": 30,
+      "height": 36,
+      "boxWidth": 36,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "steps-fold",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 215.359375,
+      "minHeight": 30,
+      "labelWidth": 44.390625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "fold-head card-head",
+      "width": 400,
+      "floor": 30,
+      "height": 52.25,
+      "boxWidth": 350,
+      "minHeight": 0,
+      "labelWidth": 58.09375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "checks-toggle",
+      "width": 400,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 400,
+      "minHeight": 32,
+      "labelWidth": 49.296875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "dock-next",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 368,
+      "minHeight": 30,
+      "labelWidth": 123.484375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "dock-report-toggle",
+      "width": 400,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 400,
+      "minHeight": 32,
+      "labelWidth": 114.390625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "dock-close",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 30,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "choice",
+      "width": 400,
+      "floor": 30,
+      "height": 79.390625,
+      "boxWidth": 177.4375,
+      "minHeight": 0,
+      "labelWidth": 103.59375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "lock-eye",
+      "width": 400,
+      "floor": 30,
+      "height": 36,
+      "boxWidth": 36,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "net-tile",
+      "width": 400,
+      "floor": 30,
+      "height": 84,
+      "boxWidth": 128,
+      "minHeight": 84,
+      "labelWidth": 55.171875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "netpick-link",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 105.296875,
+      "minHeight": 30,
+      "labelWidth": 81.296875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "net-row",
+      "width": 400,
+      "floor": 30,
+      "height": 51.578125,
+      "boxWidth": 400,
+      "minHeight": 48,
+      "labelWidth": 340,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "netpick-back",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 143.453125,
+      "minHeight": 30,
+      "labelWidth": 109.453125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "netsel",
+      "width": 400,
+      "floor": 30,
+      "height": 40,
+      "boxWidth": 140.921875,
+      "minHeight": 40,
+      "labelWidth": 64.921875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "holding-head",
+      "width": 400,
+      "floor": 30,
+      "height": 53.296875,
+      "boxWidth": 400,
+      "minHeight": 52,
+      "labelWidth": 272.34375,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "rule-group-title opens",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 350,
+      "minHeight": 30,
+      "labelWidth": 51.296875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "receipt-close",
+      "width": 400,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 32,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "tx receipt-row",
+      "width": 400,
+      "floor": 30,
+      "height": 85.78125,
+      "boxWidth": 400,
+      "minHeight": 0,
+      "labelWidth": 182,
+      "labelLines": 2,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "activity-link",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 83.625,
+      "minHeight": 30,
+      "labelWidth": 59.625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "sendcard-info",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 30,
+      "minHeight": 0,
+      "labelWidth": 16,
+      "labelLines": 2,
+      "clipped": true,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "trade-tab",
+      "width": 400,
+      "floor": 30,
+      "height": 35,
+      "boxWidth": 91.3125,
+      "minHeight": 0,
+      "labelWidth": 62.21875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "layers opens",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 82.890625,
+      "minHeight": 0,
+      "labelWidth": 38.890625,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "trade-symbol opens",
+      "width": 400,
+      "floor": 30,
+      "height": 32,
+      "boxWidth": 92.46875,
+      "minHeight": 0,
+      "labelWidth": 30.46875,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "check-row layers-row",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 196,
+      "minHeight": 30,
+      "labelWidth": 34.28125,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "pane-hide",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 30,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    },
+    {
+      "family": "pane-show",
+      "width": 400,
+      "floor": 30,
+      "height": 30,
+      "boxWidth": 30,
+      "minHeight": 0,
+      "labelWidth": 0,
+      "labelLines": 1,
+      "clipped": false,
+      "pendingWidth": null,
+      "pendingBothFaces": null,
+      "pendingOutside": null,
+      "problems": []
+    }
+  ]
+}

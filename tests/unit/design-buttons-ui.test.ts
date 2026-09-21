@@ -148,6 +148,10 @@ test('the check row is one component, and the trade sheet keeps no copy of it', 
   assert.doesNotMatch(trade, /\.layers-check\s*\{/);
 });
 
+test('the deposit card\'s open button sits on the text column', () => {
+  assert.match(css('cards.css'), /\.tcard-open\s*\{\s*margin-left:\s*calc\(20px \+ var\(--s-3\)\);\s*\}/);
+});
+
 test('the copy button is drawn once for the receipt and the send card', () => {
   const components = css('components.css');
   assert.match(components, /\.receipt-copy,\s*\.sendcard-copy\s*\{\s*gap:\s*var\(--s-1\);/);
