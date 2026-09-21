@@ -23,17 +23,22 @@
 //   6. the executor hears the intent hash, then get_status every 3 s for 3 minutes. PENDING and
 //      TX_BROADCASTED go on the row as the relay spells them; a word this app does not know is
 //      never terminal.
-//   7. SETTLED and the output balance rose by the signed diff (at most 1 pip under, the protocol
-//      fee): executed. SETTLED and the balance has not shown it: settling, the executor's
-//      needs_reconciliation path. Anything else: unconfirmed, hash and nonce on the row, and no
-//      second signature.
+//   7. SETTLED and the output balance rose by the signed diff (at most 1 pip under, the spec's
+//      allowance for the protocol fee): executed. SETTLED and the balance has not shown it:
+//      settling, the executor's needs_reconciliation path. Anything else: unconfirmed, hash and
+//      nonce on the row, and no second signature.
 //
 // TWO PHASES, TWO CONTRACTS, the rule at the top of ./intents-spend.ts: before the signature
 // every problem throws and the executor records the reason; after it nothing throws, every
 // outcome returns, and the key is never used again for this move.
 //
-// FEES. The relay charges no app fee, keyed or not; the 1 pip protocol fee stays; this rail adds
-// none. There is no size floor of the 1Click kind because there is no flat routing fee.
+// FEES. The relay charges no app fee, keyed or not; the protocol fee stays; this rail adds none.
+// There is no size floor of the 1Click kind because there is no flat routing fee. Where the
+// protocol fee comes out, per the contract source (near/intents, contracts/defuse/core/src/
+// intents/token_diff.rs, read 2026-09-20): the signer's account gets exactly the deltas it
+// signed, and the fee is taken on the negative side at the supply level, so the solver's mirror
+// covers it and our positive delta lands in full. The one-pip tolerance below is the spec's
+// allowance, kept as a guard; the live proof pins whether it ever comes into play.
 
 import { formatUnits } from 'viem';
 
@@ -527,14 +532,30 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
           evidence: { ...railEvidence, settledAmountOut: out(p, credited) },
         };
       }
-      // The contract executed the diff and this app could not read the balance either side.
-      // Still a success, and the sentence says which half is measured and which is the chain's word.
+      /* This app could not read the balance either side, so the relay's word is checked against
+         the chain instead: the nonce is committed in the same call that applies the diff, and a
+         spent nonce IS the swap having executed. A success then says which half is measured and
+         which is the chain's word; anything less is unconfirmed, never a success on the relay's
+         word alone, and the sweep asks the verifier again. */
+      const spent = await verifier.nonceUsed(account, nonce);
+      if (spent === true) {
+        return {
+          ok: true,
+          detail:
+            `swapped ${draft.amountIn} ${draft.fromSymbol} for the signed ${out(p, amountOut)} ${draft.toSymbol} inside ${INTENTS_VERIFIER}; ${evidence}. ` +
+            `The relay reports it settled on NEAR and the verifier shows the nonce spent; the balance could not be read back, so the amount out is ` +
+            'the signed diff rather than an observed figure. Nothing was transferred on any chain.',
+          txids,
+          ...(pocket === undefined ? {} : { pocket }),
+          evidence: railEvidence,
+        };
+      }
       return {
-        ok: true,
+        ok: false,
+        settling: true,
         detail:
-          `swapped ${draft.amountIn} ${draft.fromSymbol} for the signed ${out(p, amountOut)} ${draft.toSymbol} inside ${INTENTS_VERIFIER}; ${evidence}. ` +
-          `The relay reports it settled on NEAR and the verifier balance could not be read back, so the amount out is the signed diff ` +
-          'rather than an observed figure. Nothing was transferred on any chain.',
+          `the relay reports the swap settled on NEAR and the verifier has not shown the nonce spent${spent === null ? ' (it did not answer)' : ''}; ` +
+          `the balance could not be read back either; ${evidence}. Nothing more will be signed; the verifier is asked again on the next check.`,
         txids,
         ...(pocket === undefined ? {} : { pocket }),
         evidence: railEvidence,

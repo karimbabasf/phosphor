@@ -15,6 +15,8 @@ import assert from 'node:assert/strict';
 import type { Proposal, RailEvidence } from '../../src/types.ts';
 import type { RelayLookup } from '../../src/rails/index.ts';
 import type { RelayStatus } from '../../src/relay/client.ts';
+import { buildNonce } from '../../src/relay/payload.ts';
+import { RELAY_DEADLINE_GRACE_MS } from '../../src/proposals/reconcile.ts';
 import { makeCtx, SELF_EVM } from './helpers/proposals.ts';
 import type { Harness } from './helpers/proposals.ts';
 
@@ -29,7 +31,7 @@ function future(): string {
   return new Date(Date.now() + 90_000).toISOString();
 }
 function past(): string {
-  return new Date(Date.now() - 5 * 60_000).toISOString();
+  return new Date(Date.now() - RELAY_DEADLINE_GRACE_MS - 60_000).toISOString();
 }
 
 type Fixture = {
@@ -159,8 +161,8 @@ test('killed while PENDING: the relay is asked by the hash, its word goes on the
   assert.deepEqual(h.asked.nonce, [], 'a relay word that is not an ending asks nothing of the verifier');
 });
 
-test('killed while PENDING: the relay saying SETTLED with the NEAR hash settles the row with the link', async () => {
-  const h = rig({ status: statusOf('SETTLED', { nearTxHash: NEAR_TX }) });
+test('killed while PENDING: the relay saying SETTLED with the NEAR hash settles the row with the link once the verifier shows the nonce spent', async () => {
+  const h = rig({ status: statusOf('SETTLED', { nearTxHash: NEAR_TX }), nonceUsed: true });
   seed(h, { txids: [INTENT_HASH], evidence: { handle: INTENT_HASH, nonce: NONCE, deadline: future(), providerStage: 'PENDING', relayQuote: RELAY_QUOTE } });
   h.svc.reconcileOnBoot();
   const out = await h.svc.reconcile('relay-1');
@@ -199,7 +201,7 @@ test('killed while PENDING: a relay that cannot be asked changes nothing and say
 // ---------- stage: TX_BROADCASTED (the hook wrote the NEAR hash and the link) ----------
 
 test('killed while TX_BROADCASTED: the NEAR hash and link survive the sweep, and SETTLED lands the row executed', async () => {
-  const h = rig({ status: statusOf('SETTLED', { nearTxHash: NEAR_TX }) });
+  const h = rig({ status: statusOf('SETTLED', { nearTxHash: NEAR_TX }), nonceUsed: true });
   seed(h, {
     txids: [INTENT_HASH, NEAR_TX],
     evidence: { handle: INTENT_HASH, nonce: NONCE, deadline: future(), providerStage: 'TX_BROADCASTED', explorerUrl: `https://nearblocks.io/txns/${NEAR_TX}` },
@@ -215,13 +217,45 @@ test('killed while TX_BROADCASTED: the NEAR hash and link survive the sweep, and
 
 // ---------- stage: SETTLED, balance not yet read; and settling with a pocket ----------
 
-test('killed at SETTLED before the balance read: the relay word alone settles a row with no pocket', async () => {
-  const h = rig({ status: statusOf('SETTLED', { nearTxHash: NEAR_TX }) });
-  seed(h, { txids: [INTENT_HASH, NEAR_TX], evidence: { handle: INTENT_HASH, nonce: NONCE, deadline: future(), providerStage: 'SETTLED' } });
+test('killed at SETTLED before the balance read: the relay word settles a row with no pocket only once the verifier shows the nonce spent', async () => {
+  const spent = rig({ status: statusOf('SETTLED', { nearTxHash: NEAR_TX }), nonceUsed: true });
+  seed(spent, { txids: [INTENT_HASH, NEAR_TX], evidence: { handle: INTENT_HASH, nonce: NONCE, deadline: future(), providerStage: 'SETTLED' } });
+  spent.svc.reconcileOnBoot();
+  const out = await spent.svc.reconcile('relay-1');
+  assert.equal(out.status, 'executed');
+  assert.deepEqual(spent.asked.nonce, [{ account: SELF_EVM.toLowerCase(), nonce: NONCE }], 'the relay word is checked against the chain');
+
+  /* The relay's word alone is not the chain's. SETTLED with the nonce still unspent (a view a
+     block behind, or a relay that is wrong) stays unconfirmed and says which of the two has
+     not answered, and the next sweep asks again. */
+  const lagging = rig({ status: statusOf('SETTLED', { nearTxHash: NEAR_TX }), nonceUsed: false });
+  seed(lagging, { txids: [INTENT_HASH, NEAR_TX], evidence: { handle: INTENT_HASH, nonce: NONCE, deadline: future(), providerStage: 'SETTLED' } });
+  lagging.svc.reconcileOnBoot();
+  const held = await lagging.svc.reconcile('relay-1');
+  assert.equal(held.status, 'needs_reconciliation');
+  assert.match(held.result?.detail ?? '', /The relay reports the swap settled .*the verifier has not shown the nonce spent/);
+  assert.equal(held.result?.evidence?.providerStage, 'SETTLED');
+});
+
+test('an unspent nonce inside the grace after the deadline waits: the deadline is minted from this clock, not the chain', async () => {
+  const h = rig({ nonceUsed: false });
+  seed(h, { evidence: { nonce: NONCE, deadline: new Date(Date.now() - RELAY_DEADLINE_GRACE_MS + 30_000).toISOString() } });
   h.svc.reconcileOnBoot();
   const out = await h.svc.reconcile('relay-1');
-  assert.equal(out.status, 'executed');
-  assert.deepEqual(h.asked.nonce, [], 'the relay answered; the verifier was not needed');
+  assert.equal(out.status, 'needs_reconciliation');
+  assert.match(out.result?.detail ?? '', /can still execute/);
+  assert.ok(RELAY_DEADLINE_GRACE_MS >= 5 * 60_000, 'five minutes of clock skew before an unspent nonce is called dead');
+});
+
+test('a nonce whose own life has passed never yields failed: the contract may have pruned it', async () => {
+  const h = rig({ nonceUsed: false });
+  const pruned = buildNonce({ salt: Uint8Array.from([0x25, 0x28, 0x12, 0xb3]), deadlineMs: Date.now() - 60_000, random: new Uint8Array(15) });
+  seed(h, { evidence: { nonce: pruned, deadline: past() } });
+  h.svc.reconcileOnBoot();
+  const out = await h.svc.reconcile('relay-1');
+  assert.equal(out.status, 'needs_reconciliation');
+  assert.match(out.result?.detail ?? '', /nonce's own life .* has passed/);
+  assert.match(out.result?.detail ?? '', /Compare the balances/);
 });
 
 test('a settling row with a pocket is judged by its balance first and waits for the rise even when the relay says SETTLED', async () => {

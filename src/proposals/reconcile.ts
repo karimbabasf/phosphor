@@ -21,6 +21,7 @@ import { oneLine } from '../intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { depositHandleOf } from '../transactions.ts';
 import { INTENTS_RELAY_VENUE, RELAY_TERMINAL } from '../rails/intents-relay.ts';
+import { decodeNonce } from '../relay/payload.ts';
 import type { RelayLookup } from '../rails/index.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
 import { expireHold, judgeSettlingNow, settleProposal } from './execute.ts';
@@ -378,14 +379,19 @@ export async function reconcileProposal(ctx: PCtx, id: string, quiet = false): P
   return persist(ctx, { ...p, result: { ok: false, detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) } });
 }
 
-// Clock skew between this Mac and the verifier's block time. A deadline is only called passed
-// once it is this far behind, so an intent the contract could still execute is never called dead.
-const RELAY_DEADLINE_GRACE_MS = 60_000;
+/* Clock skew between this Mac and the verifier's block time. The deadline in the payload was
+   minted from this clock, and the contract judges it by its own; a deadline is only called
+   passed once it is this far behind, so an intent the contract could still execute is never
+   called dead. Five minutes is far past any skew a Mac that syncs its clock carries, and the
+   cost of waiting it out is a failed row that reads unconfirmed for five minutes longer. */
+export const RELAY_DEADLINE_GRACE_MS = 5 * 60_000;
 
 /* Re-check one relay swap: by the intent hash at the relay, then by the nonce at the verifier.
-     SETTLED at the relay        -> executed when the rail never read the balance (it died in
-                                    the watch); a row with a pocket stays until the balance shows
-                                    the rise, which the executor re-judges on every refresh.
+     SETTLED at the relay        -> a row with a pocket stays until the balance shows the rise,
+                                    which the executor re-judges on every refresh; a row without
+                                    one (the rail died in the watch) is executed once the verifier
+                                    shows the nonce spent, and stays until it does: the relay's
+                                    word is checked against the chain, never taken alone.
      PENDING, TX_BROADCASTED     -> stays, with the relay's word on the row so the card moves.
      anything else, or no hash   -> the verifier, by the nonce:
        spent                     -> the swap executed; executed without a pocket, else stays until
@@ -393,6 +399,8 @@ const RELAY_DEADLINE_GRACE_MS = 60_000;
        unspent, deadline passed  -> failed, nothing left the balance: an intent past its deadline
                                     cannot execute, and the nonce outlives the deadline by a week
                                     (NONCE_LIFE_AFTER_DEADLINE_MS) so "unspent" is still an answer.
+                                    Past the nonce's OWN life the contract may have pruned it and
+                                    "unspent" says nothing, so no verdict is written then.
        unspent, inside deadline  -> stays; it can still execute until the deadline.
        no answer                 -> stays, and says the verifier did not answer.
    Nothing here signs or publishes: the reads are the relay's status and two verifier views. */
@@ -449,11 +457,23 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
         if (p.pocket !== undefined) {
           return write('needs_reconciliation', false, `The relay reports the swap settled${tx}. The balance has not shown the rise yet; it is re-read on every refresh and this settles itself when it does.`);
         }
+        /* The relay's word, checked against the chain: the nonce is committed in the same call
+           that applies the diff, so a spent nonce IS the swap having executed. Unspent (a view a
+           block behind, or a relay that is wrong) stays unconfirmed and is asked again. */
+        const spent = nonce === null ? null : await lookup.nonceUsed(account, nonce);
+        if (spent !== true) {
+          return write(
+            'needs_reconciliation',
+            false,
+            `The relay reports the swap settled${tx} and the verifier has not shown the nonce spent${spent === null ? ' (it did not answer)' : ''}. ` +
+              'Nothing more will be signed; it is checked again shortly.',
+          );
+        }
         const signed = evidence0.relayQuote?.amountOut;
         return write(
           'executed',
           true,
-          `The relay reports the swap settled on NEAR${tx}: the verifier executed the signed diff in one call. This app did not read the balance either side of it, ` +
+          `The relay reports the swap settled on NEAR${tx} and the verifier shows the nonce spent: the signed diff executed in one call. This app did not read the balance either side of it, ` +
             `so the amount out is the signed ${signed === undefined ? 'diff' : `${signed} base units`} rather than an observed figure.`,
         );
       }
@@ -488,6 +508,16 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
   }
   if (!Number.isFinite(deadlineMs)) {
     return write(p.status, p.result?.ok ?? false, `The verifier shows the nonce unspent and no deadline was recorded, so this app cannot say whether it can still execute.${relayNote} Compare the balances before and after on the receipt.`);
+  }
+  // Past the nonce's own life the contract may have pruned it, and "unspent" then says nothing
+  // about whether it executed. No verdict is written on an answer that can no longer be one.
+  const life = decodeNonce(nonce)?.deadlineMs;
+  if (life !== undefined && Date.now() > life) {
+    return write(
+      p.status,
+      p.result?.ok ?? false,
+      `The verifier shows the nonce unspent, and the nonce's own life (${new Date(life).toISOString()}) has passed, so the verifier may have forgotten it either way.${relayNote} Compare the balances before and after on the receipt.`,
+    );
   }
   if (Date.now() < deadlineMs + RELAY_DEADLINE_GRACE_MS) {
     return write(p.status, p.result?.ok ?? false, `The verifier shows the nonce unspent and the deadline (${new Date(deadlineMs).toISOString()}) has not passed, so the swap can still execute.${relayNote} Nothing has changed; check again after the deadline.`);

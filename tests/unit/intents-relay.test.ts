@@ -124,6 +124,7 @@ function harness(
     balanceIn?: bigint | null; // the input asset, before signing
     balanceOut?: Array<bigint | null>; // the output asset: the before-read, then the after-reads in order, the last repeating
     salt?: Uint8Array | null;
+    nonceUsed?: boolean | null; // what the verifier says once asked; default false, never asked on a measured settle
     random?: (n: number) => Uint8Array;
     deps?: Partial<IntentsRelayRailDeps>;
   } = {},
@@ -191,7 +192,7 @@ function harness(
       return options.salt === undefined ? SALT : options.salt;
     },
     async nonceUsed() {
-      return null;
+      return options.nonceUsed === undefined ? false : options.nonceUsed;
     },
   };
 
@@ -551,11 +552,23 @@ test('a status call that throws does not end the watch, and SETTLED with no bala
   assert.match(out.detail, /last status not polled/);
   assert.equal(flaky.signed.length, 1);
 
-  const blind = harness({ balanceOut: [null, null] });
+  const blind = harness({ balanceOut: [null, null], nonceUsed: true });
   const result = await blind.rail.execute(draftOf(), 'p1', blind.hooks);
   assert.equal(result.ok, true, result.detail);
   assert.match(result.detail, /could not be read back, so the amount out is the signed diff/);
+  assert.match(result.detail, /the verifier shows the nonce spent/);
   assert.equal(result.pocket, undefined);
+
+  // The relay's word alone never makes a success: with no balance read and the verifier not
+  // showing the nonce spent, the row is unconfirmed, with the hash and the nonce for the sweep.
+  const unproven = harness({ balanceOut: [null, null], nonceUsed: null });
+  const held = await unproven.rail.execute(draftOf(), 'p1', unproven.hooks);
+  assert.equal(held.ok, false);
+  assert.equal(held.settling, true);
+  assert.match(held.detail, /the verifier has not shown the nonce spent/);
+  assert.equal(held.evidence?.handle, INTENT_HASH);
+  assert.equal(typeof held.evidence?.nonce, 'string');
+  assert.equal(unproven.signed.length, 1);
 });
 
 test('the counterparty is the verifier and the proceeds land on our own account, or the draft is refused', async () => {
