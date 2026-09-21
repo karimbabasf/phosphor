@@ -214,6 +214,8 @@ tests under scripts/scratch/review-b-secure/ (gitignored) all go green, their ou
   a float tail after the quote was minted (I2)
 - 1e360d7 The sweep judges a withdrawal before the venue read, so a settling sentence never routes it
   to the deposit's account check (L1, second part; closes follow-up 1 of section 6)
+- cd2f50c The sweep names the handle a row has when no venue lookup is wired, instead of claiming none
+  was recorded (the correctness review's demo item; closes request 3 of section 5)
 
 ### The four items
 
@@ -260,15 +262,28 @@ tests under scripts/scratch/review-b-secure/ (gitignored) all go green, their ou
   (red on b8d7d79 with the reviewer's own sentence, "amount 4.901002999999999 needs more than 6
   decimals"). Reviewer's movetospot.ts: `0 of 219344 combinations refused` (was 69,722).
 
-### Counts (tip 1e360d7)
+- Demo sweep sentence (reconcile.ts reconcileProposal, the "nothing left to ask" branch). Demo mode
+  builds no 1Click client (main.ts:491-494 stays as it is), so a demo row killed mid-walk carried
+  its handle and the sweep wrote "No venue handle was recorded for <hash>" over it. A status reader
+  answering from the demo walk is not honest after a crash: the walk is a timer inside the dead
+  process and keeps no status, so any answer would be invented. The sentence is truthful instead:
+  "No venue lookup is wired in demo mode, so the handle <handle> cannot be re-checked here; nothing
+  has changed." Live mode always wires the lookup and never reaches it. Test:
+  hl-crash-recovery.test.ts "withdraw, killed mid-walk in demo mode: the sweep names the handle it
+  has and never claims none was recorded" (boot with cfg.mode demo and no oneClickStatus, the
+  main.ts shape; red on 42d1057 with the old sentence).
+
+### Counts (tip cd2f50c)
 
 - `npm run typecheck`: exit 0.
-- `npm test`: 3106 pass, 0 fail (was 3098 at 96ef9f7; 9 tests added, 1 replaced: the unmeasured
+- `npm test`: 3107 pass, 0 fail (was 3098 at 96ef9f7; 10 tests added, 1 replaced: the unmeasured
   settling test, whose path no longer exists).
-- `npm run eval`: 29 pass, 0 fail, 0 xfail, 0 error (evidence-b/b2-eval.txt; run because two
-  refusal sentences and the floor's formatting rule changed).
-- gitleaks over 96ef9f7..HEAD: 4 commits scanned, no leaks (the fifth commit holds no new strings).
-  semgrep p/typescript, p/nodejs, p/secrets over the five changed source files: 0 findings.
+- `npm run eval`: 29 pass, 0 fail, 0 xfail, 0 error at e23f6ae (evidence-b/b2-eval.txt; run because
+  refusal sentences and the floor's formatting rule changed). The rerun on cd2f50c, whose only
+  source change is the demo sweep sentence no scenario reaches, was at S20 of 29 with 20 passes when
+  the lead asked to merge; its summary replaces the file in a docs commit when it ends.
+- gitleaks over 96ef9f7..HEAD: no leaks. semgrep p/typescript, p/nodejs, p/secrets over the five
+  changed source files: 0 findings.
 
 ### Files outside the named list, by line
 
@@ -278,8 +293,9 @@ tests under scripts/scratch/review-b-secure/ (gitignored) all go green, their ou
 - src/proposals/execute.ts:309-311 (comment) and :319: runRail's onEvidence persists `e.pocket` when
   present. Nothing else in the executor changed; the final persist still takes the rail's own pocket
   from the result, so the REFUNDED and FAILED answers, which carry none, are as they were.
-- src/proposals/reconcile.ts:265-278: the hl_withdraw branch of reconcileByHandle's SUCCESS, and
-  only that.
+- src/proposals/reconcile.ts:265-278: the hl_withdraw branch of reconcileByHandle's SUCCESS; and
+  :352-368, the "nothing left to ask" sentence of reconcileProposal, for the demo item the lead
+  added. main.ts untouched.
 
 ### Decisions
 
