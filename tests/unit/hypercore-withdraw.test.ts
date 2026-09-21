@@ -5,8 +5,8 @@ import type { Address } from 'viem';
 import type { HlWithdrawDraft } from '../../src/types.ts';
 import type { OneClickClient, OneClickQuote, OneClickQuoteParams, OneClickStatus } from '../../src/intents.ts';
 import type { HlSignPort, HlTypedData, HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
-import { HL_USDC_TOKEN } from '../../src/rails/hl-user-signed.ts';
-import { ONECLICK_COUNTERPARTY } from '../../src/intents.ts';
+import { HL_USDC_TOKEN, toAmountString } from '../../src/rails/hl-user-signed.ts';
+import { ONECLICK_COUNTERPARTY, toBaseUnits } from '../../src/intents.ts';
 import {
   HL_WITHDRAW_COUNTERPARTY,
   HL_WITHDRAW_FEE_BPS,
@@ -17,6 +17,7 @@ import {
   MIN_HL_WITHDRAW_USDC,
   hypercoreWithdrawRail,
   minReceivedForHlWithdraw,
+  moveToSpotUsdc,
 } from '../../src/rails/hypercore-withdraw.ts';
 import type { HypercoreWithdrawDeps } from '../../src/rails/hypercore-withdraw.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
@@ -685,6 +686,51 @@ test('a standard account moves perp collateral to spot before the send', async (
   assert.equal(exchange[0].action.toPerp, false);
   assert.equal(exchange[0].action.amount, '7');
   assert.equal(exchange[1].action.type, 'sendAsset');
+});
+
+/* `needed - spot` as a double carried the float's tail (6.1 minus 1.1 is 4.999999999999999) and
+   toAmountString refused it inside execute, after the live quote had minted an address, on
+   69,722 of 219,344 amount and balance pairs (review I2, 2026-09-20). In base units it is exact. */
+test('the classic account move to spot is exact at six places for every amount and spot balance, never a float tail the transfer refuses', () => {
+  let n = 0;
+  for (let a = 5_000_000; a <= 60_000_000; a += 1_003) {
+    for (const spot of [0.1, 1.1, 2.3, 0.7]) {
+      const amount = Number((a / 1e6).toFixed(6));
+      const move = moveToSpotUsdc(amount, 1, spot);
+      n += 1;
+      assert.doesNotThrow(() => toAmountString(move), `amount ${amount} spot ${spot}`);
+      assert.equal(toBaseUnits(move, 6), BigInt(a) + 1_000_000n - BigInt(Math.round(spot * 1e6)), `amount ${amount} spot ${spot}: the move is the exact shortfall`);
+    }
+  }
+  assert.equal(n, 219_344);
+  assert.equal(moveToSpotUsdc(5.1, 1, 1.1), 5);
+  assert.equal(moveToSpotUsdc(5.001003, 1, 1.1), 4.901003);
+  assert.equal(moveToSpotUsdc(8, 1, 20), 0, 'spot already covers it');
+  assert.equal(moveToSpotUsdc(8, 1, 2.00000009), 7, 'the spot balance is cut toward zero (2.00000009 counts as 2), so the move is never short by a rounding');
+});
+
+test('a standard account with a spot balance that made the old subtraction carry a tail still moves the exact shortfall and sends', async () => {
+  const amount = 5.001003; // 6.001003 needed less 1.1 on spot was 4.901002999999999 as a double
+  // Reads, in order: the plan, the transfer's own balance check, the send's, the proof.
+  const { rail: r, exchange } = rail(
+    {
+      quote: { amountIn: '500100300', amountInFormatted: '5.001003', amountInUsd: '5.001003', minAmountIn: '500100300', amountOut: '4800000', amountOutFormatted: '4.8', minAmountOut: '4750000' },
+      echo: { amount: '500100300' },
+    },
+    [
+      { available: 0, spot: 1.1, perp: 20, unified: false },
+      { available: 0, spot: 1.1, perp: 20, unified: false },
+      { available: 0, spot: 6.001003, perp: 15.098997, unified: false },
+      { available: 0, spot: 0, perp: 15.098997, unified: false },
+    ],
+  );
+  const out = await r.execute(draft({ amount, amountUsd: amount, minReceived: minReceivedForHlWithdraw(amount) }));
+  assert.equal(out.ok, true, out.detail);
+  assert.equal(exchange.length, 2);
+  assert.equal(exchange[0].action.type, 'usdClassTransfer');
+  assert.equal(exchange[0].action.amount, '4.901003', '6.001003 needed less 1.1 on spot, spelled exactly');
+  assert.equal(exchange[1].action.type, 'sendAsset');
+  assert.equal(exchange[1].action.amount, '5.001003');
 });
 
 // 1Click says SUCCESS the block the solver executes and a finality-final read lags it. The row

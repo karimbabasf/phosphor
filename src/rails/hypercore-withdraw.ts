@@ -120,6 +120,22 @@ export function minReceivedForHlWithdraw(amount: number): number {
   return amount - (HL_WITHDRAW_FLAT_USDC + (amount * HL_WITHDRAW_FEE_BPS) / 10_000);
 }
 
+// The places a USDC figure is spelled at in a signed venue action (toAmountString).
+const SEND_DECIMALS = 6;
+
+/* The move from the perp book to spot on a standard account, in USDC at the places the
+   transfer is spelled at. `needed - spot` as a double carried the float's tail (6.1 minus 1.1 is
+   4.999999999999999), and toAmountString then refused it inside execute, after the live quote
+   had minted an address, on 69,722 of 219,344 amount and balance pairs (review, 2026-09-20).
+   Base units instead: the spot balance is cut toward zero, never rounded, so the move is never
+   short by a rounding, and the figure is formatted once. */
+export function moveToSpotUsdc(amount: number, activationFeeUsdc: number, spotUsdc: number): number {
+  const needed = toBaseUnits(amount, SEND_DECIMALS) + toBaseUnits(activationFeeUsdc, SEND_DECIMALS);
+  // The venue reports the spot book at up to its eight places; cut to the six the move is spelled at.
+  const spot = toBaseUnits(Math.max(0, spotUsdc), HYPERCORE_ORIGIN_DECIMALS) / 10n ** BigInt(HYPERCORE_ORIGIN_DECIMALS - SEND_DECIMALS);
+  return Number(formatUnits(needed > spot ? needed - spot : 0n, SEND_DECIMALS));
+}
+
 // ---------- the seams ----------
 
 export type HypercoreWithdrawDeps = {
@@ -303,7 +319,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         ],
       };
     }
-    const moveToSpot = account.unified ? 0 : Math.max(0, needed - account.spotUsdc);
+    const moveToSpot = account.unified ? 0 : moveToSpotUsdc(draft.amount, HL_ACTIVATION_USDC, account.spotUsdc);
 
     let list: OneClickToken[];
     try {
