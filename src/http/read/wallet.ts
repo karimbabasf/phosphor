@@ -8,6 +8,7 @@ import { loadProfile } from '../../profile/index.ts';
 import { VERSION } from '../../version.ts';
 import { fail, intParam, sendJson } from '../respond.ts';
 import { LOG_LIMIT_MAX } from '../context.ts';
+import { redactedTail } from '../log-tail.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
@@ -267,7 +268,7 @@ export const walletReads: ReadTable = {
     });
   },
   log_tail: (ctx, _body, args, res) => {
-    sendJson(res, 200, ctx.audit.tail(intParam(args.limit, 50, LOG_LIMIT_MAX)));
+    sendJson(res, 200, redactedTail(ctx, intParam(args.limit, 50, LOG_LIMIT_MAX)));
   },
   /* THE ONE OBJECT, and nothing beside it. This used to answer with the whole row plus an
      `outcome` blob, and the card built its own second opinion out of the same fields, which is

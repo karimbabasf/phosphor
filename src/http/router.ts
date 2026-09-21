@@ -50,6 +50,7 @@ import {
   handleVaultUnlock,
 } from './vault.ts';
 import { sendHealth } from './health.ts';
+import { redactedTail } from './log-tail.ts';
 import { sendReceipts } from './receipts.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
 import type { Ctx } from './context.ts';
@@ -80,8 +81,10 @@ const GET: Record<string, Route> = {
     if (payload === null) return fail(res, 404, `no chart in slot ${slot}; chart_layout puts one there`);
     sendJson(res, 200, payload);
   },
+  // Redacted on the way out (src/http/log-tail.ts): a credential of this boot never leaves in a
+  // paste, whatever a writer did.
   '/api/log': (ctx, _req, res, url) =>
-    sendJson(res, 200, ctx.audit.tail(intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX))),
+    sendJson(res, 200, redactedTail(ctx, intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX))),
   '/api/transactions': (ctx, _req, res) => sendJson(res, 200, transactionsPayload(ctx)),
   '/api/trade': (ctx, _req, res) => sendJson(res, 200, ctx.trade.payload()),
   '/api/driver': (ctx, _req, res) => sendJson(res, 200, ctx.chats.payload()),
