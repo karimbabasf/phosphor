@@ -10,19 +10,30 @@ body:
     id: version
     attributes:
       label: Version
-      description: Phosphor > About Phosphor, or the commit if you run from source.
-      placeholder: 0.6.0
+      description: Filled in for you when you come here from Help, then Report a Problem. Otherwise Phosphor > About Phosphor, or the commit if you run from source.
+      placeholder: 0.7.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: macOS version
+      description: Filled in for you from the Help menu. Otherwise Apple menu > About This Mac.
+      placeholder: "26.0"
     validations:
       required: true
   - type: dropdown
     id: agent
     attributes:
       label: Agent
+      description: The one you picked in the app, on first run or in the Vault tab's Agent panel.
       options:
-        - Start your assistant (the app's own Claude Code)
-        - Claude Code, connected by hand
+        - Claude Code
         - Codex
-        - Another MCP client
+        - Hermes
+        - Grok bot
+        - Another MCP agent
+        - Claude Desktop or a chat app (no agent on this Mac)
         - No agent involved
     validations:
       required: true
@@ -46,6 +57,12 @@ body:
       description: Include the sentence the app or the policy engine showed, word for word.
     validations:
       required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: The log
+      description: Help, then Copy Log for a Report puts the newest audit lines on the clipboard, with this boot's secrets already removed. Paste them here. Transaction hashes are fine to leave in; they are public.
+      render: json
   - type: textarea
     id: state
     attributes:

@@ -41,8 +41,8 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use backend::{
-    configured_port, get_root, node_binary, phosphor_is_listening, pid_file_path, pid_is_alive,
-    post_lock, read_pid_file, spawn_backend, Backend, Handshake,
+    configured_port, get_root, identity_matches, node_binary, phosphor_is_listening, pid_file_path,
+    pid_is_alive, post_lock, read_pid_file, request_within, spawn_backend, Backend, Handshake,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
@@ -50,14 +50,32 @@ const COPY_MCP_ID: &str = "copy-mcp-config";
 
 /// The Help menu: five pages on the site and the repository, each opened in the system browser.
 /// The urls are the only ones this menu will ever open, and they live here rather than in any
-/// page, so nothing a page renders can change where a menu item goes.
+/// page, so nothing a page renders can change where a menu item goes. The problem report opens
+/// the bug form with the app version and the macOS version already filled in (`report_url`),
+/// and both of those come from this process, never from a page.
 const HELP_LINKS: [(&str, &str, &str); 5] = [
     ("help-docs", "Phosphor Documentation", "https://phosphor.karimbabasf.com/docs/"),
-    ("help-report", "Report a Problem", "https://github.com/karimbabasf/phosphor/issues/new/choose"),
+    (HELP_REPORT_ID, "Report a Problem", "https://github.com/karimbabasf/phosphor/issues/new?template=bug_report.yml"),
     ("help-security", "Report a Security Issue", "https://phosphor.karimbabasf.com/security/"),
     ("help-terms", "Terms of Use", "https://phosphor.karimbabasf.com/terms/"),
     ("help-privacy", "Privacy", "https://phosphor.karimbabasf.com/privacy/"),
 ];
+const HELP_REPORT_ID: &str = "help-report";
+
+/// The one Help item that is not a link: it puts the newest audit lines on the clipboard, one
+/// JSON line each, for pasting into a problem report. The backend redacts the tail on the way
+/// out (src/http/log-tail.ts), so a credential of this boot cannot travel in the paste. The
+/// item's own title carries the outcome for a few seconds, because a message box is not this
+/// app's design and the menu is where the person is already looking.
+const HELP_COPY_LOG_ID: &str = "help-copy-log";
+const COPY_LOG_LABEL: &str = "Copy Log for a Report";
+const LOG_LINES_FOR_A_REPORT: u16 = 200;
+const MENU_NOTICE: Duration = Duration::from_secs(4);
+
+/// The menu item handles the Help menu keeps, so an outcome can be written onto one later.
+struct HelpMenu {
+    copy_log: MenuItem<tauri::Wry>,
+}
 
 /// How often the supervisor asks whether the backend is still there. Two seconds is well under
 /// the time it takes a person to notice a dead window and long enough that the poll costs
@@ -200,22 +218,132 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &PredefinedMenuItem::select_all(app, None)?,
         ],
     )?;
-    // Documentation and the problem report first, the two legal pages after a rule. macOS
-    // adds its own search field to a menu titled Help.
+    // Documentation, the problem report and the log it wants first, the two legal pages after a
+    // rule. macOS adds its own search field to a menu titled Help.
     let help_items = HELP_LINKS
         .iter()
         .map(|(id, label, _)| MenuItem::with_id(app, *id, *label, true, None::<&str>))
         .collect::<tauri::Result<Vec<_>>>()?;
+    let copy_log = MenuItem::with_id(app, HELP_COPY_LOG_ID, COPY_LOG_LABEL, true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let mut help_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::with_capacity(help_items.len() + 1);
+    let mut help_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::with_capacity(help_items.len() + 2);
     for (at, item) in help_items.iter().enumerate() {
         if at == 3 {
             help_refs.push(&separator);
         }
         help_refs.push(item);
+        if item.id() == HELP_REPORT_ID {
+            help_refs.push(&copy_log);
+        }
     }
     let help_menu = Submenu::with_items(app, "Help", true, &help_refs)?;
+    app.manage(HelpMenu { copy_log });
     Menu::with_items(app, &[&app_menu, &edit_menu, &help_menu])
+}
+
+/// The bug form with the two facts every report needs already in it. GitHub fills an issue
+/// form's fields from query parameters named after the field ids (`version` and `os` in
+/// .github/ISSUE_TEMPLATE/bug_report.yml). Both values are percent-encoded here, so a version
+/// string can never change the path or add a parameter of its own.
+fn report_url(base: &str, version: &str, os: &str) -> String {
+    format!("{base}&version={}&os={}", query_value(version), query_value(os))
+}
+
+/// RFC 3986 unreserved characters pass; everything else is percent-encoded, byte by byte.
+fn query_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// The macOS version as `sw_vers` reports it, or "unknown": one fixed command with one fixed
+/// argument, no shell, and the answer goes into a query parameter and nowhere else.
+fn macos_version() -> String {
+    std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// The newest audit lines from this shell's backend, one JSON object per line, or None when
+/// the answer is not 200, not a JSON array, or not from the backend this shell started. Read
+/// with its own five second deadline: the probe timeout is sized for a liveness check, and a
+/// tail is a real read. `for=report` asks for the copy with addresses fingerprinted, since this
+/// text is about to land on a public issue.
+fn fetch_log_tail(port: u16, limit: u16, nonce: &str) -> Option<String> {
+    let head = format!("GET /api/log?limit={limit}&for=report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    let raw = request_within(port, &head, None, Duration::from_secs(5))?;
+    log_from_response(&raw, nonce)
+}
+
+/// The answer to that GET, judged before a byte of it reaches the clipboard: a 200, the
+/// `x-phosphor` header carrying THIS boot's nonce (the same check that gates opening the
+/// window, `identity_matches`), and a JSON array. A local process squatting the configured
+/// port can answer 200 with a list; it cannot answer with the nonce, which reached the backend
+/// over its stdin and nothing else.
+fn log_from_response(raw: &str, nonce: &str) -> Option<String> {
+    if !raw.starts_with("HTTP/1.1 200") {
+        return None;
+    }
+    if !identity_matches(raw, Some(nonce)) {
+        return None;
+    }
+    let body = raw.split_once("\r\n\r\n").map(|(_, b)| b)?;
+    log_lines(body)
+}
+
+/// A JSON array of audit events as one event per line, the shape a person pastes. Anything
+/// that is not an array is refused rather than pasted whole.
+fn log_lines(body: &str) -> Option<String> {
+    let events: Vec<serde_json::Value> = serde_json::from_str(body.trim()).ok()?;
+    let lines = events.iter().filter_map(|e| serde_json::to_string(e).ok()).collect::<Vec<_>>();
+    Some(lines.join("\n"))
+}
+
+fn copy_log_for_report(app: &tauri::AppHandle) {
+    let outcome = payload_dir(app).and_then(|payload| {
+        let data = data_dir(app)?;
+        let port = configured_port(&payload, &data);
+        let nonce = app.state::<Secrets>().0.nonce.clone();
+        let text = fetch_log_tail(port, LOG_LINES_FOR_A_REPORT, &nonce).ok_or_else(|| "the control app did not answer as this shell's backend".to_string())?;
+        app.clipboard()
+            .write_text(text)
+            .map_err(|e| format!("could not write to the clipboard: {e}"))
+    });
+    match outcome {
+        Ok(()) => say_on_menu(app, "Log copied. Paste it into the report"),
+        Err(err) => {
+            eprintln!("phosphor: copy log: {err}");
+            say_on_menu(app, "Nothing copied: the app did not answer");
+        }
+    }
+}
+
+/// Writes the outcome onto the Copy Log item's own title and puts the label back a few seconds
+/// later. Menu events arrive on the main thread and set_text is safe there; the restore comes
+/// back through run_on_main_thread for the same reason.
+fn say_on_menu(app: &tauri::AppHandle, text: &str) {
+    let Some(help) = app.try_state::<HelpMenu>() else {
+        return;
+    };
+    let item = help.copy_log.clone();
+    let _ = item.set_text(text);
+    let later = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(MENU_NOTICE);
+        let _ = later.run_on_main_thread(move || {
+            let _ = item.set_text(COPY_LOG_LABEL);
+        });
+    });
 }
 
 fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
@@ -223,9 +351,18 @@ fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
         update::check(app.clone(), true);
         return;
     }
-    if let Some((_, _, url)) = HELP_LINKS.iter().find(|(id, _, _)| event.id() == *id) {
+    if event.id() == HELP_COPY_LOG_ID {
+        copy_log_for_report(app);
+        return;
+    }
+    if let Some((id, _, url)) = HELP_LINKS.iter().find(|(id, _, _)| event.id() == *id) {
+        let target = if *id == HELP_REPORT_ID {
+            report_url(url, &app.package_info().version.to_string(), &macos_version())
+        } else {
+            url.to_string()
+        };
         // Same hand-off as a link the page opens: `open` gets the url as one argument, no shell.
-        let _ = std::process::Command::new("open").arg(url).spawn();
+        let _ = std::process::Command::new("open").arg(target).spawn();
         return;
     }
     if event.id() != COPY_MCP_ID {
@@ -666,7 +803,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL};
+    use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL, log_from_response, log_lines, query_value, report_url, HELP_LINKS, HELP_REPORT_ID};
     use std::time::Duration;
 
     const NONCE: &str = "abc123";
@@ -706,6 +843,48 @@ mod tests {
         // No line at all (Claude Desktop) and an unreadable body are refused with their own sentence.
         assert!(connection_line_from(&answer(Some(NONCE), r#"{"command":null}"#), NONCE).unwrap_err().contains("has no line to paste"));
         assert!(connection_line_from(&answer(Some(NONCE), "not json"), NONCE).unwrap_err().contains("could not be read"));
+    }
+
+    #[test]
+    fn the_problem_report_opens_the_bug_form_with_the_version_and_the_os_filled_in() {
+        let (_, _, base) = HELP_LINKS.iter().find(|(id, _, _)| *id == HELP_REPORT_ID).expect("the report item is on the Help menu");
+        let url = report_url(base, "0.7.0", "26.0.1");
+        assert_eq!(url, "https://github.com/karimbabasf/phosphor/issues/new?template=bug_report.yml&version=0.7.0&os=26.0.1");
+        assert!(url.starts_with("https://github.com/karimbabasf/phosphor/issues/new?"), "the report goes anywhere but the repository's issue form");
+    }
+
+    #[test]
+    fn a_query_value_cannot_add_a_parameter_or_leave_the_query() {
+        assert_eq!(query_value("0.7.0"), "0.7.0");
+        assert_eq!(query_value("26.0 beta&os=x#frag/../"), "26.0%20beta%26os%3Dx%23frag%2F..%2F");
+        assert_eq!(query_value("ünïcode"), "%C3%BCn%C3%AFcode");
+    }
+
+    #[test]
+    fn the_log_copy_takes_only_an_answer_that_carries_this_boots_nonce() {
+        let body = r#"[{"ts":"t1","type":"tool_call","msg":"a"}]"#;
+        let ours = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Phosphor: ABCDEF0123\r\n\r\n{body}");
+        let copied = log_from_response(&ours, "abcdef0123").expect("this boot's nonce, upper-cased on the wire, is this shell's backend");
+        assert_eq!(copied.lines().count(), 1);
+        assert!(copied.contains(r#""msg":"a""#), "the event came through: {copied}");
+        let squatter = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{body}");
+        assert_eq!(log_from_response(&squatter, "abcdef0123"), None, "a 200 with a list and no nonce is a stranger's text");
+        let old_boot = format!("HTTP/1.1 200 OK\r\nX-Phosphor: 999999\r\n\r\n{body}");
+        assert_eq!(log_from_response(&old_boot, "abcdef0123"), None, "another boot's nonce is not this shell's backend");
+        let fixed_marker = format!("HTTP/1.1 200 OK\r\nX-Phosphor: control\r\n\r\n{body}");
+        assert_eq!(log_from_response(&fixed_marker, "abcdef0123"), None, "the old fixed marker any server can send is refused");
+        let refused = format!("HTTP/1.1 401 Unauthorized\r\nX-Phosphor: abcdef0123\r\n\r\n{body}");
+        assert_eq!(log_from_response(&refused, "abcdef0123"), None);
+    }
+
+    #[test]
+    fn the_log_is_pasted_one_event_per_line_and_only_when_it_is_a_list() {
+        let body = r#"[{"ts":"t1","type":"tool_call","msg":"a"},{"ts":"t2","type":"executed","msg":"b"}]"#;
+        let lines = log_lines(body).expect("a JSON array is the log tail");
+        assert_eq!(lines.lines().count(), 2);
+        assert!(lines.lines().all(|l| l.starts_with('{') && l.ends_with('}')));
+        assert_eq!(log_lines("{\"error\":\"nope\"}"), None, "an object is an error answer, not a tail");
+        assert_eq!(log_lines("<html>"), None);
     }
 
     #[test]
