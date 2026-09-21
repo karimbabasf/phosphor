@@ -459,7 +459,7 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   assert.equal(all(card, 'tcard-line').length, all(details, 'tcard-line').length, 'a line sits outside the fold');
 
   const refunded = row('failed', {
-    decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: false, detail: 'The transfer sent the money back: the quote expired before the deposit landed. {"code":422}', txids: ['abc'], evidence: { ...evidence, providerStage: 'REFUNDED' } },
+    decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: false, detail: 'The transfer sent the money back: the quote expired before the deposit landed. {"code":422} intent 0x9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0', txids: ['abc'], evidence: { ...evidence, providerStage: 'REFUNDED' } },
     settledAt: '2026-09-18T10:40:00Z',
   });
   world.proposals([refunded]);
@@ -473,6 +473,8 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   const failedLines = all(failed, 'tcard-details')[0] ? all(all(failed, 'tcard-details')[0], 'tcard-line').map((n: Any) => n.textContent) : [];
   assert.ok(failedLines.some((t: string) => t === 'The transfer calls thisrefunded'), 'the vendor word is not in the fold as evidence: ' + failedLines.join(' | '));
   assert.ok(failedLines.some((t: string) => t.startsWith('What the app recorded') && t.includes('422')), 'the rail line is not kept as evidence: ' + failedLines.join(' | '));
+  assert.ok(failedLines.some((t: string) => t.includes('0x9f8e7d...d3c2b1a0')), 'the hash in the rail line is not cut to its ends: ' + failedLines.join(' | '));
+  assert.ok(!failed.textContent.includes('0x9f8e7d6c5b4a3928'), 'a whole hash reached the card: ' + failed.textContent);
 
   // The same frame again is nothing new, and a card the person closed stays closed across a redraw.
   const fold = world.cards.foldOf(card);

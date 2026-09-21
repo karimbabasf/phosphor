@@ -711,6 +711,13 @@
     return row;
   }
 
+  /* A line of evidence with every long id in it cut to its two ends: a rail's own sentence
+     names the intent hash and the quote handle whole, and a whole one is the line that
+     pushed every other fact off a 400 px card (3.1). */
+  function shortenIds(text) {
+    return String(text || '').replace(/0x[0-9a-fA-F]{40,}|[0-9a-fA-F]{56,}|[1-9A-HJ-NP-Za-km-z]{40,}/g, function (id) { return shortId(id); });
+  }
+
   /* The vendor's word for a phase, in lower case with its underscores gone: evidence for a
      support ticket, never a headline. KNOWN_DEPOSIT_TX reads "known deposit tx". */
   function vendorWord(stage) {
@@ -1225,7 +1232,7 @@
           var recorded = dom.el('div', 'tcard-line tcard-recorded');
           recorded.setAttribute('data-wrap', 'true');
           recorded.appendChild(dom.el('span', 'tcard-line-label', 'What the app recorded'));
-          recorded.appendChild(dom.el('span', 'tcard-line-value', String(move.detail).replace(/\s+/g, ' ').trim()));
+          recorded.appendChild(dom.el('span', 'tcard-line-value', shortenIds(String(move.detail).replace(/\s+/g, ' ').trim())));
           fold.appendChild(recorded);
         }
       } else if (move.id) {

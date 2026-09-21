@@ -99,6 +99,17 @@ test('every stage in the table has a row that produces it, with its own label', 
   assert.deepEqual(seen.sort(), Object.keys(STAGE_LABEL).sort(), 'every stage is covered exactly once');
 });
 
+test('a provider word the table has no label for falls back to the app\'s own phase', () => {
+  /* 1Click or the relay may add a word tomorrow. A card that printed it would be showing a
+     string no label covers; the row reads as its own phase instead (5.4). */
+  const open = withProvider('executing', 'SOMETHING_NEW');
+  assert.equal(open.stage, 'submitting');
+  assert.equal(open.stageLabel, 'Sending it');
+  assert.equal(open.providerStage, 'SOMETHING_NEW', 'the vendor word stays on the view as data');
+  const handed = withProvider('needs_reconciliation', 'SOMETHING_NEW', { pocket: POCKET });
+  assert.equal(handed.stage, 'crediting');
+});
+
 test('waitingOn names a person, the wallet, the transfer or the venue, and nobody once it is over', () => {
   assert.equal(CASES.waiting_for_you().waitingOn, 'You');
   assert.equal(CASES.waiting_for_unlock().waitingOn, 'You');
