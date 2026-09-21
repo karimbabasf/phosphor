@@ -63,6 +63,46 @@ Claude Code at a source checkout instead of the installed app, run this from the
     npm run typecheck   # tsc --noEmit over src, tests and scripts
     npm run e2e         # boots the app and a real MCP client over stdio, exits 0 or 1
 
+## Anxiety score
+
+`scripts/anxiety-eval.ts` scores how overwhelmed a crypto-naive person would be by every screen
+and every reply. It reads the situation list in
+`docs/superpowers/prompts/2026-09-20-ready-for-people.situations.md`, boots its own demo backend
+per situation on a free port with a throwaway data directory, produces each moment, shoots it in
+the automation Brave at an 860 px conversation column (card moments once more at 400 px), and
+scores every screenshot plus the agent's reply against the rubric in the quality-definitions
+file. It runs after every UI, card or role-text change.
+
+    node scripts/anxiety-eval.ts                 # the whole list, 3 runs, both legs
+    node scripts/anxiety-eval.ts --rows A06,B01   # some rows
+    node scripts/anxiety-eval.ts --runs 1 --no-flows --judge none   # pictures only, fast
+
+Two legs, both required:
+
+- Leg a, the rubric judge. Three screenshots per row from three demo runs, three votes per
+  screenshot from a vision model, the median taken. The judge is probed once in this order and
+  the first that answers valid JSON for an image plus text is used: a vision model on NEAR AI
+  Cloud, then `anthropic/claude-sonnet-5` on OpenRouter, then `claude -p`. The run's summary
+  names which one ran.
+- Leg b, the naive-user run. Jev plays the person through `jev-browse` on the flow rows
+  (`FLOW` in the situation list): open the deposit card, pick an agent, welcome to done, change
+  the agent in the vault. Every goal stops before an approve click.
+
+Reading the table (printed to the terminal and written as `summary.md` in the run folder):
+
+- One line per row: `pass`, `fail`, or `not reachable` (a moment the demo rails cannot produce,
+  named with its reason), then the median, the highest single vote, and the leg-b score.
+- A row passes on the median of its votes: 3 or under and no single vote 6 or over. A refusal or
+  failure row (marked `(F)`) may reach a median of 4.
+- The counts line gives pass, fail and not-reachable totals, the max and mean median, and the
+  judge that ran. A row with no screenshot is a fail, not a skip, unless it is marked not
+  reachable.
+
+Runs are written to `scripts/scratch/anxiety/<timestamp>/` (gitignored): `<row>.png`,
+`<row>.json` (the votes and the reasons), `summary.md` and `summary.json`. The rubric is copied
+verbatim from the definitions file and is never edited to raise a score; a low score is fixed in
+the product, never in the judge.
+
 ## Docs
 
 User documentation: [phosphor.karimbabasf.com/docs](https://phosphor.karimbabasf.com/docs).
