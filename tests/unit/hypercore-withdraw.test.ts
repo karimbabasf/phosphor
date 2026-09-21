@@ -158,6 +158,9 @@ type HlOverrides = {
   exchangeThrows?: boolean;
   // The first exchange call gets no reply; later ones are answered.
   exchangeThrowsOnce?: boolean;
+  // Once the exchange has been posted to, this /info read answers 429 one time: the rate limit
+  // or dropped socket a retry's own balance read can meet.
+  infoFailsOnceAfterPost?: string;
   ledgerMissing?: boolean;
   // The ledger already shows a send under the clock nonce, whether or not the fake exchange
   // recorded one: the venue took a send whose reply was lost.
@@ -175,6 +178,7 @@ function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps
   const posts: any[] = [];
   const infoTypes: string[] = [];
   let reads = 0;
+  let infoFailed = false;
   const fetchImpl: typeof fetch = async (url, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, any>;
     const json = (v: unknown) => new Response(JSON.stringify(v), { headers: { 'content-type': 'application/json' } });
@@ -192,6 +196,10 @@ function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps
       return json(over.exchange ?? { status: 'ok', response: { type: 'default' } });
     }
     infoTypes.push(body.type);
+    if (over.infoFailsOnceAfterPost === body.type && posts.length > 0 && !infoFailed) {
+      infoFailed = true;
+      return new Response('rate limited', { status: 429 });
+    }
     const shape = shapes[Math.min(reads, shapes.length - 1)] ?? { available: 0, spot: 0, perp: 0 };
     const unified = shape.unified ?? true;
     if (body.type === 'clearinghouseState') {
@@ -551,6 +559,27 @@ test('a send with no reply is retried once with the same nonce, and a reply the 
   assert.equal((signed[0].message as Record<string, unknown>).time, (signed[1].message as Record<string, unknown>).time);
   assert.match(out.detail, /nonce 1786600000000/);
   assert.deepEqual(out.txids, ['0xledgerhash', '0xdest']);
+});
+
+/* The retry re-reads the account before it re-signs, and a 429 there used to throw out of
+   execute: the executor wrote "rail threw" as failed, with no nonce and no handle on the row,
+   over a send the venue may have taken, and a person reading "failed" proposed a second real
+   withdrawal (review M1, 2026-09-20). The row hears first, and nothing throws after the signature. */
+test('a send with no reply whose retry cannot read the account is unconfirmed with its nonce, told to the row before the ledger read, and never a throw', async () => {
+  const { rail: r, posts, infoTypes } = rail({}, [{ available: 20, spot: 20, perp: 0 }], { exchangeThrowsOnce: true, infoFailsOnceAfterPost: 'clearinghouseState' });
+  const told: Array<{ nonce?: string; handle?: string; infoCallsSoFar: string[] }> = [];
+  const out = await r.execute(draft(), 'p1', { onEvidence: (e) => told.push({ nonce: e.nonce, handle: e.handle, infoCallsSoFar: [...infoTypes] }) });
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /MAY HAVE BEEN ACCEPTED/);
+  assert.match(out.detail, /tried once more: the retry with the same nonce could not run: hyperliquid clearinghouseState failed: 429/);
+  assert.match(out.detail, /unconfirmed/);
+  assert.doesNotMatch(out.detail, /Nothing was sent/);
+  assert.equal(out.evidence?.nonce, '1786600000000');
+  assert.equal(out.evidence?.handle, DEPOSIT.toLowerCase());
+  assert.equal(posts.length, 1, 'the retry never reached the venue, and no fresh nonce was signed');
+  assert.equal(told[0]?.nonce, '1786600000000', 'the nonce reached the row the moment the send went unanswered');
+  assert.equal(told[0]?.handle, DEPOSIT.toLowerCase());
+  assert.ok(!told[0]?.infoCallsSoFar.includes('userNonFundingLedgerUpdates'), 'told before the ledger read, not after it');
 });
 
 test('a send with no reply that the ledger already shows is not sent again at all', async () => {

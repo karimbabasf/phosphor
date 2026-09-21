@@ -614,27 +614,46 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     // payout. The ledger is read first: a send that landed shows there under its nonce, and
     // then there is nothing to retry. The rule is written out at the top of intents-spend.ts.
     const first = await sendAsset(hl, { destination: depositAddress, amount: draft.amount });
+    /* THE ROW HEARS BEFORE ANY OTHER READ. A send the venue took, or one it may have taken,
+       reaches the row with its nonce and the signed quote the moment the answer is in, ahead of
+       the ledger read, the retry and the watch loop. Every one of those is a network read that
+       can fail or a wait the process can die inside, and a row that has the nonce is a row the
+       sweep can re-check by it; a row without it is "failed" over a send the venue may hold,
+       which is how a second copy gets proposed (review, 2026-09-20). A send the venue refused
+       outright is not evidence of anything and is not reported here. */
+    if (first.ok || first.ambiguous) {
+      tell(hooks, { handle, ...(first.nonce !== undefined ? { nonce: String(first.nonce) } : {}), quote: signedQuote });
+    }
     let sent = first;
     let ledger: string | null = null;
     if (!first.ok && first.ambiguous && first.nonce !== undefined) {
       ledger = await ledgerHash(owner, first.nonce, depositAddress, toAmountString(draft.amount));
-      if (ledger === null) sent = await sendAsset(hl, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
+      if (ledger === null) {
+        /* NOTHING THROWS AFTER THE SIGNATURE (the two-phase contract at the top of
+           intents-spend.ts). The retry re-reads the account before it re-signs, and that read
+           fails the way any read does; a throw out of here reached the executor as "rail
+           threw", which it writes as failed with no nonce on the row. A retry that could not
+           run is the same fact as a retry that got no answer: unconfirmed, same nonce. */
+        try {
+          sent = await sendAsset(hl, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
+        } catch (err) {
+          sent = { ok: false, ambiguous: true, nonce: first.nonce, detail: `the retry with the same nonce could not run: ${oneLine(errText(err), 160)}` };
+        }
+      }
     }
     const landed = sent.ok || ledger !== null;
-    // A send the venue took, or one it may have taken, reaches the row now with its nonce and
-    // the signed quote, ahead of the watch loop, so a process that dies polling still has both.
-    // A send the venue refused outright is not evidence of anything and is not reported here.
-    if (landed || first.ambiguous) {
-      const early = first.nonce ?? sent.nonce;
-      tell(hooks, { handle, ...(early !== undefined ? { nonce: String(early) } : {}), quote: signedQuote });
-    }
     if (!landed) {
       if (first.ambiguous) {
         // The nonce is the identity of the action on this venue and the only thing a retry can
         // reuse, so it is the evidence; there is no hash to record and none is invented. A
         // refusal of the same nonce on the retry is not proof either way: the venue refuses a
         // nonce it has already taken, and it refuses a send it cannot fund.
-        const again = sent === first ? '' : ` The same nonce was sent once more and the venue answered: ${oneLine(sent.detail, 160)}.`;
+        const again =
+          sent === first
+            ? ''
+            : sent.ambiguous
+              ? ` The same nonce was tried once more: ${oneLine(sent.detail, 160)}.`
+              : ` The same nonce was sent once more and the venue answered: ${oneLine(sent.detail, 160)}.`;
         return {
           ok: false,
           detail:
