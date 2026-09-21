@@ -35,6 +35,7 @@ import { createVaultPrefs } from './vault/prefs.ts';
 import { createTerms } from './terms.ts';
 import { createDepositWatch } from './vault/watch.ts';
 import { createSseHub } from './http/sse.ts';
+import { credentialCheck, redactEvent } from './http/log-tail.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
 import { createEndedNotices } from './http/ended.ts';
@@ -114,6 +115,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     recent: recentEvents,
     recentMax: BASIC_EVENT_SCAN,
     candlesQuiet: () => candlePush.quiet(),
+    redact: (event) => redactEvent(event, credentialCheck({ agents, token })),
   });
   hub = sse;
   const {

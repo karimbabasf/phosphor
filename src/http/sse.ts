@@ -13,6 +13,7 @@ import type { Store } from '../store.ts';
 import type { TradeService } from '../trade/service.ts';
 import type { ChartSlots } from '../charts.ts';
 import type { SseHub } from './context.ts';
+import { redactEvent } from './log-tail.ts';
 
 const STATE_DEBOUNCE_MS = 120;
 const HEARTBEAT_MS = 15000; // SSE keepalive; doubles as a floor on state freshness
@@ -33,9 +34,15 @@ export function createSseHub(deps: {
   // Whether the live rail has gone quiet. Defaults to "always", which is behaviour before the
   // rail existed. See the tick below for why the nudge timer has to ask.
   candlesQuiet?: () => boolean;
+  // The wall every audit event passes on its way to a window: the same one GET /api/log and
+  // log_tail use (src/http/log-tail.ts). The caller hands in the one that knows this boot's
+  // seat secret and window token; without it the shapes and the secret-named fields are still
+  // cut, so no caller can stream a raw event by forgetting.
+  redact?: (event: LogEvent) => LogEvent;
 }): SseHub {
   const { store, audit, charts, trade, recent, recentMax } = deps;
   const candlesQuiet = deps.candlesQuiet ?? (() => true);
+  const redact = deps.redact ?? ((event: LogEvent) => redactEvent(event, () => false));
 
   const sseClients = new Set<http.ServerResponse>();
   let stateTimer: NodeJS.Timeout | null = null;
@@ -165,7 +172,7 @@ export function createSseHub(deps: {
   const offAudit = audit.subscribe((event) => {
     recent.unshift(event);
     if (recent.length > recentMax) recent.length = recentMax;
-    for (const client of sseClients) sseSend(client, { type: 'log', event });
+    for (const client of sseClients) sseSend(client, { type: 'log', event: redact(event) });
   });
 
   // Tell the browser to redraw on a fixed cadence rather than on every trade.

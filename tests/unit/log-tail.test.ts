@@ -116,6 +116,45 @@ test('the planted line: every credential shape is cut on both tail routes, and t
   }
 });
 
+/* THE STREAM. /api/events hands every audit event to any local GET with no token, live, and
+   the reviewer's line arrived on it verbatim: the same wall now stands on the way out there. */
+test('the planted line never reaches /api/events, and the hash does', async () => {
+  const h = await bootChartServer();
+  const stop = new AbortController();
+  try {
+    const stream = await fetch(`${h.url}/api/events`, { headers: { origin: h.url }, signal: stop.signal });
+    assert.equal(stream.status, 200);
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    const line = plantedLine(h.seat, h.token);
+    h.audit.append('tool_call', line, { neutral: { hash: PLANT.hexAddr }, privateKey: PLANT.hexAddr, headers: { Authorization: PLANT.bearer } });
+    const deadline = Date.now() + 5000;
+    type Frame = { type: string; event?: LogEvent & { data?: Record<string, unknown> } };
+    let arrived: Frame | undefined;
+    while (arrived === undefined && Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      for (const chunk of text.split('\n\n')) {
+        const data = chunk.split('\n').find((l) => l.startsWith('data: '));
+        if (data === undefined) continue;
+        const parsed = JSON.parse(data.slice(6)) as Frame;
+        if (parsed.type === 'log' && parsed.event?.msg.startsWith('seat ')) arrived = parsed;
+      }
+    }
+    assert.ok(arrived?.event, 'the planted line never arrived on the stream, so nothing was tested');
+    assertPlantCut(JSON.stringify(arrived), h.seat, h.token, '/api/events');
+    const event = arrived.event;
+    assert.deepEqual(event.data?.neutral, { hash: PLANT.hexAddr }, 'the stream cut a hash under a neutral key');
+    assert.equal(event.data?.privateKey, REDACTED);
+    assert.deepEqual(event.data?.headers, { Authorization: REDACTED });
+  } finally {
+    stop.abort();
+    await h.close();
+  }
+});
+
 /* THE REPORT COPY. Help, then Copy Log for a Report lands on a public issue, so that copy
    shortens every address to its two ends the way diagnose prints them; the person's own read
    of GET /api/log keeps them whole. Amounts stay in both: a report about money says how much. */
