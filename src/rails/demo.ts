@@ -37,7 +37,9 @@ import type {
 } from '../types.ts';
 import type { PocketRead } from '../ledger/settle.ts';
 import type { RailRegistry } from './index.ts';
-import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS } from './hypercore-deposit.ts';
+import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS, HYPERCORE_VENUE_MIN_CREDIT_USDC, MIN_DEPOSIT_USDC } from './hypercore-deposit.ts';
+import { HL_ACTIVATION_USDC, INTENTS_USDC_ASSET_ID, MIN_HL_WITHDRAW_USDC } from './hypercore-withdraw.ts';
+import { maxSendableUsdc } from './hl-user-signed.ts';
 import { demoAssetOf, demoAvailableUsdc, demoHolding, loadDemoLedger, moveDemoBalance } from '../ledger/demo.ts';
 import type { RailKind } from './kinds.ts';
 import { pricedAs } from '../proposals/draft.ts';
@@ -47,6 +49,17 @@ import { pricedAs } from '../proposals/draft.ts';
 export const DEMO_STAGE_SCALE_ENV = 'PHOSPHOR_DEMO_STAGE_SCALE';
 export const DEMO_STALL_ENV = 'PHOSPHOR_DEMO_STALL';
 export const DEMO_DEADLINE_ENV = 'PHOSPHOR_DEMO_DEADLINE_SEC';
+// The vendor's terminal word a Hyperliquid move ends on instead of SUCCESS: FAILED or REFUNDED.
+export const DEMO_PROVIDER_END_ENV = 'PHOSPHOR_DEMO_PROVIDER_END';
+// A Hyperliquid deposit whose preflight holds (the Arbitrum gas check fails), so the row goes
+// back to approved with the checks on it and the executor retries it; nothing walks.
+export const DEMO_HOLD_ENV = 'PHOSPHOR_DEMO_HOLD';
+// How often a held row is retried and how long it may hold, in seconds, in place of the
+// shipped half minute and quarter hour (src/proposals/execute.ts). Read by demoHeldTiming.
+export const DEMO_HELD_RETRY_ENV = 'PHOSPHOR_DEMO_HELD_RETRY_SEC';
+export const DEMO_HELD_MAX_ENV = 'PHOSPHOR_DEMO_HELD_MAX_SEC';
+
+export type DemoProviderEnd = 'FAILED' | 'REFUNDED';
 
 export type DemoKnobs = {
   // How long each stage lasts, as a multiple of the defaults below. 1 walks in about 25
@@ -57,20 +70,44 @@ export type DemoKnobs = {
   // What counts as late in demo mode, in seconds since the decision, in place of the shipped
   // floor of ten minutes (DEADLINE_SEC, src/proposals/view.ts). Null leaves the shipped one.
   deadlineSec: number | null;
+  // The Hyperliquid seams: the router's terminal word instead of SUCCESS, and the preflight hold.
+  providerEnd: DemoProviderEnd | null;
+  hold: boolean;
 };
 
 // What every knob reads outside demo mode, whatever the environment says.
-const KNOBS_OFF: DemoKnobs = { stageScale: 1, stall: false, deadlineSec: null };
+const KNOBS_OFF: DemoKnobs = { stageScale: 1, stall: false, deadlineSec: null, providerEnd: null, hold: false };
+
+function flag(value: string | undefined): boolean {
+  const word = String(value ?? '').toLowerCase();
+  return word === '1' || word === 'true' || word === 'yes';
+}
 
 export function demoKnobs(cfg: AppConfig, env: Record<string, string | undefined> = process.env): DemoKnobs {
   if (cfg.mode !== 'demo') return KNOBS_OFF;
   const scale = Number(env[DEMO_STAGE_SCALE_ENV]);
   const deadline = Number(env[DEMO_DEADLINE_ENV]);
-  const stall = String(env[DEMO_STALL_ENV] ?? '').toLowerCase();
+  const end = String(env[DEMO_PROVIDER_END_ENV] ?? '').toUpperCase();
   return {
     stageScale: Number.isFinite(scale) && scale > 0 ? scale : 1,
-    stall: stall === '1' || stall === 'true' || stall === 'yes',
+    stall: flag(env[DEMO_STALL_ENV]),
     deadlineSec: Number.isFinite(deadline) && deadline > 0 ? deadline : null,
+    providerEnd: end === 'FAILED' || end === 'REFUNDED' ? end : null,
+    hold: flag(env[DEMO_HOLD_ENV]),
+  };
+}
+
+/* The held row's clock, as the executor reads it (PCtx.held). Null in every mode but demo,
+   and in demo unless a knob names a number, so the shipped timing is what a mainnet install
+   runs on. The lead wires it into createProposalService in src/main.ts. */
+export function demoHeldTiming(cfg: AppConfig, env: Record<string, string | undefined> = process.env): { retryMs: number; maxMs: number } | null {
+  if (cfg.mode !== 'demo') return null;
+  const retry = Number(env[DEMO_HELD_RETRY_ENV]);
+  const max = Number(env[DEMO_HELD_MAX_ENV]);
+  if (!Number.isFinite(retry) && !Number.isFinite(max)) return null;
+  return {
+    retryMs: Number.isFinite(retry) && retry > 0 ? retry * 1000 : 30_000,
+    maxMs: Number.isFinite(max) && max > 0 ? max * 1000 : 15 * 60_000,
   };
 }
 
@@ -121,6 +158,11 @@ function walkOf(draft: WriteDraft): Walk {
   if (draft.kind === 'swap' && draft.venue === 'intents-relay') return { stages: RELAY_WALK, stallAt: RELAY_STALL_AT, relay: true };
   return { stages: WALK, stallAt: STALL_AT, relay: false };
 }
+/* The Hyperliquid kinds walk their own path (KIND_STAGES.hl_deposit and hl_withdraw in
+   src/proposals/view.ts): the money starts inside the verifier or on the venue, so there is no
+   PENDING_DEPOSIT to wait through, and the router's three words come in the order the card
+   prints them. Then `crediting` until the pocket shows the money, then Confirmed. */
+const HL_WALK = ['KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS'] as const;
 
 export type DemoRailDeps = {
   cfg: AppConfig;
@@ -230,24 +272,10 @@ function swapQuote(draft: SwapDraft): { out: number; feeUsd: number } | null {
 
 async function simulate(draft: WriteDraft): Promise<SimulationResult> {
   switch (draft.kind) {
-    case 'hl_deposit': {
-      const credited = draft.amount - feeFor('hl_deposit', draft.amount);
-      return {
-        ok: true,
-        summary:
-          `demo: ${units(draft.amount, 6)} ${draft.symbol} leaves NEAR Intents and about ` +
-          `${units(credited, 6)} ${draft.symbol} reaches the trading account. Nothing is signed and no money moves.`,
-      };
-    }
-    case 'hl_withdraw': {
-      const received = draft.amount - feeFor('hl_withdraw', draft.amount);
-      return {
-        ok: true,
-        summary:
-          `demo: ${units(draft.amount, 6)} USDC leaves the trading account and about ` +
-          `${units(received, 6)} USDC reaches NEAR Intents. Nothing is signed and no money moves.`,
-      };
-    }
+    case 'hl_deposit':
+      return simulateHlDeposit(draft);
+    case 'hl_withdraw':
+      return simulateHlWithdraw(draft);
     case 'swap': {
       const quote = swapQuote(draft);
       if (quote === null) {
@@ -303,6 +331,111 @@ async function simulate(draft: WriteDraft): Promise<SimulationResult> {
     default:
       return { ok: false, summary: `demo mode has no rail for ${draft.kind}`, error: 'demo_no_rail' };
   }
+}
+
+/* The Hyperliquid deposit, priced the way the live rail prices it: the same floors (7 USDC in
+   so that 5 lands after the flat fee, because the venue keeps anything under 5 delivered), the
+   fee split into its two parts, and the facts the card draws. A refusal names the floor, so a
+   demo of "put 2 dollars on Hyperliquid" reads exactly as it would on mainnet. */
+function simulateHlDeposit(draft: HlDepositDraft): SimulationResult {
+  const rate = FEES.hl_deposit;
+  if (draft.amountUsd < MIN_DEPOSIT_USDC || draft.minCredited < HYPERCORE_VENUE_MIN_CREDIT_USDC) {
+    const reason =
+      `${units(draft.amount, 6)} ${draft.symbol} is below the ${MIN_DEPOSIT_USDC} USDC floor. Hyperliquid does not credit a deposit ` +
+      `under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC, it is lost, and the routing fee is nearly flat (about ${units(rate.flat, 2)} USDC), so ` +
+      `${MIN_DEPOSIT_USDC} in is what guarantees ${HYPERCORE_VENUE_MIN_CREDIT_USDC} lands; deposit more at once`;
+    return { ok: false, summary: `REFUSED: fund Hyperliquid with ${units(draft.amount, 6)} ${draft.symbol} - ${reason}`, error: reason };
+  }
+  const fee = feeFor('hl_deposit', draft.amount);
+  const appFee = (draft.amount * rate.bps) / 10_000;
+  const routing = fee - appFee;
+  const credited = draft.amount - fee;
+  return {
+    ok: true,
+    summary: [
+      `demo: ${units(draft.amount, 6)} ${draft.symbol} leaves NEAR Intents and about ${units(credited, 6)} ${draft.symbol} reaches the trading account.`,
+      `  at least  ${units(draft.minCredited, 6)} USDC, the floor the move is held to; under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} the venue keeps it`,
+      `  cost      ${fee.toFixed(4)} USDC, ${((fee / draft.amount) * 100).toFixed(2)} percent of the deposit`,
+      `  routing   ${routing.toFixed(4)} USDC inside the quote`,
+      `  app fee   ${appFee.toFixed(4)} USDC, ${rate.bps} bp, inside the quote`,
+      'Nothing is signed and no money moves.',
+    ].join('\n'),
+    send: {
+      destinationAsset: HYPERCORE_USDC_ASSET_ID,
+      arrives: units(credited, 6),
+      arrivesAtLeast: units(draft.minCredited, 6),
+      feeUsd: Number(fee.toFixed(6)),
+      bridgeFee: null,
+      etaSeconds: Math.round((STAGE_MS * HL_WALK.length + CREDIT_MS) / 1000),
+      activity:
+        `Two fees, both inside the quote: routing ${units(routing, 6)} USDC and a ${rate.bps} bp app fee (${units(appFee, 6)} USDC). ` +
+        `Hyperliquid keeps any deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC delivered, so at least ${units(draft.minCredited, 6)} USDC has to land.`,
+      explorer: null,
+    },
+  };
+}
+
+/* The Hyperliquid withdrawal, priced the way the live rail prices it: the 5 USDC floor, the
+   routing leg and app fee inside the quote, the venue's 1 USDC activation fee on top (every
+   address 1Click mints is new to the venue), and a short balance refused BEFORE any quote with
+   the most that could come back in the sentence (criterion 8.6). */
+function simulateHlWithdraw(draft: HlWithdrawDraft): SimulationResult {
+  const refuse = (reason: string): SimulationResult => ({
+    ok: false,
+    summary: `REFUSED: withdraw ${units(draft.amount, 6)} USDC from Hyperliquid - ${reason}`,
+    error: reason,
+  });
+  if (draft.amount < MIN_HL_WITHDRAW_USDC) {
+    return refuse(
+      `${units(draft.amount, 6)} USDC is below the ${MIN_HL_WITHDRAW_USDC} USDC floor. The cost is nearly flat, about ${units(FEES.hl_withdraw.flat, 2)} USDC of ` +
+        `routing plus the ${HL_ACTIVATION_USDC} USDC activation fee the venue charges for the fresh deposit address, so at this size it would be ` +
+        'most of the withdrawal; withdraw more at once',
+    );
+  }
+  const available = demoAvailableUsdc();
+  const needed = draft.amount + HL_ACTIVATION_USDC;
+  if (available < needed) {
+    const most = maxSendableUsdc(available, HL_ACTIVATION_USDC);
+    const offer =
+      most >= MIN_HL_WITHDRAW_USDC
+        ? `The most that can come back now is ${units(most, 6)} USDC`
+        : `After the fee at most ${units(most, 6)} USDC could come back, under the ${MIN_HL_WITHDRAW_USDC} USDC floor, so nothing can leave until more is on the account`;
+    return refuse(
+      `the account has ${units(available, 6)} USDC and the withdrawal needs ${units(needed, 6)} USDC: ${units(draft.amount, 6)} plus the ` +
+        `${HL_ACTIVATION_USDC} USDC activation fee the venue charges the sender for a destination it has never seen. ${offer}`,
+    );
+  }
+  const rate = FEES.hl_withdraw;
+  const inside = feeFor('hl_withdraw', draft.amount);
+  const appFee = (draft.amount * rate.bps) / 10_000;
+  const routing = inside - appFee;
+  const total = inside + HL_ACTIVATION_USDC;
+  const received = draft.amount - inside;
+  return {
+    ok: true,
+    summary: [
+      `demo: ${units(draft.amount, 6)} USDC leaves the trading account and about ${units(received, 6)} USDC reaches NEAR Intents.`,
+      `  at least  ${units(draft.minReceived, 6)} USDC, the floor the move is held to`,
+      `  cost      ${total.toFixed(4)} USDC, ${((total / draft.amount) * 100).toFixed(2)} percent`,
+      `  routing   ${routing.toFixed(4)} USDC inside the quote`,
+      `  app fee   ${appFee.toFixed(4)} USDC, ${rate.bps} bp, inside the quote`,
+      `  activation ${HL_ACTIVATION_USDC} USDC on top, the venue's charge for a destination it has never seen`,
+      '  by hand   always a click, whatever the size',
+      'Nothing is signed and no money moves.',
+    ].join('\n'),
+    send: {
+      destinationAsset: INTENTS_USDC_ASSET_ID,
+      arrives: units(received, 6),
+      arrivesAtLeast: units(draft.minReceived, 6),
+      feeUsd: Number(total.toFixed(6)),
+      bridgeFee: null,
+      etaSeconds: Math.round((STAGE_MS * HL_WALK.length + CREDIT_MS) / 1000),
+      activity:
+        `Three fees. Routing ${units(routing, 6)} USDC and a ${rate.bps} bp app fee (${units(appFee, 6)} USDC) come out of the quote. ` +
+        `Hyperliquid charges ${HL_ACTIVATION_USDC} USDC on top to open the fresh address 1Click mints, paid by the venue account.`,
+      explorer: null,
+    },
+  };
 }
 
 // ---------- the move itself ----------
@@ -364,20 +497,32 @@ function hlDepositMove(draft: HlDepositDraft): DemoMove {
   };
 }
 
-function hlWithdrawMove(draft: HlWithdrawDraft): DemoMove {
+function hlWithdrawMove(draft: HlWithdrawDraft): DemoMove | null {
   const received = draft.amount - feeFor('hl_withdraw', draft.amount);
   const landing = demoAssetOf(draft.symbol);
+  if (landing === null) return null;
   return {
     arrives: received,
-    decimals: landing?.decimals ?? 6,
+    decimals: landing.decimals,
     symbol: draft.symbol,
-    // The live withdraw rail carries no pocket read, so neither does this: the row confirms on
-    // the rail's own word and never sits in `crediting`.
-    pocket: null,
+    // The live withdraw rail reads the verifier either side and confirms only once the credit
+    // shows (criterion 8.3), so the demo carries the same pocket: the row sits in `crediting`
+    // until the balance the fixture serves rises by the floor.
+    pocket: {
+      venue: 'intents',
+      account: draft.to.toLowerCase(),
+      assetId: landing.assetId,
+      symbol: landing.symbol,
+      decimals: landing.decimals,
+      before: base(demoHolding(landing.assetId)?.amount ?? 0, landing.decimals),
+      after: null,
+      floor: base(draft.minReceived, landing.decimals),
+    },
     credit: () => {
       moveDemoBalance({
-        intents: landing === null ? [] : [{ ...landing, amount: received }],
-        hyperliquidUsdc: -draft.amount,
+        intents: [{ ...landing, amount: received }],
+        // The venue takes the activation fee beside the amount, so the account falls by both.
+        hyperliquidUsdc: -(draft.amount + HL_ACTIVATION_USDC),
       });
     },
     detail: `demo: ${units(received, 6)} ${draft.symbol} reached NEAR Intents. Nothing was signed and no money moved.`,
@@ -466,6 +611,7 @@ function demoNearHash(): string {
 export const DEMO_EXPLORER = 'https://explorer.demo.invalid/tx/';
 
 async function walk(draft: WriteDraft, hooks: RailHooks | undefined, deps: DemoRailDeps, knobs: DemoKnobs): Promise<RailResult> {
+  if (draft.kind === 'hl_deposit' || draft.kind === 'hl_withdraw') return hlWalk(draft, hooks, deps, knobs);
   const move = moveFor(draft);
   if (move === null) return { ok: false, detail: `demo mode has no rail for ${draft.kind}` };
 
@@ -609,4 +755,142 @@ async function creditLater(move: DemoMove, deps: DemoRailDeps, afterMs: number):
   await sleep(afterMs);
   move.credit();
   await deps.refresh().catch(() => undefined);
+}
+
+// ---------- the Hyperliquid walk ----------
+
+/* The five checks a live deposit runs before the intent is signed (src/preflight/index.ts), as
+   the hold seam reports them: the Arbitrum sweep blocked by gas, everything else fine. The same
+   shape the card's checks fold draws, and a hold reason in the preflight's own words. */
+function heldPreflight(at: string): NonNullable<RailResult['preflight']> {
+  return {
+    at,
+    verdict: 'hold',
+    holdReason: 'Waiting for Arbitrum gas to settle',
+    checks: [
+      { id: 'gas', label: 'Arbitrum gas', state: 'fail', value: '300,024 / 300,000', detail: 'The sweep that lands this on Hyperliquid needs more gas than Arbitrum allows a transaction right now.', limit: 300_000 },
+      { id: 'coverage', label: 'Fee covers the payout', state: 'ok', value: '2.3x', detail: 'The fee inside the quote covers the payout with room to spare.' },
+      { id: 'venue', label: 'NEAR Intents answers', state: 'ok', value: 'Answering', detail: 'A dry quote and a status read both came back.' },
+      { id: 'balance', label: 'Balance', state: 'ok', value: 'Covered', detail: 'The balance inside NEAR Intents covers this move.' },
+      { id: 'deadline', label: 'Quote deadline', state: 'ok', value: '9 min', detail: 'The quote holds long enough to sign against.' },
+    ],
+  };
+}
+
+/* KNOWN_DEPOSIT_TX, PROCESSING, SUCCESS, then `crediting` until the pocket shows the money, then
+   Confirmed: the walk a real HyperCore move reports, on a timer, through the executor's own
+   seams. Four seams beside it, each the shape its live counterpart leaves behind:
+     hold        (PHOSPHOR_DEMO_HOLD, deposits) the preflight says wait, nothing walks, the row
+                 goes back to approved with the checks on it and the executor retries it;
+     stall       (PHOSPHOR_DEMO_STALL) the router says PROCESSING and never answers again;
+     FAILED      (PHOSPHOR_DEMO_PROVIDER_END) the router could not finish and refunded nothing yet;
+     REFUNDED    (PHOSPHOR_DEMO_PROVIDER_END) the router sent the money back.
+   The walk debits nothing before the router's terminal word, so a refund seam leaves the
+   fixture exactly as it found it, which is what a refund means. */
+async function hlWalk(draft: HlDepositDraft | HlWithdrawDraft, hooks: RailHooks | undefined, deps: DemoRailDeps, knobs: DemoKnobs): Promise<RailResult> {
+  const move = moveFor(draft);
+  if (move === null) return { ok: false, detail: `demo mode has no rail for ${draft.kind}` };
+  const stageMs = STAGE_MS * knobs.stageScale;
+
+  if (knobs.hold && draft.kind === 'hl_deposit') {
+    const preflight = heldPreflight(new Date().toISOString());
+    try {
+      hooks?.onPreflight?.(preflight);
+    } catch {
+      // the row is the executor's to write
+    }
+    return { ok: false, held: true, detail: `${preflight.holdReason}. Nothing was signed.`, preflight };
+  }
+
+  const intentHash = demoHash();
+  const quote = {
+    correlationId: `demo-${randomBytes(6).toString('hex')}`,
+    timestamp: new Date().toISOString(),
+    signature: 'demo, nothing was signed',
+    depositAddress: 'demo, no deposit address was minted',
+  };
+  // A withdrawal's first evidence is the venue nonce of the send it signed; a deposit's is the
+  // hash of the intent. Both are what the sweep asks the venue by, and both reach the row
+  // before the wait (criterion 8.5).
+  const nonce = String(Date.now());
+  const firstWord = (stage: string): RailEvidence & { txids?: string[] } =>
+    draft.kind === 'hl_withdraw'
+      ? { providerStage: stage, txids: [intentHash], handle: quote.correlationId, nonce, quote }
+      : { providerStage: stage, txids: [intentHash], handle: quote.correlationId, quote };
+  const kept = draft.kind === 'hl_withdraw' ? { handle: quote.correlationId, nonce, quote } : { handle: quote.correlationId, quote };
+
+  for (const stage of HL_WALK) {
+    await sleep(stageMs);
+    if (stage === HL_WALK[0]) {
+      tell(hooks, firstWord(stage));
+    } else if (stage === 'PROCESSING' && knobs.providerEnd !== null) {
+      tell(hooks, { providerStage: stage });
+      await sleep(stageMs);
+      tell(hooks, { providerStage: knobs.providerEnd });
+      const refundTo = draft.kind === 'hl_deposit' ? 'the balance inside NEAR Intents' : 'the venue account';
+      if (knobs.providerEnd === 'REFUNDED') {
+        return {
+          ok: false,
+          detail: `REFUNDED: ${units(draft.amount, 6)} USDC went back to ${refundTo}. The router could not finish the move. Nothing was signed and no money moved.`,
+          txids: [intentHash],
+          evidence: { ...kept, providerStage: 'REFUNDED', refundedAmount: units(draft.amount, 6) },
+        };
+      }
+      return {
+        ok: false,
+        detail: `the router reported FAILED and refunded 0 USDC so far, reason not given. The input is held by the router under handle ${quote.correlationId} until a refund shows in your balance. Nothing was signed and no money moved.`,
+        txids: [intentHash],
+        evidence: { ...kept, providerStage: 'FAILED', refundedAmount: '0', refundReason: 'not given' },
+      };
+    } else if (stage === 'SUCCESS') {
+      tell(hooks, {
+        providerStage: stage,
+        txids: [intentHash, demoHash()],
+        settledAmountOut: units(move.arrives, move.decimals),
+        explorerUrl: `${DEMO_EXPLORER}${intentHash}`,
+      });
+    } else {
+      tell(hooks, { providerStage: stage });
+    }
+    if (knobs.stall && stage === STALL_AT) {
+      return {
+        ok: false,
+        settling: true,
+        detail: 'demo: the router reported PROCESSING and has not answered since. Nothing was signed and no money moved.',
+        txids: [intentHash],
+        evidence: { ...kept, providerStage: STALL_AT },
+        ...(move.pocket === null ? {} : { pocket: move.pocket }),
+      };
+    }
+  }
+
+  // The last reported stage gets its own beat too: a word the card shows for no time at all is
+  // a stage nobody watching this could have read.
+  await sleep(stageMs);
+
+  const evidence: RailEvidence = {
+    ...kept,
+    providerStage: 'SUCCESS',
+    settledAmountOut: units(move.arrives, move.decimals),
+    explorerUrl: `${DEMO_EXPLORER}${intentHash}`,
+  };
+
+  // Both Hyperliquid kinds carry a pocket, so both settle the way their live rails do: the router
+  // is done, the venue has not shown the money, and the row waits in `crediting` until a balance
+  // read proves it. The credit lands after the executor has written that row.
+  if (move.pocket !== null) {
+    void creditLater(move, deps, CREDIT_MS * knobs.stageScale);
+    return {
+      ok: false,
+      settling: true,
+      detail: `demo: the router is done and the venue has not shown it yet. ${move.detail}`,
+      txids: [intentHash],
+      evidence,
+      pocket: move.pocket,
+    };
+  }
+
+  move.credit();
+  await deps.refresh().catch(() => undefined);
+  return { ok: true, detail: move.detail, txids: [intentHash], evidence };
 }
