@@ -19,7 +19,7 @@ Lead: Claude (Opus 5), session c49886b8. Started 2026-09-20 19:05 PDT. Main at 7
 |---|---|---|
 | A relay swap | rfp/a-relay | both reviews ACCEPT; items 1-3 closed at fc9b5d7 (3147/3147: truncateToBaseUnits, is_valid_salt before a failed verdict, hold names every passed quote); items 4-6 (execute.ts relay settling branch, 2.5 s dry-quote bound, fail-closed balance read) in progress; NOTE: relay quotes no solver for USDC to wNEAR today, USDC to USDT does; nonce is V1 (current_salt) |
 | B Hyperliquid | rfp/b-hyperliquid | secure review REJECT (M1 retry throw loses nonce and handle; L1 pocket-less withdraw confirmed on SUCCESS alone; L2 deposit card floor rounds half-up; I2 moveToSpot double): fresh builder node-b2-fix on the worktree per the workflow rule; correct review still running |
-| C agent picker | rfp/c-agent | reported (291fc9a after merging main, 3123/3123, +57 tests); correct + secure reviews running; touched ui/index.html (one link line) and src/http/router.ts (two routes) outside its list, resolve at merge |
+| C agent picker | rfp/c-agent | secure ACCEPT, four items closed at 7b60f50 (boot nonce on Copy MCP Config, scope sentence in Details and docs, done-step sentence from the pick state, evidence re-captured; 3125/3125, cargo 23/23); correct REJECT: fresh builder node-c2-fix on the worktree (proxy reads PHOSPHOR_PORT, check before writePick, focus ring, Details wording) |
 | D one card, voice | rfp/d-card | building |
 | E craft floor | rfp/e-craft | reported (ed0f0e4, 3096/3096, detector 0, audit 0 blocking); correct + secure reviews running; overwhelmed review waits for F |
 | F anxiety harness | rfp/f-anxiety | building |
