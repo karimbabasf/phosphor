@@ -19,7 +19,7 @@ Lead: Claude (Opus 5), session c49886b8. Started 2026-09-20 19:05 PDT. Main at 7
 |---|---|---|
 | A relay swap | rfp/a-relay | building |
 | B Hyperliquid | rfp/b-hyperliquid | building |
-| C agent picker | rfp/c-agent | building |
+| C agent picker | rfp/c-agent | reported (291fc9a after merging main, 3123/3123, +57 tests); correct + secure reviews running; touched ui/index.html (one link line) and src/http/router.ts (two routes) outside its list, resolve at merge |
 | D one card, voice | rfp/d-card | building |
 | E craft floor | rfp/e-craft | reported (ed0f0e4, 3096/3096, detector 0, audit 0 blocking); correct + secure reviews running; overwhelmed review waits for F |
 | F anxiety harness | rfp/f-anxiety | building |
@@ -39,3 +39,5 @@ Ports: A 4201, B 4202, C 4203, D 4204, E 4205, F 4206, G 4207 (PHOSPHOR_PORT), d
 ## Requests filed by nodes (for the lead to route)
 - E to D: decision.js Escape closes a dock read card never an ask; swap dock address grouped in fours (decision.js/cards.js); netpick.js token list gets the scrolls class and data-cut hook (C's file); src/view/theme.ts down slot floor MIN_MARK_CONTRAST to MIN_TEXT_CONTRAST (lead).
 - G to lead: 0.8.0 bump in package.json, Cargo.toml, tauri.conf.json at merge; three native message boxes in main.rs (Copy MCP Config outcome, fail(), notify()) to in-app windows; shell-health source-assertion test after E merges; per-tool argument pin after A, B, C merge; diagnose through the log redaction; a .gitleaks.toml; site docs rebuild (Karim, live site says 0.6.0).
+- C to G/lead: docs/security-model.md must list POST /api/policy/threshold (token-checked) and GET /api/connection (no-token loopback read); main.rs Copy MCP Config dialog text still says claude mcp add-json (wording in report-c section 5).
+- Flaky: tests/unit/lock-frame.test.ts timing miss once under load (3.1 s), passes alone; watch it at merge, never loosen it.
