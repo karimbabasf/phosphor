@@ -128,6 +128,21 @@ export function minCreditedFor(amount: number): number {
   return amount - (HYPERCORE_FLAT_FEE_USDC + (amount * HYPERCORE_FEE_BPS) / 10_000);
 }
 
+// A USDC figure is read to six places.
+const CARD_DECIMALS = 6;
+
+/* THE FLOOR AS THE CARD PRINTS IT: the base-unit floor the signed guarantee is checked against
+   (`guaranteed < minCreditedBase`, checkQuote), CUT to six places and never rounded. The card
+   used to print the draft's double through toFixed(6), which rounds half-up, while the check
+   runs at the venue's eight decimals: 4.571706504 printed as 4.571707, a promise 50 base units
+   above what a quote had to guarantee, on about half of all amounts (review, 2026-09-20). A
+   floor is cut (commit 42f5809), and it is cut from the same integer the check reads, so the
+   card can never say more than the rail holds the venue to. */
+export function floorUsdc(floorBase: bigint): string {
+  const cut = 10n ** BigInt(HYPERCORE_USDC_DECIMALS - CARD_DECIMALS);
+  return formatUnits((floorBase / cut) * cut, HYPERCORE_USDC_DECIMALS);
+}
+
 // ---------- the seams ----------
 
 export type HypercoreDepositDeps = {
@@ -315,8 +330,10 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
      (SendSimulation): what arrives, the draft floor as "at least", and the fee as one number. */
   type Priced = { lines: string[]; feePct: number; facts: NonNullable<SimulationResult['send']> };
 
-  function priceLines(draft: HlDepositDraft, quote: OneClickQuote, raw: unknown): Priced {
+  function priceLines(draft: HlDepositDraft, p: Plan, quote: OneClickQuote, raw: unknown): Priced {
     const out = Number(quote.amountOutFormatted);
+    // The floor in every slot a person reads it: the check's own integer, cut to six places.
+    const floor = floorUsdc(p.minCreditedBase);
     const inUsd = Number(quote.amountInUsd);
     const spent = Number.isFinite(inUsd) && inUsd > 0 ? inUsd : draft.amountUsd;
     const feeUsd = Number.isFinite(out) ? spent - out : NaN;
@@ -336,21 +353,21 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
         destinationAsset: HYPERCORE_USDC_ASSET_ID,
         // The floor in both slots, for the reason hypercore-withdraw.ts gives: the chat card
         // draws `arrives` as the landing leg and has no "at least" line for this kind yet.
-        arrives: money(draft.minCredited),
-        arrivesAtLeast: money(draft.minCredited),
+        arrives: floor,
+        arrivesAtLeast: floor,
         feeUsd: Number.isFinite(feeUsd) ? Number(feeUsd.toFixed(6)) : null,
         bridgeFee: null,
         etaSeconds: eta,
         activity:
           `Two fees, both inside the quote: routing ${money(routing)} USDC and a ${appBps} bp app fee (${money(appFee)} USDC). ` +
-          `Hyperliquid keeps any deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC delivered, so at least ${money(draft.minCredited)} USDC has to land.`,
+          `Hyperliquid keeps any deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC delivered, so at least ${floor} USDC has to land.`,
         explorer: null,
       },
       lines: [
         `Fund Hyperliquid perps from the intents balance.`,
         `  spend     ${draft.amount} ${draft.symbol} held inside ${INTENTS_VERIFIER}`,
         `  credited  ${oneLine(quote.amountOutFormatted, 40)} USDC to ${draft.hlAccount}`,
-        `  at least  ${money(draft.minCredited)} USDC, the floor the live quote is held to; under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} the venue keeps it`,
+        `  at least  ${floor} USDC, the floor the live quote is held to; under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} the venue keeps it`,
         `  cost      ${Number.isFinite(feeUsd) ? `${feeUsd.toFixed(4)} USDC, ${feePct.toFixed(2)} percent of the deposit` : 'unknown'}`,
         `  routing   ${Number.isFinite(routing) ? `${routing.toFixed(4)} USDC inside the quote` : 'unknown'}`,
         `  app fee   ${Number.isFinite(appFee) ? `${appFee.toFixed(4)} USDC, ${appBps} bp, inside the quote` : 'unknown'}${appBps > 0 ? ' (a 1Click partner key removes it)' : ''}`,
@@ -480,7 +497,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
         slippageToleranceBps: HYPERCORE_SLIPPAGE_BPS,
       });
 
-      const priced = priceLines(draft, response.quote, response.raw);
+      const priced = priceLines(draft, p, response.quote, response.raw);
       const problems = [
         ...checkQuote(draft, p, response.quote, priced.feePct),
         ...quoteEchoProblems(response.raw, echoWant(draft, p)),
@@ -663,7 +680,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
           echo: echoWant(draft, p),
           // The app fee is read off the echo for the sentence only; the ceiling reads the
           // total, which needs no echo, so the live check prices with none.
-          checkQuote: (quote) => checkQuote(draft, p, quote, priceLines(draft, quote, null).feePct),
+          checkQuote: (quote) => checkQuote(draft, p, quote, priceLines(draft, p, quote, null).feePct),
         },
         hooks,
       );

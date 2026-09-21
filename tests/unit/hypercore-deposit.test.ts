@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { parseUnits } from 'viem';
 import type { Address } from 'viem';
 
 import type { HlDepositDraft } from '../../src/types.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken } from '../../src/intents.ts';
+import { toBaseUnits } from '../../src/intents.ts';
 import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../../src/rails/intents-native.ts';
 import { INTENTS_VERIFIER } from '../../src/rails/intents-native.ts';
 import type { HlSignPort, HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
@@ -17,6 +19,7 @@ import {
   HYPERCORE_VENUE_MIN_CREDIT_USDC,
   MAX_FEE_PCT,
   MIN_DEPOSIT_USDC,
+  floorUsdc,
   hypercoreDepositRail,
   minCreditedFor,
 } from '../../src/rails/hypercore-deposit.ts';
@@ -412,6 +415,47 @@ test('the simulation carries the fee facts the card draws: the total, the app fe
   assert.match(out.summary, /app fee   0\.0250 USDC, 25 bp, inside the quote/);
   assert.match(out.summary, /routing   0\.3156 USDC inside the quote/);
   assert.match(out.summary, /at least  9\.51 USDC, the floor the live quote is held to; under 5 the venue keeps it/);
+});
+
+/* The card printed the draft's double through toFixed(6), which rounds half-up, while the
+   guarantee is checked at the venue's eight decimals: on about half of all amounts the card sat
+   up to 50 base units above the floor a signed quote had to clear (review L2, 2026-09-20). A
+   floor is cut, never rounded (commit 42f5809), and from the check's own integer. */
+test('the card floor is cut to six places from the base-unit floor the guarantee is checked against, and never sits above it', async () => {
+  // 5.041874 in: minCredited 4.571706504, which toFixed(6) printed as 4.571707.
+  assert.equal(floorUsdc(toBaseUnits(minCreditedFor(5.041874), HYPERCORE_USDC_DECIMALS)), '4.571706');
+  assert.equal(floorUsdc(toBaseUnits(minCreditedFor(10), HYPERCORE_USDC_DECIMALS)), '9.51');
+  let above = 0;
+  let below = 0;
+  let n = 0;
+  for (let micro = 5_000_000; micro <= 100_000_000; micro += 997) {
+    const amount = Number((micro / 1e6).toFixed(6));
+    const check = toBaseUnits(minCreditedFor(amount), HYPERCORE_USDC_DECIMALS);
+    const card = parseUnits(floorUsdc(check), HYPERCORE_USDC_DECIMALS);
+    n += 1;
+    if (card > check) above += 1;
+    else if (card < check) {
+      below += 1;
+      assert.ok(check - card < 100n, `cut by less than one card place at ${amount}`);
+    }
+  }
+  assert.equal(n, 95_286);
+  assert.equal(above, 0, 'the card never promises more than the check requires');
+  assert.ok(below > 0, 'the grid reaches floors with more than six places, so the cut was exercised');
+
+  // And the simulation prints that same string in every slot a person reads: 7.041874 in floors
+  // at 6.563706504, which toFixed(6) printed as 6.563707.
+  const amount = 7.041874;
+  const { rail: r } = rail({
+    quote: { amountIn: '7041874', amountInFormatted: '7.041874', amountInUsd: '7.041874', minAmountIn: '7041874', amountOut: '670000000', amountOutFormatted: '6.7', minAmountOut: '669000000' },
+    echo: { amount: '7041874' },
+  });
+  const out = await r.simulate(draft({ amount, amountUsd: amount, minCredited: minCreditedFor(amount) }));
+  assert.equal(out.ok, true, out.summary);
+  assert.equal(out.send?.arrives, '6.563706');
+  assert.equal(out.send?.arrivesAtLeast, '6.563706');
+  assert.match(out.send?.activity ?? '', /at least 6\.563706 USDC has to land/);
+  assert.match(out.summary, /at least  6\.563706 USDC/);
 });
 
 // "Deposit seen" inside 30 s of the submit (criterion 8.3): the first status read happens the

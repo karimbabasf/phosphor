@@ -51,7 +51,7 @@
 //   A REFUSAL FOR A SHORT BALANCE NAMES THE MOST THE ACCOUNT COULD SEND, so the person hears a
 //   number to try rather than a wall: what is free less the activation fee.
 
-import { isAddress } from 'viem';
+import { formatUnits, isAddress } from 'viem';
 import type { HlWithdrawDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
 import { ONECLICK_TERMINAL, baseUnits, oneClickClient, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, OneClickToken, QuoteEcho } from '../intents.ts';
@@ -356,6 +356,11 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
 
   function priceLines(draft: HlWithdrawDraft, p: Plan, quote: OneClickQuote, raw: unknown): Priced {
     const out = Number(quote.amountOutFormatted);
+    // The floor as the card prints it: the base-unit floor checkQuote holds the guarantee to,
+    // formatted from that integer, so the card and the check cannot disagree by a rounding
+    // (toFixed on the draft's double read 4.8541265 as 4.854126 where the check demanded
+    // 4.854127; review, 2026-09-20). Six places on this side, so nothing is cut.
+    const floor = formatUnits(p.minReceivedBase, INTENTS_USDC_DECIMALS);
     const insideQuote = Number.isFinite(out) ? draft.amount - out : NaN;
     const appBps = appFeeBpsOf(raw);
     const appFee = Number.isFinite(insideQuote) ? Math.min(insideQuote, (draft.amount * appBps) / 10_000) : NaN;
@@ -383,8 +388,8 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
            "receive at least" and the number the signed guarantee is checked against (criterion
            8.1); the expected figure stays in the summary, and a settled row replaces this with
            what landed. When the card draws arrivesAtLeast, `arrives` can carry the quote. */
-        arrives: usdc(draft.minReceived),
-        arrivesAtLeast: usdc(draft.minReceived),
+        arrives: floor,
+        arrivesAtLeast: floor,
         feeUsd: Number.isFinite(total) ? Number(total.toFixed(6)) : null,
         bridgeFee: null,
         etaSeconds: eta,
@@ -397,7 +402,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         `Bring collateral back from Hyperliquid into the intents balance.`,
         `  send      ${draft.amount} USDC from the venue account ${draft.from}`,
         `  credited  ${oneLine(quote.amountOutFormatted, 40)} USDC to this app's own NEAR Intents balance (${draft.to}); no other destination can be named`,
-        `  at least  ${usdc(draft.minReceived)} USDC, the floor the live quote is held to`,
+        `  at least  ${floor} USDC, the floor the live quote is held to`,
         `  cost      ${Number.isFinite(total) ? `${total.toFixed(4)} USDC, ${feePct.toFixed(2)} percent` : 'unknown'}`,
         `  routing   ${Number.isFinite(routing) ? `${routing.toFixed(4)} USDC inside the quote` : 'unknown'}`,
         `  app fee   ${Number.isFinite(appFee) ? `${appFee.toFixed(4)} USDC, ${appBps} bp, inside the quote` : 'unknown'}${appBps > 0 ? ' (a 1Click partner key removes it)' : ''}`,

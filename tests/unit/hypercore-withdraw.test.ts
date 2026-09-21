@@ -810,6 +810,23 @@ test('the simulation carries the fee facts the card draws: total with the activa
   assert.match(out.summary, /at least  7\.7180 USDC|at least  7\.718 USDC/);
 });
 
+/* The card printed the draft's double through toFixed(6) while the guarantee is checked against
+   toBaseUnits, which rounds the shortest decimal string half-up: 4.8541265 read as 4.854126 on
+   the card and 4.854127 at the check, on 145 of 95,286 amounts (review L2, 2026-09-20). The
+   card prints the check's own integer, so the two cannot disagree. */
+test('the card floor is the base-unit floor the guarantee is checked against, formatted from that integer', async () => {
+  const amount = 5.124625; // minReceived 4.8541265
+  const { rail: r } = rail({
+    quote: { amountIn: '512462500', amountInFormatted: '5.124625', amountInUsd: '5.124625', minAmountIn: '512462500', amountOut: '4900000', amountOutFormatted: '4.9', minAmountOut: '4860000' },
+    echo: { amount: '512462500' },
+  });
+  const out = await r.simulate(draft({ amount, amountUsd: amount, minReceived: minReceivedForHlWithdraw(amount) }));
+  assert.equal(out.ok, true, out.summary);
+  assert.equal(out.send?.arrivesAtLeast, '4.854127', 'the floor the check demands, not the double rounded the other way');
+  assert.equal(out.send?.arrives, '4.854127');
+  assert.match(out.summary, /at least  4\.854127 USDC/);
+});
+
 test('a quote with no app fee line in its echo prices the app fee at 0 rather than assuming 25 bp', async () => {
   const { rail: r } = rail();
   const out = await r.simulate(draft());
