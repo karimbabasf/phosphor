@@ -545,7 +545,7 @@ test('the addresses step uses the network picker when the window has one, and ta
   assert.equal(world.calls.some((c) => c.route === 'moneyin.render'), false, 'the plain address list was drawn beside the picker');
   buttonNamed(screen, 'Continue').click();
   assert.ok(world.calls.some((c) => c.route === 'netpick.destroy'), 'the picker was not taken down');
-  assert.ok(textOf(screen).includes('Connect your assistant'));
+  assert.ok(textOf(screen).includes('Your assistant'));
 });
 
 test('without the picker the addresses step falls back to the plain address list', async () => {
@@ -641,11 +641,11 @@ test('the money step draws the watch live: every phase renders its line off the 
   assert.ok(textOf(screen).includes('$1.10'));
 
   cont.click();
-  assert.ok(textOf(screen).includes('Connect your assistant'));
+  assert.ok(textOf(screen).includes('Your assistant'));
   assert.equal(find(screen, '.deposit-watch').length, 0, 'the line went down with the step');
   // A frame after the step is gone reaches nothing.
   store.put(Object.assign({}, store.get(), { deposit: depositFrame({ phase: 'stopped' }) }));
-  assert.ok(textOf(screen).includes('Connect your assistant'));
+  assert.ok(textOf(screen).includes('Your assistant'));
 });
 
 test('the money step says when a read keeps failing, and is primary at once when money is already in', async () => {

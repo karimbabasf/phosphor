@@ -821,69 +821,75 @@
     };
   }
 
-  /* 7 */
+  /* 7. THE AGENT PICKER. Six tiles, the picker component below draws them; this
+     step owns the title and the one action row under it, which follows the
+     picker's state: Start it for the one agent the app can run itself, Check
+     again for an agent that is missing or signed out, Continue otherwise.
+     Before a pick the primary is quiet and "Do this later" stays, so nobody
+     is stuck here without an agent (Karim's rule: no dead end, one sentence
+     and the same button again). */
   function screenConnect() {
-    card.appendChild(dom.el('h1', 'title', 'Connect your assistant'));
+    card.appendChild(dom.el('h1', 'title', 'Your assistant'));
+    var body = dom.el('div', 'stack');
+    card.appendChild(body);
+    var Pick = window.PhosphorAgentPick;
+    var row = null;
+    var started = false;
 
-    var built = dom.el('div', 'stack-2 connect-block');
-    built.appendChild(dom.el('p', 'title-sm', 'Use the one built in'));
-    var start = dom.el('button', 'btn btn-primary');
-    start.appendChild(dom.el('span', 'btn-label', 'Start it'));
-    dom.setAttr(start, 'data-pending-label', 'Starting');
-    built.appendChild(start);
-    built.appendChild(dom.el('p', 'meta', 'This uses the Claude subscription already on this computer. Phosphor never sees your login.'));
-    card.appendChild(built);
+    function replaceActions(label, onPrimary, options) {
+      if (row && row.parentNode) row.parentNode.removeChild(row);
+      var primary = actions(label, onPrimary, options);
+      row = primary.parentNode;
+      return primary;
+    }
 
-    var own = dom.el('div', 'stack-2 connect-block');
-    own.appendChild(dom.el('p', 'title-sm', 'Use your own'));
-    var row = dom.el('div', 'field-row');
-    var line = dom.el('input', 'input');
-    line.type = 'text';
-    line.readOnly = true;
-    line.value = 'Reading the connection line';
-    var copy = dom.el('button', 'btn btn-ghost');
-    copy.appendChild(dom.el('span', 'btn-label', 'Copy'));
-    row.appendChild(line);
-    row.appendChild(copy);
-    own.appendChild(row);
-    own.appendChild(dom.el('p', 'meta', 'Paste this into your terminal.'));
-    var status = dom.el('div', 'hstack-2');
-    status.appendChild(dom.el('span', 'dot'));
-    var statusText = dom.el('span', 'meta', 'Nothing is connected yet.');
-    status.appendChild(statusText);
-    own.appendChild(status);
-    card.appendChild(own);
-
-    api.connection().then(function (data) {
-      if (!data || data.missing || !data.command) {
-        line.value = 'The connection line is not available yet.';
+    function paintActions(state) {
+      var check = state && state.check ? state.check : null;
+      if (!check) {
+        replaceActions('Continue', function () { next(); }, { skip: 'Do this later', quiet: true });
         return;
       }
-      line.value = data.command;
-      if (Array.isArray(data.connected) && data.connected.length) {
-        dom.setText(statusText, data.connected[0].name + ' is connected.');
+      if (check.state === 'not_installed' || check.state === 'installed_not_logged_in') {
+        replaceActions('Check again', function (button) {
+          window.PhosphorShell.setPending(button, true);
+          state.handle.check().finally(function () { window.PhosphorShell.setPending(button, false); });
+        }, { skip: 'Do this later', pending: 'Checking' });
+        return;
       }
-    }).catch(function () {
-      line.value = 'The connection line is not available yet.';
-    });
+      if (check.inApp && check.state === 'installed_and_logged_in' && !started && !state.connected) {
+        replaceActions('Start it', function (button) {
+          window.PhosphorShell.setPending(button, true);
+          api.driver({ action: 'start', chat: '' })
+            .then(function (answer) {
+              if (answer && answer.ok === false) throw new Error('refused');
+              started = true;
+              state.handle.say(check.name + ' is at the wheel.', 'ready');
+              paintActions(state);
+            })
+            .catch(function () {
+              state.handle.say(check.name + ' could not start. Try again, or start it in your terminal.', 'warn');
+            })
+            .finally(function () { window.PhosphorShell.setPending(button, false); });
+        }, { skip: 'Do this later', pending: 'Starting' });
+        return;
+      }
+      replaceActions('Continue', function () { next(); }, { skip: 'Do this later' });
+    }
 
-    dom.on(copy, 'click', function () {
-      if (!navigator.clipboard) return;
-      navigator.clipboard.writeText(line.value).then(function () {
-        dom.setText(copy.querySelector('.btn-label'), 'Copied');
+    if (Pick && typeof Pick.render === 'function') {
+      stepHandle = Pick.render(body, {
+        context: 'firstrun',
+        onState: paintActions
       });
-    });
-    dom.on(start, 'click', function () {
-      window.PhosphorShell.setPending(start, true);
-      api.driver({ action: 'start', chat: '' })
-        .catch(function (err) { window.PhosphorToast.show(net.readable(err), 'down'); })
-        .finally(function () { window.PhosphorShell.setPending(start, false); });
-    });
-
-    actions('Continue', function () { next(); }, { skip: 'Do this later' });
+    }
+    paintActions(null);
   }
 
-  /* 8 */
+  /* 8. The threshold lands in policy.json the moment Continue is pressed, by
+     the person's own click, through the route that runs it past the policy's
+     rules (known failure 6: it used to be kept in `draft` and sent nowhere).
+     A refusal is the route's one sentence with the figures in it, shown over
+     the same Continue. */
   function screenThreshold() {
     card.appendChild(dom.el('h1', 'title', 'Set the ask threshold'));
 
@@ -911,12 +917,29 @@
 
     card.appendChild(dom.el('p', 'body dim', 'Below this, your limits decide on their own. Above it, nothing happens until you click.'));
     card.appendChild(dom.el('p', 'meta', 'You can change this any time. Changing it needs a click too.'));
+    var error = dom.el('p', 'body down');
+    error.hidden = true;
+    card.appendChild(error);
 
-    actions('Continue', function () {
-      var value = parseInt(input.value, 10);
-      draft.threshold = isFinite(value) && value > 0 ? value : 100;
-      go(9);
-    });
+    actions('Continue', function (button) {
+      var value = Number(String(input.value).replace(/[$,\s]/g, ''));
+      if (!isFinite(value) || value <= 0) return fail(error, 'Type a number of dollars above 0.');
+      error.hidden = true;
+      window.PhosphorShell.setPending(button, true);
+      net.postJson('/api/policy/threshold', { usd: value })
+        .then(function (answer) {
+          if (!answer || answer.ok !== true) throw new Error('not saved');
+          draft.threshold = value;
+          go(9);
+        })
+        .catch(function (err) {
+          /* The route's refusals are written for this screen, one sentence
+             with the figures; anything else is the app not answering. */
+          var own = err && (err.status === 400 || err.status === 409) && err.message;
+          fail(error, own ? err.message : 'Phosphor could not save that. Try again.');
+        })
+        .finally(function () { window.PhosphorShell.setPending(button, false); });
+    }, { pending: 'Saving' });
   }
 
   /* 9 */
@@ -1010,5 +1033,405 @@
     open: open,
     close: close,
     strengthWords: strengthWords
+  };
+})();
+
+/* The agent picker, one component for two hosts: the first run's assistant
+   step above and the Vault tab's Agent panel (ui/screens/vault.js).
+
+   Six tiles in the network picker's grammar (colourless at rest, its own
+   colour under the pointer, a mark over a name), one sentence under them, and
+   one fold. The sentence is the backend's: the picker never composes a state
+   of its own and never prints what the network answered (net.readable), only
+   the four-state check the app returns and the sentence that came with it.
+   A pick is one round trip: the app writes the choice, checks the agent on
+   this Mac inside three seconds, and registers the proxy in the agent's own
+   config where it can; the answer carries the sentence, the line to paste and
+   the technical lines that stay behind Details.
+
+   The light in front of the sentence is the roster's: it turns on when a
+   client of the picked agent is on the door, read off the state's `agents`
+   slice, and goes off when that client leaves. Nothing else turns it on. */
+(function () {
+  'use strict';
+
+  var dom = window.PhosphorDom;
+  var api = window.PhosphorApi;
+  var store = window.PhosphorState;
+
+  var COPIED_MS = 1500;
+
+  /* The six entries in the catalog's order (src/agents-catalog.ts), with the
+     colour and the mark each tile draws. The sentences never live here. */
+  var AGENTS = [
+    { id: 'claude', name: 'Claude Code', mark: 'CC', colour: '#D97757' },
+    { id: 'codex', name: 'Codex', mark: 'Cx', colour: '#10A37F' },
+    { id: 'hermes', name: 'Hermes', mark: 'He', colour: '#E8B23A' },
+    { id: 'grok', name: 'Grok', mark: 'Gr', colour: '#8A8F98' },
+    { id: 'mcp', name: 'Another agent', mark: 'A', colour: '#5B8DEF' },
+    { id: 'desktop', name: 'Claude Desktop or a chat app', mark: 'Ch', colour: '#D97757' }
+  ];
+
+  /* The two sentences this file owns: what the picker says while the app is
+     checking, and what it says when the app did not answer at all. Every
+     other sentence arrives from the app. */
+  var COPY = {
+    lead: 'Pick the one you already use.',
+    checking: 'Checking on this Mac.',
+    noAnswer: 'Phosphor could not check right now. Try again.',
+    registered: 'Phosphor added itself to the tools of ',
+    onDoor: ' is connected.',
+    tag: 'On this Mac'
+  };
+
+  /* The window's api module, when this host has one: a page without it
+     draws the tiles and asks nothing. */
+  function canAsk() {
+    return !!(api && typeof api.driver === 'function');
+  }
+
+  function entryOf(id) {
+    for (var i = 0; i < AGENTS.length; i += 1) if (AGENTS[i].id === id) return AGENTS[i];
+    return null;
+  }
+
+  function setVar(node, name, value) {
+    if (node && node.style && typeof node.style.setProperty === 'function') node.style.setProperty(name, value);
+  }
+
+  /* Whether a client of this agent is on the door, read off the roster the
+     state carries. Client names are the agents' own words ("claude-code"),
+     matched on the vendor's word; another agent is any client at all. */
+  function onDoor(id, state) {
+    var agents = state && state.agents ? state.agents : null;
+    var members = agents && Array.isArray(agents.members) ? agents.members : [];
+    if (id === 'desktop' || !members.length) return false;
+    if (id === 'mcp') return true;
+    for (var i = 0; i < members.length; i += 1) {
+      var client = String(members[i].client || members[i].label || '').toLowerCase();
+      if (client.indexOf(id) >= 0) return true;
+    }
+    return false;
+  }
+
+  function render(host, options) {
+    var opts = options || {};
+    if (host.__agentpick && typeof host.__agentpick.destroy === 'function') host.__agentpick.destroy();
+    var root = dom.el('div', 'agentpick');
+    root.dataset.context = opts.context || 'firstrun';
+    dom.clear(host);
+    host.appendChild(root);
+
+    var state = {
+      agent: opts.picked || null,
+      check: null,
+      command: null,
+      registered: false,
+      registrationFailed: false,
+      connected: false,
+      busy: false,
+      /* Which request is the latest. A click that lands while an earlier
+         check is still out wins: the earlier answer is dropped whole, so the
+         tiles never paint a state for an agent the person has moved off. */
+      seq: 0,
+      alive: true,
+      scan: {},
+      unsubscribe: null,
+      copiedTimer: 0,
+      handle: null
+    };
+
+    root.appendChild(dom.el('p', 'agentpick-lead', COPY.lead));
+
+    /* The tiles. */
+    var grid = dom.el('div', 'agentpick-grid');
+    grid.setAttribute('role', 'group');
+    grid.setAttribute('aria-label', 'Assistants');
+    var tiles = {};
+    AGENTS.forEach(function (entry, index) {
+      var tile = dom.el('button', 'agent-tile');
+      tile.type = 'button';
+      tile.dataset.agent = entry.id;
+      setVar(tile, '--net', entry.colour);
+      tile.tabIndex = (state.agent ? state.agent === entry.id : index === 0) ? 0 : -1;
+      tile.appendChild(dom.el('span', 'agent-tile-mark', entry.mark));
+      tile.appendChild(dom.el('span', 'agent-tile-name', entry.name));
+      var tag = dom.el('span', 'agent-tile-tag');
+      tag.hidden = true;
+      tile.appendChild(tag);
+      tiles[entry.id] = tile;
+      dom.on(tile, 'click', function () { pick(entry.id); });
+      dom.on(tile, 'keydown', function (event) { onTileKey(event, index); });
+      grid.appendChild(tile);
+    });
+    root.appendChild(grid);
+
+    /* The one sentence, with the light in front of it and the tools after. */
+    var line = dom.el('div', 'agentpick-line');
+    line.setAttribute('role', 'status');
+    line.setAttribute('aria-live', 'polite');
+    var light = dom.el('span', 'agentpick-light');
+    light.setAttribute('aria-hidden', 'true');
+    line.appendChild(light);
+    var sentence = dom.el('span', 'agentpick-sentence');
+    line.appendChild(sentence);
+    root.appendChild(line);
+
+    /* The line to paste, shown in the open only for another agent, where the
+       line is the next step. */
+    var paste = dom.el('div', 'field-row agentpick-paste');
+    var pasteInput = dom.el('input', 'input');
+    pasteInput.type = 'text';
+    pasteInput.readOnly = true;
+    pasteInput.setAttribute('aria-label', 'The line to paste');
+    var copy = dom.el('button', 'btn btn-ghost');
+    copy.type = 'button';
+    copy.appendChild(dom.el('span', 'btn-label', 'Copy'));
+    paste.appendChild(pasteInput);
+    paste.appendChild(copy);
+    paste.hidden = true;
+    root.appendChild(paste);
+
+    var tools = dom.el('div', 'agentpick-tools');
+    var details = dom.el('button', 'chip');
+    details.type = 'button';
+    details.setAttribute('aria-expanded', 'false');
+    details.appendChild(dom.el('span', '', 'Details'));
+    tools.appendChild(details);
+    tools.hidden = true;
+    root.appendChild(tools);
+
+    var fold = dom.el('div', 'agentpick-fold');
+    fold.hidden = true;
+    root.appendChild(fold);
+
+    dom.on(details, 'click', function () {
+      var open = fold.hidden;
+      dom.setHidden(fold, !open);
+      dom.setAttr(details, 'aria-expanded', open ? 'true' : 'false');
+    });
+
+    dom.on(copy, 'click', function () {
+      if (!navigator.clipboard || !state.command) return;
+      navigator.clipboard.writeText(state.command).then(function () {
+        dom.setText(copy.querySelector('.btn-label'), 'Copied');
+        clearTimeout(state.copiedTimer);
+        state.copiedTimer = setTimeout(function () {
+          if (state.alive) dom.setText(copy.querySelector('.btn-label'), 'Copy');
+        }, COPIED_MS);
+      });
+    });
+
+    /* Arrow keys move between the tiles; the tiles are buttons, so Enter and
+       Space already pick. */
+    function onTileKey(event, index) {
+      var next = index;
+      if (event.key === 'ArrowRight') next = Math.min(AGENTS.length - 1, index + 1);
+      else if (event.key === 'ArrowLeft') next = Math.max(0, index - 1);
+      else if (event.key === 'ArrowDown') next = Math.min(AGENTS.length - 1, index + 3);
+      else if (event.key === 'ArrowUp') next = Math.max(0, index - 3);
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = AGENTS.length - 1;
+      else return;
+      event.preventDefault();
+      tiles[AGENTS[index].id].tabIndex = -1;
+      tiles[AGENTS[next].id].tabIndex = 0;
+      tiles[AGENTS[next].id].focus();
+    }
+
+    function say(text, tone) {
+      dom.setText(sentence, text);
+      dom.setAttr(line, 'data-tone', tone === 'warn' || tone === 'down' || tone === 'dim' ? tone : null);
+    }
+
+    function markCurrent() {
+      AGENTS.forEach(function (entry) {
+        dom.setAttr(tiles[entry.id], 'aria-current', state.agent === entry.id ? 'true' : null);
+      });
+    }
+
+    /* Everything the answer to a pick or a check carries, painted in place. */
+    function paintCheck(answer) {
+      var check = answer && answer.check ? answer.check : null;
+      state.check = check;
+      state.command = answer && typeof answer.command === 'string' ? answer.command : null;
+      state.registered = !!(answer && answer.registered);
+      state.registrationFailed = !!(answer && answer.registrationFailed);
+      dom.clear(fold);
+      if (!check) {
+        paste.hidden = true;
+        tools.hidden = true;
+        fold.hidden = true;
+        return;
+      }
+      var tone = null;
+      if (check.state === 'not_installed') tone = 'down';
+      else if (check.state === 'installed_not_logged_in') tone = 'warn';
+      var text = check.sentence;
+      /* A registration that failed changes the next step, so it changes the
+         sentence; one that worked is a fact for the fold, since the sentence
+         already says what to do next. */
+      if (state.registrationFailed) {
+        text = check.name + ' is on this Mac, but Phosphor could not add itself to it: paste the line below into your terminal.';
+        tone = 'warn';
+      }
+      say(text, tone);
+      var showPaste = !!state.command && (check.agent === 'mcp' || state.registrationFailed);
+      pasteInput.value = state.command || '';
+      dom.setHidden(paste, !showPaste);
+      var lines = Array.isArray(check.details) ? check.details.slice() : [];
+      if (state.registered) lines.push(COPY.registered + check.name + ', so there is nothing to paste.');
+      if (state.command && !showPaste) lines.push('The line to paste, if you would rather do it yourself: ' + state.command);
+      lines.forEach(function (item) {
+        fold.appendChild(dom.el('p', 'agentpick-fold-line', item));
+      });
+      dom.setHidden(tools, !lines.length);
+      if (!lines.length) fold.hidden = true;
+      paintLight();
+    }
+
+    /* The light and, when the agent is on the door, the sentence. */
+    function paintLight() {
+      var whole = store && typeof store.get === 'function' ? (store.get() || {}) : {};
+      var connected = !!state.agent && onDoor(state.agent, whole);
+      state.connected = connected;
+      dom.setAttr(light, 'data-state', connected ? 'ready' : 'off');
+      if (connected && state.check) say(state.check.name + COPY.onDoor, null);
+      else if (state.check && !state.busy) paintSentenceOff();
+    }
+
+    /* Back from Connected to the check's own sentence when the client leaves. */
+    function paintSentenceOff() {
+      var text = sentence.textContent || '';
+      if (state.check && text === state.check.name + COPY.onDoor) paintCheck({ check: state.check, command: state.command, registered: state.registered, registrationFailed: state.registrationFailed });
+    }
+
+    function tell() {
+      if (typeof opts.onState === 'function') {
+        opts.onState({ agent: state.agent, check: state.check, command: state.command, registered: state.registered, connected: state.connected, handle: state.handle });
+      }
+    }
+
+    function setBusy(on) {
+      state.busy = on;
+      AGENTS.forEach(function (entry) { dom.setAttr(tiles[entry.id], 'data-busy', on ? 'true' : null); });
+    }
+
+    /* A pick: the choice is written, the agent checked and registered, in one
+       round trip. The tile is current at once so the click is seen; the
+       sentence says the app is checking until the answer lands. */
+    function pick(id) {
+      if (!state.alive || !canAsk()) return;
+      if (state.busy && state.agent === id) return;
+      state.seq += 1;
+      var seq = state.seq;
+      state.agent = id;
+      markCurrent();
+      setBusy(true);
+      say(COPY.checking, 'dim');
+      dom.setHidden(paste, true);
+      dom.setHidden(tools, true);
+      fold.hidden = true;
+      return api.driver({ action: 'agent-pick', agent: id })
+        .then(function (answer) {
+          if (!state.alive || seq !== state.seq) return;
+          if (answer && answer.ok === false) {
+            /* Refused with a sentence: the running agent has to be turned off
+               first. The pick stays where it was. */
+            state.agent = answer.picked || null;
+            markCurrent();
+            state.check = null;
+            say(answer.sentence || COPY.noAnswer, 'warn');
+            return;
+          }
+          paintCheck(answer);
+          if (typeof opts.onPick === 'function') opts.onPick({ agent: id, check: state.check, command: state.command });
+        })
+        .catch(function () {
+          if (!state.alive || seq !== state.seq) return;
+          state.check = null;
+          say(COPY.noAnswer, 'warn');
+        })
+        .finally(function () {
+          if (!state.alive || seq !== state.seq) return;
+          setBusy(false);
+          tell();
+        });
+    }
+
+    /* Check again: the same check, no write. */
+    function check() {
+      if (!state.alive || !state.agent || !canAsk()) return Promise.resolve();
+      state.seq += 1;
+      var seq = state.seq;
+      var id = state.agent;
+      setBusy(true);
+      say(COPY.checking, 'dim');
+      return api.driver({ action: 'agent-check', agent: id })
+        .then(function (answer) {
+          if (!state.alive || seq !== state.seq) return;
+          paintCheck(answer);
+        })
+        .catch(function () {
+          if (!state.alive || seq !== state.seq) return;
+          say(COPY.noAnswer, 'warn');
+        })
+        .finally(function () {
+          if (!state.alive || seq !== state.seq) return;
+          setBusy(false);
+          tell();
+        });
+    }
+
+    /* The scan behind the tiles: a tag on every agent the app found on this
+       Mac, so the person can see which of the six is theirs before clicking. */
+    function scan() {
+      if (!canAsk()) return Promise.resolve();
+      return api.driver({ action: 'agent-scan' })
+        .then(function (answer) {
+          if (!state.alive || !answer || !Array.isArray(answer.agents)) return;
+          answer.agents.forEach(function (item) {
+            var tile = tiles[item.agent];
+            if (!tile) return;
+            var found = item.state === 'installed_and_logged_in' || item.state === 'installed_not_logged_in';
+            state.scan[item.agent] = item.state;
+            var tag = tile.querySelector('.agent-tile-tag');
+            dom.setText(tag, found ? COPY.tag : '');
+            dom.setHidden(tag, !found);
+          });
+          /* An earlier pick the host did not know about is shown as current
+             and checked, so the panel opens on the truth. */
+          if (!state.agent && answer.picked && !opts.picked) {
+            state.agent = answer.picked;
+            markCurrent();
+            check();
+          }
+        })
+        .catch(function () { /* the tags are a convenience; the pick still works without them */ });
+    }
+
+    function destroy() {
+      state.alive = false;
+      if (state.unsubscribe) state.unsubscribe();
+      state.unsubscribe = null;
+      clearTimeout(state.copiedTimer);
+      if (root.parentNode === host) host.removeChild(root);
+      if (host.__agentpick === state.handle) host.__agentpick = null;
+    }
+
+    state.handle = { destroy: destroy, check: check, pick: pick, say: say, agent: function () { return state.agent; } };
+    host.__agentpick = state.handle;
+
+    markCurrent();
+    if (store && typeof store.select === 'function') state.unsubscribe = store.select('agents', paintLight);
+    scan();
+    if (state.agent) check();
+    return state.handle;
+  }
+
+  window.PhosphorAgentPick = {
+    render: render,
+    AGENTS: AGENTS,
+    onDoor: onDoor
   };
 })();

@@ -441,8 +441,8 @@ test('with the enclave ready, the first run is the welcome, Create wallet, the a
   assert.ok(world.calls.some((c) => c.route === 'moneyin.render'));
   buttonNamed(screen, 'Continue').click();
 
-  // Connect your assistant, the existing one, and its Continue is Home.
-  assert.ok(textOf(screen).includes('Connect your assistant'));
+  // The assistant step, the agent picker, and its Continue is Home.
+  assert.ok(textOf(screen).includes('Your assistant'));
   assert.ok(textOf(screen).includes('Step 3 of 3'));
   buttonNamed(screen, 'Continue').click();
   assert.equal(screen.hidden, true, 'the first run did not close');

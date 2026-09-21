@@ -56,13 +56,24 @@
       if (state.lock && state.lock.state !== 'unlocked') wipePhrase();
     });
     store.select('policy', renderAgent);
+    /* The roster drives the agent panel's light; the check runs each time the
+       tab is opened, so an agent that was removed since is named as gone
+       without anything else on the page having to know. */
+    store.select('agents', paintAgentLight);
     window.addEventListener('phosphor:view', function (event) {
       var view = event && event.detail ? event.detail.view : null;
       visible = view === 'vault';
-      if (visible) loadAddresses();
-      else wipePhrase();
+      if (visible) {
+        loadAddresses();
+        checkAgent(null);
+      } else {
+        wipePhrase();
+        closeAgentPicker();
+      }
     });
     render();
+    paintAgentCheck();
+    paintAgentChip();
   }
 
   /* ---------- the column ---------- */
@@ -189,21 +200,45 @@
     addr.body.appendChild(refs.keyRow);
     place(left, addr.node);
 
-    /* Agent */
+    /* Agent: which one, its state on this Mac from the same check the first
+       run makes, Change (the same picker, drawn in place) and Check again. The
+       two facts stay; the rules line is a third fact rather than a sentence of
+       its own, so the one sentence in this panel is the agent's state. */
     var agent = panel('Agent', 'agent');
+    refs.agentChip = chip('', null);
+    agent.right.appendChild(refs.agentChip);
     var facts = dom.el('div', 'facts');
     facts.appendChild(fact('It can see', 'your addresses, your balances, and every request it has made.'));
     facts.appendChild(fact('It cannot see', 'your keys or your recovery phrase. Neither ever leaves this window.'));
+    refs.agentRules = fact('Your rules', '');
+    facts.appendChild(refs.agentRules);
     agent.body.appendChild(facts);
-    refs.agentLine = dom.el('p', 'body dim');
-    agent.body.appendChild(refs.agentLine);
-    var agentActions = dom.el('div', 'hstack-2');
+    refs.agentSummary = dom.el('div', 'stack-2 vault-agent');
+    refs.agentLine = dom.el('p', 'body agentpick-line');
+    refs.agentLine.setAttribute('role', 'status');
+    refs.agentLight = dom.el('span', 'agentpick-light');
+    refs.agentLight.setAttribute('aria-hidden', 'true');
+    refs.agentLine.appendChild(refs.agentLight);
+    refs.agentSentence = dom.el('span', 'agentpick-sentence');
+    refs.agentLine.appendChild(refs.agentSentence);
+    refs.agentSummary.appendChild(refs.agentLine);
+    var agentActions = dom.el('div', 'hstack-2 wrap');
+    refs.agentChange = button('Change', 'btn-ghost');
+    refs.agentCheck = button('Check again', 'btn-ghost', 'Checking');
     var rules = button('Your rules', 'btn-quiet');
+    agentActions.appendChild(refs.agentChange);
+    agentActions.appendChild(refs.agentCheck);
     agentActions.appendChild(rules);
-    agent.body.appendChild(agentActions);
+    refs.agentSummary.appendChild(agentActions);
+    agent.body.appendChild(refs.agentSummary);
+    refs.agentPickHost = dom.el('div', 'stack vault-flow');
+    refs.agentPickHost.hidden = true;
+    agent.body.appendChild(refs.agentPickHost);
     dom.on(rules, 'click', function () {
       window.PhosphorShell.setView('basic', { fromClick: true });
     });
+    dom.on(refs.agentChange, 'click', openAgentPicker);
+    dom.on(refs.agentCheck, 'click', function () { checkAgent(refs.agentCheck); });
     place(right, agent.node);
 
     /* Window */
@@ -385,12 +420,148 @@
   }
 
   function renderAgent(policy) {
-    if (!refs.agentLine) return;
+    if (!refs.agentRules) return;
     var outbound = policy && policy.outbound ? policy.outbound : {};
     var threshold = typeof outbound.humanClickAboveUsd === 'number' ? outbound.humanClickAboveUsd : null;
-    dom.setText(refs.agentLine, threshold === null
+    var value = refs.agentRules.querySelector('.body');
+    dom.setText(value, threshold === null
       ? 'Every move it asks for goes through your rules first.'
       : 'Moves under ' + dom.usd(threshold, 0) + ' run without a click while the vault is open. Above that, nothing happens until you click.');
+  }
+
+  /* ---------- the agent panel ---------- */
+
+  /* What the panel knows: the last check the app answered, and the agent it
+     named. The sentence on the panel is always the app's, or one of the three
+     this file owns (nothing picked, checking, no answer); nothing the network
+     said is ever printed. */
+  var agentState = { agent: null, check: null, busy: false, picker: null };
+
+  var AGENT_COPY = {
+    none: 'No assistant is picked yet.',
+    checking: 'Checking on this Mac.',
+    noAnswer: 'Phosphor could not check right now. Press Check again.',
+    connected: ' is connected.'
+  };
+
+  function sayAgent(text, tone) {
+    if (!refs.agentSentence) return;
+    dom.setText(refs.agentSentence, text);
+    dom.setAttr(refs.agentLine, 'data-tone', tone || null);
+  }
+
+  /* The word in the chip: the agent's name and, after a check, its state in
+     one word. Tone follows the state so the head reads at a glance. */
+  function paintAgentChip() {
+    if (!refs.agentChip) return;
+    var check = agentState.check;
+    var Pick = window.PhosphorAgentPick;
+    var connected = !!(check && Pick && typeof Pick.onDoor === 'function' && Pick.onDoor(check.agent, store.get() || {}));
+    if (!check) {
+      setChip(refs.agentChip, agentState.agent ? nameOfAgent(agentState.agent) : 'None yet', agentState.agent ? null : 'warn');
+      return;
+    }
+    if (connected) return setChip(refs.agentChip, check.name + ': Ready', 'up');
+    if (check.state === 'installed_and_logged_in') return setChip(refs.agentChip, check.name + ': Signed in', 'up');
+    if (check.state === 'installed_not_logged_in') return setChip(refs.agentChip, check.name + ': Not signed in', 'warn');
+    if (check.state === 'not_installed') return setChip(refs.agentChip, check.name + ': Not on this Mac', 'down');
+    setChip(refs.agentChip, check.name, null);
+  }
+
+  function nameOfAgent(id) {
+    var Pick = window.PhosphorAgentPick;
+    var list = Pick && Array.isArray(Pick.AGENTS) ? Pick.AGENTS : [];
+    for (var i = 0; i < list.length; i += 1) if (list[i].id === id) return list[i].name;
+    return String(id || '');
+  }
+
+  /* The light and, when the agent is on the door, the sentence; when it
+     leaves, back to the check's sentence. Read off the roster in state. */
+  function paintAgentLight() {
+    if (!refs.agentLight) return;
+    var check = agentState.check;
+    var Pick = window.PhosphorAgentPick;
+    var connected = !!(check && Pick && typeof Pick.onDoor === 'function' && Pick.onDoor(check.agent, store.get() || {}));
+    dom.setAttr(refs.agentLight, 'data-state', connected ? 'ready' : 'off');
+    if (agentState.busy) return;
+    if (connected) sayAgent(check.name + AGENT_COPY.connected, null);
+    else if (check) paintAgentCheck();
+    paintAgentChip();
+  }
+
+  function paintAgentCheck() {
+    var check = agentState.check;
+    if (!check) return sayAgent(AGENT_COPY.none, 'dim');
+    var tone = null;
+    if (check.state === 'not_installed') tone = 'down';
+    else if (check.state === 'installed_not_logged_in') tone = 'warn';
+    sayAgent(check.sentence, tone);
+  }
+
+  /* The check: the same one the first run makes, for the agent picked there.
+     No pick yet is a sentence and the Change button, not an error. */
+  function checkAgent(node) {
+    if (!refs.agentSummary || agentState.busy || !api || typeof api.driver !== 'function') return Promise.resolve();
+    agentState.busy = true;
+    if (node) window.PhosphorShell.setPending(node, true);
+    sayAgent(AGENT_COPY.checking, 'dim');
+    return api.driver({ action: 'agent-check' })
+      .then(function (answer) {
+        agentState.busy = false;
+        var picked = answer && answer.picked ? answer.picked : null;
+        agentState.agent = picked;
+        agentState.check = picked && answer.check ? answer.check : null;
+        paintAgentLight();
+      })
+      .catch(function () {
+        agentState.busy = false;
+        sayAgent(AGENT_COPY.noAnswer, 'warn');
+        paintAgentChip();
+      })
+      .finally(function () {
+        agentState.busy = false;
+        if (node) window.PhosphorShell.setPending(node, false);
+      });
+  }
+
+  /* Change: the same picker the first run draws, in this panel, over the
+     summary. Done, or a pick that landed, brings the summary back with the
+     fresh check. The picker refuses nothing itself: a switch under a running
+     agent comes back from the app as one sentence, and the person turns the
+     agent off from the chat first. */
+  function openAgentPicker() {
+    var Pick = window.PhosphorAgentPick;
+    if (!Pick || typeof Pick.render !== 'function' || !refs.agentPickHost) return;
+    closeAgentPicker();
+    refs.agentSummary.hidden = true;
+    refs.agentPickHost.hidden = false;
+    agentState.picker = Pick.render(refs.agentPickHost, {
+      context: 'vault',
+      picked: agentState.agent,
+      onPick: function (result) {
+        agentState.agent = result.agent;
+        agentState.check = result.check || null;
+      }
+    });
+    var row = dom.el('div', 'hstack-2');
+    var done = button('Done', 'btn-primary');
+    row.appendChild(done);
+    refs.agentPickHost.appendChild(row);
+    dom.on(done, 'click', function () {
+      closeAgentPicker();
+      checkAgent(null);
+    });
+    var first = refs.agentPickHost.querySelector('button');
+    if (first && typeof first.focus === 'function') first.focus();
+  }
+
+  function closeAgentPicker() {
+    if (agentState.picker && typeof agentState.picker.destroy === 'function') agentState.picker.destroy();
+    agentState.picker = null;
+    if (!refs.agentPickHost) return;
+    dom.clear(refs.agentPickHost);
+    refs.agentPickHost.hidden = true;
+    refs.agentSummary.hidden = false;
   }
 
   function renderIdle(vault) {
