@@ -1,0 +1,18 @@
+demo backend pid 38246 on http://127.0.0.1:56122, data dir /var/folders/vx/kbtvr52j70v38hmcz2bnwls40000gn/T/phosphor-latency-DNq5Vr, stage scale 0.2
+
+route                                  n       p50       p95       max    budget  result
+----------------------------------------------------------------------------------------
+wallet                                20       0.6       1.1       1.2    300 ms  PASS
+proposals                             20       0.5       0.6       2.1    300 ms  PASS
+policy_show                           20       0.5       0.9       1.0    300 ms  PASS
+show (proposal)                       20       0.4       0.6       0.6    300 ms  PASS
+propose_swap over threshold (click)    5      17.8      20.0      20.0   1500 ms  PASS
+propose_swap under threshold           5      34.8      36.9      36.9   3000 ms  PASS
+stage change to SSE frame             40      18.0      42.0      82.0    500 ms  PASS
+
+propose_swap under threshold: 5 of 5 answered before settlement, the closest by 4.2 s
+reads: demo backend, no venue inside any read; the 2 s venue budget (2.1) is npm run venue-latency's line
+tool calls audited by the app: 95 of 95 made PASS
+resources: pid 38246, rss 169.8 MB (budget 250) PASS, cpu 0.1% (ps, a decaying minute average taken 3 s after the run, not the hour-long idle read)
+audit lines per proposal lifecycle: max 6 (budget 12) PASS   99a70e75-5559-4ac7-884c-af690904c7b4: 6, 0758c982-bd9c-431e-9e9c-85c34ba5773a: 6, 30ac5502-54c6-4493-9ca9-92c3061f237d: 6, 97ba563b-b956-46bb-aa9b-d31b95eaf23f: 6, 7c19910f-1fc7-4ebe-8f8d-d360e59c5046: 6
+LATENCY PROOF: PASS

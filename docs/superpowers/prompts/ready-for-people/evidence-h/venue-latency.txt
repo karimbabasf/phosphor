@@ -1,0 +1,13 @@
+
+> phosphor@0.7.0 venue-latency
+> node scripts/venue-latency.ts
+
+venue https://api.hyperliquid.xyz, user 0x0000000000000000000000000000000000000000, coin BTC, 10 samples per REST line, 20 s on the socket
+
+info meta                  p50   558 ms   min   480   max  1065   (10 samples, HTTP 200)
+info clearinghouseState    p50   434 ms   min   421   max   512   (10 samples, HTTP 200)
+info l2Book BTC            p50   410 ms   min   407   max   426   (10 samples, HTTP 200)
+info extraAgents           p50   422 ms   min   420   max   834   (10 samples, HTTP 200)
+exchange rejected cancel   p50   414 ms   min   410   max   420   (10 samples, HTTP 200, {"status":"err","response":"Unable to recover signer."})
+ws activeAssetCtx BTC      p50  1020 ms   min   474   max  1225   (19 gaps in 20 s, first frame 430 ms after open)
+ws candle 1m BTC           p50   951 ms   min   289   max  3080   (16 gaps in 20 s, first frame 2206 ms after open)
