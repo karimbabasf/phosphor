@@ -17,7 +17,11 @@
 
 import type { Proposal, RailEvidence } from '../types.ts';
 import type { OneClickStatus } from '../intents.ts';
+import { oneLine } from '../intents.ts';
+import { nearChainSpec } from '../chain/near.ts';
 import { depositHandleOf } from '../transactions.ts';
+import { INTENTS_RELAY_VENUE, RELAY_TERMINAL } from '../rails/intents-relay.ts';
+import type { RelayLookup } from '../rails/index.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
 import { expireHold, judgeSettlingNow, settleProposal } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
@@ -105,10 +109,17 @@ export function reconcileOnBoot(ctx: PCtx): Proposal[] {
     // reached the rail, so it has neither.
     const txids = p.result?.txids ?? [];
     const evidence = p.result?.evidence;
+    /* A relay swap that died after its signature carries the nonce and the deadline the rail
+       handed over before publishing (src/rails/intents-relay.ts), and those are what the sweep
+       asks the verifier by: a spent nonce is a swap that executed, an unspent one past its
+       deadline is a swap that never can. The sentence says so rather than "may or may not". */
     const detail =
-      txids.length > 0
-        ? `Phosphor stopped while this was executing. ${txids.length} transaction hash(es) were recorded, so it may already have sent.`
-        : 'Phosphor stopped while this was executing and no transaction hash was recorded, so it may or may not have sent.';
+      isRelaySwap(p) && typeof evidence?.nonce === 'string'
+        ? `Phosphor stopped while this swap was executing. The intent is signed${txids.length > 0 ? ' and published' : ''}, with its deadline at ` +
+          `${evidence.deadline ?? 'unknown'}; the verifier is asked whether it executed.`
+        : txids.length > 0
+          ? `Phosphor stopped while this was executing. ${txids.length} transaction hash(es) were recorded, so it may already have sent.`
+          : 'Phosphor stopped while this was executing and no transaction hash was recorded, so it may or may not have sent.';
     moved.push(
       persist(ctx, {
         ...p,
@@ -169,7 +180,11 @@ export async function reconcileOpen(ctx: PCtx): Promise<number> {
   const now = Date.now();
   const open = ctx.store
     .list()
-    .filter((p) => p.status === 'needs_reconciliation' && (typeof p.result?.evidence?.handle === 'string' || p.pocket !== undefined))
+    .filter(
+      (p) =>
+        p.status === 'needs_reconciliation' &&
+        (typeof p.result?.evidence?.handle === 'string' || p.pocket !== undefined || (isRelaySwap(p) && typeof p.result?.evidence?.nonce === 'string')),
+    )
     .filter((p) => now - Date.parse(p.settledAt ?? p.decidedAt ?? p.createdAt) < ONECLICK_SWEEP_MAX_AGE_MS);
   let changed = 0;
   for (const p of open) {
@@ -185,8 +200,14 @@ export async function reconcileOpen(ctx: PCtx): Promise<number> {
 }
 
 // Where the venue's word starts inside a detail, behind the rail's own sentence. Written by
-// nothing else in this repo, so splitting on it finds the rail's sentence again.
+// nothing else in this repo, so splitting on it finds the rail's sentence again. One anchor
+// per venue that gets re-checked, so a relay row never says "1Click".
 const RECHECK = ' Re-checked with 1Click: ';
+const RECHECK_RELAY = ' Re-checked with the relay: ';
+
+function isRelaySwap(p: Proposal): boolean {
+  return p.draft.kind === 'swap' && p.draft.venue === INTENTS_RELAY_VENUE;
+}
 
 // One string for one value whatever the key order, so two results that say the same thing
 // compare equal. The evidence is merged from two sources and its keys arrive in either order.
@@ -325,9 +346,16 @@ export async function reconcileProposal(ctx: PCtx, id: string, quiet = false): P
   if (p.pocket !== undefined) {
     const judged = quiet ? await judgeSettlingNow(ctx, id) : await settleProposal(ctx, id);
     if (judged.status !== 'needs_reconciliation') return judged;
+    if (isRelaySwap(judged)) return reconcileRelaySwap(ctx, judged);
     if (typeof handle === 'string' && ctx.oneClickStatus !== undefined) return reconcileByHandle(ctx, judged, handle);
     return judged;
   }
+
+  /* A RELAY SWAP HAS A CHAIN-LEVEL ANSWER the 1Click path never had: its handle is the intent
+     hash the relay reports on, and its nonce is what the verifier itself says is spent or not.
+     Before the 1Click branch, because a relay handle asked of 1Click is an address it does not
+     know, which would read as "still pending" forever. */
+  if (isRelaySwap(p)) return reconcileRelaySwap(ctx, p);
 
   /* THE VENUE, BY THE HANDLE, NEXT. A 1Click order settles on NEAR for an INTENTS swap, inside
      the verifier, so the quote handle is the only thing that can tell a SUCCESS from a REFUND. */
@@ -348,6 +376,123 @@ export async function reconcileProposal(ctx: PCtx, id: string, quiet = false): P
         'Compare the balances before and after on the receipt, or look the hash up in the explorer by hand.';
   ctx.audit.append('error', `${id}: reconcile found nothing to re-check`, { id, txids });
   return persist(ctx, { ...p, result: { ok: false, detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) } });
+}
+
+// Clock skew between this Mac and the verifier's block time. A deadline is only called passed
+// once it is this far behind, so an intent the contract could still execute is never called dead.
+const RELAY_DEADLINE_GRACE_MS = 60_000;
+
+/* Re-check one relay swap: by the intent hash at the relay, then by the nonce at the verifier.
+     SETTLED at the relay        -> executed when the rail never read the balance (it died in
+                                    the watch); a row with a pocket stays until the balance shows
+                                    the rise, which the executor re-judges on every refresh.
+     PENDING, TX_BROADCASTED     -> stays, with the relay's word on the row so the card moves.
+     anything else, or no hash   -> the verifier, by the nonce:
+       spent                     -> the swap executed; executed without a pocket, else stays until
+                                    the balance shows it.
+       unspent, deadline passed  -> failed, nothing left the balance: an intent past its deadline
+                                    cannot execute, and the nonce outlives the deadline by a week
+                                    (NONCE_LIFE_AFTER_DEADLINE_MS) so "unspent" is still an answer.
+       unspent, inside deadline  -> stays; it can still execute until the deadline.
+       no answer                 -> stays, and says the verifier did not answer.
+   Nothing here signs or publishes: the reads are the relay's status and two verifier views. */
+async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
+  const lookup: RelayLookup | undefined = ctx.rails.relay;
+  const evidence0 = p.result?.evidence ?? {};
+  const handle = typeof evidence0.handle === 'string' ? evidence0.handle : null;
+  const nonce = typeof evidence0.nonce === 'string' ? evidence0.nonce : null;
+  const deadlineMs = typeof evidence0.deadline === 'string' ? Date.parse(evidence0.deadline) : Number.NaN;
+  const account = p.draft.kind === 'swap' ? p.draft.from.toLowerCase() : '';
+  const railSaid = (p.result?.detail ?? '').split(RECHECK_RELAY)[0];
+
+  let txids = [...(p.result?.txids ?? [])];
+  let evidence: RailEvidence = { ...evidence0 };
+
+  const write = (next: Proposal['status'], ok: boolean, said: string): Proposal => {
+    const settledNow = next === 'executed' || next === 'failed';
+    const detail = settledNow || railSaid === '' ? said : `${railSaid}${RECHECK_RELAY}${said}`;
+    const result = { ok, detail, txids, evidence };
+    const current = { ok: p.result?.ok ?? false, detail: p.result?.detail ?? '', txids: p.result?.txids ?? [], evidence: p.result?.evidence ?? {} };
+    if (next === p.status && stable(result) === stable(current)) return p;
+    ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by the relay and the verifier: ${next}. ${said}`, {
+      id: p.id,
+      ...(handle === null ? {} : { handle }),
+      ...(nonce === null ? {} : { nonce }),
+    });
+    const { acknowledgedAt: _filed, ...unfiled } = p;
+    return persist(ctx, {
+      ...unfiled,
+      status: next,
+      decidedAt: p.decidedAt ?? nowIso(),
+      settledAt: next === p.status ? p.settledAt : nowIso(),
+      result,
+    });
+  };
+
+  if (lookup === undefined) {
+    return write(p.status, p.result?.ok ?? false, `No relay read is wired in ${ctx.cfg.mode} mode, so this stays as it is. Compare the balances before and after on the receipt.`);
+  }
+
+  // The relay first, when the rail got as far as a hash.
+  let relayWord: string | null = null;
+  if (handle !== null) {
+    try {
+      const status = await lookup.status(handle);
+      relayWord = status.status;
+      evidence = { ...evidence, providerStage: status.status };
+      if (status.nearTxHash !== null) {
+        txids = [...new Set([...txids, status.nearTxHash])];
+        evidence = { ...evidence, explorerUrl: `${nearChainSpec().explorerTx}${status.nearTxHash}` };
+      }
+      if (status.status === 'SETTLED') {
+        const tx = status.nearTxHash === null ? '' : ` (NEAR tx ${status.nearTxHash})`;
+        if (p.pocket !== undefined) {
+          return write('needs_reconciliation', false, `The relay reports the swap settled${tx}. The balance has not shown the rise yet; it is re-read on every refresh and this settles itself when it does.`);
+        }
+        const signed = evidence0.relayQuote?.amountOut;
+        return write(
+          'executed',
+          true,
+          `The relay reports the swap settled on NEAR${tx}: the verifier executed the signed diff in one call. This app did not read the balance either side of it, ` +
+            `so the amount out is the signed ${signed === undefined ? 'diff' : `${signed} base units`} rather than an observed figure.`,
+        );
+      }
+      if (!RELAY_TERMINAL.includes(status.status)) {
+        return write(p.status, p.result?.ok ?? false, `The relay reports ${oneLine(status.status, 40)}. Nothing has changed; check again shortly.`);
+      }
+    } catch (err) {
+      return write(p.status, p.result?.ok ?? false, `The relay could not be asked (${oneLine(errText(err), 80)}). Nothing has changed; check again shortly.`);
+    }
+  }
+
+  // The verifier, by the nonce: the chain-level answer.
+  const relayNote = relayWord === null ? '' : ` The relay reports ${oneLine(relayWord, 40)}.`;
+  if (nonce === null) {
+    return write(p.status, p.result?.ok ?? false, `No nonce was recorded for this swap, so the verifier cannot be asked whether it executed.${relayNote} Compare the balances before and after on the receipt.`);
+  }
+  const used = await lookup.nonceUsed(account, nonce);
+  if (used === null) {
+    return write(p.status, p.result?.ok ?? false, `The verifier did not answer whether the nonce was spent.${relayNote} Nothing has changed; check again shortly.`);
+  }
+  if (used) {
+    if (p.pocket !== undefined) {
+      return write('needs_reconciliation', false, `The verifier shows the nonce spent, so the swap executed.${relayNote} The balance has not shown the rise yet; it is re-read on every refresh and this settles itself when it does.`);
+    }
+    const signed = evidence0.relayQuote?.amountOut;
+    return write(
+      'executed',
+      true,
+      `The verifier shows the nonce spent, so the swap executed at the signed diff${signed === undefined ? '' : ` (${signed} base units out)`}.${relayNote} ` +
+        'This app did not read the balance either side of it, so that figure is the signed one rather than an observed one.',
+    );
+  }
+  if (!Number.isFinite(deadlineMs)) {
+    return write(p.status, p.result?.ok ?? false, `The verifier shows the nonce unspent and no deadline was recorded, so this app cannot say whether it can still execute.${relayNote} Compare the balances before and after on the receipt.`);
+  }
+  if (Date.now() < deadlineMs + RELAY_DEADLINE_GRACE_MS) {
+    return write(p.status, p.result?.ok ?? false, `The verifier shows the nonce unspent and the deadline (${new Date(deadlineMs).toISOString()}) has not passed, so the swap can still execute.${relayNote} Nothing has changed; check again after the deadline.`);
+  }
+  return write('failed', false, `The deadline (${new Date(deadlineMs).toISOString()}) passed with the nonce unspent, so the swap never executed and nothing left the balance.${relayNote} Ask for a fresh price to try again.`);
 }
 
 /* Filing an unconfirmed row. The dock keeps an unconfirmed move in front of a person because
