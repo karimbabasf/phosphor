@@ -68,6 +68,18 @@ export function savePolicy(dataDir: string, p: Policy): void {
   atomicWriteJson(policyPath(dataDir), p);
 }
 
+/* The same write, behind the same schema the loader holds the file to. savePolicy trusts its
+   caller because its callers are the seeding boot and a click on a verdict the engine already
+   gave; this is the door for a write that comes straight from the window (the onboarding
+   threshold), where the value was typed by a person and nothing has judged it yet. A policy
+   that would not load is never written: the file on disk stays what it was and the caller
+   hears false. */
+export function savePolicyChecked(dataDir: string, p: Policy): boolean {
+  if (!policySchema.safeParse(p).success) return false;
+  savePolicy(dataDir, p);
+  return true;
+}
+
 export function defaultPolicy(): Policy {
   const p: Policy = {
     version: 1,
