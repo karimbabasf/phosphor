@@ -44,7 +44,7 @@ import { formatUnits } from 'viem';
 
 import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft, SwapSimulation } from '../types.ts';
 import type { OneClickClient, OneClickToken, TokensFile } from '../intents.ts';
-import { oneClickClient, oneLine, resolveAsset, toBaseUnits } from '../intents.ts';
+import { oneClickClient, oneLine, resolveAsset, truncateToBaseUnits } from '../intents.ts';
 import { INTENTS_VERIFIER } from '../ledger/intents.ts';
 import { INTENTS_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
 import type { RiseSchedule } from '../ledger/settle.ts';
@@ -233,13 +233,15 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     if (origin.assetId === dest.assetId) {
       throw new Error(`${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
     }
+    // Both money figures cut toward zero, never rounded: what is signed is at most what was
+    // approved, and the floor held is at most the floor approved (frozen rule 2).
     return {
       assetIn: origin.assetId,
       assetOut: dest.assetId,
       inDecimals: origin.decimals,
       outDecimals: dest.decimals,
-      amountBase: toBaseUnits(draft.amountIn, origin.decimals),
-      minOutBase: toBaseUnits(draft.minAmountOut, dest.decimals),
+      amountBase: truncateToBaseUnits(draft.amountIn, origin.decimals),
+      minOutBase: truncateToBaseUnits(draft.minAmountOut, dest.decimals),
       list,
     };
   }
@@ -358,7 +360,13 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
        on a hold. */
     const pick = await bestQuote(p);
     if (pick.chosen === null) {
-      return { ok: false, held: true, detail: `${noPriceSentence(draft)}. Nothing was signed; the price is asked for again in a while.` };
+      // Every answer the relay gave and why it was passed over rides in the sentence, the same
+      // words simulate uses: a hold that says only "no price" hides a relay that did answer.
+      return {
+        ok: false,
+        held: true,
+        detail: `${[noPriceSentence(draft), ...pick.passed].join('; ')}. Nothing was signed; the price is asked for again in a while.`,
+      };
     }
     const quote = pick.chosen;
     const amountOut = BigInt(quote.amountOut);

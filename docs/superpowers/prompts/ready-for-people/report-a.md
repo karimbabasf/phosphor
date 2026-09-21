@@ -14,12 +14,14 @@ Evidence under docs/superpowers/prompts/ready-for-people/evidence-a/.
 - 12f2ab6 scripts/relay-probe.ts reads the relay and the verifier for the live proof and can sign nothing
 - 225c38d The relay's SETTLED is checked against the chain before a row is called executed, and a nonce is never called dead past its own life
 - 2e8c194 A hash off the relay is base58 or no hash, and a verifier read after the signature can never throw
-- the last commit on the branch: this report, the evidence and the lessons lines
+- c0232de docs: node A report, evidence and two lessons for the relay swap rail
+- f2a5907 Merge main into rfp/a-relay
+- (next) The relay signs figures cut toward zero, an unspent nonce is no verdict once its salt is retired, and a hold names every answer it passed over (the secure review's two Lows and one Info)
 
 ## 2. Counts
 
 - `npm run typecheck`: exit 0 (evidence-a/npm-test.txt, first line).
-- `npm test`: 3143 tests, 3143 pass, 0 fail (evidence-a/npm-test.txt). Baseline on main bb4b842: 3068 tests, 3068 pass. The branch adds 75 tests: relay-payload 21, relay-client 8, intents-relay 23, reconcile-relay 16, relay-demo 3, rail-wiring 4.
+- `npm test`: 3147 tests, 3147 pass, 0 fail (evidence-a/npm-test.txt). One earlier full run saw tests/unit/preflight.test.ts:385 (the Arbitrum sampler, real timers) fail once under machine load and pass 3 of 3 alone; not a file this node touches. Baseline on main bb4b842: 3068 tests, 3068 pass. The branch adds 79 tests: relay-payload 22, relay-client 8, intents-relay 25, reconcile-relay 17, relay-demo 3, rail-wiring 4.
 - `npm run eval`: 29 scenarios, 29 pass, 0 fail (evidence-a/eval-scripted.log). Run because the demo swap walk changed, which is what the eval's agent reads. `npm run eval:live` not run: it costs tokens and the lead runs it at merge.
 
 ## 3. Criteria
@@ -37,7 +39,7 @@ Evidence under docs/superpowers/prompts/ready-for-people/evidence-a/.
 - 11.4 n/a: no ui/ edit.
 - 11.5 not run here: the bundled app is the lead's proof run.
 - Frozen rules: 1 (the click path untouched; refusals and holds sign nothing), 2 (floor off the draft, never zero, truncated when printed; the diff signed IS the price), 4 (no key material in any string; evidence-a/security-audit.md), 5 (no second stage table), 9 (Hyperliquid untouched; no app fee on the relay; the rail adds no fee), 10 (no test-only branch, no eval edit).
-- Security: /security-review over the branch diff (one fresh-context reviewer) and the security-audit skill over src/relay/*, src/rails/intents-relay.ts and src/intents-sign.ts: 0 Critical, 0 High, 0 Medium, 3 Low, all fixed in 225c38d; two hardening changes in 2e8c194. semgrep 0, trufflehog 0, gitleaks 1 false positive (an env var name). evidence-a/security-audit.md.
+- Security: /security-review over the branch diff (one fresh-context reviewer) and the security-audit skill over src/relay/*, src/rails/intents-relay.ts and src/intents-sign.ts: 0 Critical, 0 High, 0 Medium, 3 Low, all fixed in 225c38d; two hardening changes in 2e8c194. semgrep 0, trufflehog 0, gitleaks 1 false positive (an env var name). evidence-a/security-audit.md. The lead's secure reviewer then ACCEPTED with two Lows and one Info, closed in the last commit: (1) frozen rule 2, the figures the relay signs are cut toward zero through truncateToBaseUnits (src/intents.ts), tests "truncateToBaseUnits cuts toward zero" and "the amount signed and the floor held are cut toward zero"; (2) an unspent nonce past its deadline is called dead only when the verifier still accepts the nonce's salt (is_valid_salt, answered live), since a spent nonce with a retired salt is pruned too, test "a nonce whose salt the verifier has retired gets no verdict"; (3) a hold carries every answer the relay gave and why it was passed over, test "a hold names why every answer the relay gave was passed over".
 
 ## The live proof procedure (one paragraph, for the lead)
 
@@ -58,6 +60,8 @@ Quit the installed app on 4177. In the main checkout with the real config, run `
 - 1.9 The settle tolerance is one pip cut toward zero, per the spec; the contract source shows our credit lands in full, so it should never fire (evidence-a/security-audit.md).
 - 11 Three additive fields in src/types.ts (AppConfig.swap, RailEvidence.relayQuote, SwapSimulation.priceGoodForSec) and one line in src/proposals/execute.ts pickEvidence: the config switch and the spec's evidence field cannot exist without them. Listed under requests so the lead can veto.
 - 11 The two swap rails share the signer through src/intents-sign.ts; the 1Click rail re-exports the old names so no importer or test moved.
+- 1.9 Base units: the relay converts through a new truncateToBaseUnits beside the shared toBaseUnits (src/intents.ts) rather than changing the shared helper's rounding: the other rails keep the behaviour their tests pin (node B's files untouched), and the two only differ past the asset's own precision. The lead may fold the other rails onto the truncating one later.
+- 4.1 The salt check (RelayLookup.saltValid, VerifierPort.isValidSalt) is optional the safe way round: absent reads as no answer and no failed verdict is written; the live registry always carries it. Optional so the lead's reviewer scratch fixtures and any registry a test builds by hand keep compiling.
 - 11 The branch was fast-forwarded to main bb4b842 before the first commit, so the demo-rail test the lead fixed there is green under it.
 
 ## 5. Requests for the lead

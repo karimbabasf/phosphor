@@ -63,6 +63,10 @@ export type RailRegistry = {
 export type RelayLookup = {
   status(intentHash: string): Promise<RelayStatus>;
   nonceUsed(accountId: string, nonce: string): Promise<boolean | null>;
+  // Whether the verifier still accepts a nonce's salt. Optional the safe way round: a lookup
+  // without it reads as "no answer", and no failed verdict is ever written on an unspent nonce
+  // without one (src/proposals/reconcile.ts). The live registry always carries it.
+  saltValid?(salt: Uint8Array): Promise<boolean | null>;
 };
 
 export type RailDeps = {
@@ -156,6 +160,7 @@ export function createRails(deps: RailDeps): RailRegistry {
     relay: {
       status: (intentHash) => relayReads.status(intentHash),
       nonceUsed: (accountId, nonce) => verifier.nonceUsed(accountId, nonce),
+      saltValid: (salt) => verifier.isValidSalt?.(salt) ?? Promise.resolve(null),
     },
   };
 }

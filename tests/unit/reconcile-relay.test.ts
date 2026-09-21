@@ -37,16 +37,17 @@ function past(): string {
 type Fixture = {
   status?: RelayStatus | Error;
   nonceUsed?: boolean | null;
+  saltValid?: boolean | null; // what the verifier says of the nonce's salt; default true
 };
 
-type Rig = Harness & { asked: { status: string[]; nonce: Array<{ account: string; nonce: string }> } };
+type Rig = Harness & { asked: { status: string[]; nonce: Array<{ account: string; nonce: string }>; salt: string[] } };
 
 function statusOf(status: string, over: Partial<RelayStatus> = {}): RelayStatus {
   return { intentHash: INTENT_HASH, status, statusDetails: null, nearTxHash: null, filledAmounts: [], ...over };
 }
 
 function rig(fixture: Fixture = {}, wire = true): Rig {
-  const asked = { status: [] as string[], nonce: [] as Array<{ account: string; nonce: string }> };
+  const asked = { status: [] as string[], nonce: [] as Array<{ account: string; nonce: string }>, salt: [] as string[] };
   const relay: RelayLookup = {
     async status(hash) {
       asked.status.push(hash);
@@ -57,6 +58,10 @@ function rig(fixture: Fixture = {}, wire = true): Rig {
     async nonceUsed(account, nonce) {
       asked.nonce.push({ account, nonce });
       return fixture.nonceUsed === undefined ? false : fixture.nonceUsed;
+    },
+    async saltValid(salt) {
+      asked.salt.push(Buffer.from(salt).toString('hex'));
+      return fixture.saltValid === undefined ? true : fixture.saltValid;
     },
   };
   const h = makeCtx({ deps: { rails: { for: () => null, kinds: () => [], ...(wire ? { relay } : {}) } } });
@@ -115,15 +120,37 @@ test('killed after the signature: the boot sweep keeps the nonce, and an unspent
   assert.deepEqual(h.asked.nonce, [{ account: SELF_EVM.toLowerCase(), nonce: NONCE }]);
 });
 
-test('killed after the signature: an unspent nonce past its deadline is failed, nothing lost', async () => {
-  const h = rig({ nonceUsed: false });
+test('killed after the signature: an unspent nonce past its deadline is failed, nothing lost, once the salt is still valid', async () => {
+  const h = rig({ nonceUsed: false, saltValid: true });
   seed(h, { evidence: { nonce: NONCE, deadline: past(), relayQuote: RELAY_QUOTE } });
   h.svc.reconcileOnBoot();
   const out = await h.svc.reconcile('relay-1');
   assert.equal(out.status, 'failed');
   assert.equal(out.result?.ok, false);
   assert.match(out.result?.detail ?? '', /passed with the nonce unspent, so the swap never executed and nothing left the balance/);
+  assert.deepEqual(h.asked.salt, ['252812b3'], 'the salt in the nonce is checked before "unspent" is believed');
   assert.ok(h.eventTypes().includes('error'), 'the verdict is on the audit log');
+});
+
+/* The contract prunes a SPENT nonce once its salt is rotated out (garbage_collector.rs:
+   is_nonce_cleanable is "deadline passed or salt invalid"), after which is_nonce_used answers
+   false for a swap that executed. A retired salt therefore gives no verdict at all. */
+test('killed after the signature: a nonce whose salt the verifier has retired gets no verdict, never "nothing left the balance"', async () => {
+  const h = rig({ nonceUsed: false, saltValid: false });
+  seed(h, { evidence: { nonce: NONCE, deadline: past(), relayQuote: RELAY_QUOTE } });
+  h.svc.reconcileOnBoot();
+  const out = await h.svc.reconcile('relay-1');
+  assert.equal(out.status, 'needs_reconciliation');
+  assert.match(out.result?.detail ?? '', /the verifier has retired the key of that price window/);
+  assert.match(out.result?.detail ?? '', /The balance read decides/);
+  assert.equal((out.result?.detail ?? '').includes('nothing left the balance'), false);
+
+  const silent = rig({ nonceUsed: false, saltValid: null });
+  seed(silent, { evidence: { nonce: NONCE, deadline: past(), relayQuote: RELAY_QUOTE } });
+  silent.svc.reconcileOnBoot();
+  const held = await silent.svc.reconcile('relay-1');
+  assert.equal(held.status, 'needs_reconciliation');
+  assert.match(held.result?.detail ?? '', /did not answer whether that salt is still valid/);
 });
 
 test('killed after the signature: a spent nonce means the swap executed', async () => {

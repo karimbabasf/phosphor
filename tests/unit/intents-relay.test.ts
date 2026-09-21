@@ -194,6 +194,9 @@ function harness(
     async nonceUsed() {
       return options.nonceUsed === undefined ? false : options.nonceUsed;
     },
+    async isValidSalt() {
+      return true;
+    },
   };
 
   const client = { tokens: async () => apiTokens } as unknown as OneClickClient;
@@ -483,6 +486,21 @@ test('a hold below the floor signs nothing and returns held with both numbers in
   assert.equal(none.signed.length, 0);
 });
 
+test('a hold names why every answer the relay gave was passed over, never a bare "no price"', async () => {
+  const h = harness({
+    quotes: [
+      quoteOf({ quoteHash: 'expiring', amountOut: '1970000', expirationTime: new Date(NOW + 10_000).toISOString() }),
+      quoteOf({ quoteHash: 'wrong-amount', amountIn: '1999999', amountOut: '1980000' }),
+    ],
+  });
+  const result = await h.rail.execute(draftOf(), 'p1', h.hooks);
+  assert.equal(result.held, true);
+  assert.match(result.detail, /no solver offered a price for 2 USDC to USDT right now/);
+  assert.match(result.detail, /quote expiring expires at .* inside 15 s/);
+  assert.match(result.detail, /quote wrong-amount is for 1999999 base units in, not the 2000000 the draft spends/);
+  assert.equal(h.signed.length, 0);
+});
+
 test('the key is never read in simulate, and simulate reads no balance and no salt', async () => {
   const h = harness();
   const sim = await h.rail.simulate(draftOf());
@@ -585,6 +603,9 @@ test('nothing throws after the signature: a verifier that throws on the after-re
     async nonceUsed() {
       throw new Error('rpc exploded');
     },
+    async isValidSalt() {
+      throw new Error('rpc exploded');
+    },
   };
   const rail = intentsRelayRail({
     keysPath: '/nonexistent/keys.json',
@@ -624,6 +645,21 @@ test('the counterparty is the verifier and the proceeds land on our own account,
   await assert.rejects(() => h.rail.execute(draftOf({ minAmountOut: 0 }), 'p1', h.hooks), /minAmountOut is 0/);
   assert.equal(h.signed.length, 0);
   assert.equal(INTENTS_RELAY_COUNTERPARTY, INTENTS_NATIVE_COUNTERPARTY, 'one verifier, one allowlist entry');
+});
+
+test('the amount signed and the floor held are cut toward zero, never rounded up past what was approved', async () => {
+  // 1.0000005 USDC rounds half-up to 1000001 base units; the relay asks for, and signs, 1000000.
+  const h = harness({ quotes: [quoteOf({ amountIn: '1000000', amountOut: '980000' })], balanceOut: [1_000_000n, 1_980_000n] });
+  const result = await h.rail.execute(draftOf({ amountIn: 1.0000005, minAmountOut: 0.9599999 }), 'p1', h.hooks);
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(h.quotes[0].exactAmountIn, '1000000', 'the quote asks for the cut amount');
+  assert.equal(diffOf(payloadSigned(h))[USDC], '-1000000', 'the payload spends the cut amount');
+  // The floor 0.9599999 is 959999 base units cut, 960000 rounded: a quote of 959999 is at the
+  // floor the person approved and is not refused.
+  const edge = harness({ quotes: [quoteOf({ amountOut: '1959999' })] });
+  const sim = await edge.rail.simulate(draftOf({ minAmountOut: 1.9599999 }));
+  assert.equal(sim.ok, true, sim.summary);
+  assert.equal(sim.swap?.receivesAtLeast, '1.959999');
 });
 
 test('a floor more than 20 percent under the quote is refused at simulate and at execute, nothing signed', async () => {

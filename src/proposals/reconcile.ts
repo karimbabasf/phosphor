@@ -399,8 +399,10 @@ export const RELAY_DEADLINE_GRACE_MS = 5 * 60_000;
        unspent, deadline passed  -> failed, nothing left the balance: an intent past its deadline
                                     cannot execute, and the nonce outlives the deadline by a week
                                     (NONCE_LIFE_AFTER_DEADLINE_MS) so "unspent" is still an answer.
-                                    Past the nonce's OWN life the contract may have pruned it and
-                                    "unspent" says nothing, so no verdict is written then.
+                                    Past the nonce's OWN life, or once the verifier has retired the
+                                    nonce's salt (a spent nonce with a retired salt is pruned too,
+                                    garbage_collector.rs), "unspent" says nothing and no verdict is
+                                    written: the balance read decides.
        unspent, inside deadline  -> stays; it can still execute until the deadline.
        no answer                 -> stays, and says the verifier did not answer.
    Nothing here signs or publishes: the reads are the relay's status and two verifier views. */
@@ -511,16 +513,29 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
   }
   // Past the nonce's own life the contract may have pruned it, and "unspent" then says nothing
   // about whether it executed. No verdict is written on an answer that can no longer be one.
-  const life = decodeNonce(nonce)?.deadlineMs;
-  if (life !== undefined && Date.now() > life) {
+  const parts = decodeNonce(nonce);
+  if (parts !== null && Date.now() > parts.deadlineMs) {
     return write(
       p.status,
       p.result?.ok ?? false,
-      `The verifier shows the nonce unspent, and the nonce's own life (${new Date(life).toISOString()}) has passed, so the verifier may have forgotten it either way.${relayNote} Compare the balances before and after on the receipt.`,
+      `The verifier shows the nonce unspent, and the nonce's own life (${new Date(parts.deadlineMs).toISOString()}) has passed, so the verifier may have forgotten it either way.${relayNote} Compare the balances before and after on the receipt.`,
     );
   }
   if (Date.now() < deadlineMs + RELAY_DEADLINE_GRACE_MS) {
     return write(p.status, p.result?.ok ?? false, `The verifier shows the nonce unspent and the deadline (${new Date(deadlineMs).toISOString()}) has not passed, so the swap can still execute.${relayNote} Nothing has changed; check again after the deadline.`);
+  }
+  /* The salt the nonce carries has to still be one the verifier accepts, or "unspent" is the
+     answer a pruned nonce gives whether or not it executed: the contract clears a spent nonce
+     once its salt is rotated out. A retired salt, or no answer, is no verdict. */
+  const saltValid = parts === null || lookup.saltValid === undefined ? null : await lookup.saltValid(parts.salt);
+  if (saltValid !== true) {
+    return write(
+      p.status,
+      p.result?.ok ?? false,
+      saltValid === null
+        ? `The verifier shows the nonce unspent and did not answer whether that salt is still valid, so this app cannot say whether the swap executed.${relayNote} Nothing has changed; check again shortly.`
+        : `The verifier shows the nonce unspent, and the verifier has retired the key of that price window (the nonce's salt), after which a spent nonce reads as unspent too.${relayNote} The balance read decides: compare the balances before and after on the receipt.`,
+    );
   }
   return write('failed', false, `The deadline (${new Date(deadlineMs).toISOString()}) passed with the nonce unspent, so the swap never executed and nothing left the balance.${relayNote} Ask for a fresh price to try again.`);
 }

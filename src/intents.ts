@@ -230,6 +230,23 @@ export function toBaseUnits(amount: number, decimals: number): bigint {
   return parseUnits(plainDecimal(amount), decimals);
 }
 
+/* The same conversion with the excess fraction digits CUT, never rounded. A floor is truncated
+   toward zero (the rule since 42f5809), and a figure that is signed is exactly the figure a
+   person approved, never one base unit above it: 1.0000005 USDC is 1000000 base units here and
+   1000001 through parseUnits. The relay swap rail signs through this one; the other rails keep
+   toBaseUnits and its rounding, which their tests pin, and the two differ only past the asset's
+   own precision. */
+export function truncateToBaseUnits(amount: number, decimals: number): bigint {
+  if (!Number.isFinite(amount)) throw new Error(`amount must be a finite number (got ${amount})`);
+  if (amount < 0) throw new Error(`amount must not be negative (got ${amount})`);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`decimals must be an integer in 0..36 (got ${decimals})`);
+  }
+  const [whole, fraction = ''] = plainDecimal(amount).split('.');
+  const kept = fraction.slice(0, decimals);
+  return parseUnits(kept === '' ? whole : `${whole}.${kept}`, decimals);
+}
+
 // A base-unit field off a quote. Never Number(): 18-decimal amounts do not survive a double, and
 // a garbage string must fail loudly rather than become NaN.
 //

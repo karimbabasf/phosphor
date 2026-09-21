@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { RelayQuote } from '../../src/relay/client.ts';
+import { toBaseUnits, truncateToBaseUnits } from '../../src/intents.ts';
 import {
   MAX_DEADLINE_MS,
   NONCE_MAGIC,
@@ -97,6 +98,24 @@ test('buildNonce refuses parts of the wrong size rather than padding them', () =
   assert.throws(() => buildNonce({ salt: Uint8Array.from([1, 2, 3]), deadlineMs: NOW, random: RANDOM }), /salt is 4 bytes/);
   assert.throws(() => buildNonce({ salt: SALT, deadlineMs: NOW, random: RANDOM.subarray(0, 14) }), /15 random bytes/);
   assert.throws(() => buildNonce({ salt: SALT, deadlineMs: Number.NaN, random: RANDOM }), /deadline/);
+});
+
+// ---------- base units ----------
+
+/* Frozen rule 2: a floor is truncated toward zero, never rounded, and the relay signs exactly
+   what was approved. The shared toBaseUnits rounds an excess digit half-up (viem parseUnits),
+   which lands one base unit above the person's figure on a value like 1.0000005 USDC. */
+test('truncateToBaseUnits cuts toward zero where toBaseUnits rounds half-up, and agrees everywhere else', () => {
+  assert.equal(toBaseUnits(1.0000005, 6), 1_000_001n, 'the shared helper rounds');
+  assert.equal(truncateToBaseUnits(1.0000005, 6), 1_000_000n, 'the money figure the relay signs is cut');
+  assert.equal(truncateToBaseUnits(1.9599999, 6), 1_959_999n);
+  assert.equal(truncateToBaseUnits(1.95, 6), 1_950_000n);
+  assert.equal(truncateToBaseUnits(2, 6), 2_000_000n);
+  assert.equal(truncateToBaseUnits(0.479648337832521309896459, 24), toBaseUnits(0.479648337832521309896459, 24), 'nothing to cut, same answer');
+  assert.equal(truncateToBaseUnits(2.3, 18), 2_300_000_000_000_000_000n, 'through decimal strings, never a double');
+  assert.equal(truncateToBaseUnits(1e-7, 6), 0n, 'below one base unit is nothing, not one');
+  assert.throws(() => truncateToBaseUnits(-1, 6), /negative/);
+  assert.throws(() => truncateToBaseUnits(Number.NaN, 6), /finite/);
 });
 
 // ---------- the deadline ----------

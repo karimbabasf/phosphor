@@ -24,6 +24,12 @@ export type VerifierPort = {
   currentSalt(): Promise<Uint8Array | null>;
   // Whether the verifier has committed this nonce for this account. Null when the read failed.
   nonceUsed(accountId: string, nonce: string): Promise<boolean | null>;
+  /* Whether a salt is still one the verifier accepts. A nonce whose salt was rotated out is
+     cleanable even when spent (contracts/defuse/src/contract/garbage_collector.rs), so past
+     that point "unspent" says nothing about whether the swap executed. Null when the read
+     failed. Optional the safe way round: a port without it reads as "no answer", and no failed
+     verdict is written on an unspent nonce without one. The live port always has it. */
+  isValidSalt?(salt: Uint8Array): Promise<boolean | null>;
 };
 
 type ViewResult = { result: number[] };
@@ -78,6 +84,16 @@ export function liveVerifier(fetchImpl: typeof fetch = fetch): VerifierPort {
     async nonceUsed(accountId, nonce) {
       try {
         const answer = await view('is_nonce_used', { account_id: accountId.toLowerCase(), nonce }, fetchImpl);
+        return typeof answer === 'boolean' ? answer : null;
+      } catch {
+        return null;
+      }
+    },
+    async isValidSalt(salt) {
+      if (salt.length !== 4) return null;
+      try {
+        // The contract reads a salt as its 8 hex characters, the way current_salt prints it.
+        const answer = await view('is_valid_salt', { salt: Buffer.from(salt).toString('hex') }, fetchImpl);
         return typeof answer === 'boolean' ? answer : null;
       } catch {
         return null;
