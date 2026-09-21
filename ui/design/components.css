@@ -380,43 +380,9 @@ button[data-pending-label] > :not(.btn-pending) {
   background-color: color-mix(in srgb, var(--text) 12%, var(--opens-bg, transparent));
 }
 
-/* THE PRESS ON EVERYTHING ELSE. A .btn steps its fill and gives 3 percent;
-   a chip, a tab, a tile and an opener have their own. Every other pressable
-   in the window takes this: a wash of the text at 12 percent, one shade past
-   any hover wash, so a click reads on a still frame and reads as more than a
-   hover. The compact ones (a glyph in a box, a link, a word with a caret)
-   give 3 percent as well; a row that spans its column keeps its edges still.
-   A new family joins one of the two lists, and the inventory test holds every
-   family to having a press. */
-.dock-close:active,
-.pane-hide:active,
-.pane-show:active,
-.receipt-close:active,
-.lock-eye:active,
-.netpick-back:active,
-.netpick-link:active,
-.activity-link:active,
-.netsel:active,
-.trade-tab:active,
-.steps-fold:active,
-.sendcard-info:active > span {
-  transform: scale(0.97);
-  background-color: var(--press);
-}
-
-.dock-next:active,
-.dock-report-toggle:active,
-.checks-toggle:active,
-.fold-head:active,
-.holding-head.opens:active,
-.net-row:active,
-.tx.receipt-row:active,
-.jump-latest:active {
-  background-color: var(--press);
-}
-
-.activity-link:active { background-color: color-mix(in srgb, var(--ink) 18%, transparent); }
-.jump-latest:active { background-color: color-mix(in srgb, var(--agent) 24%, var(--bg-1)); }
+/* THE PRESS ON EVERYTHING ELSE lives in press.css, the last sheet the window loads: a
+   press rule beside a family's hover rule in an earlier sheet lost the cascade (same
+   specificity, later file wins), so ten families pressed like a hover. */
 
 .opens:focus-visible {
   outline: 2px solid var(--ink);
@@ -621,11 +587,6 @@ button.chip[aria-pressed="true"] {
 }
 
 .check-row[aria-checked="true"] { color: var(--text); }
-
-.check-row:active {
-  transform: scale(0.97);
-  background-color: var(--press);
-}
 
 @media (hover: hover) and (pointer: fine) {
   .check-row:hover {

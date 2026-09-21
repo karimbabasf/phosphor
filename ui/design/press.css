@@ -1,0 +1,45 @@
+/* THE PRESS ON EVERYTHING THAT IS NOT A .btn. This sheet loads LAST (ui/index.html), on
+   purpose: every family below has a hover rule in its own screen sheet, and a press rule that
+   sits in an earlier sheet at the same specificity loses to that hover while the pointer is
+   down, so a network row, a receipt row and Jump to latest pressed like a hover (measured
+   2026-09-20). Last in order and at least the hover rule's specificity, the press wins on
+   every family; tests/unit/design-buttons-ui.test.ts holds both facts.
+
+   A .btn steps its fill and gives 3 percent; a chip, a tab, a tile and an opener have their
+   own. Every other pressable takes this: a wash of the text at 12 percent, one shade past any
+   hover wash, so a click reads on a still frame and reads as more than a hover. The compact
+   ones (a glyph in a box, a link, a word with a caret) give 3 percent as well; a row that
+   spans its column keeps its edges still. A new family joins one of the two lists, and the
+   inventory test holds every family to having a press. */
+.dock-close:active,
+.pane-hide:active,
+.pane-show:active,
+.receipt-close:active,
+.lock-eye:active,
+.netpick-back:active,
+.netpick-link:active,
+.activity-link:active,
+.netsel:active,
+.trade-tab:active,
+.steps-fold:active,
+.sendcard-info:active > span {
+  transform: scale(0.97);
+  background-color: var(--press);
+}
+
+.dock-next:active,
+.dock-report-toggle:active,
+.checks-toggle:active,
+.fold-head:active,
+.holding-head.opens:active,
+.net-row:active,
+.activity-rows > .tx.receipt-row:active,
+.tx.receipt-row:active,
+.jump-latest:active,
+.check-row:active {
+  background-color: var(--press);
+}
+
+.check-row:active { transform: scale(0.97); }
+.activity-link:active { background-color: color-mix(in srgb, var(--ink) 18%, transparent); }
+.jump-latest:active { background-color: color-mix(in srgb, var(--agent) 24%, var(--bg-1)); }

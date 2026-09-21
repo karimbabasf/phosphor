@@ -188,30 +188,74 @@ test('a quiet button keeps the floor\'s 24 px around its word', () => {
   assert.equal(declared(quiet?.[1] ?? '', 'padding'), '0 var(--s-3)', 'quiet buttons hug their label again');
 });
 
-/* Every pressable that is not a .btn takes one press state, listed in components.css: a wash of
-   the text one shade past a hover, the compact ones giving 3 percent as well. */
-const PRESSED = ['dock-close', 'pane-hide', 'pane-show', 'receipt-close', 'lock-eye', 'netpick-back', 'netpick-link', 'activity-link', 'netsel', 'trade-tab', 'steps-fold', 'dock-next', 'dock-report-toggle', 'checks-toggle', 'fold-head', 'net-row', 'jump-latest'];
+/* Every pressable that is not a .btn takes one press state, listed in press.css: a wash of the
+   text one shade past a hover, the compact ones giving 3 percent as well. The press has to WIN
+   the cascade, not merely exist: with the pointer down both the family's hover rule and its
+   press rule match, and the later or more specific one paints. Ten families pressed like a hover
+   on 2026-09-20 because the press sat in components.css at the hover's specificity. So press.css
+   loads last, and every press selector is at least as specific as every hover rule whose subject
+   is that family, anywhere in ui/design. */
+const PRESSED = ['dock-close', 'pane-hide', 'pane-show', 'receipt-close', 'lock-eye', 'netpick-back', 'netpick-link', 'activity-link', 'netsel', 'trade-tab', 'steps-fold', 'dock-next', 'dock-report-toggle', 'checks-toggle', 'fold-head', 'net-row', 'jump-latest', 'check-row'];
 
-test('every pressable that is not a .btn has a press, on the shared wash', () => {
-  const components = css('components.css');
+// Selector specificity as (ids, classes plus attributes plus pseudo-classes, elements).
+function specificity(selector: string): [number, number, number] {
+  const sel = selector.replace(/::?[a-z-]+\([^)]*\)/g, ':x').trim();
+  const ids = (sel.match(/#[\w-]+/g) ?? []).length;
+  const classes = (sel.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+/g) ?? []).length;
+  const elements = (sel.match(/(^|[\s>+~(])[a-z][\w-]*/g) ?? []).length;
+  return [ids, classes, elements];
+}
+function atLeast(a: [number, number, number], b: [number, number, number]): boolean {
+  for (let i = 0; i < 3; i += 1) { if (a[i] !== b[i]) return a[i] > b[i]; }
+  return true;
+}
+// Every selector in a sheet, with the declaration block it opens, media wrappers ignored.
+function rulesOf(text: string): Array<{ selector: string; block: string }> {
+  const out: Array<{ selector: string; block: string }> = [];
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const head = m[1].trim();
+    if (head.startsWith('@')) continue;
+    for (const selector of head.split(',')) out.push({ selector: selector.trim(), block: m[2] });
+  }
+  return out;
+}
+
+test('every pressable that is not a .btn has a press, on the shared wash, and the press wins the cascade', () => {
+  const press = css('press.css');
   assert.match(css('tokens.css'), /--press:\s*color-mix\(in srgb, var\(--text\) 12%, transparent\);/);
-  const compact = components.match(/\.dock-close:active,[^{]*\{([^}]*)\}/);
+  const compact = press.match(/\.dock-close:active,[^{]*\{([^}]*)\}/);
   assert.ok(compact, 'no shared press for the compact pressables');
   assert.match(compact?.[1] ?? '', /transform:\s*scale\(0\.97\);/);
   assert.match(compact?.[1] ?? '', /background-color:\s*var\(--press\);/);
-  const rows = components.match(/\.dock-next:active,[^{]*\{([^}]*)\}/);
+  const rows = press.match(/\.dock-next:active,[^{]*\{([^}]*)\}/);
   assert.ok(rows, 'no shared press for the rows');
   assert.match(rows?.[1] ?? '', /background-color:\s*var\(--press\);/);
   assert.doesNotMatch(rows?.[1] ?? '', /transform/, 'a row that spans its column keeps its edges still');
+  assert.match(press, /\.sendcard-info:active > span/);
+  assert.match(press, /\.holding-head\.opens:active/);
+  assert.match(css('components.css'), /\.opens:active\s*\{[^}]*background-color:\s*color-mix\(in srgb, var\(--text\) 12%, var\(--opens-bg, transparent\)\);/);
+  assert.doesNotMatch(css('components.css'), /\.dock-close:active|\.check-row:active\s*\{/, 'the press left components.css, where it lost the cascade');
+
+  // Last in the window's load order: a hover rule in any other sheet paints before it.
+  const html = fs.readFileSync(path.join(ROOT, 'ui', 'index.html'), 'utf8');
+  const links = [...html.matchAll(/<link rel="stylesheet" href="\.\/design\/([\w.-]+\.css)">/g)].map((m) => m[1]);
+  assert.equal(links.at(-1), 'press.css', `press.css is not the last sheet: ${links.join(', ')}`);
+
+  // At least the specificity of every hover rule whose subject is the family, in every sheet.
+  const sheets = fs.readdirSync(path.join(ROOT, 'ui', 'design')).filter((f) => f.endsWith('.css'));
+  const hovers = sheets.flatMap((f) => rulesOf(css(f)).map((r) => ({ ...r, sheet: f })));
+  const presses = rulesOf(press);
   for (const family of PRESSED) {
-    assert.ok(new RegExp(`\\.${family}:active`).test(components), `${family} has no press`);
+    const mine = presses.filter((r) => new RegExp(`\\.${family}:active(\\s|$)`).test(r.selector) && /background/.test(r.block));
+    assert.ok(mine.length > 0, `${family} has no press`);
+    const theirs = hovers.filter((r) => new RegExp(`\\.${family}:hover$`).test(r.selector) && /background/.test(r.block));
+    for (const h of theirs) {
+      const wins = mine.some((r) => atLeast(specificity(r.selector), specificity(h.selector)));
+      assert.ok(wins, `${family}: the press (${mine.map((r) => r.selector).join(' | ')}) loses to ${h.sheet} "${h.selector}"`);
+    }
   }
-  assert.match(components, /\.sendcard-info:active > span/);
-  assert.match(components, /\.tx\.receipt-row:active/);
-  assert.match(components, /\.holding-head\.opens:active/);
-  // The openers and the check row press on the same wash, over their own ground.
-  assert.match(components, /\.opens:active\s*\{[^}]*background-color:\s*color-mix\(in srgb, var\(--text\) 12%, var\(--opens-bg, transparent\)\);/);
-  assert.match(components, /\.check-row:active\s*\{[^}]*background-color:\s*var\(--press\);/);
 });
 
 test('a pressable\'s label never sits on the third text tone', () => {
