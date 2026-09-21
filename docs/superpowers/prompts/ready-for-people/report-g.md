@@ -16,6 +16,10 @@ the site, Vercel or the installed app. Criteria cited as term.number.
 - `224b1e0` The 0.8.0 changelog entry alone. See "Counts": the changelog heading makes one docs test red until the lead's version bump.
 - `4240cd0` Merge main (the lead's demo-rail test fix) into rfp/g-launch.
 - `ba93c37` Review fix 1: the lockfile rule names `src-tauri/Cargo.lock` by path and excuses a checksum only inside a `[[package]]` block with a crates.io source (a plant that forges a whole such block still passes; the lockfile is Cargo's to write). Node B's demo hashes (evidence-b) and node F's scene hashes (scripts/anxiety/scenes.ts) excused by value. Test: tests/unit/sweep.test.ts, six planted lines.
+- `c3d44ee` Review fix 5: GET /api/log?for=report shortens every address to its two ends (withoutAddresses, handed in by the router); Copy Log for a Report fetches that copy; the plain tail keeps addresses whole; the bug form says the log carries amounts and fingerprinted addresses. Test: tests/unit/log-tail.test.ts "the report copy fingerprints addresses and the plain tail keeps them".
+- `4326307` Review fix 4: /api/events goes through redactEvent. createSseHub takes a `redact` dep (src/http/sse.ts, unowned: the deps type, one default, the one call) and src/server.ts hands it the check that knows this boot's seat secret and window token (two lines); without one the hub still cuts shapes and secret-named fields. Test: "the planted line never reaches /api/events, and the hash does".
+- `8b0c9d6` Review fix 6: main.rs `log_from_response` requires the x-phosphor boot nonce (identity_matches) besides the 200 and the JSON array, and the fetch asks for the report copy. cargo test `the_log_copy_takes_only_an_answer_that_carries_this_boots_nonce`.
+- `22b37f0` The sweep's header names what it does not see (single-quoted or comma-separated mnemonics; sk-, ghp_, bearer, JWT shapes: gitleaks' job); evidence refreshed.
 - `2dc5ff4` Review fix 2: the log tail's second wall also cuts `ed25519:` and `secp256k1:` base58, raw 87 to 88 base58, `sk-` keys, JWTs, bearer tokens, and the apiKey, x-api-key, authorization, cookie fields; `diagnose` (src/http/read/wallet.ts, three lines, outside my list) formats a row's own lines through the same wall. Test: tests/unit/log-tail.test.ts, the reviewer's planted line on both routes and on diagnose. Cost stated in the code: a Solana signature of a deposit somebody sent is 87 to 88 base58 and now reads [redacted] in the tail.
 
 ## 2. Counts
@@ -28,7 +32,7 @@ Taken on the tree before the changelog commit, evidence-g/typecheck.txt, test.tx
 - `npm run sweep`: PASS, 6 checks, 810 tracked files, 5840 history blobs (evidence-g/sweep-after.txt), rerun after the evidence files were staged; it caught the four release checksums in them, my own test's PEM fixture in history, and a hash node D committed on `rfp/d-card` an hour later, each now excused by exact value with a note. Expect the same at merge for any fixture another node adds. Before: FAIL with 8,076 findings (evidence-g/sweep-before.txt).
 - `gitleaks git` (8.30.1): 176 findings, every one `generic-api-key`, every one a NEAR token id under a `tokenId` key, an env var name constant, the canonical Ethereum test key the sweep already excuses, or a made-up test string; zero secrets (evidence-g/gitleaks.txt; breakdown under 1.7 in section 3).
 - `npm run eval`: 29 scenarios, 29 pass, 0 fail, 0 xfail (evidence-g/eval.txt), on the fourth attempt after another node released the machine lock; the count the harness prints comes from `loadScenarios`.
-- After the changelog commit and the merge of main (`4240cd0`): the demo-rail test passes. On the tip `2dc5ff4`: `npm test` 3078 tests, 3077 pass, 1 fail, the one being `tests/unit/docs.test.ts` "the changelog opens on the version in package.json", by design until package.json says 0.8.0; typecheck clean; `npm run sweep` PASS (811 tracked files, 5969 history blobs).
+- After the changelog commit and the merge of main (`4240cd0`): the demo-rail test passes. On the tip after the six review fixes: `npm test` 3080 tests, 3079 pass, 1 fail, the one being `tests/unit/docs.test.ts` "the changelog opens on the version in package.json", by design until package.json says 0.8.0; typecheck clean; `cargo test` 25/25; `npm run sweep` PASS.
 
 ## 3. Criteria
 
@@ -187,6 +191,8 @@ Taken on the tree before the changelog commit, evidence-g/typecheck.txt, test.tx
 - `docs/security-model.md` "What signs, and with what" does not yet name the relay's `token_diff` signing; node A's merge should add one sentence.
 - `src/mcp-errors.ts` STILL_WORKING says "read proposal_status (the id is in log_tail)"; `proposals` now exists and is the better pointer (node D's wording).
 - `grep --include` is swallowed by the grep shim in this shell; `/usr/bin/grep -rn -e` works.
+- `tests/unit/diagnose.test.ts:104` holds Karim's real EVM address in full (a public address; whether it stays is his call, with the persona.ts and fixture copies above).
+- The sweep does not see a mnemonic in single quotes or separated by commas, nor sk-, ghp_, bearer or JWT shapes; its header says so now and gitleaks is the tool for those (a .gitleaks.toml is request 6).
 
 ## 7. Lessons appended
 
