@@ -230,9 +230,6 @@ async function main(): Promise<void> {
       if (msg.type() === 'error' || msg.type() === 'warning') log.push(`[console.${msg.type()}] ${msg.text()}`);
     });
     await page.goto(`${app.base}/?token=${app.token}`, { waitUntil: 'load' });
-    /* The card's own stylesheet, until ui/index.html links it (node E's file; the request is in
-       report-d.md). Loaded here so the fade the proof reads is the one that ships. */
-    await page.addStyleTag({ url: `${app.base}/design/chatcard.css` });
     await page.waitForSelector('.agent-composer', { state: 'attached', timeout: 20_000 }).catch(() => undefined);
 
     const opened = await post(app.base, '/api/driver', { action: 'open', token: app.token });
