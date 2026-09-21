@@ -45,10 +45,14 @@ registers Phosphor with the agent through the agent's own command, so there is n
 | Grok | `grok mcp add phosphor <node> --scope user --env ... -- <path>/src/mcp.ts` |
 
 `...` is `PHOSPHOR_PORT=<port>` and `PHOSPHOR_DATA_DIR=<state directory>`, the two things the
-proxy needs to find this installation of the app. An entry that already exists is removed and
-written again, so it always names the paths of the app you have now. If the registration cannot be
-written, the sentence says so and the line to paste is shown; Details holds the same line for
-anyone who would rather run it themselves.
+proxy needs to find this installation of the app. The registration is written at the agent's user
+or global scope, never for one folder: Phosphor will be available in every Claude Code, Codex,
+Hermes or Grok session on this Mac, not just one folder, and moves under your threshold run on
+their own up to your daily auto ceiling (five times the threshold by default, $500 on a fresh
+install; see [Policy](policy.md)). The picker says the same sentence behind Details. An entry that
+already exists is removed and written again, so it always names the paths of the app you have now.
+If the registration cannot be written, the sentence says so and the line to paste is shown; Details
+holds the same line for anyone who would rather run it themselves.
 
 Another agent gets the stdio command instead, with the environment in front of it:
 

@@ -11,21 +11,25 @@ docs/superpowers/prompts/ready-for-people/evidence-c/.
 - a9e7bc4 The first run's connect step is the agent picker (six tiles, one sentence, Details, Start it only for the agent the app can lock down, the threshold lands in policy.json); the Vault tab's Agent panel shows the picked agent, its state, Change and Check again, and names an agent that has gone. Tests: tests/unit/firstrun-ui.test.ts, tests/unit/vault-agent-ui.test.ts
 - 1f2f29a A probe runs with its stdin closed; Hermes is registered by removing the old entry and answering its Enable-all-tools question down stdin. Test: tests/unit/agents-catalog.test.ts over tests/fixtures/fake-agent-asks.sh
 - 7d03ad8 The picker's fill says picked and keyboard focus is the ring alone, an empty sentence draws no light, two columns under 420 px, the panel's rules fact is called the threshold
-- the last commit on the branch (git log -1): this report, the evidence and four lessons
+- 7d37427 Node C report, evidence and four lessons; 291fc9a and 52ac8ad merges of main; a9771b1 counts line
+- (review round, the last commit on the branch, git log -1) the security reviewer's four items: the
+  menu item's line is refused unless the answer carries this boot's nonce and is one printable line
+  (cargo tests), the user-scope sentence with the daily auto ceiling behind Details and in the doc, the
+  done screen reads its two sentences off the pick and the money step, registration evidence re-captured
 
 ## 2. Counts
 
 - `npm run typecheck`: exit 0 (state/typecheck.log).
-- `npm test`: 3123 tests, 3123 pass, 0 fail, on the tree with main eb28109 merged in (merge commit
-  52ac8ad). Main alone is 3068; this branch adds 55 (agents-catalog 22, connection-route 7,
-  policy-threshold-route 4, firstrun-ui 13, vault-agent-ui 9). Before the merge the tree showed one
+- `npm test`: 3125 tests, 3125 pass, 0 fail, on the tree with main eb28109 merged in (merge commit
+  52ac8ad) plus the review round. Main alone is 3068; this branch adds 57 (agents-catalog 22,
+  connection-route 8, policy-threshold-route 4, firstrun-ui 14, vault-agent-ui 9). Before the merge the tree showed one
   failure, `tests/unit/demo-rail.test.ts` "the stall knob stops the walk at PROCESSING", which failed the
   same way on the branch base 6ff58a9 with none of my commits and which main's bb4b842 fixed.
 - `npm run eval`: not run. Nothing the agent reads or says changed: src/persona.ts, src/role.ts, skills/,
   operator/, the tool descriptions in src/mcp.ts and every view.ts consumer are untouched
   (`git diff 6ff58a9 --stat` names none of them).
-- `cargo check` in src-tauri: clean, 0 warnings, after `npm run bundle` staged the payload
-  (state/cargo-check.log).
+- `cargo check` in src-tauri: clean, 0 warnings, after `npm run bundle` staged the payload;
+  `cargo test --bin phosphor-desktop`: 23 passed, 0 failed (two new).
 - Regression tests red on the parent (11.1): the four new test files copied onto a worktree at 6ff58a9
   fail there (policy-threshold-route 0/1, firstrun-ui 0/1, connection-route 0/1, vault-agent-ui 0/9) and
   pass here (4, 13, 7, 9).
@@ -41,7 +45,8 @@ docs/superpowers/prompts/ready-for-people/evidence-c/.
   ("a binary that never answers still gets a state inside three seconds", "the scan checks every agent
   ... inside three seconds"). Live on this Mac with the real vendor homes: 251 ms for all four
   (evidence-c/scan-and-lines.md). No vendor network call: the probes are `claude auth status`, `codex
-  login status`, `hermes config get model`, and the presence of ~/.grok/auth.json (values never read).
+  login status`, `hermes config get model`, and for grok the file ~/.grok/auth.json, which is parsed
+  for its key count only: no value in it is kept, printed or sent, and nothing leaves the Mac.
 - 10.3 PASS. One sentence per state from `stateSentence`, the definitions file's three sentences word for
   word, the path and version only in `details` (behind Details on both screens):
   agents-catalog.test.ts ("the sentence for every state ... names no path"), firstrun-ui.test.ts ("the
@@ -52,7 +57,14 @@ docs/superpowers/prompts/ready-for-people/evidence-c/.
   mcp_command) alike, with PHOSPHOR_PORT and PHOSPHOR_DATA_DIR in every mode and the bundled node when
   packaged: connection-route.test.ts (per-agent lines, GET equals POST, packaged branch),
   agents-catalog.test.ts (argv per vendor, remove-then-add). Live: the four real binaries registered into
-  isolated homes from the running backend, and the vendor files show the entry (evidence-c/registration-live.md).
+  empty isolated homes from the running backend, and every vendor file carries both keys
+  (evidence-c/registration-live.md, re-captured after the review). The menu item copies the line only
+  from an answer that carries this boot's nonce (identity_matches) and only when it is one printable
+  line: `cargo test --bin phosphor-desktop` 23 passed, two of them new (the_copied_line_comes_only_from_this_boots_backend,
+  a_command_that_is_not_one_printable_line_is_never_copied). The registration is user or global scope
+  on purpose, said in one sentence behind Details for the four agents with the daily auto ceiling as
+  the cap (connection-route.test.ts "an agent the app registers is told, behind Details") and in
+  docs/connect-an-agent.md.
 - 10.5 PASS. In-app start only for Claude Code (`inApp: true` for one entry, asserted); the others get
   "is signed in: start it in your terminal and it will appear here", and the light plus the sentence
   "X is connected." follow the roster's client name: firstrun-ui.test.ts ("the light turns on when a
@@ -84,7 +96,11 @@ docs/superpowers/prompts/ready-for-people/evidence-c/.
   ("Connect your assistant" became "Your assistant" in three assertions).
 - 9.2 PASS. One primary per state (quiet Continue before a pick, Start it, Check again, Continue), "Do
   this later" as the one secondary, a failed action shows one sentence and the same button:
-  firstrun-ui.test.ts ("a start that fails is one sentence over the same Start it").
+  firstrun-ui.test.ts ("a start that fails is one sentence over the same Start it"). The done screen
+  reads its sentences off what the steps saw: a connection only when the agent is on the door or the
+  app started it, "Start Codex in your terminal", "Install Claude Code or Codex, then pick it in the
+  Vault tab" for a chat app, and "Add money any time from the Basic tab" when nothing landed
+  (firstrun-ui.test.ts "the done screen says what the assistant step actually found").
 - 9.3 PASS. Nothing slower than today: a pick is one round trip (18 ms for Claude Desktop, 119 to 750 ms
   for an installed agent including the vendor's `mcp add`, 3.3 s for Hermes because its add connects to
   the proxy first); the check on the vault opens in 251 ms with real homes.
@@ -106,9 +122,11 @@ docs/superpowers/prompts/ready-for-people/evidence-c/.
 - 10.2 Hermes counts as signed in when `hermes config get model` prints a provider and a default model:
   Hermes has no single login, and `hermes auth status <provider>` said "logged out" for a provider whose
   key was set through the environment. `hermes model` is its sign-in line.
-- 10.4 Claude Code is registered at user scope (`--scope user`), so the server is there in every
-  directory the person opens Claude Code in. The old line was local scope and only worked from the
-  directory it was run in.
+- 10.4 Registration is user or global scope for all four agents (Claude Code `--scope user`, grok
+  `--scope user`, Codex and Hermes have one global file), decided with the lead at review: a person
+  who is not a developer connects once and expects the agent to drive Phosphor from any terminal. No
+  local-scope option. The sentence behind Details and in the doc says so, with the daily auto ceiling
+  named as the cap on what runs without a click.
 - 10.4 The connection line carries PHOSPHOR_PORT and PHOSPHOR_DATA_DIR in dev too, not only packaged:
   a checkout on any port other than 4177 was handing out a line whose proxy talked to 4177.
 - 10.4 Hermes: the old entry is removed and the "Enable all N tools? [Y/n/select]" question is
@@ -122,6 +140,13 @@ docs/superpowers/prompts/ready-for-people/evidence-c/.
 - 6 Threshold: only humanClickAboveUsd moves; autoApproveDailyUsd is left as the policy has it
   (an independent wall), the ceiling is the engine's AXIS_CEILING_USD and the never-asks rule is
   checked against the cap in force.
+- Menu item (review item 1): mcp_command takes this boot's nonce and refuses any answer whose identity
+  header does not carry it, before the body is read, and refuses a command that is empty, over 4096
+  bytes or holds a control character; the call site at the menu handler passes the nonce from Secrets
+  (one line outside my 139-152 range, asked for by the reviewer).
+- Done screen (review item 3): the picker reports its state (agent, check, on the door, started) to the
+  step, which keeps it in `draft.agent`; the money step keeps `draft.moneyIn`; both halves of the done
+  sentence read from those.
 - The stylesheet is linked from ui/index.html (one added line, node E's file): injecting the link from
   firstrun.js was refused by tests/unit/ui-links.test.ts, which allows href writes in links.js only.
   Also src/http/router.ts (unowned) gained the two route table lines. Both diffs are in section 5.

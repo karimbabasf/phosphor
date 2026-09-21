@@ -138,18 +138,38 @@ pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// the person picked. No token on that route and nothing secret in the answer: a path already on
 /// this disk, this app's port and data directory. The bundled runtime is still checked first so
 /// a broken bundle fails with the same sentence it always did, before the port is asked.
-fn mcp_command(_payload: &Path, _data: &Path, port: u16) -> Result<String, String> {
+///
+/// THE ANSWER IS TRUSTED ONLY FROM THIS BOOT'S BACKEND. The port can be held by something else
+/// during the respawn backoff (see refuse_existing), and a line copied to the clipboard is a
+/// command the person is about to paste into a terminal, so the response has to carry this
+/// boot's nonce in its identity header (identity_matches, the same check the readiness poll
+/// makes) before a byte of it is read, and the command it carries has to be one printable line.
+fn mcp_command(_payload: &Path, _data: &Path, port: u16, nonce: &str) -> Result<String, String> {
     node_binary()?;
     let head = format!("GET /api/connection HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     let raw = backend::request_within(port, &head, None, Duration::from_secs(5))
         .ok_or_else(|| format!("Phosphor is not answering on 127.0.0.1:{port}, so there is no line to copy yet."))?;
-    let body = raw.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+    connection_line_from(&raw, nonce)
+}
+
+/// The command in a GET /api/connection response, or why it is refused. Pure, so the two
+/// refusals a person must never paste through (a stranger on the port, a command that is not
+/// one line) are held by tests without a socket.
+fn connection_line_from(response: &str, nonce: &str) -> Result<String, String> {
+    if !backend::identity_matches(response, Some(nonce)) {
+        return Err("Something else is answering on Phosphor's port, so nothing was copied. Quit it and try again.".to_string());
+    }
+    let body = response.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
     let parsed: serde_json::Value =
         serde_json::from_str(body.trim()).map_err(|e| format!("the app's answer could not be read: {e}"))?;
-    match parsed.get("command").and_then(|c| c.as_str()) {
-        Some(command) => Ok(command.to_string()),
-        None => Err("The agent you picked has no line to paste. Pick an agent in the Vault tab's Agent panel first.".to_string()),
+    let command = match parsed.get("command").and_then(|c| c.as_str()) {
+        Some(command) => command,
+        None => return Err("The agent you picked has no line to paste. Pick an agent in the Vault tab's Agent panel first.".to_string()),
+    };
+    if command.is_empty() || command.len() > 4096 || command.chars().any(|c| c.is_control()) {
+        return Err("The app's answer was not one line, so nothing was copied.".to_string());
     }
+    Ok(command.to_string())
 }
 
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -214,7 +234,8 @@ fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
     let result = payload_dir(app).and_then(|payload| {
         let data = data_dir(app)?;
         let port = configured_port(&payload, &data);
-        let command = mcp_command(&payload, &data, port)?;
+        let nonce = app.state::<Secrets>().0.nonce.clone();
+        let command = mcp_command(&payload, &data, port, &nonce)?;
         app.clipboard()
             .write_text(command)
             .map_err(|e| format!("could not write to the clipboard: {e}"))
@@ -645,8 +666,47 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL};
+    use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL};
     use std::time::Duration;
+
+    const NONCE: &str = "abc123";
+
+    fn answer(nonce_header: Option<&str>, body: &str) -> String {
+        let header = nonce_header.map(|n| format!("x-phosphor: {n}\r\n")).unwrap_or_default();
+        format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n{header}\r\n{body}")
+    }
+
+    #[test]
+    fn the_copied_line_comes_only_from_this_boots_backend() {
+        let body = r#"{"agent":"codex","command":"codex mcp add phosphor --env PHOSPHOR_PORT=4177 -- node /x/src/mcp.ts"}"#;
+        assert_eq!(
+            connection_line_from(&answer(Some(NONCE), body), NONCE).unwrap(),
+            "codex mcp add phosphor --env PHOSPHOR_PORT=4177 -- node /x/src/mcp.ts"
+        );
+        // The header is matched without regard to case, as on the wire.
+        assert!(connection_line_from(&answer(Some("ABC123"), body), NONCE).is_ok());
+        // Another boot's nonce, the fixed marker any server can send, and no marker at all are
+        // all a stranger on the port: refused before the body is read.
+        assert!(connection_line_from(&answer(Some("other"), body), NONCE).unwrap_err().contains("Something else is answering"));
+        assert!(connection_line_from(&answer(Some("control"), body), NONCE).is_err());
+        assert!(connection_line_from(&answer(None, body), NONCE).is_err());
+    }
+
+    #[test]
+    fn a_command_that_is_not_one_printable_line_is_never_copied() {
+        let two_lines = r#"{"command":"codex mcp add phosphor\nrm -rf ~"}"#;
+        assert!(connection_line_from(&answer(Some(NONCE), two_lines), NONCE).unwrap_err().contains("not one line"));
+        let carriage = r#"{"command":"codex mcp add phosphor\r"}"#;
+        assert!(connection_line_from(&answer(Some(NONCE), carriage), NONCE).is_err());
+        let escape = "{\"command\":\"codex \\u001b[31m mcp add\"}";
+        assert!(connection_line_from(&answer(Some(NONCE), escape), NONCE).is_err());
+        assert!(connection_line_from(&answer(Some(NONCE), r#"{"command":""}"#), NONCE).is_err());
+        let long = format!(r#"{{"command":"{}"}}"#, "a".repeat(5000));
+        assert!(connection_line_from(&answer(Some(NONCE), &long), NONCE).is_err());
+        // No line at all (Claude Desktop) and an unreadable body are refused with their own sentence.
+        assert!(connection_line_from(&answer(Some(NONCE), r#"{"command":null}"#), NONCE).unwrap_err().contains("has no line to paste"));
+        assert!(connection_line_from(&answer(Some(NONCE), "not json"), NONCE).unwrap_err().contains("could not be read"));
+    }
 
     #[test]
     fn the_first_two_seconds_are_looked_at_forty_times_a_second() {

@@ -468,13 +468,13 @@ test('the light turns on when a client of the picked agent is on the door, and t
 
 /* ---------- the threshold ---------- */
 
-async function atThreshold(world: World): Promise<Any> {
+/* The software flow walked to the assistant step on the import path, which skips the words and
+   the prove step (they need a phrase). `pick` clicks that tile there and waits for the answer. */
+async function atAssistant(world: World, pick?: string): Promise<Any> {
   world.store.put({ ...world.store.get(), vault: { ...ENCLAVE, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } });
-  world.answers['agent-pick'] = { ok: true, check: CHECKS.desktop, command: null, picked: 'desktop' };
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.screen;
   buttonNamed(screen, 'Get started').click();
-  // The import path: it skips the words and the prove step, which need a phrase.
   (find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have one')) as Any).click();
   buttonNamed(screen, 'Continue').click(); // choose
   find(screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
@@ -483,11 +483,79 @@ async function atThreshold(world: World): Promise<Any> {
   buttonNamed(screen, 'Continue').click(); // addresses
   buttonNamed(screen, 'Do this later').click(); // money
   await flush();
+  assert.ok(visibleText(screen).includes('Your assistant'), 'the assistant step did not open');
+  if (pick) {
+    tile(screen, pick).click();
+    await flush();
+    await flush();
+  }
+  return screen;
+}
+
+async function atThreshold(world: World): Promise<Any> {
+  world.answers['agent-pick'] = { ok: true, check: CHECKS.desktop, command: null, picked: 'desktop' };
+  const screen = await atAssistant(world);
   buttonNamed(screen, 'Do this later').click(); // assistant
   await flush();
   assert.ok(visibleText(screen).includes('Set the ask threshold'), 'the threshold step did not open');
   return screen;
 }
+
+/* ---------- the done screen ---------- */
+
+async function doneSentence(world: World, pick?: string): Promise<string> {
+  const screen = await atAssistant(world, pick);
+  const primary = find(screen, '.screen-actions')[0].childNodes.slice(-1)[0];
+  if (primary.textContent === 'Start it') {
+    primary.click();
+    await flush();
+    await flush();
+  }
+  (buttonNamed(screen, 'Continue') ?? buttonNamed(screen, 'Do this later')).click();
+  await flush();
+  world.answers['/api/policy/threshold'] = { ok: true, threshold: 100, from: 100 };
+  buttonNamed(screen, 'Continue').click(); // threshold
+  await flush();
+  assert.ok(visibleText(screen).includes('Done'), 'the done screen did not open');
+  return find(screen, 'p.body')[0].textContent;
+}
+
+test('the done screen says what the assistant step actually found, never a connection nobody made', async () => {
+  const cases: Array<[string | undefined, Answer | undefined, string]> = [
+    ['desktop', { ok: true, check: CHECKS.desktop, command: null, picked: 'desktop' }, 'Install Claude Code or Codex, then pick it in the Vault tab.'],
+    ['codex', { ok: true, check: CHECKS.codexIn, command: LINE, registered: true, picked: 'codex' }, 'Start Codex in your terminal and it will appear.'],
+    ['codex', { ok: true, check: CHECKS.codexOut, command: LINE, picked: 'codex' }, 'Sign in to Codex, then start it in your terminal.'],
+    ['codex', { ok: true, check: CHECKS.codexMissing, command: LINE, picked: 'codex' }, 'Install Codex, then pick it in the Vault tab.'],
+    ['mcp', { ok: true, check: CHECKS.other, command: 'PHOSPHOR_PORT=4177 node /x', picked: 'mcp' }, 'Paste the line from the Vault tab into your agent and it will appear.'],
+    [undefined, undefined, 'Pick your assistant in the Vault tab when you are ready.'],
+  ];
+  for (const [pick, answer, expected] of cases) {
+    const world = build();
+    if (answer) world.answers['agent-pick'] = answer;
+    const text = await doneSentence(world, pick);
+    assert.ok(text.includes(expected), `${pick ?? 'no pick'}: ${text}`);
+    assert.ok(!text.includes('is connected'), `${pick ?? 'no pick'} claims a connection: ${text}`);
+    assert.ok(text.startsWith('Add money any time from the Basic tab.'), `the money half is not honest when nothing landed: ${text}`);
+    assert.ok(text.endsWith('Nothing moves unless you say so.'));
+  }
+
+  // Claude Code started in-app is a connection, and so is a client on the door.
+  const started = build();
+  started.answers['agent-pick'] = { ok: true, check: CHECKS.claudeIn, command: 'x', registered: true, picked: 'claude' };
+  started.answers.start = { ok: true, state: 'ready', running: true };
+  assert.ok((await doneSentence(started, 'claude')).includes('Your assistant is connected.'));
+
+  const attached = build();
+  attached.answers['agent-pick'] = { ok: true, check: CHECKS.codexIn, command: LINE, registered: true, picked: 'codex' };
+  const screen = await atAssistant(attached, 'codex');
+  attached.store.put({ ...attached.store.get(), agents: { members: [{ client: 'codex-cli', label: 'codex', ops: 1 }] } });
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  attached.answers['/api/policy/threshold'] = { ok: true, threshold: 100, from: 100 };
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  assert.ok(find(screen, 'p.body')[0].textContent.includes('Your assistant is connected.'));
+});
 
 test('Continue on the threshold step posts the figure to the policy route and moves on when it lands', async () => {
   const world = build();

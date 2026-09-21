@@ -45,7 +45,11 @@
   var stepHandle = null;
   var step = 0;
   var welcomed = false;
-  var draft = { path: 'create', password: '', mnemonic: [], threshold: 100, addresses: null };
+  /* `agent` is what the assistant step learned: which agent was picked, the app's check of it,
+     whether it is on the door, and whether the app started it. The done screen reads its
+     sentence off this rather than asserting a connection nobody made. `moneyIn` is whether the
+     money step saw the balance land. */
+  var draft = { path: 'create', password: '', mnemonic: [], threshold: 100, addresses: null, agent: null, moneyIn: false };
   var open_ = false;
 
   function boot() {
@@ -803,6 +807,7 @@
       var deposit = state.deposit && typeof state.deposit.phase === 'string' ? state.deposit : null;
       var landed = total > 0 || !!(deposit && deposit.phase === 'credited');
       dom.setText(value, dom.usd(total));
+      draft.moneyIn = landed;
       dom.setText(lead, landed ? 'Your money is here.' : 'Send anything to one of your addresses and it will appear here.');
       if (line) line.render(deposit);
       dom.setHidden(idle, landed || !!deposit);
@@ -845,6 +850,7 @@
 
     function paintActions(state) {
       var check = state && state.check ? state.check : null;
+      draft.agent = state ? { agent: state.agent, check: check, connected: !!state.connected, started: started } : null;
       if (!check) {
         replaceActions('Continue', function () { next(); }, { skip: 'Do this later', quiet: true });
         return;
@@ -863,6 +869,7 @@
             .then(function (answer) {
               if (answer && answer.ok === false) throw new Error('refused');
               started = true;
+              if (draft.agent) draft.agent.started = true;
               state.handle.say(check.name + ' is at the wheel.', 'ready');
               paintActions(state);
             })
@@ -942,14 +949,29 @@
     }, { pending: 'Saving' });
   }
 
-  /* 9 */
+  /* 9. Three facts, each read off what the steps before actually saw: whether the money landed,
+     what the assistant step found, and the one thing that is always true. "Your assistant is
+     connected" used to be printed whatever was picked, including a chat app that cannot drive. */
   function screenDone() {
     card.appendChild(dom.el('h1', 'title', 'Done'));
-    card.appendChild(dom.el('p', 'body', 'Your money is here. Your assistant is connected. Nothing moves unless you say so.'));
+    var money = draft.moneyIn ? 'Your money is here.' : 'Add money any time from the Basic tab.';
+    card.appendChild(dom.el('p', 'body', money + ' ' + doneAgentSentence(draft.agent) + ' Nothing moves unless you say so.'));
     actions('Open Phosphor', function () {
       close();
       window.PhosphorShell.setView('basic', { fromClick: true });
     }, { back: false });
+  }
+
+  /* The assistant half of the done screen, one sentence per case the picker can leave behind. */
+  function doneAgentSentence(agent) {
+    var check = agent && agent.check ? agent.check : null;
+    if (!check) return 'Pick your assistant in the Vault tab when you are ready.';
+    if (agent.connected || agent.started) return 'Your assistant is connected.';
+    if (check.agent === 'desktop') return 'Install Claude Code or Codex, then pick it in the Vault tab.';
+    if (check.agent === 'mcp') return 'Paste the line from the Vault tab into your agent and it will appear.';
+    if (check.state === 'installed_and_logged_in') return 'Start ' + check.name + ' in your terminal and it will appear.';
+    if (check.state === 'installed_not_logged_in') return 'Sign in to ' + check.name + ', then start it in your terminal.';
+    return 'Install ' + check.name + ', then pick it in the Vault tab.';
   }
 
   /* ---------- helpers ---------- */
@@ -1294,10 +1316,14 @@
     function paintLight() {
       var whole = store && typeof store.get === 'function' ? (store.get() || {}) : {};
       var connected = !!state.agent && onDoor(state.agent, whole);
+      var changed = connected !== state.connected;
       state.connected = connected;
       dom.setAttr(light, 'data-state', connected ? 'ready' : 'off');
       if (connected && state.check) say(state.check.name + COPY.onDoor, null);
       else if (state.check && !state.busy) paintSentenceOff();
+      /* The host's action row and the done screen read the connection off this
+         state, so a client arriving or leaving is told the same way a check is. */
+      if (changed && state.check && !state.busy) tell();
     }
 
     /* Back from Connected to the check's own sentence when the client leaves. */

@@ -26,7 +26,7 @@ import {
   scanAgents,
   writePick,
 } from '../agents-catalog.ts';
-import type { AgentCheck, AgentId, ConnectionSpec } from '../agents-catalog.ts';
+import type { AgentCheck, AgentEntry, AgentId, ConnectionSpec } from '../agents-catalog.ts';
 import { savePolicyChecked } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import { AXIS_CEILING_USD } from '../policy/engine.ts';
@@ -111,12 +111,29 @@ function inAppRunning(ctx: Ctx): boolean {
   return chats.all().some((chat) => chat.driver.status().running);
 }
 
+/* A registration is written at user scope: it reaches every session of that agent on this Mac,
+   not the one folder a person happened to run a line from. That is the product's call for
+   someone who is not a developer and connects once, and it is said in one sentence behind
+   Details, with the cap on what then runs without a click, the daily auto ceiling, named beside
+   it. Said here rather than in the catalog because the ceiling is the policy's figure. */
+export function scopeSentence(entry: AgentEntry, dailyCapUsd: number | null): string {
+  const cap = dailyCapUsd === null ? 'up to your daily auto ceiling' : `up to ${money(dailyCapUsd)} a day`;
+  return `Phosphor will be available in every ${entry.name} session on this Mac, not just one folder, and moves under your threshold run on their own ${cap}.`;
+}
+
 /* The check the picker and the vault panel both draw from: the catalog's four-state answer plus
    the connection line for that agent. `wasPicked` turns "not on this Mac yet" into "no longer
    on this Mac" for the agent the person chose earlier and has since removed. */
 async function checkFor(ctx: Ctx, agent: AgentId): Promise<AgentCheck> {
   const picked = readPick(dataDirOf(ctx))?.agent ?? null;
-  return checkAgent(agent, { wasPicked: picked === agent });
+  const check = await checkAgent(agent, { wasPicked: picked === agent });
+  const entry = agentById(agent);
+  if (entry !== null && entry.registers) {
+    const policy = (ctx as Partial<Ctx>).getPolicy?.() ?? null;
+    const cap = policy?.outbound.autoApproveDailyUsd;
+    check.details.push(scopeSentence(entry, typeof cap === 'number' ? cap : null));
+  }
+  return check;
 }
 
 /* ---------- the onboarding threshold ---------- */

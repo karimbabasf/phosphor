@@ -17,7 +17,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 
-import { handleConnectionRead, handleMutation } from '../../src/http/mutation.ts';
+import { handleConnectionRead, handleMutation, scopeSentence } from '../../src/http/mutation.ts';
+import { agentById } from '../../src/agents-catalog.ts';
 import type { Ctx } from '../../src/http/context.ts';
 import { readPick, writePick } from '../../src/agents-catalog.ts';
 import { createAgents } from '../../src/agents.ts';
@@ -40,6 +41,7 @@ async function boot(): Promise<App> {
     agents: createAgents(),
     sse: { broadcastState: () => {} },
     chats: { all: () => [{ driver: { status: () => ({ state: running.value ? 'ready' : 'off', sessionId: '', running: running.value }) } }] },
+    getPolicy: () => ({ outbound: { humanClickAboveUsd: 100, autoApproveDailyUsd: 500, maxPerTransactionUsd: 10000 } }),
   } as unknown as Ctx;
 
   const server = http.createServer((req, res) => {
@@ -211,6 +213,26 @@ test('the picker\'s actions carry the window token like every other write; the s
     }
     assert.equal(readPick(app.dataDir), null);
     assert.equal((await get(app, '/api/connection')).status, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('an agent the app registers is told, behind Details, that the registration reaches every session on this Mac, with the daily auto ceiling as the cap', async () => {
+  const app = await boot();
+  try {
+    for (const agent of ['claude', 'codex', 'hermes', 'grok']) {
+      const { json } = await post(app, '/api/driver', { action: 'agent-check', agent });
+      const details = (json.check as { details: string[] }).details;
+      const name = agentById(agent)!.name;
+      assert.ok(details.includes(`Phosphor will be available in every ${name} session on this Mac, not just one folder, and moves under your threshold run on their own up to $500.00 a day.`), `${agent}: ${details.join(' | ')}`);
+      assert.ok(!String((json.check as { sentence: string }).sentence).includes('every'), 'the scope sentence reached the visible sentence');
+    }
+    for (const agent of ['mcp', 'desktop']) {
+      const { json } = await post(app, '/api/driver', { action: 'agent-check', agent });
+      assert.ok(!(json.check as { details: string[] }).details.some((d) => d.includes('every')), agent);
+    }
+    assert.equal(scopeSentence(agentById('codex')!, null), 'Phosphor will be available in every Codex session on this Mac, not just one folder, and moves under your threshold run on their own up to your daily auto ceiling.');
   } finally {
     await app.close();
   }
