@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
-import type { AppConfig, Mode } from './types.ts';
+import type { AppConfig, Mode, SwapRail } from './types.ts';
 // The keystore owns where a keystore file sits. Imported rather than restated, because a second
 // copy of that filename is a second thing to keep in step with the first.
 import { keystorePathFor } from './keystore/store.ts';
@@ -55,6 +55,9 @@ const addressBookSchema = z
 // below cannot drift into accepting different sets.
 const MODES = ['live', 'demo'] as const;
 
+// The two swap rails, named once so the schema and the default cannot drift.
+const SWAP_RAILS = ['relay', 'oneclick'] as const;
+
 const configSchema = z
   .object({
     mode: z.enum(MODES).optional(),
@@ -86,8 +89,26 @@ const configSchema = z
       })
       .strict()
       .optional(),
+    // The swap rail switch. 'relay' is the solver relay (one atomic token_diff); 'oneclick' is
+    // the 1Click transfer it replaced, kept reachable for a month after the flip. The kill
+    // switch at every phase of the migration is this one line and a restart.
+    swap: z
+      .object({
+        rail: z.enum(SWAP_RAILS),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
+
+export const DEFAULT_SWAP_RAIL: SwapRail = 'relay';
+
+/* The one reader of the switch. The registry builds both rails and picks by the venue the
+   draft carries; proposeSwap stamps that venue from here. A config with no swap block runs the
+   relay, which is the flip the spec's phase 3 describes. */
+export function swapRailOf(cfg: Pick<AppConfig, 'swap'>): SwapRail {
+  return cfg.swap?.rail ?? DEFAULT_SWAP_RAIL;
+}
 
 // JSON has no comment syntax, so the committed template carries its prose under keys named
 // _comment and _skills. That convention predates this schema and is not an unknown key.
@@ -334,6 +355,7 @@ export function loadConfig(root?: string): AppConfig {
     keysPath,
   };
   if (parsed.chainscan !== undefined) cfg.chainscan = parsed.chainscan;
+  if (parsed.swap !== undefined) cfg.swap = parsed.swap;
 
   // After the merge, because config.local.json overrides the template key by key and it is the
   // merged book every other module reads. The file named is the local one when it carries an

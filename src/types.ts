@@ -398,6 +398,10 @@ export type RailEvidence = {
   // was used (src/quote-signature.ts) and kept so a dispute is filed with the vendor's own
   // commitment rather than this app's memory of it.
   quote?: { correlationId: string; timestamp: string; signature: string; depositAddress: string };
+  // The relay quote a swap was signed against (src/rails/intents-relay.ts): the hash the
+  // publish named and the two amounts the signed diff carries, written before the publish so a
+  // process that dies after the signature still says what price it signed.
+  relayQuote?: { quoteHash: string; amountIn: string; amountOut: string; expiration: string };
 };
 
 export type RailResult = {
@@ -500,6 +504,11 @@ export type SwapSimulation = {
   receivesAtLeast: string; // the quote's minAmountOut, the floor the rail will hold the live quote to
   feeUsd: number | null; // amountInUsd minus amountOutUsd, when the quote priced both
   etaSeconds: number | null;
+  /* How long the price on the card stays good, in seconds, on a rail that quotes again at the
+     click (the relay: a quote lives about a minute, and the swap is re-priced after a human
+     approves; the floor is the contract, the number on the card is the estimate). Null where
+     the quote is held to the click. The card prints it as one line, never as a number to sum. */
+  priceGoodForSec?: number | null;
 };
 
 // What a send simulation learned from the dry quote and the chain, as fields rather than as a
@@ -821,7 +830,13 @@ export type AppConfig = {
   // limit. Read by the read handler on every call, sent only to the host each was issued for,
   // and never written to a log or an error.
   chainscan?: { blockscoutApiKey?: string; nearblocksApiKey?: string };
+  /* Which rail a swap runs on: the solver relay (one atomic token_diff) or the 1Click transfer
+     it replaces, kept one config line away for a month after the flip. Rail choice is config,
+     never code; absent means the relay (src/config.ts swapRailOf). */
+  swap?: { rail: SwapRail };
 };
+
+export type SwapRail = 'relay' | 'oneclick';
 
 // ---------- Service interfaces (wired in main.ts) ----------
 
