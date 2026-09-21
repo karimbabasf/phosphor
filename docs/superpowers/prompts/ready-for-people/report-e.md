@@ -172,3 +172,48 @@ data under state/), quit before this report. Evidence under evidence-e/.
 - [E] Grid rows follow the items that are placed: hiding the split handle takes a track with it.
 - [E] The theme tool holds --down to the 3:1 mark floor and the window sets words in it; the floor is the server's to raise.
 - [E] The inventory sheet forces hover, active and focus-visible through CSS.forcePseudoState on playwright-core's CDP session (the 1.63 copy drives the cached headless shell 1243).
+
+## E2 review fixes
+
+Fresh builder (node E2) on the two holes the re-check left at a21f7da: B6 on the send card
+(the sticky answer row covers the address at scroll 0) and B2 (the shared press loses the
+cascade for 10 of 20 families). Second failed fix on B6, so 11.2 applies: the hypotheses below
+were ranked and the top one tested by measurement before any edit.
+
+### B6: hypotheses, ranked
+
+1. TOP, tested first. `position: sticky; bottom: 0` on a row inside the scroll container cannot
+   satisfy "the row never covers a fact": a stuck element paints over the in-flow content that
+   fills the scrollport's last rows, and the facts that do not fit are exactly the ones it
+   covers. Fix 2 (6f34d66) could never pass the address clause on a card taller than the body.
+   Prediction: put the row outside the scroll container (the foot, `flex: 0 0 auto`, after the
+   body in DOM order) and the body's scrollport ends above the row, so no visible fact line can
+   sit under it (row.top >= body.bottom), the address is either whole in the scrollport or
+   clipped with data-more true and a fade, and No/Approve stay on screen because the dock's
+   max-height bounds body plus foot.
+2. The dock's cap (calc(100% - 120px)) is too small; a taller dock would fit the card at
+   scroll 0. Rejected as the cause: at 960x700 the send card scrolls 796 px in a 652 px column,
+   no cap fits it, and the address's place inside the card is node D's file. A contributing
+   factor at 1180x780 only.
+3. The fade signal (data-more) is wrong, so a person is not told there is more. Rejected: at
+   scroll 0 data-more is "true" at every size where the card overflows; the covered lines sit
+   under an opaque row, and no fade makes a covered line readable.
+4. The "1 more waiting, next" line and the kicker take the room. Contributing, not the cause:
+   the overflow at 960x700 is 266 px.
+
+### B6: measurements before, at a21f7da (own backend 4228, demo, send 250 USDC to
+0x8ba1f109551bD432803012645Ac136ddd64DBA72 on ethereum and swap 500 USDC to ETH parked through
+/api/mcp, both needs_approval; browser daemon e2; every size measured after a forced frame,
+scroll 0 then scrolled to the end; hit = elementFromPoint at the address line's centre)
+
+Send, scroll 0 (row sticky in the body):
+- 1180x780 (col 360): row 694-755, No/Approve bottom 743; address lines 682-700 (hit address at
+  the centre, ROW at its bottom edge) and 702-720 (hit ROW): the second line wholly under the row.
+- 960x700 (col 400): row 614-675, bottom 663; body clip ends at 691; address lines 682-700 (part,
+  cut by the clip) and 702-720 (clipped); the row covers the lines above the address.
+- 860x700: row 614-675, bottom 663; address lines 585-603 (address), 605-623 (ROW), 625-643 (ROW),
+  645-663 (ROW): three of four lines under the row.
+- 400x800: row 714-775, bottom 763; address lines 746-764 (ROW) and 766-784 (half under the row).
+- Scrolled to the end every line hits the address at all four sizes; the row stays put.
+Swap: No/Yes bottom at scroll 0: 694, 661, 655, 727; scrolled to the end 694, 614, 614, 714;
+both address lines hit the address at every size and state.

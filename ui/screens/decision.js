@@ -523,6 +523,7 @@
     else if (next.kind === 'unread') buildUnread(next.proposal);
     else if (next.kind === 'receipt') buildReceipt(next.receipt);
     else if (next.kind === 'card') next.build(refs.body, close);
+    if (next.kind === 'receipt' || next.kind === 'card') pinLastRow();
     /* Amber means a person still has to answer. A receipt and a recovery card
        are things to read, so they take the quiet edge instead. */
     dom.setAttr(refs.dock, 'data-state', dockState(next.kind));
@@ -530,6 +531,19 @@
     settle();
     window.PhosphorShell.updateField();
     hold(next.proposal);
+  }
+
+  /* A card somebody else builds into the body (the backup nudge, the recovery
+     words, a receipt, Turn off the assistant) ends in its own row of buttons.
+     The row moves to the foot, so a long card to read keeps its Done or Close
+     on screen the way an ask keeps its answer, and the builder's file knows
+     nothing about the dock's two parts. */
+  function pinLastRow() {
+    var last = refs.body.lastElementChild;
+    if (!last) return;
+    var cls = ' ' + String(last.className) + ' ';
+    if (cls.indexOf(' dock-actions ') < 0 && cls.indexOf(' screen-actions ') < 0) return;
+    refs.foot.appendChild(last);
   }
 
   function dockState(kind) {
@@ -595,16 +609,23 @@
     var touching = proposal.status === 'awaiting_touch';
     var send = isSend(draft);
     var body = refs.body;
-    /* THE ANSWER COMES AFTER THE FACTS.
+    /* THE FACTS SCROLL, THE ANSWER DOES NOT, AND THE ANSWER NEVER COVERS A FACT.
 
-       The buttons used to live in the foot, which does not scroll, so at 390 a
-       live Yes sat under a card whose recipient address and whose rule diff were
-       both below the fold: the one control that mattered was reachable without
-       reading the one fact that decided it. They are in the body now, in flow,
-       under the amount, the pockets, the address and the changes. A person at
-       390 scrolls past the address to reach Yes. The foot keeps what has to stay
-       on screen whatever the scroll: what went wrong with a click. */
-    var foot = body;
+       The buttons are in the foot, after the body in reading order, and the
+       fold of secondary lines comes after them. Three shapes failed before
+       this one. In the foot with nothing telling a person the body went on, a
+       live Yes at 390 sat under a card whose address was below the fold. In
+       the body's own flow, under the facts, No and Approve sat 156 px under
+       the fold on a send card at the app's default window. Sticky at the
+       bottom of the scrolling body, the row was painted over the address it
+       approves at scroll 0 at three of four window sizes, because a stuck
+       element sits on the in-flow lines that fill the scrollport's last
+       pixels. Outside the scroll container the row cannot overlap a fact: the
+       scrollport ends where the foot begins, and a line that does not fit is
+       clipped under the body's fade (data-more, settle()) rather than covered.
+       A person who reaches the buttons with the fade showing knows the card
+       goes on, and the address is one scroll away, whole and unhidden. */
+    var foot = refs.foot;
 
     /* One quiet line, at the top, for everything else that is waiting. It is the
        only way another request reaches this card, and it takes a tap. */
@@ -677,8 +698,9 @@
     actions.appendChild(no);
     actions.appendChild(yes);
     foot.appendChild(actions);
-    /* The secondary lines come under the answer, closed. */
-    if (rest.length) buildReport(body, 'The rest of it', rest.join('\n'), false);
+    /* The secondary lines come under the answer, closed. Opening them grows
+       the foot and the body gives up the room, so they never push the answer. */
+    if (rest.length) buildReport(foot, 'The rest of it', rest.join('\n'), false);
 
     /* A card that has just replaced another one holds its buttons for 600 ms,
        so a tap already on its way down cannot land on a request nobody read.
@@ -713,8 +735,10 @@
       yes.disabled = true;
       no.disabled = true;
       dom.setAttr(yes, 'data-touch', 'true');
-      foot.appendChild(dom.el('p', 'meta touch-reason',
-        touchReason() || 'The Touch ID dialog is up. Confirm it there, or cancel to come back here.'));
+      /* Right under the dead buttons, above the fold of secondary lines. */
+      foot.insertBefore(dom.el('p', 'meta touch-reason',
+        touchReason() || 'The Touch ID dialog is up. Confirm it there, or cancel to come back here.'),
+        actions.nextSibling);
       return;
     }
 

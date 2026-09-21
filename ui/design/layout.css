@@ -675,26 +675,31 @@ button.bar-state:active { transform: scale(0.97); }
   outline-offset: 2px;
 }
 
-/* The answer sits in the body now, so the foot only exists when something has
-   to stay on screen whatever the scroll. */
-.dock-foot:empty { display: none; }
-
 /* ---------- The decision dock ---------- */
 
 /* Inside the conversation column, between the transcript and the composer, and
    the one region drawn in amber: a transcript row cannot look like it.
 
    Two parts inside it, whatever card is up: a body that scrolls and a foot that
-   does not. The answer sits in the body under the facts, so the dock has to be
-   tall enough to show the facts and the answer together: it takes every pixel
-   of the column but the 120 the transcript keeps for its head and the reply
-   beside the card, and it never gives way to the transcript (a shrinking dock
-   put No and Yes under the fold on a 400 px column, the 62 percent it used to
-   be capped at plus the transcript's share). When a card is taller than even
-   that, the body scrolls. macOS hides scrollbars until they are touched, so
-   the body's last lines fade while there is more below (data-more on the
-   card, measured by decision.js): that fade is the only sign a person gets
-   that the card goes on. */
+   does not. The facts are the body; the answer (No and Yes, a read card's
+   Done, the note over them, the fold of secondary lines under them) is the
+   foot, after the body in reading order. The dock takes every pixel of the
+   column but the 120 the transcript keeps for its head and the reply beside
+   the card, and it never gives way to the transcript (a shrinking dock put No
+   and Yes under the fold on a 400 px column, the 62 percent it used to be
+   capped at plus the transcript's share). When a card is taller than that,
+   the body scrolls under a pinned foot. macOS hides scrollbars until they are
+   touched, so the body's last lines fade while there is more below (data-more
+   on the card, measured by decision.js): that fade is the only sign a person
+   gets that the card goes on.
+
+   THE ROW IS NEVER INSIDE THE SCROLLING BODY. A sticky row at the body's
+   bottom edge was tried (6f34d66): it kept No and Approve on screen, and at
+   scroll 0 it was painted over the address it approves at three of four
+   window sizes, because a stuck element sits on the in-flow lines that fill
+   the scrollport's last pixels. A foot outside the scroll container cannot
+   overlap a fact: the scrollport ends where the foot begins, and a line that
+   does not fit is clipped under the fade, never covered. */
 .dock {
   position: relative;
   z-index: 2;
@@ -707,8 +712,7 @@ button.bar-state:active { transform: scale(0.97); }
   margin: 0 var(--s-3) var(--s-2);
   border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
   border-radius: var(--radius);
-  /* The ground is a variable because the answer row paints itself on it
-     when it sticks (below). */
+  /* The ground is a variable so the three states below set it in one place. */
   --dock-ground: color-mix(in srgb, var(--bg-1) 94%, var(--warn));
   background: var(--dock-ground);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--warn) 45%, transparent);
@@ -753,76 +757,20 @@ button.bar-state:active { transform: scale(0.97); }
   gap: var(--s-3);
 }
 
-/* THE ANSWER STAYS ON SCREEN. No and Yes come after the facts in reading
-   order (decision.js builds them under the card and before the fold) and,
-   when the card is taller than the dock, the row sticks to the bottom edge of
-   the scrolling body on the dock's own ground: the facts scroll under it, the
-   row never leaves the screen, and the fold of secondary lines is reached by
-   scrolling past it. A send card (the whole address in groups of four, the
-   read-back lines) is taller than the dock at the app's default window, where
-   No and Approve sat 156 px under the fold. While there is more card under the
-   row (data-more, measured by decision.js) the last lines fade into the row
-   and a hairline over it says so; at the end of the card both go, so the last
-   line is never left half drawn. The fade used to be a mask on the body, which
-   would fade the pinned row with it. */
-.dock-body > .dock-actions,
-.dock-body > .screen-actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  margin: calc(var(--s-3) * -1) calc(var(--s-4) * -1) 0;
-  padding: var(--s-3) var(--s-4);
-  background: var(--dock-ground);
-  border-top: 1px solid transparent;
-  transition: border-color var(--dur-press) var(--ease-out);
-}
-
-.dock-body > .dock-actions::before,
-.dock-body > .screen-actions::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
-  height: 28px;
-  background: linear-gradient(to bottom, transparent, var(--dock-ground));
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--dur-press) var(--ease-out);
-}
-
-/* The scrollport's bottom padding sits under the pinned row, and scrolled
-   lines showed through that strip: the row paints its ground over it. */
-.dock-body > .dock-actions::after,
-.dock-body > .screen-actions::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 100%;
-  height: var(--s-4);
-  background: var(--dock-ground);
-  pointer-events: none;
-}
-
-.dock-card[data-more="true"] .dock-body > .dock-actions,
-.dock-card[data-more="true"] .dock-body > .screen-actions {
-  border-top-color: color-mix(in srgb, var(--warn) 28%, transparent);
-}
-
-.dock-card[data-more="true"] .dock-body > .dock-actions::before,
-.dock-card[data-more="true"] .dock-body > .screen-actions::before {
-  opacity: 1;
-}
-
-.dock[data-state="read"] .dock-card[data-more="true"] .dock-body > .dock-actions,
-.dock[data-state="read"] .dock-card[data-more="true"] .dock-body > .screen-actions {
-  border-top-color: var(--line);
+/* The fade: the bottom 40 px of the scrolling body thins out while there is
+   more card under it (data-more, measured by decision.js), and comes back
+   solid at the end so the last line is never left half drawn. On the body
+   alone: the foot under it is outside the mask, so the answer never fades. */
+.dock-card[data-more="true"] .dock-body {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
 }
 
 /* The foot: a hairline in the dock's own amber over the buttons, so the pinned
-   part reads as one card with the body and not as a bar laid over it. Empty
-   (a receipt, a card of somebody else's) it takes no room at all. */
+   part reads as one card with the body and not as a bar laid over it. It never
+   shrinks: the body gives up the room, whatever the fold under the answer
+   opens to. Empty (the answer flash, a live row with nothing to press) it
+   takes no room at all. */
 .dock-foot {
   flex: 0 0 auto;
   display: flex;

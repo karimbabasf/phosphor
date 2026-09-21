@@ -3,9 +3,10 @@
 //
 // On 2026-09-21 a swap card on a 400 px column at 800 px of height put No and Yes 137 px under
 // the fold: the dock was capped at 62 percent of the column and shrank further for the
-// transcript's share, while the answer sits in the body under the facts (decision-dock-ui.test.ts
-// keeps it there, on purpose). The rules pinned here are what moved the answer back on screen,
-// measured in a real browser at 400 by 800, 400 by 780, 860 by 800 and 860 by 700.
+// transcript's share. The rules pinned here are what moved the answer back on screen, measured
+// in a real browser at 400 by 800, 400 by 780, 860 by 800 and 860 by 700; the answer row's own
+// place (a pinned foot after the scrolling body, decision-dock-ui.test.ts holds the DOM) is
+// the last two tests.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,33 +45,39 @@ test('what the transcript holds under the dock fades rather than slicing a sente
   assert.match(fade?.[1] ?? '', /mask-image:\s*linear-gradient\(to bottom, #000 calc\(100% - 32px\), transparent 100%\)/);
 });
 
-/* The send card is taller than the dock at the app's default window (1180 by 780): No and
-   Approve sat 156 px under the fold there, 117 px at 1280 by 800 and 218 px at 960 by 700, with
-   the swap card's own 34 px at 400 by 700. The answer row sticks to the bottom of the scrolling
-   body on the dock's ground, in its reading order (decision.js: under the facts, before the
-   fold), so it is on screen at every size; measured on screen at all seven sizes. */
-test('the answer row sticks to the bottom of the scrolling body, on the dock\'s ground', () => {
-  const row = LAYOUT.match(/\.dock-body > \.dock-actions,\s*\.dock-body > \.screen-actions\s*\{([^}]*)\}/);
-  assert.ok(row, 'no rule pins the answer row');
-  assert.match(row?.[1] ?? '', /position:\s*sticky;/);
-  assert.match(row?.[1] ?? '', /bottom:\s*0;/);
-  assert.match(row?.[1] ?? '', /background:\s*var\(--dock-ground\);/);
-  assert.match(block(LAYOUT, '.dock'), /--dock-ground:\s*color-mix\(in srgb, var\(--bg-1\) 94%, var\(--warn\)\);/);
-  assert.match(LAYOUT, /\.dock\[data-state="done"\]\s*\{\s*--dock-ground:\s*var\(--bg-1\);/);
-  // The strip under the row (the scrollport's padding) is painted too, or scrolled lines show.
-  assert.match(LAYOUT, /\.dock-body > \.dock-actions::after,\s*\.dock-body > \.screen-actions::after\s*\{[^}]*top:\s*100%;[^}]*background:\s*var\(--dock-ground\);/);
+/* THE ANSWER ROW IS OUTSIDE THE SCROLLING BODY. A send card is taller than the dock at the
+   app's default window (1180 by 780) and at every smaller size, so something has to scroll.
+   14a10d3 left the row in the body's flow and No and Approve sat 156 px under the fold; 6f34d66
+   made the row sticky at the bottom of the scrolling body, and at scroll 0 it was painted over
+   the address it approves at three of four sizes (the re-check's finding). A sticky row cannot
+   do otherwise: it sits on the in-flow lines that fill the scrollport's last pixels. The foot
+   is the answer: a second flex child after the body, flex 0 0 auto, never sticky, so the body's
+   scrollport ends where the row begins and a fact line is either in it or clipped under a fade,
+   never covered. Measured at 1180x780, 960x700, 860x700 and 400x800 on a send and a swap. */
+test('the answer row is a pinned foot after the scrolling body, never a sticky row inside it', () => {
+  const foot = block(LAYOUT, '.dock-foot');
+  assert.match(foot, /flex:\s*0 0 auto;/, 'a foot that shrinks puts the answer under the fold');
+  assert.match(foot, /border-top:\s*1px solid color-mix\(in srgb, var\(--warn\) 28%, transparent\);/);
+  assert.doesNotMatch(foot, /position:\s*sticky/);
+  assert.doesNotMatch(LAYOUT, /\.dock-body > \.dock-actions/, 'a rule styles the answer row inside the scrolling body');
+  assert.doesNotMatch(LAYOUT, /\.dock-body > \.screen-actions/, 'a rule styles a read card\'s row inside the scrolling body');
+  assert.doesNotMatch(LAYOUT, /position:\s*sticky/, 'something in the dock sticks, and a stuck element covers what it sits on');
+  const body = block(LAYOUT, '.dock-body');
+  assert.match(body, /flex:\s*1 1 auto;/);
+  assert.match(body, /min-height:\s*0;/);
+  assert.match(body, /overflow-y:\s*auto;/);
+  // An empty foot (a receipt of somebody else's, the answer flash) takes no room.
+  assert.match(LAYOUT, /\.dock-foot:empty\s*\{\s*display:\s*none;\s*\}/);
 });
 
-test('the fade over the pinned row replaces the mask on the body, which faded the row with it', () => {
-  assert.doesNotMatch(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body\s*\{[^}]*mask-image/);
-  assert.match(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body > \.dock-actions::before,\s*\.dock-card\[data-more="true"\] \.dock-body > \.screen-actions::before\s*\{\s*opacity:\s*1;/);
-  assert.match(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body > \.dock-actions,\s*\.dock-card\[data-more="true"\] \.dock-body > \.screen-actions\s*\{\s*border-top-color:/);
-});
-
-test('a card to read pins its row the same way, and the idle block leaves for the card\'s stay', () => {
-  // The backup prompt (deposit.js) builds its Back up now in a .screen-actions row.
-  assert.match(LAYOUT, /\.dock-body > \.dock-actions,\s*\.dock-body > \.screen-actions\s*\{\s*position:\s*sticky;/);
-  assert.match(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body > \.dock-actions,\s*\.dock-card\[data-more="true"\] \.dock-body > \.screen-actions\s*\{/);
+/* The fade is the one sign a person gets that the card goes on (macOS hides the scrollbar):
+   a mask on the body while data-more is true, solid again at the end so the last line is never
+   left half drawn. On the body, not on the row: the row is outside it now. */
+test('the body fades under data-more, and nothing fades the answer row', () => {
+  const fade = LAYOUT.match(/\.dock-card\[data-more="true"\] \.dock-body\s*\{([^}]*)\}/);
+  assert.ok(fade, 'the body is cut hard while there is more card under it');
+  assert.match(fade?.[1] ?? '', /mask-image:\s*linear-gradient\(to bottom, #000 calc\(100% - 40px\), transparent\)/);
+  assert.doesNotMatch(LAYOUT, /\.dock-actions::before|\.screen-actions::before/, 'a fade is drawn on the row');
   // The 120 px the transcript keeps reached the idle block's mark: a sliver of logo over the dock.
   assert.match(LAYOUT, /\.conversation:has\(> \.dock:not\(\[hidden\]\)\) \.agent-empty\s*\{\s*display:\s*none;\s*\}/);
 });

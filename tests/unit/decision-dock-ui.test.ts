@@ -136,6 +136,7 @@ function makeNode(tagName: string): Node {
     parentNode: null as Node | null,
     get children() { return node.childNodes; },
     get firstChild() { return node.childNodes[0] ?? null; },
+    get lastElementChild() { return node.childNodes[node.childNodes.length - 1] ?? null; },
     get nextSibling() {
       const siblings = node.parentNode?.childNodes ?? [];
       return siblings[siblings.indexOf(node) + 1] ?? null;
@@ -729,33 +730,64 @@ test('a held deposit shows what it is waiting for and the checks, and offers not
   assert.ok(!words.includes('Yes') && !words.includes('No'));
 });
 
-/* THE BUTTONS ARE ALWAYS ON SCREEN. The card is two parts: a body that scrolls
-   and a foot that does not, and the foot is where the answer lives. On
-   2026-09-18 a swap card ran past the dock's share of the column and Yes and No
-   sat below the fold, behind a scrollbar macOS hides: a request with no visible
-   way to answer it. */
-/* THE ANSWER COMES AFTER THE FACTS. The buttons used to live in the foot, which
-   does not scroll, so at 390 a live Yes sat under a card whose address and whose
-   rule diff were both below the fold. They are in the body now, under the facts,
-   in the same scroll, and the fold of secondary lines comes after them. */
-test('the answer comes after the facts, in the same scroll as them', () => {
+/* THE FACTS SCROLL, THE ANSWER DOES NOT, AND THE ANSWER NEVER COVERS A FACT. The card is two
+   parts: a body that scrolls and a foot that does not. The facts (the move card, the address)
+   are the body; the answer row is the foot's first thing after any note, and the fold of
+   secondary lines comes after the answer. Three shapes failed before this one: the answer in
+   the foot with the address under the fold on a 390 px column (2026-09-18); the answer in the
+   body under the facts, 156 px under the fold on a send card at the default window (14a10d3);
+   the answer sticky at the bottom of the scrolling body, painted over the address at scroll 0
+   at three of four sizes (6f34d66). A row outside the scroll container is the only one of the
+   three that cannot overlap a fact: the scrollport ends where the foot begins, and what does
+   not fit is clipped with a fade, never covered (design-dock-ui.test.ts holds the sheet). */
+test('the facts scroll in the body, the answer is pinned in the foot after them, and the fold comes after the answer', () => {
   const card = cardFor(swapProposal());
   const body = find(card, 'dock-body');
   const foot = find(card, 'dock-foot');
   assert.equal(body.length, 1, 'no body');
   assert.equal(foot.length, 1, 'no foot');
-  assert.equal(card.childNodes.length, 2, 'the card holds the body and the foot and nothing beside them');
-  assert.ok(find(body[0], 'tcard-title').length === 1, 'the move card is in the body');
-  assert.equal(find(foot[0], 'btn').length, 0, 'a button is pinned over the facts in the foot');
-  const kids = body[0].childNodes;
+  assert.deepEqual(card.childNodes, [body[0], foot[0]], 'the card holds the body, then the foot, and nothing beside them');
+  assert.equal(find(body[0], 'tcard-title').length, 1, 'the move card is not in the body');
+  assert.ok(find(body[0], 'destinations').length >= 0);
+  assert.equal(find(body[0], 'btn').length, 0, 'a button sits in the scrolling body, where a tall card puts it under the fold');
+  assert.equal(find(body[0], 'dock-report').length, 0, 'the fold sits between the facts and the answer');
+  const kids = foot[0].childNodes;
   const actionsAt = kids.findIndex((n: Node) => String(n.className).includes('dock-actions'));
-  const cardAt = kids.findIndex((n: Node) => String(n.className).includes('tcard'));
-  const whereAt = kids.findIndex((n: Node) => String(n.className).includes('destinations'));
-  assert.ok(actionsAt > cardAt, 'the answer comes before the move it is about');
-  assert.ok(whereAt === -1 || actionsAt > whereAt, 'the answer comes before the address it sends to');
   const foldAt = kids.findIndex((n: Node) => String(n.className).includes('dock-report'));
-  assert.ok(foldAt === -1 || foldAt > actionsAt, 'the fold of secondary lines is above the answer');
-  assert.deepEqual(find(body[0], 'btn-label').map((l) => l.textContent), ['No', 'Yes']);
+  assert.equal(actionsAt, 0, 'the answer is not the first thing in the foot');
+  assert.ok(foldAt > actionsAt, 'the fold of secondary lines is not after the answer');
+  assert.deepEqual(find(foot[0], 'btn-label').map((l) => l.textContent), ['No', 'Yes']);
+});
+
+/* A card somebody else builds into the slot (the backup nudge, the recovery words, the
+   receipt, Turn off the assistant) ends in its own row of buttons. That row is moved into
+   the foot on open, so a long card to read keeps its Done or Close on screen the same way an
+   ask keeps its answer. */
+test('a card to read has its last row of buttons pinned in the foot', () => {
+  const ui = dockFor(swapProposal({ status: 'executed' }));
+  ui.dock.showCard((host: Node, done: () => void) => {
+    const title = makeNode('h2');
+    title.className = 'title';
+    title.textContent = 'You have money in. Back up now.';
+    host.appendChild(title);
+    const actions = makeNode('div');
+    actions.className = 'screen-actions';
+    const go = makeNode('button');
+    go.className = 'btn btn-primary';
+    go.textContent = 'Back up now';
+    actions.appendChild(go);
+    host.appendChild(actions);
+    go.addEventListener('click', done);
+  });
+  const body = find(ui.card, 'dock-body')[0];
+  const foot = find(ui.card, 'dock-foot')[0];
+  assert.equal(find(body, 'title').length, 1, 'the card\'s words are not in the body');
+  assert.equal(find(body, 'screen-actions').length, 0, 'the row stayed in the scrolling body');
+  assert.equal(find(foot, 'screen-actions').length, 1, 'the row is not in the foot');
+  assert.deepEqual(find(foot, 'btn').map((b) => b.textContent), ['Back up now']);
+  // The row still works from the foot: its click closes the card.
+  fire(find(foot, 'btn')[0]!, 'click');
+  assert.equal(find(ui.card, 'screen-actions').length, 0, 'the card did not close on its own button');
 });
 
 /* The swap card says what the rail checked, as numbers under labels, and the
@@ -849,8 +881,8 @@ test('a Yes that fails puts the problem in the foot and hands the buttons back',
   const ui = dockFor(swapProposal(), {}, { approve: () => Promise.reject(new Error('The app is not answering. It may have stopped.')) });
   const foot = find(ui.card, 'dock-foot')[0];
   const body = find(ui.card, 'dock-body')[0];
-  const yes = find(body, 'btn').find((b) => String(b.className).includes('btn-primary'))!;
-  const no = find(body, 'btn').find((b) => String(b.className).includes('btn-ghost'))!;
+  const yes = find(foot, 'btn').find((b) => String(b.className).includes('btn-primary'))!;
+  const no = find(foot, 'btn').find((b) => String(b.className).includes('btn-ghost'))!;
   assert.equal(find(foot, 'dock-note').length, 0, 'a note is up before anything went wrong');
   fire(yes, 'click');
   assert.equal(yes.disabled, true, 'Yes still takes a click while the first one is in flight');
@@ -865,7 +897,7 @@ test('a Yes that fails puts the problem in the foot and hands the buttons back',
   assert.equal(foot.firstChild, note[0], 'the note is not the first thing in the foot');
   assert.equal(yes.disabled, false, 'Yes stays dead after a click that did not land');
   assert.equal(no.disabled, false);
-  assert.equal(find(body, 'dock-note').length, 0, 'the error scrolled away with the buttons');
+  assert.equal(find(body, 'dock-note').length, 0, 'the error is in the scrolling body');
 });
 
 /* A TOUCH ID DIALOG THAT CLOSES WITHOUT AN ANSWER puts the row back to pending
@@ -885,7 +917,7 @@ test('a row back from Touch ID with no answer says so, over live buttons, until 
   assert.equal(note.length, 1, 'the card came back blank');
   assert.equal(note[0].getAttribute('data-tone'), 'warn');
   assert.deepEqual(textOf(note[0]), ['Touch ID closed without an answer. Nothing moved. Yes asks again.']);
-  const buttons = find(find(ui.card, 'dock-body')[0], 'btn');
+  const buttons = find(foot, 'btn');
   assert.ok(buttons.every((b) => b.disabled === false), 'the buttons are dead on a row that is pending');
   // A heartbeat that changes nothing keeps the note; the next click clears it.
   ui.render();
@@ -915,7 +947,8 @@ test('the lock banner is at the top of the body and the queue line is in the foo
   const cardAt = kids.findIndex((n: Node) => String(n.className).includes('tcard'));
   assert.ok(cardAt >= 0, 'the move card is not in the body');
   assert.equal(kids.indexOf(banner), cardAt + 1, 'the banner is not right under the move it is about');
-  assert.deepEqual(find(body, 'btn-label').map((l) => l.textContent), ['No', 'Unlock']);
+  assert.deepEqual(find(locked, 'btn-label').map((l) => l.textContent), ['No', 'Unlock']);
+  assert.equal(find(body, 'btn').length, 0, 'No and Unlock are in the scrolling body');
 
   /* Everything else waiting is one line at the top of the card, and it is the
      only way another request reaches the card. */
