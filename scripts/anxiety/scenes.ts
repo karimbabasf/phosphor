@@ -906,7 +906,7 @@ const vault: Scene = {
       await ctx.capture(row, { clip: rect, reply: '' });
     }
     const hasChange = await page.eval<boolean>(
-      `Array.from(document.querySelectorAll('#view-vault section.panel[data-surface="agent"] button')).some(function(b){return /change/i.test(b.innerText||'');})`,
+      `Array.from(document.querySelectorAll('#view-vault section.panel[data-surface="agent"] button')).some(function(b){return /change/i.test(b.textContent||'');})`,
     );
     if (!hasChange) {
       ctx.unreachable('D05', "the vault Agent panel on this build has no Change control; node C's switcher is not on this branch");
