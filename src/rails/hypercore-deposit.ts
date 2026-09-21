@@ -61,6 +61,7 @@ import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '..
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { appFeeBpsOf, spendFromIntents } from './intents-spend.ts';
+import { TYPICAL_SEC } from '../proposals/view.ts';
 import type { PreflightRunner } from '../preflight/live.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
@@ -323,7 +324,11 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     const appBps = appFeeBpsOf(raw);
     const appFee = Number.isFinite(feeUsd) ? Math.min(Math.max(0, feeUsd), (spent * appBps) / 10_000) : NaN;
     const routing = Number.isFinite(feeUsd) ? feeUsd - appFee : NaN;
-    const eta = typeof quote.timeEstimate === 'number' && Number.isFinite(quote.timeEstimate) ? quote.timeEstimate : null;
+    // The router's estimate covers its own leg; the venue shows the money after it. The card
+    // counts the whole move against TYPICAL_SEC (src/proposals/view.ts), so that is the figure
+    // here too, and the router's leg is named for what it is.
+    const routerEta = typeof quote.timeEstimate === 'number' && Number.isFinite(quote.timeEstimate) ? quote.timeEstimate : null;
+    const eta = TYPICAL_SEC['hl_deposit'];
     const money = (n: number): string => (Number.isFinite(n) ? n.toFixed(6).replace(/\.?0+$/, '') : String(n));
     return {
       feePct,
@@ -347,7 +352,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
         `  cost      ${Number.isFinite(feeUsd) ? `${feeUsd.toFixed(4)} USDC, ${feePct.toFixed(2)} percent of the deposit` : 'unknown'}`,
         `  routing   ${Number.isFinite(routing) ? `${routing.toFixed(4)} USDC inside the quote` : 'unknown'}`,
         `  app fee   ${Number.isFinite(appFee) ? `${appFee.toFixed(4)} USDC, ${appBps} bp, inside the quote` : 'unknown'}${appBps > 0 ? ' (a 1Click partner key removes it)' : ''}`,
-        `  arrives   about ${eta ?? '?'}s`,
+        `  arrives   usually within ${Math.round(eta / 60)} minutes end to end (the router's leg about ${routerEta ?? '?'}s, then the venue shows it)`,
         `  way back  propose_hl_withdraw brings collateral back into the same balance, always by a click`,
       ],
     };

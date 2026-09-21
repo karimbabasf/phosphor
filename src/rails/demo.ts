@@ -43,6 +43,7 @@ import { maxSendableUsdc } from './hl-user-signed.ts';
 import { demoAssetOf, demoAvailableUsdc, demoHolding, loadDemoLedger, moveDemoBalance } from '../ledger/demo.ts';
 import type { RailKind } from './kinds.ts';
 import { pricedAs } from '../proposals/draft.ts';
+import { TYPICAL_SEC } from '../proposals/view.ts';
 
 // ---------- the knobs ----------
 
@@ -366,7 +367,9 @@ function simulateHlDeposit(draft: HlDepositDraft): SimulationResult {
       arrivesAtLeast: units(draft.minCredited, 6),
       feeUsd: Number(fee.toFixed(6)),
       bridgeFee: null,
-      etaSeconds: Math.round((STAGE_MS * HL_WALK.length + CREDIT_MS) / 1000),
+      // The typical the card counts against, off its own table, rather than the demo's own
+      // compressed clock: the card and the facts must name one figure (criterion 3.3).
+      etaSeconds: TYPICAL_SEC.hl_deposit,
       activity:
         `Two fees, both inside the quote: routing ${units(routing, 6)} USDC and a ${rate.bps} bp app fee (${units(appFee, 6)} USDC). ` +
         `Hyperliquid keeps any deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC delivered, so at least ${units(draft.minCredited, 6)} USDC has to land.`,
@@ -429,7 +432,7 @@ function simulateHlWithdraw(draft: HlWithdrawDraft): SimulationResult {
       arrivesAtLeast: units(draft.minReceived, 6),
       feeUsd: Number(total.toFixed(6)),
       bridgeFee: null,
-      etaSeconds: Math.round((STAGE_MS * HL_WALK.length + CREDIT_MS) / 1000),
+      etaSeconds: TYPICAL_SEC.hl_withdraw,
       activity:
         `Three fees. Routing ${units(routing, 6)} USDC and a ${rate.bps} bp app fee (${units(appFee, 6)} USDC) come out of the quote. ` +
         `Hyperliquid charges ${HL_ACTIVATION_USDC} USDC on top to open the fresh address 1Click mints, paid by the venue account.`,

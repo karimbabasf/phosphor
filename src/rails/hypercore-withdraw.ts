@@ -67,6 +67,7 @@ import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS } from './hypercore-de
 import { INTENTS_SETTLE, watchRise } from '../ledger/settle.ts';
 import type { PocketRead, RiseSchedule } from '../ledger/settle.ts';
 import { appFeeBpsOf } from './intents-spend.ts';
+import { TYPICAL_SEC } from '../proposals/view.ts';
 
 // ---------- the two ends ----------
 
@@ -371,7 +372,11 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       : p.moveToSpot > 0
         ? `\n  first     ${p.moveToSpot.toFixed(4)} USDC moves from the perp side to spot first, same account, same key`
         : '';
-    const eta = typeof quote.timeEstimate === 'number' && Number.isFinite(quote.timeEstimate) ? quote.timeEstimate : null;
+    // The router's estimate covers its own leg; the venue shows the money after it. The card
+    // counts the whole move against TYPICAL_SEC (src/proposals/view.ts), so that is the figure
+    // here too, and the router's leg is named for what it is.
+    const routerEta = typeof quote.timeEstimate === 'number' && Number.isFinite(quote.timeEstimate) ? quote.timeEstimate : null;
+    const eta = TYPICAL_SEC['hl_withdraw'];
     return {
       feePct,
       facts: {
@@ -395,7 +400,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         `  routing   ${Number.isFinite(routing) ? `${routing.toFixed(4)} USDC inside the quote` : 'unknown'}`,
         `  app fee   ${Number.isFinite(appFee) ? `${appFee.toFixed(4)} USDC, ${appBps} bp, inside the quote` : 'unknown'}${appBps > 0 ? ' (a 1Click partner key removes it)' : ''}`,
         `  activation ${HL_ACTIVATION_USDC} USDC on top, the venue's charge for a destination it has never seen`,
-        `  arrives   about ${eta ?? '?'}s` + books,
+        `  arrives   usually within ${Math.round(eta / 60)} minutes end to end (the router's leg about ${routerEta ?? '?'}s, then the venue shows it)` + books,
         `  by hand   always a click, whatever the size; refused while any position is open`,
       ],
     };

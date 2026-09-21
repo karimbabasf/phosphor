@@ -406,7 +406,7 @@ test('the simulation carries the fee facts the card draws: the total, the app fe
   assert.equal(facts.arrives, '9.6594');
   assert.equal(facts.arrivesAtLeast, String(minCreditedFor(AMOUNT)));
   assert.equal(facts.destinationAsset, HYPERCORE_USDC_ASSET_ID);
-  assert.equal(facts.etaSeconds, 20);
+  assert.equal(facts.etaSeconds, 180, "the whole move, off the table the card counts against, never the router's leg alone");
   assert.match(facts.activity, /25 bp app fee \(0\.025 USDC\)/);
   assert.match(facts.activity, /at least 9\.51 USDC has to land/);
   assert.match(out.summary, /app fee   0\.0250 USDC, 25 bp, inside the quote/);

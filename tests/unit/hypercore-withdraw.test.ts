@@ -740,7 +740,7 @@ test('the simulation carries the fee facts the card draws: total with the activa
   assert.equal(facts.arrives, '7.780248');
   assert.equal(facts.arrivesAtLeast, String(minReceivedForHlWithdraw(AMOUNT)));
   assert.equal(facts.destinationAsset, INTENTS_USDC_ASSET_ID);
-  assert.equal(facts.etaSeconds, 35);
+  assert.equal(facts.etaSeconds, 180, "the whole move, off the table the card counts against, never the router's leg alone");
   assert.match(facts.activity, /25 bp app fee \(0\.02 USDC\)/);
   assert.match(facts.activity, /1 USDC on top/);
   assert.match(out.summary, /app fee   0\.0200 USDC, 25 bp, inside the quote/);
