@@ -29,16 +29,19 @@ Settings, Privacy & Security, scroll to Security and click Open Anyway.
 
 ## Connect an agent
 
-Register the installed app with Claude Code:
+The first run asks which agent you use: Claude Code, Codex, Hermes, Grok bot, or another MCP
+agent. The app checks that it is on this Mac and signed in, registers it where the agent keeps
+a config of its own, and otherwise shows the one line to paste. The same picker is in the Vault
+tab's Agent panel. For a source checkout or by hand, the line is:
 
     claude mcp add-json phosphor "{\"command\":\"/Applications/Phosphor.app/Contents/MacOS/node\",\"args\":[\"/Applications/Phosphor.app/Contents/Resources/phosphor/src/mcp.ts\"],\"env\":{\"PHOSPHOR_PORT\":\"4177\",\"PHOSPHOR_DATA_DIR\":\"$HOME/Library/Application Support/com.karimbabasf.phosphor/state\"}}"
 
 Phosphor > Copy MCP Config in the menu bar puts this line on the clipboard with the real paths
 of your installation filled in. Run it in the directory you want the agent to work from.
 
-The window can also start the agent itself. Start your assistant spawns a headless Claude Code
-session that sees Phosphor's tools and nothing else: no shell, no files, no web, and no way to
-approve its own proposals. It needs the `claude` CLI installed and logged in.
+The window can also start Claude Code itself, headless, seeing Phosphor's tools and nothing
+else: no shell, no files, no web, and no way to approve its own proposals. It needs the `claude`
+CLI installed and logged in. Claude Desktop and the chat apps cannot drive Phosphor yet.
 
 Then ask it things. "What do I hold?" "Swap 20 USDC into WETH." "Short SOL at 10x if it loses
 that trend line, and cap me at $200."
