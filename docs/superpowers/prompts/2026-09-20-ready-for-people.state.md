@@ -17,13 +17,13 @@ Lead: Claude (Opus 5), session c49886b8. Started 2026-09-20 19:05 PDT. Main at 7
 ## Nodes (phase 1), worktrees ../phosphor-rfp-<node>, branches rfp/<node>, all off 7e0357f
 | node | branch | status |
 |---|---|---|
-| A relay swap | rfp/a-relay | reported (c0232de, 3143/3143, eval 29/29, +75 tests, security 0 High/Med); correct + secure reviews running; NOTE: relay quotes no solver for USDC to wNEAR today, USDC to USDT does; nonce is V1 (current_salt) not the spec's 32 random bytes |
+| A relay swap | rfp/a-relay | both reviews ACCEPT; items 1-3 closed at fc9b5d7 (3147/3147: truncateToBaseUnits, is_valid_salt before a failed verdict, hold names every passed quote); items 4-6 (execute.ts relay settling branch, 2.5 s dry-quote bound, fail-closed balance read) in progress; NOTE: relay quotes no solver for USDC to wNEAR today, USDC to USDT does; nonce is V1 (current_salt) |
 | B Hyperliquid | rfp/b-hyperliquid | secure review REJECT (M1 retry throw loses nonce and handle; L1 pocket-less withdraw confirmed on SUCCESS alone; L2 deposit card floor rounds half-up; I2 moveToSpot double): fresh builder node-b2-fix on the worktree per the workflow rule; correct review still running |
 | C agent picker | rfp/c-agent | reported (291fc9a after merging main, 3123/3123, +57 tests); correct + secure reviews running; touched ui/index.html (one link line) and src/http/router.ts (two routes) outside its list, resolve at merge |
 | D one card, voice | rfp/d-card | building |
 | E craft floor | rfp/e-craft | reported (ed0f0e4, 3096/3096, detector 0, audit 0 blocking); correct + secure reviews running; overwhelmed review waits for F |
 | F anxiety harness | rfp/f-anxiety | building |
-| G launch readiness | rfp/g-launch | reported (4240cd0, sweep PASS, 13.x 6 of 9 yes; needs the 0.8.0 version bump at merge); correct + secure reviews running |
+| G launch readiness | rfp/g-launch | both reviews ACCEPT, six fixes in at 9bee51b (sweep hole, log-tail shapes + diagnose, demo hash excuses, SSE redaction, report copy fingerprinted, Copy Log boot nonce): 3080/3079 (docs.test red until the 0.8.0 bump), cargo 25/25, sweep 6/6. READY TO MERGE (G merges last per order; overwhelmed review not needed: no screens) |
 
 Ports: A 4201, B 4202, C 4203, D 4204, E 4205, F 4206, G 4207 (PHOSPHOR_PORT), data dirs under each worktree's state/.
 
