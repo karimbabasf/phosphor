@@ -1,0 +1,17 @@
+trading account : 0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050
+intents account : 0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050
+amount          : 7 USDC
+
+PIN            ok, the HyperCore USDC asset id is live at the pinned decimals
+ACCOUNT        unified, available $0.000775, perp $0, spot USDC 0.000775, 0 positions, margin used $0
+EXIT           unified account: the exit signs sendAsset (spotSend and usdSend are refused here); the most that can come back now is 0 USDC (5 USDC floor)
+INTENTS        no USDC held
+
+DEPOSIT  skipped: nothing held inside the verifier to price a deposit from
+
+WITHDRAW REFUSED the account has 0.000775 USDC and the withdrawal needs 8 USDC: 7 plus the 1 USDC activation fee the venue charges the sender for a destination it has never seen. After the fee at most 0 USDC could come back, under the 5 USDC floor, so nothing can leave until m
+
+floor  enforced: 6 USDC is below the 7 USDC floor. Hyperliquid does not credit a deposit under 5 USDC, it is lost, and the rout
+
+PRICE withdraw 7 in, 6.782542 expected, at least 6.775759, 35s: inside the quote 0.217458 USDC (routing 0.199958 plus 25 bp app fee 0.017500), plus 1 USDC activation on top: total 1.217458 USDC, 17.39 percent
+PRICE deposit  7 in, 6.666496 expected, at least 6.659519, 20s: inside the quote 0.333504 USDC (routing 0.316004 plus 25 bp app fee 0.017500): 4.76 percent
