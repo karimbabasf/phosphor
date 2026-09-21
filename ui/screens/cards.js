@@ -1091,9 +1091,12 @@
     var legsHost = dom.el('div', 'tcard-legs');
     var sentence = dom.el('div', 'tcard-sentence');
     var facts = dom.el('div', 'tcard-facts mono');
+    /* The stage line is the copy over the clock, and both keep their room whatever they say:
+       two lines for the copy, one for the clock, so a stage whose sentence runs long and an
+       ending that stops the clock move nothing under them (5.3). */
     var stage = dom.el('div', 'tcard-stage');
     var copy = dom.el('span', 'tcard-stage-copy');
-    var clockCell = dom.el('span', 'tcard-stage-clock');
+    var clockCell = dom.el('div', 'tcard-stage-clock');
     var clockFigure = mono('tcard-stage-since', '');
     var clockUsual = dom.el('span', 'tcard-stage-usual', '');
     clockCell.appendChild(clockFigure);
@@ -1166,17 +1169,26 @@
       live.running = open;
       live.since = view ? view.lastChangeAt : null;
       live.fallback = view ? Number(view.sinceChangeSec) || 0 : 0;
-      var usual = open && typeof view.typicalSec === 'number' && view.typicalSec > 0 ? ' of about ' + aboutWords(view.typicalSec) : '';
-      dom.setText(clockUsual, usual);
-      dom.setHidden(clockCell, !open);
-      dom.setHidden(stage, !view);
+      /* Open, the clock counts this stage against the typical figure. Ended with money moved
+         (confirmed, failed, refunded), it says how long the whole move took. A no from the
+         person or from a rule has no duration worth a line, and the line keeps its room. */
+      var took = !open && view && typeof view.tookSec === 'number' && view.tookSec > 0 && (view.stage === 'confirmed' || view.stage === 'failed' || view.stage === 'FAILED' || view.stage === 'REFUNDED' || view.stage === 'NOT_FOUND_OR_NOT_VALID');
       if (open) {
+        dom.setText(clockUsual, typeof view.typicalSec === 'number' && view.typicalSec > 0 ? 'of about ' + aboutWords(view.typicalSec) : 'on this step');
         paintClock();
         if (!ticking) {
           ticking = true;
           tick(clockFigure, paintClock);
         }
+      } else if (took) {
+        dom.setText(clockFigure, spanWords(view.tookSec));
+        dom.setText(clockUsual, 'end to end');
+      } else {
+        dom.setText(clockFigure, '');
+        dom.setText(clockUsual, '');
       }
+      dom.setAttr(clockCell, 'data-empty', open || took ? null : 'true');
+      dom.setHidden(stage, !view);
 
       dom.setText(reason, move.reason);
       dom.setHidden(reason, !move.reason);
@@ -1198,7 +1210,6 @@
           var done = view.stage === 'confirmed';
           factLine(fold, done ? 'Confirmed at' : 'Ended at', clock(view.settledAt), done ? 'up' : null);
         }
-        if (typeof view.tookSec === 'number' && view.tookSec > 0) factLine(fold, 'Took', spanWords(view.tookSec));
         var txs = Array.isArray(view.txs) ? view.txs : [];
         for (var i = 0; i < txs.length; i += 1) {
           var leg = txs[i];
@@ -1285,7 +1296,7 @@
   var LEG_WORD = {
     origin: 'The chain it left',
     near: 'On NEAR',
-    intent: 'The intent',
+    intent: 'What was signed',
     destination: 'The chain it lands on'
   };
 

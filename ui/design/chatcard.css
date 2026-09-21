@@ -49,31 +49,34 @@
 
 /* ---------- the stage line ---------- */
 
-/* The one sentence the stage table gives this stage, and the clock since it last changed.
-   Two lines of room are kept whatever the sentence needs, so a stage whose copy runs to a
-   second line does not move the fold under it. */
+/* The one sentence the stage table gives this stage, over the clock since it last changed.
+   Two lines of room for the sentence and one for the clock, kept whatever they say: a copy
+   that runs to a second line and an ending that stops the clock move nothing under them.
+   Every copy in the table fits two lines at the narrowest column the dock is drawn at. */
 .tcard-stage {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--s-3);
-  min-height: calc(2 * 1.5em);
   padding-top: var(--s-1);
   font-size: var(--fs-12);
   line-height: 1.5;
 }
 
 .tcard-stage-copy {
-  min-width: 0;
+  display: block;
+  min-height: 3em;
   color: var(--text-2);
 }
 
 .tcard-stage-clock {
-  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.3em;
+  min-height: 1.5em;
   color: var(--text);
   font-variant-numeric: tabular-nums;
-  text-align: right;
   white-space: nowrap;
+}
+
+.tcard-stage-clock[data-empty="true"] {
+  visibility: hidden;
 }
 
 .tcard-stage-usual {

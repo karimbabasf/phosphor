@@ -425,6 +425,11 @@ test('a step row says what the call was about, not just what kind it was', () =>
   const text = world.stepRows()[0].textContent;
   assert.ok(text.includes('scanning the timeframes'), text);
   assert.ok(text.includes('SOL-USD'), text);
+  /* An id on the row is its two ends: the whole one is on the card, behind its Copy (3.1). */
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__proposal_status', input: { id: 'ca99ad08-2677-4b50-aaa2-e08e5b709af4' } });
+  const read = world.stepRows()[1].textContent;
+  assert.ok(read.includes('ca99ad08...5b709af4'), read);
+  assert.ok(!read.includes('ca99ad08-2677'), 'the whole id is on the step row: ' + read);
 });
 
 test('nothing but a scalar reaches a step row', () => {

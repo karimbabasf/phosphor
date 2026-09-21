@@ -226,6 +226,14 @@
   /* The subject of the call in a few words. An amount leads when there is one,
      because the number is the thing a person looks for on a row that moves
      money, and it is followed by what the number counts. */
+  /* An id on a step row is the two ends of it: a whole one is thirty-six characters a
+     person cannot read and does not need to, and the card under the row carries it in full
+     behind its Copy (3.1). */
+  function shortId(value) {
+    var s = String(value || '');
+    return s.length <= 20 ? s : s.slice(0, 8) + '...' + s.slice(-8);
+  }
+
   function argsLabel(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return '';
     var parts = [];
@@ -234,7 +242,7 @@
     for (var i = 0; i < ARG_FIELDS.length && parts.length < 3; i += 1) {
       var key = ARG_FIELDS[i];
       if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
-      var text = argText(input[key]);
+      var text = key === 'id' ? shortId(argText(input[key])) : argText(input[key]);
       if (!text) continue;
       if (parts.indexOf(text) !== -1) continue;
       parts.push(text);

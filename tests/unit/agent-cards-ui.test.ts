@@ -905,7 +905,7 @@ test('a late move reads its clock in words, and a held one names the checks', ()
   assert.ok(!card.textContent.includes('PROCESSING'), 'the vendor word in capitals: ' + card.textContent);
   assert.ok(!card.textContent.includes('2026-09-20T'), 'an ISO stamp on the card: ' + card.textContent);
   /* Late is still counting: the stage line keeps its clock. */
-  assert.equal(all(card, 'tcard-stage-clock')[0].hidden, false);
+  assert.equal(all(card, 'tcard-stage-clock')[0].getAttribute('data-empty'), null);
 
   const held = withView({ id: 'h1', kind: 'hl_deposit', status: 'approved', heldSince: '2026-09-20T10:00:30Z', createdAt: '2026-09-20T10:00:00Z', decidedAt: '2026-09-20T10:00:10Z', decidedBy: 'human',
     draft: { kind: 'hl_deposit', symbol: 'USDC', originAsset: 'nep141:eth-usdc', amount: 7.5425, amountUsd: 7.5425, minCredited: 5, from: '0x1', hlAccount: '0x1', counterparty: 'hypercore' },
@@ -913,5 +913,5 @@ test('a late move reads its clock in words, and a held one names the checks', ()
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__proposal_status', input: { id: 'h1' }, data: held.view });
   const holding = world.cardNodes('move')[1];
   assert.equal(all(holding, 'tcard-state')[0].textContent, 'Holding');
-  assert.ok(all(holding, 'tcard-stage-copy')[0].textContent.startsWith('The checks before signing have not cleared yet.'));
+  assert.ok(all(holding, 'tcard-stage-copy')[0].textContent.startsWith('The checks before signing have not cleared.'));
 });
