@@ -414,7 +414,7 @@ function simulateHlWithdraw(draft: HlWithdrawDraft): SimulationResult {
   return {
     ok: true,
     summary: [
-      `demo: ${units(draft.amount, 6)} USDC leaves the trading account and about ${units(received, 6)} USDC reaches NEAR Intents.`,
+      `demo: ${units(draft.amount, 6)} USDC leaves the trading account and about ${units(received, 6)} USDC reaches this app's own NEAR Intents balance; no other destination can be named.`,
       `  at least  ${units(draft.minReceived, 6)} USDC, the floor the move is held to`,
       `  cost      ${total.toFixed(4)} USDC, ${((total / draft.amount) * 100).toFixed(2)} percent`,
       `  routing   ${routing.toFixed(4)} USDC inside the quote`,

@@ -389,7 +389,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       lines: [
         `Bring collateral back from Hyperliquid into the intents balance.`,
         `  send      ${draft.amount} USDC from the venue account ${draft.from}`,
-        `  credited  ${oneLine(quote.amountOutFormatted, 40)} USDC to our intents account ${draft.to}`,
+        `  credited  ${oneLine(quote.amountOutFormatted, 40)} USDC to this app's own NEAR Intents balance (${draft.to}); no other destination can be named`,
         `  at least  ${usdc(draft.minReceived)} USDC, the floor the live quote is held to`,
         `  cost      ${Number.isFinite(total) ? `${total.toFixed(4)} USDC, ${feePct.toFixed(2)} percent` : 'unknown'}`,
         `  routing   ${Number.isFinite(routing) ? `${routing.toFixed(4)} USDC inside the quote` : 'unknown'}`,
