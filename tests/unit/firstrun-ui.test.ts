@@ -164,8 +164,8 @@ const CHECKS: Record<string, Any> = {
   codexOut: { agent: 'codex', name: 'Codex', state: 'installed_not_logged_in', probed: true, sentence: 'Codex is installed but not signed in. Sign in in your terminal, then press Check again.', details: ['Made by OpenAI.', 'Found at /Users/x/.nvm/versions/node/v24.16.0/bin/codex, codex-cli 0.154.0.', 'Sign in: codex login'], version: 'codex-cli 0.154.0', bin: '/Users/x/.nvm/versions/node/v24.16.0/bin/codex', inApp: false, registers: true, ms: 40 },
   codexIn: { agent: 'codex', name: 'Codex', state: 'installed_and_logged_in', probed: true, sentence: 'Codex is signed in: start it in your terminal and it will appear here.', details: ['Made by OpenAI.', 'Found at /Users/x/.nvm/versions/node/v24.16.0/bin/codex, codex-cli 0.154.0.'], version: 'codex-cli 0.154.0', bin: '/Users/x/.nvm/versions/node/v24.16.0/bin/codex', inApp: false, registers: true, ms: 40 },
   claudeIn: { agent: 'claude', name: 'Claude Code', state: 'installed_and_logged_in', probed: true, sentence: 'Claude Code is signed in and ready to start.', details: ['Made by Anthropic.', 'Found at /Users/x/.local/bin/claude, 2.1.278 (Claude Code).'], version: '2.1.278 (Claude Code)', bin: '/Users/x/.local/bin/claude', inApp: true, registers: true, ms: 130 },
-  other: { agent: 'mcp', name: 'Another agent', state: 'unknown_client', probed: false, sentence: 'Phosphor cannot check this agent, so paste the line below into it and it will appear here.', details: ['Made by Any agent that connects to MCP servers.'], version: null, bin: null, inApp: false, registers: false, ms: 0 },
-  desktop: { agent: 'desktop', name: 'Claude Desktop or a chat app', state: 'unknown_client', probed: false, sentence: 'Phosphor needs an agent that runs on your Mac. Claude Desktop cannot drive it yet. Install Claude Code or Codex, then pick it here.', details: ['Made by A chat window, with no agent on this Mac.'], version: null, bin: null, inApp: false, registers: false, ms: 0 },
+  other: { agent: 'mcp', name: 'Another agent', state: 'unknown_client', probed: false, sentence: 'Phosphor cannot check this agent, so paste the line below into it and it will appear here.', details: ['Any agent that connects to MCP servers.'], version: null, bin: null, inApp: false, registers: false, ms: 0 },
+  desktop: { agent: 'desktop', name: 'Claude Desktop or a chat app', state: 'unknown_client', probed: false, sentence: 'Phosphor needs an agent that runs on your Mac. Claude Desktop cannot drive it yet. Install Claude Code or Codex, then pick it here.', details: ['A chat window, with no agent on this Mac.'], version: null, bin: null, inApp: false, registers: false, ms: 0 },
 };
 
 const LINE = 'codex mcp add phosphor --env PHOSPHOR_PORT=4177 --env PHOSPHOR_DATA_DIR=/Users/x/state -- node /Users/x/phosphor/src/mcp.ts';
@@ -277,6 +277,17 @@ test('the picker prints nothing the network said, raises no toast, and brings it
   assert.equal(/\.innerHTML\s*=|insertAdjacentHTML/.test(FIRSTRUN), false);
   assert.match(CSS, /\.agentpick-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,/);
   assert.match(CSS, /\.agent-tile-name\s*\{[^}]*-webkit-line-clamp:\s*2/);
+  // Keyboard focus is the app's own ring, never the tile's colour: a brand-coloured ring read as a
+  // second picked tile beside the real one. The tile's colour is for hover and picked only.
+  const focus = /\.agent-tile:focus-visible\s*\{([^}]*)\}/.exec(CSS);
+  assert.ok(focus, 'no focus-visible rule for the tile');
+  assert.match(focus![1], /outline:\s*2px solid var\(--ink\)/, 'the focus ring is not the app\'s');
+  assert.equal(/var\(--net\)/.test(focus![1]), false, 'the focus ring is in the tile\'s colour');
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const coloured = [...rules.matchAll(/([^{}]*)\{[^}]*var\(--net\)[^}]*\}/g)].map((m) => m[1].trim());
+  for (const selector of coloured) {
+    assert.equal(/focus/.test(selector), false, `the tile's colour is painted on focus: ${selector}`);
+  }
   // The two sentences for a missing agent have one source, src/agents-catalog.ts stateSentence: a
   // screen that composed its own would fork the fix that keeps a fresh pick from reading as "no longer".
   for (const [file, source] of [['firstrun.js', FIRSTRUN], ['vault.js', VAULT]] as const) {

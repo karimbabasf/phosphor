@@ -141,6 +141,13 @@ test('the two entries that cannot be probed answer unknown_client without runnin
     desktop.sentence,
     'Phosphor needs an agent that runs on your Mac. Claude Desktop cannot drive it yet. Install Claude Code or Codex, then pick it here.',
   );
+  // Neither has a maker, so their Details line is the plain description, never "Made by A chat window".
+  assert.deepEqual(other.details, ['Any agent that connects to MCP servers.']);
+  assert.deepEqual(desktop.details, ['A chat window, with no agent on this Mac.']);
+  for (const agent of ['claude', 'codex', 'hermes', 'grok'] as const) {
+    const check = await checkAgent(agent, { env, home });
+    assert.match(check.details[0] ?? '', /^Made by \S/, `${agent}: ${check.details[0]}`);
+  }
 });
 
 test('a binary that never answers still gets a state inside three seconds', async () => {

@@ -101,8 +101,9 @@
 }
 
 /* The fill says picked (or about to be, under the pointer); keyboard focus is
-   the ring alone, so the tile the cursor rests on is never mistaken for the
-   one that was chosen. */
+   the app's own ring (reset.css :focus-visible, ink), never the tile's colour:
+   a ring in the brand colour read as a second picked tile beside the real one
+   (C review, 2026-09-20). Colour is for picked only. */
 .agent-tile:hover,
 .agent-tile[aria-current="true"] {
   border-color: var(--net);
@@ -117,7 +118,7 @@
 }
 
 .agent-tile:focus-visible {
-  outline: 2px solid var(--net);
+  outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
 

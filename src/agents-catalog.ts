@@ -42,7 +42,7 @@ export type AgentEntry = {
   id: AgentId;
   // The word on the tile. Plain, no vendor jargon on the visible face.
   name: string;
-  // Who ships it, one line, behind Details.
+  // Who ships it, or for the two entries with no maker what the entry is, one line, behind Details.
   vendor: string;
   kind: 'cli' | 'mcp' | 'desktop';
   // The command name on PATH, and where it lands when nobody set a PATH (a GUI process
@@ -424,10 +424,12 @@ export function stateSentence(entry: AgentEntry, state: AgentState, wasPicked = 
   }
 }
 
-/* The technical lines behind Details, so the sentence above never has to carry a path. */
+/* The technical lines behind Details, so the sentence above never has to carry a path. The
+   vendor line reads "Made by" only for an entry that has a maker; the two the app cannot probe
+   describe a kind of client, not a company, and read as the plain line. */
 function detailLines(entry: AgentEntry, bin: string | null, version: string | null, home: string): string[] {
   const lines: string[] = [];
-  lines.push(`Made by ${entry.vendor}.`);
+  lines.push(entry.kind === 'cli' ? `Made by ${entry.vendor}.` : `${entry.vendor}.`);
   if (bin !== null) lines.push(`Found at ${bin}${version === null ? '' : `, ${version}`}.`);
   else if (entry.binary !== null) lines.push(`Looked for \`${entry.binary}\` on PATH and in ${entry.candidates.map((c) => `~/${c}`).join(', ')}.`);
   if (entry.homeDir !== null) lines.push(`Its settings live in ${path.join(home, entry.homeDir).replace(home, '~')}.`);
