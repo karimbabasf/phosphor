@@ -6,7 +6,7 @@ Lead: Claude (Opus 5), session c49886b8. Started 2026-09-20 19:05 PDT. Main at 7
 - typecheck: exit 0
 - npm test: 3066 pass, 0 fail
 - npm run eval: 29/29 pass
-- npm run eval:live: running (started 19:14 PDT), counts to be filled when it finishes
+- npm run eval:live (full, at ab6f8f1): 17 pass, 8 fail, 4 xfail, 0 error. Pass: S3 S7 S8 S10 S11 S15 S17 S18 S19 S20 S21 S22 S24 S25 S26 S27 S29. Fail (all on the reply, judge or figure): S1 S2 S4 S5 S6 S9 S12 S16. xfail: S13 S14 S23 S28. Log: scratchpad/baseline/eval-live.log. The floor is per scenario: every baseline pass must still pass after every merge.
 - impeccable detect ui/: 3 findings after the Geist ignore (2 clipped-overflow warnings on html/body, 1 advisory hairline border plus wide shadow); baseline JSON at docs/superpowers/prompts/ready-for-people/impeccable-detect-baseline.json
 
 ## Phase 0 (done)
@@ -34,5 +34,4 @@ Ports: A 4201, B 4202, C 4203, D 4204, E 4205, F 4206, G 4207 (PHOSPHOR_PORT), d
 - 6: judge model probe order per the prompt; env names in ~/.config/jev-browse/env are TEXT_MODEL_* (NEAR AI Cloud) and OPENROUTER_*.
 
 ## Open
-- eval:live baseline count.
 - 19.94 USDC at 1Click (HS 3452114377): not touched.
