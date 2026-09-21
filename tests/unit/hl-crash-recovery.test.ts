@@ -146,10 +146,11 @@ type Boot = {
 
 /* Boot the app over a store that holds the seeded row: the boot sweep first, the way main.ts
    runs it before the port opens. The rails count their executions and answer nothing else,
-   because a boot must never reach them for a row it found on disk. */
-function boot(seed: Proposal): Boot {
+   because a boot must never reach them for a row it found on disk. `demo` boots the way
+   main.ts does in demo mode: no 1Click client, so no venue lookup for the sweep. */
+function boot(seed: Proposal, over: { demo?: boolean } = {}): Boot {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-hl-crash-'));
-  const cfg: AppConfig = { mode: 'live', port: 4177, addresses: { evm: SELF_EVM }, candleProducts: [], dataDir, keysPath: path.join(dataDir, 'keys.json') };
+  const cfg: AppConfig = { mode: over.demo ? 'demo' : 'live', port: 4177, addresses: { evm: SELF_EVM }, candleProducts: [], dataDir, keysPath: path.join(dataDir, 'keys.json') };
   savePolicy(dataDir, seededPolicy());
   const store = createStore(dataDir);
   store.put(seed);
@@ -177,10 +178,14 @@ function boot(seed: Proposal): Boot {
     riskRows,
     rails: { for: (d) => rails.get(d.kind) ?? null, kinds: () => ['hl_deposit', 'hl_withdraw'] },
     dataDir,
-    oneClickStatus: async (handle: string) => {
-      out.asked.push(handle);
-      return { found: true, status: out.venue.status, reported: out.venue.status, originTxHashes: [], destinationTxHashes: ['0xdest'], nearTxHashes: [], ...(out.venue.status === 'SUCCESS' ? { settledAmountOut: '9.66' } : {}) };
-    },
+    ...(over.demo
+      ? {}
+      : {
+          oneClickStatus: async (handle: string) => {
+            out.asked.push(handle);
+            return { found: true, status: out.venue.status, reported: out.venue.status, originTxHashes: [], destinationTxHashes: ['0xdest'], nearTxHashes: [], ...(out.venue.status === 'SUCCESS' ? { settledAmountOut: '9.66' } : {}) };
+          },
+        }),
     venueCredited: hlDepositCredited({ credited: async () => ledger.credited, rows: () => store.list() }),
   });
   out.svc = svc;
@@ -414,6 +419,31 @@ test('withdraw, killed while polling on a row with no pocket: SUCCESS alone neve
   assert.doesNotMatch(kept.result?.detail ?? '', /before depositing again/, "a withdrawal never takes the deposit's venue read");
   assert.equal(kept.result?.evidence?.nonce, NONCE);
   assert.equal(c.executed, 0);
+});
+
+/* Demo mode builds no 1Click client, so the sweep has no venue lookup, and it wrote "No venue
+   handle was recorded for <hash>" over a demo row that carried one (report-b request 3). The
+   demo walk dies with the process and keeps no status a reader could answer from, so the honest
+   sentence is that the lookup is missing, with the handle the row has named in it. */
+test('withdraw, killed mid-walk in demo mode: the sweep names the handle it has and never claims none was recorded', async () => {
+  const seed = rowAt('hl_withdraw', {
+    result: { ok: false, detail: 'submitted, waiting for the venue', txids: ['0xdemohash'], evidence: { handle: 'demo-a1b2c3d4e5f6', nonce: NONCE, providerStage: 'PROCESSING' } },
+  });
+  const b = boot(seed, { demo: true });
+  const booted = b.svc.get(seed.id) as Proposal;
+  assert.equal(booted.status, 'needs_reconciliation');
+  await b.svc.reconcileOpen();
+  const swept = b.svc.get(seed.id) as Proposal;
+  assert.equal(swept.status, 'needs_reconciliation');
+  assert.equal(b.asked.length, 0, 'there is no venue to ask in demo mode');
+  const clicked = await b.svc.reconcile(seed.id);
+  assert.equal(clicked.status, 'needs_reconciliation');
+  assert.match(clicked.result?.detail ?? '', /No venue lookup is wired in demo mode, so the handle demo-a1b2c3d4e5f6 cannot be re-checked here/);
+  assert.doesNotMatch(clicked.result?.detail ?? '', /No venue handle was recorded/);
+  assert.equal(clicked.result?.evidence?.handle, 'demo-a1b2c3d4e5f6', 'the handle stays on the row');
+  assert.equal(clicked.result?.evidence?.nonce, NONCE);
+  assert.deepEqual(clicked.result?.txids, ['0xdemohash']);
+  assert.equal(b.executed, 0);
 });
 
 test('withdraw, killed at Deposit seen: the ledger hash, handle and nonce survive, and the row resumes at the word 1Click last said', async () => {

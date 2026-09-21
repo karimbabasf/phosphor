@@ -381,15 +381,21 @@ export async function reconcileProposal(ctx: PCtx, id: string, quiet = false): P
   /* Nothing left to ask. No handle means no venue to re-check, and this app reads no chain of
      its own any more (the hashes a rail records are intent and venue hashes, not transactions
      it broadcast). Say so and change nothing: an app that cleared this row would be asserting
-     that no funds moved, which is exactly what it does not know. */
+     that no funds moved, which is exactly what it does not know. A row that carries a handle
+     with no venue lookup wired (demo mode builds no 1Click client, src/main.ts; the demo walk
+     dies with the process and keeps no status) is the lookup missing, not the record: the
+     sentence names the handle it has rather than claiming none was recorded. */
   const txids = p.result?.txids ?? [];
   const detail =
-    txids.length === 0
-      ? 'No transaction hash was recorded, so there is nothing to look up. ' +
-        'Compare the balances before and after on the receipt, or search the account in the explorer.'
-      : `No venue handle was recorded for ${txids.join(', ')}, so there is nothing this app can re-check. ` +
-        'Compare the balances before and after on the receipt, or look the hash up in the explorer by hand.';
-  ctx.audit.append('error', `${id}: reconcile found nothing to re-check`, { id, txids });
+    typeof handle === 'string'
+      ? `No venue lookup is wired in ${ctx.cfg.mode} mode, so the handle ${handle} cannot be re-checked here; nothing has changed. ` +
+        'Compare the balances before and after on the receipt.'
+      : txids.length === 0
+        ? 'No transaction hash was recorded, so there is nothing to look up. ' +
+          'Compare the balances before and after on the receipt, or search the account in the explorer.'
+        : `No venue handle was recorded for ${txids.join(', ')}, so there is nothing this app can re-check. ` +
+          'Compare the balances before and after on the receipt, or look the hash up in the explorer by hand.';
+  ctx.audit.append('error', `${id}: reconcile found nothing to re-check`, { id, txids, ...(typeof handle === 'string' ? { handle } : {}) });
   return persist(ctx, { ...p, result: { ok: false, detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) } });
 }
 
