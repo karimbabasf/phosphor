@@ -13,7 +13,10 @@ the site, Vercel or the installed app. Criteria cited as term.number.
 - `af35046` The docs describe the build they ship with: the 0.7.0 reads and the 46 tools, the stage words, the policy walls of one click, where a fresh install keeps its state and keys, the shell and its updater, a known limits page, and the release checklist prepared and not run. Test: tests/unit/keys-path.test.ts (the fresh installed app).
 - `e69a46a` README: the connect section speaks of the agent picker.
 - (next) The sweep excuses the launch evidence's release checksums, the fake PEM block from the log tail test by its whole one-line value (the PEM match now runs to an END marker on the same line, so the header alone still trips), and a peer's made-up hash; the lessons lines, the evidence and this report. Test: tests/unit/sweep.test.ts, "a fake PEM block is excused only as the exact block".
-- (final) The 0.8.0 changelog entry alone. See "Counts": the changelog heading makes one docs test red until the lead's version bump.
+- `224b1e0` The 0.8.0 changelog entry alone. See "Counts": the changelog heading makes one docs test red until the lead's version bump.
+- `4240cd0` Merge main (the lead's demo-rail test fix) into rfp/g-launch.
+- `ba93c37` Review fix 1: the lockfile rule names `src-tauri/Cargo.lock` by path and excuses a checksum only inside a `[[package]]` block with a crates.io source (a plant that forges a whole such block still passes; the lockfile is Cargo's to write). Node B's demo hashes (evidence-b) and node F's scene hashes (scripts/anxiety/scenes.ts) excused by value. Test: tests/unit/sweep.test.ts, six planted lines.
+- `2dc5ff4` Review fix 2: the log tail's second wall also cuts `ed25519:` and `secp256k1:` base58, raw 87 to 88 base58, `sk-` keys, JWTs, bearer tokens, and the apiKey, x-api-key, authorization, cookie fields; `diagnose` (src/http/read/wallet.ts, three lines, outside my list) formats a row's own lines through the same wall. Test: tests/unit/log-tail.test.ts, the reviewer's planted line on both routes and on diagnose. Cost stated in the code: a Solana signature of a deposit somebody sent is 87 to 88 base58 and now reads [redacted] in the tail.
 
 ## 2. Counts
 
@@ -25,7 +28,7 @@ Taken on the tree before the changelog commit, evidence-g/typecheck.txt, test.tx
 - `npm run sweep`: PASS, 6 checks, 810 tracked files, 5840 history blobs (evidence-g/sweep-after.txt), rerun after the evidence files were staged; it caught the four release checksums in them, my own test's PEM fixture in history, and a hash node D committed on `rfp/d-card` an hour later, each now excused by exact value with a note. Expect the same at merge for any fixture another node adds. Before: FAIL with 8,076 findings (evidence-g/sweep-before.txt).
 - `gitleaks git` (8.30.1): 176 findings, every one `generic-api-key`, every one a NEAR token id under a `tokenId` key, an env var name constant, the canonical Ethereum test key the sweep already excuses, or a made-up test string; zero secrets (evidence-g/gitleaks.txt; breakdown under 1.7 in section 3).
 - `npm run eval`: 29 scenarios, 29 pass, 0 fail, 0 xfail (evidence-g/eval.txt), on the fourth attempt after another node released the machine lock; the count the harness prints comes from `loadScenarios`.
-- After the changelog commit: `npm test` is 3076 with 2 failing, the demo-rail one above plus `tests/unit/docs.test.ts` "the changelog opens on the version in package.json", by design until package.json says 0.8.0.
+- After the changelog commit and the merge of main (`4240cd0`): the demo-rail test passes. On the tip `2dc5ff4`: `npm test` 3078 tests, 3077 pass, 1 fail, the one being `tests/unit/docs.test.ts` "the changelog opens on the version in package.json", by design until package.json says 0.8.0; typecheck clean; `npm run sweep` PASS (811 tracked files, 5969 history blobs).
 
 ## 3. Criteria
 
@@ -154,7 +157,7 @@ Taken on the tree before the changelog commit, evidence-g/typecheck.txt, test.tx
 
    The list is written once from `tools.map(t => [t.name, [...propertyNames(t.inputSchema)].sort()])` on the merged tree.
 
-5. `diagnose` (src/http/read/wallet.ts, the `log:` field) formats a row's own audit lines without the redaction the tail routes now have. One change: `const isCredential = credentialCheck(ctx);` above, and `.map((e) => withoutAddresses(...))` becomes `.map((e) => redactEvent(e, isCredential)).map((e) => withoutAddresses(...))`, with `import { credentialCheck, redactEvent } from '../log-tail.ts';`. Left alone because the brief named the tail route; it is the same class.
+5. Done in `2dc5ff4` on the lead's word: `diagnose` (src/http/read/wallet.ts) formats a row's own audit lines through the same redaction, three lines changed in a file outside my list.
 
 6. `.gitleaks.toml` at the repo root, so gitleaks' exit code means something (1.7):
 
