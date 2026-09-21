@@ -575,6 +575,13 @@ export function maxSendableUsdc(sendable: number, activationFeeUsdc: number): nu
   return Math.floor(room * 1e6) / 1e6;
 }
 
+// A USDC figure for a sentence: six places, trailing zeros off. A sum of two doubles is not a
+// number toAmountString may spell (8.209399 + 1 has a seventh decimal), and a refusal that
+// threw on its own arithmetic read as "rail threw" over a plain short balance.
+function money(amount: number): string {
+  return Number.isFinite(amount) ? amount.toFixed(6).replace(/\.?0+$/, '') : String(amount);
+}
+
 // The one action here that pays someone else, so it refuses more than it does. It has no
 // default destination on purpose: the caller must name one, and the only caller is the
 // withdraw rail, which names the address 1Click minted for the quote it just checked.
@@ -642,7 +649,7 @@ export async function sendAsset(
       maxSendableUsdc: most,
       detail:
         `REFUSED: ${summary.unified ? 'available' : `the ${sourceDex === HL_SPOT_DEX ? 'spot' : 'perp'} book holds`} ${summary.unified ? 'is ' : ''}${sendable} USDC ` +
-        `and the transfer needs ${toAmountString(needed)}${why}. The most it can send now is ${most} USDC.${hint}`,
+        `and the transfer needs ${money(needed)}${why}. The most it can send now is ${most} USDC.${hint}`,
     };
   }
 

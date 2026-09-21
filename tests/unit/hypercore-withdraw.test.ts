@@ -162,6 +162,10 @@ type HlOverrides = {
   // The ledger already shows a send under the clock nonce, whether or not the fake exchange
   // recorded one: the venue took a send whose reply was lost.
   ledgerKnowsNonce?: boolean;
+  // The same, as a `send` delta that carries no nonce field at all, only its destination,
+  // amount and time.
+  ledgerShapeOnly?: boolean;
+  ledgerShapeAmount?: string;
   refuseSend?: boolean;
 };
 
@@ -202,6 +206,9 @@ function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps
     if (body.type === 'userNonFundingLedgerUpdates') {
       if (over.ledgerKnowsNonce) {
         return json([{ time: NOW, hash: '0xledgerhash', delta: { type: 'send', token: 'USDC', amount: '8', user: ACCOUNT, destination: DEPOSIT.toLowerCase(), fee: '1.0', nonce: NOW, feeToken: 'USDC' } }]);
+      }
+      if (over.ledgerShapeOnly) {
+        return json([{ time: NOW + 2_000, hash: '0xshapedhash', delta: { type: 'send', token: 'USDC', amount: over.ledgerShapeAmount ?? '8', user: ACCOUNT, destination: DEPOSIT.toLowerCase(), fee: '1.0', feeToken: 'USDC' } }]);
       }
       if (over.ledgerMissing || exchange.length === 0) return json([]);
       const sent = exchange[exchange.length - 1];
@@ -685,13 +692,39 @@ test('the verifier showing the floor on the third read after SUCCESS is a confir
   assert.equal(out.pocket?.before, '0');
 });
 
-test('a verifier that would not answer before the send leaves no pocket, and the row settles on the router alone', async () => {
-  const { rail: r } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], {}, [], { intentsBalance: async () => null });
+test('a verifier that would not answer before the send leaves no pocket and never confirms: the row settles on the router alone, and its sentence does not ask the venue read to vouch for it', async () => {
+  let reads = 0;
+  // No before-read; the after-read answers with a balance that has nothing to be compared to.
+  const { rail: r } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], {}, [], {
+    intentsBalance: async () => (reads++ === 0 ? null : 7_780_248n),
+  });
   const out = await r.execute(draft());
-  assert.equal(out.ok, false);
+  assert.equal(out.ok, false, 'an after-read with no before is not a rise');
   assert.equal(out.settling, true);
   assert.equal(out.pocket, undefined);
   assert.match(out.detail, /would not answer a balance read before the send/);
+  assert.match(out.detail, /the next check with the router confirms it/);
+  // reconcile.ts routes "has not shown" to the Hyperliquid credit read, which answers only for a
+  // deposit and would hold a withdrawal open for ever; this sentence must not carry it.
+  assert.doesNotMatch(out.detail, /ha[sd] not shown/);
+});
+
+test('the venue ledger names the send by its nonce, and a send delta without a nonce field still matches on destination, amount and time', async () => {
+  const fixture = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], { exchangeThrowsOnce: true, ledgerKnowsNonce: true });
+  const byNonce = await fixture.rail.execute(draft());
+  assert.equal(byNonce.ok, true, byNonce.detail);
+  assert.equal(fixture.posts.length, 1, 'the ledger answered by nonce, so nothing was resent');
+
+  const shaped = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], { exchangeThrowsOnce: true, ledgerShapeOnly: true });
+  const byShape = await shaped.rail.execute(draft());
+  assert.equal(byShape.ok, true, byShape.detail);
+  assert.equal(shaped.posts.length, 1, 'a nonce-less send delta for the same destination, amount and window is the send');
+  assert.match(byShape.detail, /ledger 0xshapedhash/);
+
+  const other = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], { exchangeThrowsOnce: true, ledgerShapeOnly: true, ledgerShapeAmount: '7' });
+  const miss = await other.rail.execute(draft());
+  assert.equal(miss.ok, true, miss.detail);
+  assert.equal(other.posts.length, 2, 'a different amount is not our send, so the same nonce was sent once more');
 });
 
 // ---------- the fee facts on the card (criteria 1.10, 8.1, 8.2) ----------

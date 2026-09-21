@@ -341,6 +341,15 @@ test('sendAsset on a unified account draws on the unified figure and never sugge
 
 // The refusal ends with the number to try instead: what is free, less the activation fee when
 // the destination is fresh, cut toward zero at six decimals (criterion 8.6).
+test('a short balance refusal spells the sum as money, never as a float that toAmountString would refuse', async () => {
+  // 7.209399 plus the 1 USDC fee is 8.209399000000001 as a double; the sentence says 8.209399.
+  const out = await sendAsset(deps({ unifiedAvailable: '7.0', role: 'missing' }), { destination: FRESH, amount: 7.209399 });
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /needs 8\.209399 \(/);
+  assert.doesNotMatch(out.detail, /0000001/);
+  assert.equal(out.maxSendableUsdc, 6);
+});
+
 test('a short balance refusal names the most the account could send now', async () => {
   const fresh = await sendAsset(deps({ unifiedAvailable: '8.5', role: 'missing' }), { destination: FRESH, amount: 8 });
   assert.equal(fresh.ok, false);

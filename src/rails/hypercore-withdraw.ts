@@ -105,6 +105,11 @@ export const MIN_HL_WITHDRAW_USDC = 5;
 export const SETTLING_WITHDRAW =
   'The router reports the withdrawal settled and the intents balance has not shown it yet. ' +
   'Nothing more will be signed until the next balance read confirms it.';
+// The same row when the verifier gave no before-read: nothing to compare against, so the
+// sentence names the router's check rather than a balance, and nothing is signed either way.
+export const SETTLING_WITHDRAW_UNMEASURED =
+  'The router reports the withdrawal settled. The verifier gave no balance to compare against, ' +
+  'so the next check with the router confirms it. Nothing more will be signed.';
 
 // A USDC figure as money: six places, trailing zeros off. A sum of two doubles printed raw put
 // "8.209399000000001 USDC" in front of a person (2026-09-20).
@@ -495,10 +500,13 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     return last;
   }
 
-  // The venue's own record of the send, keyed on the nonce, which equals the action's time.
-  // Best effort: the send already happened, so a ledger that will not answer changes the
-  // sentence and not the fact.
-  async function ledgerHash(owner: string, nonce: number, destination: string): Promise<string | null> {
+  // The venue's own record of the send, keyed on the nonce the action signed with. A `send`
+  // delta that carries no nonce field is matched on the destination, the exact amount and a
+  // time inside the window instead: a miss here only costs a retry with the SAME nonce, which
+  // the venue refuses as a duplicate, so the match may be loose in that one direction and
+  // never in the other. Best effort: the send already happened, so a ledger that will not
+  // answer changes the sentence and not the fact.
+  async function ledgerHash(owner: string, nonce: number, destination: string, amount?: string): Promise<string | null> {
     try {
       const res = await (hl.fetchImpl ?? fetch)('https://api.hyperliquid.xyz/info', {
         method: 'POST',
@@ -506,13 +514,23 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         body: JSON.stringify({ type: 'userNonFundingLedgerUpdates', user: owner, startTime: nonce - 60_000 }),
         signal: readTimeout(),
       });
-      const rows = (await res.json()) as Array<{ hash?: string; delta?: Record<string, unknown> }>;
-      const hit = rows.find(
-        (r) =>
-          (r.delta?.type === 'spotTransfer' || r.delta?.type === 'send') &&
-          Number(r.delta?.nonce) === nonce &&
-          String(r.delta?.destination ?? '').toLowerCase() === destination.toLowerCase(),
-      );
+      const rows = (await res.json()) as Array<{ time?: number; hash?: string; delta?: Record<string, unknown> }>;
+      const ours = (r: { delta?: Record<string, unknown> }) =>
+        (r.delta?.type === 'spotTransfer' || r.delta?.type === 'send') && String(r.delta?.destination ?? '').toLowerCase() === destination.toLowerCase();
+      const byNonce = rows.find((r) => ours(r) && Number(r.delta?.nonce) === nonce);
+      const byShape =
+        amount === undefined
+          ? undefined
+          : rows.find(
+              (r) =>
+                ours(r) &&
+                r.delta?.nonce === undefined &&
+                String(r.delta?.amount ?? '') === amount &&
+                typeof r.time === 'number' &&
+                r.time >= nonce - 60_000 &&
+                r.time <= nonce + 10 * 60_000,
+            );
+      const hit = byNonce ?? byShape;
       return typeof hit?.hash === 'string' ? hit.hash : null;
     } catch {
       return null;
@@ -587,7 +605,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     let sent = first;
     let ledger: string | null = null;
     if (!first.ok && first.ambiguous && first.nonce !== undefined) {
-      ledger = await ledgerHash(owner, first.nonce, depositAddress);
+      ledger = await ledgerHash(owner, first.nonce, depositAddress, toAmountString(draft.amount));
       if (ledger === null) sent = await sendAsset(hl, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
     }
     const landed = sent.ok || ledger !== null;
@@ -627,7 +645,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     const nonce = first.nonce ?? sent.nonce ?? now();
     // The venue's ledger hash when it has one. When it has not shown the send yet the row keeps
     // the nonce and no hash: an invented id in txids reaches Activity as a transaction.
-    if (ledger === null) ledger = await ledgerHash(owner, nonce, depositAddress);
+    if (ledger === null) ledger = await ledgerHash(owner, nonce, depositAddress, toAmountString(draft.amount));
     const evidence = `sent ${draft.amount} USDC to ${handle} (nonce ${String(nonce)}, ledger ${ledger ?? 'not found yet'})`;
     const railEvidence = (status: OneClickStatus) => ({ ...settledEvidence(status, handle), nonce: String(nonce), quote: signedQuote });
     const hash = ledger ?? '';
@@ -648,10 +666,14 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
          credit it", and the next ledger read that shows the rise settles it. Nothing more is
          signed either way. */
       if (!proof.rose) {
+        /* A row with no before-read cannot say "has not shown" (the boot sweep reads that
+           phrase as "wait for the venue read", which answers only for a deposit and would hold
+           the row open for ever); it says what it can measure, and the router's word settles it. */
+        const lead = proof.unmeasured === true ? SETTLING_WITHDRAW_UNMEASURED : SETTLING_WITHDRAW;
         return {
           ok: false,
           settling: true,
-          detail: `${SETTLING_WITHDRAW} ${said}`,
+          detail: `${lead} ${said}`,
           txids: uniqueTxids(hash, watch),
           ...(pocket === null ? {} : { pocket }),
           evidence: railEvidence(watch),
@@ -722,7 +744,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     };
   }
 
-  type Proof = { sentence: string; rose: boolean; intentsAfter: bigint | null };
+  type Proof = { sentence: string; rose: boolean; intentsAfter: bigint | null; unmeasured?: boolean };
 
   /* What changed on each side, read back rather than assumed. The verifier is READ UNTIL IT
      SHOWS the floor or the window is spent: 1Click says SUCCESS the block the solver executes and
@@ -739,9 +761,12 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       parts.push(` Could not read the venue afterwards (${oneLine(errText(err), 80)}).`);
     }
     if (intentsBefore === null) {
+      /* No before, no comparison: a read now has nothing to rise from, so it never confirms.
+         The row lands settling without a pocket and the sweep confirms it on the router's own
+         terminal word later, which is all the evidence such a row can have. */
       const once = await intentsBalance(draft.to, INTENTS_USDC_ASSET_ID);
-      parts.push(' The verifier would not answer a balance read before the send, so the credit cannot be compared here; read the wallet.');
-      return { sentence: parts.join(''), rose: once !== null, intentsAfter: once };
+      parts.push(' The verifier would not answer a balance read before the send, so this app cannot compare the balance; the next check with the router confirms it.');
+      return { sentence: parts.join(''), rose: false, intentsAfter: once, unmeasured: true };
     }
     const floor = toBaseUnits(draft.minReceived, INTENTS_USDC_DECIMALS);
     const watched = await watchRise<bigint>({
