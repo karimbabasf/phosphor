@@ -84,6 +84,13 @@ function digits(value: unknown): string | null {
   return typeof value === 'string' && /^\d+$/.test(value) ? value : null;
 }
 
+// A hash off the wire: base58 and hash-sized, or no hash. An intent hash goes on the row as
+// the handle and a NEAR hash goes into an explorer link, so neither may carry anything but the
+// characters a hash is made of.
+function hash(value: unknown, min: number, max: number): string | null {
+  return typeof value === 'string' && value.length >= min && value.length <= max && /^[1-9A-HJ-NP-Za-km-z]+$/.test(value) ? value : null;
+}
+
 function readQuote(raw: unknown): RelayQuote | null {
   if (raw === null || typeof raw !== 'object') return null;
   const q = raw as Record<string, unknown>;
@@ -172,7 +179,7 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
     const r = result as Record<string, unknown>;
     const status = r['status'];
     if (status === 'OK') {
-      const intentHash = text(r['intent_hash'], 120);
+      const intentHash = hash(r['intent_hash'], 8, 120);
       if (intentHash === null) throw new Error('relay publish_intent said OK and gave no intent hash');
       return { status: 'OK', intentHash };
     }
@@ -189,11 +196,11 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
     const word = text(r['status'], 60);
     if (word === null) throw new Error('relay get_status answered with no status word');
     const data = r['data'];
-    const nearTxHash = data !== null && typeof data === 'object' ? text((data as Record<string, unknown>)['hash'], 120) : null;
+    const nearTxHash = data !== null && typeof data === 'object' ? hash((data as Record<string, unknown>)['hash'], 32, 64) : null;
     const filled = r['filled_amounts'];
     const filledAmounts = Array.isArray(filled) ? filled.map((v) => digits(v)).filter((v): v is string => v !== null) : [];
     return {
-      intentHash: text(r['intent_hash'], 120) ?? intentHash,
+      intentHash: hash(r['intent_hash'], 8, 120) ?? intentHash,
       status: word,
       statusDetails: text(r['status_details'], 300),
       nearTxHash,

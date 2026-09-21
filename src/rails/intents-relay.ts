@@ -172,6 +172,11 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
   const relay = deps.relay ?? relayClient({ fetchImpl: deps.fetchImpl, ...(deps.apiKey === undefined ? {} : { apiKey: deps.apiKey }) });
   const client = deps.client ?? oneClickClient({ fetchImpl: deps.fetchImpl });
   const verifier = deps.verifier ?? liveVerifier(deps.fetchImpl ?? fetch);
+  /* The two verifier reads that run after the signature, wrapped so a port that throws (the
+     live one never does) cannot turn a released signature into a thrown "nothing happened".
+     Null is the answer the rail already knows how to hold: unread, never zero, never unspent. */
+  const readBalance = (account: string, asset: string): Promise<bigint | null> => verifier.balance(account, asset).catch(() => null);
+  const readNonceUsed = (account: string, nonce: string): Promise<boolean | null> => verifier.nonceUsed(account, nonce).catch(() => null);
   const sleep = deps.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = deps.now ?? Date.now;
   const random = deps.random ?? randomBytes;
@@ -489,9 +494,9 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
       const tolerance = settleTolerance(amountOut);
       const settle =
         beforeBase === null
-          ? { last: await verifier.balance(account, p.assetOut), rose: false, reads: 1, waitedMs: 0 }
+          ? { last: await readBalance(account, p.assetOut), rose: false, reads: 1, waitedMs: 0 }
           : await watchRise({
-              read: () => verifier.balance(account, p.assetOut),
+              read: () => readBalance(account, p.assetOut),
               rose: (after) => after - beforeBase >= amountOut - tolerance,
               schedule: settleSchedule,
               sleep,
@@ -537,7 +542,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
          spent nonce IS the swap having executed. A success then says which half is measured and
          which is the chain's word; anything less is unconfirmed, never a success on the relay's
          word alone, and the sweep asks the verifier again. */
-      const spent = await verifier.nonceUsed(account, nonce);
+      const spent = await readNonceUsed(account, nonce);
       if (spent === true) {
         return {
           ok: true,

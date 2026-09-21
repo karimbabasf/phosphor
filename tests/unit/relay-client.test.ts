@@ -129,6 +129,18 @@ test('status carries the word as spelled, the NEAR hash when there is one, and t
   assert.deepEqual((t.calls[0].body['params'] as unknown[])[0], { intent_hash: 'h1' });
 });
 
+test('a hash the relay reports is a base58 string of a hash length, or it is no hash at all', async () => {
+  const t = transport([
+    rpc({ intent_hash: 'h1', status: 'TX_BROADCASTED', data: { hash: 'javascript:alert(1)' } }),
+    rpc({ intent_hash: 'h1', status: 'TX_BROADCASTED', data: { hash: '../../..' } }),
+    rpc({ status: 'OK', intent_hash: 'not a hash at all' }),
+  ]);
+  const client = relayClient({ fetchImpl: t.fetchImpl, apiKey: '' });
+  assert.equal((await client.status('h1')).nearTxHash, null);
+  assert.equal((await client.status('h1')).nearTxHash, null);
+  await assert.rejects(() => client.publishIntent({ quoteHashes: [], standard: 'erc191', payload: '{}', signature: 's' }), /no intent hash/);
+});
+
 test('a JSON-RPC error, an HTTP error and an empty body are errors with the relay words in them', async () => {
   const t = transport([{ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Invalid params' } }, { httpStatus: 503, body: null }, 'not json at all']);
   const client = relayClient({ fetchImpl: t.fetchImpl, apiKey: '' });

@@ -571,6 +571,51 @@ test('a status call that throws does not end the watch, and SETTLED with no bala
   assert.equal(unproven.signed.length, 1);
 });
 
+test('nothing throws after the signature: a verifier that throws on the after-read still returns a row with the hash and the nonce', async () => {
+  const h = harness();
+  let signed = false;
+  const throwing: VerifierPort = {
+    async balance(_account, asset) {
+      if (signed) throw new Error('rpc exploded');
+      return asset === USDC ? 5_000_000n : 1_000_000n;
+    },
+    async currentSalt() {
+      return SALT;
+    },
+    async nonceUsed() {
+      throw new Error('rpc exploded');
+    },
+  };
+  const rail = intentsRelayRail({
+    keysPath: '/nonexistent/keys.json',
+    tokens: tokensFixture,
+    signer: {
+      address: () => OWNER,
+      async signErc191(_k, payload) {
+        signed = true;
+        return erc191SignatureField(await signMessage({ privateKey: TEST_KEY, message: payload }));
+      },
+    },
+    relay: {
+      quote: async () => [quoteOf()],
+      publishIntent: async () => ({ status: 'OK', intentHash: INTENT_HASH }),
+      status: async () => statusOf('SETTLED', { nearTxHash: NEAR_TX }),
+    },
+    client: { tokens: async () => apiTokens } as unknown as OneClickClient,
+    verifier: throwing,
+    now: () => h.clock.now,
+    sleepImpl: async (ms) => {
+      h.clock.now += ms;
+    },
+    settleSchedule: { firstMs: 100, maxMs: 100, timeoutMs: 300 },
+  });
+  const result = await rail.execute(draftOf(), 'p1', h.hooks);
+  assert.equal(result.ok, false);
+  assert.equal(result.settling, true, 'unconfirmed, never a throw that reads as nothing happened');
+  assert.equal(result.evidence?.handle, INTENT_HASH);
+  assert.equal(typeof result.evidence?.nonce, 'string');
+});
+
 test('the counterparty is the verifier and the proceeds land on our own account, or the draft is refused', async () => {
   const h = harness();
   await assert.rejects(() => h.rail.execute(draftOf({ counterparty: 'somebody.near' }), 'p1', h.hooks), /must name intents\.near as the counterparty/);
