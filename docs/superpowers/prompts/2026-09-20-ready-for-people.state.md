@@ -6,7 +6,7 @@ Lead: Claude (Opus 5), session c49886b8. Started 2026-09-20 19:05 PDT. Main at 7
 - typecheck: exit 0
 - npm test: 3066 pass, 0 fail
 - npm run eval: 29/29 pass
-- npm run eval:live (full, at ab6f8f1): 17 pass, 8 fail, 4 xfail, 0 error. Pass: S3 S7 S8 S10 S11 S15 S17 S18 S19 S20 S21 S22 S24 S25 S26 S27 S29. Fail (all on the reply, judge or figure): S1 S2 S4 S5 S6 S9 S12 S16. xfail: S13 S14 S23 S28. Log: scratchpad/baseline/eval-live.log. The floor is per scenario: every baseline pass must still pass after every merge.
+- npm run eval:live (full, at ab6f8f1, 3 runs, 1h50m): run 1 17 pass 8 fail 4 xfail; run 2 20/5/4; run 3 17/8/4; 17 scenarios green every run. Per scenario x/3: S1 2, S2 2, S3 3, S4 1, S5 2, S6 1, S7 3, S8 3, S9 1, S10 1, S11 3, S12 0, S15 3, S16 0, S17 3, S18 3, S19 3, S20 2, S21 3, S22 3, S24 3, S25 2, S26 3, S27 1, S29 3; xfail every run: S13 S14 S23 S28. Log: scratchpad/baseline/eval-live.log. The floor is per scenario over 3 runs: a merge may not lower any scenario's count.
 - impeccable detect ui/: 3 findings after the Geist ignore (2 clipped-overflow warnings on html/body, 1 advisory hairline border plus wide shadow); baseline JSON at docs/superpowers/prompts/ready-for-people/impeccable-detect-baseline.json
 
 ## Phase 0 (done)
