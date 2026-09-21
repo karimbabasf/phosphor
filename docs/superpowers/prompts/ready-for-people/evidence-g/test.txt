@@ -1,33 +1,33 @@
-# trimmed to the summary and the failing block; the full run was 4305 lines. Taken on the tree before the changelog commit.
+# trimmed to the summary and the failing block; the full run was 4313 lines. Taken on the tip after the six review fixes; the one red is the 0.8.0 changelog heading, by design until the version bump.
 > phosphor@0.7.0 test
 > node --test tests/unit/*.test.ts tests/injection.test.ts tests/lockdown.test.ts
-ℹ tests 3076
+ℹ tests 3080
 ℹ suites 0
-ℹ pass 3075
+ℹ pass 3079
 ℹ fail 1
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 24586.267375
+ℹ duration_ms 44070.694625
 EXIT=1
 
 ✖ failing tests:
 
-test at tests/unit/demo-rail.test.ts:152:1
-✖ the stall knob stops the walk at PROCESSING and the deadline is what moves the row (984.249ms)
-  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
-  + actual - expected
+test at tests/unit/docs.test.ts:55:1
+✖ the changelog opens on the version in package.json (1.428375ms)
+  AssertionError [ERR_ASSERTION]: docs/changelog.md starts with "## 0.8.0" but package.json is 0.7.0
   
-  + 'The transfer'
-  - '1Click'
+  '0.8.0' !== '0.7.0'
   
-      at TestContext.<anonymous> (file:///Users/karimbaba/Developer/Apps/phosphor-rfp-g-launch/tests/unit/demo-rail.test.ts:161:10)
-      at async Test.run (node:internal/test_runner/test:1409:7)
-      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
-    generatedMessage: true,
+      at TestContext.<anonymous> (file:///Users/karimbaba/Developer/Apps/phosphor-rfp-g-launch/tests/unit/docs.test.ts:57:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: false,
     code: 'ERR_ASSERTION',
-    actual: 'The transfer',
-    expected: '1Click',
+    actual: '0.8.0',
+    expected: '0.7.0',
     operator: 'strictEqual',
     diff: 'simple'
   }

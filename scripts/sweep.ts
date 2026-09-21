@@ -16,6 +16,11 @@
 //                        it, so scanning the working tree alone proves nothing.
 //   6. config load       config.json parses, since it is itself published.
 //
+// What this sweep does NOT see, stated so nobody reads a pass as more than it is: a mnemonic
+// in single quotes or separated by commas (the mnemonic check reads whole lines and double
+// quoted strings only), and vendor credentials with no fixed shape here (sk- API keys, ghp_
+// tokens, bearer tokens, JWTs). Those are gitleaks' job, run beside this.
+//
 // This program never prints a secret it finds. A finding names the file, the line and the
 // pattern, plus an eight character sha256 prefix so two findings can be recognised as the
 // same value. Printing the match would put the secret in a terminal, a scrollback buffer and
