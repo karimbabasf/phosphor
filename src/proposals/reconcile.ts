@@ -388,8 +388,8 @@ export async function reconcileProposal(ctx: PCtx, id: string, quiet = false): P
   const txids = p.result?.txids ?? [];
   const detail =
     typeof handle === 'string'
-      ? `No venue lookup is wired in ${ctx.cfg.mode} mode, so the handle ${handle} cannot be re-checked here; nothing has changed. ` +
-        'Compare the balances before and after on the receipt.'
+      ? `Nothing has changed since the venue's last word, and the app could not re-check it on this boot (${ctx.cfg.mode} mode keeps no venue lookup). ` +
+        'Compare the balances before and after on the receipt; the reference is under Details.'
       : txids.length === 0
         ? 'No transaction hash was recorded, so there is nothing to look up. ' +
           'Compare the balances before and after on the receipt, or search the account in the explorer.'

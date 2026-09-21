@@ -1098,6 +1098,12 @@
      by 1Click under handle ..."). A generic "we cannot read what happened" on top of that is
      a lie by omission, and it is what a person read on 2026-09-15 while the row underneath
      already knew. The generic line is kept only for a row that carries no sentence at all. */
+  /* Two ends of a handle, the way the chat card shortens every id (cards.js shortId). */
+  function shortEnds(value) {
+    var id = String(value || '');
+    return id.length > 20 ? id.slice(0, 8) + '...' + id.slice(-8) : id;
+  }
+
   function unreadSentence(proposal) {
     var said = proposal && proposal.result && proposal.result.detail;
     if (typeof said === 'string' && said.trim()) return said.trim();
@@ -1118,13 +1124,15 @@
     var handle = proposal.result && proposal.result.evidence && proposal.result.evidence.handle;
     if (handle) {
       var where = dom.el('p', 'body dim');
-      dom.setText(where, 'Do not send it again. Quote handle ' + handle);
+      /* The whole handle sat on the face beside "Quote handle", a raw id in a sentence (3.1);
+         the face keeps the instruction, and the id is under the card's Details, two ends only. */
+      dom.setText(where, 'Do not send it again. Reference ' + shortEnds(handle) + ', under Details.');
       body.appendChild(where);
     }
 
     var actions = dom.el('div', 'dock-actions');
     var again = dom.el('button', 'btn btn-primary');
-    again.appendChild(dom.el('span', 'btn-label', 'Reconcile'));
+    again.appendChild(dom.el('span', 'btn-label', 'Check again'));
     dom.setAttr(again, 'data-pending-label', 'Checking');
     actions.appendChild(again);
     var gotIt = dom.el('button', 'btn');

@@ -438,7 +438,8 @@ test('withdraw, killed mid-walk in demo mode: the sweep names the handle it has 
   assert.equal(b.asked.length, 0, 'there is no venue to ask in demo mode');
   const clicked = await b.svc.reconcile(seed.id);
   assert.equal(clicked.status, 'needs_reconciliation');
-  assert.match(clicked.result?.detail ?? '', /No venue lookup is wired in demo mode, so the handle demo-a1b2c3d4e5f6 cannot be re-checked here/);
+  assert.match(clicked.result?.detail ?? '', /Nothing has changed since the venue's last word, and the app could not re-check it on this boot \(demo mode keeps no venue lookup\)/);
+  assert.doesNotMatch(clicked.result?.detail ?? '', /demo-a1b2c3d4e5f6/, 'the handle is evidence on the row, not a word in the sentence');
   assert.doesNotMatch(clicked.result?.detail ?? '', /No venue handle was recorded/);
   assert.equal(clicked.result?.evidence?.handle, 'demo-a1b2c3d4e5f6', 'the handle stays on the row');
   assert.equal(clicked.result?.evidence?.nonce, NONCE);

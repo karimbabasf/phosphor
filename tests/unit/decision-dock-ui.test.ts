@@ -56,7 +56,7 @@ test('the dock builds its buttons here and every one is named', () => {
   // neither approves, refuses, unlocks nor re-checks. A send's primary says what the click
   // starts (the Touch ID dialog that names the receiver) and, while that dialog is up, that it
   // is waiting on it; the send card itself (ui/screens/sendcard.js) builds no deciding button.
-  const allowed = ['No', 'Yes', 'Unlock', 'Reconcile', 'Got it', 'Approve, then Touch ID', 'Approve', 'Waiting for Touch ID'];
+  const allowed = ['No', 'Yes', 'Unlock', 'Check again', 'Got it', 'Approve, then Touch ID', 'Approve', 'Waiting for Touch ID'];
   assert.ok(labels.length > 0, 'the dock builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');
@@ -641,7 +641,7 @@ test('a Yes the enclave answers with awaiting_touch is not flashed as done', () 
 // 2026-09-15: two deposits sat FAILED at 1Click with the input held under their handles, and
 // the dock card said "we cannot read what happened to it" over a row that already carried the
 // whole sentence. A card that knows less than its row is nagging, not information.
-test('the unconfirmed card speaks the row\'s own sentence, names the handle, and offers Got it beside Reconcile', () => {
+test('the unconfirmed card speaks the row\'s own sentence, shortens the handle to two ends, and offers Got it beside Check again', () => {
   const said = '1click reported FAILED and refunded 0 USDC so far; the input is held by 1Click under handle 86abbc463f08f6244071c17f4cd3471285b24179a4f029fe54a1979d2de7f806; reason not given.';
   const card = cardFor({
     id: 'c2a15f9f',
@@ -658,7 +658,10 @@ test('the unconfirmed card speaks the row\'s own sentence, names the handle, and
   assert.ok(!text.some((t) => t.includes('cannot read what happened')), 'the stock sentence is gone when the row knows better');
   assert.ok(text.some((t) => t.startsWith('Not confirmed')), 'the label says what this is');
   const labels = find(card, 'btn-label').map((n) => textOf(n).join(''));
-  assert.deepEqual(labels, ['Reconcile', 'Got it']);
+  assert.deepEqual(labels, ['Check again', 'Got it']);
+  // The handle is an id: two ends on the face, never the whole 64 characters (3.1).
+  assert.ok(text.some((t) => /Reference 86abbc46\.\.\.[0-9a-f]{8}, under Details\./.test(t)), 'the reference is shortened: ' + text.join(' | '));
+  assert.ok(!text.some((t) => t.includes('Quote handle 86abbc463f08f6244071c17f4cd3471285b24179a4f029fe54a1979d2de7f8')), 'the whole handle is not on the face');
 });
 
 test('a filed unconfirmed row is not drawn by the dock', () => {
