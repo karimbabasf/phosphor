@@ -16,11 +16,11 @@ docs/superpowers/prompts/ready-for-people/evidence-c/.
 ## 2. Counts
 
 - `npm run typecheck`: exit 0 (state/typecheck.log).
-- `npm test`: 3123 tests, 3122 pass, 1 fail. Baseline 3066; this branch adds 57. The one failure is
-  `tests/unit/demo-rail.test.ts` "the stall knob stops the walk at PROCESSING and the deadline is what
-  moves the row", which fails the same way on the branch base 6ff58a9 with none of my commits (run with
-  `git stash` and with `git checkout 6ff58a9`: 2 pass, 1 fail both times). Not mine; listed under
-  follow-ups.
+- `npm test`: 3123 tests, 3123 pass, 0 fail, on the tree with main eb28109 merged in (merge commit
+  52ac8ad). Main alone is 3068; this branch adds 55 (agents-catalog 22, connection-route 7,
+  policy-threshold-route 4, firstrun-ui 13, vault-agent-ui 9). Before the merge the tree showed one
+  failure, `tests/unit/demo-rail.test.ts` "the stall knob stops the walk at PROCESSING", which failed the
+  same way on the branch base 6ff58a9 with none of my commits and which main's bb4b842 fixed.
 - `npm run eval`: not run. Nothing the agent reads or says changed: src/persona.ts, src/role.ts, skills/,
   operator/, the tool descriptions in src/mcp.ts and every view.ts consumer are untouched
   (`git diff 6ff58a9 --stat` names none of them).
@@ -143,8 +143,8 @@ docs/superpowers/prompts/ready-for-people/evidence-c/.
 
 ## 6. Follow-ups found, not fixed
 
-- tests/unit/demo-rail.test.ts "the stall knob stops the walk at PROCESSING" fails on 6ff58a9 without my
-  commits (2 pass, 1 fail); a node A or B or lead matter, not touched.
+- tests/unit/demo-rail.test.ts "the stall knob stops the walk at PROCESSING" failed on 6ff58a9 without my
+  commits; fixed on main at bb4b842, green here after the merge.
 - ui/screens/firstrun.js: on the software flow, "I already have one" goes password, then `go(5)`
   (addresses), so the "Bring your wallet in" screen (screenImport, drawn at the prove step) is never
   reached and walletImport is never posted. Pre-existing, no criterion of mine names it; the screenshot
