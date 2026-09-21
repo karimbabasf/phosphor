@@ -21,7 +21,7 @@ Lead: Claude (Opus 5), session c49886b8. Started 2026-09-20 19:05 PDT. Main at 7
 | B Hyperliquid | rfp/b-hyperliquid | secure review REJECT (M1 retry throw loses nonce and handle; L1 pocket-less withdraw confirmed on SUCCESS alone; L2 deposit card floor rounds half-up; I2 moveToSpot double): fresh builder node-b2-fix on the worktree per the workflow rule; correct review still running |
 | C agent picker | rfp/c-agent | secure ACCEPT, four items closed at 7b60f50 (boot nonce on Copy MCP Config, scope sentence in Details and docs, done-step sentence from the pick state, evidence re-captured; 3125/3125, cargo 23/23); correct REJECT: fresh builder node-c2-fix on the worktree (proxy reads PHOSPHOR_PORT, check before writePick, focus ring, Details wording) |
 | D one card, voice | rfp/d-card | building |
-| E craft floor | rfp/e-craft | reported (ed0f0e4, 3096/3096, detector 0, audit 0 blocking); correct + secure reviews running; overwhelmed review waits for F |
+| E craft floor | rfp/e-craft | all fixes in at a21f7da (3104/3104): send-card answer row pinned, quiet buttons 24 px, press state for every pressable, down slot at the text floor (side effect: lightest accepted grey ground #101010, was #212121), stacked read card pinned, netpick Escape; fresh re-check reviewer running; merges after C and D |
 | F anxiety harness | rfp/f-anxiety | building |
 | G launch readiness | rfp/g-launch | both reviews ACCEPT, six fixes in at 9bee51b (sweep hole, log-tail shapes + diagnose, demo hash excuses, SSE redaction, report copy fingerprinted, Copy Log boot nonce): 3080/3079 (docs.test red until the 0.8.0 bump), cargo 25/25, sweep 6/6. READY TO MERGE (G merges last per order; overwhelmed review not needed: no screens) |
 
