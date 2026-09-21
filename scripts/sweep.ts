@@ -230,6 +230,15 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['c7e1d3a95b40f826d1c9e4a7b3086f52dc1a9e4b7350f28cd6a1b93e5074cf81', 'a made-up transaction hash in the window fixtures, ui/core/fixtures.js in history'],
   ['41ba7cd9e2f80516a3c7d84be91f0c25d7a6b3e8420fc19d5e7a80b3c6f19d42', 'a made-up transaction hash in the window fixtures, ui/core/fixtures.js in history'],
   ['9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0', 'a made-up intent hash inside a rail sentence, tests/unit/agent-cards-ui.test.ts (the one card pass, 2026-09-20)'],
+  // Demo rail hashes from node B's evidence (docs/superpowers/prompts/ready-for-people/evidence-b, the kill -9 and withdraw walks on a demo backend): minted by the demo rail, real nowhere.
+  ['9c250bdf641fe43ea36928778a6d31ccd649ed8da6b9e6bbd4a4c6f2d72b72cf', 'demo rail hash, evidence-b/demo-kill9-4202.txt'],
+  ['e35b1abf83cf884f9b1b6250a86726f0993982479bb3a17971a6ad9bf3ff6d18', 'demo rail hash, evidence-b/demo-withdraw-walk-4202.txt'],
+  ['6da6ffb54f84da34ec3b078ceb6c2ce840d57ce1e5b38ca7f69152b252b56b94', 'demo rail hash, evidence-b/demo-withdraw-walk-4202.txt'],
+  // Made-up transaction hashes with a visible pattern in the anxiety harness's scene fixtures (node F, scripts/anxiety/scenes.ts, 2026-09-20).
+  ['9c2b7e4f1a6d3c8b5e0f2a7d4c1b8e6f3a0d9c2b7e4f1a6d3c8b5e0f2a7d4c1b', 'a made-up hash in a scene fixture, scripts/anxiety/scenes.ts'],
+  ['5b1d9e3a7c2f8d6b4a0e1c9f3d7b5a2e8c6f4d1b9a3e7c5f2d8b6a4e0c1f9d3b', 'a made-up hash in a scene fixture, scripts/anxiety/scenes.ts'],
+  ['7a3c9e1f5b2d8a6c4e0f9b3d7a1c5e8f2b6d0a4c9e3f7b1d5a8c2e6f0b4d9a3c', 'a made-up hash in a scene fixture, scripts/anxiety/scenes.ts'],
+  ['1f4b8d2c6e0a9f3b7d5c1e8a2f6b0d4c9e3a7f1b5d8c2e6a0f4b9d3c7e1a5f8b', 'a made-up hash in a scene fixture, scripts/anxiety/scenes.ts'],
   // Arbitrum Sepolia transaction hashes from the yield rail proof of 2026-08-20, in a spec that
   // left the tree with that rail. Testnet, public, permanent.
   ['862edaf1467c6e608c233b9e4d47bb7ac207329e8586f421e144e682e5d2564a', 'testnet approve tx, docs/superpowers/specs/2026-08-20-stablecoin-yield.md in history'],
@@ -261,20 +270,49 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
 // Machine-written copies of public data carry digests and addresses by the hundred, and the
 // exact allowlist cannot follow them: Cargo writes 518 crate checksums into Cargo.lock today
 // and rewrites the set on every `cargo update`, which is why the sweep sat red for days and
-// gitleaks became the gate that actually ran. Each entry here names a file by its exact path
-// and the ONE line shape the file's own format gives that field. The whole line has to match,
-// so a value smuggled anywhere else in the same file still trips. Adding an entry is the same
-// human decision as adding a constant, with one more condition: a program writes the file from
-// public data, a person never types a value into it.
-export type PublicFormat = { file: RegExp; line: RegExp; note: string };
+// gitleaks became the gate that actually ran. Each entry here names ONE file by its exact path,
+// the ONE line shape the file's own format gives that field, and, where the format has one, the
+// block the line has to sit in. The whole line has to match and the block has to be real, so a
+// value smuggled anywhere else in the same file still trips, and a file of the same name
+// somewhere else is not this file. Adding an entry is the same human decision as adding a
+// constant, with one more condition: a program writes the file from public data, a person
+// never types a value into it.
+export type PublicFormat = {
+  file: RegExp;
+  line: RegExp;
+  note: string;
+  // The lines above `at` have to prove the line is where the format puts it. Absent, the line
+  // shape alone decides.
+  block?: (lines: readonly string[], at: number) => boolean;
+};
+
+// A crates.io registry source, in the two spellings Cargo has used for it.
+const CRATES_IO_SOURCE = /^source = "(registry\+https:\/\/github\.com\/rust-lang\/crates\.io-index|sparse\+https:\/\/index\.crates\.io\/)"$/;
+
+// Walks up from a checksum line to the `[[package]]` header of its block and asks whether that
+// block names a crates.io source. A blank line, the file's head, or any other table header
+// before the package header means the line is not inside a package block at all. A git or
+// path dependency has no checksum, so a checksum line under one is not Cargo's either.
+function insideCratesIoPackage(lines: readonly string[], at: number): boolean {
+  let source = false;
+  for (let i = at - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (line === '[[package]]') return source;
+    if (line.trim() === '' || line.startsWith('[')) return false;
+    if (CRATES_IO_SOURCE.test(line)) source = true;
+  }
+  return false;
+}
 
 export const KNOWN_PUBLIC_FORMATS: PublicFormat[] = [
   {
-    // `checksum = "<sha256>"` under every [[package]] Cargo took from the registry: the digest
-    // of a published crate archive, which anyone can recompute from crates.io.
-    file: /(^|\/)Cargo\.lock$/,
+    // `checksum = "<sha256>"` under a [[package]] Cargo took from the registry: the digest of a
+    // published crate archive, which anyone can recompute from crates.io. This repo has one
+    // lockfile; a second one is a new entry here, decided by a person, not a match on the name.
+    file: /^src-tauri\/Cargo\.lock$/,
     line: /^checksum = "[0-9a-f]{64}"$/,
     note: 'crate checksum from the registry index',
+    block: insideCratesIoPackage,
   },
   {
     // The POA bridge's supported_tokens answer, kept whole as a fixture (its _comment says
@@ -287,8 +325,9 @@ export const KNOWN_PUBLIC_FORMATS: PublicFormat[] = [
   },
 ];
 
-export function publicFormat(file: string, line: string): PublicFormat | undefined {
-  return KNOWN_PUBLIC_FORMATS.find((f) => f.file.test(file) && f.line.test(line));
+export function publicFormat(file: string, lines: readonly string[], at: number): PublicFormat | undefined {
+  const line = lines[at];
+  return KNOWN_PUBLIC_FORMATS.find((f) => f.file.test(file) && f.line.test(line) && (f.block === undefined || f.block(lines, at)));
 }
 
 // A 32 byte key drawn from a CSPRNG uses nearly every hex character. A run that uses four or
@@ -307,7 +346,7 @@ export function scanContent(where: string, file: string, content: string, findin
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (publicFormat(file, line)) continue;
+    if (publicFormat(file, lines, i)) continue;
     for (const pattern of PATTERNS) {
       pattern.re.lastIndex = 0;
       let match: RegExpExecArray | null;

@@ -15,17 +15,35 @@ function findings(file: string, content: string): Finding[] {
   return out;
 }
 
-test('a Cargo.lock checksum line is a crate digest, and the same value anywhere else still trips', () => {
-  const lockfile = ['[[package]]', 'name = "serde"', 'version = "1.0.219"', `checksum = "${DIGEST}"`].join('\n');
+const CRATES_IO = 'source = "registry+https://github.com/rust-lang/crates.io-index"';
+
+test('a Cargo.lock checksum line is a crate digest only inside a crates.io package block of the one lockfile', () => {
+  const lockfile = ['[[package]]', 'name = "serde"', 'version = "1.0.219"', CRATES_IO, `checksum = "${DIGEST}"`, '', '[[package]]', 'name = "other"'].join('\n');
   assert.deepEqual(findings('src-tauri/Cargo.lock', lockfile), [], 'the checksum line tripped');
-  assert.equal(publicFormat('src-tauri/Cargo.lock', `checksum = "${DIGEST}"`)?.note, 'crate checksum from the registry index');
+  assert.equal(publicFormat('src-tauri/Cargo.lock', lockfile.split('\n'), 4)?.note, 'crate checksum from the registry index');
 
   const smuggled = findings('src-tauri/Cargo.lock', `source = "${DIGEST}"\n# ${DIGEST}\nchecksum = "${DIGEST}" # trailing`);
   assert.deepEqual(smuggled.map((f) => f.line), [1, 2, 3], 'a value outside the checksum field of a lockfile was excused');
 
+  // The reviewer's plant: a checksum line with no package block above it, one under a git
+  // source, one under a block that a blank line already closed, and one in a lockfile that is
+  // not this repo's. Each is a finding.
+  const planted: Array<[string, string]> = [
+    ['src-tauri/Cargo.lock', `checksum = "${DIGEST}"`],
+    ['src-tauri/Cargo.lock', ['[[package]]', 'name = "x"', 'source = "git+https://github.com/x/y#abc"', `checksum = "${DIGEST}"`].join('\n')],
+    ['src-tauri/Cargo.lock', ['[[package]]', 'name = "x"', CRATES_IO, '', `checksum = "${DIGEST}"`].join('\n')],
+    ['src-tauri/Cargo.lock', ['[metadata]', CRATES_IO, `checksum = "${DIGEST}"`].join('\n')],
+    ['scratch/Cargo.lock', ['[[package]]', 'name = "x"', CRATES_IO, `checksum = "${DIGEST}"`].join('\n')],
+    ['Cargo.lock', ['[[package]]', 'name = "x"', CRATES_IO, `checksum = "${DIGEST}"`].join('\n')],
+  ];
+  for (const [file, content] of planted) {
+    const found = findings(file, content);
+    assert.equal(found.length, 1, `${file}: a planted checksum line was excused: ${JSON.stringify(content)}`);
+    assert.equal(found[0].pattern, 'hex64');
+  }
+
   const elsewhere = findings('src/config.ts', `checksum = "${DIGEST}"`);
   assert.equal(elsewhere.length, 1, 'the lockfile shape excused a value in a source file');
-  assert.equal(elsewhere[0].pattern, 'hex64');
 });
 
 test('a bridge token line is excused only when both of its address fields carry the same value', () => {

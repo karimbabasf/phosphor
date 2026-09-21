@@ -7,11 +7,11 @@ PHOSPHOR SWEEP
 repo /Users/karimbaba/Developer/Apps/phosphor-rfp-g-launch
 
 PASS  config load           config.json parses and resolves
-PASS  tracked content       810 tracked files scanned
+PASS  tracked content       811 tracked files scanned
 PASS  local addresses       no local config or keys file present, nothing to match
 PASS  ignored paths         9 sensitive paths untracked and ignored
 PASS  keys outside repo     keysPath resolves to /Users/karimbaba/.phosphor/keys.json
-PASS  git history           5840 reachable blobs scanned
+PASS  git history           5969 reachable blobs scanned
 
 SWEEP PASS: 6 checks, nothing secret is reachable from the remote.
 EXIT=0
