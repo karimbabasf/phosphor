@@ -25,8 +25,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // The repo root, which is where config.json, config.local.json and skills/ all live.
 const ROOT = path.join(__dirname, '..');
 
+/* The first of these environment names that is set and not empty, in the order given. It is
+   src/config.ts's `env` helper, mirrored rather than imported, because importing config.ts pulls
+   the keystore and the chains into a process that is meant to stay a thin proxy. The same two
+   names in the same order for the port and the data directory, so a registration written by the
+   app (every one carries PHOSPHOR_PORT) and a child the app spawned (src/driver.ts sets ACC_PORT)
+   both reach the app they were made for. Reading ACC_PORT alone sent every registered agent to
+   config.json's 4177 whatever port the app ran on: tests/unit/mcp-proxy-port.test.ts. */
+function envFirst(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value !== undefined && value !== '') return value;
+  }
+  return undefined;
+}
+
 function resolvePort(): number {
-  if (process.env.ACC_PORT) return Number(process.env.ACC_PORT);
+  const fromEnv = envFirst('PHOSPHOR_PORT', 'ACC_PORT');
+  if (fromEnv !== undefined) return Number(fromEnv);
   try {
     const raw = readFileSync(path.join(__dirname, '..', 'config.json'), 'utf8');
     const cfg = JSON.parse(raw) as { port?: number };
@@ -42,13 +58,13 @@ const BASE_URL = `http://127.0.0.1:${resolvePort()}`;
 /* The app's data directory, resolved the way src/config.ts resolves it and without importing
    src/config.ts, which pulls the keystore and the chains into a process that is meant to stay a
    thin proxy. The environment wins (the app's own children and the test suites set it, and the
-   installed app's `claude mcp add-json` line carries it), then the dataDir key of the writable
+   registration the app writes, src/agents-catalog.ts, carries it), then the dataDir key of the writable
    config.local.json (PHOSPHOR_CONFIG_DIR for an installed app, the repo root otherwise), then
    config.json, then the repo's own state/. Relative to the repo root, as the app resolves it
    relative to its cwd, which is the repo root in both the checkout and the installed payload. */
 function resolveDataDir(): string {
-  const fromEnv = process.env.PHOSPHOR_DATA_DIR || process.env.ACC_DATA_DIR;
-  if (fromEnv) return path.resolve(ROOT, fromEnv);
+  const fromEnv = envFirst('PHOSPHOR_DATA_DIR', 'ACC_DATA_DIR');
+  if (fromEnv !== undefined) return path.resolve(ROOT, fromEnv);
   const configDir = process.env.PHOSPHOR_CONFIG_DIR ? path.resolve(process.env.PHOSPHOR_CONFIG_DIR) : ROOT;
   for (const file of [path.join(configDir, 'config.local.json'), path.join(ROOT, 'config.json')]) {
     try {
