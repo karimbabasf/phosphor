@@ -348,8 +348,8 @@ test('the role gives the agent a voice, and the window draws the numbers', () =>
     'raw JSON, a venue\'s error string',
     '"the venue is not answering", not "422 Failed to deserialize"',
     '`switch` for a screen, `deposit` for an address, `trade_focus` for a position or a chart',
-    'Never say "failed" unless the tool said\nfailed',
-    'wrong-network or lost-funds warning is one plain sentence',
+    'Never say "failed" unless the tool said failed',
+    'wrong-network\nor lost-funds warning is one plain sentence',
     'No exclamation marks, no emoji, no em dashes and no en\ndashes',
   ]) {
     assert.ok(text.includes(rule), `the voice lost: ${rule}`);
