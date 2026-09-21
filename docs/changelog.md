@@ -5,6 +5,49 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.8.0
+
+Built 2026-09-20, the ready-for-people pass. Not tagged at the time of writing.
+
+<!-- lead: the six lines below describe nodes A to F. Keep each one only when that node merged;
+     the wording follows the builder prompt's mission and the definitions file. -->
+- Swaps settle on the relay as one atomic exchange (`token_diff`): what you spend and what you
+  receive are one signed message, and the money is never a solver's in between. The 1Click
+  transfer path stays behind the `swap.rail` config switch for a month. The 25 bp 1Click app
+  fee disappears with it; the 1 pip protocol fee stays.
+- Hyperliquid deposits and withdrawals agree across the app, the venue and the card, and the
+  exit works on a unified account: the app uses the transfer both account modes accept, or
+  refuses before any quote and names the most it can send.
+- The connect step is an agent picker: Claude Code, Codex, Hermes, Grok bot, another MCP agent,
+  or "I use Claude Desktop or a chat app". The app checks the one you pick on this Mac, says in
+  one sentence whether it can drive, registers it where it keeps a config of its own, and the
+  Vault tab's Agent panel changes it later. The first run's ask threshold now reaches
+  `policy.json`.
+- One card per money move in the chat, redrawn in place at every stage, with the agent's reply
+  held to three plain sentences; the receipt folds into the move card.
+- The buttons and the screens went through a craft pass at 860 and 400 px; every button has its
+  five states, and the pending face never shows beside the rest face.
+- An anxiety score gates every screen and reply: a judge scores each situation as someone who
+  has never bought crypto, and a naive-user run drives the flows.
+
+- Stage words are the app's own. "The router is working" and the other vendor phases are gone
+  from the cards: a move reads Sending it, Deposit seen, On its way, Waiting for the venue to
+  credit it, Confirmed, and Finding a match, Settling on NEAR, Settled, checking your balance
+  on a swap. One table (`src/proposals/view.ts`) is the only place a stage is ever printed.
+- The log tail is redacted on the way out. `GET /api/log` and `log_tail` never hand out this
+  boot's seat secret or window token, a value filed under a secret's name, or a PEM block, and
+  every transaction hash still comes through. Help, then Copy Log for a Report puts the newest
+  two hundred lines on the clipboard, one JSON line each.
+- Help, then Report a Problem opens the bug form with the version and the macOS version already
+  filled in; the form asks for the log and names the picker's agents.
+- The secret sweep (`npm run sweep`) runs again. It had failed for days on Cargo.lock's crate
+  checksums; a lockfile's checksum lines and the bridge token list are now named as
+  machine-written public formats, a mnemonic must be made of seed words, and every fixture
+  value in the tree and the history is excused by exact value with a note on what it is.
+- The docs describe this build: the 46 tools, the stage words, the policy walls of one click,
+  where a fresh install keeps its state and its key, the shell and its updater, and a new
+  [Known limits](known-limits.md) page.
+
 ## 0.7.0
 
 Built 2026-09-19, the live-truth pass; tagged v0.7.0 on 2026-09-19.
