@@ -36,6 +36,7 @@
 .activity-rows > .tx.receipt-row:active,
 .tx.receipt-row:active,
 .jump-latest:active,
+.tcard-details-head:active,
 .check-row:active {
   background-color: var(--press);
 }
