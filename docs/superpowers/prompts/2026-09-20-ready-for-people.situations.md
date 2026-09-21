@@ -19,44 +19,44 @@ mechanics; a row whose state the demo rails cannot produce is marked in the run 
 
 | id | kind | stage id | reach |
 |---|---|---|---|
-| A01 | swap, under threshold (relay) | signing | propose_swap 2 USDC to NEAR, policy allows, shot at the signing tick |
-| A02 | swap, under threshold | waiting_for_touch | same, enclave wallet, before the fingerprint |
+| A01 | swap, under threshold (relay) | signing | propose_swap 2 USDC to NEAR, policy allows, shot at the signing tick; not reachable in demo: the demo software wallet signs and submits in one step, so there is no distinct signing tick to shoot; the live signing beat needs an enclave |
+| A02 | swap, under threshold | waiting_for_touch | same, enclave wallet, before the fingerprint; not reachable in demo: Touch ID is enclave-only and the demo backend runs a software wallet, so it never reaches waiting_for_touch; the boot sweep also rewrites a seeded awaiting_touch row to pending |
 | A03 | swap, under threshold | submitting | same, after the signature |
 | A04 | swap, under threshold | PENDING | same, relay says PENDING |
 | A05 | swap, under threshold | confirmed | same, balance rose |
 | A06 | swap, over threshold | waiting_for_you | propose_swap 500 USDC, dock open |
-| A07 | swap, over threshold | waiting_for_touch | after Yes |
+| A07 | swap, over threshold | waiting_for_touch | after Yes; not reachable in demo: Touch ID is enclave-only; the demo software wallet approves straight to signing |
 | A08 | swap, over threshold | submitting | after the signature |
 | A09 | swap, over threshold | TX_BROADCASTED | relay says TX_BROADCASTED |
 | A10 | swap, over threshold | confirmed | balance rose |
 | A11 | hl_deposit | waiting_for_you | propose_hl_deposit 150 USDC |
-| A12 | hl_deposit | waiting_for_touch | after Yes |
+| A12 | hl_deposit | waiting_for_touch | after Yes; not reachable in demo: Touch ID is enclave-only; the demo software wallet approves straight to signing |
 | A13 | hl_deposit | submitting | after the signature |
 | A14 | hl_deposit | KNOWN_DEPOSIT_TX | 1Click says the deposit is seen |
 | A15 | hl_deposit | PROCESSING | 1Click says PROCESSING |
 | A16 | hl_deposit | SUCCESS or crediting | 1Click says SUCCESS, venue balance not yet up |
 | A17 | hl_deposit | confirmed | venue balance rose |
 | A18 | hl_withdraw | waiting_for_you | propose_hl_withdraw 20 USDC (always clicks) |
-| A19 | hl_withdraw | waiting_for_touch | after Yes |
+| A19 | hl_withdraw | waiting_for_touch | after Yes; not reachable in demo: Touch ID is enclave-only; the demo software wallet approves straight to signing |
 | A20 | hl_withdraw | submitting | after the signature |
 | A21 | hl_withdraw | KNOWN_DEPOSIT_TX | deposit seen |
 | A22 | hl_withdraw | PROCESSING | on its way |
 | A23 | hl_withdraw | crediting | waiting for NEAR Intents to show it |
 | A24 | hl_withdraw | confirmed | balance rose |
 | A25 | intents_send | waiting_for_you | propose_send 5 USDC to an intents account, read-back done, confirmed: true |
-| A26 | intents_send | waiting_for_touch | after Yes |
+| A26 | intents_send | waiting_for_touch | after Yes; not reachable in demo: Touch ID is enclave-only; the demo software wallet approves straight to signing |
 | A27 | intents_send | submitting | after the signature |
 | A28 | intents_send | PROCESSING | on its way |
 | A29 | intents_send | confirmed | landed |
 | A30 | intents_pay | waiting_for_you | propose_send 5 USDC to an address on base |
-| A31 | intents_pay | waiting_for_touch | after Yes |
+| A31 | intents_pay | waiting_for_touch | after Yes; not reachable in demo: Touch ID is enclave-only; the demo software wallet approves straight to signing |
 | A32 | intents_pay | submitting | after the signature |
 | A33 | intents_pay | PROCESSING | on its way |
 | A34 | intents_pay | confirmed | landed, hash on the card |
 | A35 | trade | waiting_for_you | propose_trade above the threshold |
-| A36 | trade | waiting_for_touch | after Yes |
-| A37 | trade | signing | the wallet signing |
-| A38 | trade | submitting | posted to Hyperliquid |
+| A36 | trade | waiting_for_touch | after Yes; not reachable in demo: no demo rail for trade, and Touch ID is enclave-only; trade cards are seeded at waiting_for_you and confirmed only |
+| A37 | trade | signing | the wallet signing; not reachable in demo: no demo rail for trade, so there is no live signing tick; the boot sweep rewrites a seeded approved trade row to needs_reconciliation |
+| A38 | trade | submitting | posted to Hyperliquid; not reachable in demo: no demo rail for trade, so there is no live submitting tick; the boot sweep rewrites a seeded executing trade row to needs_reconciliation |
 | A39 | trade | confirmed | filled |
 | A40 | policy_change | waiting_for_you | propose_policy_change raising the threshold to 200, the changes block drawn |
 | A41 | policy_change | confirmed | after Yes |
@@ -80,19 +80,19 @@ mechanics; a row whose state the demo rails cannot produce is marked in the run 
 | B10 | refused: max_freezable_share | a swap into an unknown asset over the freezable cap |
 | B11 | refused: simulation_required | the demo rail's simulate throws |
 | B12 | refused: policy_unreadable | policy.json made corrupt on disk, then any propose |
-| B13 | preflight hold | hl_deposit where one of the five preflight checks holds |
+| B13 | preflight hold | hl_deposit where one of the five preflight checks holds; not reachable in demo: the demo rail produces no preflight hold, and the boot sweep expires a seeded held (approved + heldSince) row to failed, so an active hold cannot be shown in demo (that is B14); needs a demo preflight-hold seam from node B |
 | B14 | hold expired | the same hold after its 15 minutes |
 | B15 | rail failed | the demo rail returns ok: false after the signature |
 | B16 | provider FAILED | 1Click word FAILED on an hl_deposit |
 | B17 | provider REFUNDED | 1Click word REFUNDED on an hl_deposit |
 | B18 | stalled | an hl_deposit past its deadline, "Late, nothing has changed" |
 | B19 | declined by the human | No on a swap over the threshold |
-| B20 | Touch ID closed without an answer | the sheet dismissed, row back to waiting |
+| B20 | Touch ID closed without an answer | the sheet dismissed, row back to waiting; not reachable in demo: Touch ID closed without an answer is enclave-only; the software-wallet demo never opens the Touch ID sheet |
 | B21 | venue outage mid-move | the demo venue read times out during crediting |
 | B22 | empty wallet | propose_swap with nothing to spend |
 | B23 | unpriced coin | propose_swap of a coin with no USD price |
 | B24 | below the HL floor | propose_hl_deposit 2 USDC (floor named) |
-| B25 | unified-account withdraw refusal or the sendAsset path | propose_hl_withdraw on a unified account |
+| B25 | unified-account withdraw refusal or the sendAsset path | propose_hl_withdraw on a unified account; not reachable in demo: the unified-account withdraw refusal is a live Hyperliquid seam (hl-user-signed.ts); the demo rail signs nothing, so it cannot produce the refusal. Needs node B to add a demo seam |
 | B26 | relay expired (NOT_FOUND_OR_NOT_VALID) | a relay swap whose price expired before settling, nothing moved |
 
 ## C. Onboarding (15 rows, FLOW where marked)
