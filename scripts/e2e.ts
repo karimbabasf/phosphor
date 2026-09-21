@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { EXPECTED_TOOLS_SORTED } from '../tests/tool-surface.ts';
+import { KIND_STAGES } from '../src/proposals/view.ts';
 
 type Json = any;
 
@@ -470,9 +471,12 @@ async function run(): Promise<void> {
   }
   await clicking;
 
+  // The walk is the contract's own path for the kind (KIND_STAGES, src/proposals/view.ts), from
+  // the first stage after the signature: the demo rail stamps the words the card prints.
+  const expectedWalk = KIND_STAGES.hl_deposit.path.slice(KIND_STAGES.hl_deposit.path.indexOf('submitting')).join(' -> ');
   check(
     'the approved deposit walks every stage in order and lands confirmed',
-    stages.join(' -> ') === 'submitting -> KNOWN_DEPOSIT_TX -> PENDING_DEPOSIT -> PROCESSING -> SUCCESS -> crediting -> confirmed' &&
+    stages.join(' -> ') === expectedWalk &&
       settledView?.settledAt !== null &&
       settledView?.waitingOn === null,
     stages.join(' -> '),
