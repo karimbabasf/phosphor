@@ -1,0 +1,14 @@
+
+> phosphor@0.7.0 bundle
+> node scripts/bundle-payload.ts
+
+payload: staged 8 entries
+
+added 107 packages in 1s
+payload: node_modules 75MB -> 49MB
+runtime: node 26.9.0 -> binaries/node-aarch64-apple-darwin (140MB)
+src-tauri/binaries/se-helper-aarch64-apple-darwin
+enclave: se-helper -> binaries/se-helper-aarch64-apple-darwin (0MB)
+verify: bundled runtime booted the bundled payload and served 17429 bytes on :64323
+total: 193MB to bundle
+EXIT=0

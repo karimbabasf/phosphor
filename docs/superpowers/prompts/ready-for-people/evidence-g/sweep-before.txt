@@ -1,0 +1,83 @@
+
+> phosphor@0.7.0 sweep
+> node scripts/sweep.ts
+
+
+PHOSPHOR SWEEP
+repo /Users/karimbaba/Developer/Apps/phosphor-rfp-g-launch
+
+PASS  config load           config.json parses and resolves
+FAIL  tracked content       790 tracked files scanned
+PASS  local addresses       no local config or keys file present, nothing to match
+PASS  ignored paths         9 sensitive paths untracked and ignored
+# findings trimmed to counts per file (8,076 lines in the raw run; the raw sweep never prints a matched value, only an 8 char fingerprint)
+  7182  src-tauri/Cargo.lock  pattern=hex64  seen=history
+   518  src-tauri/Cargo.lock  pattern=hex64  seen=worktree
+    51  tests/unit/decision-dock-ui.test.ts  pattern=hex64  seen=history
+    36  tests/fixtures/poa-tokens.json  pattern=hex64  seen=history
+    36  tests/fixtures/poa-tokens.json  pattern=hex64  seen=worktree
+    24  tests/unit/receipts.test.ts  pattern=hex64  seen=history
+    19  docs/superpowers/specs/2026-08-20-stablecoin-yield.md  pattern=hex64  seen=history
+    15  tests/unit/keystore.test.ts  pattern=hex64  seen=history
+    13  tests/unit/hypercore-deposit.test.ts  pattern=hex64  seen=history
+    12  tests/unit/hl-user-signed.test.ts  pattern=hex64  seen=history
+    12  ui/core/fixtures.js  pattern=hex64  seen=history
+    10  tests/eval/S5.json  pattern=hex64  seen=history
+    10  tests/unit/hl-sign.test.ts  pattern=hex64  seen=history
+    10  tests/unit/hl-sign.test.ts  pattern=hex64  seen=worktree
+     8  tests/eval/S4.json  pattern=hex64  seen=history
+     8  ui/screens/agent.js  pattern=mnemonic  seen=history
+     7  tests/unit/netpick-ui.test.ts  pattern=hex64  seen=history
+     6  tests/unit/hl-user-signed.test.ts  pattern=hex64  seen=worktree
+     5  scripts/deposit-proof.ts  pattern=hex64  seen=history
+     5  tests/eval/S6.json  pattern=hex64  seen=history
+     5  tests/unit/quote-signature.test.ts  pattern=ed25519-key  seen=history
+     5  tests/unit/quote-signature.test.ts  pattern=ed25519-key  seen=worktree
+     5  tests/unit/vault-tab-ui.test.ts  pattern=hex64  seen=history
+     4  scripts/sweep.ts  pattern=hex64  seen=history
+     4  tests/eval/S2.json  pattern=hex64  seen=history
+     4  tests/eval/S23.json  pattern=hex64  seen=history
+     4  tests/eval/S3.json  pattern=hex64  seen=history
+     4  tests/unit/chainscan-networks.test.ts  pattern=hex64  seen=history
+     4  tests/unit/hyperliquid-withdraw.test.ts  pattern=hex64  seen=history
+     4  tests/unit/reconcile-oneclick.test.ts  pattern=hex64  seen=history
+     3  tests/unit/chainscan-reads.test.ts  pattern=hex64  seen=history
+     3  tests/unit/decision-dock-ui.test.ts  pattern=hex64  seen=worktree
+     3  tests/unit/keystore.test.ts  pattern=hex64  seen=worktree
+     3  tests/unit/quote-signature.test.ts  pattern=base58-64byte  seen=history
+     3  tests/unit/quote-signature.test.ts  pattern=base58-64byte  seen=worktree
+     2  data/claude/.claude.json  pattern=hex64  seen=history
+     2  scripts/deposit-proof.ts  pattern=hex64  seen=worktree
+     2  tests/eval/S4.json  pattern=hex64  seen=worktree
+     2  tests/eval/S5.json  pattern=hex64  seen=worktree
+     2  tests/unit/chainscan-networks.test.ts  pattern=hex64  seen=worktree
+     2  tests/unit/quote-signature.test.ts  pattern=hex64  seen=history
+     2  tests/unit/quote-signature.test.ts  pattern=hex64  seen=worktree
+     2  tests/unit/receipts.test.ts  pattern=hex64  seen=worktree
+     2  ui/vendor/README.md  pattern=hex64  seen=history
+     1  scripts/firstrun-proof.ts  pattern=hex64  seen=history
+     1  scripts/firstrun-proof.ts  pattern=hex64  seen=worktree
+     1  src/quote-signature.ts  pattern=ed25519-key  seen=history
+     1  src/quote-signature.ts  pattern=ed25519-key  seen=worktree
+     1  tests/eval/S2.json  pattern=hex64  seen=worktree
+     1  tests/eval/S23.json  pattern=hex64  seen=worktree
+     1  tests/eval/S3.json  pattern=hex64  seen=worktree
+     1  tests/eval/S6.json  pattern=hex64  seen=worktree
+     1  tests/unit/chainscan-reads.test.ts  pattern=hex64  seen=worktree
+     1  tests/unit/hypercore-deposit.test.ts  pattern=hex64  seen=worktree
+     1  tests/unit/netpick-ui.test.ts  pattern=hex64  seen=worktree
+     1  tests/unit/reconcile-oneclick.test.ts  pattern=hex64  seen=worktree
+     1  ui/screens/agent.js  pattern=mnemonic  seen=worktree
+PASS  keys outside repo     keysPath resolves to /Users/karimbaba/.phosphor/keys.json
+FAIL  git history           5665 reachable blobs scanned
+
+SWEEP FAIL: 2 of 6 checks failed (tracked content, git history). Do not push.
+
+Findings name the file, the line and the pattern. The matched text is never printed,
+so open the file at that line to see what it is, then:
+  a secret            remove it, and rewrite the history if a commit already holds it
+  a public constant   add the exact value to KNOWN_PUBLIC_CONSTANTS in this file,
+                      with a note saying what it is and where it came from
+npm run sweep  1.49s user 0.36s system 99% cpu 1.856 total
+EXIT=1
+

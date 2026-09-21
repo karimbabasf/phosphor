@@ -3,7 +3,7 @@
 // was the only scan that ran. Each rule here excuses exactly one shape and nothing beside it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { KNOWN_PUBLIC_CONSTANTS, isMnemonicRun, publicFormat, scanContent, type Finding } from '../../scripts/sweep.ts';
+import { FAKE_PEM_FIXTURE, KNOWN_PUBLIC_CONSTANTS, isMnemonicRun, publicFormat, scanContent, type Finding } from '../../scripts/sweep.ts';
 
 // Made from characters, never written out: a 64 hex value that is on no allowlist and is not
 // regular enough to be excused as a ruler.
@@ -46,6 +46,17 @@ test('a mnemonic is twelve seed words, not any twelve short words', () => {
   assert.deepEqual(prose, []);
   const seed = findings('notes.md', `"${'abandon '.repeat(11)}about"`);
   assert.deepEqual(seed.map((f) => f.pattern), ['mnemonic']);
+});
+
+test('a fake PEM block is excused only as the exact block, and a real header still trips', () => {
+  const fake = FAKE_PEM_FIXTURE;
+  assert.ok(fake.startsWith(['-----BEGIN', 'EC PRIVATE KEY-----'].join(' ')) && fake.split('\\n').length === 3, 'the fixture is one line with two escaped newlines');
+  assert.ok(KNOWN_PUBLIC_CONSTANTS.has(fake), 'the fixture is on the allowlist by its whole one-line value');
+  assert.deepEqual(findings('a.ts', `const pem = '${fake}';`), []);
+  const other = fake.replace('MHQCAQEEIBc', 'MHQCAQEEIBd');
+  assert.deepEqual(findings('a.ts', `const pem = '${other}';`).map((f) => f.pattern), ['pem-block'], 'a different body was excused');
+  const header = ['-----BEGIN', 'EC PRIVATE KEY-----'].join(' '); // assembled, so this file never holds a bare header
+  assert.deepEqual(findings('key.pem', header).map((f) => f.pattern), ['pem-block'], 'a header on its own line was excused');
 });
 
 test('a public hex constant is excused whatever its case, and never printed in a finding', () => {

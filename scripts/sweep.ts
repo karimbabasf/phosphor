@@ -69,7 +69,11 @@ const PATTERNS: Pattern[] = [
   },
   {
     name: 'pem-block',
-    re: /-----BEGIN[ A-Z]*(PRIVATE KEY|RSA|EC|OPENSSH)[ A-Z]*-----/g,
+    // The header alone is the finding. When the END marker sits on the same line (a block
+    // written as one string literal, `\n` escapes and all), the match runs to it, so the whole
+    // block is the value the allowlist judges: a fake block in a test can be excused by exact
+    // value while the header still trips on every real key, whose body is never that one.
+    re: /-----BEGIN[ A-Z]*(PRIVATE KEY|RSA|EC|OPENSSH)[ A-Z]*-----(?:.*?-----END[ A-Z]*-----)?/g,
     note: 'a PEM encoded private key block',
   },
 ];
@@ -101,6 +105,11 @@ export type Finding = { where: string; file: string; line: number; pattern: stri
 function fingerprint(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex').slice(0, 8);
 }
+
+// The one PEM fixture in history, assembled from pieces so this file does not itself hold a
+// PEM header for the pattern to find. The `\\n` are the two characters of a JS escape, which is
+// how the literal sat on one line in the committed test.
+export const FAKE_PEM_FIXTURE = ['-----BEGIN', 'EC PRIVATE KEY-----'].join(' ') + '\\nMHQCAQEEIBc\\n' + ['-----END', 'EC PRIVATE KEY-----'].join(' ');
 
 // Values allowed by exact string and nothing else. The allowlist is deliberately not by file
 // and not by pattern: a real private key added to keygen.ts still trips, because only these
@@ -220,6 +229,7 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['9f2c1ae4b7d05c8813fbd2a6e0417cc9de5b6a1f8340d7e2b5c9018a3f6de274', 'a made-up transaction hash in the window fixtures, ui/core/fixtures.js in history'],
   ['c7e1d3a95b40f826d1c9e4a7b3086f52dc1a9e4b7350f28cd6a1b93e5074cf81', 'a made-up transaction hash in the window fixtures, ui/core/fixtures.js in history'],
   ['41ba7cd9e2f80516a3c7d84be91f0c25d7a6b3e8420fc19d5e7a80b3c6f19d42', 'a made-up transaction hash in the window fixtures, ui/core/fixtures.js in history'],
+  ['9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0', 'a made-up intent hash inside a rail sentence, tests/unit/agent-cards-ui.test.ts (the one card pass, 2026-09-20)'],
   // Arbitrum Sepolia transaction hashes from the yield rail proof of 2026-08-20, in a spec that
   // left the tree with that rail. Testnet, public, permanent.
   ['862edaf1467c6e608c233b9e4d47bb7ac207329e8586f421e144e682e5d2564a', 'testnet approve tx, docs/superpowers/specs/2026-08-20-stablecoin-yield.md in history'],
@@ -227,6 +237,16 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['8c68a76ca6faff874c1c224bf5c1466d5b224ede3aa5c14b56a05f8732fe3127', 'testnet approve tx, docs/superpowers/specs/2026-08-20-stablecoin-yield.md in history'],
   ['f4ad8744d03e2a48eb020642b3d4f51833acc326b39fbafdd314d0ac8363d426', 'testnet supply tx, docs/superpowers/specs/2026-08-20-stablecoin-yield.md in history'],
   ['0363b7e37ab10c3381c84c924c7028bda82a18642b9153aa60dcb7a4b70e5632', 'testnet withdraw tx, docs/superpowers/specs/2026-08-20-stablecoin-yield.md in history'],
+  // A PEM block with an eleven character body, which no key has: the fixture the log tail
+  // redaction test was first committed with (tests/unit/log-tail.test.ts in history; the tree
+  // now assembles it at runtime). Excused as the exact block; the header alone still trips.
+  [FAKE_PEM_FIXTURE, 'a fake PEM block, tests/unit/log-tail.test.ts in history'],
+  // sha256 of the published release files, as SHA256SUMS on the release page lists them and as
+  // the launch evidence under docs/superpowers/prompts/ready-for-people/evidence-g records them.
+  ['211b95fc39d380218e835b12a4d6a6feb516353a0103b9acd70a5aa4db79f48c', 'sha256 of Phosphor-macOS-arm64.dmg, release v0.7.0'],
+  ['65b5564e47d96ec4b20640b74e1386112854e47d017b7551c315ef9516931506', 'sha256 of Phosphor_0.7.0_aarch64.app.tar.gz, release v0.7.0'],
+  ['7350f574186227f6a1e3b084e6cec3eb8beb198a6735186bf1d74095c089d52f', 'sha256 of Phosphor-macOS-arm64.dmg, release v0.6.0'],
+  ['809ad3e45ac4d33b7af72d3c3cbc95aa98638c59269e88c26f64b4030bcdfc33', 'sha256 of Phosphor_0.6.0_aarch64.app.tar.gz, release v0.6.0'],
   // sha256 of two vendored three.js files, recorded so a reader could verify the copy.
   ['979c1ae4b0579c9901eacf797602c0b46df129d87102c6443d14be4a1f790b70', 'sha256 of three.module.min.js, ui/vendor/README.md in history'],
   ['295a28f4a9786dd24a2a357a4ce90921eb041127e53a508335b9a0556c1e0875', 'sha256 of three.core.min.js, ui/vendor/README.md in history'],

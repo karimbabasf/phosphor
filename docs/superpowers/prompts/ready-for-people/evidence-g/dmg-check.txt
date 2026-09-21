@@ -1,0 +1,12 @@
+## DMG bytes, 2026-09-21T03:07Z
+release asset: 211b95fc39d380218e835b12a4d6a6feb516353a0103b9acd70a5aa4db79f48c  55373867 bytes  (https://github.com/karimbabasf/phosphor/releases/download/v0.7.0/Phosphor-macOS-arm64.dmg)
+site download: 211b95fc39d380218e835b12a4d6a6feb516353a0103b9acd70a5aa4db79f48c  55373867 bytes  (https://phosphor.karimbabasf.com/download/mac)
+SHA256SUMS:    211b95fc39d380218e835b12a4d6a6feb516353a0103b9acd70a5aa4db79f48c  Phosphor-macOS-arm64.dmg
+MATCH: release asset, site download and SHA256SUMS agree
+## DMG layout (.DS_Store inside the image, per the CI gotcha)
+-rw-r--r--@ 1 karimbaba  staff   10244 Sep 19 15:57 .DS_Store
+lrwxr-xr-x  1 karimbaba  staff      13 Sep 19 15:57 Applications -> /Applications
+drwxr-xr-x  3 karimbaba  staff     102 Sep 19 15:55 Phosphor.app
+Identifier=com.karimbabasf.phosphor
+Signature=adhoc
+TeamIdentifier=not set

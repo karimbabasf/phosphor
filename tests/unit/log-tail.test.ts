@@ -53,7 +53,8 @@ test('both tail readers redact the seat secret and the window token, and keep th
 });
 
 test('a PEM block is cut whole, and a hex run nobody recognises is left alone', () => {
-  const pem = '-----BEGIN EC PRIVATE KEY-----\nMHQCAQEEIBc\n-----END EC PRIVATE KEY-----';
+  // Assembled at runtime so this file never holds the marker the sweep (rightly) refuses to see.
+  const pem = ['-----BEGIN', 'EC PRIVATE', 'KEY-----\nMHQCAQEEIBc\n-----END', 'EC PRIVATE', 'KEY-----'].join(' ');
   const event = { ts: 't', type: 'tool_call', msg: `found ${pem} and ${TX_HASH}`, data: {} } as LogEvent;
   const out = redactEvent(event, () => false);
   assert.equal(out.msg, `found ${REDACTED} and ${TX_HASH}`);

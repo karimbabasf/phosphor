@@ -1,0 +1,32 @@
+# read-only checks, 2026-09-21T03:06Z
+
+## private vulnerability reporting
+{"enabled":true}
+## release v0.7.0
+Unknown JSON field: "isLatest"
+Available fields:
+  apiUrl
+  assets
+  author
+  body
+  createdAt
+  databaseId
+  id
+  isDraft
+  isImmutable
+  isPrerelease
+  name
+  publishedAt
+  tagName
+  tarballUrl
+  targetCommitish
+  uploadUrl
+  url
+  zipballUrl
+
+## release notes sha256 lines
+211b95fc39d380218e835b12a4d6a6feb516353a0103b9acd70a5aa4db79f48c  Phosphor-macOS-arm64.dmg
+65b5564e47d96ec4b20640b74e1386112854e47d017b7551c315ef9516931506  Phosphor_0.7.0_aarch64.app.tar.gz
+
+## tag v0.7.0 annotated?
+tag

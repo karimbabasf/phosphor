@@ -1,0 +1,35 @@
+# trimmed to the summary and the failing block; the full run was 4296 lines
+> phosphor@0.7.0 test
+> node --test tests/unit/*.test.ts tests/injection.test.ts tests/lockdown.test.ts
+ℹ tests 3068
+ℹ suites 0
+ℹ pass 3067
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 24663.297125
+EXIT=1
+
+✖ failing tests:
+
+test at tests/unit/demo-rail.test.ts:152:1
+✖ the stall knob stops the walk at PROCESSING and the deadline is what moves the row (970.304167ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'The transfer'
+  - '1Click'
+  
+      at TestContext.<anonymous> (file:///Users/karimbaba/Developer/Apps/phosphor-rfp-g-launch/tests/unit/demo-rail.test.ts:161:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'The transfer',
+    expected: '1Click',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+EXIT=1
+

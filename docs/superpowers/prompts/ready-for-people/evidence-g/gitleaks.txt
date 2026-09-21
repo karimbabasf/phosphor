@@ -1,0 +1,16 @@
+# gitleaks 8.30.1, `gitleaks git --no-banner --redact --exit-code 1 .` on rfp/g-launch, 2026-09-20
+915 commits scanned, ~16.25 MB in 988 ms, leaks found: 176, exit 1.
+Every finding is rule generic-api-key. By file (from the JSON report, secrets redacted, one distinct redacted value):
+  130  tests/fixtures/poa-tokens.json      near_token_id":"<chain>-<hex>.omft.near"  (the bridge's token ids)
+   15  data/tokens.json                    tokenId": "nep141:<64 hex>"               (NEAR token contract ids)
+    3  data/tokens.testnet.json            the same shape
+    3  tests/unit/oneclick.test.ts         tokenId: 'nep141:...'
+    3  tests/unit/hypercore-deposit.test.ts  tokenId: 'nep141:...'
+    3  tests/unit/intents-deposit.test.ts  tokenId: 'nep141:...'
+    2  tests/unit/intents-pay.test.ts, basic-view.test.ts, rail-wiring.test.ts, intents-native.test.ts, rails.test.ts, readstack.test.ts  tokenId: 'nep141:...'
+    2  .probe/probe-crosscheck.mjs (history only)  'aToken', 'nep141:...'
+    1  tests/unit/intents-alias.test.ts, trade-collateral.test.ts  tokenId: 'nep141:...'
+    1  tests/unit/runner-child-pentest.test.ts  KEY = '0x4c0883a6...' (the canonical Ethereum documentation key the sweep excuses by exact value)
+    1  tests/unit/research.test.ts         secret = 'a1b2c3d4e5f6' (a made-up test string)
+    1  src/rails/intents-native.ts:83      INTENTS_API_KEY_ENV = 'PHOSPHOR_ONECLICK_KEY' (an env var NAME)
+Zero secrets. `gitleaks dir` on the tree alone: 155, same shapes. A .gitleaks.toml allowlist is in report-g.md, section 5, item 6.

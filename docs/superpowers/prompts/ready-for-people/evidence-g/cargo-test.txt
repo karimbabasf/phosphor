@@ -1,0 +1,41 @@
+   Compiling window-vibrancy v0.6.0
+   Compiling muda v0.19.3
+   Compiling objc2-osa-kit v0.3.2
+   Compiling rfd v0.16.0
+   Compiling arboard v3.6.1
+   Compiling osakit v0.3.1
+   Compiling wry v0.55.1
+   Compiling tauri-runtime v2.11.3
+   Compiling tauri-runtime-wry v2.11.4
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.05s
+     Running unittests src/main.rs (target/debug/deps/phosphor_desktop-4150f431cd9440da)
+
+running 24 tests
+test backend::tests::the_shutdown_grace_outlasts_a_venue_write_in_flight ... ok
+test tests::a_backend_that_is_late_is_asked_less_often ... ok
+test backend::tests::a_response_with_no_marker_at_all_is_never_a_match ... ok
+test tests::a_query_value_cannot_add_a_parameter_or_leave_the_query ... ok
+test enclave::tests::a_missing_helper_is_a_failure_answer_not_a_panic ... ok
+test enclave::relay_tests::only_a_2xx_carrying_this_boots_nonce_is_read ... ok
+test tests::the_fast_cadence_cannot_add_more_than_it_saves ... ok
+test enclave::relay_tests::the_transport_key_crosses_as_base64_of_its_bytes ... ok
+test tests::the_first_two_seconds_are_looked_at_forty_times_a_second ... ok
+test tests::the_problem_report_opens_the_bug_form_with_the_version_and_the_os_filled_in ... ok
+test backend::tests::nothing_on_the_port_is_never_a_match ... ok
+test tests::the_log_is_pasted_one_event_per_line_and_only_when_it_is_a_list ... ok
+test update::tests::a_disk_image_is_recognised_by_its_mount_point ... ok
+test update::tests::a_version_answered_later_is_not_offered_again_by_the_clock ... ok
+test update::tests::long_notes_are_clipped_on_a_character_boundary ... ok
+test update::tests::newer_means_numerically_greater_plain_semver_and_nothing_else ... ok
+test update::tests::only_the_versioned_github_asset_is_a_download ... ok
+test update::tests::notes_from_the_network_cannot_break_out_of_the_init_script ... ok
+test backend::tests::a_squatter_sending_the_old_fixed_marker_is_not_this_shells_backend ... ok
+test update::tests::a_bundle_with_no_info_plist_at_the_top_is_refused ... ok
+test backend::tests::the_backend_that_echoes_this_boots_nonce_is_recognised ... ok
+test update::tests::an_old_signed_bundle_announced_as_new_is_caught_by_the_version_inside ... ok
+test update::tests::the_version_is_read_from_the_bundle_inside_the_verified_tarball ... ok
+test backend::tests::a_child_adopted_after_kill_began_is_reaped_not_kept ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+EXIT=

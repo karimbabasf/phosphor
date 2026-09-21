@@ -1,0 +1,21 @@
+## previous release v0.6.0 latest.json (https://github.com/karimbabasf/phosphor/releases/download/v0.6.0/latest.json)
+{"version": "0.6.0", "pub_date": "2026-09-18T20:29:26Z", "url": "https://github.com/karimbabasf/phosphor/releases/download/v0.6.0/Phosphor_0.6.0_aarch64.app.tar.gz", "signature_len": 408}
+## v0.6.0 assets
+{"assets":["latest.json","Phosphor-macOS-arm64.dmg","Phosphor_0.6.0_aarch64.app.tar.gz","Phosphor_0.6.0_aarch64.app.tar.gz.sig","SHA256SUMS"],"published":"2026-09-18T20:29:37Z"}
+## v0.6.0 SHA256SUMS
+7350f574186227f6a1e3b084e6cec3eb8beb198a6735186bf1d74095c089d52f  Phosphor-macOS-arm64.dmg
+809ad3e45ac4d33b7af72d3c3cbc95aa98638c59269e88c26f64b4030bcdfc33  Phosphor_0.6.0_aarch64.app.tar.gz
+## updater block in tauri.conf.json (this tree)
+["https://github.com/karimbabasf/phosphor/releases/latest/download/latest.json"]
+pubkey set: True createUpdaterArtifacts: True
+## the release manifest test and version-agrees test
+ℹ tests 5
+ℹ pass 5
+ℹ fail 0
+## ci.yml workflow runs on push (last 3 on main)
+2026-09-19T22:49:56Z 6347d9d completed success
+2026-09-19T00:49:18Z c43e2e8 completed success
+2026-09-18T20:21:06Z 3d9480f completed success
+## release.yml runs (last 2)
+2026-09-19T22:49:54Z v0.7.0 completed success
+2026-09-18T20:21:16Z v0.6.0 completed success

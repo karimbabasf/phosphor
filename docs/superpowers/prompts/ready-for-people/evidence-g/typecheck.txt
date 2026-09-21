@@ -1,0 +1,5 @@
+
+> phosphor@0.7.0 typecheck
+> tsc --noEmit
+
+EXIT=0
