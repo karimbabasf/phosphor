@@ -269,9 +269,9 @@ async function render(list: Family[]): Promise<Measure[]> {
         const floor = floorFor(r.family);
         const problems: string[] = [];
         if (m.height + 0.5 < floor) problems.push(`height ${m.height.toFixed(1)} under the ${floor} floor`);
-        // A quiet button has no edge, so the room around its word is the line's own; a row
-        // whose title is a sentence wraps on a narrow column rather than cutting the sentence.
-        if (!r.iconOnly && m.labelWidth > 0 && m.boxWidth + 0.5 < m.labelWidth + LABEL_ROOM && !/\bbtn-quiet\b/.test(r.family)) problems.push(`width ${m.boxWidth.toFixed(1)} leaves under 24 px around a ${m.labelWidth.toFixed(1)} px label`);
+        // A row whose title is a sentence wraps on a narrow column rather than cutting the
+        // sentence; everything else holds the floor's room around its word.
+        if (!r.iconOnly && m.labelWidth > 0 && m.boxWidth + 0.5 < m.labelWidth + LABEL_ROOM) problems.push(`width ${m.boxWidth.toFixed(1)} leaves under 24 px around a ${m.labelWidth.toFixed(1)} px label`);
         if (!r.iconOnly && !r.sentence && m.labelLines > 1) problems.push(`label wraps to ${m.labelLines} lines`);
         if (!r.iconOnly && m.clipped) problems.push('label clips');
         if (m.pendingBothFaces === true) problems.push('pending shows both faces');

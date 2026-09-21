@@ -36,10 +36,11 @@ test('every recipe still names a family the window builds', () => {
   assert.deepEqual(stale, [], `recipes for buttons nothing builds: ${stale.join(', ')}`);
 });
 
-test('every .btn family has a rule for each of its five states', () => {
+test('every family draws hover, active and focus, and every .btn family disabled and pending too', () => {
   for (const f of list) {
-    if (!/(^|\s)btn(\s|$)/.test(f.family)) continue;
-    for (const state of ['hover', 'active', 'disabled', 'focus', 'pending']) {
+    if (!literal(f.family)) continue;
+    const states = /(^|\s)btn(\s|$)/.test(f.family) ? ['hover', 'active', 'disabled', 'focus', 'pending'] : ['hover', 'active', 'focus'];
+    for (const state of states) {
       assert.notEqual(f.states[state], '', `${f.family}: no rule draws the ${state} state`);
     }
   }

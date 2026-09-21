@@ -107,7 +107,9 @@ export function isColourway(raw: unknown): raw is Colourway {
 //
 // A MARK is 3:1, WCAG's floor for a non-text graphical object. A candle body is a shape whose
 // position carries the meaning, not a glyph. The split was found when a single 4.5 floor
-// refused a down-candle the window had shipped with for months.
+// refused a down-candle the window had shipped with for months. Down went back to the text
+// floor on 2026-09-21: the window sets words in it (Turn off, Failed, the amount that left,
+// No), and a down colour the tool accepted at 3.5:1 put every one of them under the floor.
 export const MIN_TEXT_CONTRAST = 4.5;
 export const MIN_MARK_CONTRAST = 3;
 
@@ -152,6 +154,16 @@ export function contrastRatio(a: string, b: string): number {
   const hi = Math.max(la, lb);
   const lo = Math.min(la, lb);
   return (hi + 0.05) / (lo + 0.05);
+}
+
+/* The lightest surface the window paints on a ground: ui/theme.js lifts --bg-2 seven percent
+   toward white on a dark ground (toward black on a light one), the same arithmetic, so a slot
+   is held to the surface a word in it can actually sit on, not only to the ground. */
+export function raisedSurface(background: string): string {
+  const ground = rgbOf(background);
+  const lift = luminance(background) > 0.5 ? 0 : 255;
+  const step = (from: number): number => Math.round(from + (lift - from) * 0.07);
+  return '#' + [ground.r, ground.g, ground.b].map((c) => step(c).toString(16).padStart(2, '0')).join('');
 }
 
 type ThemeOutcome =
@@ -204,17 +216,23 @@ export function applyPatch(current: Theme, patch: Record<string, unknown>): Them
     next[slot] = colour;
   }
 
-  // Everything that carries meaning has to stay readable on the ground, including the one
-  // colour this tool cannot name.
+  // Everything that carries meaning has to stay readable on every surface, including the one
+  // colour this tool cannot name. The raised surface (--bg-2, the lightest the window paints)
+  // is the one that decides: a colour that clears the floor on the ground alone was 4.2:1 on a
+  // card once the ground was as light as the gate red allows.
+  const surface = raisedSurface(next.background);
   const checks: { what: string; colour: string; floor: number }[] = [
     { what: 'accent', colour: next.accent, floor: MIN_TEXT_CONTRAST },
     { what: 'agent', colour: next.agent, floor: MIN_TEXT_CONTRAST },
     { what: "the approval gate's red", colour: COLOURWAY_PALETTE[next.profile].gate, floor: MIN_TEXT_CONTRAST },
     { what: 'up', colour: next.up, floor: MIN_MARK_CONTRAST },
-    { what: 'down', colour: next.down, floor: MIN_MARK_CONTRAST },
+    // Down is text as much as it is a candle: Turn off, Failed, the amount that left, No. A
+    // down colour the window sets words in holds the text floor (the shipped #ff5a6e reads
+    // at 5.98:1 on the raised ground); the candle shares it.
+    { what: 'down', colour: next.down, floor: MIN_TEXT_CONTRAST },
   ];
   for (const check of checks) {
-    const ratio = contrastRatio(check.colour, next.background);
+    const ratio = Math.min(contrastRatio(check.colour, next.background), contrastRatio(check.colour, surface));
     if (ratio < check.floor) {
       return {
         ok: false,

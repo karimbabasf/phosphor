@@ -183,6 +183,37 @@ test('the send card\'s info disc is 16 px to read and 30 px to press', () => {
   assert.match(disc?.[1] ?? '', /border:\s*1px solid var\(--line-strong\)/);
 });
 
+test('a quiet button keeps the floor\'s 24 px around its word', () => {
+  const quiet = css('components.css').match(/\.btn-quiet\s*\{([^}]*)\}/);
+  assert.equal(declared(quiet?.[1] ?? '', 'padding'), '0 var(--s-3)', 'quiet buttons hug their label again');
+});
+
+/* Every pressable that is not a .btn takes one press state, listed in components.css: a wash of
+   the text one shade past a hover, the compact ones giving 3 percent as well. */
+const PRESSED = ['dock-close', 'pane-hide', 'pane-show', 'receipt-close', 'lock-eye', 'netpick-back', 'netpick-link', 'activity-link', 'netsel', 'trade-tab', 'steps-fold', 'dock-next', 'dock-report-toggle', 'checks-toggle', 'fold-head', 'net-row', 'jump-latest'];
+
+test('every pressable that is not a .btn has a press, on the shared wash', () => {
+  const components = css('components.css');
+  assert.match(css('tokens.css'), /--press:\s*color-mix\(in srgb, var\(--text\) 12%, transparent\);/);
+  const compact = components.match(/\.dock-close:active,[^{]*\{([^}]*)\}/);
+  assert.ok(compact, 'no shared press for the compact pressables');
+  assert.match(compact?.[1] ?? '', /transform:\s*scale\(0\.97\);/);
+  assert.match(compact?.[1] ?? '', /background-color:\s*var\(--press\);/);
+  const rows = components.match(/\.dock-next:active,[^{]*\{([^}]*)\}/);
+  assert.ok(rows, 'no shared press for the rows');
+  assert.match(rows?.[1] ?? '', /background-color:\s*var\(--press\);/);
+  assert.doesNotMatch(rows?.[1] ?? '', /transform/, 'a row that spans its column keeps its edges still');
+  for (const family of PRESSED) {
+    assert.ok(new RegExp(`\\.${family}:active`).test(components), `${family} has no press`);
+  }
+  assert.match(components, /\.sendcard-info:active > span/);
+  assert.match(components, /\.tx\.receipt-row:active/);
+  assert.match(components, /\.holding-head\.opens:active/);
+  // The openers and the check row press on the same wash, over their own ground.
+  assert.match(components, /\.opens:active\s*\{[^}]*background-color:\s*color-mix\(in srgb, var\(--text\) 12%, var\(--opens-bg, transparent\)\);/);
+  assert.match(components, /\.check-row:active\s*\{[^}]*background-color:\s*var\(--press\);/);
+});
+
 test('a pressable\'s label never sits on the third text tone', () => {
   assert.match(css('agent.css'), /\.steps-fold\s*\{[^}]*color:\s*var\(--text-2\);/);
   assert.match(css('pro.css'), /button\.rule-group-title\s*\{[^}]*color:\s*var\(--text-2\);/);

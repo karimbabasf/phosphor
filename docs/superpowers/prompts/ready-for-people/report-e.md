@@ -10,14 +10,15 @@ data under state/), quit before this report. Evidence under evidence-e/.
 - c1a058a Node E report: the button inventory sheets, the app captures at 860 and 400 px, the audit before and after, the detector at 0, and the deposit card's open button on the card's text column
 - d3fac11 Merge branch 'main' into rfp/e-craft (bb4b842, the demo-rail test word)
 - ed0f0e4 Node E report: counts after the merge of main
-- (next) The answer row sticks to the bottom of the scrolling body: a send card at the app's default window had No and Approve 156 px under the fold (the secure review's finding); the Explorer glyph back at 14 px; the inventory removes its temp pages
+- 6f34d66 The dock's answer row sticks to the bottom of the scrolling body: a send card at the app's default window had No and Approve 156 px under the fold (the secure review's finding); the Explorer glyph back at 14 px; the inventory removes its temp pages
+- (next) The correctness review's four: quiet buttons keep the floor's 24 px, every pressable has a press, the down slot and every slot hold their floor on the raised surface, a card to read pins its row and the idle block leaves for the dock's stay; netpick steps back on Escape
 
 ## 2. Counts
 
 - `npm run typecheck`: exit 0 (TypeScript: No errors found).
-- `npm test`: 3099 tests, 3099 pass, 0 fail (after `git merge main` at bb4b842, d3fac11; before
+- `npm test`: 3104 tests, 3104 pass, 0 fail (after `git merge main` at bb4b842, d3fac11; before
   it the one failure was `demo-rail.test.ts`, a phase-0 contract word the lead fixed on main).
-  My branch adds 31 tests, all green.
+  My branch adds 36 tests, all green.
 - The reviewer's gitignored scratch script (scripts/scratch/review-e-secure/dock-check.ts) has
   its own type errors and sits under tsconfig's scripts glob: the typecheck line above is the
   tracked tree (the script set aside for the run and put back).
@@ -27,13 +28,17 @@ data under state/), quit before this report. Evidence under evidence-e/.
 ## 3. Criteria
 
 - B1 PASS: `node scripts/button-inventory.ts` (108 measurements, 0 problems: heights against 36/30/44,
-  label plus 24 px, no wrap, no clip) and `tests/unit/design-buttons-ui.test.ts` (every .btn rule at
-  its variant, 19 non-.btn pressables at 30). Evidence: evidence-e/inventory/sheet-860.png,
+  label plus 24 px on every family, quiet buttons included, no wrap, no clip) and
+  `tests/unit/design-buttons-ui.test.ts` (every .btn rule at its variant, 19 non-.btn pressables
+  at 30, quiet padding at 12 px a side). Evidence: evidence-e/inventory/sheet-860.png,
   sheet-400.png, inventory.md, verdicts.md.
 - B2 PASS: the sheet shows rest, hover, active, focus, disabled, pending (and on, live) per family;
-  the inventory test asserts every .btn family has a rule for each of the five; the pending measure
-  finds no family showing both faces and no width change while waiting (0 of 108).
-  Evidence: the sheets; design-buttons-ui.test.ts "both faces of a waiting button share one cell".
+  the inventory test asserts every family has a rule for hover, active and focus, and every .btn
+  family for disabled and pending too; the 20 families that had no press take one shared press
+  (a wash of the text at 12 percent one shade past any hover, the compact ones giving 3 percent,
+  components.css); the pending measure finds no family showing both faces and no width change
+  while waiting (0 of 108). Evidence: the sheets; design-buttons-ui.test.ts "both faces of a
+  waiting button share one cell" and "every pressable that is not a .btn has a press".
 - B3 PASS: reset.css `[hidden] { display: none !important }` and the test that no other weighted
   display rule exists outside a [hidden] guard or print; disabled buttons at 0.5 opacity with the
   pointer off (button:disabled cursor default, .btn:disabled). Evidence: design-buttons-ui.test.ts.
@@ -41,11 +46,16 @@ data under state/), quit before this report. Evidence under evidence-e/.
   carries the card chevron alone, the rule group heading the icon chevron alone, the sheet shows
   each). Card glyphs and checks.js's chevron are drawn on the same 24 grid at 1.5 px like icons.js.
 - B5 PASS: on the live window, Tab lands a 2 px ink outline (verified on the first control),
-  Enter and Space switch a tab (real Input.dispatchKeyEvent), Escape closes the Layout menu.
-  Escape does not close a dock card in the read state: request 1 below (decision.js, node D).
-- B6 PASS: the answer row (No and Yes, No and Approve) sticks to the bottom of the scrolling
-  body on the dock's ground, in its reading order (under the facts, before the fold), so it is
-  on screen whatever the card's height. Measured with a parked send (250 USDC to 0x8ba1...BA72,
+  Enter and Space switch a tab (real Input.dispatchKeyEvent), Escape closes the Layout menu and
+  the deposit card, and steps the network picker back to its tiles from the tokens and the
+  address (netpick.js, netpick-ui.test.ts). Escape does not close a dock card in the read state:
+  request 1 below (decision.js, node D).
+- B6 PASS: the answer row (No and Yes, No and Approve, a read card's Back up now) sticks to the
+  bottom of the scrolling body on the dock's ground, in its reading order (under the facts,
+  before the fold), so it is on screen whatever the card's height. Send card, bottom of No and
+  Approve against the viewport: 749 of 780 at 1180 by 780, 669 of 700 at 960 by 700, 669 of 700
+  at 860 by 700, 763 of 800 at 400 by 800. The backup read card at 400 by 800 stacked: 769 of
+  800, the split kept. Measured with a parked send (250 USDC to 0x8ba1...BA72,
   the address whole in groups of four) and a parked swap: visible at 1180 by 780 (the default
   window and column), 960 by 700 (default column and a 400 px one), 1280 by 800 at a 400 px
   column, 400 by 700, 400 by 800 and 860 by 700; scrolled to the end the row sits in flow with
@@ -54,9 +64,11 @@ data under state/), quit before this report. Evidence under evidence-e/.
   Evidence: evidence-e/app/chat-dock-*.png, chat-send-*.png, chat-swap-960x700-scrolled-end.png;
   tests/unit/design-dock-ui.test.ts.
 - B7 PASS on the shipped colourway and on the hardest themes the server accepts (the lightest
-  ground #212121, the dimmest accent), for every family, hovered and pressed included:
-  tests/unit/design-contrast.test.ts. One named gap: the danger label is painted from --down,
-  which the server holds to the 3:1 mark floor (request 4).
+  ground, the dimmest accent, the dimmest down), for every family including danger, hovered and
+  pressed included: tests/unit/design-contrast.test.ts. src/view/theme.ts now holds the down
+  slot to the text floor and every slot to the raised surface (--bg-2, the lightest the window
+  paints) as well as the ground: a red it accepted at 3.5:1 is refused (#a0505c, 2.94:1 on the
+  surface) and the shipped #ff5a6e passes (theme-slots.test.ts).
 - 3.6 PASS at 860 and 400 px columns on onboarding (terms, welcome, create, password), chat with
   the dock, vault and deposit (networks, tokens): overflowX 0 everywhere, no clipped element found
   by the DOM probe, every button in view. Two follow-ups at browser-only widths (netpick head
@@ -89,12 +101,20 @@ data under state/), quit before this report. Evidence under evidence-e/.
   of the scrolling body (CSS alone, decision.js untouched: the DOM order the dock test holds is
   the order the row sticks in). The body's bottom mask went, since it faded the pinned row too;
   the fade is drawn over the row while data-more is true, with a hairline, and both go at the
-  end of the card.
+  end of the card. A card to read (the backup prompt's .screen-actions) pins the same way, so the
+  stacked split stays for it. The idle block (mark, Nobody is at the wheel, Start) leaves for the
+  dock's stay: the 120 px the transcript keeps reached its mark, a sliver of logo over the dock.
+- B2: the press for a pressable that is not a .btn is one shared wash (--press in tokens.css)
+  listed by family in components.css; a new family joins the list, and the inventory test holds
+  every family to having one.
 - B7: hover and press on the primary step toward white, never toward the ground, because the
   label is the ground on every accepted theme.
 - B7: two button labels on the third text tone moved to the second (steps fold, rule group
-  heading); the danger label stays on --down and its floor is a server request, not a stylesheet
-  workaround.
+  heading). The danger label stays on --down; the server's floor moved instead (down to the text
+  floor, every slot checked on the raised surface), because a floor checked on the ground alone
+  left the dimmest accepted down at 4.23:1 on a card. The accepted grounds narrow with it: the
+  lightest grey ground is #101010 now (was #212121), which is what the gate red's 4.5:1 on a
+  card allows.
 - Karim's list: the vault's status chips drop their dot; the bar's status lines keep theirs (no
   pill there).
 - Detector: the two overflow warnings and the hairline-plus-lift advisory are recorded as
@@ -126,13 +146,9 @@ data under state/), quit before this report. Evidence under evidence-e/.
    `.netpick-list` the `scrolls` class and the data-cut scroll hook agent.js:990 uses
    (`dom.setAttr(list, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)))`
    on scroll and on resize); components.css draws the fade for `.scrolls[data-cut]`.
-4. src/view/theme.ts (node G or the lead), the down slot is text: in applyPatch's checks,
-   `{ what: 'down', colour: next.down, floor: MIN_MARK_CONTRAST }` to
-   `{ what: 'down', colour: next.down, floor: MIN_TEXT_CONTRAST }`. The shipped down (#ff5a6e)
-   reads at 5.98:1 on bg-1 so nothing shipped changes; a patch such as down #a0505c (3.4:1) is
-   accepted today and puts Turn off, Failed and every amount that left under the text floor.
-   design-contrast.test.ts names this and flips to holding btn-danger with the rest once the
-   floor moves (its last assertion).
+4. Done on this branch on the lead's word (theme.ts unowned): the down slot's floor, plus every
+   slot checked on the raised surface. The up slot is still a mark floor (3:1) and the window
+   sets words in it too (the amount that arrived): the same one-line change if wanted.
 5. No dependency requested.
 
 ## 6. Follow-ups found, not fixed
@@ -141,6 +157,9 @@ data under state/), quit before this report. Evidence under evidence-e/.
   never under 560 px) the title truncates to "Tokens ..." beside Change network.
 - ui/screens/agent.js:908: the send disc goes pending without a verb; the CSS carries it (see
   decisions), nothing to change unless the disc grows a label.
+- src/view/theme.ts: the up slot stays at the 3:1 mark floor and is also text (the amount that
+  arrived); the same change as down if the lead wants it.
+- The pending ask hidden behind the backup card after a refusal (node D, per the lead).
 - ui/design/deposit.css uses trade.css's `feedpulse` keyframes (both sheets always load); a
   shared keyframe in components.css would be one source.
 - The secure review's two small ones are done: the send card's Explorer link has its 14 px glyph

@@ -190,7 +190,9 @@ function statesOf(family: string, selectors: string[]): Record<string, string> {
   const out: Record<string, string> = { rest: '', hover: '', active: '', disabled: '', focus: '', pending: '', on: '' };
   for (const sel of selectors) {
     for (const token of tokens) {
-      const hit = new RegExp(`(^|[\\s>+~(])\\.${token}(?![\\w-])`);
+      // The class may follow a tag (button.chip:hover) or a combinator; never a word inside a
+      // longer class name (.btn-primary is not .btn).
+      const hit = new RegExp(`(^|[\\s>+~(\\w])\\.${token}(?![\\w-])`);
       if (!hit.test(sel)) continue;
       if (out.rest === '' && !/[:\[]/.test(sel.replace(/\[data-tone[^\]]*\]/g, ''))) out.rest = sel;
       for (const [state, tests] of Object.entries(STATE_PSEUDO)) {

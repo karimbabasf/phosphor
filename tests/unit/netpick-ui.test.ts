@@ -316,6 +316,29 @@ test('the tiles are the six quick networks, and a tile leads to the tokens it cr
   assert.equal(find(world.host, '.net-tile')[1].getAttribute('aria-current'), 'true', 'the tile picked before is not marked');
 });
 
+test('Escape steps back to the tiles from the tokens and from the address, and does nothing on the tiles', async () => {
+  const world = build({ ack: true });
+  const view = world.render();
+  await flush();
+  find(world.host, '.net-tile')[1].click();
+  await flush();
+  assert.equal(stage(world), 'tokens');
+  let stopped = 0;
+  root(world).dispatch('keydown', { key: 'Escape', preventDefault() { stopped += 1; } });
+  assert.equal(stage(world), 'network', 'Escape on the tokens did not step back');
+  assert.equal(stopped, 1, 'the key was not taken');
+  root(world).dispatch('keydown', { key: 'Escape', preventDefault() { stopped += 1; } });
+  assert.equal(stage(world), 'network');
+  assert.equal(stopped, 1, 'Escape on the tiles was taken, and the picker is a fold, not a sheet');
+  view.go('address', 'base');
+  await flush();
+  assert.equal(stage(world), 'address');
+  root(world).dispatch('keydown', { key: 'Escape', preventDefault() {} });
+  assert.equal(stage(world), 'network', 'Escape on the address did not step back');
+  root(world).dispatch('keydown', { key: 'Enter', preventDefault() {} });
+  assert.equal(stage(world), 'network', 'a key that is not Escape moved the stage');
+});
+
 test('the token list is sorted the way a wallet sorts: the chain coin, USDC, USDT, then by name', async () => {
   const world = build({ ack: true });
   world.render({ stage: 'tokens', network: 'eth' });

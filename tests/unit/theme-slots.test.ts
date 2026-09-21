@@ -98,6 +98,18 @@ test('an unknown slot name is refused rather than ignored', () => {
   assert.equal(result.ok, false);
 });
 
+/* Down is text as much as a candle (Turn off, Failed, the amount that left, No), so it holds the
+   text floor: a red the tool used to accept at 3.5:1 put every one of those words under 4.5:1. */
+test('the down slot holds the text floor: a dim red is refused, the shipped red passes', () => {
+  const dim = applyPatch(DEFAULT_THEME, { down: '#a0505c' });
+  assert.equal(dim.ok, false);
+  // The ratio in the error is the one on the raised surface (the lower of the two the check reads).
+  assert.match(dim.ok ? '' : dim.error, /down #a0505c on #0e0f13 is 2\.9\d:1, under the 4\.5:1/);
+  const shipped = applyPatch(DEFAULT_THEME, { down: '#ff5a6e' });
+  assert.equal(shipped.ok, true);
+  assert.ok(contrastRatio('#ff5a6e', DEFAULT_THEME.background) >= MIN_TEXT_CONTRAST);
+});
+
 test('a background nothing can be read on is refused', () => {
   // White text and a white ground: the window would be blank. The floor exists
   // so an agent cannot paint the app into a state a person cannot get out of.

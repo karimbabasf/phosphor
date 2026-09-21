@@ -383,10 +383,18 @@ button.bar-state:active { transform: scale(0.97); }
 
 /* With a card on the dock the transcript keeps 120 px and whatever it held
    past that is under the dock: the cut fades rather than slicing a sentence
-   in half, the way every scrolling region in this window fades at its edge. */
+   in half, the way every scrolling region in this window fades at its edge.
+   The idle block (the mark, Nobody is at the wheel, Start) leaves for the
+   card's stay: its mark was the one thing the 120 px reached, a sliver of
+   logo over the dock's top edge, and its buttons were under the dock anyway.
+   The head with the seat light stays. */
 .conversation:has(> .dock:not([hidden])) > .conversation-body {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+}
+
+.conversation:has(> .dock:not([hidden])) .agent-empty {
+  display: none;
 }
 
 .composer-host {
@@ -757,7 +765,8 @@ button.bar-state:active { transform: scale(0.97); }
    and a hairline over it says so; at the end of the card both go, so the last
    line is never left half drawn. The fade used to be a mask on the body, which
    would fade the pinned row with it. */
-.dock-body > .dock-actions {
+.dock-body > .dock-actions,
+.dock-body > .screen-actions {
   position: sticky;
   bottom: 0;
   z-index: 1;
@@ -768,7 +777,8 @@ button.bar-state:active { transform: scale(0.97); }
   transition: border-color var(--dur-press) var(--ease-out);
 }
 
-.dock-body > .dock-actions::before {
+.dock-body > .dock-actions::before,
+.dock-body > .screen-actions::before {
   content: "";
   position: absolute;
   left: 0;
@@ -783,7 +793,8 @@ button.bar-state:active { transform: scale(0.97); }
 
 /* The scrollport's bottom padding sits under the pinned row, and scrolled
    lines showed through that strip: the row paints its ground over it. */
-.dock-body > .dock-actions::after {
+.dock-body > .dock-actions::after,
+.dock-body > .screen-actions::after {
   content: "";
   position: absolute;
   left: 0;
@@ -794,15 +805,18 @@ button.bar-state:active { transform: scale(0.97); }
   pointer-events: none;
 }
 
-.dock-card[data-more="true"] .dock-body > .dock-actions {
+.dock-card[data-more="true"] .dock-body > .dock-actions,
+.dock-card[data-more="true"] .dock-body > .screen-actions {
   border-top-color: color-mix(in srgb, var(--warn) 28%, transparent);
 }
 
-.dock-card[data-more="true"] .dock-body > .dock-actions::before {
+.dock-card[data-more="true"] .dock-body > .dock-actions::before,
+.dock-card[data-more="true"] .dock-body > .screen-actions::before {
   opacity: 1;
 }
 
-.dock[data-state="read"] .dock-card[data-more="true"] .dock-body > .dock-actions {
+.dock[data-state="read"] .dock-card[data-more="true"] .dock-body > .dock-actions,
+.dock[data-state="read"] .dock-card[data-more="true"] .dock-body > .screen-actions {
   border-top-color: var(--line);
 }
 

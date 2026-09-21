@@ -442,7 +442,7 @@
     },
     {
       "file": "ui/screens/netpick.js",
-      "line": 736,
+      "line": 746,
       "family": "net-tile",
       "label": "n.name (argument)",
       "pending": null,
@@ -450,7 +450,7 @@
     },
     {
       "file": "ui/screens/netpick.js",
-      "line": 778,
+      "line": 788,
       "family": "netpick-link",
       "label": "built by the caller",
       "pending": null,
@@ -458,7 +458,7 @@
     },
     {
       "file": "ui/screens/netpick.js",
-      "line": 868,
+      "line": 878,
       "family": "net-row",
       "label": "n.name (argument)",
       "pending": null,
@@ -466,7 +466,7 @@
     },
     {
       "file": "ui/screens/netpick.js",
-      "line": 920,
+      "line": 930,
       "family": "netpick-back",
       "label": "\"Change network\"",
       "pending": null,
@@ -474,7 +474,7 @@
     },
     {
       "file": "ui/screens/netpick.js",
-      "line": 1118,
+      "line": 1128,
       "family": "btn btn-ghost",
       "label": "\"Show the address\"",
       "pending": null,
@@ -482,7 +482,7 @@
     },
     {
       "file": "ui/screens/netpick.js",
-      "line": 1202,
+      "line": 1212,
       "family": "btn btn-ghost btn-sm",
       "label": "\"Try again\"",
       "pending": null,
@@ -490,7 +490,7 @@
     },
     {
       "file": "ui/screens/netpick.js",
-      "line": 1315,
+      "line": 1325,
       "family": "btn btn-ghost btn-sm",
       "label": "\"Copy memo\"",
       "pending": null,
@@ -498,7 +498,7 @@
     },
     {
       "file": "ui/screens/netpick.js",
-      "line": 1356,
+      "line": 1366,
       "family": "netpick-link",
       "label": "\" \"",
       "pending": null,
@@ -857,7 +857,7 @@
       "states": {
         "rest": ".activity-link",
         "hover": ".activity-link:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".activity-link:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -1007,7 +1007,7 @@
         },
         {
           "file": "ui/screens/netpick.js",
-          "line": 1118,
+          "line": 1128,
           "family": "btn btn-ghost",
           "label": "\"Show the address\"",
           "pending": null,
@@ -1143,7 +1143,7 @@
       "sites": [
         {
           "file": "ui/screens/netpick.js",
-          "line": 1202,
+          "line": 1212,
           "family": "btn btn-ghost btn-sm",
           "label": "\"Try again\"",
           "pending": null,
@@ -1151,7 +1151,7 @@
         },
         {
           "file": "ui/screens/netpick.js",
-          "line": 1315,
+          "line": 1325,
           "family": "btn btn-ghost btn-sm",
           "label": "\"Copy memo\"",
           "pending": null,
@@ -1729,7 +1729,7 @@
       "states": {
         "rest": ".checks-toggle",
         "hover": ".checks-toggle:hover .checks-summary",
-        "active": "",
+        "active": ".dock-next:active,\n.dock-report-toggle:active,\n.checks-toggle:active,\n.fold-head:active,\n.holding-head.opens:active,\n.net-row:active,\n.tx.receipt-row:active,\n.jump-latest:active",
         "disabled": "",
         "focus": ".checks-toggle:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -1760,12 +1760,12 @@
       ],
       "states": {
         "rest": ".chip",
-        "hover": "",
-        "active": "",
+        "hover": "button.chip:hover",
+        "active": "button.chip:active",
         "disabled": "",
         "focus": ":focus-visible (reset.css, every element)",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
-        "on": ""
+        "on": "button.chip[aria-pressed=\"true\"]"
       },
       "pending": true,
       "disables": false
@@ -1785,11 +1785,11 @@
       "states": {
         "rest": ".agent-retry",
         "hover": ".agent-retry:hover",
-        "active": "",
+        "active": "button.chip:active",
         "disabled": "",
         "focus": ":focus-visible (reset.css, every element)",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
-        "on": ""
+        "on": "button.chip[aria-pressed=\"true\"]"
       },
       "pending": true,
       "disables": false
@@ -1808,12 +1808,12 @@
       ],
       "states": {
         "rest": ".chip",
-        "hover": ".chip-filter:hover",
-        "active": "",
+        "hover": "button.chip:hover",
+        "active": "button.chip:active",
         "disabled": "",
         "focus": ".chip-filter:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
-        "on": ""
+        "on": "button.chip[aria-pressed=\"true\"]"
       },
       "pending": false,
       "disables": false
@@ -1832,12 +1832,12 @@
       ],
       "states": {
         "rest": ".connection-copy",
-        "hover": "",
-        "active": "",
+        "hover": "button.chip:hover",
+        "active": "button.chip:active",
         "disabled": "",
         "focus": ":focus-visible (reset.css, every element)",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
-        "on": ""
+        "on": "button.chip[aria-pressed=\"true\"]"
       },
       "pending": false,
       "disables": false
@@ -1856,12 +1856,12 @@
       ],
       "states": {
         "rest": ".suggest",
-        "hover": "",
-        "active": "",
+        "hover": "button.chip:hover",
+        "active": "button.chip:active",
         "disabled": "",
         "focus": ":focus-visible (reset.css, every element)",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
-        "on": ""
+        "on": "button.chip[aria-pressed=\"true\"]"
       },
       "pending": false,
       "disables": false
@@ -1929,7 +1929,7 @@
       "states": {
         "rest": ".dock-close",
         "hover": ".dock-close:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".dock-close:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -1953,7 +1953,7 @@
       "states": {
         "rest": ".dock-next",
         "hover": ".dock-next:hover",
-        "active": "",
+        "active": ".dock-next:active,\n.dock-report-toggle:active,\n.checks-toggle:active,\n.fold-head:active,\n.holding-head.opens:active,\n.net-row:active,\n.tx.receipt-row:active,\n.jump-latest:active",
         "disabled": "",
         "focus": ".dock-next:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -1977,7 +1977,7 @@
       "states": {
         "rest": ".dock-report-toggle",
         "hover": ".dock-report-toggle:hover .dock-report-count",
-        "active": "",
+        "active": ".dock-next:active,\n.dock-report-toggle:active,\n.checks-toggle:active,\n.fold-head:active,\n.holding-head.opens:active,\n.net-row:active,\n.tx.receipt-row:active,\n.jump-latest:active",
         "disabled": "",
         "focus": ".dock-report-toggle:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2001,7 +2001,7 @@
       "states": {
         "rest": ".fold > .fold-head",
         "hover": ".fold-head:hover .card-meta",
-        "active": "",
+        "active": ".dock-next:active,\n.dock-report-toggle:active,\n.checks-toggle:active,\n.fold-head:active,\n.holding-head.opens:active,\n.net-row:active,\n.tx.receipt-row:active,\n.jump-latest:active",
         "disabled": "",
         "focus": ".fold-head:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2025,7 +2025,7 @@
       "states": {
         "rest": ".holding-head",
         "hover": ".holding-head.opens:hover",
-        "active": "",
+        "active": ".dock-next:active,\n.dock-report-toggle:active,\n.checks-toggle:active,\n.fold-head:active,\n.holding-head.opens:active,\n.net-row:active,\n.tx.receipt-row:active,\n.jump-latest:active",
         "disabled": "",
         "focus": ":focus-visible (reset.css, every element)",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2049,7 +2049,7 @@
       "states": {
         "rest": ".jump-latest",
         "hover": ".jump-latest:hover",
-        "active": "",
+        "active": ".dock-next:active,\n.dock-report-toggle:active,\n.checks-toggle:active,\n.fold-head:active,\n.holding-head.opens:active,\n.net-row:active,\n.tx.receipt-row:active,\n.jump-latest:active",
         "disabled": "",
         "focus": ".jump-latest:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2121,7 +2121,7 @@
       "states": {
         "rest": ".lock-eye",
         "hover": ".lock-eye:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".lock-eye:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2135,7 +2135,7 @@
       "sites": [
         {
           "file": "ui/screens/netpick.js",
-          "line": 868,
+          "line": 878,
           "family": "net-row",
           "label": "n.name (argument)",
           "pending": null,
@@ -2145,7 +2145,7 @@
       "states": {
         "rest": ".net-row",
         "hover": ".net-tile:hover .logo[data-token=\"BASE\"],\n.net-tile:focus-visible .logo[data-token=\"BASE\"],\n.net-tile[aria-current=\"true\"] .logo[data-token=\"BASE\"],\n.net-row:hover .logo[data-token=\"BASE\"],\n.net-row:focus-visible .logo[data-token=\"BASE\"]",
-        "active": "",
+        "active": ".dock-next:active,\n.dock-report-toggle:active,\n.checks-toggle:active,\n.fold-head:active,\n.holding-head.opens:active,\n.net-row:active,\n.tx.receipt-row:active,\n.jump-latest:active",
         "disabled": "",
         "focus": ".net-tile:hover .logo[data-token=\"BASE\"],\n.net-tile:focus-visible .logo[data-token=\"BASE\"],\n.net-tile[aria-current=\"true\"] .logo[data-token=\"BASE\"],\n.net-row:hover .logo[data-token=\"BASE\"],\n.net-row:focus-visible .logo[data-token=\"BASE\"]",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2159,7 +2159,7 @@
       "sites": [
         {
           "file": "ui/screens/netpick.js",
-          "line": 736,
+          "line": 746,
           "family": "net-tile",
           "label": "n.name (argument)",
           "pending": null,
@@ -2183,7 +2183,7 @@
       "sites": [
         {
           "file": "ui/screens/netpick.js",
-          "line": 920,
+          "line": 930,
           "family": "netpick-back",
           "label": "\"Change network\"",
           "pending": null,
@@ -2193,7 +2193,7 @@
       "states": {
         "rest": ".netpick-back",
         "hover": ".netpick-back:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".netpick-back:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2207,7 +2207,7 @@
       "sites": [
         {
           "file": "ui/screens/netpick.js",
-          "line": 778,
+          "line": 788,
           "family": "netpick-link",
           "label": "built by the caller",
           "pending": null,
@@ -2215,7 +2215,7 @@
         },
         {
           "file": "ui/screens/netpick.js",
-          "line": 1356,
+          "line": 1366,
           "family": "netpick-link",
           "label": "\" \"",
           "pending": null,
@@ -2225,7 +2225,7 @@
       "states": {
         "rest": ".netpick-link",
         "hover": ".netpick-link:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".netpick-link:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2249,7 +2249,7 @@
       "states": {
         "rest": ".netsel",
         "hover": ".netsel:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".netsel:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2273,7 +2273,7 @@
       "states": {
         "rest": ".pane-hide",
         "hover": ".pane-hide:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".pane-hide:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2297,7 +2297,7 @@
       "states": {
         "rest": ".pane-show",
         "hover": ".pane-show:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".pane-show:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2321,7 +2321,7 @@
       "states": {
         "rest": ".receipt-close",
         "hover": ".receipt-close:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".receipt-close:focus-visible,\n.receipt-copy:focus-visible,\n.receipt-view:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2369,7 +2369,7 @@
       "states": {
         "rest": ".sendcard-info",
         "hover": ".sendcard-info:hover,\n.sendcard-info:focus-visible",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".sendcard-info:hover,\n.sendcard-info:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2392,8 +2392,8 @@
       ],
       "states": {
         "rest": ".status-line",
-        "hover": "",
-        "active": "",
+        "hover": "button.bar-state:hover",
+        "active": "button.bar-state:active",
         "disabled": "",
         "focus": ":focus-visible (reset.css, every element)",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2417,7 +2417,7 @@
       "states": {
         "rest": ".steps-fold",
         "hover": ".steps-fold:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".steps-fold:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2513,7 +2513,7 @@
       "states": {
         "rest": ".trade-tab",
         "hover": ".trade-tab:hover",
-        "active": "",
+        "active": ".dock-close:active,\n.pane-hide:active,\n.pane-show:active,\n.receipt-close:active,\n.lock-eye:active,\n.netpick-back:active,\n.netpick-link:active,\n.activity-link:active,\n.netsel:active,\n.trade-tab:active,\n.steps-fold:active,\n.sendcard-info:active > span",
         "disabled": "",
         "focus": ".trade-tab:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
@@ -2537,9 +2537,9 @@
       "states": {
         "rest": ".tx",
         "hover": ".activity-rows > .tx.receipt-row:hover",
-        "active": "",
+        "active": ".dock-next:active,\n.dock-report-toggle:active,\n.checks-toggle:active,\n.fold-head:active,\n.holding-head.opens:active,\n.net-row:active,\n.tx.receipt-row:active,\n.jump-latest:active",
         "disabled": "",
-        "focus": ":focus-visible (reset.css, every element)",
+        "focus": "button.tx:focus-visible",
         "pending": "[data-pending=\"true\"] (components.css, every element)",
         "on": ""
       },
@@ -2733,7 +2733,7 @@
       "width": 860,
       "floor": 36,
       "height": 36,
-      "boxWidth": 49.46875,
+      "boxWidth": 57.46875,
       "minHeight": 36,
       "labelWidth": 31.46875,
       "labelLines": 1,
@@ -3543,7 +3543,7 @@
       "width": 400,
       "floor": 36,
       "height": 36,
-      "boxWidth": 49.46875,
+      "boxWidth": 57.46875,
       "minHeight": 36,
       "labelWidth": 31.46875,
       "labelLines": 1,

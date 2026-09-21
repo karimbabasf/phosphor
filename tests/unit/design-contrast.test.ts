@@ -4,8 +4,8 @@
 // rewrites both when set_theme lands. So the pairs are listed here per family, theme.js is run
 // for the shipped colourway and for the hardest themes the server still accepts (the lightest
 // ground, an accent at the text floor), and the contrast is computed the way src/view/theme.ts
-// computes it. The one family whose label is a slot the server holds only to the 3:1 mark floor
-// (danger, painted from --down) is checked on the shipped colourway and the gap is named.
+// computes it. The danger family's label is the down slot, which the server holds to the text
+// floor since 2026-09-21; the dimmest down it accepts is checked with the rest.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,6 +28,7 @@ function tokensFor(theme: Record<string, string>): Props {
     '--text-2': PALETTE.text2,
     '--text-3': PALETTE.text3,
     '--warn': PALETTE.warn,
+    '--gate': PALETTE.gate,
   };
   const sandbox: Record<string, any> = {
     window: {},
@@ -101,6 +102,8 @@ const PAIRS: Array<[family: string, label: string, grounds: string[]]> = [
   ['check-row', '--text-2', ['--bg-2']],
   ['netpick-link, dock-next, steps-fold, rule-group-title', '--text-2', ['--bg-0', '--bg-1', '--bg-2']],
   ['choice, net-tile, holding-head, fold-head', '--text', ['--bg-0', '--bg-1', '--bg-2']],
+  ['btn-danger, and every word set in the down colour', '--down', ['--bg-0', '--bg-1', '--bg-2']],
+  ['the gate red, the word REFUSED', '--gate', ['--bg-0', '--bg-1', '--bg-2']],
 ];
 
 for (const [name, theme] of THEMES) {
@@ -134,17 +137,24 @@ test('the primary keeps its label readable while hovered and while pressed', () 
   }
 });
 
-/* The danger label is painted from --down, and the server holds --down to the 3:1 mark floor
-   (src/view/theme.ts, MIN_MARK_CONTRAST) although the window sets words in it: Turn off, Forget
-   this wallet, Failed, the amount that left. On the shipped colourway it reads at 5.98:1; a theme
-   with a down colour between 3:1 and 4.5:1 is accepted by the server and puts every one of those
-   words under the text floor. That is the server's floor to raise, not a stylesheet's to hide. */
-test('the danger label reads on the shipped colourway, and names the floor it depends on', () => {
-  const props = tokensFor({ ...DEFAULT_THEME });
+/* The danger label is painted from --down (Turn off, Forget this wallet), as are Failed, No and
+   the amount that left. The server holds the down slot to the text floor (src/view/theme.ts): a
+   red it used to accept at 3.5:1 put every one of those words under 4.5:1. */
+test('a down colour under the text floor never reaches the window', () => {
+  const dim = applyPatch(DEFAULT_THEME, { down: '#a0505c' });
+  assert.equal(dim.ok, false, 'the server accepts a down colour the danger label cannot be read in');
+  const dimmest = ((): string => {
+    let best = DEFAULT_THEME.down;
+    for (let v = 255; v >= 0; v--) {
+      const red = '#' + v.toString(16).padStart(2, '0') + '3040';
+      if (applyPatch(DEFAULT_THEME, { down: red }).ok) best = red;
+      else break;
+    }
+    return best;
+  })();
+  const props = tokensFor({ ...DEFAULT_THEME, down: dimmest });
   for (const ground of ['--bg-0', '--bg-1', '--bg-2']) {
     const r = ratio(props, '--down', ground);
-    assert.ok(r >= MIN_TEXT_CONTRAST, `btn-danger: --down on ${ground} is ${r.toFixed(2)}:1`);
+    assert.ok(r >= MIN_TEXT_CONTRAST, `the dimmest down the server accepts (${dimmest}) is ${r.toFixed(2)}:1 on ${ground}`);
   }
-  const weakest = applyPatch(DEFAULT_THEME, { down: '#a0505c' });
-  assert.ok(weakest.ok, 'the server now refuses a down colour under the text floor: retire this note and hold btn-danger with the rest');
 });

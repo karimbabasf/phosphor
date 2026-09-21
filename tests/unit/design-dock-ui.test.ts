@@ -50,7 +50,7 @@ test('what the transcript holds under the dock fades rather than slicing a sente
    body on the dock's ground, in its reading order (decision.js: under the facts, before the
    fold), so it is on screen at every size; measured on screen at all seven sizes. */
 test('the answer row sticks to the bottom of the scrolling body, on the dock\'s ground', () => {
-  const row = LAYOUT.match(/\.dock-body > \.dock-actions\s*\{([^}]*)\}/);
+  const row = LAYOUT.match(/\.dock-body > \.dock-actions,\s*\.dock-body > \.screen-actions\s*\{([^}]*)\}/);
   assert.ok(row, 'no rule pins the answer row');
   assert.match(row?.[1] ?? '', /position:\s*sticky;/);
   assert.match(row?.[1] ?? '', /bottom:\s*0;/);
@@ -58,13 +58,21 @@ test('the answer row sticks to the bottom of the scrolling body, on the dock\'s 
   assert.match(block(LAYOUT, '.dock'), /--dock-ground:\s*color-mix\(in srgb, var\(--bg-1\) 94%, var\(--warn\)\);/);
   assert.match(LAYOUT, /\.dock\[data-state="done"\]\s*\{\s*--dock-ground:\s*var\(--bg-1\);/);
   // The strip under the row (the scrollport's padding) is painted too, or scrolled lines show.
-  assert.match(LAYOUT, /\.dock-body > \.dock-actions::after\s*\{[^}]*top:\s*100%;[^}]*background:\s*var\(--dock-ground\);/);
+  assert.match(LAYOUT, /\.dock-body > \.dock-actions::after,\s*\.dock-body > \.screen-actions::after\s*\{[^}]*top:\s*100%;[^}]*background:\s*var\(--dock-ground\);/);
 });
 
 test('the fade over the pinned row replaces the mask on the body, which faded the row with it', () => {
   assert.doesNotMatch(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body\s*\{[^}]*mask-image/);
-  assert.match(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body > \.dock-actions::before\s*\{\s*opacity:\s*1;/);
-  assert.match(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body > \.dock-actions\s*\{\s*border-top-color:/);
+  assert.match(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body > \.dock-actions::before,\s*\.dock-card\[data-more="true"\] \.dock-body > \.screen-actions::before\s*\{\s*opacity:\s*1;/);
+  assert.match(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body > \.dock-actions,\s*\.dock-card\[data-more="true"\] \.dock-body > \.screen-actions\s*\{\s*border-top-color:/);
+});
+
+test('a card to read pins its row the same way, and the idle block leaves for the card\'s stay', () => {
+  // The backup prompt (deposit.js) builds its Back up now in a .screen-actions row.
+  assert.match(LAYOUT, /\.dock-body > \.dock-actions,\s*\.dock-body > \.screen-actions\s*\{\s*position:\s*sticky;/);
+  assert.match(LAYOUT, /\.dock-card\[data-more="true"\] \.dock-body > \.dock-actions,\s*\.dock-card\[data-more="true"\] \.dock-body > \.screen-actions\s*\{/);
+  // The 120 px the transcript keeps reached the idle block's mark: a sliver of logo over the dock.
+  assert.match(LAYOUT, /\.conversation:has\(> \.dock:not\(\[hidden\]\)\) \.agent-empty\s*\{\s*display:\s*none;\s*\}/);
 });
 
 test('a chip carries no dot', () => {

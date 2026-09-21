@@ -57,6 +57,10 @@
   --live-edge: var(--ink-edge);
   --live-glow: 0 0 5px var(--live);
 
+  /* The press on a pressable that is not a button: a wash of the text, one
+     shade past any hover wash (components.css). */
+  --press: color-mix(in srgb, var(--text) 12%, transparent);
+
   /* Type */
   --font-ui: "Sora", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;

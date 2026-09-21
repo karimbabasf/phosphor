@@ -635,6 +635,16 @@
     dom.clear(host);
     host.appendChild(root);
 
+    /* Escape steps back the way Change network does: the tokens and the
+       address return to the tiles. On the tiles it does nothing, because the
+       picker is a fold in the view and not a sheet over it; the deposit card
+       that holds a picker closes itself on Escape (deposit.js). */
+    dom.on(root, 'keydown', function (event) {
+      if (event.key !== 'Escape' || !state.alive || state.stage === 'network' || state.stage === null) return;
+      event.preventDefault();
+      stageNetworks();
+    });
+
     remember(opts.report || null);
 
     var state = {
