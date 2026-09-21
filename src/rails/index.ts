@@ -7,9 +7,13 @@
 //
 // Two things are deliberate:
 //
-//   1. 'swap' is the intents-native rail and nothing else: a swap is a balance inside the
-//      verifier changing what it holds. The chain-side 1Click venue went with the chain
-//      wallets (2026-09-16); rows it wrote still render as history.
+//   1. 'swap' is a balance inside the verifier changing what it holds, and two rails do it:
+//      the solver relay (one atomic token_diff, src/rails/intents-relay.ts) and the 1Click
+//      transfer it replaced (src/rails/intents-native.ts), kept one config line away for a
+//      month after the flip (`swap.rail`, src/config.ts). Both are built; the draft's venue
+//      picks, so a row written under either rail reaches the rail that wrote it. The
+//      chain-side 1Click venue went with the chain wallets (2026-09-16); rows it wrote still
+//      render as history.
 //
 //   2. Demo mode holds NO LIVE rails. The demo ledger is a fixture, not a chain, so nothing
 //      here may reach for an RPC and a private key that the demo user never meant to involve.
@@ -24,9 +28,14 @@ import { demoRails } from './demo.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
 import { hypercoreWithdrawRail } from './hypercore-withdraw.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
+import { INTENTS_RELAY_VENUE, intentsRelayRail } from './intents-relay.ts';
+import { swapRailOf } from '../config.ts';
 import { intentsSendRail } from './intents-send.ts';
 import { intentsPayRail } from './intents-pay.ts';
 import { createLivePreflight } from '../preflight/live.ts';
+import { relayClient } from '../relay/client.ts';
+import type { RelayStatus } from '../relay/client.ts';
+import { liveVerifier } from '../relay/verifier.ts';
 import { HYPERLIQUID_PERPS_COUNTERPARTY, tradeRail } from '../trade/rail.ts';
 import type { TradeDeps } from '../trade/rail.ts';
 import { isRailDraft, isRailKind, RAIL_KINDS } from './kinds.ts';
@@ -43,6 +52,17 @@ export type RailRegistry = {
   // and a trade needs a runner no fixture has.
   for(draft: WriteDraft): Rail | null;
   kinds(): RailKind[];
+  /* The relay swap rail's after-the-fact reads, for reconciliation (src/proposals/reconcile.ts):
+     the relay's own status by intent hash, and whether the verifier has spent a nonce. Here
+     rather than on the proposal service because the registry is the one table that knows which
+     venues exist; absent in demo mode and in any registry a test builds without one, where a
+     relay row is judged by its balance alone. Neither read signs anything. */
+  relay?: RelayLookup;
+};
+
+export type RelayLookup = {
+  status(intentHash: string): Promise<RelayStatus>;
+  nonceUsed(accountId: string, nonce: string): Promise<boolean | null>;
 };
 
 export type RailDeps = {
@@ -77,12 +97,31 @@ export function createRails(deps: RailDeps): RailRegistry {
      checks on the live quote before the intent is generated. */
   const preflight = createLivePreflight({ prices: deps.prices ?? (() => ({})) });
 
+  /* BOTH SWAP RAILS, whatever the switch says. The switch decides which venue proposeSwap
+     stamps on a new draft; a row already on disk names the venue it was written under, and
+     that is the rail that must answer for it (a held retry, a reconcile), or a flip of the
+     switch would strand every open swap of the other kind. */
+  const relaySwap = intentsRelayRail({
+    keysPath: deps.cfg.keysPath,
+    tokens: deps.tokens,
+    client,
+  }) as Rail;
+  const oneClickSwap = intentsNativeRail({
+    keysPath: deps.cfg.keysPath,
+    tokens: deps.tokens,
+    client,
+  }) as Rail;
+  const defaultSwap = swapRailOf(deps.cfg) === 'relay' ? relaySwap : oneClickSwap;
+  const swapFor = (draft: WriteDraft): Rail => {
+    const venue = (draft as { venue?: unknown }).venue;
+    if (venue === INTENTS_RELAY_VENUE) return relaySwap;
+    if (venue === 'intents-native') return oneClickSwap;
+    // No venue on the draft (a bare kind, a row from before venues were stamped): the switch decides.
+    return defaultSwap;
+  };
+
   const table: Record<RailKind, Rail> = {
-    swap: intentsNativeRail({
-      keysPath: deps.cfg.keysPath,
-      tokens: deps.tokens,
-      client,
-    }) as Rail,
+    swap: defaultSwap,
     hl_deposit: hypercoreDepositRail({
       keysPath: deps.cfg.keysPath,
       client,
@@ -108,9 +147,16 @@ export function createRails(deps: RailDeps): RailRegistry {
     trade: tradeRail(deps.trade) as Rail,
   };
 
+  const relayReads = relayClient();
+  const verifier = liveVerifier();
+
   return {
-    for: (draft: WriteDraft) => (isRailKind(draft.kind) ? table[draft.kind] : null),
+    for: (draft: WriteDraft) => (draft.kind === 'swap' ? swapFor(draft) : isRailKind(draft.kind) ? table[draft.kind] : null),
     kinds: () => [...RAIL_KINDS],
+    relay: {
+      status: (intentHash) => relayReads.status(intentHash),
+      nonceUsed: (accountId, nonce) => verifier.nonceUsed(accountId, nonce),
+    },
   };
 }
 

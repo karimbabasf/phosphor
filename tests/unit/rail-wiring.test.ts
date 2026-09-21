@@ -48,6 +48,8 @@ import { createRails, venueAllowlist } from '../../src/rails/index.ts';
 import { isDemoRail } from '../../src/rails/demo.ts';
 import { HYPERCORE_COUNTERPARTY } from '../../src/rails/hypercore-deposit.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from '../../src/rails/intents-native.ts';
+import { INTENTS_RELAY_COUNTERPARTY, INTENTS_RELAY_VENUE } from '../../src/rails/intents-relay.ts';
+import { DEFAULT_SWAP_RAIL, loadConfig, swapRailOf } from '../../src/config.ts';
 import { ONECLICK_COUNTERPARTY } from '../../src/intents.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import { classify } from '../../src/composition.ts';
@@ -129,7 +131,7 @@ async function landed(h: Harness, reply: Promise<Proposal>): Promise<Proposal> {
 }
 
 // intents: null means the ledger has no read at all; omitted means the default holdings.
-function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | null } = {}): Harness {
+function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | null; cfg?: Partial<AppConfig> } = {}): Harness {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-rail-wiring-'));
   const cfg: AppConfig = {
     mode: 'live', // demo mode owns no rails at all; that is its own test below
@@ -138,6 +140,7 @@ function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | nul
     candleProducts: [],
     dataDir,
     keysPath: '/tmp/phosphor-rail-wiring-keys.json', // never read: the spy rail signs nothing
+    ...over.cfg,
   };
 
   // A live-mode ledger over the demo fixture, so addresses and prices resolve without RPCs.
@@ -587,6 +590,79 @@ test('the live registry holds every rail kind and nothing else', () => {
   const swapRail = registry.for({ kind: 'swap' } as WriteDraft);
   assert.ok(swapRail !== null);
   assert.equal(swapRail.kind, 'swap');
+});
+
+// ---------- the swap rail switch ----------
+//
+// `swap.rail` is config, never code: the registry builds both swap rails and the draft's venue
+// picks between them, so a row written under either rail always finds the rail that wrote it,
+// and proposeSwap stamps the venue the switch names at the moment of the ask.
+
+// Which of the two swap rails a registry handed back, told apart by the venue each refuses:
+// a rail refuses the other rail's draft by name before touching a network.
+async function railNameOf(rail: Rail | null): Promise<string> {
+  assert.ok(rail !== null, 'no swap rail');
+  const sim = await rail.simulate({ kind: 'swap', venue: 'intents-native', counterparty: INTENTS_NATIVE_COUNTERPARTY, from: SELF_EVM, to: SELF_EVM, minAmountOut: 1 } as unknown as WriteDraft);
+  if (/intents-relay rail received/.test(sim.summary)) return 'relay';
+  const back = await rail.simulate({ kind: 'swap', venue: 'intents-relay', counterparty: INTENTS_RELAY_COUNTERPARTY, from: SELF_EVM, to: SELF_EVM, minAmountOut: 1 } as unknown as WriteDraft);
+  return /intents-native rail received/.test(back.summary) ? 'oneclick' : `unknown: ${sim.summary} / ${back.summary}`;
+}
+
+test('the config switch selects the swap rail, and the relay is the default', async () => {
+  const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
+  assert.equal(DEFAULT_SWAP_RAIL, 'relay');
+  assert.equal(swapRailOf({}), 'relay');
+  assert.equal(swapRailOf({ swap: { rail: 'oneclick' } }), 'oneclick');
+
+  const relay = createRails({ cfg: cfgFor('live'), tokens, trade: stubTrade });
+  assert.equal(await railNameOf(relay.for({ kind: 'swap' } as WriteDraft)), 'relay', 'no swap block means the relay');
+  const oneClick = createRails({ cfg: { ...cfgFor('live'), swap: { rail: 'oneclick' } }, tokens, trade: stubTrade });
+  assert.equal(await railNameOf(oneClick.for({ kind: 'swap' } as WriteDraft)), 'oneclick', 'one config line brings the 1Click rail back');
+});
+
+test('both swap rails are constructed whatever the switch says, and the draft venue picks', async () => {
+  const tokens = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8'));
+  for (const rail of ['relay', 'oneclick'] as const) {
+    const registry = createRails({ cfg: { ...cfgFor('live'), swap: { rail } }, tokens, trade: stubTrade });
+    assert.equal(await railNameOf(registry.for({ kind: 'swap', venue: 'intents-relay' } as WriteDraft)), 'relay', `a relay row under swap.rail ${rail}`);
+    assert.equal(await railNameOf(registry.for({ kind: 'swap', venue: 'intents-native' } as WriteDraft)), 'oneclick', `a 1Click row under swap.rail ${rail}`);
+    assert.ok(registry.relay !== undefined, 'the live registry carries the relay reads for reconciliation');
+  }
+});
+
+test('proposeSwap stamps the venue the switch names, and the verifier as the counterparty either way', async () => {
+  const relay = setup();
+  const viaRelay = await relay.svc.proposeSwap(swapParams(50));
+  assert.equal(viaRelay.draft.kind === 'swap' ? viaRelay.draft.venue : '', INTENTS_RELAY_VENUE);
+  assert.equal(viaRelay.draft.kind === 'swap' ? viaRelay.draft.counterparty : '', INTENTS_RELAY_COUNTERPARTY);
+  assert.notEqual(viaRelay.status, 'policy_refused', JSON.stringify(viaRelay.verdict));
+
+  const oneClick = setup({ cfg: { swap: { rail: 'oneclick' } } });
+  const viaOneClick = await oneClick.svc.proposeSwap(swapParams(50));
+  assert.equal(viaOneClick.draft.kind === 'swap' ? viaOneClick.draft.venue : '', 'intents-native');
+  assert.equal(viaOneClick.draft.kind === 'swap' ? viaOneClick.draft.counterparty : '', INTENTS_NATIVE_COUNTERPARTY);
+  assert.notEqual(viaOneClick.status, 'policy_refused', JSON.stringify(viaOneClick.verdict));
+});
+
+test('the config file accepts swap.rail as relay or oneclick and refuses anything else', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-swap-rail-'));
+  const load = (swap: unknown): AppConfig => {
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ mode: 'live', port: 4177, addresses: {}, dataDir: 'state', ...(swap === undefined ? {} : { swap }) }));
+    const saved = process.env.PHOSPHOR_KEYS;
+    process.env.PHOSPHOR_KEYS = path.join(os.tmpdir(), 'phosphor-swap-rail-keys', 'keys.json');
+    try {
+      return loadConfig(dir);
+    } finally {
+      if (saved === undefined) delete process.env.PHOSPHOR_KEYS;
+      else process.env.PHOSPHOR_KEYS = saved;
+    }
+  };
+  assert.equal(load(undefined).swap, undefined);
+  assert.deepEqual(load({ rail: 'relay' }).swap, { rail: 'relay' });
+  assert.deepEqual(load({ rail: 'oneclick' }).swap, { rail: 'oneclick' });
+  assert.throws(() => load({ rail: 'uniswap' }), /swap\.rail/);
+  assert.throws(() => load({ rail: 'relay', fee: 0 }), /swap.*fee/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('demo mode owns the demo rails and no live one, and a service with no registry still refuses', async () => {

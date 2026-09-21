@@ -24,6 +24,8 @@ import {
 } from '../rails/hypercore-deposit.ts';
 import { HL_WITHDRAW_COUNTERPARTY, minReceivedForHlWithdraw } from '../rails/hypercore-withdraw.ts';
 import { INTENTS_NATIVE_COUNTERPARTY } from '../rails/intents-native.ts';
+import { INTENTS_RELAY_COUNTERPARTY, INTENTS_RELAY_VENUE } from '../rails/intents-relay.ts';
+import { swapRailOf } from '../config.ts';
 import { INTENTS_SEND_COUNTERPARTY, intentsAccountProblem, minReceivedForSend } from '../rails/intents-send.ts';
 import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay } from '../rails/intents-pay.ts';
 import { isChainNetwork, validateAddress } from '../chainscan/index.ts';
@@ -54,9 +56,13 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
   const fromSymbol = canonicalSymbol(params.chain, params.fromSymbol);
   const toSymbol = canonicalSymbol(toChain, params.toSymbol);
 
+  // The venue is the config switch's word at the moment of the ask (`swap.rail`), pinned into
+  // the draft so the row is executed, retried and reconciled by the rail it was drafted for
+  // whatever the switch says later. Both rails share the one counterparty: the verifier.
+  const relay = swapRailOf(ctx.cfg) === 'relay';
   const draft: SwapDraft = {
     kind: 'swap',
-    venue: 'intents-native',
+    venue: relay ? INTENTS_RELAY_VENUE : 'intents-native',
     chain: params.chain,
     toChain,
     fromSymbol,
@@ -66,7 +72,7 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
     minAmountOut: params.minAmountOut,
     from,
     to: from,
-    counterparty: INTENTS_NATIVE_COUNTERPARTY,
+    counterparty: relay ? INTENTS_RELAY_COUNTERPARTY : INTENTS_NATIVE_COUNTERPARTY,
     quote: null,
   };
 
