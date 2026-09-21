@@ -19,6 +19,8 @@
 
 import { randomBytes } from 'node:crypto';
 
+import { base58Encode } from '../chain/near.ts';
+
 import type {
   AppConfig,
   HlDepositDraft,
@@ -105,6 +107,20 @@ const WALK = ['KNOWN_DEPOSIT_TX', 'PENDING_DEPOSIT', 'PROCESSING', 'SUCCESS'] as
 // Where the stall knob stops. The row lands settling on this word, nothing credits it, and the
 // deadline is the only thing left that can move it.
 const STALL_AT = 'PROCESSING';
+
+// The solver relay's words for a swap, as the relay spells them (src/rails/intents-relay.ts):
+// matched, on NEAR, settled. A demo swap walks these so the card shows the stages a real relay
+// swap shows; the stall stops it at the match, which is where a real one waits on a solver.
+const RELAY_WALK = ['PENDING', 'TX_BROADCASTED', 'SETTLED'] as const;
+const RELAY_STALL_AT = 'PENDING';
+
+type Walk = { stages: readonly string[]; stallAt: string; relay: boolean };
+
+// Which words a draft walks: a relay swap walks the relay's, everything else 1Click's.
+function walkOf(draft: WriteDraft): Walk {
+  if (draft.kind === 'swap' && draft.venue === 'intents-relay') return { stages: RELAY_WALK, stallAt: RELAY_STALL_AT, relay: true };
+  return { stages: WALK, stallAt: STALL_AT, relay: false };
+}
 
 export type DemoRailDeps = {
   cfg: AppConfig;
@@ -249,6 +265,7 @@ async function simulate(draft: WriteDraft): Promise<SimulationResult> {
           error: 'demo_quote_under_floor',
         };
       }
+      const walk = walkOf(draft);
       return {
         ok: true,
         summary: `demo: ${units(draft.amountIn, 8)} ${draft.fromSymbol} becomes about ${units(quote.out, 8)} ${draft.toSymbol} inside NEAR Intents. Nothing is signed and no money moves.`,
@@ -256,7 +273,10 @@ async function simulate(draft: WriteDraft): Promise<SimulationResult> {
           receives: units(quote.out, 8),
           receivesAtLeast: String(draft.minAmountOut),
           feeUsd: quote.feeUsd,
-          etaSeconds: Math.round((STAGE_MS * WALK.length + CREDIT_MS) / 1000),
+          etaSeconds: Math.round((STAGE_MS * walk.stages.length + CREDIT_MS) / 1000),
+          // A relay price lives about a minute and is asked for again at the click; the 1Click
+          // demo quote is held to the click the way the live one is.
+          priceGoodForSec: walk.relay ? 60 : null,
         },
       };
     }
@@ -436,6 +456,12 @@ function demoHash(): string {
   return `0x${randomBytes(32).toString('hex')}`;
 }
 
+// A NEAR-shaped hash (base58, no 0x) for the relay walk, so the history reads it as the NEAR
+// leg the way it reads a real relay swap's. Known to no chain either.
+function demoNearHash(): string {
+  return base58Encode(Uint8Array.from(randomBytes(32)));
+}
+
 // A host that cannot resolve, so a demo link is visibly a demo link and a click reaches nobody.
 export const DEMO_EXPLORER = 'https://explorer.demo.invalid/tx/';
 
@@ -451,6 +477,9 @@ async function walk(draft: WriteDraft, hooks: RailHooks | undefined, deps: DemoR
     signature: 'demo, nothing was signed',
     depositAddress: 'demo, no deposit address was minted',
   };
+
+  const walk = walkOf(draft);
+  if (walk.relay) return walkRelaySwap(move, hooks, deps, knobs);
 
   for (const stage of WALK) {
     await sleep(stageMs);
@@ -515,6 +544,65 @@ async function walk(draft: WriteDraft, hooks: RailHooks | undefined, deps: DemoR
   move.credit();
   await deps.refresh().catch(() => undefined);
   return { ok: true, detail: move.detail, txids: [intentHash], evidence };
+}
+
+/* The relay swap's walk: the same seams as the 1Click walk above, with the relay's words and
+   the relay's evidence. The first report carries what the live rail hands over the moment the
+   signature exists and the publish answers (the nonce, the deadline, the intent hash), the
+   second the NEAR hash the relay reports once the transaction is broadcast, the third the
+   settled word; the row then lands settling on its pocket and the credit lands after, exactly
+   as a live relay swap does. The stall stops at the match with nothing credited. */
+async function walkRelaySwap(move: DemoMove, hooks: RailHooks | undefined, deps: DemoRailDeps, knobs: DemoKnobs): Promise<RailResult> {
+  const stageMs = STAGE_MS * knobs.stageScale;
+  const intentHash = demoNearHash();
+  const nearHash = demoNearHash();
+  const nonce = Buffer.from(randomBytes(32)).toString('base64');
+  const deadline = new Date(Date.now() + 120_000).toISOString();
+  const explorerUrl = `${DEMO_EXPLORER}${nearHash}`;
+  const signed = { handle: intentHash, nonce, deadline };
+
+  for (const stage of RELAY_WALK) {
+    await sleep(stageMs);
+    if (stage === 'PENDING') {
+      tell(hooks, { providerStage: stage, txids: [intentHash], ...signed });
+    } else if (stage === 'TX_BROADCASTED') {
+      tell(hooks, { providerStage: stage, txids: [intentHash, nearHash], explorerUrl });
+    } else {
+      tell(hooks, { providerStage: stage, settledAmountOut: units(move.arrives, move.decimals) });
+    }
+    if (knobs.stall && stage === RELAY_STALL_AT) {
+      return {
+        ok: false,
+        settling: true,
+        detail: `demo: the swap is sent and no solver has matched it since. Nothing was signed and no money moved.`,
+        txids: [intentHash],
+        evidence: { providerStage: RELAY_STALL_AT, ...signed },
+        ...(move.pocket === null ? {} : { pocket: move.pocket }),
+      };
+    }
+  }
+  await sleep(stageMs);
+
+  const evidence: RailEvidence = {
+    providerStage: 'SETTLED',
+    ...signed,
+    settledAmountOut: units(move.arrives, move.decimals),
+    explorerUrl,
+  };
+  if (move.pocket !== null) {
+    void creditLater(move, deps, CREDIT_MS * knobs.stageScale);
+    return {
+      ok: false,
+      settling: true,
+      detail: `demo: the swap settled and the balance has not shown it yet. ${move.detail}`,
+      txids: [intentHash, nearHash],
+      evidence,
+      pocket: move.pocket,
+    };
+  }
+  move.credit();
+  await deps.refresh().catch(() => undefined);
+  return { ok: true, detail: move.detail, txids: [intentHash, nearHash], evidence };
 }
 
 async function creditLater(move: DemoMove, deps: DemoRailDeps, afterMs: number): Promise<void> {

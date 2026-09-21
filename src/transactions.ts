@@ -174,6 +174,7 @@ const EVM_PLACES: TxPlace[] = ['eth', 'base', 'arb'];
 // have a gas figure. Two rails put an intent hash first and chain hashes after it:
 //
 //   intents-native  txids = [intentHash, ...originTxHashes, ...destinationTxHashes]
+//   intents-relay   txids = [intentHash, nearTxHash]  (the relay's hash, then the NEAR settlement)
 //   intents_withdraw same shape
 //   everything else  txids = [chain tx, ...chain txs]
 //
@@ -223,7 +224,7 @@ function classifyHash(
   place: TxPlace,
   toPlace: TxPlace,
 ): { place: TxPlace; kind: TxHash['kind'] } {
-  if (index === 0 && (String(kind) === 'intents_withdraw' || kind === 'intents_send' || kind === 'intents_pay' || kind === 'hl_deposit' || venue === 'intents-native')) {
+  if (index === 0 && (String(kind) === 'intents_withdraw' || kind === 'intents_send' || kind === 'intents_pay' || kind === 'hl_deposit' || venue === 'intents-native' || venue === 'intents-relay')) {
     return { place: 'intents', kind: 'intent' };
   }
   // A hash a trade recorded is the venue's own ledger hash: the venue's explorer resolves
