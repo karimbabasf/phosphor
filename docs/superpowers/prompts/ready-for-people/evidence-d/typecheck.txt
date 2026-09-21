@@ -1,0 +1,4 @@
+npm run typecheck on e5c193d:
+> tsc --noEmit
+
+exit 0

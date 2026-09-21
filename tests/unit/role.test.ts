@@ -90,7 +90,7 @@ test('the role keeps the agent from reading the receipt back out in prose', () =
   assert.ok(text.includes('say so in one sentence'), 'the rule is gone');
   assert.ok(text.includes('Say so in one plain sentence'), 'the ending notice may still take two sentences');
   assert.ok(text.includes('with the figure that changed'), 'the landed move has no figure in its sentence');
-  assert.ok(text.includes('never the card\'s whole table told again'), 'the rule against reprinting the card is gone');
+  assert.ok(text.replace(/\n/g, ' ').includes('never the card\'s whole table told again'), 'the rule against reprinting the card is gone');
   assert.ok(text.indexOf('say so in one sentence') > text.indexOf('HOW TO ANSWER'), 'the rule is not an answering rule');
 });
 
@@ -113,7 +113,7 @@ test('the role keeps the agent to one line while a proposal waits for the click'
   /* Capped again on 2026-09-20 (criterion 5.5): three sentences, sixty words, the decision on the
      turn it is proposed, and only the figure that changed on every turn after, so the card is
      never told twice. The money stays in the decision sentence: the six live runs above are why. */
-  const rule = text.slice(at, at + 1200).replace(/\n/g, ' ');
+  const rule = text.slice(at, at + 1400).replace(/\n/g, ' ');
   assert.ok(rule.includes('at most three sentences and sixty words'), 'the rule does not cap the reply');
   assert.ok(rule.includes('only the figure that changed, no number the card already shows'), 'a later turn may still reprint the card');
   assert.ok(rule.includes('what it costs in the token and as a percent'), 'the money is not in the waiting reply');
@@ -122,7 +122,10 @@ test('the role keeps the agent to one line while a proposal waits for the click'
   // the card prints it, so the rule names the two ends and points at the card for the rest.
   assert.ok(rule.includes('keeps current on its own, through every stage'), 'the rule does not say the card updates itself');
   assert.ok(!/\bSettling\b/.test(rule), 'the role still names a stage word the stage table retired');
-  assert.ok(rule.includes('never a plan for after the click'), 'the reply may still narrate what happens next');
+  assert.ok(rule.includes('Never a plan for after the click'), 'the reply may still narrate what happens next');
+  /* Live runs 2 and 3 of 2026-09-20 padded the decision with the balance behind it and "not
+     confirmed yet": the five things the card carries are named as not belonging to that turn. */
+  assert.ok(rule.includes('Not on that turn: the balance behind it, the stage word, "not confirmed yet", the clock, the typical figure'), 'the padding is not named');
 });
 
 test('the role opens a session on `start` and never spends a later call re-orienting', () => {
@@ -297,7 +300,7 @@ test('the role is not so long it stops being read', () => {
   // (7). The JSON and error-string line folded into the first of them. Measured 20,396.
   // 21,100 later on 2026-09-20: the shape of the decision sentence, written out once with its
   // figures, because three live runs under the rule alone came back at 74 to 81 words and the
-  // six rules about figures won every time; an example does what a cap cannot. Measured 20,937.
+  // six rules about figures won every time; an example does what a cap cannot. Measured 20,937, then 21,065 with the five things the card carries named as not for that turn.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
   assert.ok(text.length < 21100, `the role is ${text.length} characters and nobody reads that far`);
@@ -351,8 +354,8 @@ test('the role gives the agent a voice, and the window draws the numbers', () =>
     'raw JSON, a venue\'s error string',
     '"the venue is not answering", not "422 Failed to deserialize"',
     '`switch` for a screen, `deposit` for an address, `trade_focus` for a position or a chart',
-    'Never say "failed" unless the tool said failed',
-    'wrong-network\nor lost-funds warning is one plain sentence',
+    'Never say\n"failed" unless the tool said failed',
+    'wrong-network or lost-funds warning is one plain\nsentence',
     'No exclamation marks, no emoji, no em dashes and no en\ndashes',
   ]) {
     assert.ok(text.includes(rule), `the voice lost: ${rule}`);

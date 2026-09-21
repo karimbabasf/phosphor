@@ -1,0 +1,52 @@
+The changed test files run against the parent commit (6ff58a9, a worktree at /tmp/rfp-d-parent
+with node_modules symlinked), one test at a time for agent-cards-ui (the file as a whole hung
+there: the old card's timer under the new receipt test), whole files for the rest.
+Criterion 11.1: red on the parent, green on the fix (npm test on 6079a6e: 3072 tests, 3071 pass,
+the one failure is demo-rail.test.ts:161, pre-existing on the parent, see report-d.md).
+
+agent-cards-ui.test.ts on parent
+green | kindFor names the card by the tool, prefix or not, and falls back to the facts card
+green | a tool_data event draws a card under the steps that produced it, and the next call folds on its own
+green | an empty wallet says so in words, with the way in
+RED   | a wallet holding something the app cannot price never reads as $0.00   (5.2: one read card per turn)
+green | the position card leads with up or down, tones each side, and lists what closed
+green | a batch read is the same card
+RED   | a proposed swap is one card, which the read-back updates in place, and a refusal says why   (5.1, 5.4, 3.5)
+RED   | a move card follows its proposal: the chip moves with the state frame, in place, and a folded card stays folded   (5.3, 5.4, 3.1, 5.7)
+green | a card says who decided: a click is the human's, an auto-run is the rules'
+green | a floor prints as a quantity, and the out leg of a move that only has a floor says so
+green | an "at least" figure never prints above the floor it promises
+green | a read-back of a move keeps the fold where the person left it
+green | a move card that was refused by the human says so once the frame says so
+green | the deposit card names the network, the tail of the address, the watch state, and opens the card
+green | a refused deposit says the reason and nothing else
+green | any other whitelisted answer is two columns of facts, numbers in mono
+green | a receipt folds: the newest opens, the ones before it close, and the head toggles by click
+green | a data card opens by default and stays where the person left it
+green | a folded turn names its calls under the chevron, and lights no dot
+green | a reply carries the mark and the clock it landed at
+green | the composer: Enter sends, Shift+Enter does not, Escape lets go, and the arrow is out while it works
+RED   | cards.js builds nothing that decides anything and writes no markup   (the Copy and the fold are new button sites)
+green | a chain_address answer is a small data block through the facts card, and its step row says the call left the machine
+green | a state word never takes the title's room: the two-row head gives the title both middle columns
+RED   | a read on the way to a move leaves no card of its own, and one turn draws at most one read card   (5.2)
+RED   | the receipt of a move folds into its card, and a move made elsewhere gets the same card off its row   (5.7, known failure 4)
+RED   | a send is the same skeleton, with the whole address on the leg it lands on   (5.7, frozen rule 3)
+RED   | a late move reads its clock in words, and a held one names the checks   (3.4, 3.5, 5.4)
+
+agent-transcript-ui.test.ts on parent: pass 40 fail 1
+  red: a step row says what the call was about, not just what kind it was   (3.1: the shortened id)
+proposal-view.test.ts on parent: pass 22 fail 2
+  red: every stage in the table has a row that produces it, with its own label (held, stageCopy)
+  red: waitingOn names a person, the wallet, the transfer or the venue, and nobody once it is over (The checks)
+  (the fallback-word test is a pin of behaviour the parent already had, and passes there)
+proposal-outcome.test.ts on parent: pass 6 fail 1
+  red: a settling row quotes the card's own stage label, and the word failed appears nowhere (no "router")
+ended-notice.test.ts on parent: pass 13 fail 1
+  red: a move that ends while the agent is idle is told to it at once, in plain words, with the screen tag (one sentence, 5.6)
+role.test.ts on parent: pass 15 fail 3
+  red: the role keeps the agent from reading the receipt back out in prose (5.6)
+  red: the role keeps the agent to one line while a proposal waits for the click (5.5)
+  red: the role gives the agent a voice, and the window draws the numbers (3.1 words)
+send-card-ui.test.ts on parent: pass 12 fail 1
+  red: the thread draws the send card from the reply's send facts, not from the tool argument (5.7 skeleton)

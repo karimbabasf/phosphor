@@ -1,0 +1,32 @@
+npm test on 6079a6e (2026-09-20), summary lines and the one failure:
+ℹ tests 3072
+ℹ pass 3071
+ℹ fail 1
+ℹ skipped 0
+✖ failing tests:
+
+test at tests/unit/demo-rail.test.ts:152:1
+✖ the stall knob stops the walk at PROCESSING and the deadline is what moves the row (1041.054167ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'The transfer'
+  - '1Click'
+  
+      at TestContext.<anonymous> (file:///Users/karimbaba/Developer/Apps/phosphor-rfp-d-card/tests/unit/demo-rail.test.ts:161:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+
+The same test on the parent commit 6ff58a9 (baseline run before any edit):
+ℹ tests 3068
+ℹ pass 3067
+ℹ fail 1
+test at tests/unit/demo-rail.test.ts:152:1
+✖ the stall knob stops the walk at PROCESSING and the deadline is what moves the row (1012.259375ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'The transfer'
+  - '1Click'
