@@ -138,7 +138,7 @@ export const STAGE_LABEL: Record<ProposalStage, string> = {
   PENDING: 'Finding a match',
   TX_BROADCASTED: 'Settling on NEAR',
   SETTLED: 'Settled, checking your balance',
-  NOT_FOUND_OR_NOT_VALID: 'Failed',
+  NOT_FOUND_OR_NOT_VALID: 'Not accepted, checking nothing moved',
   crediting: 'Waiting for the venue to credit it',
   confirmed: 'Confirmed',
   failed: 'Failed',
@@ -167,7 +167,7 @@ export const STAGE_COPY: Record<ProposalStage, string> = {
   PENDING: 'Your swap is sent and being matched at the price you approved. Nothing for you to do.',
   TX_BROADCASTED: 'Your swap is settling on NEAR. Nothing for you to do.',
   SETTLED: 'Your swap settled. The balance is being read to confirm it. Nothing for you to do.',
-  NOT_FOUND_OR_NOT_VALID: 'The swap did not settle before its price expired. Nothing moved. Ask for a fresh price.',
+  NOT_FOUND_OR_NOT_VALID: 'The network did not accept the swap. Nothing should have moved. The app checks your balance until the price window closes, then marks it.',
   crediting: 'The money is on its way to the venue and not in the balance yet. Nothing for you to do.',
   confirmed: 'Done. The balance shows it.',
   failed: 'It did not go through. The reason is on the card. Nothing more will be signed.',
@@ -176,6 +176,10 @@ export const STAGE_COPY: Record<ProposalStage, string> = {
   stalled: 'Late: nothing has changed since the last update. The app keeps checking; nothing more is signed.',
 };
 
+/* NOT_FOUND_OR_NOT_VALID is not here on purpose. When the relay answers it for a published
+   intent the signed bytes stay valid until the deadline, so the rail leaves the row open with
+   that word and the sweep writes `failed` after the deadline plus grace; until then the row is
+   still being checked, and a card that said Failed over it was ahead of the app. */
 export const TERMINAL: ReadonlySet<ProposalStage> = new Set<ProposalStage>([
   'confirmed',
   'failed',
@@ -184,7 +188,6 @@ export const TERMINAL: ReadonlySet<ProposalStage> = new Set<ProposalStage>([
   'stalled',
   'REFUNDED',
   'FAILED',
-  'NOT_FOUND_OR_NOT_VALID',
 ]);
 
 /* THE PATH EACH MONEY KIND WALKS, in order, and the words it can end on. A card draws its
@@ -205,7 +208,7 @@ const ENDINGS_OF_A_CLICK: readonly ProposalStage[] = ['declined', 'refused'];
 export const KIND_STAGES: Record<WriteDraft['kind'], KindStages> = {
   swap: {
     path: [...PERSON_STEPS, 'signing', 'submitting', 'PENDING', 'TX_BROADCASTED', 'SETTLED', 'confirmed'],
-    terminal: ['confirmed', 'NOT_FOUND_OR_NOT_VALID', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
+    terminal: ['confirmed', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
   },
   hl_deposit: {
     path: [...PERSON_STEPS, 'held', 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'],
@@ -331,6 +334,7 @@ function waitingOn(p: Proposal, stage: ProposalStage): string | null {
     case 'PENDING':
     case 'TX_BROADCASTED':
     case 'SETTLED':
+    case 'NOT_FOUND_OR_NOT_VALID':
       // The relay's words: the swap is inside NEAR Intents the whole way.
       return 'NEAR Intents';
     default:

@@ -917,3 +917,24 @@ test('a late move reads its clock in words, and a held one names the checks', ()
   assert.equal(all(holding, 'tcard-state')[0].textContent, 'Holding');
   assert.ok(all(holding, 'tcard-stage-copy')[0].textContent.startsWith('The checks before signing have not cleared.'));
 });
+
+test('an over-the-line relay swap says how long its price holds and that the click re-quotes it', () => {
+  /* The relay quote holds for about a minute and a person clicks when they click: the rail
+     re-quotes at the click (A's rail hands simulation.swap.priceGoodForSec), and the card says
+     so while the row waits on the person and at no other stage. */
+  const world = build();
+  const row = (status: string) => withView({
+    id: 'q1', kind: 'swap', status, createdAt: '2026-09-20T10:00:00Z',
+    draft: { ...SWAP_DRAFT, venue: 'intents-relay', fromSymbol: 'USDC', toSymbol: 'ETH', amountIn: 500, amountUsd: 500, minAmountOut: 0.1085 },
+    verdict: { outcome: 'needs_approval', reasons: [] },
+    simulation: { ok: true, summary: 'swap', swap: { receives: '0.1106', receivesAtLeast: '0.1085', feeUsd: 0.5, etaSeconds: 45, priceGoodForSec: 60 } },
+  });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: {}, data: row('pending') });
+  const card = world.cardNodes('move')[0];
+  const price = all(card, 'tcard-price')[0];
+  assert.equal(price.textContent, 'Price good for about a minute, re-quoted at your click');
+  assert.equal(price.hidden, false);
+  world.proposals([row('approved')]);
+  assert.equal(all(card, 'tcard-price')[0].hidden, true, 'the price line outlived the wait for the click');
+});
+

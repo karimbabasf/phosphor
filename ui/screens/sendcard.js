@@ -198,7 +198,7 @@
     failed: 'down',
     FAILED: 'down',
     REFUNDED: 'down',
-    NOT_FOUND_OR_NOT_VALID: 'down',
+    NOT_FOUND_OR_NOT_VALID: 'warn',
     declined: 'down',
     refused: 'down'
   };

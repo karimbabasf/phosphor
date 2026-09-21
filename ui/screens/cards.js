@@ -106,6 +106,7 @@
     declined: 'failed',
     refused: 'failed',
     REFUNDED: 'failed',
+    NOT_FOUND_OR_NOT_VALID: 'stalled',
     stalled: 'stalled'
   };
 
@@ -618,6 +619,14 @@
     return Math.round(n / 3600) + 'h';
   }
 
+  /* A duration a person would say: "about a minute", "about 2 minutes", "45 seconds". */
+  function roughWords(seconds) {
+    var n = Math.max(0, Math.round(Number(seconds) || 0));
+    if (n >= 50 && n <= 75) return 'about a minute';
+    if (n < 60) return n + ' seconds';
+    return 'about ' + Math.round(n / 60) + ' minutes';
+  }
+
   function secondsSince(iso) {
     var then = new Date(String(iso || '')).getTime();
     if (!isFinite(then)) return null;
@@ -1098,6 +1107,7 @@
     var legsHost = dom.el('div', 'tcard-legs');
     var sentence = dom.el('div', 'tcard-sentence');
     var facts = dom.el('div', 'tcard-facts mono');
+    var priceLine = dom.el('div', 'tcard-facts tcard-price');
     /* The stage line is the copy over the clock, and both keep their room whatever they say:
        two lines for the copy, one for the clock, so a stage whose sentence runs long and an
        ending that stops the clock move nothing under them (5.3). */
@@ -1115,6 +1125,7 @@
     body.appendChild(legsHost);
     body.appendChild(sentence);
     body.appendChild(facts);
+    body.appendChild(priceLine);
     body.appendChild(stage);
     body.appendChild(reason);
     body.appendChild(details.wrap);
@@ -1167,6 +1178,12 @@
       if (legs.feeUsd !== null && legs.feeUsd !== undefined) factBits.push('fee ' + dom.fee(legs.feeUsd));
       dom.setText(facts, factBits.join(', '));
       dom.setHidden(facts, !factBits.length);
+      /* A relay quote holds for about a minute and a click can come later than that: the
+         rail re-quotes at the click, and the card says so while the row waits on the person
+         (the relay rail hands simulation.swap.priceGoodForSec). */
+      var priceFor = view && view.stage === 'waiting_for_you' && isObject(next.simulation) && isObject(next.simulation.swap) ? num(next.simulation.swap.priceGoodForSec) : null;
+      dom.setText(priceLine, priceFor !== null && priceFor > 0 ? 'Price good for ' + roughWords(priceFor) + ', re-quoted at your click' : '');
+      dom.setHidden(priceLine, !(priceFor !== null && priceFor > 0));
 
       /* The stage line: the one sentence the table gives this stage, and the clock since it
          last changed. A stalled row is terminal and still counting, which is the whole

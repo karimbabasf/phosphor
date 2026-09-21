@@ -263,6 +263,16 @@ test('the inline card says the kind, the outcome, both legs and the four facts',
   assert.equal(withClass(card, 'receipt-cell')[3].childNodes[1].title, SELF, 'the whole address on hover');
 });
 
+test('a swap on the relay is named the way a native one is: NEAR Intents, never the rail id', () => {
+  /* The relay rail (src/rails/intents-relay.ts) writes `intents-relay` as the venue, and a
+     receipt that printed that id named a vendor's spelling in a person's record. */
+  const rig = boot();
+  const card = rig.window.PhosphorReceipt.card(swap({ venue: 'intents-relay' }));
+  const cells = withClass(card, 'receipt-cell').map((c: Any) => [text(c.childNodes[0]), text(c.childNodes[1])]);
+  assert.deepEqual(cells[2], ['Venue', 'NEAR Intents']);
+  assert.equal(text(card).includes('intents-relay'), false, 'the rail id is on the receipt: ' + text(card));
+});
+
 test('the hash is short on screen, whole on hover and whole on Copy, and Copy says so for a beat', () => {
   const rig = boot();
   const card = rig.window.PhosphorReceipt.card(swap());

@@ -45,6 +45,7 @@
   var VENUE_NAMES = {
     'intents.near': 'NEAR Intents',
     'intents-native': 'NEAR Intents',
+    'intents-relay': 'NEAR Intents',
     oneclick: 'NEAR Intents',
     hyperliquid: 'Hyperliquid',
     'uniswap-v3': 'Uniswap v3'

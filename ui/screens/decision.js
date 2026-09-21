@@ -60,7 +60,7 @@
      ("inside NEAR Intents"), so a row naming it again would say the same thing
      twice and in the rail's spelling; the retired ones that older rows still
      carry get their words. */
-  var VENUE_WORDS = { 'intents-native': null, 'oneclick': '1Click, on NEAR Intents', 'uniswap-v3': 'Uniswap v3' };
+  var VENUE_WORDS = { 'intents-native': null, 'intents-relay': null, 'oneclick': '1Click, on NEAR Intents', 'uniswap-v3': 'Uniswap v3' };
 
   /* ---------- the policy diff, carried over ---------- */
 
@@ -292,6 +292,13 @@
   function boot() {
     refs.dock = document.getElementById('overlay');
     refs.card = document.getElementById('overlay-card');
+    /* Escape closes a card that is only being read (a receipt, a shown card, a held or live
+       row). It never touches an ask: a decision is a click on Yes or No and nothing else. */
+    dom.on(document, 'keydown', function (event) {
+      if (event.key !== 'Escape' || !showing || dockState(showing.kind) !== 'read') return;
+      event.preventDefault();
+      close();
+    });
     store.select('proposals', render);
     /* The Touch ID sentence under a card that is waiting on the sensor comes off
        the vault slice, which can move on its own when the dialog closes. */
@@ -921,7 +928,7 @@
       for (var d = 0; d < destinations.length; d += 1) {
         var drow = dom.el('div', 'destination');
         dom.setAttr(drow, 'data-chosen', destinations[d].chosenBy);
-        drow.appendChild(dom.el('p', 'addr', destinations[d].address));
+        drow.appendChild(addressLine(destinations[d].address));
         drow.appendChild(dom.el('p', 'meta', destinations[d].label));
         dwrap.appendChild(drow);
       }
@@ -932,7 +939,10 @@
        lines and it belongs under the answer, not between the facts and it. */
     var more = [];
     more.push('Why you are being asked: ' + whyLine(proposal));
-    if (draft.venue) more.push('Through ' + venueWords(draft.venue));
+    /* A venue whose words are null is the one the headline already names, and "Through null"
+       was on every native swap's fold until 2026-09-20. */
+    var through = draft.venue ? venueWords(draft.venue) : null;
+    if (through) more.push('Through ' + through);
     var summary = typeof (proposal.simulation || {}).summary === 'string' ? proposal.simulation.summary.trim() : '';
     if (summary && draft.kind !== 'policy_change') more.push(summary);
     return more;
@@ -1341,6 +1351,18 @@
     if (typeof sim.priceImpact === 'number') parts.push(dom.pct(sim.priceImpact) + ' price impact');
     if (parts.length) return parts.join(', ');
     return sim.swap ? 'The venue did not price a fee.' : 'See what the venue reports, below.';
+  }
+
+  /* The address in groups of four, the way the send card prints it (ui/screens/sendcard.js
+     groupsOf): a 42-character run broke after its 41st character at 400 px and a lone digit
+     sat on its own line. The groups are the send card's own classes so they wrap as a set. */
+  function addressLine(address) {
+    var line = dom.el('p', 'addr sendcard-address');
+    dom.setAttr(line, 'data-address', address);
+    var sendCard = window.PhosphorSendCard;
+    var groups = sendCard && typeof sendCard.groupsOf === 'function' ? sendCard.groupsOf(address) : [String(address)];
+    for (var i = 0; i < groups.length; i += 1) line.appendChild(dom.el('span', 'sendcard-group', groups[i]));
+    return line;
   }
 
   function venueWords(venue) {

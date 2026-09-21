@@ -68,12 +68,33 @@ test('the dock builds its buttons here and every one is named', () => {
   assert.equal(/'btn-label', 'Approve|api\.approve|\/api\/approve/.test(SENDCARD), false, 'the send card builds a deciding button');
 });
 
-test('no key dismisses a decision', () => {
-  // The dock is a region, not a modal. Escape closing it would be a way out of a
-  // pending ask that is neither No nor Yes, and the person would not know which
-  // one the server recorded.
-  assert.equal(/'keydown'|"keydown"/.test(SOURCE), false, 'the dock listens for a key');
+test('no key dismisses a decision, and Escape closes a card that is only being read', () => {
+  // The dock is a region, not a modal. Escape closing an ask would be a way out of a pending
+  // decision that is neither No nor Yes, and the person would not know which one the server
+  // recorded. A receipt or a shown card is something to read, and Escape puts it away
+  // (E's review, 2026-09-20).
   assert.equal(/aria-modal/.test(SOURCE), false, 'the dock still calls itself a modal');
+  const d = dockFor(swapProposal());
+  assert.ok(textOf(d.card).includes('Yes'), 'the ask is up to begin with');
+  d.key('Escape');
+  assert.ok(d.shown(), 'Escape closed an ask');
+  assert.ok(textOf(d.card).includes('Yes'), 'Escape took the ask off the slot');
+
+  const quiet = dockFor({ ...swapProposal(), status: 'executed' });
+  quiet.dock.showReceipt({ id: 'r1' });
+  assert.ok(quiet.shown() && textOf(quiet.card).join(' ').includes('Receipt r1'), 'the receipt is not up');
+  quiet.key('Escape');
+  assert.equal(quiet.shown(), false, 'Escape left a receipt on the slot');
+  quiet.dock.showCard(function (host: Node) {
+    const line = makeNode('p');
+    line.textContent = 'Back up now.';
+    host.appendChild(line);
+  });
+  assert.ok(quiet.shown());
+  quiet.key('Enter');
+  assert.ok(quiet.shown(), 'a key other than Escape closed a card');
+  quiet.key('Escape');
+  assert.equal(quiet.shown(), false, 'Escape left a shown card on the slot');
 });
 
 test('the card is drawn from the server and never from a frame', () => {
@@ -186,7 +207,7 @@ function find(node: Node, className: string): Node[] {
 /* Boots the dock against a state and returns the card it drew, with the state
    it reads (mutable, for a test that moves a row on) and the render the store
    would call on a frame. `api` stands in for the routes a click takes. */
-function dockFor(proposal: Record<string, any>, state: Record<string, any> = {}, api: Record<string, any> = {}): { card: Node; payload: Record<string, any>; render: () => void; dock: Record<string, any>; sandbox: Record<string, any>; flush: () => void } {
+function dockFor(proposal: Record<string, any>, state: Record<string, any> = {}, api: Record<string, any> = {}): { card: Node; payload: Record<string, any>; render: () => void; dock: Record<string, any>; sandbox: Record<string, any>; flush: () => void; shown: () => boolean; key: (name: string) => void } {
   const dock = makeNode('div');
   const card = makeNode('div');
   const timers: Array<() => void> = [];
@@ -222,11 +243,13 @@ function dockFor(proposal: Record<string, any>, state: Record<string, any> = {},
     document: {
       createElement: makeNode,
       getElementById: (id: string) => (id === 'overlay' ? dock : id === 'overlay-card' ? card : null),
-      addEventListener: () => {},
+      /* The one document listener the dock owns is the Escape key, kept so a test can press it. */
+      addEventListener: (type: string, fn: (event: unknown) => void) => { (docHandlers[type] ??= []).push(fn); },
     },
     console,
     URL,
   };
+  const docHandlers: Record<string, Array<(event: unknown) => void>> = {};
   sandbox.document.createElementNS = (_ns: string, tag: string) => makeNode(tag);
   createContext(sandbox);
   runInContext(readFileSync(new URL('../../ui/core/links.js', import.meta.url), 'utf8'), sandbox,
@@ -249,6 +272,9 @@ function dockFor(proposal: Record<string, any>, state: Record<string, any> = {},
     dock: sandbox.window.PhosphorDecision,
     sandbox,
     flush: () => { const due = timers.splice(0, timers.length); for (const fn of due) fn(); },
+    /* Whether the slot is on screen: the dock hides its region when nothing is on it. */
+    shown: () => dock.hidden !== true,
+    key: (name: string) => { for (const fn of docHandlers.keydown ?? []) fn({ key: name, preventDefault: () => {} }); },
   };
 }
 
@@ -751,8 +777,15 @@ test('a swap card draws the rail\'s numbers as facts, the deciding rule as the r
   assert.equal(text.some((t) => t.includes('No fee was quoted')), false);
   assert.equal(text.some((t) => t.includes('swap of $2.00 to intents.near')), false, 'the engine\'s restatement is on the card');
   assert.equal(text.includes('intents-native'), false, 'the venue id is on the card as its own text');
-  // The account is on the card in full, under words that say nothing leaves it.
-  assert.ok(text.includes('0xb583f41992Cd21b2F2345e194a36D33684BB5DB0'));
+  // The account is on the card in full, under words that say nothing leaves it, in groups of
+  // four the way the send card prints an address: a 42-character run broke after its 41st
+  // character at 400 px (E's review, 2026-09-20).
+  const addr = find(card, 'sendcard-address');
+  assert.equal(addr.length, 1, 'no address line');
+  assert.equal(textOf(addr[0]).join(''), '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0', 'the address is not whole');
+  assert.equal(addr[0].getAttribute('data-address'), '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0');
+  assert.equal(find(addr[0], 'sendcard-group').length, 11, 'the address is not in groups of four');
+  assert.equal(textOf(addr[0])[1], '83f4');
   assert.ok(text.includes('Stays in your account'));
   assert.equal(text.includes('Where it goes'), false);
   assert.ok(text.some((t) => t.includes('your NEAR Intents account, the one it spends from')));
@@ -764,6 +797,17 @@ test('a swap card draws the rail\'s numbers as facts, the deciding rule as the r
   assert.equal(find(card, 'dock-summary').length, 1);
 });
 
+test('a swap on the relay names no venue line, like a native one: the headline already says inside NEAR Intents', () => {
+  for (const venue of ['intents-relay', 'intents-native']) {
+    const card = cardFor(swapProposal({ draft: Object.assign({}, swapProposal().draft, { venue }) }));
+    const text = textOf(card).join(' | ');
+    assert.equal(text.includes('Through '), false, `a venue line is drawn for ${venue} (it read "Through null" until 2026-09-20): ${text}`);
+    assert.equal(text.includes('intents-relay') || text.includes('intents relay'), false, 'the rail id is on the card');
+  }
+  const legacy = cardFor(swapProposal({ draft: Object.assign({}, swapProposal().draft, { venue: 'oneclick' }) }));
+  assert.ok(textOf(legacy).join(' | ').includes('Through 1Click, on NEAR Intents'), 'a retired venue lost its words');
+});
+
 /* A swap to somebody else's address, or an address the venue minted, is never
    described as staying put. */
 test('only the account the swap spends from is "your account"; anything else keeps its full disclosure', () => {
@@ -771,7 +815,7 @@ test('only the account the swap spends from is "your account"; anything else kee
   const elsewhere = cardFor(swapProposal({ draft: Object.assign({}, swapProposal().draft, { to: OTHER }) }));
   const text = textOf(elsewhere);
   assert.ok(text.includes('Where it goes'));
-  assert.ok(text.includes(OTHER));
+  assert.ok(find(elsewhere, 'sendcard-address').some((line) => textOf(line).join('') === OTHER));
   assert.ok(text.includes('the destination this app chose'));
   assert.equal(text.includes('Stays in your account'), false);
 });

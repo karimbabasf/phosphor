@@ -110,6 +110,23 @@ test('a provider word the table has no label for falls back to the app\'s own ph
   assert.equal(handed.stage, 'crediting');
 });
 
+test('a swap the network did not accept is still being checked, not ended', () => {
+  /* The relay's FAILED or NOT_FOUND on a published intent leaves the signed bytes valid until
+     the deadline; the rail keeps the row open with that word and the sweep writes `failed`
+     after the deadline plus grace. Until then the card says the app is checking, the row waits
+     on NEAR Intents, and nothing about it reads as over. */
+  const checking = CASES.NOT_FOUND_OR_NOT_VALID();
+  assert.equal(checking.terminal, false);
+  assert.equal(checking.stageLabel, 'Not accepted, checking nothing moved');
+  assert.equal(checking.waitingOn, 'NEAR Intents');
+  assert.equal(checking.settledAt, null);
+  assert.equal(checking.tookSec, null);
+  assert.ok(!KIND_STAGES.swap.terminal.includes('NOT_FOUND_OR_NOT_VALID'));
+  const ended = viewOf({ ...RELAY_SWAP, status: 'failed', result: { ok: false, detail: 'not accepted before the deadline' } });
+  assert.equal(ended.stage, 'failed');
+  assert.equal(ended.terminal, true);
+});
+
 test('waitingOn names a person, the wallet, the transfer or the venue, and nobody once it is over', () => {
   assert.equal(CASES.waiting_for_you().waitingOn, 'You');
   assert.equal(CASES.waiting_for_unlock().waitingOn, 'You');
