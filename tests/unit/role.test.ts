@@ -113,7 +113,7 @@ test('the role keeps the agent to one line while a proposal waits for the click'
   /* Capped again on 2026-09-20 (criterion 5.5): three sentences, sixty words, the decision on the
      turn it is proposed, and only the figure that changed on every turn after, so the card is
      never told twice. The money stays in the decision sentence: the six live runs above are why. */
-  const rule = text.slice(at, at + 640).replace(/\n/g, ' ');
+  const rule = text.slice(at, at + 1200).replace(/\n/g, ' ');
   assert.ok(rule.includes('at most three sentences and sixty words'), 'the rule does not cap the reply');
   assert.ok(rule.includes('only the figure that changed, no number the card already shows'), 'a later turn may still reprint the card');
   assert.ok(rule.includes('what it costs in the token and as a percent'), 'the money is not in the waiting reply');
@@ -295,9 +295,12 @@ test('the role is not so long it stops being read', () => {
   // surface the agent has to carry, the app's words and the banned ones with the id and tool
   // name ban (3.1), the three-sentence sixty-word cap on a move (5.5), and what a refusal owes
   // (7). The JSON and error-string line folded into the first of them. Measured 20,396.
+  // 21,100 later on 2026-09-20: the shape of the decision sentence, written out once with its
+  // figures, because three live runs under the rule alone came back at 74 to 81 words and the
+  // six rules about figures won every time; an example does what a cap cannot. Measured 20,937.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 20500, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 21100, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -382,8 +385,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // 20,700 on 2026-09-19, tracking the plain ceiling above: the index gave back everything it had
   // and four rules went on. Measured 20,501. Still a ceiling, not a target.
   // 21,700 on 2026-09-20, tracking the plain ceiling above by the same 900: the words, the cap
-  // and the gate rules (see there). Measured 21,477.
-  assert.ok(text.length < 21700, `the role is ${text.length} characters with a full profile`);
+  // and the gate rules (see there). Measured 21,477. 22,300 the same day for the worked shape of
+  // the decision sentence (see there). Measured 21,957.
+  assert.ok(text.length < 22300, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {
