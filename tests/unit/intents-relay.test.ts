@@ -24,10 +24,14 @@ import {
   INTENTS_RELAY_COUNTERPARTY,
   INTENTS_RELAY_VENUE,
   NONCE_LIFE_AFTER_DEADLINE_MS,
+  RELAY_SIMULATE_TIMEOUT_MS,
+  RELAY_SIMULATE_WAIT_MS,
   RELAY_TERMINAL,
   intentsRelayRail,
   settleTolerance,
 } from '../../src/rails/intents-relay.ts';
+import { relayClient } from '../../src/relay/client.ts';
+import { liveVerifier } from '../../src/relay/verifier.ts';
 import type { IntentsRelayRailDeps } from '../../src/rails/intents-relay.ts';
 import { KIND_STAGES, RELAY_STAGES } from '../../src/proposals/view.ts';
 
@@ -276,7 +280,7 @@ test('refuses at simulate when no quote is at or above the floor, with both numb
   const none = harness({ quotes: [] });
   const empty = await none.rail.simulate(draftOf());
   assert.equal(empty.ok, false);
-  assert.match(empty.error ?? '', /no solver offered a price for 2 USDC to USDT right now/);
+  assert.equal(empty.error, 'Nobody offered a price for this pair right now. Try again in a minute.');
 });
 
 test('the payload negative side is exactly amountIn, the positive side exactly the chosen quote, and the asset ids are the draft', async () => {
@@ -486,6 +490,58 @@ test('a hold below the floor signs nothing and returns held with both numbers in
   assert.equal(none.signed.length, 0);
 });
 
+/* 2.2: propose_swap runs the dry quote inside simulate and has to answer inside 3 s. The relay
+   waits for solvers as long as it is told (wait_ms; measured 2026-09-20: 500 ms of wait answers
+   in 1.1 s, 1500 in 2.1 s, the default 3000 in 2.7 s with a solver and 3.8 s with none), so the
+   propose-time quote asks for a shorter wait and carries its own client deadline. Execute keeps
+   the default wait and the read timeout: a click has time, an answer line does not. */
+test('the propose-time quote asks the relay for a short wait and gives up inside its own bound with one plain sentence', async () => {
+  const sent: Array<Record<string, unknown>> = [];
+  const aborted: string[] = [];
+  const slow = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { method: string; params: Array<Record<string, unknown>> };
+    sent.push(body.params[0]);
+    return new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: [] }), { status: 200 })), 5_000);
+      init?.signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        aborted.push(body.method);
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        reject(err);
+      });
+    });
+  }) as typeof fetch;
+  const h = harness({ deps: { relay: relayClient({ fetchImpl: slow, apiKey: '' }), simulateQuoteTimeoutMs: 150 } });
+  const started = Date.now();
+  const sim = await h.rail.simulate(draftOf());
+  assert.ok(Date.now() - started < 1_000, 'simulate answered inside its bound, not the transport');
+  assert.equal(sim.ok, false);
+  assert.equal(sim.error, 'Nobody offered a price for this pair right now. Try again in a minute.');
+  assert.match(sim.summary, /^REFUSED: Nobody offered a price for this pair right now\. Try again in a minute\.$/m);
+  assert.deepEqual(aborted, ['quote']);
+  assert.equal(sent[0]['wait_ms'], RELAY_SIMULATE_WAIT_MS, 'the propose-time quote names its wait');
+  assert.equal(RELAY_SIMULATE_WAIT_MS, 1_500);
+  assert.equal(RELAY_SIMULATE_TIMEOUT_MS, 2_500);
+  assert.equal(h.signed.length, 0);
+
+  // No solver inside the wait is the same sentence, and execute asks with the default wait.
+  const none = harness({ quotes: [] });
+  const empty = await none.rail.simulate(draftOf());
+  assert.equal(empty.error, 'Nobody offered a price for this pair right now. Try again in a minute.');
+  const wire: Array<Record<string, unknown>> = [];
+  const quick = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { params: Array<Record<string, unknown>> };
+    wire.push(body.params[0]);
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: [] }), { status: 200 });
+  }) as typeof fetch;
+  const viaWire = harness({ deps: { relay: relayClient({ fetchImpl: quick, apiKey: '' }) } });
+  await viaWire.rail.simulate(draftOf());
+  await viaWire.rail.execute(draftOf(), 'p1', viaWire.hooks);
+  assert.equal(wire[0]['wait_ms'], RELAY_SIMULATE_WAIT_MS);
+  assert.equal(wire[1]['wait_ms'], undefined, 'execute leaves the relay its default wait');
+});
+
 test('a hold names why every answer the relay gave was passed over, never a bare "no price"', async () => {
   const h = harness({
     quotes: [
@@ -533,15 +589,30 @@ test('a draft for the 1Click venue never reaches this rail, and the reverse', as
 
 // ---------- the rows the rail added ----------
 
-test('a balance below amountIn refuses before signing; a read that did not answer lets the contract answer', async () => {
+test('a balance below amountIn refuses before signing, and a balance the app could not read refuses too', async () => {
   const short = harness({ balanceIn: 1_999_999n });
   await assert.rejects(() => short.rail.execute(draftOf(), 'p1', short.hooks), /holds 1\.999999 USDC, less than the 2 USDC this swap spends; nothing was signed/);
   assert.equal(short.signed.length, 0);
   assert.equal(short.publishes.length, 0);
 
+  // Fail closed: an unread balance is not a balance, and nothing is signed against one.
   const unread = harness({ balanceIn: null });
-  const result = await unread.rail.execute(draftOf(), 'p1', unread.hooks);
-  assert.equal(result.ok, true, result.detail);
+  await assert.rejects(() => unread.rail.execute(draftOf(), 'p1', unread.hooks), /Could not read your balance, so nothing was signed\. Try again\./);
+  assert.equal(unread.signed.length, 0);
+  assert.equal(unread.publishes.length, 0);
+
+  // The same through the live verifier port over a transport that throws on the balance read.
+  const rpc = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { params: { method_name: string } };
+    if (body.params.method_name === 'mt_batch_balance_of') throw new Error('rpc exploded');
+    // current_salt answers as the contract does: a JSON string of 8 hex characters, as bytes.
+    const bytes = [...Buffer.from(JSON.stringify('252812b3'))];
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { result: bytes } }), { status: 200 });
+  }) as typeof fetch;
+  const live = harness({ deps: { verifier: liveVerifier(rpc) } });
+  await assert.rejects(() => live.rail.execute(draftOf(), 'p1', live.hooks), /Could not read your balance, so nothing was signed\. Try again\./);
+  assert.equal(live.signed.length, 0);
+  assert.equal(live.publishes.length, 0);
 });
 
 test('a salt the verifier did not answer with refuses before signing', async () => {

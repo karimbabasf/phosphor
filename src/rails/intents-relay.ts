@@ -12,7 +12,8 @@
 //   1. quote: every solver answers inside 3 s; the largest amount_out whose amount_in equals
 //      ours to the unit and whose expiry is at least 15 s ahead is the one. None at or above the
 //      floor: refuse (simulate) or hold (execute), nothing signed.
-//   2. balance: mt_batch_balance_of for the input asset; below amountIn refuses, nothing signed.
+//   2. balance: mt_batch_balance_of for the input asset; below amountIn, or unread, refuses,
+//      nothing signed.
 //   3. the payload is built here from the draft, the chosen quote and the app's own key and
 //      clock, serialised once, read back by checkTokenDiffPayload as a stranger would, and only
 //      then signed. The nonce is the verifier's versioned V1 shape and carries the contract's
@@ -74,6 +75,15 @@ export const RELAY_MIN_QUOTE_AHEAD_MS = 15_000;
 export const RELAY_POLL_INTERVAL_MS = 3_000;
 export const RELAY_POLL_TIMEOUT_MS = 180_000;
 
+/* The propose-time quote has an answer line to keep (2.2: propose_swap answers inside 3 s), and
+   the relay answers about 600 ms after the wait it is given, so simulate asks for a 1.5 s wait
+   and gives the whole call 2.5 s. A relay that has not answered by then is "nobody offered a
+   price", one sentence, nothing signed. Execute keeps the relay's default wait and the read
+   budget: a click has time, and the price it re-quotes at is worth waiting the full 3 s for. */
+export const RELAY_SIMULATE_WAIT_MS = 1_500;
+export const RELAY_SIMULATE_TIMEOUT_MS = 2_500;
+export const NO_PRICE_SENTENCE = 'Nobody offered a price for this pair right now. Try again in a minute.';
+
 // The relay's two ending words. The other two (PENDING, TX_BROADCASTED) and anything this app
 // has never seen keep the poll going: an unknown word is never terminal.
 export const RELAY_TERMINAL: readonly string[] = ['SETTLED', 'NOT_FOUND_OR_NOT_VALID'];
@@ -114,6 +124,8 @@ export type IntentsRelayRailDeps = {
   maxDeadlineMs?: number;
   minQuoteAheadMs?: number;
   settleSchedule?: RiseSchedule;
+  // The propose-time quote's own bound; the tests shorten it.
+  simulateQuoteTimeoutMs?: number;
 };
 
 export type IntentsRelayRail = Rail<SwapDraft>;
@@ -185,6 +197,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
   const maxDeadlineMs = deps.maxDeadlineMs ?? MAX_DEADLINE_MS;
   const minQuoteAheadMs = deps.minQuoteAheadMs ?? RELAY_MIN_QUOTE_AHEAD_MS;
   const settleSchedule = deps.settleSchedule ?? INTENTS_SETTLE;
+  const simulateQuoteTimeoutMs = deps.simulateQuoteTimeoutMs ?? RELAY_SIMULATE_TIMEOUT_MS;
 
   // Every nonce this rail has signed, for as long as the process lives. A payload naming one
   // of these is refused before the key is touched: one signature per move, ever.
@@ -246,8 +259,14 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     };
   }
 
-  async function bestQuote(p: Plan): Promise<ReturnType<typeof pickQuote>> {
-    const quotes = await relay.quote({ assetIn: p.assetIn, assetOut: p.assetOut, exactAmountIn: p.amountBase.toString() });
+  // `bounded` is the propose-time ask: a short solver wait and this call's own deadline.
+  async function bestQuote(p: Plan, bounded = false): Promise<ReturnType<typeof pickQuote>> {
+    const quotes = await relay.quote({
+      assetIn: p.assetIn,
+      assetOut: p.assetOut,
+      exactAmountIn: p.amountBase.toString(),
+      ...(bounded ? { waitMs: RELAY_SIMULATE_WAIT_MS, timeoutMs: simulateQuoteTimeoutMs } : {}),
+    });
     return pickQuote(quotes, { assetIn: p.assetIn, assetOut: p.assetOut, amountIn: p.amountBase, now: now(), minAheadMs: minQuoteAheadMs });
   }
 
@@ -314,10 +333,18 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
   async function simulate(draft: SwapDraft): Promise<SimulationResult> {
     try {
       const p = await plan(draft);
-      const pick = await bestQuote(p);
+      /* The relay not answering inside the bound is the same fact as the relay answering with
+         nobody: one sentence for the person, and the reason the answers were passed over (when
+         there were any) on the lines under it for whoever reads the row. */
+      let pick: ReturnType<typeof pickQuote>;
+      try {
+        pick = await bestQuote(p, true);
+      } catch (err) {
+        if (!noReply(err)) throw err;
+        return { ok: false, summary: `REFUSED: ${NO_PRICE_SENTENCE}`, error: NO_PRICE_SENTENCE };
+      }
       if (pick.chosen === null) {
-        const why = [noPriceSentence(draft), ...pick.passed].join('; ');
-        return { ok: false, summary: `REFUSED: ${why}`, error: why };
+        return { ok: false, summary: [`REFUSED: ${NO_PRICE_SENTENCE}`, ...pick.passed].join('\n'), error: NO_PRICE_SENTENCE };
       }
       const quote = pick.chosen;
       const swap = swapFacts(draft, p, quote);
@@ -381,17 +408,19 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     }
 
     /* THREE READS BEFORE THE KEY: the input balance, the output balance and the salt. The
-       input read refuses only where it is certain: a balance the verifier reports as short is a
-       refusal, a read that did not answer is not a balance of zero and lets the contract answer
-       (a short balance fails the relay's own simulation with nothing executed). The output read
-       is what the settle check subtracts from. The salt is what the nonce has to carry, and
-       without it no nonce the contract would accept can be made, so that read failing refuses. */
+       input read fails closed: a balance the verifier reports as short refuses, and a balance
+       this app could not read refuses too, because a signature over money the app has not seen
+       is a signature over a guess (frozen rule 1: a stale read never reads as anything). The
+       output read is what the settle check subtracts from; unread, the settle is chain-checked
+       by the nonce instead. The salt is what the nonce has to carry, and without it no nonce the
+       contract would accept can be made, so that read failing refuses. */
     const [held, beforeBase, salt] = await Promise.all([
       verifier.balance(account, p.assetIn),
       verifier.balance(account, p.assetOut),
       verifier.currentSalt(),
     ]);
-    if (held !== null && held < p.amountBase) {
+    if (held === null) throw new Error('Could not read your balance, so nothing was signed. Try again.');
+    if (held < p.amountBase) {
       throw new Error(
         `the balance inside ${INTENTS_VERIFIER} holds ${formatUnits(held, p.inDecimals)} ${draft.fromSymbol}, less than the ` +
           `${draft.amountIn} ${draft.fromSymbol} this swap spends; nothing was signed`,

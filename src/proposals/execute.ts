@@ -572,6 +572,13 @@ export function judgeSettling(ctx: PCtx, p: Proposal): Proposal {
      listeners synchronously lands back here (src/main.ts, audit.subscribe -> refreshNow). Logged
      first, the row this was about had not been written yet, so every one of those passes settled
      it again. Written first, the next pass reads `executed` at the top and stops. */
+  /* A RELAY SWAP HAS NO SHORT FILL. Its diff is atomic: the verifier applied exactly the signed
+     credit or nothing, so a rise under the floor is another credit landing in the same window
+     and never this swap filling short. The row stays as it is and the sweep asks the verifier
+     by the nonce (src/proposals/reconcile.ts reconcileRelaySwap); the settle by the balance
+     below is the one verdict this read can give it. The 1Click swap keeps the short fill: its
+     transfer can settle short. */
+  if (delta < floor && row.draft.kind === 'swap' && row.draft.venue === 'intents-relay') return row;
   if (delta < floor) {
     const detail =
       `A later read shows the balance ${place} rose by ${units(delta, pocket.decimals)} ${pocket.symbol}, below the ` +

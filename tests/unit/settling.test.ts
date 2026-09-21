@@ -128,6 +128,9 @@ function setup(result: RailResult | ((ledger: ReturnType<typeof fakeLedger>) => 
     candleProducts: [],
     dataDir,
     keysPath: path.join(dataDir, 'keys.json'),
+    // The short-fill judgment these tests describe is the 1Click swap's; a relay swap has no
+    // short fill (tests/unit/relay-settling.test.ts), so the swaps here are drafted for 1Click.
+    swap: { rail: 'oneclick' },
   };
   savePolicy(dataDir, seededPolicy());
   const audit = createAudit(dataDir);

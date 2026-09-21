@@ -13,7 +13,7 @@
 // a venue write, thirty, because the relay simulates the intent against the verifier before it
 // answers and a deadline that fires while it does leaves an intent that may be live.
 
-import { readTimeout, venueWriteTimeout } from '../net.ts';
+import { readTimeout, venueWriteTimeout, withTimeout } from '../net.ts';
 import { oneLine } from '../intents.ts';
 
 export const RELAY_URL = 'https://solver-relay-v2.chaindefuser.com/rpc';
@@ -38,6 +38,14 @@ export type RelayQuoteRequest = {
   assetOut: string;
   exactAmountIn: string; // base units, decimal integer string
   minDeadlineMs?: number; // how long the offers must stay valid; the relay defaults to 60 s
+  /* How long the relay waits for solvers before answering (wait_ms). The relay's default is
+     3 s and it answers about 600 ms after the wait (measured 2026-09-20: 500 gives 1.1 s,
+     1500 gives 2.1 s, the default 2.7 s with a solver and 3.8 s with none). Left out, the
+     relay's default stands. */
+  waitMs?: number;
+  // A deadline for this one call in place of the read budget, for a caller that has an answer
+  // line to keep. Left out, the read timeout applies.
+  timeoutMs?: number;
 };
 
 export type RelayPublishRequest = {
@@ -150,8 +158,9 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
         defuse_asset_identifier_out: req.assetOut,
         exact_amount_in: req.exactAmountIn,
         min_deadline_ms: req.minDeadlineMs ?? 60_000,
+        ...(req.waitMs === undefined ? {} : { wait_ms: req.waitMs }),
       },
-      readTimeout(),
+      req.timeoutMs === undefined ? readTimeout() : withTimeout(req.timeoutMs),
     );
     // `null` is the relay's word for "no solver answered", and it is an empty list here rather
     // than an error: nothing is wrong with the request, there is no price for it right now.
