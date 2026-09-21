@@ -21,9 +21,9 @@ Lead: Claude (Opus 5), session c49886b8. Started 2026-09-20 19:05 PDT. Main at 7
 | B Hyperliquid | rfp/b-hyperliquid | building |
 | C agent picker | rfp/c-agent | building |
 | D one card, voice | rfp/d-card | building |
-| E craft floor | rfp/e-craft | building |
+| E craft floor | rfp/e-craft | reported (ed0f0e4, 3096/3096, detector 0, audit 0 blocking); correct + secure reviews running; overwhelmed review waits for F |
 | F anxiety harness | rfp/f-anxiety | building |
-| G launch readiness | rfp/g-launch | building |
+| G launch readiness | rfp/g-launch | reported (4240cd0, sweep PASS, 13.x 6 of 9 yes; needs the 0.8.0 version bump at merge); correct + secure reviews running |
 
 Ports: A 4201, B 4202, C 4203, D 4204, E 4205, F 4206, G 4207 (PHOSPHOR_PORT), data dirs under each worktree's state/.
 
@@ -35,3 +35,7 @@ Ports: A 4201, B 4202, C 4203, D 4204, E 4205, F 4206, G 4207 (PHOSPHOR_PORT), d
 
 ## Open
 - 19.94 USDC at 1Click (HS 3452114377): not touched.
+
+## Requests filed by nodes (for the lead to route)
+- E to D: decision.js Escape closes a dock read card never an ask; swap dock address grouped in fours (decision.js/cards.js); netpick.js token list gets the scrolls class and data-cut hook (C's file); src/view/theme.ts down slot floor MIN_MARK_CONTRAST to MIN_TEXT_CONTRAST (lead).
+- G to lead: 0.8.0 bump in package.json, Cargo.toml, tauri.conf.json at merge; three native message boxes in main.rs (Copy MCP Config outcome, fail(), notify()) to in-app windows; shell-health source-assertion test after E merges; per-tool argument pin after A, B, C merge; diagnose through the log redaction; a .gitleaks.toml; site docs rebuild (Karim, live site says 0.6.0).
