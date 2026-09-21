@@ -29,6 +29,7 @@ export type ProposalStage =
   | 'waiting_for_you'
   | 'waiting_for_unlock'
   | 'waiting_for_touch'
+  | 'held'
   | 'signing'
   | 'submitting'
   | 'KNOWN_DEPOSIT_TX'
@@ -68,6 +69,10 @@ export type ProposalView = {
   changes: PolicyAxisChange[];
   stage: ProposalStage;
   stageLabel: string; // the one plain line both surfaces print. Never built twice.
+  /* The sentence under the label, STAGE_COPY verbatim: what is happening and whether the
+     person has to do anything. On the view so the card prints it and the agent quotes it off
+     the same read, rather than each phrasing the wait in its own words. */
+  stageCopy: string;
   providerStage: string | null; // 1Click's raw word, null when no provider owns this phase
   waitingOn: string | null; // 'You', 'Touch ID', '1Click', 'Hyperliquid', null when terminal
   terminal: boolean;
@@ -88,6 +93,11 @@ export type ProposalView = {
   lastChangeAt: string; // when `stage` last changed, not when the row was last written
   elapsedSec: number; // now - createdAt
   sinceChangeSec: number; // now - lastChangeAt
+  /* End to end, once it has ended: from the ask to the moment it settled. Null while it is
+     open, and null on `stalled`, which has not ended. `elapsedSec` keeps growing after the
+     end (it is a clock, not a duration), and a card that printed it as "took" said a swap
+     took sixty hours. */
+  tookSec: number | null;
   typicalSec: number | null;
   deadlineAt: string | null; // when this row flips itself to `stalled`; null for kinds with no deadline
   money: {
@@ -115,6 +125,7 @@ export const STAGE_LABEL: Record<ProposalStage, string> = {
   waiting_for_you: 'Waiting for you',
   waiting_for_unlock: 'Needs the unlock',
   waiting_for_touch: 'Touch ID',
+  held: 'Holding',
   signing: 'Signing',
   submitting: 'Sending it',
   KNOWN_DEPOSIT_TX: 'Deposit seen',
@@ -143,6 +154,7 @@ export const STAGE_COPY: Record<ProposalStage, string> = {
   waiting_for_you: 'Nothing moves until you answer Yes or No in the window.',
   waiting_for_unlock: 'The wallet is locked. Unlock it in the window and the move continues.',
   waiting_for_touch: 'Touch ID is asking for your fingerprint. Nothing moves until you answer it.',
+  held: 'The checks before signing have not cleared yet. Nothing is signed until they do, and the app tries again on its own.',
   signing: 'The wallet is signing it. Nothing for you to do.',
   submitting: 'It is signed and being sent. Nothing for you to do.',
   KNOWN_DEPOSIT_TX: 'Your money has been seen on its way. Nothing for you to do.',
@@ -181,7 +193,12 @@ export const TERMINAL: ReadonlySet<ProposalStage> = new Set<ProposalStage>([
    waiting_for_unlock, waiting_for_touch) come first and are skipped when nothing asks for them:
    under the threshold there is no click, on a software wallet there is no Touch ID. A swap's
    path is the relay's; the 1Click swap that stays behind `swap.rail` for a month walks
-   LEGACY_SWAP_PATH, and a history row keeps whichever it walked. */
+   LEGACY_SWAP_PATH, and a history row keeps whichever it walked.
+
+   `held` sits between the person's steps and the signature on every kind that runs a
+   preflight (src/preflight/, the 1Click rails): the checks said wait, nothing was signed, and
+   the executor tries again. It is skipped when the checks clear first time, which is most
+   rows. It read "Signing" before this word existed, over a row that was signing nothing. */
 export type KindStages = { path: readonly ProposalStage[]; terminal: readonly ProposalStage[] };
 const PERSON_STEPS: readonly ProposalStage[] = ['waiting_for_you', 'waiting_for_unlock', 'waiting_for_touch'];
 const ENDINGS_OF_A_CLICK: readonly ProposalStage[] = ['declined', 'refused'];
@@ -191,19 +208,19 @@ export const KIND_STAGES: Record<WriteDraft['kind'], KindStages> = {
     terminal: ['confirmed', 'NOT_FOUND_OR_NOT_VALID', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
   },
   hl_deposit: {
-    path: [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'],
+    path: [...PERSON_STEPS, 'held', 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'],
     terminal: ['confirmed', 'REFUNDED', 'FAILED', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
   },
   hl_withdraw: {
-    path: [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'],
+    path: [...PERSON_STEPS, 'held', 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'],
     terminal: ['confirmed', 'REFUNDED', 'FAILED', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
   },
   intents_send: {
-    path: [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'confirmed'],
+    path: [...PERSON_STEPS, 'held', 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'confirmed'],
     terminal: ['confirmed', 'REFUNDED', 'FAILED', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
   },
   intents_pay: {
-    path: [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'confirmed'],
+    path: [...PERSON_STEPS, 'held', 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'confirmed'],
     terminal: ['confirmed', 'REFUNDED', 'FAILED', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
   },
   trade: {
@@ -215,7 +232,7 @@ export const KIND_STAGES: Record<WriteDraft['kind'], KindStages> = {
     terminal: ['confirmed', 'failed', ...ENDINGS_OF_A_CLICK],
   },
 };
-export const LEGACY_SWAP_PATH: readonly ProposalStage[] = [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'];
+export const LEGACY_SWAP_PATH: readonly ProposalStage[] = [...PERSON_STEPS, 'held', 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'];
 
 export const TYPICAL_SEC: Record<WriteDraft['kind'], number> = {
   hl_deposit: 180,
@@ -267,8 +284,10 @@ export function stageOf(p: Proposal): ProposalStage {
       return 'waiting_for_unlock';
     case 'awaiting_touch':
       return 'waiting_for_touch';
+    // Approved and stamped heldSince is the preflight holding the row (execute.ts): nothing
+    // is being signed, and "Signing" over it was the wrong wait with the wrong owner.
     case 'approved':
-      return 'signing';
+      return p.heldSince !== undefined ? 'held' : 'signing';
     case 'executing':
       return provider !== undefined && PROVIDER_STAGES.has(provider) ? (provider as ProposalStage) : 'submitting';
     /* The router being done is not the venue having credited the money, and the gap between
@@ -303,6 +322,8 @@ function waitingOn(p: Proposal, stage: ProposalStage): string | null {
       return 'You';
     case 'waiting_for_touch':
       return 'Touch ID';
+    case 'held':
+      return 'The checks';
     case 'signing':
       return 'The wallet';
     case 'crediting':
@@ -480,12 +501,12 @@ function txsOf(p: Proposal, stage: ProposalStage): TxLeg[] {
    human declining is not an error and gets none: they decided, and the row says so. */
 function errorOf(p: Proposal, stage: ProposalStage, sinceChangeSec: number): { code: string; message: string } | null {
   const detail = p.result?.detail ?? '';
+  /* In a person's units: "22 minutes", never an ISO stamp and never 1325 seconds. The agent
+     quotes this line and the card prints it, so it is written for the reader, not the log. */
   if (stage === 'stalled') {
     return {
       code: 'deadline_passed',
-      message:
-        `Nothing has changed since ${p.lastChangeAt ?? p.createdAt}, which is ${sinceChangeSec} seconds. ` +
-        `${waitingOn(p, 'crediting') ?? 'The venue'} has not answered.`,
+      message: `Nothing has changed for ${durationWords(sinceChangeSec)}. ${waitingOn(p, 'crediting') ?? 'The venue'} has not answered.`,
     };
   }
   if (stage === 'refused') return { code: p.verdict.outcome === 'refuse' ? p.verdict.rule : 'policy_refused', message: p.verdict.reasons.at(-1) ?? 'The policy refused it.' };
@@ -493,6 +514,17 @@ function errorOf(p: Proposal, stage: ProposalStage, sinceChangeSec: number): { c
   if (stage === 'FAILED') return { code: 'provider_failed', message: detail };
   if (stage === 'REFUNDED') return { code: 'refunded', message: detail };
   return null;
+}
+
+// A duration in words: seconds under a minute and a half, minutes to the hour, then hours.
+function durationWords(seconds: number): string {
+  const n = Math.max(0, Math.round(seconds));
+  if (n < 90) return `${n} seconds`;
+  const minutes = Math.round(n / 60);
+  if (minutes < 60) return `${minutes} minutes`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours} ${hours === 1 ? 'hour' : 'hours'}` : `${hours} ${hours === 1 ? 'hour' : 'hours'} ${rest} minutes`;
 }
 
 function secondsBetween(from: string | undefined, now: number): number {
@@ -546,6 +578,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     changes: p.verdict.outcome === 'needs_approval' ? (p.verdict.changes ?? []) : [],
     stage,
     stageLabel: STAGE_LABEL[stage],
+    stageCopy: STAGE_COPY[stage],
     providerStage: p.result?.evidence?.providerStage ?? null,
     waitingOn: waitingOn(p, stage),
     terminal: TERMINAL.has(stage),
@@ -564,6 +597,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     lastChangeAt,
     elapsedSec: secondsBetween(p.createdAt, now),
     sinceChangeSec,
+    tookSec: TERMINAL.has(stage) && stage !== 'stalled' && p.settledAt !== undefined ? secondsBetween(p.createdAt, Date.parse(p.settledAt)) : null,
     typicalSec: typical === 0 ? null : typical,
     deadlineAt: deadlineAtOf(p),
     money: {

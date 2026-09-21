@@ -64,6 +64,7 @@ const CASES: Record<ProposalStage, () => ReturnType<typeof viewOf>> = {
   waiting_for_you: () => viewOf({ status: 'pending' }),
   waiting_for_unlock: () => viewOf({ status: 'pending_unlock' }),
   waiting_for_touch: () => viewOf({ status: 'awaiting_touch' }),
+  held: () => viewOf({ status: 'approved', heldSince: '2026-09-18T10:01:00.000Z' }),
   signing: () => viewOf({ status: 'approved' }),
   submitting: () => viewOf({ status: 'executing' }),
   KNOWN_DEPOSIT_TX: () => withProvider('executing', 'KNOWN_DEPOSIT_TX'),
@@ -91,6 +92,7 @@ test('every stage in the table has a row that produces it, with its own label', 
     const view = build();
     assert.equal(view.stage, stage, `expected ${stage}, got ${view.stage}`);
     assert.equal(view.stageLabel, STAGE_LABEL[stage]);
+    assert.equal(view.stageCopy, STAGE_COPY[stage], `${stage} carries its one line of copy`);
     assert.equal(view.terminal, TERMINAL.has(stage), `${stage} terminal`);
     seen.push(stage);
   }
@@ -101,6 +103,7 @@ test('waitingOn names a person, the wallet, the transfer or the venue, and nobod
   assert.equal(CASES.waiting_for_you().waitingOn, 'You');
   assert.equal(CASES.waiting_for_unlock().waitingOn, 'You');
   assert.equal(CASES.waiting_for_touch().waitingOn, 'Touch ID');
+  assert.equal(CASES.held().waitingOn, 'The checks');
   assert.equal(CASES.signing().waitingOn, 'The wallet');
   assert.equal(CASES.PROCESSING().waitingOn, 'The transfer');
   assert.equal(CASES.PENDING().waitingOn, 'NEAR Intents');

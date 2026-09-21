@@ -62,7 +62,7 @@ test('a settling row quotes the card\'s own stage label, and the word failed app
     }),
   );
   assert.equal(out.state, 'settling');
-  assert.match(out.sentence, /^Waiting for the venue to credit it: the router confirmed the move/);
+  assert.match(out.sentence, /^Waiting for the venue to credit it: the transfer is done and the balance has not shown the money yet/);
   assert.match(out.sentence, /Nothing more is signed until it does/);
   assert.doesNotMatch(out.sentence, /fail/i);
   assert.equal(out.afterUsd, null, 'not read is not zero');

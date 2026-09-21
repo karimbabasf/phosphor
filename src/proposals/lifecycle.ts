@@ -286,7 +286,7 @@ function lead(state: OutcomeState): string {
     case 'confirmed':
       return `${STAGE_LABEL.confirmed}.`;
     case 'settling':
-      return `${STAGE_LABEL.crediting}: the router confirmed the move and the balance has not shown it yet. Nothing more is signed until it does.`;
+      return `${STAGE_LABEL.crediting}: the transfer is done and the balance has not shown the money yet. Nothing more is signed until it does.`;
     case 'failed':
       return `${STAGE_LABEL.failed}.`;
     case 'unconfirmed':
