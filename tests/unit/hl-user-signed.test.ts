@@ -8,13 +8,14 @@ import {
   HL_DOMAIN,
   HL_USDC_TOKEN,
   SIGNATURE_CHAIN_ID,
+  SEND_ASSET_TYPES,
   SIGNATURE_CHAIN_ID_HEX,
-  SPOT_SEND_TYPES,
   USD_CLASS_TRANSFER_TYPES,
   accountSummary,
-  buildSpotSendPayload,
+  buildSendAssetPayload,
   buildUsdClassTransferPayload,
-  spotSend,
+  maxSendableUsdc,
+  sendAsset,
   toAmountString,
   usdClassTransfer,
   usdcCreditedSince,
@@ -31,9 +32,10 @@ const KEYS = '/nowhere/keys.json'; // never read: the port stands in for the sig
 
 // The key, destination and time are the official hyperliquid-python-sdk's own fixture inputs
 // (tests/signing_test.py). The key is published there and holds nothing. The r, s, v values
-// were produced by running the SDK's sign_user_signed_action on these inputs and, separately,
-// by viem, and the two agreed byte for byte (2026-09-11). They are the regression guard on the
-// exact bytes this module produces.
+// were produced by running the SDK's sign_user_signed_action on these inputs (SDK 0.24.0, in a
+// scratch venv that first reproduced the SDK's own spotSend vector) and, separately, by viem,
+// and the two agreed byte for byte (2026-09-20). They are the regression guard on the exact
+// bytes this module produces.
 const FIXTURE_KEY = '0x0123456789012345678901234567890123456789012345678901234567890123';
 const FIXTURE_DEST = '0x5e9ee1089755c3435139848e47e6635505d5a13a';
 const FIXTURE_TIME = 1687816341423;
@@ -119,39 +121,39 @@ function deps(over: Partial<HlUserSignedDeps> & FetchOverrides & PortOverrides =
 // producing valid signatures for the wrong message and the venue will either reject them or
 // attribute them somewhere else.
 
-test('the spotSend payload signs to the SDK vector on Mainnet', async () => {
+test('the sendAsset payload signs to the SDK vector on Mainnet', async () => {
   const account = privateKeyToAccount(FIXTURE_KEY);
-  const { typedData, action, nonce } = buildSpotSendPayload({
+  const { typedData, action, nonce } = buildSendAssetPayload({
     destination: FIXTURE_DEST,
     amount: '1',
-    time: FIXTURE_TIME,
+    nonce: FIXTURE_TIME,
   });
 
   const packed = await account.signTypedData(typedData as never);
   const { r, s, yParity } = parseSignature(packed);
 
-  assert.equal(r, '0xd252d0750b676ec0f7f8d4f2cf8f0a376055f190cd4e0e13644aa62e28896722');
-  assert.equal(s, '0x64fa8a36a959a7e4f91fcdb52b8862f7c2ace8b6054446220a9e82e6b0954c13');
+  assert.equal(r, '0xfe1a043dc1f5b7e5bd361b397a615f8f791a317cf2d7c28e483746020cf2dd04');
+  assert.equal(s, '0x3dbf449f1d7dc7c819e04c8f88e30edc762abbc69351d278e851c2b7c1fd9d39');
   assert.equal(27 + yParity, 28);
 
   const recovered = await recoverTypedDataAddress({ ...typedData, signature: packed } as never);
   assert.equal(recovered.toLowerCase(), account.address.toLowerCase());
 
-  assert.equal(nonce, action.time);
-  assert.equal(action.time, FIXTURE_TIME);
+  assert.equal(nonce, action.nonce);
+  assert.equal(action.nonce, FIXTURE_TIME);
 });
 
-test('the spotSend payload signs to the SDK vector on Testnet, so hyperliquidChain is inside the digest', async () => {
+test('the sendAsset payload signs to the SDK vector on Testnet, so hyperliquidChain is inside the digest', async () => {
   const account = privateKeyToAccount(FIXTURE_KEY);
-  const { typedData } = buildSpotSendPayload({
+  const { typedData } = buildSendAssetPayload({
     destination: FIXTURE_DEST,
     amount: '1',
-    time: FIXTURE_TIME,
+    nonce: FIXTURE_TIME,
     chain: 'Testnet',
   });
   const { r, s, yParity } = parseSignature(await account.signTypedData(typedData as never));
-  assert.equal(r, '0x37d681227977cbab573e55b1e9c486b7f03c18d6f4dc13fd635de58b48c701f9');
-  assert.equal(s, '0x5ec891bc0345ada05f8147334aebf9fcc2aa8f155d58bf98b87692a11317da73');
+  assert.equal(r, '0x99a9ac7337378f56543cb5a762b710d4afd8925abf644bb6ec03ed9669c8f60e');
+  assert.equal(s, '0x5d2db4547b8b54c9c54ce80a4948031566e5e78267eb3d9fe811960f59a7dcc0');
   assert.equal(27 + yParity, 27);
 });
 
@@ -177,12 +179,15 @@ test('the EIP-712 domain is HyperliquidSignTransaction on chain 421614 at the ze
 });
 
 test('the typed-data field order and types match the SDK, since order is inside the type hash', () => {
-  assert.deepEqual(SPOT_SEND_TYPES['HyperliquidTransaction:SpotSend'], [
+  assert.deepEqual(SEND_ASSET_TYPES['HyperliquidTransaction:SendAsset'], [
     { name: 'hyperliquidChain', type: 'string' },
     { name: 'destination', type: 'string' }, // string, NOT address
+    { name: 'sourceDex', type: 'string' },
+    { name: 'destinationDex', type: 'string' },
     { name: 'token', type: 'string' },
     { name: 'amount', type: 'string' },
-    { name: 'time', type: 'uint64' },
+    { name: 'fromSubAccount', type: 'string' },
+    { name: 'nonce', type: 'uint64' },
   ]);
   assert.deepEqual(USD_CLASS_TRANSFER_TYPES['HyperliquidTransaction:UsdClassTransfer'], [
     { name: 'hyperliquidChain', type: 'string' },
@@ -196,25 +201,31 @@ test('the HyperCore USDC token string is name:tokenId, as confirmed from spotMet
   assert.equal(HL_USDC_TOKEN, 'USDC:0x6d1e7cde53ba9467b783cb7c530ce054');
 });
 
-test('the spotSend action carries every field the API requires, and the signed message mirrors it', () => {
-  const { action, typedData, nonce } = buildSpotSendPayload({ destination: FRESH, amount: '8', time: NOW });
+test('the sendAsset action carries every field the API requires, and the signed message mirrors it', () => {
+  const { action, typedData, nonce } = buildSendAssetPayload({ destination: FRESH, amount: '8', nonce: NOW });
 
   assert.deepEqual(action, {
-    type: 'spotSend',
+    type: 'sendAsset',
     signatureChainId: '0x66eee',
     hyperliquidChain: 'Mainnet',
     destination: FRESH.toLowerCase(),
+    sourceDex: 'spot',
+    destinationDex: 'spot',
     token: HL_USDC_TOKEN,
     amount: '8',
-    time: NOW,
+    fromSubAccount: '',
+    nonce: NOW,
   });
-  assert.equal(typedData.primaryType, 'HyperliquidTransaction:SpotSend');
+  assert.equal(typedData.primaryType, 'HyperliquidTransaction:SendAsset');
   assert.deepEqual(typedData.message, {
     hyperliquidChain: 'Mainnet',
     destination: FRESH.toLowerCase(),
+    sourceDex: 'spot',
+    destinationDex: 'spot',
     token: HL_USDC_TOKEN,
     amount: '8',
-    time: BigInt(NOW),
+    fromSubAccount: '',
+    nonce: BigInt(NOW),
   });
   assert.equal(nonce, NOW);
 });
@@ -235,12 +246,12 @@ test('usdClassTransfer signs nonce, not time', () => {
 
 // ---------- the network reaches the signature, not just the URL ----------
 
-test('a mainnet spotSend signs a Mainnet payload and posts it to the mainnet exchange', async () => {
+test('a mainnet sendAsset signs a Mainnet payload and posts it to the mainnet exchange', async () => {
   const { port, signed } = fakeSignPort();
   const { fetchImpl, posts } = fakeFetch({ unifiedAvailable: '1000.0' });
   const d: HlUserSignedDeps = { keysPath: KEYS, sign: port, fetchImpl, now: () => NOW };
 
-  const out = await spotSend(d, { destination: FRESH, amount: 100 });
+  const out = await sendAsset(d, { destination: FRESH, amount: 100 });
   assert.equal(out.ok, true, out.detail);
 
   assert.equal(signed.length, 1);
@@ -250,13 +261,16 @@ test('a mainnet spotSend signs a Mainnet payload and posts it to the mainnet exc
   assert.equal(exchange.length, 1);
   assert.equal(exchange[0].url, 'https://api.hyperliquid.xyz/exchange');
   assert.deepEqual(Object.keys(exchange[0].body).sort(), ['action', 'nonce', 'signature']);
-  assert.equal(exchange[0].body.action.type, 'spotSend');
+  assert.equal(exchange[0].body.action.type, 'sendAsset');
   assert.equal(exchange[0].body.action.hyperliquidChain, 'Mainnet');
   assert.equal(exchange[0].body.action.destination, FRESH.toLowerCase());
+  assert.equal(exchange[0].body.action.sourceDex, 'spot');
+  assert.equal(exchange[0].body.action.destinationDex, 'spot');
   assert.equal(exchange[0].body.action.token, HL_USDC_TOKEN);
   assert.equal(exchange[0].body.action.amount, '100');
+  assert.equal(exchange[0].body.action.fromSubAccount, '');
   assert.equal(exchange[0].body.nonce, NOW);
-  assert.equal(exchange[0].body.action.time, NOW);
+  assert.equal(exchange[0].body.action.nonce, NOW);
   assert.ok(
     posts.every((p) => p.url.startsWith('https://api.hyperliquid.xyz/')),
     `every call should be mainnet, got ${posts.map((p) => p.url).join(', ')}`,
@@ -270,22 +284,22 @@ test('the signed usdClassTransfer payload names Mainnet in both the action and t
   assert.equal((p.typedData.message as { hyperliquidChain: string }).hyperliquidChain, 'Mainnet');
 });
 
-// ---------- spotSend refusals, every one before the key is touched ----------
+// ---------- sendAsset refusals, every one before the key is touched ----------
 
-test('spotSend refuses a destination that is not an address and signs nothing', async () => {
+test('sendAsset refuses a destination that is not an address and signs nothing', async () => {
   const { port, signed } = fakeSignPort();
-  const out = await spotSend(deps({ sign: port, unifiedAvailable: '1000.0' }), { destination: 'not-an-address', amount: 5 });
+  const out = await sendAsset(deps({ sign: port, unifiedAvailable: '1000.0' }), { destination: 'not-an-address', amount: 5 });
   assert.equal(out.ok, false);
   assert.match(out.detail, /is not an address/);
   assert.equal(signed.length, 0);
 });
 
-test('spotSend refuses an amount that toAmountString refuses', async () => {
+test('sendAsset refuses an amount that toAmountString refuses', async () => {
   const { port, signed } = fakeSignPort();
-  const zero = await spotSend(deps({ sign: port, unifiedAvailable: '1000.0' }), { destination: FRESH, amount: 0 });
+  const zero = await sendAsset(deps({ sign: port, unifiedAvailable: '1000.0' }), { destination: FRESH, amount: 0 });
   assert.equal(zero.ok, false);
   assert.match(zero.detail, /must be positive/);
-  const fine = await spotSend(deps({ sign: port, unifiedAvailable: '1000.0' }), { destination: FRESH, amount: 1.0000005 });
+  const fine = await sendAsset(deps({ sign: port, unifiedAvailable: '1000.0' }), { destination: FRESH, amount: 1.0000005 });
   assert.equal(fine.ok, false);
   assert.match(fine.detail, /needs more than 6 decimals/);
   assert.equal(signed.length, 0);
@@ -294,14 +308,14 @@ test('spotSend refuses an amount that toAmountString refuses', async () => {
 // Hyperliquid charges the SENDER 1 USDC for the first transfer into an account it has never
 // seen, on top of the amount; the destination is credited in full. Every address 1Click mints
 // is such an account, so this is the normal case for a withdrawal rather than a corner.
-test('spotSend to a never-seen destination needs amount plus 1 USDC and says why', async () => {
-  const short = await spotSend(deps({ unifiedAvailable: '8.5', role: 'missing' }), { destination: FRESH, amount: 8 });
+test('sendAsset to a never-seen destination needs amount plus 1 USDC and says why', async () => {
+  const short = await sendAsset(deps({ unifiedAvailable: '8.5', role: 'missing' }), { destination: FRESH, amount: 8 });
   assert.equal(short.ok, false);
   assert.match(short.detail, /available is 8\.5 USDC/);
   assert.match(short.detail, /needs 9 \(8 plus the 1 USDC activation fee/);
 
   const { fetchImpl, posts } = fakeFetch({ unifiedAvailable: '9.0', role: 'missing' });
-  const ok = await spotSend(deps({ fetchImpl }), { destination: FRESH, amount: 8 });
+  const ok = await sendAsset(deps({ fetchImpl }), { destination: FRESH, amount: 8 });
   assert.equal(ok.ok, true, ok.detail);
   assert.match(ok.detail, /1 USDC activation fee/);
   assert.equal(ok.activationFeeUsdc, 1);
@@ -311,41 +325,57 @@ test('spotSend to a never-seen destination needs amount plus 1 USDC and says why
   assert.equal(roles[0].body.user, FRESH.toLowerCase());
 });
 
-test('spotSend to an existing destination pays no activation fee', async () => {
-  const out = await spotSend(deps({ unifiedAvailable: '8.0', role: 'user' }), { destination: OUTSIDE, amount: 8 });
+test('sendAsset to an existing destination pays no activation fee', async () => {
+  const out = await sendAsset(deps({ unifiedAvailable: '8.0', role: 'user' }), { destination: OUTSIDE, amount: 8 });
   assert.equal(out.ok, true, out.detail);
   assert.doesNotMatch(out.detail, /activation/);
   assert.equal(out.activationFeeUsdc, 0);
 });
 
-test('spotSend on a unified account draws on the unified figure and never suggests usdClassTransfer', async () => {
-  const out = await spotSend(deps({ withdrawable: '0.0', unifiedAvailable: '10.0', spotUsdc: '10.0' }), { destination: OUTSIDE, amount: 500 });
+test('sendAsset on a unified account draws on the unified figure and never suggests usdClassTransfer', async () => {
+  const out = await sendAsset(deps({ withdrawable: '0.0', unifiedAvailable: '10.0', spotUsdc: '10.0' }), { destination: OUTSIDE, amount: 500 });
   assert.equal(out.ok, false);
   assert.match(out.detail, /available is 10 USDC/);
   assert.doesNotMatch(out.detail, /usdClassTransfer/);
 });
 
-test('spotSend on a standard account draws on the spot book and points at the perp side', async () => {
-  const out = await spotSend(deps({ withdrawable: '50.0', spotUsdc: '0.0' }), { destination: OUTSIDE, amount: 20 });
+// The refusal ends with the number to try instead: what is free, less the activation fee when
+// the destination is fresh, cut toward zero at six decimals (criterion 8.6).
+test('a short balance refusal names the most the account could send now', async () => {
+  const fresh = await sendAsset(deps({ unifiedAvailable: '8.5', role: 'missing' }), { destination: FRESH, amount: 8 });
+  assert.equal(fresh.ok, false);
+  assert.match(fresh.detail, /The most it can send now is 7\.5 USDC/);
+  assert.equal(fresh.maxSendableUsdc, 7.5);
+
+  const known = await sendAsset(deps({ unifiedAvailable: '8.5', role: 'user' }), { destination: OUTSIDE, amount: 9 });
+  assert.match(known.detail, /The most it can send now is 8\.5 USDC/);
+  assert.equal(known.maxSendableUsdc, 8.5);
+
+  assert.equal(maxSendableUsdc(0.5, 1), 0, 'never negative');
+  assert.equal(maxSendableUsdc(7.2093999, 1), 6.209399, 'cut, never rounded, and never a float tail');
+});
+
+test('sendAsset on a standard account draws on the spot book and points at the perp side', async () => {
+  const out = await sendAsset(deps({ withdrawable: '50.0', spotUsdc: '0.0' }), { destination: OUTSIDE, amount: 20 });
   assert.equal(out.ok, false);
-  assert.match(out.detail, /spot holds 0 USDC/);
+  assert.match(out.detail, /the spot book holds 0 USDC/);
   assert.match(out.detail, /usdClassTransfer/);
 });
 
-test('spotSend refuses when the signing wallet cannot be resolved', async () => {
+test('sendAsset refuses when the signing wallet cannot be resolved', async () => {
   const { port } = fakeSignPort({ throwOnAddress: 'no keys file at /nowhere/keys.json' });
-  const out = await spotSend(deps({ sign: port }), { destination: FRESH, amount: 5 });
+  const out = await sendAsset(deps({ sign: port }), { destination: FRESH, amount: 5 });
   assert.equal(out.ok, false);
   assert.match(out.detail, /cannot resolve the signing wallet/);
 });
 
-test('spotSend retries with the nonce it is given rather than minting a new one', async () => {
+test('sendAsset retries with the nonce it is given rather than minting a new one', async () => {
   const { fetchImpl, posts } = fakeFetch({ unifiedAvailable: '100.0' });
-  const out = await spotSend(deps({ fetchImpl }), { destination: OUTSIDE, amount: 5, nonce: 1700000000000 });
+  const out = await sendAsset(deps({ fetchImpl }), { destination: OUTSIDE, amount: 5, nonce: 1700000000000 });
   assert.equal(out.ok, true, out.detail);
   const posted = posts.find((p) => p.url.endsWith('/exchange'));
   assert.equal(posted?.body.nonce, 1700000000000);
-  assert.equal(posted?.body.action.time, 1700000000000);
+  assert.equal(posted?.body.action.nonce, 1700000000000);
 });
 
 // ---------- usdClassTransfer ----------
@@ -381,7 +411,7 @@ test('usdClassTransfer posts a signed action to /exchange and reports the direct
 // ---------- the response contract ----------
 
 test('an HTTP 200 carrying status err is a failure, not a success', async () => {
-  const out = await spotSend(
+  const out = await sendAsset(
     deps({ unifiedAvailable: '1000.0', exchange: { status: 'err', response: 'Insufficient balance for token transfer' } }),
     { destination: OUTSIDE, amount: 100 },
   );
@@ -391,7 +421,7 @@ test('an HTTP 200 carrying status err is a failure, not a success', async () => 
 });
 
 test('a non-JSON or non-200 reply is a failure with the body kept for the operator', async () => {
-  const bad = await spotSend(
+  const bad = await sendAsset(
     deps({ unifiedAvailable: '1000.0', exchangeStatus: 502, exchangeOk: false, exchange: { error: 'bad gateway' } }),
     { destination: OUTSIDE, amount: 100 },
   );
@@ -463,7 +493,7 @@ test('userRole tells a never-seen address from an existing one', async () => {
 // ---------- the key never leaks ----------
 
 test('no result or action ever carries the private key', async () => {
-  const out = await spotSend(deps({ unifiedAvailable: '1000.0' }), { destination: OUTSIDE, amount: 100 });
+  const out = await sendAsset(deps({ unifiedAvailable: '1000.0' }), { destination: OUTSIDE, amount: 100 });
   const dumped = JSON.stringify(out);
   assert.equal(dumped.includes(FIXTURE_KEY), false);
   assert.equal(/"privateKey"/.test(dumped), false);

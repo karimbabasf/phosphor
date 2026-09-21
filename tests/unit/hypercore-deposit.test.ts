@@ -393,6 +393,41 @@ test('the summary states the effective rate and says the intents balance is the 
   assert.doesNotMatch(out.summary, /withdraw3/);
 });
 
+// ---------- the fee facts on the card (criteria 1.10, 8.1, 8.7) ----------
+
+test('the simulation carries the fee facts the card draws: the total, the app fee off the echo, the draft floor as "at least"', async () => {
+  const { rail: r } = rail({ echo: { appFees: [{ recipient: 'app.near', fee: 25 }] } });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, true, out.summary);
+  const facts = out.send;
+  assert.ok(facts !== undefined, 'the send facts are on the simulation');
+  // 10 in, 9.6594 credited: 0.3406 inside the quote, of which 25 bp of 10 is 0.025.
+  assert.equal(facts.feeUsd, 0.3406);
+  assert.equal(facts.arrives, '9.6594');
+  assert.equal(facts.arrivesAtLeast, String(minCreditedFor(AMOUNT)));
+  assert.equal(facts.destinationAsset, HYPERCORE_USDC_ASSET_ID);
+  assert.equal(facts.etaSeconds, 20);
+  assert.match(facts.activity, /25 bp app fee \(0\.025 USDC\)/);
+  assert.match(facts.activity, /at least 9\.51 USDC has to land/);
+  assert.match(out.summary, /app fee   0\.0250 USDC, 25 bp, inside the quote/);
+  assert.match(out.summary, /routing   0\.3156 USDC inside the quote/);
+  assert.match(out.summary, /at least  9\.51 USDC, the floor the live quote is held to; under 5 the venue keeps it/);
+});
+
+test('a quote that asks for a deposit memo is refused before anything is signed, with the floor named', async () => {
+  const { rail: r, calls } = rail({ quote: { depositMemo: 'needs-a-memo' } });
+  const dry = await r.simulate(draft());
+  assert.equal(dry.ok, false);
+  assert.match(dry.summary, /deposit memo/);
+  assert.match(dry.summary, /floor stays 9\.5100 USDC landing/);
+  const live = await r.execute(draft());
+  assert.equal(live.ok, false);
+  assert.match(live.detail, /deposit memo/);
+  assert.match(live.detail, /Nothing was signed/);
+  assert.equal(calls.signed.length, 0, 'the key was never touched');
+  assert.equal(calls.generated.length, 0, 'no intent was generated');
+});
+
 test('a quote whose cost exceeds the ceiling is refused, and the refusal says to deposit more', async () => {
   const { rail: r } = rail({ quote: { amountOutFormatted: '9.0', amountOut: '900000000', minAmountOut: '899000000' } });
   const out = await r.simulate(draft());

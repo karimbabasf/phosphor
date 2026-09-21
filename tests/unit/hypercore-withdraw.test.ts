@@ -21,11 +21,12 @@ import {
 import type { HypercoreWithdrawDeps } from '../../src/rails/hypercore-withdraw.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
-// The only way collateral leaves Hyperliquid. One spotSend, signed with the master key, to an
-// address 1Click mints for the quote the rail just checked; the money lands in the app's own
-// intents balance and nowhere else. The tests pin the refusals (every one before the key), the
-// echo binding, the fee sentence with the venue's activation charge inside it, and the proof
-// the rail reads back afterwards.
+// The only way collateral leaves Hyperliquid. One sendAsset (the transfer both account modes
+// accept; spotSend is refused on a unified account), signed with the master key, to an address
+// 1Click mints for the quote the rail just checked; the money lands in the app's own intents
+// balance and nowhere else. The tests pin the refusals (every one before the key), the echo
+// binding, the fee facts with the venue's activation charge and the app fee named, the proof
+// the rail reads back afterwards, and that SUCCESS alone never confirms the row.
 
 const SELF = '0x2222222222222222222222222222222222222222' as Address;
 const ACCOUNT = SELF.toLowerCase();
@@ -181,7 +182,7 @@ function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps
         throw err;
       }
       exchange.push(body);
-      if (over.refuseSend && (body.action as { type?: string }).type === 'spotSend') {
+      if (over.refuseSend && (body.action as { type?: string }).type === 'sendAsset') {
         return json({ status: 'err', response: 'Insufficient balance for token transfer' });
       }
       return json(over.exchange ?? { status: 'ok', response: { type: 'default' } });
@@ -200,15 +201,16 @@ function fakeHl(shapes: Shape[], over: HlOverrides = {}): { hl: HlUserSignedDeps
     if (body.type === 'userRole') return json({ role: over.role ?? 'missing' });
     if (body.type === 'userNonFundingLedgerUpdates') {
       if (over.ledgerKnowsNonce) {
-        return json([{ time: NOW, hash: '0xledgerhash', delta: { type: 'spotTransfer', token: 'USDC', amount: '8', user: ACCOUNT, destination: DEPOSIT.toLowerCase(), fee: '1.0', nonce: NOW, feeToken: 'USDC' } }]);
+        return json([{ time: NOW, hash: '0xledgerhash', delta: { type: 'send', token: 'USDC', amount: '8', user: ACCOUNT, destination: DEPOSIT.toLowerCase(), fee: '1.0', nonce: NOW, feeToken: 'USDC' } }]);
       }
       if (over.ledgerMissing || exchange.length === 0) return json([]);
       const sent = exchange[exchange.length - 1];
+      // A sendAsset shows in the venue's ledger as a `send` delta keyed on the action's nonce.
       return json([
         {
-          time: sent.action.time,
+          time: sent.action.nonce,
           hash: '0xledgerhash',
-          delta: { type: 'spotTransfer', token: 'USDC', amount: sent.action.amount, user: ACCOUNT, destination: sent.action.destination, fee: '1.0', nonce: sent.action.time, feeToken: 'USDC' },
+          delta: { type: 'send', token: 'USDC', amount: sent.action.amount, user: ACCOUNT, destination: sent.action.destination, fee: '1.0', nonce: sent.action.nonce, feeToken: 'USDC' },
         },
       ]);
     }
@@ -248,6 +250,7 @@ function rail(
     pollIntervalMs: 1,
     pollTimeoutMs: 3,
     quoteKey: TEST_QUOTE_KEY,
+    settleSchedule: { firstMs: 1, maxMs: 1, timeoutMs: 3 },
     ...over,
   });
   return { rail: r, quotes, submitted, signed: hl.signed, exchange: hl.exchange, infoTypes: hl.infoTypes, posts: hl.posts };
@@ -431,7 +434,7 @@ test('a quote with no echo at all is refused rather than trusted', async () => {
 
 // ---------- execute ----------
 
-test('execute signs one spotSend to the minted address, watches 1Click, and proves both sides', async () => {
+test('execute signs one sendAsset to the minted address, watches 1Click, and proves both sides', async () => {
   const { rail: r, quotes, signed, exchange } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }]);
   const out = await r.execute(draft());
   assert.equal(out.ok, true, out.detail);
@@ -441,15 +444,19 @@ test('execute signs one spotSend to the minted address, watches 1Click, and prov
 
   assert.equal(signed.length, 1);
   const message = signed[0].message as Record<string, unknown>;
-  assert.equal(signed[0].primaryType, 'HyperliquidTransaction:SpotSend');
+  assert.equal(signed[0].primaryType, 'HyperliquidTransaction:SendAsset');
   assert.equal(message.destination, DEPOSIT.toLowerCase());
   assert.equal(message.token, HL_USDC_TOKEN);
   assert.equal(message.amount, '8');
+  assert.equal(message.sourceDex, 'spot');
+  assert.equal(message.destinationDex, 'spot');
+  assert.equal(message.fromSubAccount, '');
   assert.equal(message.hyperliquidChain, 'Mainnet');
 
   assert.equal(exchange.length, 1);
-  assert.equal(exchange[0].action.type, 'spotSend');
+  assert.equal(exchange[0].action.type, 'sendAsset');
   assert.equal(exchange[0].nonce, NOW);
+  assert.equal(exchange[0].action.nonce, NOW);
 
   assert.match(out.detail, /sent 8 USDC/);
   assert.match(out.detail, /7\.780248 USDC/);
@@ -641,14 +648,90 @@ test('a standard account moves perp collateral to spot before the send', async (
   assert.equal(exchange[0].action.type, 'usdClassTransfer');
   assert.equal(exchange[0].action.toPerp, false);
   assert.equal(exchange[0].action.amount, '7');
-  assert.equal(exchange[1].action.type, 'spotSend');
+  assert.equal(exchange[1].action.type, 'sendAsset');
 });
 
-test('a success the intents balance has not shown yet is reported as pending proof, not as a loss', async () => {
+// 1Click says SUCCESS the block the solver executes and a finality-final read lags it. The row
+// used to flip to Confirmed on that word; now it is settling until the verifier shows the floor,
+// with the pocket the executor re-judges it by (criterion 8.3).
+test('a success the intents balance has not shown yet is settling with the intents pocket, never confirmed and never a loss', async () => {
   const { rail: r } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], {}, [0n, 0n]);
   const out = await r.execute(draft());
-  assert.equal(out.ok, true, out.detail);
+  assert.equal(out.ok, false);
+  assert.equal(out.settling, true);
+  assert.match(out.detail, /has not shown it yet/);
   assert.match(out.detail, /has not shown the credit yet/);
+  assert.doesNotMatch(out.detail, /failed/i);
+  assert.deepEqual(out.pocket, {
+    venue: 'intents',
+    account: ACCOUNT,
+    assetId: INTENTS_USDC_ASSET_ID,
+    symbol: 'USDC',
+    decimals: 6,
+    before: '0',
+    after: '0',
+    floor: String(Math.round(minReceivedForHlWithdraw(AMOUNT) * 1e6)),
+  });
+  assert.equal(out.evidence?.nonce, '1786600000000');
+  assert.equal(out.evidence?.handle, DEPOSIT.toLowerCase());
+});
+
+test('the verifier showing the floor on the third read after SUCCESS is a confirmed withdrawal, with the pocket after it', async () => {
+  const { rail: r } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], {}, [0n, 0n, 0n, 7_780_248n]);
+  const out = await r.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.match(out.detail, /intents balance rose by 7\.780248/);
+  assert.equal(out.pocket?.after, '7780248');
+  assert.equal(out.pocket?.before, '0');
+});
+
+test('a verifier that would not answer before the send leaves no pocket, and the row settles on the router alone', async () => {
+  const { rail: r } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], {}, [], { intentsBalance: async () => null });
+  const out = await r.execute(draft());
+  assert.equal(out.ok, false);
+  assert.equal(out.settling, true);
+  assert.equal(out.pocket, undefined);
+  assert.match(out.detail, /would not answer a balance read before the send/);
+});
+
+// ---------- the fee facts on the card (criteria 1.10, 8.1, 8.2) ----------
+
+test('the simulation carries the fee facts the card draws: total with the activation fee, the app fee off the echo, the draft floor as "at least"', async () => {
+  const { rail: r } = rail({ echo: { appFees: [{ recipient: 'app.near', fee: 25 }] } });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, true, out.summary);
+  const facts = out.send;
+  assert.ok(facts !== undefined, 'the send facts are on the simulation');
+  // 8 in, 7.780248 credited: 0.219752 inside the quote, of which 25 bp of 8 is 0.02, plus 1 on top.
+  assert.equal(facts.feeUsd, 1.219752);
+  assert.equal(facts.arrives, '7.780248');
+  assert.equal(facts.arrivesAtLeast, String(minReceivedForHlWithdraw(AMOUNT)));
+  assert.equal(facts.destinationAsset, INTENTS_USDC_ASSET_ID);
+  assert.equal(facts.etaSeconds, 35);
+  assert.match(facts.activity, /25 bp app fee \(0\.02 USDC\)/);
+  assert.match(facts.activity, /1 USDC on top/);
+  assert.match(out.summary, /app fee   0\.0200 USDC, 25 bp, inside the quote/);
+  assert.match(out.summary, /routing   0\.1998 USDC inside the quote/);
+  assert.match(out.summary, /activation 1 USDC on top/);
+  assert.match(out.summary, /at least  7\.7180 USDC|at least  7\.718 USDC/);
+});
+
+test('a quote with no app fee line in its echo prices the app fee at 0 rather than assuming 25 bp', async () => {
+  const { rail: r } = rail();
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, true, out.summary);
+  assert.match(out.summary, /app fee   0\.0000 USDC, 0 bp, inside the quote/);
+  assert.match(out.send?.activity ?? '', /a 0 bp app fee \(0 USDC\)/);
+});
+
+test('a short balance refusal names the most that can come back, and under the floor says nothing can', async () => {
+  const some = await rail({}, [{ available: 8.5, spot: 8.5, perp: 0 }]).rail.simulate(draft());
+  assert.equal(some.ok, false);
+  assert.match(some.summary, /The most that can come back now is 7\.5 USDC/);
+
+  const none = await rail({}, [{ available: 5.5, spot: 5.5, perp: 0 }]).rail.simulate(draft());
+  assert.equal(none.ok, false);
+  assert.match(none.summary, /at most 4\.5 USDC could come back, under the 5 USDC floor/);
 });
 
 // ---------- the floor, against the measured fee ----------

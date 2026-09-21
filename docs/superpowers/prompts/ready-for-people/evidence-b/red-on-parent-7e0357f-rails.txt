@@ -1,0 +1,20 @@
+✖ a FAILED routing with nothing refunded says the input is held by 1Click, never that a refund goes back (3.564708ms)
+✖ a quote that asks for a deposit memo is refused before anything is signed, with the floor named (0.858958ms)
+✖ a quote with no app fee line in its echo prices the app fee at 0 rather than assuming 25 bp (0.862958ms)
+✖ a refund after the send names the amount and the venue account, with the send kept as evidence (27.649375ms)
+✖ a send the venue refused after the perp to spot move says where the collateral now sits (0.642833ms)
+✖ a send with no reply is retried once with the same nonce, and a reply the second time is the send (1.755667ms)
+✖ a short balance refusal names the most that can come back, and under the floor says nothing can (0.395ms)
+✖ a short deposit is reported as INCOMPLETE_DEPOSIT with what 1Click saw, not as a poll that ran out (0.51625ms)
+✖ a standard account moves perp collateral to spot before the send (1.604375ms)
+✖ a success reports the amount 1Click settled, not the quote, and keeps the NEAR settlement hash (0.962292ms)
+✖ a success the intents balance has not shown yet is settling with the intents pocket, never confirmed and never a loss (7.079667ms)
+✖ a verifier that would not answer before the send leaves no pocket, and the row settles on the router alone (2.183042ms)
+✖ a watch that runs out is unconfirmed and keeps the ledger hash and the address for a later check (0.481292ms)
+✖ execute signs one sendAsset to the minted address, watches 1Click, and proves both sides (1.955417ms)
+ℹ fail 17
+✖ failing tests:
+ℹ pass 77
+✖ the simulation carries the fee facts the card draws: the total, the app fee off the echo, the draft floor as "at least" (0.371333ms)
+✖ the simulation carries the fee facts the card draws: total with the activation fee, the app fee off the echo, the draft floor as "at least" (3.286333ms)
+✖ the verifier showing the floor on the third read after SUCCESS is a confirmed withdrawal, with the pocket after it (2.878334ms)

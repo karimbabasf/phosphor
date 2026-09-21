@@ -148,6 +148,23 @@ function tellPreflight(hooks: RailHooks | undefined, preflight: Preflight): void
   }
 }
 
+/* The app fee 1Click prices into a quote, in basis points, read off the quote's own echo:
+   quoteRequest.appFees is a list of { recipient, fee } and an unkeyed quote carries one line of
+   25 bp (found 2026-09-11: 12.5 of the 13.23 USDC fee on a 5000 USDC move; still there
+   2026-09-20). A partner key removes it, and the day it is gone this reads 0 rather than
+   assuming. Never a rate to charge, only a fact to print: the fee is already inside amountOut. */
+export function appFeeBpsOf(raw: unknown): number {
+  const echo = (raw as { quoteRequest?: { appFees?: unknown } } | null)?.quoteRequest;
+  const fees = echo?.appFees;
+  if (!Array.isArray(fees)) return 0;
+  let bps = 0;
+  for (const line of fees) {
+    const fee = Number((line as { fee?: unknown })?.fee);
+    if (Number.isFinite(fee) && fee > 0) bps += fee;
+  }
+  return bps;
+}
+
 export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpendRequest, hooks?: RailHooks): Promise<IntentsSpendOutcome> {
   const response = await deps.api.quote({
     dry: false,

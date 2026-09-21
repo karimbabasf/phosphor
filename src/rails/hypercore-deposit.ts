@@ -60,7 +60,7 @@ import { baseUnits, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.t
 import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '../intents.ts';
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
-import { spendFromIntents } from './intents-spend.ts';
+import { appFeeBpsOf, spendFromIntents } from './intents-spend.ts';
 import type { PreflightRunner } from '../preflight/live.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
@@ -306,22 +306,48 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     };
   }
 
-  // What the human reads before clicking. The effective rate is computed rather than quoted,
-  // because the number that matters is not the fee, it is the fee against THIS amount.
-  function priceLines(draft: HlDepositDraft, quote: OneClickQuote): { lines: string[]; feePct: number } {
+  /* What the human reads before clicking. The effective rate is computed rather than quoted,
+     because the number that matters is not the fee, it is the fee against THIS amount. Two parts
+     sit inside the quote and both are named as numbers: the routing leg (about 0.32 flat) and
+     the 25 bp app fee an unkeyed quote carries, read off the quote's own echo rather than
+     assumed. The facts ride on the simulation in the shape the card already draws
+     (SendSimulation): what arrives, the draft floor as "at least", and the fee as one number. */
+  type Priced = { lines: string[]; feePct: number; facts: NonNullable<SimulationResult['send']> };
+
+  function priceLines(draft: HlDepositDraft, quote: OneClickQuote, raw: unknown): Priced {
     const out = Number(quote.amountOutFormatted);
     const inUsd = Number(quote.amountInUsd);
     const spent = Number.isFinite(inUsd) && inUsd > 0 ? inUsd : draft.amountUsd;
     const feeUsd = Number.isFinite(out) ? spent - out : NaN;
     const feePct = Number.isFinite(feeUsd) && spent > 0 ? (feeUsd / spent) * 100 : NaN;
+    const appBps = appFeeBpsOf(raw);
+    const appFee = Number.isFinite(feeUsd) ? Math.min(Math.max(0, feeUsd), (spent * appBps) / 10_000) : NaN;
+    const routing = Number.isFinite(feeUsd) ? feeUsd - appFee : NaN;
+    const eta = typeof quote.timeEstimate === 'number' && Number.isFinite(quote.timeEstimate) ? quote.timeEstimate : null;
+    const money = (n: number): string => (Number.isFinite(n) ? n.toFixed(6).replace(/\.?0+$/, '') : String(n));
     return {
       feePct,
+      facts: {
+        destinationAsset: HYPERCORE_USDC_ASSET_ID,
+        arrives: oneLine(quote.amountOutFormatted, 40),
+        arrivesAtLeast: money(draft.minCredited),
+        feeUsd: Number.isFinite(feeUsd) ? Number(feeUsd.toFixed(6)) : null,
+        bridgeFee: null,
+        etaSeconds: eta,
+        activity:
+          `Two fees, both inside the quote: routing ${money(routing)} USDC and a ${appBps} bp app fee (${money(appFee)} USDC). ` +
+          `Hyperliquid keeps any deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC delivered, so at least ${money(draft.minCredited)} USDC has to land.`,
+        explorer: null,
+      },
       lines: [
         `Fund Hyperliquid perps from the intents balance.`,
         `  spend     ${draft.amount} ${draft.symbol} held inside ${INTENTS_VERIFIER}`,
         `  credited  ${oneLine(quote.amountOutFormatted, 40)} USDC to ${draft.hlAccount}`,
+        `  at least  ${money(draft.minCredited)} USDC, the floor the live quote is held to; under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} the venue keeps it`,
         `  cost      ${Number.isFinite(feeUsd) ? `${feeUsd.toFixed(4)} USDC, ${feePct.toFixed(2)} percent of the deposit` : 'unknown'}`,
-        `  arrives   about ${quote.timeEstimate ?? '?'}s`,
+        `  routing   ${Number.isFinite(routing) ? `${routing.toFixed(4)} USDC inside the quote` : 'unknown'}`,
+        `  app fee   ${Number.isFinite(appFee) ? `${appFee.toFixed(4)} USDC, ${appBps} bp, inside the quote` : 'unknown'}${appBps > 0 ? ' (a 1Click partner key removes it)' : ''}`,
+        `  arrives   about ${eta ?? '?'}s`,
         `  way back  propose_hl_withdraw brings collateral back into the same balance, always by a click`,
       ],
     };
@@ -375,6 +401,17 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     // draft a human read.
     if (quote.amountInFormatted !== undefined && Number(quote.amountInFormatted) !== draft.amount) {
       problems.push(`the quote prices ${oneLine(quote.amountInFormatted, 40)} in, but the draft says ${draft.amount}`);
+    }
+
+    // A memo is a second field the deposit would have to carry, and the signed intent hands the
+    // balance to the handle and carries none: money sent without the memo is not credited. So
+    // a quote that asks for one is refused before anything is signed, on the dry quote at
+    // simulate and again on the live one at execute, with the floor named beside the reason.
+    if (typeof quote.depositMemo === 'string' && quote.depositMemo !== '') {
+      problems.push(
+        `the quote asks for a deposit memo, which the signed intent cannot carry; money sent without it would not be credited. ` +
+          `Nothing is signed. The floor stays ${draft.minCredited.toFixed(4)} USDC landing`,
+      );
     }
 
     return problems;
@@ -436,7 +473,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
         slippageToleranceBps: HYPERCORE_SLIPPAGE_BPS,
       });
 
-      const priced = priceLines(draft, response.quote);
+      const priced = priceLines(draft, response.quote, response.raw);
       const problems = [
         ...checkQuote(draft, p, response.quote, priced.feePct),
         ...quoteEchoProblems(response.raw, echoWant(draft, p)),
@@ -444,7 +481,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       if (problems.length > 0) return refusal(draft, problems, priced.lines);
 
       priced.lines.push('execution signs one intent with the EVM key and sends nothing on any chain; the solver credits the venue');
-      return { ok: true, summary: priced.lines.join('\n') };
+      return { ok: true, summary: priced.lines.join('\n'), send: priced.facts };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: `hypercore funding simulation failed: ${message}`, error: message };
@@ -617,7 +654,9 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
           recipientType: 'DESTINATION_CHAIN',
           slippageToleranceBps: HYPERCORE_SLIPPAGE_BPS,
           echo: echoWant(draft, p),
-          checkQuote: (quote) => checkQuote(draft, p, quote, priceLines(draft, quote).feePct),
+          // The app fee is read off the echo for the sentence only; the ceiling reads the
+          // total, which needs no echo, so the live check prices with none.
+          checkQuote: (quote) => checkQuote(draft, p, quote, priceLines(draft, quote, null).feePct),
         },
         hooks,
       );

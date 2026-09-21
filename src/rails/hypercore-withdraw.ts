@@ -10,10 +10,17 @@
 // THE SEQUENCE, one signature, nothing sent on any chain by us:
 //   1. POST /v0/quote, depositType ORIGIN_CHAIN, recipientType INTENTS -> a fresh HyperCore
 //      address 1Click minted for this quote
-//   2. one spotSend of exactly the quoted amount, from the venue account to that address,
-//      signed with the master key
+//   2. one sendAsset of exactly the quoted amount, from the venue account to that address,
+//      signed with the master key. sendAsset and not spotSend: a unified account, which is the
+//      venue's recommended mode and Karim's, refuses spotSend and usdSend outright ("Action
+//      disabled when unified account is active", live 2026-09-20), and sendAsset is the one
+//      transfer both account modes accept. 1Click lists it as a supported way in
+//      (docs.near-intents.org, 1click-api/hyperliquid: "sendAsset: Supported. Spot or perp").
 //   3. GET /v0/status until SUCCESS, REFUNDED or FAILED
-//   4. read both sides: the venue ledger for the send, the verifier for the credit
+//   4. read both sides: the venue ledger for the send, the verifier for the credit, and the
+//      row is confirmed only once the verifier shows the credit. 1Click's SUCCESS is the
+//      solver's word; until the balance rose the row sits in `crediting` with its handle,
+//      nonce and ledger hash, and the next balance read that shows the rise settles it.
 //
 // WHAT IS DIFFERENT ABOUT THIS RAIL, and each is a refusal rather than a feature:
 //
@@ -31,13 +38,18 @@
 //   liquidation gets manufactured, so any position or any margin in use refuses before a
 //   quote is even asked for.
 //
-//   THE COST HAS TWO PARTS AND ONE OF THEM IS INVISIBLE IN THE QUOTE. 1Click's fee (about
-//   0.20 flat plus 25 bp without a partner key) comes out of what lands. The venue's
-//   activation fee does not: every address 1Click mints is new to HyperCore, and the venue
-//   charges the SENDER 1 USDC on top for the first transfer into a new account. So a
-//   withdrawal of 8 costs the account 9 and credits 7.78, which is 15 percent, and a
-//   withdrawal of 100 costs 101 and credits 99.5, which is 1.5 percent. The summary states
-//   the total as a rate, and the floor refuses sizes where the flat part is most of it.
+//   THE COST HAS THREE PARTS AND TWO OF THEM ARE INVISIBLE IN THE QUOTE. 1Click's routing
+//   fee (about 0.20 flat) and its 25 bp app fee (present on every quote without a partner key,
+//   echoed back as quoteRequest.appFees) both come out of what lands. The venue's activation
+//   fee does not: every address 1Click mints is new to HyperCore, and the venue charges the
+//   SENDER 1 USDC on top for the first transaction into a new account. So a withdrawal of 8
+//   costs the account 9 and credits 7.78, which is 15 percent, and a withdrawal of 100 costs
+//   101 and credits 99.5, which is 1.5 percent. The summary states every part as a number and
+//   the total as a rate, the card carries the total as its fee fact and the floor as its
+//   "arrives at least", and the floor refuses sizes where the flat part is most of it.
+//
+//   A REFUSAL FOR A SHORT BALANCE NAMES THE MOST THE ACCOUNT COULD SEND, so the person hears a
+//   number to try rather than a wall: what is free less the activation fee.
 
 import { isAddress } from 'viem';
 import type { HlWithdrawDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
@@ -49,9 +61,12 @@ import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
 import { ONECLICK_COUNTERPARTY } from '../intents.ts';
-import { HL_ACTIVATION_FEE_USDC, accountSummary, liveSignPort, spotSend, toAmountString, usdClassTransfer } from './hl-user-signed.ts';
+import { HL_ACTIVATION_FEE_USDC, accountSummary, liveSignPort, maxSendableUsdc, sendAsset, toAmountString, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS } from './hypercore-deposit.ts';
+import { INTENTS_SETTLE, watchRise } from '../ledger/settle.ts';
+import type { PocketRead, RiseSchedule } from '../ledger/settle.ts';
+import { appFeeBpsOf } from './intents-spend.ts';
 
 // ---------- the two ends ----------
 
@@ -71,7 +86,8 @@ export const INTENTS_USDC_DECIMALS = 6;
 export const HL_WITHDRAW_COUNTERPARTY = ONECLICK_COUNTERPARTY;
 
 // The fee inside the quote: measured 0.20 flat plus about 26 bp (10 route, 25 app, rounding)
-// on 2026-09-11, with headroom on both terms, for the same reason the deposit rail gives.
+// on 2026-09-11 and again 2026-09-20 (5 in, 4.787511 out), with headroom on both terms, for
+// the same reason the deposit rail gives.
 export const HL_WITHDRAW_FLAT_USDC = 0.25; // measured 0.20
 export const HL_WITHDRAW_FEE_BPS = 40; // measured about 26
 export const HL_WITHDRAW_SLIPPAGE_BPS = 10;
@@ -82,6 +98,13 @@ export const HL_ACTIVATION_USDC = HL_ACTIVATION_FEE_USDC;
 // Below this the 1.2 USDC of flat cost is most of the withdrawal. 5 is where the refusal can
 // say "you would pay a quarter of it" and be right.
 export const MIN_HL_WITHDRAW_USDC = 5;
+
+// The rail's sentence for a send the router confirmed and the verifier has not shown. Never the
+// word "failed": the money is a block away, and "failed" is how a second copy gets signed. The
+// boot sweep reads "has not shown" and keeps the row waiting on the venue (src/proposals/reconcile.ts).
+export const SETTLING_WITHDRAW =
+  'The router reports the withdrawal settled and the intents balance has not shown it yet. ' +
+  'Nothing more will be signed until the next balance read confirms it.';
 
 // A USDC figure as money: six places, trailing zeros off. A sum of two doubles printed raw put
 // "8.209399000000001 USDC" in front of a person (2026-09-20).
@@ -113,6 +136,9 @@ export type HypercoreWithdrawDeps = {
   // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
   // key its own fake signs with, and nothing else ever sets it.
   quoteKey?: string;
+  // How long, and how often, the verifier is re-read once 1Click says SUCCESS. Defaults to
+  // INTENTS_SETTLE (ninety seconds); the tests shorten it.
+  settleSchedule?: RiseSchedule;
 };
 
 export type HypercoreWithdrawRail = Rail<HlWithdrawDraft>;
@@ -143,6 +169,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
   const pollIntervalMs = deps.pollIntervalMs ?? 3000;
   const pollTimeoutMs = deps.pollTimeoutMs ?? 180_000;
   const quoteKey = deps.quoteKey;
+  const settleSchedule = deps.settleSchedule ?? INTENTS_SETTLE;
 
   function refusal(draft: HlWithdrawDraft, reasons: string[], lines: string[] = []): SimulationResult {
     const joined = reasons.join('; ');
@@ -229,7 +256,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       return { reasons: [`the draft floors at ${draft.minReceived} USDC, which is no floor at all`] };
     }
     // The send takes a decimal string, and a number it cannot spell exactly is refused by
-    // spotSend after the live quote has been minted. Refuse it here instead, before any quote.
+    // sendAsset after the live quote has been minted. Refuse it here instead, before any quote.
     try {
       toAmountString(draft.amount);
     } catch (err) {
@@ -260,10 +287,18 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     const needed = draft.amount + HL_ACTIVATION_USDC;
     const sendable = account.unified ? account.availableUsdc : account.spotUsdc + account.perpWithdrawableUsd;
     if (sendable < needed) {
+      // The most that could go: free collateral less the activation fee, the same arithmetic
+      // sendAsset would refuse on. Under the floor there is nothing to try, and the sentence
+      // says so rather than offering a number the next line would refuse.
+      const most = maxSendableUsdc(sendable, HL_ACTIVATION_USDC);
+      const offer =
+        most >= MIN_HL_WITHDRAW_USDC
+          ? `The most that can come back now is ${usdc(most)} USDC`
+          : `After the fee at most ${usdc(most)} USDC could come back, under the ${MIN_HL_WITHDRAW_USDC} USDC floor, so nothing can leave until more is on the account`;
       return {
         reasons: [
           `the account has ${usdc(sendable)} USDC and the withdrawal needs ${usdc(needed)} USDC: ${draft.amount} plus the ` +
-            `${HL_ACTIVATION_USDC} USDC activation fee the venue charges the sender for a destination it has never seen`,
+            `${HL_ACTIVATION_USDC} USDC activation fee the venue charges the sender for a destination it has never seen. ${offer}`,
         ],
       };
     }
@@ -305,26 +340,57 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     };
   }
 
-  // What the human reads before clicking. Both parts of the cost, as one rate, because the
-  // number that decides is the total against THIS amount.
-  function priceLines(draft: HlWithdrawDraft, p: Plan, quote: OneClickQuote): { lines: string[]; feePct: number } {
+  /* What the human reads before clicking: every part of the cost as a number, and the total as
+     a rate, because the number that decides is the total against THIS amount. Three parts:
+     the routing leg and the 25 bp app fee sit inside the quote (what lands is already net of
+     them), the activation fee sits outside it (the venue takes it from the sender beside the
+     amount). The app fee is read off the quote's own echo, never assumed: a partner key removes
+     it and the sentence must say 0 that day. */
+  type Priced = {
+    lines: string[];
+    feePct: number;
+    // The facts the card draws, in the shape the send card already reads (SendSimulation).
+    facts: NonNullable<SimulationResult['send']>;
+  };
+
+  function priceLines(draft: HlWithdrawDraft, p: Plan, quote: OneClickQuote, raw: unknown): Priced {
     const out = Number(quote.amountOutFormatted);
-    const routing = Number.isFinite(out) ? draft.amount - out : NaN;
-    const total = Number.isFinite(routing) ? routing + HL_ACTIVATION_USDC : NaN;
+    const insideQuote = Number.isFinite(out) ? draft.amount - out : NaN;
+    const appBps = appFeeBpsOf(raw);
+    const appFee = Number.isFinite(insideQuote) ? Math.min(insideQuote, (draft.amount * appBps) / 10_000) : NaN;
+    const routing = Number.isFinite(insideQuote) ? insideQuote - appFee : NaN;
+    const total = Number.isFinite(insideQuote) ? insideQuote + HL_ACTIVATION_USDC : NaN;
     const feePct = Number.isFinite(total) ? (total / draft.amount) * 100 : NaN;
     const books = p.account.unified
       ? ''
       : p.moveToSpot > 0
         ? `\n  first     ${p.moveToSpot.toFixed(4)} USDC moves from the perp side to spot first, same account, same key`
         : '';
+    const eta = typeof quote.timeEstimate === 'number' && Number.isFinite(quote.timeEstimate) ? quote.timeEstimate : null;
     return {
       feePct,
+      facts: {
+        destinationAsset: INTENTS_USDC_ASSET_ID,
+        arrives: oneLine(quote.amountOutFormatted, 40),
+        arrivesAtLeast: usdc(draft.minReceived),
+        feeUsd: Number.isFinite(total) ? Number(total.toFixed(6)) : null,
+        bridgeFee: null,
+        etaSeconds: eta,
+        activity:
+          `Three fees. Routing ${usdc(routing)} USDC and a ${appBps} bp app fee (${usdc(appFee)} USDC) come out of the quote. ` +
+          `Hyperliquid charges ${HL_ACTIVATION_USDC} USDC on top to open the fresh address 1Click mints, paid by the venue account.`,
+        explorer: null,
+      },
       lines: [
         `Bring collateral back from Hyperliquid into the intents balance.`,
         `  send      ${draft.amount} USDC from the venue account ${draft.from}`,
         `  credited  ${oneLine(quote.amountOutFormatted, 40)} USDC to our intents account ${draft.to}`,
-        `  cost      ${Number.isFinite(total) ? `${total.toFixed(4)} USDC, ${feePct.toFixed(2)} percent: ${routing.toFixed(4)} routing plus ${HL_ACTIVATION_USDC} USDC the venue charges for a fresh destination` : 'unknown'}`,
-        `  arrives   about ${quote.timeEstimate ?? '?'}s` + books,
+        `  at least  ${usdc(draft.minReceived)} USDC, the floor the live quote is held to`,
+        `  cost      ${Number.isFinite(total) ? `${total.toFixed(4)} USDC, ${feePct.toFixed(2)} percent` : 'unknown'}`,
+        `  routing   ${Number.isFinite(routing) ? `${routing.toFixed(4)} USDC inside the quote` : 'unknown'}`,
+        `  app fee   ${Number.isFinite(appFee) ? `${appFee.toFixed(4)} USDC, ${appBps} bp, inside the quote` : 'unknown'}${appBps > 0 ? ' (a 1Click partner key removes it)' : ''}`,
+        `  activation ${HL_ACTIVATION_USDC} USDC on top, the venue's charge for a destination it has never seen`,
+        `  arrives   about ${eta ?? '?'}s` + books,
         `  by hand   always a click, whatever the size; refused while any position is open`,
       ],
     };
@@ -354,7 +420,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     return problems;
   }
 
-  // The quote's echo of what we asked for. The signed spotSend names the deposit address and
+  // The quote's echo of what we asked for. The signed sendAsset names the deposit address and
   // nothing else: where the money goes AFTER that address is only in the quote, so the echo
   // is what ties the signature to our intents account. A missing echo is a refusal.
   function echoWant(draft: HlWithdrawDraft, p: Plan): QuoteEcho {
@@ -398,11 +464,11 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     try {
       // dry:true, always. A simulation must never mint a deposit address.
       const response = await client.quote(quoteParams(draft, p, true));
-      const priced = priceLines(draft, p, response.quote);
+      const priced = priceLines(draft, p, response.quote, response.raw);
       const problems = [...checkQuote(draft, p, response.quote), ...quoteEchoProblems(response.raw, echoWant(draft, p))];
       if (problems.length > 0) return refusal(draft, problems, priced.lines);
-      priced.lines.push('execution signs one spotSend with the master key to an address 1Click mints for this quote; nothing is sent on any chain');
-      return { ok: true, summary: priced.lines.join('\n') };
+      priced.lines.push('execution signs one sendAsset with the master key to an address 1Click mints for this quote; nothing is sent on any chain');
+      return { ok: true, summary: priced.lines.join('\n'), send: priced.facts };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: `hypercore withdraw simulation failed: ${message}`, error: message };
@@ -480,7 +546,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       return { ok: false, detail: `live quote does not match the approved draft: ${problems.join('; ')}. Nothing was sent.` };
     }
     if (typeof quote.depositMemo === 'string' && quote.depositMemo !== '') {
-      return { ok: false, detail: 'the quote requires a deposit memo, which a spotSend cannot carry; funds sent without it are lost. Nothing was sent.' };
+      return { ok: false, detail: 'the quote requires a deposit memo, which a sendAsset cannot carry; funds sent without it are lost. Nothing was sent.' };
     }
     const depositAddress = typeof quote.depositAddress === 'string' ? quote.depositAddress.trim() : '';
     if (!isAddress(depositAddress)) {
@@ -488,7 +554,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
     const signedQuote = signedQuoteRecord(response);
 
-    // A standard account pays spotSend out of the spot book; move what is short from perp.
+    // A standard account pays the send out of the spot book; move what is short from perp.
     // Same account, different side: nothing leaves, but a refusal after this point has to say
     // that the collateral now sits on spot, or the human reads "nothing was sent" as "nothing
     // changed" and the next look at the perp book comes up short.
@@ -517,12 +583,12 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     // again, or a refused duplicate) and never with a fresh one, which would be a second real
     // payout. The ledger is read first: a send that landed shows there under its nonce, and
     // then there is nothing to retry. The rule is written out at the top of intents-spend.ts.
-    const first = await spotSend(hl, { destination: depositAddress, amount: draft.amount });
+    const first = await sendAsset(hl, { destination: depositAddress, amount: draft.amount });
     let sent = first;
     let ledger: string | null = null;
     if (!first.ok && first.ambiguous && first.nonce !== undefined) {
       ledger = await ledgerHash(owner, first.nonce, depositAddress);
-      if (ledger === null) sent = await spotSend(hl, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
+      if (ledger === null) sent = await sendAsset(hl, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
     }
     const landed = sent.ok || ledger !== null;
     // A send the venue took, or one it may have taken, reaches the row now with its nonce and
@@ -569,13 +635,33 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     const watch = await watchStatus(depositAddress, hooks);
 
     if (watch.status === 'SUCCESS') {
-      const proof = await proveBothSides(draft, before, intentsBefore, deliveredAmount(watch, quote.amountOutFormatted));
+      const delivered = deliveredAmount(watch, quote.amountOutFormatted);
+      const proof = await proveBothSides(draft, before, intentsBefore, delivered);
+      const pocket = pocketOf(draft, intentsBefore, proof.intentsAfter);
+      const said =
+        `withdrew ${draft.amount} USDC from Hyperliquid; ${delivered} USDC credited to our ` +
+        `intents account ${draft.to} (${deliveredNote(watch)}); ${evidence}.${proof.sentence}`;
+      /* CONFIRMED ONLY ONCE THE VERIFIER SHOWS IT. 1Click's SUCCESS is the solver's word and a
+         finality-final read lags it, so a row that flipped to Confirmed here printed "Confirmed"
+         over a balance that had not moved. Not risen inside the window is settling: the executor
+         lands it as needs_reconciliation with the pocket, the card reads "Waiting for the venue to
+         credit it", and the next ledger read that shows the rise settles it. Nothing more is
+         signed either way. */
+      if (!proof.rose) {
+        return {
+          ok: false,
+          settling: true,
+          detail: `${SETTLING_WITHDRAW} ${said}`,
+          txids: uniqueTxids(hash, watch),
+          ...(pocket === null ? {} : { pocket }),
+          evidence: railEvidence(watch),
+        };
+      }
       return {
         ok: true,
-        detail:
-          `withdrew ${draft.amount} USDC from Hyperliquid; ${deliveredAmount(watch, quote.amountOutFormatted)} USDC credited to our ` +
-          `intents account ${draft.to} (${deliveredNote(watch)}); ${evidence}.${proof}`,
+        detail: said,
         txids: uniqueTxids(hash, watch),
+        ...(pocket === null ? {} : { pocket }),
         evidence: railEvidence(watch),
       };
     }
@@ -601,8 +687,11 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       return { ...short, evidence: { ...short.evidence, nonce: String(nonce), quote: signedQuote } };
     }
 
-    // The send happened and the watch ran out. The ledger hash and the address stay on the row
-    // so the routing can be checked later.
+    // The send happened and the watch ran out. The ledger hash, the nonce and the address stay
+    // on the row so the routing can be checked later, and the intents pocket rides with them:
+    // the boot sweep re-asks 1Click by the handle, and a SUCCESS it hears later still waits on
+    // the verifier showing the credit rather than confirming on the router's word.
+    const late = pocketOf(draft, intentsBefore, null);
     return {
       ok: false,
       detail:
@@ -610,13 +699,37 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         `(last status ${watch.reported}); ${evidence}. THE SEND HAPPENED and the routing may still complete, so it is ` +
         `unconfirmed: read the intents balance and 1Click status for ${handle} before proposing again.`,
       txids: uniqueTxids(hash, watch),
+      ...(late === null ? {} : { pocket: late }),
       evidence: { handle, nonce: String(nonce), quote: signedQuote },
     };
   }
 
-  // What changed on each side, read back rather than assumed. Never throws: the money has
-  // moved by now and a read that fails changes the sentence, not the fact.
-  async function proveBothSides(draft: HlWithdrawDraft, before: HlAccountSummary, intentsBefore: bigint | null, delivered: string): Promise<string> {
+  /* The verifier's balance of the intents USDC either side of the move, base units as strings,
+     for the receipt and for the re-judgement of a settling row (src/proposals/execute.ts
+     judgeSettling). Null when the before-read failed: a pocket with no before is a comparison
+     against nothing, and the row then settles on 1Click's word alone the way it always did. */
+  function pocketOf(draft: HlWithdrawDraft, before: bigint | null, after: bigint | null): PocketRead | null {
+    if (before === null) return null;
+    return {
+      venue: 'intents',
+      account: draft.to.toLowerCase(),
+      assetId: INTENTS_USDC_ASSET_ID,
+      symbol: 'USDC',
+      decimals: INTENTS_USDC_DECIMALS,
+      before: before.toString(),
+      after: after === null ? null : after.toString(),
+      floor: toBaseUnits(draft.minReceived, INTENTS_USDC_DECIMALS).toString(),
+    };
+  }
+
+  type Proof = { sentence: string; rose: boolean; intentsAfter: bigint | null };
+
+  /* What changed on each side, read back rather than assumed. The verifier is READ UNTIL IT
+     SHOWS the floor or the window is spent: 1Click says SUCCESS the block the solver executes and
+     a finality-final read lags it, so the one read this used to take saw the old balance and
+     called the credit unseen over money a block away. Never throws: the money has moved by now,
+     and a read that fails changes the sentence, not the fact. */
+  async function proveBothSides(draft: HlWithdrawDraft, before: HlAccountSummary, intentsBefore: bigint | null, delivered: string): Promise<Proof> {
     const parts: string[] = [];
     try {
       const after = await accountSummary(hl, draft.from);
@@ -625,18 +738,35 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     } catch (err) {
       parts.push(` Could not read the venue afterwards (${oneLine(errText(err), 80)}).`);
     }
-    const intentsAfter = await intentsBalance(draft.to, INTENTS_USDC_ASSET_ID);
-    if (intentsBefore !== null && intentsAfter !== null) {
-      const gain = intentsAfter - intentsBefore;
-      parts.push(
-        gain > 0n
-          ? ` The intents balance rose by ${Number(gain) / 10 ** INTENTS_USDC_DECIMALS} USDC.`
-          : ` The verifier has not shown the credit yet; 1Click reported SUCCESS for ${delivered} USDC, so read the wallet in a minute rather than sending again.`,
-      );
-    } else {
-      parts.push(' The verifier would not answer a balance read, so the credit is unconfirmed here; read the wallet.');
+    if (intentsBefore === null) {
+      const once = await intentsBalance(draft.to, INTENTS_USDC_ASSET_ID);
+      parts.push(' The verifier would not answer a balance read before the send, so the credit cannot be compared here; read the wallet.');
+      return { sentence: parts.join(''), rose: once !== null, intentsAfter: once };
     }
-    return parts.join('');
+    const floor = toBaseUnits(draft.minReceived, INTENTS_USDC_DECIMALS);
+    const watched = await watchRise<bigint>({
+      read: () => intentsBalance(draft.to, INTENTS_USDC_ASSET_ID),
+      rose: (read) => read - intentsBefore >= floor,
+      schedule: settleSchedule,
+      sleep,
+      now,
+    });
+    const intentsAfter = watched.last;
+    if (intentsAfter === null) {
+      parts.push(' The verifier would not answer a balance read, so the credit is unconfirmed here; read the wallet.');
+      return { sentence: parts.join(''), rose: false, intentsAfter: null };
+    }
+    const gain = intentsAfter - intentsBefore;
+    if (watched.rose) {
+      parts.push(` The intents balance rose by ${Number(gain) / 10 ** INTENTS_USDC_DECIMALS} USDC.`);
+      return { sentence: parts.join(''), rose: true, intentsAfter };
+    }
+    parts.push(
+      gain > 0n
+        ? ` The intents balance rose by ${Number(gain) / 10 ** INTENTS_USDC_DECIMALS} USDC so far, under the ${draft.minReceived} USDC floor, after ${Math.round(watched.waitedMs / 1000)}s over ${watched.reads} reads.`
+        : ` The verifier has not shown the credit yet after ${Math.round(watched.waitedMs / 1000)}s over ${watched.reads} reads; 1Click reported SUCCESS for ${delivered} USDC, so read the wallet in a minute rather than sending again.`,
+    );
+    return { sentence: parts.join(''), rose: false, intentsAfter };
   }
 
   return { kind: 'hl_withdraw', valueUsd, simulate, execute };

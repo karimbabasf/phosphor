@@ -5,13 +5,18 @@
 // (the settle step moves collateral between books), and the withdraw3 it was built around had
 // no caller at all after the terminal script went on 2026-09-01. withdraw3 is gone with it.
 // Money now leaves the venue through src/rails/hypercore-withdraw.ts, which signs the
-// spotSend below to an address NEAR Intents mints, and that is the only exit.
+// sendAsset below to an address NEAR Intents mints, and that is the only exit.
 //
 // Everything here is a SIGNED API ACTION: no transaction, no gas, no contract call from us.
 // We sign an EIP-712 payload, POST it to /exchange, and the validators do the rest.
 //
 // Two actions, and they are the two an account needs:
-//   spotSend          USDC from this account's spot book to another HyperCore address.
+//   sendAsset         USDC from this account to another HyperCore address. The one transfer
+//                     both account modes accept: spotSend and usdSend are both refused on a
+//                     unified account with "Action disabled when unified account is active"
+//                     (seen live 2026-09-20; SwapKit's HyperCore guide says the same), and
+//                     unified is the venue's recommended mode and Karim's account. spotSend
+//                     signed the exit until 2026-09-20 and is gone: one write path, not two.
 //   usdClassTransfer  USDC between this account's own spot and perp books. Not a transfer to
 //                     anyone; needed on a standard account, rejected on a unified one.
 //
@@ -27,17 +32,23 @@
 //     wallet thinks it is signing on, and the docs accept 42161 there too. The field that
 //     names the venue is hyperliquidChain, inside the signed message. That is the field to
 //     get right: a payload signed with 'Mainnet' is a valid instruction against real money.
-//   - the top-level nonce must equal the action's time (spotSend) or nonce (usdClassTransfer),
-//     in MILLISECONDS. A mismatch is rejected, and the venue keeps the highest hundred nonces
-//     per signer, so a nonce is the identity of an action and a repeat is refused.
+//   - the top-level nonce must equal the action's nonce, in MILLISECONDS. A mismatch is
+//     rejected, and the venue keeps the highest hundred nonces per signer, so a nonce is the
+//     identity of an action and a repeat is refused.
 //   - the destination is hashed as a STRING, so its case is inside the digest. It is lowercased
 //     once, before signing, and the same string is what gets posted.
+//   - sourceDex and destinationDex name the book on each side: "" is the default perps book,
+//     "spot" the spot book (docs, exchange-endpoint, Send Asset). A unified account reports its
+//     whole balance under spotClearinghouseState, so "spot" is the side that can fund the send
+//     there too; the destination side is "spot", which is where the retired spotSend landed
+//     the money and what 1Click proved it credits (three live moves, 2026-09-11).
 //
 // One fee to know about, because it is paid by us and not by the destination: the first
-// transfer into an account HyperCore has never seen costs the SENDER 1 USDC on top of the
-// amount (docs, activation-gas-fee; read back off live ledgers 2026-09-11). Every address
-// 1Click mints for a withdrawal is such an account. spotSend checks the destination's role
-// first and prices the fee in, so a caller reads the true cost before anything is signed.
+// transaction into an account HyperCore has never seen costs the SENDER 1 USDC on top of the
+// amount, whatever the action (docs, activation-gas-fee; read back off live ledgers
+// 2026-09-11). Every address 1Click mints for a withdrawal is such an account. sendAsset checks
+// the destination's role first and prices the fee in, so a caller reads the true cost before
+// anything is signed, and a refusal names the most the account could send instead.
 
 import { isAddress, parseSignature } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -67,15 +78,20 @@ function hlVenue(): HlVenueSpec {
   return HL_MAINNET;
 }
 
-// The spot USDC token, as the SpotSend message names it: `name:tokenId`. Read from the venue's
-// spotMeta on mainnet (token index 0, 8 wei decimals) and pinned, because it is inside the
-// signature and a lookup at signing time would let a poisoned list redirect the token.
-// Testnet's USDC has a different id and must never be pasted here.
+// The USDC token, as the SendAsset message names it: `name:tokenId`. Read from the venue's
+// spotMeta on mainnet (token index 0, 8 wei decimals; re-read 2026-09-20) and pinned, because
+// it is inside the signature and a lookup at signing time would let a poisoned list redirect
+// the token. Testnet's USDC has a different id and must never be pasted here.
 export const HL_USDC_TOKEN = 'USDC:0x6d1e7cde53ba9467b783cb7c530ce054';
 
-// Paid by the sender, on top of the amount, for the first transfer into an account the venue
+// Paid by the sender, on top of the amount, for the first transaction into an account the venue
 // has never seen. The destination is credited in full.
 export const HL_ACTIVATION_FEE_USDC = 1;
+
+// The two books a sendAsset names on each side, in the venue's own spelling: the empty string
+// is the default perps book, "spot" the spot book.
+export type HlDex = '' | 'spot';
+export const HL_SPOT_DEX: HlDex = 'spot';
 
 // ---------- the EIP-712 constants ----------
 
@@ -95,13 +111,16 @@ export const HL_DOMAIN = {
 // Reordering them produces a different digest and a signature that recovers to a stranger.
 // destination is typed `string`, not `address`: that is what the SDK does, and `address` would
 // hash the 20 bytes instead of the 42-character text and never verify.
-export const SPOT_SEND_TYPES = {
-  'HyperliquidTransaction:SpotSend': [
+export const SEND_ASSET_TYPES = {
+  'HyperliquidTransaction:SendAsset': [
     { name: 'hyperliquidChain', type: 'string' },
     { name: 'destination', type: 'string' },
+    { name: 'sourceDex', type: 'string' },
+    { name: 'destinationDex', type: 'string' },
     { name: 'token', type: 'string' },
     { name: 'amount', type: 'string' },
-    { name: 'time', type: 'uint64' },
+    { name: 'fromSubAccount', type: 'string' },
+    { name: 'nonce', type: 'uint64' },
   ],
 } as const;
 
@@ -147,14 +166,17 @@ export type HlTypedData = {
   message: Record<string, unknown>;
 };
 
-export type HlSpotSendAction = {
-  type: 'spotSend';
+export type HlSendAssetAction = {
+  type: 'sendAsset';
   signatureChainId: string;
   hyperliquidChain: 'Mainnet' | 'Testnet';
   destination: string;
+  sourceDex: HlDex;
+  destinationDex: HlDex;
   token: string;
   amount: string;
-  time: number;
+  fromSubAccount: ''; // never from a sub-account: this app has none and names none
+  nonce: number;
 };
 
 export type HlUsdClassTransferAction = {
@@ -167,40 +189,49 @@ export type HlUsdClassTransferAction = {
 };
 
 // Built as one function so the signed message can never drift from the posted action: the
-// message IS the action minus its `type` tag, and both come from the same object.
+// message IS the action minus its `type` and `signatureChainId` tags, and both come from the
+// same object.
 //
 // The destination is lowercased. It is hashed as a string, so its case is inside the digest,
 // and the server rebuilds the digest from the string we send. Lowercase is what the SDK's own
 // fixture uses, and normalising here means the signed text and the sent text cannot disagree.
-export function buildSpotSendPayload(args: {
+export function buildSendAssetPayload(args: {
   destination: string;
   amount: string;
-  time: number;
+  nonce: number;
+  sourceDex?: HlDex;
+  destinationDex?: HlDex;
   // Testnet exists here for the signing vectors only: nothing in this app posts to testnet.
   chain?: 'Mainnet' | 'Testnet';
-}): { action: HlSpotSendAction; typedData: HlTypedData; nonce: number } {
-  const action: HlSpotSendAction = {
-    type: 'spotSend',
+}): { action: HlSendAssetAction; typedData: HlTypedData; nonce: number } {
+  const action: HlSendAssetAction = {
+    type: 'sendAsset',
     signatureChainId: SIGNATURE_CHAIN_ID_HEX,
     hyperliquidChain: args.chain ?? hlVenue().hyperliquidChain,
     destination: args.destination.trim().toLowerCase(),
+    sourceDex: args.sourceDex ?? HL_SPOT_DEX,
+    destinationDex: args.destinationDex ?? HL_SPOT_DEX,
     token: HL_USDC_TOKEN,
     amount: args.amount,
-    time: args.time,
+    fromSubAccount: '',
+    nonce: args.nonce,
   };
   return {
     action,
-    nonce: args.time, // the API rejects a nonce that does not equal action.time
+    nonce: args.nonce, // the API rejects a nonce that does not equal action.nonce
     typedData: {
       domain: HL_DOMAIN,
-      types: SPOT_SEND_TYPES as unknown as HlTypedData['types'],
-      primaryType: 'HyperliquidTransaction:SpotSend',
+      types: SEND_ASSET_TYPES as unknown as HlTypedData['types'],
+      primaryType: 'HyperliquidTransaction:SendAsset',
       message: {
         hyperliquidChain: action.hyperliquidChain,
         destination: action.destination,
+        sourceDex: action.sourceDex,
+        destinationDex: action.destinationDex,
         token: action.token,
         amount: action.amount,
-        time: BigInt(action.time),
+        fromSubAccount: action.fromSubAccount,
+        nonce: BigInt(action.nonce),
       },
     },
   };
@@ -406,9 +437,13 @@ export async function usdcCreditedSince(deps: HlUserSignedDeps, account: string,
 export type HlActionResult = {
   ok: boolean;
   detail: string;
-  action?: HlSpotSendAction | HlUsdClassTransferAction;
-  /* spotSend only: what the venue charged us on top of the amount, 1 for a fresh destination. */
+  action?: HlSendAssetAction | HlUsdClassTransferAction;
+  /* sendAsset only: what the venue charged us on top of the amount, 1 for a fresh destination. */
   activationFeeUsdc?: number;
+  /* sendAsset only, on a refusal for a short balance: the most the account could send to this
+     destination right now, activation fee already taken off. The rail puts it in the sentence
+     a person reads, so a refusal ends with a number to try rather than a dead end. */
+  maxSendableUsdc?: number;
   response?: unknown;
   /* The nonce this attempt signed with. On Hyperliquid the nonce IS the identity of the action:
      the venue keeps the highest hundred per signer and refuses a repeat, which is the whole of
@@ -429,7 +464,7 @@ type ExchangeResponse = { status?: string; response?: unknown };
 // status field is checked as well and is what decides ok here.
 async function postAction(
   deps: HlUserSignedDeps,
-  action: HlSpotSendAction | HlUsdClassTransferAction,
+  action: HlSendAssetAction | HlUsdClassTransferAction,
   nonce: number,
   signature: HlSignature,
 ): Promise<{ ok: boolean; detail: string; body: unknown; ambiguous?: boolean }> {
@@ -486,7 +521,7 @@ async function postAction(
 
 // Moves USDC between the two books on one account. Not a transfer to anyone: same account,
 // different side. A standard account needs it in both directions: a HyperCore delivery can
-// land on spot, and spotSend pays out of spot.
+// land on spot, and the exit pays out of spot.
 export async function usdClassTransfer(
   deps: HlUserSignedDeps,
   // `nonce` retries a previous ambiguous attempt. See the note on HlActionResult.nonce.
@@ -530,12 +565,20 @@ export async function usdClassTransfer(
   };
 }
 
-// ---------- spotSend: USDC to another HyperCore address ----------
+// ---------- sendAsset: USDC to another HyperCore address ----------
+
+// The most the account could send to a destination right now: what the send can draw on, less
+// the activation fee the venue takes beside the amount. Six decimals, cut toward zero, never
+// negative. Exported so the rail's refusal and this one name the same number.
+export function maxSendableUsdc(sendable: number, activationFeeUsdc: number): number {
+  const room = Math.max(0, sendable - activationFeeUsdc);
+  return Math.floor(room * 1e6) / 1e6;
+}
 
 // The one action here that pays someone else, so it refuses more than it does. It has no
 // default destination on purpose: the caller must name one, and the only caller is the
 // withdraw rail, which names the address 1Click minted for the quote it just checked.
-export async function spotSend(
+export async function sendAsset(
   deps: HlUserSignedDeps,
   params: {
     destination: string;
@@ -544,6 +587,10 @@ export async function spotSend(
        and this is a new transfer. The venue refuses a nonce it has already seen, so a genuine
        retry is refused as a duplicate rather than paying out twice. */
     nonce?: number;
+    // Both default to the spot book: the side a unified account reports its balance under, and
+    // the side the exit has always paid out of.
+    sourceDex?: HlDex;
+    destinationDex?: HlDex;
   },
 ): Promise<HlActionResult> {
   const sign = deps.sign ?? liveSignPort;
@@ -576,31 +623,36 @@ export async function spotSend(
   }
   const needed = params.amount + activationFeeUsdc;
 
-  // spotSend pays out of the spot book. On a unified account that is the single balance, and
-  // the perp figure reads 0 while the money is present; on a standard account it is the spot
-  // total, and money on the perp side has to be moved first.
+  // The send pays out of one book. On a unified account there is one balance and the perp
+  // figure reads 0 while the money is present; on a standard account it is the named book's
+  // total, and money on the other side has to be moved first.
+  const sourceDex = params.sourceDex ?? HL_SPOT_DEX;
   const summary = await accountSummary(deps, own);
-  const sendable = summary.unified ? summary.availableUsdc : summary.spotUsdc;
+  const sendable = summary.unified ? summary.availableUsdc : sourceDex === HL_SPOT_DEX ? summary.spotUsdc : summary.perpWithdrawableUsd;
   if (needed > sendable) {
+    const most = maxSendableUsdc(sendable, activationFeeUsdc);
     const why =
       activationFeeUsdc > 0 ? ` (${amount} plus the ${activationFeeUsdc} USDC activation fee for a destination the venue has never seen)` : '';
     const hint =
-      !summary.unified && summary.perpWithdrawableUsd > 0
+      !summary.unified && summary.perpWithdrawableUsd > 0 && sourceDex === HL_SPOT_DEX
         ? ` The perp side holds ${summary.perpWithdrawableUsd} USDC; move it with usdClassTransfer({ amount, toPerp: false }) first.`
         : '';
     return {
       ok: false,
+      maxSendableUsdc: most,
       detail:
-        `REFUSED: ${summary.unified ? 'available' : 'spot holds'} ${summary.unified ? 'is ' : ''}${sendable} USDC ` +
-        `and the transfer needs ${toAmountString(needed)}${why}.${hint}`,
+        `REFUSED: ${summary.unified ? 'available' : `the ${sourceDex === HL_SPOT_DEX ? 'spot' : 'perp'} book holds`} ${summary.unified ? 'is ' : ''}${sendable} USDC ` +
+        `and the transfer needs ${toAmountString(needed)}${why}. The most it can send now is ${most} USDC.${hint}`,
     };
   }
 
-  const { action, typedData, nonce } = buildSpotSendPayload({
+  const { action, typedData, nonce } = buildSendAssetPayload({
     destination,
     amount,
+    sourceDex,
+    destinationDex: params.destinationDex ?? HL_SPOT_DEX,
     // The caller's nonce when retrying, the clock when this is a new transfer.
-    time: params.nonce ?? (deps.now ?? Date.now)(),
+    nonce: params.nonce ?? (deps.now ?? Date.now)(),
   });
 
   const signature = await sign.signTypedData(deps.keysPath, typedData);

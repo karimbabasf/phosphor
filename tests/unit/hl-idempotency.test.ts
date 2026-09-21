@@ -9,10 +9,10 @@
 //   not exist at all. The id is now a pure function of the plan, the leg and its generation,
 //   with no time window at all: a plan leg is one order for the life of the plan.
 //
-//   The user-signed nonce. `nonce = action.time` is the only identity a spotSend has (it was
+//   The user-signed nonce. `nonce = action.nonce` is the only identity a sendAsset has (it was
 //   withdraw3 when this was found; the rule is the same). The post
 //   was not wrapped, so a lost response after the venue accepted surfaced as a thrown error, and
-//   a retry above it rebuilt the payload with time: Date.now(): a new nonce, a new
+//   a retry above it rebuilt the payload with nonce: Date.now(): a new nonce, a new
 //   signature, and a venue perfectly happy to pay out a second time.
 
 import { test } from 'node:test';
@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import type { Address } from 'viem';
 
 import { cloidFor, newCloid } from '../../src/hl/exchange.ts';
-import { spotSend, usdClassTransfer } from '../../src/rails/hl-user-signed.ts';
+import { sendAsset, usdClassTransfer } from '../../src/rails/hl-user-signed.ts';
 import type { HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address;
@@ -127,7 +127,7 @@ function json(body: unknown): Response {
 
 test('a send whose reply is lost is ambiguous, never failed', async () => {
   const venue = fakeVenue({ dropReplyOnAttempt: 1 });
-  const out = await spotSend(venue.deps, { destination: DEST, amount: 100 });
+  const out = await sendAsset(venue.deps, { destination: DEST, amount: 100 });
 
   assert.equal(out.ok, false);
   assert.equal(out.ambiguous, true, 'the venue may have accepted it');
@@ -138,10 +138,10 @@ test('a send whose reply is lost is ambiguous, never failed', async () => {
 
 test('a retry with the returned nonce is refused as a duplicate', async () => {
   const venue = fakeVenue({ dropReplyOnAttempt: 1 });
-  const first = await spotSend(venue.deps, { destination: DEST, amount: 100 });
+  const first = await sendAsset(venue.deps, { destination: DEST, amount: 100 });
   assert.equal(first.ambiguous, true);
 
-  const retry = await spotSend(venue.deps, { destination: DEST, amount: 100, nonce: first.nonce });
+  const retry = await sendAsset(venue.deps, { destination: DEST, amount: 100, nonce: first.nonce });
 
   assert.equal(retry.ok, false);
   assert.match(retry.detail, /Nonce already used/);
@@ -150,13 +150,13 @@ test('a retry with the returned nonce is refused as a duplicate', async () => {
 
 test('a retry that mints a fresh nonce would pay out twice, which is why the nonce is returned', async () => {
   const venue = fakeVenue({ dropReplyOnAttempt: 1 });
-  const first = await spotSend(venue.deps, { destination: DEST, amount: 100 });
+  const first = await sendAsset(venue.deps, { destination: DEST, amount: 100 });
   assert.equal(first.ambiguous, true);
 
   // The old behaviour: retry without carrying the nonce forward. `now` is fixed in this
   // harness, so make the clock move the way a real retry a second later would.
   const later: HlUserSignedDeps = { ...venue.deps, now: () => 1_800_000_001_000 };
-  const wrong = await spotSend(later, { destination: DEST, amount: 100 });
+  const wrong = await sendAsset(later, { destination: DEST, amount: 100 });
 
   assert.equal(wrong.ok, true, 'the venue is perfectly happy to do it again');
   assert.equal(venue.paid.length, 2, 'this is the second real transfer the nonce reuse prevents');
@@ -164,7 +164,7 @@ test('a retry that mints a fresh nonce would pay out twice, which is why the non
 
 test('an ordinary send still works and reports its nonce', async () => {
   const venue = fakeVenue();
-  const out = await spotSend(venue.deps, { destination: DEST, amount: 100 });
+  const out = await sendAsset(venue.deps, { destination: DEST, amount: 100 });
   assert.equal(out.ok, true, out.detail);
   assert.equal(out.nonce, 1_800_000_000_000);
   assert.equal(venue.paid.length, 1);
