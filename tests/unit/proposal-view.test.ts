@@ -132,8 +132,8 @@ test('waitingOn names a person, the wallet, the transfer or the venue, and nobod
   assert.equal(CASES.waiting_for_unlock().waitingOn, 'You');
   assert.equal(CASES.waiting_for_touch().waitingOn, 'Touch ID');
   assert.equal(CASES.held().waitingOn, 'The checks');
-  assert.equal(CASES.signing().waitingOn, 'The wallet');
-  assert.equal(CASES.PROCESSING().waitingOn, 'The transfer');
+  assert.equal(CASES.signing().waitingOn, 'the wallet');
+  assert.equal(CASES.PROCESSING().waitingOn, 'the transfer');
   assert.equal(CASES.PENDING().waitingOn, 'NEAR Intents');
   assert.equal(CASES.TX_BROADCASTED().waitingOn, 'NEAR Intents');
   assert.equal(CASES.crediting().waitingOn, 'Hyperliquid');

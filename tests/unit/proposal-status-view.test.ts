@@ -172,7 +172,7 @@ test('proposal_status and state.proposals[].view are the same object for the sam
     assert.equal(fromTool.stage, 'PROCESSING');
     assert.equal(fromTool.stageLabel, 'On its way');
     assert.equal(fromTool.providerStage, 'PROCESSING');
-    assert.equal(fromTool.waitingOn, 'The transfer');
+    assert.equal(fromTool.waitingOn, 'the transfer');
   } finally {
     await app.close();
   }

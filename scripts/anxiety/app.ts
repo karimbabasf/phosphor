@@ -220,7 +220,11 @@ export async function bootApp(stage: string, seed: Seed): Promise<App> {
   const output: string[] = [];
   const child = spawn(process.execPath, ['src/main.ts'], {
     cwd: stage,
-    env: { ...cleanEnv(), HOME: stageHome(stage), PHOSPHOR_PORT: String(port), PHOSPHOR_MODE: 'demo', PHOSPHOR_DATA_DIR: dataDir, ...(seed.env ?? {}) },
+    /* The scripted agent must be the `claude` the driver finds. src/driver.ts asks the agent
+       catalog, which walks PATH before $HOME/.local/bin (2026-09-20), so the scratch bin goes
+       first on the child's PATH as well as being the scratch HOME's own; otherwise the real
+       Claude Code on PATH sits in every screenshot run and proposes nothing on cue. */
+    env: { ...cleanEnv(), HOME: stageHome(stage), PATH: `${path.join(stageHome(stage), '.local', 'bin')}:${cleanEnv().PATH ?? ''}`, PHOSPHOR_PORT: String(port), PHOSPHOR_MODE: 'demo', PHOSPHOR_DATA_DIR: dataDir, ...(seed.env ?? {}) },
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as AppProcess;
   child.stdin.write(`${token}\n`);

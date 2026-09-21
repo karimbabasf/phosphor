@@ -328,7 +328,7 @@ function waitingOn(p: Proposal, stage: ProposalStage): string | null {
     case 'held':
       return 'The checks';
     case 'signing':
-      return 'The wallet';
+      return 'the wallet';
     case 'crediting':
       return p.kind === 'hl_deposit' ? 'Hyperliquid' : 'NEAR Intents';
     case 'PENDING':
@@ -343,7 +343,7 @@ function waitingOn(p: Proposal, stage: ProposalStage): string | null {
          told nobody what they were waiting for. */
       if (p.kind === 'trade') return 'Hyperliquid';
       if (p.kind === 'swap' && p.draft.kind === 'swap' && p.draft.venue === 'intents-relay') return 'NEAR Intents';
-      return 'The transfer';
+      return 'the transfer';
   }
 }
 

@@ -164,7 +164,7 @@ test('the stall knob stops the walk at PROCESSING and the deadline is what moves
   const settled = await h.svc.settled(filed.id, 5_000);
   assert.equal(settled.status, 'needs_reconciliation');
   assert.equal(h.svc.view(settled).stage, 'PROCESSING');
-  assert.equal(h.svc.view(settled).waitingOn, 'The transfer');
+  assert.equal(h.svc.view(settled).waitingOn, 'the transfer');
 
   // The clock the demo stall sweep hands markStalled, built from the same knob the rail read.
   const sweep = demoStallSweep(cfgFor('demo'), { [DEMO_DEADLINE_ENV]: '1' });
