@@ -101,6 +101,9 @@ Verified 2026-09-20 at f8b08b7. Trust it for orientation, re-check a line before
 1. Any-agent support does not exist. src/driver.ts:234-256 resolves only `claude`; mutation.ts:119 builds
    only the Claude line for everyone; vault.js:193-207 has no picker; the connect step checks nothing before
    the click and shows nothing on failure (firstrun.js:825-885). A Claude Desktop user has no path at all.
+   The copy line the window offers is the dev-path command without the env the packaged app needs; the
+   Rust menu item builds the correct one (src-tauri/src/main.rs:139-152). Two sources of one truth: make
+   the backend the only builder of that line, per agent, and let both surfaces read it.
 2. The Hyperliquid exit is dead on a unified account: hypercore-withdraw.ts:520 signs a spotSend the venue
    refuses ("Action disabled when unified account is active", documented at hl-user-signed.ts:332-335).
    Live S12 fails on it.
@@ -118,6 +121,7 @@ Verified 2026-09-20 at f8b08b7. Trust it for orientation, re-check a line before
    losing to an author display (reset.css:91), the pending two-face showing both faces, and the three
    unstyled hook classes above.
 9. `npm run sweep` has been broken for days on Cargo.lock checksums, so the secret scan does not run.
+   scripts/eval.ts:4 and :41 still say 28 scenarios; there are 29. Fix the number where the baseline is read.
 10. The 19.94 USDC stuck at 1Click (ticket HS 3452114377) is outstanding. Not yours to fix; do not touch it.
 </known_failures_today>
 
