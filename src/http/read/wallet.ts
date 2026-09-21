@@ -8,7 +8,7 @@ import { loadProfile } from '../../profile/index.ts';
 import { VERSION } from '../../version.ts';
 import { fail, intParam, sendJson } from '../respond.ts';
 import { LOG_LIMIT_MAX } from '../context.ts';
-import { redactedTail } from '../log-tail.ts';
+import { credentialCheck, redactEvent, redactedTail } from '../log-tail.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
@@ -338,6 +338,7 @@ export const walletReads: ReadTable = {
     // a swap and a send have no venue account, and answering with one anyway would be noise
     // somebody could mistake for evidence about their own move.
     const venue = proposal.kind === 'hl_deposit' || proposal.kind === 'hl_withdraw' ? (ctx.ledger.hyperliquid() ?? null) : null;
+    const isCredential = credentialCheck(ctx);
     sendJson(res, 200, {
       view: ctx.proposals.view(proposal),
       /* THIS ROW'S LINES, by the id the app wrote into the event, never by the id appearing
@@ -348,6 +349,9 @@ export const walletReads: ReadTable = {
         .tail(LOG_LIMIT_MAX)
         .filter((e) => (e.data as { id?: unknown } | undefined)?.id === id)
         .slice(0, DIAGNOSE_LOG_LINES)
+        // The same wall the tail routes have (src/http/log-tail.ts): a credential never leaves
+        // through a row's own lines either.
+        .map((e) => redactEvent(e, isCredential))
         .map((e) => withoutAddresses(`${e.ts} ${e.type}: ${e.msg}`)),
       provider,
       venue,
