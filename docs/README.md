@@ -2,19 +2,20 @@
 
 These pages are the user documentation for Phosphor, the local Mac app that holds your keys,
 your venue connections and your rules while an agent proposes moves and you click. They describe
-version 0.6.0, the version in `package.json`. The site at
+version 0.7.0, the version in `package.json`. The site at
 [phosphor.karimbabasf.com/docs](https://phosphor.karimbabasf.com/docs) is rendered from these
 files, and the three developer documents below sit beside them.
 
 ## Pages
 - [Getting started](getting-started.md): download, check the file, make or restore a wallet, back it up, the lock and the brake.
-- [Connect an agent](connect-an-agent.md): Start your assistant or Connect your own, what the agent sees and what it can never do.
+- [Connect an agent](connect-an-agent.md): pick the agent you already use, what it sees and what it can never do.
 - [Money](money.md): the two pockets, deposit, swap, send, fund and withdraw from Hyperliquid, settling, fees and refusals.
 - [Trading](trading.md): Trade mode, a proposed trade, the click, armed plans and their session key, what runs after a lock.
 - [Policy](policy.md): the rules, the click threshold, policy as sentences, changing a rule, the three verdicts.
 - [Security](security.md): what the agent can read, draft and never decide, the window token, the enclave, the lock, the honest limits.
 - [Tools](tools.md): every MCP tool the app registers, grouped, one line each.
-- [Troubleshooting](troubleshooting.md): settling and unconfirmed rows, a venue that does not answer, Gatekeeper, an agent that will not connect, the unlock queue, a refused address.
+- [Troubleshooting](troubleshooting.md): a late or unconfirmed move, a venue that does not answer, Gatekeeper, an agent that will not connect, the unlock queue, a refused address.
+- [Known limits](known-limits.md): what this build does not cover, what each limit means for your money, and what closes it.
 - [Changelog](changelog.md): what changed in each version, newest first.
 
 ## For developers

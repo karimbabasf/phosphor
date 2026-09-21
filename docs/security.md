@@ -89,7 +89,8 @@ read the app and file proposals. Three things follow, stated rather than hidden:
 3. The audit log tells the two apart. An execution under the threshold is recorded as decided by
    policy; only a click is recorded as decided by a human.
 
-Two more limits are yours to know. The safety systems are engineering by one person, without a
+The whole list, with what closes each item, is [Known limits](known-limits.md). Two more limits
+are yours to know here. The safety systems are engineering by one person, without a
 third-party audit; read the
 [disclaimer](https://github.com/karimbabasf/phosphor/blob/main/DISCLAIMER.md) before you fund the
 wallet. And the

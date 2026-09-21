@@ -47,7 +47,9 @@ A swap changes what your intents balance holds. Your assistant proposes it with 
 both legs stay inside NEAR Intents and nothing moves on any chain. Every swap carries a floor,
 the least you will accept, and the app refuses a floor of zero or one more than 20 percent below
 its own quote. Under the click threshold a swap runs on its own; above it, the card shows what
-leaves and what arrives at least, and waits for your click. See [Policy](policy.md).
+leaves and what arrives at least, and waits for your click. See [Policy](policy.md). One
+exception: a swap that spends a coin the app cannot price is valued off what the quote says
+arrives, and a move the app cannot measure always waits for your click, whatever its size.
 
 ## Send
 
@@ -115,19 +117,30 @@ charges, because each withdrawal address is new to it. So 8 USDC back costs abou
 collateral back from trading, and the receipt carries the venue nonce and the balance change on
 both sides, which is what your assistant should quote before it calls the move done.
 
-## Settling
+## After the click
 
-A card says Settling from your click until the venue answers. The bridge reports success the
-moment the solver fills, and your balance can trail that by a block or, for a Hyperliquid
-deposit, by the time the bridge takes. The app waits for the balance to rise, up to ninety
-seconds for the intents balance and two minutes for Hyperliquid.
+One card follows a move from the click to the end, and its stage line changes in place. Every
+stage names what the app is waiting on, with a clock beside it, and the agent reads the same
+line you do.
 
-If the venue said success and the balance has not shown it, or the account could not be read,
-the row lands as Not confirmed and nothing more is signed. That is the honest state, not a
-failure: the money is on its way. The app judges the row again on every balance refresh and asks
-the bridge again every ten minutes; Reconcile on the card asks now. Never send the same move again
-while a row says Not confirmed. [Troubleshooting](troubleshooting.md#a-deposit-says-settling-or-not-confirmed)
-walks through the case that shaped this.
+A swap goes Signing, Sending it, Finding a match, Settling on NEAR, Settled, checking your
+balance, then Confirmed. Funding the trading account, and bringing collateral back, go Sending
+it, Deposit seen, On its way, Waiting for the venue to credit it, then Confirmed. Confirmed is
+said only once your balance has risen: the bridge reports success the moment its solver fills,
+and the money can trail that by a block, or by the minutes a Hyperliquid deposit takes to cross.
+The app watches the balance for ninety seconds inside NEAR Intents and two minutes on
+Hyperliquid before it says so.
+
+A move that has not changed for eight times its usual length, and at least ten minutes, reads
+"Late, nothing has changed". Nothing is over: the app keeps watching, and the card moves on
+the moment the venue credits it. Refunded and Failed are endings, and each names why.
+
+If the venue said success and the app could not see the money land, the row is Not confirmed
+and nothing more is signed. That is the honest state, not a failure: the money is on its way.
+The app judges the row again on every balance refresh and asks the bridge again every ten
+minutes; Reconcile on the card asks now. Never send the same move again while a row says Not
+confirmed. [Troubleshooting](troubleshooting.md#a-move-is-late-or-not-confirmed) walks through
+the case that shaped this.
 
 ## Fees and refusals
 

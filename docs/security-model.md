@@ -51,8 +51,14 @@ The chain stops at the first refusal, in this order:
 1. Policy unreadable (`policy_unreadable`)
 2. Kill switch on (`kill_switch`)
 3. Policy changes branch off here: `killSwitch`, `version` and the rendered sentences are not
-   patchable at all (`kill_switch_not_patchable`); anything else is schema-checked
-   (`invalid_patch`); a valid patch always returns `needs_approval`
+   patchable at all (`kill_switch_not_patchable`); a patch that names no rule is refused
+   (`nothing_to_change`); anything else is schema-checked (`invalid_patch`), held under the
+   ceiling of $1,000,000 per transaction and $10,000,000 per day or session (`above_ceiling`),
+   refused when it would leave the ask threshold at or above the transaction cap
+   (`never_asks`), refused when it drops an allowed destination, a forbidden issuer or an issuer
+   cap (`allowlist_shortened`, `forbidden_issuers_shortened`, `issuer_caps_dropped`), and
+   refused when its sentence does not name every figure it moves (`sentence_mismatch`); a
+   valid patch always returns `needs_approval`, with before and after on every limit it touches
 4. The draft is a rail this app runs (a swap inside NEAR Intents, a Hyperliquid deposit or
    withdrawal, a send to another intents account, a payout to an address on a chain, a trade);
    any other kind is refused by name (`unknown_kind`)
@@ -400,7 +406,11 @@ header, which any local process can set and no web page can forge, and no secret
     post '{"op":"propose","kind":"swap","params":{"chain":"arb","fromSymbol":"USDC",
            "toSymbol":"WETH","amountIn":25,"minAmountOut":0.005}}'   # 401: nothing proposed
 
-    curl -s "http://127.0.0.1:$P/api/log?limit=30"  # 200: the whole audit tail, no credential
+    curl -s "http://127.0.0.1:$P/api/log?limit=30"  # 200: the audit tail, no credential, and
+                                                     # never a credential in it: this boot's seat
+                                                     # secret and window token are redacted on the
+                                                     # way out (src/http/log-tail.ts), as is any
+                                                     # value filed under a secret's name
 
 With the secret read off the file, the same three calls are the agent's own and answer as they
 always did: 200 with the balances, 200 with the policy, and 200 with a verdict from the policy
@@ -442,14 +452,15 @@ the data directory, so the peer is identified by the kernel rather than by a fil
 the sub-threshold path behind a per-boot budget the human sets in the window rather than a number
 the policy file carries, so a process that reads the threshold cannot spend against it repeatedly.
 Neither is the real answer. The real answer is that the approval surface has no HTTP route behind it
-at all, which is what the Tauri window below is for.
+at all, which is what the Tauri window below is for. The user-facing list of what this build does
+not cover is [Known limits](known-limits.md).
 
 ## Keys and config
 
-Private keys never live in the working copy. `keysPath` defaults to `~/.phosphor/keys.json` and
-`src/config.ts` asserts at boot that the resolved path is outside the repo, refusing to start
-otherwise. A key inside a working copy is one `git add -f` from publication; a key outside one is
-not.
+Private keys never live in the working copy. `keysPath` resolves under `~/.phosphor/` (the rule,
+per data directory, is in [Reference](reference.md#keys-and-signing)) and `src/config.ts` asserts at
+boot that the resolved path is outside the repo, refusing to start otherwise. A key inside a
+working copy is one `git add -f` from publication; a key outside one is not.
 
 Config splits the same way. `config.json` is the committed template and carries no addresses.
 `config.local.json` is gitignored and merged over it key by key, which is where real addresses go.
@@ -464,7 +475,7 @@ is treated as data by the whole app: stored, rendered and audited verbatim, neve
 Everything in this section is about an agent working through the tool surface. None of it constrains
 an agent that opens a socket instead, per the boundary above.
 
-- **The tool surface cannot express an exfiltration target.** The 9 tool schemas are walked
+- **The tool surface cannot express an exfiltration target.** Every tool schema is walked
   recursively and asserted to contain no property named for a recipient or destination, and no tool
   name that mentions one. An agent that has been talked into sending money to an attacker has no
   field in which to say where. The suite pins the exact set of tool names rather than counting them,

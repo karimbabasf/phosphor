@@ -3,13 +3,18 @@
 The situations people actually hit, what the window says in each, and what to do. The rule
 under all of them: when the app says a move is unconfirmed, do not send it again. Read first.
 
-## A deposit says Settling or Not confirmed
+## A move is late, or Not confirmed
 
-Settling is the normal state between your click and the venue's answer. The bridge reports
-success the moment its solver fills, and your balance can trail that by a block, or by minutes
-for a Hyperliquid deposit that crosses a bridge first. The app waits for the balance to rise, up
-to ninety seconds inside NEAR Intents and two minutes on Hyperliquid, and the card turns to Done
-when it does.
+Between your click and Confirmed the card's stage line says what the app is waiting on: Sending
+it, Deposit seen, On its way, Waiting for the venue to credit it. The bridge reports success the
+moment its solver fills, and your balance can trail that by a block, or by minutes for a
+Hyperliquid deposit that crosses a bridge first. The app waits for the balance to rise, up to
+ninety seconds inside NEAR Intents and two minutes on Hyperliquid, and the card says Confirmed
+only when it has. See [Money](money.md#after-the-click) for every stage by name.
+
+"Late, nothing has changed" means the move has sat on one stage for eight times its usual
+length, and at least ten minutes. It is not over: the app keeps asking, and the card moves the
+moment the venue credits it. Wait, and do not send it again.
 
 Not confirmed means the venue said success and the app could not see the money land: the balance
 had not risen inside the window, or the account could not be read. The card stays up with the
@@ -30,7 +35,7 @@ card says Holding and the checks fold open on the receipt. And an unconfirmed ro
 and handle, counts against the day's cap, and refuses a same-session repeat with its id.
 
 What to do: wait, press Reconcile once, and read the account or the balance before you approve
-anything that looks like the same move. See [Money](money.md#settling).
+anything that looks like the same move. See [Money](money.md#after-the-click).
 
 ## Hyperliquid is not answering one of our reads
 
@@ -63,18 +68,23 @@ The MCP server your agent starts is a thin proxy: every call becomes one request
 `127.0.0.1:4177`. Check these in order.
 
 1. Phosphor is running. If not, the agent is told "The control app is not running."
-2. The registration line is the one the app gave you, from Connect your own or from Phosphor,
-   then Copy MCP Config in the menu bar. It carries the app's data directory, which is where the
-   proxy reads the secret the agent's door needs. Without it the app refuses the call and names
-   the file it expected.
+2. The registration is the one the app wrote or gave you: the agent picker registers Claude
+   Code and Codex itself, shows the one line to paste for any other agent, and Phosphor, then
+   Copy MCP Config in the menu bar puts that line on the clipboard. It carries the app's data
+   directory, which is where the proxy reads the secret the agent's door needs. Without it the
+   app refuses the call and names the file it expected.
 3. One app, one wallet, one port. A source checkout's backend cannot start while the installed
    app holds 4177, and the other way round; the loser reports the address is already in use.
 4. There is room. At most six agents can drive at once; a seventh is told there is no room right
    now. Turn off a session you no longer need.
-5. For Start your assistant, the `claude` command must be installed and logged in. The column
-   says "Claude Code is not installed on this Mac." when it is missing, and reports the child's
-   own reason when a start fails. A start that never reports back is called out after twenty
-   seconds.
+5. The agent you picked is on this Mac and signed in. The picker checks it on this Mac, never
+   over the network, and says so in one sentence: "Codex is not on this Mac yet. Install it,
+   then come back to this screen." or "Codex is installed but not signed in. Sign in in your
+   terminal, then press Check again." The detail sits behind Details. Claude Desktop and the
+   chat apps cannot drive Phosphor yet: install Claude Code or Codex and pick it. The Vault
+   tab's Agent panel shows the same check, with Change and Check again; an agent that was
+   uninstalled later reads "X is no longer on this Mac". A start that never reports back is
+   called out after twenty seconds.
 
 A proxy started by hand re-reads the app's secret on every call, so restarting Phosphor does not
 need the agent restarted. See [Connect an agent](connect-an-agent.md).
@@ -108,4 +118,8 @@ The Activity list on the Basic and Pro tabs is the audit log in sentences, and y
 read the raw lines with `log_tail`. Every refusal names its rule. For a problem that could move,
 expose or lose funds, use private reporting on the
 [GitHub repository](https://github.com/karimbabasf/phosphor), see
-[Security](security.md#reporting-a-problem). For anything else, open an issue there.
+[Security](security.md#reporting-a-problem). For anything else, Help, then Report a Problem opens
+the issue form with your version and macOS version filled in; Help, then Copy Log for a Report
+puts the newest audit lines on the clipboard to paste into it, with this boot's secrets removed.
+[Known limits](known-limits.md) lists what the build does not cover, so you can tell a limit
+from a bug.

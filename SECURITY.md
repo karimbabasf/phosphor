@@ -48,5 +48,6 @@ Credit in the advisory if you want it.
 ## Known limits
 
 The honest list of what the trust boundary does and does not cover is
-[docs/security-model.md](docs/security-model.md). The risk of running this at all is
+[docs/security-model.md](docs/security-model.md), and the user-facing version is
+[docs/known-limits.md](docs/known-limits.md). The risk of running this at all is
 [DISCLAIMER.md](DISCLAIMER.md).

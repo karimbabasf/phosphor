@@ -11,20 +11,29 @@ never be able to approve its own actions.
                  v
     +---------------------------+
     | src/mcp.ts                |   no state, no keys, no files, no approval path
-    | stdio MCP server          |   39 tools, every call becomes one POST
+    | stdio MCP server          |   46 tools, every call becomes one POST
     +---------------------------+
                  |
-                 | HTTP POST /api/mcp  ->  127.0.0.1:4177
+                 | HTTP POST /api/mcp  ->  127.0.0.1:4177   (carries the seat secret)
                  v
     +---------------------------+
     | src/main.ts               |   the authoritative state owner
     | app process               |   policy, ledger, proposals, audit, HTTP + UI
     +---------------------------+
-                 ^
+                 ^                         ^
                  | /api/approve, /api/refuse, /api/kill  (token-gated)
-                 |
-         the browser window at 127.0.0.1:4177
-         a human, clicking
+                 |                         | spawned, watched, three secrets down its stdin
+         the control window        +---------------------------+
+         a human, clicking         | src-tauri/ (Rust)          |   the desktop shell: starts the
+                                   | Phosphor.app               |   backend, injects the window
+                                   +---------------------------+   token, opens the window, watches
+
+Installed, the shell is a third process and deliberately a small one: it mints the window token,
+the boot nonce and the seat secret, spawns the bundled Node backend with them on its stdin, waits
+for the backend to answer with that nonce, opens one webview onto `http://127.0.0.1:4177` with the
+token injected, and supervises the child for as long as the window is open. It holds no key and
+makes no decision. `npm run app` runs the backend alone with no shell above it, and the system
+browser stands in for the window.
 
 The MCP process is deliberately thin. It has no database, writes no files, holds no keys, and
 resolves exactly one thing on startup: which port the app is on. Every tool call is forwarded to
@@ -32,15 +41,17 @@ resolves exactly one thing on startup: which port the app is on. Every tool call
 "The control app is not running. Start it with: npm run app" rather than doing anything clever.
 
 That thinness is the point. The routes that decide things (`/api/approve`, `/api/refuse`,
-`/api/kill`, `/api/session`) are on the app process, they require a token minted per boot, and the
-string `/api/approve` does not appear anywhere in `src/mcp.ts`. A test asserts that, along with the
-absence of any tool named `approve`, `refuse`, `kill`, `dismiss` or `execute`. The agent's *MCP
-process* has no route to a decision and no credential to use if it found one.
+`/api/kill`, `/api/view`, `/api/unlock`) are on the app process, they require a token minted per
+boot, and the string `/api/approve` does not appear anywhere in `src/mcp.ts`. A test asserts that,
+along with the absence of any tool named `approve`, `refuse`, `kill`, `dismiss` or `execute`. The
+agent's *MCP process* has no route to a decision and no credential to use if it found one.
 
 That last sentence is narrower than it looks and the wording is deliberate. The separation is
-between processes, not between the agent and the machine. An agent that can also run a shell can
-fetch the token from `/api/session` and post it, which is an open hole at the time of writing and is
-documented in full in [the security model](security-model.md#the-honest-v1-boundary).
+between processes, not between the agent and the machine. No route serves the window token any
+more (`GET /api/session`, which once did, answers 404), so a shell-capable agent cannot fetch it
+either; what a local process running as you can still do is read the seat secret off the data
+directory and then read and propose, never approve. The whole boundary is set out in
+[the security model](security-model.md#the-honest-v1-boundary).
 
 **A roster, capped at six.** Several MCP sessions drive this app at once, and any operator can ask
 the app to spawn workers of its own (`src/crew.ts`). A session leaves by shutting down, or by going
@@ -68,7 +79,7 @@ brief was written by another model, and nothing in that chain is a human.
 |---|---|
 | `src/main.ts` | Wires everything and boots. Seeds a default policy only when the file is absent. |
 | `src/config.ts` | Merges `config.local.json` over `config.json`, applies the `PHOSPHOR_*` env overrides, resolves `keysPath` and asserts it sits outside the repo, creates the data dir. |
-| `src/server.ts` | HTTP surface: the UI, the read APIs, `/api/mcp`, and the token-gated decision routes. |
+| `src/server.ts` | The composition root: builds the context and hands it to `src/http/`, which is the surface itself: the UI, the read APIs, `/api/mcp`, the log tail, and the token-gated decision routes. |
 | `src/mcp.ts` | The stdio MCP server. A proxy, nothing else. |
 | `src/ledger/` | `intents.ts` reads the NEAR Intents verifier, `hyperliquid.ts` reads the trading account, `demo.ts` holds the fixtures, and `index.ts` is the one interface over them. Read-only by construction. Live mode reads TWO places, the verifier and the venue, and nothing on any chain. |
 | `src/wallet.ts` | The wallet view: one row per balance inside NEAR Intents and one for the Hyperliquid account, with quantity, unit price, USD value and share. ETH and SOL included. |
@@ -96,9 +107,8 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/indicators-library.ts` | The second catalogue: the wave family, SuperTrend, Keltner, the squeeze, Ichimoku, ADX and the rest. Written from published formulas; no vendored code and no third-party dependency. |
 | `src/analysis/structure.ts` | Structure as boxes and events rather than series: order blocks, fair value gaps, liquidity shelves, and the bar that closed through a swing. Measurements, never a place to trade. |
 | `src/rails/` | The rail registry: the one table that knows every rail exists. `swap` maps to one rail that dispatches on venue, so two venues can share a kind without pushing the pair into every call site. |
-| `src/rails/mandate.ts` | The perps rail. Arming a mandate is the only way a position is opened, and it always waits for a human click because it grants standing authority rather than doing one thing. |
-| `src/strategy/` | The grammar an agent may write and the runner will execute (`grammar.ts`), what the envelope caps (`envelope.ts`), the evaluator (`evaluate.ts`), the worked examples handed to the agent (`catalog.ts`) and the plain-English renderer. Anything not in the grammar cannot happen. |
-| `src/runner/` | The only code in phosphor that places an order. No model runs in this process: it holds an agent-authored program and a human-approved envelope, and does what they say. |
+| `src/trade/rail.ts` | The perps rail behind `propose_trade`: a plan is judged on the collateral it puts at stake, and arming it is the only way a position is opened. |
+| `src/runner/` | The only code in phosphor that places an order. No model runs in this process: it holds the plans a human approved, watches their conditions, and does what they say. |
 | `src/hl/` | Hyperliquid: action signing, msgpack, the order format the venue accepts rather than rejects, info reads and liquidation maths. |
 | `src/trade/` | The trading surface: raw venue state in, one payload out. Everything the trade screen draws is a view of that function's output. |
 | `src/analysis/` | The measurements behind `chart_batch`: pivots, levels, regime, ATR, volume profile, VWAP, range, divergence, trend-line fitting. `index.ts` is a table of one line per op and must stay one. |
@@ -188,8 +198,8 @@ widening it by a factor of N to save a few basis points is the wrong trade.
 
 The second reason is that it did not need revisiting later, and that has now been tested rather
 than assumed. Perps on Hyperliquid were out of scope when this was written and are since built:
-they arrived as another rail (`src/rails/mandate.ts`) on the other side of a rail decision already
-made, and the execution path was not rebuilt to take them.
+they arrived as another rail (`src/trade/rail.ts`, placed by `src/runner/`) on the other side of a
+rail decision already made, and the execution path was not rebuilt to take them.
 
 Consequence worth naming: intents settle asynchronously (request a quote, send to a deposit address,
 poll for status). Execution is therefore a poll, not a return value, and the audit log is the record
@@ -209,13 +219,22 @@ Every one of these fails toward showing less and moving nothing, never toward si
 | Two agents connected at once | Both may read. Proposals are queued and each is approved separately. |
 | Policy file corrupted | App refuses all writes and says so. Fails closed, never open. |
 | Composition data missing for an asset | Asset shows as unclassified and counts toward the freezable cap until classified. Fails pessimistic. |
+| A move the venue has not credited after eight times its usual length | The row reads "Late, nothing has changed" (`stalled`) and keeps being re-judged; it settles forward on a late credit. Never failed on a timeout alone. |
+| The backend dies under an open window | The shell sees the child exit within two seconds, respawns it once after a three second backoff, and says so; a second death stops the app with a sentence rather than a crash loop. The window polls `/api/health` while its event stream is down and says the app is not answering. |
 
 ## Delivery
 
-A local HTTP server plus the system browser, bound to 127.0.0.1 only. No packaging step, no bundler,
-no build system on the critical path.
+A Tauri 2 shell (`src-tauri/`, Rust) around the same backend `npm run app` runs. The bundle ships
+Node inside it, so an installed copy needs nothing else; the backend is not compiled or rewritten,
+it runs the same TypeScript from the payload the bundle carries. The shell is what closes the one
+boundary a browser window cannot: the window token reaches the control webview by an
+initialization script and is served by no route, so the approval surface has no path a local
+caller can fetch a credential from (see the security model). The backend still binds `127.0.0.1`
+only, and the source checkout still runs with the system browser standing in for the window.
 
-Tauri was weighed and deferred: it produces a real desktop window, but removing an entire build
-system from the sprint was worth more than a native frame, and the approval surface is equally
-unreachable by the agent either way. Tauri is post-sprint packaging, and it is also what closes the
-one boundary the browser version cannot (see the security model).
+Releases are built by CI from a version tag (`.github/workflows/release.yml`): the DMG, the updater
+bundle and its signature, `latest.json` and `SHA256SUMS`. Installed copies check that manifest
+and offer a signed update in the app's own window (`src-tauri/frontend/update.html`); the updater
+verifies the bundle's signature, and the version it compares is read out of the signed bundle, not
+the manifest. The build is ad hoc signed and not notarized yet, so a first open goes through
+Gatekeeper's Open Anyway; [Known limits](known-limits.md) lists that beside the rest.

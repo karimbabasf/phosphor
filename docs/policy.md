@@ -76,13 +76,20 @@ is headed Change your limits. It always lands as something to click, however sma
 The engine holds a patch to these rules before it ever reaches you:
 
 - The kill switch, the file version and the rendered sentences cannot be patched at all.
-- A patch is checked against the schema, and an unknown field refuses it.
-- One change may loosen a cap by at most ten times. Past that, make it in steps you read each
-  time.
-- A cap at zero cannot be raised by a patch. Zero is a different policy, not a small number.
-- A click threshold above the transaction cap is refused, because nothing would ever wait for
-  you.
-- The destination allowlist is replaced whole, never merged, so a patch carries the whole list.
+- A patch is checked against the schema, and an unknown field refuses it. A patch that names no
+  rule is refused as nothing to change.
+- No click can set a limit above $1,000,000 per transaction or $10,000,000 per day or session.
+  Going higher is an edit to `policy.json` by a person, not a patch.
+- The click threshold must sit strictly under the transaction cap, or nothing would ever wait
+  for you. A patch that moves one past the other is refused and told to carry both.
+- A patch may add a destination, a forbidden issuer or an issuer cap, and may move a cap that
+  stays. Removing one is refused: that is a decision for the policy file, not a click.
+- The sentence must say what the patch does, on one line, with every figure it moves. A patch
+  whose sentence names a different number, or leaves one out, is refused. An accepted change
+  carries before and after for every limit it touches, and the card shows both.
+
+One click moves a limit to what the sentence says. There is no longer a ten-times-per-step
+rule: the walls above are what hold a patch, and the click is what accepts it.
 
 ## The three verdicts
 

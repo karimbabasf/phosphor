@@ -26,6 +26,9 @@ If the two differ, delete the file and download it again.
 The build is not notarized by Apple yet, so the first open stops with a warning. Open System
 Settings, then Privacy & Security, scroll to Security and click Open Anyway. See
 [Troubleshooting](troubleshooting.md#macos-will-not-open-the-app) if the app still refuses.
+Notarization needs an Apple Developer account this project does not hold yet; until it does,
+the checksum above is what proves the file is the one on the release page. It is listed as a
+known gap in [Known limits](known-limits.md).
 
 ## First open
 
@@ -52,8 +55,8 @@ What the first run shows depends on your Mac.
 
 The Secure Enclave is a separate chip inside your Mac that holds keys and never lets them out. On
 a Mac that has one, the first run is short: Create your wallet is one click and one Touch ID.
-There is nothing to write down yet. The app then shows your addresses and asks you to connect an
-assistant, see [Connect an agent](connect-an-agent.md).
+There is nothing to write down yet. The app then shows your addresses and asks which agent you
+use, see [Connect an agent](connect-an-agent.md).
 
 ### With a password
 
@@ -62,8 +65,9 @@ words. Set a password of at least eight characters. Nobody can reset it, not the
 assistant. The app then shows twelve recovery words once, and asks you to type three of them back
 by their number before it goes on.
 
-The last screen, Set the ask threshold, shows the click threshold. The shipped default is $100. A
-change to it goes through your assistant and waits for your click, see [Policy](policy.md).
+The last screen, Set the ask threshold, sets the click threshold for this wallet. The shipped
+default is $100. A later change goes through your assistant and waits for your click, see
+[Policy](policy.md).
 
 ### A wallet from another Mac
 
@@ -127,12 +131,14 @@ not leave the app. Check the Trade tab afterwards, see [Trading](trading.md).
 
 ## The Help menu
 
-Help in the menu bar opens the documentation, a problem report on GitHub, the security page,
-the terms of use and the privacy page, each in your browser. The Phosphor menu beside it has
-Check for Updates and Copy MCP Config.
+Help in the menu bar opens the documentation, a problem report on GitHub with your version and
+macOS version already filled in, the security page, the terms of use and the privacy page, each
+in your browser. Copy Log for a Report, under Report a Problem, puts the newest audit lines on
+the clipboard for the report, with this app's own secrets already removed. The Phosphor menu
+beside it has Check for Updates and Copy MCP Config.
 
 ## Next
 
-- [Connect an agent](connect-an-agent.md): start the built-in assistant or connect your own.
+- [Connect an agent](connect-an-agent.md): pick the agent you already use.
 - [Money](money.md): deposit, swap, send, and fund the trading account.
 - [Policy](policy.md): the rules that decide what needs your click.

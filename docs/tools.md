@@ -1,6 +1,6 @@
 # Tools
 
-Phosphor registers 43 tools for the agent that drives it, and every one is listed here in five
+Phosphor registers 46 tools for the agent that drives it, and every one is listed here in five
 groups: read, propose, chart and trade surface, agents, and other. Reads change nothing. Propose
 tools return a proposal id and a simulation, and cannot approve, refuse or execute anything. Every
 call, read or write, is written to the audit log. A worker an agent spawns is an analyst: the
@@ -16,7 +16,9 @@ tools marked lead only are not registered for it at all, so there is nothing to 
 | `composition` | Stablecoin composition by issuer and chain: shares, freezable share, unclassified holdings |
 | `policy_show` | The current policy as plain-English sentences |
 | `log_tail` | The most recent audit log lines, newest first |
-| `proposal_status` | The status, verdict and simulation for one proposal id, and once executed the evidence: hashes, nonces, balances before and after |
+| `proposal_status` | Where one money move is right now, as the one object the card in the window draws: the stage and its label, what is being waited on, how long it has been going, the amounts and both pockets, every transaction hash, and an error with a sentence when something went wrong |
+| `proposals` | Recent money moves, newest first, each the same object `proposal_status` returns; a kind filter and a limit up to 50. For "show me my last deposit" without asking anyone for an id. Lead only |
+| `diagnose` | Everything about one money move in one call, for "why is it not there yet": the view, the row's own audit lines, and what the router and the venue say about it. Lead only |
 | `chart_read` | The chart as it stands: product, timeframe, price, indicators, levels, drawings, and what is stale |
 | `chart_scan` | Several timeframes at once without moving the chart: price, change, range, ATR, trend |
 | `chart_snapshot` | A small picture of the chart as you see it, beside a one-line digest. Lead only |
@@ -53,6 +55,7 @@ These change what you see and move no money.
 |---|---|
 | `chart_draw` | Draws on the chart in one call: view, indicators, levels, marks, lines and zones, or clears its own work. Lead only |
 | `chart_layout` | Puts one to four charts side by side. Lead only |
+| `show` | Draws something that already exists as a card in the window: a proposal, a transaction on a named network, an open position, or the deposit card. Moves no money and asks no permission. Lead only |
 | `trade_focus` | Points the trading surface at one market; the chart follows |
 | `trade_highlight` | Points at one row or chart object (a position, an order, a plan, a level) and says why, in a note you read beside it |
 | `trade_overlay` | Turns one chart overlay on or off: entry, liquidation, the plan stop wall, working stops, targets, orders, fills |

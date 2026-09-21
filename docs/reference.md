@@ -4,7 +4,7 @@ The long form of what the README says in short: the tool surface, how a proposal
 
 ## The tool surface
 
-Forty-two tools, in six families. Read tools execute directly and cannot move anything. Write
+Forty-six tools, in six families. Read tools execute directly and cannot move anything. Write
 tools never execute: they return a proposal id and a simulation result, and nothing else. Chart
 and trading tools move a view or a marker, never funds. Team tools coordinate several agents.
 Display tools move the window. The tables below are the whole surface, and
@@ -73,7 +73,9 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `composition` | Shares by issuer and pocket, freezable share, unclassified holdings |
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
 | `log_tail` | Most recent audit lines, newest first |
-| `proposal_status` | Status, verdict and simulation result for a proposal id |
+| `proposal_status` | Where one money move is right now, as the one object the card draws (`src/proposals/view.ts`): the stage and its label, what is being waited on, seconds elapsed and since the last change, the typical duration, the amounts and both pockets, every transaction hash with its leg, and an error code with a sentence |
+| `proposals` | Recent money moves, newest first, each the same object; `kind` filters, `limit` up to 50. Lead only |
+| `diagnose` | One money move in full: its view, its own audit lines, and what the router and the venue say about it. Lead only |
 | `research` | The first read that leaves this machine. The APP fetches from a fixed allowlist of documentation hosts and hands back text; the agent never gets a URL it can point anywhere, which is the whole reason this is a Phosphor tool and not a general web fetch |
 | `chain_address` | What an address holds and has done on one network (`ethereum`, `base`, `arbitrum`, `solana`, `near`, `bitcoin`): native balance, transaction count, contract or not (an EIP-7702 delegation reads as an account), last activity where the chain exposes it, up to ten token balances, an explorer link. The address has to pass its network's shape first; a wrong EIP-55 checksum is refused, not repaired. See "Chain lookups" below |
 | `chain_transactions` | The most recent transactions of an address on one network, newest first, at most 25: hash, time, from, to, value, status, method name. Raw inputs never come back |
@@ -160,6 +162,7 @@ live on `/api/trade/action`, which the agent's door does not open onto.
 |---|---|
 | `watch` | Points the app at a market and leaves it there, so the window keeps showing what the conversation is about after the conversation has moved on |
 | `set_theme` | Changes the window's colours: five colour slots on top of the window's one colourway (green on black; the window is dark only). Moves no money, and it is on this surface because a person asking their assistant to recolour the screen should not have to leave the conversation |
+| `show` | Draws something that already exists as a card in the window: a proposal by id, a transaction by hash on a named network, an open position by coin, or the deposit card. Answers `drawn: false` when no conversation is open. Lead only |
 | `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`), the trading surface (`trade`) and the vault (`vault`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Answers with the screen record it moved to (`{ view, since, by: 'agent' }`). Not to be confused with `chart_draw view:`, which drives the chart's render state on the trade screen |
 
 A switch used to be refused outright while a proposal was pending, so an agent could not move a
@@ -232,7 +235,7 @@ the post-move composition (issuer share caps, freezable cap). Composition
 checks judge the resulting state rather than the delta, so a portfolio already past a cap cannot
 make further moves until a human changes the policy.
 
-The rails (swap, LP, Hyperliquid deposit) take their own branch, because they hand funds to a
+The rails (swap, the Hyperliquid deposit and withdrawal) take their own branch, because they hand funds to a
 venue contract rather than decomposing into transfer legs. They are checked on the amount, the
 per-transaction and session caps, the click threshold, the venue contract, and separately on
 where the proceeds land. That branch deliberately does not compute a post-move composition: the
@@ -249,8 +252,13 @@ cannot price is refused rather than assumed to be worth a dollar, because a valu
 establish is a value its caps cannot bound.
 
 Policy changes take a shorter path: `killSwitch`, `version` and the rendered sentences are not
-patchable at all, any other patch is schema-checked, and a valid one always lands on
-`needs_approval`. A policy change the human did not click is how every guarantee here gets removed.
+patchable at all; any other patch is schema-checked, held under the ceiling ($1,000,000 per
+transaction, $10,000,000 per day or session), refused when it would leave the ask threshold at
+or above the transaction cap (`never_asks`), refused when it drops a destination, a forbidden
+issuer or an issuer cap, and refused when its sentence does not name every figure it moves
+(`sentence_mismatch`); a valid one always lands on `needs_approval` carrying before and after
+for every limit it touches. A policy change the human did not click is how every guarantee here
+gets removed.
 
 ## Policy as sentences
 
@@ -372,9 +380,19 @@ stayed true. It lives beside `keysPath`, and THE DATA DIRECTORY DECIDES where th
 
     the repo default (state/)      ~/.phosphor/<repo folder>/keys.enc.json, falling back to
                                    ~/.phosphor/keys.enc.json when an older install put it there
-    the installed .app             the same file. The shell says so with PHOSPHOR_APP_DATA=1,
-                                   so an upgrade never moves the wallet
+    the installed .app             the same rule. The shell says so with PHOSPHOR_APP_DATA=1,
+                                   so an upgrade never moves the wallet. Its folder name is
+                                   `phosphor`, so a fresh Mac gets
+                                   ~/.phosphor/phosphor/keys.enc.json, and a Mac that already
+                                   had ~/.phosphor/keys.enc.json keeps using it
     any other data directory       keys.enc.json beside that directory's own state
+
+The installed app keeps everything else it writes under
+`~/Library/Application Support/com.karimbabasf.phosphor/`: `state/` (policy.json, proposals.json,
+audit.jsonl, terms.json, agent.secret) and `config.local.json` beside it. The shell creates that
+folder before the backend starts, and `loadConfig` creates the data directory it is given, so a
+first run on an empty Mac makes both without a step from the person; the key folder is made at
+mode 0700 the moment the wallet is created. `tests/unit/keys-path.test.ts` holds all three rows.
 
 The last row is the one that matters. A demo run, a test or a second profile is given a data
 directory of its own, and it gets an EMPTY wallet rather than the real one: before this the key
@@ -427,7 +445,8 @@ lands as something to click. An unlock is not an approval: the click threshold s
 ONE action may move without a person, and a queue released all at once is a different question, so
 even the small ones wait for the click they would not have needed with the app open. An
 armed trading rule is the one exception: it keeps the Hyperliquid API wallet key on a session with
-an expiry set when it was armed, eight hours by default and a day at most. That key can place
+an expiry set when it was armed: the plan's own expiry, a day at most, and eight hours when the
+plan names none. That key can place
 orders and cannot withdraw, so a bot that outlives a lock holds trading authority, not custody.
 
 An install with an older plaintext `keys.json` reads as `needs_migration` and keeps working.
@@ -455,7 +474,7 @@ recovery in another wallet, and nothing here reads them.
 key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`. A mismatch
 stops the program instead of printing an address that no private key opens.
 
-### Code signing, which is configured and not performed
+### Code signing: hardened, ad hoc, not notarized
 
 Encryption at rest with no hardened runtime moves a key from a file anyone can read to a heap
 anyone can read: any process running as you can attach to the backend with `task_for_pid` and take
@@ -463,20 +482,28 @@ the unlocked key out of memory. `fill(0)` on lock is best effort and says so in 
 
 So the bundle carries `src-tauri/entitlements.plist` and a `bundle.macOS` block asking for the
 hardened runtime without `get-task-allow`, which is the entitlement that would let a debugger
-attach. `signingIdentity` is `-` in the config so a local build still works; a real build reads
-`APPLE_SIGNING_IDENTITY` from the environment, which Tauri honours and which overrides the config:
+attach (`tests/unit/code-signing.test.ts` holds the file to that, and to the one entitlement
+V8 needs, `allow-jit`). `signingIdentity` is `-` in the config, so every build so far is ad hoc
+signed: a local build and the release build alike. The release workflow reads
+`APPLE_SIGNING_IDENTITY` and the App Store Connect key from its secrets when they are set, signs
+with a Developer ID and submits the app to Apple for notarization; they are not set, because the
+Apple Developer Program needs an account this project does not hold yet, so Gatekeeper stops the
+first open and the person clicks Open Anyway ([Getting started](getting-started.md#the-gatekeeper-warning)).
 
     APPLE_SIGNING_IDENTITY="Developer ID Application: <name> (<team id>)" npm run app:build
 
-Only the owner holds that identity, so this repo configures signing and does not perform it. Touch
-ID is designed and deliberately not built: a Keychain item is scoped by code signature, so on an
-unsigned app anything you run could read it.
+Touch ID and the Secure Enclave are built (`src-tauri/src/enclave.rs`, the `se-helper` sidecar,
+`src/vault/`): on a Mac with an enclave the key file is sealed with a data key wrapped to a key
+the enclave made and cannot export, and every click ends in a Touch ID dialog the app composes.
+On an ad hoc build the enclave key is bound to this Mac rather than to Phosphor's signature, which
+the Vault tab says in one line ("Any process on this Mac can ask"); a Developer ID build binds it
+to the app.
 
-**What is still open.** A software keystore on a laptop is not a hardware signer. The key is in
-this process's memory whenever the wallet is unlocked, and the answer to that is a separate signing
-process or a hardware device, neither of which ships here. Treat the balance behind these keys as
-the amount you are willing to lose to something that gets code execution as you while the app is
-unlocked.
+**What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
+the answer to that is a separate signing process or a hardware device, neither of which ships
+here. Treat the balance behind these keys as the amount you are willing to lose to something that
+gets code execution as you while the app is unlocked. [Known limits](known-limits.md) lists this
+beside the others.
 
 Execution routes through NEAR Intents. One rail, no bridges, 1 basis point, 25+ chains, 125+
 assets. The alternative was per-chain bridges, which multiplies the number of things that can steal
@@ -507,7 +534,7 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
 
     src/main.ts        app process: state owner, wiring, HTTP + UI on 127.0.0.1:4177
     src/server.ts      the composition root: builds the context and hands it to the router
-    src/http/          the surface itself, 23 files: the router, the routes, auth, SSE, /api/mcp
+    src/http/          the surface itself: the router, the routes, auth, SSE, /api/mcp, the log tail
     src/mcp.ts         stdio MCP server, thin proxy to the app, no approval path
     src/greeting.ts    the connect-time greeting and the index of everything an agent can do
     src/agents.ts      who is driving: the roster, roles, heartbeat TTLs, the lead
@@ -554,7 +581,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     ui/fonts/          Sora and Geist Mono, self-hosted, with their OFL beside them
     ui/logos/          the token and venue logos as SVG files, with their notices in LICENSE.md
     operator/          the opt-in operator profile: an agent that drives but cannot develop
-    state/             policy.json, proposals.json, audit.jsonl (append-only)
+    state/             policy.json, proposals.json, audit.jsonl (append-only), terms.json,
+                       agent.secret; the installed app keeps it under Application Support
 
 ## The operator profile
 

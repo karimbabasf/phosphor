@@ -242,6 +242,35 @@ test('a home with no wallet anywhere still starts a new one project-local', () =
   assert.equal(cfg.keysPath, path.join(home, '.phosphor', path.basename(root), 'keys.json'));
 });
 
+/* THE FRESH MAC, as the installed app sees it: a home with no wallet, a data directory under
+   Application Support that does not exist yet, and the shell's PHOSPHOR_APP_DATA=1. This is the
+   first run a stranger gets, and docs/reference.md ("Keys and signing") promises two things
+   about it: the state directory is made without a step from the person, and the key lands
+   under ~/.phosphor/<payload folder>/, not beside the state and not in the repo default. */
+test('a fresh installed app makes its state directory and keys under the home key folder', () => {
+  const home = scratch('phosphor-home-');
+  const root = repo();
+  const support = path.join(scratch('phosphor-support-'), 'com.karimbabasf.phosphor');
+  assert.equal(fs.existsSync(support), false, 'the scratch Application Support folder exists before the app ran');
+
+  const cfg = withEnv(
+    {
+      HOME: home,
+      PHOSPHOR_KEYS: undefined,
+      PHOSPHOR_MODE: 'live',
+      PHOSPHOR_DATA_DIR: path.join(support, 'state'),
+      PHOSPHOR_CONFIG_DIR: support,
+      PHOSPHOR_APP_DATA: '1',
+    },
+    () => loadConfig(root),
+  );
+
+  assert.equal(cfg.dataDir, path.join(support, 'state'));
+  assert.ok(fs.existsSync(cfg.dataDir), 'loadConfig did not make the state directory');
+  assert.equal(cfg.keysPath, path.join(home, '.phosphor', path.basename(root), 'keys.json'));
+  assert.equal(fs.existsSync(path.dirname(cfg.keysPath)), false, 'the key folder is made when the wallet is, not before');
+});
+
 // ---------- the repo boundary, against a filesystem rather than against a string ----------
 //
 // Private keys inside a git working copy are one `git add -f` from being published, and keeping
