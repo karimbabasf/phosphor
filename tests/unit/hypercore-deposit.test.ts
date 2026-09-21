@@ -414,6 +414,33 @@ test('the simulation carries the fee facts the card draws: the total, the app fe
   assert.match(out.summary, /at least  9\.51 USDC, the floor the live quote is held to; under 5 the venue keeps it/);
 });
 
+// "Deposit seen" inside 30 s of the submit (criterion 8.3): the first status read happens the
+// moment the submit answers, before the poll sleeps at all, and the word 1Click answers with
+// reaches the executor on that read. At the live 3 s interval every later read is 3 s apart.
+test('the first status read follows the submit with no sleep in between, so the router\'s first word reaches the card at once', async () => {
+  const events: string[] = [];
+  const { rail: r } = rail({ status: 'KNOWN_DEPOSIT_TX' }, undefined, {
+    sleep: async () => {
+      events.push('sleep');
+    },
+    pollIntervalMs: 3000,
+    pollTimeoutMs: 6000,
+  });
+  const out = await r.execute(draft(), 'p_seen', {
+    onEvidence: (e) => {
+      if (e.txids !== undefined && e.providerStage === undefined) events.push('hash');
+      if (e.providerStage !== undefined) events.push(`stage:${e.providerStage}`);
+    },
+  });
+  assert.equal(out.ok, false, 'a watch that never leaves KNOWN_DEPOSIT_TX is unconfirmed');
+  assert.match(out.detail, /IS SIGNED AND SUBMITTED/);
+  const firstWord = events.indexOf('stage:KNOWN_DEPOSIT_TX');
+  const firstSleep = events.indexOf('sleep');
+  assert.ok(firstWord >= 0, `the router's word reached the executor: ${events.join(',')}`);
+  assert.ok(events.indexOf('hash') < firstWord, 'the hash landed before the first word');
+  assert.ok(firstSleep === -1 || firstWord < firstSleep, `the first read came before the first sleep: ${events.join(',')}`);
+});
+
 test('a quote that asks for a deposit memo is refused before anything is signed, with the floor named', async () => {
   const { rail: r, calls } = rail({ quote: { depositMemo: 'needs-a-memo' } });
   const dry = await r.simulate(draft());
