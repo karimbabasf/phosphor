@@ -1,0 +1,22 @@
+pair    : 2 USDC (nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1) -> USDT (nep141:usdt.tether-token.near)
+account : none configured
+
+SALT     ok, 252812b3
+QUOTE    1 answer(s) in 2748 ms; best 1.961996 USDT
+         quote hash E4QnbQedMJZ2YbQy1NRmnL3B5FR2rLwjKcym6Arw5eBB, good until 2026-09-21T03:05:34.508Z
+
+Nothing was signed and nothing was published.
+exit 0
+
+pair    : 2 USDC (nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1) -> NEAR (nep141:wrap.near)
+account : none configured
+
+SALT     ok, 252812b3
+QUOTE    no solver offered a price for 2 USDC to NEAR (0 answers in 3645 ms). Not a pair to prove on right now.
+exit 2
+
+intent  : 11111111111111111111111111111111
+status  : NOT_FOUND_OR_NOT_VALID (NOT_FOUND)
+near tx : none yet
+filled  : none yet
+exit 0
