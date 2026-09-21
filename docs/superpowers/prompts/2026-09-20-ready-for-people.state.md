@@ -69,3 +69,9 @@ Ports: A 4201, B 4202, C 4203, D 4204, E 4205, F 4206, G 4207 (PHOSPHOR_PORT), d
 - D correct reviewer died at the limit before reporting; D merged on the secure ACCEPT plus D's own DOM evidence (card-proof.json) and the lead's test runs. Anxiety pass over D's rows runs with the harness below.
 - Final main checks: typecheck 0; npm test 3333/3333; e2e 29/29; scripted eval 29/29; cargo test 27/27; sweep 5 of 6 (the local-address check fails on history blobs that carry Karim's public address, on origin since 54ab3ba; the worktree is clean); gitleaks 181 hits, all the token-list and fixture class the G reviewers sampled; impeccable detect ui/ = []; button inventory 114 measurements, 0 problems.
 - Running: the anxiety harness on main (scripts/scratch/anxiety/main-final), the app build (npm run app:build).
+
+## Done (2026-09-21 00:50 PDT)
+- Final main: a343ae1 plus docs; 0.8.0 installed at /Applications/Phosphor.app (health ok, version 0.8.0, audit chain ok, locked) and running; DMG sha256 168b52ab...36f3a6 at src-tauri/target/release/bundle/dmg/ (updater signature step needs TAURI_SIGNING_PRIVATE_KEY, CI's).
+- Final gates: typecheck 0; npm test 3334/3334; e2e 29/29; scripted eval 29/29; cargo 27/27; latency proof PASS; detector []; inventory 114/0; sweep 5 of 6 (history blobs with his public address).
+- Anxiety: run 2 (complete, judged by OpenRouter claude-sonnet-5) 39 pass 46 fail 13 unreachable; the judge's reasons clustered and the cheap product fixes landed (e6341c2, a343ae1); run 3 lost the judge to OpenRouter HTTP 402 after 33 rows (6 flipped to pass). A full judged run on the final main needs credits or --judge claude-p; leg b needs Jev's credits.
+- Left to Karim: live eval, the real-money proof (needs about 10 USDC in intents), the judged rerun, the two product decisions (pocket names on cards, the dock mirroring the transcript card).
