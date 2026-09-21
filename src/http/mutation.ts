@@ -17,6 +17,157 @@ import type { JsonBody } from './respond.ts';
 import { pollPrice } from './chart.ts';
 import { PROJECT_DIR } from './context.ts';
 import type { Ctx } from './context.ts';
+import {
+  agentById,
+  checkAgent,
+  connectionLine,
+  readPick,
+  registerAgent,
+  scanAgents,
+  writePick,
+} from '../agents-catalog.ts';
+import type { AgentCheck, AgentId, ConnectionSpec } from '../agents-catalog.ts';
+import { savePolicyChecked } from '../policy/file.ts';
+import { renderSentences } from '../policy/render.ts';
+import { AXIS_CEILING_USD } from '../policy/engine.ts';
+import { mergePatch, money } from '../proposals/lifecycle.ts';
+
+/* ---------- the agent connection ---------- */
+
+/* What the proxy needs to find THIS app: the node that runs it, the server file, the port and
+   the data directory this boot writes its seat secret into. One place, read by the window's
+   route and by the shell's menu item through GET /api/connection, so the two lines are the same
+   bytes (they used to be built twice and differ: the window's had no environment, and the
+   packaged app's proxy read the committed config.json's port instead of the installed one).
+   Packaged, the node is the bundled runtime beside the shell binary, which is this process; in a
+   checkout it is whatever `node` the person's shell finds. PHOSPHOR_APP_DATA is the shell's own
+   mark on the backend it started (src-tauri/src/backend.rs), and nothing else sets it. */
+export function connectionSpec(ctx: Ctx): ConnectionSpec {
+  const packaged = process.env.PHOSPHOR_APP_DATA === '1';
+  const cfg = (ctx as Partial<Ctx>).cfg;
+  return {
+    nodeBin: packaged ? process.execPath : 'node',
+    serverPath: path.join(PROJECT_DIR, 'src', 'mcp.ts'),
+    port: cfg?.port ?? 4177,
+    dataDir: cfg?.dataDir ?? path.join(PROJECT_DIR, 'state'),
+  };
+}
+
+function dataDirOf(ctx: Ctx): string {
+  return (ctx as Partial<Ctx>).cfg?.dataDir ?? path.join(PROJECT_DIR, 'state');
+}
+
+/* The agent a request names, the one picked earlier, or Claude Code, in that order. A name the
+   catalog does not know is null rather than a fallback: a picker that quietly checked Claude
+   Code when asked about something else would be the picker lying. */
+function agentFor(ctx: Ctx, asked: unknown): AgentId | null {
+  if (asked !== undefined && asked !== null && asked !== '') return agentById(asked)?.id ?? null;
+  return readPick(dataDirOf(ctx))?.agent ?? 'claude';
+}
+
+/* Who is on the door right now. Names are agent-authored and the window renders them as text,
+   never as markup, exactly as it does the roster. */
+function connectedNow(ctx: Ctx): Array<{ name: string; role: string; calls: number }> {
+  const agents = (ctx as Partial<Ctx>).agents;
+  if (agents === undefined) return [];
+  return agents.roster().map((member) => ({
+    name: member.client || member.label || member.session,
+    role: member.role,
+    calls: member.ops,
+  }));
+}
+
+/* The connection payload for one agent: the line to paste (null for Claude Desktop, which has
+   nothing to connect), whether the app writes the registration itself, whether it can start the
+   agent in-app, and who is already connected. */
+export function connectionPayload(ctx: Ctx, agent: AgentId): Record<string, unknown> {
+  const entry = agentById(agent);
+  return {
+    agent,
+    name: entry?.name ?? agent,
+    command: connectionLine(agent, connectionSpec(ctx)),
+    registers: entry?.registers ?? false,
+    inApp: entry?.inApp ?? false,
+    picked: readPick(dataDirOf(ctx))?.agent ?? null,
+    connected: connectedNow(ctx),
+  };
+}
+
+/* GET /api/connection?agent=<id>: the same payload, for the shell's Copy MCP Config menu item,
+   which has a port and no window token. It reads nothing secret: the absolute path of a file
+   already on this disk, this app's port and data directory, and the names external clients
+   chose for themselves. The Host gate in router.ts is what stands in front of it. */
+export function handleConnectionRead(ctx: Ctx, _req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
+  const agent = agentFor(ctx, url.searchParams.get('agent') ?? undefined);
+  if (agent === null) return fail(res, 400, `no agent named ${String(url.searchParams.get('agent'))}`);
+  sendJson(res, 200, connectionPayload(ctx, agent));
+}
+
+/* Whether an agent this app started is alive. A pick never stops or restarts one: the person
+   turns it off from the chat (the Turn off card), then changes the pick. */
+function inAppRunning(ctx: Ctx): boolean {
+  const chats = (ctx as Partial<Ctx>).chats;
+  if (chats === undefined) return false;
+  return chats.all().some((chat) => chat.driver.status().running);
+}
+
+/* The check the picker and the vault panel both draw from: the catalog's four-state answer plus
+   the connection line for that agent. `wasPicked` turns "not on this Mac yet" into "no longer
+   on this Mac" for the agent the person chose earlier and has since removed. */
+async function checkFor(ctx: Ctx, agent: AgentId): Promise<AgentCheck> {
+  const picked = readPick(dataDirOf(ctx))?.agent ?? null;
+  return checkAgent(agent, { wasPicked: picked === agent });
+}
+
+/* ---------- the onboarding threshold ---------- */
+
+/* The one figure the onboarding asks for, written into policy.json by the person's own click at
+   the window. It goes through the policy file's loader and its schema, the engine's absolute
+   ceiling, the never-asks rule the engine holds a patch to, and the file's checked writer:
+   never a second writer, never a write the schema has not seen. Refusals are one sentence with
+   the figures in it, because this is the same guarantee as a decision route: the person clicked,
+   and the app tells them what that click did or why it did nothing. */
+export function thresholdRefusal(usd: unknown, capUsd: number | null): string | null {
+  if (typeof usd !== 'number' || !Number.isFinite(usd)) return 'The threshold has to be a number of dollars.';
+  if (usd <= 0) return 'The threshold has to be above $0, or nothing would ever run on its own.';
+  const ceiling = AXIS_CEILING_USD.humanClickAboveUsd;
+  if (usd > ceiling) return `The threshold cannot go past ${money(ceiling)} from here. Edit policy.json to go higher.`;
+  if (capUsd !== null && usd >= capUsd) {
+    return `Asking above ${money(usd)} with a hard cap of ${money(capUsd)} means nothing ever asks you. Keep the threshold under ${money(capUsd)}.`;
+  }
+  return null;
+}
+
+async function handleThreshold(ctx: Ctx, body: JsonBody, res: http.ServerResponse): Promise<void> {
+  const policy = ctx.getPolicy();
+  if (policy === null) {
+    fail(res, 409, 'The policy file cannot be read, so nothing can be changed. Fix or remove policy.json and start again.');
+    return;
+  }
+  const raw = body.usd;
+  const usd = typeof raw === 'number' ? Math.round(raw * 100) / 100 : typeof raw === 'string' && raw.trim() !== '' ? Math.round(Number(raw) * 100) / 100 : NaN;
+  const refusal = thresholdRefusal(usd, policy.outbound.maxPerTransactionUsd);
+  if (refusal !== null) {
+    fail(res, 400, refusal);
+    return;
+  }
+  const previous = policy.outbound.humanClickAboveUsd;
+  const next = mergePatch(policy, { outbound: { humanClickAboveUsd: usd } });
+  next.sentences = renderSentences(next);
+  if (!savePolicyChecked(dataDirOf(ctx), next)) {
+    fail(res, 409, 'The new rule did not pass the policy check, so the file was left as it was.');
+    return;
+  }
+  ctx.audit.append('policy_changed', `human set the ask threshold to ${money(usd)} at the window (was ${money(previous)})`, {
+    axis: 'humanClickAboveUsd',
+    from: previous,
+    to: usd,
+    by: 'human',
+    where: 'onboarding',
+  });
+  ctx.sse.broadcastState();
+  sendJson(res, 200, { ok: true, threshold: usd, from: previous });
+}
 
 /* The line the app appends to every message the human sends: which screen the window is on,
    which market is focused, and how many plans are waiting. Three facts the app already holds
@@ -103,25 +254,87 @@ export async function handleMutation(
     return;
   }
 
+  if (route === '/api/policy/threshold') {
+    await handleThreshold(ctx, body, res);
+    return;
+  }
+
   if (route === '/api/driver') {
     const action = String(body.action ?? '');
 
-    /* The connection line for THIS installation, plus who is already on the door. It is
-       checked before the chat is resolved because, like the plus, it is not ABOUT a chat.
+    /* The connection line for THIS installation, per agent, plus who is already on the door.
+       It is checked before the chat is resolved because, like the plus, it is not ABOUT a chat.
 
        It used to live in a menu bar item on the packaged app only, which meant a person
-       running from a terminal had to read a README to find the one string they needed. It
-       reads nothing secret: an absolute path to a file already on this disk, and the names
-       external clients chose for themselves. Those names are agent-authored and the window
-       renders them as text, never as markup, exactly as it does the roster. */
+       running from a terminal had to read a README to find the one string they needed, and
+       it used to be the Claude line for everyone. The line is now built once, in
+       src/agents-catalog.ts, for the agent named here, the one picked earlier, or Claude Code.
+       It reads nothing secret: an absolute path to a file already on this disk, and the names
+       external clients chose for themselves, which the window renders as text, never markup. */
     if (action === 'connection') {
+      const agent = agentFor(ctx, body.agent);
+      if (agent === null) return fail(res, 400, `no agent named ${String(body.agent)}`);
+      return sendJson(res, 200, connectionPayload(ctx, agent));
+    }
+
+    /* THE PICKER'S THREE QUESTIONS. Each is a fact about this Mac, answered inside three
+       seconds by a `--version` call and a login probe that never leave the machine; none of
+       them is about a chat, so all three sit above the chat resolution.
+       agent-scan: every agent the app can probe, for the tags on the tiles.
+       agent-check: one agent, for the sentence under the tiles and the vault panel's line.
+       agent-pick: the person chose one. The choice is written to <dataDir>/agent.json, the
+       check runs, and where the agent owns a config the app writes the registration into it
+       through the vendor's own `mcp add`. A pick never stops or restarts an agent this app
+       started: with one running it is refused with the sentence that says to turn it off first,
+       so the switch always goes through the Turn off card and never around it. */
+    if (action === 'agent-scan') {
+      const agents = await scanAgents();
+      return sendJson(res, 200, { ok: true, agents, picked: readPick(dataDirOf(ctx))?.agent ?? null });
+    }
+
+    if (action === 'agent-check') {
+      const agent = agentFor(ctx, body.agent);
+      if (agent === null) return fail(res, 400, `no agent named ${String(body.agent)}`);
+      const check = await checkFor(ctx, agent);
+      return sendJson(res, 200, { ok: true, check, ...connectionPayload(ctx, agent) });
+    }
+
+    if (action === 'agent-pick') {
+      const agent = agentById(body.agent)?.id ?? null;
+      if (agent === null) return fail(res, 400, `no agent named ${String(body.agent)}`);
+      const before = readPick(dataDirOf(ctx))?.agent ?? null;
+      if (before !== agent && inAppRunning(ctx)) {
+        return sendJson(res, 200, {
+          ok: false,
+          refused: 'running',
+          sentence: 'Your assistant is running. Turn it off in the chat, then change it here.',
+          picked: before,
+        });
+      }
+      const pick = writePick(dataDirOf(ctx), agent);
+      ctx.audit.append('app_start', `the human picked ${agentById(agent)?.name ?? agent} as the agent (was ${before ?? 'none'})`, {
+        agent,
+        from: before,
+        pickedAt: pick.pickedAt,
+      });
+      const check = await checkFor(ctx, agent);
+      /* The registration is written only where there is a binary to write it with: an agent
+         that is not on this Mac gets its sentence and the line to paste, and nothing runs. */
+      const registration = check.state === 'not_installed' || check.state === 'unknown_client'
+        ? { ok: true, wrote: false, detail: null }
+        : await registerAgent(agent, connectionSpec(ctx));
+      if (registration.detail !== null || !registration.ok) {
+        ctx.audit.append('app_start', registration.ok
+          ? `${agent} registration ${registration.wrote ? 'written' : 'not needed'}${registration.detail === null ? '' : `: ${registration.detail}`}`
+          : `${agent} registration failed: ${registration.detail ?? 'no detail'}`, { agent, ok: registration.ok, wrote: registration.wrote });
+      }
+      ctx.sse.broadcastState();
       return sendJson(res, 200, {
-        command: `claude mcp add phosphor -- node ${path.join(PROJECT_DIR, 'src/mcp.ts')}`,
-        connected: ctx.agents.roster().map((member) => ({
-          name: member.client || member.label || member.session,
-          role: member.role,
-          calls: member.ops,
-        })),
+        ok: true,
+        check,
+        registered: registration.ok && registration.wrote,
+        registrationFailed: !registration.ok,
+        ...connectionPayload(ctx, agent),
       });
     }
 

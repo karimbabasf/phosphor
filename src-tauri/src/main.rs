@@ -129,27 +129,27 @@ pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// The `claude mcp add-json` line for this installation, with the real paths filled in.
+/// The connection line for this installation, read off the backend that built it.
 ///
-/// src/mcp.ts resolves its port from the committed config.json beside it, which would miss a port
-/// changed in the installed config.local.json, so the port is pinned explicitly here instead.
-/// The data directory is pinned for the same reason: the proxy reads this boot's seat secret off
-/// <data>/state/agent.secret, which the backend writes at boot and which every /api/mcp op has to
-/// carry, and the payload's own state/ is inside a read-only bundle where no such file ever lands.
-fn mcp_command(payload: &Path, data: &Path, port: u16) -> Result<String, String> {
-    let node = node_binary()?;
-    let server = serde_json::json!({
-        "command": node.to_string_lossy(),
-        "args": [payload.join("src").join("mcp.ts").to_string_lossy()],
-        "env": {
-            "PHOSPHOR_PORT": port.to_string(),
-            "PHOSPHOR_DATA_DIR": data.join("state").to_string_lossy(),
-        },
-    });
-    Ok(format!(
-        "claude mcp add-json phosphor '{}'",
-        serde_json::to_string(&server).map_err(|e| e.to_string())?
-    ))
+/// This used to build a second copy of the line here, with the pinned port and data directory
+/// the proxy needs, while the window handed out a third without them: two sources of one truth,
+/// and they differed. The backend is the one builder now (src/agents-catalog.ts, per agent, with
+/// the environment in every mode), and GET /api/connection answers with the line for the agent
+/// the person picked. No token on that route and nothing secret in the answer: a path already on
+/// this disk, this app's port and data directory. The bundled runtime is still checked first so
+/// a broken bundle fails with the same sentence it always did, before the port is asked.
+fn mcp_command(_payload: &Path, _data: &Path, port: u16) -> Result<String, String> {
+    node_binary()?;
+    let head = format!("GET /api/connection HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    let raw = backend::request_within(port, &head, None, Duration::from_secs(5))
+        .ok_or_else(|| format!("Phosphor is not answering on 127.0.0.1:{port}, so there is no line to copy yet."))?;
+    let body = raw.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+    let parsed: serde_json::Value =
+        serde_json::from_str(body.trim()).map_err(|e| format!("the app's answer could not be read: {e}"))?;
+    match parsed.get("command").and_then(|c| c.as_str()) {
+        Some(command) => Ok(command.to_string()),
+        None => Err("The agent you picked has no line to paste. Pick an agent in the Vault tab's Agent panel first.".to_string()),
+    }
 }
 
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {

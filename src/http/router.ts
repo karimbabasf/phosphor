@@ -16,7 +16,7 @@ import { isDraining } from '../draining.ts';
 import { capLabel, errText, fail, intParam, sendCachedJson, sendJson, serveStatic } from './respond.ts';
 import { buildStateCached, proposalPage, transactionsPayload } from './state.ts';
 import { chartPayload, handleChartWrite, handleSnapshotDelivery, partParam, sendCandles, slotParam } from './chart.ts';
-import { handleMutation } from './mutation.ts';
+import { handleConnectionRead, handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
 import { handleMcp } from './mcp.ts';
 import { handleTermsAccept } from './terms.ts';
@@ -85,6 +85,10 @@ const GET: Record<string, Route> = {
   '/api/transactions': (ctx, _req, res) => sendJson(res, 200, transactionsPayload(ctx)),
   '/api/trade': (ctx, _req, res) => sendJson(res, 200, ctx.trade.payload()),
   '/api/driver': (ctx, _req, res) => sendJson(res, 200, ctx.chats.payload()),
+  // The connection line for one agent, for the shell's menu item: no token, nothing secret in
+  // it, the Host gate above in front of it. The window reads the same builder through the
+  // token-checked driver route. See connectionSpec in mutation.ts.
+  '/api/connection': (ctx, req, res, url) => handleConnectionRead(ctx, req, res, url),
   // Money arriving is the one thing nobody should have to unlock for, so this reads the
   // addresses out of the keystore's plaintext header and answers while locked.
   '/api/receive': (ctx, _req, res) => handleReceive(ctx, res),
@@ -117,6 +121,9 @@ const POST: Record<string, Route> = {
   // token like every human write; the agent's own switch is the set_view_mode op on /api/mcp.
   '/api/view': (ctx, req, res) => handleMutation(ctx, '/api/view', req, res),
   '/api/driver': (ctx, req, res) => handleMutation(ctx, '/api/driver', req, res),
+  // The onboarding threshold: the person's own click at the window, so the window token like
+  // every human write, and the policy file's own loader, schema and writer behind it.
+  '/api/policy/threshold': (ctx, req, res) => handleMutation(ctx, '/api/policy/threshold', req, res),
   // Custody. Every one of these carries the window token, and no agent op reaches any of them:
   // there is no unlock op in /api/mcp and no unlock tool in src/mcp.ts.
   '/api/unlock': (ctx, req, res) => handleUnlock(ctx, req, res),
