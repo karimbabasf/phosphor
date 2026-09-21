@@ -28,6 +28,8 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { agentById, findAgentBin } from './agents-catalog.ts';
+
 // The only tools the driver's child is allowed to hold. Phosphor's own MCP tools are matched by
 // prefix; every built-in is a surprise. Read, Grep and Glob are absent on purpose: the CLI
 // operator profile keeps them so a developer can read the code being driven, and the person
@@ -229,29 +231,18 @@ export type Driver = ReturnType<typeof createDriver>;
 
 // Where `claude` lives when nobody set a PATH. A GUI process launched from Finder inherits
 // /usr/bin:/bin:/usr/sbin:/sbin and nothing else, so the install location every developer takes
-// for granted is exactly the one the packaged app cannot see. Config wins, then these, then the
-// login shell as a last resort.
-const CLAUDE_CANDIDATES = [
-  '.local/bin/claude',
-  '.claude/local/claude',
-  '.bun/bin/claude',
-  '.volta/bin/claude',
-];
-const CLAUDE_ABSOLUTE = ['/opt/homebrew/bin/claude', '/usr/local/bin/claude', '/usr/bin/claude'];
-
+// for granted is exactly the one the packaged app cannot see. The places are the catalog's
+// (src/agents-catalog.ts, the Claude Code entry), so the picker's check and this spawn find the
+// same binary: two lists of the same paths drifted once, and a check that says installed while
+// the start says not is the picker lying. Config wins, then PATH, then the catalog's places.
 export function resolveClaudeBin(override?: string): string {
   if (override) {
     if (!fs.existsSync(override)) throw new Error(`driver: claudeBin is set to ${override}, which does not exist`);
     return override;
   }
-  const home = process.env.HOME ?? '';
-  for (const rel of CLAUDE_CANDIDATES) {
-    const full = path.join(home, rel);
-    if (fs.existsSync(full)) return full;
-  }
-  for (const full of CLAUDE_ABSOLUTE) {
-    if (fs.existsSync(full)) return full;
-  }
+  const entry = agentById('claude');
+  const found = entry === null ? null : findAgentBin(entry);
+  if (found !== null) return found;
   throw new Error(
     'driver: the claude CLI was not found. Install Claude Code, or set driver.claudeBin in config.json to its full path.',
   );
