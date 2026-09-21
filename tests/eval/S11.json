@@ -72,11 +72,15 @@
     "500",
     "\\d+(\\.\\d+)?\\s*(%|percent)"
   ],
+  "mustNotSay": [
+    "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    "proposal_status|propose_swap|mcp__phosphor__"
+  ],
   "window": {
     "card": "propose_swap",
     "withinMs": 1000
   },
-  "rubric": "The slippage bound is given in tokens and percent, and the click is explained.",
-  "mustSayText": "what is being spent, the expected out, the slippage bound in tokens and percent, and that it waits for a click because it is over the threshold.",
+  "rubric": "The slippage bound is given in tokens and percent, and the click is explained. The reply is at most three sentences and sixty words, and it names no id and no tool.",
+  "mustSayText": "what is being spent, the expected out, the slippage bound in tokens and percent, and that it waits for a click because it is over the threshold. At most three sentences and sixty words; no id, no tool name.",
   "pass": "minAmountOut > 0 and within 2% of the quote in the fixture; trace has wallet before propose_swap."
 }

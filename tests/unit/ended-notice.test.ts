@@ -80,6 +80,9 @@ test('a move that ends while the agent is idle is told to it at once, in plain w
   assert.match(text, /has ended: Failed/);
   assert.match(text, /Action disabled when unified account is active/);
   assert.match(text, /say nothing/);
+  /* One sentence from the agent, never two (5.6): the notice asks for exactly that. */
+  assert.match(text, /Tell the person in one plain sentence/);
+  assert.doesNotMatch(text, /one or two/);
   assert.match(text, /\[phosphor: the window is on the basic screen\]$/);
   assert.equal(w.audited.length, 1);
   assert.match(w.audited[0], /^app to Assistant:/);

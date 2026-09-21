@@ -88,6 +88,7 @@ test('the role keeps the agent from reading the receipt back out in prose', () =
      this now pins: one sentence, and the figure that changed is in it. */
   const text = role();
   assert.ok(text.includes('say so in one sentence'), 'the rule is gone');
+  assert.ok(text.includes('Say so in one plain sentence'), 'the ending notice may still take two sentences');
   assert.ok(text.includes('with the figure that changed'), 'the landed move has no figure in its sentence');
   assert.ok(text.includes('never the card\'s whole table told again'), 'the rule against reprinting the card is gone');
   assert.ok(text.indexOf('say so in one sentence') > text.indexOf('HOW TO ANSWER'), 'the rule is not an answering rule');
@@ -109,8 +110,12 @@ test('the role keeps the agent to one line while a proposal waits for the click'
      live runs: a 500 USDC swap answered without the 500 in it, a withdraw without either fee or
      the percent. So the cap is a shape now, one or two sentences and never a paragraph, and what
      goes in them is the figures. The ban that stands is on telling the card's whole table again. */
-  const rule = text.slice(at, at + 520).replace(/\n/g, ' ');
-  assert.ok(rule.includes('One or two sentences of that, never a paragraph'), 'the rule does not cap the reply');
+  /* Capped again on 2026-09-20 (criterion 5.5): three sentences, sixty words, the decision on the
+     turn it is proposed, and only the figure that changed on every turn after, so the card is
+     never told twice. The money stays in the decision sentence: the six live runs above are why. */
+  const rule = text.slice(at, at + 640).replace(/\n/g, ' ');
+  assert.ok(rule.includes('at most three sentences and sixty words'), 'the rule does not cap the reply');
+  assert.ok(rule.includes('only the figure that changed, no number the card already shows'), 'a later turn may still reprint the card');
   assert.ok(rule.includes('what it costs in the token and as a percent'), 'the money is not in the waiting reply');
   assert.ok(rule.includes('where it lands, and whether it waits'), 'the destination and the click are not named');
   // The stage words themselves are not restated here: src/proposals/view.ts owns that table and
@@ -285,9 +290,14 @@ test('the role is not so long it stops being read', () => {
   // app-authored turn is, 250 characters, and they came out of the start paragraph (its
   // preamble about text written before the session, the "not two or three paragraphs" echo),
   // the banner sentence and the refusal paragraph's last clause. Measured 19,491.
+  //
+  // 20,500 on 2026-09-20 (ready for people, node D): three rules the criteria name landed as
+  // surface the agent has to carry, the app's words and the banned ones with the id and tool
+  // name ban (3.1), the three-sentence sixty-word cap on a move (5.5), and what a refusal owes
+  // (7). The JSON and error-string line folded into the first of them. Measured 20,396.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 19500, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 20500, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -335,11 +345,11 @@ test('the role gives the agent a voice, and the window draws the numbers', () =>
     'Numbers keep their unit and their sign',
     'One next step at most, phrased as an offer',
     'A short answer carries no headings',
-    'Never paste raw JSON, an error string, or a hash longer than 12 characters',
-    '"the venue\nis not answering", not "422 Failed to deserialize"',
+    'raw JSON, a venue\'s error string',
+    '"the venue is not answering", not "422 Failed to deserialize"',
     '`switch` for a screen, `deposit` for an address, `trade_focus` for a position or a chart',
-    'Never say "failed" unless the tool said failed',
-    'wrong-network or\nlost-funds warning is one plain sentence',
+    'Never say "failed" unless the tool said\nfailed',
+    'wrong-network or lost-funds warning is one plain sentence',
     'No exclamation marks, no emoji, no em dashes and no en\ndashes',
   ]) {
     assert.ok(text.includes(rule), `the voice lost: ${rule}`);
@@ -371,7 +381,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // the same reasons. The number is still a ceiling, not a target.
   // 20,700 on 2026-09-19, tracking the plain ceiling above: the index gave back everything it had
   // and four rules went on. Measured 20,501. Still a ceiling, not a target.
-  assert.ok(text.length < 20700, `the role is ${text.length} characters with a full profile`);
+  // 21,700 on 2026-09-20, tracking the plain ceiling above by the same 900: the words, the cap
+  // and the gate rules (see there). Measured 21,477.
+  assert.ok(text.length < 21700, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {

@@ -149,7 +149,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
         does: 'where one money move is now, as the object the card is drawing: stage, what it waits on, seconds so far against the typical figure, amounts, hashes, any error. Quote its words.',
       },
       { tool: 'proposals', does: 'recent money moves, newest first, each as that same object. Use it when you need a proposal and hold no id.' },
-      { tool: 'diagnose', does: "one move's whole story: its view, its own audit lines, what the router last said, what the venue holds now. For why something is slow or failed." },
+      { tool: 'diagnose', does: "one move's whole story: its view, its own audit lines, what the transfer last reported, what the venue holds now. For why something is slow or failed." },
       { tool: 'show', does: 'draws a proposal, a transaction, a position or the deposit card in the window. When somebody asks to SEE a thing, draw it and say one line, never read its fields out loud.' },
     ],
   },
@@ -277,7 +277,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       },
       {
         tool: 'propose_hl_withdraw',
-        does: 'bring collateral back from Hyperliquid into the NEAR Intents balance. Always a human click, refused while a position is open, and it costs a flat 1.2 USDC on top of 25 bp, so say the percentage first.',
+        does: 'bring collateral back from Hyperliquid into the NEAR Intents balance. Always a human click, refused while a position is open, and it costs a flat 1.2 USDC on top of 0.25 percent, so say the percentage first.',
       },
       { tool: 'propose_swap', does: 'swap inside NEAR Intents by signing an intent. Nothing moves on chain.' },
       {

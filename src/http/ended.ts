@@ -104,7 +104,7 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     if (v.error !== null) ending += ` ${plain(v.error.message)}`;
     return (
       `[phosphor: the ${kind} you proposed (${named}) ${ending} ` +
-      'Tell the person in one or two plain sentences: what ended, how, and what it means for their money. ' +
+      'Tell the person in one plain sentence: what ended and what it means for their money, with the figure that changed. ' +
       'If they already know, say nothing.]'
     );
   }
