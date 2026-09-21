@@ -195,3 +195,117 @@ If Hyperliquid answers the sendAsset with status "err", the rail reports the ven
 nothing moved: that is the one fact this branch could not prove read-only, and it decides whether
 8.6's first clause holds live. Record the 1Click hashes, the ledger hash under the nonce, the
 delta type of that ledger row (expected "send"), and the balances before and after on both sides.
+
+## B2 review fixes
+
+Fresh builder B2 on the secure review's rejection (review-b-secure.md: one Medium, two Lows, one
+Info), built on 96ef9f7 in this worktree. Evidence: evidence-b/b2-eval.log; the reviewer's scratch
+tests under scripts/scratch/review-b-secure/ (gitignored) all go green, their output is quoted below.
+
+### Commits (oldest first)
+
+- 8915b46 The withdraw row hears the nonce before the ledger read, and a retry that cannot run is
+  unconfirmed rather than a throw (M1)
+- a7ee237 The withdraw row carries its intents pocket from the first word, and a withdrawal is
+  confirmed by the balance rising or not at all (L1)
+- b8d7d79 The HL card floor is cut from the base-unit floor the guarantee is checked against, never
+  rounded from the draft's double (L2)
+- b8be1e7 The classic account's move to spot is computed in base units, so the transfer never refuses
+  a float tail after the quote was minted (I2)
+- 1e360d7 The sweep judges a withdrawal before the venue read, so a settling sentence never routes it
+  to the deposit's account check (L1, second part; closes follow-up 1 of section 6)
+
+### The four items
+
+- M1 (hypercore-withdraw.ts execute). `tell(hooks, { handle, nonce, quote, pocket })` fires the moment
+  the first sendAsset is answered or unanswered, before the ledger read and the retry; the retry is
+  in try/catch and a throw there is unconfirmed with the same nonce. Nothing throws after the
+  signature. Test: hypercore-withdraw.test.ts "a send with no reply whose retry cannot read the
+  account is unconfirmed with its nonce, told to the row before the ledger read, and never a throw"
+  (red on 96ef9f7: `Error: hyperliquid clearinghouseState failed: 429 rate limited`). Reviewer's
+  retry-throw.test.ts: `rail threw: null`, `nonce or handle reached the row before the throw: true`,
+  1 pass 0 fail. hl-crash-recovery stays green.
+- L1 (types.ts, execute.ts, reconcile.ts, hypercore-withdraw.ts). The pocket (intentsBefore and the
+  floor) rides with the first tell and the executor persists it on the executing row, so a
+  crash-recovered row is settled by the verifier rise the way a live one is; the sweep never writes
+  executed on a pocketless hl_withdraw, it stays needs_reconciliation with the nonce and its own
+  sentence, ahead of the deposit's venue read; and a verifier that gives no before-read refuses
+  before any quote (mirror of the deposit rail's own before-read refusal), so no row this rail
+  writes is without its pocket. Tests: hypercore-withdraw.test.ts "the first word to the row carries
+  the intents pocket beside the nonce and the signed quote, and an unconfirmed send keeps it" and
+  "a verifier that would not answer before the send refuses before any quote: nothing is minted,
+  nothing is signed"; execute-evidence.test.ts "a pocket a rail hands back mid-flight is on the row
+  while it is still executing, and the boot sweep keeps it"; hl-crash-recovery.test.ts "withdraw,
+  killed while polling on a row with no pocket: SUCCESS alone never confirms it, and it stays
+  unconfirmed with its nonce" (two rows, the second with the settling sentence). The "killed at
+  Sending it" test now seeds the row the executor itself writes from the rail's first tell
+  (withdrawRowAtSendingIt, a live harness plus slowRail), not a pocket typed by hand (frozen rule
+  10). Reviewer's crash-no-pocket.test.ts: `after SUCCESS sweep: needs_reconciliation ok: false`,
+  `verifier balance still: 0 | rail executions: 0`, 1 pass 0 fail.
+- L2 (hypercore-deposit.ts, hypercore-withdraw.ts priceLines). The deposit card prints floorUsdc
+  (the check's base-unit floor cut to six places) in arrives, arrivesAtLeast, activity and the
+  summary; the withdraw card prints formatUnits(minReceivedBase). Tests: hypercore-deposit.test.ts
+  "the card floor is cut to six places from the base-unit floor the guarantee is checked against,
+  and never sits above it" (95,286-amount grid plus the 7.041874 simulation, 6.563706 where toFixed
+  said 6.563707); hypercore-withdraw.test.ts "the card floor is the base-unit floor the guarantee is
+  checked against, formatted from that integer" (5.124625 in: 4.854127 where toFixed said 4.854126).
+  Reviewer's rounding.ts, pointed at the rail's own formatter: `deposit (card 6dp vs check 8dp): card
+  above check 0, below 94142, equal 1144` (was above 47,044); `withdraw (6dp vs 6dp): card above
+  check 0, below 0, equal 95286` (was below 145).
+- I2 (hypercore-withdraw.ts plan). moveToSpotUsdc computes needed minus spot in six-decimal base
+  units, the spot balance cut toward zero, formatted once. Tests: hypercore-withdraw.test.ts "the
+  classic account move to spot is exact at six places for every amount and spot balance, never a
+  float tail the transfer refuses" (the reviewer's 219,344-pair grid) and "a standard account with a
+  spot balance that made the old subtraction carry a tail still moves the exact shortfall and sends"
+  (red on b8d7d79 with the reviewer's own sentence, "amount 4.901002999999999 needs more than 6
+  decimals"). Reviewer's movetospot.ts: `0 of 219344 combinations refused` (was 69,722).
+
+### Counts (tip 1e360d7)
+
+- `npm run typecheck`: exit 0.
+- `npm test`: 3106 pass, 0 fail (was 3098 at 96ef9f7; 9 tests added, 1 replaced: the unmeasured
+  settling test, whose path no longer exists).
+- `npm run eval`: 29 pass, 0 fail, 0 xfail, 0 error (evidence-b/b2-eval.log; run because two
+  refusal sentences and the floor's formatting rule changed).
+- gitleaks over 96ef9f7..HEAD: 4 commits scanned, no leaks (the fifth commit holds no new strings).
+  semgrep p/typescript, p/nodejs, p/secrets over the five changed source files: 0 findings.
+
+### Files outside the named list, by line
+
+- src/types.ts:423-429: RailHooks.onEvidence takes `pocket?: PocketRead` (one field, plus its
+  comment). The hook's type lives there and nowhere else; without it the rail cannot hand the pocket
+  over. The lead may prefer this as a request; it is one line to revert.
+- src/proposals/execute.ts:309-311 (comment) and :319: runRail's onEvidence persists `e.pocket` when
+  present. Nothing else in the executor changed; the final persist still takes the rail's own pocket
+  from the result, so the REFUNDED and FAILED answers, which carry none, are as they were.
+- src/proposals/reconcile.ts:265-278: the hl_withdraw branch of reconcileByHandle's SUCCESS, and
+  only that.
+
+### Decisions
+
+- L1, 8.3 and 8.5: a verifier that will not give the before-read refuses before the quote rather
+  than sending unmeasured. The brief asked that a row with no pocket never confirm on SUCCESS; a
+  send made with no before-read would then be a row the app could never close on its own, which
+  8.5 forbids, and the deposit rail already refuses on its own before-read, so the withdraw rail
+  now does the same. SETTLING_WITHDRAW_UNMEASURED and the unmeasured branch of proveBothSides are
+  gone; the sweep's no-pocket sentence covers rows written before this build.
+- L2, 8.1: the withdraw card is formatted from the check's integer as well, so both rails print the
+  one number the guarantee is held to. The brief asked only that the withdraw stay at 0 above; it
+  was 145 below, and 8.1 asks for equality.
+- 11.1: every fix carries a test red on its parent commit and green on the fix; the red runs were
+  done by stashing the source and running the new test file against the parent (the 429 throw, the
+  missing pocket, the missing export, the deposit sentence, the float tail).
+
+### Follow-ups found, not fixed
+
+- src/proposals/reconcile.ts reconcileByHandle: a sweep that hears SUCCESS never writes
+  providerStage, so a crash-recovered row the sweep holds at needs_reconciliation keeps its last
+  provider word (PROCESSING) and the card reads "On its way" where "Waiting for the venue to credit
+  it" is the truth (3.3, 8.4). Seen in the reviewer's crash-no-pocket output (`stage: PROCESSING`
+  after SUCCESS). Outside my slice of reconcile.ts; the fix is in `write()`'s evidence merge.
+- src/proposals/execute.ts judgeSettling: with the pocket on the row from "Sending it", a
+  crash-recovered withdrawal is judged by the intents balance from boot, so an unrelated USDC credit
+  inside the window can settle it, or call it a short fill. Same trade-off section 6 already
+  records for settling rows; the window is now the whole move rather than the crediting leg.
+- scripts/scratch/review-b-secure/rounding.ts and movetospot.ts were edited (gitignored) to call
+  floorUsdc and moveToSpotUsdc; the numbers above come from those edited copies.
