@@ -938,3 +938,41 @@ test('an over-the-line relay swap says how long its price holds and that the cli
   assert.equal(all(card, 'tcard-price')[0].hidden, true, 'the price line outlived the wait for the click');
 });
 
+test('a Hyperliquid move draws the quote on its landing leg and the floor in the facts, then the settled figure alone', () => {
+  /* The landing leg printed the floor (19.67) while the summary said about 19.75: two numbers
+     for one fact (node B's review, 2026-09-20). The same skeleton as the swap card now: "about"
+     off the quote on the leg, "at least" off arrivesAtLeast in the facts, one settled figure
+     after the venue credits it. A row whose quote named no expected figure keeps the floor. */
+  const world = build();
+  const draft = { kind: 'hl_withdraw', symbol: 'USDC', amount: 20, amountUsd: 20, minReceived: 19.67, from: '0x1', to: '0x1', counterparty: 'hypercore-withdraw' };
+  const row = (status: string, extra: Record<string, unknown> = {}) => withView({
+    id: 'w2', kind: 'hl_withdraw', status, createdAt: '2026-09-20T10:00:00Z', draft, verdict: { outcome: 'needs_approval', reasons: [] },
+    simulation: { ok: true, summary: 'withdraw', send: { arrives: '19.75', arrivesAtLeast: '19.67', feeUsd: 0.25, etaSeconds: 180 } }, ...extra,
+  });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_hl_withdraw', input: { amount: 20 }, data: row('pending') });
+  const card = world.cardNodes('move')[0];
+  const out = byAttr(card, 'data-leg').find((n: Any) => n.getAttribute('data-leg') === 'to') as Any;
+  assert.ok(out.textContent.includes('about 19.75 USDC') && out.textContent.includes('inside NEAR Intents'), out.textContent);
+  assert.ok(!out.textContent.includes('19.67'), 'the floor is on the leg: ' + out.textContent);
+  assert.equal(all(card, 'tcard-facts')[0].textContent, 'at least 19.67 USDC, fee $0.25');
+  assert.equal((card.textContent.match(/19\.67/g) || []).length, 1, 'the floor is printed twice');
+  assert.equal((card.textContent.match(/19\.75/g) || []).length, 1, 'the quote is printed twice');
+
+  world.proposals([row('executed', { decidedAt: '2026-09-20T10:00:20Z', decidedBy: 'human', settledAt: '2026-09-20T10:03:00Z',
+    result: { ok: true, detail: 'done', txids: ['abc'], evidence: { settledAmountOut: '19.72' } } })]);
+  const landed = byAttr(card, 'data-leg').find((n: Any) => n.getAttribute('data-leg') === 'to') as Any;
+  assert.ok(landed.textContent.includes('19.72 USDC'), landed.textContent);
+  assert.ok(!landed.textContent.includes('about') && !landed.textContent.includes('at least'), 'a settled figure is a fact: ' + landed.textContent);
+  assert.ok(!card.textContent.includes('19.75'), 'the quote outlived the settlement: ' + card.textContent);
+
+  /* The deposit side, and a quote with no expected figure keeps the floor on the leg. */
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_hl_deposit', input: { amount: 7 }, data: withView({
+    id: 'd2', kind: 'hl_deposit', status: 'pending', createdAt: '2026-09-20T10:05:00Z',
+    draft: { kind: 'hl_deposit', symbol: 'USDC', originAsset: 'nep141:eth-usdc', amount: 7, amountUsd: 7, minCredited: 5, from: '0x1', hlAccount: '0x1', counterparty: 'hypercore' },
+    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'deposit' },
+  }) });
+  const deposit = world.cardNodes('move')[1];
+  const credited = byAttr(deposit, 'data-leg').find((n: Any) => n.getAttribute('data-leg') === 'to') as Any;
+  assert.ok(credited.textContent.includes('at least 5 USDC') && credited.textContent.includes('to Hyperliquid'), credited.textContent);
+});
+

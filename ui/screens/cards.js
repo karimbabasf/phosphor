@@ -847,15 +847,23 @@
       move.recipient = isObject(d.recipient) ? d.recipient : (isObject(send.recipient) ? send.recipient : null);
       move.activity = sendSim && sendSim.activity ? String(sendSim.activity) : '';
       move.preflight = Array.isArray(data.preflight) && data.preflight.length ? data.preflight[data.preflight.length - 1] : null;
-    } else if (kind === 'hl_deposit') {
-      move.from = { symbol: d.symbol || args.symbol || 'USDC', place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
-      move.to = { symbol: 'USDC', place: 'hyperliquid', amount: num(d.minCredited), floor: true };
-    } else if (kind === 'hl_withdraw') {
-      /* The out leg of every rail below is the FLOOR the rail holds the venue to, not a quote,
-         and it drew as a plain figure while the agent quoted the expected amount: two numbers
-         and no reason on one card (2026-09-20). `floor` makes the leg say "at least". */
-      move.from = { symbol: 'USDC', place: 'hyperliquid', amount: num(d.amount !== undefined ? d.amount : args.amount) };
-      move.to = { symbol: 'USDC', place: 'intents', amount: num(d.minReceived), floor: true };
+    } else if (kind === 'hl_deposit' || kind === 'hl_withdraw') {
+      /* The same shape as the swap card: the leg says what the quote expects ("about"), the
+         facts line holds the floor the rail holds the venue to ("at least"), and the settled
+         figure replaces both once the row confirms. The leg used to print the floor while the
+         summary said the quote, two numbers for one fact (node B's review, 2026-09-20). A row
+         whose quote named no expected figure keeps the floor on the leg, as before. */
+      var hlSim = sim && isObject(sim.send) ? sim.send : null;
+      var hlFloor = hlSim && num(hlSim.arrivesAtLeast) !== null ? num(hlSim.arrivesAtLeast) : num(kind === 'hl_deposit' ? d.minCredited : d.minReceived);
+      var hlArrives = hlSim && num(hlSim.arrives) !== null ? num(hlSim.arrives) : null;
+      var inPocket = kind === 'hl_deposit' ? 'intents' : 'hyperliquid';
+      var outPocket = kind === 'hl_deposit' ? 'hyperliquid' : 'intents';
+      move.from = { symbol: d.symbol || args.symbol || 'USDC', place: inPocket, amount: num(d.amount !== undefined ? d.amount : args.amount) };
+      move.to = hlArrives !== null
+        ? { symbol: 'USDC', place: outPocket, amount: hlArrives, about: true }
+        : { symbol: 'USDC', place: outPocket, amount: hlFloor, floor: true };
+      if (hlArrives !== null && hlFloor !== null) move.quote = 'at least ' + floorText(hlFloor) + ' USDC';
+      if (hlSim && num(hlSim.feeUsd) !== null) move.feeUsd = num(hlSim.feeUsd);
     } else if (kind === 'trade' || kind === 'trade_change') {
       var plan = isObject(d.plan) ? d.plan : (isObject(args.plan) ? args.plan : null);
       if (plan) {
