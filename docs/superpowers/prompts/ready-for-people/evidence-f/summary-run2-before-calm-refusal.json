@@ -1,0 +1,1475 @@
+{
+  "at": "2026-09-21T07:06:22.831Z",
+  "folder": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2",
+  "runs": 3,
+  "votes": 3,
+  "judge": "openrouter (anthropic/claude-sonnet-5)",
+  "judgeProbe": [
+    "nearai (anthropic/claude-sonnet-5): no, 402 {\"error\":{\"message\":\"Credit limit exceeded. Spent: $20.11634978, Limit: $20.00. Please purchase more credits.\",\"type\":\"insufficient_credits\",\"param\":null,\"c",
+    "openrouter (anthropic/claude-sonnet-5): ok, answered 6 on the probe screenshot"
+  ],
+  "counts": {
+    "rows": 98,
+    "pass": 39,
+    "fail": 46,
+    "unreachable": 13,
+    "judged": 80,
+    "maxMedian": 9,
+    "meanMedian": 3.99
+  },
+  "worst": [
+    {
+      "id": "B16",
+      "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B16.run3.png",
+      "total": 10
+    },
+    {
+      "id": "B17",
+      "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B17.png",
+      "total": 9
+    },
+    {
+      "id": "A43",
+      "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A43.run3.png",
+      "total": 9
+    }
+  ],
+  "sceneErrors": [],
+  "misses": [],
+  "rows": [
+    {
+      "id": "A01",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: the demo software wallet signs and submits in one step, so there is no distinct signing tick to shoot; the live signing beat needs an enclave",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A02",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: Touch ID is enclave-only and the demo backend runs a software wallet, so it never reaches waiting_for_touch; the boot sweep also rewrites a seeded awaiting_touch row to pending",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A03",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 3, a vote of 7",
+      "median": 5,
+      "max": 7,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A03.png",
+        "total": 7
+      }
+    },
+    {
+      "id": "A04",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 4 over 3",
+      "median": 4,
+      "max": 4,
+      "votes": 10,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A04.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A05",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 5,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A05.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "A06",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A06.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A07",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: Touch ID is enclave-only; the demo software wallet approves straight to signing",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A08",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 4 over 3",
+      "median": 4,
+      "max": 5,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A08.400.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "A09",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 5,
+      "votes": 11,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A09.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "A10",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A10.run2.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A11",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 11,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A11.400.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A12",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: Touch ID is enclave-only; the demo software wallet approves straight to signing",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A13",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 4 over 3",
+      "median": 4,
+      "max": 5,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A13.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "A14",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 4 over 3",
+      "median": 4,
+      "max": 4,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A14.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A15",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A15.run2.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A16",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A16.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A17",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A17.run2.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A18",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 2,
+      "max": 4,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A18.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A19",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: Touch ID is enclave-only; the demo software wallet approves straight to signing",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A20",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A20.run2.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A21",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A21.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A22",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 10,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A22.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A23",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 10,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A23.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A24",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 3,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A24.400.png",
+        "total": 3
+      }
+    },
+    {
+      "id": "A25",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 2,
+      "max": 2,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A25.png",
+        "total": 2
+      }
+    },
+    {
+      "id": "A26",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: Touch ID is enclave-only; the demo software wallet approves straight to signing",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A27",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 10,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A27.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A28",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A28.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A29",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 3,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A29.png",
+        "total": 3
+      }
+    },
+    {
+      "id": "A30",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 4 over 3, a vote of 6",
+      "median": 4,
+      "max": 6,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A30.400.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "A31",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: Touch ID is enclave-only; the demo software wallet approves straight to signing",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A32",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A32.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A33",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 10,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A33.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A34",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 2,
+      "max": 4,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A34.400.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "A35",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 3",
+      "median": 5,
+      "max": 5,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A35.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "A36",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: no demo rail for trade, and Touch ID is enclave-only; trade cards are seeded at waiting_for_you and confirmed only",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A37",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: no demo rail for trade, so there is no live signing tick; the boot sweep rewrites a seeded approved trade row to needs_reconciliation",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A38",
+      "failure": false,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: no demo rail for trade, so there is no live submitting tick; the boot sweep rewrites a seeded executing trade row to needs_reconciliation",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "A39",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 3",
+      "median": 5,
+      "max": 5,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A39.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "A40",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 2,
+      "max": 2,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A40.400.png",
+        "total": 2
+      }
+    },
+    {
+      "id": "A41",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 1,
+      "max": 1,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A41.png",
+        "total": 1
+      }
+    },
+    {
+      "id": "A42",
+      "failure": true,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 0,
+      "max": 1,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A42.png",
+        "total": 1
+      }
+    },
+    {
+      "id": "A43",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 9",
+      "median": 6,
+      "max": 9,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A43.run3.png",
+        "total": 9
+      }
+    },
+    {
+      "id": "A44",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 2,
+      "max": 2,
+      "votes": 10,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/A44.png",
+        "total": 2
+      }
+    },
+    {
+      "id": "B01",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 6",
+      "median": 6,
+      "max": 6,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B01.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "B02",
+      "failure": true,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 2,
+      "max": 4,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B02.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "B03",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 7 over 4, a vote of 8",
+      "median": 7,
+      "max": 8,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B03.400.png",
+        "total": 8
+      }
+    },
+    {
+      "id": "B04",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 4",
+      "median": 5,
+      "max": 5,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B04.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "B05",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 7 over 4, a vote of 8",
+      "median": 7,
+      "max": 8,
+      "votes": 10,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B05.png",
+        "total": 8
+      }
+    },
+    {
+      "id": "B06",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "a vote of 6",
+      "median": 4,
+      "max": 6,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B06.400.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "B07",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 6",
+      "median": 6,
+      "max": 6,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B07.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "B08",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 6",
+      "median": 6,
+      "max": 6,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B08.400.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "B09",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 6",
+      "median": 6,
+      "max": 6,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B09.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "B10",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 6",
+      "median": 6,
+      "max": 6,
+      "votes": 10,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B10.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "B11",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 7",
+      "median": 6,
+      "max": 7,
+      "votes": 10,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B11.png",
+        "total": 7
+      }
+    },
+    {
+      "id": "B12",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 7",
+      "median": 6,
+      "max": 7,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B12.400.png",
+        "total": 7
+      }
+    },
+    {
+      "id": "B13",
+      "failure": true,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: the demo rail produces no preflight hold, and the boot sweep expires a seeded held (approved + heldSince) row to failed, so an active hold cannot be shown in demo (that is B14); needs a demo preflight-hold seam from node B",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "B14",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 7",
+      "median": 6,
+      "max": 7,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B14.png",
+        "total": 7
+      }
+    },
+    {
+      "id": "B15",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 4, a vote of 8",
+      "median": 5,
+      "max": 8,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B15.png",
+        "total": 8
+      }
+    },
+    {
+      "id": "B16",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 9 over 4, a vote of 10",
+      "median": 9,
+      "max": 10,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B16.run3.png",
+        "total": 10
+      }
+    },
+    {
+      "id": "B17",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 9 over 4, a vote of 9",
+      "median": 9,
+      "max": 9,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B17.png",
+        "total": 9
+      }
+    },
+    {
+      "id": "B18",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 4, a vote of 6",
+      "median": 5,
+      "max": 6,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B18.400.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "B19",
+      "failure": true,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B19.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "B20",
+      "failure": true,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: Touch ID closed without an answer is enclave-only; the software-wallet demo never opens the Touch ID sheet",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "B21",
+      "failure": true,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 4,
+      "max": 5,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B21.400.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "B22",
+      "failure": true,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 4,
+      "max": 4,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B22.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "B23",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 7",
+      "median": 6,
+      "max": 7,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B23.400.png",
+        "total": 7
+      }
+    },
+    {
+      "id": "B24",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 4, a vote of 7",
+      "median": 6,
+      "max": 7,
+      "votes": 7,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B24.400.png",
+        "total": 7
+      }
+    },
+    {
+      "id": "B25",
+      "failure": true,
+      "flow": false,
+      "status": "unreachable",
+      "reason": "marked in the situation file: the unified-account withdraw refusal is a live Hyperliquid seam (hl-user-signed.ts); the demo rail signs nothing, so it cannot produce the refusal. Needs node B to add a demo seam",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "B26",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 4, a vote of 6",
+      "median": 5,
+      "max": 6,
+      "votes": 9,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/B26.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "C01",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 3, a vote of 6",
+      "median": 6,
+      "max": 6,
+      "votes": 4,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C01.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "C02",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 7 over 3, a vote of 8",
+      "median": 7,
+      "max": 8,
+      "votes": 4,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C02.png",
+        "total": 8
+      }
+    },
+    {
+      "id": "C03",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 2,
+      "max": 2,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C03.png",
+        "total": 2
+      }
+    },
+    {
+      "id": "C04",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 3,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C04.png",
+        "total": 3
+      }
+    },
+    {
+      "id": "C05",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 0,
+      "max": 1,
+      "votes": 5,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C05.run2.png",
+        "total": 1
+      }
+    },
+    {
+      "id": "C06",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 4 over 3",
+      "median": 4,
+      "max": 4,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C06.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "C07",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 3,
+      "votes": 4,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C07.png",
+        "total": 3
+      }
+    },
+    {
+      "id": "C08",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 3",
+      "median": 5,
+      "max": 5,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C08.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "C09",
+      "failure": false,
+      "flow": true,
+      "status": "fail",
+      "reason": "leg b: error: RuntimeError: Model provider returned HTTP 402; no action executed.",
+      "median": 1,
+      "max": 1,
+      "votes": 5,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C09.png",
+        "total": 1
+      },
+      "flowResult": {
+        "reached": false,
+        "steps": 3,
+        "minimum": 5,
+        "wrongClicks": 1,
+        "blocked": true,
+        "pass": false,
+        "note": "error: RuntimeError: Model provider returned HTTP 402; no action executed."
+      }
+    },
+    {
+      "id": "C10",
+      "failure": false,
+      "flow": true,
+      "status": "pass",
+      "reason": "leg b not run: this build's connect step has no agent picker; leg b for C10 waits on node C",
+      "median": 2,
+      "max": 2,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C10.png",
+        "total": 2
+      }
+    },
+    {
+      "id": "C11",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "no screenshot",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "C12",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "no screenshot",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "C13",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "no screenshot",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "C14",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 1,
+      "max": 1,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C14.png",
+        "total": 1
+      }
+    },
+    {
+      "id": "C15",
+      "failure": false,
+      "flow": true,
+      "status": "fail",
+      "reason": "leg b: blocked",
+      "median": 2,
+      "max": 3,
+      "votes": 5,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/C15.run2.png",
+        "total": 3
+      },
+      "flowResult": {
+        "reached": false,
+        "steps": 1,
+        "minimum": 15,
+        "wrongClicks": 0,
+        "blocked": true,
+        "pass": false,
+        "note": "blocked"
+      }
+    },
+    {
+      "id": "D01",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 7 over 3, a vote of 7",
+      "median": 7,
+      "max": 7,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/D01.png",
+        "total": 7
+      }
+    },
+    {
+      "id": "D02",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 3,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/D02.png",
+        "total": 3
+      }
+    },
+    {
+      "id": "D03",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 4,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/D03.png",
+        "total": 4
+      }
+    },
+    {
+      "id": "D04",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 3, a vote of 6",
+      "median": 5,
+      "max": 6,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/D04.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "D05",
+      "failure": false,
+      "flow": true,
+      "status": "fail",
+      "reason": "no screenshot; leg b not run: this build's vault Agent panel has no Change control; leg b for D05 waits on node C",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "D06",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "no screenshot",
+      "median": null,
+      "max": null,
+      "votes": 0,
+      "samples": 0,
+      "worst": null
+    },
+    {
+      "id": "D07",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 0,
+      "max": 2,
+      "votes": 3,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/D07.png",
+        "total": 2
+      }
+    },
+    {
+      "id": "D08",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 3, a vote of 6",
+      "median": 5,
+      "max": 6,
+      "votes": 4,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/D08.run2.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "E01",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 4 over 3, a vote of 6",
+      "median": 4,
+      "max": 6,
+      "votes": 6,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/E01.png",
+        "total": 6
+      }
+    },
+    {
+      "id": "E02",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 5 over 4",
+      "median": 5,
+      "max": 5,
+      "votes": 8,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/E02.png",
+        "total": 5
+      }
+    },
+    {
+      "id": "E03",
+      "failure": true,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 7 over 4, a vote of 7",
+      "median": 7,
+      "max": 7,
+      "votes": 4,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/E03.png",
+        "total": 7
+      }
+    },
+    {
+      "id": "F01",
+      "failure": false,
+      "flow": false,
+      "status": "pass",
+      "reason": "",
+      "median": 3,
+      "max": 3,
+      "votes": 4,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/F01.png",
+        "total": 3
+      }
+    },
+    {
+      "id": "F02",
+      "failure": false,
+      "flow": false,
+      "status": "fail",
+      "reason": "median 6 over 3, a vote of 6",
+      "median": 6,
+      "max": 6,
+      "votes": 4,
+      "samples": 3,
+      "worst": {
+        "file": "/Users/karimbaba/Developer/Apps/phosphor/scripts/scratch/anxiety/main-final2/F02.png",
+        "total": 6
+      }
+    }
+  ]
+}
