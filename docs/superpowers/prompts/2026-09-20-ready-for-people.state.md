@@ -17,7 +17,7 @@ Lead: Claude (Opus 5), session c49886b8. Started 2026-09-20 19:05 PDT. Main at 7
 ## Nodes (phase 1), worktrees ../phosphor-rfp-<node>, branches rfp/<node>, all off 7e0357f
 | node | branch | status |
 |---|---|---|
-| A relay swap | rfp/a-relay | building |
+| A relay swap | rfp/a-relay | reported (c0232de, 3143/3143, eval 29/29, +75 tests, security 0 High/Med); correct + secure reviews running; NOTE: relay quotes no solver for USDC to wNEAR today, USDC to USDT does; nonce is V1 (current_salt) not the spec's 32 random bytes |
 | B Hyperliquid | rfp/b-hyperliquid | building |
 | C agent picker | rfp/c-agent | reported (291fc9a after merging main, 3123/3123, +57 tests); correct + secure reviews running; touched ui/index.html (one link line) and src/http/router.ts (two routes) outside its list, resolve at merge |
 | D one card, voice | rfp/d-card | building |
@@ -41,3 +41,5 @@ Ports: A 4201, B 4202, C 4203, D 4204, E 4205, F 4206, G 4207 (PHOSPHOR_PORT), d
 - G to lead: 0.8.0 bump in package.json, Cargo.toml, tauri.conf.json at merge; three native message boxes in main.rs (Copy MCP Config outcome, fail(), notify()) to in-app windows; shell-health source-assertion test after E merges; per-tool argument pin after A, B, C merge; diagnose through the log redaction; a .gitleaks.toml; site docs rebuild (Karim, live site says 0.6.0).
 - C to G/lead: docs/security-model.md must list POST /api/policy/threshold (token-checked) and GET /api/connection (no-token loopback read); main.rs Copy MCP Config dialog text still says claude mcp add-json (wording in report-c section 5).
 - Flaky: tests/unit/lock-frame.test.ts timing miss once under load (3.1 s), passes alone; watch it at merge, never loosen it.
+- A to D/lead: ui/screens/decision.js VENUE_WORDS and ui/screens/receipt.js VENUE_NAMES need an 'intents-relay' entry; the card draws simulation.swap.priceGoodForSec as "Price good for about a minute, re-quoted at your click"; execute.ts judgeSettling must never write the short-fill failed on a relay row (atomic diff). A added three type fields in src/types.ts and one pickEvidence line in execute.ts (on its branch).
+- Proof decision pending (4.7, proof 3): if `node scripts/relay-probe.ts --from USDC --to NEAR --amount 2` exits 2 at proof time, the swap proof runs USDC to USDT (the spec's pair) and the report says why.
