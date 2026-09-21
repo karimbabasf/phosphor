@@ -3,16 +3,16 @@
   "port": 4204,
   "stages": [
     {
-      "at": 64,
+      "at": 56,
       "source": "server",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
       "stage": "submitting",
       "label": "Sending it"
     },
     {
-      "at": 69,
+      "at": 57,
       "source": "window",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
       "word": "Sending it",
       "copy": "It is signed and being sent. Nothing for you to do.",
       "clock": "0s",
@@ -22,65 +22,21 @@
       "height": 302,
       "open": "true",
       "details": "false",
-      "lagMs": 5
+      "lagMs": 1
     },
     {
-      "at": 4104,
+      "at": 4074,
       "source": "server",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
       "stage": "KNOWN_DEPOSIT_TX",
       "label": "Deposit seen"
     },
     {
-      "at": 4104,
+      "at": 4075,
       "source": "window",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
       "word": "Deposit seen",
       "copy": "Your money has been seen on its way. Nothing for you to do.",
-      "clock": "0s",
-      "hosts": 1,
-      "fade": "a",
-      "animation": "chatcard-fade-a 0.24s",
-      "height": 302,
-      "open": "true",
-      "details": "false",
-      "lagMs": 0
-    },
-    {
-      "at": 8108,
-      "source": "server",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
-      "stage": "PENDING_DEPOSIT",
-      "label": "Waiting for the deposit"
-    },
-    {
-      "at": 8114,
-      "source": "window",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
-      "word": "Waiting for the deposit",
-      "copy": "Waiting for your money to arrive at the transfer. Nothing for you to do.",
-      "clock": "0s",
-      "hosts": 1,
-      "fade": "b",
-      "animation": "chatcard-fade-b 0.24s",
-      "height": 302,
-      "open": "true",
-      "details": "false",
-      "lagMs": 6
-    },
-    {
-      "at": 12145,
-      "source": "server",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
-      "stage": "PROCESSING",
-      "label": "On its way"
-    },
-    {
-      "at": 12146,
-      "source": "window",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
-      "word": "On its way",
-      "copy": "The transfer is moving your money across. Nothing for you to do.",
       "clock": "0s",
       "hosts": 1,
       "fade": "a",
@@ -91,16 +47,60 @@
       "lagMs": 1
     },
     {
-      "at": 16155,
+      "at": 8084,
       "source": "server",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
+      "stage": "PENDING_DEPOSIT",
+      "label": "Waiting for the deposit"
+    },
+    {
+      "at": 8086,
+      "source": "window",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
+      "word": "Waiting for the deposit",
+      "copy": "Waiting for your money to arrive at the transfer. Nothing for you to do.",
+      "clock": "0s",
+      "hosts": 1,
+      "fade": "b",
+      "animation": "chatcard-fade-b 0.24s",
+      "height": 302,
+      "open": "true",
+      "details": "false",
+      "lagMs": 2
+    },
+    {
+      "at": 12105,
+      "source": "server",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
+      "stage": "PROCESSING",
+      "label": "On its way"
+    },
+    {
+      "at": 12158,
+      "source": "window",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
+      "word": "On its way",
+      "copy": "The transfer is moving your money across. Nothing for you to do.",
+      "clock": "0s",
+      "hosts": 1,
+      "fade": "a",
+      "animation": "chatcard-fade-a 0.24s",
+      "height": 302,
+      "open": "true",
+      "details": "false",
+      "lagMs": 53
+    },
+    {
+      "at": 16134,
+      "source": "server",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
       "stage": "SUCCESS",
       "label": "Waiting for the venue to credit it"
     },
     {
-      "at": 16160,
+      "at": 16139,
       "source": "window",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
       "word": "Waiting for the venue to credit it",
       "copy": "The transfer is done and the venue has not shown the money yet. Nothing for you to do.",
       "clock": "0s",
@@ -113,23 +113,23 @@
       "lagMs": 5
     },
     {
-      "at": 20193,
+      "at": 20171,
       "source": "server",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
       "stage": "crediting",
       "label": "Waiting for the venue to credit it"
     },
     {
-      "at": 25183,
+      "at": 25175,
       "source": "server",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
       "stage": "confirmed",
       "label": "Confirmed"
     },
     {
-      "at": 25186,
+      "at": 25175,
       "source": "window",
-      "id": "6e0d4164-78d6-4dd7-aada-88e1a75c8174",
+      "id": "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f",
       "word": "Confirmed",
       "copy": "Done. The balance shows it.",
       "clock": "25s",
@@ -139,7 +139,7 @@
       "height": 302,
       "open": "true",
       "details": "false",
-      "lagMs": 3
+      "lagMs": 0
     }
   ],
   "counts": {
@@ -147,15 +147,15 @@
     "chatCards": 1,
     "receipts": 0,
     "perId": {
-      "6e0d4164-78d6-4dd7-aada-88e1a75c8174": 1
+      "29eef4a4-638f-4f1f-ab3e-4b014ca5e74f": 1
     }
   },
   "latencyMs": [
-    0,
-    6,
     1,
+    2,
+    53,
     5,
-    3
+    0
   ],
   "heights": [
     {
@@ -231,11 +231,11 @@
       "Confirmed"
     ],
     "lagsMs": [
-      0,
-      6,
       1,
+      2,
+      53,
       5,
-      3
+      0
     ],
     "heightJumps": [
       0,
@@ -246,5 +246,5 @@
     ]
   },
   "log": [],
-  "appOutputTail": "phosphor app_start: approval surface armed: the window token is held by the window only\nphosphor app_start: phosphor up on http://127.0.0.1:4204 (demo mode)\nphosphor: http://127.0.0.1:4204 (demo mode)\nphosphor: wallet no_wallet at /Users/karimbaba/Developer/Apps/phosphor-rfp-d-card/state/card-proof-1789960358417/keys.enc.json\nphosphor app_start: wallet no_wallet\nphosphor app_start: a new wallet was created in the window\nphosphor app_start: a second in-app agent is starting: AGENT 1\n"
+  "appOutputTail": "phosphor app_start: approval surface armed: the window token is held by the window only\nphosphor app_start: phosphor up on http://127.0.0.1:4204 (demo mode)\nphosphor: http://127.0.0.1:4204 (demo mode)\nphosphor: wallet no_wallet at /Users/karimbaba/Developer/Apps/phosphor-rfp-d-card/state/card-proof-1789964316771/keys.enc.json\nphosphor app_start: wallet no_wallet\nphosphor app_start: a new wallet was created in the window\nphosphor app_start: a second in-app agent is starting: AGENT 1\n"
 }

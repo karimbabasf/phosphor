@@ -1,4 +1,4 @@
-npm run typecheck on e5c193d:
+npm run typecheck on f3e4af4:
 > tsc --noEmit
 
 exit 0

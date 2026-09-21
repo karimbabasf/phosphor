@@ -3,16 +3,16 @@
   "port": 4204,
   "stages": [
     {
-      "at": 58,
+      "at": 75,
       "source": "server",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "stage": "submitting",
       "label": "Sending it"
     },
     {
-      "at": 59,
+      "at": 77,
       "source": "window",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "word": "Sending it",
       "copy": "It is signed and being sent. Nothing for you to do.",
       "clock": "0s",
@@ -22,19 +22,19 @@
       "height": 316,
       "open": "true",
       "details": "false",
-      "lagMs": 1
+      "lagMs": 2
     },
     {
-      "at": 4093,
+      "at": 4099,
       "source": "server",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "stage": "KNOWN_DEPOSIT_TX",
       "label": "Deposit seen"
     },
     {
-      "at": 4094,
+      "at": 4100,
       "source": "window",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "word": "Deposit seen",
       "copy": "Your money has been seen on its way. Nothing for you to do.",
       "clock": "0s",
@@ -47,16 +47,16 @@
       "lagMs": 1
     },
     {
-      "at": 8113,
+      "at": 8108,
       "source": "server",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "stage": "PENDING_DEPOSIT",
       "label": "Waiting for the deposit"
     },
     {
-      "at": 8114,
+      "at": 8109,
       "source": "window",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "word": "Waiting for the deposit",
       "copy": "Waiting for your money to arrive at the transfer. Nothing for you to do.",
       "clock": "0s",
@@ -69,16 +69,16 @@
       "lagMs": 1
     },
     {
-      "at": 12110,
+      "at": 12120,
       "source": "server",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "stage": "PROCESSING",
       "label": "On its way"
     },
     {
-      "at": 12116,
+      "at": 12122,
       "source": "window",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "word": "On its way",
       "copy": "The transfer is moving your money across. Nothing for you to do.",
       "clock": "0s",
@@ -88,19 +88,19 @@
       "height": 316,
       "open": "true",
       "details": "false",
-      "lagMs": 6
+      "lagMs": 2
     },
     {
-      "at": 16143,
+      "at": 16146,
       "source": "server",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "stage": "SUCCESS",
       "label": "Waiting for the venue to credit it"
     },
     {
-      "at": 16144,
+      "at": 16152,
       "source": "window",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "word": "Waiting for the venue to credit it",
       "copy": "The transfer is done and the venue has not shown the money yet. Nothing for you to do.",
       "clock": "0s",
@@ -110,26 +110,26 @@
       "height": 316,
       "open": "true",
       "details": "false",
-      "lagMs": 1
+      "lagMs": 6
     },
     {
-      "at": 20184,
+      "at": 20164,
       "source": "server",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "stage": "crediting",
       "label": "Waiting for the venue to credit it"
     },
     {
-      "at": 25178,
+      "at": 25163,
       "source": "server",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "stage": "confirmed",
       "label": "Confirmed"
     },
     {
-      "at": 25179,
+      "at": 25169,
       "source": "window",
-      "id": "a1447a8d-24d6-403f-b8e5-d90a32f1f9be",
+      "id": "6e87e1ba-b1da-4eef-8f32-6e0b783c6132",
       "word": "Confirmed",
       "copy": "Done. The balance shows it.",
       "clock": "25s",
@@ -139,7 +139,7 @@
       "height": 316,
       "open": "true",
       "details": "false",
-      "lagMs": 1
+      "lagMs": 6
     }
   ],
   "counts": {
@@ -147,15 +147,15 @@
     "chatCards": 1,
     "receipts": 0,
     "perId": {
-      "a1447a8d-24d6-403f-b8e5-d90a32f1f9be": 1
+      "6e87e1ba-b1da-4eef-8f32-6e0b783c6132": 1
     }
   },
   "latencyMs": [
     1,
     1,
+    2,
     6,
-    1,
-    1
+    6
   ],
   "heights": [
     {
@@ -233,9 +233,9 @@
     "lagsMs": [
       1,
       1,
+      2,
       6,
-      1,
-      1
+      6
     ],
     "heightJumps": [
       0,
@@ -246,5 +246,5 @@
     ]
   },
   "log": [],
-  "appOutputTail": "phosphor app_start: approval surface armed: the window token is held by the window only\nphosphor app_start: phosphor up on http://127.0.0.1:4204 (demo mode)\nphosphor: http://127.0.0.1:4204 (demo mode)\nphosphor: wallet no_wallet at /Users/karimbaba/Developer/Apps/phosphor-rfp-d-card/state/card-proof-1789960326454/keys.enc.json\nphosphor app_start: wallet no_wallet\nphosphor app_start: a new wallet was created in the window\nphosphor app_start: a second in-app agent is starting: AGENT 1\n"
+  "appOutputTail": "phosphor app_start: approval surface armed: the window token is held by the window only\nphosphor app_start: phosphor up on http://127.0.0.1:4204 (demo mode)\nphosphor: http://127.0.0.1:4204 (demo mode)\nphosphor: wallet no_wallet at /Users/karimbaba/Developer/Apps/phosphor-rfp-d-card/state/card-proof-1789964284783/keys.enc.json\nphosphor app_start: wallet no_wallet\nphosphor app_start: a new wallet was created in the window\nphosphor app_start: a second in-app agent is starting: AGENT 1\n"
 }
