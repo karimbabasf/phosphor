@@ -75,7 +75,7 @@ test('an ask above the cap is refused, because nothing would ever ask anybody', 
   assert.equal(verdict.outcome, 'refuse');
   assert.equal(verdict.outcome === 'refuse' && verdict.rule, 'never_asks');
   assert.deepEqual(verdict.reasonCodes, ['never_asks']);
-  assert.match(verdict.reasons.join(' '), /means nothing ever asks you/);
+  assert.match(verdict.reasons.join(' '), /means nothing would ever wait for a click/);
 });
 
 test('raising both in one patch is coherent and lands', () => {

@@ -150,7 +150,7 @@ export function thresholdRefusal(usd: unknown, capUsd: number | null): string | 
   const ceiling = AXIS_CEILING_USD.humanClickAboveUsd;
   if (usd > ceiling) return `The threshold cannot go past ${money(ceiling)} from here. Edit policy.json to go higher.`;
   if (capUsd !== null && usd >= capUsd) {
-    return `Asking above ${money(usd)} with a hard cap of ${money(capUsd)} means nothing ever asks you. Keep the threshold under ${money(capUsd)}.`;
+    return `Asking above ${money(usd)} with a hard cap of ${money(capUsd)} means nothing would ever wait for a click. Keep the threshold under ${money(capUsd)}.`;
   }
   return null;
 }

@@ -592,7 +592,7 @@ test('Continue on the threshold step posts the figure to the policy route and mo
 
 test('a refusal from the policy route is shown as its one sentence over the same Continue, and a dead app in the step\'s own words', async () => {
   const world = build();
-  world.answers['/api/policy/threshold'] = Object.assign(new Error('Asking above $20,000 with a hard cap of $10,000 means nothing ever asks you. Keep the threshold under $10,000.'), { status: 400 });
+  world.answers['/api/policy/threshold'] = Object.assign(new Error('Asking above $20,000 with a hard cap of $10,000 means nothing would ever wait for a click. Keep the threshold under $10,000.'), { status: 400 });
   const screen = await atThreshold(world);
   find(screen, '.threshold-input')[0].value = '20000';
   buttonNamed(screen, 'Continue').click();

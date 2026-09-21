@@ -409,7 +409,7 @@ function neverAsks(patch: PolicyPatch, policy: Policy, reasons: string[]): Verdi
   return refusal(
     reasons,
     'never_asks',
-    `Asking above ${money(ask)} and refusing above ${money(cap)} means nothing ever asks you: everything small enough to be allowed is also small enough to run on its own. Put the ask below the cap, both in the same patch.`,
+    `Asking above ${money(ask)} and refusing above ${money(cap)} means nothing would ever wait for a click: everything small enough to be allowed is also small enough to run on its own. Put the ask below the cap, both in the same patch.`,
   );
 }
 

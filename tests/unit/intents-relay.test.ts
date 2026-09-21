@@ -33,7 +33,7 @@ import {
 import { relayClient } from '../../src/relay/client.ts';
 import { liveVerifier } from '../../src/relay/verifier.ts';
 import type { IntentsRelayRailDeps } from '../../src/rails/intents-relay.ts';
-import { KIND_STAGES, RELAY_STAGES } from '../../src/proposals/view.ts';
+import { KIND_STAGES, RELAY_STAGES, TERMINAL } from '../../src/proposals/view.ts';
 
 // ---------- fixtures ----------
 
@@ -744,5 +744,9 @@ test('a floor more than 20 percent under the quote is refused at simulate and at
 
 test('the swap path in the stage contract is the relay words this rail stamps', () => {
   assert.deepEqual(KIND_STAGES.swap.path.slice(-4), ['submitting', 'PENDING', 'TX_BROADCASTED', 'SETTLED', 'confirmed'].slice(1));
-  assert.ok(KIND_STAGES.swap.terminal.includes('NOT_FOUND_OR_NOT_VALID'));
+  // A FAILED publish is not the end: the signed bytes live until the deadline, so the word is a
+  // wait ("Not accepted, checking nothing moved") and the sweep writes `failed` after it.
+  assert.equal(KIND_STAGES.swap.terminal.includes('NOT_FOUND_OR_NOT_VALID'), false);
+  assert.equal(TERMINAL.has('NOT_FOUND_OR_NOT_VALID'), false);
+  assert.ok(KIND_STAGES.swap.terminal.includes('failed'));
 });

@@ -86,8 +86,8 @@ test('a bad value is refused with one sentence naming the figures, and the file 
       [undefined, /has to be a number/],
       [0, /above \$0/],
       [-5, /above \$0/],
-      [10000, /nothing ever asks you.*under \$10,000/],
-      [12000, /nothing ever asks you/],
+      [10000, /nothing would ever wait for a click.*under \$10,000/],
+      [12000, /nothing would ever wait for a click/],
       [2_000_000, /cannot go past \$1,000,000/],
       [Number.NaN, /has to be a number/],
     ];
