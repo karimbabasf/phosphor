@@ -14,6 +14,9 @@
   flex-direction: column;
   gap: var(--s-4);
   min-width: 0;
+  /* Its own container, like the network picker: it is drawn in the wizard's
+     card and in a Vault panel, and the grid answers to the room it has. */
+  container-type: inline-size;
 }
 
 .agentpick-lead {
@@ -26,6 +29,14 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--s-2);
+}
+
+/* Under 420 px of room (a 400 px column) three tiles leave no line long
+   enough for the longest name, so the six go two across and three down. */
+@container (max-width: 419px) {
+  .agentpick-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .agent-tile {
@@ -89,8 +100,10 @@
   line-height: 1.2;
 }
 
+/* The fill says picked (or about to be, under the pointer); keyboard focus is
+   the ring alone, so the tile the cursor rests on is never mistaken for the
+   one that was chosen. */
 .agent-tile:hover,
-.agent-tile:focus-visible,
 .agent-tile[aria-current="true"] {
   border-color: var(--net);
   color: var(--net);
@@ -98,7 +111,6 @@
 }
 
 .agent-tile:hover .agent-tile-mark,
-.agent-tile:focus-visible .agent-tile-mark,
 .agent-tile[aria-current="true"] .agent-tile-mark {
   opacity: 1;
   transform: translateY(-1px) scale(1.06);
@@ -120,7 +132,12 @@
 /* ---------- the sentence and the fold ---------- */
 
 /* One sentence, and the light in front of it. The light is off until the
-   agent is on the door; the sentence carries every other state in words. */
+   agent is on the door; the sentence carries every other state in words.
+   Nothing said yet is nothing drawn: no lone light over an empty line. */
+.agentpick-line:has(.agentpick-sentence:empty) {
+  display: none;
+}
+
 .agentpick-line {
   display: flex;
   align-items: flex-start;

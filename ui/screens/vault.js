@@ -210,7 +210,7 @@
     var facts = dom.el('div', 'facts');
     facts.appendChild(fact('It can see', 'your addresses, your balances, and every request it has made.'));
     facts.appendChild(fact('It cannot see', 'your keys or your recovery phrase. Neither ever leaves this window.'));
-    refs.agentRules = fact('Your rules', '');
+    refs.agentRules = fact('The threshold', '');
     facts.appendChild(refs.agentRules);
     agent.body.appendChild(facts);
     refs.agentSummary = dom.el('div', 'stack-2 vault-agent');

@@ -263,7 +263,7 @@ test('the panel has the two facts, the rules as a third, one sentence, and Chang
   const world = build();
   const node = panel(world);
   const labels = find(node, '.fact').map((f: Any) => find(f, '.label')[0].textContent);
-  assert.deepEqual(labels, ['It can see', 'It cannot see', 'Your rules']);
+  assert.deepEqual(labels, ['It can see', 'It cannot see', 'The threshold']);
   assert.ok(visibleText(node).some((t) => t.startsWith('Moves under $100 run without a click')));
   assert.deepEqual(find(node, 'button').filter((b: Any) => !b.hidden).map((b: Any) => b.textContent), ['Change', 'Check again', 'Your rules']);
   assert.deepEqual(sentences(world), ['No assistant is picked yet.']);
