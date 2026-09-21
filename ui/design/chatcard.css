@@ -1,0 +1,198 @@
+/* The move card in the conversation (ui/screens/cards.js moveCard): the parts the skeleton
+   adds to a card, over the shell cards.css already draws.
+
+   One move is one card, painted in place as its row moves. So a stage change is a fade on
+   the state word and on the stage line, never a rebuild: the card keeps its height, its
+   place and both of its folds. The fade is 240 ms on a sine ease-out, the curve that keeps
+   moving to the end; the page's strong ease-out is 60 percent done at a sixth of its length
+   and reads as a pop whatever its duration. */
+
+/* ---------- the fade ---------- */
+
+/* Two names for one animation. A changed attribute value restarts nothing on its own; a
+   changed animation-name does, so every change alternates between the two. The first paint
+   sets neither: the card's own entrance already carries the words in. */
+@keyframes chatcard-fade-a {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes chatcard-fade-b {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.tcard-state[data-fade="a"],
+.tcard-stage-copy[data-fade="a"] {
+  animation: chatcard-fade-a 240ms cubic-bezier(0.61, 1, 0.88, 1) both;
+}
+
+.tcard-state[data-fade="b"],
+.tcard-stage-copy[data-fade="b"] {
+  animation: chatcard-fade-b 240ms cubic-bezier(0.61, 1, 0.88, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tcard-state[data-fade],
+  .tcard-stage-copy[data-fade] {
+    animation: none;
+  }
+}
+
+/* ---------- the head ---------- */
+
+/* The figure in the head is for the folded line, "Swap 2 USDC Confirmed". Open, the from
+   leg says the same number a row below, and a number twice on one card is noise. */
+.tcard[data-card="move"][data-open="true"] .tcard-figure {
+  display: none;
+}
+
+/* ---------- the stage line ---------- */
+
+/* The one sentence the stage table gives this stage, and the clock since it last changed.
+   Two lines of room are kept whatever the sentence needs, so a stage whose copy runs to a
+   second line does not move the fold under it. */
+.tcard-stage {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+  min-height: calc(2 * 1.5em);
+  padding-top: var(--s-1);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+}
+
+.tcard-stage-copy {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.tcard-stage-clock {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tcard-stage-usual {
+  color: var(--text-3);
+}
+
+/* ---------- the legs of a send ---------- */
+
+/* The receiver, every character, in groups of four. It wraps and the card grows: reading
+   an address back group by group is the whole reason it is on the card. */
+.tcard-leg-address {
+  margin: 2px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.tcard-leg-group + .tcard-leg-group {
+  margin-left: 0.35em;
+}
+
+.tcard-leg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin-top: var(--s-1);
+}
+
+/* ---------- the details fold ---------- */
+
+.tcard-details {
+  margin-top: var(--s-1);
+  border-top: 1px solid var(--line);
+}
+
+.tcard-details-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--fs-12);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tcard-details-head:hover {
+  color: var(--text-2);
+}
+
+.tcard-details-head:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--ink);
+  border-radius: 4px;
+}
+
+.tcard-details-chevron {
+  width: 14px;
+  height: 14px;
+  transition: transform 200ms var(--ease-out);
+}
+
+.tcard-details[data-open="true"] .tcard-details-chevron {
+  transform: rotate(90deg);
+}
+
+.tcard-details-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 200ms var(--ease-out);
+}
+
+.tcard-details[data-open="false"] .tcard-details-fold {
+  grid-template-rows: 0fr;
+}
+
+.tcard-details-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tcard-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--s-2);
+}
+
+/* A reference: the shortened id, the Copy beside it, a link out when there is one. */
+.tcard-ref {
+  align-items: center;
+}
+
+.tcard-ref-value {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.tcard-copy {
+  flex: 0 0 auto;
+}
+
+/* The rail's own line, as evidence: it wraps like a hash and is never the headline. */
+.tcard-recorded .tcard-line-value {
+  font-family: inherit;
+  color: var(--text-3);
+}
+
+/* The checks inside the fold are the shared fold (ui/screens/checks.js); it draws its own
+   rule and sits flush with the lines above it. */
+.tcard-details-body > .checks {
+  margin-top: var(--s-1);
+}

@@ -302,6 +302,10 @@
      region a screen reader hears. */
   var turn = null;
 
+  /* The read cards drawn so far in this turn (ui/screens/cards.js kinds other than a move), so
+     the next card can take their place: at most one read card per turn, and none under a move. */
+  var turnReadBlocks = [];
+
   /* WHICH CONVERSATION THIS COLUMN IS. The stream carries every chat's events
      and the app opens up to four, so an untagged reader printed another
      conversation's tool calls into this one and lit the window for work this
@@ -1021,6 +1025,17 @@
 
   /* Blocks carry their own key, so trimming the head of a capped transcript does
      not renumber every row under the reconciler and rebuild the column. */
+  /* Drops this turn's read cards from the thread. The steps that produced them stay: what
+     the agent did is still the honest record, only the card it drew is gone. */
+  function dropTurnReads() {
+    if (!turnReadBlocks.length) return;
+    for (var i = 0; i < turnReadBlocks.length; i += 1) {
+      var at = blocks.indexOf(turnReadBlocks[i]);
+      if (at !== -1) blocks.splice(at, 1);
+    }
+    turnReadBlocks = [];
+  }
+
   function pushBlock(block) {
     seq += 1;
     block.key = 'b' + seq;
@@ -1041,6 +1056,7 @@
 
   function said(text, state) {
     openSteps = null;
+    turnReadBlocks = [];
     var block = pushBlock({ type: 'said', text: text, state: state || 'sent' });
     startTurnBar();
     return block;
@@ -1534,7 +1550,11 @@
       input: block.input,
       at: block.at,
       open: block.open !== false,
-      onToggle: function (open) { block.open = open; }
+      onToggle: function (open) { block.open = open; },
+      /* The one fold inside a move card (checks and reference) is closed until a person
+         opens it, and where they left it survives every repaint the same way. */
+      detailsOpen: block.detailsOpen === true,
+      onDetailsToggle: function (open) { block.detailsOpen = open; }
     };
   }
 
@@ -1602,10 +1622,17 @@
          the same host, so it keeps its row and its key while its chip and its
          clock change. Everything else about a card is settled when it lands. */
       if (block.type === 'card' && row.__rev !== block.rev && cards && typeof cards.render === 'function') {
-        var fresh = cards.render(block.kind, block.data, foldOptions(block));
         var stale = row.firstChild;
-        row.insertBefore(fresh, stale);
-        if (stale) row.removeChild(stale);
+        /* A move card repaints itself: the state word and the stage line fade to their new
+           words, the clock moves, the legs keep their place and both folds stay where the
+           person left them. Every other card is settled when it lands and is drawn again. */
+        if (stale && typeof stale.__paint === 'function') {
+          stale.__paint(block.data, foldOptions(block));
+        } else {
+          var fresh = cards.render(block.kind, block.data, foldOptions(block));
+          row.insertBefore(fresh, stale);
+          if (stale) row.removeChild(stale);
+        }
         row.__rev = block.rev;
       }
       /* The shell keeps its own open flag and the block keeps the truth. */
@@ -1782,6 +1809,7 @@
     if (event.kind === 'said') {
       if (replay) {
         openSteps = null;
+        turnReadBlocks = [];
         pushBlock({ type: 'said', text: event.text, state: 'sent' });
       } else if (!adoptPending(event.text)) {
         /* Nothing to adopt means the prompt came from somewhere else: a second
@@ -1829,7 +1857,15 @@
         if (!replay) renderAll();
         return;
       }
-      pushBlock({
+      /* ONE READ CARD PER TURN, AND NONE THE PERSON DID NOT ASK ABOUT. The agent reads the
+         wallet before every swap and the account before every trade, and each read drew its
+         card, so a move took three cards of scroll and a long chat filled with balances nobody
+         asked for (known failure 4). A read card that lands under a move in the same turn was a
+         check on the way to that move and goes; a second read card in one turn replaces the
+         first, because the later read is the one the answer is about. A move card is never
+         dropped: it is the one card its row has for life. */
+      dropTurnReads();
+      var block = pushBlock({
         type: 'card',
         kind: kind,
         name: event.name,
@@ -1838,6 +1874,7 @@
         at: at,
         open: true
       });
+      if (kind !== 'move') turnReadBlocks.push(block);
       return;
     }
     if (event.kind === 'text') {
@@ -1860,6 +1897,7 @@
     if (event.kind === 'turn_end') {
       endTurn();
       turn = null;
+      turnReadBlocks = [];
       if (!replay) renderAll();
       return;
     }
@@ -1902,6 +1940,10 @@
       if (receipt.status !== 'executed') continue;
       receiptsSeen[receipt.id] = true;
       if (first && receiptAt(receipt) <= bootAt) continue;
+      /* THE RECEIPT FOLDS INTO THE MOVE CARD. A move this conversation proposed already has
+         its one card, and that card follows the row to Confirmed with the hash on it; a second
+         card for the same money was the two-cards-per-swap of 2026-09-20 (known failure 4). */
+      if (moveBlockFor(receipt)) continue;
       fresh.push(receipt);
     }
     for (var j = 0; j < fresh.length; j += 1) {
@@ -1911,6 +1953,11 @@
       pushReceipt(fresh[j], receiptWhen(fresh[j]));
     }
   }
+
+  /* The rows the last state frame carried, by id: every waiting row and the twenty most
+     recent decided ones (src/http/state.ts), each with its view. A receipt for a move made
+     outside this conversation finds its row here and draws the same card every move gets. */
+  var liveRows = Object.create(null);
 
   /* THE MOVE CARD FOLLOWS ITS PROPOSAL.
 
@@ -1933,6 +1980,7 @@
       var p = list[i];
       if (p && typeof p.id === 'string') byId[p.id] = p;
     }
+    liveRows = byId;
     var moved = false;
     for (var j = 0; j < blocks.length; j += 1) {
       var block = blocks[j];
@@ -1986,20 +2034,35 @@
   }
 
   /* The newest receipt is the one a person is looking for, so it opens; the
-     ones before it fold to their one line. */
+     ones before it fold to their one line. A receipt whose row the state frame still carries
+     draws the move card off that row, the same skeleton every move gets; only a row the
+     frame has let go (older than the twenty it keeps) falls back to the receipt's own card. */
   function pushReceipt(receipt, when) {
     for (var i = 0; i < blocks.length; i += 1) {
-      if (blocks[i].type === 'receipt') blocks[i].open = false;
+      if (blocks[i].type === 'receipt' || (blocks[i].type === 'card' && blocks[i].kind === 'move')) blocks[i].open = false;
+    }
+    var row = typeof receipt.id === 'string' ? liveRows[receipt.id] : undefined;
+    if (row && row.view) {
+      return pushBlock({ type: 'card', kind: 'move', name: 'receipts', input: { id: receipt.id }, data: row, at: when, open: true });
     }
     return pushBlock({ type: 'receipt', receipt: receipt, at: when, open: true });
   }
 
   /* A receipt opened anywhere in the window (an Activity row, a Done fill)
-     posts the same card into the thread, as a message from the app. */
+     posts the same card into the thread, as a message from the app. A move whose card is
+     already on the thread is opened where it stands rather than drawn again. */
   function onReceiptOpen(payload) {
     var receipt = payload && payload.receipt;
     if (!receipt || typeof receipt !== 'object') return;
     openSteps = null;
+    var shown = moveBlockFor(receipt);
+    if (shown) {
+      shown.open = true;
+      shown.detailsOpen = true;
+      shown.rev = (shown.rev || 0) + 1;
+      renderAll();
+      return;
+    }
     pushReceipt(receipt, receiptWhen(receipt));
   }
 

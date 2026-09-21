@@ -41,9 +41,12 @@
      browser a string. */
 
   var BRIDGE_TIP = '1Click sends it out for you; if it cannot, the money comes back to your balance.';
-  var ARRIVES_TIP = 'The least the solver may deliver. The app refuses the live quote if it promises less.';
-  var FEE_TIP = 'The solver\'s cut plus the bridge\'s flat fee. Both are already taken out of what arrives.';
+  var ARRIVES_TIP = 'The least that can arrive. The app refuses the live quote if it promises less.';
+  var FEE_TIP = 'The transfer\'s cut plus the flat network fee. Both are already taken out of what arrives.';
 
+  /* The words for a row that reached this card WITHOUT its view. The dock hands every row
+     from the state frame, and each carries `view` (src/http/state.ts), whose stageLabel is
+     the one word every surface prints; this table only answers for a row that has none. */
   var STATUS = {
     pending: ['Waiting for you', 'warn'],
     pending_unlock: ['Unlock to decide', 'warn'],
@@ -104,9 +107,14 @@
     var network = kind === 'intents_pay' ? text(draft.network) : 'intents';
     var preflight = preflightOf(p);
     var held = heldOf(p, preflight);
+    var view = isObject(p.view) ? p.view : null;
     return {
       kind: kind,
       status: held ? 'held' : text(p.status || 'pending'),
+      /* The stage word off the view, so the dock's card and the chat's card cannot name one
+         moment two ways (11.3). */
+      stage: view ? text(view.stage) : '',
+      stageLabel: view ? text(view.stageLabel) : '',
       symbol: text(draft.symbol),
       amount: num(draft.amount),
       amountUsd: num(draft.amountUsd),
@@ -132,9 +140,12 @@
     var sim = isObject(d.simulation) ? d.simulation : null;
     var where = text(facts.where || args.where);
     var kind = text(facts.kind || (where === 'intents' ? 'intents_send' : 'intents_pay'));
+    var view = isObject(d.view) ? d.view : null;
     return {
       kind: kind,
       status: text(d.status || 'pending'),
+      stage: view ? text(view.stage) : '',
+      stageLabel: view ? text(view.stageLabel) : '',
       symbol: text(facts.symbol || args.symbol).toUpperCase(),
       amount: num(facts.amount !== undefined ? facts.amount : args.amount),
       amountUsd: num(facts.amountUsd),
@@ -177,7 +188,23 @@
     return view.kind === 'intents_send' ? 'Inside NEAR Intents' : 'NEAR Intents payout';
   }
 
+  var STAGE_TONE = {
+    waiting_for_you: 'warn',
+    waiting_for_unlock: 'warn',
+    waiting_for_touch: 'warn',
+    held: 'warn',
+    stalled: 'warn',
+    confirmed: 'up',
+    failed: 'down',
+    FAILED: 'down',
+    REFUNDED: 'down',
+    NOT_FOUND_OR_NOT_VALID: 'down',
+    declined: 'down',
+    refused: 'down'
+  };
+
   function statusOf(view) {
+    if (view.stageLabel) return { word: view.stageLabel, tone: STAGE_TONE[view.stage] || 'ink' };
     var pair = STATUS[view.status] || STATUS.pending;
     var word = pair[0];
     if (view.status === 'executed') word = view.kind === 'intents_send' ? 'Sent' : 'Paid';

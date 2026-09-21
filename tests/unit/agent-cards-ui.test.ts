@@ -11,6 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
+import { proposalView } from '../../src/proposals/view.ts';
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
 const DOM_SOURCE = read('../../ui/core/dom.js');
@@ -145,7 +146,7 @@ function build() {
     },
     PhosphorReceipts: { onChange: (fn: (list: unknown[], state: string) => void) => { receiptHandlers.push(fn); fn([], 'idle'); }, load: () => {} },
     PhosphorReceipt: {
-      chainName: (id: string) => ({ base: 'Base', sol: 'Solana', intents: 'NEAR Intents', hyperliquid: 'Hyperliquid' })[id] ?? id,
+      chainName: (id: string) => ({ eth: 'Ethereum', base: 'Base', arb: 'Arbitrum', sol: 'Solana', intents: 'NEAR Intents', hyperliquid: 'Hyperliquid' })[id] ?? id,
       card: (receipt: Any) => {
         const node = make('div');
         node.className = 'receipt-card';
@@ -159,6 +160,12 @@ function build() {
     PhosphorMotion: { reduced: () => false, spring: () => 'linear' },
     PhosphorState: { select: (key: string, handler: (value: unknown, whole: unknown) => void) => { (sliceHandlers[key] ??= []).push(handler); return () => {}; } },
     PhosphorDeposit: { open: (opts: unknown) => { opened.push(opts); return Promise.resolve(null); } },
+    /* The window's one link gate (ui/core/links.js): here every https url passes, so a test
+       can see which line became a link. */
+    PhosphorLinks: {
+      explorerUrl: (url: unknown) => (typeof url === 'string' && url.startsWith('https://') ? url : null),
+      setHref: (anchor: Any, url: unknown) => { if (typeof url !== 'string' || !url.startsWith('https://')) return false; anchor.href = url; return true; },
+    },
   };
   sandbox.window = win;
   sandbox.CustomEvent = function CustomEventStub(this: Any, type: string, init: Any) { this.type = type; this.detail = init?.detail; };
@@ -216,6 +223,15 @@ const BOOK = {
 function receipt(id: string, at: number): Record<string, unknown> {
   return { id, kind: 'swap', status: 'executed', at: new Date(at).toISOString(), headline: `Swapped for ${id}`, amount: 0.049, symbol: 'SOL', fromChain: 'intents', toChain: 'intents' };
 }
+
+/* A row as the app hands it to the window: with its view beside it, built by the one builder
+   (src/proposals/view.ts). A propose reply, a state frame row and `show` all carry it, and the
+   card reads its stage word from nowhere else. */
+function withView(row: Record<string, unknown>, now?: number): Any {
+  return { ...row, view: proposalView({ settle: (r) => r }, row as never, now) };
+}
+
+const SWAP_DRAFT = { kind: 'swap', venue: 'intents-native', chain: 'intents', toChain: 'intents', fromSymbol: 'SOL', toSymbol: 'USDC', amountIn: 0.05, amountUsd: 5, minAmountOut: 4.9, from: '0x1', to: '0x1', counterparty: 'intents.near', quote: null };
 
 test('kindFor names the card by the tool, prefix or not, and falls back to the facts card', () => {
   const world = build();
@@ -280,7 +296,9 @@ test('a wallet holding something the app cannot price never reads as $0.00', () 
       { kind: 'intents', chain: 'intents', symbol: 'wNEAR', quantity: 2.0097, valueUsd: 0, priced: false, native: false },
     ],
   } });
-  card = world.cardNodes('balance')[1];
+  /* Two reads in one turn draw one card, the later read's (5.2). */
+  assert.equal(world.cardNodes('balance').length, 1, 'a second wallet read in one turn drew a second card');
+  card = world.cardNodes('balance')[0];
   assert.equal(all(card, 'tcard-figure')[0].textContent, 'at least $7.01');
   assert.equal(all(card, 'tcard-total-value')[0].textContent, 'at least $7.01');
 });
@@ -320,7 +338,8 @@ test('a proposed swap is one card, which the read-back updates in place, and a r
   const world = build();
   world.ask('swap 0.05 sol to usdc');
   const input = { chain: 'intents', toChain: 'intents', fromSymbol: 'SOL', toSymbol: 'USDC', amountIn: 0.05, minAmountOut: 4.9 };
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: { id: 'p1', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap 0.05 SOL for about 4.98 USDC' } } });
+  const filed = { id: 'p1', kind: 'swap', status: 'pending', createdAt: '2026-09-15T10:00:00Z', draft: SWAP_DRAFT, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap 0.05 SOL for about 4.98 USDC', swap: { receives: '4.98', receivesAtLeast: '4.9', feeUsd: 0.02, etaSeconds: 5 } } };
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: withView(filed) });
   let card = world.cardNodes('move')[0];
   assert.ok(card, 'no move card');
   let chip = all(card, 'tcard-state')[0];
@@ -328,12 +347,13 @@ test('a proposed swap is one card, which the read-back updates in place, and a r
   assert.equal(chip.textContent, 'Waiting for you');
   assert.ok(card.textContent.includes('SOL') && card.textContent.includes('USDC'), card.textContent);
   assert.ok(card.textContent.includes('at least 4.9 USDC'), card.textContent);
+  /* The stage line is the table's one sentence for the stage, verbatim, off the view. */
+  assert.equal(all(card, 'tcard-stage-copy')[0].textContent, 'Nothing moves until you answer Yes or No in the window.');
 
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__proposal_status', input: { id: 'p1' }, data: {
-    id: 'p1', kind: 'swap', status: 'executed', createdAt: '2026-09-15T10:00:00Z', decidedAt: '2026-09-15T10:00:20Z',
-    draft: { kind: 'swap', venue: 'intents-native', chain: 'intents', toChain: 'intents', fromSymbol: 'SOL', toSymbol: 'USDC', amountIn: 0.05, amountUsd: 5, minAmountOut: 4.9, quote: { amountOut: 4.98, feeUsd: 0.02, timeEstimateSec: 5 } },
-    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' }, result: { ok: true, detail: 'done', txids: ['abc'] },
-  } });
+  /* proposal_status answers with the view itself, which the card reads as such. */
+  const done = withView({ ...filed, status: 'executed', decidedAt: '2026-09-15T10:00:20Z', decidedBy: 'human', settledAt: '2026-09-15T10:00:40Z',
+    draft: { ...SWAP_DRAFT, quote: { amountOut: 4.98, feeUsd: 0.02, timeEstimateSec: 5 } }, result: { ok: true, detail: 'done', txids: ['abc'] } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__proposal_status', input: { id: 'p1' }, data: done.view });
   assert.equal(world.cardNodes('move').length, 1, 'the read-back drew a second card for the same move');
   card = world.cardNodes('move')[0];
   chip = all(card, 'tcard-state')[0];
@@ -341,12 +361,16 @@ test('a proposed swap is one card, which the read-back updates in place, and a r
   assert.equal(chip.textContent, 'Confirmed');
   assert.ok(card.textContent.includes('4.98') && card.textContent.includes('fee $0.02'), card.textContent);
 
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: { id: 'p2', status: 'policy_refused', verdict: { outcome: 'refuse', reasons: ['Never more than $50 in one move.'], rule: 'maxPerTransactionUsd' }, simulation: null } });
+  const refused = withView({ id: 'p2', kind: 'swap', status: 'policy_refused', createdAt: '2026-09-15T10:01:00Z', decidedAt: '2026-09-15T10:01:00Z', decidedBy: 'policy', draft: SWAP_DRAFT, verdict: { outcome: 'refuse', reasons: ['Never more than $50 in one move.'], rule: 'maxPerTransactionUsd' }, simulation: null });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: refused });
   assert.equal(world.cardNodes('move').length, 2, 'a different move is its own card');
   card = world.cardNodes('move')[1];
   chip = all(card, 'tcard-state')[0];
   assert.equal(chip.getAttribute('data-state'), 'failed');
+  assert.equal(chip.textContent, 'Refused');
   assert.ok(card.textContent.includes('Never more than $50 in one move.'), 'the reason is not on the card: ' + card.textContent);
+  /* And the next step, from the table: change the rule, in the window. */
+  assert.ok(all(card, 'tcard-stage-copy')[0].textContent.includes('Change the rule in the window'), all(card, 'tcard-stage-copy')[0].textContent);
 });
 
 test('a move card follows its proposal: the chip moves with the state frame, in place, and a folded card stays folded', () => {
@@ -357,42 +381,46 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   const world = build();
   world.ask('swap 2 usdc to sol');
   const input = { chain: 'intents', toChain: 'intents', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.0172 };
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: { id: 'p9', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap 2 USDC for about 0.0178 SOL' } } });
+  const row = (status: string, extra: Record<string, unknown> = {}) => withView({
+    id: 'p9', kind: 'swap', status, createdAt: '2026-09-18T10:35:00Z',
+    draft: { kind: 'swap', venue: 'intents-native', chain: 'intents', toChain: 'intents', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, amountUsd: 2, minAmountOut: 0.0172, quote: { amountOut: 0.0178, feeUsd: 0.01, timeEstimateSec: 5 } },
+    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap', swap: { receives: '0.0178', receivesAtLeast: '0.0172', feeUsd: 0.01, etaSeconds: 5 } },
+    ...extra,
+  });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: row('pending') });
   world.emit({ kind: 'text', text: 'Proposed. It is waiting for your click in the window.' });
   world.emit({ kind: 'turn_end', error: false, turns: 1 });
   assert.equal(world.cardNodes('move').length, 1);
-  assert.equal(all(world.cardNodes('move')[0], 'tcard-state')[0].textContent, 'Waiting for you');
+  const first = world.cardNodes('move')[0];
+  assert.equal(all(first, 'tcard-state')[0].textContent, 'Waiting for you');
+  assert.equal(all(first, 'tcard-state')[0].getAttribute('data-fade'), null, 'the first paint fades nothing');
   const before = world.blocks().map((b) => b.className);
 
-  const row = (status: string, extra: Record<string, unknown> = {}) => ({
-    id: 'p9', kind: 'swap', status, createdAt: '2026-09-18T10:35:00Z',
-    draft: { kind: 'swap', venue: 'intents-native', chain: 'intents', toChain: 'intents', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, amountUsd: 2, minAmountOut: 0.0172, quote: { amountOut: 0.0178, feeUsd: 0.01, timeEstimateSec: 5 } },
-    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' },
-    ...extra,
-  });
   // Somebody else's row moves nothing here.
   world.proposals([{ ...row('executed'), id: 'other' }]);
   assert.equal(all(world.cardNodes('move')[0], 'tcard-state')[0].textContent, 'Waiting for you');
 
   world.proposals([row('awaiting_touch')]);
   let card = world.cardNodes('move')[0];
+  assert.equal(card, first, 'the card was rebuilt rather than painted in place');
   assert.equal(all(card, 'tcard-state')[0].textContent, 'Touch ID');
+  /* The change is a fade, not a cut: the word and the stage line carry the fade attribute
+     the stylesheet animates (ui/design/chatcard.css), alternating so each change restarts it. */
+  assert.equal(all(card, 'tcard-state')[0].getAttribute('data-fade'), 'a');
+  assert.equal(all(card, 'tcard-stage-copy')[0].getAttribute('data-fade'), 'a');
+  assert.equal(all(card, 'tcard-stage-copy')[0].textContent, 'Touch ID is asking for your fingerprint. Nothing moves until you answer it.');
+  world.proposals([row('approved')]);
+  assert.equal(all(card, 'tcard-state')[0].getAttribute('data-fade'), 'b');
+  assert.equal(all(card, 'tcard-state')[0].textContent, 'Signing');
   assert.equal(world.cardNodes('move').length, 1, 'the card was appended rather than redrawn');
 
   // The settled row carries its view, which is the only place a settle time comes
   // from. The card used to print the decision time under the word "Confirmed at",
   // which is the two-clocks bug this build exists to end.
+  const evidence = { providerStage: 'SUCCESS', handle: 'h1', quote: { correlationId: 'corr-9-0123456789abcdef' }, explorerUrl: 'https://nearblocks.io/txns/abc' };
   const settled = row('executed', {
-    decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: true, detail: 'done', txids: ['abc'] },
-    settledAt: '2026-09-18T10:38:10Z',
-    view: {
-      id: 'p9', kind: 'swap', stage: 'confirmed', stageLabel: 'Confirmed', providerStage: 'SUCCESS',
-      waitingOn: null, terminal: true, outcome: 'confirmed',
-      createdAt: '2026-09-18T10:35:00Z', decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', settledAt: '2026-09-18T10:38:10Z',
-      lastChangeAt: '2026-09-18T10:38:10Z', elapsedSec: 190, sinceChangeSec: 0, typicalSec: 45,
-      deadlineAt: null, correlationId: 'corr-9', error: null, txs: [],
-      money: { symbol: 'USDC', toSymbol: 'SOL', amountIn: '2', feeUsd: '0.01', amountOut: '0.0178', fromPocket: 'NEAR Intents', toPocket: 'NEAR Intents', beforeUsd: null, afterUsd: null },
-    },
+    decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: true, detail: 'done', txids: ['abc'], evidence },
+    settledAt: '2026-09-18T10:38:10Z', lastChangeAt: '2026-09-18T10:38:10Z',
   });
   world.proposals([settled]);
   card = world.cardNodes('move')[0];
@@ -406,26 +434,45 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   const out = legs.find((n: Any) => n.getAttribute('data-leg') === 'to');
   assert.ok(out, 'no out leg');
   assert.ok(out.textContent.includes('0.0178 SOL'), out.textContent);
+  assert.ok(!out.textContent.includes('about'), 'a confirmed figure is a fact, not an expectation: ' + out.textContent);
   assert.ok(out.textContent.includes('inside NEAR Intents'), out.textContent);
   const lines = all(card, 'tcard-line').map((n: Any) => n.textContent);
   assert.ok(lines.some((t: string) => t.startsWith('Confirmed at')), lines.join(' | '));
   assert.ok(lines.some((t: string) => t.startsWith('You clicked at')), lines.join(' | '));
   assert.equal(lines.filter((t: string) => t.startsWith('Confirmed at')).length, 1);
-  /* The router's own word is evidence when a move went wrong and noise under a chip that
-     already says Confirmed ("The router calls this SUCCESS", 2026-09-20). The reference stays:
-     it is the handle support asks for, under a plain label. */
-  assert.ok(!lines.some((t: string) => t.includes('SUCCESS')), 'the router word is under a confirmed chip: ' + lines.join(' | '));
-  assert.ok(lines.some((t: string) => t.startsWith('Reference') && t.includes('corr-9')), lines.join(' | '));
+  /* The vendor's own word never sits on the face of the card, and not even in the fold under
+     a word that already says Confirmed (5.4). The reference stays, shortened to its two ends
+     with a Copy that carries the whole id (3.1), and the hash is a link where it is now. */
+  assert.ok(!card.textContent.includes('SUCCESS'), 'the vendor word is on a confirmed card: ' + card.textContent);
+  assert.ok(lines.some((t: string) => t.startsWith('Reference') && t.includes('corr-9-0...89abcdef')), lines.join(' | '));
+  assert.ok(!card.textContent.includes('corr-9-0123456789abcdef'), 'the whole id is printed: ' + card.textContent);
+  const copies = all(card, 'tcard-copy');
+  assert.ok(copies.some((b: Any) => b.getAttribute('aria-label') === 'Copy corr-9-0...89abcdef'), 'no Copy beside the reference');
+  assert.ok(all(card, 'tcard-link').some((a: Any) => a.textContent.includes('abc')), 'the hash is not a link: ' + lines.join(' | '));
   assert.ok(!lines.some((t: string) => t.startsWith('Trace')), lines.join(' | '));
   assert.deepEqual(world.blocks().map((b) => b.className), before, 'the redraw moved rows around');
+  /* Every line under the facts is inside the one fold, closed until a person opens it. */
+  const details = all(card, 'tcard-details')[0];
+  assert.ok(details, 'no details fold');
+  assert.equal(details.getAttribute('data-open'), 'false');
+  assert.ok(all(details, 'tcard-line').length >= 4, 'the checks and the reference are not in the fold');
+  assert.equal(all(card, 'tcard-line').length, all(details, 'tcard-line').length, 'a line sits outside the fold');
 
   const refunded = row('failed', {
-    decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: false, detail: 'refunded' }, settledAt: '2026-09-18T10:40:00Z',
-    view: { ...(settled as Any).view, stage: 'failed', stageLabel: 'Failed', outcome: 'failed', providerStage: 'REFUNDED', settledAt: '2026-09-18T10:40:00Z', error: { code: 'refunded', message: 'The router refunded it.' } },
+    decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', result: { ok: false, detail: 'The transfer sent the money back: the quote expired before the deposit landed. {"code":422}', txids: ['abc'], evidence: { ...evidence, providerStage: 'REFUNDED' } },
+    settledAt: '2026-09-18T10:40:00Z',
   });
   world.proposals([refunded]);
-  const failedLines = all(world.cardNodes('move')[0], 'tcard-line').map((n: Any) => n.textContent);
-  assert.ok(failedLines.some((t: string) => t.includes('REFUNDED')), 'the router word is evidence on a failed move: ' + failedLines.join(' | '));
+  const failed = world.cardNodes('move')[0];
+  assert.equal(all(failed, 'tcard-state')[0].textContent, 'Failed');
+  /* The face carries one plain sentence of why and no code, no brace, no vendor capitals;
+     the vendor's word sits in the fold in the app's case, as evidence (3.5, 5.4). */
+  const note = all(failed, 'tcard-note-down')[0];
+  assert.equal(note.textContent, 'The transfer sent the money back: the quote expired before the deposit landed.');
+  assert.ok(!failed.textContent.includes('REFUNDED'), 'the vendor word in capitals: ' + failed.textContent);
+  const failedLines = all(failed, 'tcard-details')[0] ? all(all(failed, 'tcard-details')[0], 'tcard-line').map((n: Any) => n.textContent) : [];
+  assert.ok(failedLines.some((t: string) => t === 'The transfer calls thisrefunded'), 'the vendor word is not in the fold as evidence: ' + failedLines.join(' | '));
+  assert.ok(failedLines.some((t: string) => t.startsWith('What the app recorded') && t.includes('422')), 'the rail line is not kept as evidence: ' + failedLines.join(' | '));
 
   // The same frame again is nothing new, and a card the person closed stays closed across a redraw.
   const fold = world.cards.foldOf(card);
@@ -518,7 +565,7 @@ test('a move card that was refused by the human says so once the frame says so',
   const world = build();
   world.ask('swap 2 usdc to sol');
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { chain: 'intents', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.0172 }, data: { id: 'p3', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' } } });
-  world.proposals([{ id: 'p3', kind: 'swap', status: 'refused', createdAt: '2026-09-18T10:35:00Z', decidedAt: '2026-09-18T10:35:30Z', decidedBy: 'human', draft: { kind: 'swap', chain: 'intents', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.0172 }, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: null }]);
+  world.proposals([withView({ id: 'p3', kind: 'swap', status: 'refused', createdAt: '2026-09-18T10:35:00Z', decidedAt: '2026-09-18T10:35:30Z', decidedBy: 'human', draft: { ...SWAP_DRAFT, fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.0172 }, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: null })]);
   const card = world.cardNodes('move')[0];
   assert.equal(all(card, 'tcard-state')[0].textContent, 'Declined');
   assert.ok(card.textContent.includes('You said no.'), card.textContent);
@@ -658,7 +705,11 @@ test('the composer: Enter sends, Shift+Enter does not, Escape lets go, and the a
 test('cards.js builds nothing that decides anything and writes no markup', () => {
   assert.equal(/\.innerHTML\s*=|insertAdjacentHTML|outerHTML|document\.write/.test(CARDS_SOURCE), false, 'cards.js writes markup');
   const buttons = CARDS_SOURCE.match(/dom\.el\('button'[^\n]*/g) ?? [];
-  assert.deepEqual(buttons.map((b) => b.trim()), ["dom.el('button', 'btn btn-ghost btn-sm tcard-open');"], 'an unknown button site in cards.js');
+  assert.deepEqual(buttons.map((b) => b.trim()), [
+    "dom.el('button', 'btn btn-quiet btn-sm tcard-copy');",
+    "dom.el('button', 'tcard-details-head');",
+    "dom.el('button', 'btn btn-ghost btn-sm tcard-open');",
+  ], 'an unknown button site in cards.js');
 });
 
 test('a chain_address answer is a small data block through the facts card, and its step row says the call left the machine', () => {
@@ -720,4 +771,147 @@ test('a state word never takes the title\'s room: the two-row head gives the tit
      than the room beside the figure slid over it: "250 USDaiting for the venue to credit it". */
   const state = block.slice(block.indexOf('.tcard-state {', block.indexOf('grid-area: state') - 200));
   assert.match(state.slice(0, 220), /white-space: normal/, 'the state word is still held to one line');
+});
+
+test('a read on the way to a move leaves no card of its own, and one turn draws at most one read card', () => {
+  /* The agent reads the wallet before every swap and the account before every trade, and each
+     read drew its card: three cards per move, and a long chat full of balances nobody asked
+     for (known failure 4, criterion 5.2). A read card under a move in the same turn goes; a
+     second read card in one turn replaces the first; a move card is never dropped. */
+  const world = build();
+  world.ask('swap 2 usdc to sol');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__wallet', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: WALLET });
+  assert.equal(world.cardNodes('balance').length, 1, 'the read drew its card before the move');
+  const filed = withView({ id: 'r1', kind: 'swap', status: 'pending', createdAt: '2026-09-20T10:00:00Z', draft: { ...SWAP_DRAFT, fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.0172 }, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' } });
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__propose_swap', input: {} });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__propose_swap', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 2, minAmountOut: 0.0172 }, data: filed });
+  assert.equal(world.cardNodes('balance').length, 0, 'the wallet card stayed under the move it was a check for');
+  assert.equal(world.cardNodes('move').length, 1);
+  /* The steps that produced the read stay: what the agent did is still the record. */
+  assert.ok(world.blocks().some((b) => b.className === 'steps-block'), 'the step rows went with the card');
+  world.emit({ kind: 'text', text: 'Proposed.' });
+  world.emit({ kind: 'turn_end', error: false, turns: 1 });
+
+  world.ask('what do I hold and how is the account');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: WALLET });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__trade_read', input: {}, data: BOOK });
+  assert.equal(world.cardNodes('balance').length, 0, 'two read cards in one turn');
+  assert.equal(world.cardNodes('position').length, 1);
+  assert.equal(world.cardNodes('move').length, 1, 'the move card from the turn before was touched');
+  world.emit({ kind: 'turn_end', error: false, turns: 1 });
+
+  /* A new turn starts its own count. */
+  world.ask('and the wallet again');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: WALLET });
+  assert.equal(world.cardNodes('position').length, 1, 'the turn before lost its card');
+  assert.equal(world.cardNodes('balance').length, 1);
+});
+
+test('the receipt of a move folds into its card, and a move made elsewhere gets the same card off its row', () => {
+  /* Two cards per swap by design, the move card plus a receipt card, was known failure 4.
+     The move card follows its row to Confirmed with the hash on it, so the receipt adds
+     nothing. A receipt for a move this conversation never proposed draws the same skeleton
+     from the row the state frame carries, and only a row the frame has let go falls back to
+     the receipt's own card. */
+  const world = build();
+  world.receipts([]);
+  const soon = Date.now() + 1000;
+  const row = (id: string, status: string, extra: Record<string, unknown> = {}) => withView({
+    id, kind: 'swap', status, createdAt: '2026-09-20T10:00:00Z', draft: { ...SWAP_DRAFT, quote: { amountOut: 4.98, feeUsd: 0.02, timeEstimateSec: 5 } },
+    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' }, ...extra,
+  });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: {}, data: row('p9', 'pending') });
+  const settled = row('p9', 'executed', { decidedAt: '2026-09-20T10:00:20Z', decidedBy: 'human', settledAt: '2026-09-20T10:00:50Z', result: { ok: true, detail: 'done', txids: ['EafozJ2XkQ9mRtb7n16c'], evidence: { explorerUrl: 'https://nearblocks.io/txns/EafozJ2XkQ9mRtb7n16c' } } });
+  const other = row('p10', 'executed', { decidedAt: '2026-09-20T10:01:20Z', decidedBy: 'policy', settledAt: '2026-09-20T10:01:50Z', result: { ok: true, detail: 'done', txids: ['zzz'] } });
+  world.proposals([settled, other]);
+  assert.equal(all(world.cardNodes('move')[0], 'tcard-state')[0].textContent, 'Confirmed');
+
+  world.receipts([receipt('p9', soon)]);
+  assert.equal(world.cardNodes('move').length, 1, 'the receipt drew a second card for the move');
+  assert.equal(world.cardNodes('receipt').length, 0);
+  assert.ok(all(world.cardNodes('move')[0], 'tcard-link').some((a: Any) => a.textContent.includes('EafozJ2X')), 'the hash is not on the move card');
+
+  world.receipts([receipt('p10', soon), receipt('p9', soon)]);
+  assert.equal(world.cardNodes('move').length, 2, 'a move made elsewhere got no card');
+  assert.equal(world.cardNodes('receipt').length, 0, 'a row the frame carries drew the receipt shell instead of the move card');
+  const drawn = world.cardNodes('move')[1];
+  assert.equal(all(drawn, 'tcard-state')[0].textContent, 'Confirmed');
+  assert.equal(drawn.id, 'card-proposal-p10');
+  /* The card before it folds to its line, the way a receipt used to. */
+  assert.equal(world.cards.foldOf(world.cardNodes('move')[0]).isOpen(), false);
+
+  world.receipts([receipt('gone', soon), receipt('p10', soon), receipt('p9', soon)]);
+  assert.equal(world.cardNodes('move').length, 2);
+  assert.equal(world.cardNodes('receipt').length, 1, 'a row the frame has let go still gets the receipt card');
+  /* Opening the receipt of a move already on the thread opens that card where it stands. */
+  world.bus('receipt:open', { receipt: receipt('p9', soon) });
+  assert.equal(world.cardNodes('move').length, 2);
+  assert.equal(world.cards.foldOf(world.cardNodes('move')[0]).isOpen(), true);
+  assert.equal(all(world.cardNodes('move')[0], 'tcard-details')[0].getAttribute('data-open'), 'true');
+});
+
+test('a send is the same skeleton, with the whole address on the leg it lands on', () => {
+  /* Every kind is one shape: title, the two legs, at least and fee, the stage line, one fold.
+     A send differs in one fact, the receiver, and that fact is the whole address, every
+     character in groups of four with a Copy, never shortened (frozen rule 3). */
+  const world = build();
+  const to = '0xAbCdEf0123456789abcdef0123456789ABCDEF01';
+  const draft = { kind: 'intents_pay', symbol: 'USDC', originAsset: 'nep141:eth-usdc', network: 'eth', amount: 25, amountUsd: 25, minReceived: 24.6, from: '0x1', to, toChecksum: 'valid', counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, ownAddress: false } };
+  const filed = withView({ id: 's1', kind: 'intents_pay', status: 'pending', createdAt: '2026-09-20T10:00:00Z', draft, verdict: { outcome: 'needs_approval', reasons: [] },
+    simulation: { ok: true, summary: 'pay', send: { arrives: '24.7', arrivesAtLeast: '24.6', feeUsd: 0.3, etaSeconds: 60, explorer: 'https://etherscan.io/address/' + to, activity: 'This address has never been used on Ethereum.' } } });
+  const reply = { id: 's1', status: 'pending', verdict: filed.verdict, simulation: filed.simulation, view: filed.view,
+    send: { kind: 'intents_pay', where: 'eth', to, symbol: 'USDC', amount: 25, amountUsd: 25, recipient: { known: false, count: 0, lastAt: null, ownAddress: false } } };
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_send', input: { amount: 25, symbol: 'USDC', to, where: 'eth', confirmed: true }, data: reply });
+  const card = world.cardNodes('move')[0];
+  assert.ok(card, 'no card');
+  assert.equal(all(card, 'tcard-title')[0].textContent, 'Pay');
+  assert.equal(all(card, 'tcard-state')[0].textContent, 'Waiting for you');
+  const legs = byAttr(card, 'data-leg');
+  assert.equal(legs.length, 2, 'a send is two legs like every move');
+  const from = legs.find((n: Any) => n.getAttribute('data-leg') === 'from') as Any;
+  const out = legs.find((n: Any) => n.getAttribute('data-leg') === 'to') as Any;
+  assert.ok(from.textContent.includes('25 USDC') && from.textContent.includes('inside NEAR Intents'), from.textContent);
+  assert.ok(out.textContent.includes('at least 24.6 USDC') && out.textContent.includes('to Ethereum'), out.textContent);
+  const address = all(out, 'tcard-leg-address')[0];
+  assert.ok(address, 'no address on the out leg');
+  assert.equal(address.getAttribute('data-address'), to);
+  assert.equal(all(address, 'tcard-leg-group').map((g: Any) => g.textContent).join(''), to, 'the address is not whole');
+  assert.equal(all(address, 'tcard-leg-group')[1].textContent, 'CdEf');
+  assert.ok(all(out, 'tcard-copy').length === 1, 'no Copy on the address');
+  assert.ok(all(out, 'tcard-leg-explorer').length === 1, 'no explorer link on the address');
+  assert.equal(all(card, 'tcard-facts')[0].textContent, 'fee $0.30');
+  assert.equal(all(card, 'tcard-stage-copy')[0].textContent, 'Nothing moves until you answer Yes or No in the window.');
+  const details = all(card, 'tcard-details')[0];
+  const lines = all(details, 'tcard-line').map((n: Any) => n.textContent);
+  assert.ok(lines.some((t: string) => t === 'This addressfirst send'), lines.join(' | '));
+  assert.ok(details.textContent.includes('never been used on Ethereum'), details.textContent);
+  /* No sentence about the move under two legs that already say it, and no old send card. */
+  assert.equal(all(card, 'sendcard').length, 0);
+});
+
+test('a late move reads its clock in words, and a held one names the checks', () => {
+  const world = build();
+  const late = withView({ id: 'l1', kind: 'hl_deposit', status: 'needs_reconciliation', createdAt: '2026-09-20T10:00:00Z', decidedAt: '2026-09-20T10:00:10Z', decidedBy: 'human', lastChangeAt: '2026-09-20T10:01:00Z', stalledAt: '2026-09-20T10:21:00Z',
+    draft: { kind: 'hl_deposit', symbol: 'USDC', originAsset: 'nep141:eth-usdc', amount: 7.5425, amountUsd: 7.5425, minCredited: 5, from: '0x1', hlAccount: '0x1', counterparty: 'hypercore' },
+    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: null, pocket: { venue: 'hyperliquid', symbol: 'USDC', assetId: 'hl-usdc', account: '0x1', decimals: 6, before: '0', after: null, floor: '5000000' },
+    result: { ok: false, detail: 'polling', txids: ['0xintent'], evidence: { providerStage: 'PROCESSING', handle: 'h1' } } }, Date.parse('2026-09-20T10:23:00Z'));
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__proposal_status', input: { id: 'l1' }, data: late.view });
+  const card = world.cardNodes('move')[0];
+  assert.equal(all(card, 'tcard-state')[0].textContent, 'Late, nothing has changed');
+  assert.equal(late.view.error.message, 'Nothing has changed for 22 minutes. Hyperliquid has not answered.');
+  assert.ok(!card.textContent.includes('PROCESSING'), 'the vendor word in capitals: ' + card.textContent);
+  assert.ok(!card.textContent.includes('2026-09-20T'), 'an ISO stamp on the card: ' + card.textContent);
+  /* Late is still counting: the stage line keeps its clock. */
+  assert.equal(all(card, 'tcard-stage-clock')[0].hidden, false);
+
+  const held = withView({ id: 'h1', kind: 'hl_deposit', status: 'approved', heldSince: '2026-09-20T10:00:30Z', createdAt: '2026-09-20T10:00:00Z', decidedAt: '2026-09-20T10:00:10Z', decidedBy: 'human',
+    draft: { kind: 'hl_deposit', symbol: 'USDC', originAsset: 'nep141:eth-usdc', amount: 7.5425, amountUsd: 7.5425, minCredited: 5, from: '0x1', hlAccount: '0x1', counterparty: 'hypercore' },
+    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: null });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__proposal_status', input: { id: 'h1' }, data: held.view });
+  const holding = world.cardNodes('move')[1];
+  assert.equal(all(holding, 'tcard-state')[0].textContent, 'Holding');
+  assert.ok(all(holding, 'tcard-stage-copy')[0].textContent.startsWith('The checks before signing have not cleared yet.'));
 });

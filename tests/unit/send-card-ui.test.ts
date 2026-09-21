@@ -468,14 +468,19 @@ test('the thread draws the send card from the reply\'s send facts, not from the 
     send: { kind: 'intents_pay', where: 'ethereum', to: FRIEND, symbol: 'ETH', amount: 0.01, amountUsd: 24.4, recipient: { known: false, count: 0, lastAt: null, ownAddress: false } },
   };
   // The argument spells the address in lowercase; the card shows the app's checksummed spelling.
+  // The thread draws every move in one skeleton (ui/screens/cards.js moveCard): the receiver
+  // is the whole address on the leg the money lands on, in groups of four, with a Copy.
   const card = cards.render('move', reply, { name: 'propose_send', input: { to: FRIEND.toLowerCase(), symbol: 'eth', amount: 0.01, where: 'ethereum', confirmed: true } });
-  const root = all(card, 'sendcard')[0];
-  assert.ok(root, 'the thread drew no send card');
-  assert.equal(all(root!, 'sendcard-group').map((g) => g.textContent).join(''), FRIEND);
-  assert.equal(all(root!, 'sendcard-amount')[0]?.textContent, '0.01 ETH');
-  assert.equal(all(root!, 'sendcard-recipient-line')[0]?.getAttribute('data-first'), 'true');
+  const address = all(card, 'tcard-leg-address')[0];
+  assert.ok(address, 'the thread drew no address on the send card');
+  assert.equal(all(address!, 'tcard-leg-group').map((g) => g.textContent).join(''), FRIEND);
+  assert.equal(address!.getAttribute('data-address'), FRIEND);
+  const from = all(card, 'tcard-leg').find((leg) => leg.getAttribute('data-leg') === 'from');
+  assert.ok(from?.textContent.includes('0.01 ETH'), String(from?.textContent));
+  assert.ok(all(card, 'tcard-line').some((line) => line.textContent === 'This addressfirst send'), 'the first send is not named');
   assert.equal(all(card, 'btn-primary').length, 0, 'the thread card grew a deciding button');
   assert.equal(all(card, 'tcard-title')[0]?.textContent, 'Pay');
+  assert.equal(all(card, 'sendcard').length, 0, 'the dock\'s own card is nested inside the thread card');
 });
 
 // ---------- the checks and the hold ----------
