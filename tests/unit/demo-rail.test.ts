@@ -271,7 +271,7 @@ test('the demo simulations carry the same fee facts the live rails do, so the ca
   const dep = deposit.simulation?.send;
   assert.ok(dep !== undefined, 'the deposit carries send facts');
   assert.equal(dep.feeUsd, 0.675);
-  assert.equal(dep.arrives, '149.325');
+  assert.equal(dep.arrives, dep.arrivesAtLeast, 'the floor in both slots, as the live rails do');
   assert.equal(dep.arrivesAtLeast, String(deposit.draft.kind === 'hl_deposit' ? deposit.draft.minCredited : NaN));
   assert.match(deposit.simulation?.summary ?? '', /app fee   0\.3750 USDC, 25 bp, inside the quote/);
   await h.svc.refuse(deposit.id);
@@ -281,7 +281,7 @@ test('the demo simulations carry the same fee facts the live rails do, so the ca
   assert.ok(wd !== undefined, 'the withdrawal carries send facts');
   // 0.2 flat plus 25 bp of 20 inside the quote, plus 1 USDC the venue takes on top.
   assert.equal(wd.feeUsd, 1.25);
-  assert.equal(wd.arrives, '19.75');
+  assert.equal(wd.arrives, wd.arrivesAtLeast);
   assert.equal(wd.arrivesAtLeast, String(withdraw.draft.kind === 'hl_withdraw' ? withdraw.draft.minReceived : NaN));
   assert.match(wd.activity, /1 USDC on top/);
   assert.match(withdraw.simulation?.summary ?? '', /activation 1 USDC on top/);

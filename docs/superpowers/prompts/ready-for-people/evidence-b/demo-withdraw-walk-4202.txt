@@ -1,0 +1,29 @@
+propose 200 id 1f699ed2-4a12-46aa-bf7a-44380693ef27 status pending
+reply keys id,status,verdict,simulation,view
+BEFORE CLICK view.money {"symbol":"USDC","toSymbol":"USDC","amountIn":"20","feeUsd":"1.25","amountOut":"19.67","fromPocket":"Hyperliquid","toPocket":"NEAR Intents","beforeUsd":null,"afterUsd":null}
+view.stage waiting_for_you | Waiting for you | waitingOn You | typicalSec 180
+simulation.send {"destinationAsset":"nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1","arrives":"19.67","arrivesAtLeast":"19.67","feeUsd":1.25,"bridgeFee":null,"etaSeconds":180,"activity":"Three fees. Routing 0.2 USDC and a 25 bp app fee (0.05 USDC) come out of the quote. Hyperliquid charges 1 USDC on top to open the fresh address 1Click mints, paid by the venue account.","explorer":null}
+summary:
+demo: 20 USDC leaves the trading account and about 19.75 USDC reaches this app's own NEAR Intents balance; no other destination can be named.
+  at least  19.67 USDC, the floor the move is held to
+  cost      1.2500 USDC, 6.25 percent
+  routing   0.2000 USDC inside the quote
+  app fee   0.0500 USDC, 25 bp, inside the quote
+  activation 1 USDC on top, the venue's charge for a destination it has never seen
+  by hand   always a click, whatever the size
+Nothing is signed and no money moves.
+approve 200 {"id":"1f699ed2-4a12-46aa-bf7a-44380693ef27","kind":"hl_withdraw","createdAt":"2026-09-21T03:26:57.835Z","status":"executing","draft":{"kind":"hl_withdraw","sym
+STAGES submitting -> KNOWN_DEPOSIT_TX -> PROCESSING -> SUCCESS -> crediting -> confirmed
+stamps:
+  submitting @ 2026-09-21T03:26:57.877Z label "Sending it" waitingOn The transfer
+  KNOWN_DEPOSIT_TX @ 2026-09-21T03:26:59.908Z label "Deposit seen" waitingOn The transfer
+  PROCESSING @ 2026-09-21T03:27:01.959Z label "On its way" waitingOn The transfer
+  SUCCESS @ 2026-09-21T03:27:04.027Z label "Waiting for the venue to credit it" waitingOn The transfer
+  crediting @ 2026-09-21T03:27:06.048Z label "Waiting for the venue to credit it" waitingOn NEAR Intents
+  confirmed @ 2026-09-21T03:27:08.548Z label "Confirmed" waitingOn null
+stageAt clocks {"waiting_for_you":"2026-09-21T03:26:57.835Z","signing":"2026-09-21T03:26:57.860Z","submitting":"2026-09-21T03:26:57.877Z","KNOWN_DEPOSIT_TX":"2026-09-21T03:26:59.908Z","PROCESSING":"2026-09-21T03:27:01.959Z","SUCCESS":"2026-09-21T03:27:04.027Z","crediting":"2026-09-21T03:27:06.048Z","confirmed":"2026-09-21T03:27:08.548Z"}
+AFTER view.money {"symbol":"USDC","toSymbol":"USDC","amountIn":"20","feeUsd":"1.25","amountOut":"19.75","fromPocket":"Hyperliquid","toPocket":"NEAR Intents","beforeUsd":1850,"afterUsd":1869.75}
+txs [{"leg":"origin","hash":"0xe35b1abf83cf884f9b1b6250a86726f0993982479bb3a17971a6ad9bf3ff6d18","network":null,"explorer":null,"running":false},{"leg":"destination","hash":"0x6da6ffb54f84da34ec3b078ceb6c2ce840d57ce1e5b38ca7f69152b252b56b94","network":null,"explorer":"https://explorer.demo.invalid/tx/0xe35b1abf83cf884f9b1b6250a86726f0993982479bb3a17971a6ad9bf3ff6d18","running":false}]
+evidence {"handle":"demo-49e9e2aa1ab3","nonce":"1789961217902","quote":{"correlationId":"demo-49e9e2aa1ab3","timestamp":"2026-09-21T03:26:57.902Z","signature":"demo, nothing was signed","depositAddress":"demo, no deposit address was minted"},"providerStage":"SUCCESS","settledAmountOut":"19.75","explorerUrl":"https://explorer.demo.invalid/tx/0xe35b1abf83cf884f9b1b6250a86726f0993982479bb3a17971a6ad9bf3ff6d18"}
+pocket {"venue":"intents","account":"0x2732449052376253f727786405f9a5116905812d","assetId":"nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near","symbol":"USDC","decimals":6,"before":"1850000000","after":"1869750000","floor":"19670000"}
+settledAt 2026-09-21T03:27:08.548Z | detail: confirmed on a later read: the balance inside intents.near rose by 19.75 USDC (1850 before, 1869.75 after), at or above the 19.67 USDC floor this move was approved with.

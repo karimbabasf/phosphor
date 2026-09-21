@@ -381,7 +381,14 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       feePct,
       facts: {
         destinationAsset: INTENTS_USDC_ASSET_ID,
-        arrives: oneLine(quote.amountOutFormatted, 40),
+        /* THE FLOOR, IN BOTH SLOTS. The view's amountOut is what the chat card draws as the
+           landing leg, and the card has no "at least" line for this kind yet (ui/screens/cards.js
+           draws one for a swap only), so a quote's expected figure there would print a promise
+           above the one the rail holds the venue to. The floor is the number the rubric calls
+           "receive at least" and the number the signed guarantee is checked against (criterion
+           8.1); the expected figure stays in the summary, and a settled row replaces this with
+           what landed. When the card draws arrivesAtLeast, `arrives` can carry the quote. */
+        arrives: usdc(draft.minReceived),
         arrivesAtLeast: usdc(draft.minReceived),
         feeUsd: Number.isFinite(total) ? Number(total.toFixed(6)) : null,
         bridgeFee: null,

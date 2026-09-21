@@ -1,0 +1,15 @@
+routes 
+unlock 200 {"ok":true,"released":1}
+propose 200 5e53a42b-c2a8-4e6a-b352-675b7a053905 pending
+approve 200 executing
+at kill: stage PROCESSING | status executing | nonce 1789961339621 | handle demo-2414d6ce279e | txids ["0x9c250bdf641fe43ea36928778a6d31ccd649ed8da6b9e6bbd4a4c6f2d72b72cf"]
+kill -9 pid 25579
+ON DISK after kill -9: status executing | providerStage PROCESSING | nonce 1789961339621 | handle demo-2414d6ce279e | txids ["0x9c250bdf641fe43ea36928778a6d31ccd649ed8da6b9e6bbd4a4c6f2d72b72cf"] | stageAt {"waiting_for_you":"2026-09-21T03:28:59.566Z","signing":"2026-09-21T03:28:59.584Z","submitting":"2026-09-21T03:28:59.603Z","KNOWN_DEPOSIT_TX":"2026-09-21T03:29:01.623Z","PROCESSING":"2026-09-21T03:29:03.654Z"}
+AFTER BOOT: status needs_reconciliation | stage stalled "Late, nothing has changed" | nonce 1789961339621 | handle demo-2414d6ce279e | txids ["0x9c250bdf641fe43ea36928778a6d31ccd649ed8da6b9e6bbd4a4c6f2d72b72cf"]
+detail: No venue handle was recorded for 0x9c250bdf641fe43ea36928778a6d31ccd649ed8da6b9e6bbd4a4c6f2d72b72cf, so there is nothing this app can re-check. Compare the balances before and after on the receipt, or look the hash up in the explorer by hand.
+stageAt {"waiting_for_you":"2026-09-21T03:28:59.566Z","signing":"2026-09-21T03:28:59.584Z","submitting":"2026-09-21T03:28:59.603Z","KNOWN_DEPOSIT_TX":"2026-09-21T03:29:01.623Z","PROCESSING":"2026-09-21T03:29:03.654Z","stalled":"2026-09-21T03:29:21.378Z"}
+LATER: stage stalled "Late, nothing has changed" | status needs_reconciliation | settlesForward true | error {"code":"deadline_passed","message":"Nothing has changed since 2026-09-21T03:29:03.654Z, which is 26 seconds. NEAR Intents has not answered."}
+audit tail:
+  phosphor error: 1 proposal(s) were mid-decision when Phosphor last stopped and are now waiting to be reconciled
+  phosphor error: 5e53a42b-c2a8-4e6a-b352-675b7a053905: reconcile found nothing to re-check
+  phosphor error: 5e53a42b-c2a8-4e6a-b352-675b7a053905: nothing has changed since 2026-09-21T03:29:03.654Z and it is past its deadline, so it is marked late

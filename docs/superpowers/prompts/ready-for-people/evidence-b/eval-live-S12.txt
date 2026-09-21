@@ -1,0 +1,42 @@
+grader self-test: 25 checks pass
+PHOSPHOR EVAL: 1 scenario(s), live mode, run 1 of 3
+staged repo /var/folders/vx/kbtvr52j70v38hmcz2bnwls40000gn/T/phosphor-eval-stage-AoLtvA
+
+[PASS] S12 withdraw 20 off Hyperliquid trace:ok reply:ok window:ok judge:f2/r2
+
+================================================================================================
+id   mode      result  failing check   first failing assertion
+------------------------------------------------------------------------------------------------
+S12  live      pass                    
+================================================================================================
+1 scenarios: 1 pass, 0 fail, 0 xfail, 0 error
+PHOSPHOR EVAL: 1 scenario(s), live mode, run 2 of 3
+staged repo /var/folders/vx/kbtvr52j70v38hmcz2bnwls40000gn/T/phosphor-eval-stage-eCNgbQ
+
+[PASS] S12 withdraw 20 off Hyperliquid trace:ok reply:ok window:ok judge:f2/r2
+
+================================================================================================
+id   mode      result  failing check   first failing assertion
+------------------------------------------------------------------------------------------------
+S12  live      pass                    
+================================================================================================
+1 scenarios: 1 pass, 0 fail, 0 xfail, 0 error
+PHOSPHOR EVAL: 1 scenario(s), live mode, run 3 of 3
+staged repo /var/folders/vx/kbtvr52j70v38hmcz2bnwls40000gn/T/phosphor-eval-stage-4QltDr
+
+[FAIL] S12 withdraw 20 off Hyperliquid trace:ok reply:no window:ok judge:f1/r2   judge f1/r2: 12/12/12 Landing named only as "NEAR Intents", not this app's own intents balance; 25 bp 
+
+================================================================================================
+id   mode      result  failing check   first failing assertion
+------------------------------------------------------------------------------------------------
+S12  live      fail    reply           judge f1/r2: 12/12/12 Landing named only as 
+================================================================================================
+1 scenarios: 0 pass, 1 fail, 0 xfail, 0 error
+
+================================================================================================
+ACROSS 3 RUNS of the same build, live mode
+id   runs      pass   green   last failing assertion
+------------------------------------------------------------------------------------------------
+S12  PPF       2/3    no      judge f1/r2: 12/12/12 Landing named only as "N
+================================================================================================
+1 scenarios over 3 runs: 0 green (passed every run or expected-fail every run), 1 not, of which 1 passed at least one run and failed another

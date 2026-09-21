@@ -334,7 +334,9 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       feePct,
       facts: {
         destinationAsset: HYPERCORE_USDC_ASSET_ID,
-        arrives: oneLine(quote.amountOutFormatted, 40),
+        // The floor in both slots, for the reason hypercore-withdraw.ts gives: the chat card
+        // draws `arrives` as the landing leg and has no "at least" line for this kind yet.
+        arrives: money(draft.minCredited),
         arrivesAtLeast: money(draft.minCredited),
         feeUsd: Number.isFinite(feeUsd) ? Number(feeUsd.toFixed(6)) : null,
         bridgeFee: null,

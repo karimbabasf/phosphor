@@ -363,7 +363,9 @@ function simulateHlDeposit(draft: HlDepositDraft): SimulationResult {
     ].join('\n'),
     send: {
       destinationAsset: HYPERCORE_USDC_ASSET_ID,
-      arrives: units(credited, 6),
+      // The floor in both slots, as the live rails do: the chat card draws `arrives` as the
+      // landing leg and has no "at least" line for this kind yet.
+      arrives: units(draft.minCredited, 6),
       arrivesAtLeast: units(draft.minCredited, 6),
       feeUsd: Number(fee.toFixed(6)),
       bridgeFee: null,
@@ -428,7 +430,7 @@ function simulateHlWithdraw(draft: HlWithdrawDraft): SimulationResult {
     ].join('\n'),
     send: {
       destinationAsset: INTENTS_USDC_ASSET_ID,
-      arrives: units(received, 6),
+      arrives: units(draft.minReceived, 6),
       arrivesAtLeast: units(draft.minReceived, 6),
       feeUsd: Number(total.toFixed(6)),
       bridgeFee: null,

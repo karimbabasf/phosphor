@@ -403,7 +403,7 @@ test('the simulation carries the fee facts the card draws: the total, the app fe
   assert.ok(facts !== undefined, 'the send facts are on the simulation');
   // 10 in, 9.6594 credited: 0.3406 inside the quote, of which 25 bp of 10 is 0.025.
   assert.equal(facts.feeUsd, 0.3406);
-  assert.equal(facts.arrives, '9.6594');
+  assert.equal(facts.arrives, String(minCreditedFor(AMOUNT)), 'the floor, never the quote, until the card draws an "at least" line for this kind');
   assert.equal(facts.arrivesAtLeast, String(minCreditedFor(AMOUNT)));
   assert.equal(facts.destinationAsset, HYPERCORE_USDC_ASSET_ID);
   assert.equal(facts.etaSeconds, 180, "the whole move, off the table the card counts against, never the router's leg alone");

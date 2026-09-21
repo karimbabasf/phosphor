@@ -737,7 +737,9 @@ test('the simulation carries the fee facts the card draws: total with the activa
   assert.ok(facts !== undefined, 'the send facts are on the simulation');
   // 8 in, 7.780248 credited: 0.219752 inside the quote, of which 25 bp of 8 is 0.02, plus 1 on top.
   assert.equal(facts.feeUsd, 1.219752);
-  assert.equal(facts.arrives, '7.780248');
+  // Both slots carry the floor: the card draws `arrives` as the landing leg and must never
+  // print a promise above the one the rail holds the venue to (criterion 8.1).
+  assert.equal(facts.arrives, String(minReceivedForHlWithdraw(AMOUNT)));
   assert.equal(facts.arrivesAtLeast, String(minReceivedForHlWithdraw(AMOUNT)));
   assert.equal(facts.destinationAsset, INTENTS_USDC_ASSET_ID);
   assert.equal(facts.etaSeconds, 180, "the whole move, off the table the card counts against, never the router's leg alone");
