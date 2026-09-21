@@ -190,3 +190,98 @@ docs/superpowers/prompts/ready-for-people/evidence-c/.
   goes in index.html.
 - PHOSPHOR_DATA_DIR under the worktree's state/ is refused in demo mode (the key file would sit inside
   the working copy); a demo backend's data dir has to sit outside the checkout.
+
+## C2 review fixes
+
+Fresh builder C2, off tip 7b60f50, after the correctness review (review-c-correct.md) rejected the branch on
+two breaks. Three commits, one per item, each with its regression test named and proven red on the commit
+before it.
+
+### Commits
+
+- bf62200 The proxy reads PHOSPHOR_PORT before ACC_PORT, the order src/config.ts reads them in, so an agent
+  the app registered dials the port the app runs on instead of config.json's 4177; the data directory goes
+  through the same helper. Test: tests/unit/mcp-proxy-port.test.ts, red on 7b60f50
+- 1b2a5e9 A pick checks first and stores the agent only when it is on this Mac or has nothing to probe, so a
+  fresh pick of a missing agent reads "not on this Mac yet" and "no longer on this Mac" stays for the agent
+  picked earlier that has since gone. Tests: connection-route.test.ts (red on bf62200), firstrun-ui.test.ts
+- da2bd42 Keyboard focus on a tile is the app's own ring, never the tile's colour; the two entries with no
+  maker get their plain Details line. Tests: firstrun-ui.test.ts (red on 1b2a5e9), agents-catalog.test.ts
+
+### The three items
+
+1. Port (10.4). src/mcp.ts gained `envFirst(...names)`, the first set and non-empty name in order, mirroring
+   src/config.ts's `env` (not importable: config.ts pulls the keystore and viem into the thin proxy). `resolvePort`
+   reads `PHOSPHOR_PORT` then `ACC_PORT`; `resolveDataDir` reads `PHOSPHOR_DATA_DIR` then `ACC_DATA_DIR` through
+   the same helper. Test tests/unit/mcp-proxy-port.test.ts: "with only PHOSPHOR_PORT set, the proxy dials that
+   port and reads its seat from PHOSPHOR_DATA_DIR" and "PHOSPHOR_PORT wins over ACC_PORT, the order
+   src/config.ts reads them in". Both spawn src/mcp.ts as a stdio server against a stub app; on 7b60f50 both
+   fail ("the proxy never reached the app on PHOSPHOR_PORT=52123; it saw []"), on bf62200 both pass.
+   End to end: demo backend booted on PHOSPHOR_PORT=4223 with a scratchpad data dir, src/mcp.ts driven as a
+   stdio client with only `PHOSPHOR_PORT` and `PHOSPHOR_DATA_DIR` in its environment (the registered env; no
+   ACC_* name), `wallet` called. The proxy's env names, printed: `PHOSPHOR_PORT, PHOSPHOR_DATA_DIR`. The
+   answer's first line:
+   `{"rows":[{"kind":"intents","chain":"intents","symbol":"ETH","tokenId":"nep141:eth.omft.near","quantity":0.42,"priceUsd":4520,"valueUsd":1898.3999999999999,"share":0.47318045862412766,"native":false,"priced":true,"intents":{"accountId":"0x1111111111111111111111111111111111111111","assetId":"nep141:eth.omft.near"}},{"kind":"intents","chain":"intents","symbol":"USDC","tokenId":"nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near","quantity":1850,"priceUsd":1,"valueUsd":1850,"share":0.4611166500498505,"native":false,"priced":true,"intents":{"accountId":"0x1111111111111111111111111111111111111111","assetId":"nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near"}},{"kind":"intents","chain":"intents","symbol":"SOL","tokenId":"nep141:sol.omft.near","quantity":1.2,"priceUsd":178,"valueUsd":213.6,"share":0.05324027916251247,"native":false,"priced":true,"intents":{"accountId":"0x1111111111111111111111111111111111111111","assetId":"nep141:sol.omft.near"}},{"kind":"hyperliquid","chain":"hyperliquid","symbol":"USDC","tokenId":"hyperliquid:perps","quantity":50,"priceUsd":1,"valueUsd":50,"share":0.012462612163509473,"native":false,"hyperliquid":{"account":"0x1111111111111111111111111111111111111111","availableUsdc":50,"marginUsedUsd":0,"openPositions":0,"unified":true}}],"totalUsd":4011.9999999999995,"byChain":{"intents":3961.9999999999995,"hyperliquid":50},"stale":[],"staleWhy":{},"emptyCount":0,"dustCount":0,"dustUsd":0,"unpriced":[],"hyperliquid":{"funded":true},"custody":null,"backedUp":false,"screen":{"view":"basic"}}`
+   Wallet rows, not "The control app is not running". The backend was quit after (exit 0, 4223 free).
+2. The not-installed sentence (10.3, 10.8). src/http/mutation.ts agent-pick now runs `checkFor` first; the pick
+   is written only when the check did not answer `not_installed` (installed either way, or an entry with
+   nothing to probe: another MCP agent, Claude Desktop). A pick of a missing agent stores nothing, answers the
+   10.3 sentence, and leaves an earlier pick where it was (the answer's `picked` says so); the audit log gets one
+   line for the attempt. `checkFor`'s `wasPicked` is unchanged and now reads the stored pick before any write,
+   so "no longer on this Mac" is reserved for the agent picked earlier that has since gone (the reviewer's
+   shots/17 case). Tests in tests/unit/connection-route.test.ts: "a pick of an agent that is not on this Mac
+   says it is not here yet, and stores nothing" (red on bf62200: the parent answered "Codex is no longer on
+   this Mac." and stored the pick) and "the agent picked earlier that has since gone says it is no longer on
+   this Mac, on a check and on a re-pick" (the 10.8 guard, green on both). tests/unit/firstrun-ui.test.ts:
+   the fixtures for a missing pick now carry `picked: null` as the app answers, the clicked tile stays current
+   under the app's sentence, the done screen still says "Install Codex, then pick it in the Vault tab.", and a
+   source assertion that neither firstrun.js nor vault.js composes either sentence (one source, 11.3).
+3. Focus and Details (10.1, 10.3). ui/design/agentpick.css `.agent-tile:focus-visible` is the app's ring
+   (`2px solid var(--ink)`, reset.css :focus-visible), and `var(--net)` is painted on hover and
+   `aria-current` only. src/agents-catalog.ts `detailLines` reads "Made by <vendor>." for a CLI entry and the
+   plain "<vendor>." for the two the app cannot probe: "Any agent that connects to MCP servers." and "A chat
+   window, with no agent on this Mac." Tests: firstrun-ui.test.ts "the picker prints nothing the network said..."
+   now asserts the focus rule and that no selector with `focus` paints the tile's colour (red on 1b2a5e9: "the
+   focus ring is not the app's"); agents-catalog.test.ts "the two entries that cannot be probed answer
+   unknown_client without running anything" asserts both Details lines and "Made by" on the four CLI entries
+   (red on 1b2a5e9).
+
+### Counts
+
+- `npm run typecheck`: exit 0 ("TypeScript: No errors found").
+- `npm test`: 3129 tests, 3129 pass, 0 fail (was 3125 at 7b60f50; +2 mcp-proxy-port, +2 connection-route).
+- `cargo check` in src-tauri: exit 0, 0 warnings.
+- `npm run eval`: not run; nothing the agent reads or says changed (no persona, role, skills, operator or tool
+  description edits).
+
+### Decisions
+
+- 10.3: a not_installed pick stores nothing rather than storing and flagging. The alternative (store, then
+  keep a "fresh" marker to pick the sentence) is a second copy of one fact; the stored pick means "an agent
+  that can drive, or one that needs no probe", and the done screen already says "then pick it in the Vault
+  tab" for a missing one.
+- 10.3: the picker keeps the clicked tile current while the sentence is about it; the vault panel's Done
+  re-reads the stored pick (`agent-check` with no agent), so the panel returns to the truth on its own.
+- 10.4: `envFirst` is mirrored in src/mcp.ts with a comment rather than exported from src/config.ts, whose
+  imports (keystore, viem) the thin proxy must not load; config.ts is not a file I own.
+- Not rendered: the focus ring is proven by the source assertion; no screenshot was taken (the brief made it
+  optional).
+
+### Follow-ups found, not fixed
+
+- src/mcp.ts `resolvePort` falls back to config.json only, while src/config.ts merges config.local.json over
+  it; a port set in config.local.json alone is not seen by a proxy started with no PHOSPHOR_PORT. Out of the
+  brief's scope (the env precedence only). Every line the app writes carries PHOSPHOR_PORT, so no registered
+  agent hits it.
+- ui/design/deposit.css:101-123: the network picker's `.net-tile:focus-visible` paints the tile in its brand
+  colour, the same pattern the C review flagged on the agent picker (not my file).
+- tests/unit/connection-route.test.ts and agents-catalog.test.ts play "not on this Mac" with PATH and HOME
+  pointed at nothing; a Mac with a real `codex` in /opt/homebrew/bin or /usr/local/bin (the catalog's absolute
+  list) would fail both. Same exposure the existing `bareHome` tests already carry.
+
+### Lessons appended
+
+- A flag that means "this was already so" must be read before the request writes the same state: a write
+  first and a read after turned every fresh pick into a repeat.
+- Two readers of one env contract drift on names when one cannot import the other (src/config.ts and the
+  thin proxy); mirror the helper with the same order and pin it with a test that spawns the proxy.
