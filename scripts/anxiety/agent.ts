@@ -105,10 +105,10 @@ const ENDED: Partial<Record<ProposalStage, (kind: string, legs: string, rest: st
   },
   declined: (kind, legs) => `You said no to the ${kind} of ${legs}, so nothing moved.`,
   refused: (kind, legs) => `A rule you set stopped the ${kind} of ${legs}, so nothing moved. You can change that rule in the window.`,
-  failed: (kind, legs) => `The ${kind} of ${legs} did not go through and nothing more will be signed. Check your balance before trying again.`,
-  FAILED: (kind, legs) => `The ${kind} of ${legs} could not finish and nothing more will be signed. Check your balance before trying again.`,
+  failed: (kind, legs) => `The ${kind} of ${legs} did not go through and nothing more will be signed. Check your balance before doing anything else.`,
+  FAILED: (kind, legs) => `The ${kind} of ${legs} could not finish and nothing more will be signed. Check your balance before doing anything else.`,
   NOT_FOUND_OR_NOT_VALID: (kind, legs) => `The ${kind} of ${legs} did not settle before its price expired, so nothing moved. Ask me for a fresh price to try again.`,
-  REFUNDED: (kind, legs) => `The ${kind} of ${legs} could not finish and the money came back to you. Check your balance, then try again if you want.`,
+  REFUNDED: (kind, legs) => `The ${kind} of ${legs} could not finish and the money came back to you. Check your balance before doing anything else.`,
   stalled: (kind, legs) => `The ${kind} of ${legs} is running late and nothing has changed since its last update. The app keeps checking and will settle it when the venue credits it.`,
 };
 

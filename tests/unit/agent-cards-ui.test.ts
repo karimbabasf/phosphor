@@ -348,7 +348,7 @@ test('a proposed swap is one card, which the read-back updates in place, and a r
   assert.ok(card.textContent.includes('SOL') && card.textContent.includes('USDC'), card.textContent);
   assert.ok(card.textContent.includes('at least 4.9 USDC'), card.textContent);
   /* The stage line is the table's one sentence for the stage, verbatim, off the view. */
-  assert.equal(all(card, 'tcard-stage-copy')[0].textContent, 'Nothing moves until you answer Yes or No in the window.');
+  assert.equal(all(card, 'tcard-stage-copy')[0].textContent, 'Nothing moves until you answer in the window.');
 
   /* proposal_status answers with the view itself, which the card reads as such. */
   const done = withView({ ...filed, status: 'executed', decidedAt: '2026-09-15T10:00:20Z', decidedBy: 'human', settledAt: '2026-09-15T10:00:40Z',
@@ -467,7 +467,9 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   assert.equal(all(failed, 'tcard-state')[0].textContent, 'Failed');
   /* The face carries one plain sentence of why and no code, no brace, no vendor capitals;
      the vendor's word sits in the fold in the app's case, as evidence (3.5, 5.4). */
-  const note = all(failed, 'tcard-note-down')[0];
+  const note = all(failed, 'tcard-reason')[0];
+  // One status colour on the face: the chip is red, the sentence under it is body text (alarm 0).
+  assert.ok(!note.className.includes('tcard-note-down'), 'the reason is a second red line: ' + note.className);
   assert.equal(note.textContent, 'The transfer sent the money back: the quote expired before the deposit landed.');
   assert.ok(!failed.textContent.includes('REFUNDED'), 'the vendor word in capitals: ' + failed.textContent);
   const failedLines = all(failed, 'tcard-details')[0] ? all(all(failed, 'tcard-details')[0], 'tcard-line').map((n: Any) => n.textContent) : [];
@@ -897,7 +899,7 @@ test('a send is the same skeleton, with the whole address on the leg it lands on
   assert.ok(all(out, 'tcard-copy').length === 1, 'no Copy on the address');
   assert.ok(all(out, 'tcard-leg-explorer').length === 1, 'no explorer link on the address');
   assert.equal(all(card, 'tcard-facts')[0].textContent, 'fee $0.30');
-  assert.equal(all(card, 'tcard-stage-copy')[0].textContent, 'Nothing moves until you answer Yes or No in the window.');
+  assert.equal(all(card, 'tcard-stage-copy')[0].textContent, 'Nothing moves until you answer in the window.');
   const details = all(card, 'tcard-details')[0];
   const lines = all(details, 'tcard-line').map((n: Any) => n.textContent);
   assert.ok(lines.some((t: string) => t === 'This addressfirst send'), lines.join(' | '));

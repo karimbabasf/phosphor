@@ -620,8 +620,14 @@ function evaluatePolicyChange(draft: Extract<WriteDraft, { kind: 'policy_change'
 
   const parsed = patchSchema.safeParse(draft.patch);
   if (!parsed.success) {
+    /* The schema's own words ("outbound.humanClickAboveUsd: Expected number, received string")
+       reached the card as the refusal and read as a fault in the app to the person it was
+       refusing for. Each issue is named as the rule the person knows and what shape it takes;
+       the schema's path and message stay in the audit reasons for the engineer. */
     const detail = parsed.error.issues.map(i => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ');
-    return refusal(reasons, 'invalid_patch', `Patch is not a valid policy change: ${detail}`);
+    reasons.push(`Schema: ${detail}`);
+    const plain = parsed.error.issues.map(i => plainPatchIssue(i.path.map(String), i.message));
+    return refusal(reasons, 'invalid_patch', `This change is not in a shape the app can keep: ${uniqueSentences(plain).join(' ')} Nothing changed.`);
   }
 
   // Same shape as nothing_to_move for a draft with no legs, and for the same reason: an empty
@@ -903,4 +909,32 @@ function autoApproveCeilingReason(policy: Policy, ctx: EngineCtx, usd: number): 
   const spent = ctx.autoApprovedSpentUsd ?? 0;
   if (spent + usd <= ceiling) return null;
   return `Auto-approved moves in the last 24 hours already total ${money(spent)}; with ${money(usd)} more that passes the ${money(ceiling)} ceiling, so this one waits for a click.`;
+}
+
+/* A policy field, in the words the policy's own sentences use (src/policy/render.ts), and the
+   shape it has to take. Unknown paths are named as "one of the settings" rather than by key. */
+const PATCH_FIELD_WORDS: Record<string, string> = {
+  'outbound.humanClickAboveUsd': 'the amount to ask above',
+  'outbound.maxPerTransactionUsd': 'the most one move may be',
+  'outbound.maxPerSessionUsd': 'the most a session may move',
+  'outbound.autoApproveDailyUsd': 'the daily amount that runs on its own',
+  'outbound.destinationAllowlist': 'the list of places money may go',
+  'composition.maxFreezableShare': 'the share that may sit in coins that can be frozen',
+  'composition.maxIssuerShare': 'the share one issuer may hold',
+  'composition.forbiddenIssuers': 'the list of issuers to avoid',
+};
+
+function plainPatchIssue(path: string[], message: string): string {
+  const key = path.join('.');
+  const known = PATCH_FIELD_WORDS[key] ?? (path.length > 0 ? `one of the settings (${path[path.length - 1]})` : 'the change');
+  const what = known.charAt(0).toUpperCase() + known.slice(1);
+  if (/expected number/i.test(message)) return `${what} has to be a number of dollars.`;
+  if (/expected array/i.test(message)) return `${what} has to be a list.`;
+  if (/expected boolean/i.test(message)) return `${what} has to be on or off.`;
+  if (/unrecognized key|unrecognized_keys/i.test(message)) return `${what} is not a rule this app keeps.`;
+  return `${what} is not in a shape the app can keep.`;
+}
+
+function uniqueSentences(lines: string[]): string[] {
+  return lines.filter((line, i) => lines.indexOf(line) === i);
 }

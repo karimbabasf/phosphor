@@ -1130,7 +1130,10 @@
     clockCell.appendChild(clockUsual);
     stage.appendChild(copy);
     stage.appendChild(clockCell);
-    var reason = dom.el('div', 'tcard-note tcard-note-down');
+    /* The reason under a refused or failed move is body text, not a second red line: the
+       state chip already carries the tone, and a red chip beside a red sentence read as two
+       alarms at once to the anxiety judge (B01, B03, B11, B12, 2026-09-21). */
+    var reason = dom.el('div', 'tcard-note tcard-reason');
     var details = detailsFold({ open: meta.detailsOpen === true, onToggle: meta.onDetailsToggle });
     body.appendChild(legsHost);
     body.appendChild(sentence);

@@ -151,7 +151,7 @@ export const STAGE_LABEL: Record<ProposalStage, string> = {
    The label is the headline; this is the sentence under it. A surface prints it verbatim or not
    at all, never a paraphrase, so the card and the agent cannot describe one moment two ways. */
 export const STAGE_COPY: Record<ProposalStage, string> = {
-  waiting_for_you: 'Nothing moves until you answer Yes or No in the window.',
+  waiting_for_you: 'Nothing moves until you answer in the window.',
   waiting_for_unlock: 'The wallet is locked. Unlock it in the window and the move continues.',
   waiting_for_touch: 'Touch ID is asking for your fingerprint. Nothing moves until you answer it.',
   held: 'The checks before signing have not cleared. Nothing is signed until they do; the app tries again.',
@@ -162,8 +162,8 @@ export const STAGE_COPY: Record<ProposalStage, string> = {
   INCOMPLETE_DEPOSIT: 'Part of the money arrived and the rest is still on its way. Nothing for you to do yet.',
   PROCESSING: 'The transfer is moving your money across. Nothing for you to do.',
   SUCCESS: 'The transfer is done and the venue has not shown the money yet. Nothing for you to do.',
-  REFUNDED: 'The transfer could not finish and sent the money back. Check your balance, then try again.',
-  FAILED: 'The transfer could not finish and nothing more is signed. Check your balance before trying again.',
+  REFUNDED: 'The transfer could not finish and sent the money back. Check your balance before doing anything else.',
+  FAILED: 'The transfer could not finish and nothing more is signed. Check your balance before doing anything else.',
   PENDING: 'Your swap is sent and being matched at the price you approved. Nothing for you to do.',
   TX_BROADCASTED: 'Your swap is settling on NEAR. Nothing for you to do.',
   SETTLED: 'Your swap settled. The balance is being read to confirm it. Nothing for you to do.',

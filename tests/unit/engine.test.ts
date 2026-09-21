@@ -249,3 +249,18 @@ for (const c of cases) {
     else assert.equal(c.rule, undefined, 'non-refusals must not expect a rule id');
   });
 }
+
+/* A REFUSAL IS WRITTEN FOR THE PERSON IT REFUSES FOR. The schema's own line ("outbound.
+   humanClickAboveUsd: Expected number, received string") reached the card as the reason and
+   scored as a fault in the app under the anxiety judge (B03, 2026-09-21). The last reason names
+   the rule in the policy's words and the shape it needs; the schema's line stays behind it for
+   the engineer, and no blame word appears. */
+test('engine: an invalid patch is refused in the person\'s words, with the schema line kept behind it', () => {
+  const verdict = evaluate(rawPolicyChange({ outbound: { humanClickAboveUsd: 'lots' } }), ctxWith({ policy: defaultPolicy(), sessionSpentUsd: 0 }));
+  assert.equal(verdict.outcome, 'refuse');
+  assert.equal(verdict.rule, 'invalid_patch');
+  const last = verdict.reasons[verdict.reasons.length - 1];
+  assert.equal(last, 'This change is not in a shape the app can keep: The amount to ask above has to be a number of dollars. Nothing changed.');
+  assert.doesNotMatch(last, /humanClickAboveUsd|Expected|received|invalid|you /);
+  assert.ok(verdict.reasons.some((r) => /^Schema: outbound\.humanClickAboveUsd: /.test(r)), 'the schema line is kept for the engineer');
+});
