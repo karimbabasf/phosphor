@@ -7,16 +7,16 @@ data under state/), quit before this report. Evidence under evidence-e/.
 
 - 3da97fd Every button holds the floor: 36 px, small 30, large 44, both faces of a wait in one cell, one check row and one copy button, and a button inventory that photographs every family in every state
 - 14a10d3 The dock keeps its answer on screen: it takes the column but 120 px and never gives way to the transcript, an ask takes a stacked window whole, the transcript fades under it, and the vault's chips drop their dot
-- (third) This report with the evidence, the deposit card's open button on the text column, and the lessons: hash in the final message
+- c1a058a Node E report: the button inventory sheets, the app captures at 860 and 400 px, the audit before and after, the detector at 0, and the deposit card's open button on the card's text column
+- d3fac11 Merge branch 'main' into rfp/e-craft (bb4b842, the demo-rail test word)
 
 ## 2. Counts
 
 - `npm run typecheck`: exit 0 (TypeScript: No errors found).
-- `npm test`: 3096 tests, 3095 pass, 1 fail. The one failure is `demo-rail.test.ts` "the stall
-  knob stops the walk at PROCESSING and the deadline is what moves the row", and it fails the same
-  way on the parent commit 6ff58a9 (3068 tests, 3067 pass, 1 fail, run in a detached worktree of
-  the parent). Not mine: src/ demo rail, listed under follow-ups. My branch adds 28 tests, all
-  green; nothing that passed on the parent fails here.
+- `npm test`: 3096 tests, 3096 pass, 0 fail, after `git merge main` at bb4b842 (d3fac11). Before
+  the merge the one failure was `demo-rail.test.ts` "the stall knob stops the walk at PROCESSING",
+  a phase-0 contract word the lead fixed on main; it failed the same way on the parent 6ff58a9
+  (3068 tests, 3067 pass). My branch adds 28 tests, all green.
 - `npm run eval`: not run. This node touched no file the agent reads or says (ui/design, index.html,
   scripts, tests only).
 
@@ -123,8 +123,6 @@ data under state/), quit before this report. Evidence under evidence-e/.
 
 ## 6. Follow-ups found, not fixed
 
-- tests/unit/demo-rail.test.ts "the stall knob stops the walk at PROCESSING": fails on the parent
-  commit too (1 of 3 in that file), src/ demo rail.
 - ui/design/deposit.css `.netpick-head`: at a 400 px world (browser only; the desktop world is
   never under 560 px) the title truncates to "Tokens ..." beside Change network.
 - ui/screens/agent.js:908: the send disc goes pending without a verb; the CSS carries it (see
