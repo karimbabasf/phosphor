@@ -396,6 +396,24 @@ test('withdraw, killed while polling on a row with no pocket: SUCCESS alone neve
   await b.svc.reconcileOpen();
   assert.equal(b.svc.get(seed.id)?.status, 'needs_reconciliation');
   assert.equal(b.executed, 0);
+
+  // The same row with the rail's settling sentence on it ("has not shown"), which used to route a
+  // withdrawal to the deposit's venue read and hold it open with a sentence about depositing.
+  const settling = rowAt('hl_withdraw', {
+    id: 'crash-hl_withdraw-settling-nopocket',
+    status: 'needs_reconciliation',
+    settledAt: new Date().toISOString(),
+    result: { ok: false, detail: `${SETTLING_WITHDRAW} sent 8 USDC`, txids: ['0xledgerhash'], evidence: { handle: HANDLE, nonce: NONCE, providerStage: 'SUCCESS' } },
+  });
+  const c = boot(settling);
+  c.venue.status = 'SUCCESS';
+  await c.svc.reconcileOpen();
+  const kept = c.svc.get(settling.id) as Proposal;
+  assert.equal(kept.status, 'needs_reconciliation');
+  assert.match(kept.result?.detail ?? '', /cannot confirm the credit on its own/);
+  assert.doesNotMatch(kept.result?.detail ?? '', /before depositing again/, "a withdrawal never takes the deposit's venue read");
+  assert.equal(kept.result?.evidence?.nonce, NONCE);
+  assert.equal(c.executed, 0);
 });
 
 test('withdraw, killed at Deposit seen: the ledger hash, handle and nonce survive, and the row resumes at the word 1Click last said', async () => {
