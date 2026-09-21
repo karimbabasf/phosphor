@@ -199,11 +199,6 @@
   overflow-wrap: anywhere;
 }
 
-.sendcard-address-actions .icon {
-  width: 14px;
-  height: 14px;
-}
-
 .sendcard-address-actions a {
   text-decoration: none;
 }
@@ -252,34 +247,55 @@
   .sendcard-arrow svg { transform: rotate(90deg); }
 }
 
-/* ---------- the (i) ---------- */
+/* ---------- the (i) ----------
 
+   A 16 px disc to look at inside the floor's 30 px box to press: the box is
+   transparent and pulls its margins in, so the line reads exactly as it did
+   with the disc alone. The ring on keyboard focus is drawn on the disc. */
 .sendcard-info {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  margin-left: var(--s-1);
+  width: 30px;
+  height: 30px;
+  margin: -7px 0 -7px calc(var(--s-1) - 7px);
   padding: 0;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--line-strong);
+  border: 0;
   background: transparent;
   color: var(--text-3);
+  vertical-align: middle;
+  cursor: help;
+}
+
+.sendcard-info > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
   font-family: var(--font-mono);
   font-size: 10px;
   line-height: 1;
-  vertical-align: middle;
-  cursor: help;
   transition: color var(--dur-press) var(--ease-out), border-color var(--dur-press) var(--ease-out);
 }
 
 .sendcard-info:hover,
 .sendcard-info:focus-visible {
   color: var(--text);
-  border-color: var(--text-3);
   outline: none;
+}
+
+.sendcard-info:hover > span,
+.sendcard-info:focus-visible > span {
+  border-color: var(--text-3);
+}
+
+.sendcard-info:focus-visible > span {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
 .sendcard-info::after {

@@ -976,13 +976,16 @@
 /* A finished turn folds its steps to one quiet line: a chevron, the count and
    the time, then what the calls were, by name. The chevron turns down when
    the rows are open. Never a green dot: a dot says "live", and this is over. */
+/* Its words sit on the second text tone, the quietest one a pressable's
+   label may wear: the third falls under 4.5:1 on the lightest ground the
+   theme tool accepts. */
 .steps-fold {
   display: inline-flex;
   align-items: center;
   gap: 0;
-  min-height: 22px;
+  min-height: 30px;
   font-size: var(--fs-12);
-  color: var(--text-3);
+  color: var(--text-2);
   padding: 0;
   text-align: left;
   align-self: flex-start;
@@ -1141,6 +1144,11 @@
 }
 
 .composer-send .composer-stop-glyph { display: none; }
+
+/* While the disc waits (a stop in flight) it shows the spinner alone: a
+   36 px disc has no room for the verb, and the glyph under it has left. */
+.composer-send .btn-pending { gap: 0; }
+.composer-send .btn-pending-label { display: none; }
 
 .composer-field[data-armed="true"] .composer-send:not(:disabled) {
   opacity: 1;

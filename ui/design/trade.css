@@ -53,14 +53,15 @@ body[data-view="trade"] .stage {
   flex: 1 1 auto;
 }
 
-/* The eye-off control every pane header carries: 24 px, quiet until it is
-   pointed at, the pane's own name in its label. */
+/* The eye-off control every pane header carries: a 16 px glyph in the
+   floor's 30 px box, quiet until it is pointed at, the pane's own name in its
+   label. */
 .pane-hide {
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   border-radius: var(--radius-sm);
   color: var(--text-3);
   transition: color var(--dur-press) var(--ease-out),
@@ -78,7 +79,7 @@ body[data-view="trade"] .stage {
   outline-offset: -2px;
 }
 
-/* The way back: the same 24 px ghost, wearing the eye, drawn only while its
+/* The way back: the same 30 px ghost, wearing the eye, drawn only while its
    pane is hidden. The deck's sits in the chart bar, the chart's in the deck's
    tab row, and the assistant column's is a small tab on the world's left
    edge, quiet until pointed at. */
@@ -86,8 +87,8 @@ body[data-view="trade"] .stage {
   display: none;
   flex: 0 0 auto;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   border-radius: var(--radius-sm);
   color: var(--text-3);
   transition: color var(--dur-press) var(--ease-out),
@@ -588,50 +589,11 @@ body[data-view="trade"] .stage {
   background: var(--ink);
 }
 
-/* Check rows: a drawn 12 px box that fills with the accent when on. */
+/* Check rows are the shared component (components.css, .check-row and
+   .check): this menu and the bar's Layout menu build the same row. */
 .layers-rows {
   display: flex;
   flex-direction: column;
-}
-
-.layers-row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  width: 100%;
-  height: 28px;
-  padding: 0 var(--s-2);
-  border-radius: var(--radius-sm);
-  text-align: left;
-  font-size: var(--fs-12);
-  color: var(--text-2);
-  transition: background-color var(--dur-press) var(--ease-out),
-              color var(--dur-press) var(--ease-out);
-}
-
-.layers-row[aria-checked="true"] { color: var(--text); }
-
-.layers-row:active { transform: scale(0.97); }
-
-.layers-row:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
-}
-
-.layers-check {
-  flex: 0 0 auto;
-  width: 12px;
-  height: 12px;
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--line-strong);
-  background: transparent;
-  transition: background-color var(--dur-press) var(--ease-out),
-              border-color var(--dur-press) var(--ease-out);
-}
-
-.layers-row[aria-checked="true"] .layers-check {
-  border-color: var(--ink);
-  background: var(--ink);
 }
 
 .layers-foot {
@@ -848,7 +810,7 @@ body[data-view="trade"] .stage {
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  height: 26px;
+  height: 30px;
   padding: 0 var(--s-2) 0 var(--s-3);
   border-radius: var(--radius-sm);
   font-size: var(--fs-12);
@@ -1207,8 +1169,6 @@ body[data-view="trade"] .stage {
 }
 
 .trade-more {
-  min-height: 28px;
-  height: 28px;
   font-size: var(--fs-12);
 }
 
@@ -1265,10 +1225,8 @@ body[data-view="trade"] .stage {
 }
 
 .trade-act {
-  min-height: 26px;
-  height: 26px;
   padding: 0 var(--s-3);
-  font-size: var(--fs-12);
+  font-size: var(--fs-13);
 }
 
 .trade-act[data-armed="true"] {

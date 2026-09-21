@@ -421,10 +421,9 @@
   gap: var(--s-1);
 }
 
-/* A filter chip is a pill on the raised surface, and the pressed one sits in
-   the ink wash with the text at full strength. */
+/* A filter chip is a pill on the raised surface; its height and its pressed
+   face are the pressed chip's own (components.css, button.chip). */
 .chip-filter {
-  height: 28px;
   padding: 0 var(--s-3);
   font-size: var(--fs-12);
   font-weight: 500;
@@ -432,12 +431,6 @@
   background: var(--bg-2);
   border: 1px solid var(--line);
   cursor: pointer;
-}
-
-.chip-filter[aria-pressed="true"] {
-  background: var(--ink-wash);
-  border-color: var(--ink-edge);
-  color: var(--text);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -512,10 +505,13 @@
 }
 
 .activity-link {
+  min-height: 30px;
   font-size: var(--fs-14);
   font-weight: 500;
   color: var(--ink);
-  padding: var(--s-1) var(--s-2);
+  padding: var(--s-1) var(--s-3);
+  margin: 0 calc(var(--s-3) * -1);
+  white-space: nowrap;
   border-radius: var(--radius-sm);
   transition: background-color var(--dur-press) var(--ease-out);
 }
@@ -562,10 +558,14 @@
 
 /* Over five rows the heading is the control that opens the group, with the
    count beside it. It stays a heading in size and weight: the chevron and the
-   count are what say it opens. */
+   count are what say it opens. Its words move up to the second text tone, the
+   quietest a pressable's label may wear (the third falls under 4.5:1 on the
+   lightest ground the theme tool accepts). */
 button.rule-group-title {
+  min-height: 30px;
   border: 0;
   border-radius: var(--radius-sm);
+  color: var(--text-2);
   cursor: pointer;
   --opens-bg: transparent;
   --opens-line: transparent;
@@ -583,7 +583,7 @@ button.rule-group-title .chev {
   button.rule-group-title:hover {
     background: transparent;
     border-color: transparent;
-    color: var(--text-2);
+    color: var(--text);
   }
 }
 

@@ -131,10 +131,12 @@ html, body {
   pointer-events: none;
 }
 
+/* The bar's controls hold the small variant's 30 px (components.css, the
+   floor), in a 48 px bar. */
 .tab {
   position: relative;
   z-index: 1;
-  height: 28px;
+  height: 30px;
   padding: 0 var(--s-4);
   border-radius: var(--radius-pill);
   font-size: var(--fs-13);
@@ -142,6 +144,10 @@ html, body {
   color: var(--text-2);
   transition: color var(--dur-press) var(--ease-out),
               transform var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tab:hover { color: var(--text); }
 }
 
 .tab:active {
@@ -219,6 +225,28 @@ html, body {
 .bar-state[data-tone="warn"] > .status-dot { background: var(--warn); }
 .bar-state[data-tone="off"] > .status-dot { background: var(--text-3); }
 
+/* A state that is also a button (Not backed up opens the Vault) is a
+   pressable and says so: the floor's height, a pointer, and the word
+   lifting under it. The dot and the size stay those of the lines beside it. */
+button.bar-state {
+  min-height: 30px;
+  padding: 0 var(--s-2);
+  margin: 0 calc(var(--s-2) * -1);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.bar-state:hover {
+    color: var(--text);
+    background: var(--bg-2);
+  }
+}
+
+button.bar-state:active { transform: scale(0.97); }
+
 /* The lock: a lock and a word, at the same size as the state beside it. A
    locked wallet reads in the warning colour, which the shell writes as the
    same data-tone the chip carried. */
@@ -260,7 +288,7 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: 30px;
   padding: 0 var(--s-3) 0 var(--s-2);
   border-radius: var(--radius-sm);
   font-size: var(--fs-12);
@@ -283,20 +311,18 @@ html, body {
 }
 
 /* Freeze everything: the safety control, so it keeps its words, and a solid
-   quiet button rather than an outlined red one. The wash deepens on hover and
-   the whole thing presses; frozen, it fills, because a frozen app is a state
-   the bar has to show, not a button waiting to be pressed. */
+   quiet button rather than an outlined red one, in the small variant's box
+   (index.html gives it btn-sm). The wash deepens on hover and the whole thing
+   presses; frozen, it fills, because a frozen app is a state the bar has to
+   show, not a button waiting to be pressed. */
 .btn.freeze {
   --btn-bg: var(--down-wash);
   --btn-fg: var(--down);
   --btn-edge: transparent;
-  min-height: 28px;
-  height: 28px;
-  padding: 0 var(--s-3);
+  --btn-edge-hover: transparent;
+  --btn-bg-active: color-mix(in srgb, var(--down) 30%, transparent);
   border: 0;
   border-radius: var(--radius-sm);
-  font-size: var(--fs-13);
-  font-weight: 500;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -600,7 +626,7 @@ html, body {
   justify-content: space-between;
   gap: var(--s-2);
   width: 100%;
-  min-height: 28px;
+  min-height: 30px;
   padding: 0 var(--s-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -756,9 +782,9 @@ html, body {
   color: var(--text-3);
 }
 
-/* A card that can be put away: the title at the left, one 24 px X at the
-   right, quiet until pointed at. Only a card to read carries one; an ask
-   has No and Yes and nothing else. */
+/* A card that can be put away: the title at the left, one 30 px X at the
+   right (a 16 px glyph, the floor's box around it), quiet until pointed at.
+   Only a card to read carries one; an ask has No and Yes and nothing else. */
 .dock-head {
   display: flex;
   align-items: flex-start;
@@ -770,9 +796,9 @@ html, body {
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  margin: -2px -4px 0 0;
+  width: 30px;
+  height: 30px;
+  margin: -5px -7px 0 0;
   border-radius: var(--radius-sm);
   color: var(--text-3);
   transition: color var(--dur-press) var(--ease-out),
@@ -829,6 +855,11 @@ html, body {
   line-height: 1.3;
   text-align: left;
   cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dock-report-toggle:hover .dock-report-count { color: var(--text-2); }
+  .dock-report-toggle:hover .dock-report-chevron { background-color: var(--text-2); }
 }
 
 .dock-report-toggle:focus-visible {

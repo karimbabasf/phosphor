@@ -279,12 +279,6 @@ dialog.receipt-dialog::backdrop {
 
 .receipt-copy {
   margin-left: auto;
-  gap: var(--s-1);
-}
-
-.receipt-copy > .icon {
-  width: 14px;
-  height: 14px;
 }
 
 .receipt-error {

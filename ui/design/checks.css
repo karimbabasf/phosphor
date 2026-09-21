@@ -33,6 +33,11 @@
   cursor: pointer;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .checks-toggle:hover .checks-summary { color: var(--text); }
+  .checks-toggle:hover .checks-chevron { color: var(--text-2); }
+}
+
 .checks-toggle:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;

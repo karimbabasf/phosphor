@@ -4,10 +4,18 @@
 
 /* ---------- Button ---------- */
 
+/* The floor (docs/superpowers/specs/2026-09-20-quality-definitions.md, term 9):
+   36 px tall, the small variant 30, the large 44, never narrower than its
+   label plus 24 px, and the label never wraps or clips. Every pressable that
+   is not a .btn holds the small variant's height at least, so a finger finds
+   the quiet ones too. A family that wants to be shorter than its variant is
+   the wrong variant, not a shorter button. */
 .btn {
   --btn-bg: var(--bg-2);
   --btn-fg: var(--text);
   --btn-edge: var(--line-strong);
+  --btn-edge-hover: var(--text-3);
+  --btn-bg-active: var(--bg-2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -29,12 +37,20 @@
               opacity var(--dur-press) var(--ease-out);
 }
 
+/* Hover lifts the edge in the family's own colour: the primary's edge is its
+   fill, the danger's a stronger red. The grey edge belonged to every family
+   once, and on the green fill it read as a dirty rim.
+
+   The primary's fill steps toward white on hover and on the press, never
+   toward the ground: its label is the ground, and an accent the theme tool
+   only just accepts (4.5:1) mixed 12 percent toward the ground put that label
+   at 3.8:1 the moment the pointer arrived. */
 @media (hover: hover) and (pointer: fine) {
   .btn:hover:not(:disabled) {
-    border-color: var(--text-3);
+    border-color: var(--btn-edge-hover);
   }
   .btn-primary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--ink) 88%, var(--bg-0));
+    background: color-mix(in srgb, var(--ink) 88%, #FFFFFF);
   }
   .btn-ghost:hover:not(:disabled) {
     background: var(--bg-2);
@@ -44,8 +60,11 @@
   }
 }
 
+/* The press: the box gives 3 percent and the fill steps one shade, so a
+   click reads on a still frame and not only in motion. */
 .btn:active:not(:disabled) {
   transform: scale(0.97);
+  background: var(--btn-bg-active);
 }
 
 /* A pending button is disabled as well, and that is what stops a second press on a
@@ -60,18 +79,25 @@
   --btn-bg: var(--ink);
   --btn-fg: var(--on-ink);
   --btn-edge: var(--ink);
+  --btn-edge-hover: color-mix(in srgb, var(--ink) 88%, #FFFFFF);
+  --btn-bg-active: color-mix(in srgb, var(--ink) 78%, #FFFFFF);
   font-weight: 500;
 }
 
 .btn-ghost {
   --btn-bg: transparent;
   --btn-edge: var(--line);
+  --btn-bg-active: var(--bg-2);
 }
 
+/* Quiet: no edge, no fill, the second text tone. The label stays on the text
+   tone the tokens hold to 4.5:1 on the raised ground, and the hover draws the
+   ghost's edge so the word is seen to be a button before it is pressed. */
 .btn-quiet {
   --btn-bg: transparent;
   --btn-edge: transparent;
   --btn-fg: var(--text-2);
+  --btn-bg-active: var(--bg-2);
   padding: 0 var(--s-2);
 }
 
@@ -79,6 +105,22 @@
   --btn-bg: transparent;
   --btn-fg: var(--down);
   --btn-edge: color-mix(in srgb, var(--down) 40%, transparent);
+  --btn-edge-hover: color-mix(in srgb, var(--down) 70%, transparent);
+  --btn-bg-active: var(--down-wash);
+}
+
+/* The copy button: the quiet small variant with the 14 px glyph a hair from
+   its word, the same on the receipt (.receipt-copy) and the send card
+   (.sendcard-copy), so one address copies the way another does. */
+.receipt-copy,
+.sendcard-copy {
+  gap: var(--s-1);
+}
+
+.receipt-copy > .icon,
+.sendcard-copy > .icon {
+  width: 14px;
+  height: 14px;
 }
 
 /* THE ONE THING ON THE PAGE THAT BREATHES.
@@ -133,13 +175,20 @@
    button still reads as its own label, to a screen reader and to anything else
    that asks what it says. Keyed on the element and the attribute rather than on
    .btn, because two chips wait as well: the retry in the conversation head and
-   the frost choices in the vault. */
+   the frost choices in the vault.
+
+   A button that starts to wait without having named its verb stacks all the
+   same: the faces land in one cell the moment data-pending is set, so the
+   spinner never sits beside a blank where the label was. What that button
+   loses is the reserve, so its width can move by the difference between the
+   two words: name the verb where the button is built and it does not. */
 [data-pending="true"] {
   pointer-events: none;
   opacity: 0.72;
 }
 
-button[data-pending-label] {
+button[data-pending-label],
+button[data-pending="true"] {
   display: grid;
   grid-template-areas: "swap";
   align-items: center;
@@ -147,6 +196,7 @@ button[data-pending-label] {
 }
 
 button[data-pending-label] > *,
+button[data-pending="true"] > *,
 button[data-pending-label]::before {
   grid-area: swap;
 }
@@ -454,14 +504,28 @@ button[data-pending-label] > :not(.btn-pending) {
   white-space: nowrap;
 }
 
+/* A chip that is pressed is a small button and holds the small variant's
+   height; a chip that only says something keeps the 26 px pill. The pressed
+   one (aria-pressed) sits in the ink wash with its text at full strength, on
+   every chip alike: the vault's frost choices, the activity filters, the
+   suggestions. */
 button.chip {
+  min-height: 30px;
+  cursor: pointer;
   transition: transform var(--dur-press) var(--ease-out),
               border-color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out),
               color var(--dur-press) var(--ease-out);
 }
 
 button.chip:active {
   transform: scale(0.97);
+}
+
+button.chip[aria-pressed="true"] {
+  background: var(--ink-wash);
+  border-color: var(--ink-edge);
+  color: var(--text);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -484,6 +548,61 @@ button.chip:active {
   border-radius: 50%;
   background: currentColor;
   flex: 0 0 auto;
+}
+
+/* ---------- Check row ----------
+
+   A row in a menu that switches one thing on or off: a drawn 12 px box that
+   fills with the accent when on (aria-checked), the word beside it. The bar's
+   Layout menu and the chart's Layers menu are the two, and both build it as
+   .check-row holding an .check. The box has corners, not a curve: a round one
+   read as a radio, and these rows are never one-of. */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: 30px;
+  padding: 0 var(--s-2);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+.check-row[aria-checked="true"] { color: var(--text); }
+
+.check-row:active { transform: scale(0.97); }
+
+@media (hover: hover) and (pointer: fine) {
+  .check-row:hover {
+    background: color-mix(in srgb, var(--text) 7%, transparent);
+    color: var(--text);
+  }
+}
+
+.check-row:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.check {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  transition: background-color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out);
+}
+
+.check-row[aria-checked="true"] .check {
+  border-color: var(--ink);
+  background: var(--ink);
 }
 
 /* ---------- Banner ---------- */
