@@ -475,6 +475,18 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   assert.ok(failedLines.some((t: string) => t.startsWith('What the app recorded') && t.includes('422')), 'the rail line is not kept as evidence: ' + failedLines.join(' | '));
   assert.ok(failedLines.some((t: string) => t.includes('0x9f8e7d...d3c2b1a0')), 'the hash in the rail line is not cut to its ends: ' + failedLines.join(' | '));
   assert.ok(!failed.textContent.includes('0x9f8e7d6c5b4a3928'), 'a whole hash reached the card: ' + failed.textContent);
+  /* An address is not a hash: 40 hex characters stay whole in the same line (frozen rule 3), and
+     so does a NEAR account name; only a 64-hex hash or a base58 signature is cut. */
+  const address = '0xDeAdBeEf00112233445566778899AaBbCcDdEeFf';
+  world.proposals([row('failed', {
+    decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', settledAt: '2026-09-18T10:40:00Z',
+    result: { ok: false, detail: `The venue refused the payout to ${address} (alice.near) after intent 0x9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0 was signed. {"code":422}`, txids: ['abc'], evidence: { ...evidence, providerStage: 'FAILED' } },
+  })]);
+  const refusedLines = all(all(world.cardNodes('move')[0], 'tcard-details')[0], 'tcard-line').map((n: Any) => n.textContent);
+  const recorded = refusedLines.find((t: string) => t.startsWith('What the app recorded')) as string;
+  assert.ok(recorded.includes(address), 'the receiver was cut in the evidence line: ' + recorded);
+  assert.ok(recorded.includes('alice.near'), recorded);
+  assert.ok(recorded.includes('0x9f8e7d...d3c2b1a0') && !recorded.includes('0x9f8e7d6c5b4a3928'), 'the hash was left whole: ' + recorded);
 
   // The same frame again is nothing new, and a card the person closed stays closed across a redraw.
   const fold = world.cards.foldOf(card);

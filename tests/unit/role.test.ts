@@ -301,9 +301,12 @@ test('the role is not so long it stops being read', () => {
   // 21,100 later on 2026-09-20: the shape of the decision sentence, written out once with its
   // figures, because three live runs under the rule alone came back at 74 to 81 words and the
   // six rules about figures won every time; an example does what a cap cannot. Measured 20,937, then 21,065 with the five things the card carries named as not for that turn.
+  // 21,400 after the secure review of the same day: an address is not an id and the read-back
+  // carries all 42 characters, and a hash is named only when asked how a move went, as its two
+  // ends, so WORDS and FIGURES say one thing. Measured 21,259.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 21100, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 21400, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -390,7 +393,8 @@ test('the role with a full profile still fits under the ceiling', () => {
   // 21,700 on 2026-09-20, tracking the plain ceiling above by the same 900: the words, the cap
   // and the gate rules (see there). Measured 21,477. 22,300 the same day for the worked shape of
   // the decision sentence (see there). Measured 21,957.
-  assert.ok(text.length < 22300, `the role is ${text.length} characters with a full profile`);
+  // 22,500 after the secure review (see the plain ceiling). Measured 22,340.
+  assert.ok(text.length < 22500, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {

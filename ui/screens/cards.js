@@ -720,11 +720,13 @@
     return row;
   }
 
-  /* A line of evidence with every long id in it cut to its two ends: a rail's own sentence
-     names the intent hash and the quote handle whole, and a whole one is the line that
-     pushed every other fact off a 400 px card (3.1). */
+  /* A line of evidence with every hash in it cut to its two ends: a rail's own sentence names
+     the intent hash and the transaction hash whole, and a whole one is the line that pushed
+     every other fact off a 400 px card (3.1). A hash is 64 hex characters (66 with its 0x) or a
+     base58 signature of 64 or more; an address is 40 hex or a shorter base58 run and stays
+     whole, because a shortened receiver is what a substituted one hides behind (frozen rule 3). */
   function shortenIds(text) {
-    return String(text || '').replace(/0x[0-9a-fA-F]{40,}|[0-9a-fA-F]{56,}|[1-9A-HJ-NP-Za-km-z]{40,}/g, function (id) { return shortId(id); });
+    return String(text || '').replace(/0x[0-9a-fA-F]{64}\b|\b[0-9a-fA-F]{64}\b|\b[1-9A-HJ-NP-Za-km-z]{64,}\b/g, function (id) { return shortId(id); });
   }
 
   /* The vendor's word for a phase, in lower case with its underscores gone: evidence for a
