@@ -21,7 +21,7 @@ import {
 } from '../../src/relay/payload.ts';
 import type { TokenDiffExpectation } from '../../src/relay/payload.ts';
 
-const OWNER = '0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050';
+const OWNER = '0x00000000219ab540356cBB839Cbe05303d7705Fa';
 const ACCOUNT = OWNER.toLowerCase();
 const USDC = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
 const USDT = 'nep141:usdt.tether-token.near';

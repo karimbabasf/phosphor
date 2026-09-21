@@ -101,13 +101,13 @@ test('the log slice carries this row and nobody else', async () => {
 });
 
 test('an address in a log line comes back fingerprinted, like the handle beside it does', async () => {
-  const address = '0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050';
+  const address = '0x00000000219ab540356cbb839cbe05303d7705fa';
   const hash = `0x${'a'.repeat(64)}`;
   const log = [event(`refunded to ${address}, intent ${hash}`, { id: 'p1' })];
   const out = await diagnose(ctxWith([row('p1')], log), 'p1');
   const line = out.body.log[0];
   assert.equal(line.includes(address), false, 'a whole address came back in a log line');
-  assert.match(line, /0xd7b2\.\.\.5050/);
+  assert.match(line, /0x0000\.\.\.05fa/);
   // A hash is evidence somebody needs in full, and it is not a place money can be sent.
   assert.equal(line.includes(hash), true);
 });

@@ -1,5 +1,5 @@
-trading account : 0xd7b2de5862008D949dD6e5d70D4c68Ad1D4d5050
-intents account : 0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050
+trading account : 0xd7b2...5050 (the app account, fingerprinted here)
+intents account : 0xd7b2...5050 (the app account, fingerprinted here)
 amount          : 7 USDC
 
 PIN            ok, the HyperCore USDC asset id is live at the pinned decimals
