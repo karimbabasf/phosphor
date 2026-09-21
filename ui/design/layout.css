@@ -699,7 +699,10 @@ button.bar-state:active { transform: scale(0.97); }
   margin: 0 var(--s-3) var(--s-2);
   border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--bg-1) 94%, var(--warn));
+  /* The ground is a variable because the answer row paints itself on it
+     when it sticks (below). */
+  --dock-ground: color-mix(in srgb, var(--bg-1) 94%, var(--warn));
+  background: var(--dock-ground);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--warn) 45%, transparent);
 }
 
@@ -708,15 +711,15 @@ button.bar-state:active { transform: scale(0.97); }
 /* The answer, for its own beat. Amber is the colour of a request waiting on a
    person, so holding it after the click would be the window still asking. */
 .dock[data-state="done"] {
+  --dock-ground: var(--bg-1);
   border-color: var(--ink-edge);
-  background: var(--bg-1);
   box-shadow: inset 0 1px 0 var(--ink-edge);
 }
 
 .dock[data-state="refused"],
 .dock[data-state="read"] {
+  --dock-ground: var(--bg-1);
   border-color: var(--line);
-  background: var(--bg-1);
   box-shadow: none;
 }
 
@@ -742,12 +745,65 @@ button.bar-state:active { transform: scale(0.97); }
   gap: var(--s-3);
 }
 
-/* The fade: the bottom 40 px of the scrolling body thins out while there is
-   more card under it, and comes back solid at the end so the last line is
-   never left half drawn. */
-.dock-card[data-more="true"] .dock-body {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
+/* THE ANSWER STAYS ON SCREEN. No and Yes come after the facts in reading
+   order (decision.js builds them under the card and before the fold) and,
+   when the card is taller than the dock, the row sticks to the bottom edge of
+   the scrolling body on the dock's own ground: the facts scroll under it, the
+   row never leaves the screen, and the fold of secondary lines is reached by
+   scrolling past it. A send card (the whole address in groups of four, the
+   read-back lines) is taller than the dock at the app's default window, where
+   No and Approve sat 156 px under the fold. While there is more card under the
+   row (data-more, measured by decision.js) the last lines fade into the row
+   and a hairline over it says so; at the end of the card both go, so the last
+   line is never left half drawn. The fade used to be a mask on the body, which
+   would fade the pinned row with it. */
+.dock-body > .dock-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: calc(var(--s-3) * -1) calc(var(--s-4) * -1) 0;
+  padding: var(--s-3) var(--s-4);
+  background: var(--dock-ground);
+  border-top: 1px solid transparent;
+  transition: border-color var(--dur-press) var(--ease-out);
+}
+
+.dock-body > .dock-actions::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 28px;
+  background: linear-gradient(to bottom, transparent, var(--dock-ground));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-press) var(--ease-out);
+}
+
+/* The scrollport's bottom padding sits under the pinned row, and scrolled
+   lines showed through that strip: the row paints its ground over it. */
+.dock-body > .dock-actions::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: var(--s-4);
+  background: var(--dock-ground);
+  pointer-events: none;
+}
+
+.dock-card[data-more="true"] .dock-body > .dock-actions {
+  border-top-color: color-mix(in srgb, var(--warn) 28%, transparent);
+}
+
+.dock-card[data-more="true"] .dock-body > .dock-actions::before {
+  opacity: 1;
+}
+
+.dock[data-state="read"] .dock-card[data-more="true"] .dock-body > .dock-actions {
+  border-top-color: var(--line);
 }
 
 /* The foot: a hairline in the dock's own amber over the buttons, so the pinned

@@ -203,6 +203,17 @@
   text-decoration: none;
 }
 
+/* The Explorer link beside the copy button: the same 14 px glyph, a hair from
+   its word, so the two read as one row of actions. */
+.sendcard-explorer {
+  gap: var(--s-1);
+}
+
+.sendcard-explorer > .icon {
+  width: 14px;
+  height: 14px;
+}
+
 /* Stacked: the three nodes on top of each other, the arrows pointing down.
 
    The class is set from a measured width (screens/sendcard.js layout), and in

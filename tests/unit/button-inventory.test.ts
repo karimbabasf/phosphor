@@ -8,6 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { RECIPES } from '../../scripts/button-inventory/recipes.ts';
 import { families, scan } from '../../scripts/button-inventory/scan.ts';
 
@@ -58,6 +59,12 @@ test('the one button index.html builds is the small freeze with its verb', () =>
   const freeze = sites.find((s) => s.file === 'ui/index.html' && /freeze/.test(s.family));
   assert.equal(freeze?.family, 'btn btn-sm freeze');
   assert.equal(freeze?.label, '"Freeze everything"');
+});
+
+test('the sheet\'s pages live in a temp directory the run removes', () => {
+  const source = fs.readFileSync(new URL('../../scripts/button-inventory.ts', import.meta.url), 'utf8');
+  assert.match(source, /const pages = fs\.mkdtempSync\(path\.join\(os\.tmpdir\(\), 'phosphor-button-inventory-'\)\);/);
+  assert.match(source, /finally \{[^}]*fs\.rmSync\(pages, \{ recursive: true, force: true \}\);/);
 });
 
 test('the three hook classes are on the buttons that carry them', () => {

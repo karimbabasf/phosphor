@@ -9,14 +9,18 @@ data under state/), quit before this report. Evidence under evidence-e/.
 - 14a10d3 The dock keeps its answer on screen: it takes the column but 120 px and never gives way to the transcript, an ask takes a stacked window whole, the transcript fades under it, and the vault's chips drop their dot
 - c1a058a Node E report: the button inventory sheets, the app captures at 860 and 400 px, the audit before and after, the detector at 0, and the deposit card's open button on the card's text column
 - d3fac11 Merge branch 'main' into rfp/e-craft (bb4b842, the demo-rail test word)
+- ed0f0e4 Node E report: counts after the merge of main
+- (next) The answer row sticks to the bottom of the scrolling body: a send card at the app's default window had No and Approve 156 px under the fold (the secure review's finding); the Explorer glyph back at 14 px; the inventory removes its temp pages
 
 ## 2. Counts
 
 - `npm run typecheck`: exit 0 (TypeScript: No errors found).
-- `npm test`: 3096 tests, 3096 pass, 0 fail, after `git merge main` at bb4b842 (d3fac11). Before
-  the merge the one failure was `demo-rail.test.ts` "the stall knob stops the walk at PROCESSING",
-  a phase-0 contract word the lead fixed on main; it failed the same way on the parent 6ff58a9
-  (3068 tests, 3067 pass). My branch adds 28 tests, all green.
+- `npm test`: 3099 tests, 3099 pass, 0 fail (after `git merge main` at bb4b842, d3fac11; before
+  it the one failure was `demo-rail.test.ts`, a phase-0 contract word the lead fixed on main).
+  My branch adds 31 tests, all green.
+- The reviewer's gitignored scratch script (scripts/scratch/review-e-secure/dock-check.ts) has
+  its own type errors and sits under tsconfig's scripts glob: the typecheck line above is the
+  tracked tree (the script set aside for the run and put back).
 - `npm run eval`: not run. This node touched no file the agent reads or says (ui/design, index.html,
   scripts, tests only).
 
@@ -39,10 +43,15 @@ data under state/), quit before this report. Evidence under evidence-e/.
 - B5 PASS: on the live window, Tab lands a 2 px ink outline (verified on the first control),
   Enter and Space switch a tab (real Input.dispatchKeyEvent), Escape closes the Layout menu.
   Escape does not close a dock card in the read state: request 1 below (decision.js, node D).
-- B6 PASS: with a swap parked over the threshold, No, Yes and the fold toggle are inside the dock
-  and the viewport at a 400 px column (1280 by 800 and 1180 by 780, the app's default window),
-  and at 400 and 860 px stacked (800 and 700 tall). Before: 137 px and 300 px under the fold.
-  Evidence: evidence-e/app/chat-dock-*.png; measurements in the commit 14a10d3 message;
+- B6 PASS: the answer row (No and Yes, No and Approve) sticks to the bottom of the scrolling
+  body on the dock's ground, in its reading order (under the facts, before the fold), so it is
+  on screen whatever the card's height. Measured with a parked send (250 USDC to 0x8ba1...BA72,
+  the address whole in groups of four) and a parked swap: visible at 1180 by 780 (the default
+  window and column), 960 by 700 (default column and a 400 px one), 1280 by 800 at a 400 px
+  column, 400 by 700, 400 by 800 and 860 by 700; scrolled to the end the row sits in flow with
+  the fold under it and the hairline off. Before: the swap card's No and Yes 137 px under the
+  fold at a 400 px column, the send card's No and Approve 156 px under at the default window.
+  Evidence: evidence-e/app/chat-dock-*.png, chat-send-*.png, chat-swap-960x700-scrolled-end.png;
   tests/unit/design-dock-ui.test.ts.
 - B7 PASS on the shipped colourway and on the hardest themes the server accepts (the lightest
   ground #212121, the dimmest accent), for every family, hovered and pressed included:
@@ -76,6 +85,11 @@ data under state/), quit before this report. Evidence under evidence-e/.
   under 960 px an ask takes the whole stage and a read card keeps the split. The desktop window
   never goes below 960 by 700 (src-tauri/src/main.rs:298), so the stacked rules serve the
   browser-served window only.
+- B6: a card taller than the dock keeps its answer on screen by sticking the row to the bottom
+  of the scrolling body (CSS alone, decision.js untouched: the DOM order the dock test holds is
+  the order the row sticks in). The body's bottom mask went, since it faded the pinned row too;
+  the fade is drawn over the row while data-more is true, with a hairline, and both go at the
+  end of the card.
 - B7: hover and press on the primary step toward white, never toward the ground, because the
   label is the ground on every accepted theme.
 - B7: two button labels on the third text tone moved to the second (steps fold, rule group
@@ -129,6 +143,9 @@ data under state/), quit before this report. Evidence under evidence-e/.
   decisions), nothing to change unless the disc grows a label.
 - ui/design/deposit.css uses trade.css's `feedpulse` keyframes (both sheets always load); a
   shared keyframe in components.css would be one source.
+- The secure review's two small ones are done: the send card's Explorer link has its 14 px glyph
+  back (`.sendcard-explorer > .icon`, sendcard.css) and the inventory removes its temp pages at
+  exit (button-inventory.ts, both pinned by tests).
 
 ## 7. Lessons appended
 

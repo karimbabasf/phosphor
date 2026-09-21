@@ -230,10 +230,11 @@ async function render(list: Family[]): Promise<Measure[]> {
   const browser = await chromium.launch({ headless: true, ...(BROWSER ? { executablePath: BROWSER } : {}) });
   const measures: Measure[] = [];
   const recipes = RECIPES.filter((r) => list.some((f) => f.family === r.family));
+  // The page itself points at the stylesheets by absolute path, so it lives in the temp
+  // directory for the run and goes with it: the evidence folder keeps the pictures, the table
+  // and the measurements.
+  const pages = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-button-inventory-'));
   try {
-    // The page itself points at the stylesheets by absolute path, so it lives in the temp
-    // directory: the evidence folder keeps the pictures, the table and the measurements.
-    const pages = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-button-inventory-'));
     for (const width of WIDTHS) {
       const file = path.join(pages, `sheet-${width}.html`);
       fs.writeFileSync(file, sheetHtml(recipes, width));
@@ -283,6 +284,7 @@ async function render(list: Family[]): Promise<Measure[]> {
     }
   } finally {
     await browser.close();
+    fs.rmSync(pages, { recursive: true, force: true });
   }
   return measures;
 }

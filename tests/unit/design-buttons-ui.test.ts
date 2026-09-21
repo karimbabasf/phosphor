@@ -158,6 +158,8 @@ test('the copy button is drawn once for the receipt and the send card', () => {
   assert.match(components, /\.receipt-copy > \.icon,\s*\.sendcard-copy > \.icon\s*\{[^}]*width:\s*14px;/);
   assert.doesNotMatch(css('receipt.css'), /\.receipt-copy > \.icon/);
   assert.doesNotMatch(css('sendcard.css'), /\.sendcard-address-actions \.icon/);
+  // The Explorer link beside it keeps the same 14 px glyph.
+  assert.match(css('sendcard.css'), /\.sendcard-explorer > \.icon\s*\{[^}]*width:\s*14px;/);
 });
 
 test('hover lifts the edge in the family\'s own colour, and a pressed chip is lit', () => {
