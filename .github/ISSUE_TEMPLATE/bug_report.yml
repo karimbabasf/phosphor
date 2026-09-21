@@ -61,7 +61,7 @@ body:
     id: log
     attributes:
       label: The log
-      description: Help, then Copy Log for a Report puts the newest audit lines on the clipboard, with this boot's secrets already removed. Paste them here. Transaction hashes are fine to leave in; they are public.
+      description: Help, then Copy Log for a Report puts the newest audit lines on the clipboard with this app's own secrets removed and every address shortened to its two ends. It still carries amounts and transaction hashes, which are public; read it once before you paste it.
       render: json
   - type: textarea
     id: state

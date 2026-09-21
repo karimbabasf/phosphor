@@ -50,7 +50,8 @@ import {
   handleVaultUnlock,
 } from './vault.ts';
 import { sendHealth } from './health.ts';
-import { redactedTail } from './log-tail.ts';
+import { redactedTail, scrubbedTail } from './log-tail.ts';
+import { withoutAddresses } from './read/wallet.ts';
 import { sendReceipts } from './receipts.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
 import type { Ctx } from './context.ts';
@@ -82,9 +83,13 @@ const GET: Record<string, Route> = {
     sendJson(res, 200, payload);
   },
   // Redacted on the way out (src/http/log-tail.ts): a credential of this boot never leaves in a
-  // paste, whatever a writer did.
-  '/api/log': (ctx, _req, res, url) =>
-    sendJson(res, 200, redactedTail(ctx, intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX))),
+  // paste, whatever a writer did. `for=report` is the copy that leaves this Mac (Help, then Copy
+  // Log for a Report): addresses fingerprinted too, the way diagnose prints them.
+  '/api/log': (ctx, _req, res, url) => {
+    const limit = intParam(url.searchParams.get('limit'), 200, LOG_LIMIT_MAX);
+    const lines = url.searchParams.get('for') === 'report' ? scrubbedTail(ctx, limit, withoutAddresses) : redactedTail(ctx, limit);
+    sendJson(res, 200, lines);
+  },
   '/api/transactions': (ctx, _req, res) => sendJson(res, 200, transactionsPayload(ctx)),
   '/api/trade': (ctx, _req, res) => sendJson(res, 200, ctx.trade.payload()),
   '/api/driver': (ctx, _req, res) => sendJson(res, 200, ctx.chats.payload()),

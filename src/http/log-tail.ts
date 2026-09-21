@@ -120,3 +120,26 @@ export function redactedTail(ctx: Pick<Ctx, 'audit'> & Partial<Pick<Ctx, 'agents
   const isCredential = credentialCheck(ctx);
   return ctx.audit.tail(limit).map((event) => redactEvent(event, isCredential));
 }
+
+// The same tail with every string passed through `scrub` as well: the copy that leaves this
+// Mac for a public problem report, where an address is a fact about the person and a hash is
+// evidence. The router hands in the fingerprinting the read tools already use, so this file
+// does not reach into them. Amounts stay: a report about money has to say how much.
+export function scrubbedTail(
+  ctx: Pick<Ctx, 'audit'> & Partial<Pick<Ctx, 'agents' | 'token'>>,
+  limit: number,
+  scrub: (text: string) => string,
+): LogEvent[] {
+  return redactedTail(ctx, limit).map((event) => mapStrings(event, scrub) as LogEvent);
+}
+
+function mapStrings(value: unknown, fn: (text: string) => string): unknown {
+  if (typeof value === 'string') return fn(value);
+  if (Array.isArray(value)) return value.map((v) => mapStrings(v, fn));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) out[key] = mapStrings(v, fn);
+    return out;
+  }
+  return value;
+}

@@ -116,6 +116,30 @@ test('the planted line: every credential shape is cut on both tail routes, and t
   }
 });
 
+/* THE REPORT COPY. Help, then Copy Log for a Report lands on a public issue, so that copy
+   shortens every address to its two ends the way diagnose prints them; the person's own read
+   of GET /api/log keeps them whole. Amounts stay in both: a report about money says how much. */
+test('the report copy fingerprints addresses and the plain tail keeps them', async () => {
+  const h = await bootChartServer();
+  try {
+    const address = '0xa1b2c3d4e5f60718293a4b5c6d7e8f9011225050';
+    h.audit.append('executed', `sent 12.5 USDC to ${address}, hash ${PLANT.hexAddr}`, { to: address, amountUsd: 12.5, txids: [PLANT.hexAddr] });
+    const plain = await h.get('/api/log?limit=3');
+    const report = await h.get('/api/log?limit=3&for=report');
+    const plainText = JSON.stringify(plain.json);
+    const reportText = JSON.stringify(report.json);
+    assert.ok(plainText.includes(address), 'the plain tail lost the address the person may need to read');
+    assert.equal(reportText.includes(address), false, 'the report copy carries a whole address');
+    assert.ok(reportText.includes('0xa1b2...5050'), 'the report copy does not fingerprint the way diagnose does');
+    assert.ok(reportText.includes(PLANT.hexAddr), 'the report copy lost the hash');
+    assert.ok(reportText.includes('12.5'), 'the report copy lost the amount');
+    const row = (report.json as Array<{ data?: { to?: string; amountUsd?: number } }>).find((e) => e.data?.amountUsd === 12.5);
+    assert.equal(row?.data?.to, '0xa1b2...5050');
+  } finally {
+    await h.close();
+  }
+});
+
 test('diagnose formats a row\'s own lines through the same wall', async () => {
   const seat = 's'.repeat(64);
   const token = 't'.repeat(64);
