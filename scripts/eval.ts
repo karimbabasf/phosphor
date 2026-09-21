@@ -2,7 +2,8 @@
 //
 // This is scripts/e2e.ts's harness with a scenario loop on top: a real app on a throwaway data
 // dir, a real MCP server, the window token minted here and held here, and the finger that clicks
-// approve. What e2e proves once, this proves 28 times against a named expectation.
+// approve. What e2e proves once, this proves once per scenario file in tests/eval (S1.json
+// onward, loaded by loadScenarios) against a named expectation.
 //
 // Two modes, one grader.
 //   scripted (default, `npm run eval`): tests/eval/agent.ts stands in for the `claude` binary.
@@ -44,8 +45,8 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SCENARIO_DIR = path.join(ROOT, 'tests', 'eval');
 const PREFIX = 'mcp__phosphor__';
 
-// One exit guard per driver, one driver per scenario, and 28 of them. The listeners are real and
-// wanted; the default ceiling of ten is what is wrong here.
+// One exit guard per driver, one driver per scenario, as many as tests/eval holds. The listeners
+// are real and wanted; the default ceiling of ten is what is wrong here.
 process.setMaxListeners(64);
 
 const args = process.argv.slice(2);
