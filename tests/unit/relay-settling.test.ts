@@ -1,10 +1,13 @@
-// A relay swap that landed settling has no short fill. Its diff is atomic: the verifier applied
-// exactly the signed credit or nothing, so a later read that rose by less than the floor is
-// another credit landing in the same window, never this swap filling short. The generic
-// judgment (src/proposals/execute.ts judgeSettling) wrote `failed` on that read, and the sweep
-// never re-asks a failed row, so a swap the relay had reported SETTLED could end as failed
-// with the money there. The relay row stays instead, and the verifier is asked by the nonce.
-// The 1Click swap keeps the short fill byte for byte: its transfer can settle short.
+// A settling row is never written failed on a short rise while the venue has not failed it.
+// A later read that rose by less than the floor is another credit landing in the same window:
+// on the relay because the diff is atomic (the verifier applied exactly the signed credit or
+// nothing), on 1Click because the transfer is still routing and an unrelated USDC credit can
+// land first. The generic judgment (src/proposals/execute.ts judgeSettling) wrote `failed` on
+// that read, and the sweep never re-asks a failed row, so a swap the relay had reported SETTLED
+// or a withdrawal 1Click was still routing could end as failed with the money on its way.
+// Three exits and no fourth: the floor reached confirms, the venue's own failure word fails,
+// the deadline passing stalls (the sweep's job). A relay row also takes the verifier's nonce
+// view as its verdict (tests/unit/reconcile-relay.test.ts).
 //
 // Run: node --test tests/unit/relay-settling.test.ts
 
@@ -43,14 +46,14 @@ function pocket(): PocketRead {
   return { venue: 'intents', account: ACCOUNT, assetId: USDT_ASSET, symbol: 'USDT', decimals: 6, before: '5000000', after: null, floor: '49500000' };
 }
 
-function settlingResult(): RailResult {
+function settlingResult(providerStage: string): RailResult {
   return {
     ok: false,
     settling: true,
     detail: `${SETTLING_SENTENCE} Watched USDT for ${SELF_EVM} inside intents.near for 90s over 31 reads; intent h1.`,
     txids: ['h1'],
     pocket: pocket(),
-    evidence: { handle: 'h1', nonce: NONCE, deadline: new Date(Date.now() + 90_000).toISOString(), providerStage: 'SETTLED' },
+    evidence: { handle: 'h1', nonce: NONCE, deadline: new Date(Date.now() + 90_000).toISOString(), providerStage },
   };
 }
 
@@ -90,7 +93,7 @@ function fakeLedger(): Ledger & { setUsdt(amountBase: string): void } {
   return ledger;
 }
 
-function spyRail(): { registry: RailRegistry; executed: WriteDraft[] } {
+function spyRail(providerStage: string): { registry: RailRegistry; executed: WriteDraft[] } {
   const executed: WriteDraft[] = [];
   const rail: Rail = {
     kind: 'swap',
@@ -98,20 +101,22 @@ function spyRail(): { registry: RailRegistry; executed: WriteDraft[] } {
     simulate: async () => ({ ok: true, summary: 'spy rail' }),
     execute: async (draft) => {
       executed.push(draft);
-      return settlingResult();
+      return settlingResult(providerStage);
     },
   };
   return { registry: { for: (d) => (d.kind === 'swap' ? rail : null), kinds: () => ['swap'] }, executed };
 }
 
-function setup(rail: 'relay' | 'oneclick') {
+// The provider word the rail left on the row: the relay's SETTLED, 1Click's SUCCESS, or a
+// failure word (1Click's FAILED or REFUNDED, the relay's NOT_FOUND_OR_NOT_VALID).
+function setup(rail: 'relay' | 'oneclick', providerStage: string = rail === 'relay' ? 'SETTLED' : 'SUCCESS') {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-relay-settling-'));
   const cfg: AppConfig = { mode: 'live', port: 4177, addresses: { evm: SELF_EVM }, candleProducts: [], dataDir, keysPath: path.join(dataDir, 'keys.json'), swap: { rail } };
   savePolicy(dataDir, seededPolicy());
   const audit = createAudit(dataDir);
   const store = createStore(dataDir);
   const ledger = fakeLedger();
-  const rails = spyRail();
+  const rails = spyRail(providerStage);
   const svc = createProposalService({ cfg, audit, store, ledger, riskRows, rails: rails.registry, dataDir });
   return { svc, store, ledger, rails, lines: () => audit.tail(50).reverse() };
 }
@@ -149,17 +154,43 @@ test('a relay swap that rose by the floor or more is executed on that read, as b
   assert.equal(row?.pocket?.after, '54500000');
 });
 
-test('a 1Click swap that rose by less than the floor is still the short fill, byte for byte', async () => {
+test('a 1Click move that rose by less than the floor while the venue is still routing stays settling', async () => {
   const h = setup('oneclick');
   const p = await landed(h, h.svc.proposeSwap(swap));
   assert.equal(p.draft.kind === 'swap' ? p.draft.venue : '', 'intents-native');
   h.ledger.setUsdt('6000000');
   await h.ledger.refresh();
   const row = h.store.get(p.id);
-  assert.equal(row?.status, 'failed');
-  assert.equal(
-    row?.result?.detail,
-    `A later read shows the balance inside intents.near rose by 1 USDT, below the 49.5 USDT floor this move was approved with (5 before, 6 after). Read the balance for ${ACCOUNT} before signing another.`,
-  );
-  assert.equal(h.lines().some((l) => l.type === 'execution_failed'), true);
+  assert.equal(row?.status, 'needs_reconciliation', 'an unrelated credit under the floor is not this move failing');
+  assert.equal(row?.result?.detail, p.result?.detail);
+  assert.equal(h.lines().some((l) => l.type === 'execution_failed'), false);
+  assert.equal(h.rails.executed.length, 1, 'nothing signed again');
+});
+
+test('a 1Click move that rose by the floor or more is executed on that read', async () => {
+  const h = setup('oneclick');
+  const p = await landed(h, h.svc.proposeSwap(swap));
+  h.ledger.setUsdt('54500000');
+  await h.ledger.refresh();
+  assert.equal(h.store.get(p.id)?.status, 'executed');
+});
+
+test('a short rise on a row the venue has failed is failed, with the venue word in the sentence, for both kinds', async () => {
+  for (const [rail, word] of [
+    ['oneclick', 'FAILED'],
+    ['oneclick', 'REFUNDED'],
+    ['relay', 'NOT_FOUND_OR_NOT_VALID'],
+  ] as const) {
+    const h = setup(rail, word);
+    const p = await landed(h, h.svc.proposeSwap(swap));
+    h.ledger.setUsdt('6000000');
+    await h.ledger.refresh();
+    const row = h.store.get(p.id);
+    assert.equal(row?.status, 'failed', `${rail} under ${word}`);
+    assert.equal(
+      row?.result?.detail,
+      `The venue reported ${word}, and a later read shows the balance inside intents.near rose by 1 USDT, below the 49.5 USDT floor this move was approved with (5 before, 6 after). Read the balance for ${ACCOUNT} before signing another.`,
+    );
+    assert.equal(h.lines().some((l) => l.type === 'execution_failed'), true);
+  }
 });

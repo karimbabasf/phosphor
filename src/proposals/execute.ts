@@ -572,16 +572,20 @@ export function judgeSettling(ctx: PCtx, p: Proposal): Proposal {
      listeners synchronously lands back here (src/main.ts, audit.subscribe -> refreshNow). Logged
      first, the row this was about had not been written yet, so every one of those passes settled
      it again. Written first, the next pass reads `executed` at the top and stops. */
-  /* A RELAY SWAP HAS NO SHORT FILL. Its diff is atomic: the verifier applied exactly the signed
-     credit or nothing, so a rise under the floor is another credit landing in the same window
-     and never this swap filling short. The row stays as it is and the sweep asks the verifier
-     by the nonce (src/proposals/reconcile.ts reconcileRelaySwap); the settle by the balance
-     below is the one verdict this read can give it. The 1Click swap keeps the short fill: its
-     transfer can settle short. */
-  if (delta < floor && row.draft.kind === 'swap' && row.draft.venue === 'intents-relay') return row;
+  /* A SHORT RISE IS NOT A SHORT FILL WHILE THE VENUE HAS NOT FAILED THE MOVE. A rise under the
+     floor is another credit landing in the same window: on the relay because the diff is
+     atomic (the verifier applied exactly the signed credit or nothing), on 1Click because the
+     transfer is still routing and an unrelated USDC credit lands first. A row written failed on
+     it is a second copy signed while the first is on its way, and the sweep never re-asks a
+     failed row. So a settling row has three exits and no fourth: the floor reached confirms
+     (below), the venue's own failure word on the row fails it here with that word, and the
+     deadline passing stalls it (markStalled). Everything else leaves the row exactly as it was;
+     a relay row also takes the verifier's nonce as its verdict (src/proposals/reconcile.ts). */
   if (delta < floor) {
+    const word = row.result?.evidence?.providerStage;
+    if (word === undefined || !PROVIDER_FAILED.has(word)) return row;
     const detail =
-      `A later read shows the balance ${place} rose by ${units(delta, pocket.decimals)} ${pocket.symbol}, below the ` +
+      `The venue reported ${word}, and a later read shows the balance ${place} rose by ${units(delta, pocket.decimals)} ${pocket.symbol}, below the ` +
       `${units(floor, pocket.decimals)} ${pocket.symbol} floor this move was approved with (${units(before, pocket.decimals)} before, ` +
       `${units(after, pocket.decimals)} after). Read the balance for ${pocket.account} before signing another.`;
     const short = persist(ctx, { ...row, status: 'failed', settledAt: nowIso(), pocket: settled, balances, result: { ok: false, detail, txids, ...kept } });
@@ -636,6 +640,11 @@ export function markStalled(ctx: PCtx, now: number = Date.now()): number {
 }
 
 const WAITS_ON_A_PERSON: ReadonlySet<ProposalStage> = new Set<ProposalStage>(['waiting_for_you', 'waiting_for_unlock', 'waiting_for_touch']);
+
+// The vendors' words for a move that ended without delivering: 1Click's two and the relay's
+// one. A short rise on a row carrying one of these is the refund or the leftover, and the row
+// is failed with the word; on any other word the rise is not this move's and the row waits.
+const PROVIDER_FAILED: ReadonlySet<string> = new Set(['FAILED', 'REFUNDED', 'NOT_FOUND_OR_NOT_VALID']);
 
 /* One fresh ledger read, then the judgment above. What the scheduled sweep uses: a balance
    that has not moved writes nothing, so a row can sit settling for days without collecting a

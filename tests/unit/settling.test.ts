@@ -199,15 +199,19 @@ test('a refresh that shows no rise leaves the row exactly as it was', async () =
   assert.equal(same?.result?.detail, p.result?.detail, 'not rewritten on every poll');
 });
 
-test('a later read that rose by less than the floor is the short fill, not a success', async () => {
+/* A rise under the floor while the venue is still routing is not this move filling short: it is
+   another credit landing in the window, and a row written failed on it while the transfer was
+   still on its way is a second copy signed. The row stays settling until the floor is reached,
+   the venue says it failed (tests/unit/relay-settling.test.ts) or the deadline passes. */
+test('a later read that rose by less than the floor leaves the row settling while the venue has not failed it', async () => {
   const h = setup();
   const p = await landed(h, h.svc.proposeSwap(swap));
   h.ledger.setUsdt('6000000');
   await h.ledger.refresh();
   const short = h.store.get(p.id);
-  assert.equal(short?.status, 'failed');
-  assert.match(short?.result?.detail ?? '', /rose by 1 USDT, below the 99 USDT floor/);
-  assert.match(short?.result?.detail ?? '', /before signing another/);
+  assert.equal(short?.status, 'needs_reconciliation');
+  assert.equal(short?.result?.detail, p.result?.detail, 'nothing written for a rise that is not this move');
+  assert.equal(h.lines().some((l) => l.type === 'execution_failed'), false);
 });
 
 test('re-check on a settling row reads the balance rather than asking a chain about an intent hash', async () => {
