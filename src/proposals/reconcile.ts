@@ -305,6 +305,19 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
       }
       return write('executed', true, `${settled} The Hyperliquid account shows the credit.`);
     }
+    /* A WITHDRAWAL IS CONFIRMED BY THE INTENTS BALANCE RISING, and by nothing else (criterion
+       8.3). The rail reads that balance before the send and puts the pocket on the row with the
+       nonce (hypercore-withdraw.ts), so the branch above is the one a withdrawal takes. A row
+       that carries none has nothing for the balance to rise over, and 1Click's word is the
+       solver's, not the verifier's: it stays unconfirmed, keeps its nonce and handle for a
+       later question to the venue, and says what would settle it. */
+    if (p.kind === 'hl_withdraw') {
+      return write(
+        'needs_reconciliation',
+        false,
+        `${settled} This row has no balance read from before the send to compare against, so this app cannot confirm the credit on its own: read the wallet, and press Got it once the balance shows it.`,
+      );
+    }
     return write('executed', true, settled);
   }
   if (status.status === 'REFUNDED') {

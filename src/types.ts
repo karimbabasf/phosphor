@@ -424,11 +424,13 @@ export type RailResult = {
 
 // Called by a rail the moment something irreversible exists: a signature released, a
 // transaction broadcast, an intent submitted. The executor persists it before the rail's
-// watch loop, so a process that dies inside the wait still has the hash on the row.
+// watch loop, so a process that dies inside the wait still has the hash on the row. A rail
+// that read the pocket before the move hands it over here too, so a row recovered from a
+// crash is settled by the balance the way a live one is, never by a vendor's word alone.
 // `onPreflight` is told the moment the checks have run and before anything is signed, so
 // the row carries what was read even if the rail dies in the wait that follows.
 export type RailHooks = {
-  onEvidence?: (evidence: { txids?: string[] } & RailEvidence) => void;
+  onEvidence?: (evidence: { txids?: string[]; pocket?: PocketRead } & RailEvidence) => void;
   onPreflight?: (preflight: Preflight) => void;
 };
 

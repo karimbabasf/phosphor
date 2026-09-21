@@ -63,6 +63,37 @@ test('evidence a rail hands back mid-flight is on the row while it is still exec
   await pending;
 });
 
+/* A Hyperliquid withdrawal killed while polling carried its handle and nonce and no pocket, so
+   the boot sweep wrote executed on 1Click's SUCCESS alone (review L1, 2026-09-20). The pocket
+   rides with the first piece of evidence and the executor keeps it on the executing row. */
+test('a pocket a rail hands back mid-flight is on the row while it is still executing, and the boot sweep keeps it', async () => {
+  const slow = slowRail('hl_deposit');
+  const h = makeCtx({ rails: [slow.rail] });
+  const pending = h.svc.proposeHlDeposit({ amount: 10 });
+  await slow.started();
+  const hooks = slow.hooks();
+  assert.ok(hooks?.onEvidence !== undefined, 'the executor handed the rail no hooks');
+
+  const pocket = { venue: 'intents' as const, account: 'acct', assetId: 'asset', symbol: 'USDC', decimals: 6, before: '5000000', after: null, floor: '7718000' };
+  hooks.onEvidence({ handle: 'dep1', nonce: '1786600000000', pocket });
+  hooks.onEvidence({ handle: 'dep1', providerStage: 'PROCESSING' });
+
+  const row = h.store.list()[0];
+  assert.equal(row.status, 'executing');
+  assert.deepEqual(row.pocket, pocket, 'the before-read is on the row before the wait');
+  assert.equal(row.result?.evidence?.nonce, '1786600000000');
+  assert.equal(row.result?.evidence?.providerStage, 'PROCESSING', 'a later piece without a pocket adds to the row');
+  assert.deepEqual(h.store.list()[0].pocket, pocket, 'and does not take the pocket off it');
+
+  const moved = h.svc.reconcileOnBoot();
+  assert.equal(moved.length, 1);
+  assert.equal(moved[0].status, 'needs_reconciliation');
+  assert.deepEqual(moved[0].pocket, pocket);
+
+  slow.release({ ok: true, detail: 'late', txids: ['h1'] });
+  await pending;
+});
+
 test('the balance before a move is the wallet total, read from the verifier, not the empty chain holdings', async () => {
   const h = makeCtx({
     intentsUsdc: 24.78,

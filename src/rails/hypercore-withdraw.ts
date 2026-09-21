@@ -106,11 +106,6 @@ export const MIN_HL_WITHDRAW_USDC = 5;
 export const SETTLING_WITHDRAW =
   'The router reports the withdrawal settled and the intents balance has not shown it yet. ' +
   'Nothing more will be signed until the next balance read confirms it.';
-// The same row when the verifier gave no before-read: nothing to compare against, so the
-// sentence names the router's check rather than a balance, and nothing is signed either way.
-export const SETTLING_WITHDRAW_UNMEASURED =
-  'The router reports the withdrawal settled. The verifier gave no balance to compare against, ' +
-  'so the next check with the router confirms it. Nothing more will be signed.';
 
 // A USDC figure as money: six places, trailing zeros off. A sum of two doubles printed raw put
 // "8.209399000000001 USDC" in front of a person (2026-09-20).
@@ -564,8 +559,23 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
 
     // Both sides BEFORE anything moves, so the proof afterwards is a comparison and not a guess.
+    // A verifier that will not answer now is a withdrawal nothing could confirm later: the row
+    // is settled by the balance rising over this read (criterion 8.3), and with no read there is
+    // nothing for it to rise over, so it refuses here, before a quote mints an address and
+    // before the key is touched, the way the deposit rail refuses on its own before-read.
     const before = p.account;
     const intentsBefore = await intentsBalance(draft.to, INTENTS_USDC_ASSET_ID);
+    if (intentsBefore === null) {
+      return {
+        ok: false,
+        detail:
+          'the balance inside NEAR Intents could not be read before the send, so this app could not confirm the credit ' +
+          'afterwards. Nothing was sent; try again in a minute.',
+      };
+    }
+    // The pocket the row is judged by, from this moment on: on the row with the first word from
+    // the venue, and on every answer after it.
+    const pocket = pocketOf(draft, intentsBefore, null);
 
     const response = await client.quote(quoteParams(draft, p, false));
     const quote = response.quote;
@@ -615,14 +625,16 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     // then there is nothing to retry. The rule is written out at the top of intents-spend.ts.
     const first = await sendAsset(hl, { destination: depositAddress, amount: draft.amount });
     /* THE ROW HEARS BEFORE ANY OTHER READ. A send the venue took, or one it may have taken,
-       reaches the row with its nonce and the signed quote the moment the answer is in, ahead of
-       the ledger read, the retry and the watch loop. Every one of those is a network read that
-       can fail or a wait the process can die inside, and a row that has the nonce is a row the
-       sweep can re-check by it; a row without it is "failed" over a send the venue may hold,
-       which is how a second copy gets proposed (review, 2026-09-20). A send the venue refused
-       outright is not evidence of anything and is not reported here. */
+       reaches the row with its nonce, the signed quote and the intents pocket the moment the
+       answer is in, ahead of the ledger read, the retry and the watch loop. Every one of those
+       is a network read that can fail or a wait the process can die inside, and a row that has
+       the nonce is a row the sweep can re-check by it; a row without it is "failed" over a send
+       the venue may hold, which is how a second copy gets proposed (review, 2026-09-20). The
+       pocket is what a row recovered from a crash is settled by: the balance rising over the
+       before-read, never 1Click's SUCCESS alone. A send the venue refused outright is not
+       evidence of anything and is not reported here. */
     if (first.ok || first.ambiguous) {
-      tell(hooks, { handle, ...(first.nonce !== undefined ? { nonce: String(first.nonce) } : {}), quote: signedQuote });
+      tell(hooks, { handle, ...(first.nonce !== undefined ? { nonce: String(first.nonce) } : {}), quote: signedQuote, pocket });
     }
     let sent = first;
     let ledger: string | null = null;
@@ -661,6 +673,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
             `so it is unconfirmed: read the Hyperliquid ledger for nonce ${String(first.nonce)} and 1Click status for that address ` +
             'before proposing again.',
           txids: [],
+          pocket,
           evidence: { handle, ...(first.nonce !== undefined ? { nonce: String(first.nonce) } : {}), quote: signedQuote },
         };
       }
@@ -686,7 +699,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     if (watch.status === 'SUCCESS') {
       const delivered = deliveredAmount(watch, quote.amountOutFormatted);
       const proof = await proveBothSides(draft, before, intentsBefore, delivered);
-      const pocket = pocketOf(draft, intentsBefore, proof.intentsAfter);
+      const read = pocketOf(draft, intentsBefore, proof.intentsAfter);
       const said =
         `withdrew ${draft.amount} USDC from Hyperliquid; ${delivered} USDC credited to our ` +
         `intents account ${draft.to} (${deliveredNote(watch)}); ${evidence}.${proof.sentence}`;
@@ -697,16 +710,12 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
          credit it", and the next ledger read that shows the rise settles it. Nothing more is
          signed either way. */
       if (!proof.rose) {
-        /* A row with no before-read cannot say "has not shown" (the boot sweep reads that
-           phrase as "wait for the venue read", which answers only for a deposit and would hold
-           the row open for ever); it says what it can measure, and the router's word settles it. */
-        const lead = proof.unmeasured === true ? SETTLING_WITHDRAW_UNMEASURED : SETTLING_WITHDRAW;
         return {
           ok: false,
           settling: true,
-          detail: `${lead} ${said}`,
+          detail: `${SETTLING_WITHDRAW} ${said}`,
           txids: uniqueTxids(hash, watch),
-          ...(pocket === null ? {} : { pocket }),
+          pocket: read,
           evidence: railEvidence(watch),
         };
       }
@@ -714,7 +723,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         ok: true,
         detail: said,
         txids: uniqueTxids(hash, watch),
-        ...(pocket === null ? {} : { pocket }),
+        pocket: read,
         evidence: railEvidence(watch),
       };
     }
@@ -744,7 +753,6 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     // on the row so the routing can be checked later, and the intents pocket rides with them:
     // the boot sweep re-asks 1Click by the handle, and a SUCCESS it hears later still waits on
     // the verifier showing the credit rather than confirming on the router's word.
-    const late = pocketOf(draft, intentsBefore, null);
     return {
       ok: false,
       detail:
@@ -752,17 +760,16 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         `(last status ${watch.reported}); ${evidence}. THE SEND HAPPENED and the routing may still complete, so it is ` +
         `unconfirmed: read the intents balance and 1Click status for ${handle} before proposing again.`,
       txids: uniqueTxids(hash, watch),
-      ...(late === null ? {} : { pocket: late }),
+      pocket,
       evidence: { handle, nonce: String(nonce), quote: signedQuote },
     };
   }
 
   /* The verifier's balance of the intents USDC either side of the move, base units as strings,
      for the receipt and for the re-judgement of a settling row (src/proposals/execute.ts
-     judgeSettling). Null when the before-read failed: a pocket with no before is a comparison
-     against nothing, and the row then settles on 1Click's word alone the way it always did. */
-  function pocketOf(draft: HlWithdrawDraft, before: bigint | null, after: bigint | null): PocketRead | null {
-    if (before === null) return null;
+     judgeSettling). The before is always read: execute refuses before any quote when the
+     verifier will not give one, so no row this rail writes is ever without its pocket. */
+  function pocketOf(draft: HlWithdrawDraft, before: bigint, after: bigint | null): PocketRead {
     return {
       venue: 'intents',
       account: draft.to.toLowerCase(),
@@ -775,14 +782,14 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     };
   }
 
-  type Proof = { sentence: string; rose: boolean; intentsAfter: bigint | null; unmeasured?: boolean };
+  type Proof = { sentence: string; rose: boolean; intentsAfter: bigint | null };
 
   /* What changed on each side, read back rather than assumed. The verifier is READ UNTIL IT
      SHOWS the floor or the window is spent: 1Click says SUCCESS the block the solver executes and
      a finality-final read lags it, so the one read this used to take saw the old balance and
      called the credit unseen over money a block away. Never throws: the money has moved by now,
      and a read that fails changes the sentence, not the fact. */
-  async function proveBothSides(draft: HlWithdrawDraft, before: HlAccountSummary, intentsBefore: bigint | null, delivered: string): Promise<Proof> {
+  async function proveBothSides(draft: HlWithdrawDraft, before: HlAccountSummary, intentsBefore: bigint, delivered: string): Promise<Proof> {
     const parts: string[] = [];
     try {
       const after = await accountSummary(hl, draft.from);
@@ -790,14 +797,6 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       parts.push(fell > 0 ? ` Venue collateral fell by ${Number(fell.toFixed(6))} USDC.` : ' The venue has not shown the debit yet.');
     } catch (err) {
       parts.push(` Could not read the venue afterwards (${oneLine(errText(err), 80)}).`);
-    }
-    if (intentsBefore === null) {
-      /* No before, no comparison: a read now has nothing to rise from, so it never confirms.
-         The row lands settling without a pocket and the sweep confirms it on the router's own
-         terminal word later, which is all the evidence such a row can have. */
-      const once = await intentsBalance(draft.to, INTENTS_USDC_ASSET_ID);
-      parts.push(' The verifier would not answer a balance read before the send, so this app cannot compare the balance; the next check with the router confirms it.');
-      return { sentence: parts.join(''), rose: false, intentsAfter: once, unmeasured: true };
     }
     const floor = toBaseUnits(draft.minReceived, INTENTS_USDC_DECIMALS);
     const watched = await watchRise<bigint>({

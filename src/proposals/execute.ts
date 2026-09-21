@@ -307,7 +307,9 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
      lands on the row here, before the rail's watch loop, so a quit or a crash during the three
      to five minutes of polling leaves a row that can be reconciled rather than one that "may or
      may not have sent". Merged, because a rail reports in pieces; ignored once the row has left
-     `executing`, because a late hook must not reopen a decided row. */
+     `executing`, because a late hook must not reopen a decided row. The pocket a rail read
+     before the move rides with the first piece, so a row the boot sweep recovers is judged by
+     the balance (judgeSettling below) and never by 1Click's word alone. */
   const hooks: RailHooks = {
     onEvidence: (e) => {
       const current = ctx.store.get(p.id) ?? executing;
@@ -315,7 +317,7 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
       const txids = [...new Set([...(current.result?.txids ?? []), ...(e.txids ?? [])])];
       const evidence = { ...current.result?.evidence, ...pickEvidence(e) };
       ctx.audit.append('submitted', `${p.id}: the venue holds the move; evidence recorded before the wait`, { id: p.id, txids, evidence });
-      persist(ctx, { ...current, result: { ok: false, detail: 'submitted, waiting for the venue', txids, evidence } });
+      persist(ctx, { ...current, result: { ok: false, detail: 'submitted, waiting for the venue', txids, evidence }, ...(e.pocket === undefined ? {} : { pocket: e.pocket }) });
     },
     // The checks land on the row the moment they exist, before anything is signed, so a
     // process that dies in the wait still shows what was read.

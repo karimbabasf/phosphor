@@ -31,6 +31,7 @@ import { venueAllowlist } from '../../src/rails/index.ts';
 import { HYPERCORE_COUNTERPARTY, HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS, minCreditedFor } from '../../src/rails/hypercore-deposit.ts';
 import { HL_WITHDRAW_COUNTERPARTY, INTENTS_USDC_ASSET_ID, INTENTS_USDC_DECIMALS, SETTLING_WITHDRAW, minReceivedForHlWithdraw } from '../../src/rails/hypercore-withdraw.ts';
 import { STAGE_LABEL } from '../../src/proposals/view.ts';
+import { makeCtx, slowRail } from './helpers/proposals.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(path.dirname(__dirname));
@@ -326,11 +327,31 @@ test('withdraw, killed at Signing: the approved row becomes unconfirmed with no 
   assert.equal(b.executed, 0);
 });
 
+/* The withdraw row as the executor really writes it at "Sending it", produced by the executor
+   rather than typed here: a live service runs a rail that makes the withdraw rail's first tell
+   (the handle, the nonce, the signed quote and the intents pocket, hypercore-withdraw.ts
+   execute, pinned by hypercore-withdraw.test.ts "the first word to the row carries the intents
+   pocket") through runRail's onEvidence (src/proposals/execute.ts), and then the process dies
+   with the rail still inside its watch loop. What is on disk at that moment is the seed. */
+async function withdrawRowAtSendingIt(): Promise<Proposal> {
+  const slow = slowRail('hl_withdraw');
+  const h = makeCtx({ rails: [slow.rail] });
+  const filed = await h.svc.proposeHlWithdraw({ amount: WITHDRAW_AMOUNT });
+  assert.equal(filed.status, 'pending', 'a withdrawal always waits for the click');
+  await h.svc.approve(filed.id);
+  await slow.started();
+  const hooks = slow.hooks();
+  assert.ok(hooks?.onEvidence !== undefined, 'the executor handed the rail no hooks');
+  hooks.onEvidence({ handle: HANDLE, nonce: NONCE, quote: { correlationId: 'c-1', timestamp: '2026-09-20T00:00:00.000Z', signature: 'ed25519:sig', depositAddress: HANDLE }, pocket: withdrawPocket });
+  const row = h.store.get(filed.id) as Proposal;
+  assert.equal(row.status, 'executing');
+  return row;
+}
+
 test('withdraw, killed at Sending it: the send was signed and its nonce is on the row; boot keeps the nonce, the sweep asks 1Click, and SUCCESS waits for the verifier', async () => {
-  const seed = rowAt('hl_withdraw', {
-    result: { ok: false, detail: 'submitted, waiting for the venue', txids: [], evidence: { handle: HANDLE, nonce: NONCE } },
-    pocket: withdrawPocket,
-  });
+  const seed = await withdrawRowAtSendingIt();
+  assert.equal(seed.result?.evidence?.nonce, NONCE);
+  assert.deepEqual(seed.pocket, withdrawPocket, 'the executor wrote the pocket with the first word, before the wait');
   const b = boot(seed);
   const booted = b.svc.get(seed.id) as Proposal;
   assert.equal(booted.status, 'needs_reconciliation');
@@ -348,6 +369,32 @@ test('withdraw, killed at Sending it: the send was signed and its nonce is on th
   const done = b.svc.get(seed.id) as Proposal;
   assert.equal(done.status, 'executed');
   assertKept(seed, done);
+  assert.equal(b.executed, 0);
+});
+
+/* A row with evidence and no pocket is what the executor wrote at "Sending it" until the pocket
+   rode with the first word, and the sweep then confirmed it on 1Click's SUCCESS alone with the
+   verifier balance still at zero (review L1, 2026-09-20). No rail writes such a row now; one
+   from before, or one with the pocket lost, stays unconfirmed with its nonce. */
+test('withdraw, killed while polling on a row with no pocket: SUCCESS alone never confirms it, and it stays unconfirmed with its nonce', async () => {
+  const seed = rowAt('hl_withdraw', {
+    result: { ok: false, detail: 'submitted, waiting for the venue', txids: [], evidence: { handle: HANDLE, nonce: NONCE, providerStage: 'PROCESSING' } },
+  });
+  const b = boot(seed);
+  const booted = b.svc.get(seed.id) as Proposal;
+  assert.equal(booted.status, 'needs_reconciliation');
+  assert.equal(booted.pocket, undefined);
+  b.venue.status = 'SUCCESS';
+  await b.svc.reconcileOpen();
+  const heard = b.svc.get(seed.id) as Proposal;
+  assert.equal(heard.status, 'needs_reconciliation', 'SUCCESS alone must not confirm a withdrawal');
+  assert.equal(heard.result?.ok, false);
+  assert.equal(heard.result?.evidence?.nonce, NONCE, 'the nonce stays for a later question to the venue');
+  assert.match(heard.result?.detail ?? '', /cannot confirm the credit on its own/);
+  assert.notEqual(b.svc.view(heard).stage, 'confirmed');
+  // A sweep that hears SUCCESS again writes nothing new and still confirms nothing.
+  await b.svc.reconcileOpen();
+  assert.equal(b.svc.get(seed.id)?.status, 'needs_reconciliation');
   assert.equal(b.executed, 0);
 });
 

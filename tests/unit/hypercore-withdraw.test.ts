@@ -721,21 +721,51 @@ test('the verifier showing the floor on the third read after SUCCESS is a confir
   assert.equal(out.pocket?.before, '0');
 });
 
-test('a verifier that would not answer before the send leaves no pocket and never confirms: the row settles on the router alone, and its sentence does not ask the venue read to vouch for it', async () => {
-  let reads = 0;
-  // No before-read; the after-read answers with a balance that has nothing to be compared to.
-  const { rail: r } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }], {}, [], {
-    intentsBalance: async () => (reads++ === 0 ? null : 7_780_248n),
+/* A row is confirmed by the intents balance rising over the rail's before-read and by nothing
+   else (criterion 8.3), so a before-read the verifier will not give is a withdrawal nothing could
+   confirm: it refuses before a quote mints an address and before the key is touched, the way the
+   deposit rail refuses on its own before-read. It used to send anyway, land settling with no
+   pocket, and let the sweep confirm it on 1Click's word (review L1, 2026-09-20). */
+test('a verifier that would not answer before the send refuses before any quote: nothing is minted, nothing is signed', async () => {
+  const { rail: r, quotes, signed, posts } = rail({}, [{ available: 20, spot: 20, perp: 0 }], {}, [], {
+    intentsBalance: async () => null,
   });
   const out = await r.execute(draft());
-  assert.equal(out.ok, false, 'an after-read with no before is not a rise');
-  assert.equal(out.settling, true);
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /could not be read before the send/);
+  assert.match(out.detail, /Nothing was sent/);
+  assert.equal(quotes.filter((q) => !q.dry).length, 0, 'no live quote, so no deposit address was minted');
+  assert.equal(signed.length, 0);
+  assert.equal(posts.length, 0);
+  assert.equal(out.evidence, undefined);
   assert.equal(out.pocket, undefined);
-  assert.match(out.detail, /would not answer a balance read before the send/);
-  assert.match(out.detail, /the next check with the router confirms it/);
-  // reconcile.ts routes "has not shown" to the Hyperliquid credit read, which answers only for a
-  // deposit and would hold a withdrawal open for ever; this sentence must not carry it.
-  assert.doesNotMatch(out.detail, /ha[sd] not shown/);
+});
+
+/* The pocket is what a row recovered from a crash is settled by. It used to land only when the
+   rail returned, so a process killed while polling left a row with evidence and no pocket, and
+   the boot sweep then wrote executed on 1Click's SUCCESS alone (review L1, 2026-09-20). */
+test('the first word to the row carries the intents pocket beside the nonce and the signed quote, and an unconfirmed send keeps it', async () => {
+  const { rail: r } = rail({}, undefined, { exchangeThrows: true });
+  const told: Array<Record<string, unknown>> = [];
+  const out = await r.execute(draft(), 'p1', { onEvidence: (e) => told.push(e as Record<string, unknown>) });
+  const pocket = {
+    venue: 'intents',
+    account: ACCOUNT,
+    assetId: INTENTS_USDC_ASSET_ID,
+    symbol: 'USDC',
+    decimals: 6,
+    before: '0',
+    after: null,
+    floor: '7718000', // minReceivedForHlWithdraw(8) at six decimals, the floor the guarantee was checked against
+  };
+  assert.equal(told.length, 1);
+  assert.equal(told[0].nonce, '1786600000000');
+  assert.equal(told[0].handle, DEPOSIT.toLowerCase());
+  assert.ok(told[0].quote !== undefined, 'the signed quote rides with the first word');
+  assert.deepEqual(told[0].pocket, pocket, 'the before-read and the floor are on the row before the wait');
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /unconfirmed/);
+  assert.deepEqual(out.pocket, pocket, 'an unconfirmed send keeps the pocket for the sweep to judge it by');
 });
 
 test('the venue ledger names the send by its nonce, and a send delta without a nonce field still matches on destination, amount and time', async () => {
