@@ -535,6 +535,12 @@ button.chip[aria-pressed="true"] {
   }
 }
 
+/* A chip says its state with its colour and its edge; the dot the vault's
+   chips carried beside the word made them status pills with a dot, which
+   Karim reads as cheap (2026-09-18). The dot stays on the bar's status lines,
+   where it is the state and there is no pill. */
+.chip > .dot { display: none; }
+
 .chip[data-tone="agent"] { color: var(--agent); border-color: var(--agent-edge); }
 .chip[data-tone="live"] { color: var(--live); border-color: var(--live-edge); }
 .chip[data-tone="warn"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 34%, transparent); }

@@ -381,6 +381,14 @@ button.bar-state:active { transform: scale(0.97); }
   gap: var(--s-3);
 }
 
+/* With a card on the dock the transcript keeps 120 px and whatever it held
+   past that is under the dock: the cut fades rather than slicing a sentence
+   in half, the way every scrolling region in this window fades at its edge. */
+.conversation:has(> .dock:not([hidden])) > .conversation-body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+}
+
 .composer-host {
   position: relative;
   z-index: 1;
@@ -520,6 +528,18 @@ button.bar-state:active { transform: scale(0.97); }
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 6px 46vh;
   }
+  /* An ask on the dock (the amber card, the one with no data-state) takes
+     the whole stacked window: the conversation becomes the one row, so a
+     swap card and its No and Yes fit without a scroll, and the world comes
+     back the moment the answer lands. A card to read, a receipt or the beat
+     after a click keeps the split. Four fifths was tried first and left the
+     top half of the balance showing in the band above, a number cut in two. */
+  .stage:has(> .conversation > .dock:not([hidden]):not([data-state])) {
+    grid-template-rows: 0 minmax(0, 1fr);
+  }
+  .stage:has(> .conversation > .dock:not([hidden]):not([data-state])) > .split-v {
+    display: none;
+  }
   .conversation {
     order: 3;
     border-right: 0;
@@ -657,20 +677,24 @@ button.bar-state:active { transform: scale(0.97); }
    the one region drawn in amber: a transcript row cannot look like it.
 
    Two parts inside it, whatever card is up: a body that scrolls and a foot that
-   does not. The dock takes up to 62 percent of the column; when a card is
-   taller than that the body scrolls under the foot, and the foot, with No and
-   Yes in it, stays put. macOS hides scrollbars until they are touched, so the
-   body's last lines fade toward the foot while there is more below
-   (data-more on the card, measured by decision.js): that fade is the only
-   sign a person gets that the card goes on. */
+   does not. The answer sits in the body under the facts, so the dock has to be
+   tall enough to show the facts and the answer together: it takes every pixel
+   of the column but the 120 the transcript keeps for its head and the reply
+   beside the card, and it never gives way to the transcript (a shrinking dock
+   put No and Yes under the fold on a 400 px column, the 62 percent it used to
+   be capped at plus the transcript's share). When a card is taller than even
+   that, the body scrolls. macOS hides scrollbars until they are touched, so
+   the body's last lines fade while there is more below (data-more on the
+   card, measured by decision.js): that fade is the only sign a person gets
+   that the card goes on. */
 .dock {
   position: relative;
   z-index: 2;
   display: flex;
   flex-direction: column;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
-  max-height: 62%;
+  max-height: calc(100% - 120px);
   overflow: hidden;
   margin: 0 var(--s-3) var(--s-2);
   border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);

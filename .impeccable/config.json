@@ -14,6 +14,24 @@
         "value": "geist",
         "createdAt": "2026-09-21T02:14:40.593Z",
         "reason": "Karim's shortlist"
+      },
+      {
+        "rule": "clipped-overflow-container",
+        "value": "*",
+        "files": [
+          "ui/index.html"
+        ],
+        "createdAt": "2026-09-21T03:12:16.416Z",
+        "reason": "Agent, node E: the window is a fixed one-screen deck, html and body never scroll by design (ui/design/layout.css:9, vault Gotcha on the page that scrolled under a non-scrolling shell); every positioned layer (toasts, pops, tooltips) sits inside the viewport, which clips at the same edge"
+      },
+      {
+        "rule": "gpt-thin-border-wide-shadow",
+        "value": "*",
+        "files": [
+          "ui/index.html"
+        ],
+        "createdAt": "2026-09-21T03:12:16.435Z",
+        "reason": "Agent, node E: the app's depth is a hairline plus one of two lifts by design (ui/design/tokens.css:129, two shadows in the whole app for the few things that float); on the #0E0F13 ground a lift without an edge does not read as a surface"
       }
     ]
   }
