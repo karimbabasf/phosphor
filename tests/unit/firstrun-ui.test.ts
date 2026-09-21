@@ -21,6 +21,7 @@ const LINKS = read('../../ui/core/links.js');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
 const FIRSTRUN = read('../../ui/screens/firstrun.js');
+const VAULT = read('../../ui/screens/vault.js');
 const CSS = read('../../ui/design/agentpick.css');
 
 /* ---------- a DOM small enough to read ---------- */
@@ -276,6 +277,12 @@ test('the picker prints nothing the network said, raises no toast, and brings it
   assert.equal(/\.innerHTML\s*=|insertAdjacentHTML/.test(FIRSTRUN), false);
   assert.match(CSS, /\.agentpick-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,/);
   assert.match(CSS, /\.agent-tile-name\s*\{[^}]*-webkit-line-clamp:\s*2/);
+  // The two sentences for a missing agent have one source, src/agents-catalog.ts stateSentence: a
+  // screen that composed its own would fork the fix that keeps a fresh pick from reading as "no longer".
+  for (const [file, source] of [['firstrun.js', FIRSTRUN], ['vault.js', VAULT]] as const) {
+    assert.equal(/no longer on this Mac|not on this Mac yet/.test(source), false, `${file} composes a state sentence of its own`);
+  }
+  assert.match(picker, /var text = check\.sentence;/, 'the picker does not print the check\'s own sentence');
   // The old step's toast on a failed start is gone from the assistant step too.
   const step = FIRSTRUN.slice(FIRSTRUN.indexOf('function screenConnect'), FIRSTRUN.indexOf('function screenThreshold'));
   assert.equal(/PhosphorToast|readable\(/.test(step), false, 'the assistant step still prints a raw error');
@@ -316,12 +323,14 @@ test('the scan tags the tiles the app found on this Mac, in words', async () => 
 
 test('a pick is one round trip: the tile is current at once, the sentence is the app\'s, the path waits behind Details', async () => {
   const world = build();
-  world.answers['agent-pick'] = { ok: true, check: CHECKS.codexMissing, registered: false, registrationFailed: false, command: LINE, agent: 'codex', picked: 'codex' };
+  // A missing agent is not stored by the app (picked stays null); the tile the sentence is about stays current.
+  world.answers['agent-pick'] = { ok: true, check: CHECKS.codexMissing, registered: false, registrationFailed: false, command: LINE, agent: 'codex', picked: null };
   const screen = await atPicker(world);
   tile(screen, 'codex').click();
   assert.equal(tile(screen, 'codex').getAttribute('aria-current'), 'true');
   assert.deepEqual(sentences(screen), ['Checking on this Mac.']);
   await flush();
+  assert.equal(tile(screen, 'codex').getAttribute('aria-current'), 'true');
   const pick = world.calls.find((c) => c.action === 'agent-pick');
   assert.ok(pick && pick.agent === 'codex', 'the pick was not posted');
   assert.deepEqual(sentences(screen), [CHECKS.codexMissing.sentence]);
@@ -342,7 +351,7 @@ test('a pick is one round trip: the tile is current at once, the sentence is the
 
 test('Check again re-checks without writing, and a signed-out agent gets its sentence and the same button', async () => {
   const world = build();
-  world.answers['agent-pick'] = { ok: true, check: CHECKS.codexMissing, registered: false, registrationFailed: false, command: LINE, picked: 'codex' };
+  world.answers['agent-pick'] = { ok: true, check: CHECKS.codexMissing, registered: false, registrationFailed: false, command: LINE, picked: null };
   const screen = await atPicker(world);
   tile(screen, 'codex').click();
   await flush();
@@ -525,7 +534,7 @@ test('the done screen says what the assistant step actually found, never a conne
     ['desktop', { ok: true, check: CHECKS.desktop, command: null, picked: 'desktop' }, 'Install Claude Code or Codex, then pick it in the Vault tab.'],
     ['codex', { ok: true, check: CHECKS.codexIn, command: LINE, registered: true, picked: 'codex' }, 'Start Codex in your terminal and it will appear.'],
     ['codex', { ok: true, check: CHECKS.codexOut, command: LINE, picked: 'codex' }, 'Sign in to Codex, then start it in your terminal.'],
-    ['codex', { ok: true, check: CHECKS.codexMissing, command: LINE, picked: 'codex' }, 'Install Codex, then pick it in the Vault tab.'],
+    ['codex', { ok: true, check: CHECKS.codexMissing, command: LINE, picked: null }, 'Install Codex, then pick it in the Vault tab.'],
     ['mcp', { ok: true, check: CHECKS.other, command: 'PHOSPHOR_PORT=4177 node /x', picked: 'mcp' }, 'Paste the line from the Vault tab into your agent and it will appear.'],
     [undefined, undefined, 'Pick your assistant in the Vault tab when you are ready.'],
   ];

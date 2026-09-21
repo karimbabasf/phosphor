@@ -299,11 +299,17 @@ export async function handleMutation(
        them is about a chat, so all three sit above the chat resolution.
        agent-scan: every agent the app can probe, for the tags on the tiles.
        agent-check: one agent, for the sentence under the tiles and the vault panel's line.
-       agent-pick: the person chose one. The choice is written to <dataDir>/agent.json, the
-       check runs, and where the agent owns a config the app writes the registration into it
-       through the vendor's own `mcp add`. A pick never stops or restarts an agent this app
-       started: with one running it is refused with the sentence that says to turn it off first,
-       so the switch always goes through the Turn off card and never around it. */
+       agent-pick: the person chose one. The check runs first; the choice is written to
+       <dataDir>/agent.json only when the check found the agent on this Mac, signed in or not,
+       or when the entry has nothing to probe (another MCP agent, Claude Desktop); and where the
+       agent owns a config the app writes the registration into it through the vendor's own
+       `mcp add`. A pick of an agent that is not here stores nothing and answers the
+       not-installed sentence: the write used to come first, so the check read the fresh pick
+       as an earlier one and said "no longer on this Mac" to someone who had just clicked
+       (tests/unit/connection-route.test.ts). "No longer" is for the agent picked earlier that
+       has since gone. A pick never stops or restarts an agent this app started: with one
+       running it is refused with the sentence that says to turn it off first, so the switch
+       always goes through the Turn off card and never around it. */
     if (action === 'agent-scan') {
       const agents = await scanAgents();
       return sendJson(res, 200, { ok: true, agents, picked: readPick(dataDirOf(ctx))?.agent ?? null });
@@ -328,13 +334,21 @@ export async function handleMutation(
           picked: before,
         });
       }
-      const pick = writePick(dataDirOf(ctx), agent);
-      ctx.audit.append('app_start', `the human picked ${agentById(agent)?.name ?? agent} as the agent (was ${before ?? 'none'})`, {
-        agent,
-        from: before,
-        pickedAt: pick.pickedAt,
-      });
       const check = await checkFor(ctx, agent);
+      const name = agentById(agent)?.name ?? agent;
+      if (check.state === 'not_installed') {
+        ctx.audit.append('app_start', `the human picked ${name}, which is not on this Mac: nothing stored (the pick stays ${before ?? 'none'})`, {
+          agent,
+          from: before,
+        });
+      } else {
+        const pick = writePick(dataDirOf(ctx), agent);
+        ctx.audit.append('app_start', `the human picked ${name} as the agent (was ${before ?? 'none'})`, {
+          agent,
+          from: before,
+          pickedAt: pick.pickedAt,
+        });
+      }
       /* The registration is written only where there is a binary to write it with: an agent
          that is not on this Mac gets its sentence and the line to paste, and nothing runs. */
       const registration = check.state === 'not_installed' || check.state === 'unknown_client'

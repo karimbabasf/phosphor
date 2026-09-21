@@ -183,6 +183,67 @@ test('a pick is written to agent.json with an audit line, and its check answers 
   }
 });
 
+/* The routes check with the process's own PATH and HOME (src/http/mutation.ts checkFor), so a Mac
+   with no agent on it is played by pointing both at nothing for the length of one test. */
+async function withNoAgents<T>(fn: () => Promise<T>): Promise<T> {
+  const saved = { PATH: process.env.PATH, HOME: process.env.HOME };
+  process.env.PATH = '/nonexistent';
+  process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-no-agents-'));
+  try {
+    return await fn();
+  } finally {
+    process.env.PATH = saved.PATH;
+    process.env.HOME = saved.HOME;
+  }
+}
+
+test('a pick of an agent that is not on this Mac says it is not here yet, and stores nothing', async () => {
+  const app = await boot();
+  try {
+    await withNoAgents(async () => {
+      // Nothing picked before: the fresh pick of a missing agent is "not yet", never "no longer".
+      const fresh = await post(app, '/api/driver', { action: 'agent-pick', agent: 'codex' });
+      assert.equal(fresh.status, 200);
+      assert.equal(fresh.json.ok, true);
+      const check = fresh.json.check as Record<string, unknown>;
+      assert.equal(check.state, 'not_installed');
+      assert.equal(check.sentence, 'Codex is not on this Mac yet. Install it, then come back to this screen.');
+      assert.equal(fresh.json.registered, false);
+      assert.equal(fresh.json.picked, null);
+      assert.equal(readPick(app.dataDir), null, 'a missing agent was stored as the pick');
+      assert.ok(app.lines.some((l) => l.type === 'app_start' && /picked Codex, which is not on this Mac: nothing stored/.test(l.msg)), 'no audit line for the attempt');
+
+      // An earlier pick stays where it was: the sentence is still "not yet", and the pick is untouched.
+      writePick(app.dataDir, 'mcp');
+      const again = await post(app, '/api/driver', { action: 'agent-pick', agent: 'codex' });
+      assert.equal((again.json.check as Record<string, unknown>).sentence, 'Codex is not on this Mac yet. Install it, then come back to this screen.');
+      assert.equal(again.json.picked, 'mcp');
+      assert.equal(readPick(app.dataDir)?.agent, 'mcp');
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test('the agent picked earlier that has since gone says it is no longer on this Mac, on a check and on a re-pick', async () => {
+  const app = await boot();
+  try {
+    // Picked while it was on this Mac (the file the route writes), then removed.
+    writePick(app.dataDir, 'codex');
+    await withNoAgents(async () => {
+      const check = await post(app, '/api/driver', { action: 'agent-check' });
+      assert.equal((check.json.check as Record<string, unknown>).state, 'not_installed');
+      assert.equal((check.json.check as Record<string, unknown>).sentence, 'Codex is no longer on this Mac.');
+      const repick = await post(app, '/api/driver', { action: 'agent-pick', agent: 'codex' });
+      assert.equal((repick.json.check as Record<string, unknown>).sentence, 'Codex is no longer on this Mac.');
+      assert.equal(repick.json.picked, 'codex');
+      assert.equal(readPick(app.dataDir)?.agent, 'codex');
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test('a pick is refused with one sentence while an agent this app started is running, and nothing is written', async () => {
   const app = await boot();
   try {
