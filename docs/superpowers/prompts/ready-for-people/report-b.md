@@ -199,7 +199,7 @@ delta type of that ledger row (expected "send"), and the balances before and aft
 ## B2 review fixes
 
 Fresh builder B2 on the secure review's rejection (review-b-secure.md: one Medium, two Lows, one
-Info), built on 96ef9f7 in this worktree. Evidence: evidence-b/b2-eval.log; the reviewer's scratch
+Info), built on 96ef9f7 in this worktree. Evidence: evidence-b/b2-eval.txt; the reviewer's scratch
 tests under scripts/scratch/review-b-secure/ (gitignored) all go green, their output is quoted below.
 
 ### Commits (oldest first)
@@ -265,7 +265,7 @@ tests under scripts/scratch/review-b-secure/ (gitignored) all go green, their ou
 - `npm run typecheck`: exit 0.
 - `npm test`: 3106 pass, 0 fail (was 3098 at 96ef9f7; 9 tests added, 1 replaced: the unmeasured
   settling test, whose path no longer exists).
-- `npm run eval`: 29 pass, 0 fail, 0 xfail, 0 error (evidence-b/b2-eval.log; run because two
+- `npm run eval`: 29 pass, 0 fail, 0 xfail, 0 error (evidence-b/b2-eval.txt; run because two
   refusal sentences and the floor's formatting rule changed).
 - gitleaks over 96ef9f7..HEAD: 4 commits scanned, no leaks (the fifth commit holds no new strings).
   semgrep p/typescript, p/nodejs, p/secrets over the five changed source files: 0 findings.
