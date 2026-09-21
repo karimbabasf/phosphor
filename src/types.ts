@@ -218,10 +218,13 @@ export type LegQuote = {
 export type SwapDraft = {
   kind: 'swap';
   // A swap signs an intent over a balance already held inside the intents.near verifier and
-  // transfers nothing on any chain. 'oneclick' (wallet funds to a per-quote deposit address)
-  // and 'uniswap-v3' are retired: state/proposals.json holds executed rows naming them, and
-  // the history readers take the venue as a string, so nothing has to type those rows.
-  venue: 'intents-native';
+  // transfers nothing on any chain. 'intents-relay' signs one atomic token_diff through the
+  // solver relay (docs/superpowers/specs/2026-09-20-swap-relay-design.md); 'intents-native'
+  // is the 1Click transfer it replaces, kept behind `swap.rail` until the relay has settled
+  // real money. 'oneclick' (wallet funds to a per-quote deposit address) and 'uniswap-v3' are
+  // retired: state/proposals.json holds executed rows naming them, and the history readers
+  // take the venue as a string, so nothing has to type those rows.
+  venue: 'intents-native' | 'intents-relay';
   // The home chains of the two ASSETS, which is how the 1Click token list names an asset
   // ("USDC from eth" and "USDC from arb" are two ids). Neither is a place money moves to or
   // from: both legs sit inside NEAR Intents, and every card says so.

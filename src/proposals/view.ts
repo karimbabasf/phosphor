@@ -20,9 +20,11 @@ import type { OutcomeState, PlanFate } from './lifecycle.ts';
 import { px } from '../trade/plan.ts';
 import type { PolicyAxisChange, Proposal, WriteDraft } from '../types.ts';
 
-// The app's own phases are lowercase. The provider's phases are 1Click's seven words, byte for
-// byte off GetExecutionStatusResponse, because "settling" is a word nobody outside this app can
-// check. INCOMPLETE_DEPOSIT is never folded into PROCESSING: partial money arrived.
+// The app's own phases are lowercase. The provider's phases are the vendor's words, byte for
+// byte: 1Click's seven off GetExecutionStatusResponse, the solver relay's four off get_status,
+// because "settling" is a word nobody outside this app can check. INCOMPLETE_DEPOSIT is never
+// folded into PROCESSING: partial money arrived. The vendor word is the stage's IDENTITY, never
+// its face: STAGE_LABEL is the only text a surface prints, and no label carries a vendor's word.
 export type ProposalStage =
   | 'waiting_for_you'
   | 'waiting_for_unlock'
@@ -36,6 +38,10 @@ export type ProposalStage =
   | 'SUCCESS'
   | 'REFUNDED'
   | 'FAILED'
+  | 'PENDING'
+  | 'TX_BROADCASTED'
+  | 'SETTLED'
+  | 'NOT_FOUND_OR_NOT_VALID'
   | 'crediting'
   | 'confirmed'
   | 'failed'
@@ -100,6 +106,11 @@ export type ProposalView = {
   error: { code: string; message: string } | null;
 };
 
+/* THE ONLY WORDS A STAGE IS EVER PRINTED AS. The card, the agent's sentence, proposal_status and
+   the ending notice all read this table and none of them keeps a copy. The rule for a label: the
+   app's own words, never a vendor's ("The router is working" was 1Click's phase wearing a
+   sentence, and a person who has never heard of a router read it as a fault). Every wait names
+   what is being waited on, every ending names what happened, and no label is a code. */
 export const STAGE_LABEL: Record<ProposalStage, string> = {
   waiting_for_you: 'Waiting for you',
   waiting_for_unlock: 'Needs the unlock',
@@ -109,16 +120,48 @@ export const STAGE_LABEL: Record<ProposalStage, string> = {
   KNOWN_DEPOSIT_TX: 'Deposit seen',
   PENDING_DEPOSIT: 'Waiting for the deposit',
   INCOMPLETE_DEPOSIT: 'Part of it arrived',
-  PROCESSING: 'The router is working',
-  SUCCESS: 'The router is done',
+  PROCESSING: 'On its way',
+  SUCCESS: 'Waiting for the venue to credit it',
   REFUNDED: 'Refunded',
   FAILED: 'Failed',
+  PENDING: 'Finding a match',
+  TX_BROADCASTED: 'Settling on NEAR',
+  SETTLED: 'Settled, checking your balance',
+  NOT_FOUND_OR_NOT_VALID: 'Failed',
   crediting: 'Waiting for the venue to credit it',
   confirmed: 'Confirmed',
   failed: 'Failed',
   declined: 'Declined',
   refused: 'Refused',
   stalled: 'Late, nothing has changed',
+};
+
+/* ONE LINE OF USER COPY PER STAGE: what is happening, and whether the person has to do anything.
+   The label is the headline; this is the sentence under it. A surface prints it verbatim or not
+   at all, never a paraphrase, so the card and the agent cannot describe one moment two ways. */
+export const STAGE_COPY: Record<ProposalStage, string> = {
+  waiting_for_you: 'Nothing moves until you answer Yes or No in the window.',
+  waiting_for_unlock: 'The wallet is locked. Unlock it in the window and the move continues.',
+  waiting_for_touch: 'Touch ID is asking for your fingerprint. Nothing moves until you answer it.',
+  signing: 'The wallet is signing it. Nothing for you to do.',
+  submitting: 'It is signed and being sent. Nothing for you to do.',
+  KNOWN_DEPOSIT_TX: 'Your money has been seen on its way. Nothing for you to do.',
+  PENDING_DEPOSIT: 'Waiting for your money to arrive at the transfer. Nothing for you to do.',
+  INCOMPLETE_DEPOSIT: 'Part of the money arrived and the rest is still on its way. Nothing for you to do yet.',
+  PROCESSING: 'The transfer is moving your money across. Nothing for you to do.',
+  SUCCESS: 'The transfer is done and the venue has not shown the money yet. Nothing for you to do.',
+  REFUNDED: 'The transfer could not finish and sent the money back. Check your balance, then try again.',
+  FAILED: 'The transfer could not finish. Nothing more will be signed. Check your balance before trying again.',
+  PENDING: 'Your swap is sent and being matched at the price you approved. Nothing for you to do.',
+  TX_BROADCASTED: 'Your swap is settling on NEAR. Nothing for you to do.',
+  SETTLED: 'Your swap settled. The balance is being read to confirm it. Nothing for you to do.',
+  NOT_FOUND_OR_NOT_VALID: 'The swap did not settle before its price expired. Nothing moved. Ask for a fresh price to try again.',
+  crediting: 'The money is on its way to the venue and has not shown in the balance yet. Nothing for you to do.',
+  confirmed: 'Done. The balance shows it.',
+  failed: 'It did not go through. The reason is on the card. Nothing more will be signed.',
+  declined: 'You said no. Nothing moved.',
+  refused: 'A rule you set stopped it. Nothing moved. Change the rule in the window if you want it to go.',
+  stalled: 'It is late and nothing has changed since the last update. The app keeps checking. Nothing more will be signed.',
 };
 
 export const TERMINAL: ReadonlySet<ProposalStage> = new Set<ProposalStage>([
@@ -129,7 +172,50 @@ export const TERMINAL: ReadonlySet<ProposalStage> = new Set<ProposalStage>([
   'stalled',
   'REFUNDED',
   'FAILED',
+  'NOT_FOUND_OR_NOT_VALID',
 ]);
+
+/* THE PATH EACH MONEY KIND WALKS, in order, and the words it can end on. A card draws its
+   progress from `path`, a harness enumerates its situations from both, and a rail that stamps a
+   word outside its kind's path is wrong, not novel. The steps a person owns (waiting_for_you,
+   waiting_for_unlock, waiting_for_touch) come first and are skipped when nothing asks for them:
+   under the threshold there is no click, on a software wallet there is no Touch ID. A swap's
+   path is the relay's; the 1Click swap that stays behind `swap.rail` for a month walks
+   LEGACY_SWAP_PATH, and a history row keeps whichever it walked. */
+export type KindStages = { path: readonly ProposalStage[]; terminal: readonly ProposalStage[] };
+const PERSON_STEPS: readonly ProposalStage[] = ['waiting_for_you', 'waiting_for_unlock', 'waiting_for_touch'];
+const ENDINGS_OF_A_CLICK: readonly ProposalStage[] = ['declined', 'refused'];
+export const KIND_STAGES: Record<WriteDraft['kind'], KindStages> = {
+  swap: {
+    path: [...PERSON_STEPS, 'signing', 'submitting', 'PENDING', 'TX_BROADCASTED', 'SETTLED', 'confirmed'],
+    terminal: ['confirmed', 'NOT_FOUND_OR_NOT_VALID', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
+  },
+  hl_deposit: {
+    path: [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'],
+    terminal: ['confirmed', 'REFUNDED', 'FAILED', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
+  },
+  hl_withdraw: {
+    path: [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'],
+    terminal: ['confirmed', 'REFUNDED', 'FAILED', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
+  },
+  intents_send: {
+    path: [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'confirmed'],
+    terminal: ['confirmed', 'REFUNDED', 'FAILED', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
+  },
+  intents_pay: {
+    path: [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'confirmed'],
+    terminal: ['confirmed', 'REFUNDED', 'FAILED', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
+  },
+  trade: {
+    path: [...PERSON_STEPS, 'signing', 'submitting', 'confirmed'],
+    terminal: ['confirmed', 'failed', 'stalled', ...ENDINGS_OF_A_CLICK],
+  },
+  policy_change: {
+    path: ['waiting_for_you', 'confirmed'],
+    terminal: ['confirmed', 'failed', ...ENDINGS_OF_A_CLICK],
+  },
+};
+export const LEGACY_SWAP_PATH: readonly ProposalStage[] = [...PERSON_STEPS, 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed'];
 
 export const TYPICAL_SEC: Record<WriteDraft['kind'], number> = {
   hl_deposit: 180,
@@ -150,10 +236,10 @@ export const DEADLINE_SEC: Record<WriteDraft['kind'], number | null> = Object.fr
   ]),
 ) as Record<WriteDraft['kind'], number | null>;
 
-// 1Click's seven words, as the vendor spells them. A word this app does not recognise is not
-// printed as a stage: the row falls back to its own phase rather than showing a string the
-// stage table has no label for.
-const PROVIDER_STAGES: ReadonlySet<string> = new Set([
+// The vendors' words, as each vendor spells them: 1Click's seven, then the solver relay's four.
+// A word this app does not recognise is not printed as a stage: the row falls back to its own
+// phase rather than showing a string the stage table has no label for.
+export const ONECLICK_STAGES: ReadonlySet<string> = new Set([
   'KNOWN_DEPOSIT_TX',
   'PENDING_DEPOSIT',
   'INCOMPLETE_DEPOSIT',
@@ -162,6 +248,11 @@ const PROVIDER_STAGES: ReadonlySet<string> = new Set([
   'REFUNDED',
   'FAILED',
 ]);
+export const RELAY_STAGES: ReadonlySet<string> = new Set(['PENDING', 'TX_BROADCASTED', 'SETTLED', 'NOT_FOUND_OR_NOT_VALID']);
+const PROVIDER_STAGES: ReadonlySet<string> = new Set([...ONECLICK_STAGES, ...RELAY_STAGES]);
+// The two vendor words that mean "my part is done": the money is with the venue and not yet in
+// the balance, which is `crediting` once the executor has handed the row to the settle watch.
+const PROVIDER_DONE: ReadonlySet<string> = new Set(['SUCCESS', 'SETTLED']);
 
 /* THE ONE MAP FROM A ROW TO A STAGE WORD. Every surface reads this and none of them keeps a
    second one: the card had its own `STAGES` table and the agent had `outcomeOf`, and the two
@@ -186,7 +277,7 @@ export function stageOf(p: Proposal): ProposalStage {
        still describes the router's own work and is passed through as the vendor spells it. */
     case 'needs_reconciliation':
       if (p.stalledAt !== undefined) return 'stalled';
-      if (provider !== undefined && provider !== 'SUCCESS' && PROVIDER_STAGES.has(provider)) return provider as ProposalStage;
+      if (provider !== undefined && !PROVIDER_DONE.has(provider) && PROVIDER_STAGES.has(provider)) return provider as ProposalStage;
       return 'crediting';
     case 'executed':
       return 'confirmed';
@@ -216,9 +307,18 @@ function waitingOn(p: Proposal, stage: ProposalStage): string | null {
       return 'The wallet';
     case 'crediting':
       return p.kind === 'hl_deposit' ? 'Hyperliquid' : 'NEAR Intents';
+    case 'PENDING':
+    case 'TX_BROADCASTED':
+    case 'SETTLED':
+      // The relay's words: the swap is inside NEAR Intents the whole way.
+      return 'NEAR Intents';
     default:
-      // submitting and every 1Click word: the router is the thing that has not answered.
-      return p.kind === 'trade' ? 'Hyperliquid' : '1Click';
+      /* submitting and every 1Click word: the transfer between pockets is the thing that has
+         not answered. It is named as what it is to the person, never by its vendor: "1Click"
+         told nobody what they were waiting for. */
+      if (p.kind === 'trade') return 'Hyperliquid';
+      if (p.kind === 'swap' && p.draft.kind === 'swap' && p.draft.venue === 'intents-relay') return 'NEAR Intents';
+      return 'The transfer';
   }
 }
 

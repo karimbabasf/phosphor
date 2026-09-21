@@ -170,9 +170,9 @@ test('proposal_status and state.proposals[].view are the same object for the sam
 
     assert.equal(fromTool.sentence, '10 USDC from NEAR Intents to Hyperliquid');
     assert.equal(fromTool.stage, 'PROCESSING');
-    assert.equal(fromTool.stageLabel, 'The router is working');
+    assert.equal(fromTool.stageLabel, 'On its way');
     assert.equal(fromTool.providerStage, 'PROCESSING');
-    assert.equal(fromTool.waitingOn, '1Click');
+    assert.equal(fromTool.waitingOn, 'The transfer');
   } finally {
     await app.close();
   }

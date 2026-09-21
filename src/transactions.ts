@@ -426,7 +426,7 @@ function sidesOf(draft: WriteDraft): Sides {
       // assets, not places the money went. A row the retired 1Click venue wrote did move
       // between chains, and it keeps saying so; the venue is read as the string it is.
       const venue = String(draft.venue);
-      const inside = venue === 'intents-native';
+      const inside = venue === 'intents-native' || venue === 'intents-relay';
       return {
         place: inside ? 'intents' : draft.chain,
         toPlace: inside ? 'intents' : draft.toChain,

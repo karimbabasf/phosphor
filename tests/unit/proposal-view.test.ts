@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { Proposal, RailEvidence, WriteDraft } from '../../src/types.ts';
-import { STAGE_LABEL, TERMINAL, TYPICAL_SEC, proposalView, sentenceOf } from '../../src/proposals/view.ts';
+import { KIND_STAGES, LEGACY_SWAP_PATH, ONECLICK_STAGES, RELAY_STAGES, STAGE_COPY, STAGE_LABEL, TERMINAL, TYPICAL_SEC, proposalView, sentenceOf } from '../../src/proposals/view.ts';
 import type { ProposalStage } from '../../src/proposals/view.ts';
 
 const CREATED = '2026-09-18T10:00:00.000Z';
@@ -40,6 +40,16 @@ function rowOf(over: Partial<Proposal> = {}): Proposal {
 
 const POCKET = { venue: 'hyperliquid' as const, symbol: 'USDC', assetId: 'hl-usdc', account: '0x1111111111111111111111111111111111111111', decimals: 6, before: '0', after: null, floor: '5000000' };
 
+// A relay swap's row: the same shape, the swap draft, so the relay's four words have a home.
+const RELAY_SWAP: Partial<Proposal> = {
+  kind: 'swap',
+  draft: {
+    kind: 'swap', venue: 'intents-relay', chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'NEAR',
+    amountIn: 2, amountUsd: 2, minAmountOut: 0.5, from: '0x1111111111111111111111111111111111111111', to: '0x1111111111111111111111111111111111111111',
+    counterparty: 'intents.near', quote: null,
+  },
+};
+
 function viewOf(over: Partial<Proposal>) {
   return proposalView({ settle: (row) => row }, rowOf(over), NOW);
 }
@@ -63,6 +73,10 @@ const CASES: Record<ProposalStage, () => ReturnType<typeof viewOf>> = {
   SUCCESS: () => withProvider('executing', 'SUCCESS'),
   REFUNDED: () => withProvider('needs_reconciliation', 'REFUNDED', { pocket: POCKET }),
   FAILED: () => withProvider('needs_reconciliation', 'FAILED', { pocket: POCKET }),
+  PENDING: () => withProvider('executing', 'PENDING', RELAY_SWAP),
+  TX_BROADCASTED: () => withProvider('executing', 'TX_BROADCASTED', RELAY_SWAP),
+  SETTLED: () => withProvider('executing', 'SETTLED', RELAY_SWAP),
+  NOT_FOUND_OR_NOT_VALID: () => withProvider('needs_reconciliation', 'NOT_FOUND_OR_NOT_VALID', RELAY_SWAP),
   crediting: () => withProvider('needs_reconciliation', 'SUCCESS', { pocket: POCKET }),
   confirmed: () => viewOf({ status: 'executed', settledAt: '2026-09-18T10:01:30.000Z' }),
   failed: () => viewOf({ status: 'failed', result: { ok: false, detail: 'the rail threw' } }),
@@ -83,14 +97,42 @@ test('every stage in the table has a row that produces it, with its own label', 
   assert.deepEqual(seen.sort(), Object.keys(STAGE_LABEL).sort(), 'every stage is covered exactly once');
 });
 
-test('waitingOn names a person, the wallet, the router or the venue, and nobody once it is over', () => {
+test('waitingOn names a person, the wallet, the transfer or the venue, and nobody once it is over', () => {
   assert.equal(CASES.waiting_for_you().waitingOn, 'You');
   assert.equal(CASES.waiting_for_unlock().waitingOn, 'You');
   assert.equal(CASES.waiting_for_touch().waitingOn, 'Touch ID');
   assert.equal(CASES.signing().waitingOn, 'The wallet');
-  assert.equal(CASES.PROCESSING().waitingOn, '1Click');
+  assert.equal(CASES.PROCESSING().waitingOn, 'The transfer');
+  assert.equal(CASES.PENDING().waitingOn, 'NEAR Intents');
+  assert.equal(CASES.TX_BROADCASTED().waitingOn, 'NEAR Intents');
   assert.equal(CASES.crediting().waitingOn, 'Hyperliquid');
   for (const stage of TERMINAL) assert.equal(CASES[stage]().waitingOn, null, `${stage} waits on nobody`);
+});
+
+/* THE VOCABULARY IS THE APP'S, NEVER A VENDOR'S. "The router is working" was 1Click's phase
+   wearing a sentence, and a person who has never heard of a router read it as a fault. Every
+   label and every line of copy is checked against the words a vendor or an engineer would use. */
+test('no stage label or copy carries a vendor word, a code or an engineer word', () => {
+  const banned = /router|1click|solver|nonce|intent hash|verifier|token_diff|bps|EIP|ERC|base units|RPC|[A-Z]{3,}_[A-Z]/;
+  for (const stage of Object.keys(STAGE_LABEL) as ProposalStage[]) {
+    assert.doesNotMatch(STAGE_LABEL[stage], banned, `label of ${stage}`);
+    assert.doesNotMatch(STAGE_COPY[stage], banned, `copy of ${stage}`);
+    assert.ok(/^[A-Z]/.test(STAGE_LABEL[stage]) && !STAGE_LABEL[stage].endsWith('.'), `label of ${stage} is a headline`);
+    assert.ok(STAGE_COPY[stage].endsWith('.'), `copy of ${stage} is a sentence`);
+  }
+});
+
+test('every kind walks a path that ends in confirmed and names its terminal outcomes from the table', () => {
+  for (const [kind, { path, terminal }] of Object.entries(KIND_STAGES)) {
+    assert.equal(path.at(-1), 'confirmed', `${kind} path ends confirmed`);
+    for (const stage of path) assert.ok(stage in STAGE_LABEL, `${kind} path stage ${stage} has a label`);
+    for (const stage of terminal) assert.ok(TERMINAL.has(stage), `${kind} terminal ${stage} is in TERMINAL`);
+    assert.ok(terminal.includes('confirmed'), `${kind} can confirm`);
+  }
+  // The relay swap walks the relay's words and never 1Click's; the legacy path is the reverse.
+  for (const word of RELAY_STAGES) assert.ok(KIND_STAGES.swap.path.includes(word as ProposalStage) || word === 'NOT_FOUND_OR_NOT_VALID');
+  for (const word of ONECLICK_STAGES) assert.equal(KIND_STAGES.swap.path.includes(word as ProposalStage), false, `${word} is not on the relay path`);
+  assert.ok(LEGACY_SWAP_PATH.includes('PROCESSING'));
 });
 
 test('the clocks count from the row and the stage, not from the last write', () => {
