@@ -18,7 +18,7 @@ Lead: Claude (Opus 5), session c49886b8. Started 2026-09-20 19:05 PDT. Main at 7
 | node | branch | status |
 |---|---|---|
 | A relay swap | rfp/a-relay | reported (c0232de, 3143/3143, eval 29/29, +75 tests, security 0 High/Med); correct + secure reviews running; NOTE: relay quotes no solver for USDC to wNEAR today, USDC to USDT does; nonce is V1 (current_salt) not the spec's 32 random bytes |
-| B Hyperliquid | rfp/b-hyperliquid | building |
+| B Hyperliquid | rfp/b-hyperliquid | reported (dd7bf2b, 3098/3098, eval 29/29, live S12 2/3 from 0/3, +32 tests, security 0 High/Med); correct + secure reviews running |
 | C agent picker | rfp/c-agent | reported (291fc9a after merging main, 3123/3123, +57 tests); correct + secure reviews running; touched ui/index.html (one link line) and src/http/router.ts (two routes) outside its list, resolve at merge |
 | D one card, voice | rfp/d-card | building |
 | E craft floor | rfp/e-craft | reported (ed0f0e4, 3096/3096, detector 0, audit 0 blocking); correct + secure reviews running; overwhelmed review waits for F |
@@ -43,3 +43,5 @@ Ports: A 4201, B 4202, C 4203, D 4204, E 4205, F 4206, G 4207 (PHOSPHOR_PORT), d
 - Flaky: tests/unit/lock-frame.test.ts timing miss once under load (3.1 s), passes alone; watch it at merge, never loosen it.
 - A to D/lead: ui/screens/decision.js VENUE_WORDS and ui/screens/receipt.js VENUE_NAMES need an 'intents-relay' entry; the card draws simulation.swap.priceGoodForSec as "Price good for about a minute, re-quoted at your click"; execute.ts judgeSettling must never write the short-fill failed on a relay row (atomic diff). A added three type fields in src/types.ts and one pickEvidence line in execute.ts (on its branch).
 - Proof decision pending (4.7, proof 3): if `node scripts/relay-probe.ts --from USDC --to NEAR --amount 2` exits 2 at proof time, the swap proof runs USDC to USDT (the spec's pair) and the report says why.
+- B to D/lead: cards.js hl branches draw "at least" from sim.send.arrivesAtLeast; main.ts wires held: demoHeldTiming(cfg) so the harness can expire a hold in seconds; reconcile.ts demo sentence over a handled row; role.ts withdraw phrasing for S12 3/3.
+- PROOF FACTS (B's probe): the HL deposit floor is 7 USDC in (5 lands), so "5 each way" is 7 in and 5 out; the HL account holds 0.000775 USDC and the intents balance holds NO USDC today. The live proof needs about 10 USDC in intents first: check the wallet read at proof time; if still empty, this is a You item (money) or a swap from what he holds, decided then.
