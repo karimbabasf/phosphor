@@ -6,7 +6,7 @@ you from the download to a wallet that is made, backed up and locked, and shows 
 
 ## Download
 
-Download the disk image from [phosphor.karimbabasf.com/download/mac](https://phosphor.karimbabasf.com/download/mac). It needs
+Download the disk image from [phosphor.money/download/mac](https://phosphor.money/download/mac). It needs
 an Apple silicon Mac on macOS 13.5 or later. Open the disk image and drag Phosphor into
 Applications. The source is at [github.com/karimbabasf/phosphor](https://github.com/karimbabasf/phosphor).
 
@@ -37,8 +37,8 @@ known gap in [Known limits](known-limits.md).
 
 The window opens on the terms: four plain facts (it is alpha and moves real money, your keys are
 yours alone, the venues are not ours, you are 18 or older) and links to the full
-[terms of use](https://phosphor.karimbabasf.com/terms/) and the
-[privacy page](https://phosphor.karimbabasf.com/privacy/), which open in your browser. Nothing
+[terms of use](https://phosphor.money/terms/) and the
+[privacy page](https://phosphor.money/privacy/), which open in your browser. Nothing
 else opens until you click Accept and continue. The app records the click (the date and the
 version of the terms) in its own state folder and in the audit log, and asks again only when the
 terms change.

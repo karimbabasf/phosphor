@@ -23,7 +23,7 @@
 #       the step refuses a signed DMG rather than break its signature.
 #
 #   BLOB_READ_WRITE_TOKEN
-#       Required. The Vercel Blob store behind https://phosphor.karimbabasf.com/download/mac.
+#       Required. The Vercel Blob store behind https://phosphor.money/download/mac.
 #       The DMG is copied there once the release is published, so the site serves it from its
 #       own domain instead of bouncing the browser to release-assets.githubusercontent.com.
 #
@@ -192,7 +192,7 @@ jobs:
             cat "$RELEASE_DIR/SHA256SUMS"
             echo '```'
             echo
-            echo "Installed copies are offered this version automatically; the update is signed and the app refuses one that is not. Only download Phosphor from this page or from https://phosphor.karimbabasf.com."
+            echo "Installed copies are offered this version automatically; the update is signed and the app refuses one that is not. Only download Phosphor from this page or from https://phosphor.money."
           } > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" \
             --verify-tag \

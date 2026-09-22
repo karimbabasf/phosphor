@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://phosphor.karimbabasf.com/download/mac"><b>Download for Mac</b></a>
+  <a href="https://phosphor.money/download/mac"><b>Download for Mac</b></a>
   &nbsp;·&nbsp;
-  <a href="https://phosphor.karimbabasf.com/docs">Docs</a>
+  <a href="https://phosphor.money/docs">Docs</a>
   &nbsp;·&nbsp;
   <a href="DISCLAIMER.md">Read before you fund it</a>
 </p>
@@ -47,7 +47,7 @@ advice. Read [DISCLAIMER.md](DISCLAIMER.md) first.
 
 ## Install
 
-[Download the disk image](https://phosphor.karimbabasf.com/download/mac). Apple silicon, macOS
+[Download the disk image](https://phosphor.money/download/mac). Apple silicon, macOS
 13.5 or later. Drag Phosphor into Applications.
 
 The app holds keys, so check the file first. The release page lists the SHA-256 of the disk image,
@@ -109,7 +109,7 @@ npm run eval     # scores the agent against the behaviour rubric
 
 ## Docs
 
-Read them at [phosphor.karimbabasf.com/docs](https://phosphor.karimbabasf.com/docs), or in
+Read them at [phosphor.money/docs](https://phosphor.money/docs), or in
 [docs/](docs/README.md).
 
 - [Getting started](docs/getting-started.md): download, wallet, backup, the lock and the brake.

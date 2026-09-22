@@ -3,7 +3,7 @@
 These pages are the user documentation for Phosphor, the local Mac app that holds your keys,
 your venue connections and your rules while an agent proposes moves and you click. They describe
 version 0.9.1, the version in `package.json`. The site at
-[phosphor.karimbabasf.com/docs](https://phosphor.karimbabasf.com/docs) is rendered from these
+[phosphor.money/docs](https://phosphor.money/docs) is rendered from these
 files, and the three developer documents below sit beside them.
 
 ## Pages
@@ -28,5 +28,5 @@ These pages describe the version in `package.json`, nothing older and nothing pl
 version bump updates the pages it touches and adds a changelog entry in the same commit.
 `tests/unit/docs.test.ts` fails the suite when the top entry of the changelog is not the package
 version, when a page listed here is missing, or when a link between these files is broken. The
-website at [phosphor.karimbabasf.com/docs](https://phosphor.karimbabasf.com/docs) is rebuilt from
+website at [phosphor.money/docs](https://phosphor.money/docs) is rebuilt from
 these files, so a stale page here is a stale page there.
