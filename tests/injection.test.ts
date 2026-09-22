@@ -22,6 +22,7 @@ import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { z } from 'zod';
 
 import type { EngineCtx } from '../src/policy/engine.ts';
 import { CAPABILITIES } from '../src/greeting.ts';
@@ -258,9 +259,16 @@ function propertyNames(schema: unknown, out: Set<string> = new Set()): Set<strin
   return out;
 }
 
-/* Every `additionalProperties` value at any depth. An open bag (`true`, or a schema of strings)
-   is a place the property walk above cannot see into, so a propose tool may not carry one: an
-   address smuggled under a key nobody named is still an address. */
+/* Every object schema at any depth that takes a key nobody named. An open bag is a place the
+   property walk above cannot see into, so a propose tool may not carry one: an address smuggled
+   under a key nobody named is still an address.
+
+   OPEN is any additionalProperties but false. true and {} take any key with any value, which the
+   policy patch does on purpose. Any other schema there is a record or a catchall, and its keys are
+   free text whatever its values are, so a record of numbers is open too.
+   CLOSED is false, or no additionalProperties at all on an object. JSON Schema reads that absence
+   as open. zod 4 writes it for exactly the objects that strip an unknown key, which are closed,
+   and the next test holds the converter to that. */
 function openBags(schema: unknown, at = '$', out: string[] = []): string[] {
   if (Array.isArray(schema)) {
     schema.forEach((child, i) => openBags(child, `${at}[${i}]`, out));
@@ -268,15 +276,30 @@ function openBags(schema: unknown, at = '$', out: string[] = []): string[] {
   }
   if (schema === null || typeof schema !== 'object') return out;
   const node = schema as Record<string, unknown>;
-  const extra = node.additionalProperties;
-  if (extra === true) out.push(`${at}.additionalProperties: true`);
-  else if (extra !== null && typeof extra === 'object') {
-    const type = (extra as { type?: unknown }).type;
-    if (type !== 'number' && type !== 'integer' && type !== 'boolean') out.push(`${at}.additionalProperties: ${JSON.stringify(extra)}`);
+  if ('additionalProperties' in node && node.additionalProperties !== false) {
+    out.push(`${at}.additionalProperties: ${JSON.stringify(node.additionalProperties)}`);
   }
   for (const [key, child] of Object.entries(node)) openBags(child, `${at}.${key}`, out);
   return out;
 }
+
+/* WHY NO additionalProperties AT ALL COUNTS AS CLOSED, held against the converter rather than
+   assumed. The MCP SDK turns each zod input schema into JSON Schema with zod's own toJSONSchema,
+   draft-7, input side. A zod object that strips an unknown key comes out with no
+   additionalProperties, and every object that keeps one says so: loose as {}, a catchall as its
+   schema, a record as its value schema. A strict one says false. If a zod release moves any of
+   that, openBags is reading absence wrong, and this fails before it can pass a hole. */
+test('an object schema with no additionalProperties is one that strips an unknown key', () => {
+  const shape = { amount: z.number() };
+  const extra = (schema: z.ZodType): unknown =>
+    (z.toJSONSchema(schema, { target: 'draft-7', io: 'input' }) as { additionalProperties?: unknown }).additionalProperties;
+  assert.equal(extra(z.object(shape)), undefined);
+  assert.deepEqual(z.object(shape).parse({ amount: 1, to: hostile.attacker }), { amount: 1 }, 'the object it came from strips');
+  assert.deepEqual(extra(z.object(shape).passthrough()), {});
+  assert.deepEqual(extra(z.object(shape).catchall(z.string())), { type: 'string' });
+  assert.deepEqual(extra(z.record(z.string(), z.number())), { type: 'number' });
+  assert.equal(extra(z.object(shape).strict()), false);
+});
 
 type ListedTool = { name: string; inputSchema: unknown };
 
