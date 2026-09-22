@@ -110,10 +110,10 @@ test('the writer refuses anything off the list and leaves no href behind', () =>
 
   // The product's own pages are a second, separate list: an explorer is not the
   // terms page and the terms page is not an explorer.
-  assert.equal(links.setSiteHref(anchor, 'https://phosphor.karimbabasf.com/terms/'), true);
-  assert.equal(links.setHref(anchor, 'https://phosphor.karimbabasf.com/terms/'), false);
+  assert.equal(links.setSiteHref(anchor, 'https://phosphor.money/terms/'), true);
+  assert.equal(links.setHref(anchor, 'https://phosphor.money/terms/'), false);
   assert.equal(links.setSiteHref(anchor, 'https://sepolia.basescan.org/tx/0xabc'), false);
-  assert.equal(links.setSiteHref(anchor, 'https://phosphor.karimbabasf.com.evil.com/terms/'), false);
+  assert.equal(links.setSiteHref(anchor, 'https://phosphor.money.evil.com/terms/'), false);
 });
 
 function load(): Record<string, any> {

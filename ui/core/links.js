@@ -42,7 +42,7 @@
      frame as everything else. A separate list: an explorer is not the terms
      page, and a link to the terms page is not a link to a chain. */
   var SITES = [
-    'phosphor.karimbabasf.com'
+    'phosphor.money'
   ];
 
   function onList(url, hosts) {

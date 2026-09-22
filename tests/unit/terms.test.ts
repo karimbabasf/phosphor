@@ -37,8 +37,8 @@ test('nothing is accepted on a fresh data directory, and the payload names the v
   assert.equal(data.acceptedVersion, null);
   assert.equal(data.acceptedAt, null);
   assert.equal(data.version, '2026-09-17');
-  assert.equal(data.urls.terms, 'https://phosphor.karimbabasf.com/terms/');
-  assert.equal(data.urls.privacy, 'https://phosphor.karimbabasf.com/privacy/');
+  assert.equal(data.urls.terms, 'https://phosphor.money/terms/');
+  assert.equal(data.urls.privacy, 'https://phosphor.money/privacy/');
 });
 
 test('accepting writes terms.json at 0600 with the version and the moment, and a fresh reader agrees', () => {

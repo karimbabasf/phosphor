@@ -106,7 +106,7 @@ function termsSlice(accepted: boolean): Any {
     acceptedVersion: accepted ? '2026-09-17' : null,
     acceptedAt: accepted ? '2026-09-18T12:00:00.000Z' : null,
     accepted,
-    urls: { terms: 'https://phosphor.karimbabasf.com/terms/', privacy: 'https://phosphor.karimbabasf.com/privacy/' },
+    urls: { terms: 'https://phosphor.money/terms/', privacy: 'https://phosphor.money/privacy/' },
   };
 }
 
@@ -197,8 +197,8 @@ test('the terms card is up before anything else while the terms are not accepted
   // links are; the stub below does not reflect a property onto its attribute the way a real
   // anchor does, so the destination is read off the property here.
   assert.deepEqual(links.map((a) => [a.textContent, a.href ?? null, a.getAttribute('target'), a.getAttribute('rel')]), [
-    ['Terms of use', 'https://phosphor.karimbabasf.com/terms/', '_blank', 'noopener'],
-    ['Privacy page', 'https://phosphor.karimbabasf.com/privacy/', '_blank', 'noopener'],
+    ['Terms of use', 'https://phosphor.money/terms/', '_blank', 'noopener'],
+    ['Privacy page', 'https://phosphor.money/privacy/', '_blank', 'noopener'],
   ]);
   const buttons = find(screen, 'button');
   assert.equal(buttons.length, 1, 'one button');

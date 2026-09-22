@@ -105,9 +105,9 @@
 
     var read = dom.el('p', 'terms-read');
     read.appendChild(dom.el('span', '', 'Read the full '));
-    read.appendChild(link(urls.terms || 'https://phosphor.karimbabasf.com/terms/', 'Terms of use'));
+    read.appendChild(link(urls.terms || 'https://phosphor.money/terms/', 'Terms of use'));
     read.appendChild(dom.el('span', '', ' and the '));
-    read.appendChild(link(urls.privacy || 'https://phosphor.karimbabasf.com/privacy/', 'Privacy page'));
+    read.appendChild(link(urls.privacy || 'https://phosphor.money/privacy/', 'Privacy page'));
     read.appendChild(dom.el('span', '', '. They open in your browser.'));
     body.appendChild(read);
 

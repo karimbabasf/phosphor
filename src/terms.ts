@@ -14,9 +14,9 @@ import path from 'node:path';
 
 import { atomicWrite } from './fsatomic.ts';
 
-export const TERMS_VERSION = '2026-09-17';
-export const TERMS_URL = 'https://phosphor.karimbabasf.com/terms/';
-export const PRIVACY_URL = 'https://phosphor.karimbabasf.com/privacy/';
+export const TERMS_VERSION = '2026-09-22';
+export const TERMS_URL = 'https://phosphor.money/terms/';
+export const PRIVACY_URL = 'https://phosphor.money/privacy/';
 
 export type TermsData = {
   // The version the app asks for, and the one the person accepted, if any.

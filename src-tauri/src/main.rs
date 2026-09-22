@@ -54,11 +54,11 @@ const COPY_MCP_ID: &str = "copy-mcp-config";
 /// the bug form with the app version and the macOS version already filled in (`report_url`),
 /// and both of those come from this process, never from a page.
 const HELP_LINKS: [(&str, &str, &str); 5] = [
-    ("help-docs", "Phosphor Documentation", "https://phosphor.karimbabasf.com/docs/"),
+    ("help-docs", "Phosphor Documentation", "https://phosphor.money/docs/"),
     (HELP_REPORT_ID, "Report a Problem", "https://github.com/karimbabasf/phosphor/issues/new?template=bug_report.yml"),
-    ("help-security", "Report a Security Issue", "https://phosphor.karimbabasf.com/security/"),
-    ("help-terms", "Terms of Use", "https://phosphor.karimbabasf.com/terms/"),
-    ("help-privacy", "Privacy", "https://phosphor.karimbabasf.com/privacy/"),
+    ("help-security", "Report a Security Issue", "https://phosphor.money/security/"),
+    ("help-terms", "Terms of Use", "https://phosphor.money/terms/"),
+    ("help-privacy", "Privacy", "https://phosphor.money/privacy/"),
 ];
 const HELP_REPORT_ID: &str = "help-report";
 
