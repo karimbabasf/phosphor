@@ -75,3 +75,10 @@ Ports: A 4201, B 4202, C 4203, D 4204, E 4205, F 4206, G 4207 (PHOSPHOR_PORT), d
 - Final gates: typecheck 0; npm test 3334/3334; e2e 29/29; scripted eval 29/29; cargo 27/27; latency proof PASS; detector []; inventory 114/0; sweep 5 of 6 (history blobs with his public address).
 - Anxiety: run 2 (complete, judged by OpenRouter claude-sonnet-5) 39 pass 46 fail 13 unreachable; the judge's reasons clustered and the cheap product fixes landed (e6341c2, a343ae1); run 3 lost the judge to OpenRouter HTTP 402 after 33 rows (6 flipped to pass). A full judged run on the final main needs credits or --judge claude-p; leg b needs Jev's credits.
 - Left to Karim: live eval, the real-money proof (needs about 10 USDC in intents), the judged rerun, the two product decisions (pocket names on cards, the dock mirroring the transcript card).
+
+## Follow-up fixes on Karim's word (2026-09-21 evening), main 1637da4, app rebuilt and reinstalled
+- 6cf50a4 driver block rides on the config; the sweep stamps 1Click's word on a crash-recovered row.
+- f981baa trade_focus moves the chart for any coin the venue lists (GRAM stayed on BTC-USD in his screenshot).
+- 1637da4 the swap floor comes off the app's own quote when the agent names none (rail.quote() on relay, 1Click and demo; floorUnderQuote one percent under, six significant figures, cut); propose_swap's minAmountOut optional; persona says six significant figures for a coin amount; S11/S29 argChecks accept an absent floor (absentOrGt).
+- His config.local.json carries swap.rail oneclick for now (no relay solver for wNEAR pairs); his wNEAR to USDC swap confirmed on 1Click in 7 s.
+- Gates: typecheck 0, npm test 3340/3340, scripted eval 29/29, e2e 29/29. Still open: pocket names on cards, the dock mirror, the address in history, the live site.
