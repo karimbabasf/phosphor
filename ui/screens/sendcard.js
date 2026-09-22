@@ -25,17 +25,6 @@
   var STACK_BELOW = 560;
   var SVG_NS = 'http://www.w3.org/2000/svg';
 
-  /* The chain a payout lands on, by name, and the mark that stands for it.
-     A network id the table does not know is said as the id itself. */
-  var NETWORKS = {
-    ethereum: { name: 'Ethereum', mark: 'ETH' },
-    base: { name: 'Base', mark: 'BASE' },
-    arbitrum: { name: 'Arbitrum', mark: 'ARB' },
-    solana: { name: 'Solana', mark: 'SOL' },
-    near: { name: 'NEAR', mark: 'NEAR' },
-    bitcoin: { name: 'Bitcoin', mark: 'BTC' }
-  };
-
   /* Only a url the server built (src/chainscan) and only for one of these
      hosts reaches an <a>: this is the one place the card hands the system
      browser a string. */
@@ -179,9 +168,17 @@
     return done ? 'Paid' : 'Pay';
   }
 
+  /* The chain a payout lands on, off the frame's table rather than a table of this card's own.
+     A chain the frame has no row for is said as the id itself, which is a poor label and still
+     better than an empty space where a chain should be. */
   function networkName(id) {
     if (id === 'intents') return 'NEAR Intents';
-    return NETWORKS[id] ? NETWORKS[id].name : text(id);
+    return window.PhosphorChains ? window.PhosphorChains.nameOf(id) : text(id);
+  }
+
+  function networkMark(id) {
+    if (id === 'intents') return 'NEAR';
+    return window.PhosphorChains ? window.PhosphorChains.markOf(id) : '';
   }
 
   function methodOf(view) {
@@ -373,7 +370,7 @@
     wrap.appendChild(arrow());
 
     var inside = view.network === 'intents';
-    var to = node('to', inside ? 'NEAR' : (NETWORKS[view.network] ? NETWORKS[view.network].mark : ''), inside ? 'NEAR Intents account' : networkName(view.network), false);
+    var to = node('to', inside ? 'NEAR' : networkMark(view.network), inside ? 'NEAR Intents account' : networkName(view.network), false);
 
     var address = dom.el('p', 'sendcard-address mono');
     var groups = groupsOf(view.to);

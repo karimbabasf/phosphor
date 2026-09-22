@@ -47,15 +47,8 @@
     ]
   };
 
-  var CHAIN_NAMES = {
-    eth: 'Ethereum',
-    base: 'Base',
-    arb: 'Arbitrum',
-    sol: 'Solana',
-    near: 'NEAR',
-    intents: 'NEAR Intents',
-    hyperliquid: 'Hyperliquid'
-  };
+  /* The two pockets are this window's own words; every real chain comes off the frame's table. */
+  var POCKETS = { intents: 'NEAR Intents', hyperliquid: 'Hyperliquid' };
 
   /* The cards, by the tool that answered. */
   var KINDS = {
@@ -132,7 +125,8 @@
   function chainName(id) {
     var receipt = window.PhosphorReceipt;
     if (receipt && typeof receipt.chainName === 'function') return receipt.chainName(id);
-    return CHAIN_NAMES[id] || String(id || '');
+    if (POCKETS[id]) return POCKETS[id];
+    return window.PhosphorChains ? window.PhosphorChains.nameOf(id) : String(id || '');
   }
 
   function glyph(name, className) {
@@ -1031,10 +1025,10 @@
   function pocketId(pocket) {
     if (!pocket) return '';
     var text = String(pocket);
-    for (var id in CHAIN_NAMES) {
-      if (Object.prototype.hasOwnProperty.call(CHAIN_NAMES, id) && CHAIN_NAMES[id] === text) return id;
+    for (var id in POCKETS) {
+      if (Object.prototype.hasOwnProperty.call(POCKETS, id) && POCKETS[id] === text) return id;
     }
-    return text;
+    return window.PhosphorChains ? window.PhosphorChains.idOf(text) : text;
   }
 
   /* A text that changes with a fade rather than a cut. The new words are set at once and

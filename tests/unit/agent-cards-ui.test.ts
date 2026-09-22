@@ -18,6 +18,7 @@ const DOM_SOURCE = read('../../ui/core/dom.js');
 const MARKDOWN_SOURCE = read('../../ui/core/markdown.js');
 const CARDS_SOURCE = read('../../ui/screens/cards.js');
 const AGENT_SOURCE = read('../../ui/screens/agent.js');
+import { fillChains } from '../fixtures/chains.ts';
 
 type Any = Record<string, any>;
 
@@ -170,6 +171,7 @@ function build() {
   sandbox.window = win;
   sandbox.CustomEvent = function CustomEventStub(this: Any, type: string, init: Any) { this.type = type; this.detail = init?.detail; };
   createContext(sandbox);
+  fillChains(sandbox, (src, name) => runInContext(src, sandbox, { filename: name }));
   runInContext(DOM_SOURCE, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(MARKDOWN_SOURCE, sandbox, { filename: 'ui/core/markdown.js' });
   runInContext(CARDS_SOURCE, sandbox, { filename: 'ui/screens/cards.js' });

@@ -26,6 +26,9 @@
     var previous = current;
     current = next;
     loadedOnce = true;
+    /* Before any slice fires, because a card redrawn by one of them names a chain off this
+       table and a stale table is a card printing a raw id. */
+    if (window.PhosphorChains) window.PhosphorChains.set(next.chains);
 
     for (var key in slices) {
       if (!Object.prototype.hasOwnProperty.call(slices, key)) continue;

@@ -407,3 +407,22 @@ test('a store write invalidates the cached body', async () => {
     await h.close();
   }
 });
+
+/* The window used to keep its own five-row chain table in each card, so a payout on any other
+   chain printed its raw id. The table rides here instead: one copy, and a chain added to the
+   registry reaches every card without a second edit. */
+test('the state payload carries every chain the window has to be able to name', async () => {
+  const h = await boot([]);
+  try {
+    const out = await get(h.url, '/api/state');
+    assert.equal(out.status, 200);
+    const frame = JSON.parse(out.body) as { chains: Array<{ id: string; name: string; mark: string; colour: string }> };
+    const ids = frame.chains.map((c) => c.id);
+    assert.ok(ids.includes('ton'));
+    assert.ok(ids.includes('polygon'));
+    assert.equal(frame.chains.find((c) => c.id === 'ton')?.name, 'TON');
+    assert.ok(frame.chains.every((c) => typeof c.mark === 'string' && c.mark.length > 0));
+  } finally {
+    await h.close();
+  }
+});

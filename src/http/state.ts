@@ -15,6 +15,7 @@ import { intParam, jsonWithEtag } from './respond.ts';
 import type { CachedJson } from './respond.ts';
 import type { Ctx } from './context.ts';
 import { vaultStatus } from './vault.ts';
+import { RECEIVE_NETWORKS, SPEND_NETWORKS } from '../rails/intents-address.ts';
 
 /* NOTHING UNBOUNDED RIDES ON /api/state, and this is where that rule is kept.
    The payload used to carry every proposal the data directory had ever held. Measured on a demo
@@ -120,6 +121,14 @@ export function sentencesOf(policy: Policy | null): string[] {
   return lines;
 }
 
+/* The chain table the cards name a chain by. Four fields and no addresses: a card needs the word
+   and the mark, and everything else about a chain is the deposit screen's business. Both lists,
+   because a chain can be one this app only swaps into (no deposit prefix yet) and a card still
+   has to name it. */
+const CHAIN_TABLE = [...RECEIVE_NETWORKS, ...SPEND_NETWORKS]
+  .filter((n, i, all) => all.findIndex((m) => m.id === n.id) === i)
+  .map((n) => ({ id: n.id, name: n.name, mark: n.mark, colour: n.colour }));
+
 export function buildState(ctx: Ctx): unknown {
   const snapshot = ctx.ledger.snapshot();
   const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
@@ -158,6 +167,9 @@ export function buildState(ctx: Ctx): unknown {
        terms screen ahead of everything else until this says so. */
     terms: ctx.terms.get(),
     deposit: ctx.deposits.current(),
+    /* Every chain the window may have to name, so no card keeps a table of its own. Fixed size
+       and it does not grow with use, which is the rule this payload is held to. */
+    chains: CHAIN_TABLE,
     sentences: sentencesOf(policy),
     /* Everything still waiting on a person, plus the last 20 decided, each carrying the one
        object every surface reads. The rest is paged behind GET /api/proposals; see the note on

@@ -10,6 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
+import { fillChains } from '../fixtures/chains.ts';
 
 const SOURCE = readFileSync(new URL('../../ui/screens/decision.js', import.meta.url), 'utf8');
 
@@ -126,6 +127,7 @@ function load(proposals: unknown[]): { card: Node; render: () => void } {
     URL,
   };
   createContext(sandbox);
+  fillChains(sandbox, (src, name) => runInContext(src, sandbox, { filename: name }));
   runInContext(readFileSync(new URL('../../ui/core/links.js', import.meta.url), 'utf8'), sandbox,
     { filename: 'ui/core/links.js' });
   runInContext(readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8'), sandbox,

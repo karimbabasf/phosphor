@@ -20,6 +20,7 @@ const DECISION = read('../../ui/screens/decision.js');
 const CARDS = read('../../ui/screens/cards.js');
 const LINKS = read('../../ui/core/links.js');
 const CHECKS = read('../../ui/screens/checks.js');
+import { fillChains } from '../fixtures/chains.ts';
 
 type Node = {
   tag: string;
@@ -200,6 +201,7 @@ function loadDock(proposals: unknown[], vault: Record<string, unknown> = {}) {
     URL,
   };
   createContext(sandbox);
+  fillChains(sandbox, (src, name) => runInContext(src, sandbox, { filename: name }));
   runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(CHECKS, sandbox, { filename: 'ui/screens/checks.js' });
   runInContext(SENDCARD, sandbox, { filename: 'ui/screens/sendcard.js' });
@@ -455,6 +457,7 @@ test('the thread draws the send card from the reply\'s send facts, not from the 
     URL,
   };
   createContext(sandbox);
+  fillChains(sandbox, (src, name) => runInContext(src, sandbox, { filename: name }));
   runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(SENDCARD, sandbox, { filename: 'ui/screens/sendcard.js' });
   runInContext(CARDS, sandbox, { filename: 'ui/screens/cards.js' });
@@ -558,4 +561,14 @@ test('an approved row that is not held is Sending, with no hold line', () => {
   assert.equal(all(host, 'sendcard-status')[0]?.textContent, 'Sending');
   assert.equal(all(host, 'sendcard-hold').length, 0);
   assert.equal(all(ui.card, 'sendcard').length, 0, 'the dock has nothing to show for a row that is sending');
+});
+
+/* A payout on a chain the card never had a row for. The five-row table in this file printed the
+   raw id for everything else, which is the scary-string failure the card exists to avoid. */
+test('a payout on a chain the card never had a row for still names it and draws its mark', () => {
+  const ui = loadDock([payProposal({}, { network: 'ton', symbol: 'GRAM' })]);
+  ui.render();
+  const names = all(ui.card, 'sendcard-node-name').map((n) => n.textContent);
+  assert.ok(names.includes('TON'), names.join(' | '));
+  assert.ok(!names.some((n) => n === 'ton'));
 });
