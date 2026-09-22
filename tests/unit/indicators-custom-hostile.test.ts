@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { z } from 'zod';
 
 import { bootChartServer } from '../fixtures/chart-server.ts';
 import type { Candle } from '../../src/types.ts';
@@ -127,7 +128,14 @@ test('a control or format character in a script is named by its code point, neve
   }
 });
 
-test('a symbolic link in the folder is not followed, and nothing from its target reaches a problem', () => {
+test('a symbolic link in the folder is not followed, and nothing from its target reaches a problem', (t) => {
+  /* A schema message about a file that was never meant to be read is a leak, and zod's wording
+     for one changes with its version: this list once caught it by "Required", which zod 4 never
+     says. So for this test every issue zod words itself reads as one marker, whatever the version,
+     and the app's own sentences are untouched, because zod only words what nobody else did. */
+  const ZOD_WORDED = '[zod worded this issue]';
+  z.config({ customError: () => ZOD_WORDED });
+  t.after(() => z.config({ customError: undefined }));
   const root = scratch();
   const dir = path.join(root, 'indicators');
   fs.mkdirSync(dir);
@@ -155,7 +163,7 @@ test('a symbolic link in the folder is not followed, and nothing from its target
   assert.deepEqual(files, ['dangling.json', 'dir.json', 'good.json', 'keys.json', 'loop.json', 'passwd.json', 'passwd2.pine', 'secret.json', 'secret2.pine']);
   for (const p of problems) {
     assert.match(p.message, /symbolic link/, p.file);
-    for (const leak of ['SECRET', 'root', 'kdf', 'salt', 'Required', 'title']) assert.ok(!p.message.includes(leak), `${p.file}: ${p.message}`);
+    for (const leak of ['SECRET', 'root', 'kdf', 'salt', 'title', ZOD_WORDED]) assert.ok(!p.message.includes(leak), `${p.file}: ${p.message}`);
   }
   assert.equal(loader.get('keys'), null);
   assert.equal(loader.get('secret'), null);
