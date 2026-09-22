@@ -18,7 +18,9 @@
 #   APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_P8
 #       Optional, and only useful with the certificate. An App Store Connect API key (issuer id,
 #       key id, base64 .p8) for notarization. Set, Tauri submits the signed app to Apple and
-#       staples the ticket, so Gatekeeper opens it without a dialog.
+#       staples the ticket, so Gatekeeper opens it without a dialog. The day these are set, the
+#       Open Anyway step below and the tile in src-tauri/dmg/background.html come out together:
+#       the step refuses a signed DMG rather than break its signature.
 #
 #   BLOB_READ_WRITE_TOKEN
 #       Required. The Vercel Blob store behind https://phosphor.karimbabasf.com/download/mac.
@@ -135,6 +137,12 @@ jobs:
           fi
           npx tauri build --target "$TARGET" --bundles app,dmg
 
+      # macOS 15 and later give an ad-hoc build's first-open warning no Open button, only Done and
+      # Move to Trash; the way through is a button in System Settings. This puts a shortcut to
+      # that exact spot in the DMG window. Before the checksums, because it changes the DMG.
+      - name: Put the Open Anyway shortcut in the DMG
+        run: node scripts/dmg-open-anyway.ts "src-tauri/target/$TARGET/release/bundle/dmg/Phosphor_${VERSION}_aarch64.dmg"
+
       - name: Stage the release assets and write latest.json and SHA256SUMS
         run: |
           # The whole tag message, subject and body, trimmed. A one-line message has an empty
@@ -155,6 +163,7 @@ jobs:
           ls -la "$RUNNER_TEMP/dmg/.background"
           # The Finder layout lives in .DS_Store; without it the image opens as a plain folder.
           test -f "$RUNNER_TEMP/dmg/.DS_Store" || { echo "DMG has no Finder layout (.DS_Store missing)"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+          test "$(plutil -extract URL raw "$RUNNER_TEMP/dmg/Open Anyway.inetloc")" = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Security" || { echo "DMG has no working Open Anyway shortcut"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
           hdiutil detach "$RUNNER_TEMP/dmg"
 
       - name: Publish the release
@@ -168,7 +177,7 @@ jobs:
             if [ -s "$RUNNER_TEMP/tag-body.md" ]; then cat "$RUNNER_TEMP/tag-body.md"; echo; fi
             echo "**Install.** Open the DMG, drag Phosphor into Applications, open it from there."
             if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
-              echo "This build is not yet notarized by Apple, so on first open macOS says it cannot verify the app: open System Settings, Privacy & Security, scroll to Security and click Open Anyway. Compare the checksum first."
+              echo "This build is not yet notarized by Apple, so on first open macOS says it cannot verify the app: click Done, then double-click Open Anyway in the DMG window, which opens System Settings at the Open Anyway button. Click it. Compare the checksum first."
             fi
             echo
             echo "**Verify the download** before opening it. In Terminal:"

@@ -40,7 +40,7 @@
       "signingIdentity": "-",
       "dmg": {
         "background": "dmg/background.tiff",
-        "windowSize": { "width": 660, "height": 400 },
+        "windowSize": { "width": 660, "height": 564 },
         "appPosition": { "x": 165, "y": 165 },
         "applicationFolderPosition": { "x": 495, "y": 165 }
       }
