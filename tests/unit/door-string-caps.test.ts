@@ -29,7 +29,7 @@ function row(): Proposal {
     kind: 'intents_pay',
     status: 'pending',
     createdAt: new Date().toISOString(),
-    draft: { kind: 'intents_pay', symbol: 'USDC', originAsset: 'x', network: 'ethereum', amount: 1, amountUsd: 1, minReceived: 0.97, from: '0x1', to: FRIEND, toChecksum: 'valid', counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false } },
+    draft: { kind: 'intents_pay', symbol: 'USDC', originAsset: 'x', network: 'eth', amount: 1, amountUsd: 1, minReceived: 0.97, from: '0x1', to: FRIEND, toChecksum: 'valid', counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false } },
     verdict: { outcome: 'needs_approval', reasons: [] },
     simulation: null,
   } as unknown as Proposal;
@@ -39,25 +39,25 @@ function row(): Proposal {
 
 test('a symbol over the cap is refused at the propose door with the field named, and one at the cap goes through', async () => {
   const h = makeHttp({ proposals: serviceThatAnswers(row()) });
-  const huge = await h.post('send', { to: FRIEND, symbol: 'B'.repeat(900 * 1024), amount: 1, where: 'ethereum', confirmed: true });
+  const huge = await h.post('send', { to: FRIEND, symbol: 'B'.repeat(900 * 1024), amount: 1, where: 'eth', confirmed: true });
   assert.equal(huge.status, 400);
   assert.match(String(huge.json.error), new RegExp(`^symbol is ${900 * 1024} characters, over the ${SYMBOL_MAX} this field takes`));
   assert.ok(String(huge.json.error).length < 200, 'the refusal does not echo the string');
 
-  const over = await h.post('send', { to: FRIEND, symbol: 'B'.repeat(SYMBOL_MAX + 1), amount: 1, where: 'ethereum', confirmed: true });
+  const over = await h.post('send', { to: FRIEND, symbol: 'B'.repeat(SYMBOL_MAX + 1), amount: 1, where: 'eth', confirmed: true });
   assert.equal(over.status, 400);
   assert.match(String(over.json.error), /symbol is 17 characters/);
 
-  const at = await h.post('send', { to: FRIEND, symbol: 'B'.repeat(SYMBOL_MAX), amount: 1, where: 'ethereum', confirmed: true });
+  const at = await h.post('send', { to: FRIEND, symbol: 'B'.repeat(SYMBOL_MAX), amount: 1, where: 'eth', confirmed: true });
   assert.equal(at.status, 200, JSON.stringify(at.json));
 });
 
 test('every free-text field on every propose kind has its own cap', async () => {
   const h = makeHttp({ proposals: serviceThatAnswers(row()) });
   const cases: Array<[string, Record<string, unknown>, RegExp]> = [
-    ['send', { to: 'a'.repeat(ADDRESS_MAX + 1), symbol: 'USDC', amount: 1, where: 'ethereum', confirmed: true }, /^to is 129 characters, over the 128/],
+    ['send', { to: 'a'.repeat(ADDRESS_MAX + 1), symbol: 'USDC', amount: 1, where: 'eth', confirmed: true }, /^to is 129 characters, over the 128/],
     ['send', { to: FRIEND, symbol: 'USDC', amount: 1, where: 'e'.repeat(WHERE_MAX + 1), confirmed: true }, /^where is 33 characters, over the 32/],
-    ['send', { to: FRIEND, symbol: 'USDC', amount: 1, where: 'ethereum', confirmed: true, note: 'n'.repeat(NOTE_MAX + 1) }, /^note is 281 characters, over the 280/],
+    ['send', { to: FRIEND, symbol: 'USDC', amount: 1, where: 'eth', confirmed: true, note: 'n'.repeat(NOTE_MAX + 1) }, /^note is 281 characters, over the 280/],
     ['swap', { chain: 'eth', fromSymbol: 'F'.repeat(SYMBOL_MAX + 1), toSymbol: 'USDC', amountIn: 1, minAmountOut: 0.5 }, /^fromSymbol is 17 characters/],
     ['swap', { chain: 'eth', fromSymbol: 'USDC', toSymbol: 'T'.repeat(SYMBOL_MAX + 1), amountIn: 1, minAmountOut: 0.5 }, /^toSymbol is 17 characters/],
     ['hl_deposit', { symbol: 'S'.repeat(SYMBOL_MAX + 1), amount: 10 }, /^symbol is 17 characters/],
@@ -72,7 +72,7 @@ test('every free-text field on every propose kind has its own cap', async () => 
   }
   // At the cap, each of them reaches the service.
   const fine = [
-    await h.post('send', { to: FRIEND, symbol: 'USDC', amount: 1, where: 'ethereum', confirmed: true, note: 'n'.repeat(NOTE_MAX) }),
+    await h.post('send', { to: FRIEND, symbol: 'USDC', amount: 1, where: 'eth', confirmed: true, note: 'n'.repeat(NOTE_MAX) }),
     await h.post('policy_change', { patch: {}, sentence: 's'.repeat(SENTENCE_MAX) }),
     await h.post('trade_change', { id: 'i'.repeat(ID_MAX), cancel: true }),
   ];
@@ -147,7 +147,7 @@ test('the tool_call line keeps a cut copy of every argument', async () => {
   try {
     // Under the door's ceiling, over the propose door's, and the worker seat is refused by role
     // before any draft: the line is written on the way in, whatever the door then says.
-    const r = await post(wire, { op: 'propose', kind: 'send', params: { to: FRIEND, symbol: 'S'.repeat(1000), amount: 1, where: 'ethereum', confirmed: true } });
+    const r = await post(wire, { op: 'propose', kind: 'send', params: { to: FRIEND, symbol: 'S'.repeat(1000), amount: 1, where: 'eth', confirmed: true } });
     assert.equal(r.status, 403);
     const line = wire.audit.find((e) => e.type === 'tool_call');
     assert.ok(line !== undefined, 'the call was logged');

@@ -52,16 +52,17 @@ test('a $20 payout to a fresh address lands pending for a click and never runs o
   const r = rails();
   const reads: string[] = [];
   const h = makeCtx({ rails: r.list, deps: { recipientActivity: async (network, address) => { reads.push(`${network}:${address}`); return activityOf(); } } });
-  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 20, where: 'ethereum' });
+  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 20, where: 'eth' });
   assert.equal(p.verdict.outcome, 'needs_approval', JSON.stringify(p.verdict));
   assert.equal(p.status, 'pending');
   assert.match(p.verdict.reasons.join(' '), /always needs a human click/);
   assert.equal(r.executed.length, 0, 'nothing runs while a proposal is pending');
   assert.deepEqual(reads, [`ethereum:${FRIEND}`], 'the chain was asked about the receiver once, at propose time');
 
+
   const draft = p.draft as IntentsPayDraft;
   assert.equal(draft.kind, 'intents_pay');
-  assert.equal(draft.network, 'ethereum');
+  assert.equal(draft.network, 'eth');
   assert.equal(draft.to, FRIEND, 'the address is kept as the chain spells it');
   assert.equal(draft.toChecksum, 'valid');
   assert.equal(draft.from, SELF_EVM.toLowerCase());
@@ -95,7 +96,7 @@ test('where has no default: a send with no place named, or a place off the list,
   const h = makeCtx({ rails: r.list });
   const none = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 20, where: '' });
   assert.equal(none.status, 'policy_refused');
-  assert.match(none.verdict.reasons.join(' '), /not a place this app can send to/);
+  assert.match(none.verdict.reasons.join(' '), /has to say where it lands/);
   const off = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 20, where: 'hyperliquid' });
   assert.equal(off.status, 'policy_refused');
   assert.match(off.verdict.reasons.join(' '), /not a place this app can send to/);
@@ -104,10 +105,10 @@ test('where has no default: a send with no place named, or a place off the list,
 
 test('a typo in the address is refused for the place it is going, and the reason says which', async () => {
   const h = makeCtx({ rails: rails().list });
-  const typo = await h.svc.proposeSend({ to: '0xb583f41992Cd21b2F2345e194a36D33684BB5DB1', symbol: 'USDC', amount: 20, where: 'ethereum' });
+  const typo = await h.svc.proposeSend({ to: '0xb583f41992Cd21b2F2345e194a36D33684BB5DB1', symbol: 'USDC', amount: 20, where: 'eth' });
   assert.equal(typo.status, 'policy_refused');
   assert.match(typo.verdict.reasons.join(' '), /checksum/);
-  const wrongChain = await h.svc.proposeSend({ to: SOL_FRIEND, symbol: 'USDC', amount: 20, where: 'ethereum' });
+  const wrongChain = await h.svc.proposeSend({ to: SOL_FRIEND, symbol: 'USDC', amount: 20, where: 'eth' });
   assert.equal(wrongChain.status, 'policy_refused');
   assert.match(wrongChain.verdict.reasons.join(' '), /not an address on Ethereum/);
   const self = await h.svc.proposeSend({ to: SELF_EVM, symbol: 'USDC', amount: 20, where: 'intents' });
@@ -125,7 +126,7 @@ test('our own wallet on a chain is a payout the app allows and flags', async () 
 
 test('a chain read that throws leaves the receiver unchecked and the send still decidable', async () => {
   const h = makeCtx({ rails: rails().list, deps: { recipientActivity: async () => { throw new Error('blockscout is down'); } } });
-  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 20, where: 'ethereum' });
+  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 20, where: 'eth' });
   assert.equal(p.status, 'pending', JSON.stringify(p.verdict));
   assert.equal((p.draft as IntentsPayDraft).recipient.activity, null);
 });
@@ -137,7 +138,7 @@ test('approving a send writes the receiver to the book, and the next proposal to
   const h = makeCtx({ rails: r.list, deps: { recipientActivity: async () => activityOf() } });
   assert.deepEqual(readRecipients(h.dataDir), []);
 
-  const first = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 20, where: 'ethereum', note: 'Alice, from the group chat' });
+  const first = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 20, where: 'eth', note: 'Alice, from the group chat' });
   assert.equal((first.draft as IntentsPayDraft).recipient.known, false);
   assert.equal((first.draft as IntentsPayDraft).recipient.note, 'Alice, from the group chat');
   assert.deepEqual(readRecipients(h.dataDir), [], 'a proposal nobody clicked leaves no row');
@@ -145,13 +146,13 @@ test('approving a send writes the receiver to the book, and the next proposal to
   await landed(h, h.svc.approve(first.id));
   const rows = readRecipients(h.dataDir);
   assert.equal(rows.length, 1);
-  assert.equal(rows[0]?.key, `ethereum:${FRIEND.toLowerCase()}`);
+  assert.equal(rows[0]?.key, `eth:${FRIEND.toLowerCase()}`);
   assert.equal(rows[0]?.address, FRIEND);
   assert.equal(rows[0]?.count, 1);
   assert.equal(rows[0]?.label, 'Alice, from the group chat');
   assert.equal(fs.statSync(path.join(h.dataDir, 'recipients.json')).isFile(), true);
 
-  const second = await h.svc.proposeSend({ to: FRIEND.toLowerCase(), symbol: 'USDC', amount: 5, where: 'ethereum' });
+  const second = await h.svc.proposeSend({ to: FRIEND.toLowerCase(), symbol: 'USDC', amount: 5, where: 'eth' });
   const recipient = (second.draft as IntentsPayDraft).recipient;
   assert.equal(recipient.known, true);
   assert.equal(recipient.count, 1);
@@ -195,7 +196,7 @@ test('the book counts and dates every approval, bounds the label and survives a 
 test('the dialog names the amount, the receiver and where it lands, and stays under 120 characters', () => {
   const pay = reasonFor({
     draft: {
-      kind: 'intents_pay', symbol: 'ETH', originAsset: 'nep141:eth.omft.near', network: 'ethereum', amount: 0.01, amountUsd: 24.4,
+      kind: 'intents_pay', symbol: 'ETH', originAsset: 'nep141:eth.omft.near', network: 'eth', amount: 0.01, amountUsd: 24.4,
       minReceived: 0.0097, from: SELF_EVM.toLowerCase(), to: FRIEND, toChecksum: 'valid', counterparty: 'intents.near',
       recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
     } as IntentsPayDraft,
@@ -210,7 +211,7 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
   assert.equal(send, 'Approve: Send 3.7 USDC inside NEAR Intents to 0xb583f4...84bb5db0 ($3.70)');
   const sol = reasonFor({
     draft: {
-      kind: 'intents_pay', symbol: 'SOL', originAsset: 'nep141:sol.omft.near', network: 'solana', amount: 1234.5, amountUsd: 260000,
+      kind: 'intents_pay', symbol: 'SOL', originAsset: 'nep141:sol.omft.near', network: 'sol', amount: 1234.5, amountUsd: 260000,
       minReceived: 1200, from: SELF_EVM.toLowerCase(), to: SOL_FRIEND, toChecksum: null, counterparty: 'intents.near',
       recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
     } as IntentsPayDraft,
@@ -221,7 +222,7 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
   // is minutes of work, and a NEAR name short enough is said whole.
   const vanity = reasonFor({
     draft: {
-      kind: 'intents_pay', symbol: 'ETH', originAsset: 'nep141:eth.omft.near', network: 'ethereum', amount: 0.01, amountUsd: 24.4,
+      kind: 'intents_pay', symbol: 'ETH', originAsset: 'nep141:eth.omft.near', network: 'eth', amount: 0.01, amountUsd: 24.4,
       minReceived: 0.0097, from: SELF_EVM.toLowerCase(), to: '0xb583' + 'ff' + '0'.repeat(26) + 'ffff' + '5db0', toChecksum: null, counterparty: 'intents.near',
       recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
     } as IntentsPayDraft,
@@ -252,7 +253,7 @@ test('two identical sends five seconds apart from one session, the first still p
   let clock = Date.parse('2026-09-17T10:00:00.000Z');
   const h = makeCtx({ rails: rails().list });
   const door = makeHttp({ proposals: h.svc, dataDir: h.dataDir, now: () => clock });
-  const params = { to: FRIEND, symbol: 'USDC', amount: 20, where: 'ethereum', confirmed: true };
+  const params = { to: FRIEND, symbol: 'USDC', amount: 20, where: 'eth', confirmed: true };
 
   // With the agent's own key, the repeat is answered with the row it already made.
   const a = await door.post('send', { ...params, clientKey: 'send-1' }, 'agent-a');

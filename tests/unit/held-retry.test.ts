@@ -59,7 +59,7 @@ test('a held send whose row is rewritten on disk during the hold is not retried,
     return { ok: true, detail: 'scripted payout', txids: ['0x' + 'ab'.repeat(32)], preflight: preflightOf('ok') };
   });
   const h = makeCtx({ rails: [rail], intentsUsdc: 1000, deps: { held: { retryMs: 150, maxMs: 10_000 } } });
-  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'ethereum' });
+  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'eth' });
   assert.equal(p.status, 'pending');
   await h.svc.approve(p.id);
   const heldRow = await until(() => h.store.get(p.id), (r) => r.status === 'approved' && r.heldSince !== undefined);
@@ -91,7 +91,7 @@ test('a kill switch flipped during a hold closes the row and the rail never runs
     return { ok: true, detail: 'scripted payout', txids: ['0x' + 'cd'.repeat(32)], preflight: preflightOf('ok') };
   });
   const h = makeCtx({ rails: [rail], intentsUsdc: 1000, deps: { held: { retryMs: 150, maxMs: 10_000 } } });
-  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'ethereum' });
+  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'eth' });
   await h.svc.approve(p.id);
   await until(() => h.store.get(p.id), (r) => r.status === 'approved' && r.heldSince !== undefined);
 

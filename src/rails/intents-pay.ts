@@ -52,9 +52,10 @@ import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
 import type { PreflightRunner } from '../preflight/live.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
-import { NETWORKS, addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, validateAddress } from '../chainscan/index.ts';
+import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, scanNetworkOf, validateAddressForFamily } from '../chainscan/index.ts';
 import type { AddressSummary, ChainNetwork } from '../chainscan/index.ts';
 import { pickOrExplain } from './asset-words.ts';
+import { spendNetworkOf } from './intents-address.ts';
 
 // The funds are spent inside the verifier, so the counterparty is the verifier: the same
 // allowlist entry the swap, send and HyperCore rails use.
@@ -78,24 +79,36 @@ export function minReceivedForPay(amount: number): number {
   return amount * (1 - PAY_MAX_LOSS_BPS / 10_000);
 }
 
-// The chain id the token registry and the gas-asset table know a payout network by. Bitcoin
-// is a network this app can look up and not one it can pay: the registry has no row for it,
-// and a payout without a table behind the asset id would be matching remote text.
-export function networkChain(network: ChainNetwork): ChainId | null {
-  switch (network) {
-    case 'ethereum':
-      return 'eth';
-    case 'base':
-      return 'base';
-    case 'arbitrum':
-      return 'arb';
-    case 'solana':
-      return 'sol';
-    case 'near':
-      return 'near';
-    case 'bitcoin':
-      return null;
+/* WHICH CHAINS THIS APP WILL PAY OUT ON. Not a list of chains it knows: a list of chains whose
+   addresses it can decode itself. The bridge accepts money from thirty five and this app hands
+   money to the ones where a dropped character is caught before a quote, which is every EVM chain,
+   Solana, Fogo and NEAR. The rest are refused by name, and the sentence says what is missing
+   rather than pretending the chain is unknown: it is on the deposit card, a person can see it. */
+export function payFamilyOf(network: string): 'evm' | 'sol' | 'near' | null {
+  return spendNetworkOf(network)?.pay ?? null;
+}
+
+export function payRefusal(network: string): string | null {
+  const net = spendNetworkOf(network);
+  if (net === undefined) {
+    return (
+      `"${oneLine(network, 40)}" is not a place this app can send to: say 'intents' to keep the money inside ` +
+      'NEAR Intents, or a chain id the deposit card offers, such as eth, base, arb, sol or near'
+    );
   }
+  if (net.pay === null) {
+    return (
+      `this app cannot check a ${net.name} address yet, so it will not pay one. Money can still ` +
+      `come IN on ${net.name} through the deposit card, and it can be swapped into any coin, ` +
+      'but a payout needs an address this app can decode and it has no decoder for this chain'
+    );
+  }
+  return null;
+}
+
+// The chain's word, for every sentence a person reads. The registry's name, never an id.
+export function payLabel(network: string): string {
+  return spendNetworkOf(network)?.name ?? String(network);
 }
 
 // A chain balance as a person reads it: the explorer's eighteen decimals say nothing a card
@@ -109,11 +122,14 @@ function roundAmount(raw: string): string {
 /* The one sentence about the receiver, from what the chain said at propose time. Plain
    English, one fact per clause, and a fresh address is told to check twice: that is the
    sentence that catches a pasted address which lost a character but still decodes. */
-export function recipientSentence(network: ChainNetwork, recipient: SendRecipient): string {
-  const label = NETWORKS[network].label;
+export function recipientSentence(network: string, recipient: SendRecipient): string {
+  const label = payLabel(network);
+  /* The activity was read by the chainscan, which knows six chains under its own names, so the
+     two are compared through that mapping rather than as strings. */
+  const scan = scanNetworkOf(network);
   const own = recipient.ownAddress ? `This is your own address on ${label}. ` : '';
   const a = recipient.activity;
-  if (a === null || a.network !== network) return `${own}This address could not be checked on ${label} right now.`.trim();
+  if (a === null || a.network !== scan) return `${own}This address could not be checked on ${label} right now.`.trim();
   if (!a.ok || a.txCount === null) {
     return `${own}This address could not be checked on ${label}${a.error ? ` (${oneLine(a.error, 80)})` : ''}.`.trim();
   }
@@ -144,7 +160,7 @@ export type IntentsPayRailDeps = {
   // The receiver's holdings on the chain, read before the quote and after the payout. Defaults
   // to the chainscan read on a fresh cache, so the after-read is not the before-read served
   // twice; a test hands in its own. A failed read is null, never a throw.
-  receiverRead?: (network: ChainNetwork, address: string) => Promise<AddressSummary | null>;
+  receiverRead?: (network: string, address: string) => Promise<AddressSummary | null>;
   // The checks run on the live quote before the intent is generated (src/preflight/). The
   // registry wires the live one; absent means none, which is the tests of the rail itself.
   preflight?: PreflightRunner;
@@ -172,11 +188,16 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const receiverRead =
     deps.receiverRead ??
-    ((network: ChainNetwork, address: string) =>
-      addressSummary(network, address, { fetchImpl, state: createChainFetchState() }).catch(() => null));
+    ((network: string, address: string) => {
+      /* Only the six chains the scan can read have an answer here; on every other chain the card
+         says the address could not be checked, which is the honest word for it. */
+      const scan = scanNetworkOf(network);
+      if (scan === null) return Promise.resolve(null);
+      return addressSummary(scan, address, { fetchImpl, state: createChainFetchState() }).catch(() => null);
+    });
 
   type Plan = {
-    chain: ChainId;
+    chain: string;
     originAsset: string; // the 1Click id spent, the flavor held
     destinationAsset: string; // the 1Click id the receiver is paid in
     native: boolean; // the destination is the chain's own coin
@@ -206,18 +227,18 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     return owner;
   }
 
-  function requireChain(draft: IntentsPayDraft): ChainId {
-    const chain = networkChain(draft.network);
-    if (chain === null) {
-      throw new Error(`${NETWORKS[draft.network].label} is not a network this rail pays out on yet: there is no token table behind it`);
-    }
-    return chain;
+  function requireChain(draft: IntentsPayDraft): string {
+    const refused = payRefusal(draft.network);
+    if (refused !== null) throw new Error(refused);
+    return draft.network;
   }
 
   // The receiver, decoded again here rather than trusted. Our own address is allowed (that is
   // what a withdrawal to our wallet is now) and the summary says so.
   function requireReceiver(draft: IntentsPayDraft): string {
-    const checked = validateAddress(draft.network, draft.to);
+    const family = payFamilyOf(draft.network);
+    if (family === null) throw new Error(payRefusal(draft.network) ?? `this app cannot pay out on ${payLabel(draft.network)}`);
+    const checked = validateAddressForFamily(family, draft.to, payLabel(draft.network));
     if (!checked.ok) throw new Error(`the receiving address is unusable: ${checked.reason}`);
     return checked.normalized;
   }
@@ -238,9 +259,9 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   // allowed and the summary says it is a contract.
   function refuseContractForNative(draft: IntentsPayDraft, native: boolean): void {
     const a = draft.recipient.activity;
-    if (native && a !== null && a.network === draft.network && a.isContract === true) {
+    if (native && a !== null && a.network === scanNetworkOf(draft.network) && a.isContract === true) {
       throw new Error(
-        `${draft.to} is a contract on ${NETWORKS[draft.network].label}, and ${draft.symbol} sent to a contract ` +
+        `${draft.to} is a contract on ${payLabel(draft.network)}, and ${draft.symbol} sent to a contract ` +
           'that cannot receive it is lost; pay a wallet, or a token the contract can hold',
       );
     }
@@ -259,7 +280,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     );
     if (destination.decimals !== held.decimals) {
       throw new Error(
-        `${draft.symbol} has ${held.decimals} decimals inside the verifier and ${destination.decimals} on ${NETWORKS[draft.network].label}; ` +
+        `${draft.symbol} has ${held.decimals} decimals inside the verifier and ${destination.decimals} on ${payLabel(draft.network)}; ` +
           'the amount would be wrong by a power of ten, so nothing is quoted',
       );
     }
@@ -269,7 +290,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       originAsset: held.assetId,
       destinationAsset: destination.assetId,
       native: destination.native,
-      tokenId: destination.native ? null : (tokens[chain]?.[draft.symbol.toUpperCase()]?.tokenId ?? null),
+      tokenId: destination.native ? null : (tokens[chain as ChainId]?.[draft.symbol.toUpperCase()]?.tokenId ?? null),
       decimals: held.decimals,
       amountBase: toBaseUnits(draft.amount, held.decimals),
       minReceivedBase: toBaseUnits(draft.minReceived, destination.decimals),
@@ -311,7 +332,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   }
 
   function echoWant(draft: IntentsPayDraft, p: Plan): QuoteEcho {
-    const label = NETWORKS[draft.network].label;
+    const label = payLabel(draft.network);
     return {
       recipient: p.to,
       recipientVerb: 'pay',
@@ -338,7 +359,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   }
 
   function priceLines(draft: IntentsPayDraft, p: Plan, quote: OneClickQuote): string[] {
-    const label = NETWORKS[draft.network].label;
+    const label = payLabel(draft.network);
     const feeUsd = feeUsdOf(quote);
     const fee = flatFee(quote, p);
     return [
@@ -360,7 +381,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       bridgeFee: flatFee(quote, p),
       etaSeconds: Number.isFinite(Number(quote.timeEstimate)) ? Number(quote.timeEstimate) : null,
       activity: recipientSentence(draft.network, draft.recipient),
-      explorer: explorerAddressUrl(draft.network, p.to),
+      explorer: scanNetworkOf(draft.network) === null ? null : explorerAddressUrl(scanNetworkOf(draft.network) as ChainNetwork, p.to),
     };
   }
 
@@ -370,7 +391,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     const m = /try at least (\d+)/.exec(message);
     if (m === null) return null;
     return (
-      `1Click's bridge will not pay out less than ${units(BigInt(m[1]), p.decimals)} ${draft.symbol} on ${NETWORKS[draft.network].label} ` +
+      `1Click's bridge will not pay out less than ${units(BigInt(m[1]), p.decimals)} ${draft.symbol} on ${payLabel(draft.network)} ` +
       '(its flat fee grossed up); send at least that, and more to keep the fee small against the amount'
     );
   }
@@ -409,7 +430,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
         return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined, send };
       }
       lines.push(
-        `execution signs one intent with the EVM key; 1Click's bridge pays out on ${NETWORKS[draft.network].label}, ` +
+        `execution signs one intent with the EVM key; 1Click's bridge pays out on ${payLabel(draft.network)}, ` +
           `and if it cannot, the money comes back to your balance inside ${INTENTS_VERIFIER}`,
       );
       lines.push('this payout always waits for your click and, on an enclave wallet, a Touch ID that names the receiver');
@@ -434,7 +455,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   async function execute(draft: IntentsPayDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     const p = await plan(draft);
     const owner = requireOwner(draft);
-    const label = NETWORKS[draft.network].label;
+    const label = payLabel(draft.network);
     const before = await receiverRead(draft.network, p.to);
 
     // The four shared steps: live quote, echo check, generated intent checked and signed,
@@ -484,10 +505,11 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
           ? `the receiver's ${draft.symbol} balance was not read back, so the payout hash is the proof`
           : `the receiver's ${draft.symbol} balance ${was} -> ${is}`;
       const hash = watch.destinationTxHashes[0];
-      const explorer = hash === undefined ? null : explorerTxUrl(draft.network, hash);
+      const scan = scanNetworkOf(draft.network);
+      const explorer = hash === undefined || scan === null ? null : explorerTxUrl(scan, hash);
       const payoutWords =
         hash === undefined
-          ? `1click reported SUCCESS with no payout hash yet: look for it at ${explorerAddressUrl(draft.network, p.to) ?? p.to}`
+          ? `1click reported SUCCESS with no payout hash yet: look for it at ${(scan === null ? null : explorerAddressUrl(scan, p.to)) ?? p.to}`
           : `payout ${hash}${explorer === null ? '' : ` (${explorer})`}`;
       return {
         ok: true,

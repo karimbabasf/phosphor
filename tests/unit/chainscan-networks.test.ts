@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CHAIN_NETWORKS, HOSTS, NETWORKS, explorerAddressUrl, explorerTxUrl, isChainNetwork, validateAddress, validateHash } from '../../src/chainscan/networks.ts';
+import { CHAIN_NETWORKS, HOSTS, NETWORKS, explorerAddressUrl, explorerTxUrl, isChainNetwork, validateAddress, validateAddressForFamily, validateHash } from '../../src/chainscan/networks.ts';
 
 const VITALIK = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
 const SOL_USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -109,4 +109,28 @@ test('explorer links are built only from a value that passed, on the network\'s 
   assert.equal(explorerAddressUrl('ethereum', 'https://evil.tld/?x='), null);
   assert.equal(explorerAddressUrl('near', 'evil.tld/../x'), null);
   assert.equal(explorerTxUrl('ethereum', '<script>'), null);
+});
+
+// ---------- the same decode, one chain or twenty ----------
+
+test('an EVM address is decoded the same way whatever EVM chain it is for', () => {
+  const good = '0x742d35Cc6634C0532925a3b844Bc454e4438f44e';
+  assert.equal(validateAddressForFamily('evm', good).ok, true);
+  assert.equal(validateAddressForFamily('evm', good.slice(0, -1)).ok, false);
+});
+
+/* A mixed-case address that fails its own EIP-55 checksum is the pasted address that lost a
+   character and still looks right, which is the whole reason the decoder exists. */
+test('an EVM address that fails its own checksum is refused', () => {
+  assert.equal(validateAddressForFamily('evm', '0x742d35Cc6634C0532925a3b844Bc454e4438f44E').ok, false);
+});
+
+test('a Solana address has to decode to exactly 32 bytes', () => {
+  assert.equal(validateAddressForFamily('sol', '11111111111111111111111111111111').ok, true);
+  assert.equal(validateAddressForFamily('sol', '1111').ok, false);
+});
+
+test('a NEAR account id is decoded by its own rules', () => {
+  assert.equal(validateAddressForFamily('near', 'alice.near').ok, true);
+  assert.equal(validateAddressForFamily('near', 'Alice.NEAR').ok, false);
 });

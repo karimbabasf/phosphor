@@ -13,6 +13,7 @@
 // like an address.
 
 import type { Proposal, WriteDraft } from '../types.ts';
+import { spendNetworkOf } from '../rails/intents-address.ts';
 
 const MAX_REASON = 120;
 
@@ -53,19 +54,12 @@ function shortAddress(raw: unknown): string {
   return s.length <= 2 * END_CHARS + 4 ? s : `${s.slice(0, END_CHARS)}...${s.slice(-END_CHARS)}`;
 }
 
-// The chain a payout lands on, by name and only from the table: a network id the table does
-// not know is said as "a chain", never echoed.
-const NETWORK_NAMES: Record<string, string> = {
-  ethereum: 'Ethereum',
-  base: 'Base',
-  arbitrum: 'Arbitrum',
-  solana: 'Solana',
-  near: 'NEAR',
-  bitcoin: 'Bitcoin',
-};
-
+/* The chain a payout lands on, by name and only from the chain registry: a network id the
+   registry does not know is said as "a chain", never echoed. The registry is a table in this
+   repo, which is the property that matters here: nothing an agent typed reaches this dialog as
+   a chain name. */
 function networkName(raw: unknown): string {
-  return NETWORK_NAMES[String(raw)] ?? 'a chain';
+  return spendNetworkOf(String(raw))?.name ?? 'a chain';
 }
 
 function describe(draft: WriteDraft): string {

@@ -6,7 +6,6 @@ import type { PocketRead } from './ledger/settle.ts';
 import type { Plan } from './trade/plan.ts';
 import type { PlanRisk } from './trade/risk.ts';
 import type { AddressActivity } from './chainscan/index.ts';
-import type { ChainNetwork } from './chainscan/networks.ts';
 import type { ProposalView } from './proposals/view.ts';
 // Re-exported so every caller reads the one object from the one contract without importing
 // two files to describe one row.
@@ -311,7 +310,11 @@ export type IntentsPayDraft = {
   kind: 'intents_pay';
   symbol: string;
   originAsset: string; // the 1Click asset id of the flavor held inside the verifier
-  network: ChainNetwork; // the real chain the payout lands on
+  /* The real chain the payout lands on, as the one registry ids a chain (src/rails/
+     intents-address.ts). Wider than ChainNetwork, which is the six chains this app can also READ
+     an address on: a payout needs an address it can decode, and it can decode more chains than
+     it can read. */
+  network: string;
   amount: number;
   amountUsd: number;
   minReceived: number; // the least that may arrive on the chain, in `symbol`

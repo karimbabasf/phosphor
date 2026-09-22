@@ -93,15 +93,24 @@ function evmAddressCheck(address: string, label: string): AddressCheck {
   return { ok: true, normalized: checksummed, checksum: 'valid' };
 }
 
-export function validateAddress(network: ChainNetwork, address: string): AddressCheck {
+/* THE SAME DECODE, ONE CHAIN OR TWENTY. An EVM address is forty hex and, when it carries capitals,
+   its own EIP-55 checksum; that is true of Optimism exactly as it is of Ethereum, and the decoder
+   never cared which chain it was for. Keeping the per-chain form meant a new chain could not be
+   paid until someone copied a line, which is a fence made of clerical work.
+
+   `label` is only ever printed in a refusal, so a caller that has no word for the chain says
+   nothing wrong by leaving it out. */
+export function validateAddressForFamily(
+  family: 'evm' | 'sol' | 'near',
+  address: string,
+  label = 'this chain',
+): AddressCheck {
   const value = typeof address === 'string' ? address.trim() : '';
   if (value === '') return { ok: false, reason: 'no address given' };
-  switch (network) {
-    case 'ethereum':
-    case 'base':
-    case 'arbitrum':
-      return evmAddressCheck(value, NETWORKS[network].label);
-    case 'solana':
+  switch (family) {
+    case 'evm':
+      return evmAddressCheck(value, label);
+    case 'sol':
       if (!BASE58.test(value) || value.length < 32 || value.length > 44) return { ok: false, reason: 'not a Solana address: expected 32 to 44 base58 characters' };
       if (base58Length(value) !== 32) return { ok: false, reason: 'not a Solana address: it does not decode to 32 bytes' };
       return { ok: true, normalized: value };
@@ -115,7 +124,7 @@ export function validateAddress(network: ChainNetwork, address: string): Address
       if (EVM_ADDRESS.test(value)) {
         const body = value.slice(2);
         if (/[A-F]/.test(body) && /[a-f]/.test(body)) {
-          const checked = evmAddressCheck(value, NETWORKS[network].label);
+          const checked = evmAddressCheck(value, label);
           if (!checked.ok) return checked;
           return { ok: true, normalized: value.toLowerCase(), checksum: 'valid' };
         }
@@ -124,10 +133,35 @@ export function validateAddress(network: ChainNetwork, address: string): Address
       if (!NEAR_ACCOUNT.test(value)) return { ok: false, reason: 'not a NEAR account id: expected a lowercase name like alice.near or a 64-character implicit id' };
       return { ok: true, normalized: value };
     }
-    case 'bitcoin':
-      if (!BITCOIN_ADDRESS.test(value)) return { ok: false, reason: 'not a Bitcoin address: expected bc1... or a 1.../3... address' };
-      return { ok: true, normalized: value };
   }
+}
+
+/* The six chains this module can also READ (an explorer, a balance, a transaction count), by the
+   registry id the rest of the app names a chain with. A payout reaches further than this list:
+   decoding an address is what a payout needs, and reading one is what a card would like. */
+const SCAN_BY_ID: Record<string, ChainNetwork> = {
+  eth: 'ethereum',
+  base: 'base',
+  arb: 'arbitrum',
+  sol: 'solana',
+  near: 'near',
+  btc: 'bitcoin',
+};
+
+export function scanNetworkOf(id: string): ChainNetwork | null {
+  return SCAN_BY_ID[id] ?? null;
+}
+
+// The per-chain form every existing caller still uses, over the same decoders.
+export function validateAddress(network: ChainNetwork, address: string): AddressCheck {
+  const value = typeof address === 'string' ? address.trim() : '';
+  if (value === '') return { ok: false, reason: 'no address given' };
+  if (network === 'bitcoin') {
+    if (!BITCOIN_ADDRESS.test(value)) return { ok: false, reason: 'not a Bitcoin address: expected bc1... or a 1.../3... address' };
+    return { ok: true, normalized: value };
+  }
+  const family = network === 'solana' ? 'sol' : network === 'near' ? 'near' : 'evm';
+  return validateAddressForFamily(family, value, NETWORKS[network].label);
 }
 
 export function validateHash(network: ChainNetwork, hash: string): HashCheck {

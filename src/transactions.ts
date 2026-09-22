@@ -15,7 +15,6 @@
 import type { ChainId, DecidedBy, LogEvent, Proposal, RailEvidence, WriteDraft } from './types.ts';
 import { chainSpec } from './chain/evm.ts';
 import { HYPERLIQUID_EXPLORER_ADDRESS, HYPERLIQUID_EXPLORER_TX } from './explorers.ts';
-import { networkChain } from './rails/intents-pay.ts';
 
 // ---------- explorers ----------
 
@@ -479,7 +478,10 @@ function sidesOf(draft: WriteDraft): Sides {
       // receiver is somebody else's address there.
       return {
         place: 'intents',
-        toPlace: networkChain(draft.network) ?? 'eth',
+        /* The registry id of the chain it was paid out on. Wider than TxPlace, which is the five
+           chains this app is typed on: a chain the explorer table has no row for resolves to no
+           link, which is the honest answer and what explorerFor already does. */
+        toPlace: draft.network as TxPlace,
         venue: 'intents.near',
         sent: { symbol: draft.symbol, amount: draft.amount },
         from: draft.from,

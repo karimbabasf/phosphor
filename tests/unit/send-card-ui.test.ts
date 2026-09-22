@@ -468,12 +468,12 @@ test('the thread draws the send card from the reply\'s send facts, not from the 
     status: 'pending',
     verdict: { outcome: 'needs_approval', reasons: [] },
     simulation: payProposal().simulation,
-    send: { kind: 'intents_pay', where: 'ethereum', to: FRIEND, symbol: 'ETH', amount: 0.01, amountUsd: 24.4, recipient: { known: false, count: 0, lastAt: null, ownAddress: false } },
+    send: { kind: 'intents_pay', where: 'eth', to: FRIEND, symbol: 'ETH', amount: 0.01, amountUsd: 24.4, recipient: { known: false, count: 0, lastAt: null, ownAddress: false } },
   };
   // The argument spells the address in lowercase; the card shows the app's checksummed spelling.
   // The thread draws every move in one skeleton (ui/screens/cards.js moveCard): the receiver
   // is the whole address on the leg the money lands on, in groups of four, with a Copy.
-  const card = cards.render('move', reply, { name: 'propose_send', input: { to: FRIEND.toLowerCase(), symbol: 'eth', amount: 0.01, where: 'ethereum', confirmed: true } });
+  const card = cards.render('move', reply, { name: 'propose_send', input: { to: FRIEND.toLowerCase(), symbol: 'eth', amount: 0.01, where: 'eth', confirmed: true } });
   const address = all(card, 'tcard-leg-address')[0];
   assert.ok(address, 'the thread drew no address on the send card');
   assert.equal(all(address!, 'tcard-leg-group').map((g) => g.textContent).join(''), FRIEND);

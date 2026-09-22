@@ -59,7 +59,7 @@ function sendHarness() {
 
 test('a pending send whose receiver was rewritten on disk is refused at the click, and the rail never runs', async () => {
   const h = sendHarness();
-  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'ethereum' });
+  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'eth' });
   assert.equal(p.status, 'pending');
   assert.equal(h.store.intact(p.id), true, 'a row this process wrote is intact');
 
@@ -99,7 +99,7 @@ test('a refused row flipped to pending on disk cannot be approved', async () => 
 
 test('a row this process wrote still approves, and a file that predates the process is trusted as first read', async () => {
   const h = sendHarness();
-  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'ethereum' });
+  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'eth' });
   const clicked = await h.svc.approve(p.id);
   await h.svc.settled(clicked.id, 5000);
   assert.equal(h.store.get(p.id)?.status, 'executed');
@@ -108,7 +108,7 @@ test('a row this process wrote still approves, and a file that predates the proc
 
   // A second process over the same directory: what it first reads is what its window draws,
   // so that read is the seal, and a row from before its time can be decided.
-  const q = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 2, where: 'ethereum' });
+  const q = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 2, where: 'eth' });
   assert.equal(q.status, 'pending');
   const later = createStore(h.dataDir);
   assert.equal(later.intact(q.id), true, 'first sight seals');
@@ -146,7 +146,7 @@ test('the seal survives the round trip through disk: a row read back after a wri
 
 test('a queue released by an unlock skips a row that was rewritten on disk while it waited', async () => {
   const h = sendHarness();
-  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'ethereum' });
+  const p = await h.svc.proposeSend({ to: FRIEND, symbol: 'USDC', amount: 1, where: 'eth' });
   rewriteOnDisk(h.dataDir, p.id, (row) => {
     row.status = 'pending_unlock';
   });

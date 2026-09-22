@@ -28,8 +28,8 @@ import { INTENTS_RELAY_COUNTERPARTY, INTENTS_RELAY_VENUE } from '../rails/intent
 import { swapRailOf } from '../config.ts';
 import { floorUnderQuote } from '../rails/slippage.ts';
 import { INTENTS_SEND_COUNTERPARTY, intentsAccountProblem, minReceivedForSend } from '../rails/intents-send.ts';
-import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay } from '../rails/intents-pay.ts';
-import { isChainNetwork, validateAddress } from '../chainscan/index.ts';
+import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay, payFamilyOf, payLabel, payRefusal } from '../rails/intents-pay.ts';
+import { scanNetworkOf, validateAddressForFamily } from '../chainscan/index.ts';
 import type { ChainNetwork } from '../chainscan/index.ts';
 import { recipientFor } from '../recipients.ts';
 import { canonicalSymbol, heldSymbol, oneLine } from '../intents.ts';
@@ -293,11 +293,16 @@ export async function proposeSend(ctx: PCtx, params: SendParams): Promise<Propos
       : proposeRail(ctx, 'intents_send', draft, params);
   }
 
-  if (!isChainNetwork(where)) {
-    problems.push(`"${where.slice(0, 40)}" is not a place this app can send to: say 'intents', or a network id such as ethereum, base, arbitrum, solana or near.`);
-  }
-  const network: ChainNetwork = isChainNetwork(where) ? where : 'ethereum';
-  const checked = validateAddress(network, String(params.to ?? ''));
+  /* A chain this app can decode an address for. The refusal names what is missing rather than
+     calling the chain unknown: it is on the deposit card, a person can see it there, and the
+     money can still come in on it and be swapped. */
+  const refused = where === ''
+    ? "The send has to say where it lands: 'intents' to keep it inside NEAR Intents, or a chain id such as eth, base, arb, sol or near."
+    : payRefusal(where);
+  if (refused !== null) problems.push(refused.endsWith('.') ? refused : `${refused}.`);
+  const network = refused === null ? where : 'eth';
+  const family = payFamilyOf(network) ?? 'evm';
+  const checked = validateAddressForFamily(family, String(params.to ?? ''), payLabel(network));
   let to = '';
   let toChecksum: IntentsPayDraft['toChecksum'] = null;
   if (!checked.ok) {
@@ -324,7 +329,7 @@ export async function proposeSend(ctx: PCtx, params: SendParams): Promise<Propos
     counterparty: INTENTS_PAY_COUNTERPARTY,
     // The chain is asked only about a draft that can still be sent: a refused one is a sentence,
     // not a lookup.
-    recipient: await recipientOf(ctx, network, to, to === '' || problems.length > 0 ? null : network, ownAddress, params.note),
+    recipient: await recipientOf(ctx, network, to, to === '' || problems.length > 0 ? null : scanNetworkOf(network), ownAddress, params.note),
   };
   return problems.length > 0
     ? refuseDraft(ctx, 'intents_pay', draft, problems, params)

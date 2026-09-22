@@ -20,7 +20,8 @@ import {
   PAY_MAX_LOSS_BPS,
   intentsPayRail,
   minReceivedForPay,
-  networkChain,
+  payFamilyOf,
+  payRefusal,
   recipientSentence,
 } from '../../src/rails/intents-pay.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
@@ -37,11 +38,16 @@ const USDC_ETH_ASSET = 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.om
 const USDC_BASE_ASSET = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
 const SOL_ASSET = 'nep141:sol.omft.near';
 
+const ETH_OP_ASSET = 'nep141:op.omft.near';
+
 const apiTokens: OneClickToken[] = [
   { assetId: ETH_ASSET, decimals: 18, blockchain: 'eth', symbol: 'ETH' },
   { assetId: USDC_ETH_ASSET, decimals: 6, blockchain: 'eth', symbol: 'USDC', contractAddress: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' },
   { assetId: USDC_BASE_ASSET, decimals: 6, blockchain: 'base', symbol: 'USDC', contractAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' },
   { assetId: SOL_ASSET, decimals: 9, blockchain: 'sol', symbol: 'SOL' },
+  // A chain the registry pins nothing on, which is every chain but the five: the venue's list
+  // is the only thing that says what it carries.
+  { assetId: ETH_OP_ASSET, decimals: 18, blockchain: 'op', symbol: 'ETH' },
 ];
 
 const registry: TokensFile = {
@@ -130,7 +136,7 @@ function draftOf(over: Partial<IntentsPayDraft> = {}): IntentsPayDraft {
     kind: 'intents_pay',
     symbol: 'ETH',
     originAsset: ETH_ASSET,
-    network: 'ethereum',
+    network: 'eth',
     amount: AMOUNT,
     amountUsd: 24.4,
     minReceived: minReceivedForPay(AMOUNT),
@@ -241,25 +247,28 @@ test('the loss floor is three percent under the amount, because the bridge fee i
   assert.equal(minReceivedForPay(100), 97);
 });
 
-test('every payout network maps to the chain the token registry and the gas table know, and Bitcoin to none', () => {
-  assert.equal(networkChain('ethereum'), 'eth');
-  assert.equal(networkChain('base'), 'base');
-  assert.equal(networkChain('arbitrum'), 'arb');
-  assert.equal(networkChain('solana'), 'sol');
-  assert.equal(networkChain('near'), 'near');
-  assert.equal(networkChain('bitcoin'), null);
+test('every payout network names the decoder that checks its addresses, and the rest are refused by name', () => {
+  assert.equal(payFamilyOf('eth'), 'evm');
+  assert.equal(payFamilyOf('base'), 'evm');
+  assert.equal(payFamilyOf('arb'), 'evm');
+  assert.equal(payFamilyOf('sol'), 'sol');
+  assert.equal(payFamilyOf('near'), 'near');
+  assert.equal(payFamilyOf('btc'), null);
+  assert.equal(payRefusal('eth'), null);
+  assert.match(payRefusal('btc') ?? '', /cannot check a Bitcoin address/);
+  assert.match(payRefusal('madeupchain') ?? '', /not a place this app can send to/);
 });
 
 test('the receiver sentence says what the chain said, and says to check twice when nothing was ever there', () => {
-  assert.equal(recipientSentence('ethereum', recipientOf()), 'This address has 42 transactions on Ethereum and holds 0.51 ETH.');
+  assert.equal(recipientSentence('eth', recipientOf()), 'This address has 42 transactions on Ethereum and holds 0.51 ETH.');
   const fresh = recipientOf({ activity: activityOf({ txCount: 0, balance: { amount: '0', symbol: 'ETH' }, lastSeen: null }) });
-  assert.equal(recipientSentence('ethereum', fresh), 'This address has never been used on Ethereum. Check it twice.');
+  assert.equal(recipientSentence('eth', fresh), 'This address has never been used on Ethereum. Check it twice.');
   const unread = recipientOf({ activity: null });
-  assert.equal(recipientSentence('ethereum', unread), 'This address could not be checked on Ethereum right now.');
+  assert.equal(recipientSentence('eth', unread), 'This address could not be checked on Ethereum right now.');
   const failed = recipientOf({ activity: activityOf({ ok: false, txCount: null, balance: null, error: 'blockscout answered 503' }) });
-  assert.match(recipientSentence('ethereum', failed), /could not be checked on Ethereum/);
+  assert.match(recipientSentence('eth', failed), /could not be checked on Ethereum/);
   const contract = recipientOf({ activity: activityOf({ isContract: true }) });
-  assert.match(recipientSentence('ethereum', contract), /is a contract on Ethereum/);
+  assert.match(recipientSentence('eth', contract), /is a contract on Ethereum/);
   const own = recipientOf({ ownAddress: true });
   assert.match(recipientSentence('base', own), /^This is your own address on Base\./);
 });
@@ -285,7 +294,7 @@ test('a receiver that is not an address on the named chain is refused before a q
 
 test('a Solana address passes when it decodes to 32 bytes and fails on 31', async () => {
   const solDraft = (to: string): IntentsPayDraft =>
-    draftOf({ symbol: 'SOL', originAsset: SOL_ASSET, network: 'solana', to, toChecksum: null, amount: 0.1, amountUsd: 21, minReceived: minReceivedForPay(0.1), recipient: recipientOf({ activity: null }) });
+    draftOf({ symbol: 'SOL', originAsset: SOL_ASSET, network: 'sol', to, toChecksum: null, amount: 0.1, amountUsd: 21, minReceived: minReceivedForPay(0.1), recipient: recipientOf({ activity: null }) });
   const good = railOf({
     quote: { amountIn: '100000000', amountInFormatted: '0.1', minAmountIn: '100000000', amountOut: '99648062', amountOutFormatted: '0.099648062', minAmountOut: '99500000', withdrawFee: '101938' },
     echo: { originAsset: SOL_ASSET, destinationAsset: SOL_ASSET, amount: '100000000', recipient: 'DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy' },
@@ -325,7 +334,7 @@ test('our own address on the chain is allowed and said as such', async () => {
 
 test('Bitcoin is not a network this rail pays out on', async () => {
   const { rail, calls } = railOf();
-  assert.match(await refusal(rail, draftOf({ network: 'bitcoin', to: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', toChecksum: null })), /Bitcoin/);
+  assert.match(await refusal(rail, draftOf({ network: 'btc', to: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', toChecksum: null })), /Bitcoin/);
   assert.equal(calls.quotes.length, 0);
 });
 
@@ -412,7 +421,7 @@ test('execute signs the transfer 1click generated once, submits it, and reports 
   assert.equal(calls.submitted.length, 1, 'one signature per move, never two');
   assert.equal(calls.submitted[0]?.signature, 'secp256k1:SIGNATURE');
   // The receiver read before the quote and after the success, both on the named chain.
-  assert.deepEqual(reads, [{ network: 'ethereum', address: FRIEND }, { network: 'ethereum', address: FRIEND }]);
+  assert.deepEqual(reads, [{ network: 'eth', address: FRIEND }, { network: 'eth', address: FRIEND }]);
   assert.match(result.detail, /paid 0\.01 ETH from intents\.near to 0xb583f41992Cd21b2F2345e194a36D33684BB5DB0 on Ethereum/);
   assert.match(result.detail, /0\.00994 ETH arrived/);
   assert.match(result.detail, new RegExp(`payout ${PAYOUT_TX} \\(https://etherscan\\.io/tx/${PAYOUT_TX}\\)`));
@@ -466,4 +475,22 @@ test('a submit that never answered is reported as signed and unconfirmed, not as
   assert.equal(result.ok, false);
   assert.match(result.detail, /signed/i);
   assert.match(result.detail, /HANDLE|a7d101a8/);
+});
+
+// ---------- every chain whose address this app can decode ----------
+
+test('a payout on an EVM chain the rail never had a row for is quoted', async () => {
+  const { rail } = railOf({ echo: { originAsset: ETH_OP_ASSET, destinationAsset: ETH_OP_ASSET } });
+  const sim = await rail.simulate(draftOf({ network: 'op', originAsset: ETH_OP_ASSET, recipient: recipientOf({ activity: null }) }));
+  assert.equal(sim.ok, true, sim.summary);
+  assert.match(sim.summary, /Optimism/);
+});
+
+/* Refused by name, and the sentence says what is missing. "Unknown chain" would be a lie: the app
+   knows the chain, takes deposits on it, and cannot check an address there yet. */
+test('a payout on a chain with no decoder is refused by name', async () => {
+  const { rail } = railOf();
+  const said = await refusal(rail, draftOf({ network: 'ton', symbol: 'GRAM', to: 'UQAAA', toChecksum: null, recipient: recipientOf({ activity: null }) }));
+  assert.match(said, /TON/);
+  assert.match(said, /cannot check a TON address/);
 });

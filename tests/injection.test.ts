@@ -434,11 +434,11 @@ test('the one tool with a destination field never executes on its own, and a hos
     }
   };
   const before = rowsOnDisk().length;
-  const unconfirmed = await refusedBySchema({ to: hostile.attacker, symbol: 'USDC', amount: 1, where: 'ethereum', confirmed: false });
+  const unconfirmed = await refusedBySchema({ to: hostile.attacker, symbol: 'USDC', amount: 1, where: 'eth', confirmed: false });
   assert.ok(!/"id":"/.test(unconfirmed), `an unconfirmed send made a proposal: ${unconfirmed.slice(0, 200)}`);
   const nowhere = await refusedBySchema({ to: hostile.attacker, symbol: 'USDC', amount: 1, confirmed: true });
   assert.ok(!/"id":"/.test(nowhere), `a send with no where made a proposal: ${nowhere.slice(0, 200)}`);
-  const door = await direct({ op: 'propose', kind: 'send', params: { to: hostile.attacker, symbol: 'USDC', amount: 1, where: 'ethereum', confirmed: 'yes' } });
+  const door = await direct({ op: 'propose', kind: 'send', params: { to: hostile.attacker, symbol: 'USDC', amount: 1, where: 'eth', confirmed: 'yes' } });
   assert.equal(door.status, 400, JSON.stringify(door.json));
   assert.match(String((door.json as { error?: unknown }).error), /confirmed must be true/);
   assert.equal(rowsOnDisk().length, before, 'a refused send left a row behind');

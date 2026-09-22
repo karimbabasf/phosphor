@@ -20,7 +20,7 @@ import type { ChainFetchDeps } from './fetch.ts';
 import { NEARBLOCKS_HOST, NETWORKS, explorerAddressUrl, explorerTxUrl, validateAddress, validateHash } from './networks.ts';
 import type { ChainNetwork } from './networks.ts';
 
-export { CHAIN_NETWORKS, HOSTS, NETWORKS, explorerAddressUrl, explorerTxUrl, isChainNetwork, validateAddress, validateHash } from './networks.ts';
+export { CHAIN_NETWORKS, HOSTS, NETWORKS, explorerAddressUrl, explorerTxUrl, isChainNetwork, scanNetworkOf, validateAddress, validateAddressForFamily, validateHash } from './networks.ts';
 export type { AddressCheck, ChainNetwork, HashCheck } from './networks.ts';
 export { chainFetch, createChainFetchState, isAllowedUrl } from './fetch.ts';
 export type { ChainFetchDeps, ChainFetchState, ChainKeys } from './fetch.ts';
