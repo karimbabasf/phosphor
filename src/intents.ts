@@ -19,6 +19,7 @@
 import { parseUnits } from 'viem';
 import type { ChainId } from './types.ts';
 import { readTimeout, venueWriteTimeout } from './net.ts';
+import { spendNetworkOf } from './rails/intents-address.ts';
 
 export const ONECLICK_BASE = 'https://1click.chaindefuser.com';
 
@@ -42,14 +43,6 @@ export type OneClickToken = {
   priceUpdatedAt?: string;
 };
 
-const CHAIN_TO_BLOCKCHAIN: Record<ChainId, string> = {
-  eth: 'eth',
-  base: 'base',
-  arb: 'arb',
-  sol: 'sol',
-  near: 'near',
-};
-
 /* Matches a chain + our token registry id against 1Click's token list. For near-chain
    tokens contractAddress carries the NEAR account id, so one field covers both cases.
 
@@ -65,12 +58,15 @@ const CHAIN_TO_BLOCKCHAIN: Record<ChainId, string> = {
    list this" and the two are different facts with different fixes. Every call site is already
    inside the try that wraps fetching the list. */
 export function assetIdFor(
-  chain: ChainId,
+  chain: string,
   tokenId: string,
   list: OneClickToken[],
   expectDecimals?: number,
 ): string | null {
-  const blockchain = CHAIN_TO_BLOCKCHAIN[chain];
+  /* The venue's own name for the chain, off the one registry. A chain the registry does not know
+     matches nothing rather than matching the list's rows for some other chain. */
+  const blockchain = spendNetworkOf(chain)?.venue;
+  if (blockchain === undefined || blockchain === null) return null;
   const wantId = tokenId.toLowerCase();
   const match = list.find(
     (t) => t.blockchain.toLowerCase() === blockchain && (t.contractAddress ?? '').toLowerCase() === wantId,
@@ -96,7 +92,7 @@ export function assetIdFor(
 // and never from a caller, and an ambiguous list (two entries claiming to be the gas asset
 // of one chain) returns null rather than picking one. A native asset id decides where real
 // money goes, so "the answer was not unique" has to be a refusal and not a coin flip.
-export function nativeAssetIdFor(chain: ChainId, list: OneClickToken[]): string | null {
+export function nativeAssetIdFor(chain: string, list: OneClickToken[]): string | null {
   const matches = nativeAssetMatches(chain, list);
   return matches.length === 1 ? matches[0].assetId : null;
 }
@@ -104,10 +100,10 @@ export function nativeAssetIdFor(chain: ChainId, list: OneClickToken[]): string 
 // Every entry claiming to be the gas asset of a chain. Exposed beside the single-answer form so
 // a refusal can say how many it found: zero and two are different facts with different fixes,
 // and "unambiguously" was being said about zero (NEAR on near, 2026-09-20).
-function nativeAssetMatches(chain: ChainId, list: OneClickToken[]): OneClickToken[] {
-  const blockchain = CHAIN_TO_BLOCKCHAIN[chain];
-  const spec = NATIVE_ASSET[chain];
-  if (spec === undefined) return [];
+function nativeAssetMatches(chain: string, list: OneClickToken[]): OneClickToken[] {
+  const blockchain = spendNetworkOf(chain)?.venue;
+  const spec = NATIVE_ASSET[chain as ChainId];
+  if (spec === undefined || blockchain === undefined || blockchain === null) return [];
   return list.filter(
     (t) =>
       t.blockchain.toLowerCase() === blockchain &&
@@ -139,8 +135,8 @@ const INTENTS_SYMBOL_ALIAS: Partial<Record<ChainId, Record<string, string>>> = {
 };
 // Keyed on the uppercased ask, because every other ticker on this surface is read that way
 // and "WNEAR" fell through to a registry sentence when it was not (review, 2026-09-20).
-export function canonicalSymbol(chain: ChainId, symbol: string): string {
-  return INTENTS_SYMBOL_ALIAS[chain]?.[symbol.toUpperCase()] ?? symbol;
+export function canonicalSymbol(chain: string, symbol: string): string {
+  return INTENTS_SYMBOL_ALIAS[chain as ChainId]?.[symbol.toUpperCase()] ?? symbol;
 }
 
 // The name a balance inside the verifier goes by, whatever chain the asker had in mind. The
@@ -154,41 +150,118 @@ export function heldSymbol(symbol: string): string {
   return symbol;
 }
 
-// One place that turns "USDC on base" or "ETH on eth" into the pair a quote needs. The token
-// registry is tried first and the gas-asset table second, so a chain that lists a symbol
-// explicitly always wins over the fallback and no registry entry can be shadowed. The symbol is
-// canonicalised first, so "NEAR" on near reaches the registry as wNEAR.
-//
-// It exists because both intents rails needed the same two-step lookup and neither could
-// express a gas asset without it: data/tokens.json holds ERC-20 contracts, and a native asset
-// has no contract to hold. Adding a 'native' row to that file instead was rejected because
-// src/ledger/evm.ts reads the same file to build balanceOf calls and would have sent
-// eth_call to the string "native".
+/* An assetId is the venue's own id and carries a colon; a ticker never does. Used only to tell
+   the two apart, never to parse one. */
+const LOOKS_LIKE_ASSET_ID = /:/;
+
+export type AssetCandidate = {
+  assetId: string;
+  decimals: number;
+  symbol: string;
+  contractAddress: string | null;
+  priceUsd: number | null;
+};
+
+/* One answer, or the question to put to the person. A throw is the third outcome and means the
+   ask cannot be answered at all: no such chain, or no such ticker on it. */
+export type AssetPick =
+  | { kind: 'one'; assetId: string; decimals: number; native: boolean; priceUsd: number | null }
+  | { kind: 'many'; candidates: AssetCandidate[] };
+
+function priceOf(t: OneClickToken): number | null {
+  return typeof t.price === 'number' && isFinite(t.price) && t.price > 0 ? t.price : null;
+}
+
+/* WHICH TOKEN A SPEND MEANS. Four tiers, and the order is the point.
+
+   The registry first, unchanged, so every asset this repo pins keeps its local anchor and its
+   decimals agreement with the venue (assetIdFor's expectDecimals). Nothing about USDC on the
+   five pinned chains moves. The gas-asset table second, for the same reason: it is this repo's
+   own word for what a chain's coin is, and no caller may shadow it.
+
+   An assetId named outright third, taken exactly as it is. That is how a person answers the
+   question the last tier asks, and it is the escape hatch for anything a ticker cannot say.
+
+   The venue's list last, matched on the chain's venue name and the ticker, case folded. This is
+   the tier that opens every other chain, and it is deliberately thin: it finds candidates and it
+   counts them. TWO IS NOT A GUESS. The card asks. A hundredfold decimals difference hides behind
+   one ticker on the live list today (USDC on hypercore, 8 and 6), so the count is load bearing.
+
+   It exists because both intents rails needed the same lookup and neither could express a gas
+   asset without it: data/tokens.json holds ERC-20 contracts, and a native asset has no contract
+   to hold. Adding a 'native' row to that file instead was rejected because src/ledger/evm.ts
+   reads the same file to build balanceOf calls and would have sent eth_call to the string
+   "native". */
 export function resolveAsset(
-  chain: ChainId,
+  network: string,
   asked: string,
   tokens: TokensFile,
   list: OneClickToken[],
-): { assetId: string; decimals: number; native: boolean } {
-  const symbol = canonicalSymbol(chain, asked);
-  const registry = tokens[chain]?.[symbol];
+): AssetPick {
+  const net = spendNetworkOf(network);
+  if (net === undefined || net.venue === null) {
+    throw new Error(`this app has no chain called ${oneLine(network, 40)}, so nothing can be priced on it`);
+  }
+  const blockchain = net.venue;
+
+  const symbol = canonicalSymbol(network, asked);
+  const registry = tokens[network as ChainId]?.[symbol];
   if (registry !== undefined) {
-    const assetId = assetIdFor(chain, registry.tokenId, list, registry.decimals);
-    if (assetId === null) throw new Error(`1click does not list ${symbol} on ${chain}`);
-    return { assetId, decimals: registry.decimals, native: false };
+    const assetId = assetIdFor(network, registry.tokenId, list, registry.decimals);
+    if (assetId === null) throw new Error(`1click does not list ${symbol} on ${network}`);
+    const meta = list.find((t) => t.assetId === assetId);
+    return { kind: 'one', assetId, decimals: registry.decimals, native: false, priceUsd: meta === undefined ? null : priceOf(meta) };
   }
 
-  const spec = NATIVE_ASSET[chain];
+  const spec = NATIVE_ASSET[network as ChainId];
   if (spec !== undefined && spec.symbol === symbol) {
-    const matches = nativeAssetMatches(chain, list);
-    if (matches.length === 0) throw new Error(`1click lists no native ${symbol} on ${chain}`);
+    const matches = nativeAssetMatches(network, list);
+    if (matches.length === 0) throw new Error(`1click lists no native ${symbol} on ${network}`);
     if (matches.length > 1) {
-      throw new Error(`1click lists ${matches.length} native ${symbol} on ${chain}, so the app cannot tell which one is the coin`);
+      throw new Error(`1click lists ${matches.length} native ${symbol} on ${network}, so the app cannot tell which one is the coin`);
     }
-    return { assetId: matches[0].assetId, decimals: spec.decimals, native: true };
+    return { kind: 'one', assetId: matches[0]!.assetId, decimals: spec.decimals, native: true, priceUsd: priceOf(matches[0]!) };
   }
 
-  throw new Error(`no token registry entry for ${symbol} on ${chain}, and it is not that chain's gas asset`);
+  if (LOOKS_LIKE_ASSET_ID.test(asked)) {
+    const exact = list.find((t) => t.assetId === asked && t.blockchain.toLowerCase() === blockchain);
+    if (exact === undefined) {
+      throw new Error(`1click lists no asset ${oneLine(asked, 60)} on ${network}`);
+    }
+    return {
+      kind: 'one',
+      assetId: exact.assetId,
+      decimals: exact.decimals,
+      native: (exact.contractAddress ?? '') === '',
+      priceUsd: priceOf(exact),
+    };
+  }
+
+  const wanted = symbol.toUpperCase();
+  const matches = list.filter((t) => t.blockchain.toLowerCase() === blockchain && t.symbol.toUpperCase() === wanted);
+  if (matches.length === 0) {
+    throw new Error(`1click lists no ${oneLine(symbol, 20)} on ${network}`);
+  }
+  if (matches.length > 1) {
+    return {
+      kind: 'many',
+      candidates: matches.map((t) => ({
+        assetId: t.assetId,
+        decimals: t.decimals,
+        symbol: t.symbol,
+        contractAddress: t.contractAddress ?? null,
+        priceUsd: priceOf(t),
+      })),
+    };
+  }
+  const only = matches[0]!;
+  return {
+    kind: 'one',
+    assetId: only.assetId,
+    decimals: only.decimals,
+    native: (only.contractAddress ?? '') === '',
+    priceUsd: priceOf(only),
+  };
 }
 
 // ---------- amounts ----------
