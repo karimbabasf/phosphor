@@ -190,3 +190,12 @@ test('an empty mode is absent, which is the live default, not a third mode', () 
   assert.equal(loadWithMode('').mode, 'live');
   assert.equal(loadWithMode(undefined).mode, 'live');
 });
+
+/* The driver block reached nobody: parsed, checked and then left off the config, so
+   `driver.claudeBin` in config.json never pointed the in-app chat anywhere (found 2026-09-20 by
+   the scripted eval's stand-in agent being ignored for the real Claude Code). */
+test('the driver block rides on the config it was parsed from', () => {
+  const cfg = load(null, { mode: 'demo', port: 4177, addresses: {}, dataDir: 'state', driver: { claudeBin: '/tmp/fake-claude', autostart: true, model: 'claude-sonnet-5' } });
+  assert.deepEqual(cfg.driver, { claudeBin: '/tmp/fake-claude', autostart: true, model: 'claude-sonnet-5' });
+  assert.equal(load(null).driver, undefined, 'no block, no field');
+});

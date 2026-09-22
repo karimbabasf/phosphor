@@ -356,6 +356,11 @@ export function loadConfig(root?: string): AppConfig {
   };
   if (parsed.chainscan !== undefined) cfg.chainscan = parsed.chainscan;
   if (parsed.swap !== undefined) cfg.swap = parsed.swap;
+  /* The driver block was parsed, checked against the schema and then dropped, so
+     `driver.claudeBin`, `autostart` and `model` in config.json reached nobody: the in-app chat
+     always spawned whatever `claude` the catalog found (a scripted eval's stand-in agent was
+     ignored and the real Claude Code, and its subscription, ran instead). */
+  if (parsed.driver !== undefined) cfg.driver = parsed.driver;
 
   // After the merge, because config.local.json overrides the template key by key and it is the
   // merged book every other module reads. The file named is the local one when it carries an

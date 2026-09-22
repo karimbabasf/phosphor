@@ -24,6 +24,7 @@ import { INTENTS_RELAY_VENUE, RELAY_TERMINAL } from '../rails/intents-relay.ts';
 import { decodeNonce } from '../relay/payload.ts';
 import type { RelayLookup } from '../rails/index.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
+import { ONECLICK_STAGES } from './view.ts';
 import { expireHold, judgeSettlingNow, settleProposal } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
 
@@ -240,6 +241,11 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
   // by; what 1Click reported is added beside them, so an executed row can still be re-checked.
   const evidence: RailEvidence = {
     ...p.result?.evidence,
+    /* The venue's word becomes the row's stage word, so a row the rail left at PROCESSING when
+       the process died reads "Waiting for the venue to credit it" once the sweep hears SUCCESS,
+       not "On its way" for ever (3.3, 8.4). A word the stage table does not know is not stamped:
+       the row keeps its last known one (the rail-provider-stage rule). */
+    ...(ONECLICK_STAGES.has(status.status) ? { providerStage: status.status } : {}),
     ...(status.settledAmountOut === undefined ? {} : { settledAmountOut: status.settledAmountOut }),
     ...(status.refundedAmount === undefined ? {} : { refundedAmount: status.refundedAmount }),
     ...(status.refundReason === undefined ? {} : { refundReason: status.refundReason }),

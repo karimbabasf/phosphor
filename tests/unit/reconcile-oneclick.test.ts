@@ -459,3 +459,17 @@ test('a filed row comes back to the dock the moment 1Click says something new', 
   const changed = await h.svc.reconcile('oc-1');
   assert.equal(changed.acknowledgedAt, undefined, 'a new word from the venue unfiles it');
 });
+
+/* THE VENUE'S WORD IS THE ROW'S STAGE WORD. A deposit killed while polling carries the last
+   word the rail stamped (PROCESSING); the sweep heard SUCCESS and merged the settled amount but
+   left the word, so the card read "On its way" for a row the venue had finished and the app was
+   waiting to credit (3.3, 8.4; node B2's follow-up, 2026-09-21). */
+test('a crash-recovered deposit takes the word the sweep hears, so the card moves to the crediting wait', async () => {
+  const h = setup(statusOf({ status: 'SUCCESS', settledAmountOut: '9.97' }), true, flat);
+  seed(h.dir, { result: { ok: false, detail: 'submitted, waiting for the venue', txids: ['intent-h1'], evidence: { handle: 'dep-1', providerStage: 'PROCESSING' } } });
+  const out = await h.svc.reconcile('oc-1');
+  assert.equal(out.status, 'needs_reconciliation');
+  assert.equal(out.result?.evidence?.providerStage, 'SUCCESS', 'the sweep stamps the word it heard');
+  assert.equal(h.svc.view(out).stage, 'crediting');
+  assert.equal(h.svc.view(out).stageLabel, 'Waiting for the venue to credit it');
+});

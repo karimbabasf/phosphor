@@ -229,7 +229,9 @@ test('deposit, killed at Sending it: the intent was signed, the handle is on the
   assert.deepEqual(b.asked, [HANDLE]);
   const later = b.svc.get(seed.id) as Proposal;
   assert.equal(later.status, 'needs_reconciliation');
-  assert.equal(b.svc.view(later).stage, 'crediting');
+  // The sweep stamps the word it heard, so the card reads the venue's own phase, not a guess.
+  assert.equal(later.result?.evidence?.providerStage, 'PENDING_DEPOSIT');
+  assert.equal(b.svc.view(later).stage, 'PENDING_DEPOSIT');
   assert.equal(b.executed, 0);
 });
 
