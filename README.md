@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/chat/chat-1280.png" width="920" alt="The Phosphor window: the assistant on the left showing a deposit card, the balance and holdings on the right.">
+  <img src="docs/screenshots/chat/chat-1280-receipt-open.png" width="920" alt="The Phosphor window: a finished swap and its receipt on the left, the balance, the spending rules and the holdings on the right.">
 </p>
 
 ## What it is

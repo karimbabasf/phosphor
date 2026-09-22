@@ -52,6 +52,18 @@ function relativeLinks(markdown: string): string[] {
   return out;
 }
 
+/* THE INDEX NAMES A VERSION TOO, and nothing was reading it. docs/README.md said "version
+   0.7.0, the version in package.json" while package.json said 0.9.0, and the site is built from
+   these files, so the sentence was live and wrong on two releases. The changelog test below
+   passed the whole time because it only reads the changelog. A number a person has to remember
+   to change is a number that goes stale, so it is pinned here instead. */
+test('the docs index names the version in package.json', () => {
+  const index = read('README.md');
+  const named = /version (\d+\.\d+\.\d+), the version in `package\.json`/.exec(index);
+  assert.ok(named, 'docs/README.md no longer names a version the way this test reads it');
+  assert.equal(named[1], packageVersion(), `docs/README.md says version ${named[1]} but package.json is ${packageVersion()}`);
+});
+
 test('the changelog opens on the version in package.json', () => {
   const top = firstSection(read('changelog.md'));
   assert.equal(top, packageVersion(), `docs/changelog.md starts with "## ${top}" but package.json is ${packageVersion()}`);
