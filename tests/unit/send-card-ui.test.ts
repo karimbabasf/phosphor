@@ -572,3 +572,20 @@ test('a payout on a chain the card never had a row for still names it and draws 
   assert.ok(names.includes('TON'), names.join(' | '));
   assert.ok(!names.some((n) => n === 'ton'));
 });
+
+test('a payout says what it is worth in dollars', () => {
+  const ui = loadDock([payProposal({}, { network: 'base', symbol: 'USDC', amount: 50, amountUsd: 50 })]);
+  ui.render();
+  assert.equal(all(ui.card, 'sendcard-usd')[0]?.textContent, '$50.00');
+});
+
+/* A coin the venue quotes no price for is the one case where the number that catches a mistake is
+   missing, so the card has to say the check is missing rather than leave a gap that reads as
+   nothing to see. */
+test('a coin with no price says so where the dollars would be', () => {
+  const ui = loadDock([payProposal({}, { network: 'ton', symbol: 'GRAM', amount: 12, amountUsd: null })]);
+  ui.render();
+  const usd = all(ui.card, 'sendcard-usd')[0];
+  assert.equal(usd?.textContent, 'We cannot price this');
+  assert.equal(usd?.getAttribute('data-unpriced'), 'true');
+});

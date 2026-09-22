@@ -338,7 +338,18 @@
     var figure = dom.el('p', 'sendcard-amount mono');
     dom.setText(figure, (view.amount === null ? '' : dom.qty(view.amount) + ' ') + view.symbol);
     title.appendChild(figure);
-    if (view.amountUsd !== null) title.appendChild(dom.el('p', 'sendcard-usd', dom.usd(view.amountUsd)));
+    /* The dollars are the check a person can actually make: a wrong coin or a wrong decimals comes
+       out as a number that is obviously wrong. A coin the venue quotes no price for loses that
+       check, so the card says the check is missing rather than printing nothing, which reads as
+       fine. */
+    var usd = dom.el('p', 'sendcard-usd');
+    if (view.amountUsd === null) {
+      dom.setAttr(usd, 'data-unpriced', 'true');
+      dom.setText(usd, 'We cannot price this');
+    } else {
+      dom.setText(usd, dom.usd(view.amountUsd));
+    }
+    title.appendChild(usd);
     node.appendChild(title);
     var status = statusOf(view);
     var pill = dom.el('span', 'chip sendcard-status', status.word);

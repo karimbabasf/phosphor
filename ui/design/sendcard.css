@@ -444,3 +444,10 @@
   .dock-actions .btn[data-touch="true"] .sendcard-finger { animation: none; }
   .sendcard-arrow svg, .sendcard-info::after { transition: none; }
 }
+
+/* Not a warning colour: an unpriced coin is a missing check, not a refusal, and amber here would
+   read as "something is wrong with this payout". */
+.sendcard-usd[data-unpriced] {
+  color: var(--text-2);
+  font-style: normal;
+}
