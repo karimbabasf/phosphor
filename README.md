@@ -58,9 +58,11 @@ shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg
 ```
 
 The build is signed ad hoc and is not notarised by Apple, so the first open stops with a warning
-saying the app cannot be checked. This is expected and the app is not broken. Right-click Phosphor
-in Applications and choose Open. If macOS still refuses, open System Settings, Privacy & Security,
-scroll to Security and click Open Anyway.
+saying macOS cannot check it for malware. This is expected and the app is not broken. Open it
+once and let it be refused, then go to System Settings, Privacy & Security, scroll to Security,
+and click Open Anyway next to Phosphor. That button appears only after a refused open, and only
+for about an hour. On macOS 14 and earlier you can instead right-click Phosphor in Applications
+and choose Open.
 
 ## Connect an agent
 
