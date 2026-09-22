@@ -52,9 +52,11 @@ venue the app cannot reach is still holding your exits.
 
 ## macOS will not open the app
 
-The build is not notarized by Apple, so the first open stops with a warning. Open System
-Settings, then Privacy & Security, scroll down to Security and click Open Anyway. Check the disk
-image's SHA-256 first, see [Getting started](getting-started.md#check-the-file).
+The build is not notarized by Apple, so the first open stops with a warning. Click Done, then
+double-click Open Anyway in the disk image window, which opens System Settings at the Open Anyway
+button, or go to Privacy & Security and scroll down to Security yourself. No button there means
+the refused open was more than about an hour ago: open the app once more and look again. Check
+the disk image's SHA-256 first, see [Getting started](getting-started.md#check-the-file).
 
 A second copy of the app refuses to start while one is running: "Phosphor is already running as
 process N and holding 127.0.0.1:4177. Use that window rather than opening a second one." If the

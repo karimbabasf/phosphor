@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Phosphor Open Anyway icon</title>
+<!--
+  The icon Finder shows for the Open Anyway shortcut in the disk image window. A sibling of the
+  app icon, not a copy of it: the same 824 px body on a 1024 canvas (src-tauri/icons/icon.png is
+  412 on 512), the same ground, the same green, and the app's own `unlock` glyph from
+  ui/design/icons.js at its own stroke and two tones, so it reads as a thing that unlocks
+  Phosphor rather than as a second Phosphor.
+
+  Rendered by render.ts into open-anyway.png with a transparent canvas; scripts/dmg-open-anyway.ts
+  sets it on the shortcut. Edit this file, run the renderer, commit both.
+-->
+<style>
+  html, body { margin: 0; background: transparent; }
+  body { position: relative; width: 1024px; height: 1024px; overflow: hidden; }
+  .body {
+    position: absolute;
+    left: 100px; top: 100px;
+    width: 824px; height: 824px;
+    border-radius: 185px;
+    background: #0E0F13;
+  }
+  svg {
+    position: absolute;
+    left: 248px; top: 248px;
+    width: 528px; height: 528px;
+  }
+</style>
+<div class="body"></div>
+<!-- viewBox starts half a unit up: the glyph spans y 3 to 20, so this centres it. -->
+<svg viewBox="0 -0.5 24 24" aria-hidden="true">
+  <path fill="#3FFF6C" fill-opacity="0.2"
+        d="M5 12a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/>
+  <path fill="none" stroke="#3FFF6C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+        d="M5 12a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2zM8 10V7a4 4 0 0 1 7.9-.9M12 14.5V16"/>
+</svg>

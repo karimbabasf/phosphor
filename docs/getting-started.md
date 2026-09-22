@@ -23,8 +23,11 @@ If the two differ, delete the file and download it again.
 
 ## The Gatekeeper warning
 
-The build is not notarized by Apple yet, so the first open stops with a warning. Open System
-Settings, then Privacy & Security, scroll to Security and click Open Anyway. See
+The build is not notarized by Apple yet, so the first open stops with a warning. Click Done, not
+Move to Trash, then double-click Open Anyway in the disk image window: it opens System Settings,
+Privacy & Security, at the Open Anyway button next to Phosphor. Click it. The button appears only
+after a refused open, for about an hour. Without the disk image, open System Settings, then
+Privacy & Security, and scroll to Security. See
 [Troubleshooting](troubleshooting.md#macos-will-not-open-the-app) if the app still refuses.
 Notarization needs an Apple Developer account this project does not hold yet; until it does,
 the checksum above is what proves the file is the one on the release page. It is listed as a
