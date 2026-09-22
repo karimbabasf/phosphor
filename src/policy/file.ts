@@ -12,6 +12,19 @@ import type { Policy } from '../types.ts';
 import { renderSentences } from './render.ts';
 import { atomicWriteJson } from '../fsatomic.ts';
 
+/* A record in this file. zod 4 drops an own __proto__ key from a record before it checks the
+   value, and loadPolicy hands the file on as parsed rather than as zod returned it, so the key
+   would reach the app carrying whatever the file put there. It is refused instead, by name, and
+   the whole file fails closed like any other bad entry. */
+function record<V extends z.ZodType>(value: V) {
+  return z.preprocess((raw, ctx) => {
+    if (raw !== null && typeof raw === 'object' && Object.prototype.hasOwnProperty.call(raw, '__proto__')) {
+      ctx.addIssue({ code: 'custom', path: ['__proto__'], message: 'a name in the policy file may not be __proto__' });
+    }
+    return raw;
+  }, z.record(z.string(), value));
+}
+
 const policySchema = z.object({
   version: z.number(),
   killSwitch: z.boolean(),
@@ -24,7 +37,7 @@ const policySchema = z.object({
     simulateBeforeSign: z.literal(true),
   }),
   composition: z.object({
-    maxIssuerShare: z.record(z.string(), z.number()),
+    maxIssuerShare: record(z.number()),
     maxFreezableShare: z.number(),
     forbiddenIssuers: z.array(z.string()),
   }),
