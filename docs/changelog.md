@@ -5,6 +5,16 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.9.1
+
+Built 2026-09-22, the first-open pass. Tagged v0.9.1 on 2026-09-22.
+
+- The disk image window carries an Open Anyway shortcut. The build is not notarized, and since
+  macOS 15 the warning on its first open has no Open button, only Done and Move to Trash. The
+  way through is an Open Anyway button at the bottom of System Settings, Privacy & Security,
+  which most people never find. Double-clicked after that warning, the shortcut opens Settings
+  already scrolled to the button. The window says the two steps beside it.
+
 ## 0.9.0
 
 Built 2026-09-22, the any token any chain pass. Tagged v0.9.0 on 2026-09-22.

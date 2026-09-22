@@ -2509,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "phosphor-desktop"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "flate2",
  "libc",
