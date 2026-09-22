@@ -54,3 +54,10 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Build scripts and proc macros run on the build machine and never ship, so they keep their
+# symbols. Stripped, they fail to load on macOS 27 with Xcode 27 when the deployment target is
+# 13.5: dyld refuses the dylib ("mis-aligned LINKEDIT string pool") and rustc reports "can't
+# find crate" for serde_derive, phf_macros and the rest. The app binary is still stripped.
+[profile.release.build-override]
+strip = false
