@@ -47,6 +47,6 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^26.6.2",
-    "typescript": "^5.9.0"
+    "typescript": "^7.0.2"
   }
 }
