@@ -1,0 +1,69 @@
+/* The pick-one card: two tiles, one question. Drawn by ui/screens/assetpick.js when one ticker
+   means two different tokens on one chain.
+
+   The grammar is the agent picker's (agentpick.css .agent-tile): a colourless tile at rest, the
+   one under the pointer in the app's own accent, a mark beside the words. One difference, and it
+   is why this is not that file: these tiles are read left to right, a coin mark then a ticker
+   then one plain line, because the thing being compared is a sentence rather than a name. */
+
+.assetpick-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.assetpick-tile {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  min-width: 0;
+  padding: var(--s-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 200ms var(--ease-out),
+              background-color 200ms var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.assetpick-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.assetpick-ticker {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+/* The line that does the work: what makes this one different, in words. */
+.assetpick-note {
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  line-height: 1.35;
+}
+
+.assetpick-usd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  flex: 0 0 auto;
+}
+
+.assetpick-tile:hover {
+  border-color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, var(--bg-1));
+}
+
+.assetpick-tile:active {
+  transform: translateY(1px);
+}
