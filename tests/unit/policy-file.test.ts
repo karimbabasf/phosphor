@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { defaultPolicy, loadPolicy, savePolicy } from '../../src/policy/file.ts';
+import { defaultPolicy, loadPolicy, savePolicy, savePolicyChecked } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 
 function tmpDir(): string {
@@ -71,4 +71,19 @@ test('a policy file from before the gas floors went loads with the key dropped a
   assert.equal('minNativeGasUsd' in loaded.composition, false, 'the retired key is dropped, not carried forward');
   assert.ok(!loaded.sentences.some((s) => /of gas on/i.test(s)), loaded.sentences.join(' | '));
   assert.ok(!renderSentences(loaded).some((s) => /of gas on/i.test(s)));
+});
+
+// loadPolicy hands on the file as parsed, so a key zod skips would still reach the app. An own
+// __proto__ key is the one a record skips, and JSON.parse is what makes it own, as a file does.
+test('a policy file with an own __proto__ key in a record fails closed, whatever the key holds', () => {
+  for (const held of ['0.5', '{"polluted": true}']) {
+    const dir = tmpDir();
+    const p = defaultPolicy();
+    p.composition.maxIssuerShare = JSON.parse(`{"__proto__": ${held}, "default": 1}`) as Record<string, number>;
+    fs.writeFileSync(path.join(dir, 'policy.json'), JSON.stringify(p));
+    assert.match(fs.readFileSync(path.join(dir, 'policy.json'), 'utf8'), /"__proto__":/, 'the key is on disk');
+    assert.equal(loadPolicy(dir), null, `a __proto__ share of ${held} loaded`);
+    assert.equal(savePolicyChecked(tmpDir(), p), false, `a __proto__ share of ${held} was written`);
+  }
+  assert.equal(({} as Record<string, unknown>).polluted, undefined);
 });
