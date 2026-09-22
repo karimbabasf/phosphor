@@ -928,9 +928,11 @@ function plainPatchIssue(path: string[], message: string): string {
   const key = path.join('.');
   const known = PATCH_FIELD_WORDS[key] ?? (path.length > 0 ? `one of the settings (${path[path.length - 1]})` : 'the change');
   const what = known.charAt(0).toUpperCase() + known.slice(1);
-  if (/expected number/i.test(message)) return `${what} has to be a number of dollars.`;
-  if (/expected array/i.test(message)) return `${what} has to be a list.`;
-  if (/expected boolean/i.test(message)) return `${what} has to be on or off.`;
+  // Only a wrong type. zod words a range miss "expected number to be >=0" too, and a missing value
+  // or an infinity as "received undefined" and "received Infinity"; each of those is a shape.
+  if (/expected number, received (?!undefined|-?Infinity)/i.test(message)) return `${what} has to be a number of dollars.`;
+  if (/expected array, received (?!undefined)/i.test(message)) return `${what} has to be a list.`;
+  if (/expected boolean, received (?!undefined)/i.test(message)) return `${what} has to be on or off.`;
   if (/unrecognized key|unrecognized_keys/i.test(message)) return `${what} is not a rule this app keeps.`;
   return `${what} is not in a shape the app can keep.`;
 }
