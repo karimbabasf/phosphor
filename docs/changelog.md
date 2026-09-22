@@ -7,7 +7,7 @@ without a git tag say so.
 
 ## 0.9.0
 
-Built 2026-09-22, the any token any chain pass. Not tagged at the time of writing.
+Built 2026-09-22, the any token any chain pass. Tagged v0.9.0 on 2026-09-22.
 
 - A swap reaches any coin the venue lists on any chain it lists, not only the majors. The app
   used to know five chains on the spend side while the deposit card already took money on
