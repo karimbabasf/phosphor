@@ -14,6 +14,8 @@ import type { Ledger } from '../../src/ledger/index.ts';
 import { createStore } from '../../src/store.ts';
 import { loadPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
+import { executeApproved } from '../../src/proposals/execute.ts';
+import type { PCtx } from '../../src/proposals/lifecycle.ts';
 import { ETH_USDC_FLAVOR, SELF_EVM, landed, makeCtx, railThat, seededPolicy, slowRail } from './helpers/proposals.ts';
 import type { HarnessOptions } from './helpers/proposals.ts';
 
@@ -309,6 +311,27 @@ test('a patch aimed at the kill switch is refused and never persisted', async ()
   const policy = loadPolicy(h.dataDir) as Policy;
   assert.equal(policy.version, 1);
   assert.ok(!policy.sentences.some(s => s.includes('trust me')));
+});
+
+/* THE EXECUTOR NEVER WRITES A POLICY THE LOADER WOULD REFUSE. The door and approve() both judge a
+   policy change first, and this is the wall behind them: a patch that reached the executor and
+   would leave policy.json unreadable, which stops every write until somebody edits the file by
+   hand, fails instead and leaves the file as it was. Driven through executeApproved with the four
+   things it reads, because nothing the engine passes can build such a patch any more. */
+test('an approved policy change that would leave the policy unreadable fails, and the file stays as it was', async () => {
+  const h = setup();
+  const p = await h.svc.proposePolicyChange({ patch: { outbound: { humanClickAboveUsd: 500 } }, sentence: 'Ask me above $500.' });
+  const patch = JSON.parse('{"composition":{"maxIssuerShare":{"__proto__":"lots","default":1}}}') as PolicyPatch;
+  const ctx = { dataDir: h.dataDir, audit: h.audit, store: h.store, notify: () => {} } as unknown as PCtx;
+
+  const out = await executeApproved(ctx, { ...p, status: 'approved', draft: { kind: 'policy_change', patch, sentence: 'A rule the agent wrote.' } });
+  assert.equal(out.status, 'failed');
+  const policy = loadPolicy(h.dataDir);
+  assert.ok(policy !== null, 'the policy file still loads');
+  assert.equal(policy.version, 1);
+  assert.equal(policy.outbound.humanClickAboveUsd, 100);
+  assert.ok(h.eventTypes().includes('execution_failed'));
+  assert.ok(!h.eventTypes().includes('policy_changed'), 'no change was recorded as made');
 });
 
 // ---------- bookkeeping ----------

@@ -4,7 +4,7 @@
 import type { Preflight, Proposal, Rail, RailEvidence, RailHooks, RailResult, WriteDraft } from '../types.ts';
 import type { PocketRead } from '../ledger/settle.ts';
 import { SETTLING_SENTENCE } from '../ledger/settle.ts';
-import { loadPolicy, savePolicy } from '../policy/file.ts';
+import { loadPolicy, savePolicyChecked } from '../policy/file.ts';
 import { evaluate } from '../policy/engine.ts';
 import { renderSentences } from '../policy/render.ts';
 import { isLocked } from '../keystore/index.ts';
@@ -697,7 +697,13 @@ async function applyPolicyChange(ctx: PCtx, p: Proposal): Promise<Proposal> {
   // actually in force. The agent's own wording stays in the proposal and the audit trail,
   // where it is clearly the agent talking, and never becomes the displayed rule.
   patched.sentences = renderSentences(patched);
-  savePolicy(ctx.dataDir, patched);
+  // Through the loader's own schema: a policy it would refuse is never written, because an
+  // unreadable policy.json stops every write until somebody edits the file by hand.
+  if (!savePolicyChecked(ctx.dataDir, patched)) {
+    const detail = 'the changed policy did not pass the policy check, so the file was left as it was';
+    ctx.audit.append('execution_failed', `${p.id}: ${detail}`, { id: p.id });
+    return persist(ctx, { ...p, status: 'failed', result: { ok: false, detail } });
+  }
 
   ctx.audit.append('policy_changed', `${p.id}: policy now at version ${patched.version}`, {
     id: p.id,
