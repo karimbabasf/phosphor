@@ -12,14 +12,16 @@ import type { Policy } from '../types.ts';
 import { renderSentences } from './render.ts';
 import { atomicWriteJson } from '../fsatomic.ts';
 
-/* A record in this file. zod 4 drops an own __proto__ key from a record before it checks the
-   value, and loadPolicy hands the file on as parsed rather than as zod returned it, so the key
-   would reach the app carrying whatever the file put there. It is refused instead, by name, and
-   the whole file fails closed like any other bad entry. */
-function record<V extends z.ZodType>(value: V) {
+/* A record in a policy, on disk here and in a patch in policy/engine.ts. zod 4 drops an own
+   __proto__ key from a record before it checks the value, and neither is used as zod returned it:
+   loadPolicy hands the file on as parsed, and a patch is stored and applied as the agent wrote
+   it. So the key would travel on carrying whatever was put there. It is refused instead, by
+   name, whatever it holds: the file fails closed and the patch is an invalid patch, like any
+   other bad entry. */
+export function policyRecord<V extends z.ZodType>(value: V) {
   return z.preprocess((raw, ctx) => {
     if (raw !== null && typeof raw === 'object' && Object.prototype.hasOwnProperty.call(raw, '__proto__')) {
-      ctx.addIssue({ code: 'custom', path: ['__proto__'], message: 'a name in the policy file may not be __proto__' });
+      ctx.addIssue({ code: 'custom', path: ['__proto__'], message: 'a name in a policy may not be __proto__' });
     }
     return raw;
   }, z.record(z.string(), value));
@@ -37,7 +39,7 @@ const policySchema = z.object({
     simulateBeforeSign: z.literal(true),
   }),
   composition: z.object({
-    maxIssuerShare: record(z.number()),
+    maxIssuerShare: policyRecord(z.number()),
     maxFreezableShare: z.number(),
     forbiddenIssuers: z.array(z.string()),
   }),

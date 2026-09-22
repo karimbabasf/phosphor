@@ -264,3 +264,22 @@ test('engine: an invalid patch is refused in the person\'s words, with the schem
   assert.doesNotMatch(last, /humanClickAboveUsd|Expected|received|invalid|you /);
   assert.ok(verdict.reasons.some((r) => /^Schema: outbound\.humanClickAboveUsd: /.test(r)), 'the schema line is kept for the engineer');
 });
+
+/* AN OWN __proto__ KEY IN A SHARE TABLE IS REFUSED AT THE DOOR, whatever it holds. zod 4 skips
+   that key before it looks at the value, so the patch passed and waited for a click; the draft
+   keeps the patch as the agent wrote it, the click spread the key into policy.json, and the
+   loader refuses that file, so every write stopped until somebody edited it by hand. JSON.parse
+   is what makes the key own, as the wire does. */
+test('engine: a patch with an own __proto__ key in maxIssuerShare is an invalid patch, whatever the key holds', () => {
+  for (const held of ['"lots"', '-7', '{"Circle":1}', '1e999', '0.5']) {
+    const patch: unknown = JSON.parse(`{"composition":{"maxIssuerShare":{"__proto__":${held},"default":1,"Circle":0.5}}}`);
+    const verdict = evaluate(rawPolicyChange(patch, 'Circle may not exceed 50% of holdings.'), ctxWith({ policy: defaultPolicy(), sessionSpentUsd: 0 }));
+    assert.equal(verdict.outcome, 'refuse', `__proto__ holding ${held} was ${verdict.outcome}`);
+    assert.equal(verdict.rule, 'invalid_patch', `__proto__ holding ${held}`);
+    assert.equal(
+      verdict.reasons[verdict.reasons.length - 1],
+      'This change is not in a shape the app can keep: One of the settings (__proto__) is not in a shape the app can keep. Nothing changed.',
+    );
+  }
+  assert.equal(({} as Record<string, unknown>).Circle, undefined);
+});
