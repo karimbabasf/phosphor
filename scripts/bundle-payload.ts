@@ -48,6 +48,13 @@ const PAYLOAD = ['src', 'ui', 'data', 'skills', 'operator', 'config.json', 'pack
 const DROP_EXTENSIONS = ['.map', '.d.ts', '.d.cts', '.d.mts'];
 const DROP_DIRECTORIES = ['.github'];
 
+// Whole packages, by where they install at the top of node_modules rather than by a name matched
+// anywhere. typescript is a devDependency that --omit=dev keeps: viem, ox and abitype name it as an
+// optional peer, so npm files it as dev or optional. Nothing in the app runs the compiler, and
+// since 7.0 it is a native binary, one package per platform under @typescript. The link npm made
+// to it goes too, or the bundle would carry a link to nothing.
+const DROP_PACKAGES = ['typescript', '@typescript', '.bin/tsc'];
+
 function bytes(dir: string): number {
   let total = 0;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -96,6 +103,7 @@ function stagePayload(): void {
   execFileSync('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund', '--ignore-scripts'], { cwd: STAGE, stdio: 'inherit' });
   const installed = bytes(path.join(STAGE, 'node_modules'));
 
+  for (const name of DROP_PACKAGES) fs.rmSync(path.join(STAGE, 'node_modules', name), { recursive: true, force: true });
   prune(path.join(STAGE, 'node_modules'));
   const pruned = bytes(path.join(STAGE, 'node_modules'));
   console.log(`payload: node_modules ${mb(installed)} -> ${mb(pruned)}`);
