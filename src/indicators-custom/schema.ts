@@ -146,14 +146,26 @@ const inputSchema = z
     message: 'default must sit between min and max',
   });
 
-const inputsSchema = z
-  .record(
-    z.string().refine(inputNameAllowed, {
-      message: 'an input name is a letter followed by up to 23 letters, digits or underscores, and may not be a series name, prev, or a JavaScript prototype name',
-    }),
-    inputSchema,
-  )
-  .refine((r) => Object.keys(r).length <= LIMITS.inputs, { message: `at most ${LIMITS.inputs} inputs` });
+const INPUT_NAME_RULE =
+  'an input name is a letter followed by up to 23 letters, digits or underscores, and may not be a series name, prev, or a JavaScript prototype name';
+
+/* zod 4 drops an own __proto__ key from a record before the key schema sees it, so that one name
+   is refused here, in the same words as the rest. And a key that breaks the rule comes back as
+   "Invalid key in record" with the rule nested inside it, so the record lifts the rule back out:
+   the person reading the refusal is fixing a file, and the rule is what they need. */
+const inputsSchema = z.preprocess(
+  (raw, ctx) => {
+    if (raw !== null && typeof raw === 'object' && Object.prototype.hasOwnProperty.call(raw, '__proto__')) {
+      ctx.addIssue({ code: 'custom', path: ['__proto__'], message: INPUT_NAME_RULE });
+    }
+    return raw;
+  },
+  z
+    .record(z.string().refine(inputNameAllowed, { message: INPUT_NAME_RULE }), inputSchema, {
+      error: (issue) => (issue.code === 'invalid_key' ? issue.issues[0]?.message : undefined),
+    })
+    .refine((r) => Object.keys(r).length <= LIMITS.inputs, { message: `at most ${LIMITS.inputs} inputs` }),
+);
 
 // An unknown name is quoted back so the human can find it, but a name is whatever string the
 // file put there: a hundred kilobytes, or a bidi override that would turn the sentence around.

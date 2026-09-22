@@ -24,7 +24,7 @@ const policySchema = z.object({
     simulateBeforeSign: z.literal(true),
   }),
   composition: z.object({
-    maxIssuerShare: z.record(z.number()),
+    maxIssuerShare: z.record(z.string(), z.number()),
     maxFreezableShare: z.number(),
     forbiddenIssuers: z.array(z.string()),
   }),

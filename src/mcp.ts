@@ -770,7 +770,7 @@ registerRead(
             // indicator series and divergence
             indicator: z.string().optional(),
             plot: z.string().optional(),
-            params: z.record(z.number()).optional(),
+            params: z.record(z.string(), z.number()).optional(),
             // drawing. Anchors are time and price, never pixels and never an address.
             label: z.string().optional(),
             a: z.object({ t: z.number(), price: z.number() }).optional(),
@@ -877,7 +877,7 @@ const INDICATOR = z.object({
         'Takes its own pane: volume, rsi, macd, atr, stoch, obv, wave, moneyflow, squeeze, adx, stochrsi, mfi, cci, relvolume. ' +
         'A custom indicator from the indicators folder is custom:<slug>. chart_batch op indicator_list has the parameters and ranges of all of them.',
     ),
-  params: z.record(z.number()).optional().describe('for example {"period": 50}; defaults apply when omitted'),
+  params: z.record(z.string(), z.number()).optional().describe('for example {"period": 50}; defaults apply when omitted'),
 });
 
 registerView(
