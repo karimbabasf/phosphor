@@ -381,16 +381,32 @@ button.bar-state:active { transform: scale(0.97); }
   gap: var(--s-3);
 }
 
-/* With a card on the dock the transcript keeps 120 px and whatever it held
-   past that is under the dock: the cut fades rather than slicing a sentence
-   in half, the way every scrolling region in this window fades at its edge.
-   The idle block (the mark, Nobody is at the wheel, Start) leaves for the
-   card's stay: its mark was the one thing the 120 px reached, a sliver of
-   logo over the dock's top edge, and its buttons were under the dock anyway.
-   The head with the seat light stays. */
+/* WHERE A CARD SITS IN THE RAIL. Karim, 2026-09-22: in the middle of the
+   conversation, not down on the composer. Positioning only: what the card is,
+   when it appears and what it does are untouched.
+
+   Two rules do it. The transcript stops taking the rail's free space, so the
+   space is free; the dock's own auto margins then split it and the card lands
+   at the centre. A transcript long enough to fill the rail shrinks back under
+   min-height 0, the free space goes to zero, and the card ends up exactly
+   where it always was, just above the composer.
+
+   The body's mask leaves with it. It faded the transcript's last 32 px because
+   the body ran ON under the dock and a cut sentence had to fade rather than
+   slice; the body no longer runs under anything, so an unconditional fade here
+   would only eat the last line of a short transcript. The edge that really has
+   more behind it is the inner scroller's, and .transcript-fade already draws
+   that one, on and off by opacity as the column crosses it.
+
+   The idle block (the mark, Nobody is at the wheel, Start) still leaves for
+   the card's stay: it is the transcript's own empty state and a card is not an
+   empty rail. The head with the seat light stays. */
 .conversation:has(> .dock:not([hidden])) > .conversation-body {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+  flex: 0 1 auto;
+}
+
+.conversation:has(> .dock:not([hidden])) > .dock {
+  margin-block: auto;
 }
 
 .conversation:has(> .dock:not([hidden])) .agent-empty {
