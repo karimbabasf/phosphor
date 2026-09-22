@@ -39,10 +39,31 @@ test('an ask takes the stacked window whole, and a card to read keeps the split'
   assert.doesNotMatch(stacked, /grid-template-rows:\s*0 0 minmax/);
 });
 
-test('what the transcript holds under the dock fades rather than slicing a sentence', () => {
-  const fade = LAYOUT.match(/\.conversation:has\(> \.dock:not\(\[hidden\]\)\) > \.conversation-body\s*\{([^}]*)\}/);
-  assert.ok(fade, 'the transcript is cut hard under the dock');
-  assert.match(fade?.[1] ?? '', /mask-image:\s*linear-gradient\(to bottom, #000 calc\(100% - 32px\), transparent 100%\)/);
+/* THE TRANSCRIPT NO LONGER RUNS UNDER THE DOCK, so it has nothing to fade.
+
+   Until 60d0d57 the body kept flex 1 1 auto with a card up, so it filled the column and its last
+   lines lay beneath the dock; the mask pinned here faded that cut rather than slicing a sentence.
+   Karim asked for the card in the middle of the conversation instead of down on the composer, and
+   the way it gets there is the body giving up the column's free space (flex 0 1 auto) so the
+   dock's own auto margins can split it. A body that hugs its content ends above the dock and
+   passes under nothing.
+
+   The mask had to leave with it: applied to a body that is now the height of its content, it ate
+   the last line of a SHORT transcript, which is the opposite of what it was for. The edge that
+   really has more behind it is the inner scroller's, and .transcript-fade still draws that one,
+   on and off by opacity as the column crosses it (ui/design/agent.css).
+
+   So this test pins the two rules that place the card, and pins the absence of the mask, because
+   a mask put back here would be a regression that looks like a fix. */
+test('the transcript gives up the free space so the card sits in the middle, and fades nothing', () => {
+  const body = LAYOUT.match(/\.conversation:has\(> \.dock:not\(\[hidden\]\)\) > \.conversation-body\s*\{([^}]*)\}/);
+  assert.ok(body, 'nothing shapes the transcript while a card is up');
+  assert.match(body?.[1] ?? '', /flex:\s*0 1 auto;/, 'a growing body eats the free space and the card falls back onto the composer');
+  assert.doesNotMatch(body?.[1] ?? '', /mask-image/, 'the mask is back, and on a hugging body it eats the last line of a short transcript');
+
+  const dock = LAYOUT.match(/\.conversation:has\(> \.dock:not\(\[hidden\]\)\) > \.dock\s*\{([^}]*)\}/);
+  assert.ok(dock, 'nothing centres the dock in the rail');
+  assert.match(dock?.[1] ?? '', /margin-block:\s*auto;/, 'without auto margins the card sits on the composer again');
 });
 
 /* THE ANSWER ROW IS OUTSIDE THE SCROLLING BODY. A send card is taller than the dock at the
