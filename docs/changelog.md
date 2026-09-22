@@ -5,6 +5,29 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.9.2
+
+Built 2026-09-22, the new-address pass. Tagged v0.9.2 on 2026-09-22.
+
+- The site moved to phosphor.money. The Help menu, the terms card, the docs and the release notes
+  link there now. The old address forwards to the new one, so a link in an older copy still
+  lands.
+- The terms card comes back once. The terms now name the new address, so their version is
+  2026-09-22 and the app asks for the click again. Nothing else in the terms changed.
+- Three libraries under the agent connection (fast-uri, hono and qs) take their patched
+  versions, which closes nine security alerts. None of the three was reachable in Phosphor: the
+  connection runs over stdio and never loads the parts the alerts are about.
+- The libraries the app is built with move forward: zod 4, TypeScript 7, viem 2.56.8, and patch
+  releases of the shell's clipboard, dialog, compression and plist crates.
+- With zod 4, two kinds of input that used to get through are refused where they arrive: a
+  number too large to be real (it read as infinity and reached the app as an empty value), and a
+  policy change that names `__proto__` in a share table. An approved policy change is saved only
+  if the policy file still loads after it.
+- The download no longer carries the TypeScript compiler, which only checks the code while it is
+  written and never ran in the app.
+- The release notes stop at their last sentence. The notes for 0.9.0 and 0.9.1 ended in the
+  tag's signature block, and the update window that offered 0.9.1 showed its first line.
+
 ## 0.9.1
 
 Built 2026-09-22, the first-open pass. Tagged v0.9.1 on 2026-09-22.

@@ -145,9 +145,10 @@ jobs:
 
       - name: Stage the release assets and write latest.json and SHA256SUMS
         run: |
-          # The whole tag message, subject and body, trimmed. A one-line message has an empty
-          # body, and %(contents:body) alone shipped 0.4.1 with no notes at all.
-          node -e "process.stdout.write(require('child_process').execFileSync('git', ['tag', '-l', '--format=%(contents)', process.argv[1]]).toString().trim() + '\\n')" "$TAG" > "$RUNNER_TEMP/tag-body.md"
+          # The tag message, subject and body, trimmed. Not %(contents): on a signed tag that
+          # carries the SSH signature block, and 0.9.0 and 0.9.1 shipped it in their notes and
+          # in latest.json. Not %(contents:body) alone either: that shipped 0.4.1 with no notes.
+          node -e "process.stdout.write(require('child_process').execFileSync('git', ['tag', '-l', '--format=%(contents:subject)%0a%0a%(contents:body)', process.argv[1]]).toString().trim() + '\\n')" "$TAG" > "$RUNNER_TEMP/tag-body.md"
           node scripts/release-manifest.ts \
             --version "$VERSION" --tag "$TAG" \
             --bundle "src-tauri/target/$TARGET/release/bundle" \
