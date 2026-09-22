@@ -282,3 +282,24 @@ test('two identical sends five seconds apart from one session, the first still p
   assert.match(String(e.json.error), /where is required/);
   assert.equal(h.store.list().length, 1);
 });
+
+/* The book keyed a payout by the long network name until the chains became one registry, so every
+   receiver approved before that is stored under ethereum, arbitrum or solana. A read that cannot
+   find them puts "First send to this address" on a wallet Karim has paid for months, and a warning
+   that cries wolf is a warning he clicks past. The read looks under the old name; nothing on disk
+   is rewritten and nothing new is written under it. */
+test('a receiver approved under the old network name is still known under its chain id', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-recipients-legacy-'));
+  recordRecipient(dir, 'ethereum', FRIEND, '2026-09-10T00:00:00.000Z', 'Alice');
+  const found = recipientFor(dir, 'eth', FRIEND);
+  assert.equal(found?.count, 1);
+  assert.equal(found?.label, 'Alice');
+  assert.equal(recipientFor(dir, 'arb', FRIEND), null, 'the old name is read for the same chain only');
+  assert.equal(recipientFor(dir, 'eth', SELF_EVM), null, 'an address nobody approved is still new');
+
+  // A fresh approval keys on the registry id, and the old row is left exactly as it was.
+  recordRecipient(dir, 'eth', FRIEND, '2026-09-22T00:00:00.000Z');
+  const rows = readRecipients(dir);
+  assert.deepEqual(rows.map((r) => r.key).sort(), [`eth:${FRIEND.toLowerCase()}`, `ethereum:${FRIEND.toLowerCase()}`]);
+  assert.equal(rows.find((r) => r.key === `ethereum:${FRIEND.toLowerCase()}`)?.count, 1);
+});

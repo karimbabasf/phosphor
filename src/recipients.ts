@@ -58,9 +58,31 @@ function isRow(value: unknown): value is RecipientRow {
     typeof r['firstAt'] === 'string' && typeof r['lastAt'] === 'string' && typeof r['count'] === 'number';
 }
 
+/* What a payout network was called in this book before the chains became one registry, for the
+   five it could pay out on. base and near are absent because their name did not change, and
+   bitcoin is absent because no payout on it was ever possible, so no row can exist. A table in
+   this repo, never a name from a caller: a where that could alias itself would be a way to read
+   somebody else's row.
+
+   READ ONLY. Nothing is written under these names and nothing on disk is rewritten, so the book
+   stays exactly what the app wrote and simply stays readable. */
+const LEGACY_WHERE: Record<string, string> = {
+  eth: 'ethereum',
+  arb: 'arbitrum',
+  sol: 'solana',
+};
+
 export function recipientFor(dataDir: string, where: string, address: string): RecipientRow | null {
+  const rows = readRecipients(dataDir);
   const key = recipientKey(where, address);
-  return readRecipients(dataDir).find((r) => r.key === key) ?? null;
+  const found = rows.find((r) => r.key === key);
+  if (found !== undefined) return found;
+  /* A receiver approved before the rename is the same receiver, and the card's "first send"
+     warning is only worth anything while it means what it says. */
+  const legacy = LEGACY_WHERE[where];
+  if (legacy === undefined) return null;
+  const was = recipientKey(legacy, address);
+  return rows.find((r) => r.key === was) ?? null;
 }
 
 function cleanLabel(label: string | undefined): string | undefined {
