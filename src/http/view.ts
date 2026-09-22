@@ -505,7 +505,12 @@ const HANDLERS: Record<string, ViewHandler> = {
     // catch, because both halves look right on their own.
     if (out.ok) {
       const symbol = String(args.symbol ?? '').toUpperCase();
-      const match = ctx.cfg.candleProducts.find((p) => p.split('-')[0].toUpperCase() === symbol);
+      /* The configured chart list first (it names the product the way the select does), then
+         the catalogue for any other coin the venue lists: a focus on GRAM moved the header and
+         the position panel to GRAM while the candles stayed BTC-USD, because GRAM is not in
+         config.json's candleProducts (Karim's screenshot, 2026-09-21). The catalogue's own
+         answer prefers Hyperliquid, which is where the focused market trades. */
+      const match = ctx.cfg.candleProducts.find((p) => p.split('-')[0].toUpperCase() === symbol) ?? ctx.market.resolve(symbol)?.product ?? undefined;
       if (match !== undefined) ctx.chart.setView({ product: match }, 'agent');
     }
     return out;
