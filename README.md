@@ -1,128 +1,125 @@
-# Phosphor
+<p align="center">
+  <img src="brand/phosphor-logo-green-on-black.png" alt="" width="92">
+</p>
 
-[![Tests](https://github.com/karimbabasf/phosphor/actions/workflows/ci.yml/badge.svg)](https://github.com/karimbabasf/phosphor/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/karimbabasf/phosphor/actions/workflows/dynamic/github-code-scanning/codeql/badge.svg)](https://github.com/karimbabasf/phosphor/security/code-scanning)
-[![Release](https://img.shields.io/github/v/release/karimbabasf/phosphor?label=release&color=1f7a3a)](https://github.com/karimbabasf/phosphor/releases/latest)
-[![License](https://img.shields.io/badge/license-FSL--1.1--MIT-1f7a3a)](LICENSE)
+<h1 align="center">Phosphor</h1>
 
-Phosphor is a local Mac app that holds your keys, your venue connections and your rules. Any MCP
-agent (Claude Code, Codex, anything that speaks MCP) drives it: the agent reads your money, prices
-a move and proposes it. The agent can never approve. Every execution takes a click in the app
-window, and the policy engine runs your rules with no model in the path. Two venues, and only two:
-NEAR Intents and Hyperliquid. This is alpha software that moves real money. Read
-[DISCLAIMER.md](DISCLAIMER.md) before you fund it.
+<p align="center">
+  A Mac app that holds real money and lets an AI agent move it.<br>
+  Every move stops and waits for your click.
+</p>
 
-![The Basic window on demo data](docs/screenshots/scale/basic-1280x800.png)
+<p align="center">
+  <a href="https://phosphor.karimbabasf.com/download/mac"><b>Download for Mac</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://phosphor.karimbabasf.com/docs">Docs</a>
+  &nbsp;·&nbsp;
+  <a href="DISCLAIMER.md">Read before you fund it</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/karimbabasf/phosphor/actions/workflows/ci.yml"><img src="https://github.com/karimbabasf/phosphor/actions/workflows/ci.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/karimbabasf/phosphor/releases/latest"><img src="https://img.shields.io/github/v/release/karimbabasf/phosphor?label=release&color=1f7a3a" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--MIT-1f7a3a" alt="License FSL-1.1-MIT"></a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/chat/chat-1280.png" width="920" alt="The Phosphor window: the assistant on the left showing a deposit card, the balance and holdings on the right.">
+</p>
+
+## What it is
+
+The app is the car. The agent is the driver. You hold the key.
+
+Phosphor runs on your Mac and nowhere else. There is no server, no account and no telemetry. Your
+keys sit in an enclave-wrapped file on your own disk. Any MCP agent drives the app (Claude Code,
+Codex, anything that speaks MCP), or the app runs its own assistant. The agent reads your money,
+prices a move and proposes it. The agent can never approve. Every execution takes a click in the
+window, and the policy engine runs your rules with no model in the path.
+
+Two venues, and only two. A swap reaches any coin NEAR Intents lists, on any chain it lists. A
+payout reaches every chain whose address the app can decode by itself: every EVM chain, Solana,
+Fogo and NEAR. Any other chain is refused by name. Perps run on Hyperliquid.
+
+This is alpha software that moves real money. It has had no third-party audit. It is not a wallet
+service, an exchange, a broker or an adviser, and nothing it or your agent says is financial
+advice. Read [DISCLAIMER.md](DISCLAIMER.md) first.
 
 ## Install
 
-Download the disk image from [phosphor.karimbabasf.com](https://phosphor.karimbabasf.com). Apple
-silicon, macOS 13.5 or later. Open the disk image and drag Phosphor into Applications.
+[Download the disk image](https://phosphor.karimbabasf.com/download/mac). Apple silicon, macOS
+13.5 or later. Drag Phosphor into Applications.
 
-The app holds keys, so check the file before you open it. The release page lists the SHA-256 of
-the disk image, and this line must print the same one:
+The app holds keys, so check the file first. The release page lists the SHA-256 of the disk image,
+and this must print the same one:
 
-    shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg
+```sh
+shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg
+```
 
-The build is not notarized by Apple yet, so the first open stops with a warning. Open System
-Settings, Privacy & Security, scroll to Security and click Open Anyway.
+The build is signed ad hoc and is not notarised by Apple, so the first open stops with a warning
+saying the app cannot be checked. This is expected and the app is not broken. Right-click Phosphor
+in Applications and choose Open. If macOS still refuses, open System Settings, Privacy & Security,
+scroll to Security and click Open Anyway.
 
 ## Connect an agent
 
-The first run asks which agent you use: Claude Code, Codex, Hermes, Grok bot, or another MCP
-agent. The app checks that it is on this Mac and signed in, registers it where the agent keeps
-a config of its own, and otherwise shows the one line to paste. The same picker is in the Vault
-tab's Agent panel. For a source checkout or by hand, the line is:
+The first run asks which agent you use and registers Phosphor with it. To do it by hand later,
+**Phosphor > Copy MCP Config** in the menu bar puts the one line on your clipboard with your real
+paths filled in. Run it in the directory you want the agent to work from.
 
-    claude mcp add-json phosphor "{\"command\":\"/Applications/Phosphor.app/Contents/MacOS/node\",\"args\":[\"/Applications/Phosphor.app/Contents/Resources/phosphor/src/mcp.ts\"],\"env\":{\"PHOSPHOR_PORT\":\"4177\",\"PHOSPHOR_DATA_DIR\":\"$HOME/Library/Application Support/com.karimbabasf.phosphor/state\"}}"
+Then ask it things.
 
-Phosphor > Copy MCP Config in the menu bar puts this line on the clipboard with the real paths
-of your installation filled in. Run it in the directory you want the agent to work from.
+> What do I hold?
+>
+> Swap 20 USDC into WETH.
+>
+> Short SOL at 10x if it loses that trend line, and cap me at $200.
 
-The window can also start Claude Code itself, headless, seeing Phosphor's tools and nothing
-else: no shell, no files, no web, and no way to approve its own proposals. It needs the `claude`
-CLI installed and logged in. Claude Desktop and the chat apps cannot drive Phosphor yet.
-
-Then ask it things. "What do I hold?" "Swap 20 USDC into WETH." "Short SOL at 10x if it loses
-that trend line, and cap me at $200."
+Details, and what the agent can never do, are in
+[docs/connect-an-agent.md](docs/connect-an-agent.md).
 
 ## Run from source
 
 Needs Node 24 or later and a Rust toolchain.
 
-    npm install
-    npm run tauri dev
+```sh
+npm install
+npm run tauri dev
+```
 
-That opens the window. `npm run app` runs the backend alone at http://127.0.0.1:4177. To point
-Claude Code at a source checkout instead of the installed app, run this from the repo root:
-
-    claude mcp add phosphor -- node "$PWD/src/mcp.ts"
-
+That opens the window. `npm run app` runs the backend alone on http://127.0.0.1:4177, and
 `npm run app:build` writes the app and the disk image under `src-tauri/target/release/bundle/`.
+To point Claude Code at the checkout instead of the installed app:
+
+```sh
+claude mcp add phosphor -- node "$PWD/src/mcp.ts"
+```
 
 ## Test
 
-    npm test            # the unit suite, the injection suite and the lockdown suite
-    npm run typecheck   # tsc --noEmit over src, tests and scripts
-    npm run e2e         # boots the app and a real MCP client over stdio, exits 0 or 1
-
-## Anxiety score
-
-`scripts/anxiety-eval.ts` scores how overwhelmed a crypto-naive person would be by every screen
-and every reply. It reads the situation list in
-`docs/superpowers/prompts/2026-09-20-ready-for-people.situations.md`, boots its own demo backend
-per situation on a free port with a throwaway data directory, produces each moment, shoots it in
-the automation Brave at an 860 px conversation column (card moments once more at 400 px), and
-scores every screenshot plus the agent's reply against the rubric in the quality-definitions
-file. It runs after every UI, card or role-text change.
-
-    node scripts/anxiety-eval.ts                 # the whole list, 3 runs, both legs
-    node scripts/anxiety-eval.ts --rows A06,B01   # some rows
-    node scripts/anxiety-eval.ts --runs 1 --no-flows --judge none   # pictures only, fast
-
-Two legs, both required:
-
-- Leg a, the rubric judge. Three screenshots per row from three demo runs, three votes per
-  screenshot from a vision model, the median taken. The judge is probed once in this order and
-  the first that answers valid JSON for an image plus text is used: a vision model on NEAR AI
-  Cloud, then `anthropic/claude-sonnet-5` on OpenRouter, then `claude -p`. The run's summary
-  names which one ran.
-- Leg b, the naive-user run. Jev plays the person through `jev-browse` on the flow rows
-  (`FLOW` in the situation list): open the deposit card, pick an agent, welcome to done, change
-  the agent in the vault. Every goal stops before an approve click.
-
-Reading the table (printed to the terminal and written as `summary.md` in the run folder):
-
-- One line per row: `pass`, `fail`, or `not reachable` (a moment the demo rails cannot produce,
-  named with its reason), then the median, the highest single vote, and the leg-b score.
-- A row passes on the median of its votes: 3 or under and no single vote 6 or over. A refusal or
-  failure row (marked `(F)`) may reach a median of 4.
-- The counts line gives pass, fail and not-reachable totals, the max and mean median, and the
-  judge that ran. A row with no screenshot is a fail, not a skip, unless it is marked not
-  reachable.
-
-Runs are written to `scripts/scratch/anxiety/<timestamp>/` (gitignored): `<row>.png`,
-`<row>.json` (the votes and the reasons), `summary.md` and `summary.json`. The rubric is copied
-verbatim from the definitions file and is never edited to raise a score; a low score is fixed in
-the product, never in the judge.
+```sh
+npm test         # unit, injection and lockdown suites
+npm run typecheck
+npm run eval     # scores the agent against the behaviour rubric
+```
 
 ## Docs
 
-User documentation: [phosphor.karimbabasf.com/docs](https://phosphor.karimbabasf.com/docs).
-Source: [docs/README.md](docs/README.md).
+Read them at [phosphor.karimbabasf.com/docs](https://phosphor.karimbabasf.com/docs), or in
+[docs/](docs/README.md).
 
-- [Architecture](docs/architecture.md): the two-process topology, module map, data flow and
-  failure modes.
-- [Security model](docs/security-model.md): the trust boundary, the three verdicts, fail-closed
-  rules, the approval token and the v1 limits.
-- [Reference](docs/reference.md): the tool surface, policy as sentences, the first run, config,
-  keys and signing.
-- [Security](SECURITY.md): how to report a vulnerability privately.
+- [Getting started](docs/getting-started.md): download, wallet, backup, the lock and the brake.
+- [Security model](docs/security-model.md): the trust boundary, the fail-closed rules, the limits.
+- [Known limits](docs/known-limits.md): what this build does not cover.
+- [Architecture](docs/architecture.md) and [Reference](docs/reference.md): for people changing it.
+- [SECURITY.md](SECURITY.md): reporting a vulnerability privately.
+- [CONTRIBUTING.md](CONTRIBUTING.md): the bar for a change.
 
 ## License
 
-Functional Source License 1.1 with an MIT future license (FSL-1.1-MIT). See [LICENSE](LICENSE).
-The code is open to read, run, change and audit. What it does not allow is offering Phosphor, or
-a product that does what Phosphor does, to other people as a commercial product or service. Each
-version becomes MIT two years after its release. The fonts and the token logos carry their own
-notices in `ui/fonts/OFL.txt` and `ui/logos/LICENSE.md`.
+Functional Source License 1.1 with an MIT future license
+([FSL-1.1-MIT](LICENSE)). Read it, run it, change it, audit it. You may not offer Phosphor, or a
+product that does what Phosphor does, to other people as a commercial product or service. Each
+version turns MIT two years after its release. The fonts and token logos carry their own notices
+in `ui/fonts/OFL.txt` and `ui/logos/LICENSE.md`.
