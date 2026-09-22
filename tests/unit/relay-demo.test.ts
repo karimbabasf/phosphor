@@ -46,7 +46,7 @@ function demoLedger(): Ledger {
 
 function demoHarness(knobs: Partial<DemoKnobs> = {}, cfg: Partial<AppConfig> = {}): ReturnType<typeof makeCtx> {
   const ledger = demoLedger();
-  const registry = demoRails({ cfg: cfgFor('demo'), refresh: () => ledger.refresh(), knobs: { stageScale: 0.05, stall: false, deadlineSec: null, ...knobs } });
+  const registry = demoRails({ cfg: cfgFor('demo'), refresh: () => ledger.refresh(), knobs: { stageScale: 0.05, stall: false, deadlineSec: null, providerEnd: null, hold: false, ...knobs } });
   const rails = registry.kinds().map((kind) => registry.for({ kind } as WriteDraft) as Rail);
   // The service's cfg decides the venue proposeSwap stamps; the demo rail walks what it is
   // handed. The proposal service reads mode, addresses and the swap switch off cfg and nothing
