@@ -660,7 +660,9 @@ function pinAddresses(dataDir: string | null, account: string, networks: Intents
    symbol of the row with no contract, when the list has one. */
 function unknownNetwork(bridge: string, tokens: PoaToken[]): ReceiveNetwork {
   const native = tokens.find((t) => t.network === bridge && t.contract === null)?.symbol ?? '';
-  return { id: bridge, name: bridge, words: bridge, bridge, kind: 'other', native, mark: native, colour: '#8A8F98', popular: false };
+  /* venue and pay are null for the same reason the name is the raw key: nothing is known about
+     this chain here, and a guessed venue name prices a quote against whatever chain owns it. */
+  return { id: bridge, name: bridge, words: bridge, bridge, kind: 'other', native, mark: native, colour: '#8A8F98', popular: false, venue: null, pay: null };
 }
 
 /* The 1Click price list, as assetId -> dollars, through the seam main.ts wires. A report never

@@ -17,6 +17,7 @@ import {
   poaRecentDeposits,
   poaSupportedTokens,
   receiveNetworkOf,
+  spendNetworkOf,
 } from '../../src/rails/intents-address.ts';
 
 type Call = { url: string; method: string; params: unknown[] };
@@ -289,4 +290,37 @@ test('a deposit row is read with its hash, amount and status', async () => {
   assert.equal(rows[0]!.txHash, '0xfeed');
   assert.equal(rows[0]!.amount, '5000000');
   assert.equal(rows[0]!.status, 'COMPLETED');
+});
+
+/* The venue's name for a chain is not the registry's id on three rows, and a mapping derived by
+   lowercasing the id would send a quote to the wrong chain on every one of them. Checked against
+   the live token list on 2026-09-22. */
+test('the three chains the venue spells differently carry their own venue name', () => {
+  assert.equal(spendNetworkOf('polygon')?.venue, 'pol');
+  assert.equal(spendNetworkOf('bnb')?.venue, 'bsc');
+  assert.equal(spendNetworkOf('robinhood')?.venue, 'hood');
+});
+
+test('every venue name is unique, so a venue name maps back to one chain', () => {
+  const venues = RECEIVE_NETWORKS.map((n) => n.venue).filter((v): v is string => v !== null);
+  assert.equal(new Set(venues).size, venues.length);
+});
+
+test('a chain this app can pay out names the decoder family that validates its addresses', () => {
+  assert.equal(spendNetworkOf('base')?.pay, 'evm');
+  assert.equal(spendNetworkOf('op')?.pay, 'evm');
+  assert.equal(spendNetworkOf('fogo')?.pay, 'sol');
+  assert.equal(spendNetworkOf('near')?.pay, 'near');
+});
+
+/* A chain with no decoder is pay: null and not a missing field, so the refusal can say "this app
+   cannot check a TON address yet" rather than "unknown chain". */
+test('a chain with no address decoder is explicitly unpayable', () => {
+  assert.equal(spendNetworkOf('ton')?.pay, null);
+  assert.equal(spendNetworkOf('tron')?.pay, null);
+  assert.equal(spendNetworkOf('xrp')?.pay, null);
+});
+
+test('the ton row names the coin by the ticker the venue uses', () => {
+  assert.equal(spendNetworkOf('ton')?.native, 'GRAM');
 });
