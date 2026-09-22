@@ -474,6 +474,11 @@ export type Rail<D extends WriteDraft = WriteDraft> = {
   valueUsd(draft: D): number;
   // Dry run. Must not sign or broadcast anything.
   simulate(draft: D): Promise<SimulationResult>;
+  /* A price with no floor in the question, for a swap rail only: what the venue would give for
+     the draft's amountIn right now, in the bought coin's units, or null when nobody offers a
+     price. The app sets a draft's floor under this when the agent names none (frozen rule 2:
+     the floor comes off the quote, never off a guess). Must not sign or broadcast anything. */
+  quote?(draft: D): Promise<number | null>;
   // Runs only after the proposal is approved, or auto-approved with the gate off. The proposal
   // id rides along so a rail that keeps its own registry (the trade rail) can record which
   // approval a row came from.
@@ -855,7 +860,7 @@ export type SwapParams = {
   fromSymbol: string;
   toSymbol: string;
   amountIn: number;
-  minAmountOut: number; // slippage floor, in toSymbol units
+  minAmountOut?: number; // slippage floor, in toSymbol units; absent, the app sets it under its own quote
   clientKey?: ClientKey;
   by?: string;
 };

@@ -26,6 +26,7 @@ import { HL_WITHDRAW_COUNTERPARTY, minReceivedForHlWithdraw } from '../rails/hyp
 import { INTENTS_NATIVE_COUNTERPARTY } from '../rails/intents-native.ts';
 import { INTENTS_RELAY_COUNTERPARTY, INTENTS_RELAY_VENUE } from '../rails/intents-relay.ts';
 import { swapRailOf } from '../config.ts';
+import { floorUnderQuote } from '../rails/slippage.ts';
 import { INTENTS_SEND_COUNTERPARTY, intentsAccountProblem, minReceivedForSend } from '../rails/intents-send.ts';
 import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay } from '../rails/intents-pay.ts';
 import { isChainNetwork, validateAddress } from '../chainscan/index.ts';
@@ -69,12 +70,26 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
     toSymbol,
     amountIn: params.amountIn,
     amountUsd: usdOf(ctx, fromSymbol, params.amountIn, snapshot),
-    minAmountOut: params.minAmountOut,
+    minAmountOut: params.minAmountOut ?? 0,
     from,
     to: from,
     counterparty: relay ? INTENTS_RELAY_COUNTERPARTY : INTENTS_NATIVE_COUNTERPARTY,
     quote: null,
   };
+
+  /* THE FLOOR COMES OFF THE QUOTE. An agent that names none is not guessing one for us: the
+     rail is asked for its floor-free price now and the floor is set one percent under it
+     (floorUnderQuote), pinned into the draft before the engine or a person sees the row, so
+     what is approved is what is held. No price is a refusal, never a floor of zero. */
+  if (params.minAmountOut === undefined && problems.length === 0) {
+    const rail = ctx.rails.for(draft);
+    const priced = rail !== null && typeof rail.quote === 'function' ? await rail.quote(draft).catch(() => null) : null;
+    if (priced === null || !(priced > 0)) {
+      problems.push(`Nobody offered a price for ${fromSymbol} to ${toSymbol} right now, so no floor could be set. Try again in a minute.`);
+    } else {
+      draft.minAmountOut = floorUnderQuote(priced);
+    }
+  }
 
   return problems.length > 0 ? refuseDraft(ctx, 'swap', draft, problems, params) : proposeRail(ctx, 'swap', draft, params);
 }

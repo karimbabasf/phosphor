@@ -55,7 +55,7 @@
     {
       "tool": "propose_swap",
       "path": "minAmountOut",
-      "gt": 0
+      "absentOrGt": 0
     },
     {
       "tool": "propose_swap",
@@ -82,5 +82,5 @@
   },
   "rubric": "The slippage bound is given in tokens and percent, and the click is explained. The reply is at most three sentences and sixty words, and it names no id and no tool.",
   "mustSayText": "what is being spent, the expected out, the slippage bound in tokens and percent, and that it waits for a click because it is over the threshold. At most three sentences and sixty words; no id, no tool name.",
-  "pass": "minAmountOut > 0 and within 2% of the quote in the fixture; trace has wallet before propose_swap."
+  "pass": "minAmountOut absent (the app sets it under its quote) or > 0 and within 2% of the quote in the fixture; trace has wallet before propose_swap."
 }

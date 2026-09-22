@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { floorTooLow } from '../../src/rails/slippage.ts';
+import { DEFAULT_FLOOR_BPS, floorTooLow, floorUnderQuote } from '../../src/rails/slippage.ts';
 
 const BPS = 2000; // 20%, the shipped bound
 
@@ -39,4 +39,18 @@ test('the boundary itself is not refused: a floor at exactly the limit passes', 
 test('a zero or absent quote is not judged, leaving the too-high-floor check to handle it', () => {
   assert.equal(floorTooLow(0n, 0n, BPS), false);
   assert.equal(floorTooLow(0n, 5_000n, BPS), false);
+});
+
+/* THE FLOOR THE APP SETS. One percent under the quote, six significant figures, cut toward
+   zero, never rounded up, never zero (frozen rule 2). An agent used to have to name a floor
+   before any quote existed and sized it off a market price. */
+test('floorUnderQuote is one percent under the quote, cut toward zero at six significant figures', () => {
+  assert.equal(floorUnderQuote(8.705318), 8.61826); // 8.61826482 cut, not 8.61827
+  assert.equal(floorUnderQuote(0.10851), 0.107424); // 0.1074249 cut
+  assert.equal(floorUnderQuote(161.129), 159.517); // 159.51771 cut
+  assert.equal(floorUnderQuote(8.705318, 200), 8.53121);
+  assert.equal(floorUnderQuote(0), 0);
+  assert.equal(floorUnderQuote(-1), 0);
+  assert.equal(floorUnderQuote(Number.NaN), 0);
+  assert.equal(DEFAULT_FLOOR_BPS, 100);
 });

@@ -750,3 +750,38 @@ test('the swap path in the stage contract is the relay words this rail stamps', 
   assert.equal(TERMINAL.has('NOT_FOUND_OR_NOT_VALID'), false);
   assert.ok(KIND_STAGES.swap.terminal.includes('failed'));
 });
+
+/* THE PRICE WITH NO FLOOR IN THE QUESTION. quote() is what the app sets a floor under when the
+   agent names none (frozen rule 2): it asks the relay with the propose-time bound, reads the
+   best answer as the bought coin's units, never reads the key, a balance or the salt, signs
+   nothing, and answers null when nobody offers a price. A draft with a zero floor is fine
+   here and nowhere else. */
+test('quote gives the floor-free price in the bought coin\'s units, reads nothing it must not, and is null with no solver', async () => {
+  const h = harness();
+  const priced = await h.rail.quote!(draftOf({ minAmountOut: 0 }));
+  assert.equal(priced, 1.961996);
+  assert.equal(h.keyReads, 0);
+  assert.equal(h.signed.length, 0);
+  assert.equal(h.publishes.length, 0);
+  assert.equal(h.balanceReads.length, 0);
+  assert.equal(h.saltReads, 0);
+  // The propose-time bound rides on the ask, the same as simulate's.
+  const wire: Array<Record<string, unknown>> = [];
+  const quick = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { params: Array<Record<string, unknown>> };
+    wire.push(body.params[0]);
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: [] }), { status: 200 });
+  }) as typeof fetch;
+  const viaWire = harness({ deps: { relay: relayClient({ fetchImpl: quick, apiKey: '' }) } });
+  assert.equal(await viaWire.rail.quote!(draftOf({ minAmountOut: 0 })), null);
+  assert.equal(wire[0]['wait_ms'], RELAY_SIMULATE_WAIT_MS, 'the propose-time bound');
+
+  const nobody = harness({ quotes: [] });
+  assert.equal(await nobody.rail.quote!(draftOf({ minAmountOut: 0 })), null);
+  assert.equal(nobody.signed.length, 0);
+
+  // simulate and execute still refuse the zero floor: quote() is the one caller without one.
+  const sim = await h.rail.simulate(draftOf({ minAmountOut: 0 }));
+  assert.equal(sim.ok, false);
+  assert.match(sim.error ?? '', /minAmountOut is 0/);
+});

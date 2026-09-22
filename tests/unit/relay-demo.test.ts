@@ -9,13 +9,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { AppConfig, LedgerSnapshot, Proposal, Rail, WriteDraft } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Proposal, Rail, SwapDraft, WriteDraft } from '../../src/types.ts';
 import type { Ledger } from '../../src/ledger/index.ts';
 import type { ProposalStage } from '../../src/proposals/view.ts';
 import { DEMO_DEADLINE_ENV, DEMO_EXPLORER, demoRails, demoStallSweep } from '../../src/rails/demo.ts';
 import type { DemoKnobs } from '../../src/rails/demo.ts';
 import { demoAssetOf, demoHolding, loadDemoLedger, loadDemoReads, resetDemoBalances } from '../../src/ledger/demo.ts';
 import { buildTransactions } from '../../src/transactions.ts';
+import { floorUnderQuote } from '../../src/rails/slippage.ts';
 import { makeCtx, SELF_EVM } from './helpers/proposals.ts';
 
 function cfgFor(mode: 'live' | 'demo'): AppConfig {
@@ -145,4 +146,30 @@ test('a demo swap under swap.rail oneclick still walks the 1Click words', async 
   const stages = await watchStages(h, filed.id, 5_000);
   assert.deepEqual(stages, ['submitting', 'KNOWN_DEPOSIT_TX', 'PENDING_DEPOSIT', 'PROCESSING', 'SUCCESS', 'crediting', 'confirmed']);
   resetDemoBalances();
+});
+
+/* THE FLOOR COMES OFF THE QUOTE (frozen rule 2). A swap proposed with no minAmountOut takes
+   its floor from the rail's own floor-free price, one percent under, cut toward zero at six
+   significant figures, and the row carries that floor before anyone sees it. A pair nobody
+   prices is refused, never floored at zero. Before 2026-09-21 the tool required a floor from
+   the agent, which sized it off a market price: the guess the rule forbids. */
+test('a swap proposed without a floor takes one percent under the rail\'s own quote, and no price is a refusal', async () => {
+  resetDemoBalances();
+  const h = demoHarness();
+  await h.ledger.refresh();
+  const { minAmountOut: _named, ...noFloor } = SWAP;
+  const filed = await h.svc.proposeSwap(noFloor);
+  const draft = filed.draft as SwapDraft;
+  assert.ok(draft.minAmountOut > 0, `the app set a floor: ${draft.minAmountOut}`);
+  const registry = demoRails({ cfg: cfgFor('demo'), refresh: async () => {}, knobs: { stageScale: 0.05, stall: false, deadlineSec: null, providerEnd: null, hold: false } });
+  const priced = await registry.for(draft)!.quote!(draft);
+  assert.ok(priced !== null && priced > 0);
+  assert.equal(draft.minAmountOut, floorUnderQuote(priced), 'the floor is one percent under the rail\'s quote, cut');
+  assert.ok(draft.minAmountOut < priced && draft.minAmountOut > priced * 0.985);
+  assert.notEqual(filed.status, 'policy_refused', JSON.stringify(filed.verdict));
+
+  const unpriced = await h.svc.proposeSwap({ ...noFloor, toSymbol: 'XYZ' });
+  assert.equal(unpriced.status, 'policy_refused');
+  assert.match(unpriced.verdict.reasons.join(' '), /Nobody offered a price for USDC to XYZ right now, so no floor could be set/);
+  assert.equal((unpriced.draft as SwapDraft).minAmountOut, 0, 'nothing was signed or floored');
 });

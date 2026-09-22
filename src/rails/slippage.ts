@@ -21,3 +21,20 @@ export function floorTooLow(quoteOut: bigint, minOut: bigint, maxSlippageBps: nu
   const limit = (quoteOut * BigInt(10_000 - maxSlippageBps)) / 10_000n;
   return minOut < limit;
 }
+
+/* THE FLOOR THE APP SETS WHEN THE AGENT NAMES NONE: one percent under the rail's own live
+   quote, cut toward zero at six significant figures so the card prints what was approved
+   (frozen rule 2: off the quote, never off a guess, never zero; a floor is truncated, never
+   rounded). An agent used to have to supply a floor before any quote existed and sized it off
+   a market price, which is the guess the rule forbids. */
+export const DEFAULT_FLOOR_BPS = 100;
+
+export function floorUnderQuote(quoteOut: number, bps: number = DEFAULT_FLOOR_BPS): number {
+  if (!(quoteOut > 0) || !Number.isFinite(quoteOut)) return 0;
+  const raw = quoteOut * (10_000 - bps) / 10_000;
+  // Six significant figures, cut toward zero.
+  const magnitude = Math.floor(Math.log10(raw));
+  const scale = Math.pow(10, 5 - magnitude);
+  return Math.floor(raw * scale) / scale;
+}
+

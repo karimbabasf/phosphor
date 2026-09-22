@@ -746,7 +746,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   // an obvious home.
   function requireUsable(): void {}
 
-  async function plan(draft: SwapDraft): Promise<Plan> {
+  async function plan(draft: SwapDraft, floorless = false): Promise<Plan> {
     requireVenue(draft);
     requireUsable();
 
@@ -754,8 +754,10 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
        minOutBase is the number the signed payload is checked against, and the number the
        balance read-back subtracts against after the swap. That read-back exists so a swap
        crediting nothing is not reported as a success; against a zero floor it reported a total
-       loss as a measured success, in the sentence that advertises the measurement. */
-    if (!(draft.minAmountOut > 0)) {
+       loss as a measured success, in the sentence that advertises the measurement. `floorless`
+       is the one caller with no floor yet, quote() below, which asks the price the floor will
+       be set under and never reaches a signature. */
+    if (!floorless && !(draft.minAmountOut > 0)) {
       throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
     }
 
@@ -781,7 +783,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       originDecimals: origin.decimals,
       destDecimals: dest.decimals,
       amountBase: toBaseUnits(draft.amountIn, origin.decimals),
-      minOutBase: toBaseUnits(draft.minAmountOut, dest.decimals),
+      minOutBase: floorless ? 0n : toBaseUnits(draft.minAmountOut, dest.decimals),
     };
   }
 
@@ -1188,5 +1190,21 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     return last;
   }
 
-  return { kind: 'swap', valueUsd, simulate, execute };
+  /* THE PRICE WITH NO FLOOR IN THE QUESTION: 1Click's dry quote for the draft's amountIn, read
+     as the bought coin's units. Null when the router has no price. Nothing is signed here. */
+  async function quote(draft: SwapDraft): Promise<number | null> {
+    const p = await plan(draft, true);
+    const response = await (api as IntentsApiPort).quote({
+      dry: true,
+      originAsset: p.originAsset,
+      destinationAsset: p.destinationAsset,
+      amount: p.amountBase.toString(),
+      account: draft.from,
+    });
+    const out = response.quote.amountOut;
+    if (typeof out !== 'string' || !/^\d+$/.test(out)) return null;
+    return Number(formatUnits(BigInt(out), p.destDecimals));
+  }
+
+  return { kind: 'swap', valueUsd, simulate, quote, execute };
 }

@@ -232,11 +232,13 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     }
   }
 
-  async function plan(draft: SwapDraft): Promise<Plan> {
+  async function plan(draft: SwapDraft, floorless = false): Promise<Plan> {
     requireVenue(draft);
     /* A floor of zero is not a floor. minOutBase is the number the payload is checked against
-       and the number the balance read-back is judged by; against zero every payload passes. */
-    if (!(draft.minAmountOut > 0)) throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
+       and the number the balance read-back is judged by; against zero every payload passes.
+       `floorless` is the one caller that has no floor yet because it is asking for the price
+       the floor will be set under (quote below); it never reaches a signature. */
+    if (!floorless && !(draft.minAmountOut > 0)) throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
 
     // The same registry the 1Click rail reads (resolveAsset): the asset ids are pinned into
     // the plan here at propose time and compared again against the quote before signing.
@@ -254,9 +256,25 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
       inDecimals: origin.decimals,
       outDecimals: dest.decimals,
       amountBase: truncateToBaseUnits(draft.amountIn, origin.decimals),
-      minOutBase: truncateToBaseUnits(draft.minAmountOut, dest.decimals),
+      minOutBase: floorless ? 0n : truncateToBaseUnits(draft.minAmountOut, dest.decimals),
       list,
     };
+  }
+
+  /* THE PRICE WITH NO FLOOR IN THE QUESTION. The propose-time ask (a short solver wait, this
+     call's own deadline), read as the bought coin's units and truncated to its decimals. Null
+     when nobody answered: the caller refuses, it never guesses. Nothing is signed here. */
+  async function quote(draft: SwapDraft): Promise<number | null> {
+    const p = await plan(draft, true);
+    let pick: ReturnType<typeof pickQuote>;
+    try {
+      pick = await bestQuote(p, true);
+    } catch (err) {
+      if (noReply(err)) return null;
+      throw err;
+    }
+    if (pick.chosen === null) return null;
+    return Number(formatUnits(BigInt(pick.chosen.amountOut), p.outDecimals));
   }
 
   // `bounded` is the propose-time ask: a short solver wait and this call's own deadline.
@@ -661,5 +679,5 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     }
   }
 
-  return { kind: 'swap', valueUsd, simulate, execute };
+  return { kind: 'swap', valueUsd, simulate, quote, execute };
 }

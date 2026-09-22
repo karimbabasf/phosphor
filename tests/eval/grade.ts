@@ -227,6 +227,9 @@ export function gradeTrace(scenario: Scenario, run: Run): Check {
     if (check.equals !== undefined && JSON.stringify(value) !== JSON.stringify(check.equals)) {
       return fail(`${check.tool}.${check.path} is ${show(value)}, not ${show(check.equals)}`);
     }
+    if (check.absentOrGt !== undefined && value !== undefined && !(typeof value === 'number' && value > check.absentOrGt)) {
+      return fail(`${check.tool}.${check.path} is ${show(value)}, which is neither absent nor over ${check.absentOrGt}`);
+    }
     if (check.gt !== undefined && !(typeof value === 'number' && value > check.gt)) {
       return fail(`${check.tool}.${check.path} is ${show(value)}, which is not over ${check.gt}`);
     }

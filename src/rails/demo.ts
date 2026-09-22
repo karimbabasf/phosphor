@@ -209,6 +209,8 @@ function demoRail(kind: RailKind, deps: DemoRailDeps, knobs: DemoKnobs): Rail {
     simulate: async (draft) => simulate(draft),
     execute: (draft, _id, hooks) => walk(draft, hooks, deps, knobs),
   };
+  // The floor-free price for a swap, the same fixture arithmetic simulate prices with.
+  if (kind === 'swap') rail.quote = async (draft) => swapQuote(draft as SwapDraft)?.out ?? null;
   built.add(rail);
   return rail;
 }

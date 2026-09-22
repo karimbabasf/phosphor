@@ -1140,14 +1140,14 @@ registerPropose(
   'swap',
   `Proposes swapping one token for another inside NEAR Intents: one signed intent over the balance this app already holds there, moving nothing on any chain. Both legs stay inside NEAR Intents.
 
-chain and toChain name each ASSET's home chain, which is how the token list tells "USDC from eth" from "USDC from arb"; they are never a wallet or a place the money goes. chain: 'sol' means "the SOL held inside NEAR Intents", not a Solana wallet. NEAR itself is held inside NEAR Intents as wNEAR (wrap.near), the same coin in its NEP-141 form, and the app books it under that name: when the person asks for NEAR, propose toSymbol 'NEAR' (or 'wNEAR') on toChain 'near' and tell them it lands as wNEAR, worth the same and swappable back one for one. Money reaches the balance through the deposit card in the window, never through a tool. ${CANNOT_APPROVE}`,
+chain and toChain name each ASSET's home chain, which is how the token list tells "USDC from eth" from "USDC from arb"; they are never a wallet or a place the money goes. chain: 'sol' means "the SOL held inside NEAR Intents", not a Solana wallet. NEAR itself is held inside NEAR Intents as wNEAR (wrap.near), the same coin in its NEP-141 form, and the app books it under that name: when the person asks for NEAR, propose toSymbol 'NEAR' (or 'wNEAR') on toChain 'near' and tell them it lands as wNEAR, worth the same and swappable back one for one. Money reaches the balance through the deposit card in the window, never through a tool. ${CANNOT_APPROVE} minAmountOut is the floor in the bought coin's units. Leave it out unless the person named one: the app sets the floor one percent under its own live quote and puts it on the card, which is the only floor that is off a quote rather than a guess. A floor you name is refused when it sits more than twenty percent under the quote.`,
   {
     chain: CHAIN,
     toChain: CHAIN.optional(),
     fromSymbol: z.string().max(16),
     toSymbol: z.string().max(16),
     amountIn: z.number(),
-    minAmountOut: z.number(),
+    minAmountOut: z.number().positive().optional(),
   },
 );
 

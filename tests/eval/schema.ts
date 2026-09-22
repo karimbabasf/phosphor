@@ -83,6 +83,10 @@ export type ArgCheck = {
   matches?: string;
   // The argument is absent, or it holds this value. S8's `confirmed` before the yes.
   absent?: boolean;
+  // The argument is absent (the app supplies it) or over this number. A swap's floor since
+  // 2026-09-21: the app sets it under its own quote when the agent names none, and a named one
+  // is never zero.
+  absentOrGt?: number;
 };
 
 export type WindowExpect = {
