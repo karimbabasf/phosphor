@@ -13,6 +13,7 @@
 // accumulate so the UI can show the whole chain of reasoning, not just the last line.
 
 import { z } from 'zod';
+import { policyRecord } from './file.ts';
 import { isRailKind } from '../rails/kinds.ts';
 import { classify } from '../composition.ts';
 import type { Position } from '../composition.ts';
@@ -58,7 +59,7 @@ const patchSchema = z
       .optional(),
     composition: z
       .object({
-        maxIssuerShare: z.record(z.string(), shareField).optional(),
+        maxIssuerShare: policyRecord(shareField).optional(),
         maxFreezableShare: shareField.optional(),
         forbiddenIssuers: z.array(z.string()).optional(),
       })
