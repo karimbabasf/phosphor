@@ -5,6 +5,37 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.9.0
+
+Built 2026-09-22, the any token any chain pass. Not tagged at the time of writing.
+
+- A swap reaches any coin the venue lists on any chain it lists, not only the majors. The app
+  used to know five chains on the spend side while the deposit card already took money on
+  thirty five. One chain table now serves both, and it carries the venue's own name for each
+  chain, because the venue spells three of them differently and a guessed spelling prices a
+  quote against the wrong chain.
+- A payout reaches every chain whose address the app can decode by itself: every EVM chain,
+  Solana, Fogo and NEAR. A chain it cannot decode is refused by name, and the refusal says what
+  is missing rather than pretending the chain is unknown. An address the app cannot check is an
+  address it will not hand money to.
+- When one ticker means two different coins on one chain, the app asks instead of choosing. Two
+  tiles, a plain line each, and no long identifier on the face of the card. There is one such
+  pair on the venue's list today and its two halves are a hundredfold apart in decimals, so a
+  silent pick would have been a silent hundredfold mistake.
+- Every move card says what it is worth in dollars, and says "we cannot price this" when the
+  venue quotes no price. The dollar figure is the check a person can actually make: a wrong coin
+  or a wrong decimals reads as a number that is obviously wrong.
+- A card you only have to read no longer looks like a warning. The amber ring belonged to a
+  request waiting on you, and it was being painted over receipts, nudges and moves already under
+  way. The ask now sits one step above the rail in the assistant's own colour, and everything
+  else sits flat and quiet.
+- A card sits in the middle of the conversation instead of down on the composer.
+- A receiver you approved before is still known to the app, so a wallet you have paid twice does
+  not come back as a stranger.
+- Toncoin is Gram. The app calls the coin what the venue calls it.
+- The agent says how a trade will fill before it arms one. A resting order and a bar close
+  condition make different promises, and the same English asks for both.
+
 ## 0.8.0
 
 Built 2026-09-20, the ready-for-people pass. Not tagged at the time of writing.
