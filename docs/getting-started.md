@@ -6,7 +6,7 @@ you from the download to a wallet that is made, backed up and locked, and shows 
 
 ## Download
 
-Download the disk image from [phosphor.karimbabasf.com](https://phosphor.karimbabasf.com). It needs
+Download the disk image from [phosphor.karimbabasf.com/download/mac](https://phosphor.karimbabasf.com/download/mac). It needs
 an Apple silicon Mac on macOS 13.5 or later. Open the disk image and drag Phosphor into
 Applications. The source is at [github.com/karimbabasf/phosphor](https://github.com/karimbabasf/phosphor).
 
