@@ -693,8 +693,32 @@ button.bar-state:active { transform: scale(0.97); }
 
 /* ---------- The decision dock ---------- */
 
-/* Inside the conversation column, between the transcript and the composer, and
-   the one region drawn in amber: a transcript row cannot look like it.
+/* Inside the conversation column, in the middle of the rail, and the one region
+   raised off it: a transcript row cannot look like it.
+
+   TWO JOBS, TWO TREATMENTS. Karim, 2026-09-22: a status he is waiting on read
+   as an error he had to clear and click past. It did, because one box in one
+   amber was doing both jobs, and amber is the colour this window uses for a
+   warning. So the jobs are split by ground step and by colour, not by a border
+   hue alone:
+
+   A card to read (a receipt, a nudge, a move already running, a recovery card)
+   sits ON the rail: the --bg-1 ground the rest of the window uses, a plain
+   --line hairline, no ring, no lift. It is information, and it borrows nothing
+   from a warning.
+
+   A decision sits ABOVE the rail: the --bg-2 step under a trace of the
+   assistant's own colour, an edge and a kicker in it. --agent is what this
+   window already paints the things the assistant drew (tokens.css), so the
+   card between an agent and the wallet is lit in the colour of who is asking.
+   It is the one colour free of another meaning here: green is done and up,
+   red is refused and down, amber is a warning, and a request for a signature
+   is none of those. It still stops a person, because it is the only raised
+   surface in the rail and the only place this colour frames anything.
+
+   The ground steps are told apart without a shadow between them (tokens.css),
+   which is why the raise is a step and not a drop shadow: a card floating over
+   the rail is the look this window does not ship.
 
    Two parts inside it, whatever card is up: a body that scrolls and a foot that
    does not. The facts are the body; the answer (No and Yes, a read card's
@@ -726,18 +750,19 @@ button.bar-state:active { transform: scale(0.97); }
   max-height: calc(100% - 120px);
   overflow: hidden;
   margin: 0 var(--s-3) var(--s-2);
-  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--agent) 48%, var(--line));
   border-radius: var(--radius);
   /* The ground is a variable so the three states below set it in one place. */
-  --dock-ground: color-mix(in srgb, var(--bg-1) 94%, var(--warn));
+  --dock-ground: color-mix(in srgb, var(--bg-2) 94%, var(--agent));
   background: var(--dock-ground);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--warn) 45%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--agent) 20%, transparent);
 }
 
 .dock[hidden] { display: none; }
 
-/* The answer, for its own beat. Amber is the colour of a request waiting on a
-   person, so holding it after the click would be the window still asking. */
+/* The answer, for its own beat, and already off the raised step: the question
+   has been answered, so the card stops standing above the rail. The green edge
+   is what is left of the ask. */
 .dock[data-state="done"] {
   --dock-ground: var(--bg-1);
   border-color: var(--ink-edge);
@@ -750,6 +775,18 @@ button.bar-state:active { transform: scale(0.97); }
   border-color: var(--line);
   box-shadow: none;
 }
+
+/* THE RING THAT LEAKED THE AMBER. decision.js lights the surface edge while a
+   row is held (hold(), data-glow), and a move already running or a row a rule
+   is holding carries one, so those got the ring too: the quiet card above was
+   drawn and then painted over in the wait tone, and a status a person can do
+   nothing about wore the same edge as a request for his signature. That is the
+   amber he was looking at. The ring is the ask's alone now, and it carries the
+   same colour as the border under it. The extra [data-surface] is only weight:
+   agent.css defines the tone and is loaded after this file. */
+.dock[data-surface][data-glow-tone="wait"] { --glow-c: var(--agent); }
+
+.dock[data-surface][data-state]::after { opacity: 0; }
 
 .dock-card {
   display: flex;
@@ -782,36 +819,34 @@ button.bar-state:active { transform: scale(0.97); }
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 40px), transparent);
 }
 
-/* The foot: a hairline in the dock's own amber over the buttons, so the pinned
-   part reads as one card with the body and not as a bar laid over it. It never
-   shrinks: the body gives up the room, whatever the fold under the answer
-   opens to. Empty (the answer flash, a live row with nothing to press) it
-   takes no room at all. */
+/* The foot: one hairline over the buttons, so the pinned part reads as one card
+   with the body and not as a bar laid over it. The line is the window's own
+   --line in every state now: in the dock's colour it was a second coloured
+   rule inside a card that already carries its state on the edge, and on a card
+   there is nothing to decide about it was a warning drawn across a nudge. It
+   never shrinks: the body gives up the room, whatever the fold under the
+   answer opens to. Empty (the answer flash, a live row with nothing to press)
+   it takes no room at all. */
 .dock-foot {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
   padding: var(--s-3) var(--s-4) var(--s-4);
-  border-top: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+  border-top: 1px solid var(--line);
 }
 
 .dock-foot:empty { display: none; }
 
-.dock[data-state="read"] .dock-foot,
-.dock[data-state="refused"] .dock-foot,
-.dock[data-state="done"] .dock-foot {
-  border-top-color: var(--line);
-}
-
-/* The state word over the headline, in the dock's colour: the one place in the
-   window where amber is text, because the card is the ask. */
+/* The state word over the headline, in the same colour as the edge around it,
+   because the card is the ask. A card to read says its word in the quietest
+   text the window has: it is a label, not a call. */
 .dock-kicker {
-  color: var(--warn);
+  color: var(--agent);
 }
 
 .dock[data-state="read"] .dock-kicker {
-  color: var(--text-2);
+  color: var(--text-3);
 }
 
 /* No first, so the harmless answer is the one the hand reaches. They share the
@@ -874,9 +909,11 @@ button.bar-state:active { transform: scale(0.97); }
   outline-offset: -2px;
 }
 
-/* What a held row is waiting for, in amber: a status, with nothing to press. */
+/* What a held row is waiting for: a status, with nothing to press, so it is
+   written the way the window writes a fact and not the way it writes a
+   warning. Amber here told a person to act on a line no click can move. */
 .dock-hold {
-  color: var(--warn);
+  color: var(--text-2);
   font-size: var(--fs-13);
   line-height: 1.45;
 }
@@ -888,12 +925,8 @@ button.bar-state:active { transform: scale(0.97); }
    when these lines are the only disclosure. The same fold as the checks
    (ui/design/checks.css): height through a grid track, 200 ms. */
 .dock-report {
-  border-top: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
+  border-top: 1px solid var(--line);
   padding-top: var(--s-1);
-}
-
-.dock[data-state="read"] .dock-report {
-  border-top-color: var(--line);
 }
 
 .dock-report-toggle {

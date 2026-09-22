@@ -78,7 +78,11 @@ test('the transcript gives up the free space so the card sits in the middle, and
 test('the answer row is a pinned foot after the scrolling body, never a sticky row inside it', () => {
   const foot = block(LAYOUT, '.dock-foot');
   assert.match(foot, /flex:\s*0 0 auto;/, 'a foot that shrinks puts the answer under the fold');
-  assert.match(foot, /border-top:\s*1px solid color-mix\(in srgb, var\(--warn\) 28%, transparent\);/);
+  // The hairline was the dock's amber at 28 percent until 2026-09-22. Karim read the whole
+  // amber treatment as an error to clear, and a second coloured rule inside a card that already
+  // says its state on its edge was part of it: on a nudge or a receipt it drew a warning across
+  // something there is nothing to decide about. One --line hairline in every state now.
+  assert.match(foot, /border-top:\s*1px solid var\(--line\);/);
   assert.doesNotMatch(foot, /position:\s*sticky/);
   assert.doesNotMatch(LAYOUT, /\.dock-body > \.dock-actions/, 'a rule styles the answer row inside the scrolling body');
   assert.doesNotMatch(LAYOUT, /\.dock-body > \.screen-actions/, 'a rule styles a read card\'s row inside the scrolling body');
