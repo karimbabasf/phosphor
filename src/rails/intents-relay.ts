@@ -59,6 +59,7 @@ import { liveVerifier } from '../relay/verifier.ts';
 import type { VerifierPort } from '../relay/verifier.ts';
 import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
 import { noReply } from './intents-submit.ts';
+import { pickOrExplain } from './asset-words.ts';
 
 // SwapDraft.venue for this rail. Kind 'swap' is shared with the 1Click rail; the venue routes.
 export const INTENTS_RELAY_VENUE = 'intents-relay';
@@ -243,8 +244,8 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     // The same registry the 1Click rail reads (resolveAsset): the asset ids are pinned into
     // the plan here at propose time and compared again against the quote before signing.
     const list = await client.tokens();
-    const origin = resolveAsset(draft.chain, draft.fromSymbol, tokens, list);
-    const dest = resolveAsset(draft.toChain, draft.toSymbol, tokens, list);
+    const origin = pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    const dest = pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain);
     if (origin.assetId === dest.assetId) {
       throw new Error(`${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
     }

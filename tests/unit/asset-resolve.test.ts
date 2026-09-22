@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 
 import { resolveAsset } from '../../src/intents.ts';
 import type { OneClickToken, TokensFile } from '../../src/intents.ts';
+import { pickOrExplain } from '../../src/rails/asset-words.ts';
 
 const tokens = {
   base: { USDC: { tokenId: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', decimals: 6 } },
@@ -69,4 +70,21 @@ test('a ticker on a chain that does not carry it still throws, naming the chain'
 
 test('a chain the registry does not know throws rather than guessing a venue name', () => {
   assert.throws(() => resolveAsset('madeupchain', 'USDC', tokens, list), /madeupchain/);
+});
+
+// ---------- what a rail does with an answer it cannot act on alone ----------
+
+test('a single answer passes straight through', () => {
+  const pick = resolveAsset('ton', 'GRAM', tokens, list);
+  assert.equal(pickOrExplain(pick, 'GRAM', 'ton').decimals, 9);
+});
+
+/* The refusal has to carry the way out of itself: both assetIds, and the words that say to name
+   one. An agent that reads "ambiguous" and nothing else asks the person, which is the one thing
+   this refusal is trying to avoid at this stage. */
+test('a question refuses with both assetIds and how to answer it', () => {
+  const pick = resolveAsset('hypercore', 'USDC', tokens, list);
+  assert.throws(() => pickOrExplain(pick, 'USDC', 'hypercore'), /1cs_v1:hypercore:hip1:0x6d1e/);
+  assert.throws(() => pickOrExplain(pick, 'USDC', 'hypercore'), /1cs_v1:hypercore:erc20:0xb883/);
+  assert.throws(() => pickOrExplain(pick, 'USDC', 'hypercore'), /name one of them/);
 });

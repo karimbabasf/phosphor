@@ -54,6 +54,7 @@ import type { PreflightRunner } from '../preflight/live.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { NETWORKS, addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, validateAddress } from '../chainscan/index.ts';
 import type { AddressSummary, ChainNetwork } from '../chainscan/index.ts';
+import { pickOrExplain } from './asset-words.ts';
 
 // The funds are spent inside the verifier, so the counterparty is the verifier: the same
 // allowlist entry the swap, send and HyperCore rails use.
@@ -251,7 +252,11 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     const to = requireReceiver(draft);
     const list = await api.tokens();
     const held = findHeld(list, draft);
-    const destination = resolveAsset(chain, draft.symbol.toUpperCase(), tokens, list);
+    const destination = pickOrExplain(
+      resolveAsset(chain, draft.symbol.toUpperCase(), tokens, list),
+      draft.symbol,
+      chain,
+    );
     if (destination.decimals !== held.decimals) {
       throw new Error(
         `${draft.symbol} has ${held.decimals} decimals inside the verifier and ${destination.decimals} on ${NETWORKS[draft.network].label}; ` +

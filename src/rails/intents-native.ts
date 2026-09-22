@@ -67,6 +67,7 @@ import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
 import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import { submitSignedIntent } from './intents-submit.ts';
+import { pickOrExplain } from './asset-words.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -771,8 +772,8 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     // has no row for an asset with no contract address. Without this, the funding path could
     // deposit ETH and no swap could ever spend it.
     const list = await (api as IntentsApiPort).tokens();
-    const origin = resolveAsset(draft.chain, draft.fromSymbol, tokens, list);
-    const dest = resolveAsset(draft.toChain, draft.toSymbol, tokens, list);
+    const origin = pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    const dest = pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain);
     if (origin.assetId === dest.assetId) {
       throw new Error(`${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
     }

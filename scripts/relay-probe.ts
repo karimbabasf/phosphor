@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { formatUnits } from 'viem';
 import { loadConfig } from '../src/config.ts';
 import { oneClickClient, resolveAsset, toBaseUnits } from '../src/intents.ts';
+import { pickOrExplain } from '../src/rails/asset-words.ts';
 import type { TokensFile } from '../src/intents.ts';
 import type { ChainId } from '../src/types.ts';
 import { relayClient } from '../src/relay/client.ts';
@@ -65,8 +66,8 @@ const amount = Number(arg('--amount', '2'));
 
 const tokens = JSON.parse(fs.readFileSync(path.join(root, 'data', 'tokens.json'), 'utf8')) as TokensFile;
 const list = await oneClickClient().tokens();
-const origin = resolveAsset(chain, fromSymbol, tokens, list);
-const dest = resolveAsset(chain, toSymbol, tokens, list);
+const origin = pickOrExplain(resolveAsset(chain, fromSymbol, tokens, list), fromSymbol, chain);
+const dest = pickOrExplain(resolveAsset(chain, toSymbol, tokens, list), toSymbol, chain);
 const amountBase = toBaseUnits(amount, origin.decimals);
 
 console.log(`pair    : ${amount} ${fromSymbol} (${origin.assetId}) -> ${toSymbol} (${dest.assetId})`);

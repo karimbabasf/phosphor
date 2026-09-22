@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonicalSymbol, resolveAsset, type OneClickToken, type TokensFile } from '../../src/intents.ts';
+import { pickOrExplain } from '../../src/rails/asset-words.ts';
 
 const TOKENS = {
   eth: {},
@@ -32,12 +33,12 @@ test('the alias is read the way every other ticker on this surface is typed: cas
   // Review, 2026-09-20: WNEAR and near both fell through to a registry sentence.
   for (const asked of ['near', 'WNEAR', 'wnear', 'Near']) {
     assert.equal(canonicalSymbol('near', asked), 'wNEAR', asked);
-    assert.equal(resolveAsset('near', asked, TOKENS, LIST).assetId, 'nep141:wrap.near', asked);
+    assert.equal(pickOrExplain(resolveAsset('near', asked, TOKENS, LIST), asked, 'near').assetId, 'nep141:wrap.near', asked);
   }
 });
 
 test('resolveAsset turns NEAR on near into wrap.near with the chain\'s 24 decimals', () => {
-  const found = resolveAsset('near', 'NEAR', TOKENS, LIST);
+  const found = pickOrExplain(resolveAsset('near', 'NEAR', TOKENS, LIST), 'NEAR', 'near');
   assert.equal(found.assetId, 'nep141:wrap.near');
   assert.equal(found.decimals, 24);
 });

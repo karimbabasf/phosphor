@@ -704,9 +704,12 @@ test('execute refuses a draft whose proceeds go to someone else', async () => {
   assert.equal(h.quotes.length, 0);
 });
 
+/* The registry has no DAI row and the venue's list carries no DAI on base either, so the refusal
+   now comes from the tier that reads the list. It still names the coin and the chain, which is
+   what the caller has to fix. */
 test('execute refuses an asset pair the verifier does not list', async () => {
   const h = harness();
-  await assert.rejects(() => railOf(h).execute(draftOf({ fromSymbol: 'DAI' })), /no token registry entry for DAI/);
+  await assert.rejects(() => railOf(h).execute(draftOf({ fromSymbol: 'DAI' })), /1click lists no DAI on base/);
   assert.equal(h.quotes.length, 0);
 });
 
