@@ -40,7 +40,7 @@
 import { CAPABILITIES } from './greeting.ts';
 import { profileBlock } from './profile/index.ts';
 import type { Profile } from './profile/index.ts';
-import { ALWAYS_CLICK_TOOLS, FIGURES, IDENTITY, MONEY, VERIFY, WORDS } from './persona.ts';
+import { ALWAYS_CLICK_TOOLS, FIGURES, IDENTITY, MONEY, TRADING, VERIFY, WORDS } from './persona.ts';
 import { skillsInstruction } from './skills.ts';
 
 export type RoleOptions = {
@@ -190,6 +190,10 @@ export function buildRole(opts: RoleOptions): string {
     'THE MONEY.',
     '',
     ...MONEY,
+    '',
+    'HOW A TRADE FILLS, which decides what you may promise about one.',
+    '',
+    ...TRADING,
     '',
     'NOTHING IS DONE UNTIL YOU HAVE READ IT BACK.',
     '',

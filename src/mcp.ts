@@ -979,6 +979,22 @@ registerView(
 
 const TRADE_ANSWER = 'Returns the trading surface as it now stands, so no follow-up read is needed.';
 
+/* WHAT EVERY TRADE TOOL HAS TO SAY ABOUT FILLING. The three entry shapes make three different
+   promises and a person asks for all of them in the same English ("buy when it hits 108"), so a
+   description that leaves this out is a description that lets an agent promise a touch and
+   deliver a bar close. src/persona.ts carries the whole rule; this is the part that cannot be
+   missing from the tool the agent is looking at while it writes the plan. */
+const HOW_IT_FILLS = [
+  'SAY WHICH SHAPE THIS IS BEFORE IT IS ARMED. A market entry fills now, about a second end to end.',
+  'A limit or stop entry rests at the venue and fills the instant price touches it, which is the',
+  'promise the words "when it hits X" make. A bar-close condition is the app watching instead: it',
+  'fires only once a bar of that timeframe CLOSES on the right side, up to one whole bar after the',
+  'touch, and a bar that wicks through and closes back does not fire at all. So never call a close',
+  'condition "when it hits X": name the timeframe, use the word closes, and give the wait in the',
+  'same sentence. Before arming one, say what nothing happening will look like; after it fires,',
+  'say the fill price and how long it took.',
+].join(' ');
+
 registerRead(
   'trade_read',
   [
@@ -1121,6 +1137,8 @@ registerView(
     '`remove: true` to take it off. Only an idea can be redrawn or removed; an armed plan changes',
     'through propose_trade_change. Returns the plan with its id and, where the market is known, what',
     'it would put at stake.',
+    '',
+    HOW_IT_FILLS,
     TRADE_ANSWER,
   ].join(' '),
   {
@@ -1203,6 +1221,8 @@ registerPropose(
     'at risk until they hold. Refused by name: a stop on the wrong side of the entry or the mark, a',
     'stop past liquidation, under $10 after lot rounding, more margin than is free, leverage above',
     'the coin maximum or different from another plan on the same coin.',
+    '',
+    HOW_IT_FILLS,
     CANNOT_APPROVE,
   ].join(' '),
   {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ALWAYS_CLICK_TOOLS, FIGURES, IDENTITY, MONEY, OPERATING_RULES, VERIFY, handshakeInstructions } from '../../src/persona.ts';
+import { ALWAYS_CLICK_TOOLS, FIGURES, IDENTITY, MONEY, OPERATING_RULES, TRADING, VERIFY, handshakeInstructions } from '../../src/persona.ts';
 import { buildRole } from '../../src/role.ts';
 import { greetingRules } from '../../src/greeting.ts';
 
@@ -48,6 +48,19 @@ test('both surfaces state the money graph, the withdraw rule and the verificatio
     for (const line of [...MONEY, ...VERIFY]) assert.ok(text.includes(line), `missing: ${line.slice(0, 60)}`);
     assert.ok(/always by a human click/.test(text));
     assert.ok(/proposal_status/.test(text));
+  }
+});
+
+/* A close condition is not a touch, and both surfaces have to say so. The failure this pins:
+   the agent writes a plan that fires on a 15m close, tells the person "when it hits 108", and
+   the person watches 108 print, comes back, and finds nothing fired. Nothing is broken and the
+   answer was still wrong. */
+test('both surfaces say how a trade fills and never call a close condition a touch', () => {
+  for (const text of [handshakeInstructions(ROOT), role()]) {
+    for (const line of TRADING) assert.ok(text.includes(line), `missing: ${line.slice(0, 60)}`);
+    assert.ok(/rest AT Hyperliquid/.test(text), 'the venue-held entries are not named as such');
+    assert.ok(/CLOSES on the right side/.test(text), 'the close condition is not spelled out');
+    assert.ok(/does not fire at all/.test(text), 'the wick that closes back is not named');
   }
 });
 

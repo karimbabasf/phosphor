@@ -296,7 +296,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       },
       {
         tool: 'propose_trade',
-        does: 'arm a plan, by planId or whole. The venue holds entry, stop and target. The policy reads the collateral at stake: under the click threshold it runs at once, above it the human clicks.',
+        does: 'arm a plan, by planId or whole. The venue holds entry, stop and target. The policy reads the collateral at stake: under the click threshold it runs at once, above it the human clicks. A limit or stop entry fills the instant price touches it; a bar-close condition fires only after that bar closes, so say which one you gave them.',
       },
       {
         tool: 'propose_trade_change',

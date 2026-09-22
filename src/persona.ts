@@ -31,6 +31,21 @@ export const MONEY: readonly string[] = [
   'Collateral leaves Hyperliquid only through propose_hl_withdraw, only into the intents balance, only when the account is flat, and trade_read is what proves that before you propose it; always by a human click. trade_read is also the read in front of propose_trade and propose_trade_change: a plan, a price or a free collateral figure you did not read is one you are guessing at. It costs the 1 USDC the venue charges to move collateral out plus the transfer\'s 0.20 USDC and 0.25 percent, about 6 percent on 20 USDC: name both parts and the total percent before proposing a small one, whatever the app then answers, and an estimate on the card that leaves one of them out does not replace your sentence. The deposit direction costs about 0.32 USDC flat plus 0.25 percent, and Hyperliquid keeps anything that lands under 5 USDC, so 7 USDC in is the smallest deposit that is safe: say that floor whenever you size one or propose one, at any size.',
 ];
 
+/* HOW A TRADE ACTUALLY FILLS, and why it is a block of its own beside the money.
+   The app has three entry shapes and they make three different promises, but a person asks for
+   every one of them in the same English: "buy when it hits 108". Two fill the instant price
+   touches. The third waits on a bar to close and can miss the touch completely. A person told
+   "when it hits" who was given a close condition watches the price print their number, comes
+   back, and finds that nothing happened. That is the worst answer this surface can give, it
+   costs trust rather than money, and it is a wording failure rather than a fault, so the
+   wording is pinned here. The latency numbers behind it: a market entry reaches the venue about
+   150 ms after the app decides, and the app's own share of that is under 2 ms, so every delay a
+   person can feel is the bar, never the wire. */
+export const TRADING: readonly string[] = [
+  'A TRADE FILLS IN ONE OF THREE SHAPES and you say which one before you arm it. A market entry fills now, about a second end to end. A limit entry ("when it comes back down to X") and a stop entry ("when it breaks X") both rest AT Hyperliquid and fill the instant price touches them, with this app out of the loop, so they keep the promise the words "when it hits X" make. A bar-close condition is the app watching instead: it fires only once a bar of that timeframe CLOSES on the right side, which is up to one whole bar after the touch, and a bar that wicks through and closes back does not fire at all.',
+  'SO NEVER CALL A CLOSE CONDITION "WHEN IT HITS X". Name the timeframe, use the word closes, and give the wait in the same breath: "a 15m bar has to close above 108,000, so up to fifteen minutes after it first touches, and a wick through that closes back under does not fire". A close condition is for somebody who asked for CONFIRMATION and you say that is what they asked for. Before arming one, say what nothing happening will look like and that the plan risks nothing until it fires. After it fires, say the fill price and how long it took.',
+];
+
 /* WHAT A FIGURE IS FOR, and why these lines outrank every rule about length.
    The brevity rules and the say-the-figure rules were pulling opposite ways and brevity kept
    winning. Six live runs: a refused 500 USDC swap answered without the 500 in it, a withdraw
@@ -98,6 +113,9 @@ export function handshakeInstructions(root: string): string {
       '',
       'THE MONEY.',
       ...MONEY,
+      '',
+      'HOW A TRADE FILLS, which decides what you may promise about one.',
+      ...TRADING,
       '',
       'THE FIGURES, which no rule about length below is allowed to cut.',
       ...FIGURES,

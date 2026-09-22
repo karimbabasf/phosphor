@@ -304,9 +304,15 @@ test('the role is not so long it stops being read', () => {
   // 21,400 after the secure review of the same day: an address is not an id and the read-back
   // carries all 42 characters, and a hash is named only when asked how a move went, as its two
   // ends, so WORDS and FIGURES say one thing. Measured 21,259.
+  // 22,700 on 2026-09-22: how a trade fills, two sentences, because the three entry shapes make
+  // three different promises and a person asks for all of them in the same English ("buy when it
+  // hits 108"). A limit or stop entry fills on the touch; a bar-close condition can be a whole
+  // bar late and can miss the touch entirely, and the agent had nothing telling it to say which
+  // one it gave them. The failure is a person watching their price print, coming back, and
+  // finding that nothing fired. Measured 22,603.
   const text = role();
   assert.ok(text.length > 3000, 'the role got gutted');
-  assert.ok(text.length < 21400, `the role is ${text.length} characters and nobody reads that far`);
+  assert.ok(text.length < 22700, `the role is ${text.length} characters and nobody reads that far`);
 });
 
 // ---------- the knowledge profile ----------
@@ -394,7 +400,9 @@ test('the role with a full profile still fits under the ceiling', () => {
   // and the gate rules (see there). Measured 21,477. 22,300 the same day for the worked shape of
   // the decision sentence (see there). Measured 21,957.
   // 22,500 after the secure review (see the plain ceiling). Measured 22,340.
-  assert.ok(text.length < 22500, `the role is ${text.length} characters with a full profile`);
+  // 23,800 on 2026-09-22, tracking the plain ceiling above by the same 1,300 and for the same
+  // reason: how a trade fills. Measured 23,684.
+  assert.ok(text.length < 23800, `the role is ${text.length} characters with a full profile`);
 });
 
 test('every hostile sentence fed through the profile is refused or absent from the role', () => {
