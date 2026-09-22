@@ -23,10 +23,6 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--MIT-1f7a3a" alt="License FSL-1.1-MIT"></a>
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/chat/chat-1280-receipt-open.png" width="920" alt="The Phosphor window: a finished swap and its receipt on the left, the balance, the spending rules and the holdings on the right.">
-</p>
-
 ## What it is
 
 The app is the car. The agent is the driver. You hold the key.
