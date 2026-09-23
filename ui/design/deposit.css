@@ -360,29 +360,6 @@
   border-top: 0;
 }
 
-/* A row with a contract is a button: the pointer says so, the glyph at the
-   right says what a click does, and the wash under the pointer is the same
-   one every list row in the window wears. */
-button.token-row {
-  cursor: pointer;
-  transition: background-color var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  button.token-row:hover { background: var(--bg-1); }
-  button.token-row:hover .token-copy { color: var(--text); }
-  button.token-row:hover .token-contract { color: var(--text-2); }
-}
-
-button.token-row:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
-}
-
-button.token-row[disabled] {
-  cursor: default;
-}
-
 .token-main {
   display: flex;
   flex-direction: column;
@@ -398,21 +375,16 @@ button.token-row[disabled] {
   color: var(--text);
 }
 
-/* The contract's ends under the symbol, quiet, in mono because it is read
-   against an explorer. The chain's own coin says it has none, in the UI face. */
+/* Developer mode only: the contract under the symbol, quiet, in mono because
+   it is read against an explorer. The chain's own coin says it has none, in
+   the UI face. */
 .token-contract {
-  display: block;
   font-size: var(--fs-11);
   line-height: 1.4;
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color var(--dur-press) var(--ease-out);
-}
-
-.token-row[data-copied="true"] .token-contract {
-  color: var(--up);
 }
 
 .token-side {
@@ -427,32 +399,6 @@ button.token-row[disabled] {
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-/* The copy glyph: 16 px, quiet until the row is pointed at, a tick in the
-   up colour for a moment once the clipboard read back the contract. */
-.token-copy {
-  display: inline-grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  color: var(--text-3);
-  transition: color var(--dur-press) var(--ease-out);
-}
-
-.token-copy .icon {
-  width: 16px;
-  height: 16px;
-  grid-area: 1 / 1;
-}
-
-.token-copied-icon { opacity: 0; }
-.token-row[data-copied="true"] .token-copy { color: var(--up); }
-.token-row[data-copied="true"] .token-copy-icon { opacity: 0; }
-.token-row[data-copied="true"] .token-copied-icon { opacity: 1; }
-
-.netpick-copied:empty {
-  display: none;
 }
 
 .netpick-empty {
@@ -835,9 +781,6 @@ dialog.deposit-dialog {
   .net-tile .logo,
   .net-row,
   .net-row .logo,
-  button.token-row,
-  .token-copy,
-  .token-contract,
   .netpick-back,
   .ack-row,
   .ack-box,
