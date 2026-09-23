@@ -48,6 +48,13 @@ plist = "1.10"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# The same rule, and again nothing new in the tree: tao, muda and rfd already compile these AppKit
+# bindings with NSRunningApplication in them. A second copy of this app uses it to ask macOS
+# whether the pid in the pid file is this app, and to bring that copy forward before it leaves;
+# see `launch` in main.rs. The `libc` feature is what exposes the lookup by pid.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "NSRunningApplication"] }
+
 [profile.release]
 codegen-units = 1
 lto = true

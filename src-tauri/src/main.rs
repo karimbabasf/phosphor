@@ -41,9 +41,12 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use backend::{
-    configured_port, get_root, identity_matches, node_binary, phosphor_is_listening, pid_file_path,
-    pid_is_alive, post_lock, read_pid_file, request_within, spawn_backend, Backend, Handshake,
+    configured_port, get_root, identity_matches, is_orphaned_backend, node_binary, phosphor_is_listening,
+    pid_file_path, post_lock, read_pid_file, request_within, spawn_backend, stop_orphan, write_pid_file, Backend,
+    Handshake, PidRecord,
 };
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
 const COPY_MCP_ID: &str = "copy-mcp-config";
@@ -158,7 +161,7 @@ pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// a broken bundle fails with the same sentence it always did, before the port is asked.
 ///
 /// THE ANSWER IS TRUSTED ONLY FROM THIS BOOT'S BACKEND. The port can be held by something else
-/// during the respawn backoff (see refuse_existing), and a line copied to the clipboard is a
+/// during the respawn backoff (see watch), and a line copied to the clipboard is a
 /// command the person is about to paste into a terminal, so the response has to carry this
 /// boot's nonce in its identity header (identity_matches, the same check the readiness poll
 /// makes) before a byte of it is read, and the command it carries has to be one printable line.
@@ -498,35 +501,158 @@ fn open_in_browser(url: tauri::Url) -> tauri::webview::NewWindowResponse<tauri::
     tauri::webview::NewWindowResponse::Deny
 }
 
-/// What to do when the port already answers.
+/// What answers on the port before this launch has started anything.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Occupant {
+    Nothing,
+    /// Sends the x-phosphor header: a Phosphor backend of some boot, not necessarily ours.
+    Phosphor,
+    Stranger,
+}
+
+/// What this launch does about what it found.
+#[derive(Debug, PartialEq)]
+enum Launch {
+    Start,
+    /// Give way to another copy of this app, by the pid of its shell.
+    HandOver(i32),
+    /// Stop an orphaned backend of this app, by its pid, then start.
+    StopOrphan(i32),
+    Refuse(String),
+}
+
+/// What a launch does about what is already running, decided before it starts anything.
 ///
 /// It used to attach: `if phosphor_is_listening(port) { return open_control_window(...) }`. That
 /// is how the orphan became permanent. Attaching hands the window a backend this shell does not
 /// hold a `Child` for, so every later quit calls kill() on a `None`, returns, and leaves node
-/// listening with the wallet loaded until the machine is rebooted.
+/// listening with the wallet loaded until the machine is rebooted. That rule stands: nothing here
+/// opens a window onto a backend this shell did not start, or hands one the token.
 ///
-/// So it refuses, and names the process, because "something is on the port" is not an actionable
-/// sentence and "quit process 41207" is.
-fn refuse_existing(port: u16, data: &Path) -> String {
-    let record = read_pid_file(&pid_file_path(data));
-    match record {
-        Some(pid) if pid_is_alive(pid.shell) => format!(
-            "Phosphor is already running as process {} and holding 127.0.0.1:{port}. \
-             Use that window rather than opening a second one.",
-            pid.shell
-        ),
-        Some(pid) if pid_is_alive(pid.backend) => format!(
-            "A Phosphor control app from an earlier session is still running as process {} and holding \
-             127.0.0.1:{port}, with your wallet loaded and no window on it. \
-             Quit it (`kill {}`) and start Phosphor again. This app will not attach to a backend it \
-             did not start, because it could not shut that backend down afterwards.",
-            pid.backend, pid.backend
-        ),
-        _ => format!(
-            "Something is already answering as Phosphor on 127.0.0.1:{port} and this app did not start it. \
-             Quit it (`pkill -f 'node src/main.ts'`) and try again, or set a different port in config.local.json."
-        ),
+/// Then it refused whatever it found, by name, and that put the two likeliest first-launch
+/// situations behind an error dialog about port 4177, though neither is a stranger. One is a
+/// second copy of the app: the copy opened from the disk image, which macOS runs from a hidden
+/// path of its own, beside the copy dragged to Applications, or a second open during the Open
+/// Anyway steps. The other is a backend left running by a shell that was force-quit, most often
+/// during a slow first boot. So:
+///
+///   1. Another copy of this app is running: bring it forward and leave, with no dialog. It owns
+///      its backend and its window, and this launch starts nothing.
+///   2. A backend this app started is still running with no shell above it: stop it the way
+///      quitting would have, then start as if the port had been free.
+///   3. Anything else on the port is refused in plain English, as it always was.
+///
+/// Pure, so each of those is a test, and none of the tests needs a second copy of the app.
+fn launch(port: u16, occupant: Occupant, running_copy: Option<i32>, orphan: Option<i32>) -> Launch {
+    if let Some(shell) = running_copy {
+        return Launch::HandOver(shell);
     }
+    if let Some(backend) = orphan {
+        return Launch::StopOrphan(backend);
+    }
+    match occupant {
+        Occupant::Nothing => Launch::Start,
+        Occupant::Phosphor => Launch::Refuse(format!(
+            "Another Phosphor that this app did not start is already running on 127.0.0.1:{port}, most \
+             likely one started from a source checkout with `npm run app`. \
+             Stop it (`pkill -f 'node src/main.ts'`) and open Phosphor again. \
+             This app will not open a window onto a Phosphor it did not start, because it could not \
+             shut that one down afterwards."
+        )),
+        Occupant::Stranger => Launch::Refuse(format!(
+            "Another program is already using 127.0.0.1:{port}, the address Phosphor runs on, so Phosphor \
+             did not start. Quit that program and open Phosphor again. If it has to keep that address, set \
+             a different port in config.local.json."
+        )),
+    }
+}
+
+/// What answers on the port. `None` on purpose: the question here is only whether it is
+/// Phosphor-shaped, an instance from an earlier boot answers with that boot's nonce rather than
+/// this one's, and nothing is ever opened onto the answer.
+fn occupant(port: u16) -> Occupant {
+    if phosphor_is_listening(port, None) {
+        Occupant::Phosphor
+    } else if get_root(port).is_some() {
+        Occupant::Stranger
+    } else {
+        Occupant::Nothing
+    }
+}
+
+/// The facts `launch` decides on, read off this Mac.
+///
+/// The pid file says which shell and which backend the last launch started, and neither number is
+/// taken as it stands: the file outlives the processes it names, and macOS hands numbers out
+/// again. The shell counts only when macOS itself knows that pid as this app (`is_this_app`), and
+/// never when it is this very process, which a recycled number can be. The backend counts only
+/// when the process table proves it an orphan of this app (`backend::is_orphaned_backend`).
+fn survey(app: &tauri::AppHandle) -> Result<Launch, String> {
+    let payload = payload_dir(app)?;
+    let data = data_dir(app)?;
+    let port = configured_port(&payload, &data);
+    let identifier = app.config().identifier.clone();
+    let record = read_pid_file(&pid_file_path(&data));
+    let copy = running_copy(record.as_ref(), std::process::id() as i32, |pid| is_this_app(pid, &identifier));
+    let orphan = record.map(|r| r.backend).filter(|&pid| is_orphaned_backend(pid, &identifier));
+    Ok(launch(port, occupant(port), copy, orphan))
+}
+
+/// The shell the pid file names, when it is a running copy of this app and not this process.
+fn running_copy(record: Option<&PidRecord>, me: i32, is_this_app: impl Fn(i32) -> bool) -> Option<i32> {
+    record.map(|r| r.shell).filter(|&shell| shell != me && is_this_app(shell))
+}
+
+/// Is that pid a running copy of this app, as macOS itself knows it: an application registered
+/// under this app's bundle identifier? The disk image copy and the Applications copy both are,
+/// which is the point, and a pid the pid file still names after its shell died and the number
+/// went to something else is not.
+#[cfg(target_os = "macos")]
+fn is_this_app(pid: i32, identifier: &str) -> bool {
+    NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+        .and_then(|running| running.bundleIdentifier())
+        .is_some_and(|declared| declared.to_string() == identifier)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_this_app(_pid: i32, _identifier: &str) -> bool {
+    false
+}
+
+/// Unhides that copy and brings all of its windows forward. `ActivateIgnoringOtherApps` is for
+/// macOS 13, which would otherwise leave it behind whatever was in front if this process has not
+/// become active yet; macOS 14 ignores the flag and lets the active app pass activation on, which
+/// the copy a person just opened is.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn bring_forward(pid: i32) -> bool {
+    let Some(running) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
+        return false;
+    };
+    running.unhide();
+    running.activateWithOptions(
+        NSApplicationActivationOptions::ActivateAllWindows | NSApplicationActivationOptions::ActivateIgnoringOtherApps,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn bring_forward(_pid: i32) -> bool {
+    false
+}
+
+/// Gives way to the copy of this app that is already running: brings it forward, then leaves with
+/// no dialog and nothing drawn. Sent round the event loop from a thread rather than run in setup,
+/// so it lands after this process has finished launching and holds the activation it passes on.
+fn hand_over(app: &tauri::AppHandle, shell: i32) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let leaving = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            let outcome = if bring_forward(shell) { "brought it forward" } else { "it did not come forward" };
+            eprintln!("phosphor: Phosphor is already running as process {shell}; {outcome}, and this copy is leaving");
+            leaving.exit(0);
+        });
+    });
 }
 
 /// Watches the backend for as long as the app is open.
@@ -649,21 +775,36 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
     }
 }
 
-fn start(app: &tauri::AppHandle) -> Result<(), String> {
+fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), String> {
     let payload = payload_dir(app)?;
     let data = data_dir(app)?;
     let port = configured_port(&payload, &data);
 
-    // Anything already on the port is refused by name. `None` on purpose: the question here is
-    // "is a Phosphor holding this port", which names a process to quit, and an instance from an
-    // earlier boot answers with that boot's nonce rather than this one's. See refuse_existing.
-    if phosphor_is_listening(port, None) {
-        return Err(refuse_existing(port, &data));
-    }
-    if get_root(port).is_some() {
-        return Err(format!(
-            "Port {port} is already in use by something that is not Phosphor. Free it, or set a different port in config.local.json."
-        ));
+    match found {
+        Launch::Start => {}
+        Launch::Refuse(why) => return Err(why),
+        // setup gives way before anything is drawn and never gets here; starting nothing is the
+        // answer either way.
+        Launch::HandOver(_) => return Ok(()),
+        Launch::StopOrphan(backend) => {
+            /* Claimed before it is stopped. From here the pid file names this shell, so a launch
+               that lands while the orphan drains finds a running copy and gives way to it, rather
+               than stopping the same orphan a second time and racing this one to the port. The
+               wait runs on this thread, as kill()'s does at quit: an idle backend is gone in well
+               under a second, and only a venue write in flight makes it longer. */
+            write_pid_file(&pid_file_path(&data), backend);
+            if !stop_orphan(backend, &app.config().identifier) {
+                return Err(format!(
+                    "A Phosphor control app from an earlier session is still running as process {backend}, \
+                     holding 127.0.0.1:{port} with your wallet loaded and no window on it, and it did not \
+                     stop when asked. Quit it (`kill {backend}`) and open Phosphor again."
+                ));
+            }
+            // The orphan is gone, so whatever answers now is judged as if it had never been there.
+            if let Launch::Refuse(why) = launch(port, occupant(port), None, None) {
+                return Err(why);
+            }
+        }
     }
 
     let child = {
@@ -771,6 +912,13 @@ fn main() {
         .invoke_handler(tauri::generate_handler![update::update_install, update::update_dismiss])
         .setup(|app| {
             let handle = app.handle().clone();
+            // Surveyed before anything is drawn, so a second copy of this app gives way to the
+            // first without a flash of splash, a menu or a dialog. See `launch`.
+            let found = survey(&handle);
+            if let Ok(Launch::HandOver(shell)) = found {
+                hand_over(&handle, shell);
+                return Ok(());
+            }
             app.set_menu(build_menu(&handle)?)?;
             app.on_menu_event(on_menu);
 
@@ -783,7 +931,7 @@ fn main() {
                 .center()
                 .build()?;
 
-            if let Err(err) = start(&handle) {
+            if let Err(err) = found.and_then(|found| start(&handle, found)) {
                 fail(&handle, err);
             }
             Ok(())
@@ -804,6 +952,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL, log_from_response, log_lines, query_value, report_url, HELP_LINKS, HELP_REPORT_ID};
+    use super::{launch, running_copy, Launch, Occupant, PidRecord};
     use std::time::Duration;
 
     const NONCE: &str = "abc123";
@@ -898,6 +1047,65 @@ mod tests {
     fn a_backend_that_is_late_is_asked_less_often() {
         assert_eq!(probe_interval(FAST_PROBE_WINDOW), SLOW_PROBE_INTERVAL);
         assert_eq!(probe_interval(Duration::from_secs(30)), SLOW_PROBE_INTERVAL);
+    }
+
+    const EVERY_OCCUPANT: [Occupant; 3] = [Occupant::Nothing, Occupant::Phosphor, Occupant::Stranger];
+
+    #[test]
+    fn a_second_copy_gives_way_to_the_first_whatever_answers_on_the_port() {
+        // The first copy may still be booting (nothing answers yet), up (its backend answers), or
+        // losing its port; in every case it owns the situation and this launch starts nothing.
+        for occupant in EVERY_OCCUPANT {
+            assert_eq!(launch(4177, occupant, Some(501), None), Launch::HandOver(501));
+            assert_eq!(launch(4177, occupant, Some(501), Some(502)), Launch::HandOver(501), "the running copy wins over an orphan");
+        }
+    }
+
+    #[test]
+    fn a_backend_left_without_its_shell_is_stopped_and_replaced_rather_than_refused() {
+        // Answering, still booting, or dying on a port something else took: proved an orphan, it goes.
+        for occupant in EVERY_OCCUPANT {
+            assert_eq!(launch(4177, occupant, None, Some(502)), Launch::StopOrphan(502));
+        }
+    }
+
+    #[test]
+    fn a_free_port_with_nothing_of_ours_around_starts() {
+        assert_eq!(launch(4177, Occupant::Nothing, None, None), Launch::Start);
+    }
+
+    #[test]
+    fn what_this_app_cannot_vouch_for_is_still_refused_in_plain_english() {
+        let Launch::Refuse(stranger) = launch(4177, Occupant::Stranger, None, None) else {
+            panic!("another program on the port is refused");
+        };
+        assert!(stranger.starts_with("Another program is already using 127.0.0.1:4177"), "{stranger}");
+        let Launch::Refuse(unknown) = launch(4177, Occupant::Phosphor, None, None) else {
+            panic!("a Phosphor this app did not start is refused, never attached to");
+        };
+        assert!(unknown.contains("did not start") && unknown.contains("127.0.0.1:4177"), "{unknown}");
+        assert!(!unknown.contains("`kill "), "nothing here was proved an orphan, so no pid is offered to kill");
+    }
+
+    #[test]
+    fn only_a_live_copy_of_this_app_is_handed_over_to() {
+        let record = PidRecord { shell: 501, backend: 502 };
+        assert_eq!(running_copy(Some(&record), 700, |pid| pid == 501), Some(501));
+        assert_eq!(
+            running_copy(Some(&record), 700, |_| false),
+            None,
+            "a pid macOS does not know as this app, dead or handed to another program, is nobody"
+        );
+        assert_eq!(running_copy(Some(&record), 501, |_| true), None, "a number handed back to this very process is not a copy of it");
+        assert_eq!(running_copy(None, 700, |_| true), None, "no pid file, no copy");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_process_that_is_not_this_app_is_never_taken_for_it() {
+        use super::is_this_app;
+        assert!(!is_this_app(std::process::id() as i32, "com.karimbabasf.phosphor"), "the test runner is not the app");
+        assert!(!is_this_app(i32::MAX, "com.karimbabasf.phosphor"), "no process at all is not the app");
     }
 
     #[test]

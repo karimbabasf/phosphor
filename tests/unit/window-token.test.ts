@@ -72,7 +72,7 @@ test('the shell and the backend agree on the channel and the injected global', (
   // for no reason, and the splash is created by a different builder call. Since the window went
   // dark only (2026-09-15) the splash receives no script at all: nothing read off the disk
   // reaches it, and the colourway it paints is the one in its own stylesheet.
-  const controlBlock = shell.slice(shell.indexOf('fn open_control_window'), shell.indexOf('fn refuse_existing'));
+  const controlBlock = shell.slice(shell.indexOf('fn open_control_window'), shell.indexOf('fn open_in_browser'));
   assert.ok(controlBlock.includes('initialization_script'), 'the injection sits in open_control_window');
   const splashStart = shell.indexOf('WebviewWindowBuilder::new(&handle, "splash"');
   assert.ok(splashStart >= 0, 'the splash builder is where it was');
@@ -125,13 +125,27 @@ test('a launch never attaches to a backend it did not start', () => {
   // The old line was `if phosphor_is_listening(port) { return open_control_window(app, port); }`,
   // and that is how the orphan became permanent: the window attached to a process the shell held
   // no handle for, so every later quit killed nothing.
-  const start = shell.slice(shell.indexOf('fn start(app: &tauri::AppHandle)'));
+  function body(name: string): string {
+    const from = shell.indexOf(`fn ${name}(`);
+    assert.ok(from > 0, `fn ${name} must exist`);
+    const next = shell.indexOf('\nfn ', from + 1);
+    return shell.slice(from, next === -1 ? shell.length : next);
+  }
+  // What a launch finds is acted on before anything is spawned, and every answer is one of four:
+  // start its own backend, give way to a running copy of this app, stop a backend it proved an
+  // orphan and then start, or refuse. None of them opens a window onto what it found.
+  for (const name of ['launch', 'occupant', 'survey', 'hand_over']) {
+    assert.ok(!body(name).includes('open_control_window'), `fn ${name} opens no window`);
+  }
+  const start = body('start');
+  const spawn = start.indexOf('spawn_backend(');
+  assert.ok(start.indexOf('match found') > 0 && start.indexOf('match found') < spawn, 'the survey is acted on before the spawn');
+  assert.ok(!start.slice(0, spawn).includes('open_control_window'), 'and nothing before the spawn opens a window');
   // `None` on purpose: this is the loose question, "is a Phosphor holding this port", and the only
-  // place it is still asked. It names a process to quit rather than opening a window onto one.
-  // tests/unit/boot-nonce.test.ts holds the other side, where the nonce is required.
-  assert.match(start, /if phosphor_is_listening\(port, None\) \{\s*return Err\(refuse_existing/);
-  assert.ok(shell.includes('fn refuse_existing'), 'and the refusal names the process holding the port');
-  assert.ok(shell.includes('Quit it (`kill {}`)'), 'with a command the person can actually run');
+  // place it is still asked. It decides what to do about a process and never opens a window onto
+  // one. tests/unit/boot-nonce.test.ts holds the other side, where the nonce is required.
+  assert.match(body('occupant'), /if phosphor_is_listening\(port, None\)/);
+  assert.ok(shell.includes('Quit it (`kill {backend}`)'), 'an orphan that will not stop is named with a command the person can run');
 });
 
 test('the readiness thread goes on to supervise rather than returning', () => {

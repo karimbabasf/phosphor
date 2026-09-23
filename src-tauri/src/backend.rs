@@ -7,9 +7,10 @@
 // then on every quit called kill() on a `None` and returned. The orphan survived until reboot.
 //
 // Two changes close it. A pid file written at spawn says which process this shell owns, so a
-// launch that finds the port already answering can tell "my own instance" from "an orphan from
-// last time" and refuse by name instead of adopting something it cannot stop. And Drop, so the
-// only way to leak a backend now is SIGKILL of the shell itself.
+// launch that finds the port already answering can tell "another copy of this app" from "an
+// orphan from last time" and deal with each (bring the copy forward, stop the orphan it can prove
+// is one) instead of adopting something it cannot stop. And Drop, so the only way to leak a
+// backend now is SIGKILL of the shell itself, and the next launch cleans that one up.
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
@@ -205,10 +206,10 @@ pub fn pid_file_path(data: &Path) -> PathBuf {
     data.join(PID_FILE)
 }
 
-fn write_pid_file(path: &Path, backend: i32) {
+pub fn write_pid_file(path: &Path, backend: i32) {
     let body = serde_json::json!({ "shell": std::process::id(), "backend": backend });
-    // Best effort. A pid file that cannot be written costs the NEXT launch its ability to name
-    // the process holding the port, and that launch refuses either way.
+    // Best effort. A pid file that cannot be written costs the NEXT launch its ability to
+    // recognise the process holding the port, and that launch refuses rather than guess.
     let _ = std::fs::write(path, body.to_string());
 }
 
@@ -219,6 +220,126 @@ pub fn read_pid_file(path: &Path) -> Option<PidRecord> {
         shell: parsed.get("shell")?.as_i64()? as i32,
         backend: parsed.get("backend")?.as_i64()? as i32,
     })
+}
+
+/// The command line spawn_backend gives the control app is these two paths, each behind the path
+/// of the app bundle it runs from: the bundled runtime, then the payload's entry point. Nothing
+/// else on this Mac has a reason to run exactly that.
+const RUNTIME_IN_BUNDLE: &str = "/Contents/MacOS/node ";
+const PAYLOAD_IN_BUNDLE: &str = "/Contents/Resources/phosphor/src/main.ts";
+
+/// Is `pid` a control app that some copy of this app started and then lost, still running with
+/// no shell above it?
+///
+/// Three facts, all of them, and never the port: its parent is launchd (pid 1), which is where
+/// macOS puts a process whose parent died, so a backend a live shell still watches never
+/// qualifies; its command line is spawn_backend's, the runtime and the payload of one app bundle;
+/// and that bundle declares this app's identifier. A checkout's `node src/main.ts`, the MCP proxy,
+/// an agent, and whatever a recycled pid now belongs to each fail at least one of them. Any copy
+/// of this app counts, not only this one: the copy macOS runs from the disk image lives at a
+/// random path of its choosing, and the copy in Applications is another bundle again.
+pub fn is_orphaned_backend(pid: i32, identifier: &str) -> bool {
+    if pid <= 1 || !pid_is_alive(pid) {
+        return false;
+    }
+    let Some((parent, command)) = parent_and_command(pid) else {
+        return false;
+    };
+    parent == 1
+        && backend_bundles(&command)
+            .and_then(|(runtime, payload)| one_bundle(&runtime, &payload))
+            .and_then(|bundle| bundle_identifier(&bundle))
+            .is_some_and(|declared| declared == identifier)
+}
+
+/// Stops an orphaned backend the way kill() stops this shell's own: SIGTERM first, so
+/// src/shutdown.ts drains a write in flight and takes its agent down with it, and SIGKILL only
+/// once the same grace is spent. The pid is proved to be the orphan again before each signal,
+/// because the survey that found it and a thirty-five second grace are both long enough for a pid
+/// to change hands. True when no orphan of this app is left at that pid, which is also the answer
+/// for a pid that was never one: it is left alone.
+#[cfg(unix)]
+pub fn stop_orphan(pid: i32, identifier: &str) -> bool {
+    for (signal, grace) in [(libc::SIGTERM, SHUTDOWN_GRACE), (libc::SIGKILL, Duration::from_secs(2))] {
+        if !is_orphaned_backend(pid, identifier) {
+            return true;
+        }
+        // SAFETY: kill(2) with a valid signal and a pid proved on the line above to be this app's
+        // orphaned backend.
+        if unsafe { libc::kill(pid as libc::pid_t, signal) } != 0 {
+            // ESRCH, it went on its own; EPERM, it belongs to another account on this Mac, so it
+            // is not this person's to stop, and waiting out a grace on it would only stall the
+            // launch.
+            return !pid_is_alive(pid);
+        }
+        let deadline = Instant::now() + grace;
+        while pid_is_alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    !is_orphaned_backend(pid, identifier)
+}
+
+#[cfg(not(unix))]
+pub fn stop_orphan(_pid: i32, _identifier: &str) -> bool {
+    // Never proved an orphan off unix (see parent_and_command), so there is nothing to stop.
+    true
+}
+
+/// A process's parent and its whole command line, read with `ps` for the reason
+/// src/instancelock.ts reads a start time with it: it is on every Mac and needs no unsafe. The
+/// pid is the only argument that varies and it is a number.
+#[cfg(unix)]
+fn parent_and_command(pid: i32) -> Option<(i32, String)> {
+    let out = Command::new("/bin/ps")
+        .args(["-ww", "-o", "ppid=,args=", "-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parent_and_command_from(&String::from_utf8_lossy(&out.stdout))
+}
+
+#[cfg(not(unix))]
+fn parent_and_command(_pid: i32) -> Option<(i32, String)> {
+    None
+}
+
+/// `ps -o ppid=,args=` prints the parent right-aligned, a space, then the command line.
+fn parent_and_command_from(out: &str) -> Option<(i32, String)> {
+    let (parent, command) = out.lines().next()?.trim().split_once(' ')?;
+    Some((parent.parse().ok()?, command.trim_start().to_string()))
+}
+
+/// The two bundle paths in a backend's command line, when it has exactly the shape spawn_backend
+/// gives it and nothing after: `<bundle>/Contents/MacOS/node <bundle>/Contents/Resources/phosphor/src/main.ts`.
+/// The caller proves the two are one bundle, and this app's. The line is cut at the runtime's own
+/// path rather than at a space, because a bundle path may hold one ("/Volumes/Phosphor 0.9.2").
+fn backend_bundles(command: &str) -> Option<(PathBuf, PathBuf)> {
+    let (runtime, rest) = command.split_once(RUNTIME_IN_BUNDLE)?;
+    let payload = rest.strip_suffix(PAYLOAD_IN_BUNDLE)?;
+    if !runtime.starts_with('/') || !payload.starts_with('/') {
+        return None;
+    }
+    Some((PathBuf::from(runtime), PathBuf::from(payload)))
+}
+
+/// One app bundle, however its path was spelled. Resolved rather than compared as text: the
+/// runtime's path is the one macOS launched the shell by and the payload's is tauri's resolved
+/// resource directory, and the two may spell one directory differently.
+fn one_bundle(runtime: &Path, payload: &Path) -> Option<PathBuf> {
+    let bundle = std::fs::canonicalize(runtime).ok()?;
+    let same = std::fs::canonicalize(payload).ok()? == bundle;
+    (same && bundle.extension().and_then(|e| e.to_str()) == Some("app")).then_some(bundle)
+}
+
+/// The identifier an app bundle declares in its Contents/Info.plist.
+fn bundle_identifier(bundle: &Path) -> Option<String> {
+    let info = plist::Value::from_file(bundle.join("Contents").join("Info.plist")).ok()?;
+    info.as_dictionary()?.get("CFBundleIdentifier")?.as_string().map(str::to_string)
 }
 
 /// 32 random bytes as hex, for the window token.
@@ -351,7 +472,8 @@ fn header_value<'a>(lowered: &'a str, name: &str) -> Option<&'a str> {
 /// then the keystore passphrase, in a window titled PHOSPHOR.
 ///
 /// So `nonce` decides which question is being asked. `None` accepts any Phosphor-shaped answer and
-/// is only used where the next thing that happens is a refusal by name. `Some` requires the header
+/// is only used where nothing is opened onto what answered: the launch survey, which gives way to
+/// a running copy, stops a proven orphan or refuses. `Some` requires the header
 /// to carry the value this shell minted this boot and gave the backend over its stdin, which is a
 /// channel no other process can read and no other process can guess.
 ///
@@ -536,5 +658,161 @@ mod tests {
         let res = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
         assert!(!identity_matches(res, None));
         assert!(!identity_matches(res, Some("a1b2c3d4")));
+    }
+
+    #[test]
+    fn a_backend_command_line_names_one_bundle_twice_and_nothing_after() {
+        let installed = "/Applications/Phosphor.app/Contents/MacOS/node /Applications/Phosphor.app/Contents/Resources/phosphor/src/main.ts";
+        let app = PathBuf::from("/Applications/Phosphor.app");
+        assert_eq!(backend_bundles(installed), Some((app.clone(), app)));
+        // The copy macOS runs from the disk image, at a path of its own choosing.
+        let translocated = "/private/var/folders/xy/T/AppTranslocation/0A1B/d/Phosphor.app/Contents/MacOS/node \
+                            /private/var/folders/xy/T/AppTranslocation/0A1B/d/Phosphor.app/Contents/Resources/phosphor/src/main.ts";
+        assert!(backend_bundles(translocated).is_some());
+        // A space in the bundle path is not where the line is cut.
+        let spaced = "/Volumes/Phosphor 0.9.2/Phosphor.app/Contents/MacOS/node /Volumes/Phosphor 0.9.2/Phosphor.app/Contents/Resources/phosphor/src/main.ts";
+        let volume = PathBuf::from("/Volumes/Phosphor 0.9.2/Phosphor.app");
+        assert_eq!(backend_bundles(spaced), Some((volume.clone(), volume)));
+        // Two bundles come back as two, for one_bundle to refuse.
+        let crossed = "/A.app/Contents/MacOS/node /B.app/Contents/Resources/phosphor/src/main.ts";
+        assert_eq!(backend_bundles(crossed), Some((PathBuf::from("/A.app"), PathBuf::from("/B.app"))));
+    }
+
+    #[test]
+    fn a_checkout_the_mcp_proxy_or_an_extra_argument_is_never_a_backend_of_this_app() {
+        for line in [
+            "node src/main.ts",
+            "/opt/homebrew/bin/node /Users/k/phosphor/src/main.ts",
+            "/Applications/Phosphor.app/Contents/MacOS/node /Applications/Phosphor.app/Contents/Resources/phosphor/src/mcp.ts",
+            "/Applications/Phosphor.app/Contents/MacOS/node --inspect /Applications/Phosphor.app/Contents/Resources/phosphor/src/main.ts",
+            "/Applications/Phosphor.app/Contents/MacOS/node /Applications/Phosphor.app/Contents/Resources/phosphor/src/main.ts --flag",
+            "Phosphor.app/Contents/MacOS/node Phosphor.app/Contents/Resources/phosphor/src/main.ts",
+            "",
+        ] {
+            assert_eq!(backend_bundles(line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn the_parent_and_the_command_come_off_one_ps_line() {
+        let line = "    1 /A.app/Contents/MacOS/node /A.app/Contents/Resources/phosphor/src/main.ts\n";
+        assert_eq!(
+            parent_and_command_from(line),
+            Some((1, "/A.app/Contents/MacOS/node /A.app/Contents/Resources/phosphor/src/main.ts".to_string()))
+        );
+        assert_eq!(parent_and_command_from("41207 node src/main.ts"), Some((41207, "node src/main.ts".to_string())));
+        assert_eq!(parent_and_command_from(""), None, "ps printed nothing: the pid is gone");
+        assert_eq!(parent_and_command_from("   \n"), None);
+        assert_eq!(parent_and_command_from("abc /bin/x"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn two_spellings_of_one_bundle_are_one_bundle_and_two_bundles_are_not() {
+        let root = std::env::temp_dir().join(format!("phosphor-bundles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (a, b, plain) = (root.join("A.app"), root.join("B.app"), root.join("NotABundle"));
+        for dir in [&a, &b, &plain] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let alias = root.join("Alias.app");
+        std::os::unix::fs::symlink(&a, &alias).unwrap();
+        let resolved = std::fs::canonicalize(&a).unwrap();
+
+        assert_eq!(one_bundle(&a, &a), Some(resolved.clone()));
+        assert_eq!(one_bundle(&alias, &a), Some(resolved), "a second spelling of the bundle is the bundle");
+        assert_eq!(one_bundle(&a, &b), None, "one copy's runtime running another copy's payload is not spawn_backend's");
+        assert_eq!(one_bundle(&plain, &plain), None, "not an app bundle");
+        assert_eq!(one_bundle(&root.join("Gone.app"), &root.join("Gone.app")), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A stand-in for an installed copy of the app, in a temp directory of its own: a bundle that
+    /// declares `identifier`, whose `node` is /bin/cat and whose payload entry point is a FIFO. A
+    /// process started with spawn_backend's exact command line then blocks in open() and waits,
+    /// which is all a lost backend does as far as these checks can see.
+    #[cfg(target_os = "macos")]
+    fn fake_install(tag: &str, identifier: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("phosphor-orphan-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bundle = root.join("Phosphor Test.app");
+        let runtime = bundle.join("Contents").join("MacOS").join("node");
+        let entry = bundle.join("Contents").join("Resources").join("phosphor").join("src").join("main.ts");
+        std::fs::create_dir_all(runtime.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/bin/cat", &runtime).unwrap();
+        assert!(Command::new("/usr/bin/mkfifo").arg(&entry).status().unwrap().success());
+        let info = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
+             <key>CFBundleIdentifier</key><string>{identifier}</string></dict></plist>\n"
+        );
+        std::fs::write(bundle.join("Contents").join("Info.plist"), info).unwrap();
+        (root, runtime, entry)
+    }
+
+    /// Starts spawn_backend's command line through a shell that exits at once, so the process
+    /// loses its parent and macOS hands it to launchd: what a force-quit shell leaves behind.
+    #[cfg(target_os = "macos")]
+    fn lose(runtime: &Path, entry: &Path) -> i32 {
+        let line = format!("'{}' '{}' </dev/null >/dev/null 2>&1 & echo $!", runtime.display(), entry.display());
+        let out = Command::new("/bin/sh").arg("-c").arg(line).output().unwrap();
+        let pid: i32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while parent_and_command(pid).map(|(parent, _)| parent) != Some(1) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        pid
+    }
+
+    /// Takes down a process a test started if it is still there when the test ends, and removes
+    /// the test's directory. The process is proved to be the test's own by its command line
+    /// naming that directory, so a failing test can never signal anything it did not start.
+    #[cfg(target_os = "macos")]
+    struct Reap(i32, PathBuf);
+
+    #[cfg(target_os = "macos")]
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            let root = self.1.to_string_lossy().into_owned();
+            if parent_and_command(self.0).is_some_and(|(_, command)| command.contains(&root)) {
+                // SAFETY: kill(2) on the process this test started, identified on the line above.
+                unsafe {
+                    libc::kill(self.0, libc::SIGKILL);
+                }
+            }
+            let _ = std::fs::remove_dir_all(&self.1);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_lost_backend_of_this_app_is_proved_an_orphan_and_stopped() {
+        let id = "com.example.phosphor-orphan-test";
+        let (root, runtime, entry) = fake_install("lost", id);
+        let lost = lose(&runtime, &entry);
+        let _reap = Reap(lost, root);
+        assert!(is_orphaned_backend(lost, id), "no parent, spawn_backend's command line, this app's bundle");
+        assert!(
+            !is_orphaned_backend(lost, "com.example.another-app"),
+            "the same command line in another app's bundle is not this app's"
+        );
+        assert!(stop_orphan(lost, id));
+        assert!(!pid_is_alive(lost), "gone, which is what frees the port for the next backend");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_backend_whose_shell_is_alive_is_never_an_orphan_and_never_signalled() {
+        let id = "com.example.phosphor-watched-test";
+        let (root, runtime, entry) = fake_install("watched", id);
+        let mut watched = Command::new(&runtime).arg(&entry).stdin(Stdio::null()).spawn().unwrap();
+        let pid = watched.id() as i32;
+        let _reap = Reap(pid, root);
+        let seen = is_orphaned_backend(pid, id);
+        let left_alone = stop_orphan(pid, id) && matches!(watched.try_wait(), Ok(None));
+        let _ = watched.kill();
+        let _ = watched.wait();
+        assert!(!seen, "its parent is this test and alive, so it is watched, not lost");
+        assert!(left_alone, "stop_orphan proves before it signals, and this one is never proved");
     }
 }

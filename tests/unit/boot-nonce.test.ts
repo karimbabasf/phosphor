@@ -92,8 +92,8 @@ test('the window only opens onto a backend that answered with this boot nonce', 
   const opens = source.indexOf('open_control_window(&ready, port)');
   assert.ok(opens > 0, 'the boot readiness loop is where the token gets injected');
 
-  // The two readiness loops pass the nonce; only the refusal path, which goes on to name a process
-  // to quit rather than open anything, asks the loose question.
+  // The two readiness loops pass the nonce; only the launch survey, which gives way to a running
+  // copy, stops a proven orphan or refuses, and never opens anything, asks the loose question.
   assert.equal(
     [...source.matchAll(/phosphor_is_listening\(port, Some\(&nonce\)\)/g)].length,
     2,
@@ -102,7 +102,7 @@ test('the window only opens onto a backend that answered with this boot nonce', 
   assert.equal(
     [...source.matchAll(/phosphor_is_listening\(port, None\)/g)].length,
     1,
-    'the only loose probe left is the one that refuses by name',
+    'the only loose probe left is the launch survey, which opens nothing onto what it finds',
   );
 });
 
