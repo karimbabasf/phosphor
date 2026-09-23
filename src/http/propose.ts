@@ -291,7 +291,10 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // floor of zero is not a floor. It is the one field on this whole surface whose value a
       // caller chooses and money depends on, so zero and negative are stopped at the door as
       // well as inside every venue.
-      const minAmountOut = positiveField(params, 'minAmountOut', problems);
+      // Absent is not zero: it passes, and proposeSwap sets the floor one percent under its own
+      // live quote or refuses the swap. Demanding it here refused every swap proposed without
+      // a floor before any quote was asked for.
+      const minAmountOut = params.minAmountOut === undefined ? undefined : positiveField(params, 'minAmountOut', problems);
       // `chain === null` is already in `problems`; naming it here is what convinces the type
       // system, and what stops the next edit reaching for a chain that was never resolved.
       if (problems.length > 0 || chain === null || toChain === null) {
