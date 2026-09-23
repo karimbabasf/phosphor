@@ -254,13 +254,6 @@
     return words;
   }
 
-  /* "0x8335...2913": the ends a person checks against the explorer. */
-  function shortContract(contract) {
-    var text = String(contract || '');
-    if (text.length <= 14) return text;
-    return text.slice(0, 6) + '...' + text.slice(-4);
-  }
-
   /* ---------- small helpers that survive the test harness ---------- */
 
   function setVar(node, name, value) {
@@ -1022,13 +1015,6 @@
       empty.hidden = true;
       body.appendChild(empty);
 
-      /* What the last copy did, in words, under the list: the sentence a
-         screen reader hears and the one a person checks the paste against. */
-      var said = dom.el('p', 'meta netpick-copied');
-      said.setAttribute('role', 'status');
-      body.appendChild(said);
-      var say = function (sentence) { dom.setText(said, sentence); };
-
       function fill() {
         dom.clear(list);
         var shown = filterTokens(tokens, state.query);
@@ -1038,7 +1024,7 @@
           dom.setText(empty, 'No token called ' + state.query.trim() + ' on ' + n.name + '.');
           return;
         }
-        shown.forEach(function (token) { list.appendChild(tokenRow(token, say)); });
+        shown.forEach(function (token) { list.appendChild(tokenRow(token)); });
       }
 
       dom.on(input, 'input', function () {
@@ -1060,63 +1046,29 @@
       return { eth: 'eth:1', base: 'eth:8453', arb: 'eth:42161', sol: 'sol:mainnet', near: 'near:mainnet' }[id] || id;
     }
 
-    /* One token, one row: the mark, the symbol, the minimum in the unit a
-       person types, never the bridge's base units, and where the token has a
-       contract, the contract's ends under the symbol and a copy glyph at the
-       right. The whole row is the button: a click writes the contract to the
-       clipboard, reads it back, compares it byte for byte, and only then says
-       Copied, with the last four characters, so what was pasted can be checked
-       against what was shown. The chain's own coin has no contract and says
-       so; its row does nothing. */
-    function tokenRow(token, say) {
+    /* One token, one row: the mark, the symbol and the minimum in the unit a
+       person types, never the bridge's base units. Nothing on it copies.
+       It used to show the token's contract under the symbol with a copy glyph,
+       and that read as the address to send to (Karim, 2026-09-22): a coin sent
+       to its own token contract is gone. The contract is shown only behind the
+       developer switch now, labelled, to read against an explorer. */
+    function tokenRow(token) {
       var contract = typeof token.contract === 'string' && token.contract && token.contract !== 'native' ? token.contract : null;
-      var row = dom.el(contract ? 'button' : 'div', 'token-row');
-      if (contract) row.type = 'button';
+      var row = dom.el('div', 'token-row');
       row.setAttribute('role', 'listitem');
       row.dataset.symbol = String(token.symbol);
       row.appendChild(logo(token.symbol, 24));
       var main = dom.el('div', 'token-main');
       main.appendChild(dom.el('span', 'token-symbol', token.symbol));
-      var line = dom.el('span', 'token-contract mono');
-      if (contract) {
-        row.dataset.contract = contract;
-        row.setAttribute('aria-label', 'Copy the ' + token.symbol + ' contract address');
-        row.title = contract;
-        dom.setText(line, shortContract(contract));
-      } else {
-        dom.setText(line, 'The chain\'s own coin, no contract');
-        line.className = 'token-contract token-native';
-      }
+      var line = dom.el('span', contract ? 'token-contract mono' : 'token-contract token-native');
+      line.setAttribute('data-dev-only', '');
+      dom.setText(line, contract ? 'Token contract ' + contract : 'The chain\'s own coin, no contract');
       main.appendChild(line);
       row.appendChild(main);
       var side = dom.el('span', 'token-side');
       var min = dom.el('span', 'token-min mono');
       dom.setText(min, minimumWords(token));
       side.appendChild(min);
-      if (contract) {
-        var glyph = dom.el('span', 'token-copy');
-        glyph.setAttribute('aria-hidden', 'true');
-        glyph.appendChild(icon('copy', 'token-copy-icon'));
-        glyph.appendChild(icon('done', 'token-copied-icon'));
-        side.appendChild(glyph);
-        dom.on(row, 'click', function () {
-          if (row.disabled) return;
-          row.disabled = true;
-          copyChecked(contract, function (sentence) { if (say) say(sentence); }, token.symbol + ' contract')
-            .then(function (ok) {
-              if (!ok || !state.alive) return;
-              row.dataset.copied = 'true';
-              dom.setText(line, 'Contract copied, ends in ...' + tail(contract));
-              if (row.__copiedTimer) window.clearTimeout(row.__copiedTimer);
-              row.__copiedTimer = window.setTimeout(function () {
-                row.__copiedTimer = 0;
-                delete row.dataset.copied;
-                dom.setText(line, shortContract(contract));
-              }, COPIED_MS);
-            })
-            .finally(function () { row.disabled = false; });
-        });
-      }
       row.appendChild(side);
       return row;
     }
@@ -1552,7 +1504,6 @@
     filterNetworks: filterNetworks,
     remember: remember,
     minimumWords: minimumWords,
-    shortContract: shortContract,
     defaultSymbol: defaultSymbol,
     sortTokens: sortTokens,
     filterTokens: filterTokens,

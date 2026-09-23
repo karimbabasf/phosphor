@@ -580,7 +580,7 @@ test('a network the bridge refused, an edited wallet file, and a token it does n
 
 /* ---------- the Vault card and the developer switch ---------- */
 
-test('in the Vault card the address is handed off, the way back is not offered, and every token row shows its contract or says it has none', async () => {
+test('in the Vault card the address is handed off, the way back is not offered, and every token row keeps its contract behind the developer switch', async () => {
   const world = build({ ack: true });
   const handed: Any[] = [];
   world.render({ context: 'vault', stage: 'tokens', network: 'eth', onAddress: (network: string, symbol: string, row: Any) => { handed.push({ network, symbol, address: row.address }); } });
@@ -589,9 +589,10 @@ test('in the Vault card the address is handed off, the way back is not offered, 
   assert.equal(buttonNamed(world.host, 'Change network'), undefined, 'a Change network link under a network menu');
   const contracts = find(world.host, '.token-contract');
   assert.equal(contracts.length, 6, 'a contract line per token');
+  assert.ok(contracts.every((n: Any) => n.hasAttribute('data-dev-only')), 'a contract line a person sees without the developer switch');
   assert.equal(contracts[0].textContent, 'The chain\'s own coin, no contract');
-  assert.equal(contracts[1].textContent, '0xa0b8...eb48');
-  assert.equal(find(world.host, '.token-row')[1].title, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 'the whole contract is on the row for the pointer');
+  assert.equal(contracts[1].textContent, 'Token contract 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
+  assert.ok(!find(world.host, '.token-row')[1].title, 'the contract rides on the row for the pointer');
   const dev = find(world.host, '.netpick-dev')[0];
   assert.ok(dev.hasAttribute('data-dev-only'));
   assert.equal(dev.textContent, 'Bridge network id: eth:1');
@@ -689,46 +690,30 @@ test('a floor the report calls dust says No minimum, a real one carries the doll
   assert.equal(world.pick.kindOf('bnb'), 'evm');
 });
 
-test('a token row with a contract copies it, reads it back, and says the last four; the chain\'s own coin has no button', async () => {
+/* A token's contract under its symbol with a copy glyph read as the address to send to (Karim,
+   2026-09-22), and a coin sent to its own token contract is gone. No token row copies, points
+   or offers to: the contract is behind the developer switch, labelled. */
+test('no token row copies anything or offers to: each is a plain row, the contract behind the developer switch', async () => {
   const world = build({ report: wideReport() });
   world.render({ stage: 'tokens', network: 'eth' });
   await flush();
   const rows = find(world.host, '.token-row');
-  const eth = rows[0];
-  assert.equal(eth.tagName, 'DIV', 'the chain\'s own coin got a button');
-  assert.equal(find(eth, '.token-contract')[0].textContent, 'The chain\'s own coin, no contract');
-  assert.equal(find(eth, '.token-copy').length, 0);
-  const usdc = rows[1];
-  assert.equal(usdc.tagName, 'BUTTON');
-  assert.equal(usdc.getAttribute('aria-label'), 'Copy the USDC contract address');
-  assert.equal(usdc.dataset.contract, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
-  assert.equal(find(usdc, '.token-contract')[0].textContent, '0xa0b8...eb48');
-  assert.equal(find(usdc, '.token-copy').length, 1);
-  usdc.click();
+  assert.ok(rows.length > 1);
+  for (const row of rows) {
+    assert.equal(row.tagName, 'DIV', `${row.dataset.symbol} row is a button`);
+    assert.equal(row.getAttribute('aria-label'), null);
+    assert.ok(!row.title, `${row.dataset.symbol} row carries a title`);
+    assert.equal(row.dataset.contract, undefined);
+    assert.equal(find(row, '.token-copy').length, 0);
+  }
+  rows[1].click();
   await flush();
   await flush();
-  const written = world.calls.filter((c) => c.route === 'clipboard').map((c) => c.text);
-  assert.deepEqual(written, ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48']);
-  assert.equal(usdc.dataset.copied, 'true');
-  assert.equal(find(usdc, '.token-contract')[0].textContent, 'Contract copied, ends in ...eb48');
-  assert.equal(find(world.host, '.netpick-copied')[0].textContent, 'USDC contract copied, ends in ...eb48');
-  // The moment passes and the row reads as it did.
-  world.timers.forEach((fn) => fn());
-  assert.equal(usdc.dataset.copied, undefined);
-  assert.equal(find(usdc, '.token-contract')[0].textContent, '0xa0b8...eb48');
-});
-
-test('a clipboard that reads back something else is not called copied on a contract row either', async () => {
-  const world = build({ report: wideReport() });
-  world.sandbox.navigator.clipboard.readText = () => Promise.resolve('something else');
-  world.render({ stage: 'tokens', network: 'eth' });
-  await flush();
-  const usdc = find(world.host, '.token-row')[1];
-  usdc.click();
-  await flush();
-  await flush();
-  assert.equal(usdc.dataset.copied, undefined, 'a mismatched clipboard was reported as copied');
-  assert.ok(find(world.host, '.netpick-copied')[0].textContent.startsWith('The clipboard does not hold the USDC contract'));
+  assert.equal(world.calls.filter((c) => c.route === 'clipboard').length, 0, 'a click on a token row wrote the clipboard');
+  assert.equal(find(world.host, '.netpick-copied').length, 0);
+  const usdc = find(rows[1], '.token-contract')[0];
+  assert.ok(usdc.hasAttribute('data-dev-only'));
+  assert.equal(usdc.textContent, 'Token contract 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
 });
 
 test('a memo network draws no QR of the bare address: the address and the memo each have a checked Copy, and the card says why', async () => {
