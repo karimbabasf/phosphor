@@ -314,6 +314,60 @@ test('a negative amountIn is refused at the edge, never reaching the USD math (F
   }
 });
 
+// The floor is optional on propose_swap: absent, the proposal service prices the swap and sets
+// the floor one percent under that quote. The door kept demanding one, so every swap an agent
+// proposed without a floor was refused before any quote (Karim's transcript, 2026-09-22).
+test('a swap with no floor passes the door, so the app sets the floor off its own quote', async () => {
+  const h = await boot();
+  try {
+    lastSwapParams = null;
+    const out = await raw(h.url, '/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Origin: h.url },
+      body: JSON.stringify({ secret: SEAT,
+        op: 'propose',
+        kind: 'swap',
+        params: { chain: 'base', toChain: 'eth', fromSymbol: 'USDC', toSymbol: 'USDC', amountIn: 1.991618 },
+      }),
+    });
+    assert.equal(out.status, 200, out.body);
+    // Written by the stub inside the await, which the compiler cannot see from here.
+    const seen = lastSwapParams as Record<string, unknown> | null;
+    assert.ok(seen !== null, 'the swap reached the proposal service');
+    assert.equal(seen.minAmountOut, undefined, 'no floor is invented at the door');
+  } finally {
+    await h.close();
+  }
+});
+
+test('a floor the agent does name is still refused at the door when it is not above zero', async () => {
+  const h = await boot();
+  try {
+    for (const [floor, reason] of [
+      [0, /minAmountOut must be greater than 0/],
+      [-1, /minAmountOut must be greater than 0/],
+      [null, /minAmountOut must be a finite number/],
+      ['0.5', /minAmountOut must be a finite number/],
+    ] as const) {
+      lastSwapParams = null;
+      const out = await raw(h.url, '/api/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Origin: h.url },
+        body: JSON.stringify({ secret: SEAT,
+          op: 'propose',
+          kind: 'swap',
+          params: { chain: 'base', toChain: 'eth', fromSymbol: 'USDC', toSymbol: 'USDC', amountIn: 1, minAmountOut: floor },
+        }),
+      });
+      assert.equal(out.status, 400, `floor ${String(floor)}: ${out.body}`);
+      assert.match(out.body, reason);
+      assert.equal(lastSwapParams, null, `floor ${String(floor)} never reached the proposal service`);
+    }
+  } finally {
+    await h.close();
+  }
+});
+
 // P0-1, the hole the product was named after. GET /api/session handed the approval token to any
 // process on loopback, so a curl of it followed by a POST to /api/approve executed a pending
 // proposal and wrote decidedBy: 'human' beside it. The token now arrives in the environment
