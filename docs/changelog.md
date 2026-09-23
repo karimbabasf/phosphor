@@ -5,6 +5,30 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.9.3
+
+Built 2026-09-22, the first-week fixes. Tagged v0.9.3 on 2026-09-22.
+
+- A swap proposed without a floor goes through again. The app sets the floor one percent under
+  its own live quote and shows it on the card before you click. Since 0.9.1 every such swap was
+  refused before a quote was asked for, so an agent asked you to name a floor yourself.
+- The trading screen's header follows the chart. When an agent puts another market on the main
+  chart, or a layout changes it, the header, the price and the position panel move with it. Only
+  a market Hyperliquid lists moves the header.
+- The token list on the deposit card and in onboarding shows each token's mark, its symbol and
+  its minimum, and nothing to copy. The contract under each token, with its copy button, read like
+  the address to send to, and a coin sent to its own token contract is lost. With the developer
+  switch on, each row still shows its contract, labelled.
+- Thirty-eight more tokens and networks show their own logo instead of a letter, from the same
+  open icon sets as before.
+- Opening a second copy of the app brings the first one forward instead of failing on port 4177.
+  That happened on a first launch when the copy opened from the disk image was still running. A
+  control app left running by a force-quit window is stopped and replaced on the next launch,
+  once the app has proved it is its own.
+- The update window keeps the release notes inside their box, above the buttons, and wraps them
+  at the window's width. This shows from the next update on: the window that offers 0.9.3 belongs
+  to the version you are updating from.
+
 ## 0.9.2
 
 Built 2026-09-22, the new-address pass. Tagged v0.9.2 on 2026-09-22.
