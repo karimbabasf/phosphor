@@ -74,7 +74,47 @@
     TRX: '#C4342B',
     LTC: '#345D9D',
     ADA: '#246DD3',
-    DOT: '#E6007A'
+    DOT: '#E6007A',
+    AAVE: '#9391F7',
+    ABS: '#054729',
+    ADI: '#FE7109',
+    AURORA: '#63B836',
+    BCH: '#58BE92',
+    BERA: '#FB9942',
+    COW: '#97A0D1',
+    DASH: '#008DE4',
+    EURE: '#0072AA',
+    FOGO: '#FF3D00',
+    GMX: '#4E09F8',
+    GNO: '#00A6C4',
+    GRAM: '#30A1F5',
+    HAPI: '#FFF700',
+    KNC: '#31CB9E',
+    MOG: '#FCAF1E',
+    MON: '#836EF9',
+    MOVE: '#FBDA4F',
+    NPRO: '#1BD6D5',
+    PEPE: '#4F9843',
+    ROBINHOOD: '#CCFF00',
+    SAFE: '#049F67',
+    SCROLL: '#FFEEDA',
+    SHIB: '#EB9A2E',
+    STRK: '#0C0C4F',
+    SWEAT: '#FF0D74',
+    UNI: '#FF0A6F',
+    XLM: '#FFFFFF',
+    ZEC: '#ECB244',
+    /* A wrapped or bridged ticker wears the file of the coin it carries, so it
+       takes that coin's colour too. */
+    WETH: '#627EEA',
+    CBBTC: '#F7931A',
+    HEMIBTC: '#F7931A',
+    XBTC: '#F7931A',
+    'BTC(OMNI)': '#F7931A',
+    USDT0: '#009393',
+    'USDC.E': '#2775CA',
+    XDAI: '#FDC134',
+    FXRP: '#FFFFFF'
   };
 
   /* The logos shipped as files in ui/logos/<ticker>.svg (see LICENSE.md there).
@@ -83,7 +123,11 @@
   var LOGOS = [
     'BTC', 'ETH', 'SOL', 'USDC', 'USDT', 'NEAR', 'ARB', 'BASE', 'HYPE', 'OP', 'AVAX', 'POL',
     'BNB', 'XRP', 'DOGE', 'LINK', 'WBTC', 'DAI', 'TON', 'SUI', 'APT', 'TRX', 'LTC', 'ADA', 'DOT',
-    'PYUSD', 'USDE'
+    'PYUSD', 'USDE',
+    'AAVE', 'ABS', 'ADI', 'AURORA', 'BCH', 'BERA', 'COW', 'DASH', 'EURE', 'FOGO', 'GMX', 'GNO',
+    'GRAM', 'HAPI', 'KNC', 'MOG', 'MON', 'MOVE', 'NPRO', 'PEPE', 'ROBINHOOD', 'SAFE', 'SCROLL',
+    'SHIB', 'STRK', 'SWEAT', 'UNI', 'XLM', 'ZEC',
+    'WETH', 'CBBTC', 'HEMIBTC', 'XBTC', 'BTC(OMNI)', 'USDT0', 'USDC.E', 'XDAI', 'FXRP'
   ];
 
   /* Case and whitespace tolerant, because a symbol reaches this from a wallet
