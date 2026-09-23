@@ -19,6 +19,7 @@ import { CANDLE_LIMIT_MAX } from './context.ts';
 import { feedFor, type FeedState } from '../market/push.ts';
 import { isBase64, SNAPSHOT_MAX_BYTES } from '../snapshot.ts';
 import type { Ctx } from './context.ts';
+import type { Source } from '../trade/view.ts';
 
 // The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
 // a price is the last 24 hours, not the span since midnight in a timezone the exchange
@@ -503,9 +504,11 @@ export async function handleChartWrite(ctx: Ctx, req: http.IncomingMessage, res:
     const patch = body.view as JsonBody;
     const refusal = resolveViewPatch(ctx, patch, false);
     if (refusal !== null) return fail(res, 400, refusal);
+    const before = ctx.chart.state().view.product;
     const outcome = ctx.chart.setView(patch, 'human');
     if (!outcome.ok) return fail(res, 400, outcome.error);
     notes = outcome.notes;
+    if (ctx.chart.state().view.product !== before && focusFollowsChart(ctx, 'human')) ctx.sse.broadcastTrade();
   }
   // The window's own command line. The human gets the same vocabulary as the agent, so
   // the chart is not a surface only an agent can change.
@@ -579,6 +582,24 @@ export async function handleSnapshotDelivery(ctx: Ctx, req: http.IncomingMessage
    The venue moves first because the product is resolved against it: "put SOL on coinbase"
    has to either work or say why, rather than resolving SOL the way the catalogue prefers
    and then charting Hyperliquid's perp under Coinbase's name. */
+/* The trading screen's header and its primary chart name one market, whichever of them moved.
+   trade_focus has moved the candles with the header since 2026-09-21; the other way round was
+   missing, so chart_draw with a view.product, a layout, or the window's own chart write moved
+   the candles and left the header, the price strip and the position panel on the old market
+   (Karim's screenshot, 2026-09-22: GRAM-USD candles under a BTC header). Only a market
+   Hyperliquid lists moves the header, because the header names the market a trade is placed
+   on; a chart of something the venue does not list leaves it where it was. Called only when a
+   door actually moved the primary's product, so a pan that re-sends the same product never
+   touches the header. Answers whether the header moved, so the caller sends the trade frame. */
+export function focusFollowsChart(ctx: Ctx, source: Source): boolean {
+  const product = ctx.chart.state().view.product;
+  const ref = ctx.market.resolveOn(product, 'hyperliquid');
+  if (ref === null || ref.product !== product) return false;
+  const before = ctx.trade.view.rev();
+  const out = ctx.trade.view.setFocus({ symbol: ref.symbol }, source);
+  return out.ok && ctx.trade.view.rev() !== before;
+}
+
 export function resolveViewPatch(ctx: Ctx, patch: JsonBody, requireListed: boolean, chart: ChartStore = ctx.chart): string | null {
   const asked = typeof patch.product === 'string' ? patch.product.trim() : '';
   const wantRaw =

@@ -27,3 +27,34 @@ test('trade_focus on a coin the venue lists but the config does not still moves 
     await h.close();
   }
 });
+
+// The other direction. chart_draw with a view.product, a layout, or the window's own chart write
+// moved the candles and left the header, the price strip and the position panel on the old
+// market (Karim's screenshot, 2026-09-22: GRAM-USD candles under a BTC header).
+test('a primary chart moved to another market moves the header with it, from every door', async () => {
+  const h = await bootChartServer();
+  try {
+    const header = async (): Promise<string> => String((await h.get('/api/trade')).json.view.symbol);
+    assert.equal(await header(), 'BTC');
+
+    const drawn = await h.mcp({ op: 'view', tool: 'chart_draw', args: { view: { product: 'SOL', timeframe: '1d' } }, session: 'lead', client: 'phosphor-mcp' });
+    assert.equal(drawn.status, 200, JSON.stringify(drawn.json).slice(0, 200));
+    assert.equal((await h.get('/api/chart')).json.view.product, 'SOL-USD');
+    assert.equal(await header(), 'SOL', 'chart_draw moves the header with the candles');
+
+    const laid = await h.mcp({ op: 'view', tool: 'chart_layout', args: { charts: [{ product: 'ETH-USD', timeframe: '1d' }, { product: 'BTC-USD', timeframe: '1d' }] }, session: 'lead', client: 'phosphor-mcp' });
+    assert.equal(laid.status, 200, JSON.stringify(laid.json).slice(0, 200));
+    assert.equal(await header(), 'ETH', 'a layout moves the header with its primary');
+
+    // A comparison chart is not the one the header names.
+    const side = await h.mcp({ op: 'view', tool: 'chart_draw', args: { chart: 1, view: { product: 'SOL' } }, session: 'lead', client: 'phosphor-mcp' });
+    assert.equal(side.status, 200, JSON.stringify(side.json).slice(0, 200));
+    assert.equal(await header(), 'ETH', 'a comparison chart leaves the header alone');
+
+    const moved = await h.post('/api/chart', { token: h.token, view: { product: 'BTC-USD' } });
+    assert.equal(moved.status, 200, JSON.stringify(moved.json).slice(0, 200));
+    assert.equal(await header(), 'BTC', "the window's own chart write moves the header too");
+  } finally {
+    await h.close();
+  }
+});

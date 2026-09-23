@@ -111,6 +111,7 @@ export async function bootChartServer(
   const store = createStore(dataDir);
   let view: ViewMode = opts.view ?? 'trade';
   let plans: unknown[] = [];
+  const tradeView = createTradeView('BTC');
   const fetches: { product: string; baseSec: number; bars: number; endSec: number | null; startedAt: number; endedAt: number }[] = [];
 
   const cfg: AppConfig = {
@@ -186,8 +187,9 @@ export async function bootChartServer(
       view = mode;
     },
     trade: {
-      view: createTradeView('BTC'),
-      payload: () => ({ plans }) as never,
+      view: tradeView,
+      // The view rides on the payload as it does on the real service's, so a test reads the header.
+      payload: () => ({ plans, view: tradeView.state() }) as never,
       read: () => ({}),
       batch: () => [],
       action: async () => ({ ok: false, detail: 'no venue in this test' }),
