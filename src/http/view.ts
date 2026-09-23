@@ -28,7 +28,7 @@ import { CHAIN_NETWORKS, isChainNetwork, transaction, validateHash } from '../ch
 // an error message is not somewhere control characters or escape codes belong.
 import { oneLine } from '../intents.ts';
 import type { JsonBody } from './respond.ts';
-import { chartDigest, resolveIndicator, resolveViewPatch } from './chart.ts';
+import { chartDigest, focusFollowsChart, resolveIndicator, resolveViewPatch } from './chart.ts';
 import { LEAD_ONLY_VIEW_TOOLS, VIEW_TOOLS } from './context.ts';
 import type { Ctx } from './context.ts';
 
@@ -173,6 +173,7 @@ async function chartDraw({ ctx, args, res, by: session }: ViewArgs): Promise<voi
         // is a separate file holding the same kind of object, so the sweep has to reach it from
         // here or half the agent's work would survive onto an instrument it does not describe.
         if (after !== before) {
+          if (slot.index === 0 && focusFollowsChart(ctx, 'agent')) ctx.sse.broadcastTrade();
           const swept = slot.drawings.sweepForeign(after);
           if (swept > 0) notes.push(`cleared ${swept} agent ${swept === 1 ? 'drawing' : 'drawings'} (zones and lines) anchored to ${before}`);
           for (const [id, plan] of held) {
@@ -574,11 +575,13 @@ const HANDLERS: Record<string, ViewHandler> = {
     // A layout that moves the primary onto another instrument sweeps its agent drawings, and a
     // line a waiting plan is anchored to is not one of those.
     ctx.charts.primary.drawings.hold(linesHeld(ctx).keys());
+    const before = ctx.chart.state().view.product;
     const out = ctx.charts.layout(charts);
     if (!out.ok) {
       fail(res, 400, out.reason);
       return;
     }
+    if (ctx.chart.state().view.product !== before && focusFollowsChart(ctx, 'agent')) ctx.sse.broadcastTrade();
     for (const slot of ctx.charts.list()) ctx.sse.broadcastChart(slot.index);
     ctx.sse.broadcastState();
     sendJson(res, 200, { ok: true, charts: ctx.charts.list() });
