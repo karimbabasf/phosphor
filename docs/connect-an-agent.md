@@ -128,7 +128,7 @@ The full list is in [Tools](tools.md).
   click or a policy allow inside limits you wrote.
 
 The server talks to the app on `127.0.0.1:4177`. The installed app owns that port, and one app
-serves one wallet, so a second copy of Phosphor refuses to start while the first is running. See
+serves one wallet, so a second copy of Phosphor brings the first forward and closes itself. See
 [Troubleshooting](troubleshooting.md#the-agent-does-not-connect) if the agent cannot attach.
 
 ## More than one agent

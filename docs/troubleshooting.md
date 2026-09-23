@@ -58,11 +58,13 @@ button, or go to Privacy & Security and scroll down to Security yourself. No but
 the refused open was more than about an hour ago: open the app once more and look again. Check
 the disk image's SHA-256 first, see [Getting started](getting-started.md#check-the-file).
 
-A second copy of the app refuses to start while one is running: "Phosphor is already running as
-process N and holding 127.0.0.1:4177. Use that window rather than opening a second one." If the
-message names a control app from an earlier session with no window on it, quit that process as it
-says and start Phosphor again. If it says the port is in use by something that is not Phosphor,
-free the port or set a different one in `config.local.json`.
+Opening a second copy of the app while one is running, such as the copy in the disk image and the
+copy in Applications, brings the running one forward and closes the new one, with no message. A
+control app left running from an earlier session with no window on it, after a force quit for
+example, is stopped and replaced the next time Phosphor opens. If Phosphor says another Phosphor it
+did not start is running on 127.0.0.1:4177, that is usually one started from a source checkout
+with `npm run app`: stop it and open Phosphor again. If it says another program is using
+127.0.0.1:4177, quit that program, or set a different port in `config.local.json`.
 
 ## The agent does not connect
 
