@@ -26,6 +26,7 @@
 .brake-btn:active,
 .notice-act:active,
 .bal-add:active,
+.bal-more:active,
 .vault-seg-cell:active {
   transform: scale(var(--scale-press));
   background-color: var(--press);

@@ -11,7 +11,7 @@
   --card-bg: var(--bg-2);
   /* Where the words start: past the marks, so the lines under the head sit on the move's
      own left edge. A pair of marks is wider than one. */
-  --text-x: 52px;
+  --text-x: 60px;
   position: relative;
   background: var(--surface-raised);
   border: 0;
@@ -20,7 +20,7 @@
 }
 
 .mcard:has(> .mcard-head > .mcard-marks[data-pair]) {
-  --text-x: 70px;
+  --text-x: 76px;
 }
 
 /* ---------- the head ---------- */
@@ -34,7 +34,7 @@
   flex-wrap: nowrap;
   gap: 12px;
   min-height: 56px;
-  padding: 14px 18px 14px 16px;
+  padding: 12px 18px 12px 16px;
   border-radius: var(--radius-card);
   outline: none;
 }
@@ -60,22 +60,25 @@
   align-items: center;
 }
 
-/* Two marks side by side, their boxes' clear edges overlapped so the two logos sit a hair
-   apart. No cutout ring: a brand's mark is often not a disc, and a ring would bite into it. */
+/* The coins' own logos, each mark 24 px (a 32 px box: every file draws its mark in the middle
+   three quarters), the second over the first by a third of a mark, as the Soft depth comp
+   stacks them. No cutout ring: a brand's mark is often not a disc, and a ring would bite
+   into it. */
 .mcard-marks .logo {
-  --logo: 26px;
+  --logo: 32px;
 }
 
 .mcard-marks[data-pair] .logo + .logo {
-  margin-left: -5px;
+  margin-left: -16px;
 }
 
 /* A move no coin names (a rule change): the kind's own glyph in a disc the size of a mark. */
 .mcard-glyph {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
+  margin: 2px;
   border-radius: 50%;
   background: var(--bg-3);
   box-shadow: var(--hi);
@@ -109,15 +112,15 @@
   min-width: 0;
 }
 
+/* "Swap 500 USDC to ETH" reads as one phrase: its parts a word space apart. */
+.mcard-move[data-words="true"] {
+  column-gap: 0.3em;
+}
+
 /* A figure in the move line is the line's own size and face: it sits on the words'
    baseline at their x-height. */
 .mcard-num {
   font-weight: 500;
-}
-
-.mcard-soft {
-  font-weight: 400;
-  color: var(--text-2);
 }
 
 .mcard-arrow {
@@ -708,19 +711,19 @@
 }
 
 /* On a move card the fold has no head of its own and no rule above it: its toggle is the
-   card's head or the quiet Details in the bar. Closed, it gives back the gap the body keeps
-   above it, so a closed fold adds no height to the card. */
+   card's head or the quiet Details in the bar. The fold gives back the gap the body keeps
+   above it and carries that gap inside, so the only thing that moves when it opens is the
+   fold's own row (grid-template-rows), and a closed fold adds no height to the card. */
 .mcard .tcard-details {
   border-top: 0;
-  transition: margin-top 200ms var(--ease-out);
 }
 
-.mcard-body > .tcard-details[data-open="false"] {
+.mcard-body > .tcard-details {
   margin-top: -14px;
 }
 
 .mcard .tcard-details-body {
-  padding-top: 0;
+  padding-top: 14px;
 }
 
 /* An id and its Copy are one unit that never shrinks: beside the label when they fit, on the

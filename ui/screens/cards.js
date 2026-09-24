@@ -1321,15 +1321,16 @@
     memo.marks = key;
     dom.clear(host);
     var parts = key.split(':');
+    /* The size is the head's (chatcard.css .mcard-marks .logo), so none is passed here. */
     if (parts[0] === 'pair') {
-      host.appendChild(logo(parts[1], 24));
-      host.appendChild(logo(parts[2], 24));
+      host.appendChild(logo(parts[1]));
+      host.appendChild(logo(parts[2]));
       dom.setAttr(host, 'data-pair', 'true');
       return;
     }
     dom.setAttr(host, 'data-pair', null);
     if (parts[0] === 'coin') {
-      host.appendChild(logo(parts[1], 24));
+      host.appendChild(logo(parts[1]));
       return;
     }
     var disc = dom.el('span', 'mcard-glyph');
@@ -1337,8 +1338,9 @@
     host.appendChild(disc);
   }
 
-  /* What the move is, in one line: "4 USDC -> about 0.00149 ETH" for a swap, "5 USDC -> alice.near"
-     for a send, the plan's own words for a trade or a rule. The amounts roll. */
+  /* What the move is, in one line: "Swap 4 USDC to ETH" for a swap until it lands and
+     "4 USDC -> 0.00149 ETH" once it has, "5 USDC -> alice.near" for a send, the plan's own words
+     for a trade or a rule. The amounts roll. */
   /* A payout's network by name ("Base"): its receiver is outside the balance, and the same
      address on another chain is somebody else's money. A send to a NEAR account stays inside
      NEAR Intents and names none. */
@@ -1377,15 +1379,22 @@
     var parts = [];
     var twoLegs = move.kind === 'swap' || move.kind === 'intents_send' || move.kind === 'intents_pay'
       || move.kind === 'intents_withdraw' || move.kind === 'intents_deposit' || move.kind === 'hl_deposit' || move.kind === 'hl_withdraw';
-    if (twoLegs && from && from.symbol) {
+    var words = false;
+    if (move.kind === 'swap' && plain.state !== 'done' && from && from.symbol) {
+      /* Until it lands, a swap's line is words: what it is, from what, to what. What comes
+         back is a figure, and figures stand in the facts under it, never guessed at here. */
+      words = true;
+      parts.push({ kind: 'title', value: 'Swap' });
+      parts.push({ kind: 'amount', value: from.amount !== null && from.amount !== undefined ? amountText(from.amount) : '', symbol: coinWord(from.symbol) });
+      if (to && to.symbol) parts.push({ kind: 'word', value: 'to ' + coinWord(to.symbol) });
+    } else if (twoLegs && from && from.symbol) {
       var fromAmount = from.amount !== null && from.amount !== undefined ? amountText(from.amount) : '';
       parts.push({ kind: 'amount', value: fromAmount, symbol: coinWord(from.symbol) });
       parts.push({ kind: 'arrow' });
       var word = destinationWord(move, legs);
       if (move.kind === 'swap') {
-        var toAmount = plain.state !== 'didnt_go_through' && plain.state !== 'coming_back' && to && to.amount !== null && to.amount !== undefined ? amountText(to.amount) : '';
-        var soft = toAmount && plain.state !== 'done' ? (to.floor ? 'at least' : 'about') : '';
-        parts.push({ kind: 'amount', value: toAmount, symbol: coinWord(to && to.symbol), soft: soft });
+        var toAmount = to && to.amount !== null && to.amount !== undefined ? amountText(to.amount) : '';
+        parts.push({ kind: 'amount', value: toAmount, symbol: coinWord(to && to.symbol) });
       } else if (word) {
         parts.push({ kind: 'word', value: word });
       }
@@ -1394,10 +1403,11 @@
       if (from && from.usd && from.amount !== null && from.amount !== undefined) parts.push({ kind: 'amount', value: dom.usd(from.amount), symbol: '', bare: true });
     }
     var shape = parts.map(function (p) {
-      return p.kind === 'amount' ? 'a:' + p.symbol + ':' + (p.soft || '') + ':' + (p.value ? '1' : '0') : p.kind + ':' + (p.kind === 'arrow' ? '' : p.value);
+      return p.kind === 'amount' ? 'a:' + p.symbol + ':' + (p.value ? '1' : '0') : p.kind + ':' + (p.kind === 'arrow' ? '' : p.value);
     }).join('|');
     if (memo.moveShape !== shape) {
       memo.moveShape = shape;
+      dom.setAttr(host, 'data-words', words ? 'true' : null);
       dom.clear(host);
       memo.moveNumbers = [];
       for (var i = 0; i < parts.length; i += 1) {
@@ -1411,7 +1421,6 @@
           continue;
         }
         var leg = dom.el('span', 'mcard-leg');
-        if (p.soft) leg.appendChild(dom.el('span', 'mcard-soft', p.soft + ' '));
         var figure = dom.el('span', 'num mcard-num');
         leg.appendChild(figure);
         if (p.symbol) leg.appendChild(dom.el('span', 'mcard-sym', (p.value ? ' ' : '') + p.symbol));

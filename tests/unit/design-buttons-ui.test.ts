@@ -113,6 +113,7 @@ const SMALL_FLOOR: Array<[file: string, selector: string, prop: string]> = [
   ['layout.css', '.brake-btn', 'height'],
   ['notice.css', '.notice-act', 'min-height'],
   ['basic.css', '.bal-add', 'min-height'],
+  ['basic.css', '.bal-more', 'min-height'],
   ['trade.css', '.pane-hide', 'height'],
   ['trade.css', '.pane-show', 'height'],
   ['trade.css', '.layers', 'height'],

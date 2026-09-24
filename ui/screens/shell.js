@@ -355,11 +355,13 @@
   /* ---------- the notice ----------
 
      One line, and only while something needs the person, most urgent first:
-     the app is not answering, nothing can move (a freeze, or rules that cannot
-     be read), or a wallet exists that has not been proven backed up, which is
-     one bad disk away from gone. Words and a way through; no dot, no colour. */
+     the app is not answering, a line from the macOS shell, nothing can move (a
+     freeze, or rules that cannot be read), or a wallet exists that has not been
+     proven backed up, which is one bad disk away from gone. Words and a way
+     through; no dot, no colour. */
   function noticeOf(state) {
     if (isDown()) return { icon: 'link-off', text: offlineText };
+    if (shellLine) return { icon: /on the clipboard/i.test(shellLine) ? 'copy' : 'warning', text: shellLine, shell: true };
     var basic = state.basic || {};
     if (basic.warning) {
       if (frozenIn(state)) return { icon: 'freeze', text: basic.warning, act: 'Unfreeze', run: openBrake };
@@ -367,12 +369,37 @@
     }
     var vault = state.vault || {};
     if (vault.custody && vault.backedUp === false) {
-      return { icon: 'lock', text: 'Your recovery phrase is not backed up yet.', act: 'Back it up', run: openBackup };
+      return { icon: 'lock', text: 'Recovery phrase not backed up.', act: 'Back it up', run: openBackup };
     }
     return null;
   }
 
   var noticeRun = null;
+  var noticeShell = false;
+
+  /* A line the macOS shell says in the window (src-tauri/src/main.rs notice): the
+     app restarted, or the agent's connection line is on the clipboard. It holds
+     for ten seconds, or until a click on it. */
+  var SHELL_LINE_MS = 10000;
+  var shellLine = null;
+  var shellTimer = 0;
+
+  function sayFromShell(text) {
+    var line = typeof text === 'string' ? text.trim() : '';
+    if (shellTimer) window.clearTimeout(shellTimer);
+    shellTimer = 0;
+    shellLine = line || null;
+    if (shellLine) shellTimer = window.setTimeout(dropShellLine, SHELL_LINE_MS);
+    renderNotice();
+  }
+
+  function dropShellLine() {
+    if (shellTimer) window.clearTimeout(shellTimer);
+    shellTimer = 0;
+    if (shellLine === null) return;
+    shellLine = null;
+    renderNotice();
+  }
 
   function wireNotice() {
     if (!refs.notice) return;
@@ -384,11 +411,15 @@
         if (noticeRun) noticeRun();
       });
     }
+    dom.on(refs.notice, 'click', function () {
+      if (noticeShell) dropShellLine();
+    });
   }
 
   function renderNotice() {
     if (!refs.notice) return;
     var say = noticeOf(store.get() || {});
+    noticeShell = !!(say && say.shell);
     dom.setHidden(refs.notice, !say);
     if (!say) {
       noticeRun = null;
@@ -647,6 +678,10 @@
     setPending: setPending,
     isPinned: isPinned
   };
+
+  /* The shell's way in, there from the first script so a line said before boot
+     waits for the notice to be drawn. */
+  window.__phosphorShellNotice = sayFromShell;
 
   store.subscribe(render);
 })();

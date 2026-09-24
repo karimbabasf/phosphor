@@ -171,10 +171,19 @@ body[data-view="basic"] .notice {
   margin-top: 16px;
 }
 
-/* The tiles, the tiny-balances line and the empty line scroll together inside
-   the slab when there are more than it holds; Add money stays put under them.
-   The scroller keeps a few pixels round the tiles so a tile that lifts is not
-   cut by it. */
+/* The room over Add money: the tiles, and under them the foot line. Its height is whatever
+   the slab leaves, whatever the tiles need, so basic.js fitRows reads it as the room. */
+.bal-room {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The tiles show whole or not at all: basic.js sizes the scroller to the tiles that fit,
+   and a scroll or the count under them turns it a whole tile at a time. The scroller keeps
+   a few pixels round the tiles so a tile that lifts is not cut by it. */
 .bal-scroll {
   flex: 0 1 auto;
   min-height: 0;
@@ -186,25 +195,74 @@ body[data-view="basic"] .notice {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
+  scroll-snap-type: y mandatory;
+  scroll-padding: 4px 0;
 }
 
 .bal-scroll::-webkit-scrollbar {
   display: none;
 }
 
-.bal-scroll[data-cut="top"] {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+/* How many more there are, when the slab cannot show them all, and the balances too small
+   to list, on one line under the tiles. */
+.bal-foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+  margin: -4px 4px 0;
 }
 
-.bal-scroll[data-cut="bottom"] {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+.bal-foot[hidden] {
+  display: none;
 }
 
-.bal-scroll[data-cut="both"] {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+.bal-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  margin-left: -8px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out),
+              transform var(--dur-release) var(--ease-spring);
+}
+
+.bal-more[hidden] {
+  display: none;
+}
+
+.bal-more > .icon {
+  width: 14px;
+  height: 14px;
+  transition: transform var(--dur-spring) var(--ease-spring);
+}
+
+.bal-more[data-dir="up"] > .icon {
+  transform: rotate(180deg);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bal-more:hover {
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    color: var(--text);
+  }
+}
+
+.bal-more:active {
+  transition-duration: 100ms, 100ms, var(--dur-press);
+}
+
+.bal-more:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
 }
 
 .bal-rows {
@@ -221,6 +279,7 @@ body[data-view="basic"] .notice {
    before the figures, so the words always stand on the tile's own ground. */
 .bal-row {
   position: relative;
+  scroll-snap-align: start;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -364,7 +423,7 @@ body[data-view="basic"] .notice {
 }
 
 .bal-small {
-  margin: 0 4px;
+  margin: 0;
   font-size: var(--fs-12);
   line-height: 1.45;
   color: var(--text-3);
@@ -497,13 +556,22 @@ body[data-view="basic"] .notice {
 
 /* ---------- shorter and narrower windows ---------- */
 
-/* A short window (the app opens as short as 700): the ring gives up a
-   little of its size before the list gives up a tile. */
-@media (max-height: 760px) {
+/* A short window: the ring gives up some of its size before the list gives up a tile, so
+   the default window (780 tall) holds four coins, Add money and the notice under them. */
+@media (max-height: 820px) {
   .bal-head { height: 212px; }
   .bal-ring { width: 204px; height: 204px; }
   .bal-centre { width: 138px; }
   .bal-total { font-size: calc(27px * var(--fit, 1)); }
+}
+
+/* The shortest window the app opens (700): a step smaller again, so three whole coins and
+   the count of the rest stand over Add money. */
+@media (max-height: 720px) {
+  .bal-head { height: 196px; }
+  .bal-ring { width: 188px; height: 188px; }
+  .bal-centre { width: 128px; }
+  .bal-total { font-size: calc(25px * var(--fit, 1)); }
 }
 
 /* A 27 inch screen: the ring grows with the type. */

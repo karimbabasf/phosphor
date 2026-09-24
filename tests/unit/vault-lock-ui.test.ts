@@ -626,7 +626,7 @@ test('the shell routes deposit frames to the store and the card, and says "not b
   const text = find(notice, '[data-role="notice-text"]')[0];
   const act = find(notice, '[data-role="notice-act"]')[0];
   assert.equal(notice.hidden, false, 'nothing said about a wallet that is not backed up');
-  assert.equal(text.textContent, 'Your recovery phrase is not backed up yet.');
+  assert.equal(text.textContent, 'Recovery phrase not backed up.');
   assert.equal(act.textContent, 'Back it up');
   assert.equal(act.hidden, false);
   world.put({ vault: vaultState({ state: 'unlocked', backedUp: true }) });
@@ -665,6 +665,60 @@ test('the notice says the one thing that matters most: the app not answering, th
   assert.equal(text.textContent, 'The safety rules cannot be read, so every move is being refused.');
   assert.equal(act.hidden, true);
   assert.equal(icon.getAttribute('href'), '#i-warning');
+});
+
+/* The macOS shell says a restart and a copied connection line in the window's own notice
+   (src-tauri/src/main.rs notice_script calls window.__phosphorShellNotice). The line stands
+   after "not answering", holds for ten seconds or until a click, and then the notice goes
+   back to whatever it was saying. */
+test('a line from the macOS shell shows after "not answering", and goes after ten seconds or a click', async () => {
+  const state = {
+    lock: { state: 'unlocked', idleLocksInSec: null },
+    vault: vaultState({ state: 'unlocked', backedUp: false }),
+    proposals: [],
+    policy: {},
+    deposit: null,
+  };
+  const world = build(state, [SHELL]);
+  let connect: (next: string) => void = () => {};
+  world.sandbox.PhosphorEvents.onConnection = (fn: (c: string) => void) => { connect = fn; fn('live'); };
+  const timers: Array<{ fn: () => void; ms: number }> = [];
+  world.sandbox.PhosphorShell.boot();
+  await flush();
+  world.sandbox.setTimeout = (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; };
+  const notice = world.nodes.notice;
+  const text = find(notice, '[data-role="notice-text"]')[0];
+  const act = find(notice, '[data-role="notice-act"]')[0];
+  const icon = find(notice, '[data-role="notice-icon"]')[0];
+  const backup = 'Recovery phrase not backed up.';
+  assert.equal(text.textContent, backup);
+
+  const restarted = 'Phosphor stopped and started again. Anything that was moving then shows on Activity as unknown, so check it before you act again.';
+  assert.equal(typeof world.sandbox.__phosphorShellNotice, 'function', 'the shell has no way into the notice');
+  world.sandbox.__phosphorShellNotice(restarted);
+  assert.equal(notice.hidden, false);
+  assert.equal(text.textContent, restarted);
+  assert.equal(act.hidden, true, 'the shell line offers the backup line\'s press');
+  assert.equal(icon.getAttribute('href'), '#i-warning');
+  assert.equal(timers.at(-1)?.ms, 10000, 'the line does not go after ten seconds');
+  timers.at(-1)!.fn();
+  assert.equal(text.textContent, backup, 'the backup line did not come back');
+  assert.equal(act.hidden, false);
+
+  // A click on the line puts it away early; a click on the backup line does nothing to it.
+  world.sandbox.__phosphorShellNotice('The connection line for your agent is on the clipboard. Run it in the folder the agent should work from.');
+  assert.equal(icon.getAttribute('href'), '#i-copy');
+  notice.click();
+  assert.equal(text.textContent, backup);
+  notice.click();
+  assert.equal(text.textContent, backup);
+
+  // "Not answering" outranks it, and it is still there once the app answers again.
+  world.sandbox.__phosphorShellNotice(restarted);
+  connect('offline');
+  assert.match(text.textContent, /^The app stopped answering/);
+  connect('live');
+  assert.equal(text.textContent, restarted);
 });
 
 test('the Vault tab is one of the views the shell knows', () => {
