@@ -185,9 +185,11 @@ export async function proposeTradeChange(ctx: PCtx, params: TradeChangeParams): 
     return landFree(ctx, { ...base, cancel: true, before: approved, after: approved, amountUsd: 0 }, params);
   }
 
-  /* A close only takes risk off: a reduce-only order at the plan's own bound, no new margin, and
-     nothing leaves the venue. So it lands free like a cancel, charges nothing to the day, and
-     still stops at the kill switch and an unreadable policy (landFree). */
+  /* A close only takes risk off: a reduce-only order at the plan's own bound, sized to what the
+     plan's own entry filled and never to size on the coin the plan did not open (src/runner/
+     main.ts closePlan), no new margin, and nothing leaves the venue. So it lands free like a
+     cancel, charges nothing to the day, and still stops at the kill switch and an unreadable
+     policy (landFree). */
   if (params.close === true) {
     if (row.status !== 'open') {
       return refuseDraft(ctx, 'trade', { ...base, before: approved, after: approved }, [`${row.id} is ${row.status}, so there is nothing to close; cancel it instead`], params);

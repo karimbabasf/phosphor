@@ -104,7 +104,7 @@ function changeLines(row: PlanRow, draft: Extract<TradeDraft, { op: 'change' }>)
     return lines;
   }
   if (draft.close === true) {
-    lines.push(`Close ${row.id}: the ${row.side} on ${row.symbol} is sold at market, reduce only, within ${row.entry.type === 'market' || row.entry.type === 'stop' ? row.entry.maxSlippageBps : 30} bps of the mark.`);
+    lines.push(`Close ${row.id}: the plan's own ${row.side} on ${row.symbol} is closed at market, reduce only, within ${row.entry.type === 'market' || row.entry.type === 'stop' ? row.entry.maxSlippageBps : 30} bps of the mark. Any other size on ${row.symbol} stays open.`);
     lines.push(`Collateral at stake now: ${money(draft.before.marginUsd)}. Slippage bound: ${money((row.sizeUsd * (row.entry.type === 'market' || row.entry.type === 'stop' ? row.entry.maxSlippageBps : 30)) / 10_000)}.`);
     lines.push('The stop and the target are cancelled once the position is flat.');
     return lines;

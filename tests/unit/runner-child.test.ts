@@ -328,7 +328,7 @@ test('close is a reduce-only IOC at the plan bound, then the exits are cancelled
   const { v, c } = await boot();
   await c.arm(plan());
   await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
-  v.state.position = { szi: 10, entryPx: 100.3 };
+  v.state.position = { szi: 9.97, entryPx: 100.3 };
   let reads = 0;
   v.state.answer = (orders) => {
     // The close fills; the next position read finds the account flat.
@@ -343,7 +343,7 @@ test('close is a reduce-only IOC at the plan bound, then the exits are cancelled
   assert.equal(closeOrder.b, false, 'closing a long is a sell');
   assert.equal(closeOrder.r, true);
   assert.equal(closeOrder.p, '109.67', 'the mark less 30 bps, rounded up for a sell');
-  assert.equal(closeOrder.s, '10');
+  assert.equal(closeOrder.s, '9.97', 'the size the plan filled');
   const cancel = v.state.actions.find((a) => a.type === 'cancelByCloid');
   assert.ok(cancel !== undefined && cancel.type === 'cancelByCloid' && cancel.cancels.length === 2, 'both exits are cancelled');
 });
@@ -355,6 +355,9 @@ async function partFilledLimit(v: ReturnType<typeof venue>, c: Child): Promise<{
   await c.arm(plan({ entry: { type: 'limit', px: 95 } }));
   const fired = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
   assert.equal(fired.ev, 'placed', JSON.stringify(fired));
+  const entry = v.state.book.get(fired.ev === 'placed' ? (fired.cloids.entry ?? '') : '');
+  assert.ok(entry !== undefined, 'the venue holds the entry');
+  entry.filled = 3;
   v.state.position = { szi: 3, entryPx: 95 };
   const p = await c.send({ cmd: 'protect', id: 'pl_1' });
   assert.equal(p.ev, 'protected', JSON.stringify(p));
@@ -406,6 +409,65 @@ test('close takes the rest of a limit entry off the book before the closing orde
   assert.ok(entryCancel.type === 'cancelByCloid' && exitCancel.type === 'cancelByCloid');
   assert.deepEqual(entryCancel.cancels.map((x) => x.cloid), [ids.entry]);
   assert.deepEqual(exitCancel.cancels.map((x) => x.cloid).sort(), [ids.stop, ids.target].sort());
+});
+
+// The plan's share is what its own entry filled, as the venue reports the entry order: size on
+// the coin that the plan did not open (a trade by hand after it opened) is not the plan's to
+// close, and a close the agent can land without a click must never reach it.
+function shrinkOnFill(v: ReturnType<typeof venue>): void {
+  v.state.answer = (orders) => {
+    for (const o of orders) if (v.state.position !== null) v.state.position = { ...v.state.position, szi: Number((v.state.position.szi - Number(o.s)).toFixed(8)) };
+    return orders.map((o) => ({ filled: { totalSz: o.s, avgPx: o.p, oid: 9 } }));
+  };
+}
+
+test("close takes only the plan's own fill off a coin that also holds size the plan did not open", async () => {
+  const { v, c } = await boot();
+  await c.arm(plan());
+  const fired = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(fired.ev === 'placed' ? fired.filledSz : 0, 9.97);
+  // 5.03 ETH bought by hand after the plan opened.
+  v.state.position = { szi: 15, entryPx: 100.2 };
+  shrinkOnFill(v);
+  const e = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 1000, mark: 100 });
+  assert.equal(e.ev, 'closed', JSON.stringify(e));
+  const closeOrder = v.orders()[1].orders[0];
+  assert.equal(closeOrder.r, true);
+  assert.equal(closeOrder.b, false);
+  assert.equal(closeOrder.s, '9.97', 'the plan filled 9.97, so 9.97 and not the 15 on the coin');
+  assert.equal(v.state.position?.szi, 5.03, 'the size bought by hand is still open');
+});
+
+test('close sizes to what a limit entry actually filled, after taking the rest of it off the book', async () => {
+  const { v, c } = await boot();
+  const ids = await partFilledLimit(v, c);
+  // 3 filled for the plan, then 5 more bought by hand.
+  v.state.position = { szi: 8, entryPx: 95 };
+  shrinkOnFill(v);
+  const from = v.state.actions.length;
+  const e = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 100 });
+  assert.equal(e.ev, 'closed', JSON.stringify(e));
+  const after = v.state.actions.slice(from);
+  assert.deepEqual(after.map((a) => a.type), ['cancelByCloid', 'order', 'cancelByCloid']);
+  const [entryCancel, closing] = after;
+  assert.ok(entryCancel.type === 'cancelByCloid' && closing.type === 'order');
+  assert.deepEqual(entryCancel.cancels.map((x) => x.cloid), [ids.entry]);
+  assert.equal(closing.orders[0].s, '3');
+  assert.equal(v.state.position?.szi, 5);
+});
+
+test("a close that cannot learn the plan's own fill from the venue closes nothing and says so", async () => {
+  const { v, c } = await boot();
+  await c.arm(plan());
+  await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  v.state.position = { szi: 15, entryPx: 100.2 };
+  v.state.statusAnswer = () => ({ status: 'unknownOid' });
+  const before = v.orders().length;
+  const e = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 100 });
+  assert.equal(e.ev, 'error', JSON.stringify(e));
+  assert.match(e.ev === 'error' ? e.message : '', /did not say how much of pl_1's entry filled/);
+  assert.equal(v.orders().length, before, 'no closing order was sent');
+  assert.equal(v.state.position?.szi, 15);
 });
 
 test('every event that reached the venue says how long the venue took, in whole milliseconds', async () => {

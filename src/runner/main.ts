@@ -475,14 +475,72 @@ async function closeCoin(coin: string, meta: AssetMeta, mark: number, maxSlippag
   return { closed: stillOpenSz === 0, detail: stillOpenSz === 0 ? `${coin}: closed at ${px}` : `${coin}: ${stillOpenSz} still open after the close at ${px}`, stillOpenSz };
 }
 
+// How much of this plan's own entry filled, in lots, by the venue's word on the entry order:
+// its original size less what was left of it. An entry is never reduce-only, so the venue never
+// shrinks it and the difference is exactly the fill. Null when the venue does not answer for it.
+async function ownFilledLots(h: Held): Promise<number | null> {
+  const cloid = h.cloids.entry;
+  if (cloid === undefined) return null;
+  let reply: { status?: unknown; order?: { order?: { origSz?: unknown; sz?: unknown } } } | null;
+  try {
+    reply = await info.post({ type: 'orderStatus', user: USER, oid: cloid });
+  } catch {
+    return null;
+  }
+  if (reply === null || reply.status !== 'order') return null;
+  const orig = Number(reply.order?.order?.origSz);
+  const left = Number(reply.order?.order?.sz);
+  if (!Number.isFinite(orig) || !Number.isFinite(left)) return null;
+  const f = 10 ** h.meta.szDecimals;
+  return Math.max(0, Math.round(orig * f) - Math.round(left * f));
+}
+
+/* A plan's close takes the plan's own share off the venue and nothing more: the smaller of what
+   its entry filled and the position on its side of the coin, reduce-only. Size on the coin the
+   plan did not open (a trade by hand after it opened) stays where it is, which is what makes a
+   close safe to land without a click. Flatten is the door that closes everything. */
+async function closePlan(h: Held, mark: number, maxSlippageBps: number): Promise<{ closed: boolean; detail: string }> {
+  const coin = h.plan.symbol;
+  const long = h.plan.side === 'long';
+  const f = 10 ** h.meta.szDecimals;
+  const pos = await readPosition(coin);
+  if (pos === null || pos.szi > 0 !== long) return { closed: true, detail: `${coin}: nothing of ${h.plan.id} is open` };
+  const own = await ownFilledLots(h);
+  if (own === null) {
+    return {
+      closed: false,
+      detail:
+        `the venue did not say how much of ${h.plan.id}'s entry filled, so nothing was closed rather than risk closing size on ` +
+        `${coin} that is not this plan's. Try again, or use Flatten to close everything on the account`,
+    };
+  }
+  const posLots = Math.round(Math.abs(pos.szi) * f);
+  const lots = Math.min(posLots, own);
+  if (lots <= 0) return { closed: true, detail: `${coin}: nothing of ${h.plan.id} is open` };
+  const isBuy = !long;
+  const px = roundToValidPrice(aggressiveLimitPrice(mark, isBuy, maxSlippageBps), h.meta.szDecimals, true, isBuy);
+  const res = await requireExchange().order([
+    { assetId: h.meta.assetId, isBuy, price: px, size: lots / f, reduceOnly: true, tif: 'Ioc', szDecimals: h.meta.szDecimals },
+  ]);
+  const refused = orderErrors(res);
+  if (refused.length > 0) return { closed: false, detail: `${coin}: the venue refused the close: ${refused.join('; ')}` };
+  const after = await readPosition(coin);
+  const afterLots = after === null || after.szi > 0 !== long ? 0 : Math.round(Math.abs(after.szi) * f);
+  const stillOwn = Math.max(0, afterLots - (posLots - lots));
+  if (stillOwn > 0) return { closed: false, detail: `${coin}: ${stillOwn / f} of ${h.plan.id} still open after the close at ${px}` };
+  const others = posLots - lots;
+  return { closed: true, detail: `${coin}: ${lots / f} closed at ${px}${others > 0 ? `; ${others / f} on ${coin} is not this plan's and stays open` : ''}` };
+}
+
 async function close(m: Extract<ToChild, { cmd: 'close' }>): Promise<FromChild> {
   const h = held.get(m.id);
   if (h === undefined) return { ev: 'refused', seq: m.seq, id: m.id, reason: `this runner holds no plan ${m.id}` };
   // The rest of a resting entry comes off first, so nothing fills behind the close and opens
-  // the position again. A market entry never rests, so it costs no round trip.
+  // the position again, and what the entry filled is final when the close is sized from it. A
+  // market entry never rests, so it costs no round trip.
   let entryRefused: string[] = [];
   if (h.plan.entry.type !== 'market' && h.cloids.entry !== undefined) entryRefused = await cancelCloids(h.meta.assetId, [h.cloids.entry]);
-  const out = await closeCoin(h.plan.symbol, h.meta, m.mark, m.maxSlippageBps);
+  const out = await closePlan(h, m.mark, m.maxSlippageBps);
   if (!out.closed) return { ev: 'error', seq: m.seq, id: m.id, message: out.detail };
   // Flat. The venue usually cancels the exits itself; asking again is free and "already
   // canceled" is success.
