@@ -1105,7 +1105,7 @@ export function createRunnerHost(deps: HostDeps) {
       if (mark === null) return { ok: false, detail: `no mark price for ${row.symbol}` };
       const armed = await ensureArmed(row);
       if (!armed.ok) return { ok: false, detail: armed.reason };
-      const reply = await request({ cmd: 'close', id, maxSlippageBps, mark });
+      const reply = await request({ cmd: 'close', id, maxSlippageBps, mark, exitSz: row.exitSz ?? 0 });
       if (reply.ev !== 'closed') {
         return { ok: false, detail: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };
       }

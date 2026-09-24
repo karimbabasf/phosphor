@@ -43,8 +43,9 @@ export function venue() {
     // Every order the venue accepted, by the client id it carried: its original size, what of
     // it filled, and whether the rest was canceled. orderStatus answers from it the way the
     // venue does (origSz, and sz as what is left), and a test moves `filled` to stand in for a
-    // resting entry that filled later.
-    book: new Map<string, { origSz: number; filled: number; canceled: boolean }>(),
+    // resting entry that filled later. `status` overrides the word the venue gives, for a
+    // trigger order that answers `triggered`.
+    book: new Map<string, { origSz: number; filled: number; canceled: boolean; status?: string }>(),
     // What every orderStatus read answers instead, when a test needs the venue silent or odd.
     statusAnswer: null as null | ((oid: unknown) => unknown),
   };
@@ -85,7 +86,7 @@ export function venue() {
             return res.end(JSON.stringify({ status: 'order', order: { status: 'open', statusTimestamp: Date.now(), order: { oid: json.oid, coin: 'ETH' } } }));
           }
           const left = Number((known.origSz - known.filled).toFixed(8));
-          const status = left <= 0 ? 'filled' : known.canceled ? 'canceled' : 'open';
+          const status = known.status ?? (left <= 0 ? 'filled' : known.canceled ? 'canceled' : 'open');
           return res.end(JSON.stringify({ status: 'order', order: { status, statusTimestamp: Date.now(), order: { oid: json.oid, coin: 'ETH', origSz: String(known.origSz), sz: String(left) } } }));
         }
         return res.end('{}');

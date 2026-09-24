@@ -416,7 +416,11 @@ test('close takes the rest of a limit entry off the book before the closing orde
 // close, and a close the agent can land without a click must never reach it.
 function shrinkOnFill(v: ReturnType<typeof venue>): void {
   v.state.answer = (orders) => {
-    for (const o of orders) if (v.state.position !== null) v.state.position = { ...v.state.position, szi: Number((v.state.position.szi - Number(o.s)).toFixed(8)) };
+    for (const o of orders) {
+      if (v.state.position === null) continue;
+      const szi = Number((v.state.position.szi - Number(o.s)).toFixed(8));
+      v.state.position = szi === 0 ? null : { ...v.state.position, szi };
+    }
     return orders.map((o) => ({ filled: { totalSz: o.s, avgPx: o.p, oid: 9 } }));
   };
 }
@@ -463,11 +467,95 @@ test("a close that cannot learn the plan's own fill from the venue closes nothin
   v.state.position = { szi: 15, entryPx: 100.2 };
   v.state.statusAnswer = () => ({ status: 'unknownOid' });
   const before = v.orders().length;
+  const cancels = cancelled(v).length;
   const e = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 100 });
   assert.equal(e.ev, 'error', JSON.stringify(e));
   assert.match(e.ev === 'error' ? e.message : '', /did not say how much of pl_1's entry filled/);
   assert.equal(v.orders().length, before, 'no closing order was sent');
+  assert.equal(cancelled(v).length, cancels, 'the stop and target stay');
   assert.equal(v.state.position?.szi, 15);
+});
+
+// Fail closed. A close sizes from the venue's word on the plan's own entry, so an answer that
+// cannot be trusted closes nothing and cancels nothing: the position keeps the stop and target
+// the human approved, and the reply points at Flatten. Cancelling the exits on a close that
+// sent no order is how a position ends up open with no stop.
+function assertKept(e: FromChild, v: ReturnType<typeof venue>, orders: number, cancels: number): void {
+  assert.equal(e.ev, 'error', JSON.stringify(e));
+  const said = e.ev === 'error' ? e.message : '';
+  assert.match(said, /nothing was closed/);
+  assert.match(said, /stop and target are still in place/);
+  assert.match(said, /Flatten/);
+  assert.equal(v.orders().length, orders, 'no closing order was sent');
+  assert.equal(cancelled(v).length, cancels, 'no cancel of any kind: the stop and target stay');
+}
+
+const STOP_ENTRY = { entry: { type: 'stop' as const, px: 105, maxSlippageBps: 30 } };
+
+// A stop entry that triggered and filled 9.5238 (1000 dollars at 105), protected by the runner.
+async function triggeredStopEntry(v: ReturnType<typeof venue>, c: Child): Promise<string> {
+  await c.arm(plan(STOP_ENTRY));
+  const fired = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(fired.ev, 'placed', JSON.stringify(fired));
+  const entry = fired.ev === 'placed' ? (fired.cloids.entry ?? '') : '';
+  v.state.position = { szi: 9.5238, entryPx: 105 };
+  const p = await c.send({ cmd: 'protect', id: 'pl_1' });
+  assert.equal(p.ev, 'protected', JSON.stringify(p));
+  return entry;
+}
+
+test('a triggered stop entry the venue does not report as filled is not closed: nothing is sent and its stop and target stay', async () => {
+  const { v, c } = await boot();
+  const entry = await triggeredStopEntry(v, c);
+  const book = v.state.book.get(entry);
+  assert.ok(book !== undefined);
+  // The trigger fired and the position is open, but the order's own status shows it triggered
+  // with none of it filled: the fill was booked somewhere the entry's id does not reach.
+  book.status = 'triggered';
+  const orders = v.orders().length;
+  const cancels = cancelled(v).length;
+  const e = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 106 });
+  assertKept(e, v, orders, cancels);
+  assert.match(e.ev === 'error' ? e.message : '', /stop entry/);
+  assert.equal(v.state.position?.szi, 9.5238, 'the position is still there, and still protected');
+  // The plan is still held: a later close, once the venue answers cleanly, goes through.
+  book.status = undefined;
+  book.filled = book.origSz;
+  shrinkOnFill(v);
+  const later = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 106 });
+  assert.equal(later.ev, 'closed', JSON.stringify(later));
+});
+
+test('a stop entry the venue reports filled closes its own fill', async () => {
+  const { v, c } = await boot();
+  const entry = await triggeredStopEntry(v, c);
+  const book = v.state.book.get(entry);
+  assert.ok(book !== undefined);
+  book.filled = book.origSz;
+  shrinkOnFill(v);
+  const e = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 106 });
+  assert.equal(e.ev, 'closed', JSON.stringify(e));
+  assert.equal(v.orders()[v.orders().length - 1].orders[0].s, '9.5238');
+  assert.equal(v.state.position, null);
+});
+
+test('an entry read that shows less filled than the app recorded for the plan closes nothing', async () => {
+  const { v, c } = await boot();
+  await c.arm(plan());
+  await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  v.state.position = { szi: 9.97, entryPx: 100.3 };
+  v.state.statusAnswer = () => ({ status: 'order', order: { status: 'filled', order: { coin: 'ETH', origSz: '0.0', sz: '0.0' } } });
+  let orders = v.orders().length;
+  let cancels = cancelled(v).length;
+  const none = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 100, exitSz: 9.97 });
+  assertKept(none, v, orders, cancels);
+  v.state.statusAnswer = () => ({ status: 'order', order: { status: 'filled', order: { coin: 'ETH', origSz: '5.0', sz: '0.0' } } });
+  orders = v.orders().length;
+  cancels = cancelled(v).length;
+  const less = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 100, exitSz: 9.97 });
+  assertKept(less, v, orders, cancels);
+  assert.match(less.ev === 'error' ? less.message : '', /reports 5 of pl_1's entry filled, and the app recorded 9\.97/);
+  assert.equal(v.state.position?.szi, 9.97);
 });
 
 test('every event that reached the venue says how long the venue took, in whole milliseconds', async () => {
@@ -480,7 +568,8 @@ test('every event that reached the venue says how long the venue took, in whole 
   const placed = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
   assert.equal(placed.ev, 'placed');
   took(placed, 'placed');
-  v.state.position = { szi: 10, entryPx: 100.3 };
+  // The fill itself: a close sizes from it and holds the venue to what protect recorded.
+  v.state.position = { szi: 9.97, entryPx: 100.3 };
   took(await c.send({ cmd: 'protect', id: 'pl_1' }), 'protected');
   took(await c.send({ cmd: 'modify', id: 'pl_1', stop: 95, cloids: {}, gen: 1, mark: 100 }), 'modified');
   v.state.answer = (orders) => {

@@ -19,7 +19,9 @@ export type ToChild =
   | { cmd: 'protect'; seq: number; id: string }
   | { cmd: 'modify'; seq: number; id: string; stop?: number; target?: number; cloids: Cloids; gen: number; mark: number }
   | { cmd: 'cancel'; seq: number; id: string }
-  | { cmd: 'close'; seq: number; id: string; maxSlippageBps: number; mark: number }
+  // `exitSz` is the fill the host recorded for the plan: a read of the entry showing less than
+  // that is not trusted to size the close.
+  | { cmd: 'close'; seq: number; id: string; maxSlippageBps: number; mark: number; exitSz?: number }
   // Every coin the host names is closed at the human's own bound, and every cloid it names is
   // cancelled. The child holds books for armed coins only, so the host names the rest.
   | { cmd: 'flatten'; seq: number; coins: { coin: string; meta: AssetMeta; mark: number }[]; cancels: { assetId: number; cloid: string }[] }

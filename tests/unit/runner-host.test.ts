@@ -617,6 +617,7 @@ test('close goes through the child at the given bound and finishes the plan', as
   assert.equal(out.ok, true, out.detail);
   const sent = h.forked[0].of('close')[0];
   assert.equal(sent?.cmd === 'close' ? sent.maxSlippageBps : 0, 30);
+  assert.equal(sent?.cmd === 'close' ? sent.exitSz : 0, 10, 'the fill the app recorded goes with it, for the runner to hold the venue to');
   assert.equal(h.runner.get('pl_2')?.endReason, 'closed');
   const notOpen = await h.runner.close('pl_1', 30);
   assert.equal(notOpen.ok, false, 'a placed plan has nothing to close');
