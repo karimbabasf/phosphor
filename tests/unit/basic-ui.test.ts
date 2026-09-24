@@ -413,22 +413,28 @@ test('the slab shows whole tiles only, and under them how many more there are', 
   const four = [...COINS, coin('SOL', 1200.42, '8.10', 'Solana (SOL)')];
   const state = frame('$12,557.93', four, { smallLine: '1 tiny balance under a cent, not listed' });
   panel.put(state);
+  const list = panel.one('bal-list');
   const room = panel.one('bal-room');
+  const actions = panel.one('bal-actions');
   const scroll = panel.one('bal-scroll');
   const foot = panel.one('bal-foot');
   const more = panel.one('bal-more');
   assert.ok(room && foot && more, 'no room, foot or count under the tiles');
   assert.equal(panel.one('bal-small').parentNode, foot, 'the tiny balances line scrolls away with the tiles');
+  /* The room box is only as tall as the tiles it shows (Add money follows them), so the room
+     is read off the list the slab sizes: its height less the keys (52) and the gap over them. */
   let roomHeight = 260;
   scroll.scrollTop = 0;
-  room.getBoundingClientRect = () => ({ height: roomHeight });
+  list.getBoundingClientRect = () => ({ height: roomHeight + 52 + 12 });
+  actions.getBoundingClientRect = () => ({ height: 52 });
+  room.getBoundingClientRect = () => { throw new Error('the room was measured: it is only as tall as its tiles'); };
   panel.rows().forEach((row: Any, i: number) => {
     row.getBoundingClientRect = () => ({ top: 100 + i * 72 - scroll.scrollTop, bottom: 164 + i * 72 - scroll.scrollTop });
   });
   foot.getBoundingClientRect = () => ({ height: more.hidden ? 18 : 30 });
   panel.win.getComputedStyle = (el: Any) => (el === scroll
     ? { paddingTop: '4px', paddingBottom: '4px', marginTop: '-4px' }
-    : el === room ? { rowGap: '12px' } : { marginTop: el === foot ? '-4px' : '0px' });
+    : el === room || el === list ? { rowGap: '12px' } : { marginTop: el === foot ? '-4px' : '0px' });
 
   panel.put({ ...state });
   assert.equal(scroll.style.height, '216px', 'the scroller is not three whole tiles tall');
@@ -465,25 +471,35 @@ test('the ring gives up its size before the list gives up a tile, and nothing fa
   assert.match(css, /\.bal-row \{[^}]*scroll-snap-align: start;/);
 });
 
-/* Policies live on the Vault (Karim, 2026-09-23). Beside Add money, quiet, one press goes there
-   and asks the shell to bring the Policies into view (ui/screens/shell.js reveal). */
-test('a quiet Policies key beside Add money goes to the Vault\'s Policies', () => {
+/* Policies live on the Vault (Karim, 2026-09-23). Beside Add money, one press goes there and asks
+   the shell to bring the Policies into view (ui/screens/shell.js reveal). The finish review,
+   2026-09-24: as a bare word beside a filled key it read as a stray, and the keys waited at the
+   slab's foot under 160 px of nothing at 1440 by 900. */
+test('a Policies key of Add money\'s family beside it goes to the Vault\'s Policies, and the pair follows the tiles', () => {
   const panel = build();
   panel.put(frame('$11,357.51', COINS));
   const actions = panel.one('bal-actions');
   const [add, rules] = actions.children;
   assert.ok(add.className.split(' ').includes('bal-add'), 'Add money is not first');
   assert.ok(rules.className.split(' ').includes('bal-rules'), 'no Policies key beside Add money');
-  assert.ok(rules.className.split(' ').includes('btn-quiet'), 'the Policies key is not the quiet one');
+  assert.ok(rules.className.split(' ').includes('btn-ghost'), 'the Policies key is not a filled soft key');
+  assert.ok(!rules.className.split(' ').includes('btn-quiet'), 'the Policies key is a bare word again');
   assert.equal(rules.textContent, 'Policies');
   assert.equal(all(rules, 'icon')[0].dataset.icon, 'gauge');
   const asked: Any[] = [];
   panel.win.PhosphorShell = { setView: (name: string, opts: Any) => { asked.push({ name, opts }); } };
   click(rules);
   assert.deepEqual(JSON.parse(JSON.stringify(asked)), [{ name: 'vault', opts: { fromClick: true, reveal: 'policies' } }]);
-  // The same height and corner as Add money, so its hover fill is Add money's shape.
+  // Add money's height, corner, fill and light, so the two read as one pair of keys.
   const css = read('../../ui/design/basic.css');
   assert.match(css, /\.bal-rules \{[^}]*min-height: 52px;[^}]*border-radius: var\(--radius-tile\);/);
+  const rule = css.match(/\n\.bal-rules \{([^}]*)\}/)?.[1] ?? '';
+  assert.match(rule, /--btn-bg: var\(--bg-2\);/, 'not Add money\'s fill');
+  assert.match(rule, /--btn-hi: var\(--hi\), 0 1px 2px rgba\(0, 0, 0, 0\.25\);/, 'not Add money\'s light');
+  // The keys follow the tiles: the room is only as tall as what it shows, and nothing pushes the
+  // keys to the slab's foot.
+  assert.match(css, /\n\.bal-room \{\s*flex: 0 1 auto;/);
+  assert.doesNotMatch(css.match(/\n\.bal-actions \{([^}]*)\}/)?.[1] ?? '', /margin-top:\s*auto/, 'the keys wait at the slab\'s foot again');
 });
 
 test('the panel carries nothing but the balance: no rules strip, no folds, no brake', () => {

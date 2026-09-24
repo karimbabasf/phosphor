@@ -69,11 +69,12 @@ body[data-view="vault"] .world {
 }
 
 /* The notice at the slab's foot takes the slab's own lowest shade, so it
-   reads as the end of the slab rather than a bar laid over it. */
+   reads as the end of the slab rather than a bar laid over it, and what
+   scrolls under it fades into that shade (notice.css). */
 body[data-view="pro"] .notice,
 body[data-view="trade"] .notice,
 body[data-view="vault"] .notice {
-  background: color-mix(in srgb, var(--bg-1), var(--bg-0) 25%);
+  --notice-bg: color-mix(in srgb, var(--bg-1), var(--bg-0) 25%);
   padding-inline: var(--s-6);
 }
 
@@ -180,12 +181,50 @@ body[data-view="pro"] #view-pro[data-active="true"] {
   gap: 14px;
 }
 
-.stmt-ring {
+.stmt-ring-box {
+  position: relative;
   flex: 0 0 auto;
-  display: block;
   width: 72px;
   height: 72px;
+}
+
+.stmt-ring {
+  display: block;
+  width: 100%;
+  height: 100%;
   overflow: visible;
+}
+
+/* Where the legend steps off (under 860), the disc says the largest coin's
+   share, "49%" over "USDC", as the mockup's ring does, so the ring is never
+   an empty dark disc. */
+.stmt-ring-label {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-content: center;
+  justify-items: center;
+  margin: 0;
+  line-height: 1.1;
+  text-align: center;
+  pointer-events: none;
+}
+
+.stmt-ring-share {
+  font-size: var(--fs-16);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.stmt-ring-coin {
+  max-width: 46px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-2);
 }
 
 .stmt-disc-top { stop-color: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 3%); }
@@ -497,12 +536,13 @@ body[data-view="pro"] #view-pro[data-active="true"] {
   border-radius: var(--radius-xs);
 }
 
-/* THE POLICIES AND THE RECENT MOVES, side by side. */
+/* THE POLICIES AND THE RECENT MOVES, side by side, their two cards ending on
+   one line. */
 .stmt-duo {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
   margin-top: 14px;
 }
 
@@ -529,8 +569,9 @@ body[data-view="pro"] #view-pro[data-active="true"] {
 .stmt-freeze[data-on="true"] { color: var(--warn); }
 
 /* THE DIALS. Three soft dials: when it asks, the most in one move, and what
-   it did on its own today against its allowance. A pressed track, the arc in
-   the agent's ink (the cap's in the second text tone), a raised disc with
+   it did on its own today against its allowance. A faint full track, so the
+   arc in the agent's ink (the cap's in the second text tone) reads as how far
+   round it has come rather than as a knob on a dark ring; a raised disc with
    the figure on it, the words under it. The arcs sweep in once. */
 .dials {
   display: grid;
@@ -541,8 +582,11 @@ body[data-view="pro"] #view-pro[data-active="true"] {
 
 .dials[hidden] { display: none; }
 
+/* The words hang from the disc: a one line caption stays under its dial
+   instead of sinking to the middle of the row's two line height. */
 .dial {
   display: grid;
+  align-content: start;
   justify-items: center;
   gap: 7px;
   margin: 0;
@@ -579,7 +623,7 @@ body[data-view="pro"] #view-pro[data-active="true"] {
   stroke-width: 9;
 }
 
-.dial-track { stroke: var(--well-bg); }
+.dial-track { stroke: rgba(var(--hi-rgb), 0.07); }
 
 .dial-arc {
   stroke: var(--agent);
@@ -623,10 +667,12 @@ body[data-view="pro"] #view-pro[data-active="true"] {
   text-wrap: balance;
 }
 
+/* The day's ceiling closes the dial row, centred under it. */
 .stmt-policies-foot {
   margin: 12px 0 0;
   font-size: 12.5px;
   color: var(--text-2);
+  text-align: center;
 }
 
 @container policies (max-width: 380px) {
@@ -741,11 +787,13 @@ body[data-view="pro"] #view-pro[data-active="true"] {
 
 /* ---------- the statement narrowing ---------- */
 
-/* Under 860: the legend steps off (the ring stays), the actions go under the
-   total, and the amount column folds under the coin's name. */
+/* Under 860: the legend steps off (the ring stays, the largest share inside
+   it), the actions go under the total, and the amount column folds under the
+   coin's name. */
 @container prostmt (max-width: 860px) {
   .stmt-hero { grid-template-columns: minmax(0, 1fr) auto; }
   .stmt-legend { display: none; }
+  .stmt-ring-label:not([hidden]) { display: grid; }
   .stmt-actions { grid-column: 1 / -1; }
   .stmt-total { font-size: 38px; }
   .l-row { grid-template-columns: minmax(120px, 1.2fr) minmax(120px, 1.4fr) 62px minmax(92px, 1fr); }
@@ -766,12 +814,15 @@ body[data-view="pro"] #view-pro[data-active="true"] {
   .stmt-actions > .btn { flex: 1 1 0; }
 }
 
-/* A short window, the app's default 780 among them: one fewer move, rows a
-   little tighter, as the mockup does once the slab is under 700 tall. */
-@media (max-height: 800px) {
+/* A window up to 920 tall, the app's default 780 and a 900 tall screen among
+   them: one fewer move, rows and the dials' lead a little tighter, so at 1440
+   by 900 the whole statement stands in the slab over the notice, nothing
+   under it (the finish review, 2026-09-24: the fourth move ran into it). */
+@media (max-height: 920px) {
   .stmt-moves .move:nth-child(n+4) { display: none; }
-  .l-row { min-height: 52px; }
+  .l-rows > .l-row { min-height: 52px; }
   .stmt-hero { padding-bottom: 12px; }
+  .dials { margin-top: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

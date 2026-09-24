@@ -109,9 +109,9 @@
     add.type = 'button';
     add.appendChild(window.PhosphorIcons.svg('deposit'));
     add.appendChild(dom.el('span', '', 'Add money'));
-    /* Beside Add money, quiet: the Policies, which live on the Vault. It goes
-       there and lands on them (ui/screens/shell.js reveal). */
-    var rules = dom.el('button', 'btn btn-quiet btn-lg bal-rules');
+    /* Beside Add money, the second key of its pair: the Policies, which live on
+       the Vault. It goes there and lands on them (ui/screens/shell.js reveal). */
+    var rules = dom.el('button', 'btn btn-ghost btn-lg bal-rules');
     rules.type = 'button';
     rules.appendChild(window.PhosphorIcons.svg('gauge'));
     rules.appendChild(dom.el('span', 'btn-label', 'Policies'));
@@ -166,6 +166,7 @@
       empty: empty,
       add: add,
       rules: rules,
+      keys: actions,
       flow: flow,
       title: title,
       flowBody: flowBody
@@ -186,8 +187,9 @@
     dom.on(scroll, 'scroll', paintMore);
     dom.on(more, 'click', turnPage);
     /* The room the tiles have changes with the window, the notice under the slab and the
-       caption over the list; every change is a new count of whole tiles. */
-    if (typeof window.ResizeObserver === 'function') new window.ResizeObserver(fitSoon).observe(room);
+       caption over the list; every change is a new count of whole tiles. The list is watched,
+       not the room: the room is only as tall as the tiles it shows. */
+    if (typeof window.ResizeObserver === 'function') new window.ResizeObserver(fitSoon).observe(list);
     else window.addEventListener('resize', fitSoon);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSoon);
   }
@@ -480,15 +482,21 @@
      and under them how many more there are, which the list turns to a tile at a time. */
   function fitRows() {
     var scroll = refs.scroll;
-    if (!scroll || refs.list.hidden || typeof refs.room.getBoundingClientRect !== 'function') return;
+    if (!scroll || refs.list.hidden || typeof refs.list.getBoundingClientRect !== 'function') return;
     var tiles = [];
     for (var i = 0; i < refs.rows.children.length; i += 1) {
       var tile = refs.rows.children[i];
       if (!tile.hidden && String(tile.className).indexOf('bal-row-skel') < 0) tiles.push(tile);
     }
     /* Measured without touching the scroller: the room is the slab's to give, the tiles keep
-       their places, and a list half way through a turn stays where it is. */
-    var room = refs.room.getBoundingClientRect().height;
+       their places, and a list half way through a turn stays where it is. The room box is only
+       as tall as the tiles it shows (Add money follows them, basic.css), so what the slab gives
+       is read off the list, which the slab sizes: its height less the keys and the gap over
+       them. */
+    var room = refs.list.getBoundingClientRect().height
+      - refs.keys.getBoundingClientRect().height
+      - (parseFloat(window.getComputedStyle(refs.keys).marginTop) || 0)
+      - (parseFloat(window.getComputedStyle(refs.list).rowGap) || 0);
     dom.setHidden(refs.more, true);
     dom.setHidden(refs.foot, refs.small.hidden);
     if (!tiles.length || !(room > 0)) {

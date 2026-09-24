@@ -70,7 +70,7 @@ export const RECIPES: readonly Recipe[] = [
   { family: 'btn btn-lg', children: [label('Move my keys')], pending: 'Waiting for Touch ID', disables: true },
   { family: 'btn stmt-act', wrap: 'stmt-actions', children: [{ tag: 'svg', icon: 'swap', cls: 'icon' }, label('Swap')] },
   { family: 'stmt-trade', wide: true, wrap: 'stmt', children: [{ tag: 'span', cls: 'logo', attrs: { style: '--logo: 28px', 'data-fallback': 'true' }, children: [{ tag: 'span', cls: 'logo-initial', text: 'H' }] }, { tag: 'span', cls: 'stmt-trade-main', children: [{ tag: 'b', text: 'Trading account' }, { tag: 'span', cls: 'stmt-trade-figure num', text: '$1,046.82 · 2 positions' }] }, { tag: 'span', cls: 'stmt-trade-go', children: [{ tag: 'span', text: 'Open Trade' }, { tag: 'svg', icon: 'chevron-right', cls: 'icon' }] }], labelSelector: '.stmt-trade-main' },
-  { family: 'btn btn-quiet btn-lg bal-rules', wrap: 'bal-actions', children: [{ tag: 'svg', icon: 'gauge', cls: 'icon' }, label('Policies')] },
+  { family: 'btn btn-ghost btn-lg bal-rules', wrap: 'bal-actions', children: [{ tag: 'svg', icon: 'gauge', cls: 'icon' }, label('Policies')] },
   { family: 'btn btn-ghost btn-sm agentrow-use', wrap: 'agentrow-act', attrs: { 'aria-label': 'Use Claude Code' }, children: [label('Use')], pending: 'Checking', disables: true },
   { family: 'btn btn-quiet btn-sm agentrow-copy', wrap: 'agentrow-cmd', children: [{ tag: 'svg', icon: 'copy' }, label('Copy')] },
   { family: 'btn btn-quiet btn-sm agentpick-again', wrap: 'agentpick-foot', children: [label('Check again')], pending: 'Checking' },

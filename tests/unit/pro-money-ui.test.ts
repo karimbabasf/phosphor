@@ -127,7 +127,7 @@ type Rig = {
   candles: Record<string, Any>;
 };
 
-function boot(options: { view?: string; candles?: Record<string, Any>; receipts?: Any[] } = {}): Rig {
+function boot(options: { view?: string; candles?: Record<string, Any>; receipts?: Any[]; svg?: boolean } = {}): Rig {
   const host = makeNode('section');
   host.id = 'view-pro';
   let subscriber: ((state: Any) => void) | null = null;
@@ -161,6 +161,8 @@ function boot(options: { view?: string; candles?: Record<string, Any>; receipts?
     getElementById: (id: string) => (id === 'view-pro' ? host : null),
     querySelector: (sel: string) => (sel === '.composer-input' ? composer : null),
   };
+  // The ring and the dials' arcs are built only where there is an svg namespace to build in.
+  if (options.svg) document.createElementNS = (_ns: string, tag: string) => makeNode(tag);
   const window: Any = {
     document,
     setTimeout: () => { timers += 1; return 0; },
@@ -304,6 +306,26 @@ test('each coin: its price, the amount under its name and in its own column, and
   assert.equal(one(row(rig, 'NEAR'), 'l-price-figure').textContent, '$4.42');
 });
 
+/* The finish review, 2026-09-24: under 860 the legend steps off and the ring was an empty dark
+   disc. The disc says the largest coin's share there, as the mockup's ring does. */
+test('the ring\'s disc says the largest coin\'s share where the legend steps off', () => {
+  const rig = boot();
+  const label = one(rig.host, 'stmt-ring-label');
+  assert.equal(label.hidden, true, 'a share before the first read');
+  rig.put(state());
+  assert.equal(label.hidden, false);
+  assert.equal(one(label, 'stmt-ring-share').textContent, '49%');
+  assert.equal(one(label, 'stmt-ring-coin').textContent, 'USDC');
+  assert.equal(withClass(one(rig.host, 'stmt-legend'), 'stmt-legend-item')[0].textContent, 'USDC 49%', 'the disc and the legend disagree');
+  // Nothing priced is no share to say.
+  rig.put(state({ wallet: { rows: [intents('WIF', 2.5, { priceUsd: 0, valueUsd: 0, priced: false })], stale: [], hyperliquid: { funded: true } } }));
+  assert.equal(label.hidden, true);
+  // Only where the legend is not: beside the legend it would say the same thing twice.
+  assert.match(CSS, /\.stmt-ring-label \{[^}]*display: none;/);
+  const at860 = CSS.slice(CSS.indexOf('@container prostmt (max-width: 860px)'));
+  assert.match(at860, /\.stmt-ring-label:not\(\[hidden\]\) \{ display: grid; \}/);
+});
+
 /* ---------- the day ---------- */
 
 test('the day\'s line and change are read only for markets the app lists, and a coin without one shows neither', async () => {
@@ -415,6 +437,31 @@ test('Policies: three dials from the policy and the engine\'s own total, the day
   rig.put(state({ policy: { ...POLICY, killSwitch: true } }));
   assert.deepEqual(words(one(rig.host, 'stmt-freeze')), ['Freeze is on']);
   assert.equal(one(rig.host, 'stmt-freeze').getAttribute('data-on'), 'true');
+});
+
+/* The finish review, 2026-09-24: $100 of a $10,000 cap is 1 of the dial's 100, and at 1 the
+   round caps met in a dot on the top that read as a knob. An arc above nothing shows at least 6
+   of the 100, and what shows starts at the top: the dash starts a cap (1.7) past it and stops a
+   cap short. The track is a faint full ring, so the arc reads as how far round it has come. */
+test('a small share still sweeps from the top over a faint full track, and a full dial is the whole ring', () => {
+  const rig = boot({ svg: true });
+  rig.put(state());
+  const arcs = withClass(one(rig.host, 'stmt-policies'), 'dial').map((d) => d.children[0].children[0].children[1]);
+  assert.ok(arcs.every((a) => a && a.getAttribute('class') === 'dial-arc'), 'no arc on a dial');
+  const [ask, cap, auto] = arcs;
+  assert.equal(ask.style.strokeDasharray, '2.60 100', 'the $100 dial is a dot again');
+  assert.equal(ask.style.strokeDashoffset, '-1.7');
+  assert.equal(cap.style.strokeDasharray, '100 100');
+  assert.equal(cap.style.strokeDashoffset, '0');
+  assert.equal(auto.style.strokeDasharray, '2.60 100', '$14.22 of $500 is under the floor');
+  // A share past the floor draws itself: $250 of $500 on its own is half the ring.
+  rig.put(state({ autoLimit: { capUsd: 500, spentUsd: 250, resetsAt: null } }));
+  assert.equal(auto.style.strokeDasharray, '46.60 100');
+  // Nothing spent is an empty track and no arc.
+  rig.put(state({ autoLimit: { capUsd: 500, spentUsd: 0, resetsAt: null } }));
+  assert.equal(auto.style.strokeDasharray, '0 100');
+  assert.equal(withClass(rig.host, 'dial')[2].getAttribute('data-empty'), 'true');
+  assert.match(CSS, /\.dial-track \{ stroke: rgba\(var\(--hi-rgb\), 0\.07\); \}/, 'the track is a dark groove again');
 });
 
 test('policies that cannot be read are one sentence, and no dial draws a number it was not given', () => {
@@ -542,8 +589,15 @@ test('the statement reflows the way the mockup does, and keeps the stage every w
   const narrow = CSS.slice(CSS.indexOf('@container moves (max-width: 360px)'));
   assert.match(narrow, /"icon title title"\s*"icon meta state"/);
   assert.match(narrow, /\.move-words \{ display: contents; \}/);
-  // The app's default window (780 tall) is a short one.
-  assert.match(CSS, /@media \(max-height: 800px\)\s*\{\s*\.stmt-moves \.move:nth-child\(n\+4\)\s*\{\s*display:\s*none;/);
+  // A window up to 920 tall, the app's default 780 and a 900 tall screen among them, lists three
+  // moves and tightens the coin rows (never the head row), so at 1440 by 900 the statement stands
+  // whole over the notice (the finish review, 2026-09-24).
+  assert.match(CSS, /@media \(max-height: 920px\)\s*\{\s*\.stmt-moves \.move:nth-child\(n\+4\)\s*\{\s*display:\s*none;\s*\}\s*\.l-rows > \.l-row \{ min-height: 52px; \}/);
+  // The two cards end on one line, a one line caption hangs under its dial, and the day's
+  // ceiling sits centred under the dials.
+  assert.match(CSS, /\.stmt-duo \{[^}]*align-items: stretch;/);
+  assert.match(CSS, /\n\.dial \{[^}]*align-content: start;/);
+  assert.match(CSS, /\.stmt-policies-foot \{[^}]*text-align: center;/);
 });
 
 /* ---------- Policies, one press from Basic ---------- */
