@@ -17,15 +17,6 @@
 
 import type { BasicHolding, BasicView, ChainId, Proposal, WalletView, WriteDraft } from '../types.ts';
 
-// What the server managed to read about one of the coins the price tracker follows. Null rather
-// than a stale figure, and null rather than a zero: see the rule at the top of the file.
-export type PriceReading = {
-  product: string; // 'ETH-USD'
-  priceUsd: number;
-  changePct: number; // over the tracked window, not since some arbitrary epoch
-  closes: number[]; // the same window as a series, oldest first
-} | null;
-
 export type BasicInput = {
   wallet: WalletView;
   proposals: Proposal[];

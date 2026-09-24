@@ -1,11 +1,9 @@
-// Every candle surface and the chart the human is looking at: the price cache behind the basic
-// screen, the two candle loaders, the render payload, the agent's read of the same thing, and
-// the window's own pan and zoom coming home.
+// Every candle surface and the chart the human is looking at: the two candle loaders, the render
+// payload, the agent's read of the same thing, and the window's own pan and zoom coming home.
 
 import type http from 'node:http';
 
 import type { Candle } from '../types.ts';
-import type { PriceReading } from '../view/basic.ts';
 import { buildCompactRead, buildRead, LIMITS as CHART_LIMITS, MAX_TIMEFRAME_SEC, TIMEFRAMES, timeframeLabel } from '../chart.ts';
 import type { ChartGeometry, ChartIndicator, ChartState, ProviderChoice } from '../chart.ts';
 import { PROVIDER_CHOICES } from '../chart.ts';
@@ -20,66 +18,6 @@ import { feedFor, type FeedState } from '../market/push.ts';
 import { isBase64, SNAPSHOT_MAX_BYTES } from '../snapshot.ts';
 import type { Ctx } from './context.ts';
 import type { Source } from '../trade/view.ts';
-
-// The basic screen's price tracker. Hourly bars over a day: "today" for someone reading
-// a price is the last 24 hours, not the span since midnight in a timezone the exchange
-// does not share. Polled well below the rate any venue rate-limits.
-const PRICE_GRANULARITY_SEC = 3600;
-const PRICE_BARS = 24;
-const PRICE_POLL_MS = 30000;
-
-async function readPrice(ctx: Ctx, product: string): Promise<PriceReading> {
-  try {
-    const load = await loadCandles(ctx, product, PRICE_GRANULARITY_SEC, PRICE_BARS);
-    const candles = load.candles ?? [];
-    const last = candles[candles.length - 1];
-    const first = candles[0];
-    if (last === undefined || first === undefined || !(first.o > 0)) return null;
-    return {
-      product,
-      priceUsd: last.c,
-      changePct: ((last.c - first.o) / first.o) * 100,
-      // The window the change is measured over, as a series. The same 24 bars behind
-      // both figures, so the line and the percentage can never disagree on screen.
-      closes: candles.map((candle) => candle.c),
-    };
-  } catch (err) {
-    /* A venue outage and a bug in this file both used to return null, so the price path was the
-       one place a ReferenceError could hide completely: `ctx` is read here from a closure that is
-       assembled directly above the first poll, and had that order ever slipped, this catch would
-       have swallowed the temporal-dead-zone error and the screen would simply have shown three
-       blank prices. A fault in the app is named; a network failure is not, because it is expected
-       and a line per poll would bury the log. */
-    if (err instanceof TypeError || err instanceof ReferenceError || err instanceof SyntaxError) {
-      ctx.audit.append(
-        'error',
-        `reading the price of ${product} hit a fault in Phosphor rather than in the venue: ${err.name}: ${err.message}`,
-      );
-    }
-    return null;
-  }
-}
-
-export async function pollPrice(ctx: Ctx): Promise<void> {
-  // Read into a local first. The list can change under this await when the assistant is
-  // asked for a different coin, and assigning a three-coin result into a screen that now
-  // shows two would put a price under the wrong name.
-  const coins = [...ctx.prices.coins];
-  const readings = await Promise.all(coins.map((product) => readPrice(ctx, product)));
-  if (coins.join() !== ctx.prices.coins.join()) return;
-  ctx.prices.readings = readings;
-}
-
-// The poll runs on a timer and once at boot. The timer is handed back rather than held here,
-// because the server's own close handler is what clears it.
-export function startPricePolling(ctx: Ctx): NodeJS.Timeout {
-  const priceTimer = setInterval(() => {
-    void pollPrice(ctx);
-  }, PRICE_POLL_MS);
-  priceTimer.unref();
-  void pollPrice(ctx);
-  return priceTimer;
-}
 
 type CandleLoad = {
   candles: Candle[];
@@ -142,8 +80,8 @@ function readCandles(
 }
 
 // `provider` pins the venue. It defaults to 'auto' so the surfaces that are not the chart
-// (the price line, the coin list, a scan of some other product) keep the catalogue's own
-// answer, and only the chart the human is looking at follows the chart's own choice.
+// (a scan of some other product) keep the catalogue's own answer, and only the chart the
+// human is looking at follows the chart's own choice.
 export async function loadCandles(
   ctx: Ctx,
   product: string,
