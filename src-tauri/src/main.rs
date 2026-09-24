@@ -427,8 +427,8 @@ const NOT_BACK: &str = "It stopped and did not come back when it was restarted. 
 const NOT_RESTARTED: &str = "It stopped and could not be started again. Try again.";
 
 // The two lines the window's notice carries for this shell.
-const RESTARTED: &str = "Phosphor stopped and started again. Anything that was moving then shows on Activity as unknown, so check it before you act again.";
-const MCP_COPIED: &str = "The connection line for your agent is on the clipboard. Run it in the folder the agent should work from.";
+const RESTARTED: &str = "Phosphor stopped and started again. Anything that was moving then shows as Not confirmed in Pro's Recent moves, so check it before you act again.";
+const MCP_COPIED: &str = "The connection line for your agent is on the clipboard.";
 
 impl Failure {
     fn starting(message: &'static str, detail: impl Into<String>) -> Self {

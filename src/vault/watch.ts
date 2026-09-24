@@ -19,7 +19,7 @@
 //
 // THE WATCH OUTLIVES THE CARD. A person closes the card and goes back to their agent in ten
 // seconds; the deposit takes two minutes. So the watch runs until a minute after credited, or
-// Stop, or a day, whichever first, and the window is told on every change over SSE as
+// Stop, or two hours, whichever first, and the window is told on every change over SSE as
 // `{type:'deposit', ...}`; the backup nudge keys off the first `credited`.
 // Nothing here is a control: the rails read balances from the ledger, never from this.
 

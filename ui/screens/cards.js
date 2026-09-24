@@ -1559,7 +1559,7 @@
       var decision = window.PhosphorDecision;
       if (plain.state === 'didnt_go_through' || plain.state === 'coming_back') return plain.sentence;
       if (plain.state === 'done') return plain.note;
-      if (stale) return 'This is no longer waiting on you. Activity has what happened to it.';
+      if (stale) return 'This is no longer waiting on you.';
       if (plain.state !== 'working') return '';
       if (plain.held) return decision && typeof decision.heldLine === 'function' ? decision.heldLine(row) : 'Waiting for the checks to clear. Nothing is signed until they do.';
       if (plain.late) {

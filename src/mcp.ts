@@ -1069,7 +1069,7 @@ const PLAN = z.object({
 registerView(
   'trade_plan',
   [
-    'Draws a plan on the chart as an IDEA and lists it under Waiting. Nothing is placed until',
+    'Draws a plan on the chart as an IDEA and lists it under Orders. Nothing is placed until',
     'propose_trade arms it by its id. A plan is symbol, side, sizeUsd, leverage, entry (market, limit',
     'or stop), stop, an optional target, optional conditions the venue cannot hold (a bar close, a',
     'reclaim wick, volume, a time window), an expiry and a note. "Buy when it comes down to X" is a',
