@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { Screen, ScreenBy, ViewMode } from './types.ts';
 import { buildWorkerRole } from './role.ts';
 import { createChartSlots } from './charts.ts';
+import { createMarkingsKeeper } from './markings.ts';
 import { createSnapshotBroker } from './snapshot.ts';
 import { createCustomIndicators } from './indicators-custom/loader.ts';
 import { DEFAULT_THEME, type Theme } from './view/theme.ts';
@@ -86,6 +87,44 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const charts = createChartSlots(cfg.candleProducts[0] ?? 'BTC-USD', Date.now, (type) => customIndicators.get(type));
   const chart = charts.primary.store;
   const drawings = charts.primary.drawings;
+
+  /* The markings come back before anything can draw, and are kept from here on (src/markings.ts).
+     Studies come back through the same resolver the chart draws with, so a custom one is found
+     by its slug in the loader's map, never read out of the kept file. The focus and the Layers
+     switches are the trading view's, which main.ts built before this server. */
+  const markingsLog = (line: string): void => {
+    audit.append('error', `chart markings: ${line}`);
+  };
+  /* Of the Layers switches only the two noisy ones are kept. The risk overlays (the position, the
+     liquidation, working stops and targets, a plan's stop) start on at every boot as they always
+     have: an agent that turned one off must not be able to keep it off across a restart. */
+  const keptOverlays = (overlays: Record<string, boolean | undefined>): Partial<Record<'fills' | 'orders', boolean>> => ({
+    ...(typeof overlays.fills === 'boolean' ? { fills: overlays.fills } : {}),
+    ...(typeof overlays.orders === 'boolean' ? { orders: overlays.orders } : {}),
+  });
+  const kept = deps.markings?.load() ?? null;
+  if (kept !== null) {
+    charts.restore(kept.charts, markingsLog);
+    if (kept.focus !== null) {
+      trade.view.setFocus({ symbol: kept.focus.symbol }, 'human');
+      for (const [name, on] of Object.entries(keptOverlays(kept.focus.overlays))) trade.view.setOverlay({ name, on }, 'human');
+    }
+  }
+  const markings =
+    deps.markings === undefined
+      ? null
+      : createMarkingsKeeper({
+          file: deps.markings,
+          snapshot: () => {
+            const view = trade.view.state();
+            return { charts: charts.snapshot(), focus: { symbol: view.symbol, overlays: keptOverlays(view.overlays) } };
+          },
+          log: markingsLog,
+        });
+  if (markings !== null) {
+    charts.onChange(() => markings.touch());
+    trade.view.onChange(() => markings.touch());
+  }
 
   // The team board. One line each, read by every agent and by the human's log, and the reason a
   // roster of agents is a team rather than a crowd. See src/board.ts for what it is not.
@@ -297,6 +336,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     stopLockFrames();
     ended?.stop();
     chats.stopAll();
+    // Anything still waiting on the view's one-second settle goes down before the process does.
+    markings?.stop();
   });
 
   // Structural guarantee for the "binds 127.0.0.1 only" constraint: a bare port

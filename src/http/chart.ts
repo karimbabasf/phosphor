@@ -4,7 +4,7 @@
 import type http from 'node:http';
 
 import type { Candle } from '../types.ts';
-import { buildCompactRead, buildRead, LIMITS as CHART_LIMITS, MAX_TIMEFRAME_SEC, TIMEFRAMES, timeframeLabel } from '../chart.ts';
+import { buildCompactRead, buildRead, LIMITS as CHART_LIMITS, MAX_TIMEFRAME_SEC, STALE_MS, TIMEFRAMES, timeframeLabel } from '../chart.ts';
 import type { ChartGeometry, ChartIndicator, ChartState, ProviderChoice } from '../chart.ts';
 import { PROVIDER_CHOICES } from '../chart.ts';
 import type { ChartSlot, ChartStore } from '../charts.ts';
@@ -220,7 +220,7 @@ export async function chartDigest(ctx: Ctx, slot: ChartSlot): Promise<ChartDiges
     // refusals are still the answer to the write that was made.
   }
   const newest = candles.length > 0 ? (candles[candles.length - 1] as Candle) : null;
-  const drawings = slot.drawings.list();
+  const drawings = slot.drawings.on(view.product);
   return {
     chart: slot.index,
     product: view.product,
@@ -244,19 +244,76 @@ export async function chartDigest(ctx: Ctx, slot: ChartSlot): Promise<ChartDiges
   };
 }
 
-// How many plans are drawn on this chart, read off the trading payload. Guarded: the plan store
-// is the execution unit's and a server built without one has no plans at all.
+// How many plans are drawn on this chart, read off the trading payload.
 function plansOnChart(ctx: Ctx, product: string): number {
-  const coin = product.split('-')[0]?.toUpperCase() ?? '';
+  return plansOn(ctx, product).length;
+}
+
+// Every plan row on the trading payload. Guarded, because the plan store is the execution unit's
+// and a server built without one (every chart test) has no plans at all.
+function planRows(ctx: Ctx): Record<string, unknown>[] {
   let payload: unknown;
   try {
     payload = ctx.trade.payload();
   } catch {
-    return 0;
+    return [];
   }
   const plans = (payload as { plans?: unknown } | null)?.plans;
-  if (!Array.isArray(plans)) return 0;
-  return plans.filter((p) => p !== null && typeof p === 'object' && String((p as { symbol?: unknown }).symbol ?? '').toUpperCase() === coin).length;
+  if (!Array.isArray(plans)) return [];
+  return plans.filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object');
+}
+
+// The plans drawn on a chart.
+export function plansOn(ctx: Ctx, product: string): { id: string; status: string }[] {
+  const coin = product.split('-')[0]?.toUpperCase() ?? '';
+  return planRows(ctx)
+    .filter((p) => String(p.symbol ?? '').toUpperCase() === coin)
+    .map((p) => ({ id: String(p.id ?? ''), status: String(p.status ?? '') }));
+}
+
+/* The lines waiting plans are anchored to, keyed by line id, whatever chart is showing: the
+   watcher resolves a plan's `{ line: 'tl_N' }` on the primary by id, so the line matters wherever
+   the human has panned to. Only a WAITING plan holds one. An idea has no authority and
+   trade_plan is how it changes; a placed or open plan has already fired and the venue holds its
+   orders; a done plan is history. */
+export function linesHeld(ctx: Ctx): Map<string, { id: string; status: string }> {
+  const out = new Map<string, { id: string; status: string }>();
+  for (const plan of planRows(ctx)) {
+    const status = String(plan.status ?? '');
+    if (status !== 'waiting') continue;
+    const when = Array.isArray(plan.when) ? plan.when : [];
+    for (const condition of when) {
+      const at = (condition as { at?: { line?: unknown } } | null)?.at;
+      if (typeof at?.line === 'string') out.set(at.line, { id: String(plan.id ?? ''), status });
+    }
+  }
+  return out;
+}
+
+/* The drawing store's half of a clear, for the two doors that clear: the agent's chart_draw and
+   the person's button. The chart store clears its own levels and marks; this takes the lines and
+   zones the same clear means, on the market on screen or on every market, and never a line a
+   waiting plan is anchored to (the store steps around held ids). */
+export function clearDrawn(
+  ctx: Ctx,
+  slot: ChartSlot,
+  what: string,
+  by: string | null,
+  everywhere: boolean,
+): { removed: number; notes: string[] } {
+  slot.drawings.hold(linesHeld(ctx).keys());
+  const product = everywhere ? undefined : slot.store.state().view.product;
+  let removed = 0;
+  if (what === 'mine') removed = by === null ? 0 : slot.drawings.clear('agent', by, product);
+  else if (what === 'agent') removed = slot.drawings.clear('agent', undefined, product);
+  else if (what === 'all') removed = slot.drawings.clear(undefined, undefined, product);
+  else if (what === 'stale') {
+    const cutoff = Date.now() - STALE_MS;
+    for (const d of product === undefined ? slot.drawings.list() : slot.drawings.on(product)) {
+      if (d.source === 'agent' && d.createdAt < cutoff && slot.drawings.remove(d.id)) removed += 1;
+    }
+  }
+  return { removed, notes: removed > 0 ? [`and ${removed} drawn ${removed === 1 ? 'object' : 'objects'} (zones and lines)`] : [] };
 }
 
 // The ?slot= of GET /api/chart: absent is the primary, one of the four digits is that chart, and
@@ -380,9 +437,10 @@ export function chartPayload(ctx: Ctx, slot = 0, part: ChartPart = 'full'): unkn
     marks: state.marks,
     // Trend lines and zones live in their own store beside the chart's levels and marks.
     // They reach the browser on the same payload so the human sees exactly the objects
-    // the agent is measuring against, which is the whole point of drawing them there.
-    drawings: held.drawings.list(),
-    agentObjects: chart.agentObjects() + held.drawings.list().filter((d) => d.source === 'agent').length,
+    // the agent is measuring against, which is the whole point of drawing them there. The
+    // market on screen's only: another market's zone is kept, not drawn.
+    drawings: held.drawings.on(state.view.product),
+    agentObjects: chart.agentObjects() + held.drawings.on(state.view.product).filter((d) => d.source === 'agent').length,
     products: ctx.cfg.candleProducts,
     timeframes: TIMEFRAMES,
     limits: CHART_LIMITS,
@@ -410,7 +468,7 @@ export async function chartRead(ctx: Ctx, by?: string | null, opts: { slot?: Cha
       computed: computeIndicators(ctx, state, load.candles),
       nowSec: Math.floor(Date.now() / 1000),
       housekeeping: chart.housekeeping(by, slot.drawings.list()),
-      drawings: slot.drawings.list(),
+      drawings: slot.drawings.on(state.view.product),
     };
     return opts.full === true ? buildRead(args) : buildCompactRead({ ...args, chart: slot.index });
   } catch (err) {
@@ -461,8 +519,14 @@ export async function handleChartWrite(ctx: Ctx, req: http.IncomingMessage, res:
     if (!outcome.ok) return fail(res, 400, outcome.error);
   }
   if (typeof body.clear === 'string') {
+    /* The person's clear reaches the lines and zones as well as the levels. It used to clear the
+       chart store alone, so "Clear 3 drawings" left the agent's zones on the chart while the
+       count had included them. Scoped to the market on screen, like the count on the button, and
+       a line a waiting plan is anchored to stays, as it does for every other clear. */
     const outcome = ctx.chart.clear(body.clear);
     if (!outcome.ok) return fail(res, 400, outcome.error);
+    const drawn = clearDrawn(ctx, ctx.charts.primary, body.clear, null, false);
+    notes = notes.concat(outcome.notes, drawn.notes);
   }
   ctx.sse.broadcastChart();
   // The resulting view goes back with the answer. The window applies it from here rather

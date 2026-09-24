@@ -29,6 +29,7 @@ import type { SnapshotBroker } from '../snapshot.ts';
 import type { CustomIndicators } from '../indicators-custom/loader.ts';
 import type { Theme } from '../view/theme.ts';
 import type { DrawingStore } from '../drawings.ts';
+import type { MarkingsFile } from '../markings.ts';
 import type { Board } from '../board.ts';
 import type { Crew } from '../crew.ts';
 import type { DuplicateGuard } from '../duplicates.ts';
@@ -220,6 +221,10 @@ export type ServerDeps = {
   // exactly what the app must not do: src/main.ts always passes the persisting pair.
   getTheme?: () => Theme;
   setTheme?: (theme: Theme) => void;
+  /* Where the chart's markings are kept across a restart (src/markings.ts). Same contract as the
+     theme pair: absent, the charts live in this process only, which is what every test that
+     stands a server up wants, and src/main.ts always passes the file. */
+  markings?: MarkingsFile;
   trade: TradeService;
   /* The keys and the lock over them. Optional so a test can stand a server up without one;
      createServer then builds a keystore over cfg.keysPath, which reads that path and writes

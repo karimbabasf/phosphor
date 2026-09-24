@@ -319,12 +319,15 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
     /* Clearing defaults to the agent's OWN drawings, and on a team "own" got narrower.
        source:'mine' is this session's; 'agent' is every agent's; 'all' includes the human's.
        A bare call still means 'mine', because a tidy that reached a colleague's work by
-       default would be the commonest way one agent silently undoes another. */
+       default would be the commonest way one agent silently undoes another. On the market on
+       screen, the way chart_draw clears: another market keeps its own until somebody clears it
+       there. */
     drawings_clear: (a) => {
       const scope = str(a.source, 'mine');
-      if (scope === 'all') return { cleared: deps.drawings.clear() };
-      if (scope === 'agent') return { cleared: deps.drawings.clear('agent') };
-      return { cleared: deps.drawings.clear('agent', deps.author?.by ?? null) };
+      const market = deps.author?.product;
+      if (scope === 'all') return { cleared: deps.drawings.clear(undefined, undefined, market) };
+      if (scope === 'agent') return { cleared: deps.drawings.clear('agent', undefined, market) };
+      return { cleared: deps.drawings.clear('agent', deps.author?.by ?? null, market) };
     },
   };
 }

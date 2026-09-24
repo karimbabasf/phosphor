@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { bootChartServer } from '../fixtures/chart-server.ts';
-import { createDrawingStore, DRAWINGS_MAX } from '../../src/drawings.ts';
+import { createDrawingStore, DRAWINGS_PER_MARKET } from '../../src/drawings.ts';
 import { LIMITS } from '../../src/chart.ts';
 
 const T0 = 1_760_000_000;
@@ -264,30 +264,36 @@ test('chart_draw: clear leaves a line a waiting plan is anchored to and names th
   }
 });
 
-test('chart_draw: a product switch, a layout that moves the primary and the drawing cap all leave a held line alone', async () => {
+test('chart_draw: a product switch and a layout keep every drawing with its market, and the cap leaves a held line alone', async () => {
   const h = await bootChartServer();
   try {
     const line = { t1: T0, p1: 1, t2: T0 + 3600, p2: 2 };
     await draw(h, { lines: [line], zones: [{ p1: 1, p2: 2 }] });
     h.setPlans([{ id: 'pl_1', symbol: 'BTC', status: 'waiting', when: [{ type: 'close', tf: '1h', is: 'above', at: { line: 'tl_1' } }] }]);
+    const onScreen = async (): Promise<string[]> => (await h.get('/api/chart')).json.drawings.map((d: { id: string }) => d.id);
 
     const moved = await draw(h, { view: { product: 'eth' } });
     assert.equal(moved.json.product, 'ETH-USD');
-    let ids = (await h.get('/api/chart')).json.drawings.map((d: { id: string }) => d.id);
-    assert.deepEqual(ids, ['tl_1'], 'the zone was swept with the product, the held line was not');
-    assert.ok((moved.json.notes ?? []).some((n: string) => /tl_1/.test(n) && /pl_1/.test(n)), JSON.stringify(moved.json.notes));
+    assert.deepEqual(await onScreen(), [], "Bitcoin's line and zone are not drawn on Ethereum");
+    assert.ok((moved.json.notes ?? []).some((n: string) => /2 lines and zones stay with BTC-USD/.test(n)), JSON.stringify(moved.json.notes));
 
     const layout = await h.mcp({ op: 'view', tool: 'chart_layout', session: 'a', args: { charts: [{ product: 'sol', timeframe: '1h' }] } });
     assert.equal(layout.status, 200);
-    ids = (await h.get('/api/chart')).json.drawings.map((d: { id: string }) => d.id);
-    assert.deepEqual(ids, ['tl_1'], 'a layout that moves the primary is the same sweep');
+    assert.deepEqual(await onScreen(), []);
 
-    const zones = Array.from({ length: DRAWINGS_MAX + 20 }, (_, i) => ({ p1: i + 1, p2: i + 2 }));
-    const flood = await draw(h, { zones });
-    assert.equal(flood.status, 200);
-    const all = (await h.get('/api/chart')).json.drawings as { id: string }[];
-    assert.equal(all.length, DRAWINGS_MAX);
-    assert.ok(all.some((d) => d.id === 'tl_1'), 'the cap evicts the oldest agent drawing that no plan holds');
+    // A flood on another market takes nothing from this one.
+    const zones = Array.from({ length: DRAWINGS_PER_MARKET + 20 }, (_, i) => ({ p1: i + 1, p2: i + 2 }));
+    assert.equal((await draw(h, { zones })).status, 200);
+    assert.equal((await onScreen()).length, DRAWINGS_PER_MARKET, 'the per-market cap holds');
+    await h.mcp({ op: 'view', tool: 'chart_layout', session: 'a', args: { charts: [{ product: 'btc', timeframe: '1h' }] } });
+    assert.deepEqual(await onScreen(), ['tl_1', 'zn_1'], 'back on Bitcoin, both are where they were');
+
+    // A flood on this market evicts the oldest agent drawing that no plan holds.
+    assert.equal((await draw(h, { zones })).status, 200);
+    const here = await onScreen();
+    assert.equal(here.length, DRAWINGS_PER_MARKET);
+    assert.ok(here.includes('tl_1'), 'the held line stays');
+    assert.ok(!here.includes('zn_1'), 'the zone nobody holds was the oldest');
   } finally {
     await h.close();
   }

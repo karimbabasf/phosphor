@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import type { Candle, Policy, RiskRow, Screen, ScreenBy, ViewMode } from './types.ts';
 import { readScreen, writeScreen } from './view/mode.ts';
 import { readTheme, writeTheme, type Theme } from './view/theme.ts';
+import { createMarkingsFile } from './markings.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
 import { recordAuditChain } from './http/health.ts';
@@ -769,6 +770,11 @@ const server = createServer({
   setView,
   getTheme,
   setTheme,
+  // Same shape as the theme: the file is the durable copy of the chart's markings and the stores
+  // are the live one. See src/markings.ts.
+  markings: createMarkingsFile(cfg.dataDir, (line) => {
+    audit.append('error', `chart markings: ${line}`);
+  }),
   keystore,
   session,
   trade,

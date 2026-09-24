@@ -375,23 +375,129 @@ function recorder(): { ctx: Record<string, unknown>; texts: { text: string; x: n
   return { ctx, texts, dots, strokes };
 }
 
-test('a level the agent drew shows no [agent] word: its dot is drawn in the agent tone before the label', () => {
+test('a level names itself in a chip on the price axis, in its owner\'s ink, with no [agent] word and nothing over the candles', () => {
   const s = loadChartUi();
-  ready(s, { levels: [{ id: 'level-1', price: 101, label: '[agent] ceiling', source: 'agent' }] });
+  ready(s, {
+    levels: [
+      { id: 'level-1', price: 101, label: '[agent] ceiling', source: 'agent' },
+      { id: 'level-2', price: 99, label: 'my floor', source: 'human' },
+    ],
+  });
+  s.CHART_CHIP_W = s.CHIP_AXIS_MAX;
+  s.buildLayout(900, 600, fakeCtx);
   const L = s.buildLayout(900, 600, fakeCtx);
-  s.CHART_SCENE_LABELS = [];
+  s.CHART_AXIS_CHIPS = [];
   const scene = recorder();
   s.drawLevels(scene.ctx, L);
+  // Solid, one device pixel in the owner's ink: the agent's violet, the person's text.
+  assert.deepEqual(scene.strokes, [`${s.chartInk('agent', 0.72)} w1`, `${s.chartInk('text', 0.72)} w1`]);
+  L.chips = s.chipLayout(L);
+  const legend = recorder();
+  s.drawLegend(legend.ctx, L);
+  assert.ok(!legend.texts.some((t) => /ceiling|floor/.test(t.text)), 'no level is written in the column over the candles');
+  const axis = recorder();
+  s.drawAxisChips(axis.ctx, L);
+  const printed = axis.texts.map((t) => t.text);
+  assert.ok(!printed.some((t) => /\[agent\]/.test(t)), `no bracketed word on the canvas: ${printed.join(' | ')}`);
+  const word = axis.texts.find((t) => t.text === 'ceiling');
+  const price = axis.texts.find((t) => t.text === '101.0');
+  assert.ok(word && price, printed.join(' | '));
+  assert.equal(word?.ink, s.chartInk('agent', 0.82), 'the name in the agent tone');
+  assert.ok((price?.x ?? 0) >= L.plotWidth && (price?.x ?? 0) < (word?.x ?? 0), 'the price in the axis column, the name after it');
+  assert.equal(axis.texts.find((t) => t.text === 'my floor')?.ink, s.chartInk('text', 0.82), "the person's in the text ink");
+  assert.equal(axis.dots.length, 0, 'the ink says who drew it: no dot to read');
+});
+
+test('studies take the study hues in order, none of them a state colour, the first two a cool and a warm', () => {
+  const s = loadChartUi();
+  const tokens = readFileSync(new URL('../../ui/design/tokens.css', import.meta.url), 'utf8');
+  for (let i = 1; i <= 5; i += 1) {
+    const m = new RegExp('--study-' + i + ':\\s*(#[0-9a-fA-F]{6})').exec(tokens);
+    assert.ok(m, `tokens.css ships --study-${i}`);
+    assert.equal(s.CHART_TOKENS.studies[i - 1].toLowerCase(), m![1].toLowerCase(), 'the engine draws before the stylesheet in the shipped value');
+  }
+  const flat = (v: number) => new Array(40).fill(v);
+  ready(s, {
+    indicators: [
+      { id: 'ema-1', type: 'ema', label: '[agent] EMA 21', pane: 'price', source: 'agent', plots: [{ key: 'ema', style: 'line', emphasis: 0.9, values: flat(100) }] },
+      { id: 'ema-2', type: 'ema', label: 'EMA 55', pane: 'price', source: 'human', plots: [{ key: 'ema', style: 'line', emphasis: 0.9, values: flat(101) }] },
+      { id: 'bb-3', type: 'bbands', label: 'BB 20/2', pane: 'price', source: 'human', plots: [{ key: 'upper', style: 'band', emphasis: 0.5, fillTo: 'lower', values: flat(103) }, { key: 'mid', style: 'line', emphasis: 0.7, values: flat(100) }, { key: 'lower', style: 'line', emphasis: 0.5, values: flat(97) }] },
+    ],
+  });
+  const L = s.buildLayout(900, 600, fakeCtx);
+  const scene = recorder();
+  s.drawOverlayLines(scene.ctx, L);
+  const [first, second, ...band] = scene.strokes;
+  assert.equal(first, `${s.studyInk(0, 0.95)} w1.5`, 'the study itself at 1.5 px in the first hue');
+  assert.equal(second, `${s.studyInk(1, 0.95)} w1.5`, 'the next study in the next hue');
+  assert.ok(band.every((st) => st.startsWith(s.studyInk(2, 0.72).slice(0, -6)) && st.endsWith('w1')), `a band is one study in one hue, its edges at 1 px: ${band.join(' | ')}`);
+  for (const st of scene.strokes) {
+    for (const state of [s.RGB_ACCENT, s.RGB_DOWN, s.RGB_AGENT]) assert.ok(!st.startsWith(`rgba(${state},`), `a study drawn in a state colour: ${st}`);
+  }
+  // The legend matches name to line: a swatch in the line's own hue, the value in it too.
   const hud = recorder();
   s.drawLegend(hud.ctx, L);
-  const printed = hud.texts.map((t) => t.text);
-  assert.ok(!printed.some((t) => /\[agent\]/.test(t)), `no bracketed word on the canvas: ${printed.join(' | ')}`);
-  const label = hud.texts.find((t) => /^ceiling /.test(t.text));
-  assert.ok(label, `the level is labelled by its name and price: ${printed.join(' | ')}`);
-  assert.equal(label?.ink, s.chartInk('agent', 0.9), 'in the agent tone');
-  assert.equal(hud.dots.length, 1, 'one dot, for the one agent object');
-  assert.equal(hud.dots[0]?.ink, s.chartInk('agent', 0.9), 'the dot is in the agent tone');
-  assert.ok((hud.dots[0]?.x ?? 0) < (label?.x ?? 0), 'and it sits before the label');
+  const named = hud.texts.findIndex((t) => t.text === 'EMA 21');
+  assert.equal(hud.texts[named + 1]?.text, '100.0');
+  assert.equal(hud.texts[named + 1]?.ink, s.studyInk(0, 1));
+  assert.equal(hud.texts.find((t) => t.text === 'EMA 21')?.ink, s.chartInk('agent', 0.95), "the agent's study is named in its violet");
+});
+
+test('a horizontal line lands on whole device pixels at 2x: two device pixels on a pixel edge', () => {
+  const s = loadChartUi();
+  s.DPR = 2;
+  assert.equal(s.crispWidth(1), 1, 'one css pixel is two device pixels');
+  assert.equal(s.crisp(100.3, 1), 100.5, 'on the device pixel edge nearest');
+  assert.equal(s.crisp(100.3, 1.5), 100.25, 'three device pixels sit on the nearest device pixel centre');
+  s.DPR = 1;
+  assert.equal(s.crisp(100.3, 1), 100.5, 'at 1x one pixel sits on the pixel centre');
+});
+
+test('a mark names itself in a chip on the time axis, and the clock under the chip steps aside', () => {
+  const s = loadChartUi();
+  const candles = barsFrom([2026, 8, 16, 8, 0], 60, 240);
+  ready(s, { marks: [{ id: 'mark-1', t: candles[120]!.t, label: '[agent] CPI', source: 'agent' }] });
+  s.CHART.candles = candles;
+  s.CHART.view = { product: 'BTC-USD', provider: 'auto', granularitySec: 60, barCount: 240, panOffset: 0, priceScale: { mode: 'auto' } };
+  const L = s.buildLayout(900, 600, fakeCtx);
+  const scene = recorder();
+  L.markChips = s.markChipLayout(scene.ctx, L);
+  assert.equal(L.markChips.length, 1);
+  assert.equal(L.markChips[0].word, 'CPI');
+  s.drawTimeGrid(scene.ctx, L);
+  const chip = L.markChips[0];
+  const covered = scene.texts.filter((t) => t.x > chip.left - 4 && t.x < chip.left + chip.w + 4);
+  assert.deepEqual(covered, [], 'no clock label under the chip');
+  s.drawMarkChips(scene.ctx, L);
+  const word = scene.texts.find((t) => t.text === 'CPI');
+  assert.ok(word && word.ink === s.chartInk('agent', 0.9), JSON.stringify(scene.texts.slice(-3)));
+});
+
+test('a marking that lands docks in and one that is cleared fades out, and neither moves under reduced motion', () => {
+  const s = loadChartUi();
+  let now = 1000;
+  s.performance = { now: () => now };
+  s.window.performance = s.performance;
+  ready(s);
+  s.noteMarkings(false);
+  s.CHART.levels = [{ id: 'level-1', price: 101, label: 'a', source: 'agent' }];
+  s.noteMarkings(true);
+  assert.ok(s.markIn('level:level-1').alpha < 0.05, 'a new level starts at the edge of seeing');
+  now += 120;
+  const mid = s.markIn('level:level-1');
+  assert.ok(mid.alpha > 0.5 && mid.alpha < 1 && mid.draw < 1, JSON.stringify(mid));
+  now += 400;
+  assert.equal(JSON.stringify(s.markIn('level:level-1')), JSON.stringify({ alpha: 1, draw: 1 }));
+  s.CHART.levels = [];
+  s.noteMarkings(true);
+  assert.equal(s.ghostsOf('level').length, 1, 'the cleared level is still drawn, fading');
+  now += 250;
+  assert.equal(s.ghostsOf('level').length, 0, 'and gone within the window close time');
+  // Reduced motion: it is simply there, and simply gone.
+  s.window.matchMedia = () => ({ matches: true });
+  s.CHART.levels = [{ id: 'level-2', price: 101, label: 'b', source: 'agent' }];
+  s.noteMarkings(true);
+  assert.equal(JSON.stringify(s.markIn('level:level-2')), JSON.stringify({ alpha: 1, draw: 1 }));
 });
 
 test('the four prices of the head line sit in equal columns, so a tick moves nothing beside it', () => {

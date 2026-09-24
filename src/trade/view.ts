@@ -115,6 +115,9 @@ export function createTradeView(
   setOverlay(args: Record<string, unknown>, source: Source): Outcome;
   clear(what: string): Outcome;
   agentObjects(): number;
+  // Told after every change that moves the revision. The market in focus and the Layers switches
+  // are kept across a restart (src/markings.ts), and this is how the keeper hears about them.
+  onChange(fn: () => void): () => void;
 } {
   const state: TradeViewState = {
     symbol: initialSymbol.toUpperCase(),
@@ -124,6 +127,7 @@ export function createTradeView(
     lastDriver: 'human',
     lastChangeAt: new Date(now()).toISOString(),
   };
+  const listeners = new Set<() => void>();
 
   // Bumped only when something actually changed. The revision is what the browser redraws on
   // and what the agent uses to ignore its own echo, so a bump for a no-op call makes both of
@@ -132,6 +136,13 @@ export function createTradeView(
     state.rev += 1;
     state.lastDriver = source;
     state.lastChangeAt = new Date(now()).toISOString();
+    for (const fn of listeners) {
+      try {
+        fn();
+      } catch {
+        // A keeper's failure is its own, never the change's.
+      }
+    }
   }
 
   // Expiry happens on read rather than on a timer. A timer would have the state and the screen
@@ -250,5 +261,10 @@ export function createTradeView(
     },
 
     agentObjects: () => live().filter((h) => h.source === 'agent').length,
+
+    onChange(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
   };
 }

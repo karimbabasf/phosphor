@@ -28,7 +28,7 @@ import { CHAIN_NETWORKS, isChainNetwork, transaction, validateHash } from '../ch
 // an error message is not somewhere control characters or escape codes belong.
 import { oneLine } from '../intents.ts';
 import type { JsonBody } from './respond.ts';
-import { chartDigest, focusFollowsChart, resolveIndicator, resolveViewPatch } from './chart.ts';
+import { chartDigest, clearDrawn, focusFollowsChart, linesHeld, plansOn, resolveIndicator, resolveViewPatch } from './chart.ts';
 import { LEAD_ONLY_VIEW_TOOLS, VIEW_TOOLS } from './context.ts';
 import type { Ctx } from './context.ts';
 
@@ -120,25 +120,26 @@ async function chartDraw({ ctx, args, res, by: session }: ViewArgs): Promise<voi
   // leave the other.
   const by = session === null ? null : session.slice(0, 64);
   // The lines a waiting plan is anchored to, read fresh off the plans on every write, so nothing
-  // below (clear, the product sweep, the cap) can take one from under a plan the human approved.
+  // below (a clear, the cap) can take one from under a plan the human approved.
   const held = linesHeld(ctx);
   slot.drawings.hold(held.keys());
 
   // 1. Clear. Scoped like the old chart_clear: `mine` is this session's, `agent` every agent's,
-  // `all` the human's too. A plan drawn on this chart is never touched here, whatever the
-  // scope: an idea is removed through trade_plan, and anything armed is protection the venue
-  // holds, so it is named in the refusals and left exactly where it is.
+  // `all` the human's too, on the market on screen, or on every market this chart keeps with
+  // `everywhere`. A plan drawn on this chart is never touched here, whatever the scope: an idea
+  // is removed through trade_plan, and anything armed is protection the venue holds, so it is
+  // named in the refusals and left exactly where it is.
   if (args.clear !== undefined) {
     const what = String(args.clear);
+    const everywhere = args.everywhere === true;
     if (what !== 'mine' && what !== 'agent' && what !== 'all') {
       refused.push(`clear must be mine, agent or all, got ${what}`);
     } else {
-      const out = chart.clear(what, by);
+      const out = chart.clear(what, by, { everywhere });
       if (!out.ok) refused.push(out.error);
       else {
-        const removed = what === 'mine' ? slot.drawings.clear('agent', by) : what === 'agent' ? slot.drawings.clear('agent') : slot.drawings.clear();
-        notes.push(...out.notes);
-        if (removed > 0) notes.push(`and ${removed} drawn ${removed === 1 ? 'object' : 'objects'} (zones and lines)`);
+        const drawn = clearDrawn(ctx, slot, what, by, everywhere);
+        notes.push(...out.notes, ...drawn.notes);
       }
       for (const plan of plansOn(ctx, chart.state().view.product)) {
         if (plan.status !== 'idea') refused.push(`plan ${plan.id} is ${plan.status}, not an idea: clear leaves it; propose_trade_change is how it changes`);
@@ -169,17 +170,12 @@ async function chartDraw({ ctx, args, res, by: session }: ViewArgs): Promise<voi
       else {
         notes.push(...out.notes);
         const after = chart.state().view.product;
-        // The chart store tidies its own levels and marks on a product switch. The drawing store
-        // is a separate file holding the same kind of object, so the sweep has to reach it from
-        // here or half the agent's work would survive onto an instrument it does not describe.
+        // The chart store parks its own levels and marks on a product switch, and the drawing
+        // store's lines and zones stay with the market they were drawn on: the digest says so.
         if (after !== before) {
           if (slot.index === 0 && focusFollowsChart(ctx, 'agent')) ctx.sse.broadcastTrade();
-          const swept = slot.drawings.sweepForeign(after);
-          if (swept > 0) notes.push(`cleared ${swept} agent ${swept === 1 ? 'drawing' : 'drawings'} (zones and lines) anchored to ${before}`);
-          for (const [id, plan] of held) {
-            const line = slot.drawings.get(id);
-            if (line !== undefined && line.product !== after) notes.push(`line ${id} stays, anchored to ${line.product ?? before}: plan ${plan.id} is waiting on it`);
-          }
+          const left = slot.drawings.list().filter((d) => d.product === before).length;
+          if (left > 0) notes.push(`${left} ${left === 1 ? 'line or zone stays' : 'lines and zones stay'} with ${before}`);
         }
       }
     }
@@ -200,8 +196,9 @@ async function chartDraw({ ctx, args, res, by: session }: ViewArgs): Promise<voi
     if (wanted !== null) {
       // With no session to go on, the honest tidy is every agent's studies: an agent that cannot
       // name itself cannot own anything, and leaving the chart full would fail the package on the
-      // cap, which is the outcome this path exists to prevent.
-      chart.clear(by === null ? 'agent' : 'mine', by);
+      // cap, which is the outcome this path exists to prevent. Studies only: this used to be a
+      // whole clear, and a preset took the agent's levels and marks with it.
+      chart.clearStudies(by);
       for (const want of wanted) addIndicator(ctx, chart, want, by, refused, notes);
     }
     for (const want of indicatorReqs(ind.add)) addIndicator(ctx, chart, want, by, refused, notes);
@@ -234,10 +231,18 @@ async function chartDraw({ ctx, args, res, by: session }: ViewArgs): Promise<voi
   }
 
   // 6 and 7. Lines and zones, into the drawing store, the one the window renders. Stamped with
-  // the session and the instrument so `clear: 'mine'` and the product sweep reach them the same
-  // way they reach a level.
+  // the session and the instrument so `clear: 'mine'` reaches them the same way it reaches a
+  // level, and so each stays with its market. The store holds the shape and the label rules
+  // (src/drawings.ts, src/chart-label.ts); a shape it refuses comes back as its sentence.
   const view = chart.state().view;
   const stamp = { source: 'agent' as const, by, product: view.product, granularitySec: view.granularitySec };
+  const draw = (d: Parameters<typeof slot.drawings.add>[0]): void => {
+    try {
+      slot.drawings.add(d);
+    } catch (err) {
+      refused.push(err instanceof Error ? err.message : String(err));
+    }
+  };
   for (const line of rows(args.lines)) {
     const t1 = num(line.t1);
     const p1 = num(line.p1);
@@ -247,19 +252,7 @@ async function chartDraw({ ctx, args, res, by: session }: ViewArgs): Promise<voi
       refused.push('a line needs t1, p1, t2 and p2 as finite numbers');
       continue;
     }
-    // Two anchors at the same instant describe a vertical line, which is a mark, and the
-    // renderer would divide by zero working out the slope.
-    if (t1 === t2) {
-      refused.push('a line needs two different times; for a vertical line at one moment use marks');
-      continue;
-    }
-    const flip = t2 < t1;
-    slot.drawings.add({
-      kind: 'trendline',
-      label: tagLabel(line.label, 'line'),
-      ...stamp,
-      line: { a: { t: flip ? t2 : t1, price: flip ? p2 : p1 }, b: { t: flip ? t1 : t2, price: flip ? p1 : p2 } },
-    });
+    draw({ kind: 'trendline', label: String(line.label ?? ''), ...stamp, line: { a: { t: t1, price: p1 }, b: { t: t2, price: p2 } } });
   }
   for (const zone of rows(args.zones)) {
     const p1 = num(zone.p1);
@@ -268,21 +261,13 @@ async function chartDraw({ ctx, args, res, by: session }: ViewArgs): Promise<voi
       refused.push('a zone needs p1 and p2 as finite numbers');
       continue;
     }
-    if (p1 === p2) {
-      refused.push('a zone needs two different prices; for one price use levels');
-      continue;
-    }
     const t1 = num(zone.t1);
     const t2 = num(zone.t2);
-    slot.drawings.add({
+    draw({
       kind: 'zone',
-      label: tagLabel(zone.label, 'zone'),
+      label: String(zone.label ?? ''),
       ...stamp,
-      zone: {
-        low: Math.min(p1, p2),
-        high: Math.max(p1, p2),
-        ...(t1 !== null && t2 !== null ? { t1: Math.min(t1, t2), t2: Math.max(t1, t2) } : {}),
-      },
+      zone: { low: p1, high: p2, ...(t1 !== null && t2 !== null ? { t1, t2 } : {}) },
     });
   }
 
@@ -305,13 +290,6 @@ function collapse(lines: string[]): string[] {
   return [...out.slice(0, DIGEST_LINES_MAX), `and ${out.length - DIGEST_LINES_MAX} more`];
 }
 
-// Attribution the agent cannot write its way out of. The chart store tags its own objects; the
-// drawing store is written from here, so the tag is added here.
-function tagLabel(raw: unknown, fallback: string): string {
-  const trimmed = String(raw ?? '').trim().slice(0, 48);
-  return `[agent] ${trimmed || fallback}`;
-}
-
 function addIndicator(ctx: Ctx, chart: ChartSlot['store'], want: IndicatorReq, by: string | null, refused: string[], notes: string[]): void {
   const type = want.type.toLowerCase().trim();
   const spec = resolveIndicator(ctx, type);
@@ -324,46 +302,6 @@ function addIndicator(ctx: Ctx, chart: ChartSlot['store'], want: IndicatorReq, b
   else notes.push(...out.notes);
 }
 
-// Every plan row on the trading payload. Guarded, because the plan store is the execution unit's
-// and a server built without one (every chart test) has no plans at all.
-function planRows(ctx: Ctx): Record<string, unknown>[] {
-  let payload: unknown;
-  try {
-    payload = ctx.trade.payload();
-  } catch {
-    return [];
-  }
-  const plans = (payload as { plans?: unknown } | null)?.plans;
-  if (!Array.isArray(plans)) return [];
-  return plans.filter((p): p is Record<string, unknown> => p !== null && typeof p === 'object');
-}
-
-// The plans drawn on a chart.
-export function plansOn(ctx: Ctx, product: string): { id: string; status: string }[] {
-  const coin = product.split('-')[0]?.toUpperCase() ?? '';
-  return planRows(ctx)
-    .filter((p) => String(p.symbol ?? '').toUpperCase() === coin)
-    .map((p) => ({ id: String(p.id ?? ''), status: String(p.status ?? '') }));
-}
-
-/* The lines waiting plans are anchored to, keyed by line id, whatever chart is showing: the
-   watcher resolves a plan's `{ line: 'tl_N' }` on the primary by id, so the line matters wherever
-   the human has panned to. Only a WAITING plan holds one. An idea has no authority and
-   trade_plan is how it changes; a placed or open plan has already fired and the venue holds its
-   orders; a done plan is history. */
-export function linesHeld(ctx: Ctx): Map<string, { id: string; status: string }> {
-  const out = new Map<string, { id: string; status: string }>();
-  for (const plan of planRows(ctx)) {
-    const status = String(plan.status ?? '');
-    if (status !== 'waiting') continue;
-    const when = Array.isArray(plan.when) ? plan.when : [];
-    for (const condition of when) {
-      const at = (condition as { at?: { line?: unknown } } | null)?.at;
-      if (typeof at?.line === 'string') out.set(at.line, { id: String(plan.id ?? ''), status });
-    }
-  }
-  return out;
-}
 /* How many concepts each session has recorded, per server. Ten is the session's allowance: the
    profile is a file the next role text is built from, and an agent that could fill it in one
    sitting could fill it with sixty things nobody taught. Keyed by the Ctx rather than held in a
@@ -572,9 +510,6 @@ const HANDLERS: Record<string, ViewHandler> = {
       }
       charts.push({ product: String(patch.product), timeframe: String(entry.timeframe ?? '') });
     }
-    // A layout that moves the primary onto another instrument sweeps its agent drawings, and a
-    // line a waiting plan is anchored to is not one of those.
-    ctx.charts.primary.drawings.hold(linesHeld(ctx).keys());
     const before = ctx.chart.state().view.product;
     const out = ctx.charts.layout(charts);
     if (!out.ok) {

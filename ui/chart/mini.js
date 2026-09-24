@@ -53,8 +53,15 @@
     text3: '#9a8c7f',
     up: '#52e893',
     down: '#ff6b5b',
-    agent: '#B79CFF'
+    agent: '#B79CFF',
+    // The studies' hues, the primary's own (--study-1 to --study-5).
+    study1: '#7EB6F6',
+    study2: '#F2A47C',
+    study3: '#EADCC8',
+    study4: '#EC8DBB',
+    study5: '#5CC8D6'
   };
+  var STUDIES = ['study1', 'study2', 'study3', 'study4', 'study5'];
 
   /* Figures in the engine's tabular Geist (chart.js chartText), or plain canvas text where the
      engine is not loaded. */
@@ -92,7 +99,7 @@
   function readTokens() {
     if (typeof window.getComputedStyle !== 'function' || !document.documentElement) return;
     var style = window.getComputedStyle(document.documentElement);
-    var names = { bg1: 'bg-1', line: 'line', text: 'text', text2: 'text-2', text3: 'text-3', up: 'up', down: 'down', agent: 'agent' };
+    var names = { bg1: 'bg-1', line: 'line', text: 'text', text2: 'text-2', text3: 'text-3', up: 'up', down: 'down', agent: 'agent', study1: 'study-1', study2: 'study-2', study3: 'study-3', study4: 'study-4', study5: 'study-5' };
     for (var key in names) {
       if (!Object.prototype.hasOwnProperty.call(names, key)) continue;
       var value = String(style.getPropertyValue('--' + names[key]) || '').trim();
@@ -387,11 +394,45 @@
     }
     ctx.textAlign = 'left';
 
-    drawZones(ctx, payload, xOf, yOf, top, bottom, plotW);
+    drawZones(ctx, payload, xOf, yOf, top, bottom, plotW, dpr);
     drawCandles(ctx, candles, start, end, xOf, yOf, slot, dpr);
     drawPlots(ctx, payload, start, end, xOf, yOf);
-    drawLevels(ctx, payload, yOf, top, bottom, plotW, decimals, dpr);
-    drawLines(ctx, payload, candles, granularity, start, slot, yOf, top, bottom, plotW);
+    var chips = [];
+    drawLevels(ctx, payload, yOf, top, bottom, plotW, dpr, chips);
+    drawLines(ctx, payload, candles, granularity, start, slot, yOf, top, bottom, plotW, chips);
+    drawChips(ctx, chips, plotW, w, top, bottom, decimals);
+  }
+
+  /* The owner's ink: the agent's violet, the person's text. */
+  function ownerInk(source) {
+    return source === 'agent' ? tokens.agent : tokens.text;
+  }
+
+  /* A marking's name on this small canvas is its price, in a soft chip on the axis beside its
+     line, in the owner's ink, the way the primary docks it: nothing is printed over the candles.
+     Chips that would overlap the one above are left out, the lower price first. */
+  function drawChips(ctx, chips, plotW, w, top, bottom, decimals) {
+    chips.sort(function (a, b) {
+      return a.y - b.y;
+    });
+    var h = 15;
+    var edge = top;
+    for (var i = 0; i < chips.length; i += 1) {
+      var y = Math.max(top + h / 2, Math.min(bottom - h / 2, chips[i].y));
+      if (y - h / 2 < edge) continue;
+      var x = plotW + 2;
+      var cw = w - plotW - 3;
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y - h / 2, cw, h, 5);
+      else ctx.rect(x, y - h / 2, cw, h);
+      ctx.fillStyle = alpha(tokens.bg1, 0.94);
+      ctx.fill();
+      ctx.fillStyle = alpha(chips[i].ink, 0.16);
+      ctx.fill();
+      ctx.fillStyle = chips[i].ink;
+      text(ctx, priceText(chips[i].price, decimals), plotW + 6, y);
+      edge = y + h / 2 + 2;
+    }
   }
 
   function drawCandles(ctx, candles, start, end, xOf, yOf, slot, dpr) {
@@ -422,11 +463,17 @@
     for (var i = 0; i < list.length; i += 1) {
       var ind = list[i];
       if (ind.pane !== 'price' || !Array.isArray(ind.plots)) continue;
+      // Each study in its hue, as on the primary; past five the hues come round dashed.
+      var hue = tokens[STUDIES[n % STUDIES.length]];
+      var dash = n >= STUDIES.length ? [5, 3] : [];
+      n += 1;
       for (var p = 0; p < ind.plots.length; p += 1) {
         var plot = ind.plots[p];
         if (plot.style === 'histogram' || !Array.isArray(plot.values)) continue;
-        ctx.strokeStyle = alpha(ind.source === 'agent' ? tokens.agent : tokens.up, 0.75);
-        ctx.setLineDash(n > 2 ? [4, 3] : []);
+        var main = typeof plot.emphasis !== 'number' || plot.emphasis >= 0.85;
+        ctx.strokeStyle = alpha(hue, main ? 0.9 : 0.6);
+        ctx.lineWidth = main ? 1.5 : 1;
+        ctx.setLineDash(dash);
         ctx.beginPath();
         var pen = false;
         for (var k = start; k <= end; k += 1) {
@@ -443,36 +490,32 @@
           }
         }
         ctx.stroke();
-        n += 1;
       }
     }
     ctx.setLineDash([]);
+    ctx.lineWidth = 1;
   }
 
-  /* Levels, dotted for the agent's and dashed for a person's, the same reading
-     the primary gives them. Off the pane means off the chart here: a comparison
-     chart does not pin labels to its edges. */
-  function drawLevels(ctx, payload, yOf, top, bottom, plotW, decimals, dpr) {
+  /* Levels, solid in the owner's ink, the same reading the primary gives them.
+     Off the pane means off the chart here: a comparison chart does not pin
+     chips to its edges. */
+  function drawLevels(ctx, payload, yOf, top, bottom, plotW, dpr, chips) {
     var list = Array.isArray(payload.levels) ? payload.levels : [];
     for (var i = 0; i < list.length; i += 1) {
       var level = list[i];
       var y = yOf(level.price);
       if (!isFinite(y) || y < top || y > bottom) continue;
-      var fromAgent = level.source === 'agent';
-      var ink = fromAgent ? tokens.agent : tokens.up;
-      ctx.strokeStyle = alpha(ink, fromAgent ? 0.6 : 0.7);
-      ctx.setLineDash(fromAgent ? [2, 3] : [6, 4]);
+      var ink = ownerInk(level.source);
+      ctx.strokeStyle = alpha(ink, 0.7);
       ctx.beginPath();
       ctx.moveTo(0, hair(y, dpr));
       ctx.lineTo(plotW, hair(y, dpr));
       ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = alpha(ink, 0.9);
-      text(ctx, String(level.label || '') + ' ' + priceText(level.price, decimals), 5, Math.max(top + 7, y - 8));
+      chips.push({ y: y, price: level.price, ink: ink });
     }
   }
 
-  function drawZones(ctx, payload, xOf, yOf, top, bottom, plotW) {
+  function drawZones(ctx, payload, xOf, yOf, top, bottom, plotW, dpr) {
     var list = Array.isArray(payload.drawings) ? payload.drawings : [];
     for (var i = 0; i < list.length; i += 1) {
       var d = list[i];
@@ -482,19 +525,26 @@
       var boxTop = Math.max(top, Math.min(yHigh, yLow));
       var boxBottom = Math.min(bottom, Math.max(yHigh, yLow));
       if (boxBottom <= top || boxTop >= bottom) continue;
-      var ink = d.source === 'agent' ? tokens.agent : tokens.up;
-      ctx.fillStyle = alpha(ink, 0.12);
+      var ink = ownerInk(d.source);
+      ctx.fillStyle = alpha(ink, 0.1);
       ctx.fillRect(0, boxTop, plotW, boxBottom - boxTop);
-      ctx.fillStyle = alpha(ink, 0.8);
-      ctx.textAlign = 'right';
-      text(ctx, String(d.label || ''), plotW - 4, boxTop + 9);
-      ctx.textAlign = 'left';
+      ctx.strokeStyle = alpha(ink, 0.42);
+      ctx.beginPath();
+      if (yHigh >= top) {
+        ctx.moveTo(0, hair(yHigh, dpr));
+        ctx.lineTo(plotW, hair(yHigh, dpr));
+      }
+      if (yLow <= bottom) {
+        ctx.moveTo(0, hair(yLow, dpr));
+        ctx.lineTo(plotW, hair(yLow, dpr));
+      }
+      ctx.stroke();
     }
   }
 
   /* Trend lines, by time and price like the primary's: the value the agent
      measured against is the value on this glass too. Extended to both edges. */
-  function drawLines(ctx, payload, candles, granularity, start, slot, yOf, top, bottom, plotW) {
+  function drawLines(ctx, payload, candles, granularity, start, slot, yOf, top, bottom, plotW, chips) {
     var list = Array.isArray(payload.drawings) ? payload.drawings : [];
     /* The moment under a pixel column: the first visible bar's open time plus
        the bars between, fractional so a line's slope is not notched. */
@@ -515,23 +565,20 @@
       var y1 = yOf(valueAt(d.line, t1));
       if (!isFinite(y0) || !isFinite(y1)) continue;
       if ((y0 < top && y1 < top) || (y0 > bottom && y1 > bottom)) continue;
-      var ink = d.source === 'agent' ? tokens.agent : tokens.up;
+      var ink = ownerInk(d.source);
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, top, plotW, bottom - top);
       ctx.clip();
-      ctx.strokeStyle = alpha(ink, 0.7);
-      ctx.setLineDash(d.source === 'agent' ? [2, 3] : [6, 4]);
+      ctx.strokeStyle = alpha(ink, 0.85);
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(0, y0);
       ctx.lineTo(plotW, y1);
       ctx.stroke();
-      ctx.setLineDash([]);
       ctx.restore();
-      ctx.fillStyle = alpha(ink, 0.85);
-      ctx.textAlign = 'right';
-      text(ctx, String(d.label || ''), plotW - 4, Math.max(top + 8, Math.min(bottom - 4, y1 - 6)));
-      ctx.textAlign = 'left';
+      ctx.lineWidth = 1;
+      if (y1 >= top && y1 <= bottom) chips.push({ y: y1, price: valueAt(d.line, t1), ink: ink });
     }
   }
 

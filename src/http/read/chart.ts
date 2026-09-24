@@ -5,7 +5,7 @@ import { digestSeries, resolveScanTimeframe, timeframeLabel } from '../../chart.
 import { runBatch } from '../../batch.ts';
 import { analysisHandlers } from '../../analysis/index.ts';
 import { errText, fail, intParam, sendJson } from '../respond.ts';
-import { chartDigest, chartRead, customIndicatorsOf, loadCandles, resolveIndicator } from '../chart.ts';
+import { chartDigest, chartRead, customIndicatorsOf, linesHeld, loadCandles, resolveIndicator } from '../chart.ts';
 import type { ChartDigest } from '../chart.ts';
 import { slotOf } from '../view.ts';
 import { SNAPSHOT_TTL_MS } from '../../snapshot.ts';
@@ -23,6 +23,10 @@ export const chartReads: ReadTable = {
   chart_batch: async (ctx, body, args, res) => {
     const ops = Array.isArray(args.ops) ? args.ops : [];
     const view = ctx.chart.state().view;
+    // A batch can remove and evict drawings (drawings_remove, drawings_clear, the cap), so it reads
+    // the lines waiting plans hold first, the way chart_draw does: holds that went stale, or that
+    // are empty because the app just started, cannot let a batch take a line a plan waits on.
+    ctx.drawings.hold(linesHeld(ctx).keys());
     const results = await runBatch(
       ops as { op: string; args?: Record<string, unknown>; as?: string }[],
       analysisHandlers({

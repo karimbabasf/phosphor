@@ -50,7 +50,15 @@ var CHART_TOKENS = {
   up: '#52e893',
   down: '#ff6b5b',
   agent: '#B79CFF',
-  warn: '#F5B942'
+  warn: '#F5B942',
+  /* The studies' own hues (--study-1 to --study-5). A study is an opinion about price, not a
+     state, so it is none of the state colours: green is the live move and success, red a loss,
+     violet what the agent drew, amber a warning. Five hues a reader tells apart at a glance on
+     the warm ground, the first two a cool and a warm so the commonest pair (a fast and a slow
+     average) never share a family. Every line on the price pane used to be the accent green at
+     a different strength, which ran out after three studies and made every study read as the
+     live price. */
+  studies: ['#7EB6F6', '#F2A47C', '#EADCC8', '#EC8DBB', '#5CC8D6']
 };
 
 // The panel, not the window ground. The chart sits inside a panel and painting it --bg-0
@@ -68,6 +76,7 @@ var RGB_AGENT = '183, 156, 255';
 var RGB_LINE = '48, 42, 38';
 var RGB_TEXT = '248, 240, 232';
 var RGB_TEXT2 = '188, 174, 161';
+var RGB_STUDIES = ['126, 182, 246', '242, 164, 124', '234, 220, 200', '236, 141, 187', '92, 200, 214'];
 
 /* "#5b8def" or "#5be" to "91, 141, 239". Returns null on anything else, and every caller
    treats null as "leave the colour alone": a bad value from the server must never be able to
@@ -390,6 +399,11 @@ function readTokens() {
     var value = String(style.getPropertyValue('--' + slots[i][1]) || '').trim();
     if (rgbTriple(value) !== null) CHART_TOKENS[slots[i][0]] = value;
   }
+  for (var s = 0; s < CHART_TOKENS.studies.length; s++) {
+    var hue = String(style.getPropertyValue('--study-' + (s + 1)) || '').trim();
+    if (rgbTriple(hue) !== null) CHART_TOKENS.studies[s] = hue;
+    RGB_STUDIES[s] = rgbTriple(CHART_TOKENS.studies[s]) || RGB_STUDIES[s];
+  }
   C_BG = CHART_TOKENS.bg1;
   C_UP = CHART_TOKENS.up;
   C_DOWN = CHART_TOKENS.down;
@@ -426,22 +440,39 @@ function chartInk(tone, alpha) {
 
 /* The ground behind a label that sits over candles, mixed from the panel's own colour. */
 function chartLabelPad() {
-  return 'rgba(' + (rgbTriple(CHART_TOKENS.bg1) || '17, 20, 24') + ', 0.72)';
+  return 'rgba(' + (rgbTriple(CHART_TOKENS.bg1) || '17, 20, 24') + ', 0.78)';
 }
 
-/* Everything the scene wants written down the left edge, collected while it draws and placed
-   by the hud in one pass with the legend (see ui/chart/labels.js). Reset per scene draw; a hud
-   redraw between two scenes reuses the last set, which is the set the lines on screen have. */
-var CHART_SCENE_LABELS = [];
-function chartLabel(item) {
-  CHART_SCENE_LABELS.push(item);
+/* A study's hue by its place on the chart: the first overlay the first hue, and so on. Past
+   five the hues come round again and the line is dashed (studyDash), the one place a dash is
+   there to tell two things apart rather than to say something is not live. */
+function studyInk(index, alpha) {
+  return 'rgba(' + RGB_STUDIES[index % RGB_STUDIES.length] + ', ' + alpha + ')';
+}
+function studyDash(index) {
+  return index >= RGB_STUDIES.length ? [5, 3] : [];
 }
 
-/* A level off the top or the bottom of the pane has no line to draw, and a label pinned to the
-   plot's edge printed over the candles. It becomes a chip on the price axis instead, at the edge
-   it went off: a short word, an arrow and the price, in the line's own ink. Collected while the
-   scene draws, stacked once it has (chipLayout), drawn by the hud. Item: {price, edge 'top' or
-   'bottom', word, tone, ring}. */
+/* Three weights for a plot, read off its emphasis: the study's own line at 1.5 px, a signal
+   or a band edge at 1 px, a faint guide at 1 px and half strength. Brightness used to be the
+   only thing that told plots apart, so every plot was a step of one green; now the hue says
+   which study and the weight says which line of it. */
+var PLOT_WIDTH = [1.5, 1, 1];
+var PLOT_ALPHA = [0.95, 0.72, 0.5];
+function plotTier(plot) {
+  var e = plot && typeof plot.emphasis === 'number' ? plot.emphasis : 0.8;
+  return e >= 0.85 ? 0 : e >= 0.5 ? 1 : 2;
+}
+/* A custom indicator may name a token for a plot (src/indicators.ts Plot.tone); that wins. */
+function plotInk(plot, hueIndex, alphaScale) {
+  var a = PLOT_ALPHA[plotTier(plot)] * (alphaScale === undefined ? 1 : alphaScale);
+  if (plot && typeof plot.tone === 'string') return chartInk(plot.tone === 'text' ? 'text' : plot.tone, a);
+  return studyInk(hueIndex, a);
+}
+
+/* Every marking's name and price, as a chip on the price axis beside its line, or at the edge
+   its line went off. Collected while the scene draws, laid out once it has (chipLayout), drawn
+   by the hud. See the axis chips section for the item's shape. */
 var CHART_AXIS_CHIPS = [];
 function chartAxisChip(item) {
   CHART_AXIS_CHIPS.push(item);
@@ -453,22 +484,112 @@ function chartSpotOn(kind, id) {
   return typeof window.chartSpotActive === 'function' && window.chartSpotActive(kind, id) === true;
 }
 
+/* ---------- a marking arriving and leaving ----------
+
+   A level, a line, a zone, a mark or a study that lands on a chart already on screen docks in:
+   it fades up over 220 ms on the exit curve and a level draws itself out from the price axis,
+   the way the agent's own hand would lay it. One that is cleared fades out over 200 ms from
+   where it was, so a clear reads as the marks going rather than the chart blinking. Those are
+   the window's own open and close times (DESIGN.md). Nothing moves on a market's first frame,
+   because what is on it was already there, and nothing moves under reduced motion. */
+var MARK_IN_MS = 220;
+var MARK_OUT_MS = 200;
+var MARK_DRAW_MS = 340;
+var CHART_BORN = {};
+var CHART_GHOSTS = [];
+// The keys on screen after the last payload: null until there has been one.
+var CHART_MARK_KEYS = null;
+
+function markNow() {
+  return window.performance && performance.now ? performance.now() : Date.now();
+}
+
+function easeOutQuart(t) {
+  var u = 1 - (t < 0 ? 0 : t > 1 ? 1 : t);
+  return 1 - u * u * u * u;
+}
+
+/* How far in a marking is, 0 to 1, and how far its line has drawn out. */
+function markIn(key) {
+  var born = CHART_BORN[key];
+  if (born === undefined) return { alpha: 1, draw: 1 };
+  var age = markNow() - born;
+  if (age >= MARK_DRAW_MS) {
+    delete CHART_BORN[key];
+    return { alpha: 1, draw: 1 };
+  }
+  return { alpha: easeOutQuart(age / MARK_IN_MS), draw: easeOutQuart(age / MARK_DRAW_MS) };
+}
+
+function markingKeys() {
+  var keys = {};
+  var add = function (kind, list) {
+    for (var i = 0; i < list.length; i++) keys[kind + ':' + list[i].id] = { kind: kind, item: list[i] };
+  };
+  add('level', CHART.levels);
+  add('mark', CHART.marks);
+  add('drawing', CHART.drawings);
+  add('study', CHART.indicators);
+  return keys;
+}
+
+/* Called when a payload lands. Same market as before: what is new docks in and what went fades
+   out. Another market, or the first payload: everything is simply there. */
+function noteMarkings(sameMarket) {
+  var next = markingKeys();
+  if (CHART_MARK_KEYS !== null && sameMarket && !reducedMotion()) {
+    var at = markNow();
+    for (var key in next) {
+      if (Object.prototype.hasOwnProperty.call(next, key) && !Object.prototype.hasOwnProperty.call(CHART_MARK_KEYS, key)) CHART_BORN[key] = at;
+    }
+    for (var gone in CHART_MARK_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(CHART_MARK_KEYS, gone) || Object.prototype.hasOwnProperty.call(next, gone)) continue;
+      CHART_GHOSTS.push({ kind: CHART_MARK_KEYS[gone].kind, item: CHART_MARK_KEYS[gone].item, diedAt: at });
+    }
+  } else {
+    CHART_BORN = {};
+    CHART_GHOSTS = [];
+  }
+  CHART_MARK_KEYS = next;
+}
+
+/* The markings of one kind still fading out, each carrying how much of it is left. */
+function ghostsOf(kind) {
+  var out = [];
+  var at = markNow();
+  for (var i = 0; i < CHART_GHOSTS.length; i++) {
+    var g = CHART_GHOSTS[i];
+    if (g.kind !== kind) continue;
+    var left = 1 - (at - g.diedAt) / MARK_OUT_MS;
+    if (left > 0) out.push({ item: g.item, alpha: left * left });
+  }
+  return out;
+}
+
+/* Whether a marking is still moving, which keeps the scene drawing for it; spent ghosts go. */
+function markingsMoving() {
+  var at = markNow();
+  CHART_GHOSTS = CHART_GHOSTS.filter(function (g) {
+    return at - g.diedAt < MARK_OUT_MS;
+  });
+  if (CHART_GHOSTS.length) return true;
+  for (var key in CHART_BORN) {
+    if (Object.prototype.hasOwnProperty.call(CHART_BORN, key) && at - CHART_BORN[key] < MARK_DRAW_MS) return true;
+  }
+  return false;
+}
+
 /* The label as the human reads it. The server tags everything an agent draws with a literal
    `[agent] ` it cannot write its way out of (src/chart.ts), and that tag is what the agent
    reads back; on the canvas the word became a wall of brackets down the left edge. Here the
-   word comes off and the agent's own ink and a drawn dot say the same thing (labelGlyph
-   'agent'). The bare label is what is drawn; the source field is what decides the dot. */
+   word comes off and the agent's own violet says the same thing. The bare label is what is
+   drawn; the source field is what decides the ink (src/chart-label.ts). */
 function labelText(label) {
   var text = String(label || '');
   if (text.indexOf('[agent] ') === 0) text = text.slice(8);
   else if (text.indexOf('[agent]') === 0) text = text.slice(7).replace(/^\s+/, '');
   if (text.slice(-8) === ' [agent]') text = text.slice(0, -8);
   return text;
-}
-
-/* The parts that open every label of an object: the agent's dot when the agent drew it. */
-function labelLead(source, alpha) {
-  return source === 'agent' ? [{ glyph: 'agent', tone: 'agent', alpha: alpha === undefined ? 0.9 : alpha }] : [];
 }
 
 /* The boxes the label column drew last frame, by the id of the object a cross would remove,
@@ -811,6 +932,7 @@ function buildLayout(width, height, ctx) {
     textWidth(ctx, priceText(low, decimals))
   );
   var wanted = clampNum(Math.ceil(widest) + 16, 66, 112);
+  if (CHART_CHIP_W > 0) wanted = Math.max(wanted, CHART_CHIP_W);
   /* The axis is measured from the frame just drawn and applied to the next one, which is fine
      for a static chart and visibly wrong during a tween: a price magnitude crossing a digit
      boundary makes the whole plot width step sideways a frame late, mid-motion. So while a
@@ -1074,6 +1196,12 @@ function tweenStep() {
     else running = true;
   }
 
+  // A marking docking in or fading out is drawn by the scene, a few frames at a time.
+  if (markingsMoving()) {
+    CHART_DIRTY.scene = true;
+    running = true;
+  }
+
   if (!CHART_TWEEN) return running;
   var t = (now - CHART_TWEEN.t0) / CHART_TWEEN.ms;
   if (t >= 1) {
@@ -1142,6 +1270,19 @@ function hair(value) {
   return Math.round(value * DPR) / DPR + 0.5 / DPR;
 }
 
+/* A horizontal or vertical line of any weight on whole device pixels. The width is rounded to
+   device pixels and the line sits on a pixel centre when that count is odd and on a pixel edge
+   when it is even: a 1 px line at 2x is two device pixels, and drawn on a centre it smeared
+   across three at half strength, which is the blur a level had on a retina screen. */
+function crispWidth(width) {
+  return Math.max(1, Math.round(width * DPR)) / DPR;
+}
+function crisp(value, width) {
+  var device = Math.max(1, Math.round(width * DPR));
+  var at = value * DPR;
+  return (device % 2 ? Math.floor(at) + 0.5 : Math.round(at)) / DPR;
+}
+
 function prepare(canvas, opaque) {
   var ctx = canvas.getContext('2d', { alpha: !opaque });
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -1177,30 +1318,40 @@ function drawScene() {
 
   var L = buildLayout(width, height, ctx);
   CHART_LAYOUT = L;
-  CHART_SCENE_LABELS = [];
   CHART_AXIS_CHIPS = [];
   maybeBackfill(L);
 
+  // The marks' chips go on the time axis before its labels do, so a clock under a chip is left
+  // out rather than half covered.
+  L.markChips = markChipLayout(ctx, L);
   drawPriceGrid(ctx, L);
   drawTimeGrid(ctx, L);
   drawMarks(ctx, L);
   drawOverlayBands(ctx, L);
   drawCandles(ctx, L);
   drawOverlayLines(ctx, L);
-  drawLevels(ctx, L);
-  // After the levels so a zone's fill sits under the horizontal lines rather than washing
-  // them out, and before the panes so nothing leaks into a sub-pane's box.
+  // A zone's wash first, so the level lines stay crisp over it, and all of them before the
+  // panes so nothing leaks into a sub-pane's box.
   drawDrawings(ctx, L);
+  drawLevels(ctx, L);
   // The trading page's account overlays: entries, liquidation, the mandate wall, working
   // orders, fills. Defined in ui/trade-overlay.js, which only the trading page loads, so on
   // the pro page this is one typeof check and the chart is exactly what it was before.
   if (typeof drawTradeOverlays === 'function') drawTradeOverlays(ctx, L);
-  // The axis prices go down last, once every off-pane level has asked for a chip, so a price
-  // under a chip is left out rather than half covered by it.
+  // The axis prices go down last, once every marking has asked for its chip, so a price under
+  // a chip is left out rather than half covered by it.
   L.chips = chipLayout(L);
+  // A chip names its line in a word, and the axis has to be wide enough for one. Measured on
+  // this frame and applied from the next, the way the axis follows its own labels.
+  var chipW = chipAxisWidth(ctx, L.chips, L.decimals);
+  if (Math.abs(chipW - CHART_CHIP_W) > 2) {
+    CHART_CHIP_W = chipW;
+    chartInvalidate(true);
+  }
   drawPriceLabels(ctx, L);
   drawPanes(ctx, L);
   drawAxisFrame(ctx, L);
+  drawMarkChips(ctx, L);
 }
 
 /* ---------- the waiting scene ---------- */
@@ -1379,111 +1530,285 @@ function drawPriceLabels(ctx, L) {
     if (L.reserved && y > L.reserved.top && y < L.reserved.bottom) continue;
     var covered = false;
     for (var c = 0; c < chips.length; c++) {
-      if (y > chips[c].y - 7 && y < chips[c].y + CHIP_H + 7) covered = true;
+      if (y > chips[c].y - 6 && y < chips[c].y + chips[c].h + 6) covered = true;
     }
     if (covered) continue;
     drawText(ctx, priceText(labels[i][0], L.decimals), L.plotWidth + 6, y);
   }
 }
 
-/* ---------- the axis chips ---------- */
+/* ---------- the axis chips ----------
 
-var CHIP_H = 29;
-var CHIP_GAP = 3;
-var CHIP_MAX = 3;
-var CHIP_FONT = '10px "Geist", ui-sans-serif, system-ui, sans-serif';
+   Every marking names itself here, in a chip docked on the price axis: one line, the price in
+   the axis's own column with the name after it, on a small soft layer in its owner's ink, set
+   in the window's face with tabular figures. The owner is the ink (violet is the agent's), so
+   there is no dot to read. A chip sits beside its line when the line is on the pane ('at'), and
+   waits at the edge the line went off with an arrow when it is not ('top', 'bottom'). The chips
+   beside their lines are pushed apart so no two overlap and none covers the last price's tag;
+   in a crowded pane the least important go and the chip nearest the price counts them.
 
-/* Stack the chips at the edge each went off, in price order (the highest at the top of either
-   stack), clear of the last price's band, three to an edge. A fourth is not dropped in silence:
-   the outermost chip then says how many more sit past it. */
+   Item: { price, edge 'at' | 'top' | 'bottom', y (for 'at'), word, tone, ring, alpha, prio,
+   single (a name with no price: a zone), bracket ({ top, bottom }, a zone's height) }. */
+
+var CHIP_H = 17;
+var CHIP_H_ONE = 17;
+var CHIP_GAP = 2;
+var CHIP_RADIUS = 5;
+var CHIP_FONT = '500 10px "Geist", ui-sans-serif, system-ui, sans-serif';
+/* How wide the axis grows to name its chips: at least enough for a short word beside a price,
+   at most a little over half as wide again as a bare price axis. Measured on one frame, applied
+   from the next, the way the axis already follows its own labels. */
+var CHIP_AXIS_MIN = 96;
+var CHIP_AXIS_MAX = 140;
+var CHART_CHIP_W = 0;
+var ELLIPSIS = String.fromCharCode(0x2026);
+
+function chipHeight(chip) {
+  return chip.single ? CHIP_H_ONE : CHIP_H;
+}
+
+/* Up to three chips wait at an edge, two on a short pane, so the off-scale ones cannot take the
+   whole axis from the lines that are on it. */
+function chipsPerEdge(L) {
+  return L.priceHeight < 240 ? 2 : 3;
+}
+
+/* How wide a chip needs to be to say all of itself: the price, the arrow, the name. */
+function chipWidthWanted(ctx, chip, decimals) {
+  ctx.font = CHIP_FONT;
+  var word = textWidth(ctx, String(chip.word || ''));
+  ctx.font = CHART_FONT;
+  var price = chip.single || typeof chip.price !== 'number' ? 0 : textWidth(ctx, priceText(chip.price, decimals)) + 7;
+  var arrow = chip.edge === 'top' || chip.edge === 'bottom' ? LABEL_GLYPH_W + 1 : 0;
+  return Math.ceil(price + arrow + word + 12);
+}
+
+/* The axis the chips on screen ask for: the widest of them, held between the floor and the
+   ceiling, or nothing when there are none. */
+function chipAxisWidth(ctx, chips, decimals) {
+  var want = 0;
+  for (var i = 0; i < chips.length; i++) want = Math.max(want, chipWidthWanted(ctx, chips[i], decimals));
+  ctx.font = CHART_FONT;
+  return want > 0 ? clampNum(want, CHIP_AXIS_MIN, CHIP_AXIS_MAX) : 0;
+}
+
+/* A soft layer on the axis: the panel's own ground, washed in the tone, with a hairline of light
+   along its top. The last price tag stays the one solid block on the axis. */
+function softChip(ctx, x, y, w, h, tone, alpha, radius) {
+  var r = radius === undefined ? CHIP_RADIUS : radius;
+  var shape = function () {
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, r);
+    else ctx.rect(x, y, w, h);
+  };
+  shape();
+  ctx.fillStyle = groundInk(0.94 * alpha);
+  ctx.fill();
+  shape();
+  ctx.fillStyle = chartInk(tone, 0.15 * alpha);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255, 232, 220, ' + 0.07 * alpha + ')';
+  ctx.fillRect(x + r, y, Math.max(0, w - r * 2), 1 / DPR);
+}
+
+function ringChip(ctx, x, y, w, h, radius) {
+  ctx.strokeStyle = warnInk(0.95);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') ctx.roundRect(x - 1, y - 1, w + 2, h + 2, (radius === undefined ? CHIP_RADIUS : radius) + 1);
+  else ctx.rect(x - 1, y - 1, w + 2, h + 2);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+}
+
+/* Where a chip of height h can sit starting at t, moved past any band it would cover: down
+   when dir is 1, up when it is -1. */
+function clearOfBands(t, h, bands, dir) {
+  for (var pass = 0; pass < 4; pass++) {
+    var moved = false;
+    for (var i = 0; i < bands.length; i++) {
+      var b = bands[i];
+      if (t < b.bottom && t + h > b.top) {
+        t = dir > 0 ? b.bottom + CHIP_GAP : b.top - CHIP_GAP - h;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return t;
+}
+
+/* The chips beside their lines, in price order, each as near its line as the others allow: a
+   pass down pushes each clear of the one above and of the bands, a pass up pulls the run back
+   inside the pane when it ran off the bottom. What still does not fit is dropped. */
+function packChips(items, lo, hi, bands) {
+  var edge = lo;
+  for (var i = 0; i < items.length; i++) {
+    var t = Math.max(items[i].want - items[i].h / 2, edge);
+    t = clearOfBands(t, items[i].h, bands, 1);
+    items[i].y = t;
+    edge = t + items[i].h + CHIP_GAP;
+  }
+  var wall = hi;
+  for (var j = items.length - 1; j >= 0; j--) {
+    if (items[j].y + items[j].h > wall) items[j].y = clearOfBands(wall - items[j].h, items[j].h, bands, -1);
+    wall = items[j].y - CHIP_GAP;
+  }
+  return items.filter(function (it) {
+    return it.y >= lo - 0.5;
+  });
+}
+
 function chipLayout(L) {
   var top = L.priceTop;
   var bottom = L.priceTop + L.priceHeight;
   var reserved = L.reserved;
+  var bands = reserved ? [{ top: reserved.top, bottom: reserved.bottom }] : [];
+  var perEdge = chipsPerEdge(L);
   function clash(y) {
     return reserved && y < reserved.bottom && y + CHIP_H > reserved.top;
   }
-  function edge(name) {
+  /* The edge stacks first. Each is sorted nearest the pane first, so a cut keeps the levels the
+     price will reach soonest, and stacks inward from its own edge. A stack stops at the last
+     price's band rather than jumping over it: an off-scale level parked beside the live price
+     took the room the lines near the price needed for their own names. Only when nothing fits
+     on its side of the band does one chip go on the other side of it. The chip nearest the pane
+     counts what did not fit. */
+  var laid = [];
+  var floor = top;
+  function stack(name) {
+    var down = name === 'top';
     var list = CHART_AXIS_CHIPS.filter(function (chip) {
       return chip.edge === name;
     });
-    // Nearest the pane first, so a cut keeps the levels the price will reach soonest.
     list.sort(function (a, b) {
-      return name === 'top' ? a.price - b.price : b.price - a.price;
+      return down ? a.price - b.price : b.price - a.price;
     });
-    var more = Math.max(0, list.length - CHIP_MAX);
-    list = list.slice(0, CHIP_MAX);
-    if (more && list.length) list[list.length - 1] = Object.assign({}, list[list.length - 1], { more: more });
-    return list;
+    // The slots this side of the band holds, from the edge in; the nearest chips fill them, the
+    // farthest of those at the edge.
+    var slots = [];
+    var y = down ? top + 2 : bottom - 2 - CHIP_H;
+    while (slots.length < Math.min(list.length, perEdge)) {
+      if (clash(y) || (down ? y + CHIP_H > bottom : y < floor + CHIP_GAP)) break;
+      slots.push(y);
+      y += down ? CHIP_H + CHIP_GAP : -(CHIP_H + CHIP_GAP);
+    }
+    var placed = [];
+    for (var k = 0; k < slots.length; k++) placed.push(Object.assign({}, list[slots.length - 1 - k], { y: slots[k], h: CHIP_H, single: false }));
+    if (!placed.length && list.length && reserved) {
+      var over = down ? reserved.bottom + CHIP_GAP : reserved.top - CHIP_GAP - CHIP_H;
+      if (over >= floor + CHIP_GAP && over + CHIP_H <= bottom) placed.push(Object.assign({}, list[0], { y: over, h: CHIP_H, single: false }));
+    }
+    var unshown = list.length - placed.length;
+    if (unshown > 0 && placed.length) placed[placed.length - 1].more = unshown;
+    for (var p = 0; p < placed.length; p++) {
+      laid.push(placed[p]);
+      if (down) floor = Math.max(floor, placed[p].y + CHIP_H);
+    }
   }
-  var laid = [];
-  var ups = edge('top').reverse();
-  var y = top + 2;
-  var upFloor = top;
-  for (var i = 0; i < ups.length; i++) {
-    if (clash(y)) y = reserved.bottom + CHIP_GAP;
-    if (y + CHIP_H > bottom) break;
-    laid.push(Object.assign({}, ups[i], { y: y }));
-    upFloor = y + CHIP_H;
-    y += CHIP_H + CHIP_GAP;
+  stack('top');
+  stack('bottom');
+
+  /* Then the chips beside their lines. The last price's tag splits the axis in two and a chip
+     stays on its line's side of it, so the axis reads as a ladder: every chip above the tag is a
+     price above the market and every chip below it one under. Within its side a chip steps
+     around the edge chips, and a crowded side names what matters most: the account's lines first
+     (a position, its liquidation, a plan), then levels, lines and zones, and between equals the
+     one nearer the last price, which the price reaches first. The rest are counted on the chip
+     nearest the price, where the eye already is. */
+  for (var e = 0; e < laid.length; e++) bands.push({ top: laid[e].y, bottom: laid[e].y + laid[e].h });
+  var tagY = reserved ? reserved.top + 10 : null;
+  var sides = reserved
+    ? [{ lo: top + 1, hi: reserved.top - CHIP_GAP, items: [] }, { lo: reserved.bottom + CHIP_GAP, hi: bottom - 1, items: [] }]
+    : [{ lo: top + 1, hi: bottom - 1, items: [] }];
+  CHART_AXIS_CHIPS.forEach(function (chip) {
+    if (chip.edge !== 'at') return;
+    var side = tagY === null || chip.y < tagY ? sides[0] : sides[1];
+    side.items.push(Object.assign({}, chip, { want: chip.y, h: chipHeight(chip) }));
+  });
+  var lastY = tagY === null ? top + L.priceHeight / 2 : tagY;
+  var packed = [];
+  var dropped = 0;
+  sides.forEach(function (side) {
+    if (!side.items.length) return;
+    var room = side.hi - side.lo + CHIP_GAP;
+    for (var b = 0; b < bands.length; b++) room -= Math.max(0, Math.min(side.hi, bands[b].bottom) - Math.max(side.lo, bands[b].top)) + (bands[b].bottom > side.lo && bands[b].top < side.hi ? CHIP_GAP : 0);
+    var items = side.items.sort(function (a, b) {
+      return (b.prio || 0) - (a.prio || 0) || Math.abs(a.want - lastY) - Math.abs(b.want - lastY);
+    });
+    var keep = Math.min(items.length, Math.max(0, Math.floor(room / (CHIP_H + CHIP_GAP))));
+    dropped += items.length - keep;
+    items = items.slice(0, keep).sort(function (a, b) {
+      return a.want - b.want;
+    });
+    var done = packChips(items, side.lo, side.hi, bands).filter(function (it) {
+      return it.y + it.h <= side.hi + 0.5;
+    });
+    dropped += items.length - done.length;
+    packed = packed.concat(done);
+  });
+  if (dropped > 0 && packed.length) {
+    var nearest = packed.reduce(function (best, c) {
+      return Math.abs(c.want - lastY) < Math.abs(best.want - lastY) ? c : best;
+    }, packed[0]);
+    nearest.more = dropped;
   }
-  var downs = edge('bottom').reverse();
-  y = bottom - 2 - CHIP_H;
-  for (var j = 0; j < downs.length; j++) {
-    if (clash(y)) y = reserved.top - CHIP_GAP - CHIP_H;
-    if (y < upFloor + CHIP_GAP) break;
-    laid.push(Object.assign({}, downs[j], { y: y }));
-    y -= CHIP_H + CHIP_GAP;
-  }
-  return laid;
+  return laid.concat(packed);
 }
 
 /* The word as wide as the room, cut with an ellipsis when it is not. */
 function fitWord(ctx, word, room) {
   var text = String(word || '');
+  if (room <= 0) return '';
   if (textWidth(ctx, text) <= room) return text;
-  while (text.length > 1 && textWidth(ctx, text + '\u2026') > room) text = text.slice(0, -1);
-  return text.replace(/\s+$/, '') + '\u2026';
+  while (text.length > 1 && textWidth(ctx, text + ELLIPSIS) > room) text = text.slice(0, -1);
+  return text.replace(/\s+$/, '') + ELLIPSIS;
 }
 
-/* A chip is two lines on a tinted ground: the word over the price, with the arrow beside the
-   word saying which way the level went off. Tinted, never filled: the last price tag stays
-   the one solid block on the axis. */
+/* A chip: the price in the axis's own column, the arrow when its line is off the pane, then the
+   name, all in the owner's ink on its soft layer. A zone's chip is its name alone, beside a
+   bracket as tall as the band. A chip docking in slides the last few pixels toward the axis as
+   it fades up. */
 function drawAxisChips(ctx, L) {
   var chips = L.chips || [];
   if (!chips.length) return;
-  var x = L.plotWidth + 3;
   var w = L.padRight - 5;
   for (var i = 0; i < chips.length; i++) {
     var chip = chips[i];
-    var ink = chartInk(chip.tone, 0.95);
-    ctx.fillStyle = chartInk(chip.tone, 0.14);
-    if (typeof ctx.roundRect === 'function') {
-      ctx.beginPath();
-      ctx.roundRect(x, chip.y, w, CHIP_H, 5);
-      ctx.fill();
-    } else {
-      ctx.fillRect(x, chip.y, w, CHIP_H);
+    var a = chip.alpha === undefined ? 1 : chip.alpha;
+    var x = L.plotWidth + 4 + (1 - a) * 6;
+    var h = chip.h || chipHeight(chip);
+    var mid = chip.y + h / 2;
+    if (chip.bracket) {
+      ctx.fillStyle = chartInk(chip.tone, 0.6 * a);
+      ctx.fillRect(L.plotWidth + 1, chip.bracket.top, 2, Math.max(1, chip.bracket.bottom - chip.bracket.top));
     }
-    if (chip.ring) {
-      ctx.strokeStyle = chartInk('warn', 0.95);
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(x - 0.5, chip.y - 0.5, w + 1, CHIP_H + 1);
-      ctx.lineWidth = 1;
-    }
-    ctx.font = CHIP_FONT;
+    softChip(ctx, x, chip.y, w - 1, h, chip.tone, a);
+    if (chip.ring) ringChip(ctx, x, chip.y, w - 1, h);
     ctx.textAlign = 'left';
-    var word = chip.more ? chip.word + ' +' + chip.more : chip.word;
-    var room = w - 8;
-    // The arrow gives way to the word when both do not fit: the chip's edge already says which
-    // way the level went, the word is the only thing that says what it is.
-    var arrow = textWidth(ctx, word) + LABEL_GLYPH_W + 3 <= room;
-    if (arrow) labelGlyph(ctx, chip.edge === 'top' ? 'up' : 'down', x + 3, chip.y + 14, ink);
-    ctx.fillStyle = chartInk(chip.tone, 0.8);
-    drawText(ctx, fitWord(ctx, word, arrow ? room - LABEL_GLYPH_W - 3 : room), x + (arrow ? LABEL_GLYPH_W + 6 : 4), chip.y + 10);
+    var left = L.plotWidth + 6 + (1 - a) * 6;
+    var right = x + w - 6;
+    if (!chip.single && typeof chip.price === 'number') {
+      ctx.font = CHART_FONT;
+      ctx.fillStyle = chartInk(chip.tone, a);
+      var figure = priceText(chip.price, L.decimals);
+      drawText(ctx, figure, left, mid);
+      left += textWidth(ctx, figure) + 7;
+    }
+    var word = String(chip.word || '');
+    if (chip.more) word = word ? word + ' +' + chip.more : '+' + chip.more;
+    ctx.font = CHIP_FONT;
+    if (chip.edge === 'top' || chip.edge === 'bottom') {
+      if (left + LABEL_GLYPH_W + 1 < right) {
+        labelGlyph(ctx, chip.edge === 'top' ? 'up' : 'down', left - 1, mid + 4, chartInk(chip.tone, 0.95 * a));
+        left += LABEL_GLYPH_W + 1;
+      }
+    }
+    if (word) {
+      ctx.fillStyle = chartInk(chip.tone, 0.82 * a);
+      drawText(ctx, fitWord(ctx, word, right - left), left, mid);
+    }
     ctx.font = CHART_FONT;
-    ctx.fillStyle = ink;
-    drawText(ctx, priceText(chip.price, L.decimals), L.plotWidth + 6, chip.y + 21);
   }
 }
 
@@ -1565,12 +1890,19 @@ function drawTimeGrid(ctx, L) {
   ctx.stroke();
 
   ctx.textAlign = 'center';
+  var chips = L.markChips || [];
   for (var k = 0; k < ticks.length; k++) {
     var tick = ticks[k];
     ctx.fillStyle = tick.major ? textInk(0.8) : text2(0.8);
     // A label centred on a tick at the edge would lose half of itself; it is slid inside.
     var half = textWidth(ctx, tick.text) / 2;
-    drawText(ctx, tick.text, clampNum(tick.x, half + 1, L.plotWidth - half - 1), bottom + 9);
+    var at = clampNum(tick.x, half + 1, L.plotWidth - half - 1);
+    var under = false;
+    for (var c = 0; c < chips.length; c++) {
+      if (at + half + 4 > chips[c].left && at - half - 4 < chips[c].left + chips[c].w) under = true;
+    }
+    if (under) continue;
+    drawText(ctx, tick.text, at, bottom + 9);
   }
   ctx.textAlign = 'left';
 }
@@ -1685,11 +2017,6 @@ function drawCandleColumns(ctx, L, columns) {
   }
 }
 
-function plotColour(plot, alphaScale) {
-  var alpha = clampNum((plot.emphasis === undefined ? 0.8 : plot.emphasis) * (alphaScale || 1), 0.08, 1);
-  return accent(alpha);
-}
-
 function strokeSeries(ctx, values, from, to, xOf, yOf) {
   ctx.beginPath();
   var pen = false;
@@ -1711,9 +2038,26 @@ function strokeSeries(ctx, values, from, to, xOf, yOf) {
   ctx.stroke();
 }
 
-function drawOverlayBands(ctx, L) {
+/* The price overlays with the hue each is drawn in and how far in it is: the ones on the chart
+   in their order, then any still fading out, in the hue they had. */
+function overlaysDrawn(L) {
+  var out = [];
   for (var i = 0; i < L.overlays.length; i++) {
-    var plots = L.overlays[i].plots || [];
+    out.push({ ind: L.overlays[i], hue: i, alpha: markIn('study:' + L.overlays[i].id).alpha });
+  }
+  var ghosts = ghostsOf('study');
+  for (var g = 0; g < ghosts.length; g++) {
+    if (ghosts[g].item.pane !== 'price') continue;
+    out.push({ ind: ghosts[g].item, hue: typeof ghosts[g].item.__hue === 'number' ? ghosts[g].item.__hue : 0, alpha: ghosts[g].alpha });
+  }
+  for (var k = 0; k < L.overlays.length; k++) L.overlays[k].__hue = k;
+  return out;
+}
+
+function drawOverlayBands(ctx, L) {
+  var drawn = overlaysDrawn(L);
+  for (var i = 0; i < drawn.length; i++) {
+    var plots = drawn[i].ind.plots || [];
     for (var p = 0; p < plots.length; p++) {
       var plot = plots[p];
       if (plot.style !== 'band' || !plot.fillTo) continue;
@@ -1722,7 +2066,9 @@ function drawOverlayBands(ctx, L) {
         if (plots[q].key === plot.fillTo) other = plots[q];
       }
       if (!other) continue;
-      ctx.fillStyle = accent(0.08);
+      // A band is one study's range, washed in that study's hue at a strength the candles
+      // inside it still read through.
+      ctx.fillStyle = typeof plot.tone === 'string' ? chartInk(plot.tone, 0.06 * drawn[i].alpha) : studyInk(drawn[i].hue, 0.06 * drawn[i].alpha);
       ctx.beginPath();
       var open = false;
       var k;
@@ -1747,20 +2093,22 @@ function drawOverlayBands(ctx, L) {
 }
 
 function drawOverlayLines(ctx, L) {
-  ctx.lineWidth = 1;
-  for (var i = 0; i < L.overlays.length; i++) {
-    var plots = L.overlays[i].plots || [];
+  var drawn = overlaysDrawn(L);
+  ctx.lineCap = 'round';
+  for (var i = 0; i < drawn.length; i++) {
+    var plots = drawn[i].ind.plots || [];
     for (var p = 0; p < plots.length; p++) {
       var plot = plots[p];
       if (plot.style === 'histogram') continue;
-      ctx.strokeStyle = plotColour(plot, plot.style === 'band' ? 0.7 : 1);
-      // Overlays past the third separate by dash as well as by brightness: on one hue,
-      // brightness alone runs out after about three lines.
-      ctx.setLineDash(i > 2 ? [4, 3] : []);
+      ctx.lineWidth = PLOT_WIDTH[plotTier(plot)];
+      ctx.strokeStyle = plotInk(plot, drawn[i].hue, drawn[i].alpha);
+      ctx.setLineDash(studyDash(drawn[i].hue));
       strokeSeries(ctx, plot.values, L.start, L.end, L.xOf, L.yOf);
     }
   }
   ctx.setLineDash([]);
+  ctx.lineCap = 'butt';
+  ctx.lineWidth = 1;
 }
 
 function drawPanes(ctx, L) {
@@ -1776,7 +2124,18 @@ function drawPanes(ctx, L) {
     ctx.stroke();
 
     var guides = ind.guides || [];
-    ctx.strokeStyle = lineInk(0.6);
+    var fade = markIn('study:' + ind.id).alpha;
+    /* A bounded study (RSI, a stochastic) says where its extremes are with two guides; the
+       stretch between them is washed faintly, so the pane reads as inside or outside at a
+       glance instead of as three rules to count. */
+    if (ind.range && guides.length === 2) {
+      var ga = paneYOf(pane, guides[0].value);
+      var gb = paneYOf(pane, guides[1].value);
+      ctx.fillStyle = text2(0.035);
+      ctx.fillRect(0, Math.min(ga, gb), L.plotWidth, Math.abs(gb - ga));
+    }
+    ctx.lineWidth = 1 / DPR;
+    ctx.strokeStyle = lineInk(0.9);
     ctx.fillStyle = text2(0.7);
     ctx.beginPath();
     for (var g = 0; g < guides.length; g++) {
@@ -1792,19 +2151,27 @@ function drawPanes(ctx, L) {
       drawText(ctx, guides[gl].label, L.plotWidth + 6, ly);
     }
 
+    // Each line of a pane study in its own hue, in order: a MACD and its signal are two
+    // lines a reader has to tell apart, where a band's three edges are one shape.
     var plots = ind.plots || [];
+    var hue = 0;
+    ctx.lineCap = 'round';
     for (var p = 0; p < plots.length; p++) {
       var plot = plots[p];
       if (plot.style === 'histogram') {
-        drawPaneHistogram(ctx, L, pane, plot);
+        drawPaneHistogram(ctx, L, pane, plot, fade);
         continue;
       }
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = plotColour(plot, 1);
+      ctx.lineWidth = PLOT_WIDTH[plotTier(plot)];
+      ctx.strokeStyle = plotInk(plot, hue, fade);
+      plot.__hue = hue;
+      hue += 1;
       strokeSeries(ctx, plot.values, L.start, L.end, L.xOf, function (v) {
         return paneYOf(pane, v);
       });
     }
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = 1;
 
     // The pane's own scale: two numbers, at its edges, so a value can be placed without a
     // grid cutting the pane into strips. A pane with a fixed domain already says 0 to 100
@@ -1821,17 +2188,20 @@ function drawPanes(ctx, L) {
    its colour from the value. A magnitude one (volume) draws from the floor of the pane and
    takes its colour from a direction series beside it: volume is never negative, and folding
    the direction into the value would put half the bars under an axis. */
-function drawPaneHistogram(ctx, L, pane, plot) {
+function drawPaneHistogram(ctx, L, pane, plot, fade) {
   var width = Math.max(1, Math.floor(L.slot * 0.6));
   var base = paneYOf(pane, clampNum(0, pane.low, pane.high));
   var signs = plot.signs;
   var sets = plot.signed === true || signs ? [1, -1] : [1];
+  var f = fade === undefined ? 1 : fade;
   // Squeezed below a pixel a bar, the tallest bar under each column stands for the column:
   // a sum would leave the pane's scale, and one rect per column is what a pixel can hold.
   var folded = L.slot < LOD_SLOT_PX;
   for (var s = 0; s < sets.length; s++) {
     var sign = sets[s];
-    ctx.fillStyle = sets.length === 1 ? accent(0.34) : sign > 0 ? accent(0.4) : danger(0.45);
+    // A histogram is the quiet layer of its pane: its direction is the candles' up and down,
+    // held well under the lines drawn over it.
+    ctx.fillStyle = sets.length === 1 ? text2(0.3 * f) : sign > 0 ? accent(0.3 * f) : danger(0.34 * f);
     ctx.beginPath();
     var lastX = null;
     var lastTop = 0;
@@ -1857,170 +2227,291 @@ function drawPaneHistogram(ctx, L, pane, plot) {
   }
 }
 
+/* ---------- the markings ----------
+
+   One system for everything drawn on the price: its shape on the plot in its owner's ink, and
+   its name and price in a chip docked on the price axis beside it, never printed over the
+   candles. The agent's are in its violet and the person's in the text ink. A level, a zone's
+   edge and a trend line are solid: on this chart a dash means one thing, not live yet (a plan
+   still waiting to fire), and a dotted agent level beside a dashed human one said nothing a
+   colour does not say better. Stored by time and price, never by pixel, so a pan or a zoom
+   moves them with the candles and the value the agent measured is the value on the glass. */
+
+function markingTone(source) {
+  return source === 'agent' ? 'agent' : 'text';
+}
+
+/* The panel's own colour, for the ground a chip or an anchor sits on. */
+function groundInk(alpha) {
+  return 'rgba(' + (rgbTriple(C_BG) || rgbTriple(CHART_TOKENS.bg1) || '30, 25, 23') + ', ' + alpha + ')';
+}
+
+// The moment under a pixel column, and the pixel column of a moment, on this chart's bars.
+function timeAtX(L, x) {
+  var candles = CHART.candles;
+  return candles.length ? candles[0].t + L.indexAt(x) * CHART.view.granularitySec : 0;
+}
+function xOfTime(L, tSec) {
+  var candles = CHART.candles;
+  if (!candles.length) return NaN;
+  return L.xOf((tSec - candles[0].t) / CHART.view.granularitySec);
+}
+
+// A line's price at a moment. Two anchors at one instant read as flat: finite beats correct
+// here, since a NaN would vanish silently.
+function lineValueAt(line, tSec) {
+  var dt = line.b.t - line.a.t;
+  if (dt === 0) return line.a.price;
+  return line.a.price + ((line.b.price - line.a.price) / dt) * (tSec - line.a.t);
+}
+
+/* Every marking of one kind on this frame: the ones on the chart with how far in each has
+   come, and the ones still fading out. */
+function markingsOf(kind, list) {
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var motion = markIn(kind + ':' + list[i].id);
+    out.push({ item: list[i], alpha: motion.alpha, draw: motion.draw, ghost: false });
+  }
+  var ghosts = ghostsOf(kind);
+  for (var g = 0; g < ghosts.length; g++) out.push({ item: ghosts[g].item, alpha: ghosts[g].alpha, draw: 1, ghost: true });
+  return out;
+}
+
 function drawLevels(ctx, L) {
-  if (!CHART.levels.length) return;
-  ctx.lineWidth = 1;
+  var list = markingsOf('level', CHART.levels);
+  if (!list.length) return;
   var top = L.priceTop;
   var bottom = L.priceTop + L.priceHeight;
-  for (var i = 0; i < CHART.levels.length; i++) {
-    var level = CHART.levels[i];
+  for (var i = 0; i < list.length; i++) {
+    var level = list[i].item;
     var y = L.yOf(level.price);
-    var fromAgent = level.source === 'agent';
-    var tone = fromAgent ? 'agent' : 'ink';
-    var ring = chartSpotOn('level', level.id);
+    var tone = markingTone(level.source);
+    var chip = {
+      price: level.price,
+      word: labelText(level.label),
+      tone: tone,
+      ring: !list[i].ghost && chartSpotOn('level', level.id),
+      alpha: list[i].alpha,
+      prio: list[i].ghost ? 1 : 6
+    };
     if (y < top || y > bottom) {
       // Off the top or the bottom of what is on screen. The line cannot be drawn where it
-      // belongs, so it becomes a chip on the price axis at the edge it went off.
-      chartAxisChip({ price: level.price, edge: y < top ? 'top' : 'bottom', word: labelText(level.label), tone: tone, ring: ring });
+      // belongs, so its chip waits at the edge it went off.
+      chip.edge = y < top ? 'top' : 'bottom';
+      chartAxisChip(chip);
       continue;
     }
-    ctx.strokeStyle = fromAgent ? agentInk(0.5) : accent(0.7);
-    // Agent lines are dotted, human lines are dashed. Attribution is in the label as well,
-    // but the eye reads the dash first.
-    ctx.setLineDash(fromAgent ? [2, 3] : [6, 4]);
+    // Drawn out from the price axis as it lands, the way a hand lays a rule to a price.
+    var from = L.plotWidth * (1 - list[i].draw);
+    var at = crisp(y, 1);
+    ctx.lineWidth = crispWidth(1);
+    ctx.strokeStyle = chartInk(tone, 0.72 * list[i].alpha);
     ctx.beginPath();
-    ctx.moveTo(0, hair(y));
-    ctx.lineTo(L.plotWidth, hair(y));
+    ctx.moveTo(from, at);
+    ctx.lineTo(L.plotWidth, at);
     ctx.stroke();
-    ctx.setLineDash([]);
-    chartLabel({
-      y: y - 7,
-      parts: labelLead(level.source).concat([{ text: labelText(level.label) + ' ' + priceText(level.price, L.decimals), tone: tone }]),
-      ring: ring
-    });
+    chip.edge = 'at';
+    chip.y = y;
+    chartAxisChip(chip);
+  }
+  ctx.lineWidth = 1;
+}
+
+function drawDrawings(ctx, L) {
+  if (!CHART.candles.length) return;
+  var list = markingsOf('drawing', CHART.drawings || []);
+  for (var i = 0; i < list.length; i++) {
+    var d = list[i].item;
+    var ring = !list[i].ghost && chartSpotOn('line', d.id);
+    if (d.kind === 'zone' && d.zone) drawZone(ctx, L, d, list[i], ring);
+    else if (d.line) drawTrendLine(ctx, L, d, list[i], ring);
   }
 }
 
-// Trend lines and zones the agent drew, or the human did. These are stored by TIME and
-// PRICE rather than by pixel, so they stay where they belong through a pan and a zoom, and
-// so the value the agent measured against is the value drawn here. One computation, two
-// consumers: the number in the agent's answer and the pixel on this canvas cannot disagree.
-//
-// No new hue. Red belongs to the approval gate alone, so an agent drawing is the same
-// phosphor green at a lower brightness tier, dotted the way agent levels already are.
-function drawDrawings(ctx, L) {
-  var list = CHART.drawings;
-  if (!list || !list.length) return;
-  var granularity = CHART.view.granularitySec;
-  var candles = CHART.candles;
-  if (!candles.length) return;
-  var firstT = candles[0].t;
-
-  // A drawing's price at a given time. Two anchors at one instant have no slope, so they
-  // read as horizontal: finite beats correct here, since a NaN would vanish silently.
-  function valueAt(line, tSec) {
-    var dt = line.b.t - line.a.t;
-    if (dt === 0) return line.a.price;
-    return line.a.price + ((line.b.price - line.a.price) / dt) * (tSec - line.a.t);
-  }
-  function timeOfX(x) {
-    return firstT + L.indexAt(x) * granularity;
-  }
-
+/* A zone is a soft band in its owner's ink with its two edges drawn, and on the axis a bracket
+   the height of the band with the zone's name beside it. The band's own prices are on the axis
+   grid under the bracket, so the chip carries the name alone. */
+function drawZone(ctx, L, d, motion, ring) {
   var top = L.priceTop;
   var bottom = L.priceTop + L.priceHeight;
-
-  for (var i = 0; i < list.length; i++) {
-    var d = list[i];
-    var fromAgent = d.source === 'agent';
-    // The server tags an agent's drawing "[agent] trend" as it lands (tagLabel in
-    // src/http/view.ts); on the canvas the word comes off and the dot says it.
-    var label = labelText(d.label);
-
-    if (d.kind === 'zone' && d.zone) {
-      var yHigh = L.yOf(d.zone.high);
-      var yLow = L.yOf(d.zone.low);
-      var boxTop = Math.max(top, Math.min(yHigh, yLow));
-      var boxBottom = Math.min(bottom, Math.max(yHigh, yLow));
-      if (boxBottom <= top || boxTop >= bottom) continue;
-      ctx.fillStyle = accent(0.14);
-      ctx.fillRect(0, boxTop, L.plotWidth, boxBottom - boxTop);
-      // Right-aligned, like the trend line labels. Left-aligning collided with the OHLC
-      // legend whenever a zone reached the top of the plot, which is exactly what a wide
-      // zone does, so the collision was the common case rather than an edge one.
-      drawEdgeLabel(ctx, label, fromAgent, L.plotWidth - 4, boxTop + 11, chartSpotOn('line', d.id));
-      continue;
+  var yHigh = L.yOf(d.zone.high);
+  var yLow = L.yOf(d.zone.low);
+  var tone = markingTone(d.source);
+  var chip = { word: labelText(d.label), tone: tone, ring: ring, alpha: motion.alpha, prio: motion.ghost ? 1 : 4 };
+  if (yLow < top || yHigh > bottom) {
+    // The whole band is past an edge: a chip there with the edge price nearest the pane.
+    chip.edge = yLow < top ? 'top' : 'bottom';
+    chip.price = chip.edge === 'top' ? d.zone.low : d.zone.high;
+    chartAxisChip(chip);
+    return;
+  }
+  var boxTop = Math.max(top, yHigh);
+  var boxBottom = Math.min(bottom, yLow);
+  var x0 = 0;
+  var x1 = L.plotWidth;
+  if (typeof d.zone.t1 === 'number' && typeof d.zone.t2 === 'number') {
+    x0 = clampNum(xOfTime(L, d.zone.t1), 0, L.plotWidth);
+    x1 = clampNum(xOfTime(L, d.zone.t2), 0, L.plotWidth);
+  }
+  if (x1 - x0 >= 1 && boxBottom - boxTop >= 0.5) {
+    ctx.fillStyle = chartInk(tone, 0.1 * motion.alpha);
+    ctx.fillRect(x0, boxTop, x1 - x0, boxBottom - boxTop);
+    ctx.lineWidth = crispWidth(1);
+    ctx.strokeStyle = chartInk(tone, 0.42 * motion.alpha);
+    ctx.beginPath();
+    if (yHigh >= top) {
+      ctx.moveTo(x0, crisp(yHigh, 1));
+      ctx.lineTo(x1, crisp(yHigh, 1));
     }
+    if (yLow <= bottom) {
+      ctx.moveTo(x0, crisp(yLow, 1));
+      ctx.lineTo(x1, crisp(yLow, 1));
+    }
+    ctx.stroke();
+    ctx.lineWidth = 1;
+  }
+  chip.edge = 'at';
+  chip.single = true;
+  chip.y = (boxTop + boxBottom) / 2;
+  chip.bracket = { top: boxTop, bottom: boxBottom };
+  chartAxisChip(chip);
+}
 
-    if (!d.line) continue;
-    // Extended to both plot edges: a trend line that stopped at its anchors would be a
-    // segment, and the whole reason to draw one is where it goes next.
-    var x0 = 0;
-    var x1 = L.plotWidth;
-    var y0 = L.yOf(valueAt(d.line, timeOfX(x0)));
-    var y1 = L.yOf(valueAt(d.line, timeOfX(x1)));
-    if ((y0 < top && y1 < top) || (y0 > bottom && y1 > bottom)) continue;
-
+/* A trend line through its two anchors, extended to both edges of the plot (the reason to draw
+   one is where it goes next), with the anchors marked as the two points it was drawn through.
+   Its chip sits where it meets the axis, carrying the price it is at now. */
+function drawTrendLine(ctx, L, d, motion, ring) {
+  var top = L.priceTop;
+  var bottom = L.priceTop + L.priceHeight;
+  var tone = markingTone(d.source);
+  var right = lineValueAt(d.line, timeAtX(L, L.plotWidth));
+  var y0 = L.yOf(lineValueAt(d.line, timeAtX(L, 0)));
+  var y1 = L.yOf(right);
+  if (!((y0 < top && y1 < top) || (y0 > bottom && y1 > bottom))) {
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, top, L.plotWidth, L.priceHeight);
+    // Drawn along its own direction as it lands, from the left edge toward the axis.
+    ctx.rect(0, top, L.plotWidth * motion.draw, L.priceHeight);
     ctx.clip();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = accent(fromAgent ? 0.5 : 0.7);
-    ctx.setLineDash(fromAgent ? [2, 3] : [6, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = chartInk(tone, 0.85 * motion.alpha);
     ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y1);
+    ctx.moveTo(0, y0);
+    ctx.lineTo(L.plotWidth, y1);
     ctx.stroke();
-    ctx.setLineDash([]);
+    var anchors = [d.line.a, d.line.b];
+    for (var i = 0; i < anchors.length; i++) {
+      var ax = xOfTime(L, anchors[i].t);
+      var ay = L.yOf(anchors[i].price);
+      if (!(ax >= 0 && ax <= L.plotWidth && ay >= top && ay <= bottom)) continue;
+      ctx.fillStyle = groundInk(0.95 * motion.alpha);
+      ctx.beginPath();
+      ctx.arc(ax, ay, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = chartInk(tone, motion.alpha);
+      ctx.beginPath();
+      ctx.arc(ax, ay, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
-
-    // The label rides the right end, where the line is heading.
-    var labelY = Math.max(top + 10, Math.min(bottom - 3, y1 - 5));
-    drawEdgeLabel(ctx, label, fromAgent, L.plotWidth - 4, labelY, chartSpotOn('line', d.id));
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = 1;
   }
-}
-
-/* A label against the right edge of the plot, for a line or a zone: right-aligned text in the
-   accent, the agent's dot in front when the agent drew it, the spotlight ring around both. */
-function drawEdgeLabel(ctx, label, fromAgent, right, y, spot) {
-  ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
-  ctx.textAlign = 'right';
-  drawText(ctx, label, right, y);
-  ctx.textAlign = 'left';
-  var width = textWidth(ctx, label);
-  var left = right - width;
-  if (fromAgent) {
-    left -= LABEL_GLYPH_W + 2;
-    labelGlyph(ctx, 'agent', left, y, agentInk(0.85));
+  var chip = { price: right, word: labelText(d.label), tone: tone, ring: ring, alpha: motion.alpha, prio: motion.ghost ? 1 : 5 };
+  if (y1 >= top && y1 <= bottom) {
+    chip.edge = 'at';
+    chip.y = y1;
+  } else {
+    chip.edge = y1 < top ? 'top' : 'bottom';
   }
-  drawSpotRing(ctx, left, y, right - left, spot);
+  chartAxisChip(chip);
 }
 
-/* The spotlight on a label drawn outside the column: the same amber ring the column draws. */
-function drawSpotRing(ctx, x, y, width, on) {
-  if (!on) return;
-  ctx.strokeStyle = warnInk(0.95);
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(x - 4.5, y - 9.5, width + 9, 18);
-  ctx.lineWidth = 1;
-}
-
+/* A moment in time: a hairline through every pane at its bar, and its name in a chip docked on
+   the time axis under it, the way a level's name docks on the price axis. The name used to be
+   printed sideways up the pane, across the candles and the indicator panes both. */
 function drawMarks(ctx, L) {
-  if (!CHART.marks.length) return;
-  var granularity = CHART.view.granularitySec;
+  var list = L.markChips || [];
+  for (var i = 0; i < list.length; i++) {
+    var chip = list[i];
+    ctx.lineWidth = 1 / DPR;
+    ctx.strokeStyle = chartInk(chip.tone, 0.32 * chip.alpha);
+    ctx.beginPath();
+    ctx.moveTo(hair(chip.x), PAD_TOP);
+    ctx.lineTo(hair(chip.x), L.axisTop);
+    ctx.stroke();
+    // A small notch on the price pane's top edge, so the mark reads from above as well.
+    ctx.fillStyle = chartInk(chip.tone, 0.7 * chip.alpha);
+    ctx.beginPath();
+    ctx.moveTo(chip.x - 3.5, PAD_TOP);
+    ctx.lineTo(chip.x + 3.5, PAD_TOP);
+    ctx.lineTo(chip.x, PAD_TOP + 4);
+    ctx.closePath();
+    ctx.fill();
+  }
   ctx.lineWidth = 1;
-  for (var i = 0; i < CHART.marks.length; i++) {
-    var mark = CHART.marks[i];
+}
+
+var MARK_CHIP_H = 16;
+
+/* The chips on the time axis, one per mark on screen, pushed apart left to right so no two
+   overlap and pulled back inside the plot at its right edge. What does not fit is counted on
+   the last chip. Laid before the time grid, so a clock label under a chip is left out rather
+   than half covered. */
+function markChipLayout(ctx, L) {
+  var list = markingsOf('mark', CHART.marks);
+  if (!list.length) return [];
+  var granularity = CHART.view.granularitySec;
+  ctx.font = CHIP_FONT;
+  var chips = [];
+  for (var i = 0; i < list.length; i++) {
+    var mark = list[i].item;
     // Marks land on the bar that contains them, not between two bars.
     var index = indexOfTime(mark.t, granularity);
     if (index < L.start - 1 || index > L.end + 1) continue;
     var x = L.xOf(index);
     if (x < 0 || x > L.plotWidth) continue;
-    var markInk = mark.source === 'agent' ? agentInk : accent;
-    ctx.strokeStyle = markInk(0.34);
-    ctx.setLineDash([2, 4]);
-    ctx.beginPath();
-    ctx.moveTo(hair(x), PAD_TOP);
-    ctx.lineTo(hair(x), L.axisTop);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.save();
-    ctx.translate(x - 3, L.axisTop - 4);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillStyle = markInk(0.55);
-    drawText(ctx, labelText(mark.label), 0, 0);
-    ctx.restore();
+    var word = labelText(mark.label);
+    var w = Math.min(L.plotWidth, textWidth(ctx, word) + 14);
+    chips.push({ x: x, w: w, left: x - w / 2, word: word, tone: markingTone(mark.source), alpha: list[i].alpha, ring: !list[i].ghost && chartSpotOn('mark', mark.id) });
+  }
+  chips.sort(function (a, b) {
+    return a.x - b.x;
+  });
+  var edge = 0;
+  for (var k = 0; k < chips.length; k++) {
+    chips[k].left = Math.max(chips[k].left, edge);
+    edge = chips[k].left + chips[k].w + 3;
+  }
+  var wall = L.plotWidth;
+  for (var j = chips.length - 1; j >= 0; j--) {
+    if (chips[j].left + chips[j].w > wall) chips[j].left = wall - chips[j].w;
+    wall = chips[j].left - 3;
+  }
+  var kept = chips.filter(function (c) {
+    return c.left >= 0;
+  });
+  if (kept.length < chips.length && kept.length) kept[kept.length - 1].more = chips.length - kept.length;
+  ctx.font = CHART_FONT;
+  return kept;
+}
+
+function drawMarkChips(ctx, L) {
+  var chips = L.markChips || [];
+  var y = L.axisTop + 1;
+  for (var i = 0; i < chips.length; i++) {
+    var chip = chips[i];
+    var a = chip.alpha;
+    softChip(ctx, chip.left, y, chip.w, MARK_CHIP_H, chip.tone, a, 5);
+    if (chip.ring) ringChip(ctx, chip.left, y, chip.w, MARK_CHIP_H, 5);
+    ctx.font = CHIP_FONT;
+    var x = chip.left + 7;
+    ctx.fillStyle = chartInk(chip.tone, 0.9 * a);
+    var word = chip.more ? chip.word + ' +' + chip.more : chip.word;
+    drawText(ctx, fitWord(ctx, word, chip.left + chip.w - 5 - x), x, y + MARK_CHIP_H / 2);
+    ctx.font = CHART_FONT;
   }
 }
 
@@ -2068,15 +2559,18 @@ function drawLastPrice(ctx, L) {
   // things for 120 ms at a time.
   var shown = shownPrice();
   var y = L.yOf(shown === null ? last.c : shown);
+  /* A guide, not an object: a fine dotted rule, so it is never mistaken for a plan's dashed leg
+     or a level's solid line crossing the same price. */
   if (y >= L.priceTop && y <= L.priceTop + L.priceHeight) {
-    ctx.strokeStyle = up ? accent(0.5) : danger(0.6);
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = up ? accent(0.55) : danger(0.6);
+    ctx.lineWidth = crispWidth(1);
+    ctx.setLineDash([1, 3]);
     ctx.beginPath();
-    ctx.moveTo(0, hair(y));
-    ctx.lineTo(L.plotWidth, hair(y));
+    ctx.moveTo(0, crisp(y, 1));
+    ctx.lineTo(L.plotWidth, crisp(y, 1));
     ctx.stroke();
     ctx.setLineDash([]);
+    ctx.lineWidth = 1;
   }
 
   // The price tag. This is the one thing on the chart that has to be readable without
@@ -2192,22 +2686,25 @@ function drawLegend(ctx, L) {
   var dir = up ? 'up' : 'down';
 
   /* The legend is the head of the one label column: the market line first, then one line per
-     price overlay, then everything the scene collected (levels, the account's lines, plans),
-     placed together so no two of them can print on one y. Sub-pane lines stay in their panes.
+     price overlay, placed together so no two of them can print on one y. Sub-pane lines stay in
+     their panes. Everything else that has a name (levels, lines, zones, the account's lines)
+     names itself in a chip on the price axis, not in this column over the candles.
 
      The four prices sit in columns as wide as the widest price on the axis, so a close that
      ticks from 999.99 to 1,000.01 moves nothing to its right: a legend that jittered on every
-     tick was the one thing on the surface that looked cheaper than the numbers on it. */
+     tick was the one thing on the surface that looked cheaper than the numbers on it. The
+     figures are in the text ink and only the change carries the bar's direction: four prices in
+     green read as four things that went up. */
   var items = [];
   var valueW = Math.max(textWidth(ctx, priceText(L.high, L.decimals)), textWidth(ctx, priceText(L.low, L.decimals)));
   var head = [
-    { text: coinOf(identity.product), tone: 'hi' },
+    { text: coinOf(identity.product), tone: 'text', alpha: 0.95 },
     { text: timeframeOf(identity.granularitySec), tone: 'text2', alpha: 0.85 }
   ];
   var ohlc = [['O', candle.o], ['H', candle.h], ['L', candle.l], ['C', candle.c]];
   for (var v = 0; v < ohlc.length; v++) {
-    head.push({ text: ohlc[v][0], tone: 'text2', alpha: 0.7 });
-    head.push({ text: priceText(ohlc[v][1], L.decimals), tone: dir, alpha: 1, width: valueW });
+    head.push({ text: ohlc[v][0], tone: 'text2', alpha: 0.6 });
+    head.push({ text: priceText(ohlc[v][1], L.decimals), tone: 'text', alpha: 0.88, width: valueW });
   }
   // Round before choosing the sign, or a bar that moved a hundredth of a percent down
   // prints "-0.00%", which reads as a rendering fault rather than as a flat bar.
@@ -2220,7 +2717,6 @@ function drawLegend(ctx, L) {
   for (var o = 0; o < L.overlays.length; o++) {
     items.push(legendItem(L, L.overlays[o], index, columnTop + LABEL_PITCH * o));
   }
-  for (var s = 0; s < CHART_SCENE_LABELS.length; s++) items.push(CHART_SCENE_LABELS[s]);
 
   var laid = labelLayout(items, columnTop - LABEL_TOP, L.priceTop + L.priceHeight);
   var boxes = labelDraw(ctx, laid.placed, chartInk, chartLabelPad());
@@ -2240,17 +2736,34 @@ function drawLegend(ctx, L) {
   drawChartNotes(ctx, L);
 }
 
-/* One legend line for a study: the agent's dot when the agent added it, the label, its values
-   at the hovered bar, and, under the pointer only, the cross that removes it. The same line
-   serves a price overlay in the column and a sub-pane at the top of its pane. */
+/* The ink a study's value is printed in: its line's own hue, so the eye reads name, line and
+   number as one thing. A histogram has no line and prints in the quiet ink. */
+function valueInk(plot, hueIndex) {
+  if (plot && typeof plot.tone === 'string') return chartInk(plot.tone === 'text' ? 'text' : plot.tone, 1);
+  if (plot && plot.style === 'histogram') return text2(0.85);
+  return studyInk(hueIndex, 1);
+}
+
+/* One legend line for a study: a swatch of its line, the name (in the agent's violet when the
+   agent put it there, the one thing on the line that is about who rather than what), its values
+   at the hovered bar each in its own line's hue, and, under the pointer only, the cross that
+   removes it. The same line serves a price overlay in the column and a sub-pane at the top of
+   its pane. */
 function studyParts(L, indicator, index) {
-  var parts = labelLead(indicator.source, 0.85);
-  parts.push({ text: labelText(indicator.label), tone: indicator.source === 'agent' ? 'agent' : 'text', alpha: 0.85 });
+  var price = indicator.pane === 'price';
+  var hue = typeof indicator.__hue === 'number' ? indicator.__hue : 0;
   var plots = indicator.plots || [];
+  var parts = [];
+  for (var s = 0; s < plots.length; s++) {
+    if (plots[s].style === 'histogram') continue;
+    parts.push({ glyph: 'swatch', ink: valueInk(plots[s], price ? hue : plots[s].__hue || 0) });
+    break;
+  }
+  parts.push({ text: labelText(indicator.label), tone: indicator.source === 'agent' ? 'agent' : 'text2', alpha: 0.95 });
   for (var i = 0; i < plots.length; i++) {
     var value = plots[i].values[index];
     if (value === null || value === undefined || !isFinite(value)) continue;
-    parts.push({ text: indicator.pane === 'price' ? priceText(value, L.decimals) : paneText(value), tone: 'text2', alpha: 0.9 });
+    parts.push({ text: price ? priceText(value, L.decimals) : paneText(value), ink: valueInk(plots[i], price ? hue : plots[i].__hue || 0) });
   }
   var hovered = labelHovered(indicator.id);
   if (hovered) parts.push({ glyph: 'close', tone: 'text2', alpha: 0.7 });
@@ -2290,9 +2803,13 @@ function drawChartNotes(ctx, L) {
     x += wide + 12;
   }
 
+  // A pane the chart could not fit is a fact about the window's height, not a loss, so it is
+  // said in the quiet ink, in the study's own name without the agent's bracket.
   if (L.dropped.length) {
-    var full = 'no room for: ' + L.dropped.join(', ');
-    ctx.fillStyle = C_DOWN;
+    var full = 'No room for ' + L.dropped.map(labelText).join(', ');
+    ctx.fillStyle = chartLabelPad();
+    ctx.fillRect(x - 3, y - 8, textWidth(ctx, full) + 6, 15);
+    ctx.fillStyle = text2(0.8);
     drawText(ctx, full, x, y);
     x += textWidth(ctx, full) + 12;
   }
@@ -2504,6 +3021,7 @@ function applyChart(payload) {
   CHART.levels = payload.levels || [];
   CHART.marks = payload.marks || [];
   CHART.drawings = payload.drawings || [];
+  noteMarkings(sameIdentity);
   CHART.products = payload.products || [];
   CHART.timeframes = payload.timeframes || [];
   CHART.agentObjects = payload.agentObjects || 0;
@@ -3133,11 +3651,14 @@ function renderChartStatus() {
   if (CHART.agentObjects > 0) {
     // One control carrying the count, not a count and a control: the bar has one row and the
     // status line shares it with the segment, the command and Layers.
-    var many = CHART.agentObjects === 1 ? ' drawing' : ' drawings';
-    var clear = chartButton('chart-extra', 'Clear ' + CHART.agentObjects + many);
+    var many = CHART.agentObjects === 1 ? 'drawing' : 'drawings';
+    var clear = chartButton('chart-extra', 'Clear ' + CHART.agentObjects);
+    // The noun steps off on the narrowest chart (ui/design/trade.css), so the control stays whole
+    // on the bar's one row rather than sliding under Layers.
+    clear.appendChild(chartSpan('chart-extra-word', many));
     clear.id = 'chart-clear-agent';
     clear.dataset.extra = '1';
-    clear.title = 'Your assistant drew ' + CHART.agentObjects + many + ' on this chart. Clear them.';
+    clear.title = 'Your assistant drew ' + CHART.agentObjects + ' ' + many + ' on this market. Clear them.';
     cluster.appendChild(clear);
   }
 }

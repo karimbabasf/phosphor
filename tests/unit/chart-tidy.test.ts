@@ -1,10 +1,11 @@
-// The chart cleaning up after itself.
+// The chart cleaning up after itself, and keeping what nobody asked it to clear.
 //
 // Three claims, and they are the ones a human would notice failing:
 //
-//   1. A level, a mark or a trend line drawn on one instrument does not survive onto another.
-//      It is not stale there, it is wrong: 63,000 lands off the bottom of a Solana chart.
-//   2. An indicator DOES survive, because it is a recipe rather than a place.
+//   1. A level, a mark or a trend line drawn on one instrument is not drawn on another: 63,000
+//      lands off the bottom of a Solana chart. It is kept with its market instead, and back when
+//      the chart returns to it. Only a clear removes a marking.
+//   2. An indicator stays on the chart, because it is a recipe rather than a place.
 //   3. A human's drawings are never swept by anything an agent does.
 //
 // Plus the tidy an agent runs itself: `mine` reaches one agent's work and nothing else, which
@@ -25,16 +26,21 @@ function storeAt(start: number): { chart: ReturnType<typeof createChartStore>; a
   };
 }
 
-test('switching instrument clears the agent drawings anchored to the old one', () => {
+test('switching instrument keeps the markings with the market they were drawn on', () => {
   const { chart } = storeAt(1_000_000);
   chart.setLevel({ price: 63000, label: 'range high' }, 'agent', 'a');
   chart.setMark({ t: 1700000000, label: 'entry' }, 'agent', 'a');
 
   const out = chart.setView({ product: 'SOL-USD' }, 'agent', 'a');
   assert.equal(out.ok, true);
-  assert.equal(chart.state().levels.length, 0);
+  assert.equal(chart.state().levels.length, 0, 'a Bitcoin level is not drawn on Solana');
   assert.equal(chart.state().marks.length, 0);
-  assert.match(out.notes.join(' '), /cleared 2 agent drawings/);
+  assert.match(out.notes.join(' '), /kept 2 markings on BTC-USD/);
+
+  const back = chart.setView({ product: 'BTC-USD' }, 'agent', 'a');
+  assert.deepEqual(chart.state().levels.map((l) => l.label), ['[agent] range high'], 'back on Bitcoin, the level is back');
+  assert.equal(chart.state().marks.length, 1);
+  assert.match(back.notes.join(' '), /2 markings kept on BTC-USD from before are back/);
 });
 
 test('indicators survive the switch, because they recompute on the new series', () => {
@@ -47,15 +53,58 @@ test('indicators survive the switch, because they recompute on the new series', 
   assert.equal(chart.state().levels.length, 0);
 });
 
-test('a human drawing is left alone on the switch, and reported rather than removed', () => {
+test("a human drawing goes with its market too, and is never removed by an agent's switch", () => {
   const { chart } = storeAt(1_000_000);
   chart.setLevel({ price: 63000, label: 'mine' }, 'human');
   chart.setLevel({ price: 64000, label: 'theirs' }, 'agent', 'a');
 
-  const out = chart.setView({ product: 'SOL-USD' }, 'agent', 'a');
+  chart.setView({ product: 'SOL-USD' }, 'agent', 'a');
+  assert.equal(chart.state().levels.length, 0, 'neither is drawn on the wrong market');
+  chart.setView({ product: 'BTC-USD' }, 'agent', 'a');
+  assert.deepEqual(chart.state().levels.map((l) => l.source), ['human', 'agent']);
+});
+
+test('a clear reaches the market on screen, and everywhere reaches the rest', () => {
+  const { chart } = storeAt(1_000_000);
+  chart.setLevel({ price: 63000 }, 'agent', 'a');
+  chart.setView({ product: 'SOL-USD' }, 'agent', 'a');
+  chart.setLevel({ price: 150 }, 'agent', 'a');
+  chart.setLevel({ price: 140 }, 'human');
+
+  const here = chart.clear('agent');
+  assert.deepEqual(chart.state().levels.map((l) => l.source), ['human']);
+  assert.match(here.notes.join(' '), /1 agent marking is kept on other markets; everywhere: true reaches them/);
+  assert.equal(chart.housekeeping('a').elsewhere, 1);
+
+  chart.clear('agent', null, { everywhere: true });
+  assert.equal(chart.housekeeping('a').elsewhere, 0);
+  chart.setView({ product: 'BTC-USD' }, 'agent', 'a');
+  assert.equal(chart.state().levels.length, 0, 'the Bitcoin level went with the everywhere clear');
+});
+
+test('the per-market cap holds on each market and the total holds across them', () => {
+  const { chart } = storeAt(1_000_000);
+  const coins = ['A', 'B', 'C', 'D', 'E', 'F'];
+  let refused = '';
+  for (const coin of coins) {
+    chart.setView({ product: `${coin}-USD` }, 'agent', 'a');
+    for (let i = 0; i < 25; i += 1) {
+      const out = chart.setLevel({ price: i + 1 }, 'agent', 'a');
+      if (!out.ok) refused = out.error;
+    }
+  }
+  assert.match(refused, /across your markets is the maximum/);
+  const total = chart.snapshot().levels.length;
+  assert.equal(total, 120);
+});
+
+test('a preset replaces the agent studies and leaves its levels alone', () => {
+  const { chart } = storeAt(1_000_000);
+  chart.addIndicator({ type: 'ema', params: { period: 21 } }, 'agent', 'a');
+  chart.setLevel({ price: 63000 }, 'agent', 'a');
+  assert.equal(chart.clearStudies('a'), 1);
+  assert.equal(chart.state().indicators.length, 0);
   assert.equal(chart.state().levels.length, 1);
-  assert.equal(chart.state().levels[0]?.source, 'human');
-  assert.match(out.notes.join(' '), /human drawing.*left alone/);
 });
 
 test('a timeframe change sweeps nothing: a price level is true on every timeframe', () => {

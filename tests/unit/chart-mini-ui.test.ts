@@ -288,9 +288,13 @@ test('the canvas carries the candles, the price plot, the level, the line and th
   const bodies = calls.filter((c) => c.op === 'fillRect').length;
   assert.ok(bodies >= 41, `${bodies} rects for 40 candles and the ground`);
   const labels = calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
-  assert.ok(labels.some((l) => l.startsWith('support')), `no level label: ${JSON.stringify(labels)}`);
-  assert.ok(labels.some((l) => l.startsWith('trend')), `no line label: ${JSON.stringify(labels)}`);
-  assert.ok(labels.some((l) => l.startsWith('demand')), `no zone label: ${JSON.stringify(labels)}`);
+  // A marking's name is not printed over the candles here: its price docks on the axis in a
+  // chip, the way the primary docks it.
+  for (const name of ['support', 'trend', 'demand']) assert.ok(!labels.some((l) => l.startsWith(name)), `${name} printed over the candles: ${JSON.stringify(labels)}`);
+  const texts = calls.filter((c) => c.op === 'fillText');
+  const level = texts.find((c) => /^3,010/.test(String(c.args[0])));
+  assert.ok(level, `the level's price is on the axis: ${JSON.stringify(labels)}`);
+  assert.ok(Number(level.args[1]) > 300, 'in the axis gutter, right of the plot');
   // The plot line and the trend line are strokes; the sub-pane indicator is not drawn at all.
   assert.ok(calls.filter((c) => c.op === 'stroke').length >= 2);
   assert.ok(!labels.some((l) => l.includes('rsi')), 'a sub-pane indicator was drawn on a price-only canvas');

@@ -13,20 +13,23 @@
    they accepted is reached and the venue closes it for them. Showing both, with the human's
    nearer than the venue's, is the design's whole claim rendered as two lines.
 
-   THE PLAN BAND. A plan that has not fired yet is drawn as its shape: the entry line in the
-   agent's ink, the stop under it in the down ink with the band between them washed the same,
-   the target above it in the window's ink with its own wash. That is how a strategy is shown
-   without a word of prose, and it is the one memorable thing on this canvas.
+   THE PLAN BAND. A plan is drawn as its shape: the entry and the target in green, the stop in
+   the loss colour because it is the price a loss is taken at, and a wash between the entry and
+   each of them. A plan that has not fired yet (an idea, or waiting on its condition) is dashed:
+   on this chart a dash means exactly that, not live yet. Once the venue holds its orders
+   (placed or open) its lines are solid.
 
    COLOUR. Every ink is a token, asked for by meaning through chartInk in chart.js: the
-   liquidation is --down and nothing else on this canvas is that colour at full strength; a
-   wall is --warn, the colour this window uses for anything waiting on a person; the agent's
-   plans are --agent; the entry of a live position is plain text. No hex lives here.
+   liquidation and a stop are --down and nothing else here is, because red is a loss; the plan
+   and a target are --up; the entry of a live position, the working orders and the fills are
+   the text inks, because a buy or a sell is a direction and not a gain or a loss. No hex lives
+   here.
 
    Everything is drawn from price and time, never from a stored pixel, so a pan or a zoom moves
    these with the candles and the value the agent measured against is the value on the glass.
-   Labels are not drawn here at all: they go into the chart's one label column (chartLabel), so
-   an entry and a stop three pixels apart cannot print on top of each other. */
+   Names are not printed over the candles: every line hands its name and price to the chart's
+   chips on the price axis (chartAxisChip), where they are stacked with the levels' so no two
+   print on one another. */
 
 'use strict';
 
@@ -45,36 +48,33 @@ function tradeUsd(n) {
   return sign + '$' + a.toFixed(2);
 }
 
-function tradeSigned(n) {
-  var v = Number(n);
-  if (!isFinite(v)) return '--';
-  return (v > 0 ? '+' : '') + tradeUsd(v).replace('$-', '-$');
-}
-
-/* One horizontal price line, with its label handed to the column. An off-pane line becomes a
-   chip on the price axis (chartAxisChip), as drawLevels does for agent levels, so the two behave
-   the same way under a zoom. Off-range is the NORMAL case for a stop that sits a long way down,
-   and the chip carries the short word (spec.chip) rather than the whole label. */
+/* One horizontal price line on whole device pixels, and its chip on the price axis carrying the
+   short word (spec.chip) and the price. A line off the pane is its chip alone, at the edge it
+   went off, as a level's is, so the two behave the same under a zoom. Off-range is the NORMAL
+   case for a stop that sits a long way down. */
 function tradeLine(ctx, L, spec) {
   var y = L.yOf(spec.price);
   var top = L.priceTop;
   var bottom = L.priceTop + L.priceHeight;
-  var text = spec.label + '  ' + priceText(spec.price, L.decimals);
+  var chip = { price: spec.price, word: spec.chip, tone: spec.tone, ring: spec.ring === true, prio: spec.prio || 7 };
   if (y < top || y > bottom) {
-    chartAxisChip({ price: spec.price, edge: y < top ? 'top' : 'bottom', word: spec.chip || spec.label, tone: spec.tone, ring: spec.ring === true });
+    chip.edge = y < top ? 'top' : 'bottom';
+    chartAxisChip(chip);
     return;
   }
+  var width = spec.width || 1;
   ctx.strokeStyle = chartInk(spec.tone, spec.alpha === undefined ? 0.85 : spec.alpha);
-  ctx.lineWidth = spec.width || 1;
+  ctx.lineWidth = crispWidth(width);
   ctx.setLineDash(spec.dash || []);
   ctx.beginPath();
-  ctx.moveTo(0, hair(y));
-  ctx.lineTo(L.plotWidth, hair(y));
+  ctx.moveTo(spec.from || 0, crisp(y, width));
+  ctx.lineTo(L.plotWidth, crisp(y, width));
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.lineWidth = 1;
-  // Above the line, as a level's label sits, so the dashes do not run through the words.
-  chartLabel({ y: y - 7, text: text, tone: spec.tone, ring: spec.ring === true });
+  chip.edge = 'at';
+  chip.y = y;
+  chartAxisChip(chip);
 }
 
 /* The band beyond a wall: the region of price where the position no longer belongs to you.
@@ -132,7 +132,8 @@ function tradeSpan(ctx, L, priceA, priceB, tone, alpha) {
 /* Where this account actually traded, at the bar it traded on. A fill is the one mark on the
    chart that is neither an opinion nor a plan: it already happened. Buys point up from below
    the bar, sells point down from above it, so a scalp in and out of one bar reads as two
-   marks and not as one ambiguous blob. */
+   marks and not as one ambiguous blob. The side is the shape; the ink is the text's, since a
+   sell is not a loss, with a hairline of the ground around it so it reads over a candle. */
 function drawTradeFills(ctx, L, fills) {
   var candles = CHART.candles;
   if (!candles.length || !fills.length) return;
@@ -149,20 +150,23 @@ function drawTradeFills(ctx, L, fills) {
     if (y < L.priceTop || y > L.priceTop + L.priceHeight) continue;
 
     var buy = f.side === 'buy' || f.side === 'B';
-    var tone = buy ? 'up' : 'down';
     // Size carries information, so it is drawn: a 6px triangle is a nibble and a 10px one is
     // the trade that mattered. Clamped so one outlier cannot cover the pane.
     var size = Math.max(4, Math.min(9, 4 + Math.sqrt(Math.abs(f.notionalUsd)) / 12));
     var tip = buy ? y + 3 : y - 3;
-    ctx.fillStyle = chartInk(tone, f.liquidation ? 1 : 0.8);
     ctx.beginPath();
     ctx.moveTo(x, tip + (buy ? -size : size));
     ctx.lineTo(x - size * 0.7, tip);
     ctx.lineTo(x + size * 0.7, tip);
     ctx.closePath();
+    ctx.strokeStyle = groundInk(0.9);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = chartInk('text', f.liquidation ? 1 : 0.88);
     ctx.fill();
-    // A liquidation is ringed, because "the venue closed this for you" is not the same event
-    // as "you closed this" and the two must never look alike on a chart.
+    ctx.lineWidth = 1;
+    // A liquidation is ringed in the loss colour, because "the venue closed this for you" is not
+    // the same event as "you closed this" and the two must never look alike on a chart.
     if (f.liquidation) {
       ctx.strokeStyle = chartInk('down', 1);
       ctx.lineWidth = 1.5;
@@ -182,27 +186,10 @@ function drawTradeFills(ctx, L, fills) {
   }
 }
 
-/* The side mark on an order tag: a filled triangle five pixels tall, its point on the side
-   the order takes, centred on the middle of the text beside it, then a hair of air. */
-var ORDER_GLYPH_W = 9;
-
-function orderGlyph(ctx, buy, x, baseline, ink) {
-  var cy = baseline - 4;
-  var dir = buy ? 1 : -1;
-  ctx.fillStyle = ink;
-  ctx.beginPath();
-  ctx.moveTo(x + 3 + dir * 3, cy);
-  ctx.lineTo(x + 3 - dir * 2, cy - 2.5);
-  ctx.lineTo(x + 3 - dir * 2, cy + 2.5);
-  ctx.closePath();
-  ctx.fill();
-}
-
-/* Resting orders sit at the right edge as ticks rather than as full-width lines. A working
-   order is a smaller fact than a position, and drawing nine of them across the pane buries the
-   candles under a ladder. The tick is at the price, the size is beside it. */
+/* Resting orders are a short tick at the right edge rather than a full-width line: a working
+   order is a smaller fact than a position, and nine of them across the pane buried the candles
+   under a ladder. The tick is at the price; the side and the size are its chip on the axis. */
 function drawTradeOrders(ctx, L, orders) {
-  ctx.font = CHART_FONT;
   for (var i = 0; i < orders.length; i++) {
     var o = orders[i];
     var px = o.kind === 'trigger' ? o.triggerPx : o.px;
@@ -210,23 +197,15 @@ function drawTradeOrders(ctx, L, orders) {
     var y = L.yOf(px);
     if (y < L.priceTop || y > L.priceTop + L.priceHeight) continue;
     var buy = o.side === 'buy' || o.side === 'B';
-    var tone = buy ? 'up' : 'down';
-    ctx.strokeStyle = chartInk(tone, 0.5);
-    ctx.setLineDash([1, 3]);
-    ctx.beginPath();
-    ctx.moveTo(L.plotWidth * 0.72, hair(y));
-    ctx.lineTo(L.plotWidth, hair(y));
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // The side as a drawn triangle ahead of the words: pointing right for a buy, left for a
-    // sell, the same ink as the words. Everything sits to the left of the dotted line's start.
-    var tag = tradeUsd(o.notionalUsd) + (o.reduceOnly ? ' reduce' : '');
-    var width = ORDER_GLYPH_W + textWidth(ctx, tag);
-    var tagX = L.plotWidth * 0.72 - width - 4;
-    orderGlyph(ctx, buy, tagX, y + 3, chartInk(tone, 0.75));
-    ctx.fillStyle = chartInk(tone, 0.75);
-    drawText(ctx, tag, tagX + ORDER_GLYPH_W, y + 3);
-    drawSpotRing(ctx, tagX, y + 3, width, chartSpotOn('order', String(o.oid)));
+    tradeLine(ctx, L, {
+      price: px,
+      tone: 'text2',
+      chip: (buy ? 'Buy ' : 'Sell ') + tradeUsd(o.notionalUsd) + (o.reduceOnly ? ' reduce' : ''),
+      alpha: 0.75,
+      from: Math.max(0, L.plotWidth - 28),
+      prio: 3,
+      ring: chartSpotOn('order', String(o.oid))
+    });
   }
 }
 
@@ -250,27 +229,18 @@ function drawPlan(ctx, L, plan, showStop) {
   var side = plan.side === 'short' ? 'short' : 'long';
   var stop = typeof plan.stop === 'number' && isFinite(plan.stop) ? plan.stop : null;
   var target = typeof plan.target === 'number' && isFinite(plan.target) ? plan.target : null;
+  // Not live yet is dashed; once the venue holds the orders the lines are solid.
+  var dash = plan.status === 'placed' || plan.status === 'open' ? [] : [5, 4];
 
   if (stop !== null && showStop) tradeSpan(ctx, L, entry, stop, 'down', 0.05);
-  if (target !== null) tradeSpan(ctx, L, entry, target, 'ink', 0.05);
+  if (target !== null) tradeSpan(ctx, L, entry, target, 'up', 0.05);
 
-  // tradeLine writes the price after the label, so the label is the word alone: "Plan long"
-  // becomes "Plan long  64,100" on the glass. Carrying the price in the label as well printed
-  // every plan line's price twice.
-  tradeLine(ctx, L, {
-    price: entry,
-    tone: 'agent',
-    label: 'Plan ' + side,
-    chip: 'Plan ' + side,
-    dash: [6, 4],
-    alpha: 0.85,
-    ring: ring
-  });
+  tradeLine(ctx, L, { price: entry, tone: 'up', chip: 'Plan ' + side, dash: dash, alpha: 0.9, ring: ring, prio: 8 });
   if (stop !== null && showStop) {
-    tradeLine(ctx, L, { price: stop, tone: 'down', label: 'Stop', chip: 'Stop', dash: [6, 4], alpha: 0.8 });
+    tradeLine(ctx, L, { price: stop, tone: 'down', chip: 'Stop', dash: dash, alpha: 0.85, prio: 8 });
   }
   if (target !== null) {
-    tradeLine(ctx, L, { price: target, tone: 'ink', label: 'Target', chip: 'Target', dash: [6, 4], alpha: 0.8 });
+    tradeLine(ctx, L, { price: target, tone: 'up', chip: 'Target', dash: dash, alpha: 0.85, prio: 8 });
   }
 }
 
@@ -278,8 +248,8 @@ function drawPlan(ctx, L, plan, showStop) {
    kind of object; this decides what there is to draw and in what order.
 
    Order matters and is chosen: bands first so they sit under the candles' own ink, then the
-   lines. The labels are not drawn here at all: they were handed to the column as the lines
-   went down, and the hud places them in one pass with the legend. */
+   lines. The names are not drawn here at all: each line handed its chip to the price axis as
+   it went down, and the hud lays them out in one pass with the levels'. */
 function drawTradeOverlays(ctx, L) {
   var data = tradeData();
   if (!data) return;
@@ -306,25 +276,20 @@ function drawTradeOverlays(ctx, L) {
     /* The venue's wall, and the region past it. Drawn before anything else so a liquidation
        that is close reads as a closing wall rather than as one more line in a list. */
     if (show.liquidation && isFinite(p.liqPx) && p.liqPx > 0) {
-      tradeBand(ctx, L, p.liqPx, long ? 'down' : 'up', 'down', 0.07);
-      tradeLine(ctx, L, {
-        price: p.liqPx,
-        tone: 'down',
-        label: 'Liquidation ' + p.coin,
-        chip: 'Liquidation',
-        width: 1.5,
-        alpha: 0.9
-      });
+      tradeBand(ctx, L, p.liqPx, long ? 'down' : 'up', 'down', 0.06);
+      tradeLine(ctx, L, { price: p.liqPx, tone: 'down', chip: 'Liquidation', width: 1.5, alpha: 0.9, prio: 9 });
     }
 
+    // The position's own entry, in the text ink: a fact about the account, not a gain or a loss.
+    // Its size and its profit are the deck's to show; the chip names the side.
     if (show.position && isFinite(p.entryPx) && p.entryPx > 0) {
       tradeLine(ctx, L, {
         price: p.entryPx,
         tone: 'text',
-        label: (long ? 'Long ' : 'Short ') + tradeUsd(p.notionalUsd) + ' at ' + p.leverage + 'x  ' + tradeSigned(p.unrealisedUsd),
-        chip: 'Entry',
+        chip: long ? 'Long' : 'Short',
         width: 1.5,
         alpha: 0.9,
+        prio: 9,
         ring: chartSpotOn('position', String(p.coin).toUpperCase())
       });
     }
@@ -342,13 +307,13 @@ function drawTradeOverlays(ctx, L) {
     });
     for (var t = 0; t < triggers.length; t++) {
       var tr = triggers[t];
+      // A working trigger is live at the venue, so it is solid.
       tradeLine(ctx, L, {
         price: tr.triggerPx,
-        tone: tr.role === 'stop' ? 'down' : 'ink',
-        label: (tr.role === 'stop' ? 'Stop ' : 'Target ') + tradeUsd(tr.notionalUsd),
+        tone: tr.role === 'stop' ? 'down' : 'up',
         chip: tr.role === 'stop' ? 'Stop' : 'Target',
-        dash: [4, 4],
         alpha: 0.8,
+        prio: 8,
         ring: chartSpotOn('order', String(tr.oid))
       });
     }
