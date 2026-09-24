@@ -103,15 +103,16 @@ export function assertSurface(tools: unknown): string[] {
 
 /* The built-ins this Claude Code release has, as the driver profile names them: every one but the
    web tools is on its deny list, and tests/lockdown.test.ts holds that list to the installed
-   binary. Read once. A profile that cannot be read makes every name a built-in, the strict answer;
-   the driver does not start without the profile anyway. */
+   binary. Read once, lowercased, since tool() compares names without case. A profile that cannot be
+   read makes every name a built-in, the strict answer; the driver does not start without the
+   profile anyway. */
 let builtins: ReadonlySet<string> | null | undefined;
 function claudeBuiltins(): ReadonlySet<string> | null {
   if (builtins !== undefined) return builtins;
   try {
     const profile = JSON.parse(fs.readFileSync(new URL('../../operator/driver.settings.json', import.meta.url), 'utf8')) as { permissions?: { deny?: unknown } };
     const deny = profile.permissions?.deny;
-    builtins = Array.isArray(deny) ? new Set([...deny.filter((t): t is string => typeof t === 'string'), ...Object.keys(WEB_TOOLS)]) : null;
+    builtins = Array.isArray(deny) ? new Set([...deny.filter((t): t is string => typeof t === 'string'), ...Object.keys(WEB_TOOLS)].map((t) => t.toLowerCase())) : null;
   } catch {
     builtins = null;
   }
@@ -160,12 +161,17 @@ export const claude: Provider = {
   tool(name, input, server): ToolCall {
     // Claude's web tools run in the CLI; a tool the API ran inside the reply was never asked for.
     if (server === true) return { kind: 'builtin', name: `server ${name}` };
-    if (name.startsWith(MCP_PREFIX)) return { kind: 'phosphor', name, input };
-    // Own keys only: `in` would also pass "constructor" and "toString".
-    if (Object.hasOwn(WEB_TOOLS, name)) return { kind: 'web', name: WEB_TOOLS[name] };
+    /* Compared without case: a CLI that took `bash` for Bash, or `webfetch` for WebFetch, would run
+       that tool, so each reads as the tool it spells (the pre-push audit's lockdown hardening). */
+    const folded = name.toLowerCase();
+    if (folded.startsWith(MCP_PREFIX)) return { kind: 'phosphor', name: `${MCP_PREFIX}${name.slice(MCP_PREFIX.length)}`, input };
+    // Own keys only: `in` would also pass "constructor" and "toString". Underscores are ignored too,
+    // so a read under grok's spelling (web_fetch) still sets the web-read mark.
+    const web = Object.keys(WEB_TOOLS).find((t) => t.toLowerCase() === folded.replaceAll('_', ''));
+    if (web !== undefined) return { kind: 'web', name: WEB_TOOLS[web] };
     // Another server's tool, or a built-in the profile keeps out: a real tool, so the session ends.
     const known = claudeBuiltins();
-    if (name.startsWith('mcp__') || known === null || known.has(name)) return { kind: 'builtin', name };
+    if (folded.startsWith('mcp__') || known === null || known.has(folded)) return { kind: 'builtin', name };
     return { kind: 'unknown', name };
   },
   result(content) {

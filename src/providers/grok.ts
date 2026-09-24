@@ -62,16 +62,28 @@ const WEB_TOOLS = ['web_search', 'web_fetch'] as const;
 const SERVER = 'phosphor';
 /* Grok 1.0.40's other built-ins, as its init line listed them with no --tools (measured
    2026-09-23), with Agent and the shell's other spelling. A call to one ends the session; a name
-   that is none of them and no server's is turned away by grok itself (see ToolCall 'unknown'). */
+   that is none of them and no server's is turned away by grok itself (see ToolCall 'unknown').
+   Lowercased, since tool() compares names without case, as claude's does. */
 const GROK_BUILTINS: ReadonlySet<string> = new Set([
   'run_terminal_command', 'run_terminal_cmd', 'read_file', 'search_replace', 'list_dir', 'grep', 'write',
   'kill_command_or_subagent', 'get_command_or_subagent_output', 'todo_write', 'monitor', 'workflow',
   'scheduler_create', 'scheduler_delete', 'scheduler_list', 'enter_plan_mode', 'exit_plan_mode',
   'ask_user_question', 'send_feedback', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'Agent',
-]);
+].map((t) => t.toLowerCase()));
 // A tool of some MCP server in grok's spelling, server__tool.
 const SERVER_TOOL = /^[A-Za-z0-9_-]+?__[A-Za-z0-9_.-]+$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// Grok's web tool by a lowercased name, or null. Underscores are ignored, so its rule names
+// (WebSearch, WebFetch, which are Claude's) still read as a web read and set the mark.
+function webTool(folded: string): (typeof WEB_TOOLS)[number] | null {
+  return WEB_TOOLS.find((t) => t.replaceAll('_', '') === folded.replaceAll('_', '')) ?? null;
+}
+
+// One of grok's other built-ins, or some MCP server's tool, by a lowercased name.
+function builtinTool(folded: string): boolean {
+  return GROK_BUILTINS.has(folded) || SERVER_TOOL.test(folded);
+}
 
 export function resolveGrokBin(override?: string): string {
   const entry = agentById('grok');
@@ -263,19 +275,27 @@ export const grok: Provider = {
   tool(name, input, server): ToolCall {
     // A server-run block is grok's backend web search, inline in the reply, and nothing else.
     if (server === true) return name === 'web_search' ? { kind: 'web', name: 'web_search' } : { kind: 'builtin', name: `server ${name}` };
-    if (name === 'search_tool') return { kind: 'meta' };
-    if ((WEB_TOOLS as readonly string[]).includes(name)) return { kind: 'web', name: name as 'web_search' | 'web_fetch' };
-    if (name.startsWith(`${SERVER}__`)) return { kind: 'phosphor', name: `${MCP_PREFIX}${name.slice(SERVER.length + 2)}`, input };
-    if (name === 'use_tool' && input !== null && typeof input === 'object') {
+    // Compared without case, as claude's are (src/providers/claude.ts).
+    const folded = name.toLowerCase();
+    if (folded === 'search_tool') return { kind: 'meta' };
+    const web = webTool(folded);
+    if (web !== null) return { kind: 'web', name: web };
+    if (folded.startsWith(`${SERVER}__`)) return { kind: 'phosphor', name: `${MCP_PREFIX}${name.slice(SERVER.length + 2)}`, input };
+    if (folded === 'use_tool' && input !== null && typeof input === 'object') {
       const call = input as { tool_name?: unknown; tool_input?: unknown };
-      if (typeof call.tool_name === 'string' && call.tool_name.startsWith(`${SERVER}__`)) {
-        return { kind: 'phosphor', name: `${MCP_PREFIX}${call.tool_name.slice(SERVER.length + 2)}`, input: call.tool_input ?? {} };
+      const called = typeof call.tool_name === 'string' ? call.tool_name : '';
+      if (called.toLowerCase().startsWith(`${SERVER}__`)) {
+        return { kind: 'phosphor', name: `${MCP_PREFIX}${called.slice(SERVER.length + 2)}`, input: call.tool_input ?? {} };
       }
-      // Another server's tool is a real one; a name no server has is turned away by use_tool.
+      /* use_tool reaches MCP tools (measured), but one that reached a built-in would run it, so a
+         built-in or a web tool named through it reads as that tool, and another server's tool is a
+         real one. A name no tool has is turned away by use_tool. */
+      const via = webTool(called.toLowerCase());
+      if (via !== null) return { kind: 'web', name: via };
       const named = `use_tool ${String(call.tool_name)}`;
-      return typeof call.tool_name === 'string' && SERVER_TOOL.test(call.tool_name) ? { kind: 'builtin', name: named } : { kind: 'unknown', name: named };
+      return builtinTool(called.toLowerCase()) ? { kind: 'builtin', name: named } : { kind: 'unknown', name: named };
     }
-    if (GROK_BUILTINS.has(name) || SERVER_TOOL.test(name)) return { kind: 'builtin', name };
+    if (builtinTool(folded)) return { kind: 'builtin', name };
     return { kind: 'unknown', name };
   },
   /* use_tool answers { type: "MCP", tool_name, server_name, output: { OkayOutput: "<the tool's

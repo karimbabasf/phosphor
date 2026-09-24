@@ -89,6 +89,43 @@ test('a name no tool has passes to the CLI; a real tool outside the allowlist en
   assert.equal(grok.tool('use_tool', { tool_name: 'other__peek' }).kind, 'builtin');
 });
 
+/* THE CASE OF A NAME DOES NOT CHANGE WHAT IT IS (the pre-push audit's lockdown hardening). A CLI that
+   took `bash` for Bash, or `webfetch` for WebFetch, would run that tool, so each reads as the tool it
+   spells: a built-in still ends the session, and a web tool still marks the web read. */
+test('a tool named in another case reads as the tool it spells', () => {
+  for (const name of ['bash', 'BASH', 'read', 'todowrite', 'MCP__other__peek']) assert.equal(claude.tool(name, {}).kind, 'builtin', `claude ${name}`);
+  assert.deepEqual(claude.tool('webfetch', {}), { kind: 'web', name: 'web_fetch' });
+  assert.deepEqual(claude.tool('WEBSEARCH', {}), { kind: 'web', name: 'web_search' });
+  assert.deepEqual(claude.tool('Mcp__phosphor__wallet', {}), { kind: 'phosphor', name: 'mcp__phosphor__wallet', input: {} });
+  for (const name of ['Run_Terminal_Command', 'READ_FILE', 'agent']) assert.equal(grok.tool(name, {}).kind, 'builtin', `grok ${name}`);
+  assert.deepEqual(grok.tool('Web_Fetch', {}), { kind: 'web', name: 'web_fetch' });
+  assert.deepEqual(grok.tool('Search_Tool', {}), { kind: 'meta' });
+  assert.deepEqual(grok.tool('Phosphor__wallet', {}), { kind: 'phosphor', name: 'mcp__phosphor__wallet', input: {} });
+  assert.deepEqual(grok.tool('Use_Tool', { tool_name: 'PHOSPHOR__wallet', tool_input: {} }), { kind: 'phosphor', name: 'mcp__phosphor__wallet', input: {} });
+});
+
+/* A WEB READ UNDER EITHER VENDOR'S SPELLING IS A WEB READ (the audit's first dropped item). Grok's
+   rule names for its web tools are Claude's names, so a vendor that took the other spelling would
+   read a page, and the read has to set the web-read mark whatever it was called. */
+test('a web tool spelled the other vendor\'s way reads as web', () => {
+  for (const name of ['web_fetch', 'Web_Fetch']) assert.deepEqual(claude.tool(name, {}), { kind: 'web', name: 'web_fetch' }, `claude ${name}`);
+  assert.deepEqual(claude.tool('web_search', {}), { kind: 'web', name: 'web_search' });
+  for (const name of ['WebFetch', 'webFetch']) assert.deepEqual(grok.tool(name, {}), { kind: 'web', name: 'web_fetch' }, `grok ${name}`);
+  assert.deepEqual(grok.tool('WebSearch', {}), { kind: 'web', name: 'web_search' });
+  assert.deepEqual(grok.tool('use_tool', { tool_name: 'WebFetch', tool_input: {} }), { kind: 'web', name: 'web_fetch' });
+});
+
+// Grok's use_tool reaches MCP tools, but a use_tool that ever reached a built-in would run it.
+test('grok\'s use_tool naming one of its built-ins or web tools reads as that tool', () => {
+  for (const name of ['run_terminal_command', 'read_file', 'write', 'Agent', 'Run_Terminal_Command']) {
+    assert.deepEqual(grok.tool('use_tool', { tool_name: name, tool_input: {} }), { kind: 'builtin', name: `use_tool ${name}` }, name);
+  }
+  assert.deepEqual(grok.tool('use_tool', { tool_name: 'web_fetch', tool_input: { url: 'https://near.ai' } }), { kind: 'web', name: 'web_fetch' });
+  assert.deepEqual(grok.tool('use_tool', { tool_name: 'WEB_SEARCH', tool_input: {} }), { kind: 'web', name: 'web_search' });
+  // Still no tool: use_tool turns these away and the chat goes on.
+  for (const name of ['switch', 'use_tool', 'search_tool']) assert.equal(grok.tool('use_tool', { tool_name: name }).kind, 'unknown', name);
+});
+
 test('a grok session of this app\'s is found where grok keeps it', () => {
   assert.equal(
     sessionDir('/u/.grok', '/Users/k/Library/Application Support/Phosphor/agents/grok', 's-1'),
