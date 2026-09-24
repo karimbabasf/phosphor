@@ -51,6 +51,8 @@
   var mounted = false;
   var filled = false;
   var steps = null;
+  /* How the tiles fit the slab (fitRows): how many show whole, of how many, a tile apart. */
+  var shown = null;
   var ringDrawn = false;
 
   function boot() {
@@ -82,12 +84,25 @@
     panel.appendChild(under);
 
     var list = dom.el('div', 'bal-list');
+    var room = dom.el('div', 'bal-room');
     var scroll = dom.el('div', 'bal-scroll');
     var rows = dom.el('ul', 'bal-rows');
     rows.setAttribute('aria-label', 'What you hold');
     for (var i = 0; i < 3; i += 1) rows.appendChild(skeletonRow());
+    /* Under the tiles: how many more there are, when the slab cannot show them all, and the
+       balances too small to list. */
+    var foot = dom.el('div', 'bal-foot');
+    foot.hidden = true;
+    var more = dom.el('button', 'bal-more');
+    more.type = 'button';
+    more.hidden = true;
+    var moreLabel = dom.el('span', 'bal-more-label');
+    more.appendChild(moreLabel);
+    more.appendChild(window.PhosphorIcons.svg('chevron-down', 'bal-more-chev'));
     var small = dom.el('p', 'bal-small');
     small.hidden = true;
+    foot.appendChild(more);
+    foot.appendChild(small);
     var empty = dom.el('p', 'bal-empty');
     empty.hidden = true;
     var add = dom.el('button', 'bal-add');
@@ -95,9 +110,10 @@
     add.appendChild(window.PhosphorIcons.svg('deposit'));
     add.appendChild(dom.el('span', '', 'Add money'));
     scroll.appendChild(rows);
-    scroll.appendChild(small);
     scroll.appendChild(empty);
-    list.appendChild(scroll);
+    room.appendChild(scroll);
+    room.appendChild(foot);
+    list.appendChild(room);
     list.appendChild(add);
     panel.appendChild(list);
 
@@ -131,7 +147,11 @@
       totalSkel: totalSkel,
       caption: caption,
       list: list,
+      room: room,
       scroll: scroll,
+      foot: foot,
+      more: more,
+      moreLabel: moreLabel,
       rows: rows,
       small: small,
       empty: empty,
@@ -149,7 +169,13 @@
       event.preventDefault();
       closeSteps();
     });
-    dom.on(scroll, 'scroll', paintCut);
+    dom.on(scroll, 'scroll', paintMore);
+    dom.on(more, 'click', turnPage);
+    /* The room the tiles have changes with the window, the notice under the slab and the
+       caption over the list; every change is a new count of whole tiles. */
+    if (typeof window.ResizeObserver === 'function') new window.ResizeObserver(fitSoon).observe(room);
+    else window.addEventListener('resize', fitSoon);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSoon);
   }
 
   function skeletonRow() {
@@ -374,7 +400,7 @@
       dom.setHidden(refs.list, false);
       dom.setAttr(refs.panel, 'data-flow', null);
       fitTotal();
-      paintCut();
+      fitRows();
       if (refs.add.focus) refs.add.focus();
     }, refs.list);
   }
@@ -415,13 +441,14 @@
 
     dom.setText(refs.small, basic.smallLine || '');
     dom.setHidden(refs.small, !basic.smallLine);
+    dom.setHidden(refs.foot, !basic.smallLine && refs.more.hidden);
     dom.setText(refs.empty, basic.emptyLine || '');
     dom.setHidden(refs.empty, !basic.emptyLine);
     /* An empty wallet's one thing to do is add money, so Add money is the slab's main key. */
     dom.setAttr(refs.panel, 'data-empty', basic.emptyLine && !holdings.length ? 'true' : null);
 
     fitTotal();
-    paintCut();
+    fitRows();
   }
 
   /* The total stays inside the disc whatever its length: past what the disc
@@ -435,14 +462,92 @@
     if (room > 0 && need > room) total.style.setProperty('--fit', (Math.floor(room / need * 100) / 100).toFixed(2));
   }
 
-  /* The list scrolls inside the slab when it holds more coins than the slab
-     has room for, and says so: the edge with more behind it fades. */
-  function paintCut() {
-    var box = refs.scroll;
-    if (!box || typeof box.scrollHeight !== 'number') return;
-    var top = box.scrollTop > 2;
-    var bottom = box.scrollHeight - box.scrollTop - box.clientHeight > 2;
-    dom.setAttr(box, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
+  /* The slab shows whole tiles only, never one cut by its edge: as many as it has room for,
+     and under them how many more there are, which the list turns to a tile at a time. */
+  function fitRows() {
+    var scroll = refs.scroll;
+    if (!scroll || refs.list.hidden || typeof refs.room.getBoundingClientRect !== 'function') return;
+    var tiles = [];
+    for (var i = 0; i < refs.rows.children.length; i += 1) {
+      var tile = refs.rows.children[i];
+      if (!tile.hidden && String(tile.className).indexOf('bal-row-skel') < 0) tiles.push(tile);
+    }
+    /* Measured without touching the scroller: the room is the slab's to give, the tiles keep
+       their places, and a list half way through a turn stays where it is. */
+    var room = refs.room.getBoundingClientRect().height;
+    dom.setHidden(refs.more, true);
+    dom.setHidden(refs.foot, refs.small.hidden);
+    if (!tiles.length || !(room > 0)) {
+      scroll.style.removeProperty('height');
+      shown = null;
+      return paintMore();
+    }
+
+    var style = window.getComputedStyle(scroll);
+    var pad = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+    var lead = parseFloat(style.marginTop) || 0;
+    var gap = parseFloat(window.getComputedStyle(refs.room).rowGap) || 0;
+    var top = tiles[0].getBoundingClientRect().top;
+    var reach = function (k) { return tiles[k - 1].getBoundingClientRect().bottom - top + pad + lead; };
+    var pitch = tiles.length > 1 ? tiles[1].getBoundingClientRect().top - top : reach(1) - pad - lead;
+    var footUsed = function () {
+      if (refs.foot.hidden) return 0;
+      return gap + (parseFloat(window.getComputedStyle(refs.foot).marginTop) || 0) + refs.foot.getBoundingClientRect().height;
+    };
+
+    var n = tiles.length;
+    if (reach(n) + footUsed() > room + 0.5) {
+      dom.setHidden(refs.more, false);
+      dom.setHidden(refs.foot, false);
+      var fits = room - footUsed();
+      n = 1;
+      while (n < tiles.length && reach(n + 1) <= fits + 0.5) n += 1;
+    }
+    var height = n < tiles.length ? (reach(n) - lead) + 'px' : '';
+    if (scroll.style.height !== height) scroll.style.height = height;
+    shown = { n: n, count: tiles.length, pitch: pitch };
+    paintMore();
+  }
+
+  var fitAsked = false;
+
+  function fitSoon() {
+    if (fitAsked) return;
+    fitAsked = true;
+    window.requestAnimationFrame(function () {
+      fitAsked = false;
+      fitRows();
+    });
+  }
+
+  /* The count of the tiles out of view, the way the list turns to them: down while there
+     are more below, back up once the last is in view. */
+  function paintMore() {
+    var more = refs.more;
+    if (!shown || shown.n >= shown.count) {
+      dom.setHidden(more, true);
+      return;
+    }
+    var first = Math.round(refs.scroll.scrollTop / shown.pitch);
+    var below = Math.max(0, shown.count - shown.n - first);
+    var up = below === 0;
+    var count = up ? Math.min(first, shown.count - shown.n) : below;
+    dom.setText(refs.moreLabel, '+' + count + ' more');
+    dom.setAttr(more, 'data-dir', up ? 'up' : 'down');
+    dom.setAttr(more, 'aria-label', up
+      ? 'Show the ' + (count === 1 ? 'coin' : count + ' coins') + ' above'
+      : 'Show ' + count + ' more ' + (count === 1 ? 'coin' : 'coins'));
+    dom.setHidden(more, false);
+  }
+
+  function turnPage() {
+    if (!shown) return;
+    var scroll = refs.scroll;
+    var down = refs.more.getAttribute('data-dir') !== 'up';
+    var to = down ? scroll.scrollTop + shown.n * shown.pitch : 0;
+    var still = !!(window.PhosphorMotion && window.PhosphorMotion.reduced && window.PhosphorMotion.reduced());
+    if (typeof scroll.scrollTo === 'function') scroll.scrollTo({ top: to, behavior: still ? 'auto' : 'smooth' });
+    else scroll.scrollTop = to;
   }
 
   function keyOf(holding) {

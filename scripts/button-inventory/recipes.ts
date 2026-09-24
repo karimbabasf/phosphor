@@ -66,6 +66,7 @@ export const RECIPES: readonly Recipe[] = [
   { family: 'btn btn-quiet btn-sm tcard-copy', wrap: 'tcard-ref-value', wrapStyle: 'display: flex; align-items: center; gap: 4px', children: [label('Copy')] },
   { family: 'btn btn-sm', wrap: 'brake-actions', children: [label('Unfreeze')], pending: 'Unfreezing', disables: true },
   { family: 'btn btn-quiet btn-sm bal-done', wrap: 'bal-flow-head', children: [label('Done')] },
+  { family: 'bal-more', wrap: 'bal-foot', attrs: { 'data-dir': 'down', 'aria-label': 'Show 1 more coin' }, children: [{ tag: 'span', cls: 'bal-more-label', text: '+1 more' }, { tag: 'svg', icon: 'chevron-down', cls: 'icon bal-more-chev' }], labelSelector: '.bal-more-label' },
   { family: 'btn btn-lg', children: [label('Move my keys')], pending: 'Waiting for Touch ID', disables: true },
   { family: 'btn btn-sm pro-sum-fund', wrap: 'pro-sum-account', children: [label('Add trading money')] },
   { family: 'btn btn-ghost btn-sm agentrow-use', wrap: 'agentrow-act', attrs: { 'aria-label': 'Use Claude Code' }, children: [label('Use')], pending: 'Checking', disables: true },

@@ -121,7 +121,8 @@ test('what needs the person is one calm line at the foot of the world, never in 
   const world = HTML.slice(HTML.indexOf('<main class="world"'), HTML.indexOf('</main>'));
   assert.match(world, /<div class="notice" id="notice" role="status" hidden>/, 'the notice is not in the world');
   assert.equal(bar().includes('notice'), false);
-  for (const word of ["'Reconnecting to the app.'", "'Your recovery phrase is not backed up yet.'", "'Back it up'"]) {
+  /* One line in the balances slab at the smallest window (960 x 700), so the words are short. */
+  for (const word of ["'Reconnecting to the app.'", "'Recovery phrase not backed up.'", "'Back it up'"]) {
     assert.ok(SHELL.includes(word), `the notice never says ${word}`);
   }
   const rule = NOTICE.match(/\.notice\s*\{([^}]*)\}/)?.[1] ?? '';

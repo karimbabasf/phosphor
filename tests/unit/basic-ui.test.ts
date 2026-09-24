@@ -155,6 +155,7 @@ function build(options: { loaded?: boolean } = {}) {
     host,
     calls,
     timers,
+    win,
     put: (state: Any) => win.PhosphorState.put(state),
     one: (className: string) => all(host, className)[0],
     rows: () => all(host, 'bal-row'),
@@ -401,6 +402,67 @@ test('Escape on the network tiles closes the steps, and says so to the picker', 
   let again = false;
   for (const handler of body.__on['netpick:dismiss'] ?? []) handler({ preventDefault: () => { again = true; } });
   assert.equal(again, false);
+});
+
+/* The finish review, 2026-09-23: at 1180 x 780 the fade above Add money cut the SOL tile
+   through its figure and a sliver showed at 700. The slab shows whole tiles only, and under
+   them how many more there are, which turn the list a tile at a time. The geometry here is the
+   app's at 960 x 700: 64 px tiles 8 apart, a scroller with 4 px round them. */
+test('the slab shows whole tiles only, and under them how many more there are', () => {
+  const panel = build();
+  const four = [...COINS, coin('SOL', 1200.42, '8.10', 'Solana (SOL)')];
+  const state = frame('$12,557.93', four, { smallLine: '1 tiny balance under a cent, not listed' });
+  panel.put(state);
+  const room = panel.one('bal-room');
+  const scroll = panel.one('bal-scroll');
+  const foot = panel.one('bal-foot');
+  const more = panel.one('bal-more');
+  assert.ok(room && foot && more, 'no room, foot or count under the tiles');
+  assert.equal(panel.one('bal-small').parentNode, foot, 'the tiny balances line scrolls away with the tiles');
+  let roomHeight = 260;
+  scroll.scrollTop = 0;
+  room.getBoundingClientRect = () => ({ height: roomHeight });
+  panel.rows().forEach((row: Any, i: number) => {
+    row.getBoundingClientRect = () => ({ top: 100 + i * 72 - scroll.scrollTop, bottom: 164 + i * 72 - scroll.scrollTop });
+  });
+  foot.getBoundingClientRect = () => ({ height: more.hidden ? 18 : 30 });
+  panel.win.getComputedStyle = (el: Any) => (el === scroll
+    ? { paddingTop: '4px', paddingBottom: '4px', marginTop: '-4px' }
+    : el === room ? { rowGap: '12px' } : { marginTop: el === foot ? '-4px' : '0px' });
+
+  panel.put({ ...state });
+  assert.equal(scroll.style.height, '216px', 'the scroller is not three whole tiles tall');
+  assert.equal(more.hidden, false);
+  assert.equal(all(more, 'bal-more-label')[0].textContent, '+1 more');
+  assert.equal(more.getAttribute('data-dir'), 'down');
+
+  // A turn: the last tile in view, and the count now points back up.
+  scroll.scrollTop = 72;
+  for (const handler of scroll.__on.scroll ?? []) handler({});
+  assert.equal(more.getAttribute('data-dir'), 'up');
+  assert.equal(more.getAttribute('aria-label'), 'Show the coin above');
+  click(more);
+  assert.equal(scroll.scrollTop, 0, 'the count did not turn the list back to the top');
+
+  // Room for every tile: no count, no fixed height, the tiny line alone under them.
+  roomHeight = 400;
+  panel.put({ ...state });
+  assert.equal(scroll.style.height, '');
+  assert.equal(more.hidden, true);
+  assert.equal(foot.hidden, false);
+});
+
+/* The default window is 780 tall: the ring steps down under 820 so four coins, Add money and
+   the notice fit it, and again under 720 so the smallest window keeps three whole ones. No fade
+   masks the list's edge any more: nothing is ever half in view to fade. */
+test('the ring gives up its size before the list gives up a tile, and nothing fades a tile', () => {
+  const css = read('../../ui/design/basic.css');
+  const tier = (height: number) => css.match(new RegExp(`@media \\(max-height: ${height}px\\) \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? '';
+  assert.match(tier(820), /\.bal-ring \{ width: 204px; height: 204px; \}/);
+  assert.match(tier(720), /\.bal-ring \{ width: 188px; height: 188px; \}/);
+  assert.doesNotMatch(css, /data-cut|mask-image/, 'a fade still cuts the list');
+  assert.match(css, /\.bal-scroll \{[^}]*scroll-snap-type: y mandatory;/);
+  assert.match(css, /\.bal-row \{[^}]*scroll-snap-align: start;/);
 });
 
 test('the panel carries nothing but the balance: no rules strip, no folds, no brake', () => {

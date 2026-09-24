@@ -162,3 +162,30 @@ test('the card keeps one head row, labels keep their words, and a reply figure s
   assert.match(figure, /font-family:\s*var\(--font-num\);/);
   assert.doesNotMatch(figure, /font-mono|word-spacing|font-size/);
 });
+
+/* The finish review, 2026-09-23. The send key at rest was a 40 percent ghost nobody could find;
+   the Details fold animated a margin inside a thread that follows its own foot; and the coin
+   pair was two 16 px marks side by side where the comp stacks two 24 px ones. */
+test('the send key is hollow at rest and solid when armed, never faded', () => {
+  assert.doesNotMatch(block(AGENT, '.composer-send'), /opacity/, 'the key is faded at rest');
+  const rest = block(AGENT, '.composer-send:disabled');
+  assert.doesNotMatch(rest, /opacity/);
+  assert.match(rest, /background:\s*transparent;/);
+  assert.match(rest, /box-shadow:\s*inset 0 0 0 1\.5px var\(--line-strong\);/);
+  assert.match(block(AGENT, '.composer-field[data-armed="true"] .composer-send:not(:disabled)'), /background:\s*var\(--text\);/);
+});
+
+test('the Details fold moves only its own row: no margin animates in the thread', () => {
+  assert.doesNotMatch(CARD, /transition:[^;]*margin/, 'a margin is animated in the thread');
+  assert.match(block(CARD, '.mcard-body > .tcard-details'), /margin-top:\s*-14px;/);
+  assert.match(block(CARD, '.mcard .tcard-details-body'), /padding-top:\s*14px;/);
+  assert.match(block(CARD, '.tcard-details-fold'), /transition:\s*grid-template-rows/);
+});
+
+test('a swap wears its two coins at 24 px, the second over the first, with no ring', () => {
+  assert.match(block(CARD, '.mcard-marks .logo'), /--logo:\s*32px;/, 'a mark is not 24 px (its file draws it in the middle three quarters)');
+  assert.match(block(CARD, '.mcard-marks[data-pair] .logo + .logo'), /margin-left:\s*-16px;/);
+  assert.doesNotMatch(block(CARD, '.mcard-marks[data-pair] .logo + .logo'), /box-shadow|border|outline/, 'a ring bites into the mark');
+  const cards = read('ui/screens/cards.js');
+  assert.doesNotMatch(cards.slice(cards.indexOf('function paintMarks'), cards.indexOf('function payoutPlace')), /logo\([^)]*,\s*\d+\)/, 'paintMarks sizes the marks over the head\'s own size');
+});

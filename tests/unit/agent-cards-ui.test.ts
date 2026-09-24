@@ -412,7 +412,7 @@ test('a proposed swap is one card from the ask to the end, and a refusal says wh
   assert.ok(card, 'nothing drew when the move was asked for');
   assert.equal(card.getAttribute('data-state'), 'working');
   assert.equal(stateWord(card), 'Checking prices');
-  assert.match(faceOf(card), /^0\.05 SOL USDC/);
+  assert.match(faceOf(card), /^Swap 0\.05 SOL to USDC/);
   assert.equal(all(world.host, 'chat-working').length, 0, 'the working line repeats what the card already says');
 
   const filed = withView({ id: 'p1', kind: 'swap', status: 'pending', createdAt: '2026-09-15T10:00:00Z', draft: SWAP_DRAFT, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap 0.05 SOL for about 4.98 USDC', swap: { receives: '4.98', receivesAtLeast: '4.9', feeUsd: 0.02, etaSeconds: 5 } } });
@@ -422,7 +422,10 @@ test('a proposed swap is one card from the ask to the end, and a refusal says wh
   card = world.cardNodes('move')[0];
   assert.equal(card.getAttribute('data-state'), 'needs_you');
   assert.equal(stateWord(card), 'Needs your OK');
-  assert.match(faceOf(card), /0\.05 SOL about 4\.98 USDC/);
+  /* The line is words until the swap lands; what comes back is a figure, in the facts only
+     (finish review, 2026-09-23: "about 0.1862 ETH" over "You get at least 0.1843 ETH"). */
+  assert.match(faceOf(card), /^Swap 0\.05 SOL to USDC/);
+  assert.equal(faceOf(card).includes('about 4.98'), false, 'a guessed figure in the line: ' + faceOf(card));
   assert.match(faceOf(card), /You pay 0\.05 SOL You get at least 4\.9 USDC Fee \$0\.02/);
   assert.deepEqual(all(card, 'mcard-fact-label').map((n) => n.textContent), ['You pay', 'You get at least', 'Fee'], 'each figure is not under its own label');
   assert.equal(all(card, 'mcard-approve').length, 0, 'the reply alone drew the question');

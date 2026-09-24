@@ -1029,7 +1029,7 @@ textarea.input {
    above it. A transaction is a row with a mark, a sentence, a time and a
    signed amount. None of them is a label:value fact row. */
 
-/* THE PRICE TAG. Mono, 20 px, on a wash that carries the direction of the
+/* THE PRICE TAG. Geist with tabular figures, 20 px, on a wash that carries the direction of the
    last tick: the same treatment the chart's own last price label gets on its
    axis, so the number in the rail and the number on the canvas are the same
    thing. data-dir is up | down | unset, written by the surface as the price
@@ -1066,7 +1066,7 @@ textarea.input {
 .tag[data-flash="true"][data-dir="up"] { background: color-mix(in srgb, var(--up) 26%, var(--bg-1)); }
 .tag[data-flash="true"][data-dir="down"] { background: color-mix(in srgb, var(--down) 26%, var(--bg-1)); }
 
-/* A FIGURE. The label above, the value under it in mono, side by side in a
+/* A FIGURE. The label above, the value under it in tabular figures, side by side in a
    row of them. The opposite reading order to a fact row, on purpose: a fact
    row is a form, a figure is a dashboard. */
 .stats {
@@ -1192,7 +1192,7 @@ textarea.input {
 }
 
 /* A dense transaction: one line, for a tape that must hold twenty. The time
-   leads at 12 px mono, the amount trails, the sentence takes the room
+   leads at 12 px in tabular figures, the amount trails, the sentence takes the room
    between and truncates. */
 .tx[data-dense="true"] {
   grid-template-columns: 28px minmax(0, 1fr) auto;
@@ -1208,7 +1208,7 @@ textarea.input {
 
 /* THE STATUS LINE. What the assistant is doing right now, as a line rather
    than a sweep: a mark or a dot, the verb beside it in the text colour, and the
-   seconds elapsed in mono. Nothing on it pulses. The word changes and the clock
+   seconds elapsed in tabular figures. Nothing on it pulses. The word changes and the clock
    counts, and those are the two things that carry the state. */
 .status-line {
   display: inline-flex;
@@ -1240,7 +1240,7 @@ textarea.input {
 
 /* THE CLOCK. On the assistant's line it is the only thing that moves, so it
    reads as a figure rather than as a footnote: the second text tone at body
-   size, the app's mono, tabular figures, and a slot wide enough for the longest
+   size, the text face with tabular figures, and a slot wide enough for the longest
    value it can hold, right aligned. 9.9 s becoming 10.0 s moves nothing. */
 .status-line > .status-elapsed {
   flex: 0 0 auto;
