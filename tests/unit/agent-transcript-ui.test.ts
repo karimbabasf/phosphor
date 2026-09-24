@@ -349,13 +349,15 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
     pill: () => all(host, 'jump-latest')[0],
     pillOn: () => all(host, 'jump-latest')[0].getAttribute('data-on') === 'true',
     /* Put the person part way up a long transcript: the box is 400 tall, the content 2000,
-       and the top is where they are reading. */
+       and the top is where they are reading. They get there by hand, a wheel under the
+       scroll, which is the only thing that lets go of the end. */
     scrollUp() {
       const list = all(host, 'transcript')[0];
       list.clientHeight = 400;
       list.scrollHeight = 2000;
       list.scrollTop = 1600;
       fire(list, 'scroll');
+      fire(list, 'wheel', { deltaY: -1600 });
       list.scrollTop = 0;
       fire(list, 'scroll');
     },
@@ -1041,6 +1043,75 @@ test('at the end, the column stays at the end through anything that changes its 
   world.grew();
   assert.equal(list.scrollTop, 1900, 'the growth slipped under the fold');
   assert.equal(world.pillOn(), false);
+});
+
+/* Karim, 2026-09-23: "when a model answers I don't want to have to scroll down." Two ways the
+   column let go of its end with nobody's hand on it, both reproduced in the app's WebKit with a
+   streamed reply: a card above folding to its one line (and the waiting line leaving) moved the
+   scroller up, which read as the person scrolling; and one wheel tick over a thread shorter
+   than its box (a resting finger) let go with no scroll to take it back. Only the hand moves
+   the pin now. */
+test('a row that folds above moves the scroller up without letting go of the end', () => {
+  const world = build();
+  world.type('walk me through a swap');
+  const list = world.list();
+  list.clientHeight = 544;
+  list.scrollHeight = 1835;
+  list.scrollTop = 1291;
+  world.grew();
+  /* The card above folds: the content is 53 px shorter and WebKit moves the scroller up 77.
+     Its scroll event comes a frame later, after two more lines have landed, so the column is
+     80 px from its end when it reads the move. */
+  list.scrollHeight = 1782;
+  list.scrollTop = 1214;
+  list.scrollHeight = 1838;
+  fire(list, 'scroll');
+  /* The reply keeps streaming. */
+  list.scrollHeight = 2312;
+  world.grew();
+  assert.equal(list.scrollTop, 2312 - 544, 'the fold above let go of the end');
+  assert.equal(world.pillOn(), false, 'Latest came up for a scroll nobody made');
+});
+
+test('a wheel tick that moves nothing lets go of nothing: the reply is followed past the fold', async () => {
+  const world = build();
+  world.type('hey how are you?');
+  const list = world.list();
+  list.clientHeight = 544;
+  list.scrollHeight = 300;
+  list.scrollTop = 0;
+  world.grew();
+  /* A resting finger: one tick up over a thread with nowhere to go, so no scroll follows it. */
+  fire(list, 'wheel', { deltaY: -2 });
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  list.scrollHeight = 1207;
+  world.grew();
+  assert.equal(list.scrollTop, 1207 - 544, 'the tick let go and the reply ran under the fold');
+  assert.equal(world.pillOn(), false);
+});
+
+test('a small move up by hand near the end keeps the pin, a real one lets go', async () => {
+  const world = build();
+  world.type('what do I hold?');
+  const list = world.list();
+  list.clientHeight = 400;
+  list.scrollHeight = 2000;
+  list.scrollTop = 1600;
+  world.grew();
+  fire(list, 'wheel', { deltaY: -10 });
+  list.scrollTop = 1590;
+  fire(list, 'scroll');
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  list.scrollHeight = 2100;
+  world.grew();
+  assert.equal(list.scrollTop, 1700, 'ten pixels of reading let go of the end');
+  fire(list, 'wheel', { deltaY: -300 });
+  list.scrollTop = 1400;
+  fire(list, 'scroll');
+  list.scrollHeight = 2200;
+  world.grew();
+  assert.equal(list.scrollTop, 1400, 'the follow pulled a reader back down');
+  assert.equal(world.pillOn(), true);
 });
 
 test('pressing Latest scrolls to the end and puts it away', () => {
