@@ -25,15 +25,13 @@
 .brake-btn:active,
 .notice-act:active,
 .bal-add:active,
+.vault-seg-cell:active,
 .sendcard-info:active > span {
   transform: scale(0.97);
   background-color: var(--press);
 }
 
-.dock-next:active,
-.dock-report-toggle:active,
 .checks-toggle:active,
-.holding-head.opens:active,
 .net-row:active,
 .activity-rows > .tx.receipt-row:active,
 .tx.receipt-row:active,
@@ -44,5 +42,4 @@
 }
 
 .check-row:active { transform: scale(0.97); }
-.activity-link:active { background-color: color-mix(in srgb, var(--ink) 18%, transparent); }
 .jump-latest:active { background-color: color-mix(in srgb, var(--agent) 24%, var(--bg-1)); }

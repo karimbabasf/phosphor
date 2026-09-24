@@ -13,9 +13,9 @@
  * why the drag maths lives in splitBegin/splitAt, which touch no DOM at all.
  *
  * THE FLOOR THAT IS NOT A PREFERENCE. Every pane has a minimum so it cannot be dragged to
- * nothing. The APPROVAL GATE's is bigger than the rest and it is the reason the minimums
- * exist at all: a gate that can be dragged out of sight is a window that can be arranged to
- * hide the one control that stops money moving. It is a safety surface, not a panel.
+ * nothing. The conversation's is the one that matters most: Approve lives on the move card
+ * in the thread, and a thread dragged out of sight is a window arranged to hide the one
+ * control that releases money.
  *
  * THE KEYBOARD IS NOT A CHECKBOX. This is a wallet. Every handle is a real focusable
  * separator: arrows move it, Enter puts it back. Nothing here is reachable only by a pointer.
@@ -29,10 +29,9 @@
  *
  * PANES CAN BE HIDDEN, NOT DRAGGED SHUT. Hiding is a separate act from sizing: a checkbox in
  * the bar's Layout menu or the eye-off control in the pane's own header, never the handle. A
- * hidden pane is a data attribute on its host and the stylesheet reflows the grid; the handle
- * beside it goes with it, and the neighbours take the room. The choice persists on its own key.
- * The way back is the Layout menu, and the menu is on the bar because the bar is on every
- * mode: a pane hidden on Basic has to be reachable from Basic.
+ * hidden pane is a data attribute on its host and the stylesheet reflows the layout; the
+ * handle beside it goes with it, and the neighbour takes the room. The choice persists on its
+ * own key. The way back is the Layout menu on the bar, or the eye where the pane was.
  */
 
 'use strict';
@@ -57,28 +56,30 @@ var SPLIT_DOUBLE_MS = 400; /* two presses this close together are one double cli
  *            stylesheet clamps the column to, so a stored size from a wider window is
  *            brought back inside it on load rather than applied blindly.
  *
- * The minimums are measured, not guessed: 380 for a chart column is where candles stop
- * being read and start being estimated (the same number ui/trade.css states for a chart's
- * height), 240 for the agent column is a transcript line that still holds a sentence, and
- * 96 for the gate is one pending proposal with its two buttons still on screen.
+ * The minimums are measured, not guessed: 560 for the trading side is a chart that is still
+ * read rather than estimated with the market line above it, 400 for the conversation is a
+ * line that still holds a sentence and the move card, and 364 for the chart's column is the
+ * chart stage's own 320 plus its 44 px bar.
  */
 var SPLIT_PAGES = {
-  /* The stage: the conversation column against the world. The person may widen
-     the transcript to 760 (the --conv-max token) and narrow it to 360; the
-     world never goes under 560, which is one Basic column with its margins. */
+  /* The stage on Pro and the Vault: the conversation keeps the left and the
+     world is a wide right side, so the handle sizes the WORLD and the
+     conversation takes the rest. Dragging right shrinks the world: the sign is
+     -1. 560 and 1400 are the floor and the ceiling pro.css clamps --trade to;
+     the conversation never goes under 400, a line that still holds a sentence
+     and the move card beside it. Basic has its own fixed panel and no handle. */
   stage: {
     conversation: {
-      axis: 'x', sign: 1, min: 360, max: 760,
-      pane: '.conversation', host: '.stage', prop: '--conv',
-      give: '.world', giveMin: 560,
+      axis: 'x', sign: -1, min: 560, max: 1400,
+      pane: '.world', host: '.stage', prop: '--trade',
+      give: '.conversation', giveMin: 400,
     },
   },
-  /* One handle in the whole window now, because pro is a grid and basic is a
-     column: neither needs dragging. Trade's deck sits under the chart since
-     2026-09-14 (Karim: "this trade panel on the side I want to be below the
-     chart, so the whole chart horizontally"), so the handle is a horizontal
-     bar and the axis is y. The pane is below the handle, so dragging down
-     shrinks it: the sign is -1.
+  /* Under the chart on Pro. The deck sits below the chart since 2026-09-14
+     (Karim: "this trade panel on the side I want to be below the chart, so
+     the whole chart horizontally"), so the handle is a horizontal bar and the
+     axis is y. The pane is below the handle, so dragging down shrinks it: the
+     sign is -1.
 
      The deck opens at its floor and the drag makes it taller: 120 is the tab
      row with two rows under it, which is "Nothing open." with air, or one
@@ -361,32 +362,33 @@ function splitBoot() {
      columns go before the panels: a size restored against a pane that is about to
      vanish would be clamped against room that is not there. */
   splitPanesApply();
-  splitPaneGate();
 }
 
 /* ---------- panes that can be hidden ----------
  *
- * The three panes a person may take off the screen, and the only place they are written
+ * The two panes a person may take off the screen, and the only place they are written
  * down. `host` is where the state is written, as `data-pane-<name>="hidden"`; the stylesheet
- * (ui/design/trade.css) keys the grid template off it, so the pane's track and its handle
- * drop out and the neighbours take the room. `view` is the one mode that draws the pane; a
- * pane without one is on every mode. The Layout menu lists by it, so a mode never offers a
- * checkbox for a pane it does not draw. Nothing here measures anything.
+ * (ui/design/trade.css) keys the layout off it, so the pane and its handle drop out and the
+ * neighbour takes the room. `view` is the one mode that draws the pane, and the Layout menu
+ * lists by it, so a mode never offers a checkbox for a pane it does not draw. Nothing here
+ * measures anything.
  *
- *   conversation   the assistant column, on every mode. Written on the stage.
- *   chart          the chart with its bar, on trade. Written on the trade wrap.
- *   deck           the tabbed panel under the chart, on trade. Written on the trade wrap.
+ *   chart          the chart with its bar, on Pro. Written on the trade wrap.
+ *   deck           the positions and orders under the chart, on Pro. Written on the trade wrap.
  *
- * THE GATE STAYS REACHABLE. The approval dock lives in the conversation column, so a column
- * hidden while a proposal waits would be a window arranged to hide the one control that
- * stops money moving. The dock's own hidden attribute is watched: the moment it has
- * something to show, the column is shown too. It can be hidden again once the dock is empty.
+ * THE CONVERSATION IS NOT ONE OF THEM. Approve lives on the move card inside the thread, so
+ * a column that could be hidden would be a window arranged to hide the one control that
+ * releases money. It stays on screen in every mode.
  */
 var SPLIT_PANES = {
-  conversation: { host: '.stage', label: 'Assistant', gate: '#overlay' },
-  chart: { host: '.trade-wrap', label: 'Chart', view: 'trade' },
-  deck: { host: '.trade-wrap', label: 'Positions and fills', view: 'trade' },
+  chart: { host: '.trade-wrap', label: 'Chart', view: 'pro' },
+  deck: { host: '.trade-wrap', label: 'Positions and orders', view: 'pro' },
 };
+
+/* Trade is Pro's trading side under the name the server still uses for it. */
+function splitViewOf(view) {
+  return view === 'trade' ? 'pro' : view;
+}
 
 function splitPaneKey(name) {
   return SPLIT_PANE_PREFIX + name;
@@ -455,10 +457,11 @@ function splitPaneToggle(name) {
    that view draws; given nothing, all of them. */
 function splitPaneList(view) {
   var out = [];
+  var mode = splitViewOf(view);
   for (var name in SPLIT_PANES) {
     if (!Object.prototype.hasOwnProperty.call(SPLIT_PANES, name)) continue;
     var conf = SPLIT_PANES[name];
-    if (view && conf.view && conf.view !== view) continue;
+    if (mode && conf.view && conf.view !== mode) continue;
     out.push({ name: name, label: conf.label, hidden: splitPaneHidden(name) });
   }
   return out;
@@ -486,10 +489,9 @@ function splitPaneControl(name) {
 /* The way back, at the edge the pane left: one 24 px ghost button wearing the eye, drawn
    only while its pane is hidden (the stylesheet keys it off the host's data-pane attribute).
    The deck's sits in the chart bar beside the chart's own eye-off, the chart's in the deck's
-   tab row, and the assistant column's on the world's left edge as a small tab. The Layout menu
-   on the bar still lists every pane; this is the shortcut a hand reaches for (Karim,
-   2026-09-16: "a subtle button around there as well on the side ... that is super subtle to
-   bring it back"). Null in a document with nothing to build it in. */
+   tab row. The Layout menu on the bar still lists every pane; this is the shortcut a hand
+   reaches for (Karim, 2026-09-16: "a subtle button around there as well on the side ... that
+   is super subtle to bring it back"). Null in a document with nothing to build it in. */
 function splitPaneRestore(name) {
   var conf = SPLIT_PANES[name];
   if (!conf || typeof document.createElement !== 'function') return null;
@@ -504,25 +506,6 @@ function splitPaneRestore(name) {
     splitPaneSet(name, true);
   });
   return button;
-}
-
-/* The dock is watched once. Its hidden attribute is the one fact that says a proposal is
-   waiting on a person, and the column that holds it is shown the moment that is true. */
-var SPLIT_GATE_WATCHED = false;
-
-function splitPaneGate() {
-  if (SPLIT_GATE_WATCHED) return;
-  var conf = SPLIT_PANES.conversation;
-  var dock = document.querySelector(conf.gate);
-  if (!dock) return;
-  SPLIT_GATE_WATCHED = true;
-  function check() {
-    if (dock.hidden === false && splitPaneHidden('conversation')) splitPaneSet('conversation', true);
-  }
-  if (typeof MutationObserver === 'function') {
-    new MutationObserver(check).observe(dock, { attributes: true, attributeFilter: ['hidden'] });
-  }
-  check();
 }
 
 window.PhosphorSplit = {

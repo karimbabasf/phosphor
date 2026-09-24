@@ -2,9 +2,9 @@
 // not about whether the drag feels nice. They are about the four things that make a resizable
 // deck safe to ship:
 //
-//   - a pane cannot be dragged to nothing, and the APPROVAL GATE's floor is bigger than the
-//     rest. A gate dragged out of sight is a window arranged to hide the one control that
-//     stops money moving, and it is the reason the minimums exist at all;
+//   - a pane cannot be dragged to nothing, and the conversation cannot be put away at all:
+//     Approve lives on the move card in the thread, so a thread dragged or hidden out of
+//     sight is a window arranged to hide the one control that releases money;
 //   - a pane cannot be grown past the point where its neighbour hits its own floor;
 //   - what a person leaves is what they come back to, and a size stored on a big screen is
 //     clamped to a small one rather than applied blindly to it;
@@ -223,34 +223,45 @@ test('a stored size that no longer fits is clamped, and the stored one is left a
   );
 });
 
-test('a stored conversation width outside the column\'s own range is clamped on load', () => {
-  // The column is clamp(360px, 30vw, 760px) in the stylesheet since 2026-09-15, and the
-  // handle carries the same two numbers. A width stored before the ceiling existed, or
-  // written by hand, comes back inside the range: past the ceiling on a wide window where
-  // the world could spare it, under the floor on any window.
+test('on Pro and the Vault the divider sizes the world, inside its range, and never squeezes the conversation', () => {
+  // The world is clamp(560px, var(--trade, 55vw), 1400px) in pro.css, and the handle carries
+  // the same two numbers. It sits to the right of the conversation, so dragging right shrinks
+  // it: the sign is -1. The conversation gives the room and keeps 400 of it.
   const conf = load().SPLIT_PAGES.stage.conversation;
-  assert.equal(conf.min, 360);
-  assert.equal(conf.max, 760);
+  assert.equal(conf.pane, '.world');
+  assert.equal(conf.prop, '--trade');
+  assert.equal(conf.sign, -1);
+  assert.equal(conf.min, 560);
+  assert.equal(conf.max, 1400);
+  assert.equal(conf.give, '.conversation');
+  assert.equal(conf.giveMin, 400);
 
+  // A width stored on a 27 inch screen comes back inside the ceiling on a wide window.
   const wide = makeStorage();
-  wide.setItem('phosphor.split.stage.conversation', '1200');
+  wide.setItem('phosphor.split.stage.conversation', '2000');
   const s = load(wide);
-  // A 27 inch screen: 760 in the column, 1794 in the world, which could give 1234 more.
-  const h = handle(s, 'stage', 'conversation', { pane: 760, give: 1794 });
+  const h = handle(s, 'stage', 'conversation', { pane: 1400, give: 1160 });
   s.splitRestore(h);
-  assert.equal(applied(h), 760, 'the ceiling holds even when the world has room');
-  assert.equal(wide.map.get('phosphor.split.stage.conversation'), '1200', 'the stored value is left alone');
+  assert.equal(applied(h), 1400, 'the ceiling holds even when the conversation has room');
+  assert.equal(wide.map.get('phosphor.split.stage.conversation'), '2000', 'the stored value is left alone');
 
+  // Under the floor on any window.
   const narrow = makeStorage();
   narrow.setItem('phosphor.split.stage.conversation', '200');
   const t = load(narrow);
-  const g = handle(t, 'stage', 'conversation', { pane: 360, give: 594 });
+  const g = handle(t, 'stage', 'conversation', { pane: 704, give: 576 });
   t.splitRestore(g);
-  assert.equal(applied(g), 360, 'the floor holds');
+  assert.equal(applied(g), 560, 'the floor holds');
 
-  // And a drag on the wide window stops at the ceiling too.
-  s.splitBegin(h, 0);
-  assert.equal(s.splitAt(h, 5000), 760);
+  // At 1280: 704 of world and 576 of conversation. A drag left grows the world until the
+  // conversation is down to its 400, and not a pixel more; a drag right shrinks it.
+  const u = load();
+  const k = handle(u, 'stage', 'conversation', { pane: 704, give: 576 });
+  u.splitBegin(k, 0);
+  assert.equal(u.splitAt(k, -40), 744, 'left grows the world one for one');
+  assert.equal(u.splitAt(k, -5000), 880, 'and stops where the conversation keeps its 400');
+  assert.equal(u.splitAt(k, 100), 604, 'right shrinks it');
+  assert.equal(u.splitAt(k, 5000), 560, 'down to its floor');
 });
 
 test('storage that refuses everything does not cost a person their drag', () => {
@@ -364,32 +375,45 @@ function loadWithHosts(storage: Any = makeStorage()): { s: Any; nodes: Record<st
   return { s: sandbox, nodes, events };
 }
 
-test('every pane starts on screen, and the three are the conversation, the chart and the deck', () => {
+test('every pane starts on screen, and the two are the chart and the deck: the conversation is not one', () => {
   const s = load();
   // Through JSON: the arrays are built in the vm's realm and a strict deep compare tests
   // prototypes as well as values.
   assert.deepEqual(
     JSON.parse(JSON.stringify(s.splitPaneList().map((p: Any) => [p.name, p.hidden]))),
-    [['conversation', false], ['chart', false], ['deck', false]],
+    [['chart', false], ['deck', false]],
   );
+  // A conversation hidden on an older build comes back: nothing reads the old key.
+  const storage = makeStorage();
+  storage.map.set('phosphor.pane.conversation', 'hidden');
+  const old = loadWithHosts(storage);
+  old.s.splitBoot();
+  assert.equal(old.nodes['.stage'].getAttribute('data-pane-conversation'), null);
   for (const pane of s.splitPaneList()) assert.ok(typeof pane.label === 'string' && pane.label.length > 0, pane.name + ' has a word');
   assert.equal(s.splitPaneHidden('deck'), false);
   assert.equal(s.splitPaneHidden('nothing'), false, 'a pane that does not exist is not hidden either');
 });
 
-test('asked for one view, the list holds the panes that view has: the assistant everywhere, the chart and the deck on trade', () => {
-  // The Layout menu is on the bar and the bar is on every mode, so a row for a pane the
-  // mode does not draw would be a checkbox that does nothing. Karim, 2026-09-15: the
-  // assistant hidden on Basic had no way back, because the menu lived on the trade strip.
+test('asked for one view, the list holds the panes that view has: the chart and the deck on Pro, under either name', () => {
+  // The Layout menu is on the bar, so a row for a pane the mode does not draw would be a
+  // checkbox that does nothing. Trade is Pro's trading side under the server's older name.
   const s = load();
   const names = (view?: string) => JSON.parse(JSON.stringify(s.splitPaneList(view).map((p: Any) => p.name)));
-  assert.deepEqual(names('trade'), ['conversation', 'chart', 'deck']);
-  assert.deepEqual(names('basic'), ['conversation']);
-  assert.deepEqual(names('pro'), ['conversation']);
-  assert.deepEqual(names('vault'), ['conversation']);
-  assert.deepEqual(names(), ['conversation', 'chart', 'deck'], 'no view asked for means every pane');
-  assert.deepEqual(JSON.parse(JSON.stringify(s.PhosphorSplit.panes('basic').map((p: Any) => p.name))), ['conversation'],
+  assert.deepEqual(names('pro'), ['chart', 'deck']);
+  assert.deepEqual(names('trade'), ['chart', 'deck']);
+  assert.deepEqual(names('basic'), []);
+  assert.deepEqual(names('vault'), []);
+  assert.deepEqual(names(), ['chart', 'deck'], 'no view asked for means every pane');
+  assert.deepEqual(JSON.parse(JSON.stringify(s.PhosphorSplit.panes('pro').map((p: Any) => p.name))), ['chart', 'deck'],
     'the window API takes the view too');
+});
+
+test('the dock gate is gone: nothing watches an #overlay, and nothing can hide the thread', () => {
+  assert.doesNotMatch(SOURCE, /#overlay/);
+  assert.doesNotMatch(SOURCE, /MutationObserver/);
+  const { s } = loadWithHosts();
+  assert.equal(s.splitPaneSet('conversation', false), false, 'there is no pane called conversation');
+  assert.equal(s.splitPaneHidden('conversation'), false);
 });
 
 test('hiding a pane writes the attribute the stylesheet reads, tells the page, and comes back after a reload', () => {
@@ -420,10 +444,10 @@ test('hiding a pane writes the attribute the stylesheet reads, tells the page, a
 
 test('a toggle flips the pane, and a pane that is not in the table is refused', () => {
   const { s, nodes } = loadWithHosts();
-  assert.equal(s.splitPaneToggle('conversation'), true);
-  assert.equal(nodes['.stage'].getAttribute('data-pane-conversation'), 'hidden');
-  assert.equal(s.splitPaneToggle('conversation'), false);
-  assert.equal(nodes['.stage'].getAttribute('data-pane-conversation'), null);
+  assert.equal(s.splitPaneToggle('chart'), true);
+  assert.equal(nodes['.trade-wrap'].getAttribute('data-pane-chart'), 'hidden');
+  assert.equal(s.splitPaneToggle('chart'), false);
+  assert.equal(nodes['.trade-wrap'].getAttribute('data-pane-chart'), null);
   assert.equal(s.splitPaneSet('gate', false), false, 'there is no pane called gate');
 });
 
@@ -496,15 +520,16 @@ test('the way back: a restore control draws for its pane, names it, and shows it
     return node;
   };
   s.PhosphorIcons = { svg: (name: string) => ({ icon: name }) };
-  const back = s.PhosphorSplit.paneRestore('conversation');
+  const back = s.PhosphorSplit.paneRestore('deck');
   assert.ok(back, 'no restore control');
   assert.equal(back.className, 'pane-show');
-  assert.equal(back.getAttribute('data-pane'), 'conversation');
-  assert.equal(back.getAttribute('aria-label'), 'Show the assistant');
+  assert.equal(back.getAttribute('data-pane'), 'deck');
+  assert.equal(back.getAttribute('aria-label'), 'Show the positions and orders');
   assert.deepEqual(back.children, [{ icon: 'show' }]);
-  s.PhosphorSplit.setPane('conversation', false);
-  assert.equal(s.PhosphorSplit.paneHidden('conversation'), true);
+  s.PhosphorSplit.setPane('deck', false);
+  assert.equal(s.PhosphorSplit.paneHidden('deck'), true);
   back.click();
-  assert.equal(s.PhosphorSplit.paneHidden('conversation'), false, 'the click did not bring the pane back');
+  assert.equal(s.PhosphorSplit.paneHidden('deck'), false, 'the click did not bring the pane back');
+  assert.equal(s.PhosphorSplit.paneRestore('conversation'), null, 'the conversation has no way back because it never goes');
   assert.equal(s.PhosphorSplit.paneRestore('nothing'), null);
 });

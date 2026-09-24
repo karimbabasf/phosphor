@@ -122,7 +122,7 @@ const SMALL_FLOOR: Array<[file: string, selector: string, prop: string]> = [
   ['agent.css', '.agent-waiting', 'min-height'],
   ['chatcard.css', '.mcard-details-toggle', 'min-height'],
   ['deposit.css', '.netpick-link', 'min-height'],
-  ['pro.css', 'button.rule-group-title', 'min-height'],
+  ['vault.css', '.vault-seg-cell', 'min-height'],
   ['pro.css', '.activity-link', 'min-height'],
   ['components.css', 'button.chip', 'min-height'],
   ['components.css', '.check-row', 'min-height'],
@@ -198,7 +198,7 @@ test('a quiet button keeps the floor\'s 24 px around its word', () => {
    on 2026-09-20 because the press sat in components.css at the hover's specificity. So press.css
    loads last, and every press selector is at least as specific as every hover rule whose subject
    is that family, anywhere in ui/design. */
-const PRESSED = ['dock-close', 'pane-hide', 'pane-show', 'receipt-close', 'lock-eye', 'netpick-back', 'netpick-link', 'activity-link', 'netsel', 'trade-tab', 'steps-fold', 'dock-next', 'dock-report-toggle', 'checks-toggle', 'brake-btn', 'notice-act', 'bal-add', 'net-row', 'jump-latest', 'check-row'];
+const PRESSED = ['dock-close', 'pane-hide', 'pane-show', 'receipt-close', 'lock-eye', 'netpick-back', 'netpick-link', 'activity-link', 'netsel', 'trade-tab', 'steps-fold', 'checks-toggle', 'brake-btn', 'notice-act', 'bal-add', 'vault-seg-cell', 'net-row', 'jump-latest', 'check-row'];
 
 // Selector specificity as (ids, classes plus attributes plus pseudo-classes, elements).
 function specificity(selector: string): [number, number, number] {
@@ -232,12 +232,12 @@ test('every pressable that is not a .btn has a press, on the shared wash, and th
   assert.ok(compact, 'no shared press for the compact pressables');
   assert.match(compact?.[1] ?? '', /transform:\s*scale\(0\.97\);/);
   assert.match(compact?.[1] ?? '', /background-color:\s*var\(--press\);/);
-  const rows = press.match(/\.dock-next:active,[^{]*\{([^}]*)\}/);
+  const rows = press.match(/\.checks-toggle:active,[^{]*\{([^}]*)\}/);
   assert.ok(rows, 'no shared press for the rows');
   assert.match(rows?.[1] ?? '', /background-color:\s*var\(--press\);/);
   assert.doesNotMatch(rows?.[1] ?? '', /transform/, 'a row that spans its column keeps its edges still');
   assert.match(press, /\.sendcard-info:active > span/);
-  assert.match(press, /\.holding-head\.opens:active/);
+  assert.doesNotMatch(press, /\.dock-next|\.dock-report-toggle|\.holding-head/, 'a press for a control nothing builds any more');
   assert.match(css('components.css'), /\.opens:active\s*\{[^}]*background-color:\s*color-mix\(in srgb, var\(--text\) 12%, var\(--opens-bg, transparent\)\);/);
   assert.doesNotMatch(css('components.css'), /\.dock-close:active|\.check-row:active\s*\{/, 'the press left components.css, where it lost the cascade');
 
@@ -263,7 +263,7 @@ test('every pressable that is not a .btn has a press, on the shared wash, and th
 
 test('a pressable\'s label never sits on the third text tone', () => {
   assert.match(css('agent.css'), /\.steps-fold\s*\{[^}]*color:\s*var\(--text-2\);/);
-  assert.match(css('pro.css'), /button\.rule-group-title\s*\{[^}]*color:\s*var\(--text-2\);/);
+  assert.match(css('vault.css'), /\.vault-seg-cell\s*\{[^}]*color:\s*var\(--text-2\);/);
   const quiet = css('components.css').match(/\.btn-quiet\s*\{([^}]*)\}/);
   assert.equal(declared(quiet?.[1] ?? '', '--btn-fg'), 'var(--text-2)');
 });

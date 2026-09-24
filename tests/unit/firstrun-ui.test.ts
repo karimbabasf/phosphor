@@ -1,13 +1,13 @@
-// The first run's assistant step: the agent picker, and the threshold that lands in policy.json.
+// The first run's assistant step: the agent list, and the threshold that lands in policy.json.
 //
 // Both run for real over a small DOM (the pattern of firstrun-welcome-ui.test.ts) with the api
 // module replaced by a recorder that answers what the test says the app answered. What is
-// proven: six tiles in the catalog's order; a pick is one round trip whose sentence, line and
-// technical lines come from the answer; the action row follows the state (Start it for the one
-// agent the app runs, Check again for a missing or signed-out one, Continue otherwise); one
-// sentence at a time, the path behind Details, nothing the network said printed; the light
-// follows the roster; and the threshold step posts the figure and shows the route's refusal
-// over the same Continue. tsc never sees ui/, so this is the check.
+// proven: six rows in the catalog's order, each with the state the app's scan found and the line
+// that says how; Use is one round trip whose words come from the answer, and a pick the app did
+// not store is never shown as held; the action row follows the state (Start and the agent's
+// name for one the app runs, Continue otherwise, never a dead end); nothing the network said is
+// printed; a terminal agent on the door reads Connected; and the threshold step posts the figure
+// and shows the route's refusal over the same Continue. tsc never sees ui/, so this is the check.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -261,229 +261,192 @@ async function atPicker(world: World): Promise<Any> {
   return world.screen;
 }
 
-const tiles = (screen: Any): Any[] => find(screen, '.agent-tile');
-const tile = (screen: Any, id: string): Any => tiles(screen).find((t: Any) => t.dataset.agent === id) as Any;
-const sentences = (screen: Any): string[] => find(screen, '.agentpick-sentence').filter((n: Any) => !n.hidden).map((n: Any) => n.textContent).filter((t: string) => t !== '');
+const rows = (screen: Any): Any[] => find(screen, '.agentrow');
+const rowOf = (screen: Any, id: string): Any => rows(screen).find((r: Any) => r.dataset.agent === id) as Any;
+const stateOf = (screen: Any, id: string): string => find(rowOf(screen, id), '.agentrow-state')[0].textContent;
+const commandOf = (screen: Any, id: string): string => {
+  const cmd = find(rowOf(screen, id), '.agentrow-cmd')[0];
+  return cmd && !cmd.hidden ? find(cmd, '.agentrow-code')[0].textContent : '';
+};
+const status = (screen: Any): string => {
+  const node = find(screen, '.agentpick-status')[0];
+  return node && !node.hidden ? node.textContent : '';
+};
+const useOf = (screen: Any, id: string): Any => find(rowOf(screen, id), '.agentrow-use')[0];
 const primary = (screen: Any): Any => find(screen, '.screen-actions')[0].childNodes[find(screen, '.screen-actions')[0].childNodes.length - 1];
-const light = (screen: Any): string | null => find(screen, '.agentpick-light')[0].getAttribute('data-state');
 
 /* ---------- the source ---------- */
 
-test('the picker prints nothing the network said, raises no toast, and brings its stylesheet with three columns of tiles', () => {
-  const picker = FIRSTRUN.slice(FIRSTRUN.indexOf('The agent picker, one component'));
-  assert.ok(picker.length > 1000, 'the picker block was not found');
-  assert.equal(/readable\(/.test(picker), false, 'the picker prints net.readable');
-  assert.equal(/PhosphorToast/.test(picker), false, 'the picker raises a toast');
+test('the list prints nothing the network said, raises no toast, and owns no sentence about a missing agent', () => {
+  const list = FIRSTRUN.slice(FIRSTRUN.indexOf('The agent list, one component for two hosts'));
+  assert.ok(list.length > 3000, 'the list block was not found');
+  assert.equal(/readable\(/.test(list), false, 'the list prints net.readable');
+  assert.equal(/PhosphorToast/.test(list), false, 'the list raises a toast');
   assert.equal(/\.innerHTML\s*=|insertAdjacentHTML/.test(FIRSTRUN), false);
-  assert.match(CSS, /\.agentpick-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,/);
-  assert.match(CSS, /\.agent-tile-name\s*\{[^}]*-webkit-line-clamp:\s*2/);
-  // Keyboard focus is the app's own ring, never the tile's colour: a brand-coloured ring read as a
-  // second picked tile beside the real one. The tile's colour is for hover and picked only.
-  const focus = /\.agent-tile:focus-visible\s*\{([^}]*)\}/.exec(CSS);
-  assert.ok(focus, 'no focus-visible rule for the tile');
-  assert.match(focus![1], /outline:\s*2px solid var\(--ink\)/, 'the focus ring is not the app\'s');
-  assert.equal(/var\(--net\)/.test(focus![1]), false, 'the focus ring is in the tile\'s colour');
-  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  const coloured = [...rules.matchAll(/([^{}]*)\{[^}]*var\(--net\)[^}]*\}/g)].map((m) => m[1].trim());
-  for (const selector of coloured) {
-    assert.equal(/focus/.test(selector), false, `the tile's colour is painted on focus: ${selector}`);
-  }
-  // The two sentences for a missing agent have one source, src/agents-catalog.ts stateSentence: a
+  // The rows are ruled, not tiled, and no brand colour lands on them.
+  assert.match(CSS, /\.agentrow\s*\{[^}]*grid-template-columns:\s*28px minmax\(0, 1fr\) auto auto;/);
+  assert.equal(/var\(--net\)|agent-tile|agentpick-light/.test(CSS), false, 'a tile, a brand colour or a light is back');
+  // The sentences for a missing agent have one source, src/agents-catalog.ts stateSentence: a
   // screen that composed its own would fork the fix that keeps a fresh pick from reading as "no longer".
   for (const [file, source] of [['firstrun.js', FIRSTRUN], ['vault.js', VAULT]] as const) {
     assert.equal(/no longer on this Mac|not on this Mac yet/.test(source), false, `${file} composes a state sentence of its own`);
   }
-  assert.match(picker, /var text = check\.sentence;/, 'the picker does not print the check\'s own sentence');
   // The old step's toast on a failed start is gone from the assistant step too.
   const step = FIRSTRUN.slice(FIRSTRUN.indexOf('function screenConnect'), FIRSTRUN.indexOf('function screenThreshold'));
   assert.equal(/PhosphorToast|readable\(/.test(step), false, 'the assistant step still prints a raw error');
 });
 
-/* ---------- the tiles ---------- */
+/* ---------- the rows ---------- */
 
-test('six tiles in the catalog\'s order, one screen, and the stylesheet linked from the page', async () => {
+test('six rows in the catalog\'s order, one screen, the stylesheet linked, and a quiet way on before a pick', async () => {
   const world = build();
   const screen = await atPicker(world);
-  assert.deepEqual(tiles(screen).map((t: Any) => t.dataset.agent), ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']);
+  assert.deepEqual(rows(screen).map((r: Any) => r.dataset.agent), ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']);
   assert.deepEqual(
-    tiles(screen).map((t: Any) => find(t, '.agent-tile-name')[0].textContent),
+    rows(screen).map((r: Any) => find(r, '.agentrow-name')[0].textContent),
     ['Claude Code', 'Codex', 'Hermes', 'Grok', 'Another agent', 'Claude Desktop or a chat app'],
   );
-  assert.ok(visibleText(screen).includes('Step 3 of 3'), 'the picker is not the same step the connect step was');
-  assert.equal(tiles(screen).filter((t: Any) => t.tabIndex === 0).length, 1, 'more than one tile in the tab order');
-  assert.match(read('../../ui/index.html'), /<link rel="stylesheet" href="\.\/design\/agentpick\.css">/, 'index.html does not link the picker stylesheet');
+  assert.ok(visibleText(screen).includes('Step 3 of 3'), 'the list is not the same step the connect step was');
+  assert.match(read('../../ui/index.html'), /<link rel="stylesheet" href="\.\/design\/agentpick\.css">/, 'index.html does not link the list stylesheet');
   assert.equal(world.calls.filter((c) => c.action === 'agent-scan').length, 1, 'the scan did not run once');
-  // Before a pick: nothing said, the primary is a quiet Continue, and Do this later stays.
-  assert.deepEqual(sentences(screen), []);
+  assert.equal(status(screen), '');
   assert.equal(primary(screen).textContent, 'Continue');
   assert.equal(primary(screen).className, 'btn btn-ghost btn-lg');
   assert.ok(buttonNamed(screen, 'Do this later'));
+  // The list carries its own Check again here, since the step has none.
+  assert.ok(buttonNamed(screen, 'Check again'), 'no way to check again after installing');
 });
 
-test('the scan tags the tiles the app found on this Mac, in words', async () => {
+test('the scan says each agent\'s state in words, with the line that says how', async () => {
   const world = build();
-  world.answers['agent-scan'] = { ok: true, agents: [CHECKS.claudeIn, CHECKS.codexOut, { ...CHECKS.codexMissing, agent: 'hermes', name: 'Hermes' }], picked: null };
+  world.answers['agent-scan'] = { ok: true, agents: [CHECKS.claudeIn, CHECKS.codexOut, { ...CHECKS.codexMissing, agent: 'hermes', name: 'Hermes', details: ['Install: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash'] }], picked: null };
   const screen = await atPicker(world);
   await flush();
-  const tagged = tiles(screen).filter((t: Any) => !find(t, '.agent-tile-tag')[0].hidden).map((t: Any) => t.dataset.agent);
-  assert.deepEqual(tagged, ['claude', 'codex']);
-  assert.equal(find(tile(screen, 'claude'), '.agent-tile-tag')[0].textContent, 'On this Mac');
+  assert.equal(stateOf(screen, 'claude'), 'Ready');
+  assert.equal(stateOf(screen, 'codex'), 'Not signed in');
+  assert.equal(commandOf(screen, 'codex'), 'codex login');
+  assert.equal(stateOf(screen, 'hermes'), 'Not installed');
+  assert.equal(commandOf(screen, 'hermes'), 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash');
+  assert.equal(useOf(screen, 'hermes').hidden, true, 'Use on an agent that is not here');
+  assert.equal(stateOf(screen, 'desktop'), 'Cannot drive Phosphor');
+  assert.equal(useOf(screen, 'desktop').hidden, true, 'Use on a chat app that cannot drive');
+  assert.ok(!visibleText(screen).some((t) => t.includes('/Users/')), 'a path is in the open');
 });
 
 /* ---------- a pick ---------- */
 
-test('a pick is one round trip: the tile is current at once, the sentence is the app\'s, the path waits behind Details', async () => {
+test('Claude Code signed in: Use is one round trip, the step offers Start Claude Code, and a start that lands turns it into Continue', async () => {
   const world = build();
-  // A missing agent is not stored by the app (picked stays null); the tile the sentence is about stays current.
-  world.answers['agent-pick'] = { ok: true, check: CHECKS.codexMissing, registered: false, registrationFailed: false, command: LINE, agent: 'codex', picked: null };
-  const screen = await atPicker(world);
-  tile(screen, 'codex').click();
-  assert.equal(tile(screen, 'codex').getAttribute('aria-current'), 'true');
-  assert.deepEqual(sentences(screen), ['Checking on this Mac.']);
-  await flush();
-  assert.equal(tile(screen, 'codex').getAttribute('aria-current'), 'true');
-  const pick = world.calls.find((c) => c.action === 'agent-pick');
-  assert.ok(pick && pick.agent === 'codex', 'the pick was not posted');
-  assert.deepEqual(sentences(screen), [CHECKS.codexMissing.sentence]);
-  assert.equal(find(screen, '.agentpick-line')[0].getAttribute('data-tone'), 'down');
-  // The fold is closed until Details is pressed, and it is where the path lives.
-  const fold = find(screen, '.agentpick-fold')[0];
-  assert.equal(fold.hidden, true);
-  assert.ok(!visibleText(screen).some((t) => t.includes('/Users/')), 'a path is in the open');
-  buttonNamed(screen, 'Details').click();
-  assert.equal(fold.hidden, false);
-  assert.ok(visibleText(screen).some((t) => t.startsWith('Install: npm install -g @openai/codex')));
-  assert.ok(visibleText(screen).some((t) => t.includes(LINE)), 'the line to paste is not behind Details');
-  // The action row follows: Check again over the same Do this later.
-  assert.equal(primary(screen).textContent, 'Check again');
-  assert.ok(buttonNamed(screen, 'Do this later'));
-  assert.equal(world.toasts.length, 0);
-});
-
-test('Check again re-checks without writing, and a signed-out agent gets its sentence and the same button', async () => {
-  const world = build();
-  world.answers['agent-pick'] = { ok: true, check: CHECKS.codexMissing, registered: false, registrationFailed: false, command: LINE, picked: null };
-  const screen = await atPicker(world);
-  tile(screen, 'codex').click();
-  await flush();
-  world.answers['agent-check'] = { ok: true, check: CHECKS.codexOut, command: LINE, picked: 'codex' };
-  buttonNamed(screen, 'Check again').click();
-  await flush();
-  await flush();
-  assert.equal(world.calls.filter((c) => c.action === 'agent-pick').length, 1, 'Check again wrote the pick again');
-  assert.equal(world.calls.filter((c) => c.action === 'agent-check').length, 1);
-  assert.deepEqual(sentences(screen), [CHECKS.codexOut.sentence]);
-  assert.equal(find(screen, '.agentpick-line')[0].getAttribute('data-tone'), 'warn');
-  assert.equal(primary(screen).textContent, 'Check again');
-  world.answers['agent-check'] = { ok: true, check: CHECKS.codexIn, command: LINE, picked: 'codex' };
-  buttonNamed(screen, 'Check again').click();
-  await flush();
-  await flush();
-  assert.deepEqual(sentences(screen), [CHECKS.codexIn.sentence]);
-  assert.equal(primary(screen).textContent, 'Continue');
-  assert.equal(primary(screen).className, 'btn btn-primary btn-lg');
-});
-
-test('Claude Code signed in offers Start it, and a start that lands turns the row into Continue', async () => {
-  const world = build();
+  world.answers['agent-scan'] = { ok: true, agents: [CHECKS.claudeIn], picked: null };
   world.answers['agent-pick'] = { ok: true, check: CHECKS.claudeIn, registered: true, registrationFailed: false, command: 'claude mcp add phosphor --scope user -- node /x/src/mcp.ts', picked: 'claude' };
   world.answers.start = { ok: true, state: 'ready', running: true };
   const screen = await atPicker(world);
-  tile(screen, 'claude').click();
   await flush();
-  assert.deepEqual(sentences(screen), [CHECKS.claudeIn.sentence]);
-  assert.equal(primary(screen).textContent, 'Start it');
-  buttonNamed(screen, 'Details').click();
-  assert.ok(visibleText(screen).some((t) => t.startsWith('Phosphor added itself to the tools of Claude Code')), 'the registration is not said');
+  useOf(screen, 'claude').click();
+  assert.equal(status(screen), 'Checking on this Mac.');
+  await flush();
+  await flush();
+  const pick = world.calls.find((c) => c.action === 'agent-pick');
+  assert.ok(pick && pick.agent === 'claude', 'the pick was not posted');
+  assert.equal(rowOf(screen, 'claude').getAttribute('aria-current'), 'true');
+  assert.equal(primary(screen).textContent, 'Start Claude Code');
   primary(screen).click();
   await flush();
-  assert.ok(world.calls.some((c) => c.action === 'start'), 'Start it did not post the start');
-  assert.deepEqual(sentences(screen), ['Claude Code is at the wheel.']);
+  assert.ok(world.calls.some((c) => c.action === 'start'), 'Start did not post the start');
+  assert.equal(status(screen), 'Claude Code is at the wheel.');
   assert.equal(primary(screen).textContent, 'Continue');
   primary(screen).click();
   assert.equal(screen.hidden, true, 'Continue on the last step did not close the first run');
+  assert.equal(world.toasts.length, 0);
 });
 
-test('a start that fails is one sentence over the same Start it, never a toast or the raw text', async () => {
+test('a start that fails is one sentence over the same Start, never a toast or the raw text', async () => {
   const world = build();
+  world.answers['agent-scan'] = { ok: true, agents: [CHECKS.claudeIn], picked: null };
   world.answers['agent-pick'] = { ok: true, check: CHECKS.claudeIn, registered: true, registrationFailed: false, command: 'x', picked: 'claude' };
   world.answers.start = new Error('spawn ENOENT /Users/x/.local/bin/claude');
   const screen = await atPicker(world);
-  tile(screen, 'claude').click();
+  await flush();
+  useOf(screen, 'claude').click();
+  await flush();
   await flush();
   primary(screen).click();
   await flush();
   await flush();
-  assert.deepEqual(sentences(screen), ['Claude Code could not start. Try again, or start it in your terminal.']);
-  assert.equal(primary(screen).textContent, 'Start it');
+  assert.equal(status(screen), 'Claude Code could not start. Try again, or start it in your terminal.');
+  assert.equal(primary(screen).textContent, 'Start Claude Code');
   assert.equal(world.toasts.length, 0);
   assert.ok(!visibleText(screen).some((t) => t.includes('ENOENT') || t.includes('RAW:')));
 });
 
-test('another agent gets the line to paste in the open with Copy, and Claude Desktop gets its three sentences and no probe', async () => {
+test('a pick of an agent that is not here stores nothing: the list says the app\'s sentence and the pick stays where it was', async () => {
+  const world = build();
+  world.answers['agent-pick'] = { ok: true, check: CHECKS.codexMissing, registered: false, registrationFailed: false, command: LINE, agent: 'codex', picked: null };
+  const screen = await atPicker(world);
+  useOf(screen, 'codex').click();
+  await flush();
+  await flush();
+  assert.equal(rowOf(screen, 'codex').getAttribute('aria-current'), null, 'a pick the app did not store is shown as held');
+  assert.equal(stateOf(screen, 'codex'), 'Not installed');
+  assert.equal(commandOf(screen, 'codex'), 'npm install -g @openai/codex');
+  assert.equal(status(screen), CHECKS.codexMissing.sentence);
+  assert.equal(primary(screen).textContent, 'Continue');
+});
+
+test('another agent gets the line to paste with Copy, and Continue', async () => {
   const world = build();
   world.answers['agent-pick'] = { ok: true, check: CHECKS.other, registered: false, registrationFailed: false, command: 'PHOSPHOR_PORT=4177 node /x/src/mcp.ts', picked: 'mcp' };
   const screen = await atPicker(world);
-  tile(screen, 'mcp').click();
+  useOf(screen, 'mcp').click();
   await flush();
-  assert.deepEqual(sentences(screen), [CHECKS.other.sentence]);
-  const paste = find(screen, '.agentpick-paste')[0];
-  assert.equal(paste.hidden, false);
-  assert.equal(find(paste, 'input')[0].value, 'PHOSPHOR_PORT=4177 node /x/src/mcp.ts');
-  buttonNamed(screen, 'Copy').click();
+  await flush();
+  assert.equal(commandOf(screen, 'mcp'), 'PHOSPHOR_PORT=4177 node /x/src/mcp.ts');
+  buttonNamed(rowOf(screen, 'mcp'), 'Copy').click();
   await flush();
   assert.deepEqual(world.clipboard, ['PHOSPHOR_PORT=4177 node /x/src/mcp.ts']);
-  assert.equal(primary(screen).textContent, 'Continue');
-
-  world.answers['agent-pick'] = { ok: true, check: CHECKS.desktop, registered: false, registrationFailed: false, command: null, picked: 'desktop' };
-  tile(screen, 'desktop').click();
-  await flush();
-  assert.deepEqual(sentences(screen), [CHECKS.desktop.sentence]);
-  assert.equal(find(screen, '.agentpick-paste')[0].hidden, true);
   assert.equal(primary(screen).textContent, 'Continue');
 });
 
 test('a pick the app refuses while an agent is running shows that one sentence and leaves the pick where it was', async () => {
   const world = build();
+  world.answers['agent-scan'] = { ok: true, agents: [CHECKS.claudeIn, CHECKS.codexIn], picked: 'claude' };
   world.answers['agent-pick'] = { ok: false, refused: 'running', sentence: 'Your assistant is running. Turn it off in the chat, then change it here.', picked: 'claude' };
   const screen = await atPicker(world);
-  tile(screen, 'codex').click();
   await flush();
-  assert.deepEqual(sentences(screen), ['Your assistant is running. Turn it off in the chat, then change it here.']);
-  assert.equal(tile(screen, 'codex').getAttribute('aria-current'), null);
-  assert.equal(tile(screen, 'claude').getAttribute('aria-current'), 'true');
-  assert.equal(primary(screen).textContent, 'Continue');
+  useOf(screen, 'codex').click();
+  await flush();
+  await flush();
+  assert.equal(status(screen), 'Your assistant is running. Turn it off in the chat, then change it here.');
+  assert.equal(rowOf(screen, 'codex').getAttribute('aria-current'), null);
+  assert.equal(rowOf(screen, 'claude').getAttribute('aria-current'), 'true');
 });
 
-test('when the app does not answer, the picker says so in its own words and never prints what the network said', async () => {
+test('when the app does not answer, the list says so in its own words and never prints what the network said', async () => {
   const world = build();
   world.answers['agent-pick'] = new Error('Failed to fetch');
   const screen = await atPicker(world);
-  tile(screen, 'hermes').click();
+  useOf(screen, 'grok').click();
   await flush();
   await flush();
-  assert.deepEqual(sentences(screen), ['Phosphor could not check right now. Try again.']);
+  assert.equal(status(screen), 'Phosphor could not check right now. Try again.');
   assert.ok(!visibleText(screen).some((t) => t.includes('RAW:') || t.includes('Failed to fetch')));
   assert.equal(world.toasts.length, 0);
-  assert.equal(sentences(screen).length, 1);
 });
 
-/* ---------- the light ---------- */
-
-test('the light turns on when a client of the picked agent is on the door, and the sentence says so; off when it leaves', async () => {
+test('a terminal agent on the door reads Connected, and another vendor\'s client does not light it', async () => {
   const world = build();
+  world.answers['agent-scan'] = { ok: true, agents: [CHECKS.codexIn], picked: null };
   world.answers['agent-pick'] = { ok: true, check: CHECKS.codexIn, registered: true, registrationFailed: false, command: LINE, picked: 'codex' };
   const screen = await atPicker(world);
-  tile(screen, 'codex').click();
   await flush();
-  assert.equal(light(screen), 'off');
+  useOf(screen, 'codex').click();
+  await flush();
+  await flush();
+  assert.equal(stateOf(screen, 'codex'), 'Runs in your terminal');
   world.store.put({ ...world.store.get(), agents: { members: [{ client: 'codex-cli', label: 'codex', ops: 0 }] } });
-  assert.equal(light(screen), 'ready');
-  assert.deepEqual(sentences(screen), ['Codex is connected.']);
-  // Another vendor's client does not light Codex.
+  assert.equal(stateOf(screen, 'codex'), 'Connected');
   world.store.put({ ...world.store.get(), agents: { members: [{ client: 'claude-code', label: 'claude', ops: 2 }] } });
-  assert.equal(light(screen), 'off');
-  assert.deepEqual(sentences(screen), [CHECKS.codexIn.sentence]);
+  assert.equal(stateOf(screen, 'codex'), 'Runs in your terminal');
 });
 
 /* ---------- the threshold ---------- */
@@ -505,7 +468,7 @@ async function atAssistant(world: World, pick?: string): Promise<Any> {
   await flush();
   assert.ok(visibleText(screen).includes('Your assistant'), 'the assistant step did not open');
   if (pick) {
-    tile(screen, pick).click();
+    (find(screen, '.agentrow').find((r: Any) => r.dataset.agent === pick) as Any).querySelector('.agentrow-use').click();
     await flush();
     await flush();
   }
@@ -526,7 +489,7 @@ async function atThreshold(world: World): Promise<Any> {
 async function doneSentence(world: World, pick?: string): Promise<string> {
   const screen = await atAssistant(world, pick);
   const primary = find(screen, '.screen-actions')[0].childNodes.slice(-1)[0];
-  if (primary.textContent === 'Start it') {
+  if (primary.textContent.startsWith('Start ')) {
     primary.click();
     await flush();
     await flush();
@@ -542,7 +505,6 @@ async function doneSentence(world: World, pick?: string): Promise<string> {
 
 test('the done screen says what the assistant step actually found, never a connection nobody made', async () => {
   const cases: Array<[string | undefined, Answer | undefined, string]> = [
-    ['desktop', { ok: true, check: CHECKS.desktop, command: null, picked: 'desktop' }, 'Install Claude Code or Codex, then pick it in the Vault tab.'],
     ['codex', { ok: true, check: CHECKS.codexIn, command: LINE, registered: true, picked: 'codex' }, 'Start Codex in your terminal and it will appear.'],
     ['codex', { ok: true, check: CHECKS.codexOut, command: LINE, picked: 'codex' }, 'Sign in to Codex, then start it in your terminal.'],
     ['codex', { ok: true, check: CHECKS.codexMissing, command: LINE, picked: null }, 'Install Codex, then pick it in the Vault tab.'],

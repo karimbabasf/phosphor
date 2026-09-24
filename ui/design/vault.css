@@ -1,72 +1,328 @@
-/* The Vault tab: a wide column of six cards, two abreast where the world has
-   the room, and the Addresses card's network menu.
+/* The Vault: three sections of ruled rows on the wide right side (the stage's
+   shape is pro.css's, shared with Pro so the conversation never moves).
 
    Karim, 2026-09-15: "I hate how the vault has to be so scrollable, make it
-   wider, make the info easier to read." The column that was Basic's 640 px is
-   1120 here, the cards sit on a two column grid from 980 px of world, and the
-   words inside them are one step larger with more air between rows. Mono is
-   kept for what is read as digits: an address, a hash, a number. */
+   wider, make the info easier to read." So the page is the wide side, the
+   rows are ruled rather than boxed so nothing pays for a card's padding, the
+   assistant and safety come first, and on a wide world those two sit side by
+   side. Mono is kept for what is read as characters: a command, an address,
+   a word of the phrase. */
 
-.vault-col {
-  width: min(1120px, 100%);
-  gap: var(--s-3);
+.vault {
+  width: min(960px, 100%);
+  padding: var(--s-6) var(--s-6) var(--s-7);
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  flex: 0 0 auto;
 }
 
-/* Under 980 px the two columns dissolve into the one column Basic reads,
-   and the cards keep their reading order through the `order` each carries. */
-.vault-column {
-  display: contents;
-}
-
-@container world (min-width: 980px) {
-  .vault-col {
+@container world (min-width: 1000px) {
+  .vault {
+    width: min(1280px, 100%);
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--s-7);
     align-items: start;
   }
 
-  /* A column stacks its cards, each as tall as what it holds: no card is
-     stretched to its neighbour and no row leaves a hole under the shorter
-     one. */
-  .vault-column {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-3);
-    min-width: 0;
+  .vault > .vault-sec[data-surface="wallet"] {
+    grid-column: 1 / -1;
   }
 }
 
-/* ---------- readability inside the cards ---------- */
+/* ---------- a section ---------- */
 
-.vault-col .card-body {
-  gap: var(--s-4);
+.vault-sec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
 }
 
-.vault-col .card-body > .body,
-.vault-col .card-body > .meta {
-  line-height: 1.55;
+.vault-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  min-height: 30px;
 }
 
-.vault-col .card-body > .meta {
-  font-size: var(--fs-13);
+.vault-sec-head > .btn {
+  margin-right: calc(var(--s-3) * -1);
 }
 
-.vault-col .card-body > .body.dim {
-  color: var(--text-2);
-}
-
-.vault-col .facts {
-  gap: var(--s-3) var(--s-5);
-}
-
-.vault-col .fact > .label {
-  font-size: var(--fs-13);
-  color: var(--text-2);
-}
-
-.vault-col .fact > .body {
+.vault-title {
+  margin: 0;
+  font-size: var(--fs-18);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
   color: var(--text);
-  text-align: left;
+}
+
+.vault-lead {
+  margin: 0 0 var(--s-3);
+  max-width: 62ch;
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.vault-sec-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vault-agents {
+  min-width: 0;
+}
+
+/* ---------- a row ----------
+
+   The row's name, what it says, and its action, on one line of a grid; what
+   it opens (a confirm, a flow) grows under the words. The body is the only
+   part that wraps. */
+.vault-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) auto;
+  column-gap: var(--s-5);
+  align-items: start;
+  padding: var(--s-4) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.vault-sec-body > .vault-row:first-child {
+  border-top: 1px solid var(--line);
+}
+
+.vault-row-title {
+  margin: 0;
+  padding-top: 1px;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.vault-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.vault-row-act {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  min-height: 30px;
+}
+
+.vault-row-act:not(:has(> :not([hidden]))) {
+  display: none;
+}
+
+/* The addresses need the row's whole width for the token list. */
+.vault-row-wide {
+  grid-template-columns: 112px minmax(0, 1fr);
+}
+
+.vault-row-wide > .vault-row-act {
+  display: none;
+}
+
+.vault-text {
+  margin: 0;
+  max-width: 64ch;
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.vault-text[data-frozen="true"] {
+  color: var(--text);
+}
+
+.vault-text.dim {
+  color: var(--text-3);
+}
+
+.vault-sub {
+  margin: 0;
+  max-width: 64ch;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+/* Something the person has to know before going on: an icon from the family
+   and the sentence in the text tone. Never a wash, never red. */
+.vault-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.vault-warn > .icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--text-2);
+}
+
+.vault-error {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.vault-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* ---------- a confirm step ----------
+
+   Under the words it asks about, inset on the conversation's ground with a
+   hairline, never a dialog over the window. The harmless answer takes the
+   focus. */
+.vault-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin-top: var(--s-1);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-0);
+  animation: vault-in var(--dur-enter) var(--ease-out);
+}
+
+.vault-confirm-text {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.vault-confirm .field {
+  max-width: 280px;
+}
+
+@keyframes vault-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+
+/* The answers wear the bar's neutral ring: a green ring on Cancel beside the
+   red Freeze reads as the way to go. */
+.vault-confirm .btn:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+/* ---------- the lock timer ---------- */
+
+.vault-lock-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) 10px;
+}
+
+/* Three choices as one quiet segmented control: the current one on the
+   raised ground with a hairline, the others words. */
+.vault-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg-0);
+}
+
+.vault-seg-cell {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 var(--s-3);
+  border-radius: calc(var(--radius-sm) - 2px);
+  border: 1px solid transparent;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text-2);
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .vault-seg-cell:hover { color: var(--text); }
+}
+
+.vault-seg-cell[aria-checked="true"] {
+  color: var(--text);
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+}
+
+.vault-seg-cell:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 1px;
+}
+
+/* ---------- limits ---------- */
+
+.vault-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vault-rule {
+  max-width: 64ch;
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/* ---------- the phrase's flows ---------- */
+
+.vault-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+
+.vault-flow-title {
+  margin: 0;
+  font-size: var(--fs-15);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.vault-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
 }
 
 /* ---------- the network menu ---------- */
@@ -80,8 +336,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  min-height: 40px;
-  padding: 0 var(--s-3) 0 var(--s-3);
+  min-height: 36px;
+  padding: 0 var(--s-3);
   border-radius: var(--radius-sm);
   border: 1px solid var(--line-strong);
   background: var(--bg-2);
@@ -92,8 +348,10 @@
               background-color var(--dur-press) var(--ease-out);
 }
 
-.netsel:hover {
-  border-color: var(--text-3);
+@media (hover: hover) and (pointer: fine) {
+  .netsel:hover {
+    border-color: var(--text-3);
+  }
 }
 
 .netsel:focus-visible {
@@ -131,7 +389,6 @@
 }
 
 .netsel-option {
-  --net: var(--text);
   display: flex;
   align-items: center;
   gap: var(--s-2);
@@ -168,7 +425,7 @@
 }
 
 /* Where the keyboard is, and where the pointer is: the same paint. The one
-   in the menu that is already picked carries the ink dot. */
+   already picked is in the text tone and the heavier weight. */
 .netsel-option[data-active="true"],
 .netsel-option:hover {
   background: var(--bg-1);
@@ -184,15 +441,7 @@
 
 .netsel-option[aria-selected="true"] {
   color: var(--text);
-}
-
-.netsel-option[aria-selected="true"]::after {
-  content: "";
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ink);
+  font-weight: 600;
 }
 
 /* ---------- the tokens and the key ---------- */
@@ -219,11 +468,38 @@
   font-size: var(--fs-14);
 }
 
+/* ---------- narrow ---------- */
+
+/* Under 600 of world the name sits over the row's words and the actions
+   under them, left-aligned, so no sentence is squeezed beside a button. */
+@container world (max-width: 599px) {
+  .vault {
+    padding-inline: var(--s-5);
+  }
+
+  .vault-row,
+  .vault-row-wide {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--s-2);
+  }
+
+  .vault-row-act {
+    justify-content: flex-start;
+  }
+
+  .vault-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .vault-confirm { animation: none; }
+
   .netsel,
   .netsel .chev-icon,
   .netsel-option,
-  .netsel-option .logo {
+  .netsel-option .logo,
+  .vault-seg-cell {
     transition: none;
   }
 }
