@@ -10,7 +10,7 @@ import type { OneClickToken, TokensFile } from '../intents.ts';
 import { amountAsk, baseUnitsToDecimal, decimalToBaseUnits, heldSymbol, oneLine, resolveAsset } from '../intents.ts';
 import { MAX_LIMIT } from '../chainscan/index.ts';
 import type { IntentsActivity, IntentsRow } from '../chainscan/index.ts';
-import { networkByVenue, spendNetworkOf } from '../rails/intents-address.ts';
+import { networkByVenue } from '../rails/intents-address.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, INTENTS_NATIVE_VENUE } from '../rails/intents-native.ts';
 import { INTENTS_RELAY_COUNTERPARTY, INTENTS_RELAY_VENUE } from '../rails/intents-relay.ts';
 import { reasonOf } from '../rails/reasons.ts';
@@ -93,53 +93,120 @@ function heldOf(ctx: PCtx): Map<string, string> {
   return out;
 }
 
-export type SidePick = { kind: 'one'; side: SwapSide } | { kind: 'many'; candidates: SwapSide[] } | { kind: 'none'; why: string };
+export type SidePick =
+  | { kind: 'one'; side: SwapSide }
+  | { kind: 'many'; candidates: SwapSide[] }
+  | { kind: 'none'; why: string; code?: ReasonCode };
 export type SideAsk = { asked: string; chain?: string };
 
-/* THE TWO COINS OF A SWAP, one rule for swap_quote and propose_swap alike. A coin named with its
-   network, or by id, is that coin. A ticker alone that several coins carry is narrowed in a fixed
-   order: the one the balance already holds, then the one on the other coin's network, then the
-   one on NEAR. A step that matches nothing is skipped; one coin left is the answer, and only when
-   several are still left is it a question (ambiguous_asset), answered with their ids. "Swap my
-   NEAR to USDC" is USDC on near, never "which USDC?" (2026-09-23). */
+/* THE TWO COINS OF A SWAP, one rule for swap_quote and propose_swap alike (2026-09-23: "swap my
+   NEAR to USDC" came back "which USDC?"). A coin named with its network, or by id, is that coin.
+   A ticker alone that several coins carry:
+     spent  -> the one the balance holds is the only answer; none held is nothing to spend, and
+               several held is the question.
+     bought -> the one the balance holds; otherwise pickBoughtByQuote asks what each would get.
+   What is still several after this is the candidates the next step, or the person, chooses from. */
 export function resolveSwapSides(from: SideAsk, to: SideAsk, list: OneClickToken[], held: ReadonlySet<string>): { from: SidePick; to: SidePick } {
-  const asks = { from, to };
+  const named = (ask: SideAsk): boolean => (ask.chain?.trim() ?? '') !== '';
   const picks = { from: resolveSide(from.asked, from.chain, list), to: resolveSide(to.asked, to.chain, list) };
-  // The network a side stands on: the one it named, else the one its coin was found on.
-  const networkOf = (side: 'from' | 'to'): string | null => {
-    const chain = asks[side].chain?.trim().toLowerCase() ?? '';
-    if (chain !== '') return spendNetworkOf(chain)?.id ?? null;
-    const pick = picks[side];
-    return pick.kind === 'one' ? pick.side.network : null;
-  };
-  // Twice round, so a coin settled by NEAR on the first pass lends its network to the other.
-  for (let pass = 0; pass < 2; pass += 1) {
-    for (const side of ['from', 'to'] as const) {
-      const pick = picks[side];
-      if (pick.kind !== 'many' || (asks[side].chain?.trim() ?? '') !== '') continue;
-      const otherNetwork = networkOf(side === 'from' ? 'to' : 'from');
-      const rules: Array<(s: SwapSide) => boolean> = [(s) => held.has(s.assetId)];
-      if (otherNetwork !== null) rules.push((s) => s.network === otherNetwork);
-      rules.push((s) => s.network === 'near');
-      let left = pick.candidates;
-      for (const rule of rules) {
-        const kept = left.filter(rule);
-        if (kept.length > 0) left = kept;
-        if (left.length === 1) break;
-      }
-      picks[side] = left.length === 1 ? { kind: 'one', side: left[0]! } : { kind: 'many', candidates: left };
-    }
+  if (picks.from.kind === 'many' && !named(from)) {
+    const owned = picks.from.candidates.filter((s) => held.has(s.assetId));
+    picks.from =
+      owned.length === 1
+        ? { kind: 'one', side: owned[0]! }
+        : owned.length > 1
+          ? { kind: 'many', candidates: owned }
+          : { kind: 'none', why: `the balance holds no ${oneLine(from.asked, 20)}`, code: 'insufficient_balance' };
+  }
+  if (picks.to.kind === 'many' && !named(to)) {
+    const owned = picks.to.candidates.filter((s) => held.has(s.assetId));
+    if (owned.length === 1) picks.to = { kind: 'one', side: owned[0]! };
+    else if (owned.length > 1) picks.to = { kind: 'many', candidates: owned };
   }
   return picks;
 }
 
-// The one resolver over the venue's list and the balance as the ledger last read it. Null when
-// there is no venue list here to read (demo mode, a hand-built registry).
-export async function pickSwapSides(ctx: PCtx, from: SideAsk, to: SideAsk): Promise<{ from: SidePick; to: SidePick; list: OneClickToken[] } | null> {
+/* THE COIN BOUGHT, BY WHAT IT WOULD GET. Up to BUY_PROBE_MAX of the candidates are asked for a
+   floorless price at once, BUY_PROBE_TIMEOUT_MS for all of them, and the most arriving wins: they
+   are the same coin, so the amounts, each in its own coin's units, compare as they are. That keeps
+   a new person off the bridged ETH on near when ETH from Ethereum pays more. No answer at all is
+   the one on near; no near one either is the question. Nothing is signed or filed. The four asked
+   are the one on near, the one on the spent coin's network, then Ethereum, Base, Arbitrum and
+   Solana, then the list's own order; the same order breaks a tie. */
+export const BUY_PROBE_MAX = 4;
+export const BUY_PROBE_TIMEOUT_MS = 2_000;
+const BUY_PROBE_PREFERRED = ['eth', 'base', 'arb', 'sol'];
+
+export async function pickBoughtByQuote(ctx: PCtx, sold: SwapSide, amount: string | null, candidates: SwapSide[], account: string): Promise<SidePick> {
+  const rank = (s: SwapSide): number => {
+    const order = ['near', sold.network, ...BUY_PROBE_PREFERRED];
+    const at = order.indexOf(s.network);
+    return at === -1 ? order.length : at;
+  };
+  const ordered = candidates.map((s, i) => ({ s, i })).sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i).map((x) => x.s);
+  const near = ordered.find((s) => s.network === 'near');
+  const asked = amount === null ? [] : ordered.slice(0, BUY_PROBE_MAX);
+  const outs = await Promise.all(asked.map((s) => boughtOut(ctx, sold, s, amount ?? '0', account)));
+  let won: { side: SwapSide; out: number } | null = null;
+  for (const [i, out] of outs.entries()) {
+    if (out !== null && (won === null || out > won.out)) won = { side: asked[i]!, out };
+  }
+  if (won !== null) return { kind: 'one', side: won.side };
+  return near !== undefined ? { kind: 'one', side: near } : { kind: 'many', candidates };
+}
+
+// What one candidate would get for the amount sold, in its own units, or null: no price, a refusal,
+// or no answer inside BUY_PROBE_TIMEOUT_MS.
+async function boughtOut(ctx: PCtx, sold: SwapSide, target: SwapSide, amount: string, account: string): Promise<number | null> {
+  const draft = { ...draftFor(ctx, sold, target, account), amountIn: Number(amount), amountInExact: amount };
+  const rail = ctx.rails.for(draft);
+  if (rail === null) return null;
+  const ask = async (): Promise<number | null> => {
+    if (typeof rail.quote === 'function') return rail.quote(draft);
+    if (typeof rail.facts === 'function') return Number((await rail.facts(draft)).expectedOut);
+    return null;
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), BUY_PROBE_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  try {
+    const out = await Promise.race([ask().catch(() => null), late]);
+    return out !== null && Number.isFinite(out) && out > 0 ? out : null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The amount a probe sells: "all" is the balance as the ledger last read it, an amount is cut to the
+// coin's own decimals. Null when there is nothing to ask a price for.
+function probeAmount(ctx: PCtx, sold: SwapSide, amountIn: unknown): string | null {
+  const ask = amountAsk(amountIn);
+  if (ask === null) return null;
+  if (ask.all) return heldOf(ctx).get(sold.assetId) ?? null;
+  const base = decimalToBaseUnits(ask.text, sold.decimals);
+  return base === 0n ? null : baseUnitsToDecimal(base, sold.decimals);
+}
+
+/* THE ONE RESOLVER, whole: the rule above over the venue's list and the balance as the ledger last
+   read it, then the bought coin by what it would get. Null when there is no venue list here to
+   read (demo mode, a hand-built registry). */
+export async function pickSwapSides(
+  ctx: PCtx,
+  from: SideAsk,
+  to: SideAsk,
+  amountIn: unknown,
+): Promise<{ from: SidePick; to: SidePick; list: OneClickToken[] } | null> {
   const lookup = ctx.rails.swap;
   if (lookup === undefined) return null;
   const list = await lookup.tokens();
-  return { ...resolveSwapSides(from, to, list, new Set(heldOf(ctx).keys())), list };
+  const picks = resolveSwapSides(from, to, list, new Set(heldOf(ctx).keys()));
+  if (picks.from.kind === 'one' && picks.to.kind === 'many' && (to.chain?.trim() ?? '') === '') {
+    const account = ourIntentsAddress(ctx, []);
+    picks.to = await pickBoughtByQuote(ctx, picks.from.side, probeAmount(ctx, picks.from.side, amountIn), picks.to.candidates, account);
+  }
+  return { ...picks, list };
 }
 
 /* The name a draft carries for a picked coin: its ticker, which the card and the rails read, or its
@@ -206,6 +273,14 @@ function draftFor(ctx: PCtx, from: SwapSide, to: SwapSide, account: string): Swa
 }
 
 // For the sentence only: the plain names, so a reason reads "NEAR to WBTC", never two ids.
+// For the sentence only, before either coin is found: the names as they were asked.
+function askedWords(ctx: PCtx, params: SwapQuoteParams): SwapDraft {
+  const from = String(params.fromSymbol ?? '');
+  const to = String(params.toSymbol ?? '');
+  const side = (symbol: string, network?: string): SwapSide => ({ symbol, network: network ?? '', assetId: symbol, decimals: 0 });
+  return wordsDraft(draftFor(ctx, side(from, params.chain), side(to, params.toChain), ''), side(from), side(to));
+}
+
 function wordsDraft(draft: SwapDraft, from: SwapSide, to: SwapSide): SwapDraft {
   return { ...draft, fromSymbol: from.symbol, toSymbol: to.assetId === 'nep141:btc.omft.near' ? draft.toSymbol : to.symbol };
 }
@@ -356,12 +431,17 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
     return { ...none, from: null, to: null, reason: 'no_price', sentence: "The swap service didn't answer just now, so there is no quote. Try again in a minute.", details: shortIds(errText(err)) };
   }
 
-  const { from: fromPick, to: toPick } = resolveSwapSides(
+  const sides = resolveSwapSides(
     { asked: String(params.fromSymbol ?? ''), chain: params.chain },
     { asked: String(params.toSymbol ?? ''), chain: params.toChain },
     list,
     new Set(heldOf(ctx).keys()),
   );
+  const fromPick = sides.from;
+  let toPick = sides.to;
+  if (fromPick.kind === 'one' && toPick.kind === 'many' && (params.toChain?.trim() ?? '') === '') {
+    toPick = await pickBoughtByQuote(ctx, fromPick.side, probeAmount(ctx, fromPick.side, params.amountIn), toPick.candidates, ourIntentsAddress(ctx, []));
+  }
   for (const [pick, which] of [
     [fromPick, 'the coin you sell'],
     [toPick, 'the coin you buy'],
@@ -377,12 +457,16 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
       };
     }
     if (pick.kind === 'none') {
+      const code = pick.code ?? 'unsupported_asset';
       return {
         ...none,
         from: fromPick.kind === 'one' ? fromPick.side : null,
         to: toPick.kind === 'one' ? toPick.side : null,
-        reason: 'unsupported_asset',
-        sentence: "The swap service doesn't offer that coin, so there is no quote. Ask what can be swapped and pick from that.",
+        reason: code,
+        sentence:
+          code === 'unsupported_asset'
+            ? "The swap service doesn't offer that coin, so there is no quote. Ask what can be swapped and pick from that."
+            : reasonSentence(code, askedWords(ctx, params)),
         details: pick.why,
       };
     }

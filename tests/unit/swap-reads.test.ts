@@ -126,15 +126,21 @@ test('swap_quote for all of the NEAR prices the exact raw balance and files noth
   assert.equal(h.store.list().length, 0, 'a quote filed a proposal');
 });
 
-/* ONE TICKER, SEVERAL COINS, NO NETWORK NAMED: the one held, then the one on the other coin's
-   network, then the one on NEAR; only when none of those leaves one coin is it a question. "Swap
-   my NEAR to USDC" came back "which USDC?" on the live build (2026-09-23). */
+/* ONE TICKER, SEVERAL COINS, NO NETWORK NAMED ("swap my NEAR to USDC" came back "which USDC?" on
+   the live build, 2026-09-23). The coin spent is the one held, and only that. The coin bought is
+   the one held; else up to four are asked what they would get and the most wins; no answer is the
+   one on near; no near one either is the question. */
 const USDC_ETH = 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near';
 const USDC_ARB = 'nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near';
 const USDC_BASE = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
 const USDT_ARB = 'nep141:arb-0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9.omft.near';
 const USDT_ETH = 'nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near';
 const USDT_TRON = 'nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near';
+const ETH_NEAR = 'nep141:eth.bridge.near';
+const ETH_ETH = 'nep141:eth.omft.near';
+const ETH_BASE = 'nep141:base.omft.near';
+const ETH_ARB = 'nep141:arb.omft.near';
+const ETH_OP = 'nep245:v2_1.omni.hot.tg:10_11111111111111111111';
 const WIDE: OneClickToken[] = [
   ...LIST,
   { assetId: USDC_ETH, decimals: 6, blockchain: 'eth', symbol: 'USDC', contractAddress: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', price: 1 },
@@ -143,7 +149,30 @@ const WIDE: OneClickToken[] = [
   { assetId: USDT_ARB, decimals: 6, blockchain: 'arb', symbol: 'USDT', contractAddress: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', price: 1 },
   { assetId: USDT_ETH, decimals: 6, blockchain: 'eth', symbol: 'USDT', contractAddress: '0xdac17f958d2ee523a2206206994597c13d831ec7', price: 1 },
   { assetId: USDT_TRON, decimals: 6, blockchain: 'tron', symbol: 'USDT', contractAddress: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', price: 1 },
+  { assetId: ETH_NEAR, decimals: 18, blockchain: 'near', symbol: 'ETH', contractAddress: 'eth.bridge.near', price: 4000 },
+  { assetId: ETH_ETH, decimals: 18, blockchain: 'eth', symbol: 'ETH', price: 4000 },
+  { assetId: ETH_BASE, decimals: 18, blockchain: 'base', symbol: 'ETH', price: 4000 },
+  { assetId: ETH_ARB, decimals: 18, blockchain: 'arb', symbol: 'ETH', price: 4000 },
+  { assetId: ETH_OP, decimals: 18, blockchain: 'op', symbol: 'ETH', price: 4000 },
 ];
+
+/* A venue whose floorless price per bought coin the test sets: a number, null for no price, or
+   'hang' for an answer that never comes. Every ask is recorded by the id it was for. */
+function pricingRail(outs: Record<string, number | null | 'hang'>, fallback: number | null = 0.0001): { rail: Rail; asked: string[] } {
+  const asked: string[] = [];
+  const base = venueRail().rail;
+  const rail: Rail = {
+    ...base,
+    async quote(draft) {
+      const id = (draft as SwapDraft).toSymbol;
+      asked.push(id);
+      const out = id in outs ? outs[id] : fallback;
+      if (out === 'hang') return new Promise<number | null>(() => {});
+      return out ?? null;
+    },
+  };
+  return { rail, asked };
+}
 
 function wide(rail: Rail): RailRegistry {
   const r = registry(rail);
@@ -163,73 +192,90 @@ function holding(extra: Array<[string, string, number]>): IntentsRead {
 }
 
 test('the live case: swap_quote from all of the NEAR to USDC is USDC on near, never "which USDC?"', async () => {
-  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(venueRail().rail) } });
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(pricingRail({}).rail) } });
   const reply = await h.svc.swapQuote!({ fromSymbol: 'wNEAR', toSymbol: 'USDC', amountIn: 'all' });
   assert.equal(reply.ok, true, JSON.stringify(reply));
   assert.equal(reply.reason, null);
-  assert.equal(reply.to?.assetId, USDC);
+  assert.equal(reply.to?.assetId, USDC, 'four USDC quote the same, and the tie goes to the one on near');
   assert.equal(reply.to?.network, 'near');
 });
 
-test('step 1: the coin the balance already holds comes first, over the other coin\'s network and over near', async () => {
-  const h = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 2_000_000]]), deps: { rails: wide(venueRail().rail) } });
+test('the coin bought: the one the balance already holds comes first, and nothing is asked', async () => {
+  const v = pricingRail({ [USDC_ETH]: 9 });
+  const h = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 2_000_000]]), deps: { rails: wide(v.rail) } });
   const reply = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'USDC', amountIn: '0.5' });
   assert.equal(reply.ok, true, JSON.stringify(reply));
   assert.equal(reply.to?.assetId, USDC_BASE);
-
-  // And on the sold side: the USDC held is the one sold, wherever it is from.
-  const sell = await h.svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'NEAR', amountIn: '1' });
-  assert.equal(sell.from?.assetId, USDC_BASE);
+  assert.deepEqual(v.asked, [], 'a held coin is not quoted against the others');
 });
 
-test('step 2: with none held, the coin on the other coin\'s network, named or found', async () => {
-  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(venueRail().rail) } });
-  const named = await h.svc.swapQuote!({ fromSymbol: 'USDT', chain: 'arb', toSymbol: 'USDC', amountIn: '1' });
-  assert.equal(named.to?.assetId, USDC_ARB, 'USDC on arb beside USDT named on arb, not USDC on near');
-
-  // NEAR is only on near, so BTC is the one on near: nBTC, which quotes.
-  const found = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'BTC', amountIn: '0.5' });
-  assert.equal(found.ok, true, JSON.stringify(found));
-  assert.equal(found.to?.assetId, NBTC);
+test('the coin bought: with none held, four are asked at once and the one that gets the most wins', async () => {
+  // ETH from Ethereum pays more than the bridged ETH on near: the new person gets the better coin.
+  const v = pricingRail({ [ETH_NEAR]: 0.00101, [ETH_ETH]: 0.00108, [ETH_BASE]: 0.00107, [ETH_ARB]: 0.00106, [ETH_OP]: 0.5 });
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(v.rail) } });
+  const reply = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'ETH', amountIn: '0.5' });
+  assert.equal(reply.to?.assetId, ETH_ETH);
+  assert.deepEqual([...v.asked].sort(), [ETH_ARB, ETH_BASE, ETH_ETH, ETH_NEAR].sort(), 'near, then Ethereum, Base and Arbitrum; op is fifth and never asked');
 });
 
-test('step 3: with none held and none on the other coin\'s network, the one on near', async () => {
-  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(venueRail().rail) } });
-  // Native BTC sits on btc, where no USDC is listed.
-  const reply = await h.svc.swapQuote!({ fromSymbol: 'BTC', chain: 'btc', toSymbol: 'USDC', amountIn: '0.001' });
-  assert.equal(reply.to?.assetId, USDC);
+test('the coin bought: when no price comes back, the one on near; when there is none on near, the question', async () => {
+  const silent = pricingRail({}, null);
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(silent.rail) } });
+  const eth = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'ETH', amountIn: '0.5' });
+  assert.equal(eth.to?.assetId, ETH_NEAR);
+
+  // USDT on eth, arb and tron: nobody answers, and none is on near.
+  const usdt = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'USDT', amountIn: '0.5' });
+  assert.equal(usdt.ok, false);
+  assert.equal(usdt.reason, 'ambiguous_asset');
+  assert.deepEqual(usdt.candidates?.map((c) => c.assetId).sort(), [USDT_ARB, USDT_ETH, USDT_TRON].sort());
+
+  // NEAR is only on near, and native BTC has no seller: nBTC, which quotes.
+  const btc = await makeCtx({ intents: wnearHeld(), deps: { rails: wide(pricingRail({ [BTC]: null }).rail) } }).svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'BTC', amountIn: '0.5' });
+  assert.equal(btc.ok, true, JSON.stringify(btc));
+  assert.equal(btc.to?.assetId, NBTC);
 });
 
-test('only when none of the three leaves one coin is it a question, answered with the ids', async () => {
-  // USDT on eth and on tron: neither held, neither on near, where the NEAR sold is.
-  const narrow = WIDE.filter((t) => t.assetId !== USDT_ARB);
-  const r = wide(venueRail().rail);
-  const h = makeCtx({ intents: wnearHeld(), deps: { rails: { ...r, swap: { ...r.swap!, tokens: async () => narrow } } } });
-  const reply = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'USDT', amountIn: '0.5' });
-  assert.equal(reply.ok, false);
-  assert.equal(reply.reason, 'ambiguous_asset');
-  assert.deepEqual(reply.candidates?.map((c) => c.assetId).sort(), [USDT_ETH, USDT_TRON].sort());
+test('the coin bought: a price that does not come within two seconds is no answer', async () => {
+  const v = pricingRail({ [ETH_ETH]: 'hang', [ETH_NEAR]: 0.001 }, null);
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(v.rail) } });
+  const started = Date.now();
+  const reply = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'ETH', amountIn: '0.5' });
+  assert.equal(reply.to?.assetId, ETH_NEAR);
+  assert.ok(Date.now() - started < 3_000, 'the hung ask did not hold the answer past its bound');
+});
 
-  // Two held are narrowed on by the next rules, not asked about.
-  const two = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 1_000_000], [USDC_ARB, 'USDC', 1_000_000]]), deps: { rails: wide(venueRail().rail) } });
-  const picked = await two.svc.swapQuote!({ fromSymbol: 'USDT', chain: 'arb', toSymbol: 'USDC', amountIn: '1' });
-  assert.equal(picked.to?.assetId, USDC_ARB);
+test('the coin spent: the one held is the only answer; none held is nothing to spend, two held is the question', async () => {
+  const one = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 2_000_000]]), deps: { rails: wide(pricingRail({}).rail) } });
+  assert.equal((await one.svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'NEAR', amountIn: '1' })).from?.assetId, USDC_BASE);
+
+  const none = makeCtx({ intents: wnearHeld(), deps: { rails: wide(pricingRail({}).rail) } });
+  const nothing = await none.svc.swapQuote!({ fromSymbol: 'USDT', toSymbol: 'NEAR', amountIn: '1' });
+  assert.equal(nothing.reason, 'insufficient_balance');
+  assert.match(nothing.sentence ?? '', /You don't have that much USDT/);
+
+  const two = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 1_000_000], [USDC_ARB, 'USDC', 1_000_000]]), deps: { rails: wide(pricingRail({}).rail) } });
+  const which = await two.svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'NEAR', amountIn: '1' });
+  assert.equal(which.reason, 'ambiguous_asset');
+  assert.deepEqual(which.candidates?.map((c) => c.assetId).sort(), [USDC_ARB, USDC_BASE].sort());
 });
 
 test('propose_swap picks by the same rule: a network left out is found, and a question is refused with the ids', async () => {
-  const h = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 2_000_000]]), deps: { rails: wide(venueRail().rail) } });
+  const h = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 2_000_000]]), deps: { rails: wide(pricingRail({}).rail) } });
   const p = await h.svc.proposeSwap({ fromSymbol: 'NEAR', toSymbol: 'USDC', amountIn: '0.5', minAmountOut: 1 });
   assert.equal(p.draft.kind, 'swap');
   const d = p.draft as SwapDraft;
   assert.deepEqual([d.chain, d.fromSymbol, d.toChain, d.toSymbol], ['near', 'wNEAR', 'base', 'USDC'], 'NEAR found on near, USDC the one held');
 
-  const r = wide(venueRail().rail);
-  const narrow = WIDE.filter((t) => t.assetId !== USDT_ARB);
-  const asked = makeCtx({ intents: wnearHeld(), deps: { rails: { ...r, swap: { ...r.swap!, tokens: async () => narrow } } } });
+  const best = makeCtx({ intents: wnearHeld(), deps: { rails: wide(pricingRail({ [ETH_ETH]: 0.002, [ETH_NEAR]: 0.001 }).rail) } });
+  const bought = await best.svc.proposeSwap({ chain: 'near', fromSymbol: 'NEAR', toSymbol: 'ETH', amountIn: '0.5', minAmountOut: 0.0009 });
+  assert.deepEqual([(bought.draft as SwapDraft).toChain, (bought.draft as SwapDraft).toSymbol], ['eth', 'ETH']);
+
+  const asked = makeCtx({ intents: wnearHeld(), deps: { rails: wide(pricingRail({}, null).rail) } });
   const refused = await asked.svc.proposeSwap({ chain: 'near', fromSymbol: 'NEAR', toSymbol: 'USDT', amountIn: '0.5', minAmountOut: 1 });
   assert.equal(refused.status, 'policy_refused');
   assert.equal(asked.svc.view(refused).reason?.code, 'ambiguous_asset');
-  assert.match(refused.verdict.reasons.join(' '), new RegExp(`${USDT_ETH}.*${USDT_TRON}|${USDT_TRON}.*${USDT_ETH}`));
+  assert.match(refused.verdict.reasons.join(' '), new RegExp(`${USDT_ETH}`));
 });
 
 test('swap_quote into native BTC is no price, in the words that say what works instead', async () => {
