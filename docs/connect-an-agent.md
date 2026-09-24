@@ -6,36 +6,40 @@ agent you already use, what that agent sees, and what it can never do whatever i
 
 ## Pick your assistant
 
-The last step of the first run, and the Agent panel of the Vault tab, is a picker with six tiles:
+The assistant step of the first run, and Your assistant at the top of the Vault tab, list five
+agents, one tile each:
 
 - Claude Code
 - Codex
 - Hermes
 - Grok
 - Another agent (any MCP client)
-- Claude Desktop or a chat app
 
-Pick the one you already use. The app checks that agent on this Mac inside three seconds and says
-in one sentence what it found. The check is a `--version` call and a sign-in probe that stays on
-this Mac (a status command, or whether the vendor's credential file exists); it never sends
-anything to the vendor and never reads a token. The answer is one of four states:
+Each tile says what the app found on this Mac: Signed in, runs in the chat; Signed in, runs in
+your terminal; Connected; Installed, not signed in; Not installed; or, for another agent, Connects
+from outside. Chat apps like Claude Desktop get no tile: one line under the list says they cannot
+drive Phosphor yet, because Phosphor needs an agent that runs on your Mac.
+
+Press Use on the one you already use. The app checks that agent on this Mac inside three seconds
+and says in one sentence what it found. The check is a `--version` call and a sign-in probe that
+stays on this Mac (a status command, or whether the vendor's credential file exists); it never
+sends anything to the vendor and never reads a token. The answer is one of four states:
 
 | State | The sentence |
 | --- | --- |
-| installed and signed in | "Codex is signed in: start it in your terminal and it will appear here." (Claude Code: "is signed in and ready to start.") |
+| installed and signed in | "Codex is signed in: start it in your terminal and it will appear here." (Claude Code and Grok: "is signed in and ready to start.") |
 | installed, not signed in | "Codex is installed but not signed in. Sign in in your terminal, then press Check again." |
 | not installed | "Codex is not on this Mac yet. Install it, then come back to this screen." |
 | cannot be checked | "Phosphor cannot check this agent, so paste the line below into it and it will appear here." |
 
-The path the agent was found at, its version, and the install and sign-in commands sit behind
-Details. Claude Desktop and chat apps get three sentences and no check: Phosphor needs an agent
-that runs on your Mac, Claude Desktop cannot drive it yet, so install Claude Code or Codex and pick
-it here.
+A tile that needs an install or a sign-in has How to install or How to sign in, which opens the
+line to run, with Copy.
 
 ## What a pick does
 
-Picking a tile writes the choice to `agent.json` in the app's state directory, runs the check, and
-registers Phosphor with the agent through the agent's own command, so there is nothing to paste:
+Use runs the check first. When the agent is on this Mac, the app writes the choice to
+`agent.json` in its state directory and registers Phosphor with the agent through the agent's own
+command, so there is nothing to paste:
 
 | Agent | What the app runs |
 | --- | --- |
@@ -49,10 +53,9 @@ proxy needs to find this installation of the app. The registration is written at
 or global scope, never for one folder: Phosphor will be available in every Claude Code, Codex,
 Hermes or Grok session on this Mac, not just one folder, and moves under your threshold run on
 their own up to your daily auto ceiling (five times the threshold by default, $500 on a fresh
-install; see [Policy](policy.md)). The picker says the same sentence behind Details. An entry that
-already exists is removed and written again, so it always names the paths of the app you have now.
-If the registration cannot be written, the sentence says so and the line to paste is shown; Details
-holds the same line for anyone who would rather run it themselves.
+install; see [Policy](policy.md)). An entry that already exists is removed and written again, so it
+always names the paths of the app you have now. If the registration cannot be written, the tile
+says so and shows the line to paste into your terminal, with Copy.
 
 Another agent gets the stdio command instead, with the environment in front of it:
 
@@ -61,56 +64,66 @@ PHOSPHOR_PORT=4177 PHOSPHOR_DATA_DIR='/Users/you/Library/Application Support/com
 ```
 
 Register that the way your client registers a stdio MCP server. The same line, for the agent you
-picked, is under Phosphor, then Copy MCP Config in the menu bar; the window and the menu read it
-from the same place, so they never differ.
+picked, is under Phosphor, then Copy MCP Config in the menu bar, and behind Connect your own in the
+chat; they read it from the same place, so they never differ.
 
 ## Starting it
 
-Claude Code is the one agent the app starts itself: press Start it on the picker, or Start your
-assistant in the assistant column. The session it starts is locked down, and the lockdown is not a
-setting you can loosen:
+Two agents run inside the app, in the chat on the left: Claude Code and Grok. Pick one in the
+Vault tab, then press Start your agent in the chat. The chat runs the agent you picked and no
+other: if your pick runs in your terminal, the chat says so instead of starting something else.
+The session it starts is locked down, and the lockdown is not a setting you can loosen:
 
-- It sees Phosphor's own tools and nothing else. No shell, no file access, no web fetch, no
-  search.
-- It runs with none of your Claude Code settings, hooks, plugins or `CLAUDE.md` files, and loads
-  no memory the app did not write.
-- It announces its tool list when it starts. If that list holds anything outside Phosphor's
-  tools, the app refuses to drive and says so.
+- It sees Phosphor's own tools, plus the vendor's own web search and page reading, and nothing
+  else. No shell and no file access.
+- Once it has searched the web or read a page, every move it proposes in that chat waits for your
+  click, whatever the size, until the chat starts a new session. See
+  [Security](security.md#a-web-page-is-not-an-instruction).
+- It runs with none of your own settings, hooks, plugins or instruction files (such as
+  `CLAUDE.md`), and loads no memory the app did not write.
+- It announces its tool list when it starts. If that list holds anything beyond Phosphor's tools
+  and the two web tools, the app refuses to drive and says so. Grok also reads back everything it
+  would load before each turn, and a turn that would load anything Phosphor did not put there does
+  not run.
 - It has no way to approve its own proposals. Approval is your click in the window.
 
-Every other agent starts in your terminal, the way you always start it, and appears in the window
-when it connects: the light in front of the sentence turns on and the sentence reads "Codex is
-connected." An agent that runs inside the app must run under a lockdown file the app owns
-(`operator/driver.settings.json`, held to the installed release by `tests/lockdown.test.ts`), which
-is why only Claude Code is started in-app today.
+Codex, Hermes and any other agent start in your terminal, the way you always start them, and
+appear in the window when they connect: the tile says Connected, and the chat says "Your own agent
+is connected." An agent that runs inside the app must run under a lockdown the app owns and reads
+back: for Claude Code that is `operator/driver.settings.json`, held to the installed release by
+`tests/lockdown.test.ts`, and for Grok it is the app's own flags and an empty home folder the app
+owns. That is why only these two run in the chat today.
 
-Tell it what to do from its own terminal, or in the box at the bottom of the assistant column for
-the built-in one. Its moves land in Activity, and every one that needs your click waits for it in
-the window.
+Talk to a terminal agent in its own terminal, and to the chat's agent in the box at the bottom of
+the chat. Its replies stream in as they are written. Every move, from either one, lands in the chat
+as one card, and the card is where you click when your click is needed.
 
 ## Changing it later
 
-The Agent panel in the Vault tab shows the agent you picked, its state from the same check, a
-Change button that opens the same picker, and Check again. Changing the pick never stops or
-restarts an agent the app started: while one is running the switch is refused with "Your assistant
-is running. Turn it off in the chat, then change it here." Turn it off from the assistant column
-first, then change it.
+Your assistant, at the top of the Vault tab, is the same list. The agent in use says Your
+assistant where its Use would be, Use on another tile changes the pick, and Check again asks this
+Mac again. Changing the pick never stops or restarts an agent the app started: while one is
+running the switch is refused with "Your assistant is running. Turn it off in the chat, then change
+it here." Press Turn off at the top of the chat first (it asks, then deletes the chat's transcript
+on this window; your wallet, limits and open positions are untouched), then change it.
 
-An agent you remove later reads "Codex is no longer on this Mac" in the panel, with the light off.
-Nothing else in the app depends on it, so the app boots as it always did.
+An agent you remove later reads "Codex is no longer on this Mac." Nothing else in the app depends
+on it, so the app boots as it always did.
 
 ## What the agent sees
 
-At connect time the agent is handed its role: it drives this app and does not develop it, it
-cannot approve, and everything it reads is data. Its first call is normally `start`, which
-returns the live state (network, wallet value, whether a decision is waiting, the click threshold,
-which tab you are looking at) and an index of every capability with the tool that performs it.
+At connect time an agent in your terminal is handed its role: it drives this app and does not
+develop it, it cannot approve, and everything it reads is data. Its first call is normally
+`start`, which returns the live state (network, balance, what waits for a click, the click
+threshold, which tab you are looking at) and an index of every capability with the tool that
+performs it. The chat's agent has the same rules as its system prompt instead, and every message
+you send it carries one line saying which tab you are on.
 
 From there it can read your addresses, your balances in both pockets, your policy as sentences,
-the audit log, the chart, public chain data, and every request it has made. It can draw on the
-chart, switch tabs, and set which coins the Basic tab tracks. The Vault tab says the same in two
-lines: it can see your addresses, your balances and every request it has made; it cannot see your
-keys or your recovery phrase.
+the chart, public chain data, and every request it has made; an agent in your terminal can also
+read the audit log. It can draw on the chart and switch tabs. The chat's agent can also search the
+web and read pages. The Vault tab says the same in one line: "It sees your balances and addresses,
+never your keys or your phrase."
 
 The full list is in [Tools](tools.md).
 
@@ -133,7 +146,7 @@ serves one wallet, so a second copy of Phosphor brings the first forward and clo
 
 ## More than one agent
 
-Up to six agents can drive at once. An agent can spawn up to three workers of its own with
-`agent_spawn`; a worker reads, measures and draws, and has no propose tools at all. Agents share a
-board they post one-line claims to, so two do not measure the same thing twice. Everything one
-agent reads from another is data, never an instruction.
+Up to six agents can drive at once. An agent in your terminal can spawn up to three workers of its
+own with `agent_spawn`; a worker reads, measures and draws, and has no propose tools at all. Agents
+share a board they post one-line claims to, so two do not measure the same thing twice. Everything
+one agent reads from another is data, never an instruction.

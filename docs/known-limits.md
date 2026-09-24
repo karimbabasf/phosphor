@@ -19,8 +19,8 @@ gets called an audit until a third party signs it.
 Your wallet file is sealed on disk, and on a Mac with a Secure Enclave the seal opens only with
 Touch ID. But while the vault is open the unsealed key sits in the app's memory, because that is
 what signs the moves you approved and the small ones your rules allow. The lock wipes it, and the
-lock comes after fifteen minutes with nobody at the window, when the Mac sleeps, and when you
-close the window.
+lock comes after fifteen minutes with nobody at the window (or the time you set in the Vault
+tab), when the Mac sleeps, when you close the window, and when you press Lock now.
 
 What it means: a program that can read the app's memory while the vault is open has the key.
 On macOS that takes a process running as you with the right to attach to another process, which
@@ -36,9 +36,9 @@ and once it has, it can do what your agent can do: read your balances and propos
 
 What it means: a move under your click threshold runs without a click. That is the one money
 exposure such a program has, and your rules set its size. If a hostile program running as you is
-something you worry about, lower the threshold or set it to zero: at zero every move waits for
-you. Nothing on this Mac can approve a move: the click needs the window token, which no route
-serves and no program can fetch.
+something you worry about, lower the threshold in the Vault tab, or ask your assistant to set it
+to zero: at zero every move waits for you. Nothing on this Mac can approve a move: the click
+needs the window token, which no route serves and no program can fetch.
 
 What closes it: the agent's door moving onto a socket the operating system can identify the
 caller of. Until then the seat secret is the credential in its place.
@@ -53,8 +53,9 @@ project does not hold yet.
 What it means: the checksum on the release page is what proves the file is the one we built.
 Check it before you open the disk image, every time, see
 [Getting started](getting-started.md#check-the-file). Two more things follow from the missing
-Developer ID. The Secure Enclave key is bound to this Mac rather than to Phosphor, so the Vault
-tab says "Any process on this Mac can ask"; a Developer ID build binds it to the app. And a
+Developer ID. The Secure Enclave key is bound to this Mac rather than to Phosphor, so the Keys row
+in the Vault tab says that other apps on this Mac could ask for the key; a Developer ID build
+binds it to the app. And a
 signed update still verifies: the updater checks the bundle's own signature, which does not
 depend on Apple.
 
@@ -69,7 +70,7 @@ anything. A bridge that holds a failed deposit refunds it on its own timetable, 
 support, and the app can only keep asking and show you the state honestly. A venue outage means
 the app shows unknown, never zero, and signs nothing against a number it could not read.
 
-What it means: a move the app calls Not confirmed or "Late, nothing has changed" is money in
+What it means: a move whose card says Taking longer, or that reads Not confirmed, is money in
 the venue's hands, not lost and not the app's to recover by itself. Do not send it again.
 [Troubleshooting](troubleshooting.md#a-move-is-late-or-not-confirmed) says what to do.
 

@@ -3,8 +3,8 @@
 Your rules decide what the agent may do on its own, what waits for your click, and what is
 refused outright. They live in the app as plain sentences, a pure engine enforces them with no
 model in the path, and no proposal reaches execution without either your click or an allow inside
-limits you wrote. This page explains the rules, the click threshold, how a rule changes, and why
-the gate has no off switch.
+limits you wrote. This page explains the rules, the click threshold, the click that follows a web
+page, how a rule changes, and why the gate has no off switch.
 
 ## The rules
 
@@ -35,9 +35,8 @@ everything in the top bar, see [Getting started](getting-started.md#freeze-every
 
 The click threshold splits every write into two kinds. At or below it, the policy engine decides
 alone and the move may execute at once, with no click and, on an enclave wallet, no Touch ID,
-as long as the vault is open. Above it, nothing happens until you click. The Vault tab says the
-same in one line: "Moves under $100 run without a click while the vault is open. Above that,
-nothing happens until you click."
+as long as the vault is open. Above it, nothing happens until you click. The Vault tab's Policies
+row says it as Asks you above $100: "Anything above this waits for your click."
 
 This convenience applies only to money that stays in your own custody: a swap inside NEAR
 Intents, funding the Hyperliquid account, arming a trade. Three moves wait for a click at any
@@ -48,30 +47,54 @@ size, and the policy engine never executes them on its own:
 - A policy change, because a rule the human did not click is how every other guarantee gets
   removed.
 
-The card for a move above the threshold shows the simulation, the totals, and Why you are being
-asked, then two buttons: Yes and No. On a send the button reads Approve, then Touch ID.
+Two more cases wait for a click whatever their size: a swap the app cannot measure, because it
+spends a coin the app cannot price or one whose listed price nothing in the quote can check (see
+[Money](money.md#swap)), and every move the chat's agent proposes after it read a web page (see
+below).
 
-If a hostile process running as you is in your threat model, lower the threshold or set it to
-zero: at zero every move waits for a person. [Security](security.md#the-honest-limits) says why
-that is the one exposure that remains.
+A move that waits is one card in the chat that says Needs your OK. It shows what leaves and what
+arrives at least, its Details say why it asks, and it has two buttons: Cancel and Approve. On an
+enclave wallet Approve then asks for Touch ID, and the card says Confirm on your Mac until you
+answer.
+
+If a hostile process running as you is in your threat model, lower the threshold in the Vault
+tab, or ask your assistant to set it to zero: at zero every move waits for a person.
+[Security](security.md#the-honest-limits) says why that is the one exposure that remains.
+
+### After a web page
+
+Once the agent in the chat has searched the web or read a page, every money move it proposes in
+that chat waits for your click, whatever its size, until the chat starts a new session (the agent
+restarts, or you start a new chat). Why it asks, in the card's Details, says: "It read a web
+page earlier in this chat, so this one waits for your OK." A chart label the agent writes after
+a web read carries the same mark, and an agent that later reads that label is marked too. A move
+that would have been refused is still refused; the mark only turns a move that would have run on
+its own into one that asks. [Security](security.md#a-web-page-is-not-an-instruction) says why.
 
 ## Policy as sentences
 
 The policy is stored as a file but read as English. The sentences are rendered from the file by
 a pure function, so what you read is what the engine enforces, and there is no second version
-anywhere. You see them in three places: the rules strip on the Basic tab ("Asks you above $100",
-"Refuses above $10,000"), the Policy card on the Pro tab, and the `policy_show` tool your
-assistant reads.
+anywhere. You see them in three places. Policies on the Pro tab draws three of them as dials
+(Asks you above, Never more in one move, and what ran on its own today), with the daily cap under
+them. The Policies row in the Vault tab lists every rule that is set: Asks you above, Largest move,
+In any 24 hours, Without asking, and where money may go. Policies on the Basic tab takes you
+there. And the `policy_show` tool gives your assistant the sentences themselves.
 
 Limits that mean something at their default always render. Opt-in restrictions render only once
 set, because "no issuer may exceed 100%" says nothing. The kill switch line always renders last.
 
 ## Changing a rule
 
-The Pro tab's Policy card says it in one line: "Ask your assistant to change a rule. Every change
-waits for your click." There is no editor in the window. The agent proposes the change with
-`propose_policy_change`, carrying the patch and a sentence that says what it means, and the card
-is headed Change your limits. It always lands as something to click, however small the change.
+Besides Freeze, the click threshold is the one rule you can change in the window. In the Vault
+tab, press Change beside Asks you above, type an amount or pick $25, $100, $500 or $1,000, and
+press Save. That is your own click, and the audit log records it as a human change. The amount
+must be above $0 and under the per-transaction cap, or it is refused with the reason.
+
+Every other rule, and a threshold of zero, changes through your assistant. It proposes the change
+with `propose_policy_change`, carrying the patch and a sentence that says what it means, and the
+card is headed Change your limits. It always lands as something to click, however small the
+change.
 
 The engine holds a patch to these rules before it ever reaches you:
 
@@ -96,8 +119,8 @@ rule: the walls above are what hold a patch, and the click is what accepts it.
 The engine returns exactly one of three verdicts, and there is no fourth:
 
 - Refuse: nothing happens. The refusal names the rule and the reasons, and both are logged.
-- Needs approval: the proposal is saved as pending and drawn in the window with its simulation.
-  It executes only after your click.
+- Needs approval: the proposal is saved as pending and drawn as a card in the chat with its
+  simulation. It executes only after your click.
 - Allow: inside every cap and at or below the threshold, so the app executes it and logs the
   verdict that let it.
 

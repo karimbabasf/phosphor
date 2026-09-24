@@ -8,16 +8,22 @@ when the wallet locks.
 
 ## Trade mode
 
-Switch to the Trade tab in the top bar, or tell your assistant "switch to trading". The strip
-above the chart shows the market, the venue, the mark price and the day's change. The chart is
-shared: your assistant can draw levels, lines and zones on it, and everything it draws is marked
-as the agent's. Which market picks the coin, Timeframe and Add indicator shape the chart, and the
-Layout menu in the top bar hides or shows panes.
+Switch to the Trade tab in the top bar, or tell your assistant "switch to trading". Everything
+about Hyperliquid lives here, and it is the one tab with a chart. The market line above the
+chart shows the coin with its logo, the price, the day's change, and the day's high and low;
+click the coin to pick another market. The chart is shared: your assistant can draw levels, lines
+and zones on it, and everything it draws is marked as the agent's. The timeframes and the Add
+indicator field shape the chart, and the Layout menu in the top bar hides or shows panes.
 
-The deck under the chart has three panels: Open, Waiting and Done. Open is every position, with
-how far it sits from liquidation. Waiting is every plan that is drawn or armed. Done is the tape:
-fills and ended plans, newest first. Before anything can trade, the account needs collateral: the
-deck says "No trading money yet. Ask your assistant to fund it." See [Money](money.md#fund-the-trading-account).
+Markings, studies and layouts are kept per market, across a quit, until you or your assistant
+clear them. A stop or a liquidation level always has its own label on the price axis.
+
+The panel under the chart has three tabs, Positions, Orders and History, each with its count,
+and what the trading account holds (Trading money and Free) at the right. Positions shows each
+open position as a small card: its size, its profit, and its entry, mark, liquidation, stop and
+target. Orders lists every plan that is drawn or armed. History is the last 24 hours of fills and
+ended plans, newest first; Show more adds older ones, and a fill opens its receipt. Before
+anything can trade, the account needs collateral, see [Money](money.md#fund-the-trading-account).
 
 Every position opens isolated. Isolated margin means the collateral posted for one position is
 the most the venue can take for it; a loss on one plan cannot drain the whole account.
@@ -36,20 +42,22 @@ optional target, optional conditions, an expiry and a note.
 - The expiry defaults to 24 hours and can be at most seven days ahead.
 
 Your assistant can draw the plan first with `trade_plan`. That is an idea: it appears under
-Waiting with the pill Idea, nothing is placed, and no policy is consulted. It can redraw or remove
-an idea freely. "Go" arms the plan exactly as it is on screen.
+Orders marked Idea, nothing is placed, and no policy is consulted. It can redraw or remove an idea
+freely. "Go" arms the plan exactly as it is on screen.
 
 ## The click
 
 Arming is a proposal, `propose_trade`, and the policy engine judges it like any other move. What
 the policy sees is the collateral at stake: the margin the position posts, or the loss at the
-stop if that is larger. Under the click threshold the plan arms at once. Above it the card shows
-the side, the size, the multiple, Collateral at stake, Max loss at the stop, what happens if the
-stop slips 10 percent, Entry, Stop, Target, the conditions in English, Expires, and the totals
-across every live plan. Then Yes or No. See [Policy](policy.md#the-click-threshold).
+stop if that is larger. Under the click threshold the plan arms at once. Above it the card in the
+chat shows Collateral at stake (isolated, at the multiple), Max loss at the stop, If the stop
+slips 10%, Entry, Stop, Target, Liquidation near and Expires. Its Details hold the plan in
+English, with its conditions and the totals across every live plan. Then Cancel or Approve. See
+[Policy](policy.md#the-click-threshold).
 
 The app refuses a plan by name when the stop is on the wrong side, when the stop sits past the
-liquidation price, when the size is under $10 after rounding to the venue's lot, when the margin
+liquidation price, when the size is under $11 (the venue's floor is $10 after rounding to its
+lot, and rounding only makes a size smaller), when the margin
 is more than the account has free, when the multiple is above the coin's maximum or differs from
 another plan on the same coin, or when a plan matching one already armed exists.
 
@@ -60,16 +68,20 @@ risk until they hold.
 
 ## Armed rules
 
-An armed plan is the app watching the market for you. Its pill under Waiting says Armed while it
-watches its conditions and Placed once the venue holds the entry. When the entry fills, the plan
-moves to Open, and when it ends it moves to Done with the reason: Stopped, Hit target, Cancelled,
-Expired, or Failed with a sentence.
+An armed plan is the app watching the market for you. Under Orders it says Watching while it
+watches its conditions and Placed once the venue holds the entry. When the entry fills, the
+position shows under Positions, and when the plan ends it moves to History with the reason:
+Stopped, Hit target, Closed, Cancelled, Expired, or Failed with the reason.
 
 Changes to an armed plan go through `propose_trade_change`, one change per call. A new stop or
 target that tightens the plan (a max loss at or under the one you approved) lands without a
 click. One that widens it is priced like a new plan. Cancel works on a waiting or placed plan;
-an open plan is closed, not cancelled, because its exits are its protection. The window has the
-same buttons: Cancel on a waiting or placed plan, Close on an open one.
+an open plan is closed, not cancelled, because its exits are its protection. A close never takes
+more than its own plan, and a plan that ends cancels whatever is left of its entry.
+
+The window has two buttons of its own: Cancel on a plan under Orders, and Close on a position
+Phosphor opened. Each turns its card into a question that says what will happen in figures,
+answered in place, with no agent involved. A position opened somewhere else has no Close here.
 
 To watch the market between your unlocks, an armed plan holds a session key. This is a separate
 Hyperliquid API wallet the app keeps for trading: by the venue's own signing split it can place
@@ -86,11 +98,12 @@ key until that session ends, so a bot that outlives a lock holds trading authori
 It can place the entry it was armed for and its exits; it cannot move money out.
 
 A plan whose session has ended while the wallet is locked waits as Needs unlock and re-arms when
-you unlock. If the price feed behind the watcher goes stale, the pill says Feed stale and nothing
-fires until it is fresh again.
+you unlock. If the prices behind the watcher stop coming in, the plan says Waiting for prices and
+nothing fires until they are back.
 
-Freeze everything in the top bar ends all of it: every armed plan is finished, every resting
-order is cancelled, and the positions those plans opened are closed when the venue can be reached.
+Freeze everything in the top bar ends all of it: every plan is finished, resting orders are
+cancelled, and every open position on the account is closed at the market price when the venue
+can be reached. A position that does not close keeps its stop and target resting.
 See [Getting started](getting-started.md#freeze-everything).
 
 ## Reading the account

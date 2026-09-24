@@ -35,17 +35,16 @@ known gap in [Known limits](known-limits.md).
 
 ## First open
 
-The window opens on the terms: four plain facts (it is alpha and moves real money, your keys are
-yours alone, the venues are not ours, you are 18 or older) and links to the full
+The window opens on the welcome: "Your money stays on this Mac, under a key only you hold. Your
+assistant does the work. You decide what needs your click." Click Get started.
+
+Then the terms, under Before you start: four plain facts (it is alpha and moves real money, your
+keys are yours alone, the venues are not ours, you are 18 or older) and links to the full
 [terms of use](https://phosphor.money/terms/) and the
 [privacy page](https://phosphor.money/privacy/), which open in your browser. Nothing
 else opens until you click Accept and continue. The app records the click (the date and the
 version of the terms) in its own state folder and in the audit log, and asks again only when the
-terms change.
-
-Then the welcome: "Your money stays on this Mac, under a key only you hold. Your assistant does
-the work, and every move waits for your click." Nothing is uploaded and there is no account to
-make. Click Get started.
+terms change. Nothing is uploaded and there is no account to make.
 
 Every address the app makes is a real address that can hold real money. There is no practice
 mode. Size your first deposit as a test.
@@ -68,9 +67,9 @@ words. Set a password of at least eight characters. Nobody can reset it, not the
 assistant. The app then shows twelve recovery words once, and asks you to type three of them back
 by their number before it goes on.
 
-The last screen, Set the ask threshold, sets the click threshold for this wallet. The shipped
-default is $100. A later change goes through your assistant and waits for your click, see
-[Policy](policy.md).
+Near the end, When should it ask you? sets the click threshold for this wallet: type an amount,
+or pick $25, $100, $500 or $1,000. The shipped default is $100. You can change it any time in the
+Vault tab, see [Policy](policy.md#changing-a-rule).
 
 ### A wallet from another Mac
 
@@ -83,22 +82,23 @@ twenty-four words, to bring the wallet here.
 The recovery phrase is the only way back to the wallet. Anyone who has it has your money, and
 nobody from this app will ever ask you for it.
 
-On an enclave wallet the phrase is not shown at first run. Open the Vault tab, then Recovery,
-and click Reveal recovery phrase. Touch ID shows the words on that screen only. Write them down
-somewhere that is not this Mac, then click Prove it and type three of the words back by their
-number. Only that turns the chip from Not backed up to Backed up.
+On an enclave wallet the phrase is not shown at first run. Open the Vault tab: under Safety, the
+Recovery phrase row has Back it up. Touch ID shows the words in that row only. Write them down
+somewhere that is not this Mac, click I wrote them down, then Prove it and type three of the
+words back by their number. Only that turns the row's line from Not backed up yet to Backed up.
 
-Until then the top bar shows Not backed up, and the first deposit that lands raises a card that
-says "You have money in. Back up now." The Vault tab refuses to forget a wallet whose phrase has
-not been proven backed up.
+Until then a line at the foot of the window says Recovery phrase not backed up, with Back it up
+beside it, and the first deposit that lands reminds you once more. The Vault tab refuses to
+forget a wallet whose phrase has not been proven backed up: its Forget row says Back up first.
 
-A password wallet shows its words at creation. The Vault tab also offers Show my recovery words
-and Save an encrypted backup, both behind the password.
+A password wallet shows its words at creation. In the Vault tab, Show my words (in the Recovery
+phrase row) and Save an encrypted copy (in the Restore row) both ask for the password.
 
 ## Touch ID and the Secure Enclave
 
-The Vault tab's Custody card says which kind of wallet you have. Secure Enclave on this Mac opens
-with Touch ID, or your Mac login password. The key file, `keys.enc.json`, sits under `~/.phosphor`,
+The Keys row in the Vault tab, under Your wallet, says which kind of wallet you have. On an
+enclave wallet it reads Touch ID: the key is behind the Secure Enclave on this Mac, and Touch ID
+or your Mac login password opens it. The key file, `keys.enc.json`, sits under `~/.phosphor`,
 outside the app and outside any code checkout. Its contents are sealed with a data key, and that
 data key is wrapped to a key the enclave made and cannot export. Nothing on disk opens the file
 without the enclave.
@@ -108,29 +108,34 @@ is drawn by macOS, and its sentence is composed by the app from the proposal's o
 amount, the receiver shortened to eight characters at each end, and the chain. Read it before you
 confirm. [Security](security.md) says what this does and does not protect against.
 
-A password wallet on a Mac that has an enclave shows a Move behind the Secure Enclave button. The
-Custody card says Software, on this disk until you press it.
+A password wallet says Password in the Keys row: "Locked with your password on this Mac." On a
+Mac that has an enclave, the row also shows Protect with Touch ID, which moves the same wallet
+behind the enclave. Nothing moves and the addresses stay the same.
 
 ## The 15 minute lock
 
 The wallet locks after fifteen minutes with nobody at the window, when the Mac sleeps, and when
-you close the window. The window frosts and says Phosphor is locked. Unlock with Touch ID, or with
-your password on a software wallet.
+you close the window. Locks after, under Safety in the Vault tab, sets the time to 5 minutes,
+15 minutes or 1 hour, and Lock now locks at once. The window frosts and says Phosphor is locked.
+Unlock with Touch ID, or with your password on a software wallet.
 
-Locked, every read still works and the window still shows your balances. A move the agent asks
-for while the wallet is locked is drafted, priced and checked against your rules, then waits as
-Needs the unlock. When you unlock, each waiting move is decided again and lands as something to
-click. An unlock is never an approval.
+Locked, every read still works. A move the agent asks for while the wallet is locked is drafted,
+priced and checked against your rules, then its card in the chat says Unlock to decide. When you
+unlock, each waiting move is decided again and lands as something to click. An unlock is never
+an approval.
 
 ## Freeze everything
 
-Freeze everything is the last button in the top bar, on every tab. It is the brake. The dialog
-says it cancels every working order and disarms every rule, and it asks you to confirm.
+Freeze everything is the snowflake at the right end of the top bar, on every tab, and the Freeze
+row under Safety in the Vault tab. It is the brake. It asks first: "This closes your open trading
+positions at the market price and stops every plan. Nothing can move your money until you
+unfreeze."
 
-Frozen, the policy reads "KILL SWITCH ON: all writes refused." Every proposal is refused until you
-press the button again, whatever its size. The app also cancels every order it placed, ends every
-armed plan, and closes the positions those plans opened when it can reach the venue. Money does
-not leave the app. Check the Trade tab afterwards, see [Trading](trading.md).
+Frozen, the button reads Frozen and the policy reads "KILL SWITCH ON: all writes refused." Every
+proposal is refused until you unfreeze, whatever its size. The app also cancels resting orders,
+ends every plan, and closes every open position on your Hyperliquid account when it can reach the
+venue, including one you opened somewhere else. Money does not leave the app. Check the Trade tab
+afterwards, see [Trading](trading.md).
 
 ## The Help menu
 
