@@ -95,7 +95,7 @@ function spend(dir: string, id: string, usd: number, status: ProposalStatus, ago
 test('an empty history spends nothing and has nothing to reset', () => {
   const svc = serviceOn(tmpDir());
   const limit = svc.dailyLimit(25_000);
-  assert.deepEqual(limit, { capUsd: 25_000, spentUsd: 0, resetsAt: null });
+  assert.deepEqual(limit, { capUsd: 25_000, spentUsd: 0, resetsAt: null, autoSpentUsd: 0 });
 });
 
 test('the figure on screen is the figure the engine budgets on', () => {
@@ -105,6 +105,16 @@ test('the figure on screen is the figure the engine budgets on', () => {
   spend(dir, 'b', 100, 'executing');
   assert.equal(svc.dailyLimit(25_000).spentUsd, svc.sessionSpentUsd());
   assert.equal(svc.dailyLimit(25_000).spentUsd, 500);
+});
+
+test('the auto-run figure rides beside the spend and never exceeds it', () => {
+  const dir = tmpDir();
+  const svc = serviceOn(dir);
+  spend(dir, 'a', 400, 'executed');
+  const limit = svc.dailyLimit(25_000);
+  const auto = limit.autoSpentUsd ?? Number.NaN;
+  assert.ok(Number.isFinite(auto) && auto >= 0, String(auto));
+  assert.ok(auto <= limit.spentUsd, auto + ' > ' + limit.spentUsd);
 });
 
 test('it survives a restart, because it was never in memory', () => {
