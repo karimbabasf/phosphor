@@ -3,7 +3,11 @@
    The old build reached for window.confirm() on the flatten, close and disarm
    paths: an OS modal inside a Tauri window, unstyleable, and it blocks the
    render thread while the person decides about money. This is the replacement,
-   and it is a real <dialog> so escape and the focus trap are the browser's. */
+   and it is a real <dialog> so escape and the focus trap are the browser's.
+
+   There is no password dialog here any more: a password is typed into the row
+   that needs it (the Vault's recovery phrase and encrypted copy), in place,
+   never in a modal over the window. */
 (function () {
   'use strict';
 
@@ -125,114 +129,6 @@
     });
   }
 
-  /* ---------- password ---------- */
-
-  /* Asked at the moment it is needed and held nowhere. Resolves with the typed
-     password, or with an empty string when the person backs out, so a caller
-     cannot mistake a cancel for a blank password that the server would refuse
-     anyway. */
-
-  var pwDialog = null;
-  var pwResolve = null;
-  var pwExtra = '';
-
-  function buildPassword() {
-    pwDialog = document.createElement('dialog');
-    pwDialog.className = 'confirm';
-    pwDialog.setAttribute('data-motion', 'dialog');
-
-    var card = dom.el('form', 'confirm-card');
-    var title = dom.el('h2', 'title');
-    title.dataset.role = 'title';
-    var body = dom.el('p', 'body dim');
-    body.dataset.role = 'body';
-
-    var field = dom.el('div', 'field');
-    field.appendChild(dom.el('label', 'label', 'Password'));
-    var input = dom.el('input', 'input');
-    input.type = 'password';
-    input.name = 'password';
-    input.autocomplete = 'current-password';
-    field.appendChild(input);
-
-    var extra = dom.el('div', 'field');
-    extra.hidden = true;
-    var extraLabel = dom.el('label', 'label');
-    extraLabel.dataset.role = 'extra-label';
-    var extraInput = dom.el('input', 'input');
-    extraInput.type = 'text';
-    extraInput.dataset.role = 'extra-input';
-    extra.appendChild(extraLabel);
-    extra.appendChild(extraInput);
-
-    var actions = dom.el('div', 'screen-actions');
-    var no = dom.el('button', 'btn btn-ghost');
-    no.type = 'button';
-    no.appendChild(dom.el('span', 'btn-label', 'Cancel'));
-    var yes = dom.el('button', 'btn btn-primary');
-    yes.type = 'submit';
-    yes.dataset.role = 'confirm';
-    yes.appendChild(dom.el('span', 'btn-label', 'Continue'));
-    actions.appendChild(no);
-    actions.appendChild(yes);
-
-    card.appendChild(title);
-    card.appendChild(body);
-    card.appendChild(field);
-    card.appendChild(extra);
-    card.appendChild(actions);
-    pwDialog.appendChild(card);
-    document.body.appendChild(pwDialog);
-
-    function finishPw(value) {
-      pwExtra = extraInput.value.trim();
-      input.value = '';
-      if (pwDialog.open) hideDialog(pwDialog);
-      var done = pwResolve;
-      pwResolve = null;
-      if (done) done(value);
-    }
-
-    dom.on(card, 'submit', function (event) {
-      event.preventDefault();
-      finishPw(input.value);
-    });
-    dom.on(no, 'click', function () { finishPw(''); });
-    dom.on(pwDialog, 'cancel', function (event) {
-      event.preventDefault();
-      finishPw('');
-    });
-    dom.on(pwDialog, 'click', function (event) {
-      if (event.target === pwDialog) finishPw('');
-    });
-
-    pwDialog.__refs = { title: title, body: body, input: input, yes: yes, extra: extra, extraLabel: extraLabel, extraInput: extraInput };
-  }
-
-  function askPassword(options) {
-    var opts = options || {};
-    if (!pwDialog) buildPassword();
-    var refs = pwDialog.__refs;
-    dom.setText(refs.title, opts.title || 'Your password');
-    dom.setText(refs.body, opts.body || '');
-    dom.setText(refs.yes.querySelector('.btn-label'), opts.confirm || 'Continue');
-    refs.input.value = '';
-    refs.extraInput.value = '';
-    pwExtra = '';
-    dom.setHidden(refs.extra, !opts.extra);
-    if (opts.extra) {
-      dom.setText(refs.extraLabel, opts.extra.label || '');
-      refs.extraInput.placeholder = opts.extra.placeholder || '';
-    }
-
-    return new Promise(function (resolve) {
-      pwResolve = resolve;
-      showDialog(pwDialog);
-      refs.input.focus();
-    });
-  }
-
   window.PhosphorToast = { show: show };
   window.PhosphorConfirm = { ask: ask };
-  window.PhosphorPassword = { ask: askPassword, extraValue: function () { return pwExtra; } };
 })();

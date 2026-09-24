@@ -1,23 +1,28 @@
-/* The deposit card: the dialog that holds the three steps of money in when
-   they are asked for from somewhere other than the Money in fold.
+/* The deposit card: the dialog that holds the three steps of money in when a
+   screen hands over a network, which today is the Vault tab's Addresses card
+   (and the chat's deposit card, until it draws the address itself).
 
-   It opens over any screen when the assistant's `deposit` tool asks, or when
-   the Vault tab's Addresses card or the assistant panel hands over a network.
    What it draws is ui/screens/netpick.js, the same component the Money in
    fold runs in place, opened at the address step for the network the caller
    named, or at the token list when the acknowledgement has not been given on
    this Mac yet. The three checks (the wallet is open, the QR reads back as the
-   same bytes, the clipboard reads back what was written) live there now and
-   run wherever an address is drawn.
+   same bytes, the clipboard reads back what was written) live there and run
+   wherever an address is drawn.
 
-   The address never comes from the frame that opened the card. The frame says
-   which watch is running; the address is fetched, and where the frame carries
-   one too the two have to agree.
+   It never opens on its own. The assistant's `deposit` tool used to open it
+   over the conversation with no click, while the thread drew a second card
+   for the same watch: two surfaces for one answer, one of them covering the
+   chat (hunt-b 18). A watch the agent starts is the chat's to show.
 
-   The watch outlives the card, so closing it stops nothing; only Stop does.
-   Money that lands after the card was put away is still said once, as a
-   toast, and the first landed deposit on a wallet that is not backed up
-   raises the backup card. Both of those live here, with the dialog. */
+   The address never comes from the watch. The watch says which network is
+   being watched; the address is fetched, and where the watch carries one too
+   the two have to agree.
+
+   The watch outlives the card, so closing it stops nothing, and the watch
+   ends on its own. Money that lands after the card was put away is still
+   said once, as a toast, and the first landed deposit on a wallet that is not
+   backed up raises the backup card. Both of those live here, with the
+   dialog. */
 (function () {
   'use strict';
 
@@ -30,9 +35,7 @@
   var refs = {};
   var view = null;
   var current = null;
-  var seenStart = null;
   var promptedFor = null;
-  var absorbing = 0;
 
   function pick() {
     return window.PhosphorNetPick;
@@ -58,10 +61,12 @@
     if (window.PhosphorToast) window.PhosphorToast.show(landedWords(deposit), 'up');
   }
 
+  /* The same words the watcher line ends on, so a deposit reads the same in
+     the toast as on the card: what arrived, and where it is now. */
   function landedWords(deposit) {
     var symbol = deposit.symbol || '';
-    return 'Landed: ' + (typeof deposit.amount === 'number' ? dom.qty(deposit.amount) + ' ' + symbol : symbol)
-      + (typeof deposit.ms === 'number' ? ' in ' + Math.max(1, Math.round(deposit.ms / 1000)) + ' s' : '');
+    var what = typeof deposit.amount === 'number' && deposit.amount > 0 ? dom.qty(deposit.amount) + (symbol ? ' ' + symbol : '') : (symbol || 'Your deposit');
+    return what + ' is in your balance';
   }
 
   function networkWords(chain) {
@@ -75,21 +80,16 @@
   /* ---------- the watch ---------- */
 
   /* One place the window starts a watch. The backend answers with the watch
-     and also broadcasts it, and the broadcast can land before the answer: any
-     `watching` frame that arrives while a start is in flight is this one, so it
-     is marked seen instead of opening a second card over the first. */
+     and also broadcasts it; the card that asked keeps the answer. */
   function startWatch(chain, symbol, address) {
-    absorbing += 1;
     return api.depositShow(chain, symbol, address || null)
       .then(function (answer) {
         if (!answer || answer.ok === false || !answer.deposit) {
           throw new Error((answer && answer.error) || 'The deposit card could not open.');
         }
-        seenStart = answer.deposit.startedAt || seenStart;
         if (isOpen()) current = answer.deposit;
         return answer.deposit;
-      })
-      .finally(function () { absorbing -= 1; });
+      });
   }
 
   /* ---------- opening ---------- */
@@ -110,28 +110,25 @@
       });
   }
 
-  /* The stream spoke. A watch this card has not seen begins on `watching` with
-     a new startedAt, and that is the one frame that opens it. Every other
-     frame is a change to a watch already on screen, or to one the person
-     closed, or the echo of a start this window made itself. */
+  /* The stream spoke. A frame never opens the card: the card shows a watch a
+     person asked for, and the picker inside it follows the store's `deposit`
+     slice on its own (netpick.js followWatch). A frame for the watch on
+     screen only keeps `current` up to date for the toast and the backup card. */
   function onFrame(deposit) {
-    if (!deposit || deposit.phase !== 'watching') return;
-    if (absorbing > 0) {
-      seenStart = deposit.startedAt || seenStart;
-      return;
-    }
-    if (deposit.startedAt && deposit.startedAt === seenStart) return;
-    show(deposit);
+    if (!deposit || !isOpen() || !current) return;
+    if (deposit.startedAt && deposit.startedAt === current.startedAt) current = deposit;
   }
 
   function show(deposit) {
-    seenStart = deposit.startedAt || null;
     current = deposit;
     build();
     var motion = window.PhosphorMotion;
     if (motion && typeof motion.openDialog === 'function') motion.openDialog(dialog);
     else if (!dialog.open) dialog.showModal();
     fill();
+    /* The card opens on its title, not on Close: the loudest thing on a card
+       the person just asked for should be what it says. */
+    if (refs.title && typeof refs.title.focus === 'function') refs.title.focus({ preventScroll: true });
   }
 
   /* The card and its scrim go out together before the dialog closes
@@ -177,15 +174,28 @@
     var card = dom.el('div', 'confirm-card deposit-card');
     dialog.appendChild(card);
 
-    var head = dom.el('div', 'between deposit-head');
-    refs.title = dom.el('h2', 'title', 'Deposit');
+    /* The card's title is the step's own ("Send on Solana only."), with the
+       network's mark, so the network is named once and the picker inside
+       keeps only its way back (deposit.css). */
+    var head = dom.el('div', 'deposit-head');
+    refs.title = dom.el('h2', 'deposit-title');
+    refs.title.setAttribute('tabindex', '-1');
+    refs.titleMark = dom.el('span', 'deposit-title-mark');
+    refs.titleText = dom.el('span', 'deposit-title-text', 'Add money');
+    refs.title.appendChild(refs.titleMark);
+    refs.title.appendChild(refs.titleText);
     head.appendChild(refs.title);
     var closeBtn = dom.el('button', 'btn btn-quiet btn-sm');
     closeBtn.type = 'button';
-    closeBtn.appendChild(dom.el('span', 'btn-label', 'Close'));
+    closeBtn.setAttribute('aria-label', 'Close');
+    var icons = window.PhosphorIcons;
+    if (icons && typeof icons.svg === 'function') closeBtn.appendChild(icons.svg('close', 'deposit-close-icon'));
+    closeBtn.appendChild(dom.el('span', 'sr-only', 'Close'));
     dom.on(closeBtn, 'click', close);
     head.appendChild(closeBtn);
     card.appendChild(head);
+    dialog.setAttribute('aria-labelledby', 'deposit-title');
+    refs.title.id = 'deposit-title';
 
     refs.body = dom.el('div', 'deposit-host');
     card.appendChild(refs.body);
@@ -206,8 +216,24 @@
       network: deposit.chain,
       symbol: deposit.symbol,
       deposit: deposit,
-      onDismiss: close
+      onDismiss: close,
+      onStage: title
     });
+  }
+
+  /* The title follows the step the picker is on. */
+  function title(stage, network) {
+    if (!refs.titleText) return;
+    var netpick = pick();
+    var name = network && netpick ? netpick.name(network) : '';
+    var words = 'Add money';
+    if (stage === 'tokens' && name) words = 'What you can send on ' + name;
+    else if (stage === 'address' && name) words = 'Send on ' + name + ' only.';
+    dom.setText(refs.titleText, words);
+    dom.clear(refs.titleMark);
+    var n = network && netpick && typeof netpick.networkOf === 'function' ? netpick.networkOf(network) : null;
+    var marks = window.PhosphorMarks;
+    if (stage !== 'network' && n && marks && typeof marks.logo === 'function') refs.titleMark.appendChild(marks.logo(n.mark, 22));
   }
 
   /* ---------- the backup card ---------- */

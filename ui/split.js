@@ -50,6 +50,8 @@ var SPLIT_DOUBLE_MS = 400; /* two presses this close together are one double cli
  *   host     where the property is written. A column's width belongs to the grid, so it is
  *            written on the deck; a panel's height belongs to the panel.
  *   give     the pane that pays for it, and giveMin the floor it may not be pushed under.
+ *            giveMinShort, where it is set, is that floor in a window under 760 px tall,
+ *            the same number trade.css drops the chart's floor to there.
  *            No give means the handle only takes from slack that is already spare.
  *   min      the floor for the sized pane itself.
  *   max      the ceiling for the sized pane, where one exists: the same number the
@@ -88,12 +90,14 @@ var SPLIT_PAGES = {
      is the give's floor: the stage's own 320 px min-height, under which
      candles stop being read and start being estimated, plus the 44 px bar
      above it. A floor of 320 alone would let the handle push the stage under
-     its own minimum and spill it over the deck. */
+     its own minimum and spill it over the deck. In a window under 760 px tall
+     (the app's floor is 700) the chart's floor is 240, so the deck still holds
+     two positions under it. */
   trade: {
     'deck-rail': {
       axis: 'y', sign: -1, min: 120,
       pane: '.trade-rail', host: '.trade-wrap', prop: '--deck',
-      give: '.trade-main', giveMin: 364,
+      give: '.trade-main', giveMin: 364, giveMinShort: 240,
     },
   },
 };
@@ -166,7 +170,7 @@ function splitSizeOf(node, horiz) {
 function splitBounds(h) {
   var horiz = h.conf.axis === 'x';
   var size = splitSizeOf(h.pane, horiz);
-  var room = h.give ? Math.max(0, splitSizeOf(h.give, horiz) - h.conf.giveMin) : 0;
+  var room = h.give ? Math.max(0, splitSizeOf(h.give, horiz) - splitGiveMin(h.conf)) : 0;
   var max = size + room;
   if (typeof h.conf.max === 'number' && h.conf.max < max) max = h.conf.max;
   return { size: size, min: h.conf.min, max: Math.max(h.conf.min, max) };
@@ -465,6 +469,11 @@ function splitPaneList(view) {
 /* The eye-off control a pane header carries: one 24 px ghost button that hides its own pane.
    Built here so every header draws the same control, whichever file owns the header. Null in
    a document with nothing to build it in. */
+function splitGiveMin(conf) {
+  var short = typeof window.innerHeight === 'number' && window.innerHeight < 760;
+  return short && typeof conf.giveMinShort === 'number' ? conf.giveMinShort : conf.giveMin;
+}
+
 function splitPaneControl(name) {
   var conf = SPLIT_PANES[name];
   if (!conf || typeof document.createElement !== 'function') return null;
@@ -473,7 +482,7 @@ function splitPaneControl(name) {
   button.className = 'pane-hide';
   button.setAttribute('data-pane', name);
   button.setAttribute('aria-label', 'Hide the ' + conf.label.toLowerCase());
-  button.title = 'Hide';
+  button.title = 'Hide the ' + conf.label.toLowerCase();
   button.appendChild(window.PhosphorIcons.svg('hide'));
   button.addEventListener('click', function () {
     splitPaneSet(name, false);

@@ -13,5 +13,4 @@
             <stop stop-color="#fff"/>
             <stop offset="1" stop-color="#111"/>
         </linearGradient>
-    </defs>
-</svg>
+    </defs><circle data-edge="light" cx="12" cy="12" r="8.5" fill="none" stroke="#FFF" stroke-opacity=".22" stroke-width="1"/></svg>

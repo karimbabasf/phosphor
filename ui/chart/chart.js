@@ -42,15 +42,15 @@
    Down is still lighter than the approval gate's alarm red so the gate stays the only alarm on
    the page. Nothing here can repaint that gate: it is a CSS token this file never touches. */
 var CHART_TOKENS = {
-  bg0: '#0E0F13',
-  bg1: '#151619',
-  line: '#262729',
-  text: '#ECEEF1',
-  text2: '#9BA1AB',
-  up: '#3FFF6C',
-  down: '#FF5A6E',
+  bg0: '#161210',
+  bg1: '#1e1917',
+  line: '#302a26',
+  text: '#f8f0e8',
+  text2: '#bcaea1',
+  up: '#52e893',
+  down: '#ff6b5b',
   agent: '#B79CFF',
-  warn: '#F2B544'
+  warn: '#F5B942'
 };
 
 // The panel, not the window ground. The chart sits inside a panel and painting it --bg-0
@@ -58,16 +58,16 @@ var CHART_TOKENS = {
 var C_BG = CHART_TOKENS.bg1;
 var C_UP = CHART_TOKENS.up;
 var C_DOWN = CHART_TOKENS.down;
-var C_HI = '#8FFFAB';
+var C_HI = '#a2f2c4';
 
 /* The ramps every ink in the engine is mixed from. Triples rather than hex, because every
    call site wants an alpha and building "rgba(...)" from a triple is one concatenation. */
-var RGB_ACCENT = '91, 141, 239';
-var RGB_DOWN = '255, 90, 110';
+var RGB_ACCENT = '82, 232, 147';
+var RGB_DOWN = '255, 107, 91';
 var RGB_AGENT = '183, 156, 255';
-var RGB_LINE = '38, 39, 41';
-var RGB_TEXT = '236, 238, 241';
-var RGB_TEXT2 = '155, 161, 171';
+var RGB_LINE = '48, 42, 38';
+var RGB_TEXT = '248, 240, 232';
+var RGB_TEXT2 = '188, 174, 161';
 
 /* "#5b8def" or "#5be" to "91, 141, 239". Returns null on anything else, and every caller
    treats null as "leave the colour alone": a bad value from the server must never be able to
@@ -1081,7 +1081,9 @@ function prepare(canvas, opaque) {
 function drawScene() {
   var canvas = chartCanvas();
   if (!canvas || !CHART_SIZE.w) return;
-  var ctx = prepare(canvas, true);
+  /* The chart sits on the world's slab, whose ground is a soft gradient: a
+     canvas that painted a flat panel over it drew a rectangle on the slab. */
+  var ctx = prepare(canvas, false);
   var width = CHART_SIZE.w;
   var height = CHART_SIZE.h;
 
@@ -1151,7 +1153,7 @@ function reducedMotion() {
 /* What the panel is waiting for, said in the words the rest of the bar uses. An error is a
    state, not a wait: it says so and stops moving. */
 function waitingState() {
-  var product = CHART.view.product || 'the market';
+  var product = CHART.view.product ? coinOf(CHART.view.product) : 'the market';
   var tf = timeframeOf(CHART.view.granularitySec);
   if (CHART.meta.error) {
     return { head: 'Chart unreachable', sub: CHART.meta.error + '  retrying', live: CHART_FETCH.inflight };
@@ -1159,12 +1161,12 @@ function waitingState() {
   if (!CHART_READY) {
     // Before the first payload there is no product and no timeframe to name, and naming the
     // defaults would put a market on screen that nobody has confirmed is the one being read.
-    if (!CHART.view.product) return { head: 'Connecting', sub: 'waiting for the first chart payload', live: true };
-    return { head: 'Acquiring ' + product + ' ' + tf, sub: 'waiting for the first candles', live: true };
+    if (!CHART.view.product) return { head: 'Connecting', sub: 'waiting for prices', live: true };
+    return { head: 'Loading ' + product + ' ' + tf, sub: 'waiting for the first prices', live: true };
   }
   return {
-    head: 'No candles for ' + product + ' ' + tf,
-    sub: (CHART.meta.source || 'the source') + ' returned nothing for this window',
+    head: 'No prices for ' + product + ' ' + tf,
+    sub: sourceName(CHART.meta.source) + ' has nothing for this window',
     live: CHART_FETCH.inflight
   };
 }
@@ -2001,7 +2003,7 @@ function drawLegend(ctx, L) {
   var items = [];
   var valueW = Math.max(ctx.measureText(priceText(L.high, L.decimals)).width, ctx.measureText(priceText(L.low, L.decimals)).width);
   var head = [
-    { text: identity.product, tone: 'hi' },
+    { text: coinOf(identity.product), tone: 'hi' },
     { text: timeframeOf(identity.granularitySec), tone: 'text2', alpha: 0.85 }
   ];
   var ohlc = [['O', candle.o], ['H', candle.h], ['L', candle.l], ['C', candle.c]];
@@ -2098,9 +2100,8 @@ function drawChartNotes(ctx, L) {
   // The left edge of history: older bars on their way, or the venue's own first bar on screen.
   // A fact about the exchange rather than a fault in the chart, said beside the bars.
   var notes = [];
-  if (CHART_BACKFILL.inflight) notes.push('loading older bars');
-  else if (historyBegins() && L.start === 0) notes.push('history begins here');
-  if (CHART.view.panOffset > 0) notes.push('panned back ' + Math.round(CHART.view.panOffset));
+  if (CHART_BACKFILL.inflight) notes.push('Loading earlier prices');
+  else if (historyBegins() && L.start === 0) notes.push('History starts here');
   if (notes.length === 0) return;
   ctx.fillStyle = text2(0.55);
   ctx.fillText(notes.join('   '), x, y);
@@ -2727,28 +2728,122 @@ function renderChartBar() {
 
   var box = document.getElementById('timeframes');
   if (box) {
-    if (box.dataset.filled !== String(CHART.timeframes.length)) {
-      box.textContent = '';
-      for (var t = 0; t < CHART.timeframes.length; t++) {
-        var tf = CHART.timeframes[t];
-        var button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'timeframe';
-        button.dataset.sec = String(tf.sec);
-        button.textContent = tf.label;
-        box.appendChild(button);
-      }
-      box.dataset.filled = String(CHART.timeframes.length);
-    }
+    if (box.dataset.filled !== String(CHART.timeframes.length)) fillTimeframes(box);
     var kids = box.childNodes;
-    for (var k = 0; k < kids.length; k++) {
-      kids[k].className = Number(kids[k].dataset.sec) === CHART.view.granularitySec
-        ? 'timeframe on'
-        : 'timeframe';
+    var picked = null;
+    for (var k = 0; k < kids.length; k++) paintTimeframe(kids[k]);
+    var menu = timeframeMenu(box);
+    if (menu) {
+      for (var m = 0; m < menu.childNodes.length; m++) {
+        if (paintTimeframe(menu.childNodes[m])) picked = menu.childNodes[m].textContent;
+      }
+      var toggle = menu.parentNode && menu.parentNode.childNodes[0];
+      if (toggle) {
+        toggle.textContent = picked || 'More';
+        toggle.className = picked ? 'timeframe tf-more on' : 'timeframe tf-more';
+      }
     }
   }
 
   renderChartStatus();
+}
+
+/* The timeframes as cells: the six everyday ones always, the rest inline
+   where the chart is wide and behind a More cell where it is not (the
+   stylesheet decides which by the chart's width, on data-tier). The More
+   cell wears the picked timeframe's name when the pick is one of the rest. */
+var EVERYDAY_TF = { '1m': true, '5m': true, '15m': true, '1h': true, '4h': true, '1d': true };
+
+function fillTimeframes(box) {
+  box.textContent = '';
+  var rest = [];
+  for (var t = 0; t < CHART.timeframes.length; t++) {
+    var tf = CHART.timeframes[t];
+    var tier = EVERYDAY_TF[tf.label] ? 'day' : 'more';
+    box.appendChild(timeframeButton(tf, tier));
+    if (tier === 'more') rest.push(tf);
+  }
+  if (rest.length) {
+    var wrap = document.createElement('span');
+    wrap.className = 'tf-more-wrap';
+    var toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'timeframe tf-more';
+    toggle.textContent = 'More';
+    toggle.setAttribute('aria-haspopup', 'true');
+    toggle.setAttribute('aria-expanded', 'false');
+    var menu = document.createElement('span');
+    menu.className = 'tf-menu pop';
+    for (var r = 0; r < rest.length; r++) menu.appendChild(timeframeButton(rest[r], 'menu'));
+    wrap.appendChild(toggle);
+    wrap.appendChild(menu);
+    box.appendChild(wrap);
+    toggle.addEventListener('click', function (ev) {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      setTimeframeMenu(box, menu.dataset.open !== 'true');
+    });
+    menu.addEventListener('click', function () { setTimeframeMenu(box, false); });
+    document.addEventListener('click', function (ev) {
+      if (menu.dataset.open === 'true' && ev.target !== toggle) setTimeframeMenu(box, false);
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && menu.dataset.open === 'true') {
+        setTimeframeMenu(box, false);
+        if (toggle.focus) toggle.focus();
+      }
+    });
+  }
+  box.dataset.filled = String(CHART.timeframes.length);
+}
+
+function timeframeButton(tf, tier) {
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'timeframe';
+  button.dataset.sec = String(tf.sec);
+  button.dataset.tier = tier;
+  button.textContent = tf.label;
+  return button;
+}
+
+function timeframeMenu(box) {
+  var kids = box.childNodes;
+  for (var i = 0; i < kids.length; i++) {
+    if (kids[i].className === 'tf-more-wrap') return kids[i].childNodes[1] || null;
+  }
+  return null;
+}
+
+function setTimeframeMenu(box, open) {
+  var menu = timeframeMenu(box);
+  if (!menu) return;
+  if (open) menu.dataset.open = 'true';
+  else delete menu.dataset.open;
+  var toggle = menu.parentNode.childNodes[0];
+  if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+/* One cell painted against the timeframe on screen. True when it is it. */
+function paintTimeframe(node) {
+  if (!node || !node.dataset || node.dataset.sec === undefined) return false;
+  var on = Number(node.dataset.sec) === CHART.view.granularitySec;
+  node.className = on ? 'timeframe on' : 'timeframe';
+  if (node.setAttribute) node.setAttribute('aria-pressed', on ? 'true' : 'false');
+  return on;
+}
+
+/* "BTC-USD" is the chart's id for a market; the legend and the empty chart
+   name the coin, the way the strip does. */
+function coinOf(product) {
+  return String(product || '').split('-')[0] || String(product || '');
+}
+
+/* Where the prices come from, as a name. */
+function sourceName(source) {
+  var names = { hyperliquid: 'Hyperliquid', coinbase: 'Coinbase', binance: 'Binance', kraken: 'Kraken', okx: 'OKX', bybit: 'Bybit' };
+  var key = String(source || '').toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(names, key)) return names[key];
+  return key ? key.charAt(0).toUpperCase() + key.slice(1) : 'the exchange';
 }
 
 /* What the data is doing, in one place.
@@ -2765,10 +2860,19 @@ function feedState() {
   return 'delayed';
 }
 
+/* The words for each state, the way a person needs them: live says so and
+   nothing else; a slow feed says how often it moves; a paused one says the
+   prices on screen are the last ones, which is the thing to know before
+   trusting them. */
+var FEED_WORDS = {
+  live: 'Live',
+  delayed: 'Updates every few seconds',
+  offline: 'Prices paused, showing the last ones'
+};
 var FEED_TITLE = {
-  live: 'the venue is pushing this price',
-  delayed: 'no live feed, refreshing on a timer',
-  offline: 'the source is unreachable, showing the last bars it served'
+  live: 'Prices arrive as they trade.',
+  delayed: 'There is no live feed right now, so the chart reads prices every few seconds.',
+  offline: 'The price source is not answering. The chart shows the last prices it had and tries again.'
 };
 
 function renderChartStatus() {
@@ -2783,8 +2887,8 @@ function renderChartStatus() {
     // separate meta line, which is two places saying halves of one thing.
     feed.dataset.busy = CHART_FETCH.inflight ? '1' : '0';
     var label = feed.querySelector('b');
-    if (label) label.textContent = state;
-    feed.title = CHART.meta.error || FEED_TITLE[state];
+    if (label) label.textContent = FEED_WORDS[state];
+    feed.title = FEED_TITLE[state];
   }
 
   /* The venue's delay on the socket serving these bars, beside the state word. The server
@@ -2793,11 +2897,11 @@ function renderChartStatus() {
      an age, so it does not climb between payloads; the number this replaced was the age of
      the trading socket's account snapshot, which the venue pushes every 5 s, so it ran from
      0 to 5000 ms and reset while the price moved every half second. */
+  /* The socket's round trip is an engineer's number, so it is not written:
+     "Live" is the whole answer a person needs. The slot stays for the
+     stylesheet and is left empty. */
   var latency = document.getElementById('chart-latency');
-  if (latency) {
-    var ms = CHART.meta.latencyMs;
-    latency.textContent = typeof ms === 'number' && isFinite(ms) ? Math.round(ms) + ' ms' : '';
-  }
+  if (latency) latency.textContent = '';
 
   /* The venue word, in the Layers popover's foot. It prints what is actually SERVING the
      candles, and says "pinned" only when the choice was made rather than inherited, so a pin
@@ -2806,9 +2910,9 @@ function renderChartStatus() {
   var venue = document.getElementById('chart-provider');
   if (venue) {
     var pinned = CHART.view.provider !== 'auto';
-    venue.textContent = (CHART.meta.source || '--') + (pinned ? ' pinned' : '');
+    venue.textContent = sourceName(CHART.meta.source) + (pinned ? ', chosen by your assistant' : '');
     venue.dataset.pinned = pinned ? '1' : '0';
-    venue.title = pinned ? 'venue pinned to ' + CHART.view.provider : 'venue chosen automatically';
+    venue.title = pinned ? 'Your assistant chose where these prices come from.' : 'Phosphor picks the source that is answering.';
   }
 
   // Two controls that only exist when there is something to act on. Neither is a note about
@@ -2817,21 +2921,31 @@ function renderChartStatus() {
   for (var i = 0; i < extras.length; i++) extras[i].remove();
 
   if (CHART.view.panOffset > 0) {
-    var live = chartSpan('timeframe', 'Live');
+    var live = chartButton('chart-extra', 'Back to now');
     live.id = 'chart-live';
     live.dataset.extra = '1';
-    live.title = 'back to the newest bar';
+    live.title = 'Scroll back to the newest prices';
     cluster.appendChild(live);
   }
   if (CHART.agentObjects > 0) {
     // One control carrying the count, not a count and a control: the bar has one row and the
     // status line shares it with the segment, the command and Layers.
-    var clear = chartSpan('timeframe', 'Clear ' + CHART.agentObjects);
+    var many = CHART.agentObjects === 1 ? ' drawing' : ' drawings';
+    var clear = chartButton('chart-extra', 'Clear ' + CHART.agentObjects + many);
     clear.id = 'chart-clear-agent';
     clear.dataset.extra = '1';
-    clear.title = 'the agent drew ' + CHART.agentObjects + (CHART.agentObjects === 1 ? ' object' : ' objects') + ' on this chart. Clear them';
+    clear.title = 'Your assistant drew ' + CHART.agentObjects + many + ' on this chart. Clear them.';
     cluster.appendChild(clear);
   }
+}
+
+/* The two situational controls are buttons, so the keyboard reaches them. */
+function chartButton(className, text) {
+  var button = document.createElement('button');
+  button.type = 'button';
+  if (className) button.className = className;
+  button.textContent = text;
+  return button;
 }
 
 function chartSpan(className, text) {
@@ -3200,18 +3314,9 @@ function wireChart() {
     });
   }
 
-  // The chart's control surface is a command line, not a toolbar: the same vocabulary the
-  // agent uses, typed. "ema 50", "rsi", "bbands 20 2.5", "clear".
-  var command = document.getElementById('chart-cmd');
-  if (command) {
-    command.addEventListener('keydown', function (ev) {
-      if (ev.key !== 'Enter') return;
-      var parsed = parseCommand(command.value);
-      command.value = '';
-      if (!parsed) return;
-      void pushChart(parsed);
-    });
-  }
+  // The chart's indicator field is ui/screens/trade.js's: it lists what can be added and
+  // hands the words here (window.chartCommand), in the same vocabulary the agent uses,
+  // "ema 50", "rsi", "bbands 20 2.5", "clear".
 
   if (window.ResizeObserver) {
     var observer = new ResizeObserver(function () {
@@ -3271,6 +3376,16 @@ function parseCommand(raw) {
   }
   return { addIndicator: { type: head, params: params } };
 }
+
+/* The words from the indicator field. True when they named something the
+   chart can do, which is then pushed; false leaves the field as it was. */
+function chartCommand(raw) {
+  var parsed = parseCommand(raw);
+  if (!parsed) return false;
+  void pushChart(parsed);
+  return true;
+}
+window.chartCommand = chartCommand;
 
 function chartBoot() {
   // The stylesheet is in by now, so the canvas can take its palette from the same tokens the

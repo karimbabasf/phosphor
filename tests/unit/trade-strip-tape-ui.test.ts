@@ -331,7 +331,8 @@ test('the day folds the live bar in: the change against the close a day ago, the
   w.flush();
   assert.equal(price(w), '$64,000.00');
   // 64,000 against 61,700: up 2,300, which is 3.73%.
-  assert.equal(change.childNodes[1].textContent, '+2,300.00 / +3.73%');
+  // The sign, then the unit, then the percent in brackets: "+$2,300 (+3.73%) in 24h".
+  assert.equal(change.childNodes[1].textContent, '+$2,300 (+3.73%)');
   assert.equal(change.childNodes[1].dataset.dir, 'up');
   assert.equal(high.childNodes[1].textContent, '$64,120.00', 'a live high above the day\'s must show');
   assert.equal(low.childNodes[1].textContent, '$58,100.00', 'a live low under the day\'s must show');

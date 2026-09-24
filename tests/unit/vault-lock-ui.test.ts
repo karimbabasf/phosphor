@@ -402,6 +402,89 @@ test('focus lands on the Touch ID button where there is no field', () => {
   assert.equal(button.focused, true);
 });
 
+test('the fine print says what really runs while the app is locked, for both kinds of wallet', () => {
+  for (const custody of ['software', 'secure-enclave']) {
+    const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody }) }, [LOCK]);
+    world.sandbox.PhosphorLock.boot();
+    const fine = find(world.nodes['screen-lock'], '.lock-fine')[0].textContent;
+    assert.ok(fine.includes('Nothing new is sent while Phosphor is locked; orders already on the exchange still run.'), `${custody}: ${fine}`);
+    assert.doesNotMatch(fine, /nothing moves|cannot be reset/i, `${custody}: a promise the lock cannot keep`);
+  }
+});
+
+test('too many tries count down in place, hold Unlock in its outline until nought, then clear', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, [LOCK]);
+  const ticks: Array<() => void> = [];
+  world.sandbox.setInterval = (fn: () => void) => { ticks.push(fn); return 7; };
+  world.sandbox.clearInterval = () => { ticks.length = 0; };
+  world.sandbox.PhosphorApi.unlock = () => Promise.resolve({ ok: false, error: 'Too many tries.', code: 'locked_out', retryInSec: 3 });
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  const input = find(screen, 'input[type="password"]')[0];
+  const unlock = buttonNamed(screen, 'Unlock');
+  input.value = 'nope';
+  find(screen, 'form')[0].dispatch('submit');
+  await flush();
+  const error = find(screen, '.lock-error')[0];
+  assert.equal(error.textContent, 'Too many tries. Try again in 3 seconds.');
+  assert.equal(unlock.disabled, true, 'Unlock stayed live while the app refuses every try');
+  assert.equal(unlock.getAttribute('data-waiting'), 'true');
+  // A press while waiting posts nothing.
+  const posts = world.calls.length;
+  input.value = 'again';
+  find(screen, 'form')[0].dispatch('submit');
+  await flush();
+  assert.equal(world.calls.length, posts, 'a try went out during the wait');
+  ticks[0]();
+  assert.equal(error.textContent, 'Too many tries. Try again in 2 seconds.');
+  ticks[0]();
+  assert.equal(error.textContent, 'Too many tries. Try again in 1 second.');
+  ticks[0]();
+  assert.equal(unlock.disabled, false, 'Unlock did not come back at nought');
+  assert.equal(unlock.getAttribute('data-waiting'), null);
+  assert.equal(error.hidden, true, 'the line stayed after the wait');
+});
+
+test('a forgotten password has a way back where this Mac has Touch ID: the phrase, in the card, and a second press', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  const forgot = find(screen, 'button.lock-forgot')[0];
+  assert.ok(forgot, 'no way back from a forgotten password');
+  assert.equal(forgot.textContent, 'Forgot your password? Restore from your recovery phrase');
+  const step = find(screen, '.lock-restore')[0];
+  const form = find(screen, 'form')[0];
+  assert.equal(step.hidden, true);
+  forgot.click();
+  assert.equal(step.hidden, false);
+  assert.equal(form.hidden, true, 'the password field stayed beside the phrase');
+  const phrase = find(step, 'textarea')[0];
+  const go = buttonNamed(step, 'Restore');
+  phrase.value = 'one two';
+  go.click();
+  await flush();
+  assert.ok(textOf(step).includes('That is 2 words. It should be 12 or 24.'));
+  const words = Array.from({ length: 12 }, (_v, i) => 'w' + (i + 1));
+  phrase.value = words.join(' ');
+  go.click();
+  await flush();
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'one press replaced the wallet');
+  assert.ok(textOf(step).some((t) => t.startsWith('This replaces the wallet on this Mac with the one your phrase makes.')));
+  go.click();
+  await flush();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/restore');
+  assert.ok(post, 'the restore was not posted');
+  assert.equal(post.mnemonic, words.join(' '));
+  assert.ok(world.calls.some((c) => c.route === 'refresh'));
+  // Back to the password, and no way back offered where there is no Touch ID to restore behind.
+  buttonNamed(step, 'Use my password').click();
+  assert.equal(form.hidden, false);
+  const bare = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software', enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } }) }, [LOCK]);
+  bare.sandbox.PhosphorLock.boot();
+  assert.equal(find(bare.nodes['screen-lock'], 'button.lock-forgot').length, 0, 'a restore offered where it cannot run');
+});
+
 /* ---------- the first run ---------- */
 
 test('with the enclave ready, the first run is the welcome, Create wallet, the addresses, the assistant, then Home', async () => {

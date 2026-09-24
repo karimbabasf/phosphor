@@ -1,10 +1,9 @@
-// The status cluster above the chart: the state word and the delay beside it.
+// The status cluster above the chart: the words that answer "can I trust this price now".
 //
-// The delay is the one number on the bar that used to be about the wrong thing. It came off the
-// trading payload as the age of the account snapshot, which Hyperliquid pushes every 5 s, so it
-// climbed from 0 to 5000 ms and reset while the price moved every half second. It is the venue's
-// delay on the socket serving the bars now, carried on the chart payload's meta, and it is the
-// engine that writes it.
+// The delay beside the state word was the one number on the bar that meant nothing to a
+// person: a socket's round trip in milliseconds. Live now says Live and nothing else, a slow
+// feed says how often it moves, and a paused one says the prices on screen are the last ones.
+// The latency slot is still built for the engine and is left empty.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -93,37 +92,35 @@ function payload(meta: Record<string, unknown>) {
   };
 }
 
-test('a live feed prints the venue delay beside the state word, rounded to the millisecond', () => {
+test('a live feed says Live and nothing else: the round trip is an engineer\'s number', () => {
   const { s, feed, word, latency } = loadChartUi();
   s.applyChart(payload({ feed: 'live', latencyMs: 141.4 }));
   s.renderChartStatus();
   assert.equal(feed.dataset.feed, 'live');
-  assert.equal(word.textContent, 'live');
-  assert.equal(latency.textContent, '141 ms');
-});
-
-test('the delay is a measurement, not a clock: a repaint without a new payload prints the same number', () => {
-  const { s, latency } = loadChartUi();
-  s.applyChart(payload({ feed: 'live', latencyMs: 140 }));
-  s.renderChartStatus();
-  s.renderChartStatus();
-  s.renderChartStatus();
-  assert.equal(latency.textContent, '140 ms');
-});
-
-test('no delay prints nothing, never a zero, and a delayed feed carries none', () => {
-  const { s, feed, latency } = loadChartUi();
-  s.applyChart(payload({ feed: 'live', latencyMs: null }));
-  s.renderChartStatus();
+  assert.equal(word.textContent, 'Live');
   assert.equal(latency.textContent, '');
+});
 
+test('a slow feed says how often it moves, and a paused one that the prices are the last ones', () => {
+  const { s, feed, word } = loadChartUi();
   s.applyChart(payload({ feed: 'delayed', latencyMs: null }));
   s.renderChartStatus();
   assert.equal(feed.dataset.feed, 'delayed');
-  assert.equal(latency.textContent, '');
+  assert.equal(word.textContent, 'Updates every few seconds');
 
-  // A payload from before the field existed.
-  s.applyChart(payload({ feed: 'live' }));
+  s.applyChart(payload({ feed: 'offline' }));
   s.renderChartStatus();
-  assert.equal(latency.textContent, '');
+  assert.equal(feed.dataset.feed, 'offline');
+  assert.equal(word.textContent, 'Prices paused, showing the last ones');
+  // The reason is in words, never the source's own error string.
+  assert.ok(!/error|unreachable/i.test(feed.title), feed.title);
+});
+
+test('the delay slot stays empty whatever the payload carries', () => {
+  const { s, latency } = loadChartUi();
+  for (const meta of [{ feed: 'live', latencyMs: 140 }, { feed: 'live', latencyMs: null }, { feed: 'delayed' }, { feed: 'live' }]) {
+    s.applyChart(payload(meta));
+    s.renderChartStatus();
+    assert.equal(latency.textContent, '');
+  }
 });

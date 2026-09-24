@@ -1,10 +1,11 @@
 /* The pick-one card: two tiles, one question. Drawn by ui/screens/assetpick.js when one ticker
    means two different tokens on one chain.
 
-   The grammar is the agent picker's (agentpick.css .agent-tile): a colourless tile at rest, the
-   one under the pointer in the app's own accent, a mark beside the words. One difference, and it
-   is why this is not that file: these tiles are read left to right, a coin mark then a ticker
-   then one plain line, because the thing being compared is a sentence rather than a name. */
+   SOFT DEPTH. Each choice is a tile on the card (the tile fill, a hairline of light on its top
+   edge, no border), read left to right: a coin mark, then a ticker, then one plain line, because
+   the thing being compared is a sentence rather than a name. The price is a figure in Geist with
+   tabular lining numerals. Under the pointer the tile lifts one step, and it squishes when
+   pressed and springs back when let go. */
 
 .assetpick-list {
   display: flex;
@@ -19,16 +20,16 @@
   gap: var(--s-3);
   width: 100%;
   min-width: 0;
-  padding: var(--s-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--bg-1);
-  color: var(--text-1);
+  padding: 14px 18px;
+  border: 0;
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
+  color: var(--text);
   text-align: left;
   cursor: pointer;
-  transition: border-color 200ms var(--ease-out),
-              background-color 200ms var(--ease-out),
-              transform var(--dur-press) var(--ease-out);
+  transition: background-color 160ms var(--ease-out),
+              transform var(--dur-release) var(--ease-spring);
 }
 
 .assetpick-words {
@@ -40,8 +41,8 @@
 }
 
 .assetpick-ticker {
-  font-size: var(--fs-14);
-  font-weight: 600;
+  font-size: var(--fs-15);
+  font-weight: 550;
   letter-spacing: -0.005em;
 }
 
@@ -53,17 +54,36 @@
 }
 
 .assetpick-usd {
-  font-family: var(--font-mono);
-  font-size: var(--fs-12);
-  color: var(--text-2);
   flex: 0 0 auto;
+  font-family: var(--font-num);
+  font-variant-numeric: var(--num-features);
+  font-size: var(--fs-15);
+  color: var(--text);
 }
 
-.assetpick-tile:hover {
-  border-color: var(--ink);
-  background: color-mix(in srgb, var(--ink) 8%, var(--bg-1));
+@media (hover: hover) and (pointer: fine) {
+  .assetpick-tile:hover {
+    background-color: color-mix(in srgb, var(--tile), var(--bg-3) 35%);
+  }
+}
+
+.assetpick-tile:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
 }
 
 .assetpick-tile:active {
-  transform: translateY(1px);
+  transform: scale(var(--scale-press));
+  transition-duration: 160ms, 100ms;
+  transition-timing-function: var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assetpick-tile {
+    transition: none;
+  }
+
+  .assetpick-tile:active {
+    transform: none;
+  }
 }

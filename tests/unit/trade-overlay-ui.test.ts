@@ -122,7 +122,7 @@ test('a plan is drawn as its band: entry in the agent ink, stop in down, target 
   // Two washes, one each side of the entry, both at a twentieth of full strength.
   const washes = fills.filter((f) => f.style.endsWith('0.05)'));
   assert.equal(washes.length, 2, JSON.stringify(fills));
-  assert.ok(washes[0].style.startsWith('rgba(255, 90, 110'), 'the stop side is the down token');
+  assert.ok(washes[0].style.startsWith('rgba(' + s.RGB_DOWN), 'the stop side is the down token');
   assert.ok(washes[1].style.startsWith('rgba(' + s.RGB_ACCENT), 'the target side is the ink');
   // The stop wash covers entry to stop: a 3 point band, taller than nothing and under the pane.
   assert.ok(washes[0].h > 0 && washes[0].h < L.priceHeight);
@@ -178,7 +178,7 @@ test('a position prints in sentence case with its entry in the text ink and its 
     ['Liquidation BTC  97.0', 'down'],
     ['Long $30,000 at 10x  +$1,000  100.0', 'text'],
   ]);
-  assert.ok(strokes[0].startsWith('rgba(255, 90, 110'), 'the liquidation line is the one red on the canvas');
+  assert.ok(strokes[0].startsWith('rgba(' + s.RGB_DOWN), 'the liquidation line is the one red on the canvas');
 });
 
 test('the spotlight rings the object the agent is pointing at', () => {
@@ -216,6 +216,6 @@ test('the legend and the overlays share one column, so no two labels print on on
   assert.ok(distinct.size >= 3, JSON.stringify(printed));
   const sorted = [...distinct].sort((a, b) => a - b);
   for (let i = 1; i < sorted.length; i += 1) assert.ok(sorted[i] - sorted[i - 1] >= 13, `two labels ${sorted[i] - sorted[i - 1]} px apart`);
-  assert.equal(printed[0][0], 'BTC-USD');
+  assert.equal(printed[0][0], 'BTC');
   assert.equal(printed[0][1], 16, 'the column starts at y 16');
 });

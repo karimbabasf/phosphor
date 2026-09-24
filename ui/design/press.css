@@ -8,9 +8,11 @@
    A .btn steps its fill and gives 3 percent; a chip, a tab, a tile and an opener have their
    own. Every other pressable takes this: a wash of the text at 12 percent, one shade past any
    hover wash, so a click reads on a still frame and reads as more than a hover. The compact
-   ones (a glyph in a box, a link, a word with a caret) give 3 percent as well; a row that
-   spans its column keeps its edges still. A new family joins one of the two lists, and the
-   inventory test holds every family to having a press. */
+   ones (a glyph in a box, a link, a word with a caret) give 3 percent as well (the
+   --scale-press token, Soft depth's squish), and a family whose sheet carries the release
+   spring (transform var(--dur-release) var(--ease-spring)) springs back when let go; a row
+   that spans its column keeps its edges still. A new family joins one of the two lists, and
+   the inventory test holds every family to having a press. */
 .dock-close:active,
 .pane-hide:active,
 .pane-show:active,
@@ -26,7 +28,7 @@
 .bal-add:active,
 .vault-seg-cell:active,
 .sendcard-info:active > span {
-  transform: scale(0.97);
+  transform: scale(var(--scale-press));
   background-color: var(--press);
 }
 
@@ -39,5 +41,5 @@
   background-color: var(--press);
 }
 
-.check-row:active { transform: scale(0.97); }
+.check-row:active { transform: scale(var(--scale-press)); }
 .jump-latest:active { background-color: color-mix(in srgb, var(--agent) 24%, var(--bg-1)); }

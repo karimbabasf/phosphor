@@ -149,6 +149,22 @@
     link: [
       'M7 7h3v10H7a5 5 0 0 1 0-10zM14 7h3a5 5 0 0 1 0 10h-3z',
       'M9.5 17H7a5 5 0 0 1 0-10h2.5M14.5 7H17a5 5 0 0 1 0 10h-2.5M8.5 12h7'
+    ],
+    /* A shield with a tick in it: the recovery phrase, proven backed up. */
+    shield: [
+      'M12 3.2l7 2.7v5.3c0 4.4-2.9 8.1-7 9.4-4.1-1.3-7-5-7-9.4V5.9z',
+      'M12 3.2l7 2.7v5.3c0 4.4-2.9 8.1-7 9.4-4.1-1.3-7-5-7-9.4V5.9zM9.2 12.1l2 2 3.7-3.9'
+    ],
+    /* A computer on its stand: this Mac. */
+    mac: [
+      'M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15H4z',
+      'M4 15V6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15M4 15h16M2 18.5h20'
+    ],
+    /* A check on its own, no ring: the tick inside a box that is already the
+       shape (the acknowledgement on Add money). */
+    check: [
+      '',
+      'M6 12.5l4 4 8-9'
     ]
   };
 

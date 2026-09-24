@@ -45,6 +45,8 @@ const ALLOWED: Site[] = [
   { file: 'core/dom.js', code: "use.setAttribute('href', '#phosphor-mark');", count: 1, why: 'fragment' },
   { file: 'core/links.js', code: 'anchor.href = safe;', count: 1, why: 'links' },
   { file: 'design/icons.js', code: "use.setAttribute('href', '#i-' + name);", count: 1, why: 'fragment' },
+  // The Vault's frozen row draws the bar's own freeze glyph, which index.html holds as a symbol.
+  { file: 'screens/vault.js', code: "use.setAttribute('href', '#i-freeze');", count: 1, why: 'fragment' },
 ];
 
 function found(): Site[] {

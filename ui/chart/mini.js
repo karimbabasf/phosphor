@@ -43,14 +43,16 @@
   var FONT = '11px "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+  /* The tokens' shipped values (ui/design/tokens.css), for the frame drawn
+     before the stylesheet is read. */
   var tokens = {
-    bg1: '#151619',
-    line: '#262729',
-    text: '#ECEEF1',
-    text2: '#9BA1AB',
-    text3: '#828890',
-    up: '#3FFF6C',
-    down: '#FF5A6E',
+    bg1: '#1e1917',
+    line: '#302a26',
+    text: '#f8f0e8',
+    text2: '#bcaea1',
+    text3: '#9a8c7f',
+    up: '#52e893',
+    down: '#ff6b5b',
     agent: '#B79CFF'
   };
 
@@ -297,8 +299,8 @@
     var ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = tokens.bg1;
-    ctx.fillRect(0, 0, w, h);
+    /* The mini sits on its own tile (trade.css .mini): the canvas lets it show. */
+    ctx.clearRect(0, 0, w, h);
     ctx.font = FONT;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';

@@ -96,7 +96,8 @@ test('a payload naming another market moves the window onto it', () => {
   s.applyChart(payload({ view: viewOf('BTC-USD') }));
 
   assert.equal(s.CHART.view.product, 'BTC-USD');
-  assert.equal(legendWords(s)[0], 'BTC-USD');
+  // The legend names the coin, the way the strip does, not the chart's product id.
+  assert.equal(legendWords(s)[0], 'BTC');
 });
 
 test('the legend names the bars on screen, not the switch still in flight', () => {
@@ -111,7 +112,7 @@ test('the legend names the bars on screen, not the switch still in flight', () =
 
   assert.equal(s.CHART.view.product, 'SOL-USD', 'the hand is not overruled by a payload that crossed it');
   const words = legendWords(s);
-  assert.equal(words[0], 'BTC-USD', 'the prices drawn are BTC-USD, so the name has to be');
+  assert.equal(words[0], 'BTC', 'the prices drawn are BTC-USD, so the name has to be BTC');
   assert.equal(words[1], '5m', 'the bar length follows the same payload as the bars');
 });
 
@@ -221,5 +222,5 @@ test('an agent switching product still owns the view', () => {
 
   assert.equal(s.CHART.view.product, 'SOL-USD');
   assert.equal(s.CHART.view.panOffset, 12);
-  assert.equal(legendWords(s)[0], 'SOL-USD');
+  assert.equal(legendWords(s)[0], 'SOL');
 });

@@ -83,22 +83,30 @@ const paneOf = (layout: any, label: string) =>
 
 // ---------- the palette ----------
 
-test('the chart is not green any more, and every ink is a design token', () => {
+test('the chart draws in the window\'s own inks before the stylesheet is in', () => {
   const s = loadChartUi();
-  // The mark's own green since 2026-09-14, the same hex as --ink in tokens.css.
-  assert.equal(s.C_UP, '#3FFF6C');
-  assert.equal(s.C_DOWN, '#FF5A6E');
-  // The window moved its graphite in the v2 rebuild and the canvas follows it: these two
-  // are the fallbacks the engine draws with before the stylesheet is in, so a hairline that
-  // does not match --line is a seam a person can see for the first frame.
-  assert.equal(s.CHART_TOKENS.line, '#262729');
-  assert.equal(s.CHART_TOKENS.text2, '#9BA1AB');
+  // The fallbacks the engine draws with before the stylesheet is read are the tokens'
+  // shipped values (ui/design/tokens.css), so the first frame has no seam against the slab:
+  // a hairline or a candle in last season's colours is a flash a person can see.
+  const tokens = readFileSync(new URL('../../ui/design/tokens.css', import.meta.url), 'utf8');
+  const token = (name: string): string => {
+    const m = new RegExp('--' + name + ':\\s*(#[0-9a-fA-F]{6})').exec(tokens);
+    assert.ok(m, 'tokens.css ships --' + name);
+    return m![1].toLowerCase();
+  };
+  const triple = (hex: string): string => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ');
+  assert.equal(s.C_UP.toLowerCase(), token('up'));
+  assert.equal(s.C_DOWN.toLowerCase(), token('down'));
+  assert.equal(s.CHART_TOKENS.line.toLowerCase(), token('line'));
+  assert.equal(s.CHART_TOKENS.text2.toLowerCase(), token('text-2'));
+  assert.equal(s.CHART_TOKENS.bg1.toLowerCase(), token('bg-1'));
   // The four inks the engine mixes from, named for meaning rather than for a colour.
-  assert.equal(s.accent(0.5), 'rgba(91, 141, 239, 0.5)');
-  assert.equal(s.danger(1), 'rgba(255, 90, 110, 1)');
-  assert.equal(s.lineInk(1), 'rgba(38, 39, 41, 1)');
-  assert.equal(s.text2(0.7), 'rgba(155, 161, 171, 0.7)');
-  assert.equal(typeof s.green, 'undefined', 'a function called green() returning blue is a lie');
+  assert.equal(s.accent(0.5), 'rgba(' + triple(token('up')) + ', 0.5)');
+  assert.equal(s.danger(1), 'rgba(' + triple(token('down')) + ', 1)');
+  assert.equal(s.lineInk(1), 'rgba(' + triple(token('line')) + ', 1)');
+  assert.equal(s.text2(0.7), 'rgba(' + triple(token('text-2')) + ', 0.7)');
+  assert.ok(s.CHART_FONT.startsWith('11px "Geist Mono"'), s.CHART_FONT);
+  assert.ok(s.CHART_FONT_SMALL.startsWith('9px "Geist Mono"'), s.CHART_FONT_SMALL);
 });
 
 test('the shipped defaults leave the chart on its tokens, and a chosen colour wins', () => {
@@ -436,7 +444,8 @@ test('the waiting scene speaks in sentence case, not tracked caps', () => {
   s.CHART.meta = { source: '', stale: false, built: '', error: null };
   assert.equal(s.waitingState().head, 'Connecting');
   s.CHART.view.product = 'BTC-USD';
-  assert.ok(s.waitingState().head.startsWith('Acquiring BTC-USD'), s.waitingState().head);
+  // The coin, the way the strip names it, not the chart's product id.
+  assert.ok(s.waitingState().head.startsWith('Loading BTC 1m'), s.waitingState().head);
   s.CHART.meta.error = 'no route';
   assert.equal(s.waitingState().head, 'Chart unreachable');
 });

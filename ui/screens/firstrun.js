@@ -14,7 +14,15 @@
    and three screens: Create wallet, the addresses, the assistant. The phrase is
    not shown here; backup is prompted later and proven in the Vault tab. A
    wallet file another Mac made opens on Restore instead of Create. Without an
-   enclave the software screens run as they always have, after the welcome. */
+   enclave the software screens run after the welcome, on one of two paths: a
+   new wallet (its words, then three of them typed back and checked by the
+   app) or one brought in with its phrase.
+
+   The terms of use are the first step after the welcome for a person with no
+   wallet yet, so the product's own moment is the first thing anyone sees
+   (ui/screens/terms.js keeps its card for a newer version over a wallet that
+   already exists). Steps are named, never numbered, and the progress counts
+   them in four phases a person can hold in their head. */
 (function () {
   'use strict';
 
@@ -23,14 +31,26 @@
   var api = window.PhosphorApi;
   var store = window.PhosphorState;
 
-  var SOFTWARE_STEPS = [
-    'welcome', 'choose', 'password', 'words', 'prove', 'addresses',
-    'money', 'connect', 'threshold', 'done'
-  ];
-  var ENCLAVE_STEPS = ['welcome', 'create', 'addresses', 'connect'];
-  var FOREIGN_STEPS = ['welcome', 'foreign', 'addresses', 'connect'];
+  var FLOWS = {
+    create: ['welcome', 'choose', 'password', 'words', 'prove', 'addresses', 'money', 'connect', 'threshold', 'done'],
+    import: ['welcome', 'choose', 'password', 'import', 'addresses', 'money', 'connect', 'threshold', 'done'],
+    enclave: ['welcome', 'create', 'addresses', 'connect'],
+    foreign: ['welcome', 'foreign', 'addresses', 'connect']
+  };
 
-  var STEPS = SOFTWARE_STEPS;
+  /* What the progress names. The welcome and the terms come before any of
+     it and are not counted. */
+  var PHASES = [
+    { name: 'Wallet', steps: ['choose', 'password', 'import', 'create', 'foreign'] },
+    { name: 'Backup', steps: ['words', 'prove'] },
+    { name: 'Money', steps: ['addresses', 'money'] },
+    { name: 'Assistant', steps: ['connect', 'threshold', 'done'] }
+  ];
+  var UNCOUNTED = ['welcome', 'terms'];
+  var PROVE_COUNT = 3;
+  var ASK_CHOICES = [25, 100, 500, 1000];
+
+  var STEPS = FLOWS.create;
   var EASE = [0.16, 1, 0.3, 1];
 
   var host = null;
@@ -49,25 +69,46 @@
      whether it is on the door, and whether the app started it. The done screen reads its
      sentence off this rather than asserting a connection nobody made. `moneyIn` is whether the
      money step saw the balance land. */
-  var draft = { path: 'create', password: '', mnemonic: [], threshold: 100, addresses: null, agent: null, moneyIn: false };
+  var draft = { path: 'create', password: '', mnemonic: [], threshold: 100, addresses: null, agent: null, moneyIn: false, backedUp: false, wordsNote: '' };
   var open_ = false;
 
   function boot() {
     host = document.getElementById('screen-firstrun');
   }
 
-  /* Which flow, read off the vault slice at the moment the card opens. */
+  function stateNow() {
+    return store && typeof store.get === 'function' ? (store.get() || {}) : {};
+  }
+
+  /* Which flow, read off the vault slice, the path picked on the choose step
+     and whether the terms still wait. */
   function flowOf() {
-    var state = store && typeof store.get === 'function' ? (store.get() || {}) : {};
+    var state = stateNow();
     var vault = state.vault || {};
-    if (vault.foreign === true) return FOREIGN_STEPS;
-    if (vault.enclave && vault.enclave.ready === true) return ENCLAVE_STEPS;
-    return SOFTWARE_STEPS;
+    var base = vault.foreign === true
+      ? FLOWS.foreign
+      : (vault.enclave && vault.enclave.ready === true ? FLOWS.enclave : (draft.path === 'import' ? FLOWS.import : FLOWS.create));
+    var steps = base.slice();
+    var terms = window.PhosphorTerms;
+    if (terms && typeof terms.required === 'function' && typeof terms.content === 'function' && terms.required(state)) steps.splice(1, 0, 'terms');
+    return steps;
+  }
+
+  /* The flow again, keeping the person on the step they are on, or on the one
+     that took its place (the terms step, once accepted, is gone). */
+  function reflow() {
+    var name = STEPS[step];
+    STEPS = flowOf();
+    var at = STEPS.indexOf(name);
+    step = at >= 0 ? at : Math.max(0, Math.min(step, STEPS.length - 1));
   }
 
   function open() {
     if (!host || open_) return;
     open_ = true;
+    draft.path = 'create';
+    draft.backedUp = false;
+    draft.wordsNote = '';
     STEPS = flowOf();
     dom.setAttr(document.body, 'data-locked', 'true');
     /* The page is not frosted behind this card, it is not painted at all
@@ -153,8 +194,11 @@
 
   /* ---------- steps ---------- */
 
-  function go(next) {
-    step = Math.max(0, Math.min(STEPS.length - 1, next));
+  /* To a step by its name, or by its place in the flow. */
+  function go(target) {
+    var at = typeof target === 'string' ? STEPS.indexOf(target) : target;
+    if (at < 0) return;
+    step = Math.max(0, Math.min(STEPS.length - 1, at));
     swap();
   }
 
@@ -284,15 +328,18 @@
     cleanupStep();
     dom.clear(card);
     var name = STEPS[step];
-    card.className = name === 'welcome' ? 'screen-body firstrun-welcome' : 'screen-body';
+    card.className = name === 'welcome' ? 'screen-body firstrun-welcome' : (name === 'done' ? 'screen-body firstrun-done' : 'screen-body');
+    card.dataset.step = name;
     drawProgress();
     if (name === 'welcome') screenWelcome();
+    else if (name === 'terms') screenTerms();
     else if (name === 'create') screenCreate();
     else if (name === 'foreign') screenForeign();
     else if (name === 'choose') screenChoose();
     else if (name === 'password') screenPassword();
     else if (name === 'words') screenWords();
     else if (name === 'prove') screenProve();
+    else if (name === 'import') screenImport();
     else if (name === 'addresses') screenAddresses();
     else if (name === 'money') screenMoney();
     else if (name === 'connect') screenConnect();
@@ -305,36 +352,60 @@
        input too, and it is never the thing to land on. The welcome is the
        exception: the card itself takes it, so the one button arrives without
        a focus ring drawn on it before anyone has touched a key, and Tab still
-       reaches it first. */
+       reaches it first. The choose step lands on the path that is picked. */
     if (name === 'welcome') {
       if (shell && typeof shell.focus === 'function') shell.focus();
       return;
     }
-    var focusable = card.querySelector('input.input, textarea.input, button');
+    var focusable = (name === 'choose' && card.querySelector('.choice[data-chosen]')) || card.querySelector('input.input, textarea.input, button');
     if (focusable) focusable.focus();
   }
 
-  /* The progress: one thin segment per step after the welcome, the ones
-     reached in the ink, and the same count in words for a screen reader. The
-     welcome is not a step, so it has no bar and is not counted. */
+  /* The progress: the phases the flow has (Wallet, Backup, Money, Assistant),
+     each named over a thin bar that fills as its steps are passed, the phase
+     the person is in in the text tone. The count in words is for a screen
+     reader. The welcome and the terms come before it: no bar, not counted.
+     The bars are kept between steps, so a fill slides rather than jumps. */
   function drawProgress() {
-    var total = STEPS.length - 1;
-    if (step < 1 || total < 1) {
+    var name = STEPS[step];
+    var counted = STEPS.filter(function (s) { return UNCOUNTED.indexOf(s) === -1; });
+    var at = counted.indexOf(name);
+    if (at < 0 || !counted.length) {
       if (progress) detach(progress);
       progress = null;
       return;
     }
-    if (!progress) {
+    var phases = PHASES.map(function (phase) {
+      return { name: phase.name, steps: counted.filter(function (s) { return phase.steps.indexOf(s) !== -1; }) };
+    }).filter(function (phase) { return phase.steps.length > 0; });
+    var shape = phases.map(function (phase) { return phase.name + phase.steps.length; }).join(',');
+    if (!progress || progress.dataset.shape !== shape) {
+      if (progress) detach(progress);
       progress = dom.el('div', 'screen-progress');
+      progress.dataset.shape = shape;
+      progress.appendChild(dom.el('span', 'sr-only'));
+      phases.forEach(function (phase) {
+        var item = dom.el('span', 'screen-phase');
+        item.setAttribute('aria-hidden', 'true');
+        item.dataset.phase = phase.name;
+        item.appendChild(dom.el('span', 'screen-phase-name', phase.name));
+        var bar = dom.el('span', 'screen-phase-bar');
+        bar.appendChild(dom.el('span', 'screen-phase-fill'));
+        item.appendChild(bar);
+        progress.appendChild(item);
+      });
       shell.insertBefore(progress, shell.firstChild);
     }
-    dom.clear(progress);
-    progress.appendChild(dom.el('span', 'sr-only', 'Step ' + step + ' of ' + total));
-    for (var i = 1; i <= total; i += 1) {
-      var seg = dom.el('span', 'screen-progress-seg');
-      seg.setAttribute('aria-hidden', 'true');
-      if (i <= step) seg.dataset.done = 'true';
-      progress.appendChild(seg);
+    dom.setText(progress.querySelector('.sr-only'), 'Step ' + (at + 1) + ' of ' + counted.length);
+    var items = progress.querySelectorAll('.screen-phase');
+    for (var i = 0; i < phases.length && i < items.length; i += 1) {
+      var own = phases[i].steps;
+      var passed = own.filter(function (s) { return counted.indexOf(s) <= at; }).length;
+      var here = own.indexOf(name) !== -1;
+      dom.setAttr(items[i], 'data-current', here ? 'true' : null);
+      dom.setAttr(items[i], 'data-done', !here && passed === own.length ? 'true' : null);
+      var fill = items[i].querySelector('.screen-phase-fill');
+      if (fill && fill.style) fill.style.transform = 'scaleX(' + (passed / own.length) + ')';
     }
   }
 
@@ -371,10 +442,10 @@
 
   /* The mark above the name, in the window's own light: the one screen that
      introduces the product opens on the thing it is recognised by. */
-  function markBlock() {
+  function markBlock(state) {
     var mark = dom.el('div', 'firstrun-mark');
     mark.setAttribute('aria-hidden', 'true');
-    var markSvg = dom.mark();
+    var markSvg = state ? dom.mark(null, state) : dom.mark();
     if (markSvg) mark.appendChild(markSvg);
     card.appendChild(mark);
     return mark;
@@ -390,7 +461,7 @@
     var mark = markBlock();
     var title = dom.el('h1', 'firstrun-welcome-title', 'Welcome to Phosphor');
     card.appendChild(title);
-    var line = dom.el('p', 'firstrun-welcome-line', 'Your money stays on this Mac, under a key only you hold. Your assistant does the work, and every move waits for your click.');
+    var line = dom.el('p', 'firstrun-welcome-line', 'Your money stays on this Mac, under a key only you hold. Your assistant does the work. You decide what needs your click.');
     card.appendChild(line);
     var primary = actions('Get started', function () { go(1); }, { back: false });
     if (welcomed) return;
@@ -431,13 +502,13 @@
   function whereBlock(kind) {
     var block = dom.el('div', 'firstrun-where');
     var facts = dom.el('ul', 'firstrun-facts');
-    facts.appendChild(fact(macIcon(), 'Made and kept on this Mac.', 'Nothing is uploaded, and there is no account to make.'));
+    facts.appendChild(fact(icon('mac'), 'Made and kept on this Mac.', 'Nothing is uploaded, and there is no account to make.'));
     if (kind === 'enclave') {
       facts.appendChild(fact(icon('lock'), 'Locked by this Mac\'s Secure Enclave.', 'Touch ID opens it, and the key never leaves the chip.'));
     } else {
-      facts.appendChild(fact(icon('lock'), 'Locked by your password.', 'Nobody can reset it, not us, not your assistant.'));
+      facts.appendChild(fact(icon('lock'), 'Locked by your password.', 'Nobody can reset it, not us, not your assistant. Your recovery phrase brings the wallet back.'));
     }
-    facts.appendChild(fact(icon('hide'), 'Your assistant never sees the key.', 'It asks, the app checks the rules, and you approve each move with a click.'));
+    facts.appendChild(fact(icon('hide'), 'Your assistant never sees the key.', 'It asks, the app checks your limits, and anything above them waits for your click.'));
     block.appendChild(facts);
 
     var dev = window.PhosphorDev;
@@ -480,36 +551,9 @@
   }
 
   /* One icon from the drawn set, or nothing where the set is not loaded. */
-  function icon(name) {
+  function icon(name, className) {
     var icons = window.PhosphorIcons;
-    return icons && typeof icons.svg === 'function' ? icons.svg(name) : null;
-  }
-
-  /* This Mac: a screen on its deck, drawn on the set's own 24 grid in its
-     stroke and its two tones, because the set has no computer yet. */
-  function macIcon() {
-    if (typeof document.createElementNS !== 'function') return null;
-    var NS = 'http://www.w3.org/2000/svg';
-    var node = document.createElementNS(NS, 'svg');
-    node.setAttribute('class', 'icon');
-    node.setAttribute('viewBox', '0 0 24 24');
-    node.setAttribute('aria-hidden', 'true');
-    node.setAttribute('focusable', 'false');
-    var fill = document.createElementNS(NS, 'path');
-    fill.setAttribute('fill', 'currentColor');
-    fill.setAttribute('fill-opacity', '.2');
-    fill.setAttribute('stroke', 'none');
-    fill.setAttribute('d', 'M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15H4z');
-    var stroke = document.createElementNS(NS, 'path');
-    stroke.setAttribute('fill', 'none');
-    stroke.setAttribute('stroke', 'currentColor');
-    stroke.setAttribute('stroke-width', '1.5');
-    stroke.setAttribute('stroke-linecap', 'round');
-    stroke.setAttribute('stroke-linejoin', 'round');
-    stroke.setAttribute('d', 'M4 15V6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15M4 15h16M2 18.5h20');
-    node.appendChild(fill);
-    node.appendChild(stroke);
-    return node;
+    return icons && typeof icons.svg === 'function' ? icons.svg(name, className) : null;
   }
 
   /* The enclave first run, whole. One click makes the wallet and one Touch ID
@@ -520,7 +564,7 @@
     card.appendChild(dom.el('p', 'body dim', 'One click makes it. One Touch ID proves this Mac can open it.'));
     whereBlock('enclave');
 
-    var error = dom.el('p', 'body down');
+    var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
 
@@ -550,7 +594,7 @@
 
     var f = phraseField('Recovery phrase, 12 or 24 words');
     card.appendChild(f.node);
-    var error = dom.el('p', 'body down');
+    var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
 
@@ -573,36 +617,81 @@
         })
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    }, { back: false, pending: 'Restoring your wallet' });
+    }, { back: false, pending: 'Restoring' });
   }
 
-  /* 1 */
+  /* THE TERMS, the first step for a person with no wallet yet. The words are
+     the terms card's own (ui/screens/terms.js), so the two never disagree;
+     accepting is one write, and the step leaves when the app says accepted. */
+  function screenTerms() {
+    var terms = window.PhosphorTerms;
+    card.appendChild(dom.el('h1', 'title', 'Before you start'));
+    var note = terms && typeof terms.content === 'function' ? terms.content(card) : null;
+    actions('Accept and continue', function (button) {
+      if (!terms || typeof terms.accept !== 'function') return;
+      window.PhosphorShell.setPending(button, true);
+      if (note) dom.setText(note, 'Saving your answer.');
+      terms.accept().then(function (answer) {
+        window.PhosphorShell.setPending(button, false);
+        if (!answer || answer.ok !== true) {
+          if (note) dom.setText(note, answer && answer.reason ? answer.reason : 'The app did not record the answer. Try again.');
+          return;
+        }
+        /* Accepted: the step leaves the flow, and the one after it takes
+           its place. */
+        reflow();
+        swap();
+      });
+    }, { pending: 'Saving' });
+  }
+
+  /* 1. Two paths, as one choice: the tile picked is raised, with a tick. */
   function screenChoose() {
     card.appendChild(dom.el('h1', 'title', 'Create or bring a wallet'));
-    var options = dom.el('div', 'stack');
+    var options = dom.el('div', 'firstrun-choices');
+    options.setAttribute('role', 'radiogroup');
+    options.setAttribute('aria-label', 'Which wallet');
     options.appendChild(choice('Make a new wallet', 'A new wallet starts empty. You add money in a minute.', 'create'));
-    options.appendChild(choice('I already have one', 'You will need your recovery words.', 'import'));
+    options.appendChild(choice('I already have one', 'Bring it in with its recovery phrase, 12 or 24 words.', 'import'));
     card.appendChild(options);
-    actions('Continue', function () { go(2); });
+    actions('Continue', function () { go('password'); });
   }
 
   function choice(title, note, value) {
     var button = dom.el('button', 'choice');
     button.type = 'button';
-    if (draft.path === value) button.dataset.chosen = 'true';
-    button.appendChild(dom.el('span', 'title-sm', title));
-    button.appendChild(dom.el('span', 'meta', note));
+    button.dataset.value = value;
+    button.setAttribute('role', 'radio');
+    markChoice(button, draft.path === value);
+    var words = dom.el('span', 'choice-text');
+    words.appendChild(dom.el('span', 'title-sm', title));
+    words.appendChild(dom.el('span', 'meta', note));
+    button.appendChild(words);
+    var tick = dom.el('span', 'choice-tick');
+    tick.setAttribute('aria-hidden', 'true');
+    var glyph = icon('done', 'icon-20');
+    if (glyph) tick.appendChild(glyph);
+    button.appendChild(tick);
     dom.on(button, 'click', function () {
       draft.path = value;
-      draw();
+      var all = card.querySelectorAll('.choice');
+      for (var i = 0; i < all.length; i += 1) markChoice(all[i], all[i].dataset.value === value);
+      reflow();
+      drawProgress();
     });
     return button;
   }
 
+  function markChoice(button, on) {
+    button.setAttribute('aria-checked', on ? 'true' : 'false');
+    dom.setAttr(button, 'data-chosen', on ? 'true' : null);
+  }
+
   /* 2. The software wallet is made here, so this is also where the person
      reads where it will live. No line under the title: the second fact under
-     the fields says what the password does, and the card has to fit an
-     800 px window with the technical list open. */
+     the fields says what the password does, and the card has to fit a 700 px
+     window with the technical list open. On the import path the wallet is
+     made on the next step, from the phrase. */
   function screenPassword() {
     card.appendChild(dom.el('h1', 'title', 'Set a password'));
 
@@ -614,7 +703,7 @@
     var strength = dom.el('p', 'meta');
     strength.hidden = true;
     card.appendChild(strength);
-    var error = dom.el('p', 'body down');
+    var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
 
@@ -631,7 +720,10 @@
       if (one.input.value !== two.input.value) return fail(error, 'The two passwords do not match.');
       error.hidden = true;
       draft.password = one.input.value;
-      if (draft.path === 'import') return go(5);
+      if (draft.path === 'import') return go('import');
+      /* The wallet is made once. A person back on this step after its words
+         were shown goes on to them again, never through a second create. */
+      if (draft.mnemonic.length) return go('words');
 
       window.PhosphorShell.setPending(button, true);
       api.walletCreate(draft.password)
@@ -645,108 +737,172 @@
              and nowhere else. */
           draft.mnemonic = Array.isArray(answer.mnemonic) ? answer.mnemonic : [];
           draft.addresses = answer.addresses || null;
-          go(3);
+          go('words');
         })
-        .catch(function (err) { fail(error, net.readable(err)); })
+        .catch(function (err) { fail(error, err && err.status === 409 ? walletProblem('exists') : net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    }, { pending: 'Making your wallet' });
+    }, { pending: 'Making it' });
   }
 
-  /* 3 */
+  /* 3. The words, once. Print and no Copy: a clipboard is a place other
+     processes read. The wallet exists from here on, so there is no Back to
+     the screens before it. */
   function screenWords() {
     card.appendChild(dom.el('h1', 'title', 'Save your recovery words'));
-    card.appendChild(dom.el('p', 'body dim', 'These twelve words are the only way back to this wallet. Anyone who has them has your money.'));
+    card.appendChild(dom.el('p', 'body dim', 'These ' + (draft.mnemonic.length === 24 ? 'twenty-four' : 'twelve') + ' words are the only way back to this wallet. Anyone who has them has your money.'));
+    if (draft.wordsNote) {
+      var again = dom.el('p', 'firstrun-note');
+      var glyph = icon('warning', 'firstrun-note-icon');
+      if (glyph) again.appendChild(glyph);
+      again.appendChild(dom.el('span', '', draft.wordsNote));
+      card.appendChild(again);
+      draft.wordsNote = '';
+    }
 
     var grid = dom.el('ol', 'words');
     for (var i = 0; i < draft.mnemonic.length; i += 1) {
       var item = dom.el('li', 'word');
-      item.appendChild(dom.el('span', 'meta mono', String(i + 1)));
-      item.appendChild(dom.el('span', 'body mono', draft.mnemonic[i]));
+      item.appendChild(dom.el('span', 'meta num', String(i + 1)));
+      item.appendChild(dom.el('span', 'body word-text', draft.mnemonic[i]));
       grid.appendChild(item);
     }
     card.appendChild(grid);
 
     var tools = dom.el('div', 'hstack-2');
-    var copy = dom.el('button', 'btn btn-ghost');
-    copy.appendChild(dom.el('span', 'btn-label', 'Copy'));
-    var print = dom.el('button', 'btn btn-ghost');
+    var print = dom.el('button', 'btn btn-ghost btn-sm');
+    print.type = 'button';
     print.appendChild(dom.el('span', 'btn-label', 'Print'));
-    tools.appendChild(copy);
     tools.appendChild(print);
     card.appendChild(tools);
+    dom.on(print, 'click', function () { printPhrase(draft.mnemonic); });
 
-    dom.on(copy, 'click', function () {
-      if (!navigator.clipboard) return;
-      navigator.clipboard.writeText(draft.mnemonic.join(' ')).then(function () {
-        dom.setText(copy.querySelector('.btn-label'), 'Copied');
-      });
-    });
-    dom.on(print, 'click', function () { window.print(); });
-
-    var check = dom.el('label', 'checkline');
-    var box = dom.el('input');
+    /* The deposit step's own drawn tick (ui/design/deposit.css), so one flow
+       has one kind of checkbox. The input is real, so the keyboard and a
+       screen reader treat it as one. */
+    var check = dom.el('label', 'ack-row firstrun-ack');
+    var box = dom.el('input', 'ack-input');
     box.type = 'checkbox';
+    box.name = 'saved-words';
     check.appendChild(box);
-    check.appendChild(dom.el('span', 'body', 'I have saved these somewhere that is not this computer.'));
+    var drawn = dom.el('span', 'ack-box');
+    drawn.setAttribute('aria-hidden', 'true');
+    var tick = icon('done', 'ack-check');
+    if (tick) drawn.appendChild(tick);
+    check.appendChild(drawn);
+    check.appendChild(dom.el('span', 'ack-text', 'I have saved these somewhere that is not this computer.'));
     card.appendChild(check);
 
-    var primary = actions('Continue', function () { go(4); }, { disabled: true });
-    dom.on(box, 'change', function () { primary.disabled = !box.checked; });
+    var primary = actions('Continue', function () { go('prove'); }, { disabled: true, back: false });
+    dom.on(box, 'change', function () {
+      primary.disabled = !box.checked;
+      dom.setAttr(check, 'data-checked', box.checked ? 'true' : null);
+    });
   }
 
-  /* 4 */
+  /* A sheet with nothing on it but the numbered words, printed and taken
+     away again: the Vault's own sheet when it is loaded. */
+  function printPhrase(words) {
+    var vault = window.PhosphorVault;
+    if (vault && typeof vault.printPhrase === 'function') {
+      vault.printPhrase(words);
+      return;
+    }
+    if (!words || !words.length) return;
+    var sheet = dom.el('div', 'print-sheet');
+    sheet.appendChild(dom.el('h1', '', 'Phosphor recovery phrase'));
+    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has the money. Keep this sheet somewhere that is not near your computer.'));
+    var list = dom.el('ol', '');
+    for (var i = 0; i < words.length; i += 1) list.appendChild(dom.el('li', '', words[i]));
+    sheet.appendChild(list);
+    document.body.appendChild(sheet);
+    try {
+      window.print();
+    } finally {
+      if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+    }
+  }
+
+  /* Three positions, never the same three. */
+  function pickPositions(count, total) {
+    var out = [];
+    while (out.length < count && out.length < total) {
+      var at = Math.floor(Math.random() * total);
+      if (out.indexOf(at) === -1) out.push(at);
+    }
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  /* 4. Prove it: three words typed back and checked by the app against the
+     phrase it holds, the check that marks the wallet backed up. A miss says
+     so; two misses show the words again with a line that says why. */
   function screenProve() {
-    if (draft.path === 'import') return screenImport();
     card.appendChild(dom.el('h1', 'title', 'Prove it'));
     card.appendChild(dom.el('p', 'body dim', 'Type three of your words back, by their number.'));
 
-    var picks = [2, 6, 10];
+    var picks = pickPositions(PROVE_COUNT, draft.mnemonic.length);
     var inputs = [];
+    var fields = dom.el('div', 'firstrun-fields');
     for (var i = 0; i < picks.length; i += 1) {
       var f = field('Word ' + (picks[i] + 1), 'off');
       f.input.type = 'text';
-      card.appendChild(f.node);
+      f.input.spellcheck = false;
+      f.input.setAttribute('autocapitalize', 'off');
+      f.input.dataset.index = String(picks[i]);
+      fields.appendChild(f.node);
       inputs.push(f.input);
     }
+    card.appendChild(fields);
 
-    var error = dom.el('p', 'body down');
+    var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
     var tries = 0;
 
-    actions('Continue', function () {
-      var ok = true;
-      for (var i = 0; i < picks.length; i += 1) {
-        if (inputs[i].value.trim().toLowerCase() !== draft.mnemonic[picks[i]]) ok = false;
+    actions('Continue', function (button) {
+      var words = [];
+      for (var i = 0; i < inputs.length; i += 1) {
+        var value = inputs[i].value.trim().toLowerCase();
+        if (!value) return fail(error, 'Type all three words.');
+        words.push({ index: Number(inputs[i].dataset.index), word: value });
       }
-      if (ok) {
-        error.hidden = true;
-        go(5);
-        return;
-      }
-      tries += 1;
-      /* Wrong twice shows the list again rather than locking the person out. */
-      if (tries >= 2) {
-        go(3);
-        return;
-      }
-      fail(error, 'One of those is not right. Check your list and try again.');
-    });
+      error.hidden = true;
+      window.PhosphorShell.setPending(button, true);
+      api.vaultBackupProven(words)
+        .then(function (answer) {
+          if (answer && answer.ok === false) {
+            if (answer.code !== 'wrong_words') return fail(error, answer.error || 'That did not work.');
+            tries += 1;
+            if (tries >= 2) {
+              draft.wordsNote = 'Two tries did not match. Check your copy, then try again.';
+              go('words');
+              return;
+            }
+            return fail(error, 'Those words do not match. Look at your copy again.');
+          }
+          draft.backedUp = true;
+          next();
+        })
+        .catch(function (err) { fail(error, net.readable(err)); })
+        .finally(function () { window.PhosphorShell.setPending(button, false); });
+    }, { pending: 'Checking' });
   }
 
+  /* The import path's own step: the phrase, 12 or 24 words, in a box that
+     wraps, with every helper that would remember or correct it off. */
   function screenImport() {
     card.appendChild(dom.el('h1', 'title', 'Bring your wallet in'));
-    card.appendChild(dom.el('p', 'body dim', 'Type your twelve recovery words, separated by spaces.'));
-    var f = field('Recovery words', 'off');
-    f.input.type = 'text';
+    card.appendChild(dom.el('p', 'body dim', 'Type your recovery phrase, 12 or 24 words, with a space between each.'));
+    var f = phraseField('Recovery phrase');
     card.appendChild(f.node);
-    var error = dom.el('p', 'body down');
+    var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
 
     actions('Continue', function (button) {
-      var words = f.input.value.trim().split(/\s+/);
-      if (words.length !== 12) return fail(error, 'That is ' + words.length + ' words. It should be twelve.');
+      var words = wordsOf(f.input.value);
+      if (words.length !== 12 && words.length !== 24) {
+        return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
+      }
       error.hidden = true;
       window.PhosphorShell.setPending(button, true);
       api.walletImport({ password: draft.password, mnemonic: words.join(' ') })
@@ -755,16 +911,17 @@
             fail(error, walletProblem(answer.code || answer.error));
             return;
           }
+          f.input.value = '';
           draft.addresses = answer.addresses || null;
-          go(5);
+          go('addresses');
         })
-        .catch(function (err) { fail(error, net.readable(err)); })
+        .catch(function (err) { fail(error, err && err.status === 409 ? walletProblem('exists') : net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    }, { pending: 'Bringing your wallet in' });
+    }, { pending: 'Bringing it in' });
   }
 
   /* 5. The address picker when the window has one, the plain address list
-     when it does not. */
+     when it does not. The wallet exists by now: no Back into making it. */
   function screenAddresses() {
     card.appendChild(dom.el('h1', 'title', 'Your addresses'));
     var body = dom.el('div', 'stack');
@@ -773,7 +930,7 @@
     stepHandle = pick && typeof pick.render === 'function'
       ? pick.render(body, { context: 'firstrun' })
       : window.PhosphorMoneyIn.render(body);
-    actions('Continue', function () { next(); });
+    actions('Continue', function () { next(); }, { back: false });
   }
 
   /* 6. The money step is the deposit watch, live, not a spinner: the same line
@@ -795,7 +952,7 @@
     dom.setText(idle, 'No address has been shown yet. Go back to pick a network, or do this later.');
     idle.hidden = true;
     card.appendChild(idle);
-    var primary = actions('Continue', function () { go(7); }, {
+    var primary = actions('Continue', function () { go('connect'); }, {
       skip: 'Do this later',
       quiet: true
     });
@@ -893,35 +1050,67 @@
      A refusal is the route's one sentence with the figures in it, shown over
      the same Continue. */
   function screenThreshold() {
-    card.appendChild(dom.el('h1', 'title', 'Set the ask threshold'));
+    card.appendChild(dom.el('h1', 'title', 'When should it ask you?'));
 
-    var line = dom.el('div', 'hstack-2 threshold-line');
-    line.appendChild(dom.el('span', 'body', 'Ask me before anything above'));
-    var input = dom.el('input', 'input threshold-input');
+    /* The figure in a money field pressed into the card, the four common
+       amounts beside it as one choice that follows what is typed. */
+    var line = dom.el('div', 'threshold-line');
+    var well = dom.el('label', 'threshold-money');
+    well.appendChild(dom.el('span', 'threshold-sign', '$'));
+    var input = dom.el('input', 'input threshold-input num');
     input.type = 'text';
-    input.inputMode = 'numeric';
+    input.inputMode = 'decimal';
+    input.name = 'ask-above';
+    input.autocomplete = 'off';
+    input.setAttribute('aria-label', 'Ask me above, in dollars');
     input.value = String(draft.threshold);
-    line.appendChild(input);
-    card.appendChild(line);
+    well.appendChild(input);
+    line.appendChild(well);
 
-    var presets = dom.el('div', 'hstack-2');
-    [25, 100, 500].forEach(function (value) {
-      var chip = dom.el('button', 'chip');
+    var presets = dom.el('div', 'threshold-chips');
+    presets.setAttribute('role', 'radiogroup');
+    presets.setAttribute('aria-label', 'Common amounts');
+    ASK_CHOICES.forEach(function (value) {
+      var chip = dom.el('button', 'chip threshold-chip num');
       chip.type = 'button';
-      chip.appendChild(dom.el('span', '', '$' + value));
+      chip.setAttribute('role', 'radio');
+      chip.dataset.value = String(value);
+      chip.appendChild(dom.el('span', '', dom.usd(value, 0)));
       presets.appendChild(chip);
       dom.on(chip, 'click', function () {
         input.value = String(value);
-        draft.threshold = value;
+        paint();
       });
     });
-    card.appendChild(presets);
+    line.appendChild(presets);
+    card.appendChild(line);
 
-    card.appendChild(dom.el('p', 'body dim', 'Below this, your limits decide on their own. Above it, nothing happens until you click.'));
-    card.appendChild(dom.el('p', 'meta', 'You can change this any time. Changing it needs a click too.'));
-    var error = dom.el('p', 'body down');
+    var explain = dom.el('p', 'body dim');
+    card.appendChild(explain);
+    card.appendChild(dom.el('p', 'meta', 'You can change this any time in the Vault.'));
+    var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
+
+    /* What the figure means, in the policy's own numbers: above it every move
+       waits for a click; under it moves run on their own until they add up
+       to the policy's daily amount for moves made without asking. */
+    function paint() {
+      var typed = Number(String(input.value).replace(/[$,\s]/g, ''));
+      var ok = String(input.value).trim() !== '' && isFinite(typed) && typed > 0;
+      var chips = presets.querySelectorAll('.threshold-chip');
+      for (var i = 0; i < chips.length; i += 1) {
+        chips[i].setAttribute('aria-checked', ok && Number(chips[i].dataset.value) === typed ? 'true' : 'false');
+      }
+      var outbound = (stateNow().policy || {}).outbound || {};
+      var figure = ok ? dom.usd(typed, Math.round(typed * 100) % 100 === 0 ? 0 : 2) : 'this';
+      var auto = typeof outbound.autoApproveDailyUsd === 'number'
+        ? ' Under it your assistant can act on its own, up to ' + dom.usd(outbound.autoApproveDailyUsd, 0) + ' in any 24 hours, then it asks again.'
+        : '';
+      dom.setText(explain, 'Anything above ' + figure + ' waits for your click.' + auto);
+    }
+    dom.on(input, 'input', paint);
+    paint();
 
     actions('Continue', function (button) {
       var value = Number(String(input.value).replace(/[$,\s]/g, ''));
@@ -932,7 +1121,7 @@
         .then(function (answer) {
           if (!answer || answer.ok !== true) throw new Error('not saved');
           draft.threshold = value;
-          go(9);
+          go('done');
         })
         .catch(function (err) {
           /* The route's refusals are written for this screen, one sentence
@@ -944,27 +1133,51 @@
     }, { pending: 'Saving' });
   }
 
-  /* 9. Three facts, each read off what the steps before actually saw: whether the money landed,
-     what the assistant step found, and the one thing that is always true. "Your assistant is
-     connected" used to be printed whatever was picked, including a chat app that cannot drive. */
+  /* 9. PHOSPHOR IS READY. The mark flashes once, and three facts each read off
+     what the steps before actually saw: the wallet and whether money landed,
+     the figure the assistant asks above, and what the assistant step found.
+     "Your assistant is connected" used to be printed whatever was picked,
+     including a chat app that cannot drive. */
   function screenDone() {
-    card.appendChild(dom.el('h1', 'title', 'Done'));
+    markBlock('done');
+    card.appendChild(dom.el('h1', 'title firstrun-done-title', 'Phosphor is ready'));
+    var facts = dom.el('ul', 'firstrun-facts firstrun-done-facts');
+    var vault = stateNow().vault || {};
+    var backed = draft.backedUp || vault.backedUp === true;
     var money = draft.moneyIn ? 'Your money is here.' : 'Add money any time from the Basic tab.';
-    card.appendChild(dom.el('p', 'body', money + ' ' + doneAgentSentence(draft.agent) + ' Nothing moves unless you say so.'));
+    facts.appendChild(fact(icon(backed ? 'shield' : 'lock'), backed ? 'Your wallet is made and backed up.' : 'Your wallet is on this Mac.', backed ? money : money + ' The Vault asks you to prove its recovery phrase once.'));
+    facts.appendChild(fact(icon('done'), 'Anything above ' + dom.usd(draft.threshold, Math.round(draft.threshold * 100) % 100 === 0 ? 0 : 2) + ' waits for your click.', 'You can change it any time in the Vault.'));
+    var agent = doneAgentLines(draft.agent);
+    facts.appendChild(fact(icon('link'), agent.lead, agent.rest));
+    card.appendChild(facts);
     actions('Open Phosphor', function () {
       close();
       window.PhosphorShell.setView('basic', { fromClick: true });
     }, { back: false });
   }
 
-  /* The assistant half of the done screen, one sentence per case the picker can leave behind. */
+  /* The assistant's fact: who it is, and the one thing to do next. */
+  function doneAgentLines(agent) {
+    var check = agent && agent.check ? agent.check : null;
+    var connected = !!(check && (agent.connected || agent.started));
+    if (!check) return { lead: 'No assistant yet.', rest: 'Pick one in the Vault tab when you are ready.' };
+    return {
+      lead: connected ? 'Your assistant is connected.' : (check.name && check.agent !== 'mcp' && check.agent !== 'desktop' ? 'Your assistant is ' + check.name + '.' : 'Your assistant.'),
+      rest: connected ? 'Talk to it in the chat on the left.' : doneAgentSentence(agent)
+    };
+  }
+
+  /* The assistant half of the done screen, one sentence per case the picker can leave behind. An
+     agent the chat runs itself starts from the chat's own button, never a terminal. */
   function doneAgentSentence(agent) {
     var check = agent && agent.check ? agent.check : null;
     if (!check) return 'Pick your assistant in the Vault tab when you are ready.';
     if (agent.connected || agent.started) return 'Your assistant is connected.';
     if (check.agent === 'desktop') return 'Install Claude Code or Codex, then pick it in the Vault tab.';
     if (check.agent === 'mcp') return 'Paste the line from the Vault tab into your agent and it will appear.';
+    if (check.state === 'installed_and_logged_in' && check.inApp) return 'Press Start your agent in the chat to start ' + check.name + '.';
     if (check.state === 'installed_and_logged_in') return 'Start ' + check.name + ' in your terminal and it will appear.';
+    if (check.state === 'installed_not_logged_in' && check.inApp) return 'Sign in to ' + check.name + ', then press Start your agent in the chat.';
     if (check.state === 'installed_not_logged_in') return 'Sign in to ' + check.name + ', then start it in your terminal.';
     return 'Install ' + check.name + ', then pick it in the Vault tab.';
   }
@@ -981,7 +1194,7 @@
   /* The vault routes' refusals, in the words of the screen that asked. */
   function vaultProblem(code) {
     if (code === 'user_cancel') return 'Touch ID was cancelled. Nothing was changed.';
-    if (code === 'enclave_unavailable') return 'The Secure Enclave did not answer. Phosphor may be running outside its desktop shell.';
+    if (code === 'enclave_unavailable') return 'Touch ID did not answer. Open the Phosphor app and try again.';
     if (code === 'bad_phrase') return 'That phrase is not right. Check every word and the order they are in.';
     if (code === 'not_backed_up') return 'The wallet already on this Mac is not backed up yet, so it cannot be replaced.';
     if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
@@ -1023,8 +1236,13 @@
     return { node: node, input: input };
   }
 
+  /* A problem on a step: the warning glyph and the sentence, a step heavier
+     than the step's own words, never red. */
   function fail(node, message) {
-    dom.setText(node, message);
+    dom.clear(node);
+    var glyph = icon('warning', 'firstrun-error-icon');
+    if (glyph) node.appendChild(glyph);
+    node.appendChild(dom.el('span', '', message));
     node.hidden = false;
   }
 
@@ -1056,23 +1274,27 @@
 /* The agent list, one component for two hosts: the first run's assistant
    step above and the Vault (ui/screens/vault.js).
 
-   One row per agent in the catalog's order (src/agents-catalog.ts): its mark,
-   its name, one plain state, and one action. The state is read off the app's
-   own check of this Mac, never guessed and never the network's words:
+   One tile per agent in the catalog's order (src/agents-catalog.ts): its
+   mark, its name, one status line under it, and one action. The status is
+   read off the app's own check of this Mac, never guessed and never the
+   network's words, and says what a person needs to know: installed, signed
+   in, and where it runs.
 
-     Ready                  signed in, and the chat on the left runs it
-     Runs in your terminal  signed in, and it runs outside this window
-     Connected              one of those, on the door right now
-     Not signed in          installed; the line under it is how to sign in
-     Not installed          the line under it is how to install it
-     Connects from outside  any other agent: one line to paste into it
-     Cannot drive Phosphor  a chat app with no agent on this Mac
+     Signed in, runs in the chat        the chat on the left runs it
+     Signed in, runs in your terminal   it runs outside this window
+     Connected                          one of those, on the door right now
+     Installed, not signed in           "How to sign in" opens the line to run
+     Not installed                      "How to install" opens the line to run
+     Connects from outside              any other agent: one line to paste
 
-   The one action is Use, which writes the pick, checks the agent and
-   registers Phosphor in its config where it can, in one round trip. The chat's
-   Start then names the agent picked (it hears a `phosphor:agent` event). The
-   agent in use says so where its Use would be. No dots and no colour: the
-   words and the mark carry every state. */
+   A chat app (Claude Desktop) cannot drive Phosphor, so it has no tile: one
+   line under the list says so. The one action is Use, which writes the pick,
+   checks the agent and registers Phosphor in its config where it can, in one
+   round trip, and the list names the agent while it checks. The chat's Start
+   then names the agent picked (it hears a `phosphor:agent` event). The agent
+   in use says so where its Use would be, with the app's own sentence about
+   it under its name. No dots and no colour: the words and the mark carry
+   every state. */
 (function () {
   'use strict';
 
@@ -1093,27 +1315,38 @@
     { id: 'desktop', name: 'Claude Desktop or a chat app' }
   ];
 
+  /* The tiles: every entry but the chat app, which cannot drive Phosphor and
+     is said under the list instead. */
+  var TILES = AGENTS.filter(function (entry) { return entry.id !== 'desktop'; });
+
   /* The words this file owns: the state names, and what the list says while
      the app is checking or did not answer. Every sentence about a particular
      agent arrives from the app. */
   var STATE_WORDS = {
-    ready: 'Ready',
-    terminal: 'Runs in your terminal',
+    ready: 'Signed in, runs in the chat',
+    terminal: 'Signed in, runs in your terminal',
     connected: 'Connected',
-    signin: 'Not signed in',
+    signin: 'Installed, not signed in',
     install: 'Not installed',
     outside: 'Connects from outside',
     cannot: 'Cannot drive Phosphor',
     checking: 'Checking'
   };
 
+  /* The fold that holds the line to run, by the state that needs it. */
+  var HOW = {
+    signin: { label: 'How to sign in', lead: 'Sign in: ' },
+    install: { label: 'How to install', lead: 'Install: ' }
+  };
+
   var COPY = {
     checking: 'Checking on this Mac.',
     noAnswer: 'Phosphor could not check right now. Try again.',
     outside: 'Paste one line into it and it joins this window.',
-    cannot: 'A chat app cannot drive Phosphor yet. Use Claude Code or Grok instead.',
+    cannot: 'Chat apps like Claude Desktop cannot drive Phosphor yet.',
     inUse: 'Your assistant',
     registrationFailed: ' is on this Mac, but Phosphor could not add itself to it. Paste this line into your terminal:',
+    runIt: 'Run this in Terminal, then press Check again.',
     onDoor: ' is connected.'
   };
 
@@ -1210,7 +1443,7 @@
     var list = dom.el('ul', 'agentlist');
     list.setAttribute('aria-label', 'Assistants');
     var rows = {};
-    AGENTS.forEach(function (entry) {
+    TILES.forEach(function (entry) {
       var row = buildRow(entry);
       rows[entry.id] = row;
       list.appendChild(row.node);
@@ -1224,6 +1457,10 @@
     status.setAttribute('aria-live', 'polite');
     status.hidden = true;
     root.appendChild(status);
+
+    /* What cannot be picked at all, said once under the list rather than as a
+       tile whose only content is no. */
+    root.appendChild(dom.el('p', 'agentpick-note', COPY.cannot));
 
     /* Check again, for a host that has no place of its own for it. The first
        run has one in its action row, and the Vault puts one by its title. */
@@ -1249,18 +1486,33 @@
       var said = dom.el('p', 'agentrow-state');
       var line = dom.el('p', 'agentrow-line');
       line.hidden = true;
+      /* The line to run sits behind a fold: a shell command is the ask for
+         a developer, and a person who is not one reads the status and the
+         name of the step first. */
+      var how = dom.el('button', 'btn btn-quiet btn-sm agentrow-how');
+      how.type = 'button';
+      how.hidden = true;
+      how.setAttribute('aria-expanded', 'false');
+      how.appendChild(dom.el('span', 'btn-label', ''));
+      if (window.PhosphorIcons) how.appendChild(window.PhosphorIcons.svg('chevron-down', 'agentrow-how-icon'));
       var cmd = dom.el('div', 'agentrow-cmd');
       cmd.hidden = true;
-      var code = dom.el('code', 'agentrow-code mono');
+      var cmdNote = dom.el('p', 'agentrow-cmd-note', COPY.runIt);
+      cmdNote.hidden = true;
+      var code = dom.el('code', 'agentrow-code');
       var copy = dom.el('button', 'btn btn-quiet btn-sm agentrow-copy');
       copy.type = 'button';
       copy.appendChild(window.PhosphorIcons ? window.PhosphorIcons.svg('copy') : dom.el('span'));
       copy.appendChild(dom.el('span', 'btn-label', 'Copy'));
-      cmd.appendChild(code);
-      cmd.appendChild(copy);
+      cmd.appendChild(cmdNote);
+      var codeLine = dom.el('div', 'agentrow-code-line');
+      codeLine.appendChild(code);
+      codeLine.appendChild(copy);
+      cmd.appendChild(codeLine);
       text.appendChild(name);
       text.appendChild(said);
       text.appendChild(line);
+      text.appendChild(how);
       text.appendChild(cmd);
       node.appendChild(text);
 
@@ -1278,10 +1530,17 @@
       act.appendChild(current);
       node.appendChild(act);
 
+      var row = { node: node, said: said, line: line, how: how, cmd: cmd, cmdNote: cmdNote, code: code, use: use, current: current, open: false };
       dom.on(use, 'click', function () { pick(entry.id, use); });
       dom.on(copy, 'click', function () { copyLine(code.textContent, copy); });
-
-      return { node: node, said: said, line: line, cmd: cmd, code: code, use: use, current: current };
+      dom.on(how, 'click', function () {
+        row.open = !row.open;
+        var motion = window.PhosphorMotion;
+        var change = function () { paint(); };
+        if (motion && typeof motion.morph === 'function') motion.morph(node, change, { fade: row.open ? cmd : null });
+        else change();
+      });
+      return row;
     }
 
     function copyLine(text, button) {
@@ -1305,7 +1564,7 @@
     /* Every row, from what the app last said about each agent. */
     function paint() {
       var whole = store && typeof store.get === 'function' ? (store.get() || {}) : {};
-      AGENTS.forEach(function (entry) {
+      TILES.forEach(function (entry) {
         var row = rows[entry.id];
         var check = state.checks[entry.id] || null;
         var picked = state.agent === entry.id;
@@ -1315,32 +1574,42 @@
         dom.setAttr(row.node, 'aria-current', picked ? 'true' : null);
         dom.setText(row.said, STATE_WORDS[kind]);
 
+        /* The line under the status is the app's own sentence, for the agent
+           in use (its next step) and for another agent (how it joins). */
         var line = '';
-        var command = '';
-        if (kind === 'terminal') line = check.sentence;
-        else if (kind === 'signin') command = commandIn(check, 'Sign in: ');
-        else if (kind === 'install') command = commandIn(check, 'Install: ');
-        else if (kind === 'outside') line = COPY.outside;
-        else if (kind === 'cannot') line = COPY.cannot;
+        if (kind === 'outside') line = COPY.outside;
+        else if (picked && check && check.sentence && kind !== 'ready' && kind !== 'connected') line = check.sentence;
+
+        /* The line to run, behind its fold: how to sign in or install. */
+        var how = HOW[kind] || null;
+        var command = how ? commandIn(check, how.lead) : '';
+        var folded = !!command;
 
         /* The agent in use keeps what the last pick said about it: a
            registration that failed changes its next step to the line to
-           paste, and another agent's next step is the line itself. */
+           paste, and another agent's next step is the line itself. Both are
+           the one thing left to do, so they are open. */
         if (picked && state.registrationFailed && state.command) {
           line = entry.name + COPY.registrationFailed;
           command = state.command;
+          folded = false;
         } else if (picked && entry.id === 'mcp' && state.command) {
           command = state.command;
+          folded = false;
         }
 
         dom.setText(row.line, line);
         dom.setHidden(row.line, !line);
+        dom.setHidden(row.how, !folded);
+        if (how) dom.setText(row.how.querySelector('.btn-label'), how.label);
+        dom.setAttr(row.how, 'aria-expanded', folded && row.open ? 'true' : 'false');
         dom.setText(row.code, command);
-        dom.setHidden(row.cmd, !command);
+        dom.setHidden(row.cmdNote, !folded);
+        dom.setHidden(row.cmd, !command || (folded && !row.open));
 
         /* Use where a pick can do something: every state but one the app knows
-           is missing, and the chat app that cannot drive. A row still being
-           checked can be used; the pick checks it on the way. */
+           is missing. A row still being checked can be used; the pick checks
+           it on the way. */
         var usable = kind !== 'install' && kind !== 'cannot';
         dom.setHidden(row.use, picked || !usable);
         row.use.disabled = state.busy;
@@ -1376,7 +1645,8 @@
       if (!state.alive || !canAsk()) return Promise.resolve();
       state.seq += 1;
       var seq = state.seq;
-      say(COPY.checking, null);
+      var entry = entryOf(id);
+      say(entry ? 'Checking ' + entry.name + ' on this Mac.' : COPY.checking, null);
       if (button && window.PhosphorShell) window.PhosphorShell.setPending(button, true);
       setBusy(true);
       return api.driver({ action: 'agent-pick', agent: id })

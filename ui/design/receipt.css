@@ -1,9 +1,14 @@
 /* The receipt: the card a person opens when they want the hash, and the Activity
    row that opens it (ui/screens/receipt.js). One card, two homes: a centred
    dialog over the window, and the same card inline in the assistant thread at
-   full width with no backdrop. Everything numeric is mono and tabular; the one
-   accent is the arrow between what left and what arrived, the green on what
-   arrived, and the primary button out to the explorer. */
+   full width with no backdrop.
+
+   SOFT DEPTH. The popover is a soft card floating over the window (the pop
+   surface and its long shadow), the inline card a raised layer in the thread.
+   No hairlines: the facts sit on a tile of their own. Every figure is Geist
+   with tabular lining numerals; the hash, the address and the reference are
+   Geist Mono. The one accent is the arrow between what left and what arrived,
+   the green on what arrived, and the primary button out to the explorer. */
 
 /* ---------- the popover ---------- */
 
@@ -46,19 +51,20 @@ dialog.receipt-dialog::backdrop {
   width: 100%;
   max-width: none;
   padding: var(--s-5);
-  border-radius: var(--radius-xl);
-  background: var(--bg-2);
-  border: 1px solid var(--line-strong);
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--surface-pop);
   box-shadow: var(--lift);
   color: var(--text);
   outline: none;
   container-type: inline-size;
 }
 
-/* Inline in the thread: the panel around it is flat, the card is the raised
-   thing, and it stands on the ground rather than floating over it. */
+/* Inline in the thread: a raised layer that stands on the ground rather than
+   floating over it. */
 .receipt-card[data-inline] {
-  box-shadow: none;
+  background: var(--surface-raised);
+  box-shadow: var(--raise-sm);
 }
 
 .receipt-card .icon {
@@ -90,15 +96,27 @@ dialog.receipt-dialog::backdrop {
   color: var(--text-2);
 }
 
-.receipt-status {
-  height: 24px;
-  padding: 0 var(--s-2) 0 var(--s-2);
-  gap: var(--s-1);
+/* The outcome is its icon and its word, never a pill: green only for a move
+   that went through, amber only for one the app cannot confirm, and a move
+   that did not go through in the second text tone, because nothing was lost. */
+.chip.receipt-status {
+  height: auto;
+  padding: 0;
+  gap: 6px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  font-size: var(--fs-13);
+  font-weight: 500;
+}
+
+.chip.receipt-status[data-tone="down"] {
+  color: var(--text-2);
 }
 
 .receipt-status > .icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .receipt-time {
@@ -118,12 +136,13 @@ dialog.receipt-dialog::backdrop {
   background: transparent;
   color: var(--text-2);
   transition: background-color var(--dur-press) var(--ease-out),
-              color var(--dur-press) var(--ease-out);
+              color var(--dur-press) var(--ease-out),
+              transform var(--dur-release) var(--ease-spring);
 }
 
 .receipt-close > .icon {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -136,7 +155,7 @@ dialog.receipt-dialog::backdrop {
 .receipt-close:focus-visible,
 .receipt-copy:focus-visible,
 .receipt-view:focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--text-2);
   outline-offset: 2px;
 }
 
@@ -144,12 +163,25 @@ dialog.receipt-dialog::backdrop {
    no coloured edge. */
 .receipt-note {
   margin: 0;
-  padding: var(--s-3);
-  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  border-radius: var(--radius);
   background: var(--warn-wash);
   color: var(--warn);
   font-size: var(--fs-13);
-  line-height: 1.45;
+  line-height: 1.5;
+}
+
+/* The reference support asks for, read one character at a time. */
+.receipt-handle {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.receipt-handle > .id {
+  color: var(--text-2);
 }
 
 /* The from and to line. Sized so two ordinary legs and the arrow share the
@@ -175,9 +207,11 @@ dialog.receipt-dialog::backdrop {
 }
 
 .receipt-amount {
-  font-size: var(--fs-18);
-  font-weight: 500;
-  letter-spacing: -0.01em;
+  font-family: var(--font-num);
+  font-variant-numeric: var(--num-features);
+  font-size: var(--fs-20);
+  font-weight: 550;
+  letter-spacing: -0.02em;
   line-height: 1.2;
   white-space: nowrap;
   color: var(--text);
@@ -213,14 +247,17 @@ dialog.receipt-dialog::backdrop {
   }
 }
 
-/* Four facts in two columns: value, fee, venue or chain, wallet or account. */
+/* Four facts in two columns on a tile of their own: value, fee, venue or
+   chain, wallet or account. */
 .receipt-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--s-3) var(--s-4);
   margin: 0;
-  padding-top: var(--s-4);
-  border-top: 1px solid var(--line);
+  padding: 14px 18px;
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
 }
 
 .receipt-cell {
@@ -230,12 +267,22 @@ dialog.receipt-dialog::backdrop {
   min-width: 0;
 }
 
+.receipt-cell > dt {
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
 .receipt-cell > dd {
   margin: 0;
-  font-size: var(--fs-14);
+  font-size: var(--fs-15);
   line-height: 1.4;
   color: var(--text);
   overflow-wrap: anywhere;
+}
+
+.receipt-cell > dd.addr {
+  font-size: var(--fs-14);
+  word-break: normal;
 }
 
 /* The evidence: each hash short, the whole of it on hover and one press away,
@@ -244,8 +291,6 @@ dialog.receipt-dialog::backdrop {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
-  padding-top: var(--s-4);
-  border-top: 1px solid var(--line);
 }
 
 .receipt-tx {
@@ -281,8 +326,11 @@ dialog.receipt-dialog::backdrop {
   margin-left: auto;
 }
 
-.receipt-error {
+/* A check that could not run is news, not a loss: it reads in the text tone. */
+.receipt-error,
+.receipt-error.down {
   margin: 0;
+  color: var(--text);
 }
 
 .receipt-actions {
@@ -312,10 +360,10 @@ dialog.receipt-dialog::backdrop {
    whole thing is the point, and broken anywhere because an intent hash is one 44 character
    word that would otherwise push the card sideways. */
 .said {
-  padding: var(--s-3) var(--s-4);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg-1);
+  padding: 14px 18px;
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
 }
 
 .said-body {
@@ -325,10 +373,10 @@ dialog.receipt-dialog::backdrop {
 }
 
 .tx-row {
-  padding: var(--s-3);
-  border-radius: var(--radius-sm);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
+  padding: 14px 18px;
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
@@ -344,16 +392,16 @@ button.tx {
   border-left: 0;
   border-right: 0;
   border-bottom: 0;
-  transition: background-color var(--dur-press) var(--ease-out);
+  transition: background-color 160ms var(--ease-out);
 }
 
 /* Hover lifts the row one surface step. */
 @media (hover: hover) and (pointer: fine) {
-  button.tx:hover { background: var(--bg-2); }
+  button.tx:hover { background: color-mix(in srgb, var(--tile), var(--bg-3) 35%); }
 }
 
 button.tx:focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--text-2);
   outline-offset: -2px;
 }
 

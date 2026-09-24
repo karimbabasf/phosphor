@@ -1,6 +1,8 @@
-/* The terms card, before anything else. Owned by ui/screens/terms.js. Wears
-   the first run's clothes (firstrun.css) on the same ink ground, so the two
-   screens a new person meets in a row read as one. */
+/* The terms of use. Owned by ui/screens/terms.js. For a person with no
+   wallet they are a step of the first run and wear its card (firstrun.css);
+   the card here is the one a newer version brings back over a wallet that
+   already exists, on the same ink with the mark over it and the first run's
+   field behind it, so the two read as one product. */
 
 body[data-terms="true"] #page {
   visibility: hidden;
@@ -19,6 +21,42 @@ body[data-terms="true"] #page {
 
 #screen-terms .screen-card:focus {
   outline: none;
+}
+
+/* The mark and the title lead the card, centred like the welcome's; the
+   facts under them read as a list. */
+.terms-body {
+  align-items: stretch;
+}
+
+.terms-mark {
+  align-self: center;
+  width: 36px;
+  height: 40px;
+  margin-bottom: 0;
+}
+
+.terms-title {
+  text-align: center;
+}
+
+.terms-lead {
+  margin: 0;
+  font-size: var(--fs-15);
+  line-height: 1.55;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.terms-body > .terms-lead {
+  text-align: center;
+}
+
+.terms-facts {
+  padding: var(--s-4);
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
 }
 
 .terms-read,

@@ -6,7 +6,9 @@
 /* One line at the foot of the world, and only while something needs the
    person (shell.js decides which): words in the second tone, a glyph in the
    third, and the way through as a plain underlined word. No dot, no colour,
-   no box. Sticky, so a long world scrolls under it rather than away from it. */
+   no box. Sticky, so a long world scrolls under it rather than away from it;
+   a soft shadow above it says what is under it, where a hairline would draw
+   a line across the slab. Each view sets its ground (pro.css, basic.css). */
 .notice {
   position: sticky;
   bottom: 0;
@@ -16,12 +18,12 @@
   align-items: center;
   gap: var(--s-2);
   margin-top: auto;
-  padding: var(--s-2) var(--s-5);
+  padding: 10px var(--s-5) 12px;
   font-size: var(--fs-13);
   line-height: 1.45;
   color: var(--text-2);
   background: var(--bg-0);
-  border-top: 1px solid var(--line);
+  box-shadow: 0 -14px 24px -18px rgba(0, 0, 0, 0.7);
 }
 
 .notice > .icon {
@@ -44,7 +46,7 @@
   padding: 0 var(--s-1);
   margin: 0 calc(var(--s-1) * -1);
   border-radius: var(--radius-xs);
-  font-weight: 500;
+  font-weight: 550;
   color: var(--text);
   text-decoration: underline;
   text-decoration-color: var(--line-strong);
@@ -60,4 +62,21 @@
   outline: 2px solid var(--text-2);
   outline-offset: 2px;
   border-radius: var(--radius-xs);
+}
+
+/* While the notice is up, whatever the keyboard or a scrollIntoView brings
+   into view lands above it, never under it: a button hidden by the notice
+   takes the click on the notice instead. */
+.world:has(> .notice:not([hidden])) {
+  scroll-padding-bottom: 64px;
+}
+
+/* Stacked (a browser tab under 960 wide, never the app), the world is a strip
+   above the conversation and a sticky line would float over the middle of
+   it: the notice sits at the end of the world instead. */
+@media (max-width: 959px) {
+  .notice {
+    position: static;
+    box-shadow: none;
+  }
 }

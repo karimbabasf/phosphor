@@ -190,7 +190,7 @@
     var node = dom.el('span', 'receipt-leg');
     node.dataset.dir = dir;
     node.appendChild(logo(symbol, 32));
-    node.appendChild(dom.el('span', 'receipt-amount mono' + (muted ? ' dim' : ''), amount));
+    node.appendChild(dom.el('span', 'receipt-amount num' + (muted ? ' dim' : ''), amount));
     return node;
   }
 
@@ -221,11 +221,13 @@
     return wrap;
   }
 
-  function cell(host, label, value, mono, full) {
+  /* `face` is 'num' for a figure (Geist, tabular) and 'addr' for an address
+     (Geist Mono); anything else is words. */
+  function cell(host, label, value, face, full) {
     if (value === '' || value === null || value === undefined) return;
     var item = dom.el('div', 'receipt-cell');
     item.appendChild(dom.el('dt', 'label', label));
-    var dd = dom.el('dd', mono ? 'mono' : '', value);
+    var dd = dom.el('dd', face === 'num' || face === 'addr' ? face : '', value);
     if (full) dd.title = full;
     item.appendChild(dd);
     host.appendChild(item);
@@ -236,25 +238,25 @@
      cell names one place, or both when the money changed place. */
   function grid(receipt) {
     var list = dom.el('dl', 'receipt-grid');
-    cell(list, 'Value', typeof receipt.valueUsd === 'number' ? dom.usd(receipt.valueUsd) : '', true);
-    cell(list, 'Fee', typeof receipt.feesUsd === 'number' ? dom.fee(receipt.feesUsd) : 'none yet', typeof receipt.feesUsd === 'number');
+    cell(list, 'Value', typeof receipt.valueUsd === 'number' ? dom.usd(receipt.valueUsd) : '', 'num');
+    cell(list, 'Fee', typeof receipt.feesUsd === 'number' ? dom.fee(receipt.feesUsd) : 'none yet', typeof receipt.feesUsd === 'number' ? 'num' : '');
     /* A move between two places names the route, because that is what the person checks
        ("Base to NEAR Intents"); a move inside one place names the venue that did it. */
     var venue = venueName(receipt.venue);
     var from = receipt.fromChain ? chainName(receipt.fromChain) : '';
     var to = receipt.toChain ? chainName(receipt.toChain) : '';
-    if (from && to && from !== to) cell(list, 'Chain', from + ' to ' + to, false);
-    else if (venue) cell(list, 'Venue', venue, false);
-    else if (from || to) cell(list, 'Chain', from || to, false);
+    if (from && to && from !== to) cell(list, 'Chain', from + ' to ' + to, '');
+    else if (venue) cell(list, 'Venue', venue, '');
+    else if (from || to) cell(list, 'Chain', from || to, '');
     var onVenue = receipt.fromChain === 'intents' || receipt.fromChain === 'hyperliquid';
-    if (receipt.wallet) cell(list, onVenue ? 'Account' : 'Wallet', shortAddress(receipt.wallet), true, String(receipt.wallet));
-    else if (receipt.account) cell(list, 'Account', shortAddress(receipt.account), true, String(receipt.account));
+    if (receipt.wallet) cell(list, onVenue ? 'Account' : 'Wallet', shortAddress(receipt.wallet), 'addr', String(receipt.wallet));
+    else if (receipt.account) cell(list, 'Account', shortAddress(receipt.account), 'addr', String(receipt.account));
     return list;
   }
 
   function hashRow(tx) {
     var row = dom.el('div', 'receipt-tx');
-    var code = dom.el('code', 'receipt-tx-hash mono', shortHash(tx.hash));
+    var code = dom.el('code', 'receipt-tx-hash hash', shortHash(tx.hash));
     code.title = String(tx.hash);
     row.appendChild(code);
     if (tx.chain) row.appendChild(dom.el('span', 'receipt-tx-place meta', chainName(tx.chain)));
@@ -368,9 +370,10 @@
       card.appendChild(back);
     }
     if (receipt.handle && receipt.status !== 'executed') {
-      var handle = dom.el('p', 'receipt-handle mono');
+      var handle = dom.el('p', 'receipt-handle');
       handle.title = String(receipt.handle);
-      dom.setText(handle, 'Handle ' + String(receipt.handle));
+      handle.appendChild(dom.el('span', 'receipt-handle-label', 'Reference '));
+      handle.appendChild(dom.el('span', 'id', String(receipt.handle)));
       card.appendChild(handle);
     }
 

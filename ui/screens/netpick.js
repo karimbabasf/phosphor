@@ -1,4 +1,4 @@
-/* Money in, in three steps: the network, what it credits, the address.
+/* Money in, in three steps: the network, what can be sent on it, the address.
 
    Karim, 2026-09-15, on the screens this replaces: "first you select the
    network you want to deposit from ... have it all colorless, and then when the
@@ -15,18 +15,20 @@
 
    So: six quick tiles in one row that never wraps, colourless at rest and in
    their brand colour under the pointer, and under them a search over every
-   network the bridge credits (the backend's registry, thirty-odd today, read
-   off the report so a network the bridge adds is on this list without a
-   window change). Then the tokens that network credits, searchable, each with
-   its minimum in the unit a person types, or "No minimum" where the bridge's
-   floor is dust; each token with a contract is a row that copies that
-   contract, read back byte for byte before the window says Copied. Then one
-   address, and nothing to choose beside it.
+   network the bridge takes money on (the backend's registry, thirty-odd
+   today, read off the report so a network the bridge adds is on this list
+   without a window change). Then the tokens that can be sent on that
+   network, searchable, each with its minimum in the unit a person types, or
+   "No minimum" where the bridge's floor is dust; no token row copies
+   anything (its contract read as the address to send to). Then one address,
+   and nothing to choose beside it.
 
-   One component, three hosts. The Money in fold and the wizard's addresses
+   One component, four hosts. The Money in fold and the wizard's addresses
    step run all three steps in place. The deposit card opens at the step its
    caller asks for. The Vault tab's Addresses card runs step two under its own
-   network menu and hands step three to the deposit card. The address is drawn
+   network menu and hands step three to the deposit card. The chat's deposit
+   card ('chat') draws step three inside the thread, compact, with no way back
+   to the tiles: the agent already named the network. The address is drawn
    by one function, after the same three checks the card has always run: the
    wallet is open, the QR reads back as the same bytes, the clipboard reads
    back what was written. */
@@ -39,8 +41,8 @@
   var store = window.PhosphorState;
 
   var ACK_KEY = 'phosphor.depositAck';
-  var EASE = [0.16, 1, 0.3, 1];
-  var COPIED_MS = 1500;
+  /* A watch with nothing seen after this long says how long it has waited. */
+  var LATE_MS = 10 * 60 * 1000;
 
   /* The one list writes every href in this window (core/links.js). */
   function setHref(anchor, url) {
@@ -48,12 +50,13 @@
     return !!links && typeof links.setHref === 'function' && links.setHref(anchor, url);
   }
 
-  /* The six networks an exchange withdraw screen lists first, each with its
-     brand colour, for the one row of tiles: the five the app has always
-     credited and Bitcoin. Every other network comes off the report, where the
-     backend's registry names it, colours it and says what it credits. The
-     colours here are the chains' own (Base's brand blue is #0052FF, marks.js
-     has the coin file's #0000FF). `words` is the network in the words an
+  /* The six networks an exchange withdraw screen lists first, for the one row
+     of tiles: the five the app has always taken money on and Bitcoin. Every
+     other network comes off the report, where the backend's registry names it
+     and says what can be sent on it. A tile's colour is its logo's
+     (colourOf: ui/design/marks.js is the one table), so the hover never
+     disagrees with the mark beside it; the colours here stand in only where
+     that table is not loaded. `words` is the network in the words an
      exchange's withdraw screen uses. */
   var NETWORKS = [
     { id: 'eth', name: 'Ethereum', mark: 'ETH', colour: '#627EEA', words: 'Ethereum (ERC-20)', native: 'ETH', kind: 'evm', popular: true },
@@ -127,6 +130,16 @@
   function networkName(chain) {
     var n = networkOf(chain);
     return n ? n.name : String(chain || '');
+  }
+
+  /* The colour a network wears under the pointer: its logo's, from the one
+     table in ui/design/marks.js, so Stellar's hover is Stellar's mark and not
+     a purple the registry once picked. The registry's colour is the fallback
+     for a mark the table does not know. */
+  function colourOf(n) {
+    var marks = window.PhosphorMarks;
+    var own = n && marks && typeof marks.colourFor === 'function' ? marks.colourFor(n.mark) : '';
+    return own || (n && n.colour) || '';
   }
 
   /* The list a search runs over: the report's networks in the report's order
@@ -254,6 +267,24 @@
     return words;
   }
 
+  /* The floors of the first two tokens in the list, for the address step:
+     the list is something to read, not a choice, so the step names the two a
+     person most likely holds rather than one it guessed ("Minimums: ETH none,
+     USDC 0.001."). The rest are one click away. */
+  function minimumsWords(tokens) {
+    var list = Array.isArray(tokens) ? tokens : [];
+    var parts = [];
+    for (var i = 0; i < list.length && parts.length < 2; i += 1) {
+      var min = minimumOf(list[i]);
+      if (min) parts.push(min);
+    }
+    if (!parts.length) return '';
+    if (parts.length === 1) {
+      return parts[0].shown ? 'Minimum ' + parts[0].amount + ' ' + parts[0].symbol + '.' : 'No minimum for ' + parts[0].symbol + '.';
+    }
+    return 'Minimums: ' + parts.map(function (m) { return m.symbol + ' ' + (m.shown ? m.amount : 'none'); }).join(', ') + '.';
+  }
+
   /* ---------- small helpers that survive the test harness ---------- */
 
   function setVar(node, name, value) {
@@ -345,9 +376,10 @@
      groups, all one size and one weight, the "0x" quiet, the first and last
      group in the text colour and the rest one step quieter. Nothing is bold
      and nothing jumps in size: a person reads it left to right, checks the
-     ends, and is done. */
+     ends, and is done. It is set in Geist Mono (.addr), the one face that
+     keeps a 0 and an O, and a 1 and an l, apart. */
   function addressBlock(address, kind) {
-    var block = dom.el('div', 'deposit-address mono');
+    var block = dom.el('div', 'deposit-address addr');
     block.appendChild(dom.el('span', 'sr-only', address));
     var parts = chunks(address, kind);
     var shown = dom.el('span', 'deposit-chunks');
@@ -372,7 +404,7 @@
      specifies and the one every scanner reads. Then the check: the pixels are
      read back off the same canvas and decoded, and the string has to be the
      address. Anything short of that is a refusal with a reason. */
-  function drawChecked(canvas, address) {
+  function drawChecked(canvas, address, targetPx) {
     if (typeof window.qrcode !== 'function') return { ok: false, why: 'The QR encoder did not load.' };
     if (typeof window.jsQR !== 'function') return { ok: false, why: 'The QR checker did not load.' };
 
@@ -387,7 +419,8 @@
 
     var count = code.getModuleCount();
     var total = count + QUIET * 2;
-    var scale = Math.max(MIN_SCALE, Math.floor(QR_TARGET_PX / total));
+    var target = typeof targetPx === 'number' && targetPx > 0 ? targetPx : QR_TARGET_PX;
+    var scale = Math.max(MIN_SCALE, Math.floor(target / total));
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
     var size = total * scale;
 
@@ -467,71 +500,72 @@
 
   /* ---------- the watcher line ---------- */
 
-  function elapsed(startedAt) {
+  function waitedMs(startedAt) {
     var then = new Date(startedAt).getTime();
-    if (!isFinite(then)) return '0:00';
-    var seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
-    var minutes = Math.floor(seconds / 60);
-    var rest = seconds % 60;
-    return minutes + ':' + (rest < 10 ? '0' : '') + rest;
+    if (!isFinite(then)) return null;
+    return Math.max(0, Date.now() - then);
   }
 
-  function shortAddress(address) {
-    var text = String(address || '');
-    if (text.length <= 14) return text;
-    return text.slice(0, 6) + '...' + text.slice(-4);
-  }
-
-  function seconds(ms) {
-    return String(Math.max(1, Math.round(ms / 1000)));
-  }
-
-  /* What the line says for a frame: plain words, with every number marked so it
-     can be set in the mono face. A part is a string or { mono: '0:42' }. The
-     phases come from src/vault/watch.ts: watching (this app asking), seen (the
-     bridge saw the transfer arrive, confirming), bridged (the bridge is done,
-     the verifier is crediting), credited (the balance went up), stopped. */
+  /* What the line says for a frame, in plain words, with every figure marked
+     so it is set in the figure face. A part is a string or { num: '25' }. The
+     phases come from src/vault/watch.ts: watching (nothing seen yet), seen
+     (the transfer is on its way in), bridged (it is being added to the
+     balance), credited (the balance went up), stopped (the app stopped
+     checking; money sent still arrives). There is no clock while it waits: a
+     time shows only once the wait is long enough to wonder about. */
   function watcherParts(deposit) {
     var symbol = deposit.symbol || '';
     var network = networkName(deposit.chain);
-    var amount = typeof deposit.amount === 'number' ? [{ mono: dom.qty(deposit.amount) }, ' ' + symbol] : null;
+    var amount = typeof deposit.amount === 'number' && deposit.amount > 0 ? [{ num: dom.qty(deposit.amount) }, ' ' + symbol] : null;
     if (deposit.phase === 'watching') {
-      var where = deposit.address ? ['Watching ' + network + ' for a deposit to ', { mono: shortAddress(deposit.address) }] : ['Watching ' + network + ' for your deposit'];
-      return where.concat([', ', { mono: elapsed(deposit.startedAt) }]);
+      var waited = waitedMs(deposit.startedAt);
+      if (waited !== null && waited >= LATE_MS) {
+        return ['Still waiting for your deposit on ' + network + ', ', { num: String(Math.floor(waited / 60000)) }, ' min so far'];
+      }
+      return ['Waiting for your deposit on ' + network];
     }
     if (deposit.phase === 'seen') {
-      var parts = ['Seen on ' + network + ': '].concat(amount || ['a deposit']);
-      if (typeof deposit.confirmations === 'number') {
-        return parts.concat([', ', { mono: String(deposit.confirmations) }, deposit.confirmations === 1 ? ' confirmation' : ' confirmations']);
-      }
-      return parts.concat([', confirming']);
+      return amount ? ['Arriving on ' + network + ': '].concat(amount) : ['Your deposit is arriving on ' + network];
     }
     if (deposit.phase === 'bridged') {
-      return ['Bridged into NEAR Intents: '].concat(amount || ['your deposit']).concat([', crediting']);
+      return amount ? ['Almost there: '].concat(amount) : ['Almost there'];
     }
     if (deposit.phase === 'credited') {
-      var landed = typeof deposit.ms === 'number' ? ['Landed in ', { mono: seconds(deposit.ms) }, ' s: '] : ['Landed: '];
-      return landed.concat(amount || [symbol]).concat([' is in your balance']);
+      return (amount || [symbol || 'Your deposit']).concat([' is in your balance']);
     }
-    return ['Stopped watching.'];
+    if (typeof deposit.unstarted === 'string') {
+      return ['This app could not start checking for your deposit. Money you send still arrives in your balance.'];
+    }
+    return ['Stopped checking for this deposit. Money you sent still arrives in your balance.'];
+  }
+
+  /* A read that keeps failing, in words a person can use. The watch's own
+     reason names the service it is waiting on, which is the app's business:
+     it rides behind the developer switch. */
+  function troubleWords(error) {
+    if (typeof error !== 'string' || error === '') return null;
+    if (/^Cannot check the /.test(error)) return 'This line cannot follow this coin. Your deposit still arrives in your balance.';
+    return 'Checking is slow right now. The app keeps trying.';
   }
 
   /* One renderer for every surface that shows a watch: the picker's address
      step and the first run's money step draw the same line off the same frame,
-     so a deposit reads the same wherever the person is standing. The mark
-     carries the phase (a breathing dot, then the check), the words say it, the
-     hash is a link to the explorer, and the last read failure sits under it in
-     the quiet face. The clock runs only while watching. `stop: false` leaves
-     the Stop button off, for a surface that has nowhere to put it. */
-  function watcherLine(host, options) {
-    var opts = options || {};
+     so a deposit reads the same wherever the person is standing. The mark is a
+     small ring that fills in the ink as the money comes in (a third when it is
+     seen, two thirds while it is added, then the check), the words say it, the
+     transfer is a link to the explorer, and a read that keeps failing sits
+     under it in the quiet face. Nothing on the line stops the watch: closing
+     the card is the only way out a person needs, and the watch ends on its
+     own (src/vault/watch.ts). */
+  function watcherLine(host) {
     var node = dom.el('div', 'deposit-watch');
     node.setAttribute('role', 'status');
     node.hidden = true;
     var mark = dom.el('span', 'deposit-watch-mark');
+    mark.setAttribute('aria-hidden', 'true');
     node.appendChild(mark);
     var body = dom.el('div', 'deposit-watch-body');
-    var text = dom.el('span', 'body deposit-watch-text');
+    var text = dom.el('span', 'deposit-watch-text');
     body.appendChild(text);
     var link = dom.el('a', 'deposit-watch-link', 'View');
     link.target = '_blank';
@@ -541,42 +575,50 @@
     var note = dom.el('span', 'meta deposit-watch-note');
     note.hidden = true;
     body.appendChild(note);
+    var raw = dom.el('span', 'meta deposit-watch-raw');
+    raw.setAttribute('data-dev-only', '');
+    raw.hidden = true;
+    body.appendChild(raw);
     node.appendChild(body);
-    var stop = null;
-    if (opts.stop !== false) {
-      stop = button('Stop watching', 'btn-quiet btn-sm', 'Stopping');
-      dom.on(stop, 'click', function () {
-        window.PhosphorShell.setPending(stop, true);
-        api.depositStop()
-          .catch(function (err) { window.PhosphorToast.show(net.readable(err), 'down'); })
-          .finally(function () { window.PhosphorShell.setPending(stop, false); });
-      });
-      node.appendChild(stop);
-    }
     host.appendChild(node);
 
     var tick = 0;
     var markPhase = null;
     var last = null;
 
+    /* The check springs in once, the moment the money lands; a line drawn
+       already landed shows it still. */
     function drawMark(phase) {
       if (markPhase === phase) return;
+      var was = markPhase;
       markPhase = phase;
       dom.clear(mark);
-      mark.appendChild(phase === 'credited' ? icon('done', 'deposit-watch-check') : dom.el('span', 'dot'));
+      if (phase !== 'credited') {
+        mark.appendChild(dom.el('span', 'deposit-ring'));
+        return;
+      }
+      var check = icon('done', 'deposit-watch-check');
+      mark.appendChild(check);
+      var motion = window.PhosphorMotion;
+      if (was !== null && typeof check.animate === 'function' && !reducedMotion()) {
+        var ease = motion && typeof motion.spring === 'function' ? motion.spring() : 'cubic-bezier(0.34, 1.4, 0.64, 1)';
+        check.animate([{ opacity: 0, transform: 'scale(0.4)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 480, easing: ease });
+      }
     }
 
     function write(parts) {
       dom.clear(text);
       for (var i = 0; i < parts.length; i += 1) {
         var part = parts[i];
-        text.appendChild(typeof part === 'string' ? dom.el('span', '', part) : dom.el('span', 'mono', part.mono));
+        text.appendChild(typeof part === 'string' ? dom.el('span', '', part) : dom.el('span', 'num', part.num));
       }
     }
 
+    /* While it waits the line only has to notice the moment it becomes late
+       and count the minutes after, so a slow tick is enough. */
     function startTick() {
       if (tick) return;
-      tick = window.setInterval(function () { if (last) render(last); }, 1000);
+      tick = window.setInterval(function () { if (last) render(last); }, 15000);
     }
 
     function stopTick() {
@@ -597,14 +639,16 @@
       node.dataset.phase = deposit.phase;
       write(watcherParts(deposit));
       /* One node, repainted every phase. The list clears the href when the read
-         has no url yet, so the View button cannot be left pointing at the phase
+         has no url yet, so the View link cannot be left pointing at the phase
          before this one. */
       link.hidden = !setHref(link, deposit.explorerUrl);
-      var why = typeof deposit.error === 'string' && deposit.error !== '' ? deposit.error : null;
+      var why = troubleWords(deposit.error);
       note.hidden = why === null;
       dom.setText(note, why === null ? '' : why);
+      var rawWords = why !== null ? String(deposit.error) : (typeof deposit.unstarted === 'string' ? deposit.unstarted : '');
+      raw.hidden = rawWords === '';
+      dom.setText(raw, rawWords);
       drawMark(deposit.phase);
-      if (stop) dom.setHidden(stop, deposit.phase === 'credited' || deposit.phase === 'stopped');
       if (deposit.phase === 'watching') startTick();
       else stopTick();
     }
@@ -615,7 +659,7 @@
       if (node.parentNode) node.parentNode.removeChild(node);
     }
 
-    return { node: node, text: text, stop: stop, render: render, destroy: destroy };
+    return { node: node, text: text, render: render, destroy: destroy };
   }
 
   /* ---------- the component ---------- */
@@ -629,14 +673,40 @@
     host.appendChild(root);
 
     /* Escape steps back the way Change network does: the tokens and the
-       address return to the tiles. On the tiles it does nothing, because the
-       picker is a fold in the view and not a sheet over it; the deposit card
-       that holds a picker closes itself on Escape (deposit.js). */
+       address return to the tiles, wherever that way back is offered. On the
+       tiles it asks the host to put the steps away: through onDismiss where
+       the host passed one (the deposit card), and otherwise as a
+       'netpick:dismiss' event that bubbles out of the picker, which a fold
+       that renders it through another module (the Money in fold) cancels to
+       say it closed. Nobody listening, the key is left alone. */
     dom.on(root, 'keydown', function (event) {
-      if (event.key !== 'Escape' || !state.alive || state.stage === 'network' || state.stage === null) return;
+      if (event.key !== 'Escape' || !state.alive) return;
+      if (state.stage === 'network' || state.stage === null) {
+        if (askDismiss()) event.preventDefault();
+        return;
+      }
+      if (!backOffered()) return;
       event.preventDefault();
       stageNetworks();
     });
+
+    function askDismiss() {
+      if (typeof opts.onDismiss === 'function') {
+        opts.onDismiss();
+        return true;
+      }
+      if (typeof root.dispatchEvent !== 'function' || typeof window.CustomEvent !== 'function') return false;
+      var asked = new window.CustomEvent('netpick:dismiss', { bubbles: true, cancelable: true });
+      return root.dispatchEvent(asked) === false;
+    }
+
+    /* The Vault card has its own network menu and the chat's card was opened
+       on the network the agent named: neither offers a way back to the tiles. */
+    function backOffered() {
+      return opts.context !== 'vault' && opts.context !== 'chat';
+    }
+
+    var compact = opts.context === 'chat';
 
     remember(opts.report || null);
 
@@ -653,9 +723,7 @@
       alive: true,
       stageNode: null,
       watch: null,
-      tick: 0,
-      unsubscribe: null,
-      copiedTimer: 0
+      unsubscribe: null
     };
 
     /* The report is what step two and three draw from. Step one needs nothing
@@ -688,45 +756,65 @@
       return null;
     }
 
-    /* One stage on screen at a time. The one leaving fades and lifts away over
-       150 ms; the one arriving fades and settles down over 300 ms. With motion
-       reduced, or where motion.dev is not loaded, the swap is a swap. */
+    /* One stage on screen at a time, through the window's one grammar
+       (ui/design/motion.js swap): the stage leaving fades out, then the
+       picker's height slides to the one arriving while it fades in, so the
+       panel around it never jumps. With motion reduced the swap is a swap.
+
+       The pressed control leaves with its stage, so the focus would fall to
+       the page and a keyboard user would start again at the top of the
+       window. Where the focus was inside the stage that left, or was already
+       lost, it lands on the new stage's first stop: the tile of the network
+       in hand, or the step's title. */
     function show(stage, node) {
       var prev = state.stageNode;
+      var hadFocus = holdsFocus(prev);
       state.stage = stage;
       state.stageNode = node;
       root.dataset.stage = stage;
       node.className = 'netpick-stage netpick-' + stage;
       if (typeof opts.onStage === 'function') opts.onStage(stage, state.network);
-      var Motion = window.Motion;
-      var animated = !!(Motion && typeof Motion.animate === 'function') && !reducedMotion();
-      if (!prev) {
+      var motion = window.PhosphorMotion;
+      var put = function () {
+        if (!state.alive) return;
+        if (prev && prev.parentNode === root) root.removeChild(prev);
+        if (state.stageNode !== node || node.parentNode === root) return;
         root.appendChild(node);
-        if (animated) Motion.animate(node, { opacity: [0, 1], y: [10, 0] }, { duration: 0.3, ease: EASE });
-        return;
-      }
-      if (!animated) {
-        if (prev.parentNode === root) root.removeChild(prev);
-        root.appendChild(node);
-        return;
-      }
-      var leaving = Motion.animate(prev, { opacity: [1, 0], y: [0, -6] }, { duration: 0.15, ease: EASE });
-      var arrive = function () {
-        if (!state.alive || state.stageNode !== node) return;
-        if (prev.parentNode === root) root.removeChild(prev);
-        root.appendChild(node);
-        Motion.animate(node, { opacity: [0, 1], y: [10, 0] }, { duration: 0.3, ease: EASE });
+        if (prev && (hadFocus || focusLost())) focusStage(node);
       };
-      var done = leaving && leaving.finished ? leaving.finished : Promise.resolve();
-      done.then(arrive, arrive);
+      if (!prev) {
+        put();
+        if (motion && typeof motion.enter === 'function') motion.enter(node, { scale: false });
+        return;
+      }
+      if (motion && typeof motion.swap === 'function') motion.swap(root, prev, put, { fade: node });
+      else put();
+    }
+
+    function holdsFocus(node) {
+      var active = document.activeElement;
+      return !!node && !!active && typeof node.contains === 'function' && node.contains(active);
+    }
+
+    function focusLost() {
+      var active = document.activeElement;
+      return active === null || (!!active && active === document.body);
+    }
+
+    function focusStage(node) {
+      var target = node.__first;
+      if (target && typeof target.focus === 'function') target.focus({ preventScroll: true });
     }
 
     /* ---------- step one: the network ---------- */
 
     /* Six tiles in one row that never wraps, then a search over every network
-       the bridge credits. The list draws only while there is a query or the
-       person asked for all of them: thirty rows under six tiles would push
-       the whole fold off the screen for the one network they came for. */
+       the app takes money on. The list draws only while there is a query or
+       the person asked to browse it: thirty rows under six tiles would push
+       the whole fold off the screen for the one network they came for. It
+       opens and closes by sliding the step's height, and a search that
+       changes it fades the rows in, so nothing appears or vanishes in one
+       frame. */
     function stageNetworks() {
       var node = dom.el('div');
       node.appendChild(dom.el('p', 'netpick-lead', 'Pick the network you are sending on.'));
@@ -739,7 +827,7 @@
         var tile = dom.el('button', 'net-tile');
         tile.type = 'button';
         tile.dataset.network = n.id;
-        setVar(tile, '--net', n.colour);
+        setVar(tile, '--net', colourOf(n));
         if (n.accent) setVar(tile, '--net-accent', n.accent);
         tile.tabIndex = (state.network ? state.network === n.id : index === 0) ? 0 : -1;
         var mark = dom.el('span', 'net-tile-mark');
@@ -752,6 +840,7 @@
         dom.on(tile, 'keydown', function (event) { onTileKey(event, index); });
         tiles.push(tile);
         grid.appendChild(tile);
+        if (tile.tabIndex === 0) node.__first = tile;
       });
       node.appendChild(grid);
 
@@ -767,20 +856,26 @@
       search.appendChild(input);
       node.appendChild(search);
 
-      var list = dom.el('div', 'netpick-list netpick-netlist');
+      var list = dom.el('div', 'netpick-list netpick-netlist scrolls');
       list.setAttribute('role', 'list');
       list.setAttribute('aria-label', 'All networks');
       list.hidden = true;
       node.appendChild(list);
+      var cutList = edges(list);
 
       var empty = dom.el('p', 'netpick-empty');
       empty.hidden = true;
       node.appendChild(empty);
 
+      /* One way into the whole list, in words the search above does not
+         already say. */
       var foot = dom.el('div', 'netpick-netfoot');
       var all = dom.el('button', 'netpick-link');
       all.type = 'button';
       all.dataset.role = 'all-networks';
+      var allWords = dom.el('span', '');
+      all.appendChild(allWords);
+      all.appendChild(icon('chevron-down', 'netpick-link-chev'));
       foot.appendChild(all);
       node.appendChild(foot);
 
@@ -794,35 +889,46 @@
           : 'Search networks';
       }
 
-      function fillList() {
+      function fillList(animate) {
         var every = allNetworks(state.report);
         var others = every.length - NETWORKS.length;
-        dom.setText(all, showAll ? 'Fewer networks' : (others > 0 ? 'All ' + every.length + ' networks' : ''));
+        dom.setText(allWords, others > 0 ? (showAll ? 'Hide the list' : 'Browse the list') : '');
+        all.setAttribute('aria-expanded', showAll ? 'true' : 'false');
         dom.setHidden(foot, others <= 0);
         var q = query.trim();
-        if (!q && !showAll) {
-          dom.setHidden(list, true);
-          dom.setHidden(empty, true);
+        var open = !!q || showAll;
+        var wasOpen = !list.hidden || !empty.hidden;
+        var shown = open ? filterNetworks(every, q) : [];
+        var change = function () {
+          dom.clear(list);
+          dom.setHidden(list, !open || shown.length === 0);
+          dom.setHidden(empty, !open || shown.length > 0);
+          if (open && !shown.length) dom.setText(empty, 'No network called ' + q + '. Check the name your exchange uses.');
+          shown.forEach(function (n) { list.appendChild(networkRow(n)); });
+          cutList();
+        };
+        var motion = window.PhosphorMotion;
+        if (!animate || !motion || typeof motion.morph !== 'function' || state.stageNode !== node) {
+          change();
           return;
         }
-        var shown = filterNetworks(every, q);
-        dom.clear(list);
-        dom.setHidden(empty, shown.length > 0);
-        dom.setHidden(list, shown.length === 0);
-        if (!shown.length) {
-          dom.setText(empty, 'No network called ' + q + '. Check the name your exchange uses.');
+        if (wasOpen && !open) {
+          motion.swap(node, [list, empty], change);
           return;
         }
-        shown.forEach(function (n) { list.appendChild(networkRow(n)); });
+        motion.morph(node, change, { fade: wasOpen ? null : [list, empty] });
+        if (wasOpen && open && typeof list.animate === 'function' && !reducedMotion()) {
+          list.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 180, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+        }
       }
 
       dom.on(input, 'input', function () {
         query = input.value || '';
-        fillList();
+        fillList(true);
       });
       dom.on(all, 'click', function () {
         showAll = !showAll;
-        fillList();
+        fillList(true);
       });
 
       /* Arrow keys move between the tiles, Enter or Space picks the one under
@@ -857,22 +963,43 @@
       show('network', node);
     }
 
+    /* The bridge refused this network just now. The tile stays whole (a
+       faded tile reads as broken, not as busy), its name steps back to the
+       quiet tone and a second line says so; the click still leads to the
+       sentence instead of an address. */
     function markUnavailable(tile, id) {
       var known = reportNetwork(id);
-      if (!known || !known.unavailable) return;
+      if (!known || !known.unavailable || tile.dataset.unavailable === 'true') return;
       tile.dataset.unavailable = 'true';
       tile.setAttribute('aria-disabled', 'true');
-      tile.title = 'Not available right now: ' + known.unavailable;
+      tile.title = 'Not available now';
+      tile.appendChild(dom.el('span', 'net-tile-note', 'Not available'));
     }
 
-    /* One network in the list: the mark, the name, and at the right what it
-       credits, three symbols and a count for the rest. */
+    /* A list that scrolls inside itself says where it is cut
+       (components.css .scrolls[data-cut]), so the last row in view fades
+       rather than ending on a hard edge, and a person sees there is more. */
+    function edges(list) {
+      function cut() {
+        var top = list.scrollTop > 2;
+        var bottom = list.scrollTop + list.clientHeight < list.scrollHeight - 2;
+        dom.setAttr(list, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
+      }
+      dom.on(list, 'scroll', cut);
+      return function () {
+        if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(cut);
+        else cut();
+      };
+    }
+
+    /* One network in the list: the mark, the name, and at the right what can
+       be sent on it, three symbols and a count for the rest. */
     function networkRow(n) {
       var row = dom.el('button', 'net-row');
       row.type = 'button';
       row.setAttribute('role', 'listitem');
       row.dataset.network = n.id;
-      setVar(row, '--net', n.colour || 'var(--text-2)');
+      setVar(row, '--net', colourOf(n) || 'var(--text-2)');
       row.appendChild(logo(n.mark, 24));
       var main = dom.el('div', 'net-row-main');
       main.appendChild(dom.el('span', 'net-row-name', n.name));
@@ -892,8 +1019,7 @@
       var side = dom.el('span', 'net-row-side');
       if (known && known.unavailable) {
         row.dataset.unavailable = 'true';
-        row.title = 'Not available right now: ' + known.unavailable;
-        dom.setText(side, 'Unavailable');
+        dom.setText(side, 'Not available now');
       } else if (symbols.length) {
         dom.setText(side, symbols.slice(0, 3).join(', ') + (symbols.length > 3 ? ' +' + (symbols.length - 3) : ''));
       }
@@ -908,17 +1034,23 @@
       stageTokens();
     }
 
-    /* The line above steps two and three: the network's mark and name, and
-       the way back to step one. */
-    function stageHead(n, text, withBack) {
+    /* The line above steps two and three: the network's mark and the step's
+       title, which wraps rather than cutting the network's name, and the way
+       back to step one beside it where the room allows and under it where it
+       does not (deposit.css). The title is where the focus lands when a step
+       arrives, so it takes focus without being a stop in the tab order. */
+    function stageHead(node, n, text, withBack) {
       var head = dom.el('div', 'netpick-head');
       var title = dom.el('div', 'netpick-title');
       var titleMark = dom.el('span', 'netpick-title-mark');
-      setVar(titleMark, '--net', n.colour);
+      setVar(titleMark, '--net', colourOf(n));
       titleMark.appendChild(logo(n.mark, 20));
       title.appendChild(titleMark);
-      title.appendChild(dom.el('span', 'netpick-title-text', text));
+      var words = dom.el('span', 'netpick-title-text', text);
+      words.setAttribute('tabindex', '-1');
+      title.appendChild(words);
       head.appendChild(title);
+      node.__first = words;
       if (withBack) {
         var back = dom.el('button', 'netpick-back');
         back.type = 'button';
@@ -930,14 +1062,14 @@
       return head;
     }
 
-    /* ---------- step two: what it credits ---------- */
+    /* ---------- step two: what can be sent on it ---------- */
 
     function stageTokens() {
       var n = networkOf(state.network);
       if (!n) return stageNetworks();
       var node = dom.el('div');
 
-      node.appendChild(stageHead(n, 'Tokens credited on ' + n.name, opts.context !== 'vault'));
+      node.appendChild(stageHead(node, n, 'What you can send on ' + n.name, backOffered()));
 
       var body = dom.el('div', 'netpick-tokens-body');
       node.appendChild(body);
@@ -983,13 +1115,13 @@
         return;
       }
       if (network.unavailable) {
-        body.appendChild(refusal('No deposit address on ' + n.name + ' right now: ' + network.unavailable));
+        body.appendChild(unavailableRefusal(n, network));
         return;
       }
 
       var tokens = sortTokens(network.accepts, n.native);
       if (!tokens.length) {
-        body.appendChild(refusal('The bridge credits nothing on ' + n.name + ' right now, so there is no address to show.'));
+        body.appendChild(refusal('Nothing can be sent on ' + n.name + ' right now, so there is no address to show.'));
         return;
       }
 
@@ -1006,10 +1138,13 @@
       search.appendChild(input);
       body.appendChild(search);
 
-      var list = dom.el('div', 'netpick-list');
+      /* The list scrolls behind the search at a height that leaves the
+         acknowledgement and its button above the fold of a 900 px window. */
+      var list = dom.el('div', 'netpick-list scrolls');
       list.setAttribute('role', 'list');
-      list.setAttribute('aria-label', 'Tokens credited on ' + n.name);
+      list.setAttribute('aria-label', 'What you can send on ' + n.name);
       body.appendChild(list);
+      var cutList = edges(list);
 
       var empty = dom.el('p', 'netpick-empty');
       empty.hidden = true;
@@ -1025,6 +1160,7 @@
           return;
         }
         shown.forEach(function (token) { list.appendChild(tokenRow(token)); });
+        cutList();
       }
 
       dom.on(input, 'input', function () {
@@ -1034,7 +1170,7 @@
       fill();
 
       /* Behind the developer switch: the bridge's own id for this network. */
-      var bridge = dom.el('p', 'netpick-dev mono');
+      var bridge = dom.el('p', 'netpick-dev id');
       bridge.setAttribute('data-dev-only', '');
       dom.setText(bridge, 'Bridge network id: ' + (network && typeof network.bridge === 'string' && network.bridge ? network.bridge : bridgeId(n.id)));
       body.appendChild(bridge);
@@ -1060,7 +1196,7 @@
       row.appendChild(logo(token.symbol, 24));
       var main = dom.el('div', 'token-main');
       main.appendChild(dom.el('span', 'token-symbol', token.symbol));
-      var line = dom.el('span', contract ? 'token-contract mono' : 'token-contract token-native');
+      var line = dom.el('span', contract ? 'token-contract addr' : 'token-contract token-native');
       line.setAttribute('data-dev-only', '');
       dom.setText(line, contract ? 'Token contract ' + contract : 'The chain\'s own coin, no contract');
       main.appendChild(line);
@@ -1073,8 +1209,13 @@
       return row;
     }
 
-    /* Under the list, once per install: a person says they have read what is
-       credited before the address is shown. Remembered, it is one small button. */
+    /* Under the list, once per install: a person says they have read what can
+       be sent here before the address is shown. This is the one place the
+       loss is said. Remembered, it is one small button.
+
+       The tick brings the button into view: the acknowledgement card reads
+       like the end of the panel, and on a short window the button sat under
+       the frame's notice with nothing saying it was there. */
     function ackBlock(n, network, tokens) {
       var wrap = dom.el('div', 'netpick-ack');
       var go = button('Show the address', ackRemembered() ? 'btn-ghost btn-sm' : 'btn-primary');
@@ -1087,15 +1228,18 @@
         row.appendChild(box);
         var drawn = dom.el('span', 'ack-box');
         drawn.setAttribute('aria-hidden', 'true');
-        drawn.appendChild(icon('done', 'ack-check'));
+        drawn.appendChild(icon('check', 'ack-check'));
         row.appendChild(drawn);
-        row.appendChild(dom.el('span', 'ack-text', 'I understand only the tokens above are credited here. Anything else sent to this address is lost.'));
+        row.appendChild(dom.el('span', 'ack-text', 'I understand only the tokens above can be sent here. Anything else sent to this address is lost.'));
         wrap.appendChild(row);
         go.disabled = true;
         dom.on(box, 'change', function () {
           go.disabled = !box.checked;
           if (box.checked) row.dataset.checked = 'true';
           else delete row.dataset.checked;
+          if (box.checked && typeof go.scrollIntoView === 'function') {
+            go.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+          }
         });
         dom.on(go, 'click', function () {
           if (!box.checked) return;
@@ -1128,7 +1272,7 @@
       var n = networkOf(state.network);
       if (!n) return stageNetworks();
       var node = dom.el('div');
-      node.appendChild(stageHead(n, 'Send on ' + n.name + ' only.', true));
+      node.appendChild(stageHead(node, n, 'Send on ' + n.name + ' only.', backOffered()));
 
       var body = dom.el('div', 'deposit-body');
       node.appendChild(body);
@@ -1155,10 +1299,27 @@
       host.appendChild(skel);
     }
 
-    function refusal(why) {
-      var banner = dom.el('div', 'banner');
-      banner.dataset.tone = 'down';
+    /* A step that cannot show an address says why in its place. A network
+       that is only closed for now is news, in the quiet banner; a sign that
+       something is wrong with the address itself (an edited wallet file, a
+       code that reads back wrong, a coin that would be lost) is a warning.
+       Nothing here is a loss, so nothing here is red. */
+    function refusal(why, tone) {
+      var banner = dom.el('div', 'banner netpick-refusal');
+      if (tone) banner.dataset.tone = tone;
       banner.appendChild(dom.el('span', '', why));
+      return banner;
+    }
+
+    /* The bridge's own reason names its route ("the bridge refused
+       eth:42161: ..."), which is the app's business: the person reads that
+       the network is closed for now and what to do, and the reason rides
+       behind the developer switch. */
+    function unavailableRefusal(n, network) {
+      var banner = refusal(n.name + ' is not taking deposits right now. Try again later, or pick another network.');
+      var raw = dom.el('span', 'netpick-dev', String(network.unavailable));
+      raw.setAttribute('data-dev-only', '');
+      banner.appendChild(raw);
       return banner;
     }
 
@@ -1182,7 +1343,7 @@
       var report = state.report;
       var network = reportNetwork(n.id);
       if (report && report.tampered) {
-        return refuse(body, 'The wallet file on this Mac has been edited, so no address in it can be trusted.');
+        return refuse(body, 'The wallet file on this Mac has been edited, so no address in it can be trusted.', 'warn');
       }
       if (!report || !network) {
         return refuse(body, state.failed
@@ -1190,19 +1351,22 @@
           : 'This wallet has no deposit address on ' + n.name + (report && report.reason ? ': ' + report.reason : '.'));
       }
       if (network.unavailable) {
-        return refuse(body, 'No deposit address on ' + n.name + ' right now: ' + network.unavailable);
+        dom.clear(body);
+        body.appendChild(unavailableRefusal(n, network));
+        body.dataset.state = 'refused';
+        return;
       }
       if (typeof network.address !== 'string' || !network.address.length) {
         /* A row the report marks changed carries no address on purpose: the
            bridge's answer and the one pinned on disk disagree, and neither
            is drawn. The sentence takes the address's place. */
-        return refuse(body, typeof network.changed === 'string' && network.changed
-          ? network.changed
-          : 'No deposit address on ' + n.name + ' right now.');
+        return typeof network.changed === 'string' && network.changed
+          ? refuse(body, network.changed, 'warn')
+          : refuse(body, 'No deposit address on ' + n.name + ' right now.');
       }
       var token = tokenOf(network, state.symbol) || tokenOf(network, defaultSymbol(network.accepts, n.native));
       if (state.symbol && !tokenOf(network, state.symbol)) {
-        return refuse(body, state.symbol + ' is not credited on ' + n.name + '. Sending it there loses it.');
+        return refuse(body, state.symbol + ' is not on the list for ' + n.name + '. Sending it there loses it.', 'warn');
       }
 
       /* Check 1: the wallet is open, so this address was derived from the keys
@@ -1214,7 +1378,7 @@
       if (state.deposit && state.deposit.chain === n.id
         && typeof state.deposit.address === 'string' && state.deposit.address.length
         && !sameBytes(state.deposit.address, network.address)) {
-        return refuse(body, 'The address the watcher holds is not the one this wallet reports. Nothing is shown.');
+        return refuse(body, 'The address the watcher holds is not the one this wallet reports. Nothing is shown.', 'warn');
       }
 
       var address = network.address;
@@ -1222,20 +1386,20 @@
       dom.clear(body);
 
       /* A memo network (Stellar today) hands everybody one address and tells
-         the deposits apart by memo, so a send without the memo is credited to
-         nobody and not refunded. No QR of the bare address, then: a wallet
-         that scans one sends without the memo. The address and the memo each
-         get their own Copy, and the card says why (security review,
-         2026-09-16). */
+         the deposits apart by memo, so a send without the memo reaches
+         nobody's balance and is not refunded. No QR of the bare address,
+         then: a wallet that scans one sends without the memo. The address and
+         the memo each get their own Copy, and the card says why (security
+         review, 2026-09-16). */
       if (memoText === null) {
         var qr = dom.el('div', 'qr deposit-qr');
         var canvas = dom.el('canvas');
         canvas.setAttribute('role', 'img');
         canvas.setAttribute('aria-label', 'QR code of the deposit address');
         qr.appendChild(canvas);
-        var check = drawChecked(canvas, address);
+        var check = drawChecked(canvas, address, compact ? 128 : QR_TARGET_PX);
         if (!check.ok) {
-          return refuse(body, 'Nothing is shown: ' + check.why + ' Close this and open it again. If it happens twice, do not send money until it is fixed.');
+          return refuse(body, 'Nothing is shown: ' + check.why + ' Close this and open it again. If it happens twice, do not send money until it is fixed.', 'warn');
         }
         body.dataset.state = 'shown';
         body.appendChild(qr);
@@ -1244,53 +1408,25 @@
         body.dataset.memo = 'true';
       }
 
+      /* The address in a well, and under it the one thing a person came for:
+         Copy, the width of the column. Only the sentence under it changes
+         once the clipboard reads back (it carries the check), and it goes
+         once it has been read. */
       var side = dom.el('div', 'deposit-side');
-      side.appendChild(addressBlock(address, kindOf(n.id)));
-
-      var tools = dom.el('div', 'deposit-tools');
-      var copy = button(memoText === null ? 'Copy' : 'Copy address', 'btn-ghost btn-sm');
-      copy.dataset.role = 'copy';
-      var said = dom.el('span', 'meta deposit-copied');
-      said.setAttribute('role', 'status');
-      tools.appendChild(copy);
-      tools.appendChild(said);
-      side.appendChild(tools);
-      dom.on(copy, 'click', function () {
-        copy.disabled = true;
-        copyChecked(address, function (sentence) { dom.setText(said, sentence); })
-          .then(function (ok) {
-            if (!ok || !state.alive) return;
-            dom.setText(copy.firstChild, 'Copied');
-            copy.dataset.copied = 'true';
-            if (state.copiedTimer) window.clearTimeout(state.copiedTimer);
-            state.copiedTimer = window.setTimeout(function () {
-              state.copiedTimer = 0;
-              dom.setText(copy.firstChild, memoText === null ? 'Copy' : 'Copy address');
-              delete copy.dataset.copied;
-            }, COPIED_MS);
-          })
-          .finally(function () { copy.disabled = false; });
-      });
+      var well = dom.el('div', 'deposit-well');
+      well.appendChild(addressBlock(address, kindOf(n.id)));
+      side.appendChild(well);
+      side.appendChild(copyTools(address, 'Copy address', 'copy', 'address'));
 
       if (memoText !== null) {
         var memoBlock = dom.el('div', 'deposit-memo');
         memoBlock.appendChild(dom.el('p', 'label', 'Memo, required with the address'));
-        memoBlock.appendChild(dom.el('p', 'deposit-memo-value mono', memoText));
-        var memoTools = dom.el('div', 'deposit-tools');
-        var copyMemo = button('Copy memo', 'btn-ghost btn-sm');
-        copyMemo.dataset.role = 'copy-memo';
-        var saidMemo = dom.el('span', 'meta deposit-copied');
-        saidMemo.setAttribute('role', 'status');
-        memoTools.appendChild(copyMemo);
-        memoTools.appendChild(saidMemo);
-        memoBlock.appendChild(memoTools);
-        dom.on(copyMemo, 'click', function () {
-          copyMemo.disabled = true;
-          copyChecked(memoText, function (sentence) { dom.setText(saidMemo, sentence); }, 'memo')
-            .finally(function () { copyMemo.disabled = false; });
-        });
+        var memoWell = dom.el('div', 'deposit-well');
+        memoWell.appendChild(dom.el('p', 'deposit-memo-value addr', memoText));
+        memoBlock.appendChild(memoWell);
+        memoBlock.appendChild(copyTools(memoText, 'Copy memo', 'copy-memo', 'memo'));
         var memoWarn = dom.el('p', 'deposit-memo-warn');
-        dom.setText(memoWarn, 'Paste the memo into the memo or tag field on the sending side. This address is shared with other people and the memo is what credits the money to you; without it the deposit goes to nobody and is not refunded. No QR code here, because a scanned address leaves the memo out.');
+        dom.setText(memoWarn, 'Paste the memo into the memo or tag field on the sending side. This address is shared with other people and the memo is what puts the money in your balance; without it the deposit goes to nobody and is not refunded. No QR code here, because a scanned address leaves the memo out.');
         memoBlock.appendChild(memoWarn);
         side.appendChild(memoBlock);
       }
@@ -1310,17 +1446,15 @@
       dom.setText(plain, sharedWords(n, network));
       notes.appendChild(plain);
 
-      if (token) {
+      var accepts = sortTokens(network.accepts, n.native);
+      var floors = minimumsWords(accepts);
+      if (floors) {
         var minLine = dom.el('p', 'deposit-min');
-        var min = minimumOf(token);
-        minLine.appendChild(dom.el('span', '', min && min.shown
-          ? minimumWords(token).replace(/^Min /, 'Minimum ') + '.'
-          : 'No minimum for ' + token.symbol + '.'));
-        var accepts = Array.isArray(network.accepts) ? network.accepts : [];
-        if (accepts.length > 1) {
+        minLine.appendChild(dom.el('span', '', floors));
+        if (accepts.length > 2) {
           var more = dom.el('button', 'netpick-link');
           more.type = 'button';
-          more.appendChild(dom.el('span', '', 'All ' + accepts.length + ' tokens and minimums'));
+          more.appendChild(dom.el('span', '', 'All ' + accepts.length + ' tokens'));
           dom.on(more, 'click', function () { stageTokens(); });
           minLine.appendChild(dom.el('span', '', ' '));
           minLine.appendChild(more);
@@ -1339,21 +1473,61 @@
       if (!same) startWatch(n, watchSymbol, address);
     }
 
-    /* Which networks this address also serves, from the report's own byte
-       comparison, never from a table: the bridge hands the EVM chains one
-       address, and the sentence names the ones it actually did. */
+    /* What to pick on the sending side, and which networks this address also
+       serves, from the report's own byte comparison, never from a table: the
+       bridge hands the EVM chains one address, and the sentence names the ones
+       it actually did. The loss is said once, in the acknowledgement; here is
+       only what to do. */
     function sharedWords(n, network) {
       var ids = network && Array.isArray(network.sharedWith) ? network.sharedWith : null;
       if (ids === null && EVM.indexOf(n.id) >= 0) ids = EVM.filter(function (id) { return id !== n.id; });
       var names = [];
       for (var i = 0; ids && i < ids.length; i += 1) names.push(networkName(ids[i]));
-      if (!names.length) return 'Choose ' + n.words + ' on the sending side. Anything sent here from another network is lost.';
-      /* Three named and the rest counted: sixteen EVM chains in one sentence
+      var pick = 'When you send, pick ' + n.words + ' as the network.';
+      if (!names.length) return pick;
+      /* Two named and the rest counted: sixteen EVM chains in one sentence
          is a sentence nobody reads to the end. */
       var list;
-      if (names.length <= 3) list = names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
-      else list = names.slice(0, 3).join(', ') + ' and ' + (names.length - 3) + ' more';
-      return n.name + ', ' + list + ' use this same address. The network you send on is what decides where it lands, so choose ' + n.words + ' on the sending side.';
+      if (names.length <= 2) list = names.join(' and ');
+      else list = names.slice(0, 2).join(', ') + ' and ' + (names.length - 2) + ' more';
+      return pick + ' ' + list + ' use this same address.';
+    }
+
+    /* Copy, the width of its column, and the sentence under it. The sentence
+       is the answer: it says the clipboard read back what was written and the
+       last four to check, then fades once it has been read (deposit.css). A
+       copy that could not be checked says so and stays. The line keeps its
+       height either way, so nothing under it moves. */
+    function copyTools(text, label, role, noun) {
+      var tools = dom.el('div', 'deposit-tools');
+      var copy = dom.el('button', 'btn');
+      copy.type = 'button';
+      copy.dataset.role = role;
+      copy.appendChild(icon('copy', 'deposit-copy-icon'));
+      copy.appendChild(dom.el('span', 'btn-label', label));
+      var said = dom.el('p', 'meta deposit-copied');
+      said.setAttribute('role', 'status');
+      tools.appendChild(copy);
+      tools.appendChild(said);
+      var busy = false;
+      dom.on(copy, 'click', function () {
+        if (busy) return;
+        busy = true;
+        var sentence = '';
+        copyChecked(text, function (words) { sentence = words; }, noun).then(function (ok) {
+          busy = false;
+          if (!state.alive) return;
+          dom.clear(said);
+          if (ok) said.appendChild(icon('done', 'deposit-copied-check'));
+          said.appendChild(dom.el('span', '', sentence));
+          said.removeAttribute('data-said');
+          /* A second copy restarts the fade: the attribute comes off and goes
+             back on either side of a layout read. */
+          if (typeof said.getBoundingClientRect === 'function') said.getBoundingClientRect();
+          said.setAttribute('data-said', ok ? 'ok' : 'problem');
+        });
+      });
+      return tools;
     }
 
     /* Check 1 failed: one button, the system dialog, then a fresh fetch. On a
@@ -1374,7 +1548,7 @@
       actions.appendChild(go);
       body.appendChild(actions);
 
-      var error = dom.el('p', 'body down');
+      var error = dom.el('p', 'body netpick-error');
       error.hidden = true;
       body.appendChild(error);
 
@@ -1430,7 +1604,7 @@
         })
         .catch(function (err) {
           if (!state.alive || !state.watch) return;
-          state.watch.render({ phase: 'stopped', chain: n.id, symbol: symbol, error: 'Not watching for this deposit: ' + net.readable(err) });
+          state.watch.render({ phase: 'stopped', chain: n.id, symbol: symbol, unstarted: net.readable(err) });
         });
     }
 
@@ -1452,7 +1626,6 @@
       state.alive = false;
       if (state.watch) state.watch.destroy();
       state.watch = null;
-      if (state.copiedTimer) window.clearTimeout(state.copiedTimer);
       if (state.unsubscribe) state.unsubscribe();
       state.unsubscribe = null;
       if (root.parentNode === host) host.removeChild(root);
