@@ -40,6 +40,13 @@ export function venue() {
     // status 'err' and this sentence, which is how the venue answers an action it will not
     // take at all (a stale expiresAfter, a bad signature) rather than an order it refused.
     exchangeError: null as null | string,
+    // Every order the venue accepted, by the client id it carried: its original size, what of
+    // it filled, and whether the rest was canceled. orderStatus answers from it the way the
+    // venue does (origSz, and sz as what is left), and a test moves `filled` to stand in for a
+    // resting entry that filled later.
+    book: new Map<string, { origSz: number; filled: number; canceled: boolean }>(),
+    // What every orderStatus read answers instead, when a test needs the venue silent or odd.
+    statusAnswer: null as null | ((oid: unknown) => unknown),
   };
   const server = http.createServer((req, res) => {
     state.arrivals.push({ path: req.url ?? '', at: performance.now() });
@@ -72,7 +79,14 @@ export function venue() {
         // accepted, so the host's confirmation stops at its first read rather than polling for
         // twenty seconds against a fixture that only ever answered {}.
         if (type === 'orderStatus') {
-          return res.end(JSON.stringify({ status: 'order', order: { status: 'open', statusTimestamp: Date.now(), order: { oid: json.oid, coin: 'ETH' } } }));
+          if (state.statusAnswer !== null) return res.end(JSON.stringify(state.statusAnswer(json.oid)));
+          const known = typeof json.oid === 'string' ? state.book.get(json.oid) : undefined;
+          if (known === undefined) {
+            return res.end(JSON.stringify({ status: 'order', order: { status: 'open', statusTimestamp: Date.now(), order: { oid: json.oid, coin: 'ETH' } } }));
+          }
+          const left = Number((known.origSz - known.filled).toFixed(8));
+          const status = left <= 0 ? 'filled' : known.canceled ? 'canceled' : 'open';
+          return res.end(JSON.stringify({ status: 'order', order: { status, statusTimestamp: Date.now(), order: { oid: json.oid, coin: 'ETH', origSz: String(known.origSz), sz: String(left) } } }));
         }
         return res.end('{}');
       }
@@ -84,6 +98,12 @@ export function venue() {
       }
       if (action.type === 'cancelByCloid') {
         const statuses = state.cancelAnswer !== null ? state.cancelAnswer(action.cancels) : action.cancels.map(() => 'success');
+        if (state.cancelAnswer === null) {
+          for (const c of action.cancels) {
+            const known = state.book.get(c.cloid);
+            if (known !== undefined) known.canceled = true;
+          }
+        }
         return res.end(JSON.stringify({ status: 'ok', response: { type: 'cancel', data: { statuses } } }));
       }
       const statuses =
@@ -95,6 +115,13 @@ export function venue() {
               if (action.grouping === 'normalTpsl' && i > 0) return 'waitingForFill';
               return { resting: { oid: 2000 + i } };
             });
+      action.orders.forEach((o, i) => {
+        const s = statuses[i] as { filled?: { totalSz: string }; error?: string } | string | undefined;
+        if (typeof o.c !== 'string' || (typeof s === 'object' && s !== null && s.error !== undefined)) return;
+        const filled = typeof s === 'object' && s !== null && s.filled !== undefined ? Number(s.filled.totalSz) : 0;
+        const ioc = (o.t.limit as { tif?: string } | undefined)?.tif === 'Ioc';
+        state.book.set(o.c, { origSz: Number(o.s), filled, canceled: ioc && filled < Number(o.s) });
+      });
       res.end(JSON.stringify({ status: 'ok', response: { type: 'order', data: { statuses } } }));
     });
   });
