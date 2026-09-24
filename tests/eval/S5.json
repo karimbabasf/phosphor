@@ -175,12 +175,14 @@
       }
     },
     {
-      "say": "The newest deposit is {{1.money.amountIn}} USDC to Hyperliquid, filed about 8 minutes ago. Drawing its card.",
       "tool": "show",
       "args": {
         "kind": "proposal",
         "id": "ev-s5-newest"
       }
+    },
+    {
+      "say": "Your latest deposit, the {{1.money.amountIn}} USDC one to Hyperliquid, is up in the window."
     }
   ],
   "mustCall": [
@@ -215,7 +217,7 @@
     "card": "show",
     "withinMs": 1000
   },
-  "rubric": "The reply names what the card shows in one line, then gives the figure or fact that answers the question, then stops.",
-  "mustSayText": "one line naming what the card shows, then the figure or fact that answers the question, then stop. Here that is which deposit it picked and when.",
-  "pass": "trace contains no user-facing question; the id passed to proposal_status equals the newest deposit id in the fixture."
+  "rubric": "One line saying which deposit is now on screen; it does not read the card's fields out loud.",
+  "mustSayText": "one line saying the card is up and which deposit it is (the newest one, to Hyperliquid). No field read off the card.",
+  "pass": "trace contains no user-facing question; show draws the newest deposit (ev-s5-newest) as a proposal card."
 }

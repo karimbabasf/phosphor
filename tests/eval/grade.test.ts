@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { gradeReply, gradeTrace, gradeWindow, stateOf, type Run } from './grade.ts';
+import { BANNED, bannedForJudge, gradeReply, gradeTrace, gradeWindow, stateOf, type Run } from './grade.ts';
 import { validate, type Scenario } from './schema.ts';
 
 const T0 = 1_700_000_000_000;
@@ -387,4 +387,68 @@ test('trace: one corrected resend after a form refusal is forgiven, and a resend
   // And a scenario that names no forgiven code forgives nothing.
   const strict = scenario({ maxCalls: { propose_policy_change: 1 } });
   assert.equal(gradeTrace(strict, formError).ok, false);
+});
+
+// ---------- one step, either spelling ----------
+
+test('trace: a step written a|b is answered by either tool, in mustCall, traceEquals and ordering', () => {
+  const s = scenario({ mustCall: ['proposal_status|proposals', 'wallet'], traceEquals: ['proposal_status|proposals+', 'wallet'] });
+  assert.equal(gradeTrace(s, run({ trace: [call('proposals'), call('wallet')] })).ok, true);
+  assert.equal(gradeTrace(s, run({ trace: [call('proposal_status'), call('proposals'), call('wallet')] })).ok, true);
+
+  const neither = gradeTrace(scenario({ mustCall: ['proposal_status|proposals'] }), run({ trace: [call('wallet')] }));
+  assert.equal(neither.ok, false);
+  assert.match(neither.first, /proposal_status or proposals is never called/);
+
+  // Out of order is still out of order, whichever spelling answered.
+  const late = gradeTrace(scenario({ ordering: [['proposal_status|proposals', 'wallet']] }), run({ trace: [call('wallet'), call('proposals')] }));
+  assert.equal(late.ok, false);
+  assert.match(late.first, /wallet is called before proposal_status or proposals/);
+});
+
+test('trace: an ifCalled argument check holds when its tool is called and is skipped when the other spelling was', () => {
+  const s = scenario({
+    mustCall: ['proposal_status|proposals'],
+    argChecks: [{ tool: 'proposal_status', path: 'id', equals: 'p1', ifCalled: true }],
+  });
+  assert.equal(gradeTrace(s, run({ trace: [call('proposals')] })).ok, true);
+  assert.equal(gradeTrace(s, run({ trace: [call('proposal_status', { id: 'p1' })] })).ok, true);
+  assert.match(gradeTrace(s, run({ trace: [call('proposal_status', { id: 'p2' })] })).first, /proposal_status\.id is p2/);
+});
+
+test('reply: "it is done" after swap_check is a reading, the read the persona sends a swap question to', () => {
+  const read = run({
+    trace: [call('swap_check', { id: 'p1' }, T0)],
+    texts: [{ at: T0 + 10, text: "It's done: the swap went through." }],
+  });
+  assert.equal(gradeReply(scenario(), read).ok, true);
+});
+
+// ---------- the judge is told what the grader allows ----------
+
+test('judge: every banned phrase the grader carves an allowed shape out of reaches the judge with that shape', () => {
+  const line = bannedForJudge();
+  for (const banned of BANNED) {
+    assert.ok(line.includes(banned.why), `the judge is not told ${banned.why}`);
+    if (banned.allow !== undefined || banned.needsStatusRead === true) {
+      assert.ok(banned.allowed !== undefined && line.includes(banned.allowed), `${banned.why} reaches the judge with no allowed shape`);
+    }
+  }
+  // S9's question: the grader passes it, and the judge is told the shape it passes on.
+  const asked = run({ texts: [{ at: T0, text: 'Could you paste the address and tell me which network it should land on?' }] });
+  assert.equal(gradeReply(scenario(), asked).ok, true);
+  assert.match(line, /which network money should land is fine/);
+});
+
+test('window: "nothing new" lets show draw a waiting proposal again, and nothing else', () => {
+  const s = scenario({ window: { noNewCard: true, redraws: ['p1'] } });
+  const again = run({ cards: [{ at: T0, name: 'show', data: { card: 'proposal', id: 'p1' } }] });
+  assert.equal(gradeWindow(s, again).ok, true);
+
+  const other = run({ cards: [{ at: T0, name: 'show', data: { card: 'proposal', id: 'p2' } }] });
+  assert.match(gradeWindow(s, other).first, /drew a show card/);
+  const deposit = run({ cards: [{ at: T0, name: 'deposit', data: { card: 'deposit', id: 'p1' } }] });
+  assert.match(gradeWindow(s, deposit).first, /drew a deposit card/);
+  // With no redraws named, the same card is new.
+  assert.equal(gradeWindow(scenario({ window: { noNewCard: true } }), again).ok, false);
 });

@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, LedgerSnapshot, Proposal, Rail, WriteDraft } from '../../src/types.ts';
+import type { AppConfig, LedgerSnapshot, Proposal, Rail, SwapDraft, WriteDraft } from '../../src/types.ts';
 import type { Ledger } from '../../src/ledger/index.ts';
 import type { ProposalStage } from '../../src/proposals/view.ts';
 import {
@@ -357,3 +357,89 @@ for (const end of ['FAILED', 'REFUNDED'] as const) {
     resetDemoBalances();
   });
 }
+
+// ---------- the swap reads, off the same fixture the demo swap rail swaps against ----------
+
+// A service over the demo registry itself, its swap lookup included, rather than its rails alone.
+function swapHarness(knobs: Partial<DemoKnobs> = {}): ReturnType<typeof makeCtx> {
+  const ledger = demoLedger();
+  const registry = demoRails({
+    cfg: cfgFor('demo'),
+    refresh: () => ledger.refresh(),
+    knobs: { stageScale: 0.05, stall: false, deadlineSec: null, providerEnd: null, hold: false, ...knobs },
+  });
+  return makeCtx({ deps: { rails: registry, ledger } });
+}
+
+test('demo mode answers the swap reads off its fixture, so a quote before a swap is never "no swap venue"', async () => {
+  resetDemoBalances();
+  const h = swapHarness();
+
+  const assets = await h.svc.swapAssets!({ query: 'eth' });
+  assert.equal(assets.ok, true);
+  const eth = assets.assets.find((a) => a.symbol === 'ETH');
+  assert.equal(eth?.network, 'eth');
+  assert.equal(eth?.held, '0.42');
+  assert.equal(eth?.priceUsd, 4520);
+  assert.equal(eth?.liquidity, 'yes');
+
+  // 500 USDC into ETH at the fixture's 4,520, less the demo's 10 bp fee: 499.5 / 4520.
+  const quote = await h.svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'ETH', amountIn: '500' });
+  assert.equal(quote.ok, true);
+  assert.equal(quote.reason, null);
+  assert.equal(quote.from?.assetId, USDC);
+  assert.equal(quote.amountIn, '500');
+  assert.equal(quote.expectedOut, '0.11050885');
+  assert.equal(Number(quote.minOut) > 0 && Number(quote.minOut) < Number(quote.expectedOut), true);
+  assert.equal(quote.feeUsd, 0.5);
+
+  // "all" is the fixture's balance to the last unit, and NEAR is the wNEAR the balance would hold.
+  const all = await h.svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'NEAR', amountIn: 'all' });
+  assert.equal(all.ok, true);
+  assert.equal(all.amountIn, '1850');
+  assert.equal(all.to?.assetId, 'nep141:wrap.near');
+
+  // A coin the fixture cannot price is one the venue does not offer, never a made-up rate.
+  const btc = await h.svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'BTC', amountIn: '10' });
+  assert.equal(btc.ok, false);
+  assert.equal(btc.reason, 'unsupported_asset');
+  resetDemoBalances();
+});
+
+test('a demo swap named without a network is the one the quote priced, and swap_check reads its move off the demo ledger', async () => {
+  resetDemoBalances();
+  const h = swapHarness();
+  const filed = await h.svc.proposeSwap({ fromSymbol: 'USDC', toSymbol: 'ETH', amountIn: '40' });
+  assert.equal(filed.draft.kind, 'swap');
+  assert.equal((filed.draft as SwapDraft).chain, 'eth');
+  assert.equal((filed.draft as SwapDraft).amountInExact, '40');
+  // The walk lands the row settling and the credit confirms it a beat later.
+  const until = Date.now() + 5_000;
+  while (Date.now() < until && h.svc.get(filed.id)?.status !== 'executed') await sleep(20);
+  assert.equal(h.svc.get(filed.id)?.status, 'executed');
+
+  const check = await h.svc.swapCheck!(filed.id);
+  assert.equal(check.ok, true);
+  assert.equal(check.moved, 'yes');
+  assert.equal(check.balance.now, '1810');
+  assert.equal(check.ledger?.source, 'demo');
+  assert.deepEqual(check.ledger?.outgoing.map((m) => m.amount), ['40']);
+  resetDemoBalances();
+});
+
+test('a demo swap stalled before its credit reads as nothing left, off the demo ledger rather than unknown', async () => {
+  resetDemoBalances();
+  const h = swapHarness({ stall: true });
+  const filed = await h.svc.proposeSwap({ fromSymbol: 'USDC', toSymbol: 'ETH', amountIn: '40' });
+  const until = Date.now() + 5_000;
+  while (Date.now() < until && h.svc.get(filed.id)?.status !== 'needs_reconciliation') await sleep(20);
+  assert.equal(h.svc.get(filed.id)?.status, 'needs_reconciliation');
+
+  const check = await h.svc.swapCheck!(filed.id);
+  assert.equal(check.moved, 'no');
+  assert.equal(check.ledger?.source, 'demo');
+  assert.deepEqual(check.ledger?.outgoing, []);
+  assert.equal(check.balance.now, '1850');
+  assert.match(check.summary, /Nothing has left your balance/);
+  resetDemoBalances();
+});

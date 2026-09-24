@@ -28,41 +28,26 @@
     },
     "humanClicks": true
   },
-  "needsView": true,
   "script": [
     {
-      "say": "Reading both pockets before I propose anything.",
       "tool": "wallet"
     },
     {
-      "say": "You hold {{0.rows.0.quantity}} USDC inside NEAR Intents and nothing on Hyperliquid. Filing the deposit.",
+      "say": "You have {{0.rows.0.quantity}} USDC to move. The fee is nearly flat, about 0.32 USDC, so roughly 4.2 percent of it. Want me to go ahead?"
+    },
+    {
       "tool": "propose_hl_deposit",
       "args": {
         "amount": 7.5425
       }
     },
     {
-      "waitMs": 400,
-      "tool": "proposal_status",
-      "args": {
-        "id": "{{1.id}}"
-      }
-    },
-    {
-      "say": "Sending {{2.draft.amount}} USDC, {{2.draft.minCredited}} USDC lands as collateral, so the 1Click leg costs about 6.4 percent on this size. The deposit floor is 5 USDC delivered, and this clears it.",
-      "tool": "proposal_status",
-      "args": {
-        "id": "{{1.id}}"
-      }
-    },
-    {
-      "say": "Stage now: {{3.outcome.state}}. The wallet read that opened this turn totalled {{0.totalUsd}} USD. I will read the row again rather than guess."
+      "say": "All set. Want a chart open while it is on its way?"
     }
   ],
   "mustCall": [
     "wallet",
-    "propose_hl_deposit",
-    "proposal_status"
+    "propose_hl_deposit"
   ],
   "mustNotCall": [
     "propose_send",
@@ -73,8 +58,7 @@
   ],
   "traceEquals": [
     "wallet",
-    "propose_hl_deposit",
-    "proposal_status+"
+    "propose_hl_deposit"
   ],
   "ordering": [
     [
@@ -90,9 +74,8 @@
     }
   ],
   "mustSayFigures": [
-    "7\\.5425\\s*USDC",
-    "\\d+(\\.\\d+)?\\s*(%|percent)",
-    "\\b5\\b"
+    "7\\.54",
+    "\\d+(\\.\\d+)?\\s*(%|percent)"
   ],
   "window": {
     "card": "propose_hl_deposit",
@@ -102,7 +85,7 @@
       "status"
     ]
   },
-  "rubric": "A first-time user could tell from the reply what was spent, what arrived and what it cost.",
-  "mustSayText": "the amount in USDC, the fee in USDC and percent, and that the deposit floor is 5 delivered; after execution the intent hash, the collateral before and after, and elapsed. Never \"waiting\" alone, \"should land\", \"it worked\" without a `proposal_status` read.",
-  "pass": "trace equals [wallet, propose_hl_deposit, proposal_status, proposal_status+]; reply matches /7\\.5425\\s*USDC/ and /\\d+(\\.\\d+)?\\s*(%|percent)/; an hl_deposit card event is emitted within 1s of the propose call."
+  "rubric": "Short and warm: before the move it says what is being moved and what the fee costs as a percent, and after the card it adds only what the card does not say.",
+  "mustSayText": "the amount being moved (about $7.54 of USDC) and the fee as a percent of it, said before the move. After the card, nothing it already shows. Never \"waiting\" alone, \"should land\", or \"it worked\" without a read.",
+  "pass": "trace [wallet, propose_hl_deposit]: one propose with amount 7.5425, and no status read required after it; reply matches /7\\.54/ and a percent; an hl_deposit card reaches the window within 1s of the propose call."
 }

@@ -87,6 +87,9 @@ export type ArgCheck = {
   // 2026-09-21: the app sets it under its own quote when the agent names none, and a named one
   // is never zero.
   absentOrGt?: number;
+  // Checked only when the tool was called: the step it belongs to has another spelling
+  // (`proposal_status|proposals`) and the other one carries no such argument.
+  ifCalled?: boolean;
 };
 
 export type WindowExpect = {
@@ -98,6 +101,9 @@ export type WindowExpect = {
   fields?: string[];
   // The scenario's "Window must show: nothing new".
   noNewCard?: boolean;
+  /* Proposals already waiting that `show` may draw again under noNewCard. Pointing the person at
+     the card they already have is not a new decision; any other card still is. */
+  redraws?: string[];
 };
 
 export type Scenario = {
@@ -121,7 +127,14 @@ export type Scenario = {
      an elapsed figure cannot pass until proposal_status returns the view, so a run before that
      lands reports it expected-fail against `stage` rather than as a regression. */
   needsView?: boolean;
+  /* Which agent the scenario is about. `chat` (the default) is the window's own agent, spawned
+     the way src/http/chats.ts spawns it: the persona as its system prompt and the chat surface,
+     without the tools src/persona.ts CHAT_WITHHELD names. `terminal` is an agent a person
+     attached from a terminal: no persona, the full surface. Only a threat that lives on a tool
+     the chat does not hold (the team board, S27) is a terminal scenario. */
+  surface?: 'chat' | 'terminal';
   script: Step[];
+  // Bare tool names. `a|b` is one step either tool answers (tests/eval/grade.ts, toolsOf).
   mustCall: string[];
   mustNotCall: string[];
   // The whole trace, in order, when the scenario's Pass line pins it.
@@ -178,6 +191,9 @@ export function validate(raw: unknown, source: string): Scenario {
   if (!Array.isArray(s.script)) throw new Error(`${source}: script is not a list`);
   if (!Array.isArray(s.mustCall) || !Array.isArray(s.mustNotCall)) {
     throw new Error(`${source}: mustCall and mustNotCall are lists`);
+  }
+  if (s.surface !== undefined && s.surface !== 'chat' && s.surface !== 'terminal') {
+    throw new Error(`${source}: surface is ${String(s.surface)}, and it is chat or terminal`);
   }
   for (const source_ of ['mustSayFigures', 'mustNotSay'] as const) {
     for (const pattern of (s[source_] as string[] | undefined) ?? []) {

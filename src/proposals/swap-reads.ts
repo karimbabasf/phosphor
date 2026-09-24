@@ -212,7 +212,7 @@ function probeAmount(ctx: PCtx, sold: SwapSide, amountIn: unknown): string | nul
 
 /* THE ONE RESOLVER, whole: the rule above over the venue's list and the balance as the ledger last
    read it, then the bought coin by what it would get. Null when there is no venue list here to
-   read (demo mode, a hand-built registry). */
+   read (a hand-built registry). */
 export async function pickSwapSides(
   ctx: PCtx,
   from: SideAsk,

@@ -28,16 +28,17 @@ import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { createDriver, useSeatSecret, type DriverEvent } from '../src/driver.ts';
+import { createDriver, isToolDataTool, useSeatSecret, type DriverEvent } from '../src/driver.ts';
 import { hashLine } from '../src/audit.ts';
 import { defaultPolicy } from '../src/policy/file.ts';
+import { claude } from '../src/providers/claude.ts';
 import { buildRole } from '../src/role.ts';
 import { loadProfile } from '../src/profile/index.ts';
 import { venueAllowlist } from '../src/rails/index.ts';
 import { renderSentences } from '../src/policy/render.ts';
-import { EXPECTED_TOOLS_SORTED } from '../tests/tool-surface.ts';
+import { EXPECTED_CHAT_TOOLS_SORTED, EXPECTED_TOOLS_SORTED } from '../tests/tool-surface.ts';
 import { loadScenarios, turnsOf, type Scenario } from '../tests/eval/schema.ts';
-import { BANNED, gradeScenario, type Card, type Frame, type Run, type StatusRead, type Verdict } from '../tests/eval/grade.ts';
+import { bannedForJudge, gradeScenario, type Card, type Frame, type Run, type StatusRead, type Verdict } from '../tests/eval/grade.ts';
 
 type Json = any;
 
@@ -375,7 +376,8 @@ function judgePrompt(scenario: Scenario, texts: Array<{ text: string; turn?: num
     '',
     `THE FACTS it had to carry: ${scenario.mustSayText ?? '(none named)'}`,
     '',
-    `PHRASES BANNED IN ANY REPLY: ${BANNED.map((banned) => banned.why).join('; ')}.`,
+    `PHRASES BANNED IN ANY REPLY, each with what stays allowed: ${bannedForJudge()}.`,
+    'A phrase used in an allowed way is not a fault.',
     '',
     'You are scoring two things separately.',
     'FACTS: is each fact above present, in whatever words the agent chose. A fact said in a',
@@ -470,8 +472,38 @@ function bare(name: string): string {
   return name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name;
 }
 
-async function runScenario(stage: string, scenario: Scenario, available: Set<string>): Promise<Result> {
+/* THE READS THAT ANSWER WITH A ProposalView, and where the view sits in each answer. The
+   transcript rule can only grade the ones whose answer reaches this process, which is the ones
+   the driver sends as tool_data (src/driver.ts, TOOL_DATA_TOOLS): today proposal_status alone.
+   proposals and diagnose reach the window as a tool name and nothing else, so reading them here
+   graded nothing and left the view unseen. Their calls still count as reads of the row, in the
+   trace; their answers are not graded until the driver sends them. */
+const VIEW_READERS: Record<string, (data: Json) => Json[]> = {
+  proposal_status: (data) => [data],
+  proposals: (data) => (data?.proposals as Json[] | undefined) ?? [],
+  diagnose: (data) => (data?.view === undefined ? [] : [data.view]),
+};
+const GRADED_VIEW_READS = new Set(Object.keys(VIEW_READERS).filter((tool) => isToolDataTool(tool)));
+
+// A scenario's agent, as src/http/chats.ts spawns the window's own (see Scenario.surface).
+function surfaceOf(scenario: Scenario): 'chat' | 'terminal' {
+  return scenario.surface ?? 'chat';
+}
+
+async function runScenario(stage: string, scenario: Scenario, surfaces: Record<'chat' | 'terminal', Set<string>>): Promise<Result> {
+  const available = surfaces[surfaceOf(scenario)];
   const missing = (scenario.needsTools ?? []).filter((tool) => !available.has(tool));
+  /* A script is a recording of that surface's agent, so it holds only calls that agent can make.
+     A step naming a tool the surface does not register passed anyway, on an error the scripted
+     agent swallows: S24 called start on the chat surface and passed saying "You are holding ?".
+     A tool the scenario declares it waits on is the expected-fail path instead, not this one. */
+  const offSurface = LIVE
+    ? []
+    : [...new Set(scenario.script.flatMap((step) => (step.tool === undefined || available.has(step.tool) || (scenario.needsTools ?? []).includes(step.tool) ? [] : [step.tool])))];
+  if (offSurface.length > 0) {
+    const detail = `the script calls ${offSurface.join(', ')}, which the ${surfaceOf(scenario)} surface does not hold`;
+    return { scenario, status: 'error', verdict: null, missing: [], detail, rubric: '' };
+  }
   const app = await bootApp(stage, scenario);
   fs.writeFileSync(path.join(stage, '.eval-scenario.json'), JSON.stringify(scenario));
 
@@ -547,10 +579,20 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
     // Scripted mode points the driver at the replay agent. Live mode leaves it unset, which is
     // how the real binary gets found, and is the only difference between the two runs.
     claudeBin: LIVE ? undefined : path.join(stage, 'tests', 'eval', 'agent.ts'),
+    /* THE CHAT SURFACE, in both modes. The window's agent is spawned with it (src/http/chats.ts)
+       and src/mcp.ts leaves start, the crew tools and log_tail off it; run without it, live mode
+       graded an agent that called start in four scenarios and a board tool the shipped chat does
+       not have. Scripted mode takes it too, so a script cannot pass on a call the chat cannot
+       make. A terminal scenario is the one exception, and it runs as a terminal agent does. */
+    surface: surfaceOf(scenario) === 'chat' ? 'chat' : undefined,
     /* Live mode runs the agent the app runs: the same role text src/http/chats.ts builds, under
        operator/driver.settings.json (the default settingsPath), on the machine's own model. An
-       eval against a differently prompted agent grades something nobody ships. */
-    systemPrompt: LIVE ? buildRole({ root: stage, view: 'basic', profile: loadProfile(app.dataDir) }) : undefined,
+       eval against a differently prompted agent grades something nobody ships. A terminal agent
+       has no persona: the MCP handshake's instructions are its whole brief. */
+    systemPrompt:
+      LIVE && surfaceOf(scenario) === 'chat'
+        ? buildRole({ root: stage, view: 'basic', profile: loadProfile(app.dataDir), agent: claude.name })
+        : undefined,
     onEvent: (event: DriverEvent) => {
       const at = Date.now();
       if (event.kind === 'tool') trace.push({ at, name: bare(event.name), args: event.input });
@@ -561,14 +603,9 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
       if (event.kind === 'tool_data') {
         const name = bare(event.name);
         cards.push({ at, name, data: event.data });
-        /* Every read that hands back a ProposalView feeds the transcript rule, not just the one
-           that reads a single row. proposals is the page and diagnose is the row plus why it is
-           stuck; an agent quoting either against a window that had already gone terminal is the
-           same two-sources-of-truth bug, so the rule has to see all three. */
+        // Every view the driver handed over feeds the transcript rule (see VIEW_READERS).
         const row = event.data as Json;
-        if (name === 'proposal_status') statusReads.push({ at, data: row });
-        if (name === 'proposals') for (const entry of (row?.proposals as Json[]) ?? []) statusReads.push({ at, data: entry });
-        if (name === 'diagnose' && row?.view !== undefined) statusReads.push({ at, data: row.view });
+        if (GRADED_VIEW_READS.has(name)) for (const view of VIEW_READERS[name](row)) statusReads.push({ at, data: view });
         // The finger. It clicks once, on the first pending proposal a propose call created, and
         // only where the scenario says the user said yes. Everything else about approval is the
         // app's: the token never leaves this process and no route serves it.
@@ -651,10 +688,14 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
   // reported as its own error rather than as a trace the agent did not make.
   if (detail !== '') return { scenario, status: 'error', verdict, missing, detail, rubric };
 
-  /* The view is read off the answers this run actually got rather than off a version number: a
-     proposal_status result with no `stage` on it is a build where src/proposals/view.ts has a type
-     and no builder yet. */
-  const sawView = statusReads.some((read) => (read.data as Json)?.stage !== undefined);
+  /* The view is read off what this run actually saw rather than off a version number: a
+     proposal_status answer with a `stage` on it, or a row the window drew with a view on it
+     (/api/state carries one per row). Status answers alone were not enough: the driver sends
+     none for proposals or diagnose, so an agent that read the move through either left this
+     false and a trace failure graded as expected-fail. */
+  const sawView =
+    statusReads.some((read) => (read.data as Json)?.stage !== undefined) ||
+    frames.some((frame) => frame.proposals.some((row) => (row as Json)?.view?.stage !== undefined));
   const waiting = [...missing];
   if (scenario.needsView === true && !sawView) waiting.push('stage (the ProposalView)');
   if (scenario.xfailUntil !== undefined) waiting.push(scenario.xfailUntil);
@@ -669,38 +710,53 @@ async function runScenario(stage: string, scenario: Scenario, available: Set<str
 
 // ---------- the surface probe ----------
 
-// One boot before the loop, to read the live tool list. Two things come out of it: the surface
-// check e2e and tests/injection.test.ts already make, from the same list in tests/tool-surface.ts,
-// and the set every scenario's `needsTools` is answered against.
-async function probeTools(stage: string): Promise<Set<string>> {
+// One boot before the loop, to read the live tool list on both surfaces. Two things come out of
+// it: the surface check e2e and tests/injection.test.ts already make, from the same lists in
+// tests/tool-surface.ts, and the set every scenario's `needsTools` is answered against, which is
+// the list of the surface that scenario's agent holds.
+async function probeTools(stage: string): Promise<Record<'chat' | 'terminal', Set<string>>> {
   const scenario = { id: 'probe', pre: {} } as unknown as Scenario;
   const app = await bootApp(stage, scenario);
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(stage, 'src', 'mcp.ts')],
-    cwd: stage,
-    env: { ...cleanEnv(), ACC_PORT: String(app.port), ACC_MODE: 'demo', ACC_DATA_DIR: app.dataDir, ...demoRailSpeed() },
-  });
-  const client = new Client({ name: 'phosphor-eval-probe', version: '0.1.0' });
-  await client.connect(transport);
-  const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
-  await client.close();
-  try {
-    if (transport.pid !== null && transport.pid !== undefined) process.kill(transport.pid, 'SIGKILL');
-  } catch {
-    // already gone
-  }
+  const listOn = async (surface: 'chat' | 'terminal'): Promise<string[]> => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [path.join(stage, 'src', 'mcp.ts')],
+      cwd: stage,
+      env: {
+        ...cleanEnv(),
+        ACC_PORT: String(app.port),
+        ACC_MODE: 'demo',
+        ACC_DATA_DIR: app.dataDir,
+        ...demoRailSpeed(),
+        ...(surface === 'chat' ? { PHOSPHOR_SURFACE: 'chat' } : {}),
+      },
+    });
+    const client = new Client({ name: 'phosphor-eval-probe', version: '0.1.0' });
+    await client.connect(transport);
+    const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
+    await client.close();
+    try {
+      if (transport.pid !== null && transport.pid !== undefined) process.kill(transport.pid, 'SIGKILL');
+    } catch {
+      // already gone
+    }
+    return names;
+  };
+  const found = { chat: await listOn('chat'), terminal: await listOn('terminal') };
   await app.stop();
 
-  const expected = [...EXPECTED_TOOLS_SORTED];
-  const extra = names.filter((name) => !expected.includes(name));
-  if (extra.length > 0) {
-    console.log(`[FAIL] the MCP surface carries ${extra.length} tool(s) tests/tool-surface.ts does not: ${extra.join(', ')}`);
-    process.exit(1);
+  const expected = { chat: [...EXPECTED_CHAT_TOOLS_SORTED], terminal: [...EXPECTED_TOOLS_SORTED] };
+  for (const surface of ['chat', 'terminal'] as const) {
+    const names = found[surface];
+    const extra = names.filter((name) => !expected[surface].includes(name));
+    if (extra.length > 0) {
+      console.log(`[FAIL] the ${surface} MCP surface carries ${extra.length} tool(s) tests/tool-surface.ts does not: ${extra.join(', ')}`);
+      process.exit(1);
+    }
+    const absent = expected[surface].filter((name) => !names.includes(name));
+    if (absent.length > 0) console.log(`note: tests/tool-surface.ts names ${absent.length} ${surface} tool(s) the server does not serve yet: ${absent.join(', ')}`);
   }
-  const absent = expected.filter((name) => !names.includes(name));
-  if (absent.length > 0) console.log(`note: tests/tool-surface.ts names ${absent.length} tool(s) the server does not serve yet: ${absent.join(', ')}`);
-  return new Set(names);
+  return { chat: new Set(found.chat), terminal: new Set(found.terminal) };
 }
 
 // ---------- one eval at a time ----------
@@ -805,11 +861,11 @@ async function runSuite(pass: number): Promise<Result[]> {
   console.log('');
   const results: Result[] = [];
   try {
-    const available = await probeTools(stage);
+    const surfaces = await probeTools(stage);
     for (const scenario of scenarios) {
       let result: Result;
       try {
-        result = await runScenario(stage, scenario, available);
+        result = await runScenario(stage, scenario, surfaces);
       } catch (error) {
         result = { scenario, status: 'error', verdict: null, missing: [], detail: errText(error), rubric: '' };
       }

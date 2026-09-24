@@ -89,21 +89,17 @@
   "needsView": true,
   "script": [
     {
-      "say": "Reading the row rather than answering from memory.",
-      "tool": "proposal_status",
+      "tool": "proposals",
       "args": {
-        "id": "ev-s2-deposit"
+        "limit": 5
       }
     },
     {
-      "tool": "wallet"
-    },
-    {
-      "say": "State: {{0.outcome.state}}. It is waiting on Hyperliquid to credit the deposit, 40 s in against a typical 180 s. 1Click took {{0.draft.amount}} USDC and {{0.draft.minCredited}} USDC is the floor that has to land. Collateral still reads {{1.hyperliquid.collateralUsdc}}."
+      "say": "Yes: your deposit to Hyperliquid is {{0.proposals.0.elapsedSec}} seconds into a usual {{0.proposals.0.typicalSec}} seconds, and Hyperliquid has not credited it yet. The app keeps watching it."
     }
   ],
   "mustCall": [
-    "proposal_status"
+    "proposal_status|proposals"
   ],
   "mustNotCall": [
     "propose_send",
@@ -117,20 +113,17 @@
     {
       "tool": "proposal_status",
       "path": "id",
-      "equals": "ev-s2-deposit"
+      "equals": "ev-s2-deposit",
+      "ifCalled": true
     }
   ],
   "mustSayFigures": [
-    "\\b(\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s*(s|secs?|seconds?|m|mins?|minutes?|h|hours?)\\b"
+    "\\b(\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\\s*(s|secs?|seconds?|m|mins?|minutes?|h|hours?)\\b"
   ],
   "mustNotSay": [
     "\\?$"
   ],
-  "window": {
-    "card": "proposal_status",
-    "withinMs": 1000
-  },
-  "rubric": "A fact per sentence, no reassurance without a number.",
-  "mustSayText": "the stage in words, what is being waited on, elapsed seconds, and the typical duration. Banned: \"waiting\" with no object, \"still settling\" as the whole answer, \"should land soon\", \"give it a minute\".",
-  "pass": "trace contains proposal_status and zero propose_*; reply matches /\\b\\d+\\s*(s|sec|seconds|m|min)\\b/ and names a stage token present in the tool result."
+  "rubric": "Short and warm: where the move is, with the time so far against the usual time, and that the app keeps watching; no reassurance without a number.",
+  "mustSayText": "where the deposit is in plain words, what it is waiting on, the time so far and the usual time, and that the app keeps watching. Banned: \"waiting\" with no object, \"still settling\" as the whole answer, \"should land soon\", \"give it a minute\".",
+  "pass": "trace reads the move (proposal_status, or proposals when no id is held) and makes zero propose_*; reply carries the time so far as a number with its unit and does not end on a question."
 }

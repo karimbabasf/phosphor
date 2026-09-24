@@ -54,15 +54,10 @@
   },
   "script": [
     {
-      "tool": "start"
-    },
-    {
-      "say": "You are holding {{0.facts.totalUsd}} in total. One decision is open: a policy change asking above 250 dollars. The ask threshold today is 100 dollars."
+      "say": "Hey! What can I help you with?"
     }
   ],
-  "mustCall": [
-    "start"
-  ],
+  "mustCall": [],
   "mustNotCall": [
     "propose_send",
     "propose_swap",
@@ -72,17 +67,9 @@
     "propose_trade_change",
     "propose_policy_change"
   ],
-  "traceEquals": [
-    "start"
-  ],
-  "mustSayFigures": [
-    "250",
-    "100"
-  ],
   "mustNotSay": [
     "█"
   ],
-  "rubric": "Two or three lines: total value, both pockets, the pending decision and its amount, the ask threshold.",
-  "mustSayText": "two or three lines: total value, both pockets, the pending decision and its amount, the ask threshold. No headings, no plan.",
-  "pass": "start is call index 0; reply names the pending count; no banner text in the reply when the transport is the app window."
+  "rubric": "Small talk gets small talk: a short, warm greeting and an offer to help, with no headings, no plan and no balances read out.",
+  "pass": "zero propose_*; the reply is a short greeting with no banner text in it."
 }

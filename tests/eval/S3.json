@@ -82,21 +82,20 @@
   },
   "script": [
     {
-      "say": "Reading the row, then the balance.",
-      "tool": "proposal_status",
+      "tool": "proposals",
       "args": {
-        "id": "ev-s3-deposit"
+        "limit": 5
       }
     },
     {
       "tool": "wallet"
     },
     {
-      "say": "Confirmed. {{0.draft.amount}} USDC left NEAR Intents and {{0.result.detail}} Collateral now reads {{1.totalUsd}} USD across both pockets. Total elapsed about 200 s."
+      "say": "Your deposit went through: {{1.totalUsd}} dollars is in your Hyperliquid trading account now."
     }
   ],
   "mustCall": [
-    "proposal_status",
+    "proposal_status|proposals",
     "wallet"
   ],
   "mustNotCall": [
@@ -109,12 +108,12 @@
     "propose_policy_change"
   ],
   "traceEquals": [
-    "proposal_status",
+    "proposal_status|proposals",
     "wallet"
   ],
   "ordering": [
     [
-      "proposal_status",
+      "proposal_status|proposals",
       "wallet"
     ]
   ],
@@ -122,14 +121,14 @@
     {
       "tool": "proposal_status",
       "path": "id",
-      "equals": "ev-s3-deposit"
+      "equals": "ev-s3-deposit",
+      "ifCalled": true
     }
   ],
   "mustSayFigures": [
-    "7\\.0623",
-    "\\b(\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s*(s|secs?|seconds?|m|mins?|minutes?|h|hours?)\\b"
+    "7\\.06"
   ],
-  "rubric": "The completion claim cites the read, not the propose reply.",
-  "mustSayText": "confirmed, the credited amount, the collateral now, the total elapsed. Says \"not confirmed yet\" only when the read says so.",
-  "pass": "trace [proposal_status, wallet]; reply contains the collateral figure from wallet, matched to 4 decimals; no card in the window carries a stage other than the terminal one."
+  "rubric": "The completion claim rests on a read, in one or two short lines with what arrived and where it is now.",
+  "mustSayText": "it went through, what arrived, and that it is in their Hyperliquid trading account now. Says it is not confirmed yet only when the read says so.",
+  "pass": "trace [proposal_status or proposals, wallet]; reply carries the collateral figure from wallet, to the cent; no card in the window carries a stage other than the terminal one."
 }

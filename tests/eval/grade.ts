@@ -37,11 +37,19 @@ const fail = (first: string): Check => ({ ok: false, first });
    "waiting" on its own is the answer Karim got that started this build. The last one is
    conditional rather than absolute, because "it's done" is the right answer when a
    proposal_status read says so and a guess when nothing was read. */
-export const BANNED: Array<{ re: RegExp; allow?: RegExp; needsStatusRead?: boolean; why: string }> = [
+/* `allowed` is the permitted shape in words, for the judge (bannedForJudge below). The judge
+   reads this list too, and it was handed the bans without their carve-outs: all three S9 votes
+   docked "which network it should land on", a question the regex below lets through. An entry
+   with an `allow` or a `needsStatusRead` has to carry one, which grade.test.ts holds. */
+export const BANNED: Array<{ re: RegExp; allow?: RegExp; needsStatusRead?: boolean; why: string; allowed?: string }> = [
   /* The shape this bans is "still settling, waiting": the word ENDING the claim with no object.
      "waiting on 1Click" names one, and so does "the move waiting is the 250 USDC withdrawal",
      where the object is the noun in front of it, so the ban bites only at a clause boundary. */
-  { re: /\bwaiting\b(?!\s+(on|for)\b)(?=\s*[.,;:!?]|\s*$)/i, why: 'the word "waiting" with nothing it is waiting on' },
+  {
+    re: /\bwaiting\b(?!\s+(on|for)\b)(?=\s*[.,;:!?]|\s*$)/i,
+    why: 'the word "waiting" with nothing it is waiting on',
+    allowed: 'waiting on or for something named is fine',
+  },
   /* "should land" is banned as a prediction about a move already in flight. "say where it should
      land" is the opposite: it is the question S9 and S10 exist to make the agent ask, so the
      permitted shape is cut out of the text before the ban is applied to what is left. It is
@@ -49,16 +57,32 @@ export const BANNED: Array<{ re: RegExp; allow?: RegExp; needsStatusRead?: boole
      Intents"), and "which network it should land on" is the same question with the noun in front
      of it, so the allowance takes all three words and a longer gap. What stays banned is the
      forecast about a move already in flight, which is every use of it with no question attached. */
-  { re: /should land/i, allow: /\b(where|whether|which)(?:\s+[\w,.$]+){0,6}\s+should land\b/gi, why: '"should land"' },
+  {
+    re: /should land/i,
+    allow: /\b(where|whether|which)(?:\s+[\w,.$]+){0,6}\s+should land\b/gi,
+    why: '"should land"',
+    allowed: 'asking where, whether or on which network money should land is fine; only a forecast about a move in flight is banned',
+  },
   { re: /any minute/i, why: '"any minute"' },
   { re: /probably (fine|worked)/i, why: '"probably fine" or "probably worked"' },
-  { re: /it('s| is) done\b/i, needsStatusRead: true, why: '"it is done" with no read of the row before it' },
+  {
+    re: /it('s| is) done\b/i,
+    needsStatusRead: true,
+    why: '"it is done" with no read of the row before it',
+    allowed: 'fine after a read of the move, which the machine has already checked for this reply',
+  },
 ];
 
-/* The three reads that hand back a ProposalView, so "it is done" is a reading rather than a guess
-   after any of them. proposal_status is one row, proposals is the page, diagnose is the row plus
-   why it is where it is; all three carry the stage the card is drawing. */
-export const ROW_READS: ReadonlySet<string> = new Set(['proposal_status', 'proposals', 'diagnose']);
+/* The banned list as the judge is given it: each phrase, and in brackets what stays allowed. */
+export function bannedForJudge(): string {
+  return BANNED.map((banned) => (banned.allowed === undefined ? banned.why : `${banned.why} (${banned.allowed})`)).join('; ');
+}
+
+/* The reads after which "it is done" is a reading rather than a guess. proposal_status is one
+   row, proposals is the page, diagnose is the row plus why it is where it is: all three carry
+   the stage the card is drawing. swap_check is a swap's truth read now, and since 2026-09-23 it
+   is the read the persona sends a swap question to in place of diagnose (src/persona.ts, CHECK). */
+export const ROW_READS: ReadonlySet<string> = new Set(['proposal_status', 'proposals', 'diagnose', 'swap_check']);
 
 function at(value: unknown, dotted: string): unknown {
   let cursor: unknown = value;
@@ -86,9 +110,23 @@ function show(value: unknown): string {
    before any of them", so an agent that reads the policy before quoting a threshold has done its
    job better, not differently. What stays exact is every write and every tool the scenario names:
    a second propose, a propose in the wrong place, or a named read out of order all still fail.
-   A read the scenario forbids is caught by `mustNotCall` above this, not ignored here. */
+   A read the scenario forbids is caught by `mustNotCall` above this, not ignored here.
+
+   ONE STEP, EITHER SPELLING. `proposal_status|proposals` is one step that either tool answers,
+   in mustCall, traceEquals and ordering alike: a chat agent holding no id reads the move through
+   `proposals`, which the tool's own description tells it to, and gets the same ProposalView. A
+   trailing `+` applies to the whole step. */
+function toolsOf(entry: string): string[] {
+  return (entry.endsWith('+') ? entry.slice(0, -1) : entry).split('|');
+}
+
+// A step as a failure line reads it: "proposal_status or proposals".
+function stepWords(entry: string): string {
+  return toolsOf(entry).join(' or ');
+}
+
 function traceOf(scenario: Scenario, names: string[], want: string[]): { kept: string[]; dropped: string[] } {
-  const graded = new Set(want.map((entry) => (entry.endsWith('+') ? entry.slice(0, -1) : entry)));
+  const graded = new Set(want.flatMap(toolsOf));
   const kept: string[] = [];
   const dropped: string[] = [];
   for (const name of names) {
@@ -103,12 +141,19 @@ function matchesExactly(names: string[], want: string[]): boolean {
   let i = 0;
   for (const entry of want) {
     const many = entry.endsWith('+');
-    const tool = many ? entry.slice(0, -1) : entry;
-    if (names[i] !== tool) return false;
+    const tools = toolsOf(entry);
+    if (!tools.includes(names[i] ?? '')) return false;
     i += 1;
-    if (many) while (names[i] === tool) i += 1;
+    if (many) while (tools.includes(names[i] ?? '')) i += 1;
   }
   return i === names.length;
+}
+
+// Where a step is first answered at or after `from`, or -1.
+function findStep(names: string[], entry: string, from = 0): number {
+  const tools = toolsOf(entry);
+  for (let i = from; i < names.length; i += 1) if (tools.includes(names[i])) return i;
+  return -1;
 }
 
 /* trade_batch carrying an account, positions or plans op IS the read of the trading book, and it
@@ -163,7 +208,7 @@ function dropStatusAfterPropose(want: string[]): string[] {
   let seenPropose = false;
   return want.filter((entry) => {
     if (entry.startsWith('propose_')) seenPropose = true;
-    return !(seenPropose && entry.replace(/\+$/, '') === 'proposal_status');
+    return !(seenPropose && toolsOf(entry).includes('proposal_status'));
   });
 }
 
@@ -196,28 +241,31 @@ export function gradeTrace(scenario: Scenario, run: Run): Check {
 
   // Ordered subsequence: every required call is there, and in the order the scenario names.
   let cursor = 0;
+  let previous = 'the start';
   for (const required of mustCall) {
-    const found = names.indexOf(required, cursor);
+    const found = findStep(names, required, cursor);
     if (found === -1) {
-      return names.includes(required)
-        ? fail(`${required} is called, but not after ${mustCall[Math.max(0, cursor - 1)] ?? 'the start'}`)
-        : fail(`${required} is never called`);
+      return findStep(names, required) !== -1
+        ? fail(`${stepWords(required)} is called, but not after ${previous}`)
+        : fail(`${stepWords(required)} is never called`);
     }
     cursor = found + 1;
+    previous = stepWords(required);
   }
 
   for (const [before, after] of scenario.ordering ?? []) {
-    const iBefore = names.indexOf(before);
-    const iAfter = names.indexOf(after);
-    if (iBefore === -1) return fail(`${before} is never called, so it cannot come before ${after}`);
-    if (iAfter === -1) return fail(`${after} is never called`);
-    if (iBefore > iAfter) return fail(`${after} is called before ${before}`);
+    const iBefore = findStep(names, before);
+    const iAfter = findStep(names, after);
+    if (iBefore === -1) return fail(`${stepWords(before)} is never called, so it cannot come before ${stepWords(after)}`);
+    if (iAfter === -1) return fail(`${stepWords(after)} is never called`);
+    if (iBefore > iAfter) return fail(`${stepWords(after)} is called before ${stepWords(before)}`);
     const between = names.slice(iBefore + 1, iAfter).find((name) => name.startsWith('propose_'));
-    if (between !== undefined) return fail(`${between} is written between ${before} and ${after}`);
+    if (between !== undefined) return fail(`${between} is written between ${stepWords(before)} and ${stepWords(after)}`);
   }
 
   for (const check of scenario.argChecks ?? []) {
     const call = run.trace.find((entry) => entry.name === check.tool);
+    if (call === undefined && check.ifCalled === true) continue;
     if (call === undefined) return fail(`${check.tool} is never called, so its ${check.path} cannot be checked`);
     const value = at(call.args, check.path);
     if (check.absent === true) {
@@ -377,7 +425,11 @@ export function gradeWindow(scenario: Scenario, rawRun: Run): Check {
   if (want === undefined) return { ok: true, first: '', skipped: sentences.skipped === true };
 
   if (want.noNewCard === true) {
-    const drawn = run.cards.find((card) => DECISION_CARDS(card.name));
+    const redrawn = (card: Card): boolean => {
+      const data = (card.data ?? {}) as { card?: unknown; id?: unknown };
+      return card.name === 'show' && data.card === 'proposal' && (want.redraws ?? []).includes(String(data.id));
+    };
+    const drawn = run.cards.find((card) => DECISION_CARDS(card.name) && !redrawn(card));
     if (drawn !== undefined) return fail(`the window drew a ${drawn.name} card, and this scenario draws nothing new`);
   }
 

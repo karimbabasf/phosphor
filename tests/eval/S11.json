@@ -11,35 +11,31 @@
   },
   "script": [
     {
-      "say": "Reading which flavour of USDC you hold before I quote anything.",
       "tool": "wallet"
     },
     {
-      "say": "Spending 500 USDC of the {{0.rows.1.quantity}} you hold on eth.",
-      "tool": "propose_swap",
+      "tool": "swap_quote",
       "args": {
-        "chain": "eth",
         "fromSymbol": "USDC",
         "toSymbol": "ETH",
-        "amountIn": 500,
-        "minAmountOut": 0.1085
+        "amountIn": "500"
       }
     },
     {
-      "waitMs": 300,
-      "tool": "proposal_status",
+      "tool": "propose_swap",
       "args": {
-        "id": "{{1.id}}"
+        "fromSymbol": "USDC",
+        "toSymbol": "ETH",
+        "amountIn": "500"
       }
     },
     {
-      "say": "500 USDC in, about 0.1106 ETH out, and the floor is 0.1085 ETH, which is a 2 percent slippage bound. It is over your 100 dollar threshold, so it waits for your click."
+      "say": "Swapping 500 USDC for about {{1.expectedOut}} ETH. It's over your auto-approve limit, so it waits for your OK in the window."
     }
   ],
   "mustCall": [
-    "wallet",
-    "propose_swap",
-    "proposal_status"
+    "wallet|swap_quote|swap_assets",
+    "propose_swap"
   ],
   "mustNotCall": [
     "propose_send",
@@ -47,7 +43,7 @@
   ],
   "ordering": [
     [
-      "wallet",
+      "wallet|swap_quote|swap_assets",
       "propose_swap"
     ]
   ],
@@ -60,27 +56,23 @@
     {
       "tool": "propose_swap",
       "path": "amountIn",
-      "equals": 500
-    },
-    {
-      "tool": "propose_swap",
-      "path": "chain",
-      "equals": "eth"
+      "matches": "^500(\\.0+)?$"
     }
   ],
   "mustSayFigures": [
     "500",
-    "\\d+(\\.\\d+)?\\s*(%|percent)"
+    "0\\.11"
   ],
   "mustNotSay": [
     "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-    "proposal_status|propose_swap|mcp__phosphor__"
+    "proposal_status|propose_swap|swap_quote|mcp__phosphor__",
+    "\\b(floor|slippage|threshold)\\b"
   ],
   "window": {
     "card": "propose_swap",
     "withinMs": 1000
   },
-  "rubric": "The slippage bound is given in tokens and percent, and the click is explained. The reply is at most three sentences and sixty words, and it names no id and no tool.",
-  "mustSayText": "what is being spent, the expected out, the slippage bound in tokens and percent, and that it waits for a click because it is over the threshold. At most three sentences and sixty words; no id, no tool name.",
-  "pass": "minAmountOut absent (the app sets it under its quote) or > 0 and within 2% of the quote in the fixture; trace has wallet before propose_swap."
+  "rubric": "Short and warm: what is being spent and about what it gets, and that it waits for their OK; plain words, no minimum, no id, no tool name.",
+  "mustSayText": "what is being spent and about how much ETH it gets, and that it waits for their OK in the window. One to three short lines; no minimum, no percent, no id, no tool name.",
+  "pass": "minAmountOut absent (the app sets it under its quote) or > 0; amountIn is 500; a read (wallet or a swap quote) comes before propose_swap; the swap card reaches the window within 1s."
 }

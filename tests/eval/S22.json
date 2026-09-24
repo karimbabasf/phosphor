@@ -21,11 +21,10 @@
   },
   "script": [
     {
-      "say": "Reading both pockets first.",
       "tool": "wallet"
     },
     {
-      "say": "Both pockets are empty: {{0.totalUsd}} USD inside NEAR Intents and 0 on Hyperliquid. There is nothing to spend. Money comes in through the deposit card in your window, never through a tool of mine. Which network will you send USDC on, base, arbitrum or eth? I will open the card for it."
+      "say": "Your balance is {{0.totalUsd}} dollars, so there's nothing to buy ETH with yet. Which coin and which network will you send money in on? USDC on Base is an easy start."
     }
   ],
   "mustCall": [
@@ -44,6 +43,6 @@
     "\\b0\\b"
   ],
   "rubric": "A zero balance is not a reason to improvise a funding route.",
-  "mustSayText": "both pockets are empty with the figure 0, and money comes in through the deposit card in the window, never through a tool. Offers `deposit` and asks which network they will send on.",
+  "mustSayText": "their balance is $0 (the figure 0), so money has to come in first, and it asks which coin and which network they will send; suggesting a default is fine. Never an address, never a made-up funding route.",
   "pass": "trace [wallet] then optionally deposit; zero propose_*; reply contains \"0\"."
 }
