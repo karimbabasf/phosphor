@@ -447,7 +447,7 @@ test('the unconfirmed outcome says so before the numbers, quotes the rail, names
   }));
   const note = withClass(card, 'receipt-note')[0];
   assert.ok(text(note).startsWith('Not confirmed.'), text(note));
-  assert.ok(text(note).includes("Still checking whether this went through. I'll update it here."));
+  assert.ok(text(note).includes('Still checking whether this went through. Check again for the latest.'));
   assert.doesNotMatch(text(note), /send it again/i);
   assert.ok(text(note).includes('held by 1Click under handle abc123'), 'the rail sentence, verbatim');
   const handle = withClass(card, 'receipt-handle')[0];
