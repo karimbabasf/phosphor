@@ -72,6 +72,32 @@ test('past eight labels the column says how many more rather than printing a wal
   const ys = out.placed.map((p: { labelY: number }) => p.labelY);
   assert.ok(ys.every((y: number) => Number.isFinite(y) && y >= 16), JSON.stringify(ys));
   assert.equal(ys[8] - ys[7], 13);
+  // The count hands over what it holds, so the window can name every one of them.
+  assert.deepEqual([...out.hidden.map((p: Any) => p.text)], ['l8', 'l9', 'l10', 'l11']);
+  assert.equal(s.labelLayout([item(16, 'a')], 0, 400).hidden.length, 0);
+});
+
+test('the column sits on one plate as wide as its widest line, docked to the left edge, under every line', () => {
+  const s = load();
+  const calls: string[] = [];
+  const ctx = {
+    fillStyle: '',
+    measureText: (t: string) => ({ width: t.length * 6 }),
+    fillRect: (x: number, y: number, w: number, h: number) => calls.push(`rect ${ctx.fillStyle} ${x},${y},${w},${h}`),
+    fillText: (t: string) => calls.push(`text ${t}`),
+    strokeRect: () => {},
+  };
+  const placed = s.labelLayout([item(20, 'EMA 21'), item(22, 'BB 20/2 84,690')], 0, 400).placed;
+  const plate = s.labelPlate(ctx, placed, { ground: 'ground', light: 'light', hair: 0.5 });
+  // One ground from the plot's left edge to past the widest line, from above the first line to
+  // under the last, and the hairline of light along its top.
+  assert.deepEqual({ ...plate }, { x: 0, y: 20 - 9, w: 8 + 'BB 20/2 84,690'.length * 6 + 7, h: 13 + 18 });
+  assert.equal(calls[0], `rect ground 0,11,${plate.w},${plate.h}`);
+  assert.equal(calls[1], `rect light 0,11,${plate.w - 7},0.5`);
+  // Drawn without a pad of their own, the lines go on top of it.
+  s.labelDraw(ctx, placed, (tone: string) => tone, null);
+  assert.deepEqual(calls.slice(2), ['text EMA 21', 'text BB 20/2 84,690']);
+  assert.equal(s.labelPlate(ctx, [], { ground: 'g' }), null, 'nothing to back, no plate');
 });
 
 test('drawing a column pads, paints in the tone asked for, and rings the spotlighted one', () => {

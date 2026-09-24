@@ -12,8 +12,10 @@
    tone} in here, and one pass places them: from y 16, on a 13 px pitch, eight
    pixels in from the left edge, pushed down and never up past a neighbour,
    lifted back on screen if the stack runs off the bottom, and cut at eight
-   with a line that says how many more there were. Order is kept, so the label
-   above still belongs to the line above.
+   with a line that says how many more there were, whose names the engine
+   gives on hover and focus. Order is kept, so the label above still belongs
+   to the line above. The whole column sits on one plate (labelPlate), so no
+   line of it is read against the candles under it.
 
    Plain browser script like the engine beside it: no imports, no framework.
    Nothing here touches the DOM or the tokens; the engine passes the ink. */
@@ -33,14 +35,18 @@ var LABEL_GLYPH_W = 8;
    to advance by whatever it measures, so a column of prices holds still
    while the digits under it tick).
    Returns the placed items in draw order, each with labelY, plus the count
-   that did not fit. Pure: the same input places the same way every frame. */
+   that did not fit and the items it holds, so the engine can name them
+   where the count is read (chart.js syncFold). Pure: the same input places
+   the same way every frame. */
 function labelLayout(items, top, bottom) {
   var wanted = items.slice().sort(function (a, b) {
     return a.y - b.y;
   });
   var more = 0;
+  var hidden = [];
   if (wanted.length > LABEL_MAX) {
     more = wanted.length - LABEL_MAX;
+    hidden = wanted.slice(LABEL_MAX);
     wanted = wanted.slice(0, LABEL_MAX);
     /* The count line wants the last kept label's y, so the pitch below places
        it one line under. Wanting Infinity, as it used to, made the overflow
@@ -60,7 +66,53 @@ function labelLayout(items, top, bottom) {
   if (overflow > 0) {
     for (var j = 0; j < wanted.length; j += 1) wanted[j].labelY -= overflow;
   }
-  return { placed: wanted, more: more };
+  return { placed: wanted, more: more, hidden: hidden };
+}
+
+/* How wide one placed line is: its parts and the air between them, as labelDraw lays them. */
+function labelLineWidth(ctx, item) {
+  var parts = item.parts || [{ text: item.text, tone: item.tone || 'text' }];
+  var width = 0;
+  for (var m = 0; m < parts.length; m += 1) {
+    width += labelPartWidth(ctx, parts[m]) + (m < parts.length - 1 ? 6 : 0);
+  }
+  return width;
+}
+
+/* One plate behind a whole placed column: a ground as wide as the widest
+   line and as tall as the run, docked to the plot's left edge with its free
+   corners rounded, so what the column says is never read against whatever
+   runs under it. `inks` is the engine's: the ground, and a hairline of light
+   along the top (`light`, `hair` tall). Returns the plate's box, or null when
+   there is nothing to back. */
+var LABEL_PLATE_RADIUS = 7;
+
+function labelPlate(ctx, placed, inks) {
+  if (!placed.length || !inks) return null;
+  var width = 0;
+  var first = Infinity;
+  var last = -Infinity;
+  for (var i = 0; i < placed.length; i += 1) {
+    width = Math.max(width, labelLineWidth(ctx, placed[i]));
+    first = Math.min(first, placed[i].labelY);
+    last = Math.max(last, placed[i].labelY);
+  }
+  if (!isFinite(first) || !isFinite(last)) return null;
+  var r = LABEL_PLATE_RADIUS;
+  var box = { x: 0, y: first - 9, w: LABEL_X + width + 7, h: last - first + 18 };
+  ctx.fillStyle = inks.ground;
+  if (typeof ctx.roundRect === 'function') {
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.w, box.h, [0, r, r, 0]);
+    ctx.fill();
+  } else {
+    ctx.fillRect(box.x, box.y, box.w, box.h);
+  }
+  if (inks.light) {
+    ctx.fillStyle = inks.light;
+    ctx.fillRect(box.x, box.y, Math.max(0, box.w - r), inks.hair || 1);
+  }
+  return box;
 }
 
 /* Draw one placed column. `inkOf(tone, alpha)` is the engine's own palette, so
@@ -73,10 +125,7 @@ function labelDraw(ctx, placed, inkOf, pad) {
     var item = placed[i];
     var parts = item.parts || [{ text: item.text, tone: item.tone || 'text' }];
     var x = LABEL_X;
-    var width = 0;
-    for (var m = 0; m < parts.length; m += 1) {
-      width += labelPartWidth(ctx, parts[m]) + (m < parts.length - 1 ? 6 : 0);
-    }
+    var width = labelLineWidth(ctx, item);
     if (pad) {
       ctx.fillStyle = pad;
       if (typeof ctx.roundRect === 'function') {

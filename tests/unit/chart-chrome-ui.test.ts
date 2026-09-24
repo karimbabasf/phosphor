@@ -210,6 +210,30 @@ test('an indicator pane keeps its room and volume gives up its own first', () =>
   assert.ok(paneOf(roomy, 'rsi 14'));
 });
 
+test('a pane figure is written the way every other figure is: grouped by thousands, whole from a thousand up', () => {
+  const s = loadChartUi();
+  // The volume axis read "6221.0" in the review's 1440 frame.
+  assert.equal(s.paneText(6221.04), '6,221');
+  assert.equal(s.paneText(1000), '1,000');
+  assert.equal(s.paneText(-12_345.6), '-12,346');
+  assert.equal(s.paneText(359.31), '359.3');
+  assert.equal(s.paneText(27.97), '27.97');
+  assert.equal(s.paneText(0.5), '0.5000');
+  assert.equal(s.paneText(0), '0');
+  assert.equal(s.paneText(1_234_567), '1.23M');
+  assert.equal(s.paneText(2_500_000_000), '2.50B');
+  assert.equal(s.paneText(null), '--');
+  // The pane's own scale prints through it.
+  ready(s);
+  s.CHART.candles = s.CHART.candles.map((c: Bar, i: number) => ({ ...c, v: i === 20 ? 6221.04 : 12.5 }));
+  const L = s.buildLayout(900, 600, fakeCtx);
+  const drawn: string[] = [];
+  const ctx = { ...fakeCtx, fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'butt', fillText: (t: string) => drawn.push(String(t)), fillRect: () => {}, beginPath: () => {}, moveTo: () => {}, lineTo: () => {}, stroke: () => {}, rect: () => {}, fill: () => {} };
+  s.drawPanes(ctx, L);
+  assert.ok(drawn.some((t) => /^\d{1,3}(,\d{3})+$/.test(t)), `the volume axis prints its top grouped: ${JSON.stringify(drawn)}`);
+  assert.ok(!drawn.some((t) => /^\d{4,}\.\d$/.test(t)), `a figure over a thousand kept a tenth and no comma: ${JSON.stringify(drawn)}`);
+});
+
 test('the pane can be put away and offers the way back', () => {
   const s = loadChartUi();
   ready(s);
@@ -498,6 +522,53 @@ test('a marking that lands docks in and one that is cleared fades out, and neith
   s.CHART.levels = [{ id: 'level-2', price: 101, label: 'b', source: 'agent' }];
   s.noteMarkings(true);
   assert.equal(JSON.stringify(s.markIn('level:level-2')), JSON.stringify({ alpha: 1, draw: 1 }));
+});
+
+test('the study legend sits on one plate in the slab\'s shade, so no value is read against the candles or a line under it', () => {
+  const s = loadChartUi();
+  const flat = (v: number) => new Array(40).fill(v);
+  ready(s, {
+    indicators: [
+      { id: 'ema-1', type: 'ema', label: '[agent] EMA 21', pane: 'price', source: 'agent', plots: [{ key: 'ema', style: 'line', emphasis: 0.9, values: flat(100) }] },
+      { id: 'bb-2', type: 'bbands', label: 'BB 20/2', pane: 'price', source: 'human', plots: [{ key: 'upper', style: 'band', emphasis: 0.5, fillTo: 'lower', values: flat(103) }, { key: 'mid', style: 'line', emphasis: 0.7, values: flat(100) }, { key: 'lower', style: 'line', emphasis: 0.5, values: flat(97) }] },
+      { id: 'vwap-3', type: 'vwap', label: 'VWAP', pane: 'price', source: 'human', plots: [{ key: 'vwap', style: 'line', emphasis: 0.9, values: flat(99) }] },
+    ],
+  });
+  const L = s.buildLayout(900, 600, fakeCtx);
+  const rects: Array<{ fill: string; x: number; y: number; w: number; h: number }> = [];
+  const texts: Array<{ text: string; y: number }> = [];
+  const ctx: Record<string, unknown> = {
+    font: '',
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    textAlign: 'left',
+    measureText: (text: string) => ({ width: String(text).length * 6 }),
+    fillText: (text: string, _x: number, y: number) => texts.push({ text: String(text), y }),
+    fillRect: (x: number, y: number, w: number, h: number) => rects.push({ fill: String(ctx.fillStyle), x, y, w, h }),
+    strokeRect: () => {},
+    beginPath: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    closePath: () => {},
+    arc: () => {},
+    rect: () => {},
+    fill: () => {},
+    stroke: () => {},
+  };
+  s.CHART_HOVER = null;
+  s.drawLegend(ctx, L);
+  const ground = s.groundInk(0.92);
+  // The price pane's column; the volume pane's own line sits on a plate of its own in its pane.
+  const plates = rects.filter((r) => r.fill === ground && r.y < L.priceTop + L.priceHeight);
+  assert.equal(plates.length, 1, `one plate behind the column, not a pad per line: ${JSON.stringify(rects)}`);
+  const plate = plates[0]!;
+  const column = texts.filter((t) => /EMA 21|BB 20\/2|VWAP/.test(t.text));
+  assert.equal(column.length, 3);
+  for (const t of column) assert.ok(t.y > plate.y && t.y < plate.y + plate.h, `${t.text} is off the plate`);
+  assert.equal(plate.x, 0, 'docked to the plot\'s left edge');
+  assert.ok(plate.y >= L.priceTop, 'under the market line, which has its own strip');
+  assert.ok(!rects.some((r) => r.fill === s.chartLabelPad()), 'no line of the column keeps a pad of its own');
 });
 
 test('the four prices of the head line sit in equal columns, so a tick moves nothing beside it', () => {

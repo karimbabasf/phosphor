@@ -977,6 +977,143 @@
   pointer-events: none;
 }
 
+/* A count on the chart, named. The engine paints the count ("+5 more") on
+   its canvas and lays a button over it here, on a layer as big as the stage
+   that lets the pointer through everywhere else. Hover or focus opens the
+   list of what the count holds, each marking in its owner's ink with its
+   price in tabular figures; it stays open while the pointer is on it, and
+   Escape puts it away. */
+.chart-folds {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.chart-fold {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.chart-fold:hover {
+  background: rgba(var(--hi-rgb), 0.06);
+}
+
+.chart-fold:focus { outline: none; }
+
+.chart-fold:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.chart-fold-tip {
+  position: absolute;
+  width: max-content;
+  min-width: 176px;
+  max-width: min(320px, 92%);
+  padding: 7px 10px 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface-pop);
+  border-radius: 12px;
+  box-shadow: var(--lift-sm);
+  color: var(--text-2);
+  font: 400 var(--fs-12) / 1.3 var(--font-ui);
+  font-variant-numeric: var(--num-features);
+  pointer-events: auto;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(var(--scale-open));
+  transform-origin: top left;
+  transition: opacity var(--dur-close) var(--ease-exit),
+              transform var(--dur-close) var(--ease-exit),
+              visibility 0s linear var(--dur-close);
+}
+
+.chart-fold-tip[data-align="end"] {
+  translate: -100% 0;
+  transform-origin: top right;
+}
+
+.chart-fold:hover:not([data-hush]) + .chart-fold-tip,
+.chart-fold:focus:not([data-hush]) + .chart-fold-tip,
+.chart-fold-tip:hover {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-duration: var(--dur-open), var(--dur-open), 0s;
+  transition-timing-function: var(--ease-out), var(--ease-spring-soft), linear;
+  transition-delay: 0s;
+}
+
+.chart-fold-head {
+  margin-bottom: 3px;
+  color: var(--text-3);
+}
+
+.chart-fold-list {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Each row is a real list item on the list's two columns (subgrid), so the
+   prices line up down their column and the item stays in the list a screen
+   reader walks. */
+.chart-fold-list li {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  color: var(--text);
+}
+
+.chart-fold-list li[data-tone="agent"] { color: var(--agent); }
+
+.chart-fold-px {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.chart-fold-name {
+  overflow-wrap: anywhere;
+  color: color-mix(in srgb, currentColor 82%, transparent);
+}
+
+/* The arrow says the marking is off the chart's top or bottom, the way its
+   chip on the axis would; the words after it say the same to a reader that
+   cannot see it. */
+.chart-fold-arrow {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin: 0 5px 1px 0;
+  vertical-align: middle;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+}
+
+.chart-fold-arrow[data-dir="up"] { border-bottom: 5px solid currentColor; }
+.chart-fold-arrow[data-dir="down"] { border-top: 5px solid currentColor; }
+
+.chart-fold-where {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* THE GRID. chart_layout puts up to four charts side by side; the stage carries
    the count as data-n (ui/chart/mini.js writes it) and the primary keeps its
    ids and its own engine whatever the count. One chart fills the column, two
@@ -2107,6 +2244,8 @@ body[data-view="pro"] .tape-head { margin: 0; }
   .trade-symbol:hover .chev-icon,
   .layers:hover .chev-icon { transform: none; }
   .pop { transition-duration: 1ms; }
+  /* The count's list still waits a moment before it goes, so the pointer can cross onto it. */
+  .chart-fold-tip { transform: none; transition-duration: 1ms, 1ms, 0s; }
   .trade-rail [data-spot="true"] { box-shadow: 0 0 0 2px var(--warn); }
   /* The dim keeps its short fade: it is a change of state, not motion. */
   .trade-row,

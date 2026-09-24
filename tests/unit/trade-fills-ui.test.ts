@@ -1469,7 +1469,7 @@ test('the bar is one segmented control, the command, Layers and one status line;
   assert.ok(provider !== null, 'the engine writes the venue into #chart-provider');
   assert.notEqual(provider.tagName, 'button', 'the venue is a word now, not a cycling button');
   // Every id the engine binds by name is still there.
-  for (const id of ['chart', 'chart-hud', 'chartwrap', 'panel-chart', 'timeframes', 'chart-cmd', 'chart-status', 'chart-feed']) {
+  for (const id of ['chart', 'chart-hud', 'chartwrap', 'chart-folds', 'panel-chart', 'timeframes', 'chart-cmd', 'chart-status', 'chart-feed']) {
     assert.ok(byId(host, id) !== null, `#${id} is missing`);
   }
 });
