@@ -132,6 +132,9 @@
      with this time constant, so a reply streaming in reads as one glide and not a restart
      per word. */
   var FOLLOW_TAU_MS = 70;
+  /* How long after a wheel tick or a key the person's hand counts as on the column. Momentum
+     keeps sending ticks, so a whole fling is one touch. */
+  var HAND_MS = 300;
   var COMPOSER_MAX_LINES = 6;
   var COMPOSER_LINE_FALLBACK_PX = 21;
 
@@ -373,9 +376,9 @@
     if (!host) return null;
     var opts = options || {};
     /* pinned: the column is at its end and follows what lands; following: the follow motion
-       is running; lastTop: where the scroller was, to tell a person scrolling up from a row
-       that shrank. */
-    var node = { host: host, composerHost: opts.composerHost || null, refs: {}, pinned: true, following: false, lastTop: 0 };
+       is running; lastTop: where the scroller was; hand: until when a scroll is the person's
+       own (a wheel tick or a key just now), the only thing that can let go of the end. */
+    var node = { host: host, composerHost: opts.composerHost || null, refs: {}, pinned: true, following: false, lastTop: 0, hand: 0 };
     build(node);
     mounts.push(node);
     render(node);
@@ -595,15 +598,18 @@
     dom.on(jump, 'click', function () { toEnd(node); });
     dom.on(waitLine, 'click', function () { toWaiting(node); });
 
-    /* The hand wins. A wheel or a key that moves up lets go of the end at once, so the
-       follow never fights a person who is reading; reaching the end again takes it back. */
+    /* The hand wins, and only the hand. A wheel tick, a key or a touch marks the person's
+       hand on the column: the follow holds still under it, and a move up by it lets go of the
+       end. A row that folds above, a box that changes height or the follow's own writes are
+       never the person, and a tick that moves nothing (a thread shorter than its box, a
+       resting finger) lets go of nothing (Karim, 2026-09-23: "when a model answers I don't
+       want to have to scroll down"). */
     dom.on(list, 'scroll', function () { onScroll(node); }, { passive: true });
-    dom.on(list, 'wheel', function (event) {
-      if (event && event.deltaY < 0) letGo(node);
-    }, { passive: true });
+    dom.on(list, 'wheel', function () { handOn(node); }, { passive: true });
+    dom.on(list, 'touchmove', function () { handOn(node); }, { passive: true });
     dom.on(list, 'keydown', function (event) {
       var key = event && event.key;
-      if (key === 'ArrowUp' || key === 'PageUp' || key === 'Home') letGo(node);
+      if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'PageUp' || key === 'PageDown' || key === 'Home' || key === 'End' || key === ' ') handOn(node);
     });
     if (typeof window.ResizeObserver === 'function') {
       var sizes = new window.ResizeObserver(function () { onResize(node); });
@@ -1172,7 +1178,10 @@
     refs.send.title = stopping ? 'Stop this answer' : 'Send';
     arm(node);
 
-    if (jumpAll) node.pinned = true;
+    if (jumpAll) {
+      node.pinned = true;
+      node.hand = 0;
+    }
     renderBlocks(node);
     if (node.pinned) follow(node);
     paintScroll(node);
@@ -1215,11 +1224,13 @@
   /* THE FOLLOW. While the column is pinned to its end it stays there through anything that
      changes the height (a row, a card that opens, a reply that streams, the window) on one
      motion toward the end that reads the end again every frame, so new growth retargets it
-     instead of restarting it. Under reduced motion it lands at once. */
+     instead of restarting it. It holds still while the person's hand is on the column, and
+     lets go only when that hand moves it up. Under reduced motion it lands at once. */
   function follow(node) {
     var list = node.refs.list;
     var raf = window.requestAnimationFrame;
     if (reduced() || typeof raf !== 'function') {
+      if (handIsOn(node)) return;
       list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
       node.lastTop = list.scrollTop;
       return;
@@ -1232,6 +1243,12 @@
         node.following = false;
         return;
       }
+      var dt = before ? Math.min(64, now - before) : 16;
+      before = now;
+      if (handIsOn(node)) {
+        raf(step);
+        return;
+      }
       var end = Math.max(0, list.scrollHeight - list.clientHeight);
       var gap = end - list.scrollTop;
       if (Math.abs(gap) < 1) {
@@ -1241,8 +1258,6 @@
         paintScroll(node);
         return;
       }
-      var dt = before ? Math.min(64, now - before) : 16;
-      before = now;
       list.scrollTop = list.scrollTop + gap * (1 - Math.exp(-dt / FOLLOW_TAU_MS));
       node.lastTop = list.scrollTop;
       raf(step);
@@ -1250,21 +1265,26 @@
     raf(step);
   }
 
-  function letGo(node) {
-    if (!node.pinned) return;
-    node.pinned = false;
-    paintScroll(node);
+  function handOn(node) {
+    node.hand = Date.now() + HAND_MS;
   }
 
+  function handIsOn(node) {
+    return Date.now() < node.hand;
+  }
+
+  /* Only a scroll the person made moves the pin: up and away from the end lets go, back at the
+     end takes it again. Every other scroll (the follow's own, a row that folded above, a box
+     that grew or shrank) changes nothing, so Latest only ever shows for a person who went up. */
   function onScroll(node) {
     var list = node.refs.list;
     var top = list.scrollTop;
     var moved = top - node.lastTop;
     node.lastTop = top;
-    /* The follow only ever moves down, and a row that shrinks clamps the scroller at its end,
-       so a move up away from the end is the person. */
-    if (atEnd(list)) node.pinned = true;
-    else if (moved < -1) node.pinned = false;
+    if (handIsOn(node)) {
+      if (atEnd(list)) node.pinned = true;
+      else if (moved < -1) node.pinned = false;
+    }
     paintScroll(node);
   }
 
@@ -1275,6 +1295,7 @@
 
   function toEnd(node) {
     node.pinned = true;
+    node.hand = 0;
     follow(node);
     paintScroll(node);
   }
