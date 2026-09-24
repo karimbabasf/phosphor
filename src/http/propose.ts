@@ -37,11 +37,13 @@ import type { Ctx } from './context.ts';
 // a reply that carried only the status word left the agent reading `failed` as a cue to retry.
 function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): void {
   ctx.sse.broadcastState();
+  // The simulation without its engineer's lines: the agent reads this reply and says the summary.
+  const { developer: _developer, ...simulation } = proposal.simulation ?? { developer: undefined };
   sendJson(res, 200, {
     id: proposal.id,
     status: proposal.status,
     verdict: proposal.verdict,
-    simulation: proposal.simulation,
+    simulation: proposal.simulation === null ? null : simulation,
     view: ctx.proposals.view(proposal),
     ...(proposal.result === undefined ? {} : { result: proposal.result }),
     ...sendFacts(proposal),
@@ -267,7 +269,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     // venue, and "in flight" would under-describe it to an agent deciding whether to send again.
     const unconfirmed = own && existing?.status === 'needs_reconciliation';
     const lead = unconfirmed
-      ? `this ${kind} was sent by this session moments ago${names} and the first one is unconfirmed, do not send it again; read proposal_status ${clash.id}.`
+      ? `this ${kind} was sent by this session moments ago${names} and the first one is still unconfirmed, so this repeat was not filed; read proposal_status ${clash.id}.`
       : own
         ? `this ${kind} is still in flight${names}, so a repeat of it is refused rather than sending it twice.`
         : `another agent proposed exactly this ${kind} moments ago${names}. It has not been superseded, so this one is refused rather than doubling it.`;
@@ -306,8 +308,9 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     if (kind === 'swap') {
       // One venue: the balance inside NEAR Intents. chain and toChain name the home chains of
       // the two assets, never a place money lands, so there is no venue field to check.
-      const chain = swapChainField(params, 'chain', problems);
-      const toChain = params.toChain === undefined ? chain : swapChainField(params, 'toChain', problems);
+      // Either may be left out: the swap picks the coin by one rule (resolveSwapSides).
+      const chain = params.chain === undefined ? undefined : swapChainField(params, 'chain', problems);
+      const toChain = params.toChain === undefined ? undefined : swapChainField(params, 'toChain', problems);
       const fromSymbol = strField(params, 'fromSymbol', problems, SWAP_SYMBOL_MAX);
       const toSymbol = strField(params, 'toSymbol', problems, SWAP_SYMBOL_MAX);
       // A negative or zero input has no honest swap, and neither does one too large to be

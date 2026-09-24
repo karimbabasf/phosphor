@@ -146,7 +146,7 @@ test('a same-session repeat of a move that landed unconfirmed is refused with th
   assert.equal(again.status, 409, JSON.stringify(again.json));
   assert.equal(again.json.duplicate, first.json.id);
   assert.equal(again.json.status, 'needs_reconciliation');
-  assert.match(String(again.json.error), /the first one is unconfirmed, do not send it again; read proposal_status/);
+  assert.match(String(again.json.error), /the first one is still unconfirmed, so this repeat was not filed; read proposal_status/);
   assert.match(String(again.json.error), new RegExp(String(first.json.id)));
   assert.equal(h.store.list().length, 1, 'one row, not two');
 });

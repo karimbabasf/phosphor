@@ -290,7 +290,7 @@ function lead(state: OutcomeState): string {
     case 'failed':
       return `${STAGE_LABEL.failed}.`;
     case 'unconfirmed':
-      return 'Unconfirmed: the move was started and its outcome is not known yet. Do not send it again; read it again instead.';
+      return 'Unconfirmed: the move was started and its outcome is not known yet. Still checking; read it again for the latest.';
     case 'pending':
       return 'Not executed yet.';
   }

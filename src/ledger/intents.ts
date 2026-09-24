@@ -49,6 +49,12 @@ export type IntentsHolding = {
   // only for the hand-built rows in tests; every row this module returns carries it.
   amountBase?: string;
   decimals: number;
+  /* 1Click's own USD price for this asset, off the token list it was labelled from, and when that
+     list was fetched. The price of last resort: read only where no other source prices the coin
+     (src/proposals/draft.ts priceOf, src/wallet.ts). Null when 1Click lists no price either, which
+     stays unknown and never becomes zero. */
+  priceUsd?: number | null;
+  priceAsOf?: number;
 };
 
 export type IntentsRead = {
@@ -138,16 +144,19 @@ async function tokensForOwner(rpcUrl: string, accountId: string, fetchImpl: type
 // already match asset ids against. This is a display path: it scales a number a human
 // reads and never a number that authorises a spend, so an unlisted asset is shown by its
 // raw id at 0 decimals rather than dropped, and a wrong guess here cannot move money.
-function describe(assetId: string, list: OneClickToken[]): { symbol: string; decimals: number; originChain: string } {
+function describe(assetId: string, list: OneClickToken[]): { symbol: string; decimals: number; originChain: string; priceUsd: number | null } {
   const meta = list.find((t) => t.assetId === assetId);
-  if (meta === undefined) return { symbol: assetId, decimals: 0, originChain: 'intents' };
-  return { symbol: meta.symbol, decimals: meta.decimals, originChain: meta.blockchain };
+  if (meta === undefined) return { symbol: assetId, decimals: 0, originChain: 'intents', priceUsd: null };
+  const price = typeof meta.price === 'number' && Number.isFinite(meta.price) && meta.price > 0 ? meta.price : null;
+  return { symbol: meta.symbol, decimals: meta.decimals, originChain: meta.blockchain, priceUsd: price };
 }
 
 export type IntentsBalanceDeps = {
   rpcUrl: string;
   accountId: string;
   tokenList: () => Promise<OneClickToken[]>;
+  // When the list tokenList answers with was fetched; the stamp its prices are aged by.
+  listedAt?: () => number | null;
   fetchImpl: typeof fetch;
 };
 
@@ -214,11 +223,12 @@ export async function fetchIntentsHoldings(deps: IntentsBalanceDeps): Promise<In
       );
     }
 
+    const listedAt = deps.listedAt?.() ?? null;
     const holdings: IntentsHolding[] = [];
     for (const [i, assetId] of assetIds.entries()) {
       const raw = BigInt(amounts[i] ?? '0');
       if (raw <= 0n) continue; // enumerated but emptied since: not a holding
-      const { symbol, decimals, originChain } = describe(assetId, list);
+      const { symbol, decimals, originChain, priceUsd } = describe(assetId, list);
       holdings.push({
         accountId,
         assetId,
@@ -227,6 +237,8 @@ export async function fetchIntentsHoldings(deps: IntentsBalanceDeps): Promise<In
         amount: Number(raw) / 10 ** decimals,
         amountBase: raw.toString(),
         decimals,
+        priceUsd,
+        ...(listedAt === null ? {} : { priceAsOf: listedAt }),
       });
     }
     return { holdings, ok: true, fetchedAt };

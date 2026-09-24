@@ -59,7 +59,7 @@ import { liveVerifier } from '../relay/verifier.ts';
 import type { VerifierPort } from '../relay/verifier.ts';
 import { MAX_SLIPPAGE_BPS, QUOTE_REUSE_MS, floorTooLow, floorUnderQuote } from './slippage.ts';
 import { noReply } from './intents-submit.ts';
-import { pickOrExplain } from './asset-words.ts';
+import { pickOrExplain, swapSummary } from './asset-words.ts';
 import { ReasonError, reasonOf } from './reasons.ts';
 import { FIRST_POLL_MS, pollUntil } from './watch.ts';
 
@@ -424,10 +424,10 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
         pick = await bestQuote(p, true, true);
       } catch (err) {
         if (!noReply(err)) throw err;
-        return { ok: false, summary: `REFUSED: ${NO_PRICE_SENTENCE}`, error: NO_PRICE_SENTENCE, reason: 'no_price' };
+        return { ok: false, summary: '', developer: `REFUSED: ${NO_PRICE_SENTENCE}`, error: NO_PRICE_SENTENCE, reason: 'no_price' };
       }
       if (pick.chosen === null) {
-        return { ok: false, summary: [`REFUSED: ${NO_PRICE_SENTENCE}`, ...pick.passed].join('\n'), error: NO_PRICE_SENTENCE, reason: 'no_price' };
+        return { ok: false, summary: '', developer: [`REFUSED: ${NO_PRICE_SENTENCE}`, ...pick.passed].join('\n'), error: NO_PRICE_SENTENCE, reason: 'no_price' };
       }
       const quote = pick.chosen;
       const swap = swapFacts(draft, p, quote);
@@ -437,20 +437,21 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
       // to: a quote under the floor is never signed, and at simulate time that is a refusal.
       if (amountOut < p.minOutBase) {
         const why = floorSentence(draft, p, quote);
-        return { ok: false, summary: [`REFUSED: ${why}`, ...lines].join('\n'), error: why, reason: 'price_moved', swap };
+        return { ok: false, summary: '', developer: [`REFUSED: ${why}`, ...lines].join('\n'), error: why, reason: 'price_moved', swap };
       }
       if (floorTooLow(amountOut, p.minOutBase, MAX_SLIPPAGE_BPS)) {
         const why =
           `the draft floor of ${draft.minAmountOut} ${draft.toSymbol} is more than ${MAX_SLIPPAGE_BPS / 100}% below the ` +
           `${out(p, amountOut)} ${draft.toSymbol} this swap quotes: a floor that low is an invitation to a sandwich, not slippage protection`;
-        return { ok: false, summary: [`REFUSED: ${why}`, ...lines].join('\n'), error: why, reason: 'simulation_failed', swap };
+        return { ok: false, summary: '', developer: [`REFUSED: ${why}`, ...lines].join('\n'), error: why, reason: 'simulation_failed', swap };
       }
       lines.push(`execution signs one token_diff with the EVM key and transfers nothing; the verifier moves both sides in one call or neither`);
       keepForClick(p, draft.from, quote);
-      return { ok: true, summary: lines.join('\n'), swap };
+      const bought = p.list.find((t) => t.assetId === p.assetOut)?.symbol ?? draft.toSymbol;
+      return { ok: true, summary: swapSummary(swap, bought), developer: lines.join('\n'), swap };
     } catch (err) {
       const message = errText(err);
-      return { ok: false, summary: `intents-relay simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
+      return { ok: false, summary: '', developer: `intents-relay simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
     }
   }
 

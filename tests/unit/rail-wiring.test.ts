@@ -603,9 +603,9 @@ test('the live registry holds every rail kind and nothing else', () => {
 async function railNameOf(rail: Rail | null): Promise<string> {
   assert.ok(rail !== null, 'no swap rail');
   const sim = await rail.simulate({ kind: 'swap', venue: 'intents-native', counterparty: INTENTS_NATIVE_COUNTERPARTY, from: SELF_EVM, to: SELF_EVM, minAmountOut: 1 } as unknown as WriteDraft);
-  if (/intents-relay rail received/.test(sim.summary)) return 'relay';
+  if (/intents-relay rail received/.test(sim.error ?? '')) return 'relay';
   const back = await rail.simulate({ kind: 'swap', venue: 'intents-relay', counterparty: INTENTS_RELAY_COUNTERPARTY, from: SELF_EVM, to: SELF_EVM, minAmountOut: 1 } as unknown as WriteDraft);
-  return /intents-native rail received/.test(back.summary) ? 'oneclick' : `unknown: ${sim.summary} / ${back.summary}`;
+  return /intents-native rail received/.test(back.error ?? '') ? 'oneclick' : `unknown: ${sim.error} / ${back.error}`;
 }
 
 test('the config switch selects the swap rail, and the relay is the default', async () => {

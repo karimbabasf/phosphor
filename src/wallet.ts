@@ -54,8 +54,11 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   // A balance inside the intents.near verifier, priced off the spot table. An asset we have
   // no price for keeps its quantity and values at zero rather than borrowing a number from
   // somewhere it does not belong.
+  // Where neither prices it, 1Click's own price for the asset, off the token list, marked as such:
+  // WBTC, cbBTC, nBTC and the rest read "not priced" beside a real balance until 2026-09-23.
   const intentsRows: WalletRow[] = (intents?.holdings ?? []).map(h => {
-    const priceUsd = priceOf(h.symbol);
+    const listed = !pricedOf(h.symbol) && typeof h.priceUsd === 'number' && h.priceUsd > 0 ? h.priceUsd : null;
+    const priceUsd = listed ?? priceOf(h.symbol);
     return {
       kind: 'intents',
       chain: 'intents',
@@ -66,7 +69,8 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
       valueUsd: h.amount * priceUsd,
       share: 0,
       native: false,
-      priced: pricedOf(h.symbol),
+      priced: listed !== null || pricedOf(h.symbol),
+      ...(listed === null ? {} : { priceSource: '1click' as const }),
       intents: { accountId: h.accountId, assetId: h.assetId },
     };
   });

@@ -144,7 +144,7 @@ test('rows written before codes existed say only what their own fields prove', (
     pocket: { venue: 'intents', account: SELF, assetId: 'nep141:eth.omft.near', symbol: 'WBTC', decimals: 8, before: '0', after: '0', floor: '1' },
   });
   assert.equal(open.reason?.code, 'stuck_unknown');
-  assert.match(open.reason?.sentence ?? '', /can't confirm yet/);
+  assert.equal(open.reason?.sentence, "Still checking whether this went through. I'll update it here.");
 
   // A failed row with nothing sent at all: the executor's own proof nothing moved.
   const unsent = view({ status: 'failed', result: { ok: false, detail: 'swap rail threw: the quote timed out' } });
@@ -214,7 +214,7 @@ test('a venue failure the rail could not prove stays open, counts against the da
   assert.equal(p.status, 'needs_reconciliation');
   assert.equal(p.result?.reason, 'stuck_unknown');
   assert.equal(h.svc.dailyLimit(25_000).spentUsd, 10);
-  assert.match(h.svc.view(p).reason?.sentence ?? '', /Don't send it again/);
+  assert.equal(h.svc.view(p).reason?.sentence, "Still checking whether this went through. I'll update it here.");
 });
 
 test('a rail that stopped before signing names its cause on the failed row', async () => {

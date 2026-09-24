@@ -77,7 +77,8 @@ test('a row the boot sweep stranded with no pocket is unconfirmed, not settling'
     }),
   );
   assert.equal(out.state, 'unconfirmed');
-  assert.match(out.sentence, /Do not send it again/);
+  assert.match(out.sentence, /Still checking; read it again for the latest/);
+  assert.doesNotMatch(out.sentence, /send it again/i);
 });
 
 test('a failed row is failed with the rail sentence; a refused one is failed and says nothing was signed', () => {

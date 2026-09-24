@@ -10,7 +10,7 @@ import type { OneClickToken, TokensFile } from '../intents.ts';
 import { amountAsk, baseUnitsToDecimal, decimalToBaseUnits, heldSymbol, oneLine, resolveAsset } from '../intents.ts';
 import { MAX_LIMIT } from '../chainscan/index.ts';
 import type { IntentsActivity, IntentsRow } from '../chainscan/index.ts';
-import { networkByVenue } from '../rails/intents-address.ts';
+import { networkByVenue, spendNetworkOf } from '../rails/intents-address.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, INTENTS_NATIVE_VENUE } from '../rails/intents-native.ts';
 import { INTENTS_RELAY_COUNTERPARTY, INTENTS_RELAY_VENUE } from '../rails/intents-relay.ts';
 import { reasonOf } from '../rails/reasons.ts';
@@ -21,7 +21,7 @@ import type { SwapDraft } from '../types.ts';
 import { ourIntentsAddress, usdOf } from './draft.ts';
 import { errText } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
-import { reasonSentence, shortIds } from './view.ts';
+import { reasonSentence, shortIds, watchWords } from './view.ts';
 
 // ---------- shapes ----------
 
@@ -93,12 +93,65 @@ function heldOf(ctx: PCtx): Map<string, string> {
   return out;
 }
 
-type SidePick = { kind: 'one'; side: SwapSide } | { kind: 'many'; candidates: SwapSide[] } | { kind: 'none'; why: string };
+export type SidePick = { kind: 'one'; side: SwapSide } | { kind: 'many'; candidates: SwapSide[] } | { kind: 'none'; why: string };
+export type SideAsk = { asked: string; chain?: string };
 
-/* A coin named by ticker, by ticker and chain, or by id. A ticker alone across every chain is
-   one answer when one coin carries it, or when the person holds exactly one of several (the one
-   they can sell); anything else is a question, answered with the ids to choose between. */
-function resolveSide(asked: string, chain: string | undefined, list: OneClickToken[], held: ReadonlySet<string> | null): SidePick {
+/* THE TWO COINS OF A SWAP, one rule for swap_quote and propose_swap alike. A coin named with its
+   network, or by id, is that coin. A ticker alone that several coins carry is narrowed in a fixed
+   order: the one the balance already holds, then the one on the other coin's network, then the
+   one on NEAR. A step that matches nothing is skipped; one coin left is the answer, and only when
+   several are still left is it a question (ambiguous_asset), answered with their ids. "Swap my
+   NEAR to USDC" is USDC on near, never "which USDC?" (2026-09-23). */
+export function resolveSwapSides(from: SideAsk, to: SideAsk, list: OneClickToken[], held: ReadonlySet<string>): { from: SidePick; to: SidePick } {
+  const asks = { from, to };
+  const picks = { from: resolveSide(from.asked, from.chain, list), to: resolveSide(to.asked, to.chain, list) };
+  // The network a side stands on: the one it named, else the one its coin was found on.
+  const networkOf = (side: 'from' | 'to'): string | null => {
+    const chain = asks[side].chain?.trim().toLowerCase() ?? '';
+    if (chain !== '') return spendNetworkOf(chain)?.id ?? null;
+    const pick = picks[side];
+    return pick.kind === 'one' ? pick.side.network : null;
+  };
+  // Twice round, so a coin settled by NEAR on the first pass lends its network to the other.
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const side of ['from', 'to'] as const) {
+      const pick = picks[side];
+      if (pick.kind !== 'many' || (asks[side].chain?.trim() ?? '') !== '') continue;
+      const otherNetwork = networkOf(side === 'from' ? 'to' : 'from');
+      const rules: Array<(s: SwapSide) => boolean> = [(s) => held.has(s.assetId)];
+      if (otherNetwork !== null) rules.push((s) => s.network === otherNetwork);
+      rules.push((s) => s.network === 'near');
+      let left = pick.candidates;
+      for (const rule of rules) {
+        const kept = left.filter(rule);
+        if (kept.length > 0) left = kept;
+        if (left.length === 1) break;
+      }
+      picks[side] = left.length === 1 ? { kind: 'one', side: left[0]! } : { kind: 'many', candidates: left };
+    }
+  }
+  return picks;
+}
+
+// The one resolver over the venue's list and the balance as the ledger last read it. Null when
+// there is no venue list here to read (demo mode, a hand-built registry).
+export async function pickSwapSides(ctx: PCtx, from: SideAsk, to: SideAsk): Promise<{ from: SidePick; to: SidePick; list: OneClickToken[] } | null> {
+  const lookup = ctx.rails.swap;
+  if (lookup === undefined) return null;
+  const list = await lookup.tokens();
+  return { ...resolveSwapSides(from, to, list, new Set(heldOf(ctx).keys())), list };
+}
+
+/* The name a draft carries for a picked coin: its ticker, which the card and the rails read, or its
+   id where the ticker is shared on its own network (two USDC on hypercore, 6 and 8 decimals). */
+export function draftSymbolOf(side: SwapSide, list: OneClickToken[]): string {
+  const twins = list.filter((t) => t.symbol.toUpperCase() === side.symbol.toUpperCase() && sideOf(t)?.network === side.network);
+  return twins.length === 1 ? side.symbol : side.assetId;
+}
+
+/* A coin named by ticker, by ticker and chain, or by id. A ticker alone across every chain is one
+   answer when one coin carries it; several are the candidates resolveSwapSides narrows. */
+function resolveSide(asked: string, chain: string | undefined, list: OneClickToken[]): SidePick {
   const text = asked.trim();
   if (text === '') return { kind: 'none', why: 'no coin was named' };
   const byId = (id: string): SwapSide | null => {
@@ -128,10 +181,6 @@ function resolveSide(asked: string, chain: string | undefined, list: OneClickTok
     .filter((s): s is SwapSide => s !== null);
   if (matches.length === 0) return { kind: 'none', why: `the swap service lists no coin called ${oneLine(text, 20)}` };
   if (matches.length === 1) return { kind: 'one', side: matches[0]! };
-  if (held !== null) {
-    const owned = matches.filter((s) => held.has(s.assetId));
-    if (owned.length === 1) return { kind: 'one', side: owned[0]! };
-  }
   return { kind: 'many', candidates: matches };
 }
 
@@ -307,9 +356,12 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
     return { ...none, from: null, to: null, reason: 'no_price', sentence: "The swap service didn't answer just now, so there is no quote. Try again in a minute.", details: shortIds(errText(err)) };
   }
 
-  const held = heldOf(ctx);
-  const fromPick = resolveSide(String(params.fromSymbol ?? ''), params.chain, list, new Set(held.keys()));
-  const toPick = resolveSide(String(params.toSymbol ?? ''), params.toChain, list, null);
+  const { from: fromPick, to: toPick } = resolveSwapSides(
+    { asked: String(params.fromSymbol ?? ''), chain: params.chain },
+    { asked: String(params.toSymbol ?? ''), chain: params.toChain },
+    list,
+    new Set(heldOf(ctx).keys()),
+  );
   for (const [pick, which] of [
     [fromPick, 'the coin you sell'],
     [toPick, 'the coin you buy'],
@@ -360,7 +412,7 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
     if (base === 0n) return { ...none, from, to, reason: 'invalid_request', sentence: `That's less than the smallest amount of ${from.symbol}.` };
   }
   const exact = baseUnitsToDecimal(base, from.decimals);
-  const priced: SwapDraft = { ...draft, amountIn: Number(exact), amountInExact: exact, amountUsd: usdOf(ctx, from.symbol, Number(exact), ctx.ledger.snapshot()) };
+  const priced: SwapDraft = { ...draft, amountIn: Number(exact), amountInExact: exact, amountUsd: usdOf(ctx, from.symbol, Number(exact), ctx.ledger.snapshot(), from.assetId) };
   const rail = ctx.rails.for(priced);
   if (rail === null || typeof rail.facts !== 'function') return { ...none, from, to, amountIn: exact, reason: 'not_available', sentence: NO_VENUE };
 
@@ -522,12 +574,12 @@ export async function swapCheck(ctx: PCtx, id: string): Promise<SwapCheckReply> 
   else if (p.status === 'policy_refused' || p.status === 'refused') summary = `It was never sent, so nothing left your balance.${holding}`;
   // The signed transfer can still run until its deadline, so "nothing left" is not over yet.
   else if (p.status === 'needs_reconciliation' && p.result?.reason === 'venue_failed_watching' && moved !== 'yes')
-    summary = `It didn't go through, and nothing has left your balance yet. The app keeps an eye on it for a few minutes; don't send it again until then.${holding}`;
+    summary = `It didn't go through, and nothing has left your balance yet. I'm keeping an eye on it ${watchWords(p.result?.evidence?.deadline, Date.now())}.${holding}`;
   else if (moved === 'no' && (status === 'FAILED' || status === 'NOT_FOUND_OR_NOT_VALID' || p.status === 'failed')) summary = `It didn't go through. Nothing left your balance.${holding}`;
   else if (moved === 'no') summary = `Nothing has left your balance yet${word === null ? '' : `; the swap service says ${word}`}.${holding}`;
   else if (moved === 'yes' && refunded === true) summary = `Your ${symbol} left and the swap service reports a refund${refundedAmount !== null && Number(refundedAmount) > 0 ? ` of ${refundedAmount}` : ''}.${holding}`;
-  else if (moved === 'yes') summary = `Your ${symbol} left your balance and the swap hasn't finished${word === null ? '' : `: the swap service says ${word}`}. The app keeps checking; don't send it again.`;
-  else summary = `The app can't tell yet whether your ${symbol} left your balance. It keeps checking; don't send it again.`;
+  else if (moved === 'yes') summary = `Your ${symbol} left your balance and the swap hasn't finished${word === null ? '' : `: the swap service says ${word}`}. I'll update it here.`;
+  else summary = `Still checking whether your ${symbol} left your balance. I'll update it here.`;
 
   return {
     id: p.id,

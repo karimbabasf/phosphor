@@ -562,7 +562,7 @@ test('the propose-time quote asks the relay for a short wait and gives up inside
   assert.ok(Date.now() - started < 1_000, 'simulate answered inside its bound, not the transport');
   assert.equal(sim.ok, false);
   assert.equal(sim.error, 'Nobody offered a price for this pair right now. Try again in a minute.');
-  assert.match(sim.summary, /^REFUSED: Nobody offered a price for this pair right now\. Try again in a minute\.$/m);
+  assert.match(sim.developer ?? '', /^REFUSED: Nobody offered a price for this pair right now\. Try again in a minute\.$/m);
   assert.deepEqual(aborted, ['quote']);
   assert.equal(sent[0]['wait_ms'], RELAY_SIMULATE_WAIT_MS, 'the propose-time quote names its wait');
   assert.equal(RELAY_SIMULATE_WAIT_MS, 1_500);
@@ -611,8 +611,9 @@ test('the key is never read in simulate, and simulate reads no balance and no sa
   assert.equal(h.balanceReads.length, 0);
   assert.equal(h.saltReads, 0);
   assert.deepEqual(sim.swap, { receives: '1.961996', receivesAtLeast: '1.95', feeUsd: 0.0376, etaSeconds: null, priceGoodForSec: 60 });
-  assert.match(sim.summary, /one atomic swap inside intents\.near/);
-  assert.match(sim.summary, /price good for 60s and re-quoted at your click/);
+  assert.equal(sim.summary, 'About 1.962 USDT, at least 1.95. Fee about $0.04.');
+  assert.match(sim.developer ?? '', /one atomic swap inside intents\.near/);
+  assert.match(sim.developer ?? '', /price good for 60s and re-quoted at your click/);
 });
 
 test('a draft for the 1Click venue never reaches this rail, and the reverse', async () => {
@@ -620,14 +621,14 @@ test('a draft for the 1Click venue never reaches this rail, and the reverse', as
   const native = draftOf({ venue: 'intents-native', counterparty: INTENTS_NATIVE_COUNTERPARTY });
   const sim = await h.rail.simulate(native);
   assert.equal(sim.ok, false);
-  assert.match(sim.summary, /received a intents-native draft/);
+  assert.match(sim.error ?? '', /received a intents-native draft/);
   await assert.rejects(() => h.rail.execute(native, 'p1', h.hooks), /received a intents-native draft/);
   assert.equal(h.quotes.length, 0);
 
   const oneClick = intentsNativeRail({ keysPath: '/nonexistent/keys.json', tokens: tokensFixture, api: { tokens: async () => apiTokens } as never });
   const back = await oneClick.simulate(draftOf());
   assert.equal(back.ok, false);
-  assert.match(back.summary, /received a intents-relay draft/);
+  assert.match(back.error ?? '', /received a intents-relay draft/);
   assert.equal(INTENTS_RELAY_VENUE, 'intents-relay');
 });
 

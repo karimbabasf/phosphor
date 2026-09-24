@@ -69,7 +69,7 @@ import { MAX_SLIPPAGE_BPS, QUOTE_REUSE_MS, floorTooLow, floorUnderQuote } from '
 import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import { noReply, submitSignedIntent } from './intents-submit.ts';
-import { pickOrExplain } from './asset-words.ts';
+import { pickOrExplain, swapSummary } from './asset-words.ts';
 import { ReasonError, quoteRefusalReason, reasonOf } from './reasons.ts';
 import { watchOneClick } from './watch.ts';
 
@@ -765,6 +765,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   type Plan = {
     originAsset: string;
     destinationAsset: string;
+    destSymbol: string; // the bought coin as the list names it, for the summary a person reads
     originDecimals: number;
     destDecimals: number;
     amountBase: bigint;
@@ -836,6 +837,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     return {
       originAsset: origin.assetId,
       destinationAsset: dest.assetId,
+      destSymbol: list.find((t) => t.assetId === dest.assetId)?.symbol ?? draft.toSymbol,
       originDecimals: origin.decimals,
       destDecimals: dest.decimals,
       // The exact decimal the draft was approved with. A row written before it existed carries
@@ -1038,19 +1040,20 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       // simulate stays key-free; requireVenue has already tied from and to together, and execute
       // checks both against the real key a moment before signing.
       const problems = [...checkQuote(draft, p, response.quote), ...checkQuoteEcho(p, draft.from, response.raw)];
+      // A refusal's words are its reason's sentence (the view); its summary says nothing more.
       if (problems.length > 0) {
         const joined = problems.map((x) => x.text).join('; ');
-        return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined, reason: causeOf(problems), swap };
+        return { ok: false, summary: '', developer: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined, reason: causeOf(problems), swap };
       }
 
       lines.push(
         `execution signs one intent with the EVM key and transfers nothing; the balance must already be ` +
           `inside ${INTENTS_VERIFIER}`,
       );
-      return { ok: true, summary: lines.join('\n'), swap };
+      return { ok: true, summary: swapSummary(swap, p.destSymbol), developer: lines.join('\n'), swap };
     } catch (err) {
       const message = errText(err);
-      return { ok: false, summary: `intents-native simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
+      return { ok: false, summary: '', developer: `intents-native simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
     }
   }
 

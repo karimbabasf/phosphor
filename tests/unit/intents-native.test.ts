@@ -657,8 +657,10 @@ test('simulate asks for a dry quote and never generates or signs anything', asyn
   assert.equal((h.quotes[0] as Record<string, unknown>).dry, true);
   assert.equal(h.generated.length, 0);
   assert.equal(h.signedPayloads.length, 0);
-  assert.match(result.summary, /100 USDC -> 99\.85 USDT, entirely inside intents\.near/);
-  assert.match(result.summary, /transfers nothing/);
+  // The plain words the agent says and the card prints; the engineer's lines ride behind them.
+  assert.equal(result.summary, 'About 99.85 USDT, at least 99.5. Fee about $0.16, about 42 seconds.');
+  assert.match(result.developer ?? '', /100 USDC -> 99\.85 USDT, entirely inside intents\.near/);
+  assert.match(result.developer ?? '', /transfers nothing/);
   // The same figures as fields, for the decision card: what comes back, the floor the live
   // quote is held to, the fee as the USD gap, the eta. The card drew "No fee was quoted." over
   // a summary line naming the fee while these were prose only.
