@@ -3,9 +3,9 @@
 // The control window has no IPC bridge on purpose (see main.rs), so nothing about updates goes
 // through the page. The check runs in this shell, the offer is a window of the shell's own
 // (frontend/update.html, served by Tauri like the splash), the manual check is a native menu
-// item, and the control page never learns any of it. The update window is the one webview
-// with commands, exactly two: install and dismiss. Both refuse a caller that is not that
-// window, and a remote page cannot reach app commands at the ACL anyway.
+// item, and the control page never learns any of it. The update window's commands are three:
+// install, dismiss, and retry (a failed check or install asked again). Each refuses a caller
+// that is not that window, and a remote page cannot reach app commands at the ACL anyway.
 //
 // What the plugin does, and why it is the one thing here that is not hand-rolled: it fetches
 // latest.json over TLS from the endpoint in tauri.conf.json, takes the entry for this OS and
@@ -32,7 +32,7 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, Once};
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
@@ -93,15 +93,19 @@ impl Updates {
 }
 
 /// Starts the automatic checks. Called once the control window is open, from the worker that
-/// watched the backend come up; it never runs from the main thread and never blocks it.
+/// watched the backend come up; it never runs from the main thread and never blocks it. Once per
+/// process: a start that is tried again after a failure comes back through here.
 pub fn schedule(app: &AppHandle) {
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(FIRST_CHECK_DELAY);
-        loop {
-            check(handle.clone(), false);
-            std::thread::sleep(CHECK_INTERVAL);
-        }
+    static SCHEDULED: Once = Once::new();
+    SCHEDULED.call_once(|| {
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(FIRST_CHECK_DELAY);
+            loop {
+                check(handle.clone(), false);
+                std::thread::sleep(CHECK_INTERVAL);
+            }
+        });
     });
 }
 
@@ -110,8 +114,9 @@ pub fn schedule(app: &AppHandle) {
 /// always answers, because a menu item that does nothing visible looks broken.
 pub fn check(app: AppHandle, asked: bool) {
     if let Some(reason) = cannot_update_from_here() {
+        // Trying again changes nothing until the app has moved, so the window offers no retry.
         if asked {
-            show(&app, failed("Updates need Phosphor in Applications", &reason));
+            show(&app, failed("Updates need Phosphor in Applications", &reason, false));
         }
         return;
     }
@@ -131,13 +136,7 @@ fn settle(app: AppHandle, result: Result<Option<Update>, String>, asked: bool) {
         Err(err) => {
             eprintln!("phosphor: update check failed: {err}");
             if asked {
-                show(
-                    &app,
-                    failed(
-                        "Could not check for updates",
-                        &format!("Phosphor could not reach its release feed. Try again later.\n\n{err}"),
-                    ),
-                );
+                show(&app, check_failed(&err));
             }
         }
         Ok(None) => {
@@ -162,8 +161,19 @@ fn settle(app: AppHandle, result: Result<Option<Update>, String>, asked: bool) {
     }
 }
 
-fn failed(title: &str, message: &str) -> serde_json::Value {
-    serde_json::json!({ "state": "failed", "title": title, "message": message })
+/// A failed state. The message is one plain sentence, a blank line, then the raw error, which
+/// update.html splits so the sentence is what the window says and the error sits behind Details.
+/// `retry` shows Try again, which asks update_retry.
+fn failed(title: &str, message: &str, retry: bool) -> serde_json::Value {
+    serde_json::json!({ "state": "failed", "title": title, "message": message, "retry": retry })
+}
+
+fn check_failed(err: &str) -> serde_json::Value {
+    failed(
+        "Could not check for updates",
+        &format!("Phosphor could not reach its release feed. Check the connection, then try again.\n\n{err}"),
+        true,
+    )
 }
 
 /// Opens the update window on the given state, replacing one that is already open: a second
@@ -197,7 +207,7 @@ fn show(app: &AppHandle, payload: serde_json::Value) {
 /// angle bracket is escaped on top of that: an initialization script is not parsed as HTML,
 /// so a `</script>` in a note could not end anything, but the literal should not carry one
 /// at all, and the cost is nothing.
-fn init_literal(payload: &serde_json::Value) -> String {
+pub(crate) fn init_literal(payload: &serde_json::Value) -> String {
     payload.to_string().replace('<', "\\u003c")
 }
 
@@ -222,11 +232,13 @@ pub fn update_install(app: AppHandle, window: tauri::Window) -> Result<(), Strin
             Err(err) => {
                 eprintln!("phosphor: update install refused or failed: {err}");
                 if let Some(win) = app.get_webview_window(WINDOW) {
-                    let message = serde_json::json!(format!(
+                    let message = init_literal(&serde_json::json!(format!(
                         "Nothing changed: Phosphor {} keeps running.\n\n{err}",
                         app.package_info().version
-                    ));
-                    let _ = win.eval(&format!("window.__phosphorFailed({message})"));
+                    )));
+                    // The second argument is Try again: it checks again, which offers the update
+                    // afresh once whatever stopped it (a move still executing) has cleared.
+                    let _ = win.eval(&format!("window.__phosphorFailed({message}, true)"));
                 }
             }
         }
@@ -363,6 +375,17 @@ pub fn update_dismiss(app: AppHandle, window: tauri::Window) -> Result<(), Strin
     Ok(())
 }
 
+/// Try again, from a failed check or a failed install: the check runs again as if the menu item
+/// had been picked, so it always answers, and its answer replaces this window.
+#[tauri::command]
+pub fn update_retry(app: AppHandle, window: tauri::Window) -> Result<(), String> {
+    if window.label() != WINDOW {
+        return Err("not the update window".to_string());
+    }
+    check(app, true);
+    Ok(())
+}
+
 /// An app opened straight off the disk image runs from a read-only volume, and the swap would
 /// fail with a filesystem error that says nothing a person can act on. Say the fix instead.
 fn cannot_update_from_here() -> Option<String> {
@@ -394,9 +417,23 @@ fn clip(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{bundled_version, clip, expected_url, init_literal, is_dismissed, newer, runs_from_a_volume, NOTES_LIMIT};
+    use super::{bundled_version, check_failed, clip, expected_url, failed, init_literal, is_dismissed, newer, runs_from_a_volume, NOTES_LIMIT};
     use std::io::Write;
     use std::path::Path;
+
+    #[test]
+    fn a_failed_check_keeps_its_sentence_apart_from_the_raw_error_and_offers_try_again() {
+        let payload = check_failed("error sending request for url (https://github.com/...): dns error");
+        assert_eq!(payload["state"], "failed");
+        assert_eq!(payload["retry"], true);
+        let message = payload["message"].as_str().unwrap();
+        let (sentence, raw) = message.split_once("\n\n").expect("a sentence, a blank line, then the error");
+        assert_eq!(sentence, "Phosphor could not reach its release feed. Check the connection, then try again.");
+        assert!(raw.starts_with("error sending request"));
+        assert!(!sentence.contains("later"), "Try again is right there, so the sentence does not send the person away");
+        // A failure that trying again cannot fix offers no Try again.
+        assert_eq!(failed("Updates need Phosphor in Applications", "Drag it in.", false)["retry"], false);
+    }
 
     #[test]
     fn a_version_answered_later_is_not_offered_again_by_the_clock() {

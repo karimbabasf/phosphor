@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "update-window",
+  "description": "The update window lays its title bar over the page, so its header is the drag region (data-tauri-drag-region in frontend/update.html). Moving that one window is all this grants.",
+  "windows": ["update"],
+  "permissions": ["core:window:allow-start-dragging"]
+}

@@ -82,6 +82,19 @@ impl Backend {
     /// is in flight and taking its own child down, and SIGKILL only as the backstop.
     pub fn kill(&self) {
         self.stopping.store(true, Ordering::SeqCst);
+        self.stop_child();
+    }
+
+    /// Takes down a backend that failed, before Try again spawns the next one: the same stop as
+    /// kill(), without deciding to stop for good, so adopt() and the supervisor go on as before.
+    /// A child that already exited returns at once.
+    pub fn stop_for_retry(&self) {
+        self.stop_child();
+    }
+
+    // The lock is held for the whole stop, so a second caller waits for it to finish rather than
+    // finding no child and returning while this one is still draining.
+    fn stop_child(&self) {
         self.clear_pid_file();
         let Ok(mut guard) = lock(&self.child) else {
             return;
