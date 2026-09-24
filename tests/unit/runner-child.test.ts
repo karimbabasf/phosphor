@@ -129,8 +129,8 @@ test('a market fire is one bracket: entry IOC, stop with its limit ten percent p
   const e = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
   assert.equal(e.ev, 'placed', JSON.stringify(e));
   if (e.ev !== 'placed') return;
-  assert.equal(e.filledSz, 9.971, 'a thousand dollars at the bound, rounded toward zero, filled whole');
-  assert.equal(e.avgPx, 100.29);
+  assert.equal(e.filledSz, 9.97, 'a thousand dollars at the bound, rounded toward zero, filled whole');
+  assert.equal(e.avgPx, 100.3);
   assert.equal(typeof e.cloids.entry, 'string');
   assert.equal(typeof e.cloids.stop, 'string');
   assert.equal(typeof e.cloids.target, 'string');
@@ -146,10 +146,10 @@ test('a market fire is one bracket: entry IOC, stop with its limit ten percent p
   assert.equal(bracket.orders.length, 3);
   const [entry, stop, target] = bracket.orders;
   assert.deepEqual(entry.t, { limit: { tif: 'Ioc' } });
-  // 100 times 1.003 lands a hair under 100.3 in binary and a buy bound rounds DOWN, so the
-  // venue sees 100.29: one tick tighter than the nominal bound, never past it.
-  assert.equal(entry.p, '100.29', 'the entry bound is the mark plus 30 bps, rounded down for a buy');
-  assert.equal(entry.s, '9.971', 'sized at the bound so a fill there never exceeds the approved notional');
+  // 100 times 1.003 lands a hair under 100.3 in binary. That is float noise on a price that is
+  // on the grid, so the venue sees the nominal bound itself, 100.3, and never a tick past it.
+  assert.equal(entry.p, '100.3', 'the entry bound is the mark plus 30 bps, rounded down for a buy');
+  assert.equal(entry.s, '9.97', 'sized at the bound so a fill there never exceeds the approved notional');
   assert.equal(entry.r, false);
   assert.equal(stop.r, true);
   assert.equal(trigger(stop).tpsl, 'sl');
@@ -161,6 +161,26 @@ test('a market fire is one bracket: entry IOC, stop with its limit ten percent p
   assert.equal(target.p, '120');
   assert.equal(stop.c, e.cloids.stop);
   assert.equal(target.c, e.cloids.target);
+});
+
+test('a sub-cent perp: the entry bound crosses the mark, and the approved stop and target go to the venue as approved (MEME at 0.000585)', async () => {
+  const { v, c } = await boot();
+  const armed = await c.send({
+    cmd: 'arm',
+    plan: plan({ symbol: 'MEME', sizeUsd: 20, stop: 0.000555, target: 0.000615 }),
+    cloids: {},
+    gen: 0,
+    meta: { ...META, assetId: 75, szDecimals: 0 },
+  });
+  assert.equal(armed.ev, 'armed');
+  const e = await c.send({ cmd: 'fire', id: 'pl_1', mark: 0.000585 });
+  assert.equal(e.ev, 'placed', JSON.stringify(e));
+  const [entry, stop, target] = v.orders()[0].orders;
+  assert.equal(entry.p, '0.000586', 'thirty basis points over the mark, rounded down to the grid, still over the mark');
+  assert.equal(trigger(stop).triggerPx, '0.000555', 'the stop the human approved, under the mark, not the next step up');
+  assert.equal(stop.p, '0.0005', 'ten percent under the trigger, rounded up to the grid for a sell');
+  assert.equal(trigger(target).triggerPx, '0.000615');
+  assert.equal(target.p, '0.000615');
 });
 
 test('a partial IOC fill gets positionTpsl exits sized to the fill, in the same command', async () => {
@@ -328,6 +348,66 @@ test('close is a reduce-only IOC at the plan bound, then the exits are cancelled
   assert.ok(cancel !== undefined && cancel.type === 'cancelByCloid' && cancel.cancels.length === 2, 'both exits are cancelled');
 });
 
+// A GTC entry that part-filled keeps resting for the rest of its size. When the plan ends,
+// whatever made it end, that rest has to come off the book with the exits, or it fills days
+// later into a position no row tracks and no stop covers.
+async function partFilledLimit(v: ReturnType<typeof venue>, c: Child): Promise<{ entry: string; stop: string; target: string }> {
+  await c.arm(plan({ entry: { type: 'limit', px: 95 } }));
+  const fired = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(fired.ev, 'placed', JSON.stringify(fired));
+  v.state.position = { szi: 3, entryPx: 95 };
+  const p = await c.send({ cmd: 'protect', id: 'pl_1' });
+  assert.equal(p.ev, 'protected', JSON.stringify(p));
+  if (p.ev !== 'protected') throw new Error('not protected');
+  return { entry: p.cloids.entry ?? '', stop: p.cloids.stop ?? '', target: p.cloids.target ?? '' };
+}
+
+function cancelled(v: ReturnType<typeof venue>): string[][] {
+  return v.state.actions.filter((a) => a.type === 'cancelByCloid').map((a) => (a.type === 'cancelByCloid' ? a.cancels.map((x) => x.cloid).sort() : []));
+}
+
+test('release takes the rest of a part-filled limit entry off the book together with the exits', async () => {
+  const { v, c } = await boot();
+  const ids = await partFilledLimit(v, c);
+  const before = cancelled(v).length;
+  const e = await c.send({ cmd: 'release', id: 'pl_1' });
+  assert.equal(e.ev, 'released', JSON.stringify(e));
+  const sent = cancelled(v).slice(before);
+  assert.equal(sent.length, 1, 'one cancel action');
+  assert.deepEqual(sent[0], [ids.entry, ids.stop, ids.target].sort());
+});
+
+test('a child that never held the plan still cancels the orders the host names, on the asset it names', async () => {
+  const { v, c } = await boot();
+  const e = await c.send({ cmd: 'release', id: 'pl_gone', assetId: 7, cloids: ['0xaaa', '0xbbb'] });
+  assert.equal(e.ev, 'released', JSON.stringify(e));
+  const cancel = v.state.actions.find((a) => a.type === 'cancelByCloid');
+  assert.ok(cancel !== undefined && cancel.type === 'cancelByCloid');
+  assert.deepEqual(cancel.cancels, [
+    { asset: 7, cloid: '0xaaa' },
+    { asset: 7, cloid: '0xbbb' },
+  ]);
+});
+
+test('close takes the rest of a limit entry off the book before the closing order, then the exits once flat', async () => {
+  const { v, c } = await boot();
+  const ids = await partFilledLimit(v, c);
+  const from = v.state.actions.length;
+  v.state.answer = (orders) => {
+    v.state.position = null;
+    return orders.map((o) => ({ filled: { totalSz: o.s, avgPx: o.p, oid: 9 } }));
+  };
+  const e = await c.send({ cmd: 'close', id: 'pl_1', maxSlippageBps: 30, mark: 100 });
+  assert.equal(e.ev, 'closed', JSON.stringify(e));
+  const after = v.state.actions.slice(from);
+  const kinds = after.map((a) => a.type);
+  assert.deepEqual(kinds, ['cancelByCloid', 'order', 'cancelByCloid'], 'entry first, then the close, then the exits');
+  const [entryCancel, , exitCancel] = after;
+  assert.ok(entryCancel.type === 'cancelByCloid' && exitCancel.type === 'cancelByCloid');
+  assert.deepEqual(entryCancel.cancels.map((x) => x.cloid), [ids.entry]);
+  assert.deepEqual(exitCancel.cancels.map((x) => x.cloid).sort(), [ids.stop, ids.target].sort());
+});
+
 test('every event that reached the venue says how long the venue took, in whole milliseconds', async () => {
   const { v, c } = await boot();
   const venueMs = (e: FromChild): number => ('venueMs' in e ? e.venueMs : Number.NaN);
@@ -386,6 +466,20 @@ test('leverage is never changed under a position or a resting order on the coin'
   assert.equal(v.state.actions.length, 0);
 });
 
+test('a plan never fires onto a position already open on its coin, even when the account setting already matches', async () => {
+  const { v, c } = await boot();
+  v.state.position = { szi: 2, entryPx: 100 };
+  await c.arm(plan());
+  const e = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(e.ev, 'refused', JSON.stringify(e));
+  assert.match(e.ev === 'refused' ? e.reason : '', /ETH already has a position open that this plan did not make/);
+  assert.equal(v.state.actions.length, 0, 'nothing signed');
+
+  v.state.position = null;
+  const ok = await c.send({ cmd: 'fire', id: 'pl_1', mark: 100 });
+  assert.equal(ok.ev, 'placed', 'a flat coin fires as before');
+});
+
 test('a venue refusal on the bracket is a refusal, and the plan can fire again', async () => {
   const { v, c } = await boot();
   v.state.answer = () => [{ error: 'Insufficient margin to place order.' }];
@@ -413,6 +507,18 @@ test('flatten closes every coin it is named and cancels every cloid it is named'
   assert.equal(closeOrder.b, true, 'closing a short is a buy');
   assert.equal(closeOrder.p, '101', 'a hundred basis points for the human door');
   assert.ok(v.state.actions.some((a) => a.type === 'cancelByCloid'));
+});
+
+test('flatten takes resting entries off the book before it closes anything, so nothing fills behind the close', async () => {
+  const { v, c } = await boot();
+  v.state.position = { szi: 2, entryPx: 100 };
+  v.state.answer = (orders) => {
+    v.state.position = null;
+    return orders.map((o) => ({ filled: { totalSz: o.s, avgPx: o.p, oid: 9 } }));
+  };
+  const e = await c.send({ cmd: 'flatten', coins: [{ coin: 'ETH', meta: META, mark: 100 }], cancels: [{ assetId: 3, cloid: '0xentry' }] });
+  assert.equal(e.ev, 'flat', JSON.stringify(e));
+  assert.deepEqual(v.state.actions.map((a) => a.type), ['cancelByCloid', 'order']);
 });
 
 test('a venue 5xx on the bracket answers ambiguous, not refused: the venue may hold the order', async () => {

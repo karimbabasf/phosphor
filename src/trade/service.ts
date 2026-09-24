@@ -73,7 +73,14 @@ export type TradeServiceDeps = {
   // Test seam, handed straight to the feed: the socket is the one thing in here a test cannot
   // reason about offline.
   wsImpl?: (url: string) => FeedSocket;
+  // The waits between metadata reads that failed, the last one repeating. A test shortens it.
+  metaRetryMs?: readonly number[];
 };
+
+export const META_RETRY_MS = [1_000, 2_000, 5_000, 15_000, 60_000] as const;
+// A coin missing from metadata that did load reads it again at most this often: a listing the
+// venue added after boot shows up without a restart, and a coin it never lists costs nothing.
+const META_REFRESH_MS = 10 * 60_000;
 
 export const IDEAS_PER_SESSION = 20;
 
@@ -90,19 +97,46 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
   const meta = new Map<string, AssetMeta>();
   const listeners: Array<() => void> = [];
 
-  // Asset ids and decimals are constant under a running process, so they are read once over
-  // REST rather than re-read on a socket that is carrying price. A failure here is not fatal:
-  // the surface renders without them and says so, because a missing szDecimals stops an order
-  // from being placed and does not stop a human from seeing their position.
-  void deps.info
-    .post<{ universe: { name: string; szDecimals: number; maxLeverage: number }[] }>({ type: 'meta' })
-    .then((m) => {
-      m.universe.forEach((a, assetId) => {
-        meta.set(a.name.toUpperCase(), { ...a, assetId });
+  /* Asset ids and decimals are constant under a running process, so they are read over REST
+     rather than re-read on a socket that is carrying price. A failure is not fatal and not
+     final: the surface renders without them and says so, and the read is tried again with a
+     growing wait until it lands, because without them no plan can be priced, no plan can arm
+     and Flatten cannot size a close. An app started before the network was up used to stay that
+     way until it was restarted. A lookup that misses asks again at once (see metaOf). */
+  const retryMs = deps.metaRetryMs ?? META_RETRY_MS;
+  let metaLoading: Promise<void> | null = null;
+  let metaTimer: ReturnType<typeof setTimeout> | null = null;
+  let metaFailures = 0;
+  let metaLoadedAt: number | null = null;
+  let stopped = false;
+
+  function loadMeta(): void {
+    if (metaLoading !== null || stopped) return;
+    if (metaTimer !== null) clearTimeout(metaTimer);
+    metaTimer = null;
+    metaLoading = deps.info
+      .post<{ universe?: { name: string; szDecimals: number; maxLeverage: number }[] }>({ type: 'meta' })
+      .then((m) => {
+        if (!Array.isArray(m?.universe) || m.universe.length === 0) throw new Error('the venue answered with no universe');
+        m.universe.forEach((a, assetId) => {
+          meta.set(a.name.toUpperCase(), { ...a, assetId });
+        });
+        metaFailures = 0;
+        metaLoadedAt = now();
+        notify();
+      })
+      .catch(() => {
+        if (stopped) return;
+        const wait = retryMs[Math.min(metaFailures, retryMs.length - 1)] ?? 60_000;
+        metaFailures += 1;
+        metaTimer = setTimeout(loadMeta, wait);
+        metaTimer.unref?.();
+      })
+      .finally(() => {
+        metaLoading = null;
       });
-      notify();
-    })
-    .catch(() => undefined);
+  }
+  loadMeta();
 
   /* THE ACCOUNT, HANDED TO THE THING THAT ACTS ON IT.
      Pushed on every feed update rather than read inside a render, because a plan whose entry
@@ -148,7 +182,11 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
 
   function metaOf(coin: string): RunnerMeta | null {
     const m = meta.get(coin.toUpperCase());
-    return m === undefined ? null : { assetId: m.assetId, szDecimals: m.szDecimals, maxLeverage: m.maxLeverage };
+    if (m === undefined) {
+      if (metaLoadedAt === null || now() - metaLoadedAt > META_REFRESH_MS) loadMeta();
+      return null;
+    }
+    return { assetId: m.assetId, szDecimals: m.szDecimals, maxLeverage: m.maxLeverage };
   }
 
   function freeUsd(): number | null {
@@ -278,6 +316,8 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
     },
 
     stop() {
+      stopped = true;
+      if (metaTimer !== null) clearTimeout(metaTimer);
       feed.stop();
     },
   };

@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 
 import { MAX_FEE_PCT, MIN_DEPOSIT_USDC } from '../../src/rails/hypercore-deposit.ts';
 import { FUNDING_SHAPE, feePctAt, fundingBlock } from '../../src/trade/funding.ts';
-import { buildTradePayload } from '../../src/trade/state.ts';
+import { buildTradePayload, buildTradeRead } from '../../src/trade/state.ts';
 import type { AssetMeta } from '../../src/trade/state.ts';
 import type { AccountSnapshot, TradeFeed } from '../../src/trade/feed-ws.ts';
 import { createTradeView } from '../../src/trade/view.ts';
@@ -178,3 +178,19 @@ test('the funding shape reaches the payload so the page does no arithmetic about
   assert.ok(p.collateral.funding.costAt.length > 1);
 });
 
+
+// ---------- what the agent reads ----------
+
+// The live account on 2026-09-23 held 0.000775 USDC. The agent reads the same dust rule the
+// screen does, so it says there is no trading money yet instead of reading $0.00 as funded.
+test('the agent read says an account holding only dust has no trading money yet, and says nothing when it cannot tell', () => {
+  const dust = buildTradeRead(payload(snapshot({ perpValueUsd: 0, spotUsdcUsd: 0.000775, equityUsd: 0.000775 })));
+  assert.equal(dust.account.funded, false);
+  assert.match(dust.account.summary, /no trading money yet/);
+  const funded = buildTradeRead(payload(snapshot({ perpValueUsd: 12.5, spotUsdcUsd: 0, equityUsd: 12.5 })));
+  assert.equal(funded.account.funded, true);
+  assert.doesNotMatch(funded.account.summary, /no trading money/);
+  const unknown = buildTradeRead(payload(null));
+  assert.equal(unknown.account.funded, null);
+  assert.doesNotMatch(unknown.account.summary, /no trading money/);
+});

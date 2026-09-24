@@ -34,12 +34,13 @@ export type PlanRisk = {
 export type RiskInputs = {
   mark: number;
   szDecimals: number;
-  maxLeverage: number;
+  // Null when the venue's metadata for the coin has not loaded: nothing can be sized then.
+  maxLeverage: number | null;
   freeCollateralUsd: number | null;
   takerFeeBps: number;
-  // The leverage of any placed or open plan on the same coin. Leverage is a per-coin account
-  // setting on the venue, so two plans on one coin must agree.
-  sameCoinLeverage: number | null;
+  // The id of another live plan on the same coin, or null. One plan holds a coin at a time
+  // (see sameCoinRefusal), which also keeps the coin's one venue-wide setting its own.
+  sameCoinPlan: string | null;
   // The fill price of a plan that is already open. A change on an open plan measures its loss
   // from where the position actually was opened, not from where the plan meant to.
   entryPx?: number;
@@ -66,6 +67,17 @@ function onGrid(px: number, szDecimals: number): boolean {
   }
 }
 
+/* ONE PLAN PER COIN. The venue keeps one position per coin, and a plan's stop and target are
+   sized to that position: a second plan on the coin would take the first one's fill as its own,
+   put exits on the whole position at its own stop, and report numbers that belong to neither.
+   So a coin with a live plan takes no second one until the first is done. */
+export function sameCoinRefusal(symbol: string, otherId: string): string {
+  return (
+    `${symbol} already has a live plan (${otherId}), and the venue keeps one position per coin, so a second ` +
+    `plan would share it. Change or cancel ${otherId} first`
+  );
+}
+
 function gridRefusal(what: string, px: number, szDecimals: number): string {
   return (
     `${what} ${String(px)} is off the venue's price grid: at most 5 significant figures and ` +
@@ -74,15 +86,14 @@ function gridRefusal(what: string, px: number, szDecimals: number): string {
 }
 
 export function planRisk(plan: Plan, i: RiskInputs): Outcome {
+  if (i.maxLeverage === null) {
+    return refuse(`the venue's details for ${plan.symbol} have not loaded yet (the app keeps asking Hyperliquid for them), so the plan cannot be priced; try again in a minute`);
+  }
   if (!Number.isFinite(i.mark) || i.mark <= 0) return refuse(`no mark price for ${plan.symbol} yet, so the plan cannot be priced`);
   if (plan.leverage > i.maxLeverage) {
     return refuse(`leverage ${plan.leverage}x is above the ${i.maxLeverage}x maximum the venue allows on ${plan.symbol}`);
   }
-  if (i.sameCoinLeverage !== null && i.sameCoinLeverage !== plan.leverage) {
-    return refuse(
-      `${plan.symbol} is at ${i.sameCoinLeverage}x while another plan is placed or open on it, and a coin has one leverage`,
-    );
-  }
+  if (i.sameCoinPlan !== null) return refuse(sameCoinRefusal(plan.symbol, i.sameCoinPlan));
 
   const long = plan.side === 'long';
   const entryRef = i.entryPx ?? (plan.entry.type === 'market' ? i.mark : plan.entry.px);

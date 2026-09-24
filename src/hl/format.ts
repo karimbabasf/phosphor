@@ -108,17 +108,29 @@ function stripTrailingZeros(fixed: string): string {
 // Two limits bind at once and the tighter wins: at most `maxDecimals` decimal places, and at
 // most 5 significant figures. For a five-figure price like BTC the significant-figure rule bites
 // first and the answer is an integer, which the venue always accepts regardless of figures.
+// Figures are counted from the first non-zero digit, so under a dollar the leading zeros are
+// places the figures start after: 0.000585 has 5 - (-4 + 1) = 8 decimals of figures, and the
+// coin's own limit (6 at szDecimals 0) is the one that binds.
 //
 // Direction matters and is not a rounding preference. An aggressive BUY limit is the most it may
 // pay, so it rounds DOWN; an aggressive SELL limit is the least it may accept, so it rounds UP.
 // Rounding the other way would push the fill past the bound the human approved, which is the one
 // outcome this whole path exists to prevent.
+//
+// A price already on the grid comes back as it is. px * f carries float noise (0.000555 * 1e6 is
+// 554.9999999999999), and flooring the noise moved an approved stop by a whole step. The
+// tolerance is a trillionth of the price, far under any step and far over the noise.
 export function roundToValidPrice(px: number, szDecimals: number, isPerp: boolean, isBuy: boolean): number {
   const maxDecimals = (isPerp ? 6 : 8) - szDecimals;
-  const whole = Math.floor(Math.abs(px)).toString().length;
-  const bySigFigs = 5 - whole;
+  // The power of ten of the first significant digit. The nudge keeps a value that lands a hair
+  // under a power of ten from gaining a decimal it cannot use; erring that way is always valid.
+  const lead = Math.floor(Math.log10(Math.abs(px)) + 1e-9);
+  const bySigFigs = 5 - (lead + 1);
   const decimals = Math.max(0, Math.min(maxDecimals, bySigFigs));
   const f = 10 ** decimals;
+  const scaled = px * f;
+  const nearest = Math.round(scaled);
+  if (Math.abs(scaled - nearest) <= 1e-12 * Math.max(1, Math.abs(nearest))) return nearest / f;
   // Buy rounds down, sell rounds up: never past the bound.
-  return (isBuy ? Math.floor(px * f) : Math.ceil(px * f)) / f;
+  return (isBuy ? Math.floor(scaled) : Math.ceil(scaled)) / f;
 }

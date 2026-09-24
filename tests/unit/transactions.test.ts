@@ -523,3 +523,33 @@ test('a retired standing mandate still on disk reads as a bot that was armed', (
   assert.equal(row.place, 'hyperliquid');
   assert.equal(row.valueUsd, 100);
 });
+
+// A withdrawal from Hyperliquid: the first hash is the venue's own ledger hash of the send,
+// which only the venue's explorer resolves, and the NEAR settlement comes after it.
+function hlWithdraw(txids: string[]): Proposal {
+  return {
+    id: 'p-hl-withdraw',
+    kind: 'hl_withdraw',
+    createdAt: '2026-09-23T00:00:00.000Z',
+    status: 'executed',
+    draft: { kind: 'hl_withdraw', symbol: 'USDC', amount: 5.5, amountUsd: 5.5, minReceived: 5.2, from: SELF, to: SELF, counterparty: '1click' },
+    simulation: null,
+    verdict: { outcome: 'allow', reasons: [] },
+    decidedBy: 'human',
+    decidedAt: '2026-09-23T00:00:01.000Z',
+    settledAt: '2026-09-23T00:03:00.000Z',
+    result: { ok: true, detail: 'withdrew 5.5 USDC from Hyperliquid', txids, evidence: { handle: '0xabc', nonce: '1789882352607' } },
+  } as unknown as Proposal;
+}
+
+test('a Hyperliquid withdrawal links its venue hash to the venue explorer, never to Etherscan', () => {
+  const venueHash = '0x20a456389c' + 'a'.repeat(54);
+  const nearHash = '9XZ5Qu7yrWg51cWSKiqv57ZStjdM3subW95yNR1Vg8Go';
+  const [row] = build([hlWithdraw([venueHash, nearHash])]);
+  assert.ok(row);
+  const [first, second] = row.hashes;
+  assert.equal(first?.place, 'hyperliquid');
+  assert.equal(first?.url, explorerTxUrl('hyperliquid', venueHash));
+  assert.doesNotMatch(first?.url ?? '', /etherscan/);
+  assert.equal(second?.place, 'near');
+});

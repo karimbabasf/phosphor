@@ -27,8 +27,10 @@ import type { ChainId } from '../types.ts';
 export type FundingOrigin = { chain: ChainId; etaSec: number };
 
 export type FundingShape = {
-  // Below this the rail refuses: Hyperliquid credits nothing under 5 USDC delivered (the docs
-  // say the money is lost), and this is the size that puts 5 on the ground after the flat fee.
+  // Below this the rail refuses: the routing fee is nearly flat, and under this size it is more
+  // than maxFeePct of the deposit. The "under 5 USDC is lost" rule in Hyperliquid's docs belongs
+  // to the legacy Arbitrum bridge; this route credits through Circle CCTP, which charges a flat
+  // forwarding fee and has no such floor (Circle's Arbitrum to HyperCore guide sends 2 USDC).
   minUsd: number;
   // What a deposit is allowed to cost before the rail stops calling it a deposit.
   maxFeePct: number;

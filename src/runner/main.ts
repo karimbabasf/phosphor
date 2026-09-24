@@ -50,6 +50,15 @@ const USER = process.env.PHOSPHOR_HL_USER ?? '';
  * process has no heap. */
 let KEY: `0x${string}` | undefined;
 let stdinBuffer = '';
+/* The pipe and the IPC channel are two channels, and nothing orders them: the host writes the
+   key before its first command, and the command can still be read first. A fresh child whose
+   first command signs (a flatten, a release) would then refuse for want of a key it was about
+   to get, so the queue waits for the key line, briefly, before the first command. */
+const KEY_WAIT_MS = 2_000;
+let keyLineRead: () => void = () => undefined;
+const keyLine = new Promise<void>((resolve) => {
+  keyLineRead = resolve;
+});
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk: string) => {
   stdinBuffer += chunk;
@@ -58,7 +67,9 @@ process.stdin.on('data', (chunk: string) => {
   const line = stdinBuffer.slice(0, end).trim();
   stdinBuffer = '';
   if (/^0x[0-9a-fA-F]{64}$/.test(line)) KEY = line as `0x${string}`;
+  keyLineRead();
 });
+process.stdin.on('end', () => keyLineRead());
 
 type Held = {
   plan: Plan;
@@ -160,11 +171,19 @@ async function readLeverage(coin: string): Promise<{ type: string; value: number
 // margin posted is then the most the venue can take for this plan, which is the number the
 // human approved. Never changed under a position or a resting entry: the venue would refuse,
 // and a plan that changed the leverage under another plan's position would change that plan.
+//
+// Nor does a plan fire onto a position that is already open on its coin, whatever the setting:
+// its exits would be sized to the whole position and close what it never opened. The position
+// is read beside the setting, so the fire waits on one round trip, not two.
 async function ensureLeverage(h: Held): Promise<string | null> {
   const coin = h.plan.symbol;
-  const current = await readLeverage(coin);
-  if (current !== null && current.type === 'isolated' && current.value === h.plan.leverage) return null;
-  if ((await readPosition(coin)) !== null || (await hasRestingOrders(coin))) {
+  const [current, pos] = await Promise.all([readLeverage(coin), readPosition(coin)]);
+  const matches = current !== null && current.type === 'isolated' && current.value === h.plan.leverage;
+  if (matches && pos !== null) {
+    return `${coin} already has a position open that this plan did not make, and the plan's stop and target would close all of it, so it did not fire`;
+  }
+  if (matches) return null;
+  if (pos !== null || (await hasRestingOrders(coin))) {
     return (
       `${coin} is at ${current === null ? 'an unknown leverage' : `${current.value}x ${current.type}`} with a position or a ` +
       `resting order on it, so its leverage cannot move to ${h.plan.leverage}x isolated for this plan`
@@ -181,6 +200,10 @@ function nextGen(h: Held): number {
   return h.gen;
 }
 
+// The approved stop and target passed planRisk's grid check before this plan could fire or
+// change, and a price on the grid comes back from roundToValidPrice as it went in: the price
+// checked is the price placed. Off the grid, which planRisk refuses, a stop would round toward
+// the mark, so the loss could only shrink.
 function exitLegs(h: Held, sizeCoin: number, gen: number): { legs: TriggerRequest[]; cloids: Cloids } {
   const long = h.plan.side === 'long';
   const sz = h.meta.szDecimals;
@@ -284,7 +307,7 @@ function refusalBeforeSigning(h: Held, mark: number, change?: { stop?: number; t
     maxLeverage: h.meta.maxLeverage,
     freeCollateralUsd: null,
     takerFeeBps: DEFAULT_TAKER_FEE_BPS,
-    sameCoinLeverage: null,
+    sameCoinPlan: null,
     ...(entryPx !== undefined && Number.isFinite(entryPx) && entryPx > 0 ? { entryPx } : {}),
   });
   return out.ok ? null : out.refusal;
@@ -455,30 +478,26 @@ async function closeCoin(coin: string, meta: AssetMeta, mark: number, maxSlippag
 async function close(m: Extract<ToChild, { cmd: 'close' }>): Promise<FromChild> {
   const h = held.get(m.id);
   if (h === undefined) return { ev: 'refused', seq: m.seq, id: m.id, reason: `this runner holds no plan ${m.id}` };
+  // The rest of a resting entry comes off first, so nothing fills behind the close and opens
+  // the position again. A market entry never rests, so it costs no round trip.
+  let entryRefused: string[] = [];
+  if (h.plan.entry.type !== 'market' && h.cloids.entry !== undefined) entryRefused = await cancelCloids(h.meta.assetId, [h.cloids.entry]);
   const out = await closeCoin(h.plan.symbol, h.meta, m.mark, m.maxSlippageBps);
   if (!out.closed) return { ev: 'error', seq: m.seq, id: m.id, message: out.detail };
   // Flat. The venue usually cancels the exits itself; asking again is free and "already
   // canceled" is success.
   const exits = [h.cloids.stop, h.cloids.target].filter((c): c is string => c !== undefined);
-  const refused = await cancelCloids(h.meta.assetId, exits);
-  if (refused.length > 0) return { ev: 'error', seq: m.seq, id: m.id, message: `closed, and the venue refused to cancel the exits: ${refused.join('; ')}` };
+  const refused = [...entryRefused, ...(await cancelCloids(h.meta.assetId, exits))];
+  if (refused.length > 0) return { ev: 'error', seq: m.seq, id: m.id, message: `closed, and the venue refused to cancel what the plan left on the book: ${refused.join('; ')}` };
   held.delete(m.id);
   return { ev: 'closed', seq: m.seq, id: m.id, stillOpenSz: 0, venueMs: venueMs() };
 }
 
+// The resting entries come off first, so nothing fills behind a close and opens the coin
+// again; then every coin is closed against the position the venue reports.
 async function flatten(m: Extract<ToChild, { cmd: 'flatten' }>): Promise<FromChild> {
   const stillOpen: string[] = [];
   const details: string[] = [];
-  for (const c of m.coins) {
-    try {
-      const out = await closeCoin(c.coin, c.meta, c.mark, 100);
-      details.push(out.detail);
-      if (!out.closed) stillOpen.push(c.coin);
-    } catch (err) {
-      stillOpen.push(c.coin);
-      details.push(`${c.coin}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
   const byAsset = new Map<number, string[]>();
   for (const c of m.cancels) byAsset.set(c.assetId, [...(byAsset.get(c.assetId) ?? []), c.cloid]);
   for (const [assetId, cloids] of byAsset) {
@@ -489,17 +508,32 @@ async function flatten(m: Extract<ToChild, { cmd: 'flatten' }>): Promise<FromChi
       details.push(`cancel on asset ${assetId}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  held.clear();
+  for (const c of m.coins) {
+    try {
+      const out = await closeCoin(c.coin, c.meta, c.mark, 100);
+      details.push(out.detail);
+      if (!out.closed) stillOpen.push(c.coin);
+    } catch (err) {
+      stillOpen.push(c.coin);
+      details.push(`${c.coin}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  // A plan on a coin that did not close is still the host's, with its exits resting.
+  for (const [id, h] of held) if (!stillOpen.includes(h.plan.symbol)) held.delete(id);
   return { ev: 'flat', seq: m.seq, stillOpen, detail: details.join('; ') };
 }
 
+// The entry is in the list with the exits: a GTC entry that part-filled keeps resting for the
+// rest of its size, and left there it fills later into a position nothing tracks or protects.
 async function release(m: Extract<ToChild, { cmd: 'release' }>): Promise<FromChild> {
   const h = held.get(m.id);
-  if (h === undefined) return { ev: 'released', seq: m.seq, id: m.id };
-  const exits = [h.cloids.stop, h.cloids.target].filter((c): c is string => c !== undefined);
-  const refused = await cancelCloids(h.meta.assetId, exits);
   held.delete(m.id);
-  if (refused.length > 0) return { ev: 'error', seq: m.seq, id: m.id, message: `the venue refused to cancel the leftover exits: ${refused.join('; ')}` };
+  const assetId = h?.meta.assetId ?? m.assetId;
+  const own = h === undefined ? [] : [h.cloids.entry, h.cloids.stop, h.cloids.target];
+  const cloids = [...new Set([...own, ...(m.cloids ?? [])])].filter((c): c is string => typeof c === 'string' && c !== '');
+  if (assetId === undefined || cloids.length === 0) return { ev: 'released', seq: m.seq, id: m.id };
+  const refused = await cancelCloids(assetId, cloids);
+  if (refused.length > 0) return { ev: 'error', seq: m.seq, id: m.id, message: `the venue refused to cancel what the plan left on the book: ${refused.join('; ')}` };
   return { ev: 'released', seq: m.seq, id: m.id };
 }
 
@@ -538,7 +572,13 @@ async function handle(m: ToChild): Promise<FromChild | null> {
 
 // One command at a time. Two fires for two plans on one coin would otherwise race the leverage
 // read, and a protect landing during a modify would size exits the modify then cancels.
-let queue: Promise<void> = Promise.resolve();
+let queue: Promise<void> = new Promise<void>((resolve) => {
+  const timer = setTimeout(resolve, KEY_WAIT_MS);
+  void keyLine.then(() => {
+    clearTimeout(timer);
+    resolve();
+  });
+});
 
 process.on('message', (raw: unknown) => {
   const m = raw as ToChild;

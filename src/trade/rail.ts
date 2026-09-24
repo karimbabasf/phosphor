@@ -68,20 +68,20 @@ export function planOfRow(row: PlanRow): Plan {
   };
 }
 
-// The live facts a plan is priced against, read at propose and again at simulate. Every
-// placed or open plan on the same coin pins the leverage, because a coin has one on the venue.
+// The live facts a plan is priced against, read at propose and again at simulate. Any other
+// waiting, placed or open plan on the same coin takes the coin (see sameCoinRefusal).
 export function riskInputsFor(deps: PricingDeps, plan: Plan, exceptId: string | null, entryPx?: number): RiskInputs {
   const meta = deps.meta(plan.symbol);
   const same = deps.runner
     .plans()
-    .find((r) => r.id !== exceptId && r.symbol === plan.symbol && (r.status === 'placed' || r.status === 'open'));
+    .find((r) => r.id !== exceptId && r.symbol === plan.symbol && (r.status === 'waiting' || r.status === 'placed' || r.status === 'open'));
   return {
     mark: deps.mark(plan.symbol) ?? Number.NaN,
     szDecimals: meta?.szDecimals ?? 0,
-    maxLeverage: meta?.maxLeverage ?? 0,
+    maxLeverage: meta?.maxLeverage ?? null,
     freeCollateralUsd: deps.free(),
     takerFeeBps: DEFAULT_TAKER_FEE_BPS,
-    sameCoinLeverage: same === undefined ? null : same.leverage,
+    sameCoinPlan: same === undefined ? null : same.id,
     ...(entryPx !== undefined ? { entryPx } : {}),
   };
 }

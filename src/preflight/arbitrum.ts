@@ -5,9 +5,10 @@
 // hard-coded 300,000 gas limit. Arbitrum charges every transaction for the L1 calldata it will
 // post, in L2 gas units, and for a few minutes that evening the L1 charge was about 200x
 // normal: the sweep carried 155,024 gas of L1 data on top of its own execution, ran out of
-// gas at 300,000, was retried once, reverted, and nothing retried it again. The money sat on
-// Arbitrum where an INTENTS refund cannot reach it. The vendor's other sweeps that day used
-// about 204,000; the execution part is close to constant and the L1 part is what moves.
+// gas at 300,000, was retried once with 63,426 of L1 data, reverted again, and nothing retried
+// it after that. The money sat on Arbitrum where an INTENTS refund cannot reach it. The same
+// shape failed four more sweeps since 2026-05-28, with 63k to 245k of L1 data where a normal
+// sweep carries under 15k. The execution part is close to constant and the L1 part is what moves.
 //
 // THE MODEL. The precompile at 0x6C (ArbGasInfo) answers `getPricesInWei()` with six prices,
 // two of which matter here: perL1CalldataByte, what a byte of L1 calldata costs right now in
@@ -43,17 +44,24 @@ export const ARB_GAS_INFO_ABI = [
   },
 ] as const;
 
-// The gas limit 1Click's relayer sends its sweep with. Hard-coded on their side, read off the
-// two failed sweeps on 2026-09-15 and the 23 that went through on 09-16.
+// The gas limit 1Click's relayer sends its sweep with. Hard-coded on their side: the two
+// failed sweeps on 2026-09-15 and all 150 sweeps from 2026-09-21 08:38 to 09-22 21:32 UTC
+// were sent at exactly this, read off their receipts on 2026-09-23.
 export const VENDOR_SWEEP_GAS_LIMIT = 300_000;
-// What the sweep's own execution takes, before the L1 charge: 300,000 minus the 155,024 of L1
-// data on the sweep that ran out of gas, rounded to what the vendor's successful sweeps show.
-export const SWEEP_L2_GAS_UNITS = 145_000;
+// What the sweep's own execution needs from that limit, before the L1 charge. Those 150
+// receipts report 203,117 to 207,985 of execution (gasUsed less gasUsedForL1), but the second
+// sweep on 09-15 (0xcf26193a...) ran out after 234,720 of execution with 63,426 of L1 charged:
+// 236,574 was not enough. A receipt reports less than a sweep has to be sent with, and the
+// failure is the number that counts.
+export const SWEEP_L2_GAS_UNITS = 237_000;
 // The calldata of a CCTP depositForBurn sweep as observed on the chain.
 export const SWEEP_CALLDATA_BYTES = 420;
-// Under this the sweep has room; between here and the limit it is elevated and the receipt
-// says so; above the limit it fails the way it failed on 09-15.
-export const SWEEP_OK_BELOW = 240_000;
+// Under this the sweep has room. The limit leaves 63,000 for L1 data and this keeps two
+// thirds of it spare, so a surge has to triple the L1 price in the seconds between this read
+// and the relayer's sweep to break it. The busiest of the 150 sweeps above carried 14,445.
+// From here to the limit the sweep is elevated, and above the limit it fails the way it
+// failed on 09-15.
+export const SWEEP_OK_BELOW = 258_000;
 
 export type ArbGasRead = {
   l2BaseFeeWei: bigint; // the L2 base fee off the latest block

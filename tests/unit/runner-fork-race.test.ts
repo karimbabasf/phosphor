@@ -55,10 +55,11 @@ class FakeChild extends EventEmitter {
   }
 }
 
-function plan(id: string): PlanRow {
+// One plan per coin, so a test that arms two gives the second its own coin.
+function plan(id: string, symbol = 'ETH'): PlanRow {
   return {
     id,
-    symbol: 'ETH',
+    symbol,
     side: 'long',
     sizeUsd: 100,
     leverage: 2,
@@ -107,7 +108,7 @@ function host(keyDelayMs = 20) {
 test('two plans arming at once share one child, so no process is left holding the key', async () => {
   const h = host();
 
-  const [first, second] = await Promise.all([h.runner.arm(plan('m1')), h.runner.arm(plan('m2'))]);
+  const [first, second] = await Promise.all([h.runner.arm(plan('m1')), h.runner.arm(plan('m2', 'BTC'))]);
 
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
@@ -124,7 +125,7 @@ test('two plans arming at once share one child, so no process is left holding th
 
 test('stopAll reaches the child every arm shares', async () => {
   const h = host();
-  await Promise.all([h.runner.arm(plan('m1')), h.runner.arm(plan('m2'))]);
+  await Promise.all([h.runner.arm(plan('m1')), h.runner.arm(plan('m2', 'BTC'))]);
 
   await h.runner.stopAll('kill switch');
 
@@ -155,7 +156,7 @@ test('a later arm starts a new child, because stopping is not permanent', async 
   await h.runner.arm(plan('m1'));
   await h.runner.stopAll('kill switch');
 
-  const again = await h.runner.arm(plan('m2'));
+  const again = await h.runner.arm(plan('m2', 'BTC'));
   assert.equal(again.ok, true);
   assert.equal(h.forked.length, 2);
 });

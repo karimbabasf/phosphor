@@ -65,6 +65,63 @@ function setup() {
 
 const plan = (sizeUsd = 300): Record<string, unknown> => ({ symbol: 'ETH', side: 'long', sizeUsd, leverage: 5, entry: { type: 'market' }, stop: 92, target: 110 });
 
+// ---------- venue metadata ----------
+
+// An info door whose meta read fails while `down` is set, the way it does when the app starts
+// before the network is up. Every other read answers.
+function flakyInfo(): InfoClient & { down: boolean; metaAsks: number } {
+  const door = {
+    down: true,
+    metaAsks: 0,
+    post<T>(body: unknown): Promise<T> {
+      if ((body as { type?: string }).type === 'meta') {
+        door.metaAsks += 1;
+        if (door.down) return Promise.reject(new Error('fetch failed'));
+      }
+      return info.post<T>(body);
+    },
+    health: info.health,
+  };
+  return door;
+}
+
+async function until(check: () => boolean, ms = 1_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test('venue metadata that did not load at start is read again on its own until it lands, with no restart', async () => {
+  const door = flakyInfo();
+  const svc = createTradeService({ wsUrl: 'wss://test.invalid/ws', user: USER, info: door, runner: fakeRunner(), products: ['ETH-USD'], atrFor: () => null, initialSymbol: 'ETH', wsImpl: fakeSocket, metaRetryMs: [5] });
+  try {
+    const first = door.metaAsks;
+    await until(() => door.metaAsks >= first + 2);
+    assert.equal(svc.meta('ETH'), null, 'nothing loaded while the venue is down');
+    door.down = false;
+    await until(() => svc.meta('ETH') !== null);
+    assert.deepEqual(svc.meta('ETH'), { assetId: 0, szDecimals: 4, maxLeverage: 25 });
+  } finally {
+    svc.stop();
+  }
+});
+
+test('a lookup while the metadata is missing asks for it at once instead of waiting out the retry', async () => {
+  const door = flakyInfo();
+  const svc = createTradeService({ wsUrl: 'wss://test.invalid/ws', user: USER, info: door, runner: fakeRunner(), products: ['ETH-USD'], atrFor: () => null, initialSymbol: 'ETH', wsImpl: fakeSocket, metaRetryMs: [60_000] });
+  try {
+    await until(() => door.metaAsks >= 1);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    door.down = false;
+    assert.equal(svc.meta('ETH'), null);
+    await until(() => svc.meta('ETH') !== null, 500);
+  } finally {
+    svc.stop();
+  }
+});
+
 test('the twenty-first idea from one seat is refused by name, another seat still draws, and a removal frees the slot', () => {
   const { svc, runner } = setup();
   try {

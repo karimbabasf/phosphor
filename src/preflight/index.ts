@@ -7,8 +7,10 @@
 // The checks, in the order the receipt draws them:
 //   gas       the chain the payout lands on. Arbitrum (a HyperCore deposit, a payout to
 //             Arbitrum) is modelled as the vendor's sweep against its 300,000 gas limit
-//             (src/preflight/arbitrum.ts); Ethereum and Base are the base fee against the
-//             hour's average. Solana and NEAR are not read, and the check says so.
+//             (src/preflight/arbitrum.ts), and a HyperCore deposit fails closed on it: a
+//             sweep that is elevated, or an Arbitrum that did not answer, holds. Ethereum and
+//             Base are the base fee against the hour's average. Solana and NEAR are not read,
+//             and the check says so.
 //   coverage  the fee inside the quote against this app's own estimate of what the payout
 //             costs at today's gas price. A fee that does not cover the cost is the 09-15
 //             shape: the vendor is paying for the payout out of a number it set earlier.
@@ -111,8 +113,17 @@ function errText(err: unknown): string {
 }
 
 // The gas read, and what the coverage check needs from it: the price of a unit and how many
-// units the payout takes. Both null when nothing was read.
-type GasRead = { check: PreflightCheck; priceWei: bigint | null; extraUnits: number; sweepUnits: number | null };
+// units the payout takes. Both null when nothing was read. `hold` is the sentence the person
+// reads when this check is what holds the move, where the generic one would not do.
+type GasRead = { check: PreflightCheck; priceWei: bigint | null; extraUnits: number; sweepUnits: number | null; hold?: string };
+
+// What the person reads while an HL deposit waits on Arbitrum: what is happening, that nothing
+// moved, and when to look again. The receipt carries the numbers. No full stop at the end,
+// because the executor's sentence goes on after it.
+export const SWEEP_SPIKE_HOLD =
+  'Arbitrum fees are spiking, so a deposit sent now could get stuck on the way. It is on hold and your money has not moved. Try again in a few minutes';
+export const SWEEP_UNREAD_HOLD =
+  'Arbitrum is not answering, so the app cannot check that the deposit would get through. It is on hold and your money has not moved. Try again in a few minutes';
 
 async function gasCheck(landing: Landing, deps: PreflightDeps): Promise<GasRead> {
   const now = deps.now();
@@ -140,20 +151,38 @@ async function gasCheck(landing: Landing, deps: PreflightDeps): Promise<GasRead>
   }
   const label = `${landing.label} gas`;
   if (landing.chain === 'arb') {
+    // An HL deposit fails closed on the sweep: the relayer that carries it never retries, so
+    // a sweep that is not known to have room is not sent. A plain payout to Arbitrum has no
+    // relayer behind it, and holds only on a sweep that would not fit at all.
+    const closed = landing.model === 'sweep';
     const read = await deps.arbitrum();
     const estimate = read === null ? null : sweepEstimate(read);
     if (read === null || estimate === null) {
       return {
-        check: { id: 'gas', label, state: 'warn', value: 'Not read', detail: 'Arbitrum did not answer, so the sweep cannot be modelled right now.' },
+        check: {
+          id: 'gas',
+          label,
+          state: closed ? 'fail' : 'warn',
+          value: 'Not read',
+          detail: `Arbitrum did not answer, so the sweep cannot be modelled right now${closed ? ', and the deposit waits rather than guess' : ''}.`,
+        },
         priceWei: null,
         extraUnits: 0,
         sweepUnits: null,
+        ...(closed ? { hold: SWEEP_UNREAD_HOLD } : {}),
       };
     }
     const history = deps.history.arb;
     const average = history.average(now);
     history.push(now, estimate.gasUnits);
-    const state = estimate.verdict === 'ok' ? 'ok' : estimate.verdict === 'elevated' ? 'warn' : 'fail';
+    const state = estimate.verdict === 'ok' ? 'ok' : estimate.verdict === 'blocked' || closed ? 'fail' : 'warn';
+    const waits = closed ? ', so the deposit waits' : '';
+    const verdictWords =
+      estimate.verdict === 'blocked'
+        ? ` That is over the limit, and the sweep would run out of gas the way it did on 2026-09-15${waits}.`
+        : estimate.verdict === 'elevated'
+          ? ` That is too close to the limit to send${waits}.`
+          : '';
     return {
       check: {
         id: 'gas',
@@ -162,13 +191,14 @@ async function gasCheck(landing: Landing, deps: PreflightDeps): Promise<GasRead>
         value: `${units(estimate.gasUnits)} / ${units(estimate.limit)}`,
         detail:
           `1Click's relayer sweeps the payout with a ${units(estimate.limit)} gas limit. Right now the sweep needs about ` +
-          `${units(estimate.gasUnits)}, ${units(estimate.l1DataUnits)} of it L1 data${ratioWords(estimate.gasUnits, average)}.`,
+          `${units(estimate.gasUnits)}, ${units(estimate.l1DataUnits)} of it L1 data${ratioWords(estimate.gasUnits, average)}.${verdictWords}`,
         series: history.series(now),
         limit: estimate.limit,
       },
       priceWei: read.perArbGasTotal,
       extraUnits: estimate.l1DataUnits,
       sweepUnits: estimate.gasUnits,
+      ...(closed ? { hold: SWEEP_SPIKE_HOLD } : {}),
     };
   }
   const fee = await deps.baseFee(landing.chain);
@@ -321,9 +351,10 @@ function deadlineCheck(quote: OneClickQuote, deps: PreflightDeps): PreflightChec
   return { id: 'deadline', label, state: 'ok', value, detail };
 }
 
-function holdReasonOf(check: PreflightCheck, landing: Landing): string {
+function holdReasonOf(check: PreflightCheck, landing: Landing, gas: GasRead): string {
   switch (check.id) {
     case 'gas':
+      if (gas.hold !== undefined) return gas.hold;
       return `Waiting for ${landing.model === 'sweep' || landing.model === 'evm' ? landing.label : 'chain'} gas to settle`;
     case 'coverage':
       return 'Waiting for a fee that covers the payout';
@@ -353,6 +384,6 @@ export async function runPreflight(kind: WriteDraft['kind'], draft: WriteDraft, 
     at: new Date(deps.now()).toISOString(),
     checks,
     verdict: stop === undefined ? 'hold' : 'fail',
-    holdReason: holdReasonOf(first, landing),
+    holdReason: holdReasonOf(first, landing, gas),
   };
 }
