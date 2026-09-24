@@ -33,10 +33,13 @@ mod enclave;
 mod update;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::webview::PageLoadEvent;
+use tauri::{Manager, RunEvent, TitleBarStyle, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
@@ -50,6 +53,9 @@ use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
 const COPY_MCP_ID: &str = "copy-mcp-config";
+const COPY_MCP_LABEL: &str = "Copy MCP Config";
+const SPLASH: &str = "splash";
+const CONTROL: &str = "control";
 
 /// The Help menu: five pages on the site and the repository, each opened in the system browser.
 /// The urls are the only ones this menu will ever open, and they live here rather than in any
@@ -75,9 +81,10 @@ const COPY_LOG_LABEL: &str = "Copy Log for a Report";
 const LOG_LINES_FOR_A_REPORT: u16 = 200;
 const MENU_NOTICE: Duration = Duration::from_secs(4);
 
-/// The menu item handles the Help menu keeps, so an outcome can be written onto one later.
-struct HelpMenu {
+/// The menu items an outcome is written onto later, for a moment, in place of a message box.
+struct MenuNotes {
     copy_log: MenuItem<tauri::Wry>,
+    copy_mcp: MenuItem<tauri::Wry>,
 }
 
 /// How often the supervisor asks whether the backend is still there. Two seconds is well under
@@ -169,7 +176,7 @@ fn mcp_command(_payload: &Path, _data: &Path, port: u16, nonce: &str) -> Result<
     node_binary()?;
     let head = format!("GET /api/connection HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     let raw = backend::request_within(port, &head, None, Duration::from_secs(5))
-        .ok_or_else(|| format!("Phosphor is not answering on 127.0.0.1:{port}, so there is no line to copy yet."))?;
+        .ok_or_else(|| "Phosphor is not answering yet, so there is no line to copy.".to_string())?;
     connection_line_from(&raw, nonce)
 }
 
@@ -178,7 +185,7 @@ fn mcp_command(_payload: &Path, _data: &Path, port: u16, nonce: &str) -> Result<
 /// one line) are held by tests without a socket.
 fn connection_line_from(response: &str, nonce: &str) -> Result<String, String> {
     if !backend::identity_matches(response, Some(nonce)) {
-        return Err("Something else is answering on Phosphor's port, so nothing was copied. Quit it and try again.".to_string());
+        return Err("Something else is answering in Phosphor's place, so nothing was copied. Quit it and try again.".to_string());
     }
     let body = response.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
     let parsed: serde_json::Value =
@@ -194,7 +201,7 @@ fn connection_line_from(response: &str, nonce: &str) -> Result<String, String> {
 }
 
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let copy = MenuItem::with_id(app, COPY_MCP_ID, "Copy MCP Config", true, None::<&str>)?;
+    let copy = MenuItem::with_id(app, COPY_MCP_ID, COPY_MCP_LABEL, true, None::<&str>)?;
     let updates = MenuItem::with_id(app, update::CHECK_ID, "Check for Updates...", true, None::<&str>)?;
     let app_menu = Submenu::with_items(
         app,
@@ -240,7 +247,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
     }
     let help_menu = Submenu::with_items(app, "Help", true, &help_refs)?;
-    app.manage(HelpMenu { copy_log });
+    app.manage(MenuNotes { copy_log, copy_mcp: copy.clone() });
     Menu::with_items(app, &[&app_menu, &edit_menu, &help_menu])
 }
 
@@ -323,28 +330,28 @@ fn copy_log_for_report(app: &tauri::AppHandle) {
             .map_err(|e| format!("could not write to the clipboard: {e}"))
     });
     match outcome {
-        Ok(()) => say_on_menu(app, "Log copied. Paste it into the report"),
+        Ok(()) => say_on_menu(app, |notes| (notes.copy_log.clone(), COPY_LOG_LABEL), "Log copied. Paste it into the report"),
         Err(err) => {
             eprintln!("phosphor: copy log: {err}");
-            say_on_menu(app, "Nothing copied: the app did not answer");
+            say_on_menu(app, |notes| (notes.copy_log.clone(), COPY_LOG_LABEL), "Nothing copied: the app did not answer");
         }
     }
 }
 
-/// Writes the outcome onto the Copy Log item's own title and puts the label back a few seconds
-/// later. Menu events arrive on the main thread and set_text is safe there; the restore comes
-/// back through run_on_main_thread for the same reason.
-fn say_on_menu(app: &tauri::AppHandle, text: &str) {
-    let Some(help) = app.try_state::<HelpMenu>() else {
+/// Writes an outcome onto a menu item's own title and puts its label back a few seconds later.
+/// Menu events arrive on the main thread and set_text is safe there; the restore comes back
+/// through run_on_main_thread for the same reason.
+fn say_on_menu(app: &tauri::AppHandle, pick: impl Fn(&MenuNotes) -> (MenuItem<tauri::Wry>, &'static str), text: &str) {
+    let Some(notes) = app.try_state::<MenuNotes>() else {
         return;
     };
-    let item = help.copy_log.clone();
+    let (item, label) = pick(&notes);
     let _ = item.set_text(text);
     let later = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(MENU_NOTICE);
         let _ = later.run_on_main_thread(move || {
-            let _ = item.set_text(COPY_LOG_LABEL);
+            let _ = item.set_text(label);
         });
     });
 }
@@ -376,48 +383,246 @@ fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
         let port = configured_port(&payload, &data);
         let nonce = app.state::<Secrets>().0.nonce.clone();
         let command = mcp_command(&payload, &data, port, &nonce)?;
-        app.clipboard()
-            .write_text(command)
-            .map_err(|e| format!("could not write to the clipboard: {e}"))
+        app.clipboard().write_text(command).map_err(|e| {
+            eprintln!("phosphor: copy MCP config: the clipboard refused it: {e}");
+            "The clipboard would not take the line, so nothing was copied.".to_string()
+        })
     });
-    // Never blocking_show here. Menu events arrive on the main thread, and a blocking dialog
-    // raised from it deadlocks the event loop that is supposed to be drawing the dialog.
-    match result {
-        Ok(()) => app
-            .dialog()
-            .message("The `claude mcp add-json` line for this installation is on the clipboard. Run it in the directory you want the agent to work from.")
-            .title("MCP config copied")
-            .show(|_| {}),
-        Err(err) => app
-            .dialog()
-            .message(err)
-            .kind(MessageDialogKind::Error)
-            .title("Could not copy the MCP config")
-            .show(|_| {}),
+    // Said in the window, where the person is, never in a message box over it. Before the window
+    // is up the item's own title says it for a moment, the way Copy Log does.
+    let said = match &result {
+        Ok(()) => MCP_COPIED.to_string(),
+        Err(err) => err.clone(),
     };
+    if !notice(app, &said) {
+        let short = if result.is_ok() { "Copied. Run it where the agent works" } else { "Nothing copied: Phosphor is not ready" };
+        say_on_menu(app, |notes| (notes.copy_mcp.clone(), COPY_MCP_LABEL), short);
+    }
 }
 
-/// Reports a startup failure and quits once it has been read. Same main-thread rule as above: the
-/// exit is deferred into the dismissal callback rather than taken after a blocking call.
-fn fail(app: &tauri::AppHandle, message: String) {
-    eprintln!("phosphor: {message}");
+/// What a failure says in the splash's failed state (frontend/index.html): a title, one plain
+/// sentence, and the shell's own reason behind Details. The sentence is for the person, so it
+/// names no port, no duration and no process; the reason keeps all of that.
+#[derive(Clone, Debug, PartialEq)]
+struct Failure {
+    title: &'static str,
+    message: &'static str,
+    detail: String,
+}
+
+const DID_NOT_OPEN: &str = "Phosphor did not open";
+const STOPPED: &str = "Phosphor stopped";
+
+// Every sentence a failure can say, kept together so one test reads them all.
+const START_BLOCKED: &str = "Something on this Mac stopped it from starting. Try again, and if it happens again, restart your Mac.";
+const PORT_TAKEN: &str = "Another program is using the address Phosphor runs on. Quit that program, then try again.";
+const OTHER_PHOSPHOR: &str = "Another copy of Phosphor, started outside this app, is already running. Stop it, then try again.";
+const OLD_SESSION: &str = "Phosphor from an earlier session is still running and did not stop when asked. Quit it, then try again.";
+const EXITED_STARTING: &str = "It stopped while it was starting. Try again, and if it happens again, restart your Mac.";
+const TOO_SLOW: &str = "It took too long to start. Try again.";
+const NO_WINDOW: &str = "It started but could not open its window. Try again.";
+const STOPPED_TWICE: &str = "It stopped twice in a row, so it was not started again. Try again, or quit and open it later.";
+const TAKEN_ON_RESTART: &str = "It stopped, and another program took its address before it could start again. Quit that program, then try again.";
+const NOT_BACK: &str = "It stopped and did not come back when it was restarted. Try again.";
+const NOT_RESTARTED: &str = "It stopped and could not be started again. Try again.";
+
+// The two lines the window's notice carries for this shell.
+const RESTARTED: &str = "Phosphor stopped and started again. Anything that was moving then shows on Activity as unknown, so check it before you act again.";
+const MCP_COPIED: &str = "The connection line for your agent is on the clipboard. Run it in the folder the agent should work from.";
+
+impl Failure {
+    fn starting(message: &'static str, detail: impl Into<String>) -> Self {
+        Failure { title: DID_NOT_OPEN, message, detail: detail.into() }
+    }
+
+    fn stopped(message: &'static str, detail: impl Into<String>) -> Self {
+        Failure { title: STOPPED, message, detail: detail.into() }
+    }
+
+    fn payload(&self) -> serde_json::Value {
+        serde_json::json!({ "title": self.title, "message": self.message, "detail": self.detail })
+    }
+}
+
+/// The failure as the splash page takes it once it is running. Serialised with serde_json and the
+/// angle bracket escaped (update::init_literal), so the reason, which can carry any text an error
+/// had in it, arrives as data and is only ever set as text.
+fn failure_script(failure: &Failure) -> String {
+    format!("window.__phosphorFailed({})", update::init_literal(&failure.payload()))
+}
+
+/// The splash's state before any of its script runs: starting, or straight into failed when the
+/// splash comes back after the window had replaced it.
+fn splash_init(failed: Option<&Failure>) -> String {
+    let state = match failed {
+        Some(failure) => {
+            let mut payload = failure.payload();
+            payload["state"] = serde_json::json!("failed");
+            payload
+        }
+        None => serde_json::json!({ "state": "starting" }),
+    };
+    format!("window.__PHOSPHOR_SPLASH__ = {};", update::init_literal(&state))
+}
+
+/// Whether the splash's page has loaded, and a script waiting for it: a start can fail before
+/// the page is up, and a script evaluated then would run against nothing.
+#[derive(Default)]
+struct SplashPage(Mutex<SplashLoad>);
+
+#[derive(Default)]
+struct SplashLoad {
+    loaded: bool,
+    pending: Option<String>,
+}
+
+/// Held while a Try again runs, so a second click does not start a second backend beside it.
+#[derive(Default)]
+struct Retrying(AtomicBool);
+
+fn splash_load(app: &tauri::AppHandle) -> std::sync::MutexGuard<'_, SplashLoad> {
+    let page = app.state::<SplashPage>().inner();
+    page.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The splash, in the app's one colourway, with the lights over the page and no title, like the
+/// update window. It is given one script, its state (`splash_init`), and nothing read off the
+/// disk: a failure's reason reaches it only as the text it shows behind Details.
+fn open_splash(app: &tauri::AppHandle, failed: Option<&Failure>) -> tauri::Result<WebviewWindow> {
+    {
+        let mut load = splash_load(app);
+        load.loaded = false;
+        load.pending = None;
+    }
+    WebviewWindowBuilder::new(app, SPLASH, WebviewUrl::App("index.html".into()))
+        .title("Phosphor")
+        .hidden_title(true)
+        .title_bar_style(TitleBarStyle::Overlay)
+        .inner_size(420.0, 300.0)
+        .resizable(false)
+        .center()
+        .initialization_script(&splash_init(failed))
+        .on_page_load(|window, load| {
+            if load.event() != PageLoadEvent::Finished {
+                return;
+            }
+            let waiting = {
+                let mut page = splash_load(window.app_handle());
+                page.loaded = true;
+                page.pending.take()
+            };
+            if let Some(script) = waiting {
+                let _ = window.eval(&script);
+            }
+        })
+        .build()
+}
+
+/// A failure the app cannot go on from, drawn in the splash's failed state: the mark stops, one
+/// sentence says what happened, the reason sits behind Details, and Try again and Quit are
+/// splash_retry and splash_quit. A window onto a backend that is gone can do nothing, so it goes
+/// first (which locks the wallet) and the splash comes back in its place. Only when not even the
+/// splash can be drawn does a system alert say it, and the app quits once it is read: a startup
+/// failure with no design surface is the one place a system alert is still this app's.
+fn fail(app: &tauri::AppHandle, failure: Failure) {
+    eprintln!("phosphor: {} {}", failure.message, failure.detail);
+    if let Some(control) = app.get_webview_window(CONTROL) {
+        let _ = control.destroy();
+    }
+    let drawn = match app.get_webview_window(SPLASH) {
+        Some(splash) => {
+            let script = failure_script(&failure);
+            let mut load = splash_load(app);
+            if load.loaded {
+                let _ = splash.eval(&script);
+            } else {
+                load.pending = Some(script);
+            }
+            true
+        }
+        None => open_splash(app, Some(&failure)).is_ok(),
+    };
+    if drawn {
+        return;
+    }
+    // Never blocking_show: this runs on the main thread, and a blocking dialog raised from it
+    // deadlocks the event loop that is supposed to be drawing the dialog.
     let handle = app.clone();
     app.dialog()
-        .message(message)
+        .message(format!("{}\n\n{}", failure.message, failure.detail))
         .kind(MessageDialogKind::Error)
-        .title("Phosphor could not start")
+        .title(failure.title)
         .show(move |_| handle.exit(1));
 }
 
-/// Says something happened and leaves the app running. Used by the supervisor, where the app is
-/// still usable and the person needs to know the backend went away and came back.
-fn notify(app: &tauri::AppHandle, title: &str, message: String) {
-    eprintln!("phosphor: {message}");
-    app.dialog()
-        .message(message)
-        .kind(MessageDialogKind::Warning)
-        .title(title)
-        .show(|_| {});
+/// One line in the window's own notice (#notice), the place the app already says what needs the
+/// person, instead of a system alert over the window. False when there is no window to say it in.
+fn notice(app: &tauri::AppHandle, text: &str) -> bool {
+    match app.get_webview_window(CONTROL) {
+        Some(control) => control.eval(&notice_script(text)).is_ok(),
+        None => false,
+    }
+}
+
+/// The notice line as a script for the window. The page takes it through
+/// window.__phosphorShellNotice when it has that hook; without it the line is written into the
+/// notice directly. The text is a JSON literal, so it arrives as data and is set as text.
+fn notice_script(text: &str) -> String {
+    format!(
+        "(function (text) {{\
+           if (typeof window.__phosphorShellNotice === 'function') {{ window.__phosphorShellNotice(text); return; }}\
+           var n = document.getElementById('notice'); if (!n) return;\
+           var t = n.querySelector('[data-role=\"notice-text\"]'); if (t) t.textContent = text;\
+           var a = n.querySelector('[data-role=\"notice-act\"]'); if (a) a.hidden = true;\
+           n.hidden = false;\
+         }})({})",
+        update::init_literal(&serde_json::json!(text))
+    )
+}
+
+/// Try again, from the splash's failed state: what is left of the backend that failed is taken
+/// down, then the start runs again from the survey, exactly as at launch. The stop is off the
+/// main thread, since it can wait on a write in flight; the start is back on it, since it draws
+/// windows. A second click while one runs is ignored.
+#[tauri::command]
+fn splash_retry(app: tauri::AppHandle, window: tauri::Window) -> Result<(), String> {
+    if window.label() != SPLASH {
+        return Err("not the splash window".to_string());
+    }
+    if app.state::<Retrying>().0.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        handle.state::<Backend>().stop_for_retry();
+        let again = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            if let Some(splash) = again.get_webview_window(SPLASH) {
+                let _ = splash.eval("window.__phosphorStarting && window.__phosphorStarting()");
+            }
+            match survey(&again).map_err(|e| Failure::starting(START_BLOCKED, e)) {
+                Ok(Launch::HandOver(shell)) => hand_over(&again, shell),
+                Ok(found) => {
+                    if let Err(failure) = start(&again, found) {
+                        fail(&again, failure);
+                    }
+                }
+                Err(failure) => fail(&again, failure),
+            }
+            again.state::<Retrying>().0.store(false, Ordering::SeqCst);
+        });
+    });
+    Ok(())
+}
+
+/// Quit, from the splash's failed state. The exit takes the backend down on its way out.
+#[tauri::command]
+fn splash_quit(app: tauri::AppHandle, window: tauri::Window) -> Result<(), String> {
+    if window.label() != SPLASH {
+        return Err("not the splash window".to_string());
+    }
+    app.exit(0);
+    Ok(())
 }
 
 /// Replaces the splash with the real window. Created rather than navigated, so the page holding
@@ -453,7 +658,7 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
     // it opened hanging off the bottom right (Karim, 2026-09-15: "default it to fill the
     // screen"). tao centers a window that was given no position on its own, so the fallback
     // frame is still centered without the call, and the zoom is the last word.
-    let window = WebviewWindowBuilder::new(app, "control", WebviewUrl::External(url))
+    let window = WebviewWindowBuilder::new(app, CONTROL, WebviewUrl::External(url))
         .title("Phosphor")
         .inner_size(1180.0, 780.0)
         .min_inner_size(960.0, 700.0)
@@ -479,7 +684,7 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
         }
     });
 
-    if let Some(splash) = app.get_webview_window("splash") {
+    if let Some(splash) = app.get_webview_window(SPLASH) {
         let _ = splash.close();
     }
     Ok(())
@@ -518,7 +723,8 @@ enum Launch {
     HandOver(i32),
     /// Stop an orphaned backend of this app, by its pid, then start.
     StopOrphan(i32),
-    Refuse(String),
+    /// The sentence the person reads, and the shell's own reason behind Details.
+    Refuse { message: &'static str, detail: String },
 }
 
 /// What a launch does about what is already running, decided before it starts anything.
@@ -552,18 +758,24 @@ fn launch(port: u16, occupant: Occupant, running_copy: Option<i32>, orphan: Opti
     }
     match occupant {
         Occupant::Nothing => Launch::Start,
-        Occupant::Phosphor => Launch::Refuse(format!(
-            "Another Phosphor that this app did not start is already running on 127.0.0.1:{port}, most \
-             likely one started from a source checkout with `npm run app`. \
-             Stop it (`pkill -f 'node src/main.ts'`) and open Phosphor again. \
-             This app will not open a window onto a Phosphor it did not start, because it could not \
-             shut that one down afterwards."
-        )),
-        Occupant::Stranger => Launch::Refuse(format!(
-            "Another program is already using 127.0.0.1:{port}, the address Phosphor runs on, so Phosphor \
-             did not start. Quit that program and open Phosphor again. If it has to keep that address, set \
-             a different port in config.local.json."
-        )),
+        Occupant::Phosphor => Launch::Refuse {
+            message: OTHER_PHOSPHOR,
+            detail: format!(
+                "Another Phosphor that this app did not start is already running on 127.0.0.1:{port}, most \
+                 likely one started from a source checkout with `npm run app`. \
+                 Stop it (`pkill -f 'node src/main.ts'`) and open Phosphor again. \
+                 This app will not open a window onto a Phosphor it did not start, because it could not \
+                 shut that one down afterwards."
+            ),
+        },
+        Occupant::Stranger => Launch::Refuse {
+            message: PORT_TAKEN,
+            detail: format!(
+                "Another program is already using 127.0.0.1:{port}, the address Phosphor runs on, so Phosphor \
+                 did not start. Quit that program and open Phosphor again. If it has to keep that address, set \
+                 a different port in config.local.json."
+            ),
+        },
     }
 }
 
@@ -679,9 +891,10 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
             let _ = dead.clone().run_on_main_thread(move || {
                 fail(
                     &dead,
-                    "The control app stopped twice, so Phosphor is not restarting it again. \
-                     Its error is in Console.app under Phosphor."
-                        .to_string(),
+                    Failure::stopped(
+                        STOPPED_TWICE,
+                        "The backend exited a second time after it was restarted. Its error is in Console.app under Phosphor.",
+                    ),
                 );
             });
             return;
@@ -705,10 +918,12 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
             let _ = taken.clone().run_on_main_thread(move || {
                 fail(
                     &taken,
-                    format!(
-                        "The control app stopped and something else took 127.0.0.1:{port} before it could be \
-                         restarted. Phosphor will not open a window onto a process it did not start. Quit \
-                         whatever is holding the port and start Phosphor again."
+                    Failure::stopped(
+                        TAKEN_ON_RESTART,
+                        format!(
+                            "The backend stopped and something else took 127.0.0.1:{port} before it could be \
+                             restarted. Phosphor will not open a window onto a process it did not start."
+                        ),
                     ),
                 );
             });
@@ -743,20 +958,13 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
                 let back = app.clone();
                 let _ = back.clone().run_on_main_thread(move || {
                     if answered {
-                        notify(
-                            &back,
-                            "Phosphor restarted its control app",
-                            "The control app stopped and has been started again. Anything that was in \
-                             flight when it stopped is on the Activity as an unknown outcome: check it \
-                             before acting again."
-                                .to_string(),
-                        );
+                        // A line in the window's notice, where the person is, not a box over it.
+                        eprintln!("phosphor: the backend stopped and was started again");
+                        notice(&back, RESTARTED);
                     } else {
                         fail(
                             &back,
-                            "The control app stopped and the restarted one never answered. Its error is \
-                             in Console.app under Phosphor."
-                                .to_string(),
+                            Failure::stopped(NOT_BACK, "The restarted backend never answered. Its error is in Console.app under Phosphor."),
                         );
                     }
                 });
@@ -767,7 +975,7 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
             Err(err) => {
                 let broken = app.clone();
                 let _ = broken.clone().run_on_main_thread(move || {
-                    fail(&broken, format!("The control app stopped and could not be restarted: {err}"));
+                    fail(&broken, Failure::stopped(NOT_RESTARTED, format!("The backend could not be restarted: {err}")));
                 });
                 return;
             }
@@ -775,14 +983,14 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
     }
 }
 
-fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), String> {
-    let payload = payload_dir(app)?;
-    let data = data_dir(app)?;
+fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), Failure> {
+    let payload = payload_dir(app).map_err(|e| Failure::starting(START_BLOCKED, e))?;
+    let data = data_dir(app).map_err(|e| Failure::starting(START_BLOCKED, e))?;
     let port = configured_port(&payload, &data);
 
     match found {
         Launch::Start => {}
-        Launch::Refuse(why) => return Err(why),
+        Launch::Refuse { message, detail } => return Err(Failure::starting(message, detail)),
         // setup gives way before anything is drawn and never gets here; starting nothing is the
         // answer either way.
         Launch::HandOver(_) => return Ok(()),
@@ -794,22 +1002,25 @@ fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), String> {
                under a second, and only a venue write in flight makes it longer. */
             write_pid_file(&pid_file_path(&data), backend);
             if !stop_orphan(backend, &app.config().identifier) {
-                return Err(format!(
-                    "A Phosphor control app from an earlier session is still running as process {backend}, \
-                     holding 127.0.0.1:{port} with your wallet loaded and no window on it, and it did not \
-                     stop when asked. Quit it (`kill {backend}`) and open Phosphor again."
+                return Err(Failure::starting(
+                    OLD_SESSION,
+                    format!(
+                        "A Phosphor backend from an earlier session is still running as process {backend}, \
+                         holding 127.0.0.1:{port} with your wallet loaded and no window on it, and it did not \
+                         stop when asked. Quit it (`kill {backend}`) and open Phosphor again."
+                    ),
                 ));
             }
             // The orphan is gone, so whatever answers now is judged as if it had never been there.
-            if let Launch::Refuse(why) = launch(port, occupant(port), None, None) {
-                return Err(why);
+            if let Launch::Refuse { message, detail } = launch(port, occupant(port), None, None) {
+                return Err(Failure::starting(message, detail));
             }
         }
     }
 
     let child = {
         let hand = app.state::<Secrets>();
-        spawn_backend(&payload, &data, &hand.0)?
+        spawn_backend(&payload, &data, &hand.0).map_err(|e| Failure::starting(START_BLOCKED, e))?
     };
     app.state::<Backend>().adopt(child, pid_file_path(&data));
 
@@ -833,9 +1044,11 @@ fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), String> {
                 let _ = dead.clone().run_on_main_thread(move || {
                     fail(
                         &dead,
-                        "The control app stopped while starting up. Its error is in Console.app under Phosphor. \
-                         The two usual causes are a port already in use and a state file it refused to read."
-                            .to_string(),
+                        Failure::starting(
+                            EXITED_STARTING,
+                            "The backend exited before it answered. Its error is in Console.app under Phosphor. \
+                             The two usual causes are a port already in use and a state file it refused to read.",
+                        ),
                     );
                 });
                 return;
@@ -846,7 +1059,7 @@ fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), String> {
                 let ready = handle.clone();
                 let _ = ready.clone().run_on_main_thread(move || {
                     if let Err(err) = open_control_window(&ready, port) {
-                        fail(&ready, err);
+                        fail(&ready, Failure::starting(NO_WINDOW, err));
                     }
                 });
                 update::schedule(&handle);
@@ -858,7 +1071,10 @@ fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), String> {
         }
         let late = handle.clone();
         let _ = late.clone().run_on_main_thread(move || {
-            fail(&late, format!("The control app did not answer on 127.0.0.1:{port} within {}s.", READY_TIMEOUT.as_secs()));
+            fail(
+                &late,
+                Failure::starting(TOO_SLOW, format!("The backend did not answer on 127.0.0.1:{port} within {}s.", READY_TIMEOUT.as_secs())),
+            );
         });
     });
     Ok(())
@@ -907,9 +1123,18 @@ fn main() {
         .manage(Backend::new())
         .manage(Secrets(secrets))
         .manage(update::Updates::default())
-        // The only commands this shell has, and only the update window can call them: the
-        // control window is a remote page, which the ACL keeps away from app commands.
-        .invoke_handler(tauri::generate_handler![update::update_install, update::update_dismiss])
+        .manage(SplashPage::default())
+        .manage(Retrying::default())
+        // The only commands this shell has, and only the splash and the update window can call
+        // them, each its own: the control window is a remote page, which the ACL keeps away from
+        // app commands.
+        .invoke_handler(tauri::generate_handler![
+            update::update_install,
+            update::update_dismiss,
+            update::update_retry,
+            splash_retry,
+            splash_quit
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
             // Surveyed before anything is drawn, so a second copy of this app gives way to the
@@ -922,17 +1147,9 @@ fn main() {
             app.set_menu(build_menu(&handle)?)?;
             app.on_menu_event(on_menu);
 
-            // The splash paints the window's one colourway, green on black, and receives no
-            // script: nothing read off the disk reaches it.
-            WebviewWindowBuilder::new(&handle, "splash", WebviewUrl::App("index.html".into()))
-                .title("Phosphor")
-                .inner_size(420.0, 300.0)
-                .resizable(false)
-                .center()
-                .build()?;
-
-            if let Err(err) = found.and_then(|found| start(&handle, found)) {
-                fail(&handle, err);
+            open_splash(&handle, None)?;
+            if let Err(failure) = found.map_err(|e| Failure::starting(START_BLOCKED, e)).and_then(|found| start(&handle, found)) {
+                fail(&handle, failure);
             }
             Ok(())
         })
@@ -953,6 +1170,11 @@ fn main() {
 mod tests {
     use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL, log_from_response, log_lines, query_value, report_url, HELP_LINKS, HELP_REPORT_ID};
     use super::{launch, running_copy, Launch, Occupant, PidRecord};
+    use super::{failure_script, notice_script, splash_init, Failure, DID_NOT_OPEN, STOPPED};
+    use super::{
+        EXITED_STARTING, MCP_COPIED, NOT_BACK, NOT_RESTARTED, NO_WINDOW, OLD_SESSION, OTHER_PHOSPHOR, PORT_TAKEN, RESTARTED, START_BLOCKED,
+        STOPPED_TWICE, TAKEN_ON_RESTART, TOO_SLOW,
+    };
     use std::time::Duration;
 
     const NONCE: &str = "abc123";
@@ -1076,15 +1298,76 @@ mod tests {
 
     #[test]
     fn what_this_app_cannot_vouch_for_is_still_refused_in_plain_english() {
-        let Launch::Refuse(stranger) = launch(4177, Occupant::Stranger, None, None) else {
+        let Launch::Refuse { message, detail: stranger } = launch(4177, Occupant::Stranger, None, None) else {
             panic!("another program on the port is refused");
         };
+        assert_eq!(message, PORT_TAKEN);
         assert!(stranger.starts_with("Another program is already using 127.0.0.1:4177"), "{stranger}");
-        let Launch::Refuse(unknown) = launch(4177, Occupant::Phosphor, None, None) else {
+        let Launch::Refuse { message, detail: unknown } = launch(4177, Occupant::Phosphor, None, None) else {
             panic!("a Phosphor this app did not start is refused, never attached to");
         };
+        assert_eq!(message, OTHER_PHOSPHOR);
         assert!(unknown.contains("did not start") && unknown.contains("127.0.0.1:4177"), "{unknown}");
         assert!(!unknown.contains("`kill "), "nothing here was proved an orphan, so no pid is offered to kill");
+    }
+
+    // Every sentence a person reads from this shell: plain, whole, and free of the machinery.
+    // The port, the timeout and the backend's name stay in the reason behind Details.
+    const SAID: [&str; 13] = [
+        START_BLOCKED, PORT_TAKEN, OTHER_PHOSPHOR, OLD_SESSION, EXITED_STARTING, TOO_SLOW, NO_WINDOW, STOPPED_TWICE,
+        TAKEN_ON_RESTART, NOT_BACK, NOT_RESTARTED, RESTARTED, MCP_COPIED,
+    ];
+
+    #[test]
+    fn every_sentence_a_person_reads_is_plain_and_names_no_machinery() {
+        for said in SAID {
+            let lower = said.to_lowercase();
+            for banned in ["control app", "127.0.0.1", "port", "backend", "process", "node", "config", "seconds"] {
+                assert!(!lower.contains(banned), "{said:?} says {banned:?}");
+            }
+            assert!(!said.chars().any(|c| c.is_ascii_digit()), "{said:?} carries a number");
+            assert!(!said.contains('\u{2013}') && !said.contains('\u{2014}'), "{said:?} carries a dash");
+            assert!(said.ends_with('.'), "{said:?} is not a whole sentence");
+        }
+    }
+
+    #[test]
+    fn a_failure_reaches_the_splash_as_data_with_its_reason_behind_details() {
+        let reason = "spawn failed: </script><script>alert(1)</script>\n\"; x = 1; //";
+        let script = failure_script(&Failure::starting(START_BLOCKED, reason));
+        assert!(script.starts_with("window.__phosphorFailed({") && script.ends_with("})"), "{script}");
+        assert!(!script.contains('<') && !script.contains('\n'), "{script}");
+        let literal = &script["window.__phosphorFailed(".len()..script.len() - 1];
+        let back: serde_json::Value = serde_json::from_str(literal).unwrap();
+        assert_eq!(back["title"], DID_NOT_OPEN);
+        assert_eq!(back["message"], START_BLOCKED);
+        assert_eq!(back["detail"], reason, "the reason arrives whole, as text");
+        assert_eq!(Failure::stopped(NOT_BACK, "x").title, STOPPED);
+    }
+
+    #[test]
+    fn the_splash_starts_in_the_state_the_shell_gives_it() {
+        assert_eq!(splash_init(None), r#"window.__PHOSPHOR_SPLASH__ = {"state":"starting"};"#);
+        let failed = splash_init(Some(&Failure::stopped(STOPPED_TWICE, "exit </b>")));
+        let literal = failed.trim_start_matches("window.__PHOSPHOR_SPLASH__ = ").trim_end_matches(';');
+        assert!(!literal.contains('<'));
+        let back: serde_json::Value = serde_json::from_str(literal).unwrap();
+        assert_eq!(back["state"], "failed");
+        assert_eq!(back["title"], STOPPED);
+        assert_eq!(back["message"], STOPPED_TWICE);
+        assert_eq!(back["detail"], "exit </b>");
+    }
+
+    #[test]
+    fn a_notice_line_reaches_the_window_as_text() {
+        let line = "copied </span><img src=x onerror=alert(1)>\n\"; //";
+        let script = notice_script(line);
+        assert!(!script.contains('<') && !script.contains('\n'), "{script}");
+        assert!(script.contains("window.__phosphorShellNotice(text)"), "the page's own hook is asked first");
+        assert!(script.contains("textContent = text"), "the fallback sets it as text, never as markup");
+        let start = script.rfind("})(").expect("the line is passed in last") + 3;
+        let back: serde_json::Value = serde_json::from_str(&script[start..script.len() - 1]).unwrap();
+        assert_eq!(back, line);
     }
 
     #[test]

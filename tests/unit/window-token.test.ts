@@ -70,17 +70,20 @@ test('the shell and the backend agree on the channel and the injected global', (
   assert.ok(shell.includes('.initialization_script(&script)'), 'through an initialization script, so it runs before page script');
   // On the control window only. A splash that carried the token would put it on a second webview
   // for no reason, and the splash is created by a different builder call. Since the window went
-  // dark only (2026-09-15) the splash receives no script at all: nothing read off the disk
-  // reaches it, and the colourway it paints is the one in its own stylesheet.
+  // dark only (2026-09-15) nothing read off the disk reaches the splash, and the colourway it
+  // paints is the one in its own stylesheet. Its one script is its state, starting or failed
+  // (splash_init), so a failure is drawn in the app's own look instead of a system alert.
   const controlBlock = shell.slice(shell.indexOf('fn open_control_window'), shell.indexOf('fn open_in_browser'));
-  assert.ok(controlBlock.includes('initialization_script'), 'the injection sits in open_control_window');
-  const splashStart = shell.indexOf('WebviewWindowBuilder::new(&handle, "splash"');
-  assert.ok(splashStart >= 0, 'the splash builder is where it was');
-  const splashBlock = shell.slice(splashStart, shell.indexOf('.build()?;', splashStart));
+  assert.ok(controlBlock.includes('initialization_script(&script)'), 'the injection sits in open_control_window');
+  assert.equal(shell.split('initialization_script(&script)').length, 2, 'the token script is injected once, into the control window');
+  const splashStart = shell.indexOf('fn open_splash');
+  assert.ok(splashStart >= 0, 'the splash has one builder');
+  const splashBlock = shell.slice(splashStart, shell.indexOf('.build()', splashStart));
+  assert.ok(splashBlock.includes('WebviewWindowBuilder::new(app, SPLASH'), 'and it builds the splash');
   assert.ok(!splashBlock.includes('__PHOSPHOR_TOKEN__'), 'the splash window never receives the token');
   assert.ok(!splashBlock.includes('token'), 'nothing named token reaches the splash builder');
-  assert.ok(!shell.slice(shell.indexOf('"splash"')).includes('initialization_script(&script)'), 'the token script is injected once, before the splash is ever named');
-  assert.ok(!splashBlock.includes('initialization_script'), 'the splash receives no script at all');
+  assert.equal(splashBlock.split('initialization_script').length, 2, 'the splash is given one script');
+  assert.ok(splashBlock.includes('.initialization_script(&splash_init(failed))'), 'and that script is its state');
   assert.ok(!shell.includes('__PHOSPHOR_PROFILE__'), 'no colourway is read off the disk and handed to a page');
 });
 
