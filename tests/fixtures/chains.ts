@@ -9,7 +9,7 @@ export const CHAINS_SOURCE = readFileSync(new URL('../../ui/core/chains.js', imp
 
 export const CHAIN_ROWS = [...RECEIVE_NETWORKS, ...SPEND_NETWORKS]
   .filter((n, i, all) => all.findIndex((m) => m.id === n.id) === i)
-  .map((n) => ({ id: n.id, name: n.name, mark: n.mark, colour: n.colour }));
+  .map((n) => ({ id: n.id, name: n.name, mark: n.mark }));
 
 // The window as a card test builds it: run chains.js in the sandbox and fill its table once.
 export function fillChains(sandbox: Record<string, unknown>, run: (source: string, name: string) => void): void {

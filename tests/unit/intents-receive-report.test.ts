@@ -139,11 +139,12 @@ test('every row carries the registry fields the window draws by, and the six qui
     assert.deepEqual(rest.map((n) => n.name), [...rest.map((n) => n.name)].sort((x, y) => x.localeCompare(y, 'en')), 'the rest are not by name');
     const btc = net(report, 'btc');
     assert.deepEqual(
-      { name: btc.name, words: btc.words, bridge: btc.bridge, kind: btc.kind, native: btc.native, mark: btc.mark, colour: btc.colour, popular: btc.popular },
-      { name: 'Bitcoin', words: 'Bitcoin (BTC)', bridge: 'btc:mainnet', kind: 'other', native: 'BTC', mark: 'BTC', colour: '#F7931A', popular: true },
+      { name: btc.name, words: btc.words, bridge: btc.bridge, kind: btc.kind, native: btc.native, mark: btc.mark, popular: btc.popular },
+      { name: 'Bitcoin', words: 'Bitcoin (BTC)', bridge: 'btc:mainnet', kind: 'other', native: 'BTC', mark: 'BTC', popular: true },
     );
     assert.equal(btc.address, shapedAddress('btc:mainnet'));
-    assert.deepEqual(Object.keys(btc), ['id', 'name', 'words', 'bridge', 'kind', 'native', 'mark', 'colour', 'popular', 'address', 'memo', 'unavailable', 'sharedWith', 'warning', 'accepts', 'changed']);
+    // No colour: the window has one colour table, keyed by the mark (PhosphorMarks.colourFor).
+    assert.deepEqual(Object.keys(btc), ['id', 'name', 'words', 'bridge', 'kind', 'native', 'mark', 'popular', 'address', 'memo', 'unavailable', 'sharedWith', 'warning', 'accepts', 'changed']);
   } finally {
     b.restore();
   }
@@ -258,7 +259,7 @@ test('the registry covers every network prefix in the live token list, once each
   assert.equal(new Set(RECEIVE_NETWORKS.map((n) => n.id)).size, RECEIVE_NETWORKS.length, 'two networks share an id');
   assert.deepEqual(RECEIVE_NETWORKS.filter((n) => n.popular).map((n) => n.id), ['eth', 'base', 'arb', 'sol', 'near', 'btc']);
   for (const n of RECEIVE_NETWORKS) {
-    assert.match(n.colour, /^#[0-9A-F]{6}$/, `${n.id} has no brand hex`);
+    assert.equal('colour' in n, false, `${n.id} carries a colour beside the window's one table`);
     assert.ok(n.name !== '' && n.words !== '' && n.native !== '' && n.mark !== '', `${n.id} is missing a word`);
   }
 });

@@ -47,8 +47,6 @@ export type ReceiveNetwork = {
   native: string;
   // The symbol marks.js draws the tile with.
   mark: string;
-  // The brand hex, or the quiet grey where the chain has no colour anyone knows.
-  colour: string;
   // The six quick tiles. Everything else is reached through the search.
   popular: boolean;
   /* The name 1Click's token list gives this chain, which is NOT always our id: the list says
@@ -63,7 +61,7 @@ export type ReceiveNetwork = {
   pay: 'evm' | 'sol' | 'near' | null;
 };
 
-const QUIET = '#8A8F98';
+// No colour here: the window has one colour table, keyed by the mark (PhosphorMarks.colourFor).
 
 /* Every network the bridge lists in supported_tokens, verified against the live list on
    2026-09-16 (34 prefixes). The bridge names networks with the defuse asset identifier prefix,
@@ -73,43 +71,43 @@ const QUIET = '#8A8F98';
    EVM names are the ones chainid.network gives the chain ids. A prefix the bridge adds after this
    list was written is not invented here: the report shows it under its raw key. */
 export const RECEIVE_NETWORKS: readonly ReceiveNetwork[] = [
-  { id: 'eth', name: 'Ethereum', words: 'Ethereum (ERC-20)', bridge: 'eth:1', kind: 'evm', native: 'ETH', mark: 'ETH', colour: '#627EEA', popular: true , venue: 'eth', pay: 'evm' },
-  { id: 'base', name: 'Base', words: 'Base', bridge: 'eth:8453', kind: 'evm', native: 'ETH', mark: 'BASE', colour: '#0052FF', popular: true , venue: 'base', pay: 'evm' },
-  { id: 'arb', name: 'Arbitrum', words: 'Arbitrum One', bridge: 'eth:42161', kind: 'evm', native: 'ETH', mark: 'ARB', colour: '#12AAFF', popular: true , venue: 'arb', pay: 'evm' },
-  { id: 'sol', name: 'Solana', words: 'Solana (SPL)', bridge: 'sol:mainnet', kind: 'sol', native: 'SOL', mark: 'SOL', colour: '#9945FF', popular: true , venue: 'sol', pay: 'sol' },
-  { id: 'near', name: 'NEAR', words: 'NEAR Protocol', bridge: 'near:mainnet', kind: 'near', native: 'NEAR', mark: 'NEAR', colour: '#00EC97', popular: true , venue: 'near', pay: 'near' },
-  { id: 'btc', name: 'Bitcoin', words: 'Bitcoin (BTC)', bridge: 'btc:mainnet', kind: 'other', native: 'BTC', mark: 'BTC', colour: '#F7931A', popular: true , venue: 'btc', pay: null },
-  { id: 'bch', name: 'Bitcoin Cash', words: 'Bitcoin Cash (BCH)', bridge: 'bch:mainnet', kind: 'other', native: 'BCH', mark: 'BCH', colour: '#8DC351', popular: false , venue: 'bch', pay: null },
-  { id: 'ltc', name: 'Litecoin', words: 'Litecoin (LTC)', bridge: 'ltc:mainnet', kind: 'other', native: 'LTC', mark: 'LTC', colour: '#345D9D', popular: false , venue: 'ltc', pay: null },
-  { id: 'doge', name: 'Dogecoin', words: 'Dogecoin (DOGE)', bridge: 'doge:mainnet', kind: 'other', native: 'DOGE', mark: 'DOGE', colour: '#C2A633', popular: false , venue: 'doge', pay: null },
-  { id: 'dash', name: 'Dash', words: 'Dash (DASH)', bridge: 'dash:mainnet', kind: 'other', native: 'DASH', mark: 'DASH', colour: '#008DE4', popular: false , venue: 'dash', pay: null },
-  { id: 'zec', name: 'Zcash', words: 'Zcash (ZEC)', bridge: 'zec:mainnet', kind: 'other', native: 'ZEC', mark: 'ZEC', colour: '#F4B728', popular: false , venue: 'zec', pay: null },
-  { id: 'xrp', name: 'XRP Ledger', words: 'XRP Ledger (XRP)', bridge: 'xrp:mainnet', kind: 'other', native: 'XRP', mark: 'XRP', colour: QUIET, popular: false , venue: 'xrp', pay: null },
-  { id: 'ton', name: 'TON', words: 'TON (The Open Network)', bridge: 'ton:mainnet', kind: 'other', native: 'GRAM', mark: 'TON', colour: '#0098EA', popular: false , venue: 'ton', pay: null },
-  { id: 'tron', name: 'Tron', words: 'Tron (TRC-20)', bridge: 'tron:mainnet', kind: 'other', native: 'TRX', mark: 'TRX', colour: '#FF060A', popular: false , venue: 'tron', pay: null },
-  { id: 'sui', name: 'Sui', words: 'Sui (SUI)', bridge: 'sui:mainnet', kind: 'other', native: 'SUI', mark: 'SUI', colour: '#4DA2FF', popular: false , venue: 'sui', pay: null },
-  { id: 'aptos', name: 'Aptos', words: 'Aptos (APT)', bridge: 'aptos:mainnet', kind: 'other', native: 'APT', mark: 'APT', colour: '#00D2CE', popular: false , venue: 'aptos', pay: null },
-  { id: 'cardano', name: 'Cardano', words: 'Cardano (ADA)', bridge: 'cardano:mainnet', kind: 'other', native: 'ADA', mark: 'ADA', colour: '#0033AD', popular: false , venue: 'cardano', pay: null },
-  { id: 'stellar', name: 'Stellar', words: 'Stellar (XLM)', bridge: 'stellar:mainnet', kind: 'other', native: 'XLM', mark: 'XLM', colour: '#7D00FF', popular: false , venue: 'stellar', pay: null },
-  { id: 'starknet', name: 'Starknet', words: 'Starknet', bridge: 'starknet:mainnet', kind: 'other', native: 'STRK', mark: 'STRK', colour: '#EC796B', popular: false , venue: 'starknet', pay: null },
-  { id: 'aleo', name: 'Aleo', words: 'Aleo', bridge: 'aleo:mainnet', kind: 'other', native: 'ALEO', mark: 'ALEO', colour: QUIET, popular: false , venue: 'aleo', pay: null },
+  { id: 'eth', name: 'Ethereum', words: 'Ethereum (ERC-20)', bridge: 'eth:1', kind: 'evm', native: 'ETH', mark: 'ETH', popular: true , venue: 'eth', pay: 'evm' },
+  { id: 'base', name: 'Base', words: 'Base', bridge: 'eth:8453', kind: 'evm', native: 'ETH', mark: 'BASE', popular: true , venue: 'base', pay: 'evm' },
+  { id: 'arb', name: 'Arbitrum', words: 'Arbitrum One', bridge: 'eth:42161', kind: 'evm', native: 'ETH', mark: 'ARB', popular: true , venue: 'arb', pay: 'evm' },
+  { id: 'sol', name: 'Solana', words: 'Solana (SPL)', bridge: 'sol:mainnet', kind: 'sol', native: 'SOL', mark: 'SOL', popular: true , venue: 'sol', pay: 'sol' },
+  { id: 'near', name: 'NEAR', words: 'NEAR Protocol', bridge: 'near:mainnet', kind: 'near', native: 'NEAR', mark: 'NEAR', popular: true , venue: 'near', pay: 'near' },
+  { id: 'btc', name: 'Bitcoin', words: 'Bitcoin (BTC)', bridge: 'btc:mainnet', kind: 'other', native: 'BTC', mark: 'BTC', popular: true , venue: 'btc', pay: null },
+  { id: 'bch', name: 'Bitcoin Cash', words: 'Bitcoin Cash (BCH)', bridge: 'bch:mainnet', kind: 'other', native: 'BCH', mark: 'BCH', popular: false , venue: 'bch', pay: null },
+  { id: 'ltc', name: 'Litecoin', words: 'Litecoin (LTC)', bridge: 'ltc:mainnet', kind: 'other', native: 'LTC', mark: 'LTC', popular: false , venue: 'ltc', pay: null },
+  { id: 'doge', name: 'Dogecoin', words: 'Dogecoin (DOGE)', bridge: 'doge:mainnet', kind: 'other', native: 'DOGE', mark: 'DOGE', popular: false , venue: 'doge', pay: null },
+  { id: 'dash', name: 'Dash', words: 'Dash (DASH)', bridge: 'dash:mainnet', kind: 'other', native: 'DASH', mark: 'DASH', popular: false , venue: 'dash', pay: null },
+  { id: 'zec', name: 'Zcash', words: 'Zcash (ZEC)', bridge: 'zec:mainnet', kind: 'other', native: 'ZEC', mark: 'ZEC', popular: false , venue: 'zec', pay: null },
+  { id: 'xrp', name: 'XRP Ledger', words: 'XRP Ledger (XRP)', bridge: 'xrp:mainnet', kind: 'other', native: 'XRP', mark: 'XRP', popular: false , venue: 'xrp', pay: null },
+  { id: 'ton', name: 'TON', words: 'TON (The Open Network)', bridge: 'ton:mainnet', kind: 'other', native: 'GRAM', mark: 'TON', popular: false , venue: 'ton', pay: null },
+  { id: 'tron', name: 'Tron', words: 'Tron (TRC-20)', bridge: 'tron:mainnet', kind: 'other', native: 'TRX', mark: 'TRX', popular: false , venue: 'tron', pay: null },
+  { id: 'sui', name: 'Sui', words: 'Sui (SUI)', bridge: 'sui:mainnet', kind: 'other', native: 'SUI', mark: 'SUI', popular: false , venue: 'sui', pay: null },
+  { id: 'aptos', name: 'Aptos', words: 'Aptos (APT)', bridge: 'aptos:mainnet', kind: 'other', native: 'APT', mark: 'APT', popular: false , venue: 'aptos', pay: null },
+  { id: 'cardano', name: 'Cardano', words: 'Cardano (ADA)', bridge: 'cardano:mainnet', kind: 'other', native: 'ADA', mark: 'ADA', popular: false , venue: 'cardano', pay: null },
+  { id: 'stellar', name: 'Stellar', words: 'Stellar (XLM)', bridge: 'stellar:mainnet', kind: 'other', native: 'XLM', mark: 'XLM', popular: false , venue: 'stellar', pay: null },
+  { id: 'starknet', name: 'Starknet', words: 'Starknet', bridge: 'starknet:mainnet', kind: 'other', native: 'STRK', mark: 'STRK', popular: false , venue: 'starknet', pay: null },
+  { id: 'aleo', name: 'Aleo', words: 'Aleo', bridge: 'aleo:mainnet', kind: 'other', native: 'ALEO', mark: 'ALEO', popular: false , venue: 'aleo', pay: null },
   // Fogo runs the Solana virtual machine and its addresses are base58 like Solana's.
-  { id: 'fogo', name: 'Fogo', words: 'Fogo', bridge: 'fogo:mainnet', kind: 'sol', native: 'FOGO', mark: 'FOGO', colour: QUIET, popular: false , venue: 'fogo', pay: 'sol' },
-  { id: 'movement', name: 'Movement', words: 'Movement', bridge: 'movement:mainnet', kind: 'other', native: 'MOVE', mark: 'MOVE', colour: QUIET, popular: false , venue: 'movement', pay: null },
+  { id: 'fogo', name: 'Fogo', words: 'Fogo', bridge: 'fogo:mainnet', kind: 'sol', native: 'FOGO', mark: 'FOGO', popular: false , venue: 'fogo', pay: 'sol' },
+  { id: 'movement', name: 'Movement', words: 'Movement', bridge: 'movement:mainnet', kind: 'other', native: 'MOVE', mark: 'MOVE', popular: false , venue: 'movement', pay: null },
   // HyperCore credits an EVM address: the bridge hands back the same address as the EVM chains.
-  { id: 'hypercore', name: 'Hyperliquid', words: 'Hyperliquid (HyperCore)', bridge: 'hypercore:mainnet', kind: 'evm', native: 'HYPE', mark: 'HYPE', colour: '#97FCE4', popular: false , venue: 'hypercore', pay: 'evm' },
-  { id: 'op', name: 'Optimism', words: 'Optimism (OP Mainnet)', bridge: 'eth:10', kind: 'evm', native: 'ETH', mark: 'OP', colour: '#FF0420', popular: false , venue: 'op', pay: 'evm' },
-  { id: 'gnosis', name: 'Gnosis', words: 'Gnosis Chain', bridge: 'eth:100', kind: 'evm', native: 'xDAI', mark: 'GNO', colour: '#3E6957', popular: false , venue: 'gnosis', pay: 'evm' },
-  { id: 'polygon', name: 'Polygon', words: 'Polygon (POS)', bridge: 'eth:137', kind: 'evm', native: 'POL', mark: 'POL', colour: '#8247E5', popular: false , venue: 'pol', pay: 'evm' },
-  { id: 'monad', name: 'Monad', words: 'Monad', bridge: 'eth:143', kind: 'evm', native: 'MON', mark: 'MON', colour: '#836EF9', popular: false , venue: 'monad', pay: 'evm' },
-  { id: 'xlayer', name: 'X Layer', words: 'X Layer (OKX)', bridge: 'eth:196', kind: 'evm', native: 'OKB', mark: 'XLAYER', colour: QUIET, popular: false , venue: 'xlayer', pay: 'evm' },
-  { id: 'adi', name: 'ADI Chain', words: 'ADI Chain', bridge: 'eth:36900', kind: 'evm', native: 'ADI', mark: 'ADI', colour: QUIET, popular: false , venue: 'adi', pay: 'evm' },
-  { id: 'avax', name: 'Avalanche', words: 'Avalanche (C-Chain)', bridge: 'eth:43114', kind: 'evm', native: 'AVAX', mark: 'AVAX', colour: '#E84142', popular: false , venue: 'avax', pay: 'evm' },
-  { id: 'robinhood', name: 'Robinhood Chain', words: 'Robinhood Chain', bridge: 'eth:4663', kind: 'evm', native: 'ETH', mark: 'ROBINHOOD', colour: QUIET, popular: false , venue: 'hood', pay: 'evm' },
-  { id: 'scroll', name: 'Scroll', words: 'Scroll', bridge: 'eth:534352', kind: 'evm', native: 'ETH', mark: 'SCROLL', colour: '#FFEEDA', popular: false , venue: 'scroll', pay: 'evm' },
-  { id: 'bnb', name: 'BNB Smart Chain', words: 'BNB Smart Chain (BEP-20)', bridge: 'eth:56', kind: 'evm', native: 'BNB', mark: 'BNB', colour: '#F3BA2F', popular: false , venue: 'bsc', pay: 'evm' },
-  { id: 'bera', name: 'Berachain', words: 'Berachain', bridge: 'eth:80094', kind: 'evm', native: 'BERA', mark: 'BERA', colour: '#814625', popular: false , venue: 'bera', pay: 'evm' },
-  { id: 'plasma', name: 'Plasma', words: 'Plasma', bridge: 'eth:9745', kind: 'evm', native: 'XPL', mark: 'XPL', colour: '#00FF85', popular: false , venue: 'plasma', pay: 'evm' },
+  { id: 'hypercore', name: 'Hyperliquid', words: 'Hyperliquid (HyperCore)', bridge: 'hypercore:mainnet', kind: 'evm', native: 'HYPE', mark: 'HYPE', popular: false , venue: 'hypercore', pay: 'evm' },
+  { id: 'op', name: 'Optimism', words: 'Optimism (OP Mainnet)', bridge: 'eth:10', kind: 'evm', native: 'ETH', mark: 'OP', popular: false , venue: 'op', pay: 'evm' },
+  { id: 'gnosis', name: 'Gnosis', words: 'Gnosis Chain', bridge: 'eth:100', kind: 'evm', native: 'xDAI', mark: 'GNO', popular: false , venue: 'gnosis', pay: 'evm' },
+  { id: 'polygon', name: 'Polygon', words: 'Polygon (POS)', bridge: 'eth:137', kind: 'evm', native: 'POL', mark: 'POL', popular: false , venue: 'pol', pay: 'evm' },
+  { id: 'monad', name: 'Monad', words: 'Monad', bridge: 'eth:143', kind: 'evm', native: 'MON', mark: 'MON', popular: false , venue: 'monad', pay: 'evm' },
+  { id: 'xlayer', name: 'X Layer', words: 'X Layer (OKX)', bridge: 'eth:196', kind: 'evm', native: 'OKB', mark: 'XLAYER', popular: false , venue: 'xlayer', pay: 'evm' },
+  { id: 'adi', name: 'ADI Chain', words: 'ADI Chain', bridge: 'eth:36900', kind: 'evm', native: 'ADI', mark: 'ADI', popular: false , venue: 'adi', pay: 'evm' },
+  { id: 'avax', name: 'Avalanche', words: 'Avalanche (C-Chain)', bridge: 'eth:43114', kind: 'evm', native: 'AVAX', mark: 'AVAX', popular: false , venue: 'avax', pay: 'evm' },
+  { id: 'robinhood', name: 'Robinhood Chain', words: 'Robinhood Chain', bridge: 'eth:4663', kind: 'evm', native: 'ETH', mark: 'ROBINHOOD', popular: false , venue: 'hood', pay: 'evm' },
+  { id: 'scroll', name: 'Scroll', words: 'Scroll', bridge: 'eth:534352', kind: 'evm', native: 'ETH', mark: 'SCROLL', popular: false , venue: 'scroll', pay: 'evm' },
+  { id: 'bnb', name: 'BNB Smart Chain', words: 'BNB Smart Chain (BEP-20)', bridge: 'eth:56', kind: 'evm', native: 'BNB', mark: 'BNB', popular: false , venue: 'bsc', pay: 'evm' },
+  { id: 'bera', name: 'Berachain', words: 'Berachain', bridge: 'eth:80094', kind: 'evm', native: 'BERA', mark: 'BERA', popular: false , venue: 'bera', pay: 'evm' },
+  { id: 'plasma', name: 'Plasma', words: 'Plasma', bridge: 'eth:9745', kind: 'evm', native: 'XPL', mark: 'XPL', popular: false , venue: 'plasma', pay: 'evm' },
 ];
 
 /* The chains the venue lists a token on that the bridge lists no prefix for, so money can be
@@ -118,7 +116,7 @@ export const RECEIVE_NETWORKS: readonly ReceiveNetwork[] = [
    does not know is a deposit address that cannot be minted. `bridge` is the eth chain id, which
    is what the bridge will key the chain by the day it appears. */
 const SPEND_ONLY_NETWORKS: readonly ReceiveNetwork[] = [
-  { id: 'abs', name: 'Abstract', words: 'Abstract', bridge: 'eth:2741', kind: 'evm', native: 'ETH', mark: 'ABS', colour: QUIET, popular: false, venue: 'abs', pay: 'evm' },
+  { id: 'abs', name: 'Abstract', words: 'Abstract', bridge: 'eth:2741', kind: 'evm', native: 'ETH', mark: 'ABS', popular: false, venue: 'abs', pay: 'evm' },
 ];
 
 const BY_ID = new Map(RECEIVE_NETWORKS.map((n) => [n.id, n]));

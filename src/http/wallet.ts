@@ -484,7 +484,6 @@ export type IntentsReceiveNetwork = {
   kind: ReceiveKind;
   native: string;
   mark: string;
-  colour: string;
   popular: boolean;
   address: string | null;
   memo: string | null;
@@ -662,7 +661,7 @@ function unknownNetwork(bridge: string, tokens: PoaToken[]): ReceiveNetwork {
   const native = tokens.find((t) => t.network === bridge && t.contract === null)?.symbol ?? '';
   /* venue and pay are null for the same reason the name is the raw key: nothing is known about
      this chain here, and a guessed venue name prices a quote against whatever chain owns it. */
-  return { id: bridge, name: bridge, words: bridge, bridge, kind: 'other', native, mark: native, colour: '#8A8F98', popular: false, venue: null, pay: null };
+  return { id: bridge, name: bridge, words: bridge, bridge, kind: 'other', native, mark: native, popular: false, venue: null, pay: null };
 }
 
 /* The 1Click price list, as assetId -> dollars, through the seam main.ts wires. A report never
@@ -840,7 +839,6 @@ export async function intentsReceiveReport(ctx: Ctx, opts: { force?: boolean } =
       kind: row.net.kind,
       native: row.net.native,
       mark: row.net.mark,
-      colour: row.net.colour,
       popular: row.net.popular,
       address: row.got?.address ?? null,
       memo: row.got?.memo ?? null,
