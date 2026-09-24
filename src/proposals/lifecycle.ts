@@ -419,7 +419,7 @@ export function newProposal(
   draft: WriteDraft,
   simulation: SimulationResult | null,
   verdict: Verdict,
-  origin?: { clientKey?: ClientKey; by?: string | null },
+  origin?: { clientKey?: ClientKey; by?: string | null; webRead?: boolean },
 ): Proposal {
   const clientKey = origin?.clientKey;
   const by = typeof origin?.by === 'string' && origin.by !== '' ? origin.by : undefined;
@@ -436,6 +436,8 @@ export function newProposal(
     ...(clientKey === undefined ? {} : { clientKey }),
     // The seat that proposed it, for the ending notice (src/http/ended.ts).
     ...(by === undefined ? {} : { by }),
+    // The web-read stamp the service took when the move was asked for (src/web-read.ts).
+    ...(origin?.webRead === true ? { webRead: true as const } : {}),
   };
 }
 

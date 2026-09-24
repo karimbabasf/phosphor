@@ -620,6 +620,9 @@ export type Proposal = {
   // that conversation when the row ends after its turn (src/http/ended.ts). Absent on a row
   // the app filed itself or a person filed from the window.
   by?: string;
+  // Set when that seat's agent had read the web in its session at the moment this was asked for
+  // (src/web-read.ts). land() makes such a row wait for a click, whatever its size.
+  webRead?: true;
   // Set when a person filed an unconfirmed row from the dock ("Got it, waiting on the venue").
   // The row stays needs_reconciliation, keeps counting against the day and keeps its place in
   // Activity; only the dock stops asking. Cleared the moment a re-check changes what the venue
