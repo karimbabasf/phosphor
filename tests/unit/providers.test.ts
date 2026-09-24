@@ -111,7 +111,7 @@ test('a web tool spelled the other vendor\'s way reads as web', () => {
   for (const name of ['web_fetch', 'Web_Fetch']) assert.deepEqual(claude.tool(name, {}), { kind: 'web', name: 'web_fetch' }, `claude ${name}`);
   assert.deepEqual(claude.tool('web_search', {}), { kind: 'web', name: 'web_search' });
   for (const name of ['WebFetch', 'webFetch']) assert.deepEqual(grok.tool(name, {}), { kind: 'web', name: 'web_fetch' }, `grok ${name}`);
-  assert.deepEqual(grok.tool('WebSearch', {}), { kind: 'web', name: 'web_search' });
+  for (const name of ['WebSearch', 'webSearch']) assert.deepEqual(grok.tool(name, {}), { kind: 'web', name: 'web_search' }, `grok ${name}`);
   assert.deepEqual(grok.tool('use_tool', { tool_name: 'WebFetch', tool_input: {} }), { kind: 'web', name: 'web_fetch' });
 });
 
