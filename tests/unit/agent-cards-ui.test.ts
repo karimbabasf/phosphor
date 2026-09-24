@@ -158,6 +158,7 @@ function build() {
   const win: Record<string, unknown> = {
     setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; },
     clearTimeout: () => {},
+    addEventListener: () => {},
     setInterval: () => 0,
     clearInterval: () => {},
     getComputedStyle: () => ({ lineHeight: '21px', paddingTop: '8px', paddingBottom: '8px' }),

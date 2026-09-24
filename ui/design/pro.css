@@ -11,13 +11,11 @@
    stacked layout in layout.css stands. */
 @media (min-width: 960px) {
   body[data-view="pro"] .stage,
-  body[data-view="trade"] .stage,
   body[data-view="vault"] .stage {
     grid-template-columns: minmax(0, 1fr) clamp(560px, var(--trade, 55vw), 1400px);
   }
 
   body[data-view="pro"] .stage > .conversation,
-  body[data-view="trade"] .stage > .conversation,
   body[data-view="vault"] .stage > .conversation {
     grid-column: 1;
     grid-row: 1;
@@ -25,14 +23,12 @@
   }
 
   body[data-view="pro"] .stage > .world,
-  body[data-view="trade"] .stage > .world,
   body[data-view="vault"] .stage > .world {
     grid-column: 2;
     grid-row: 1;
   }
 
   body[data-view="pro"] .stage > .split-v,
-  body[data-view="trade"] .stage > .split-v,
   body[data-view="vault"] .stage > .split-v {
     grid-column: 2;
     grid-row: 1;
@@ -48,31 +44,27 @@
    is, with the same hairline between them. The chart's canvas paints this
    ground too, so the trading side reads as one surface. */
 body[data-view="pro"] .world,
-body[data-view="trade"] .world,
 body[data-view="vault"] .world {
   background: var(--bg-1);
   border-left: 1px solid var(--line);
 }
 
 body[data-view="pro"] .notice,
-body[data-view="trade"] .notice,
 body[data-view="vault"] .notice {
   background: var(--bg-1);
   padding-inline: var(--s-5);
 }
 
-/* ---------- Pro and Trade are one screen ----------
+/* ---------- one trading screen ----------
 
    The money line (#view-pro) over the market, the chart and the deck
-   (#view-trade), on both names. The line keeps its own height; the trading
-   side below it takes the rest. */
-body[data-view="pro"] #view-trade,
-body[data-view="trade"] #view-pro {
+   (#view-trade), which the trade bundle builds into a view of its own. The
+   line keeps its own height; the trading side below it takes the rest. */
+body[data-view="pro"] #view-trade {
   display: flex;
 }
 
-body[data-view="pro"] #view-pro,
-body[data-view="trade"] #view-pro {
+body[data-view="pro"] #view-pro {
   flex: 0 0 auto;
 }
 

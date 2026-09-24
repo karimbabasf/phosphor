@@ -221,7 +221,7 @@ async function boot(data: unknown, opts: { candles?: unknown[]; reduced?: boolea
       },
       tradeAction: async () => ({ ok: true }),
     },
-    PhosphorShell: { view: () => 'trade', setPending: () => {} },
+    PhosphorShell: { view: () => 'pro', setPending: () => {} },
     PhosphorAgent: { mount: () => {} },
     PhosphorMarks: {
       logo: (symbol: string) => {

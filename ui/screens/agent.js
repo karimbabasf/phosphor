@@ -1092,7 +1092,6 @@
     var empty = !hasConversation();
     var failed = failure !== null && canStart();
     var away = canStart() ? awayReason() : '';
-    // The start buttons name the agent the person picked in the Vault.
     var word = pick && pick.inApp !== false && pick.name ? 'Start ' + pick.name : 'Start your assistant';
     dom.setText(refs.start.querySelector('.btn-label'), word);
     dom.setText(refs.startBig.querySelector('.btn-label'), word);
@@ -1937,14 +1936,6 @@
       ingest(event, false);
     });
 
-    // A pick in the Vault changes which agent Start names.
-    if (typeof window.addEventListener === 'function') window.addEventListener('phosphor:agent', function () {
-      api.driverState().then(function (r) {
-        var d = r.data || {};
-        if (d.agent && typeof d.agent === 'object') { pick = d.agent; renderAll(); }
-      }).catch(function () {});
-    });
-
     api.driverState().then(function (result) {
       var data = result.data || {};
       var chat = (data.chats && data.chats[0]) || {};
@@ -1959,6 +1950,17 @@
       markRestored();
     }).catch(function () {
       markRestored();
+    });
+
+    /* A pick in the Vault (or the first run) names the agent the next Start runs. */
+    window.addEventListener('phosphor:agent', function () {
+      api.driverState().then(function (r) {
+        var d = r.data || {};
+        if (d.agent && typeof d.agent === 'object') {
+          pick = d.agent;
+          renderAll();
+        }
+      }).catch(function () {});
     });
 
     api.connection().then(function (data) {
