@@ -207,7 +207,7 @@ test('every reason code maps to a plain state that agrees with its sentence', ()
     declined: ['didnt_go_through', /Nothing moved/],
     not_sent: ['didnt_go_through', /didn't go through\. Nothing left/],
     venue_failed_nothing_moved: ['didnt_go_through', /didn't go through\. Nothing left/],
-    venue_failed_watching: ['didnt_go_through', /didn't go through\. Your NEAR hasn't moved/],
+    venue_failed_watching: ['working', /^Still checking this swap\. Your NEAR hasn't moved so far/],
     venue_failed_refund_pending: ['coming_back', /until it comes back to your balance/],
     refunded: ['didnt_go_through', /sent your NEAR back/],
     short_fill: ['done', /went through, but/],

@@ -70,6 +70,7 @@ import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, s
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import { noReply, submitSignedIntent } from './intents-submit.ts';
 import { pickOrExplain, swapSummary } from './asset-words.ts';
+import { networkByVenue } from './intents-address.ts';
 import { ReasonError, quoteRefusalReason, reasonOf } from './reasons.ts';
 import { watchOneClick } from './watch.ts';
 
@@ -766,6 +767,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     originAsset: string;
     destinationAsset: string;
     destSymbol: string; // the bought coin as the list names it, for the summary a person reads
+    destNetwork: string | undefined; // and the network it is from, by name
     originDecimals: number;
     destDecimals: number;
     amountBase: bigint;
@@ -838,6 +840,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       originAsset: origin.assetId,
       destinationAsset: dest.assetId,
       destSymbol: list.find((t) => t.assetId === dest.assetId)?.symbol ?? draft.toSymbol,
+      destNetwork: networkByVenue(list.find((t) => t.assetId === dest.assetId)?.blockchain ?? '')?.name,
       originDecimals: origin.decimals,
       destDecimals: dest.decimals,
       // The exact decimal the draft was approved with. A row written before it existed carries
@@ -1050,7 +1053,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         `execution signs one intent with the EVM key and transfers nothing; the balance must already be ` +
           `inside ${INTENTS_VERIFIER}`,
       );
-      return { ok: true, summary: swapSummary(swap, p.destSymbol), developer: lines.join('\n'), swap };
+      return { ok: true, summary: swapSummary(swap, p.destSymbol, p.destNetwork), developer: lines.join('\n'), swap };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: '', developer: `intents-native simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };

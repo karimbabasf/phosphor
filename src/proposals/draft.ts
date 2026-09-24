@@ -69,8 +69,16 @@ export function pricedAs(symbol: string): string {
 // (stables are 1.0 everywhere in this app), then the native spot table, then 1Click's own price
 // for the asset held (listedPrice). null means this app cannot honestly price it.
 export function priceOf(ctx: PCtx, symbol: string, snapshot: LedgerSnapshot, assetId?: string): number | null {
+  return pricing(ctx, symbol, snapshot, assetId)?.price ?? null;
+}
+
+/* The same price with where it came from: a stable, the spot table, or 1Click's list, the price of
+   last resort. A swap priced by the list alone is bounded by its quote (src/proposals/rails.ts). */
+export type PriceSource = 'stable' | 'spot' | 'list';
+
+export function pricing(ctx: PCtx, symbol: string, snapshot: LedgerSnapshot, assetId?: string): { price: number; source: PriceSource } | null {
   const upper = symbol.toUpperCase();
-  if (ctx.stables.has(upper)) return 1;
+  if (ctx.stables.has(upper)) return { price: 1, source: 'stable' };
 
   // Spot comes BEFORE the holdings table, and the order is the whole point.
   //
@@ -85,14 +93,15 @@ export function priceOf(ctx: PCtx, symbol: string, snapshot: LedgerSnapshot, ass
   const key = pricedAs(upper);
   const spot = snapshot.prices[key];
   if (typeof spot === 'number' && Number.isFinite(spot) && spot > 0) {
-    return priceIsFresh(snapshot, key) ? spot : null;
+    return priceIsFresh(snapshot, key) ? { price: spot, source: 'spot' } : null;
   }
 
   // Then 1Click's own price for the coin held, the price of last resort. For anything it does not
   // price either, null: usdOf turns that into Infinity and the engine refuses it as
   // invalid_amount. A token the app cannot price is a token it cannot govern, and refusing beats
   // guessing 1.0 and letting an unbounded amount through.
-  return listedPrice(ctx, upper, assetId);
+  const listed = listedPrice(ctx, upper, assetId);
+  return listed === null ? null : { price: listed, source: 'list' };
 }
 
 /* 1CLICK'S PRICE FOR A COIN THE BALANCE HOLDS, off the token list the ledger labelled it from. Any
@@ -199,7 +208,8 @@ export async function presimulate(ctx: PCtx, kind: RailKind, draft: RailDraft): 
 // Shared tail for every rail: evaluate, simulate, persist, and execute only if the policy said
 // allow. Nothing here knows which rail it is holding. `presimulated` is the simulation a caller
 // took before the queue (presimulate), used instead of asking again.
-export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, origin?: Origin, presimulated?: SimulationResult | null): Promise<Proposal> {
+// `ask` is a reason the caller already holds for a person to look first: an allow becomes a click.
+export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, origin?: Origin, presimulated?: SimulationResult | null, ask?: string | null): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   const rail = ctx.rails.for(draft);
@@ -250,6 +260,8 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
       verdict = { ...verdict, reasons: [...verdict.reasons, unpriced] };
     }
   }
+
+  if (ask !== undefined && ask !== null && verdict.outcome === 'allow') verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, ask] };
 
   if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, simulation, verdict, origin));
 

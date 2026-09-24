@@ -95,7 +95,7 @@ test('every stage in the table has a row that produces it, with its own label', 
     // A move whose state its cause chose (did not go through, still checking, money on its way
     // back, a short fill) says why in the cause's own sentence; every other stage carries the
     // table's line.
-    const caused = new Set(['stuck_unknown', 'venue_failed_refund_pending', 'short_fill']);
+    const caused = new Set(['stuck_unknown', 'venue_failed_watching', 'venue_failed_refund_pending', 'short_fill']);
     const copy = view.reason !== null && (view.state === 'didnt_go_through' || caused.has(view.reason.code)) ? view.reason.sentence : STAGE_COPY[stage];
     assert.equal(view.stageCopy, copy, `${stage} carries its one line of copy`);
     assert.equal(view.terminal, TERMINAL.has(stage), `${stage} terminal`);
@@ -332,7 +332,7 @@ test('a withdraw is the same line, the other way round', () => {
   );
 });
 
-test('a swap names the two assets, because both legs sit inside NEAR Intents', () => {
+test('a swap names the two assets, and the network of the one bought, because both legs sit inside NEAR Intents', () => {
   assert.equal(
     sentenceFor({
       kind: 'swap',
@@ -349,7 +349,7 @@ test('a swap names the two assets, because both legs sit inside NEAR Intents', (
       counterparty: 'intents.near',
       quote: null,
     }),
-    '25 USDC to ETH inside NEAR Intents',
+    '25 USDC to ETH on Ethereum, inside NEAR Intents',
   );
 });
 

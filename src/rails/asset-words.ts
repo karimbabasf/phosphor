@@ -14,8 +14,9 @@ import { ReasonError } from './reasons.ts';
    least it can be, the fee and the time ("About 3.8255 USDC, at least 3.8064. Fee about $0.01,
    about 12 seconds."). The engineer's lines ride on the simulation's `developer` field instead:
    "solver floor 3806395 base units" was being read out to a person (2026-09-23). */
-export function swapSummary(swap: SwapSimulation, symbol: string): string {
-  const coin = symbol.toUpperCase() === 'WNEAR' ? 'NEAR' : symbol;
+export function swapSummary(swap: SwapSimulation, symbol: string, network?: string): string {
+  // The network is named: one ticker is several coins, one per network (audit, finding 8).
+  const coin = `${symbol.toUpperCase() === 'WNEAR' ? 'NEAR' : symbol}${network === undefined ? '' : ` on ${network}`}`;
   const tail: string[] = [];
   if (swap.feeUsd !== null && Number.isFinite(swap.feeUsd)) tail.push(swap.feeUsd < 0.005 ? 'fee under a cent' : `fee about $${swap.feeUsd.toFixed(2)}`);
   if (swap.etaSeconds !== null && Number.isFinite(swap.etaSeconds) && swap.etaSeconds > 0) {
