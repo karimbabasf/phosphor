@@ -1039,12 +1039,15 @@ ol.chat-list li::marker {
   padding: var(--s-3) 0 22px;
 }
 
+/* The words start 36 px in. macOS draws a glass key of its own just left of the text caret (a
+   system cursor accessory, 25 px wide and 6 px from the caret, not part of the page); with the
+   words at 20 px it sat across the field's rounded edge (Karim, 2026-09-23). Now it sits inside. */
 .composer-field {
   display: flex;
   align-items: flex-end;
   gap: 10px;
   min-height: 58px;
-  padding: 9px 9px 9px 20px;
+  padding: 9px 9px 9px 36px;
   border-radius: var(--radius-xl);
   background: var(--bg-2);
   border: 0;

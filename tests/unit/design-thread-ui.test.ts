@@ -189,3 +189,13 @@ test('a swap wears its two coins at 24 px, the second over the first, with no ri
   const cards = read('ui/screens/cards.js');
   assert.doesNotMatch(cards.slice(cards.indexOf('function paintMarks'), cards.indexOf('function payoutPlace')), /logo\([^)]*,\s*\d+\)/, 'paintMarks sizes the marks over the head\'s own size');
 });
+
+/* Karim's window, 2026-09-23: the glass key macOS draws just left of the text caret sat across
+   the composer's rounded edge while the words started 20 px in. They start 36 px in, so the
+   key (25 px, 6 px from the caret) sits inside the field on every view and width. */
+test('the composer\'s words start far enough in for the key macOS draws beside the caret', () => {
+  const field = block(AGENT, '.composer-field');
+  const left = Number(/padding:\s*\S+\s+\S+\s+\S+\s+(\d+)px;/.exec(field)?.[1] ?? 0);
+  assert.ok(left >= 36, `the words start ${left} px in, where the caret's key crosses the edge`);
+  assert.match(block(AGENT, '.agent-composer .input'), /padding:\s*9px 0;/, 'the text area adds its own inset and moves the caret');
+});
