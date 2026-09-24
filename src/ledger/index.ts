@@ -201,6 +201,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
       rpcUrl: NEAR_RPC_URL,
       accountId: account,
       tokenList: () => oneClick.tokens(),
+      listedAt: () => oneClick.listedAt?.() ?? null,
       fetchImpl,
     });
     if (read.ok) return { ...read, failures: 0 };

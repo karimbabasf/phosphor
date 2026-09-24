@@ -115,6 +115,9 @@ export type WalletRow = {
   quantity: number;
   priceUsd: number; // 1.0 for stables, spot for natives
   valueUsd: number;
+  // Where priceUsd came from when it is 1Click's listed price, the source of last resort; absent
+  // for the spot table and the stablecoin list.
+  priceSource?: '1click';
   /* False when this app could not price the asset at all, so valueUsd is a hole rather than a
      figure. Absent means priced, because every other rail derives its value from a number it
      already holds. It exists because "$0.00" and "we do not know" printed identically, and the
@@ -516,6 +519,10 @@ export type SimulationResult = {
   depositAddresses?: Array<{ leg: string; address: string }>;
   ok: boolean;
   summary: string; // human-readable, rendered in the approval gate
+  /* The engineer's lines behind the summary: base units, the solver's own floor, what is signed.
+     Kept on the row for the log and a developer; the propose reply the agent reads leaves it out
+     (src/http/propose.ts), so the agent says the summary and never these. */
+  developer?: string;
   postComposition?: CompositionView; // fund moves: composition after the move
   policyDiff?: { before: string[]; after: string[] }; // policy changes: sentences before/after
   send?: SendSimulation; // the two send rails: the facts the send card draws
@@ -807,8 +814,10 @@ export type SwapRail = 'relay' | 'oneclick';
 // the MCP schemas built from these carry no destination field.
 
 export type SwapParams = {
-  chain: string; // the asset home of what is sold: any spend network id
-  toChain?: string; // the asset home of what is bought; defaults to chain
+  // The home networks of the two coins, any spend network id. Either may be left out, and the
+  // swap picks it by one rule (src/proposals/swap-reads.ts, resolveSwapSides).
+  chain?: string;
+  toChain?: string;
   fromSymbol: string;
   toSymbol: string;
   // "all" (the exact balance held), an exact decimal string, or a number read through its

@@ -126,12 +126,110 @@ test('swap_quote for all of the NEAR prices the exact raw balance and files noth
   assert.equal(h.store.list().length, 0, 'a quote filed a proposal');
 });
 
-test('swap_quote names the coins to choose between when a ticker is two different coins', async () => {
-  const h = makeCtx({ intents: wnearHeld(), deps: { rails: registry(venueRail().rail) } });
-  const reply = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'BTC', amountIn: '0.5' });
+/* ONE TICKER, SEVERAL COINS, NO NETWORK NAMED: the one held, then the one on the other coin's
+   network, then the one on NEAR; only when none of those leaves one coin is it a question. "Swap
+   my NEAR to USDC" came back "which USDC?" on the live build (2026-09-23). */
+const USDC_ETH = 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near';
+const USDC_ARB = 'nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near';
+const USDC_BASE = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
+const USDT_ARB = 'nep141:arb-0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9.omft.near';
+const USDT_ETH = 'nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near';
+const USDT_TRON = 'nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near';
+const WIDE: OneClickToken[] = [
+  ...LIST,
+  { assetId: USDC_ETH, decimals: 6, blockchain: 'eth', symbol: 'USDC', contractAddress: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', price: 1 },
+  { assetId: USDC_ARB, decimals: 6, blockchain: 'arb', symbol: 'USDC', contractAddress: '0xaf88d065e77c8cc2239327c5edb3a432268e5831', price: 1 },
+  { assetId: USDC_BASE, decimals: 6, blockchain: 'base', symbol: 'USDC', contractAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', price: 1 },
+  { assetId: USDT_ARB, decimals: 6, blockchain: 'arb', symbol: 'USDT', contractAddress: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', price: 1 },
+  { assetId: USDT_ETH, decimals: 6, blockchain: 'eth', symbol: 'USDT', contractAddress: '0xdac17f958d2ee523a2206206994597c13d831ec7', price: 1 },
+  { assetId: USDT_TRON, decimals: 6, blockchain: 'tron', symbol: 'USDT', contractAddress: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', price: 1 },
+];
+
+function wide(rail: Rail): RailRegistry {
+  const r = registry(rail);
+  return { ...r, swap: { ...r.swap!, tokens: async () => WIDE } };
+}
+
+// wNEAR, and beside it whatever else the balance holds, by id and base units.
+function holding(extra: Array<[string, string, number]>): IntentsRead {
+  const base = wnearHeld();
+  return {
+    ...base,
+    holdings: [
+      ...base.holdings,
+      ...extra.map(([assetId, symbol, units]) => ({ accountId: SELF_EVM.toLowerCase(), assetId, symbol, originChain: 'eth', amount: units / 1e6, amountBase: String(units), decimals: 6 })),
+    ],
+  };
+}
+
+test('the live case: swap_quote from all of the NEAR to USDC is USDC on near, never "which USDC?"', async () => {
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(venueRail().rail) } });
+  const reply = await h.svc.swapQuote!({ fromSymbol: 'wNEAR', toSymbol: 'USDC', amountIn: 'all' });
+  assert.equal(reply.ok, true, JSON.stringify(reply));
+  assert.equal(reply.reason, null);
+  assert.equal(reply.to?.assetId, USDC);
+  assert.equal(reply.to?.network, 'near');
+});
+
+test('step 1: the coin the balance already holds comes first, over the other coin\'s network and over near', async () => {
+  const h = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 2_000_000]]), deps: { rails: wide(venueRail().rail) } });
+  const reply = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'USDC', amountIn: '0.5' });
+  assert.equal(reply.ok, true, JSON.stringify(reply));
+  assert.equal(reply.to?.assetId, USDC_BASE);
+
+  // And on the sold side: the USDC held is the one sold, wherever it is from.
+  const sell = await h.svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'NEAR', amountIn: '1' });
+  assert.equal(sell.from?.assetId, USDC_BASE);
+});
+
+test('step 2: with none held, the coin on the other coin\'s network, named or found', async () => {
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(venueRail().rail) } });
+  const named = await h.svc.swapQuote!({ fromSymbol: 'USDT', chain: 'arb', toSymbol: 'USDC', amountIn: '1' });
+  assert.equal(named.to?.assetId, USDC_ARB, 'USDC on arb beside USDT named on arb, not USDC on near');
+
+  // NEAR is only on near, so BTC is the one on near: nBTC, which quotes.
+  const found = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'BTC', amountIn: '0.5' });
+  assert.equal(found.ok, true, JSON.stringify(found));
+  assert.equal(found.to?.assetId, NBTC);
+});
+
+test('step 3: with none held and none on the other coin\'s network, the one on near', async () => {
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(venueRail().rail) } });
+  // Native BTC sits on btc, where no USDC is listed.
+  const reply = await h.svc.swapQuote!({ fromSymbol: 'BTC', chain: 'btc', toSymbol: 'USDC', amountIn: '0.001' });
+  assert.equal(reply.to?.assetId, USDC);
+});
+
+test('only when none of the three leaves one coin is it a question, answered with the ids', async () => {
+  // USDT on eth and on tron: neither held, neither on near, where the NEAR sold is.
+  const narrow = WIDE.filter((t) => t.assetId !== USDT_ARB);
+  const r = wide(venueRail().rail);
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: { ...r, swap: { ...r.swap!, tokens: async () => narrow } } } });
+  const reply = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'USDT', amountIn: '0.5' });
   assert.equal(reply.ok, false);
   assert.equal(reply.reason, 'ambiguous_asset');
-  assert.deepEqual(reply.candidates?.map((c) => c.assetId).sort(), [BTC, NBTC].sort());
+  assert.deepEqual(reply.candidates?.map((c) => c.assetId).sort(), [USDT_ETH, USDT_TRON].sort());
+
+  // Two held are narrowed on by the next rules, not asked about.
+  const two = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 1_000_000], [USDC_ARB, 'USDC', 1_000_000]]), deps: { rails: wide(venueRail().rail) } });
+  const picked = await two.svc.swapQuote!({ fromSymbol: 'USDT', chain: 'arb', toSymbol: 'USDC', amountIn: '1' });
+  assert.equal(picked.to?.assetId, USDC_ARB);
+});
+
+test('propose_swap picks by the same rule: a network left out is found, and a question is refused with the ids', async () => {
+  const h = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 2_000_000]]), deps: { rails: wide(venueRail().rail) } });
+  const p = await h.svc.proposeSwap({ fromSymbol: 'NEAR', toSymbol: 'USDC', amountIn: '0.5', minAmountOut: 1 });
+  assert.equal(p.draft.kind, 'swap');
+  const d = p.draft as SwapDraft;
+  assert.deepEqual([d.chain, d.fromSymbol, d.toChain, d.toSymbol], ['near', 'wNEAR', 'base', 'USDC'], 'NEAR found on near, USDC the one held');
+
+  const r = wide(venueRail().rail);
+  const narrow = WIDE.filter((t) => t.assetId !== USDT_ARB);
+  const asked = makeCtx({ intents: wnearHeld(), deps: { rails: { ...r, swap: { ...r.swap!, tokens: async () => narrow } } } });
+  const refused = await asked.svc.proposeSwap({ chain: 'near', fromSymbol: 'NEAR', toSymbol: 'USDT', amountIn: '0.5', minAmountOut: 1 });
+  assert.equal(refused.status, 'policy_refused');
+  assert.equal(asked.svc.view(refused).reason?.code, 'ambiguous_asset');
+  assert.match(refused.verdict.reasons.join(' '), new RegExp(`${USDT_ETH}.*${USDT_TRON}|${USDT_TRON}.*${USDT_ETH}`));
 });
 
 test('swap_quote into native BTC is no price, in the words that say what works instead', async () => {
@@ -234,13 +332,17 @@ test('swap_check on the FAILED wNEAR swap: the ledger shows nothing left, and th
 test('swap_check on a FAILED swap whose signed transfer can still run says nothing has left yet, not that it is over', async () => {
   const h = makeCtx({ intents: wnearHeld(), deps: { rails: registry(venueRail().rail, QUIET_LEDGER), oneClickStatus: async () => failedStatus() } });
   const row = failedSwap();
-  h.store.put({ ...row, result: { ...row.result!, reason: 'venue_failed_watching' } });
+  const watching = (deadline: string) => ({ ...row, result: { ...row.result!, reason: 'venue_failed_watching', evidence: { ...row.result!.evidence, deadline } } });
+  h.store.put(watching(new Date(Date.now() + 3 * 60_000).toISOString()));
   const reply = await h.svc.swapCheck!('8b589eca');
   assert.equal(reply.moved, 'no');
-  assert.equal(
-    reply.summary,
-    "It didn't go through, and nothing has left your balance yet. The app keeps an eye on it for a few minutes; don't send it again until then. You hold 0.894697028778374732410224 NEAR.",
-  );
+  assert.equal(reply.summary, "It didn't go through, and nothing has left your balance yet. I'm keeping an eye on it for a few minutes. You hold 0.894697028778374732410224 NEAR.");
+
+  // A transfer 1Click signed for 72 hours says how long, never "a few minutes" over days.
+  h.store.put(watching(new Date(Date.now() + 72 * 3_600_000).toISOString()));
+  const long = await h.svc.swapCheck!('8b589eca');
+  assert.match(long.summary, /I'm keeping an eye on it until it can no longer run, in about 3 days\./);
+  assert.doesNotMatch(long.summary, /send it again|a few minutes/);
 });
 
 test('swap_check says the coin left when the ledger shows the transfer to the handle, and cannot tell when there is no ledger', async () => {
@@ -256,7 +358,7 @@ test('swap_check says the coin left when the ledger shows the transfer to the ha
   blind.store.put(failedSwap());
   const unknown = await blind.svc.swapCheck!('8b589eca');
   assert.equal(unknown.moved, 'unknown');
-  assert.match(unknown.summary, /can't tell yet/);
+  assert.equal(unknown.summary, "Still checking whether your NEAR left your balance. I'll update it here.");
 });
 
 // ---------- the doors ----------

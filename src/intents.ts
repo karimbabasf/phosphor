@@ -650,24 +650,46 @@ export type OneClickDeps = { fetchImpl?: typeof fetch };
 
 export type OneClickClient = {
   tokens(): Promise<OneClickToken[]>;
+  // When the list tokens() answers with was fetched, in epoch ms; null before the first fetch.
+  listedAt?(): number | null;
   quote(params: OneClickQuoteParams): Promise<OneClickQuoteResponse>;
   submitDeposit(depositAddress: string, txHash: string): Promise<{ ok: boolean; detail: string }>;
   status(depositAddress: string, depositMemo?: string): Promise<OneClickStatus>;
 };
 
+/* HOW OLD THE TOKEN LIST MAY GET: one minute. The list is the price of last resort for a coin no
+   other source prices (src/proposals/draft.ts priceOf), and a governing price may be two minutes
+   old at most (PRICE_STALENESS_MS), so it is read again inside that. A read that fails keeps the
+   last list and its stamp: the names stay good, and the prices age out of governing on their own. */
+export const TOKEN_LIST_TTL_MS = 60_000;
+
 export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  let tokenListCache: OneClickToken[] | null = null;
+  let tokenListCache: { list: OneClickToken[]; at: number } | null = null;
+  // One read at a time: callers that find the list old together share the read that renews it.
+  let reading: Promise<OneClickToken[]> | null = null;
+
+  async function readList(): Promise<OneClickToken[]> {
+    try {
+      const res = await fetchImpl(`${ONECLICK_BASE}/v0/tokens`, { signal: readTimeout() });
+      if (!res.ok) {
+        throw new Error(`1click token list fetch failed: ${res.status} ${await res.text()}`);
+      }
+      const list = (await res.json()) as OneClickToken[];
+      tokenListCache = { list, at: Date.now() };
+      return list;
+    } catch (err) {
+      if (tokenListCache !== null) return tokenListCache.list;
+      throw err;
+    } finally {
+      reading = null;
+    }
+  }
 
   async function tokens(): Promise<OneClickToken[]> {
-    if (tokenListCache) return tokenListCache;
-    const res = await fetchImpl(`${ONECLICK_BASE}/v0/tokens`, { signal: readTimeout() });
-    if (!res.ok) {
-      throw new Error(`1click token list fetch failed: ${res.status} ${await res.text()}`);
-    }
-    const list = (await res.json()) as OneClickToken[];
-    tokenListCache = list;
-    return list;
+    if (tokenListCache !== null && Date.now() - tokenListCache.at < TOKEN_LIST_TTL_MS) return tokenListCache.list;
+    reading ??= readList();
+    return reading;
   }
 
   async function quote(params: OneClickQuoteParams): Promise<OneClickQuoteResponse> {
@@ -762,5 +784,5 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
     return parseStatus(await res.json().catch(() => null));
   }
 
-  return { tokens, quote, submitDeposit, status };
+  return { tokens, listedAt: () => tokenListCache?.at ?? null, quote, submitDeposit, status };
 }

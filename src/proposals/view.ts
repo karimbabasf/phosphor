@@ -636,9 +636,24 @@ function buysNativeBtc(draft: WriteDraft): boolean {
   return draft.kind === 'swap' && (draft.toChain.toLowerCase() === 'btc' || /btc\.omft\.near/i.test(draft.toSymbol));
 }
 
+/* How long a row waits on a signed transfer that can still run, in a person's words. A few minutes
+   for the three this app signs now; a transfer 1Click signed for 72 hours says how long, never "a
+   few minutes" over days. Unknown says until when rather than inventing a figure. */
+export function watchWords(deadline: string | undefined, now: number): string {
+  const left = Date.parse(deadline ?? '') - now;
+  if (!Number.isFinite(left)) return 'until it can no longer run';
+  if (left <= 15 * 60_000) return 'for a few minutes';
+  const minutes = Math.round(left / 60_000);
+  if (minutes < 90) return `until it can no longer run, in about ${minutes} minutes`;
+  const hours = Math.round(left / 3_600_000);
+  if (hours < 48) return `until it can no longer run, in about ${hours} hours`;
+  return `until it can no longer run, in about ${Math.round(hours / 24)} days`;
+}
+
 /* ONE PLAIN SENTENCE PER CAUSE, and this is the only place any of them is written. Each says
-   what happened, where the money is, and what the person can do, in words a person uses. */
-export function reasonSentence(code: ReasonCode, draft: WriteDraft): string {
+   what happened, where the money is, and what the person can do, in words a person uses. `watch`
+   is how long a row still watches its signed transfer (watchWords), for the one cause that says. */
+export function reasonSentence(code: ReasonCode, draft: WriteDraft, watch = 'for a few minutes'): string {
   const sym = plainSymbol(symbolOf(draft)) || 'it';
   const to = plainSymbol(toSymbolOf(draft));
   const noun = NOUN[draft.kind] ?? 'move';
@@ -693,7 +708,7 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft): string {
     case 'venue_failed_nothing_moved':
       return `${The} didn't go through. Nothing left your balance.`;
     case 'venue_failed_watching':
-      return `${The} didn't go through. Your ${sym} hasn't moved; I'm keeping an eye on it for a few minutes.`;
+      return `${The} didn't go through. Your ${sym} hasn't moved; I'm keeping an eye on it ${watch}.`;
     case 'venue_failed_refund_pending':
       return `${The} didn't go through. Your ${sym} is with the swap service until it comes back to your balance; the app keeps checking.`;
     case 'refunded':
@@ -701,7 +716,7 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft): string {
     case 'short_fill':
       return `${The} went through, but less arrived than the minimum you approved. The details show how much.`;
     case 'stuck_unknown':
-      return "We can't confirm yet whether this went through. Don't send it again; the app keeps checking and will update this.";
+      return "Still checking whether this went through. I'll update it here.";
   }
 }
 
@@ -732,10 +747,11 @@ const RETRYABLE: ReadonlySet<ReasonCode> = new Set<ReasonCode>([
   'refunded',
 ]);
 
-function reasonOfRow(p: Proposal, stage: ProposalStage): ProposalReason | null {
+function reasonOfRow(p: Proposal, stage: ProposalStage, now: number): ProposalReason | null {
   const code = reasonCodeOf(p, stage);
   if (code === null) return null;
-  return { code, sentence: reasonSentence(code, p.draft), details: code === 'declined' ? null : detailsOf(p), retry: RETRYABLE.has(code) };
+  const sentence = reasonSentence(code, p.draft, watchWords(p.result?.evidence?.deadline, now));
+  return { code, sentence, details: code === 'declined' ? null : detailsOf(p), retry: RETRYABLE.has(code) };
 }
 
 // Late once a move still working has run past its usual time, counted from the click.
@@ -802,7 +818,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
   const pockets = pocketsOf(p.draft);
   const typical = TYPICAL_SEC[p.kind] ?? null;
   const state = moveStateOf(stage);
-  const reason = reasonOfRow(p, stage);
+  const reason = reasonOfRow(p, stage, now);
   return {
     id: p.id,
     kind: p.kind,

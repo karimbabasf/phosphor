@@ -66,9 +66,9 @@ export function pricedAs(symbol: string): string {
 }
 
 // What one unit of a symbol is worth, from what the app already knows: the risk table
-// (stables are 1.0 everywhere in this app), then the ledger's own holdings, then the
-// native spot table. null means this app cannot honestly price it.
-export function priceOf(ctx: PCtx, symbol: string, snapshot: LedgerSnapshot): number | null {
+// (stables are 1.0 everywhere in this app), then the native spot table, then 1Click's own price
+// for the asset held (listedPrice). null means this app cannot honestly price it.
+export function priceOf(ctx: PCtx, symbol: string, snapshot: LedgerSnapshot, assetId?: string): number | null {
   const upper = symbol.toUpperCase();
   if (ctx.stables.has(upper)) return 1;
 
@@ -88,11 +88,27 @@ export function priceOf(ctx: PCtx, symbol: string, snapshot: LedgerSnapshot): nu
     return priceIsFresh(snapshot, key) ? spot : null;
   }
 
-  // Fall back to the holdings table only for something we already treat as a dollar.
-  // For anything else, return null: usdOf turns that into Infinity and the engine refuses
-  // it as invalid_amount. A token the app cannot price is a token it cannot govern, and
-  // refusing beats guessing 1.0 and letting an unbounded amount through.
-  return null;
+  // Then 1Click's own price for the coin held, the price of last resort. For anything it does not
+  // price either, null: usdOf turns that into Infinity and the engine refuses it as
+  // invalid_amount. A token the app cannot price is a token it cannot govern, and refusing beats
+  // guessing 1.0 and letting an unbounded amount through.
+  return listedPrice(ctx, upper, assetId);
+}
+
+/* 1CLICK'S PRICE FOR A COIN THE BALANCE HOLDS, off the token list the ledger labelled it from. Any
+   coin 1Click lists has one, so a swap out of WBTC is governed by its limit instead of waiting on
+   a click as unpriced (2026-09-23). Held to the same age as a spot price, PRICE_STALENESS_MS,
+   counted from when the list was fetched. By asset id where the caller knows it; by symbol only
+   when one held asset carries it, since two coins under one name are two prices. */
+function listedPrice(ctx: PCtx, upper: string, assetId?: string): number | null {
+  const read = ctx.ledger.intents();
+  if (read === undefined) return null;
+  const rows = read.holdings.filter((h) => (assetId !== undefined ? h.assetId === assetId : h.symbol.toUpperCase() === upper));
+  const ids = new Set(rows.map((h) => h.assetId));
+  const row = rows[0];
+  if (row === undefined || ids.size !== 1) return null;
+  if (typeof row.priceUsd !== 'number' || !(row.priceUsd > 0) || row.priceAsOf === undefined) return null;
+  return Date.now() - row.priceAsOf <= PRICE_STALENESS_MS ? row.priceUsd : null;
 }
 
 // USD the draft moves, which is the number every budget in the engine reads. Deliberately
@@ -100,8 +116,8 @@ export function priceOf(ctx: PCtx, symbol: string, snapshot: LedgerSnapshot): nu
 // value could name a small one. A symbol the app cannot price becomes Infinity, never NaN,
 // because the engine refuses a non-finite amount ('invalid_amount') where NaN would make
 // every comparison against a cap false and sail through all of them.
-export function usdOf(ctx: PCtx, symbol: string, amount: number, snapshot: LedgerSnapshot): number {
-  const price = priceOf(ctx, symbol, snapshot);
+export function usdOf(ctx: PCtx, symbol: string, amount: number, snapshot: LedgerSnapshot, assetId?: string): number {
+  const price = priceOf(ctx, symbol, snapshot, assetId);
   if (price === null || !Number.isFinite(amount) || amount < 0) return Infinity;
   return amount * price;
 }

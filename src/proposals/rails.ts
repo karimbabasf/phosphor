@@ -41,6 +41,8 @@ import type { ReasonCode } from '../rails/reasons.ts';
 import { ourEvmAddress, ourIntentsAddress, presimulate, proposeRail, refuseDraft, usdOf } from './draft.ts';
 import { errText } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
+import { draftSymbolOf, pickSwapSides } from './swap-reads.ts';
+import type { SidePick, SwapSide } from './swap-reads.ts';
 
 /* A SWAP PROPOSAL IN TWO HALVES, so the spend queue never waits on the network.
    prepareSwap reads the world: the balance, the price the floor is cut from, the simulation.
@@ -70,7 +72,40 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
     problems.push(why);
     code ??= cause;
   };
-  const toChain = params.toChain ?? params.chain;
+  /* A COIN NAMED WITHOUT ITS NETWORK is picked by the rule swap_quote uses (resolveSwapSides): the
+     one the balance holds, then the one on the other coin's network, then the one on NEAR. A coin
+     named with its network is taken as named. With no venue list to read (demo mode) the bought
+     coin is on the sold coin's network, as it always was. */
+  let chain = params.chain ?? '';
+  let toChain = params.toChain ?? '';
+  let fromAsked = params.fromSymbol;
+  let toAsked = params.toSymbol;
+  if (params.chain === undefined || params.toChain === undefined) {
+    const sideAsk = (asked: string, named: string | undefined) => (named === undefined ? { asked } : { asked, chain: named });
+    let picked: Awaited<ReturnType<typeof pickSwapSides>> = null;
+    try {
+      picked = await pickSwapSides(ctx, sideAsk(params.fromSymbol, params.chain), sideAsk(params.toSymbol, params.toChain));
+    } catch (err) {
+      refuse(`The swap service's coin list could not be read, so the coin could not be found (${errText(err)}). Try again in a minute.`, 'no_price');
+    }
+    const settle = (pick: SidePick, which: string): SwapSide | null => {
+      if (pick.kind === 'one') return pick.side;
+      if (pick.kind === 'many') {
+        const named = pick.candidates.map((c) => `${c.symbol} on ${c.network} (${c.assetId})`).join(', ');
+        refuse(`Several coins go by that name for ${which}: ${named}. Name one by its id.`, 'ambiguous_asset');
+      } else refuse(pick.why, 'unsupported_asset');
+      return null;
+    };
+    if (picked !== null) {
+      const sold = params.chain === undefined ? settle(picked.from, 'the coin you sell') : null;
+      if (sold !== null) [chain, fromAsked] = [sold.network, draftSymbolOf(sold, picked.list)];
+      const bought = params.toChain === undefined ? settle(picked.to, 'the coin you buy') : null;
+      if (bought !== null) [toChain, toAsked] = [bought.network, draftSymbolOf(bought, picked.list)];
+    } else if (problems.length === 0) {
+      if (params.chain === undefined) refuse('Say which network the coin you sell is on, such as near or eth.', 'invalid_request');
+      toChain = params.toChain ?? chain;
+    }
+  }
 
   // Both sides are our own account inside the verifier. The agent picks the assets; it has
   // no way to say who receives the output.
@@ -85,8 +120,8 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
   // The name the verifier and the wallet row use, not the one the agent typed: NEAR inside
   // intents is wNEAR (src/intents.ts, canonicalSymbol). Booked here so the card, the policy and
   // the balance watch all read the same word.
-  const fromSymbol = canonicalSymbol(params.chain, params.fromSymbol);
-  const toSymbol = canonicalSymbol(toChain, params.toSymbol);
+  const fromSymbol = canonicalSymbol(chain, fromAsked);
+  const toSymbol = canonicalSymbol(toChain, toAsked);
 
   // The venue is the config switch's word at the moment of the ask (`swap.rail`), pinned into
   // the draft so the row is executed, retried and reconciled by the rail it was drafted for
@@ -96,7 +131,7 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
   const draft: SwapDraft = {
     kind: 'swap',
     venue: relay ? INTENTS_RELAY_VENUE : 'intents-native',
-    chain: params.chain,
+    chain,
     toChain,
     fromSymbol,
     toSymbol,
@@ -117,10 +152,13 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
      the coin's own decimals, and one larger than the balance is refused here, before any price
      is asked for. The whole wNEAR balance travelled as a double on 2026-09-23 and came back
      67,589,776 yocto larger than it was: three signed transfers that could never run. */
+  // The coin spent, by id, once the rail has named it: what it is priced by when only 1Click prices it.
+  let spentAsset: string | undefined;
   if (problems.length === 0 && ask !== null) {
     if (rail !== null && typeof rail.spend === 'function') {
       try {
         const spent = await rail.spend(draft);
+        spentAsset = spent.assetId;
         const exact = exactSpend(ask, spent, fromSymbol);
         if ('why' in exact) refuse(exact.why, exact.cause);
         else {
@@ -134,7 +172,7 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
       refuse(`This app cannot read the ${fromSymbol} balance here, so it cannot tell how much all of it is. Name an amount instead.`, 'balance_unread');
     }
   }
-  draft.amountUsd = usdOf(ctx, fromSymbol, draft.amountIn, snapshot);
+  draft.amountUsd = usdOf(ctx, fromSymbol, draft.amountIn, snapshot, spentAsset);
 
   /* THE FLOOR COMES OFF THE QUOTE. An agent that names none is not guessing one for us: the
      rail is asked for its floor-free price now and the floor is set one percent under it
