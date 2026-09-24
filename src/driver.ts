@@ -20,8 +20,8 @@
 // hostile page into putting them in one. What it cannot do is move money to anyone: a send and a
 // withdrawal wait for the person's click at any size (src/proposals/execute.ts land()), and no
 // tool takes an address but propose_send. Nor can a page talk it into a move of the person's own
-// money: after a web call, every move it proposes waits for the click until the person's next
-// message (src/web-read.ts). The persona tells the agent a page is data and never to put their
+// money: after a web call, every move it asks for waits for the click for the rest of that agent
+// session (src/web-read.ts). The persona tells the agent a page is data and never to put their
 // figures in a search or a URL; that is prose, and the three walls above are code.
 //
 // That check is the point. A deny list is a claim about a tool surface that changes with every
@@ -520,16 +520,6 @@ export function createDriver(opts: DriverOptions) {
   let draining: number | null = null;
   let held: string | null = null;
 
-  /* Whether the last turn to end was cut short (a stop, a failure, a stop of the whole chat). A
-     proposal that turn made may still be landing, so the web-read mark (src/web-read.ts) is kept
-     through the next turn. Not reset by start(): a chat restarted after a stop is the same case. */
-  let stoppedLast = false;
-
-  // A message of the person's starts its turn: the web-read mark ends here, unless the turn
-  // before it was cut short.
-  function freshTurn(): void {
-    if (!stoppedLast) clearWebRead(seat);
-  }
 
   /* App-authored context waiting for the person's next message (src/http/ended.ts: a move that
      ended since the last answer). It never starts a turn of its own: waking the agent for a card
@@ -576,7 +566,6 @@ export function createDriver(opts: DriverOptions) {
   // A stop or a failure: the turn in flight ends nothing when its process exits, and a message
   // waiting for it goes nowhere.
   function letGo(): void {
-    if (state === 'thinking') stoppedLast = true;
     turn = null;
     held = null;
   }
@@ -767,12 +756,9 @@ export function createDriver(opts: DriverOptions) {
       // an error. The next result after an interrupt is the stopped answer's: Claude answers in order.
       const stopped = interrupted;
       interrupted = false;
-      stoppedLast = stopped;
       opts.onEvent({ kind: 'turn_end', error: event.is_error === true && !stopped, turns });
       owed = Math.max(0, owed - 1);
-      if (state === 'failed' || state === 'stopped') return;
-      // The next message the person sent starts its turn now.
-      if (owed > 0) return freshTurn();
+      if (owed > 0 || state === 'failed' || state === 'stopped') return;
       set('ready', stopped ? 'the human stopped this answer' : undefined);
     }
   }
@@ -920,7 +906,6 @@ export function createDriver(opts: DriverOptions) {
     if (!live) return;
     const stopped = interrupted;
     interrupted = false;
-    stoppedLast = stopped;
     if (!said) opts.onEvent({ kind: 'turn_end', error: !stopped && code !== 0, turns: 0 });
     // A message sent while this turn was ending goes the moment its process group is gone.
     if (held !== null) return;
@@ -957,7 +942,6 @@ export function createDriver(opts: DriverOptions) {
 
   // turn transport: one message, one process.
   function dispatch(body: string): void {
-    freshTurn();
     interrupted = false;
     // No session the vendor holds yet (a fresh start, or a turn that never reached init): a
     // new id, never one grok may already have.
@@ -1007,6 +991,8 @@ export function createDriver(opts: DriverOptions) {
     sessionId = opts.session ?? randomUUID();
     seat = sessionId;
     session = seat;
+    // A new agent session holds no page: its context starts empty (src/web-read.ts).
+    clearWebRead(seat);
     resumable = false;
     answered = false;
     owed = 0;
@@ -1047,8 +1033,6 @@ export function createDriver(opts: DriverOptions) {
       return;
     }
     if (!child) throw new Error('driver: no agent is running');
-    // Behind a turn still running, this message starts when that one's result is out.
-    if (owed === 0) freshTurn();
     child.stdin.write(provider.encodeTurn!(body));
     owed += 1;
     notes = [];

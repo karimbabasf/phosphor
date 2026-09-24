@@ -41,6 +41,7 @@ import { proposePolicyChange } from './proposals/draft.ts';
 import { decideSwap, prepareSwap, proposeHlDeposit, proposeHlWithdraw, proposeSend } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
 import { swapAssets, swapCheck, swapQuote } from './proposals/swap-reads.ts';
+import { webReadBy } from './web-read.ts';
 
 export type { ProposalDeps };
 
@@ -90,20 +91,41 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     },
   };
 
+  /* The web-read stamp, taken the moment a move is asked for and before anything is awaited or
+     queued: the params travel as the proposal's origin to newProposal, which puts it on the row,
+     and land() reads the row (src/web-read.ts). Whatever the mark does while the reads run or the
+     queue waits, the move is judged by what its agent had read when it asked. */
+  const stamped = <T extends { by?: string | null }>(p: T): T & { webRead: boolean } => ({ ...p, webRead: webReadBy(p.by ?? undefined) });
+
   return {
     proposePolicyChange: (p) => serialise(() => proposePolicyChange(ctx, p)),
     /* The reads (the balance, the price, the simulation) run before the queue and the decision
        runs in it: the engine against the day's spend as it stands, and the landing that reserves.
        A swap's seconds of quotes used to hold every approve and refuse behind them. */
     proposeSwap: async (p) => {
-      const prepared = await prepareSwap(ctx, p);
+      const prepared = await prepareSwap(ctx, stamped(p));
       return serialise(() => decideSwap(ctx, prepared));
     },
-    proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(ctx, p)),
-    proposeHlWithdraw: (p) => serialise(() => proposeHlWithdraw(ctx, p)),
-    proposeSend: (p) => serialise(() => proposeSend(ctx, p)),
-    proposeTrade: (p) => serialise(() => proposeTrade(ctx, p)),
-    proposeTradeChange: (p) => serialise(() => proposeTradeChange(ctx, p)),
+    proposeHlDeposit: (p) => {
+      const asked = stamped(p);
+      return serialise(() => proposeHlDeposit(ctx, asked));
+    },
+    proposeHlWithdraw: (p) => {
+      const asked = stamped(p);
+      return serialise(() => proposeHlWithdraw(ctx, asked));
+    },
+    proposeSend: (p) => {
+      const asked = stamped(p);
+      return serialise(() => proposeSend(ctx, asked));
+    },
+    proposeTrade: (p) => {
+      const asked = stamped(p);
+      return serialise(() => proposeTrade(ctx, asked));
+    },
+    proposeTradeChange: (p) => {
+      const asked = stamped(p);
+      return serialise(() => proposeTradeChange(ctx, asked));
+    },
     // approve() executes, so it shares the queue: a human click landing next to an
     // auto-approval must not be able to double-spend the cap either.
     approve: (id: string) => serialise(() => approve(ctx, id)),
