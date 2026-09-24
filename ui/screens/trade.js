@@ -189,6 +189,13 @@
     hud.id = 'chart-hud';
     chartwrap.appendChild(hud);
     stage.appendChild(chartwrap);
+    /* The counts the chart draws, named: the engine lays a real button over
+       each count it paints and a list beside it (ui/chart/chart.js syncFold).
+       Beside the picture rather than inside it, since everything inside an
+       image is read as part of the image and a key never reaches it. */
+    var folds = dom.el('div', 'chart-folds');
+    folds.id = 'chart-folds';
+    stage.appendChild(folds);
     main.appendChild(stage);
 
     /* The handle between the chart and the deck: a horizontal bar, dragged up

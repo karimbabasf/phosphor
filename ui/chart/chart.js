@@ -622,17 +622,19 @@ function priceText(value, decimals) {
 }
 
 /* Pane values are not prices: an OBV in the millions and an RSI between 0 and 100 cannot
-   share a rule, so the digits follow the size of the number. */
+   share a rule, so the digits follow the size of the number. They are written the way every
+   other figure in the window is, grouped by thousands, and a figure from a thousand up is
+   whole: the volume axis read "6221.0", a tenth nobody trades on, with no comma. */
 function paneText(value) {
-  if (value === null || !isFinite(value)) return '--';
+  if (value === null || value === undefined || !isFinite(value)) return '--';
   if (value === 0) return '0';
   var abs = Math.abs(value);
-  if (abs >= 1e9) return (value / 1e9).toFixed(2) + 'B';
-  if (abs >= 1e6) return (value / 1e6).toFixed(2) + 'M';
-  if (abs >= 1e4) return Math.round(value).toLocaleString('en-US');
-  if (abs >= 100) return value.toFixed(1);
-  if (abs >= 1) return value.toFixed(2);
-  return value.toFixed(4);
+  if (abs >= 1e9) return priceText(value / 1e9, 2) + 'B';
+  if (abs >= 1e6) return priceText(value / 1e6, 2) + 'M';
+  if (abs >= 1000) return priceText(value, 0);
+  if (abs >= 100) return priceText(value, 1);
+  if (abs >= 1) return priceText(value, 2);
+  return priceText(value, 4);
 }
 
 /* ---------- the calendar behind the time axis ----------
@@ -1313,6 +1315,8 @@ function drawScene() {
   if (!CHART.candles.length) {
     drawWaiting(ctx, width, height);
     CHART_LAYOUT = null;
+    syncFold('axis', null);
+    syncFold('legend', null);
     return;
   }
 
@@ -1340,10 +1344,13 @@ function drawScene() {
   if (typeof drawTradeOverlays === 'function') drawTradeOverlays(ctx, L);
   // The axis prices go down last, once every marking has asked for its chip, so a price under
   // a chip is left out rather than half covered by it.
-  L.chips = chipLayout(L);
-  // A chip names its line in a word, and the axis has to be wide enough for one. Measured on
-  // this frame and applied from the next, the way the axis follows its own labels.
-  var chipW = chipAxisWidth(ctx, L.chips, L.decimals);
+  L.chips = chipLayout(L, ctx);
+  foldLayout(ctx, L);
+  syncAxisFold(L);
+  // A chip names its line in words, and the axis grows to hold the widest on one line, up to a
+  // fifth of the chart. Measured on this frame and applied from the next, the way the axis
+  // follows its own labels.
+  var chipW = chipAxisWidth(ctx, L.chips, L.decimals, chipAxisCap(width));
   if (Math.abs(chipW - CHART_CHIP_W) > 2) {
     CHART_CHIP_W = chipW;
     chartInvalidate(true);
@@ -1539,57 +1546,133 @@ function drawPriceLabels(ctx, L) {
 
 /* ---------- the axis chips ----------
 
-   Every marking names itself here, in a chip docked on the price axis: one line, the price in
-   the axis's own column with the name after it, on a small soft layer in its owner's ink, set
-   in the window's face with tabular figures. The owner is the ink (violet is the agent's), so
-   there is no dot to read. A chip sits beside its line when the line is on the pane ('at'), and
-   waits at the edge the line went off with an arrow when it is not ('top', 'bottom'). The chips
-   beside their lines are pushed apart so no two overlap and none covers the last price's tag;
-   in a crowded pane the least important go and the chip nearest the price counts them.
+   Every marking names itself here, in a chip docked on the price axis: the price in the axis's own
+   column with the name after it, on a small soft layer in its owner's ink, set in the window's face
+   with tabular figures. The owner is the ink (violet is the agent's), so there is no dot to read. A
+   chip sits beside its line when the line is on the pane ('at'), and waits at the edge the line
+   went off with an arrow when it is not ('top', 'bottom').
 
-   Item: { price, edge 'at' | 'top' | 'bottom', y (for 'at'), word, tone, ring, alpha, prio,
-   single (a name with no price: a zone), bracket ({ top, bottom }, a zone's height) }. */
+   The last price's tag splits the axis in two and a chip keeps to its line's side of it, so the
+   axis reads as a ladder: every chip above the tag is a price above the market and every chip below
+   it one under. Each side is one ladder with its edge chips at the ends, packed so no two overlap
+   and none covers the tag.
+
+   What a crowded side gives up is decided by what a chip is, never by where it sits, at an edge or
+   beside its line. A stop, the liquidation, a position's entry and a plan's entry and target are
+   prices a person loses or makes money at (risk), and each always gets a chip of its own: the chips
+   close up to a tighter pitch before one of them could go, and a side with no room left hands its
+   chip across the tag rather than hide it. The person's own markings and their resting orders stay
+   too. Only the agent's informational markings (its levels, lines and zones, and anything fading
+   out) fold, into one count in the strip above the axis that names every marking it holds on hover
+   and on focus (syncFold). A count printed on a stop's chip read as the stop's own, and hid the
+   stops it held.
+
+   A name is never cut. The axis grows to fit the widest chip on one line, up to a fifth of the
+   chart, and a name wider than that wraps onto a second line under itself; the axis grows a little
+   further when that is what keeps a long name to two lines.
+
+   Item: { price, edge 'at' | 'top' | 'bottom', y (for 'at'), word, tone, ring, alpha, prio, risk (a
+   price money is lost or made at), fold (the agent's informational marking, which may fold into the
+   count), single (a name with no price: a zone), bracket ({ top, bottom }, a zone's height), range
+   ([low, high], a zone's band, for the count's list) }. */
 
 var CHIP_H = 17;
 var CHIP_H_ONE = 17;
 var CHIP_GAP = 2;
+var CHIP_LINE = 11;
 var CHIP_RADIUS = 5;
 var CHIP_FONT = '500 10px "Geist", ui-sans-serif, system-ui, sans-serif';
-/* How wide the axis grows to name its chips: at least enough for a short word beside a price,
-   at most a little over half as wide again as a bare price axis. Measured on one frame, applied
-   from the next, the way the axis already follows its own labels. */
+/* The pitches a crowded side closes up through before any chip that has to stay could go: a line's
+   height, the step to each wrapped line under it, and the air between two chips. */
+var CHIP_PITCHES = [
+  { h: 17, line: 11, gap: 2 },
+  { h: 15, line: 10, gap: 1 },
+  { h: 14, line: 10, gap: 0 }
+];
+/* How wide the axis grows to name its chips: at least enough for a short word beside a price, and
+   as much as the widest chip on screen asks for, up to a fifth of the chart and never past the
+   ceiling; past that a name wraps rather than taking the plot. Measured on one frame, applied from
+   the next, the way the axis already follows its own labels. */
 var CHIP_AXIS_MIN = 96;
-var CHIP_AXIS_MAX = 140;
+var CHIP_AXIS_MAX = 184;
+var CHIP_AXIS_SHARE = 0.2;
+var CHIP_AXIS_LOW_CAP = 140;
+/* What a chip's text loses to the chip's own edges: the chip starts four in from the plot and stops
+   one short of the axis's edge, and its text sits two inside it on the left and six on the right. */
+var CHIP_TEXT_PAD = 13;
 var CHART_CHIP_W = 0;
 var ELLIPSIS = String.fromCharCode(0x2026);
+/* The count of folded markings, in the strip above the axis. */
+var FOLD_CHIP_H = 16;
 
 function chipHeight(chip) {
   return chip.single ? CHIP_H_ONE : CHIP_H;
 }
 
-/* Up to three chips wait at an edge, two on a short pane, so the off-scale ones cannot take the
-   whole axis from the lines that are on it. */
+/* Up to three chips wait at an edge, two on a short pane, so the agent's off-scale levels cannot
+   take the whole axis from the lines that are on it. The account's are counted first and are never
+   turned away: an off-scale stop is the normal case, and it is shown. */
 function chipsPerEdge(L) {
   return L.priceHeight < 240 ? 2 : 3;
 }
 
-/* How wide a chip needs to be to say all of itself: the price, the arrow, the name. */
+/* The widest the axis may grow for a name on this chart. */
+function chipAxisCap(width) {
+  if (!(width > 0)) return CHIP_AXIS_MAX;
+  return clampNum(Math.round(width * CHIP_AXIS_SHARE), CHIP_AXIS_LOW_CAP, CHIP_AXIS_MAX);
+}
+
+/* What a chip prints ahead of its name, and how wide that is: the figure in the axis's own face and
+   a gap after it, then the arrow when its line is off the pane. */
+function chipLead(ctx, chip, decimals) {
+  ctx.font = CHART_FONT;
+  var figure = chip.single || typeof chip.price !== 'number' ? '' : priceText(chip.price, decimals);
+  var width = figure ? textWidth(ctx, figure) + 7 : 0;
+  if (chip.edge === 'top' || chip.edge === 'bottom') width += LABEL_GLYPH_W + 1;
+  return { figure: figure, width: width };
+}
+
+/* How wide the axis needs to be for a chip to say all of itself on one line. */
 function chipWidthWanted(ctx, chip, decimals) {
+  var lead = chipLead(ctx, chip, decimals).width;
   ctx.font = CHIP_FONT;
   var word = textWidth(ctx, String(chip.word || ''));
   ctx.font = CHART_FONT;
-  var price = chip.single || typeof chip.price !== 'number' ? 0 : textWidth(ctx, priceText(chip.price, decimals)) + 7;
-  var arrow = chip.edge === 'top' || chip.edge === 'bottom' ? LABEL_GLYPH_W + 1 : 0;
-  return Math.ceil(price + arrow + word + 12);
+  return Math.ceil(lead + word + CHIP_TEXT_PAD + 1);
 }
 
-/* The axis the chips on screen ask for: the widest of them, held between the floor and the
-   ceiling, or nothing when there are none. */
-function chipAxisWidth(ctx, chips, decimals) {
+/* The axis the chips on screen ask for: the widest of them on one line, held between the floor and
+   the cap (chipAxisCap, or the ceiling), or nothing when there are none. A name that would take
+   more than two lines at the cap asks for as much more as keeps it to two, up to the ceiling: the
+   longest name a label can hold (48 characters) reads as two short lines, not a column of words. */
+function chipAxisWidth(ctx, chips, decimals, cap) {
+  var top = cap === undefined ? CHIP_AXIS_MAX : Math.min(cap, CHIP_AXIS_MAX);
   var want = 0;
-  for (var i = 0; i < chips.length; i++) want = Math.max(want, chipWidthWanted(ctx, chips[i], decimals));
+  for (var i = 0; i < chips.length; i++) {
+    var one = chipWidthWanted(ctx, chips[i], decimals);
+    var w = one;
+    if (one > top) {
+      w = top;
+      if (chipLines(ctx, chips[i], top - CHIP_TEXT_PAD, decimals).lines.length > 2) w = chipTwoLineWidth(ctx, chips[i], decimals, top);
+    }
+    want = Math.max(want, w);
+  }
   ctx.font = CHART_FONT;
-  return want > 0 ? clampNum(want, CHIP_AXIS_MIN, CHIP_AXIS_MAX) : 0;
+  return want > 0 ? clampNum(want, CHIP_AXIS_MIN, Math.max(top, want)) : 0;
+}
+
+/* The narrowest axis, from `from` up to the ceiling, on which a chip's name takes two lines at most;
+   the ceiling itself when not even that holds it (the name then takes the lines it needs). */
+function chipTwoLineWidth(ctx, chip, decimals, from) {
+  var lo = from;
+  var hi = CHIP_AXIS_MAX;
+  if (chipLines(ctx, chip, hi - CHIP_TEXT_PAD, decimals).lines.length > 2) return hi;
+  while (hi - lo > 1) {
+    var mid = Math.floor((lo + hi) / 2);
+    if (chipLines(ctx, chip, mid - CHIP_TEXT_PAD, decimals).lines.length <= 2) hi = mid;
+    else lo = mid;
+  }
+  return hi;
 }
 
 /* A soft layer on the axis: the panel's own ground, washed in the tone, with a hairline of light
@@ -1638,125 +1721,296 @@ function clearOfBands(t, h, bands, dir) {
   return t;
 }
 
-/* The chips beside their lines, in price order, each as near its line as the others allow: a
-   pass down pushes each clear of the one above and of the bands, a pass up pulls the run back
-   inside the pane when it ran off the bottom. What still does not fit is dropped. */
-function packChips(items, lo, hi, bands) {
+/* A name broken into lines at its spaces, first beside the figure (`first` wide), then each line
+   under the one before (`rest` wide). The figure's line keeps no word at all when not even the
+   first one fits beside it: the name starts on the line under. A word wider than a whole line is
+   broken inside itself, the one case where a line cannot end at a space, and no letter is ever left
+   out. The context's font is the name's. */
+function wrapWords(ctx, text, first, rest) {
+  var words = String(text || '').split(/\s+/).filter(Boolean);
+  var lines = [];
+  var line = '';
+  var room = Math.max(1, first);
+  for (var i = 0; i < words.length; i++) {
+    var word = words[i];
+    var next = line ? line + ' ' + word : word;
+    if (textWidth(ctx, next) <= room) {
+      line = next;
+      continue;
+    }
+    if (line || (!lines.length && rest > room)) {
+      lines.push(line);
+      line = '';
+      room = Math.max(1, rest);
+      if (textWidth(ctx, word) <= room) {
+        line = word;
+        continue;
+      }
+    }
+    while (word.length > 1 && textWidth(ctx, word) > room) {
+      var cut = word.length - 1;
+      while (cut > 1 && textWidth(ctx, word.slice(0, cut)) > room) cut--;
+      lines.push(word.slice(0, cut));
+      word = word.slice(cut);
+      room = Math.max(1, rest);
+    }
+    line = word;
+  }
+  if (line || !lines.length) lines.push(line);
+  return lines;
+}
+
+/* A chip's name as the lines it takes in `room`, the text width a chip has. Lines after the first
+   hang under the start of the name, so the name reads as one beside its price; when that column is
+   too narrow to hold it in two lines, they start under the figure instead and use the chip's whole
+   width. */
+function chipLines(ctx, chip, room, decimals) {
+  var word = String(chip.word || '');
+  var lead = chipLead(ctx, chip, decimals).width;
+  ctx.font = CHIP_FONT;
+  var hung = wrapWords(ctx, word, room - lead, room - lead);
+  var out = hung.length <= 2 || lead === 0 ? { lines: hung, hang: true } : { lines: wrapWords(ctx, word, room - lead, room), hang: false };
+  ctx.font = CHART_FONT;
+  return out;
+}
+
+/* One chip per price: a plan's stop and the stop order the venue holds for it are one level, and
+   two chips saying the same thing is a ladder twice as tall for nothing. The one that stays keeps
+   the stronger claim of the two. */
+function dedupeChips(list) {
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < list.length; i++) {
+    var chip = list[i];
+    var key = typeof chip.price === 'number' ? [chip.edge, chip.word, chip.tone, chip.price].join('|') : null;
+    if (key === null || seen[key] === undefined) {
+      if (key !== null) seen[key] = out.length;
+      out.push(chip);
+      continue;
+    }
+    var held = out[seen[key]];
+    out[seen[key]] = Object.assign({}, held, {
+      ring: held.ring === true || chip.ring === true,
+      risk: held.risk === true || chip.risk === true,
+      fold: held.fold === true && chip.fold === true,
+      prio: Math.max(held.prio || 0, chip.prio || 0),
+      alpha: Math.max(held.alpha === undefined ? 1 : held.alpha, chip.alpha === undefined ? 1 : chip.alpha)
+    });
+  }
+  return out;
+}
+
+/* A chip's height at a pitch: one line, and a step for each line its name wrapped onto. */
+function chipTall(chip, pitch) {
+  return pitch.h + (chip.lines.length - 1) * pitch.line;
+}
+
+/* Whether a run of chips fits in a side at a pitch, with the air between each two. */
+function sideFits(list, side, pitch) {
+  if (!list.length) return true;
+  if (!side) return false;
+  var used = 0;
+  for (var i = 0; i < list.length; i++) used += chipTall(list[i], pitch);
+  used += (list.length - 1) * pitch.gap;
+  return used <= side.hi - side.lo + 0.5;
+}
+
+/* The chips beside their lines and at the edges, laid out for this frame. See the section above
+   for the rules; this is them in order. Also sets L.fold, the agent's markings that folded into the
+   count, or null. `ctx` measures the names for wrapping; without one every name is one line. */
+function chipLayout(L, ctx) {
+  var top = L.priceTop;
+  var bottom = L.priceTop + L.priceHeight;
+  var reserved = L.reserved || null;
+  var tagY = reserved ? reserved.top + 10 : null;
+  var mid = tagY === null ? top + L.priceHeight / 2 : tagY;
+  var yOf = typeof L.yOf === 'function' ? L.yOf : null;
+  var room = (typeof L.padRight === 'number' ? L.padRight : CHART_AXIS_W) - CHIP_TEXT_PAD;
+
+  var chips = dedupeChips(CHART_AXIS_CHIPS).map(function (chip) {
+    var out = Object.assign({}, chip);
+    out.keep = chip.fold !== true;
+    out.risk = chip.risk === true;
+    var wrapped = ctx ? chipLines(ctx, chip, room, L.decimals) : { lines: [String(chip.word || '')], hang: true };
+    out.lines = wrapped.lines;
+    out.hang = wrapped.hang;
+    out.side = reserved === null ? 0 : chip.edge === 'top' ? 0 : chip.edge === 'bottom' ? 1 : chip.y < tagY ? 0 : 1;
+    // Where on the ladder it belongs, top to bottom, and how far that is from the last price.
+    if (chip.edge === 'at' && typeof chip.y === 'number') out.rank = chip.y;
+    else if (yOf && typeof chip.price === 'number') out.rank = yOf(chip.price);
+    else out.rank = chip.edge === 'top' ? top - 1e6 - (chip.price || 0) : bottom + 1e6 - (chip.price || 0);
+    out.near = Math.abs(out.rank - mid);
+    return out;
+  });
+
+  function sidesAt(pitch) {
+    if (reserved === null) return [{ lo: top + 1, hi: bottom - 1 }, null];
+    var upper = { lo: top + 1, hi: reserved.top - pitch.gap };
+    var lower = { lo: reserved.bottom + pitch.gap, hi: bottom - 1 };
+    return [upper.hi > upper.lo ? upper : null, lower.hi > lower.lo ? lower : null];
+  }
+
+  /* The chips that stay, on their sides at one pitch, handing the ones nearest the tag across it
+     while a side is over and the other has room. */
+  function settle(keepers, pitch) {
+    var sides = sidesAt(pitch);
+    var runs = [[], []];
+    keepers.forEach(function (chip) {
+      chip.crossed = false;
+      runs[chip.side].push(chip);
+    });
+    for (var s = 0; s < 2; s++) {
+      var other = 1 - s;
+      while (runs[s].length && !sideFits(runs[s], sides[s], pitch)) {
+        var nearest = runs[s].reduce(function (best, c) {
+          return c.near < best.near ? c : best;
+        }, runs[s][0]);
+        if (!sideFits(runs[other].concat([nearest]), sides[other], pitch)) break;
+        runs[s].splice(runs[s].indexOf(nearest), 1);
+        nearest.crossed = true;
+        runs[other].push(nearest);
+      }
+    }
+    var ok = sideFits(runs[0], sides[0], pitch) && sideFits(runs[1], sides[1], pitch);
+    return { ok: ok, sides: sides, runs: runs, pitch: pitch };
+  }
+
+  var keepers = chips.filter(function (c) {
+    return c.keep;
+  });
+  var folders = chips.filter(function (c) {
+    return !c.keep;
+  });
+  var plan = null;
+  for (var p = 0; p < CHIP_PITCHES.length && !(plan && plan.ok); p++) plan = settle(keepers, CHIP_PITCHES[p]);
+  /* Past the tightest pitch the person's own markings and resting orders fold too, the least
+     important first, before a price money is lost at could. Only a pane far shorter than the
+     window allows reaches this. */
+  var tightest = CHIP_PITCHES[CHIP_PITCHES.length - 1];
+  var spare = keepers
+    .filter(function (c) {
+      return !c.risk;
+    })
+    .sort(function (a, b) {
+      return (a.prio || 0) - (b.prio || 0) || b.near - a.near;
+    });
+  while (!plan.ok && spare.length) {
+    var gone = spare.shift();
+    keepers.splice(keepers.indexOf(gone), 1);
+    folders.push(gone);
+    plan = settle(keepers, tightest);
+  }
+
+  /* Then the agent's: the one it is pointing at first (the spotlight), then the most important
+     and, between equals, the one nearest the price, the same rule at an edge as beside a line. An
+     edge holds three chips (two on a short pane), the account's first: an off-scale stop and the
+     liquidation always wait there, and the agent's off-scale levels take what they leave. */
+  var pitch = plan.pitch;
+  var perEdge = chipsPerEdge(L);
+  var atEdge = { top: 0, bottom: 0 };
+  keepers.forEach(function (chip) {
+    if ((chip.edge === 'top' || chip.edge === 'bottom') && !chip.crossed) atEdge[chip.edge] += 1;
+  });
+  var folded = [];
+  folders
+    .sort(function (a, b) {
+      return (b.ring ? 1 : 0) - (a.ring ? 1 : 0) || (b.prio || 0) - (a.prio || 0) || a.near - b.near;
+    })
+    .forEach(function (chip) {
+      var edge = chip.edge === 'top' || chip.edge === 'bottom' ? chip.edge : null;
+      var side = plan.sides[chip.side];
+      if (chip.keep || !side || (edge && atEdge[edge] >= perEdge) || !sideFits(plan.runs[chip.side].concat([chip]), side, pitch)) {
+        folded.push(chip);
+        return;
+      }
+      chip.crossed = false;
+      plan.runs[chip.side].push(chip);
+      if (edge) atEdge[edge] += 1;
+    });
+
+  // Each side packed as a ladder: its top edge first, then the chips beside their lines, then its
+  // bottom edge; a chip handed across the tag sits at the end of the ladder nearest the tag.
+  var laid = [];
+  for (var s = 0; s < 2; s++) {
+    var side = plan.sides[s];
+    var run = plan.runs[s];
+    if (!run.length) continue;
+    var lo = side ? side.lo : s === 0 ? top + 1 : bottom - 1;
+    var hi = side ? side.hi : lo;
+    run.forEach(function (chip) {
+      chip.h = chipTall(chip, pitch);
+      chip.h1 = pitch.h;
+      chip.step = pitch.line;
+      if (s === 0) chip.group = chip.edge === 'top' && !chip.crossed ? 0 : chip.crossed || chip.edge === 'bottom' ? 2 : 1;
+      else chip.group = chip.crossed || chip.edge === 'top' ? 0 : chip.edge === 'bottom' ? 2 : 1;
+      chip.want = chip.group === 1 && typeof chip.y === 'number' ? chip.y : chip.group === 0 ? lo + chip.h / 2 : hi - chip.h / 2;
+    });
+    run.sort(function (a, b) {
+      return a.group - b.group || (a.group === 1 ? a.want - b.want : a.rank - b.rank);
+    });
+    laid = laid.concat(packChips(run, lo, hi, [], pitch.gap));
+  }
+
+  folded.sort(function (a, b) {
+    return a.rank - b.rank;
+  });
+  L.fold = folded.length
+    ? {
+        items: folded,
+        tone: folded.every(function (c) {
+          return c.tone === 'agent';
+        })
+          ? 'agent'
+          : 'text2',
+        // The agent pointing at a marking with no room on the axis rings the count that holds it.
+        ring: folded.some(function (c) {
+          return c.ring === true;
+        })
+      }
+    : null;
+  return laid;
+}
+
+/* The chips of one side as near their lines as the others allow: a pass down pushes each clear of
+   the one above and of the bands, a pass up pulls the run back inside the side when it ran off the
+   bottom. Nothing is dropped here: what the side could not hold was decided before. */
+function packChips(items, lo, hi, bands, gap) {
+  var air = gap === undefined ? CHIP_GAP : gap;
   var edge = lo;
   for (var i = 0; i < items.length; i++) {
     var t = Math.max(items[i].want - items[i].h / 2, edge);
     t = clearOfBands(t, items[i].h, bands, 1);
     items[i].y = t;
-    edge = t + items[i].h + CHIP_GAP;
+    edge = t + items[i].h + air;
   }
   var wall = hi;
   for (var j = items.length - 1; j >= 0; j--) {
     if (items[j].y + items[j].h > wall) items[j].y = clearOfBands(wall - items[j].h, items[j].h, bands, -1);
-    wall = items[j].y - CHIP_GAP;
+    wall = items[j].y - air;
   }
-  return items.filter(function (it) {
-    return it.y >= lo - 0.5;
-  });
+  return items;
 }
 
-function chipLayout(L) {
-  var top = L.priceTop;
-  var bottom = L.priceTop + L.priceHeight;
-  var reserved = L.reserved;
-  var bands = reserved ? [{ top: reserved.top, bottom: reserved.bottom }] : [];
-  var perEdge = chipsPerEdge(L);
-  function clash(y) {
-    return reserved && y < reserved.bottom && y + CHIP_H > reserved.top;
-  }
-  /* The edge stacks first. Each is sorted nearest the pane first, so a cut keeps the levels the
-     price will reach soonest, and stacks inward from its own edge. A stack stops at the last
-     price's band rather than jumping over it: an off-scale level parked beside the live price
-     took the room the lines near the price needed for their own names. Only when nothing fits
-     on its side of the band does one chip go on the other side of it. The chip nearest the pane
-     counts what did not fit. */
-  var laid = [];
-  var floor = top;
-  function stack(name) {
-    var down = name === 'top';
-    var list = CHART_AXIS_CHIPS.filter(function (chip) {
-      return chip.edge === name;
-    });
-    list.sort(function (a, b) {
-      return down ? a.price - b.price : b.price - a.price;
-    });
-    // The slots this side of the band holds, from the edge in; the nearest chips fill them, the
-    // farthest of those at the edge.
-    var slots = [];
-    var y = down ? top + 2 : bottom - 2 - CHIP_H;
-    while (slots.length < Math.min(list.length, perEdge)) {
-      if (clash(y) || (down ? y + CHIP_H > bottom : y < floor + CHIP_GAP)) break;
-      slots.push(y);
-      y += down ? CHIP_H + CHIP_GAP : -(CHIP_H + CHIP_GAP);
-    }
-    var placed = [];
-    for (var k = 0; k < slots.length; k++) placed.push(Object.assign({}, list[slots.length - 1 - k], { y: slots[k], h: CHIP_H, single: false }));
-    if (!placed.length && list.length && reserved) {
-      var over = down ? reserved.bottom + CHIP_GAP : reserved.top - CHIP_GAP - CHIP_H;
-      if (over >= floor + CHIP_GAP && over + CHIP_H <= bottom) placed.push(Object.assign({}, list[0], { y: over, h: CHIP_H, single: false }));
-    }
-    var unshown = list.length - placed.length;
-    if (unshown > 0 && placed.length) placed[placed.length - 1].more = unshown;
-    for (var p = 0; p < placed.length; p++) {
-      laid.push(placed[p]);
-      if (down) floor = Math.max(floor, placed[p].y + CHIP_H);
-    }
-  }
-  stack('top');
-  stack('bottom');
-
-  /* Then the chips beside their lines. The last price's tag splits the axis in two and a chip
-     stays on its line's side of it, so the axis reads as a ladder: every chip above the tag is a
-     price above the market and every chip below it one under. Within its side a chip steps
-     around the edge chips, and a crowded side names what matters most: the account's lines first
-     (a position, its liquidation, a plan), then levels, lines and zones, and between equals the
-     one nearer the last price, which the price reaches first. The rest are counted on the chip
-     nearest the price, where the eye already is. */
-  for (var e = 0; e < laid.length; e++) bands.push({ top: laid[e].y, bottom: laid[e].y + laid[e].h });
-  var tagY = reserved ? reserved.top + 10 : null;
-  var sides = reserved
-    ? [{ lo: top + 1, hi: reserved.top - CHIP_GAP, items: [] }, { lo: reserved.bottom + CHIP_GAP, hi: bottom - 1, items: [] }]
-    : [{ lo: top + 1, hi: bottom - 1, items: [] }];
-  CHART_AXIS_CHIPS.forEach(function (chip) {
-    if (chip.edge !== 'at') return;
-    var side = tagY === null || chip.y < tagY ? sides[0] : sides[1];
-    side.items.push(Object.assign({}, chip, { want: chip.y, h: chipHeight(chip) }));
-  });
-  var lastY = tagY === null ? top + L.priceHeight / 2 : tagY;
-  var packed = [];
-  var dropped = 0;
-  sides.forEach(function (side) {
-    if (!side.items.length) return;
-    var room = side.hi - side.lo + CHIP_GAP;
-    for (var b = 0; b < bands.length; b++) room -= Math.max(0, Math.min(side.hi, bands[b].bottom) - Math.max(side.lo, bands[b].top)) + (bands[b].bottom > side.lo && bands[b].top < side.hi ? CHIP_GAP : 0);
-    var items = side.items.sort(function (a, b) {
-      return (b.prio || 0) - (a.prio || 0) || Math.abs(a.want - lastY) - Math.abs(b.want - lastY);
-    });
-    var keep = Math.min(items.length, Math.max(0, Math.floor(room / (CHIP_H + CHIP_GAP))));
-    dropped += items.length - keep;
-    items = items.slice(0, keep).sort(function (a, b) {
-      return a.want - b.want;
-    });
-    var done = packChips(items, side.lo, side.hi, bands).filter(function (it) {
-      return it.y + it.h <= side.hi + 0.5;
-    });
-    dropped += items.length - done.length;
-    packed = packed.concat(done);
-  });
-  if (dropped > 0 && packed.length) {
-    var nearest = packed.reduce(function (best, c) {
-      return Math.abs(c.want - lastY) < Math.abs(best.want - lastY) ? c : best;
-    }, packed[0]);
-    nearest.more = dropped;
-  }
-  return laid.concat(packed);
+/* Where the count of folded markings sits: in the strip above the price axis, beside the market
+   line, at the axis's left edge, as wide as its words. Measured here so the canvas and the button
+   over it (syncFold) agree to the pixel. */
+function foldLayout(ctx, L) {
+  var fold = L.fold;
+  if (!fold) return;
+  fold.text = '+' + fold.items.length + ' more';
+  ctx.font = CHIP_FONT;
+  var w = Math.ceil(textWidth(ctx, fold.text)) + 14;
+  ctx.font = CHART_FONT;
+  fold.rect = {
+    x: L.plotWidth + 4,
+    y: Math.max(1, Math.round(L.priceTop / 2 - FOLD_CHIP_H / 2)),
+    w: Math.min(w, Math.max(24, L.padRight - 6)),
+    h: FOLD_CHIP_H
+  };
 }
 
-/* The word as wide as the room, cut with an ellipsis when it is not. */
+/* The word as wide as the room, cut with an ellipsis when it is not. The time axis's marks only:
+   a price chip wraps its name instead (chipLines). */
 function fitWord(ctx, word, room) {
   var text = String(word || '');
   if (room <= 0) return '';
@@ -1766,19 +2020,19 @@ function fitWord(ctx, word, room) {
 }
 
 /* A chip: the price in the axis's own column, the arrow when its line is off the pane, then the
-   name, all in the owner's ink on its soft layer. A zone's chip is its name alone, beside a
-   bracket as tall as the band. A chip docking in slides the last few pixels toward the axis as
-   it fades up. */
+   name, all in the owner's ink on its soft layer, a wrapped name's lines under its first. A zone's
+   chip is its name alone, beside a bracket as tall as the band. A chip docking in slides the last
+   few pixels toward the axis as it fades up. Then the count, when the agent's markings folded. */
 function drawAxisChips(ctx, L) {
   var chips = L.chips || [];
-  if (!chips.length) return;
   var w = L.padRight - 5;
   for (var i = 0; i < chips.length; i++) {
     var chip = chips[i];
     var a = chip.alpha === undefined ? 1 : chip.alpha;
     var x = L.plotWidth + 4 + (1 - a) * 6;
     var h = chip.h || chipHeight(chip);
-    var mid = chip.y + h / 2;
+    var mid = chip.y + (chip.h1 || h) / 2;
+    var step = chip.step || CHIP_LINE;
     if (chip.bracket) {
       ctx.fillStyle = chartInk(chip.tone, 0.6 * a);
       ctx.fillRect(L.plotWidth + 1, chip.bracket.top, 2, Math.max(1, chip.bracket.bottom - chip.bracket.top));
@@ -1786,8 +2040,8 @@ function drawAxisChips(ctx, L) {
     softChip(ctx, x, chip.y, w - 1, h, chip.tone, a);
     if (chip.ring) ringChip(ctx, x, chip.y, w - 1, h);
     ctx.textAlign = 'left';
-    var left = L.plotWidth + 6 + (1 - a) * 6;
-    var right = x + w - 6;
+    var start = L.plotWidth + 6 + (1 - a) * 6;
+    var left = start;
     if (!chip.single && typeof chip.price === 'number') {
       ctx.font = CHART_FONT;
       ctx.fillStyle = chartInk(chip.tone, a);
@@ -1795,21 +2049,184 @@ function drawAxisChips(ctx, L) {
       drawText(ctx, figure, left, mid);
       left += textWidth(ctx, figure) + 7;
     }
-    var word = String(chip.word || '');
-    if (chip.more) word = word ? word + ' +' + chip.more : '+' + chip.more;
-    ctx.font = CHIP_FONT;
     if (chip.edge === 'top' || chip.edge === 'bottom') {
-      if (left + LABEL_GLYPH_W + 1 < right) {
-        labelGlyph(ctx, chip.edge === 'top' ? 'up' : 'down', left - 1, mid + 4, chartInk(chip.tone, 0.95 * a));
-        left += LABEL_GLYPH_W + 1;
-      }
+      labelGlyph(ctx, chip.edge === 'top' ? 'up' : 'down', left - 1, mid + 4, chartInk(chip.tone, 0.95 * a));
+      left += LABEL_GLYPH_W + 1;
     }
-    if (word) {
-      ctx.fillStyle = chartInk(chip.tone, 0.82 * a);
-      drawText(ctx, fitWord(ctx, word, right - left), left, mid);
+    var lines = chip.lines || [String(chip.word || '')];
+    ctx.font = CHIP_FONT;
+    ctx.fillStyle = chartInk(chip.tone, 0.82 * a);
+    for (var n = 0; n < lines.length; n++) {
+      if (lines[n]) drawText(ctx, lines[n], n === 0 || chip.hang !== false ? left : start, mid + n * step);
     }
     ctx.font = CHART_FONT;
   }
+  var fold = L.fold;
+  if (fold && fold.rect) {
+    var r = fold.rect;
+    softChip(ctx, r.x, r.y, r.w, r.h, fold.tone, 1);
+    if (fold.ring) ringChip(ctx, r.x, r.y, r.w, r.h);
+    ctx.font = CHIP_FONT;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = chartInk(fold.tone, 0.9);
+    drawText(ctx, fold.text, r.x + 7, r.y + r.h / 2);
+    ctx.font = CHART_FONT;
+  }
+}
+
+/* ---------- a count, named ----------
+
+   A count on the canvas says how many markings it holds; the window says which. Each count gets a
+   real button laid over its chip (#chart-folds, which the trade screen puts beside the chart's
+   picture rather than inside it), so the keyboard reaches it and a screen reader reads it. On hover
+   and on focus a list opens beside it naming every marking the count holds, with its price, in its
+   owner's ink; Escape puts it away. Rebuilt only when what it holds changes. Two slots: 'axis' for
+   the price axis's count, 'legend' for the study column's. */
+var CHART_FOLD_KEYS = {};
+var CHART_FOLD_AT = {};
+
+function syncFold(slot, spec) {
+  if (typeof document === 'undefined' || !document || typeof document.getElementById !== 'function') return;
+  var layer = document.getElementById('chart-folds');
+  if (!layer) return;
+  var button = document.getElementById('chart-fold-' + slot);
+  var tip = document.getElementById('chart-fold-tip-' + slot);
+  if (!spec) {
+    if (button && button.parentNode) button.parentNode.removeChild(button);
+    if (tip && tip.parentNode) tip.parentNode.removeChild(tip);
+    CHART_FOLD_KEYS[slot] = '';
+    CHART_FOLD_AT[slot] = '';
+    return;
+  }
+  if (!button || !tip) {
+    button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'chart-fold-' + slot;
+    button.className = 'chart-fold';
+    tip = document.createElement('div');
+    tip.id = 'chart-fold-tip-' + slot;
+    tip.className = 'chart-fold-tip';
+    tip.setAttribute('role', 'tooltip');
+    button.setAttribute('aria-describedby', tip.id);
+    wireFold(button);
+    layer.appendChild(button);
+    layer.appendChild(tip);
+    CHART_FOLD_KEYS[slot] = '';
+    CHART_FOLD_AT[slot] = '';
+  }
+  // The legend's count is laid on every pointer move: the button moves only when its chip did.
+  var wrap = chartWrap();
+  var dx = wrap && typeof wrap.offsetLeft === 'number' ? wrap.offsetLeft : 0;
+  var dy = wrap && typeof wrap.offsetTop === 'number' ? wrap.offsetTop : 0;
+  var anchor = typeof spec.tipX === 'number' ? spec.tipX : spec.align === 'end' ? spec.x + spec.w : spec.x;
+  var at = [dx + spec.x, dy + spec.y, spec.w, spec.h, anchor, spec.align].map(function (v) {
+    return typeof v === 'number' ? Math.round(v) : v;
+  }).join(',');
+  if (CHART_FOLD_AT[slot] !== at) {
+    CHART_FOLD_AT[slot] = at;
+    button.style.left = Math.round(dx + spec.x) + 'px';
+    button.style.top = Math.round(dy + spec.y) + 'px';
+    button.style.width = Math.round(spec.w) + 'px';
+    button.style.height = Math.round(spec.h) + 'px';
+    var below = Math.round(dy + spec.y + spec.h + 6);
+    tip.dataset.align = spec.align;
+    tip.style.left = Math.round(dx + anchor) + 'px';
+    tip.style.top = below + 'px';
+    var room = (layer.clientHeight || 0) - below - 8;
+    tip.style.maxHeight = room > 48 ? room + 'px' : '';
+  }
+
+  var key = spec.title + '|' + spec.rows.map(function (row) {
+    return [row.figure, row.arrow, row.word, row.tone].join('~');
+  }).join('|');
+  if (CHART_FOLD_KEYS[slot] === key) return;
+  CHART_FOLD_KEYS[slot] = key;
+  button.setAttribute('aria-label', spec.label);
+  tip.textContent = '';
+  var head = document.createElement('div');
+  head.className = 'chart-fold-head';
+  head.textContent = spec.title;
+  tip.appendChild(head);
+  var list = document.createElement('ul');
+  list.className = 'chart-fold-list';
+  for (var i = 0; i < spec.rows.length; i++) {
+    var row = spec.rows[i];
+    var item = document.createElement('li');
+    item.dataset.tone = row.tone;
+    var figure = document.createElement('span');
+    figure.className = 'chart-fold-px';
+    figure.textContent = row.figure || '';
+    item.appendChild(figure);
+    var name = document.createElement('span');
+    name.className = 'chart-fold-name';
+    if (row.arrow) {
+      var arrow = document.createElement('span');
+      arrow.className = 'chart-fold-arrow';
+      arrow.dataset.dir = row.arrow;
+      name.appendChild(arrow);
+    }
+    name.appendChild(document.createTextNode(row.word));
+    if (row.arrow) {
+      var where = document.createElement('span');
+      where.className = 'chart-fold-where';
+      where.textContent = row.arrow === 'up' ? ', above the chart' : ', below the chart';
+      name.appendChild(where);
+    }
+    item.appendChild(name);
+    list.appendChild(item);
+  }
+  tip.appendChild(list);
+}
+
+/* The list shows while the pointer or the focus is on the count (the stylesheet), and stays while
+   the pointer is on the list itself. Escape puts it away until the focus or the pointer leaves and
+   comes back. A press does nothing else: it is not a toggle a pointer could leave stuck open. */
+function wireFold(button) {
+  button.addEventListener('click', function (ev) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+  });
+  button.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Escape') return;
+    button.dataset.hush = '1';
+    if (ev.stopPropagation) ev.stopPropagation();
+  });
+  button.addEventListener('blur', function () {
+    delete button.dataset.hush;
+  });
+  button.addEventListener('pointerleave', function () {
+    delete button.dataset.hush;
+  });
+}
+
+/* The price axis's count, as the list it names: every folded marking top to bottom, its price (a
+   zone's band), whether it is off the top or the bottom, and its name. */
+function syncAxisFold(L) {
+  var fold = L.fold;
+  if (!fold || !fold.rect) {
+    syncFold('axis', null);
+    return;
+  }
+  var rows = fold.items.map(function (chip) {
+    var figure = '';
+    if (chip.range) figure = priceText(chip.range[0], L.decimals) + ' to ' + priceText(chip.range[1], L.decimals);
+    else if (typeof chip.price === 'number') figure = priceText(chip.price, L.decimals);
+    var arrow = chip.edge === 'top' ? 'up' : chip.edge === 'bottom' ? 'down' : '';
+    return { figure: figure, arrow: arrow, word: String(chip.word || ''), tone: chip.tone };
+  });
+  var n = rows.length;
+  var whose = fold.tone === 'agent' ? 'from your assistant' : 'on this chart';
+  // The list opens over the axis it was folded out of, its right edge on the chart's.
+  syncFold('axis', {
+    x: fold.rect.x,
+    y: fold.rect.y,
+    w: fold.rect.w,
+    h: fold.rect.h,
+    align: 'end',
+    tipX: L.width - 2,
+    title: n + ' more ' + whose,
+    label: n + ' more ' + (n === 1 ? 'marking ' : 'markings ') + whose + ', not shown on the axis',
+    rows: rows
+  });
 }
 
 /* The ticks of the time axis for one layout: the first bar of every bucket of the coarsest
@@ -2293,7 +2710,10 @@ function drawLevels(ctx, L) {
       tone: tone,
       ring: !list[i].ghost && chartSpotOn('level', level.id),
       alpha: list[i].alpha,
-      prio: list[i].ghost ? 1 : 6
+      prio: list[i].ghost ? 1 : 6,
+      // The agent's level is information, and may fold into the count on a crowded axis; the
+      // person's own never does. Anything fading out may.
+      fold: list[i].ghost || level.source === 'agent'
     };
     if (y < top || y > bottom) {
       // Off the top or the bottom of what is on screen. The line cannot be drawn where it
@@ -2338,7 +2758,15 @@ function drawZone(ctx, L, d, motion, ring) {
   var yHigh = L.yOf(d.zone.high);
   var yLow = L.yOf(d.zone.low);
   var tone = markingTone(d.source);
-  var chip = { word: labelText(d.label), tone: tone, ring: ring, alpha: motion.alpha, prio: motion.ghost ? 1 : 4 };
+  var chip = {
+    word: labelText(d.label),
+    tone: tone,
+    ring: ring,
+    alpha: motion.alpha,
+    prio: motion.ghost ? 1 : 4,
+    fold: motion.ghost || d.source === 'agent',
+    range: [d.zone.low, d.zone.high]
+  };
   if (yLow < top || yHigh > bottom) {
     // The whole band is past an edge: a chip there with the edge price nearest the pane.
     chip.edge = yLow < top ? 'top' : 'bottom';
@@ -2419,7 +2847,7 @@ function drawTrendLine(ctx, L, d, motion, ring) {
     ctx.lineCap = 'butt';
     ctx.lineWidth = 1;
   }
-  var chip = { price: right, word: labelText(d.label), tone: tone, ring: ring, alpha: motion.alpha, prio: motion.ghost ? 1 : 5 };
+  var chip = { price: right, word: labelText(d.label), tone: tone, ring: ring, alpha: motion.alpha, prio: motion.ghost ? 1 : 5, fold: motion.ghost || d.source === 'agent' };
   if (y1 >= top && y1 <= bottom) {
     chip.edge = 'at';
     chip.y = y1;
@@ -2719,21 +3147,65 @@ function drawLegend(ctx, L) {
   }
 
   var laid = labelLayout(items, columnTop - LABEL_TOP, L.priceTop + L.priceHeight);
-  var boxes = labelDraw(ctx, laid.placed, chartInk, chartLabelPad());
+  /* One soft plate behind the whole column, in the slab's own shade, so a study's name and its
+     values are never read against the candles, a band or a line running under them. It used to
+     be a pad per line at three quarters, and the price and the trend line showed between them. */
+  var plate = labelPlate(ctx, laid.placed, legendPlateInks());
+  var boxes = labelDraw(ctx, laid.placed, chartInk, plate ? null : chartLabelPad());
+  var count = null;
   for (var b = 0; b < boxes.length; b++) {
     var placed = boxes[b].item;
+    if (placed.overflow) count = boxes[b];
     if (!placed.id) continue;
     CHART_LABEL_BOXES[placed.id] = boxes[b];
     if (!placed.remove) continue;
     // The cross is the last part of the line, so the hit is the tail of the box.
     CHART_HITS.push({ x: boxes[b].x + boxes[b].w - 16, y: boxes[b].y, w: 18, h: boxes[b].h, remove: placed.remove });
   }
+  syncLegendFold(count, laid.hidden || []);
 
   for (var p = 0; p < L.panes.length; p++) {
     drawIndicatorLine(ctx, L, L.panes[p].indicator, L.panes[p].top + 9, index);
   }
 
   drawChartNotes(ctx, L);
+}
+
+/* The legend's plate: the chart's own ground, the slab it sits on, strong enough that nothing under
+   it reads through, with the same hairline of warm light along its top every soft layer on the
+   axis wears. */
+function legendPlateInks() {
+  return { ground: groundInk(0.92), light: 'rgba(255, 232, 220, 0.06)', hair: 1 / DPR };
+}
+
+/* The column's own count ("+2 more", past eight studies), named like the axis's: the button over
+   it opens a list of every study it holds with its values at the bar being read. */
+function syncLegendFold(count, hidden) {
+  if (!count || !hidden.length) {
+    syncFold('legend', null);
+    return;
+  }
+  var rows = hidden.map(function (item) {
+    var texts = (item.parts || [{ text: item.text, tone: item.tone }]).filter(function (part) {
+      return typeof part.text === 'string';
+    });
+    var name = texts.length ? texts[0] : { text: '', tone: 'text' };
+    var values = texts.slice(1).map(function (part) {
+      return part.text;
+    });
+    return { figure: name.text, arrow: '', word: values.join('  '), tone: name.tone === 'agent' ? 'agent' : 'text' };
+  });
+  var n = rows.length;
+  syncFold('legend', {
+    x: count.x,
+    y: count.y,
+    w: count.w,
+    h: count.h,
+    align: 'start',
+    title: n + ' more ' + (n === 1 ? 'study' : 'studies') + ' on this chart',
+    label: n + ' more ' + (n === 1 ? 'study' : 'studies') + ' on this chart, not shown in the legend',
+    rows: rows
+  });
 }
 
 /* The ink a study's value is printed in: its line's own hue, so the eye reads name, line and
@@ -2830,7 +3302,9 @@ function drawChartNotes(ctx, L) {
    the pointer. */
 function drawIndicatorLine(ctx, L, indicator, y, index) {
   var study = studyParts(L, indicator, index);
-  var boxes = labelDraw(ctx, [{ labelY: y, parts: study.parts, ring: chartSpotOn('indicator', indicator.id) }], chartInk, chartLabelPad());
+  var line = [{ labelY: y, parts: study.parts, ring: chartSpotOn('indicator', indicator.id) }];
+  var plate = labelPlate(ctx, line, legendPlateInks());
+  var boxes = labelDraw(ctx, line, chartInk, plate ? null : chartLabelPad());
   var box = boxes[0];
   if (!box) return y + LABEL_PITCH;
   CHART_LABEL_BOXES[indicator.id] = box;

@@ -29,7 +29,9 @@
    these with the candles and the value the agent measured against is the value on the glass.
    Names are not printed over the candles: every line hands its name and price to the chart's
    chips on the price axis (chartAxisChip), where they are stacked with the levels' so no two
-   print on one another. */
+   print on one another. A line money is lost or made at (the liquidation, a stop, an entry, a
+   target) says so (risk), and the axis never folds its chip into a count however crowded it is:
+   a stop hidden behind "+7" is a stop the person cannot see. */
 
 'use strict';
 
@@ -56,7 +58,7 @@ function tradeLine(ctx, L, spec) {
   var y = L.yOf(spec.price);
   var top = L.priceTop;
   var bottom = L.priceTop + L.priceHeight;
-  var chip = { price: spec.price, word: spec.chip, tone: spec.tone, ring: spec.ring === true, prio: spec.prio || 7 };
+  var chip = { price: spec.price, word: spec.chip, tone: spec.tone, ring: spec.ring === true, prio: spec.prio || 7, risk: spec.risk === true };
   if (y < top || y > bottom) {
     chip.edge = y < top ? 'top' : 'bottom';
     chartAxisChip(chip);
@@ -235,12 +237,12 @@ function drawPlan(ctx, L, plan, showStop) {
   if (stop !== null && showStop) tradeSpan(ctx, L, entry, stop, 'down', 0.05);
   if (target !== null) tradeSpan(ctx, L, entry, target, 'up', 0.05);
 
-  tradeLine(ctx, L, { price: entry, tone: 'up', chip: 'Plan ' + side, dash: dash, alpha: 0.9, ring: ring, prio: 8 });
+  tradeLine(ctx, L, { price: entry, tone: 'up', chip: 'Plan ' + side, dash: dash, alpha: 0.9, ring: ring, prio: 8, risk: true });
   if (stop !== null && showStop) {
-    tradeLine(ctx, L, { price: stop, tone: 'down', chip: 'Stop', dash: dash, alpha: 0.85, prio: 8 });
+    tradeLine(ctx, L, { price: stop, tone: 'down', chip: 'Stop', dash: dash, alpha: 0.85, prio: 8, risk: true });
   }
   if (target !== null) {
-    tradeLine(ctx, L, { price: target, tone: 'up', chip: 'Target', dash: dash, alpha: 0.85, prio: 8 });
+    tradeLine(ctx, L, { price: target, tone: 'up', chip: 'Target', dash: dash, alpha: 0.85, prio: 8, risk: true });
   }
 }
 
@@ -277,7 +279,7 @@ function drawTradeOverlays(ctx, L) {
        that is close reads as a closing wall rather than as one more line in a list. */
     if (show.liquidation && isFinite(p.liqPx) && p.liqPx > 0) {
       tradeBand(ctx, L, p.liqPx, long ? 'down' : 'up', 'down', 0.06);
-      tradeLine(ctx, L, { price: p.liqPx, tone: 'down', chip: 'Liquidation', width: 1.5, alpha: 0.9, prio: 9 });
+      tradeLine(ctx, L, { price: p.liqPx, tone: 'down', chip: 'Liquidation', width: 1.5, alpha: 0.9, prio: 9, risk: true });
     }
 
     // The position's own entry, in the text ink: a fact about the account, not a gain or a loss.
@@ -290,6 +292,7 @@ function drawTradeOverlays(ctx, L) {
         width: 1.5,
         alpha: 0.9,
         prio: 9,
+        risk: true,
         ring: chartSpotOn('position', String(p.coin).toUpperCase())
       });
     }
@@ -314,6 +317,7 @@ function drawTradeOverlays(ctx, L) {
         chip: tr.role === 'stop' ? 'Stop' : 'Target',
         alpha: 0.8,
         prio: 8,
+        risk: true,
         ring: chartSpotOn('order', String(tr.oid))
       });
     }
