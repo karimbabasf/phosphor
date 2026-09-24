@@ -228,7 +228,7 @@ test('the one action asks the assistant in the thread, and says what to do first
   rig.canTalk(false);
   one(rig.host, 'pro-sum-fund').click();
   assert.equal(rig.sent.length, 1, 'a message went nowhere');
-  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'Start your assistant, then ask it to add money to your trading account.');
+  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'Start your agent, then ask it to add money to your trading account.');
 });
 
 test('a venue that has not answered is a wait, and one that is not answering reads unknown, never empty', () => {
@@ -254,16 +254,19 @@ test('nothing here polls: the account follows the stream through trade.js, and t
   assert.deepEqual(rig.loads, []);
   rig.view('pro');
   assert.deepEqual(rig.loads, ['trade']);
+  rig.view('trade');
+  assert.deepEqual(rig.loads, ['trade', 'trade'], 'Trade does not ask for its bundle');
   // Before the bundle has read anything the account side is empty, not a guess.
   assert.equal(one(rig.host, 'pro-sum-figures').hidden, true);
   assert.equal(one(rig.host, 'pro-sum-note').hidden, true);
 });
 
-test('one trading screen: the money line and the trading side show together on Pro, on a two track stage shared with the Vault', () => {
-  assert.match(CSS, /body\[data-view="pro"\] #view-trade\s*\{\s*display:\s*flex;/);
-  assert.doesNotMatch(CSS, /data-view="trade"/, 'a second trading state is back');
+test('Pro is the money line over the deck alone, Trade adds the market and the chart, and both share the Vault\'s two track stage', () => {
+  assert.match(CSS, /body\[data-view="pro"\] #view-trade,\s*body\[data-view="trade"\] #view-pro\s*\{\s*display:\s*flex;/, 'Pro and Trade do not both open on the money line');
+  assert.match(CSS, /body\[data-view="pro"\] \.trade-wrap > \.trade-strip,\s*body\[data-view="pro"\] \.trade-wrap > \.trade-main,\s*body\[data-view="pro"\] \.trade-wrap > \.split-h\s*\{\s*display:\s*none;/, 'Pro draws the market or the chart');
+  assert.match(CSS, /body\[data-view="pro"\] \.trade-wrap > \.trade-rail\s*\{\s*display:\s*flex;\s*flex:\s*1 1 auto;/, 'the deck is not the whole of Pro under the line');
   assert.match(CSS, /grid-template-columns:\s*minmax\(0, 1fr\) clamp\(560px, var\(--trade, 55vw\), 1400px\);/);
-  for (const view of ['pro', 'vault']) {
+  for (const view of ['pro', 'trade', 'vault']) {
     assert.ok(CSS.includes(`body[data-view="${view}"] .stage,`) || CSS.includes(`body[data-view="${view}"] .stage {`), `${view} does not take the shared stage`);
   }
   const line = CSS.slice(CSS.indexOf('/* ---------- the money line'), CSS.indexOf('/* ---------- the receipts list'));

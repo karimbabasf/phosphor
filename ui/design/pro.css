@@ -1,21 +1,24 @@
-/* Pro: the same conversation on the left, the trading side on the right.
+/* Pro and Trade: the same conversation on the left, the trading side on the
+   right.
 
-   THE STAGE ON PRO AND THE VAULT. Two tracks, the way Basic lays its own: the
-   conversation takes what is left and the world is a panel on the right. Only
-   the panel's width differs, because a chart in Basic's reading width is a
-   phone chart: here it is 55 percent of the window between 560 and 1400,
-   or whatever the divider was dragged to (--trade, ui/split.js). The Vault
-   uses the same track, so Pro and the Vault never move the conversation.
-   The divider sits over the boundary rather than in a track of its own, so
-   the grid keeps Basic's shape. Under 960 wide (a browser, never the app) the
-   stacked layout in layout.css stands. */
+   THE STAGE ON PRO, TRADE AND THE VAULT. Two tracks, the way Basic lays its
+   own: the conversation takes what is left and the world is a panel on the
+   right. Only the panel's width differs, because a chart in Basic's reading
+   width is a phone chart: here it is 55 percent of the window between 560
+   and 1400, or whatever the divider was dragged to (--trade, ui/split.js).
+   The three share the track, so moving between them never moves the
+   conversation. The divider sits over the boundary rather than in a track of
+   its own, so the grid keeps Basic's shape. Under 960 wide (a browser, never
+   the app) the stacked layout in layout.css stands. */
 @media (min-width: 960px) {
   body[data-view="pro"] .stage,
+  body[data-view="trade"] .stage,
   body[data-view="vault"] .stage {
     grid-template-columns: minmax(0, 1fr) clamp(560px, var(--trade, 55vw), 1400px);
   }
 
   body[data-view="pro"] .stage > .conversation,
+  body[data-view="trade"] .stage > .conversation,
   body[data-view="vault"] .stage > .conversation {
     grid-column: 1;
     grid-row: 1;
@@ -23,12 +26,14 @@
   }
 
   body[data-view="pro"] .stage > .world,
+  body[data-view="trade"] .stage > .world,
   body[data-view="vault"] .stage > .world {
     grid-column: 2;
     grid-row: 1;
   }
 
   body[data-view="pro"] .stage > .split-v,
+  body[data-view="trade"] .stage > .split-v,
   body[data-view="vault"] .stage > .split-v {
     grid-column: 2;
     grid-row: 1;
@@ -44,33 +49,47 @@
    is, with the same hairline between them. The chart's canvas paints this
    ground too, so the trading side reads as one surface. */
 body[data-view="pro"] .world,
+body[data-view="trade"] .world,
 body[data-view="vault"] .world {
   background: var(--bg-1);
   border-left: 1px solid var(--line);
 }
 
 body[data-view="pro"] .notice,
+body[data-view="trade"] .notice,
 body[data-view="vault"] .notice {
   background: var(--bg-1);
   padding-inline: var(--s-5);
 }
 
-/* ---------- one trading screen ----------
+/* ---------- Pro and Trade ----------
 
-   The money line (#view-pro) over the market, the chart and the deck
-   (#view-trade), which the trade bundle builds into a view of its own. The
-   line keeps its own height; the trading side below it takes the rest. */
-body[data-view="pro"] #view-trade {
+   Both open on the money line (#view-pro). Trade is the market, the chart and
+   the deck under it (#view-trade, built by the trade bundle). Pro is your
+   money and your positions: the same line over the deck alone, which takes
+   the whole height, so the positions, orders and history read without the
+   chart. The deck is one element shown on both, never a copy. */
+body[data-view="pro"] #view-trade,
+body[data-view="trade"] #view-pro {
   display: flex;
 }
 
-body[data-view="pro"] #view-pro {
+body[data-view="pro"] #view-pro,
+body[data-view="trade"] #view-pro {
   flex: 0 0 auto;
 }
 
-.world[data-swapping="true"] #view-pro,
-.world[data-swapping="true"] #view-trade {
-  animation: viewin var(--dur-swap) var(--ease-out) both;
+body[data-view="pro"] .trade-wrap > .trade-strip,
+body[data-view="pro"] .trade-wrap > .trade-main,
+body[data-view="pro"] .trade-wrap > .split-h {
+  display: none;
+}
+
+/* On Pro the deck is the view, so Trade's Layout choice to hide it does not
+   reach here. */
+body[data-view="pro"] .trade-wrap > .trade-rail {
+  display: flex;
+  flex: 1 1 auto;
 }
 
 /* ---------- the money line ----------

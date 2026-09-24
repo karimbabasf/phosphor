@@ -45,7 +45,7 @@ export const RECIPES: readonly Recipe[] = [
   { family: 'btn btn-primary btn-lg', children: [label('Create wallet')], pending: 'Waiting for Touch ID', disables: true },
   { family: 'btn btn-primary lock-unlock', wrap: 'lock-card', children: [label('Unlock')], pending: 'Unlocking', disables: true },
   { family: 'btn btn-ghost', children: [label('Keep running')] },
-  { family: 'btn', children: [label('Start your assistant')], pending: 'Starting', disables: true },
+  { family: 'btn', children: [label('Start your agent')], pending: 'Starting', disables: true },
   { family: 'btn btn-quiet btn-sm chat-sheet-go', wrap: 'chat-sheet-line', children: [label('Back it up')] },
   { family: 'btn btn-ghost mcard-cancel', wrap: 'mcard-buttons', children: [label('Cancel')], pending: 'Cancelling', disables: true },
   { family: 'btn btn-primary mcard-approve', wrap: 'mcard-buttons', children: [label('Approve')], pending: 'Approving', live: true, disables: true },

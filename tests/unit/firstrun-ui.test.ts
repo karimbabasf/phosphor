@@ -335,7 +335,7 @@ test('the scan says each agent\'s state in words, with the line that says how', 
 
 /* ---------- a pick ---------- */
 
-test('Claude Code signed in: Use is one round trip, the step offers Start Claude Code, and a start that lands turns it into Continue', async () => {
+test('Claude Code signed in: Use is one round trip, the step offers Start your agent, and a start that lands turns it into Continue', async () => {
   const world = build();
   world.answers['agent-scan'] = { ok: true, agents: [CHECKS.claudeIn], picked: null };
   world.answers['agent-pick'] = { ok: true, check: CHECKS.claudeIn, registered: true, registrationFailed: false, command: 'claude mcp add phosphor --scope user -- node /x/src/mcp.ts', picked: 'claude' };
@@ -349,7 +349,7 @@ test('Claude Code signed in: Use is one round trip, the step offers Start Claude
   const pick = world.calls.find((c) => c.action === 'agent-pick');
   assert.ok(pick && pick.agent === 'claude', 'the pick was not posted');
   assert.equal(rowOf(screen, 'claude').getAttribute('aria-current'), 'true');
-  assert.equal(primary(screen).textContent, 'Start Claude Code');
+  assert.equal(primary(screen).textContent, 'Start your agent');
   primary(screen).click();
   await flush();
   assert.ok(world.calls.some((c) => c.action === 'start'), 'Start did not post the start');
@@ -374,7 +374,7 @@ test('a start that fails is one sentence over the same Start, never a toast or t
   await flush();
   await flush();
   assert.equal(status(screen), 'Claude Code could not start. Try again, or start it in your terminal.');
-  assert.equal(primary(screen).textContent, 'Start Claude Code');
+  assert.equal(primary(screen).textContent, 'Start your agent');
   assert.equal(world.toasts.length, 0);
   assert.ok(!visibleText(screen).some((t) => t.includes('ENOENT') || t.includes('RAW:')));
 });

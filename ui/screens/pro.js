@@ -1,10 +1,9 @@
-/* Pro: the same conversation on the left, the trading side on the right.
+/* The money line: the top of Pro and of Trade, beside the same conversation.
 
-   The trading side reads top to bottom: your money in one line (this file),
-   then the market, the chart, and the positions and orders under it
-   (ui/screens/trade.js, which builds into #view-trade). The two show together
-   on Pro, the one trading screen: the shell reads the server's 'trade' as
-   Pro (ui/screens/shell.js, ui/design/pro.css).
+   Pro is your money and your positions: this line over the positions, orders
+   and history. Trade is the same line over the market, the chart and that
+   same deck (ui/screens/trade.js builds the market, the chart and the deck
+   into #view-trade; ui/design/pro.css decides which parts each view shows).
 
    Your money is the balance total with what it is, from the same server view
    the Basic panel draws (state.basic), and beside it the trading account:
@@ -42,10 +41,10 @@
     });
 
     /* The chart and the deck are a late load (ui/core/lazy.js), fetched the
-       first time the trading side is on screen. */
+       first time Pro or Trade is on screen. */
     window.addEventListener('phosphor:view', function (event) {
       var view = event && event.detail ? event.detail.view : null;
-      if (view === 'pro') loadTrading();
+      if (view === 'pro' || view === 'trade') loadTrading();
     });
 
     renderBalance();
@@ -183,7 +182,7 @@
     var agent = window.PhosphorAgent;
     var sent = !!(agent && typeof agent.send === 'function' && agent.send(FUND_ASK));
     if (sent) return;
-    dom.setText(refs.note, 'Start your assistant, then ask it to add money to your trading account.');
+    dom.setText(refs.note, 'Start your agent, then ask it to add money to your trading account.');
     dom.setHidden(refs.note, false);
   }
 

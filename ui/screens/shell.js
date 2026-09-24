@@ -15,17 +15,13 @@
   var events = window.PhosphorEvents;
   var store = window.PhosphorState;
 
-  var VIEWS = ['basic', 'pro', 'vault'];
-
-  /* One trading screen, Pro. The server still names it 'trade' when a chart
-     tool moves the window, and the window reads that as Pro. */
-  var ALIASES = { trade: 'pro' };
+  var VIEWS = ['basic', 'pro', 'trade', 'vault'];
 
   /* A view that needs a script the window did not fetch at boot asks for it
-     here, the first time it opens (ui/core/lazy.js): Pro's trading side is the
-     trade bundle, and the agent list on the Vault lives in the first run's
-     script. */
-  var NEEDS = { pro: 'trade', vault: 'firstrun' };
+     here, the first time it opens (ui/core/lazy.js): Pro's positions and
+     orders and Trade's chart are the trade bundle, and the agent list on the
+     Vault lives in the first run's script. */
+  var NEEDS = { pro: 'trade', trade: 'trade', vault: 'firstrun' };
 
   var refs = {};
   var currentView = 'basic';
@@ -69,7 +65,6 @@
   function readInitialView() {
     var params = new URLSearchParams(window.location.search);
     var wanted = params.get('view');
-    if (ALIASES[wanted]) wanted = ALIASES[wanted];
     if (VIEWS.indexOf(wanted) >= 0) {
       pinned = wanted;
       return wanted;
@@ -156,7 +151,6 @@
 
   function setView(name, options) {
     var opts = options || {};
-    if (ALIASES[name]) name = ALIASES[name];
     if (VIEWS.indexOf(name) < 0) return;
     var changed = name !== currentView;
     currentView = name;
@@ -471,8 +465,8 @@
   /* ---------- Layout ----------
 
      Every pane the mode that is up can hide, as a check row: on means on
-     screen. It is on the bar while Pro is up, the mode with panes to
-     arrange; Basic and the Vault have none (layout.css hides it there). The
+     screen. It is on the bar while Trade is up, the mode with panes to
+     arrange; Basic, Pro and the Vault have none (layout.css hides it there). The
      state is ui/split.js's; this menu only mirrors it, and it re-reads it each
      time it opens, each time a pane changes and each time the view changes, so
      an eye-off press in a header and a press here never disagree. */

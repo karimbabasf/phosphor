@@ -1120,7 +1120,7 @@ test('an agent that runs outside this window gets its sentence where Start would
   assert.equal(world.note().hidden, false, 'the sentence is not in the head');
   assert.equal(world.noteText(), reason);
   assert.equal(world.retry().hidden, true, 'a Retry for an agent that does not start here');
-  const starts = all(world.host, 'btn').filter((b) => b.textContent === 'Start your assistant');
+  const starts = all(world.host, 'btn').filter((b) => b.textContent === 'Start your agent');
   assert.ok(starts.length > 0 && starts.every((b) => b.hidden === true), 'a Start for an agent that runs elsewhere');
 });
 
@@ -1139,24 +1139,26 @@ test('a quiet card from another screen is a line in the thread, and nothing in t
 });
 
 
-test('Start names the picked agent, and a pick in the Vault renames it on the spot', async () => {
+test('Start says Start your agent whatever is picked, and a pick in the Vault is read on the spot', async () => {
   // GET /api/driver carries the pick as `agent` (src/providers/index.ts vendorFor); the Vault's
   // list dispatches `phosphor:agent` after every pick the app stored, and the column reads again.
+  // The vendor's name is the Vault's list's to say, never the Start button's (Karim, 2026-09-23).
   const data: Record<string, unknown> = { state: 'off', agent: { id: 'grok', name: 'Grok', inApp: true, reason: null } };
   const world = build({ driverData: data });
   await new Promise((resolve) => setTimeout(resolve, 0));
   const starts = (): string[] => all(world.host, 'btn-label').map((l) => l.textContent).filter((t) => t.startsWith('Start'));
   assert.ok(starts().length >= 2, JSON.stringify(starts()));
-  assert.ok(starts().every((t) => t === 'Start Grok'), JSON.stringify(starts()));
+  assert.ok(starts().every((t) => t === 'Start your agent'), JSON.stringify(starts()));
 
   data.agent = { id: 'claude', name: 'Claude Code', inApp: true, reason: null };
   world.windowEvent('phosphor:agent');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(starts().every((t) => t === 'Start Claude Code'), JSON.stringify(starts()));
+  assert.ok(starts().every((t) => t === 'Start your agent'), JSON.stringify(starts()));
 
-  // A pick the chat cannot run keeps the plain word; its sentence is the head's note.
+  // A pick the chat cannot run keeps the same word; its sentence is the head's note.
   data.agent = { id: 'codex', name: 'Codex', inApp: false, reason: 'Codex runs in your terminal, not in this chat. Start it there and it joins this window.' };
   world.windowEvent('phosphor:agent');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(starts().every((t) => t === 'Start your assistant'), JSON.stringify(starts()));
+  assert.ok(starts().every((t) => t === 'Start your agent'), JSON.stringify(starts()));
+  assert.equal(world.noteText(), data.agent.reason, 'the pick was not read again');
 });

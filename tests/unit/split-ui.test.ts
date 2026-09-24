@@ -394,16 +394,17 @@ test('every pane starts on screen, and the two are the chart and the deck: the c
   assert.equal(s.splitPaneHidden('nothing'), false, 'a pane that does not exist is not hidden either');
 });
 
-test('asked for one view, the list holds the panes that view has: the chart and the deck on Pro', () => {
+test('asked for one view, the list holds the panes that view has: the chart and the deck on Trade', () => {
   // The Layout menu is on the bar, so a row for a pane the mode does not draw would be a
   // checkbox that does nothing.
   const s = load();
   const names = (view?: string) => JSON.parse(JSON.stringify(s.splitPaneList(view).map((p: Any) => p.name)));
-  assert.deepEqual(names('pro'), ['chart', 'deck']);
+  assert.deepEqual(names('trade'), ['chart', 'deck']);
+  assert.deepEqual(names('pro'), [], 'Pro shows the deck alone and has nothing to arrange');
   assert.deepEqual(names('basic'), []);
   assert.deepEqual(names('vault'), []);
   assert.deepEqual(names(), ['chart', 'deck'], 'no view asked for means every pane');
-  assert.deepEqual(JSON.parse(JSON.stringify(s.PhosphorSplit.panes('pro').map((p: Any) => p.name))), ['chart', 'deck'],
+  assert.deepEqual(JSON.parse(JSON.stringify(s.PhosphorSplit.panes('trade').map((p: Any) => p.name))), ['chart', 'deck'],
     'the window API takes the view too');
 });
 

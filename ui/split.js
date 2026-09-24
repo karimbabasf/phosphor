@@ -62,7 +62,7 @@ var SPLIT_DOUBLE_MS = 400; /* two presses this close together are one double cli
  * chart stage's own 320 plus its 44 px bar.
  */
 var SPLIT_PAGES = {
-  /* The stage on Pro and the Vault: the conversation keeps the left and the
+  /* The stage on Pro, Trade and the Vault: the conversation keeps the left and the
      world is a wide right side, so the handle sizes the WORLD and the
      conversation takes the rest. Dragging right shrinks the world: the sign is
      -1. 560 and 1400 are the floor and the ceiling pro.css clamps --trade to;
@@ -75,7 +75,7 @@ var SPLIT_PAGES = {
       give: '.conversation', giveMin: 400,
     },
   },
-  /* Under the chart on Pro. The deck sits below the chart since 2026-09-14
+  /* Under the chart on Trade. The deck sits below the chart since 2026-09-14
      (Karim: "this trade panel on the side I want to be below the chart, so
      the whole chart horizontally"), so the handle is a horizontal bar and the
      axis is y. The pane is below the handle, so dragging down shrinks it: the
@@ -373,16 +373,16 @@ function splitBoot() {
  * lists by it, so a mode never offers a checkbox for a pane it does not draw. Nothing here
  * measures anything.
  *
- *   chart          the chart with its bar, on Pro. Written on the trade wrap.
- *   deck           the positions and orders under the chart, on Pro. Written on the trade wrap.
+ *   chart          the chart with its bar, on Trade. Written on the trade wrap.
+ *   deck           the positions and orders under the chart, on Trade. Written on the trade wrap.
  *
  * THE CONVERSATION IS NOT ONE OF THEM. Approve lives on the move card inside the thread, so
  * a column that could be hidden would be a window arranged to hide the one control that
  * releases money. It stays on screen in every mode.
  */
 var SPLIT_PANES = {
-  chart: { host: '.trade-wrap', label: 'Chart', view: 'pro' },
-  deck: { host: '.trade-wrap', label: 'Positions and orders', view: 'pro' },
+  chart: { host: '.trade-wrap', label: 'Chart', view: 'trade' },
+  deck: { host: '.trade-wrap', label: 'Positions and orders', view: 'trade' },
 };
 
 

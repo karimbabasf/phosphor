@@ -150,7 +150,7 @@
   /* The card's sentences, in one place. */
   var COPY = {
     offTitle: 'Nobody is at the wheel.',
-    offLine: 'Start your assistant, or connect one you already use.',
+    offLine: 'Start your agent, or connect one you already use.',
     comingTitle: 'Taking the wheel.',
     comingLine: 'Starting your assistant.',
     liveTitle: 'Your assistant is at the wheel.',
@@ -413,7 +413,7 @@
     head.appendChild(note);
 
     var controls = dom.el('div', 'agent-controls');
-    var start = button('btn btn-ghost btn-sm', 'Start your assistant', '', 'Starting');
+    var start = button('btn btn-ghost btn-sm', 'Start your agent', '', 'Starting');
     var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off', 'Turning off');
     controls.appendChild(start);
     controls.appendChild(stopAgent);
@@ -439,7 +439,7 @@
     emptyInner.appendChild(emptyTitle);
     emptyInner.appendChild(emptyNote);
     var emptyActions = dom.el('div', 'agent-empty-actions');
-    var startBig = button('btn', 'Start your assistant', '', 'Starting');
+    var startBig = button('btn', 'Start your agent', '', 'Starting');
     var connectBtn = button('btn btn-ghost', 'Connect your own');
     emptyActions.appendChild(startBig);
     emptyActions.appendChild(connectBtn);
@@ -1087,10 +1087,6 @@
     var empty = !hasConversation();
     var failed = failure !== null && canStart();
     var away = canStart() ? awayReason() : '';
-    var word = pick && pick.inApp !== false && pick.name ? 'Start ' + pick.name : 'Start your assistant';
-    dom.setText(refs.start.querySelector('.btn-label'), word);
-    dom.setText(refs.startBig.querySelector('.btn-label'), word);
-
     dom.setHidden(refs.note, !failed && !away);
     dom.setText(refs.noteText, failed ? failure.reason : away);
     dom.setHidden(refs.retry, !failed);
@@ -1935,7 +1931,8 @@
       markRestored();
     });
 
-    /* A pick in the Vault (or the first run) names the agent the next Start runs. */
+    /* A pick in the Vault (or the first run) is the agent the next Start runs, and says
+       whether it runs in this window at all. */
     window.addEventListener('phosphor:agent', function () {
       api.driverState().then(function (r) {
         var d = r.data || {};
