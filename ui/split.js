@@ -68,13 +68,17 @@ var SPLIT_PAGES = {
      world is a wide right side, so the handle sizes the WORLD and the
      conversation takes the rest. Dragging right shrinks the world: the sign is
      -1. 560 and 1400 are the floor and the ceiling pro.css clamps --trade to;
-     the conversation never goes under 400, a line that still holds a sentence
-     and the move card beside it. Basic has its own fixed panel and no handle. */
+     the conversation never goes under 380, a line that still holds a sentence
+     and the move card with its Approve. Basic has its own fixed panel and no
+     handle. `version` moves the stored width to a new key: the right side
+     opens at two thirds of the window since 2026-09-23 (Karim: "the right side
+     is the star"), so a width dragged against the old default starts over
+     once, for everyone. */
   stage: {
     conversation: {
       axis: 'x', sign: -1, min: 560, max: 1400,
       pane: '.world', host: '.stage', prop: '--trade',
-      give: '.conversation', giveMin: 400,
+      give: '.conversation', giveMin: 380, version: 2,
     },
   },
   /* Under the chart on Trade. The deck sits below the chart since 2026-09-14
@@ -109,7 +113,23 @@ var SPLIT_MEM = {};
 var SPLIT_LIVE = [];
 
 function splitKey(page, id) {
-  return SPLIT_PREFIX + page + '.' + id;
+  var conf = SPLIT_PAGES[page] && SPLIT_PAGES[page][id];
+  return SPLIT_PREFIX + page + '.' + id + (conf && conf.version ? '.v' + conf.version : '');
+}
+
+/* A handle whose key moved leaves its old keys behind, so they are taken away rather than
+   left to sit in storage forever. */
+function splitRetire(page, id) {
+  var conf = SPLIT_PAGES[page] && SPLIT_PAGES[page][id];
+  if (!conf || !conf.version) return;
+  var base = SPLIT_PREFIX + page + '.' + id;
+  for (var v = 1; v < conf.version; v++) {
+    try {
+      window.localStorage.removeItem(v === 1 ? base : base + '.v' + v);
+    } catch (err) {
+      // Storage refuses everything here, so there is nothing stored to take away either.
+    }
+  }
 }
 
 /* Null means "no stored size", which is not the same as zero: it is the difference between
@@ -341,6 +361,7 @@ function splitBoot() {
       var pane = document.querySelector(conf.pane);
       var host = conf.host === conf.pane ? pane : document.querySelector(conf.host);
       if (!pane || !host) continue;
+      splitRetire(page, id);
       var live = {
         page: page, id: id, conf: conf, node: node, pane: pane, host: host,
         give: conf.give ? document.querySelector(conf.give) : null,

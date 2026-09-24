@@ -103,11 +103,21 @@ dialog[data-motion][data-closing="true"]::backdrop {
 
    ui/screens/shell.js dips the views out, switches, and brings the new ones
    in. Between Basic and the other three the world's track changes width, and
-   while data-moving is on the stage it slides there instead of snapping, so
-   the conversation narrows or widens once, smoothly. Only then: a drag of
-   the divider or a resize of the window must follow the hand at once. */
+   while data-moving is on the stage it slides there on a soft spring instead
+   of snapping, so the conversation narrows or widens once, smoothly. Only
+   then: a drag of the divider or a resize of the window must follow the hand
+   at once. Meanwhile the world's views hold the width they are going to have
+   (--pin-w, set by the shell) against the slab's right edge, so the slab
+   opens over them, or closes onto them, and nothing in them reflows. */
 .stage[data-moving="true"] {
-  transition: grid-template-columns var(--dur-view) var(--ease-out);
+  transition: grid-template-columns var(--dur-spring) var(--ease-spring-soft);
+}
+
+.stage[data-moving="true"] .world > .view,
+.stage[data-moving="true"] .world > .notice {
+  flex-shrink: 0;
+  align-self: flex-end;
+  width: var(--pin-w);
 }
 
 .world {

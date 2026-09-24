@@ -224,9 +224,10 @@ test('a stored size that no longer fits is clamped, and the stored one is left a
 });
 
 test('on Pro and the Vault the divider sizes the world, inside its range, and never squeezes the conversation', () => {
-  // The world is clamp(560px, var(--trade, 62vw), 1400px) in pro.css, and the handle carries
-  // the same two numbers. It sits to the right of the conversation, so dragging right shrinks
-  // it: the sign is -1. The conversation gives the room and keeps 400 of it.
+  // The world is clamp(560px, min(var(--trade, 66.667vw), calc(100vw - 380px)), 1400px) in
+  // pro.css, and the handle carries the same numbers. It sits to the right of the conversation,
+  // so dragging right shrinks it: the sign is -1. The conversation gives the room and keeps
+  // 380 of it.
   const conf = load().SPLIT_PAGES.stage.conversation;
   assert.equal(conf.pane, '.world');
   assert.equal(conf.prop, '--trade');
@@ -234,32 +235,43 @@ test('on Pro and the Vault the divider sizes the world, inside its range, and ne
   assert.equal(conf.min, 560);
   assert.equal(conf.max, 1400);
   assert.equal(conf.give, '.conversation');
-  assert.equal(conf.giveMin, 400);
+  assert.equal(conf.giveMin, 380);
+
+  // The default moved to two thirds on 2026-09-23, so the stored width moved to a new key:
+  // a width dragged against the old default is not read, and it is taken away.
+  const old = makeStorage();
+  old.setItem('phosphor.split.stage.conversation', '900');
+  const o = load(old);
+  assert.equal(o.splitKey('stage', 'conversation'), 'phosphor.split.stage.conversation.v2');
+  assert.equal(o.splitRead('stage', 'conversation'), null, 'the old width came back');
+  o.splitRetire('stage', 'conversation');
+  assert.equal(old.map.has('phosphor.split.stage.conversation'), false, 'the old key is left behind');
+  assert.equal(o.splitKey('trade', 'deck-rail'), 'phosphor.split.trade.deck-rail', 'a handle that did not move kept its key');
 
   // A width stored on a 27 inch screen comes back inside the ceiling on a wide window.
   const wide = makeStorage();
-  wide.setItem('phosphor.split.stage.conversation', '2000');
+  wide.setItem('phosphor.split.stage.conversation.v2', '2000');
   const s = load(wide);
   const h = handle(s, 'stage', 'conversation', { pane: 1400, give: 1160 });
   s.splitRestore(h);
   assert.equal(applied(h), 1400, 'the ceiling holds even when the conversation has room');
-  assert.equal(wide.map.get('phosphor.split.stage.conversation'), '2000', 'the stored value is left alone');
+  assert.equal(wide.map.get('phosphor.split.stage.conversation.v2'), '2000', 'the stored value is left alone');
 
   // Under the floor on any window.
   const narrow = makeStorage();
-  narrow.setItem('phosphor.split.stage.conversation', '200');
+  narrow.setItem('phosphor.split.stage.conversation.v2', '200');
   const t = load(narrow);
   const g = handle(t, 'stage', 'conversation', { pane: 704, give: 576 });
   t.splitRestore(g);
   assert.equal(applied(g), 560, 'the floor holds');
 
-  // At 1280: 704 of world and 576 of conversation. A drag left grows the world until the
-  // conversation is down to its 400, and not a pixel more; a drag right shrinks it.
+  // A world of 704 and a conversation of 576. A drag left grows the world until the
+  // conversation is down to its 380, and not a pixel more; a drag right shrinks it.
   const u = load();
   const k = handle(u, 'stage', 'conversation', { pane: 704, give: 576 });
   u.splitBegin(k, 0);
   assert.equal(u.splitAt(k, -40), 744, 'left grows the world one for one');
-  assert.equal(u.splitAt(k, -5000), 880, 'and stops where the conversation keeps its 400');
+  assert.equal(u.splitAt(k, -5000), 900, 'and stops where the conversation keeps its 380');
   assert.equal(u.splitAt(k, 100), 604, 'right shrinks it');
   assert.equal(u.splitAt(k, 5000), 560, 'down to its floor');
 });

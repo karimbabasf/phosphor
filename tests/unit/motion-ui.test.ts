@@ -211,7 +211,11 @@ test('the world dips between views and its track slides only while it does', () 
   assert.match(SHELL, /var RISE_MS = 170;/);
   assert.ok(70 + 170 <= 260, 'a switch takes longer than the view token allows');
   assert.match(SHELL, /if \(changed && !opts\.silent && opts\.fromClick && canDip\(\)\) dip\(\);\s*else showView\(changed\);/, 'a swap the server asked for animates, or a click does not');
-  assert.match(SHELL, /refs\.stage\.dataset\.moving = 'true';/);
-  assert.match(CSS, /\.stage\[data-moving="true"\]\s*\{\s*transition:\s*grid-template-columns var\(--dur-view\) var\(--ease-out\);/);
+  // Between Basic and the others the tracks slide on a soft spring from pixels to pixels, and
+  // the views hold the width they are going to have while they do.
+  assert.match(SHELL, /stage\.dataset\.moving = 'true';/);
+  assert.match(SHELL, /stage\.style\.setProperty\('--pin-w', world\.clientWidth \+ 'px'\);/);
+  assert.match(CSS, /\.stage\[data-moving="true"\]\s*\{\s*transition:\s*grid-template-columns var\(--dur-spring\) var\(--ease-spring-soft\);/);
+  assert.match(CSS, /\.stage\[data-moving="true"\] \.world > \.view,\s*\.stage\[data-moving="true"\] \.world > \.notice\s*\{[^}]*width: var\(--pin-w\);/);
   assert.doesNotMatch(bare(read('../../ui/design/layout.css')), /viewin|data-swapping/, 'the one-sided fade is back');
 });
