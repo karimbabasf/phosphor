@@ -539,6 +539,29 @@ test('the composer arms on text and leaves the screen when nobody of ours can ta
   assert.equal(composer.hidden, false, 'the box did not come back with the assistant');
 });
 
+test('the box is measured inside a field that keeps its height, so the thread holds still on every key', () => {
+  /* WebKit lays the page out while the box sits at zero to be measured. A field that shrank
+     with it made the thread a line taller for that one layout, a thread at its end was clamped
+     a line short, and the follow pulled it back: once the box held two lines, every key moved
+     the thread. */
+  const world = build();
+  const field = all(world.composerHost, 'composer-field')[0];
+  field.offsetHeight = 80;
+  let measured: { box: string; field: string } | null = null;
+  Object.defineProperty(world.input, 'scrollHeight', {
+    configurable: true,
+    get() {
+      measured = { box: world.input.style.height, field: field.style.minHeight };
+      return 60;
+    },
+  });
+  world.input.value = 'a question long enough to run onto a second line of the box';
+  fire(world.input, 'input');
+  assert.deepEqual(measured, { box: 'auto', field: '80px' }, 'the box was measured at zero in a field that gave its height up');
+  assert.equal(field.style.minHeight, '', 'the field went on holding its height after the measure');
+  assert.equal(world.input.style.height, '62px', 'the box did not take the height of its words');
+});
+
 test('a client of the person\'s own that is working is named on the card, with no composer', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'off' });
