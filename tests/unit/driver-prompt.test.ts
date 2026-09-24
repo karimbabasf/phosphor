@@ -186,6 +186,25 @@ test('a message sent right after a stop is its own turn: the stopped answer\'s l
   }
 });
 
+test('a tool name no tool has keeps the chat: the CLI turns it away, and only the developer\'s log hears of it', async () => {
+  const run = await drive({ sends: ['show me BTC UNKNOWN-TOOL'] });
+  assert.equal(run.events.some((e) => e.kind === 'error' || (e.kind === 'status' && e.state === 'failed')), false, 'the chat ended');
+  assert.equal(run.events.some((e) => (e.kind === 'tool' || e.kind === 'tool_result') && e.name === 'switch'), false, 'the window was told');
+  const debug = run.events.filter((e): e is Extract<DriverEvent, { kind: 'debug' }> => e.kind === 'debug');
+  assert.equal(debug.length, 1);
+  assert.match(debug[0].message, /called switch, which no tool in this session has/);
+  assert.ok(run.events.some((e) => e.kind === 'text' && e.text === 'Swapping $4 now.'), 'the answer came after the refusal');
+  assert.ok(run.events.some((e) => e.kind === 'turn_end' && !e.error));
+});
+
+test('Bash, Write and another server\'s tool still end the session', async () => {
+  for (const [mode, name] of [['BASH-TOOL', 'Bash'], ['WRITE-TOOL', 'Write'], ['OTHER-SERVER-TOOL', 'mcp__other__peek']]) {
+    const run = await drive({ sends: [mode] });
+    const error = run.events.find((e): e is Extract<DriverEvent, { kind: 'error' }> => e.kind === 'error');
+    assert.ok(error?.message.startsWith(`refusing to drive: the agent called ${name},`), `${mode}: ${String(error?.message)}`);
+  }
+});
+
 test('a persona file is gone when the agent cannot even start', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-driver-prompt-'));
   const home = path.join(dir, 'agents', 'claude');

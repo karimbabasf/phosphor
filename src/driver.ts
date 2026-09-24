@@ -10,8 +10,8 @@
 // tool surface, and a wrong choice here is worse than not shipping the feature at all. So the
 // lockdown is not configurable, and it is not trusted either: the child announces its own tool list
 // in the init event, the provider reads it back, and the session dies when that list holds anything
-// the app did not expect. Every tool call on the stream is read the same way, and a built-in there
-// ends the session too.
+// the app did not expect. Every tool call on the stream is read the same way: a real tool outside the
+// allowlist ends the session too, and a name no tool has is left for the CLI to turn away.
 //
 // THE WEB, SINCE 2026-09-23. The surface is Phosphor's tools plus the vendor's own web search and
 // page reading, on Karim's decision: the agent has to be able to research anything, not only
@@ -77,7 +77,9 @@ export type DriverEvent =
      the payload is scrubbed and capped before it leaves this process: see toolDataFor. */
   | { kind: 'tool_data'; name: string; input: unknown; data: unknown }
   | { kind: 'turn_end'; error: boolean; turns: number }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string }
+  // A line for the developer's log, never the window (src/http/chats.ts routes it to the audit).
+  | { kind: 'debug'; message: string };
 
 /* WHICH ANSWERS REACH THE WINDOW AS DATA, AND HOW MUCH OF THEM.
 
@@ -678,6 +680,13 @@ export function createDriver(opts: DriverOptions) {
         const id = typeof block.id === 'string' ? block.id : '';
         if (call.kind === 'meta') {
           if (id !== '') calls.set(id, { name: block.name, input: block.input, meta: true });
+          continue;
+        }
+        // A name no tool has runs nothing: the CLI turns it away and the model tries again. Its
+        // result is kept from the window like a lookup's, and the developer's log hears of it.
+        if (call.kind === 'unknown') {
+          if (id !== '') calls.set(id, { name: block.name, input: block.input, meta: true });
+          opts.onEvent({ kind: 'debug', message: `the agent called ${call.name}, which no tool in this session has; ${provider.name} turned it away` });
           continue;
         }
         if (call.kind === 'web') markWebRead(seat);

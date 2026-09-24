@@ -82,6 +82,11 @@ export function createChatRegistry(deps: {
   }
 
   function driverEvent(chat: Chat, event: DriverEvent): void {
+    // The developer's line: the audit log keeps it, and the chat never shows it.
+    if (event.kind === 'debug') {
+      audit.append('tool_call', event.message, { source: 'driver', chat: chat.id });
+      return;
+    }
     /* A delta is the answer being written. It reaches the window and nothing else: the `text`
        event that closes the same block is what the transcript keeps, so a window that reloads
        gets each block once, whole. */

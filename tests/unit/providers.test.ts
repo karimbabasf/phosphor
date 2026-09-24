@@ -48,7 +48,7 @@ test('grok\'s surface: its two MCP built-ins, its two web tools and the phosphor
   assert.deepEqual(grok.surface({ mcp_servers: [] }), ['<the init event carried no tool list>']);
 });
 
-test('grok\'s calls read as Phosphor\'s own names, and anything else as a built-in', () => {
+test('grok\'s calls read as Phosphor\'s own names, and a real tool outside them as a built-in', () => {
   assert.deepEqual(grok.tool('use_tool', { tool_name: 'phosphor__wallet', tool_input: {} }), { kind: 'phosphor', name: 'mcp__phosphor__wallet', input: {} });
   assert.deepEqual(grok.tool('use_tool', { tool_name: 'phosphor__propose_swap', tool_input: { amountIn: 'all' } }), {
     kind: 'phosphor',
@@ -71,6 +71,24 @@ test('grok\'s web tools read as web, and a tool the API ran is only ever its web
   assert.equal(grok.tool('phosphor__wallet', {}, true).kind, 'builtin');
 });
 
+/* The lead's call of 2026-09-23: a name that is not a real tool can run nothing, so it must not end
+   the chat. Live, Claude once called a bare `switch` for mcp__phosphor__switch and the lockdown
+   ended the conversation over a call the CLI would have turned away. */
+test('a name no tool has passes to the CLI; a real tool outside the allowlist ends the session', () => {
+  for (const name of ['switch', 'trade_focus', 'OpenChart']) {
+    assert.equal(claude.tool(name, {}).kind, 'unknown', `claude ${name}`);
+    assert.equal(grok.tool(name, {}).kind, 'unknown', `grok ${name}`);
+  }
+  for (const name of ['Bash', 'Write', 'Read', 'TodoWrite', 'Agent', 'mcp__other__peek', 'mcp__phosphor_evil__x']) {
+    assert.equal(claude.tool(name, {}).kind, 'builtin', `claude ${name}`);
+  }
+  for (const name of ['run_terminal_command', 'run_terminal_cmd', 'write', 'read_file', 'search_replace', 'image_gen', 'Agent', 'other__peek']) {
+    assert.equal(grok.tool(name, {}).kind, 'builtin', `grok ${name}`);
+  }
+  assert.equal(grok.tool('use_tool', { tool_name: 'switch' }).kind, 'unknown');
+  assert.equal(grok.tool('use_tool', { tool_name: 'other__peek' }).kind, 'builtin');
+});
+
 test('a grok session of this app\'s is found where grok keeps it', () => {
   assert.equal(
     sessionDir('/u/.grok', '/Users/k/Library/Application Support/Phosphor/agents/grok', 's-1'),
@@ -86,14 +104,15 @@ test('grok\'s MCP wrapper comes off a result, and an output that is not an answe
   assert.equal(grok.result('plain words'), 'plain words');
 });
 
-test('claude\'s calls: an mcp__phosphor__ name is the app\'s, its two web tools are web, any other name ends the session', () => {
+test('claude\'s calls: an mcp__phosphor__ name is the app\'s, its two web tools are web, a real tool outside them ends the session', () => {
   assert.equal(claude.tool('mcp__phosphor__wallet', {}).kind, 'phosphor');
   assert.deepEqual(claude.tool('WebSearch', { query: 'near ai' }), { kind: 'web', name: 'web_search' });
   assert.deepEqual(claude.tool('WebFetch', { url: 'https://near.ai', prompt: 'what is it' }), { kind: 'web', name: 'web_fetch' });
   assert.equal(claude.tool('Bash', { command: 'ls' }).kind, 'builtin');
   // Claude's web tools run in the CLI; a tool the API ran inside the reply was never granted.
   assert.equal(claude.tool('web_search', {}, true).kind, 'builtin');
-  for (const inherited of ['constructor', 'toString', '__proto__']) assert.equal(claude.tool(inherited, {}).kind, 'builtin', inherited);
+  // Not web tools: names no tool has, which the CLI turns away.
+  for (const inherited of ['constructor', 'toString', '__proto__']) assert.equal(claude.tool(inherited, {}).kind, 'unknown', inherited);
   assert.deepEqual(claude.surface({ tools: ['mcp__phosphor__wallet', 'WebFetch', 'WebSearch'] }), []);
   assert.deepEqual(claude.surface({ tools: ['mcp__phosphor__wallet', 'WebFetch', 'Bash', 'constructor'] }), ['Bash', 'constructor']);
   const argv = buildArgv({ repo: '/repo', nodeBin: '/n', settings: '/s.json', sessionId: 'x' });

@@ -284,8 +284,10 @@ test('the tag names the screen, the focused symbol and how many plans are waitin
   const view = createTradeView('ETH');
   const plans = (statuses: string[]) => ({ view, payload: () => ({ plans: statuses.map((status) => ({ status })) }) });
   assert.equal(screenTag('trade', plans(['waiting'])), '[phosphor: the window is on the trade screen, ETH focused, 1 plan waiting]');
-  assert.equal(screenTag('pro', plans(['waiting', 'open', 'waiting'])), '[phosphor: the window is on the pro screen, ETH focused, 2 plans waiting]');
-  assert.equal(screenTag('basic', plans(['done'])), '[phosphor: the window is on the basic screen, ETH focused, no plans waiting]');
+  // The market is on screen only on trade. "ETH focused" on a Basic message became "Window's on
+  // ETH if you want to look around" in reply to small talk (Karim, 2026-09-23).
+  assert.equal(screenTag('pro', plans(['waiting', 'open', 'waiting'])), '[phosphor: the window is on the pro screen, 2 plans waiting]');
+  assert.equal(screenTag('basic', plans(['done'])), '[phosphor: the window is on the basic screen, no plans waiting]');
   // The count comes from the trade service's status. A service without one cannot say, and the
   // tag leaves the clause out rather than asserting zero.
   assert.equal(screenTag('trade', { view }), '[phosphor: the window is on the trade screen, ETH focused]');
@@ -297,7 +299,7 @@ test('the tag rides on every prompt through the driver', async () => {
     await b.driver({ action: 'start' });
     await b.driver({ action: 'prompt', text: 'read the four hour' });
     assert.equal(b.calls.sends.length, 1);
-    assert.ok(b.calls.sends[0].endsWith('\n\n[phosphor: the window is on the pro screen, BTC focused]'), b.calls.sends[0]);
+    assert.ok(b.calls.sends[0].endsWith('\n\n[phosphor: the window is on the pro screen]'), b.calls.sends[0]);
   } finally {
     await b.close();
   }

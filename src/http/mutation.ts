@@ -253,7 +253,9 @@ async function handleThreshold(ctx: Ctx, body: JsonBody, res: http.ServerRespons
 
 /* The line the app appends to every message the human sends: which screen the window is on,
    which market is focused, and how many plans are waiting. Three facts the app already holds
-   and the agent otherwise spends a call on `start` or `trade_read` to learn.
+   and the agent otherwise spends a call on `start` or `trade_read` to learn. The market is named
+   only on trade, the one screen that shows it: "BTC focused" riding on a Basic message became
+   "Window's on BTC if you want to look around" in reply to "hey how are you?" (2026-09-23).
    The plan count is read off the trade payload, which carries every plan with its status. A
    service whose payload has no plans (the fixtures that stub it) cannot say, and the tag leaves
    the clause out rather than asserting zero. */
@@ -271,7 +273,7 @@ const COIN = /^[A-Z0-9]{1,12}$/;
 export function screenTag(view: string, trade: TagSource): string {
   const parts = [`the window is on the ${view} screen`];
   const symbol = trade.view.state().symbol;
-  if (COIN.test(symbol)) parts.push(`${symbol} focused`);
+  if (view === 'trade' && COIN.test(symbol)) parts.push(`${symbol} focused`);
   let plans: { status?: string }[] | undefined;
   try {
     plans = trade.payload?.()?.plans;

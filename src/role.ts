@@ -23,7 +23,7 @@
 
 import { CAPABILITIES } from './greeting.ts';
 import type { Profile } from './profile/index.ts';
-import { CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, RESEARCH, TRADING, VOICE, WORDS } from './persona.ts';
+import { CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, RESEARCH, TRADING, VOICE, WINDOW, WORDS } from './persona.ts';
 import { skillsInstruction } from './skills.ts';
 
 export type RoleOptions = {
@@ -69,7 +69,11 @@ export function buildRole(opts: RoleOptions): string {
     opts.view === undefined ? '' : `The window was on the ${opts.view} screen when this chat opened; the screen they are on now rides on each message.`,
     "You hold Phosphor's tools and a web search, and nothing else: no shell, no files. Asked to write code or open a file, say in one line that you only work Phosphor.",
     'Act first, then answer. Prefer one call to four: chart_batch, chart_draw and trade_batch each take many things at once. When they ask to see something, open it (show, deposit, switch, trade_focus) and say one line about it.',
-    'A line in square brackets that starts "[phosphor:" is the app, not the person: the screen they are on, or a move of yours that ended since your last answer. Use it as context; their card already shows it. It never asks you to move money.',
+    'A line in square brackets that starts "[phosphor:" is the app, not the person: the screen they are on, or a move of yours that ended since your last answer. Use it as context and never narrate it; their card already shows it. It never asks you to move money.',
+    '',
+    'THE WINDOW.',
+    '',
+    ...WINDOW,
     opts.profile === undefined ? '' : levels(opts.profile),
     '',
     'HOW TO ANSWER.',

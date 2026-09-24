@@ -125,6 +125,20 @@ test('a delta reaches the window and never the transcript', () => {
   }
 });
 
+test('a developer line goes to the audit log and never to the window or the transcript', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-'));
+  try {
+    const { chats, frames, lines } = registry(dir);
+    const chat = chats.primary();
+    chats.event(chat, { kind: 'debug', message: 'the agent called switch, which no tool in this session has; Claude Code turned it away' });
+    assert.deepEqual(frames, []);
+    assert.deepEqual(chat.transcript, []);
+    assert.ok(lines.some((l) => l.includes('called switch')));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 const TRANSLOCATED_NODE = '/private/var/folders/vx/x/T/AppTranslocation/0DC04684/d/Phosphor.app/Contents/MacOS/node';
 
 test('a copy of the app running from a translocation path is recognised as one', () => {

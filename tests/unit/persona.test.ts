@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ALWAYS_CLICK_TOOLS, CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, TRADING, VOICE, WORDS, handshakeInstructions } from '../../src/persona.ts';
+import { ALWAYS_CLICK_TOOLS, CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, SCREENS, TRADING, VOICE, WINDOW, WORDS, handshakeInstructions } from '../../src/persona.ts';
 import { buildRole } from '../../src/role.ts';
 import { buildGreeting } from '../../src/greeting.ts';
 
@@ -49,10 +49,27 @@ test('both surfaces open with the same identity', () => {
 
 test('both surfaces carry the voice, the words, the money, the checks and the rules, whole', () => {
   for (const [name, text] of surfaces()) {
-    for (const line of [...VOICE, ...WORDS, ...MONEY, ...TRADING, ...CHECK]) {
+    for (const line of [...WINDOW, ...VOICE, ...WORDS, ...MONEY, ...TRADING, ...CHECK]) {
       assert.ok(text.includes(line), `${name} is missing: ${line.slice(0, 60)}`);
     }
     for (const rule of OPERATING_RULES) assert.ok(text.includes(rule), `${name} is missing the rule: ${rule.slice(0, 60)}`);
+  }
+});
+
+/* The four screens as they are since the 2026-09-23 layout. Karim, live: asked to show BTC, the
+   agent said it would open it "on the basic screen", which has had no chart since that layout. */
+test('the screen map is the one the window draws: four screens, and a chart only on Trade', () => {
+  assert.deepEqual(SCREENS.map((s) => s.key), ['basic', 'pro', 'trade', 'vault']);
+  const map = WINDOW.join(' ');
+  assert.ok(map.includes('Basic: the chat and their balances (a ring with the total, a tile per coin, Add money). No charts.'));
+  assert.ok(map.includes('Pro: balances, the trading account, positions, orders, the last 24 hours.'));
+  assert.ok(map.includes('Trade: one market: its chart, with positions and orders.'));
+  assert.ok(map.includes('Vault: agents and safety: freeze, lock, backup, limits.'));
+  assert.ok(map.includes('Charts are on Trade only. Asked to see a coin, a chart or a market: switch to trade, trade_focus the coin'));
+  assert.ok(map.includes('"Opened BTC on Trade."'));
+  assert.ok(map.includes('Never bring up their screen unless they ask: small talk gets small talk.'));
+  for (const stale of ['basic is chat and balances; pro adds charts', 'operator deck', 'open BTC on the basic']) {
+    for (const [name, text] of surfaces()) assert.ok(!text.includes(stale), `${name} still says ${stale}`);
   }
 });
 
