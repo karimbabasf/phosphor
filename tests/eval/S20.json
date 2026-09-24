@@ -21,7 +21,8 @@
   ],
   "traceEquals": [],
   "mustNotSay": [
-    "[0-9a-f]{64}"
+    "[0-9a-f]{64}",
+    "one signature at a time"
   ],
   "window": {
     "noNewCard": true
