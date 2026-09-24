@@ -701,12 +701,8 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft, seen: Seen =
     case 'unpriced':
       return `The app has no dollar price for ${sym} right now, so it can't check this against your limits. Nothing moved. Try again in a minute.`;
     case 'no_price':
-      if (buysNativeBtc(draft)) {
-        return (
-          "Bitcoin itself can't be held inside NEAR Intents right now, so nobody offers a price for it. Nothing moved. " +
-          'Wrapped bitcoin works: WBTC, nBTC or cbBTC stay in your balance. Or real BTC can go to a Bitcoin address, from about $7.'
-        );
-      }
+      // No retry can ever price it, so the sentence names the coin that works (retry is false, below).
+      if (buysNativeBtc(draft)) return "Bitcoin itself can't be held here, so nothing moved. Wrapped bitcoin (WBTC) tracks it one to one: ask for WBTC instead.";
       return `Nobody is offering a price for ${sym}${to !== '' && to !== sym ? ` to ${to}` : ''} right now, so nothing moved. Try again in a minute.`;
     case 'price_moved':
       return 'The price moved while we checked, so nothing happened and nothing moved. Ask again for a fresh price.';
@@ -780,7 +776,9 @@ function reasonOfRow(p: Proposal, stage: ProposalStage, now: number): ProposalRe
   const code = reasonCodeOf(p, stage);
   if (code === null) return null;
   const sentence = reasonSentence(code, p.draft, { watch: watchWords(p.result?.evidence?.deadline, now), arrived: arrivedOf(p) });
-  return { code, sentence, details: code === 'declined' ? null : detailsOf(p), retry: RETRYABLE.has(code) };
+  // Native bitcoin has no seller however often it is asked, so its no_price offers no Try again.
+  const retry = RETRYABLE.has(code) && !(code === 'no_price' && buysNativeBtc(p.draft));
+  return { code, sentence, details: code === 'declined' ? null : detailsOf(p), retry };
 }
 
 // What the rail's own reads say arrived, against the floor it was approved with, in the coin's units.

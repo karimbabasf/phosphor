@@ -85,7 +85,7 @@ test('a refusal the app made never says a rule you set stopped it; one the perso
   assert.equal(noPrice.state, 'didnt_go_through');
   assert.equal(noPrice.reason?.code, 'no_price');
   assert.doesNotMatch(noPrice.stageCopy, /rule you set/i);
-  assert.match(noPrice.stageCopy, /Bitcoin itself can't be held inside NEAR Intents/);
+  assert.match(noPrice.stageCopy, /Bitcoin itself can't be held here/);
   assert.match(noPrice.reason?.details ?? '', /Nobody offered a price/);
 
   // 78c16328: the price moved between the two quotes.

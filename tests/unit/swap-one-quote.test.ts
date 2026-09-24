@@ -250,17 +250,24 @@ function pricingRail(price: number | null | Error): Rail {
   };
 }
 
-test('no price for native BTC says bitcoin itself cannot be held inside NEAR Intents, and what works instead', async () => {
+/* A TRY AGAIN THAT CAN NEVER WORK is not offered (hunt A, #21): nobody sells native bitcoin inside
+   NEAR Intents however often it is asked, so the card says what does work, in two short lines. */
+test('no price for native BTC offers no Try again, and says in two plain lines to ask for WBTC instead', async () => {
   const h = makeCtx({ rails: [pricingRail(null)] });
   const p = await h.svc.proposeSwap({ chain: 'near', toChain: 'btc', fromSymbol: 'USDC', toSymbol: 'BTC', amountIn: '100' });
   assert.equal(p.status, 'policy_refused');
   assert.deepEqual(p.verdict.reasonCodes, ['no_price']);
   const view = h.svc.view(p);
   assert.equal(view.reason?.code, 'no_price');
-  assert.match(view.reason?.sentence ?? '', /^Bitcoin itself can't be held inside NEAR Intents right now/);
-  assert.match(view.reason?.sentence ?? '', /WBTC, nBTC or cbBTC/);
-  assert.match(view.reason?.sentence ?? '', /from about \$7/);
+  assert.equal(view.reason?.retry, false, 'asking again cannot price native bitcoin');
+  assert.equal(view.reason?.sentence, "Bitcoin itself can't be held here, so nothing moved. Wrapped bitcoin (WBTC) tracks it one to one: ask for WBTC instead.");
+  assert.doesNotMatch(view.reason?.sentence ?? '', /NEAR Intents|nBTC|cbBTC/);
   assert.equal(view.stageCopy, view.reason?.sentence, 'the card prints the cause, not "a rule you set"');
+
+  // Any other pair nobody prices right now is worth asking again.
+  const other = await h.svc.proposeSwap({ chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'wNEAR', amountIn: '100' });
+  assert.equal(h.svc.view(other).reason?.code, 'no_price');
+  assert.equal(h.svc.view(other).reason?.retry, true);
 });
 
 test('a quote that fails for a reason other than no price is refused with that reason, never swallowed as no price', async () => {
