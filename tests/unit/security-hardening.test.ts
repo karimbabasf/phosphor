@@ -470,9 +470,11 @@ test('an unknown chain is refused rather than silently drafted against ethereum'
     // chainField used to return 'eth' as its sentinel. Every caller checks problems.length
     // first, so it was latent; the point of returning null is that the next branch that forgets
     // cannot spend on the wrong chain.
-    const out = await proposeWith(h.url, 'swap', { chain: 'polygon', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 10, minAmountOut: 1 });
+    // polygon was the unknown chain here once; a swap takes any chain the venue lists a coin on
+    // now, so the unknown one is a chain nobody lists.
+    const out = await proposeWith(h.url, 'swap', { chain: 'atlantis', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'WETH', amountIn: 10, minAmountOut: 1 });
     assert.equal(out.status, 400);
-    assert.match(out.body, /chain must be one of/);
+    assert.match(out.body, /chain must be a chain id the deposit card offers/);
     assert.doesNotMatch(out.body, /"id"/, 'no proposal was created');
   } finally {
     await h.close();

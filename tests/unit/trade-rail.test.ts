@@ -248,12 +248,13 @@ test('a cancel on an open plan is refused at propose, and on a placed plan it la
   assert.equal(h.runner.calls[0], 'cancel pl_placed');
 });
 
-test('a close is priced at the plan margin and goes through the plan bound', async () => {
+test('a close is free at the wall and goes through the plan bound', async () => {
   const h = setup({ clickUsd: 1000 });
   openRow(h.runner);
   const p = await landed(h, h.svc.proposeTradeChange({ id: 'pl_open', close: true }));
   assert.equal(p.status, 'executed');
-  assert.equal((p.draft as TradeDraft).amountUsd, 60);
+  // A reduce-only close takes risk off, so it charges nothing (B4, 2026-09-23).
+  assert.equal((p.draft as TradeDraft).amountUsd, 0);
   assert.equal(h.runner.calls[0], 'close pl_open 30');
   const notOpen = await h.svc.proposeTradeChange({ id: 'pl_open', close: true, cancel: true });
   assert.equal(notOpen.status, 'policy_refused');

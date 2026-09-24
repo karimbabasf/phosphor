@@ -430,8 +430,9 @@ function sidesOf(draft: WriteDraft): Sides {
       const venue = String(draft.venue);
       const inside = venue === 'intents-native' || venue === 'intents-relay';
       return {
-        place: inside ? 'intents' : draft.chain,
-        toPlace: inside ? 'intents' : draft.toChain,
+        // Only a retired venue's row reaches the chain side, and those named one of the five.
+        place: inside ? 'intents' : (draft.chain as TxPlace),
+        toPlace: inside ? 'intents' : (draft.toChain as TxPlace),
         venue,
         sent: { symbol: draft.fromSymbol, amount: draft.amountIn },
         from: draft.from,

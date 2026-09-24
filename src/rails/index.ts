@@ -22,8 +22,10 @@
 //      They are built here and only here, and only under this mode.
 
 import type { AppConfig, ChainId, Rail, WriteDraft } from '../types.ts';
-import type { TokensFile } from '../intents.ts';
+import type { OneClickToken, TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY, oneClickClient } from '../intents.ts';
+import { intentsActivity } from '../chainscan/index.ts';
+import type { IntentsActivity } from '../chainscan/index.ts';
 import { demoRails } from './demo.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
 import { hypercoreWithdrawRail } from './hypercore-withdraw.ts';
@@ -58,6 +60,17 @@ export type RailRegistry = {
      venues exist; absent in demo mode and in any registry a test builds without one, where a
      relay row is judged by its balance alone. Neither read signs anything. */
   relay?: RelayLookup;
+  /* What the swap reads (src/proposals/swap-reads.ts) ask the venue and the chain: the token
+     list the swap rails resolve against, one balance inside the verifier, and the account's
+     intents ledger history. All three are reads. Absent in demo mode and in any registry a test
+     builds by hand, where the swap reads say there is no venue to ask. */
+  swap?: SwapLookup;
+};
+
+export type SwapLookup = {
+  tokens(): Promise<OneClickToken[]>;
+  balance(accountId: string, assetId: string): Promise<bigint | null>;
+  activity(accountId: string, limit: number): Promise<IntentsActivity>;
 };
 
 export type RelayLookup = {
@@ -161,6 +174,11 @@ export function createRails(deps: RailDeps): RailRegistry {
       status: (intentHash) => relayReads.status(intentHash),
       nonceUsed: (accountId, nonce) => verifier.nonceUsed(accountId, nonce),
       saltValid: (salt) => verifier.isValidSalt?.(salt) ?? Promise.resolve(null),
+    },
+    swap: {
+      tokens: () => client.tokens(),
+      balance: (accountId, assetId) => verifier.balance(accountId, assetId).catch(() => null),
+      activity: (accountId, limit) => intentsActivity(accountId, limit, { keys: deps.cfg.chainscan }),
     },
   };
 }

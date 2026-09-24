@@ -18,6 +18,8 @@
 import { outcomeOf } from './lifecycle.ts';
 import type { OutcomeState, PlanFate } from './lifecycle.ts';
 import { px } from '../trade/plan.ts';
+import { isReasonCode } from '../rails/reasons.ts';
+import type { ReasonCode } from '../rails/reasons.ts';
 import type { PolicyAxisChange, Proposal, WriteDraft } from '../types.ts';
 
 // The app's own phases are lowercase. The provider's phases are the vendor's words, byte for
@@ -56,6 +58,24 @@ export type TxLeg = {
   network: string | null;
   explorer: string | null;
   running: boolean; // the leg the operation is inside right now. At most one is true.
+};
+
+/* The four states a person reads a move in. Twenty-three stage words are the app's to keep;
+   a card shows one of these. `stalled` is working and late, never over. */
+export type MoveState = 'working' | 'needs_you' | 'done' | 'didnt_go_through';
+
+/* Why a move is where it is, when that needs saying: the code from src/rails/reasons.ts, the one
+   plain sentence for it (what happened, where the money is, what the person can do), and the
+   engineer's line behind it with long ids shortened. The card prints the sentence and folds the
+   details; the agent quotes the sentence. Chosen by the cause, never by the status. */
+export type ProposalReason = {
+  code: ReasonCode;
+  sentence: string;
+  details: string | null;
+  /* Whether asking for the same move again can work as it stands: nobody quoted, the price moved,
+     a read failed, or it ended with nothing gone. Never for a move that may still be live at the
+     venue, nor for one only a different amount, coin or rule would let through. */
+  retry: boolean;
 };
 
 export type ProposalView = {
@@ -113,7 +133,13 @@ export type ProposalView = {
   };
   txs: TxLeg[];
   correlationId: string | null;
+  /* The engine's or the rail's own code (kept for readers that switch on it) and, for a move
+     that stopped, the plain sentence from `reason`. */
   error: { code: string; message: string } | null;
+  state: MoveState;
+  // Set once a move that is still working has run past its usual time, counted from the click.
+  late: { elapsedSec: number; typicalSec: number } | null;
+  reason: ProposalReason | null;
 };
 
 /* THE ONLY WORDS A STAGE IS EVER PRINTED AS. The card, the agent's sentence, proposal_status and
@@ -391,6 +417,8 @@ function toSymbolOf(draft: WriteDraft): string {
 
 function amountInOf(draft: WriteDraft): string | null {
   if (draft.kind === 'policy_change' || draft.kind === 'trade') return null;
+  // The exact decimal a swap was approved with, never the double beside it for display.
+  if (draft.kind === 'swap' && draft.amountInExact !== undefined) return draft.amountInExact;
   const amount = draft.kind === 'swap' ? draft.amountIn : (draft as { amount?: unknown }).amount;
   return typeof amount === 'number' ? String(amount) : null;
 }
@@ -502,9 +530,14 @@ function txsOf(p: Proposal, stage: ProposalStage): TxLeg[] {
 }
 
 /* WHAT WENT WRONG, as a code the grader and the agent read and a sentence a person reads. A
-   human declining is not an error and gets none: they decided, and the row says so. */
-function errorOf(p: Proposal, stage: ProposalStage, sinceChangeSec: number): { code: string; message: string } | null {
-  const detail = p.result?.detail ?? '';
+   human declining is not an error and gets none: they decided, and the row says so. The
+   sentence is the reason's own, so the error line and the copy line cannot disagree about why
+   (the card said "a rule you set" over a swap nobody had quoted, 2026-09-23); the engineer's line
+   is in reason.details. */
+function errorOf(p: Proposal, stage: ProposalStage, sinceChangeSec: number, reason: ProposalReason | null): { code: string; message: string } | null {
+  // The plain sentence first, then the specific line behind it (a limit's figure, the venue's
+  // own words): a card's reason line reads the first sentence, its fold and an agent the rest.
+  const said = (fallback: string): string => (reason === null ? fallback : reason.details === null ? reason.sentence : `${reason.sentence} ${reason.details}`);
   /* In a person's units: "22 minutes", never an ISO stamp and never 1325 seconds. The agent
      quotes this line and the card prints it, so it is written for the reader, not the log. */
   if (stage === 'stalled') {
@@ -513,11 +546,202 @@ function errorOf(p: Proposal, stage: ProposalStage, sinceChangeSec: number): { c
       message: `Nothing has changed for ${durationWords(sinceChangeSec)}. ${waitingOn(p, 'crediting') ?? 'The venue'} has not answered.`,
     };
   }
-  if (stage === 'refused') return { code: p.verdict.outcome === 'refuse' ? p.verdict.rule : 'policy_refused', message: p.verdict.reasons.at(-1) ?? 'The policy refused it.' };
-  if (stage === 'failed') return { code: 'rail_failed', message: detail };
-  if (stage === 'FAILED') return { code: 'provider_failed', message: detail };
-  if (stage === 'REFUNDED') return { code: 'refunded', message: detail };
+  if (stage === 'refused') return { code: p.verdict.outcome === 'refuse' ? p.verdict.rule : 'policy_refused', message: said(p.verdict.reasons.at(-1) ?? 'The policy refused it.') };
+  if (stage === 'failed') return { code: 'rail_failed', message: said(p.result?.detail ?? '') };
+  if (stage === 'FAILED') return { code: 'provider_failed', message: said(p.result?.detail ?? '') };
+  if (stage === 'REFUNDED') return { code: 'refunded', message: said(p.result?.detail ?? '') };
   return null;
+}
+
+// ---------- the plain states and the reasons ----------
+
+const NEEDS_YOU: ReadonlySet<ProposalStage> = new Set<ProposalStage>(['waiting_for_you', 'waiting_for_unlock', 'waiting_for_touch']);
+const DIDNT_GO_THROUGH: ReadonlySet<ProposalStage> = new Set<ProposalStage>(['failed', 'declined', 'refused', 'REFUNDED', 'FAILED']);
+
+export function moveStateOf(stage: ProposalStage): MoveState {
+  if (NEEDS_YOU.has(stage)) return 'needs_you';
+  if (stage === 'confirmed') return 'done';
+  if (DIDNT_GO_THROUGH.has(stage)) return 'didnt_go_through';
+  return 'working';
+}
+
+/* The engine's rules, as the cause a person reads. The last six are the app's own walls; any
+   other rule on a money move is one of the person's, and on a policy change it is the app
+   refusing the change as written. */
+const RULE_REASON: Record<string, ReasonCode> = {
+  max_per_transaction: 'over_trade_cap',
+  max_per_session: 'over_daily_cap',
+  kill_switch: 'kill_switch',
+  policy_unreadable: 'rules_unreadable',
+  invalid_amount: 'unpriced',
+  invalid_draft: 'invalid_request',
+  simulation_required: 'simulation_failed',
+  no_rail: 'not_available',
+  unknown_kind: 'invalid_request',
+};
+
+/* THE CAUSE, read off what decided the row: the verdict's code or rule for a refusal, the rail's
+   code for an ending, and only then the status. A code the rail named wins; a row written before
+   codes existed falls back to what its own fields can still prove. */
+export function reasonCodeOf(p: Proposal, stage: ProposalStage): ReasonCode | null {
+  switch (p.status) {
+    case 'pending':
+      return 'needs_approval';
+    case 'refused':
+      return 'declined';
+    case 'policy_refused': {
+      const named = (p.verdict.reasonCodes ?? []).find((c) => isReasonCode(c));
+      if (named !== undefined && isReasonCode(named)) return named;
+      const rule = p.verdict.outcome === 'refuse' ? p.verdict.rule : '';
+      return RULE_REASON[rule] ?? (p.kind === 'policy_change' ? 'invalid_request' : 'policy_rule');
+    }
+    case 'failed': {
+      if (isReasonCode(p.result?.reason)) return p.result.reason;
+      if (p.result?.evidence?.providerStage === 'REFUNDED') return 'refunded';
+      // No hash, handle or nonce is the executor's own proof nothing was sent (src/proposals/execute.ts).
+      const evidence = p.result?.evidence;
+      const sent = (p.result?.txids?.length ?? 0) > 0 || evidence?.handle !== undefined || evidence?.nonce !== undefined;
+      return sent ? 'stuck_unknown' : 'not_sent';
+    }
+    case 'needs_reconciliation':
+      if (isReasonCode(p.result?.reason)) return p.result.reason;
+      // The venue's refund, reported and not yet shown in the balance.
+      if (stage === 'REFUNDED') return 'venue_failed_refund_pending';
+      // A FAILED with no balance read behind it proves nothing either way, and neither does a
+      // row with no read at all; a row with the rail's read is settling and on its way.
+      return stage === 'FAILED' || stage === 'stalled' || p.pocket === undefined ? 'stuck_unknown' : null;
+    default:
+      return null;
+  }
+}
+
+// What a person calls a coin: NEAR, not wNEAR; a raw venue id is "that coin".
+function plainSymbol(symbol: string): string {
+  if (symbol.toUpperCase() === 'WNEAR') return 'NEAR';
+  return symbol.includes(':') ? 'that coin' : symbol;
+}
+
+const NOUN: Record<string, string> = {
+  swap: 'swap',
+  hl_deposit: 'deposit',
+  hl_withdraw: 'withdrawal',
+  intents_send: 'send',
+  intents_pay: 'payment',
+  trade: 'trade',
+  policy_change: 'change',
+};
+
+// Native bitcoin as the thing bought. Inside NEAR Intents nobody sells it today (R1, 2026-09-23).
+function buysNativeBtc(draft: WriteDraft): boolean {
+  return draft.kind === 'swap' && (draft.toChain.toLowerCase() === 'btc' || /btc\.omft\.near/i.test(draft.toSymbol));
+}
+
+/* ONE PLAIN SENTENCE PER CAUSE, and this is the only place any of them is written. Each says
+   what happened, where the money is, and what the person can do, in words a person uses. */
+export function reasonSentence(code: ReasonCode, draft: WriteDraft): string {
+  const sym = plainSymbol(symbolOf(draft)) || 'it';
+  const to = plainSymbol(toSymbolOf(draft));
+  const noun = NOUN[draft.kind] ?? 'move';
+  const The = `The ${noun}`;
+  switch (code) {
+    case 'needs_approval':
+      return 'This one waits for your OK. Nothing moves until you say yes.';
+    case 'over_trade_cap':
+      return "That's over your limit for one move, so nothing moved. Ask for less, or change the rule in the window.";
+    case 'over_daily_cap':
+      return 'That would go past your daily limit, so nothing moved. Try a smaller amount, or wait for the limit to free up.';
+    case 'kill_switch':
+      return "Your stop switch is on, so nothing moved. Turn it off in the window when you're ready.";
+    case 'policy_rule':
+      return 'One of your rules stopped this, so nothing moved. Change the rule in the window if you want it to go.';
+    case 'rules_unreadable':
+      return "Your rules couldn't be read, so nothing can move right now. Open the window to fix them.";
+    case 'unpriced':
+      return `The app has no dollar price for ${sym} right now, so it can't check this against your limits. Nothing moved. Try again in a minute.`;
+    case 'no_price':
+      if (buysNativeBtc(draft)) {
+        return (
+          "Bitcoin itself can't be held inside NEAR Intents right now, so nobody offers a price for it. Nothing moved. " +
+          'Wrapped bitcoin works: WBTC, nBTC or cbBTC stay in your balance. Or real BTC can go to a Bitcoin address, from about $7.'
+        );
+      }
+      return `Nobody is offering a price for ${sym}${to !== '' && to !== sym ? ` to ${to}` : ''} right now, so nothing moved. Try again in a minute.`;
+    case 'price_moved':
+      return 'The price moved while we checked, so nothing happened and nothing moved. Ask again for a fresh price.';
+    case 'insufficient_balance':
+      return `You don't have that much ${sym}, so nothing moved. Check your balance, or ask to swap all of it.`;
+    case 'balance_unread':
+      return "Your balance couldn't be read just now, so nothing moved. Try again in a moment.";
+    case 'below_minimum':
+      return "That's under the smallest amount the swap service takes, so nothing moved. Try a bigger amount.";
+    case 'unsupported_asset':
+      return "The swap service doesn't offer that coin there, so nothing moved. Ask what can be swapped and pick from that.";
+    case 'ambiguous_asset':
+      return 'Two different coins go by that name, so nothing moved. Say which one you mean.';
+    case 'simulation_failed':
+      return "The last check before signing didn't pass, so nothing was signed and nothing moved. Try again in a minute.";
+    case 'invalid_request':
+      return "That couldn't be set up as asked, so nothing moved. The details say why.";
+    case 'not_available':
+      return "That kind of move isn't available here, so nothing moved.";
+    case 'plan_exists':
+      return `${sym} already has a live plan, so nothing new was placed. Change or cancel that plan first.`;
+    case 'declined':
+      return 'You said no. Nothing moved.';
+    case 'not_sent':
+      return `${The} didn't go through. Nothing left your balance.`;
+    case 'venue_failed_nothing_moved':
+      return `${The} didn't go through. Nothing left your balance.`;
+    case 'venue_failed_refund_pending':
+      return `${The} didn't go through. Your ${sym} is with the swap service until it comes back to your balance; the app keeps checking.`;
+    case 'refunded':
+      return `${The} didn't go through. The swap service sent your ${sym} back to your balance.`;
+    case 'short_fill':
+      return `${The} went through, but less arrived than the minimum you approved. The details show how much.`;
+    case 'stuck_unknown':
+      return "We can't confirm yet whether this went through. Don't send it again; the app keeps checking and will update this.";
+  }
+}
+
+/* Long ids, cut to their two ends the way the card cuts them (ui/screens/cards.js shortenIds):
+   a 64-hex hash or handle, with or without 0x, and a base58 signature of 64 or more. An address
+   is not a hash and stays whole (frozen rule 3): a 40-hex address, a Solana key, a NEAR name. */
+export function shortIds(text: string): string {
+  return text.replace(/0x[0-9a-fA-F]{64}\b|\b[0-9a-fA-F]{64}\b|\b[1-9A-HJ-NP-Za-km-z]{64,}\b/g, (id) => `${id.slice(0, 8)}...${id.slice(-8)}`);
+}
+
+const MAX_DETAILS = 600;
+
+function detailsOf(p: Proposal): string | null {
+  const raw = p.status === 'policy_refused' || p.status === 'pending' ? p.verdict.reasons.at(-1) : p.result?.detail;
+  if (raw === undefined || raw.trim() === '') return null;
+  const flat = shortIds(raw.replace(/\s+/g, ' ').trim());
+  return flat.length > MAX_DETAILS ? `${flat.slice(0, MAX_DETAILS)}...` : flat;
+}
+
+const RETRYABLE: ReadonlySet<ReasonCode> = new Set<ReasonCode>([
+  'no_price',
+  'price_moved',
+  'simulation_failed',
+  'balance_unread',
+  'unpriced',
+  'not_sent',
+  'venue_failed_nothing_moved',
+  'refunded',
+]);
+
+function reasonOfRow(p: Proposal, stage: ProposalStage): ProposalReason | null {
+  const code = reasonCodeOf(p, stage);
+  if (code === null) return null;
+  return { code, sentence: reasonSentence(code, p.draft), details: code === 'declined' ? null : detailsOf(p), retry: RETRYABLE.has(code) };
+}
+
+// Late once a move still working has run past its usual time, counted from the click.
+function lateOf(p: Proposal, state: MoveState, now: number): { elapsedSec: number; typicalSec: number } | null {
+  const typical = TYPICAL_SEC[p.kind] ?? 0;
+  if (state !== 'working' || typical <= 0) return null;
+  const elapsed = secondsBetween(p.decidedAt ?? p.createdAt, now);
+  return elapsed > typical ? { elapsedSec: elapsed, typicalSec: typical } : null;
 }
 
 // A duration in words: seconds under a minute and a half, minutes to the hour, then hours.
@@ -575,6 +799,8 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
   const sinceChangeSec = secondsBetween(lastChangeAt, now);
   const pockets = pocketsOf(p.draft);
   const typical = TYPICAL_SEC[p.kind] ?? null;
+  const state = moveStateOf(stage);
+  const reason = reasonOfRow(p, stage);
   return {
     id: p.id,
     kind: p.kind,
@@ -582,7 +808,9 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     changes: p.verdict.outcome === 'needs_approval' ? (p.verdict.changes ?? []) : [],
     stage,
     stageLabel: STAGE_LABEL[stage],
-    stageCopy: STAGE_COPY[stage],
+    // A move that did not go through says why in its own words, never the stage's stock line:
+    // "A rule you set stopped it" was printed over every refusal, the app's own included.
+    stageCopy: state === 'didnt_go_through' && reason !== null ? reason.sentence : STAGE_COPY[stage],
     providerStage: p.result?.evidence?.providerStage ?? null,
     waitingOn: waitingOn(p, stage),
     terminal: TERMINAL.has(stage),
@@ -617,6 +845,9 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     },
     txs: txsOf(p, stage),
     correlationId: p.result?.evidence?.quote?.correlationId ?? null,
-    error: errorOf(p, stage, sinceChangeSec),
+    error: errorOf(p, stage, sinceChangeSec, reason),
+    state,
+    late: lateOf(p, state, now),
+    reason,
   };
 }

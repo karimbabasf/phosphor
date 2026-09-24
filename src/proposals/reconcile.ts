@@ -26,6 +26,7 @@ import type { RelayLookup } from '../rails/index.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
 import { ONECLICK_STAGES } from './view.ts';
 import { expireHold, judgeSettlingNow, settleProposal } from './execute.ts';
+import { LEDGER_PAGE, ledgerMoves } from './swap-reads.ts';
 import type { PCtx } from './lifecycle.ts';
 
 // How a 1Click order is re-checked by the deposit address a quote minted. It is the handle the
@@ -227,9 +228,10 @@ function stable(value: unknown): string {
                   account read (ctx.venueCredited) shows the credit, because the solver's
                   delivery and the venue's credit are two events and only the second is money.
      REFUNDED  -> failed: the input went back, so nothing is on the far side; the amount is named.
-     FAILED    -> stays needs_reconciliation: a FAILED order can still be refunded at the deadline,
-                  so it is not terminal for us. The detail says what came back (or 0), why, and
-                  that the input is held by 1Click under the handle.
+     FAILED    -> failed when the intents ledger shows no transfer to the handle since the move
+                  was approved: nothing left the balance. Otherwise stays needs_reconciliation (a
+                  FAILED order can still be refunded at the deadline), saying the input left when
+                  a hash or the ledger shows it did, and that it is not confirmed when neither does.
      anything else (still pending, or an address the API does not know yet) leaves the row and
      says which status it is waiting on. */
 async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promise<Proposal> {
@@ -258,11 +260,19 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
      every ten minutes for seven days, and an order 1Click keeps calling FAILED used to collect
      up to a thousand audit lines and SSE frames saying so. */
   const railSaid = (p.result?.detail ?? '').split(RECHECK)[0];
-  const write = (next: Proposal['status'], ok: boolean, said: string): Proposal => {
+  // `reason` is the cause the card reads; a row that keeps its status keeps its cause unless told.
+  const write = (next: Proposal['status'], ok: boolean, said: string, reason?: string): Proposal => {
     const settledNow = next === 'executed' || next === 'failed';
     const detail = settledNow || railSaid === '' ? said : `${railSaid}${RECHECK}${said}`;
-    const result = { ok, detail, txids, evidence };
-    const current = { ok: p.result?.ok ?? false, detail: p.result?.detail ?? '', txids: p.result?.txids ?? [], evidence: p.result?.evidence ?? {} };
+    const cause = reason ?? (next === p.status ? p.result?.reason : undefined);
+    const result = { ok, detail, txids, evidence, ...(cause === undefined ? {} : { reason: cause }) };
+    const current = {
+      ok: p.result?.ok ?? false,
+      detail: p.result?.detail ?? '',
+      txids: p.result?.txids ?? [],
+      evidence: p.result?.evidence ?? {},
+      ...(p.result?.reason === undefined ? {} : { reason: p.result.reason }),
+    };
     if (next === p.status && stable(result) === stable(current)) return p;
     ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by 1Click: ${next}. ${said}`, { id: p.id, handle, status: status.status });
     // Something changed, so a row a person had filed comes back to the dock with the new word.
@@ -329,20 +339,62 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
   }
   if (status.status === 'REFUNDED') {
     const amount = status.refundedAmount ?? '0';
-    return write('failed', false, `1click reported REFUNDED: ${amount} went back, so nothing is on the far side.`);
+    return write('failed', false, `1click reported REFUNDED: ${amount} went back, so nothing is on the far side.`, 'refunded');
   }
   if (status.status === 'FAILED') {
     const amount = status.refundedAmount ?? '0';
-    const reason = status.refundReason ?? 'not given';
+    const why = status.refundReason ?? 'not given';
+    // A row the rail already proved untouched stays closed: FAILED is the word it was closed on.
+    if (p.status === 'failed' && (p.result?.reason === 'venue_failed_nothing_moved' || p.result?.reason === 'refunded')) return p;
+    /* THE LEDGER, BEFORE ANY WORDS. The funding transfer of a 1Click order goes from our account
+       to this handle, so the intents ledger either shows it or does not. "Held by 1Click under
+       handle" was written here over three swaps whose transfer never ran (2026-09-23) and kept
+       those rows open for good. A transfer hash the venue reports is the same fact the ledger
+       would show. */
+    const hashes = status.nearTxHashes.length + status.originTxHashes.length + status.destinationTxHashes.length;
+    const ledger = hashes > 0 ? 'yes' : await ledgerSaysMoved(ctx, p, handle);
+    if (ledger === 'no') {
+      return write(
+        'failed',
+        false,
+        `1click reported FAILED (reason ${why}) and the intents ledger shows no transfer to handle ${handle} since this move was approved, so nothing left the balance.`,
+        'venue_failed_nothing_moved',
+      );
+    }
+    if (ledger === 'yes') {
+      return write(
+        'needs_reconciliation',
+        false,
+        `1click reported FAILED and refunded ${amount} so far, reason ${why}. The input left the balance for handle ${handle} and is not back yet; this settles when a refund shows in the balance.`,
+        'venue_failed_refund_pending',
+      );
+    }
     return write(
       'needs_reconciliation',
       false,
-      `1click reported FAILED and refunded ${amount} so far, reason ${reason}. The input is held by 1Click under handle ${handle} until a refund shows in your balance.`,
+      `1click reported FAILED and refunded ${amount} so far, reason ${why}. Whether the input left the balance is not confirmed yet; it is checked again on the next sweep.`,
+      'stuck_unknown',
     );
   }
   // Not terminal yet, or an address 1Click does not know: change nothing, say what it is waiting on.
   const said = status.found ? status.status : 'an address 1Click does not recognise yet';
   return write(p.status, p.result?.ok ?? false, `1click has not settled this: it reports ${said}. Nothing has changed; check again shortly.`);
+}
+
+/* What the account's intents ledger says about a transfer to this handle since the move was
+   approved: 'yes' when it shows one, 'no' when the page reaches back past the approval and shows
+   none, 'unknown' when there is no ledger to ask or it did not answer in full. A Hyperliquid
+   withdrawal's input was never on this ledger, so it is not asked. */
+async function ledgerSaysMoved(ctx: PCtx, p: Proposal, handle: string): Promise<'yes' | 'no' | 'unknown'> {
+  const lookup = ctx.rails.swap;
+  const from = (p.draft as { from?: unknown }).from;
+  if (lookup === undefined || p.kind === 'hl_withdraw' || typeof from !== 'string' || from === '') return 'unknown';
+  try {
+    const activity = await lookup.activity(from.toLowerCase(), LEDGER_PAGE);
+    return ledgerMoves(activity, null, Date.parse(p.decidedAt ?? p.createdAt), handle).moved;
+  } catch {
+    return 'unknown';
+  }
 }
 
 /* Ask the venue or the chain what happened. Reachable for a row waiting to be reconciled, and
@@ -444,11 +496,18 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
   let txids = [...(p.result?.txids ?? [])];
   let evidence: RailEvidence = { ...evidence0 };
 
-  const write = (next: Proposal['status'], ok: boolean, said: string): Proposal => {
+  const write = (next: Proposal['status'], ok: boolean, said: string, reason?: string): Proposal => {
     const settledNow = next === 'executed' || next === 'failed';
     const detail = settledNow || railSaid === '' ? said : `${railSaid}${RECHECK_RELAY}${said}`;
-    const result = { ok, detail, txids, evidence };
-    const current = { ok: p.result?.ok ?? false, detail: p.result?.detail ?? '', txids: p.result?.txids ?? [], evidence: p.result?.evidence ?? {} };
+    const cause = reason ?? (next === p.status ? p.result?.reason : undefined);
+    const result = { ok, detail, txids, evidence, ...(cause === undefined ? {} : { reason: cause }) };
+    const current = {
+      ok: p.result?.ok ?? false,
+      detail: p.result?.detail ?? '',
+      txids: p.result?.txids ?? [],
+      evidence: p.result?.evidence ?? {},
+      ...(p.result?.reason === undefined ? {} : { reason: p.result.reason }),
+    };
     if (next === p.status && stable(result) === stable(current)) return p;
     ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by the relay and the verifier: ${next}. ${said}`, {
       id: p.id,
@@ -563,7 +622,12 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
         : `The verifier shows the nonce unspent, and the verifier has retired the key of that price window (the nonce's salt), after which a spent nonce reads as unspent too.${relayNote} The balance read decides: compare the balances before and after on the receipt.`,
     );
   }
-  return write('failed', false, `The deadline (${new Date(deadlineMs).toISOString()}) passed with the nonce unspent, so the swap never executed and nothing left the balance.${relayNote} Ask for a fresh price to try again.`);
+  return write(
+    'failed',
+    false,
+    `The deadline (${new Date(deadlineMs).toISOString()}) passed with the nonce unspent, so the swap never executed and nothing left the balance.${relayNote} Ask for a fresh price to try again.`,
+    'venue_failed_nothing_moved',
+  );
 }
 
 /* Filing an unconfirmed row. The dock keeps an unconfirmed move in front of a person because

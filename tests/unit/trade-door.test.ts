@@ -24,10 +24,10 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
-import { tradeRail } from '../../src/trade/rail.ts';
+import { riskInputsFor, tradeRail } from '../../src/trade/rail.ts';
 import type { TradeDeps } from '../../src/trade/rail.ts';
 import { planHash, validatePlanInput } from '../../src/trade/plan.ts';
-import type { PlanInput } from '../../src/trade/plan.ts';
+import type { Plan, PlanInput } from '../../src/trade/plan.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -227,7 +227,7 @@ function setup(clickUsd: number) {
     trade,
     dataDir,
   });
-  return { svc, runner };
+  return { svc, runner, dataDir };
 }
 
 const PLAN = { symbol: 'ETH', side: 'long', sizeUsd: 300, leverage: 5, entry: { type: 'market' }, stop: 92, target: 110 };
@@ -266,20 +266,52 @@ test('a change reaches a plan whoever drew it: ownership is recorded, and the po
   // No `by` exists to pass. The only identity a change carries is the plan id.
   const closed = await landed(h, h.svc.proposeTradeChange({ id: 'pl_theirs', close: true }));
   assert.equal(closed.status, 'executed', JSON.stringify(closed.verdict));
-  assert.equal((closed.draft as TradeDraft).amountUsd, 60, 'a close is priced at the margin, whoever asks');
+  assert.equal((closed.draft as TradeDraft).amountUsd, 0, 'a close is free at the wall, whoever asks');
   assert.equal(h.runner.calls[0], 'close pl_theirs 30');
 
   const cancelled = await landed(h, h.svc.proposeTradeChange({ id: 'pl_resting', cancel: true }));
   assert.equal(cancelled.status, 'executed');
   assert.equal((cancelled.draft as TradeDraft).amountUsd, 0, 'a cancel is free at the wall');
   assert.equal(h.runner.calls[1], 'cancel pl_resting');
+});
 
-  // And the same close above a $10 threshold waits for the person, whoever asked for it.
+/* A CLOSE ONLY TAKES RISK OFF: a reduce-only order at the plan's own bound, no new margin, and
+   nothing leaves the venue. It was priced at the plan's margin and so charged the day and waited
+   for a click above the ask line, the way opening one does (B4, 2026-09-23). It lands free now,
+   like a cancel, and the two walls that are not about the amount still hold. */
+test('a close charges nothing to the day and lands without a click, and the kill switch still refuses it', async () => {
   const strict = setup(10);
   openRow(strict.runner, 'pl_theirs', 'agent-1');
-  const waits = await strict.svc.proposeTradeChange({ id: 'pl_theirs', close: true });
-  assert.equal(waits.status, 'pending');
-  assert.deepEqual(strict.runner.calls, []);
+  const before = strict.svc.dailyLimit(25_000).spentUsd;
+  const closed = await landed(strict, strict.svc.proposeTradeChange({ id: 'pl_theirs', close: true }));
+  assert.equal(closed.status, 'executed', JSON.stringify(closed.verdict));
+  assert.equal(strict.svc.dailyLimit(25_000).spentUsd, before, 'a close was charged to the day');
+  assert.deepEqual(strict.runner.calls, ['close pl_theirs 30']);
+
+  const stopped = setup(1000);
+  openRow(stopped.runner, 'pl_theirs', 'agent-1');
+  const policy = seededPolicy(1000);
+  policy.killSwitch = true;
+  savePolicy(stopped.dataDir, policy);
+  const refused = await stopped.svc.proposeTradeChange({ id: 'pl_theirs', close: true });
+  assert.equal(refused.status, 'policy_refused');
+  assert.equal(refused.verdict.outcome === 'refuse' ? refused.verdict.rule : '', 'kill_switch');
+  assert.deepEqual(stopped.runner.calls, [], 'nothing reached the venue');
+});
+
+/* ONE PLAN PER COIN, REFUSED BEFORE THE DRAW. The rule is pg/hl's (src/trade/risk.ts
+   sameCoinPlan); the propose side refuses a second plan on a coin before drawing it, so a refusal
+   leaves no stray idea on the chart. Skipped until the risk inputs carry the field. */
+const onePlanPerCoin = 'sameCoinPlan' in (riskInputsFor({ runner: fakeRunner(), meta: () => ({ assetId: 3, szDecimals: 4, maxLeverage: 25 }), mark: () => 100, free: () => 1000 } as unknown as TradeDeps, { id: 'pl_x', ...PLAN } as unknown as Plan, null) as object);
+test('a second plan on a coin that already has a live one is refused before anything is drawn', { skip: onePlanPerCoin ? false : 'the one-plan-per-coin rule lands with pg/hl' }, async () => {
+  const h = setup(1000);
+  openRow(h.runner, 'pl_live', 'agent-1');
+  const drawn = h.runner.rows.size;
+  const p = await h.svc.proposeTrade({ plan: { ...PLAN, side: 'short', sizeUsd: 200 }, by: 'agent-2' });
+  assert.equal(p.status, 'policy_refused');
+  assert.deepEqual(p.verdict.reasonCodes, ['plan_exists']);
+  assert.equal(h.runner.rows.size, drawn, 'a refused plan left an idea on the chart');
+  assert.equal(h.svc.view(p).reason?.sentence, 'ETH already has a live plan, so nothing new was placed. Change or cancel that plan first.');
 });
 
 /* THE CARD IS THE PLAN THAT RUNS. An idea stays an idea while its proposal waits for the click,

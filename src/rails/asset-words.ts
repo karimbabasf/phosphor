@@ -7,6 +7,7 @@
 
 import type { AssetPick } from '../intents.ts';
 import { oneLine } from '../intents.ts';
+import { ReasonError } from './reasons.ts';
 
 export function pickOrExplain(
   pick: AssetPick,
@@ -19,7 +20,8 @@ export function pickOrExplain(
   const said = pick.candidates
     .map((c) => `${oneLine(c.assetId, 60)} (${c.decimals} decimals)`)
     .join(' and ');
-  throw new Error(
+  throw new ReasonError(
+    'ambiguous_asset',
     `${pick.candidates.length} different tokens are called ${oneLine(symbol, 20)} on ${network}: ${said}. ` +
       'They are not the same coin and their decimals differ, so this app will not pick one for you: ' +
       'ask the person which they mean, then name one of them as the symbol and propose again',

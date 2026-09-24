@@ -46,7 +46,7 @@
 // moment the signature exists, and the hash the moment the submit answers. A process that
 // dies inside the watch loop then still has both on the row.
 
-import { ONECLICK_TERMINAL, oneLine, quoteEchoProblems } from '../intents.ts';
+import { oneLine, quoteEchoProblems } from '../intents.ts';
 import type { OneClickEndpointType, OneClickQuote, OneClickStatus, QuoteEcho } from '../intents.ts';
 import type { Preflight, RailHooks } from '../types.ts';
 import type { VenueProbe } from '../preflight/index.ts';
@@ -55,6 +55,8 @@ import type { QuoteRecord } from '../quote-signature.ts';
 import { INTENTS_SIGNING_STANDARD, checkIntentPayload, intentDeadline } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { submitSignedIntent } from './intents-submit.ts';
+import { FIRST_POLL_MS, watchOneClick } from './watch.ts';
+import { tell } from './oneclick-words.ts';
 
 export type IntentsSpendDeps = {
   api: IntentsApiPort;
@@ -64,6 +66,8 @@ export type IntentsSpendDeps = {
   sleep: (ms: number) => Promise<void>;
   pollIntervalMs: number;
   pollTimeoutMs: number;
+  // The first wait of the status watch; FIRST_POLL_MS when a rail names none.
+  firstPollMs?: number;
   maxDeadlineMs: number;
   // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
   // key its own fake signs with, and nothing else ever sets it.
@@ -125,20 +129,6 @@ export type IntentsSpendOutcome =
       quote: OneClickQuote;
       signedQuote: QuoteRecord;
     };
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-// A hook is the executor's business. Whatever it does with the evidence, it must not turn a
-// signature that is already released into a thrown "nothing happened".
-function tell(hooks: RailHooks | undefined, evidence: Parameters<NonNullable<RailHooks['onEvidence']>>[0]): void {
-  try {
-    hooks?.onEvidence?.(evidence);
-  } catch {
-    // reported by the executor's own persistence, not by this rail
-  }
-}
 
 function tellPreflight(hooks: RailHooks | undefined, preflight: Preflight): void {
   try {
@@ -264,35 +254,11 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   return { signed: true, submitted: true, intentHash: submitted.intentHash, depositAddress, deadline, quote, signedQuote, watch };
 }
 
-// Polls until terminal, out of attempts, or out of time. Never throws once the intent has
-// been submitted: a status endpoint that goes down after the money has moved must not become
-// an unhandled rejection.
-//
-// Every poll tells the executor which word 1Click used, so the stage on the card is the stage
-// the vendor would confirm and a person watching a five minute wait sees it move.
-export async function watchStatus(deps: IntentsSpendDeps, depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
-  const deadline = deps.now() + deps.pollTimeoutMs;
-  const maxPolls = Math.max(1, Math.ceil(deps.pollTimeoutMs / deps.pollIntervalMs));
-  let last: OneClickStatus = {
-    found: false,
-    status: 'PENDING_DEPOSIT',
-    reported: 'not polled',
-    originTxHashes: [],
-    destinationTxHashes: [],
-    nearTxHashes: [],
-  };
-
-  for (let attempt = 0; attempt < maxPolls; attempt += 1) {
-    try {
-      last = await deps.api.status(depositAddress);
-      tell(hooks, { providerStage: last.status });
-      if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return last;
-    } catch (err) {
-      last = { ...last, reported: `status check failed: ${oneLine(errText(err), 80)}` };
-    }
-    if (deps.now() >= deadline) break;
-    await deps.sleep(deps.pollIntervalMs);
-  }
-
-  return last;
+// The one watch every rail shares (./watch.ts): from a quarter second after the submit,
+// doubling to this rail's interval, until terminal or out of time. Never throws once the intent
+// has been submitted: a status endpoint that goes down after the money has moved must not become
+// an unhandled rejection. Every read tells the executor 1Click's word, so the card moves with it.
+export function watchStatus(deps: IntentsSpendDeps, depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
+  const plan = { firstMs: deps.firstPollMs ?? FIRST_POLL_MS, everyMs: deps.pollIntervalMs, timeoutMs: deps.pollTimeoutMs, sleep: deps.sleep, now: deps.now };
+  return watchOneClick(plan, (handle) => deps.api.status(handle), depositAddress, hooks);
 }

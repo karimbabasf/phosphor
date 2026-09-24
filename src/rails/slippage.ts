@@ -29,6 +29,12 @@ export function floorTooLow(quoteOut: bigint, minOut: bigint, maxSlippageBps: nu
    a market price, which is the guess the rule forbids. */
 export const DEFAULT_FLOOR_BPS = 100;
 
+/* How long the price a propose cut its floor from is reused by the check that follows it. The
+   floor-setting ask and the simulate were the same request a second apart, both paid a round
+   trip before the card could draw, and the second one coming back a hair lower refused the swap
+   against a floor cut from the first. One price per propose, used once. */
+export const QUOTE_REUSE_MS = 20_000;
+
 export function floorUnderQuote(quoteOut: number, bps: number = DEFAULT_FLOOR_BPS): number {
   if (!(quoteOut > 0) || !Number.isFinite(quoteOut)) return 0;
   const raw = quoteOut * (10_000 - bps) / 10_000;

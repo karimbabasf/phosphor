@@ -7,9 +7,11 @@ import type { Plan } from './trade/plan.ts';
 import type { PlanRisk } from './trade/risk.ts';
 import type { AddressActivity } from './chainscan/index.ts';
 import type { ProposalView } from './proposals/view.ts';
+import type { SwapAssetsParams, SwapAssetsReply, SwapCheckReply, SwapQuoteParams, SwapQuoteReply } from './proposals/swap-reads.ts';
 // Re-exported so every caller reads the one object from the one contract without importing
 // two files to describe one row.
 export type { ProposalStage, ProposalView, TxLeg } from './proposals/view.ts';
+export type { SwapAssetsParams, SwapAssetsReply, SwapCheckReply, SwapQuoteParams, SwapQuoteReply } from './proposals/swap-reads.ts';
 
 export type ChainId = 'eth' | 'base' | 'arb' | 'sol' | 'near';
 export type Mode = 'demo' | 'live';
@@ -226,12 +228,19 @@ export type SwapDraft = {
   venue: 'intents-native' | 'intents-relay';
   // The home chains of the two ASSETS, which is how the 1Click token list names an asset
   // ("USDC from eth" and "USDC from arb" are two ids). Neither is a place money moves to or
-  // from: both legs sit inside NEAR Intents, and every card says so.
-  chain: ChainId;
-  toChain: ChainId;
+  // from: both legs sit inside NEAR Intents, and every card says so. Any spend network id
+  // (src/rails/intents-address.ts), not only the five pinned chains.
+  chain: string;
+  toChain: string;
   fromSymbol: string;
   toSymbol: string;
+  // For display and pricing. The rails sign amountInExact when it is present, never this.
   amountIn: number;
+  /* The amount approved, as an exact decimal in fromSymbol units, cut to the coin's own
+     decimals when the draft was built. A double holds about 16 significant digits and a
+     24-decimal balance needs 24, so "all of it" as a number could sign more than was held
+     (2026-09-23). Absent on rows written before it existed. */
+  amountInExact?: string;
   amountUsd: number;
   minAmountOut: number; // slippage floor; execution must revert rather than fill below this
   from: string;
@@ -410,6 +419,9 @@ export type RailEvidence = {
 export type RailResult = {
   ok: boolean;
   detail: string;
+  // Why it ended the way it did, as one code from src/rails/reasons.ts. The view turns it into
+  // the sentence a person reads; `detail` stays the engineer's line.
+  reason?: string;
   txids?: string[];
   evidence?: RailEvidence;
   // The venue confirmed the move and the balance has not shown it inside the rail's window.
@@ -482,6 +494,12 @@ export type Rail<D extends WriteDraft = WriteDraft> = {
      price. The app sets a draft's floor under this when the agent names none (frozen rule 2:
      the floor comes off the quote, never off a guess). Must not sign or broadcast anything. */
   quote?(draft: D): Promise<number | null>;
+  /* For a swap rail only: which asset the draft spends and how much of it the verifier holds
+     for us right now, in base units (null when the read failed, never zero for unread). What
+     turns "all" into an exact amount and refuses one larger than the balance. Signs nothing. */
+  spend?(draft: D): Promise<SwapSpend>;
+  /* For a swap rail only: a dry quote as fields, for a read that files nothing. Signs nothing. */
+  facts?(draft: D): Promise<SwapQuoteFacts>;
   // Runs only after the proposal is approved, or auto-approved with the gate off. The proposal
   // id rides along so a rail that keeps its own registry (the trade rail) can record which
   // approval a row came from.
@@ -503,6 +521,21 @@ export type SimulationResult = {
   send?: SendSimulation; // the two send rails: the facts the send card draws
   swap?: SwapSimulation; // the swap rail: the facts the decision card draws
   error?: string;
+  // Why it did not pass, as one code from src/rails/reasons.ts, when the rail knows.
+  reason?: string;
+};
+
+// The asset a swap draft spends, resolved, and what the verifier holds of it for us.
+export type SwapSpend = { assetId: string; decimals: number; heldBase: bigint | null };
+
+/* One dry quote as fields: the exact amount it prices, what it says arrives, the floor the app
+   would set under it, the fee and the time. Amounts are exact decimals in the coin's units. */
+export type SwapQuoteFacts = {
+  amountIn: string;
+  expectedOut: string;
+  minOut: string;
+  feeUsd: number | null;
+  etaSeconds: number | null;
 };
 
 // What a swap simulation learned from the dry quote, as fields rather than as a sentence, so the
@@ -576,7 +609,7 @@ export type Proposal = {
   // txids are the evidence: the hashes the rail broadcast or the intents it signed. They
   // are also written to the audit log, but the log is compactable and this record is not,
   // so the transaction history keeps its explorer links after a compaction.
-  result?: { ok: boolean; detail: string; txids?: string[]; evidence?: RailEvidence };
+  result?: { ok: boolean; detail: string; reason?: string; txids?: string[]; evidence?: RailEvidence };
   // When the rail returned, or when a reconcile settled the row. `decidedAt` is the decision
   // and can be a minute before the money moved, which is the wrong stamp to judge a balance by.
   settledAt?: string;
@@ -858,11 +891,13 @@ export type SwapRail = 'relay' | 'oneclick';
 // the MCP schemas built from these carry no destination field.
 
 export type SwapParams = {
-  chain: ChainId; // the asset home of what is sold
-  toChain?: ChainId; // the asset home of what is bought; defaults to chain
+  chain: string; // the asset home of what is sold: any spend network id
+  toChain?: string; // the asset home of what is bought; defaults to chain
   fromSymbol: string;
   toSymbol: string;
-  amountIn: number;
+  // "all" (the exact balance held), an exact decimal string, or a number read through its
+  // shortest decimal string. Never float math on base units.
+  amountIn: number | string;
   minAmountOut?: number; // slippage floor, in toSymbol units; absent, the app sets it under its own quote
   clientKey?: ClientKey;
   by?: string;
@@ -951,4 +986,10 @@ export type ProposalService = {
   // The rolling 24h cap as the window shows it: the same spend figure the engine budgets on,
   // plus when the oldest counted spend leaves the window and capacity returns.
   dailyLimit(capUsd: number): { capUsd: number; spentUsd: number; resetsAt: string | null };
+  /* The three swap reads (src/proposals/swap-reads.ts). None files a row, signs anything or
+     takes the spend queue: what can be swapped, a dry quote, and one swap's truth re-read now.
+     Optional so a stand-in service without a venue need not carry them. */
+  swapAssets?(params: SwapAssetsParams): Promise<SwapAssetsReply>;
+  swapQuote?(params: SwapQuoteParams): Promise<SwapQuoteReply>;
+  swapCheck?(id: string): Promise<SwapCheckReply>;
 };

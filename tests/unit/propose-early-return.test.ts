@@ -54,13 +54,16 @@ test('the reply lands while the rail is still out, carrying the view the card dr
   assert.equal(ctx.store.get(String(reply.json.id))?.status, 'executed', 'the rail settles the row behind the reply');
 });
 
-test('an executing reply says where the settled amount will appear', async () => {
+/* No "read proposal_status" hint rides on it any more: the reply already carries the view, and
+   the hint sent the agent on a read it did not need (R3, 2026-09-23). */
+test('an executing reply carries the view and the evidence, and no hint to go and read again', async () => {
   const executing = row({ result: { ok: false, detail: 'submitted, waiting for the venue', txids: ['h1'], evidence: { handle: 'dep1' } } });
   const h = makeHttp({ proposals: serviceThatAnswers(executing) });
   const reply = await h.post('hl_deposit', { amount: 10 });
   assert.equal(reply.status, 200);
   assert.equal(reply.json.status, 'executing');
-  assert.equal(reply.json.next, 'executing: the window is drawing it; read proposal_status for the stage and the settled amount');
+  assert.equal(reply.json.next, undefined);
+  assert.ok(reply.json.view !== undefined, 'the view is on the reply');
   assert.deepEqual(reply.json.result, executing.result, 'the hash the venue already holds rides on the reply');
   assert.equal('draft' in reply.json, false, 'the draft and its resolved addresses stay off the wire');
 });

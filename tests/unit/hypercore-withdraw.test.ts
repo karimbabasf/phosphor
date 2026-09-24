@@ -631,12 +631,14 @@ test('a refund after the send names the amount and the venue account, with the s
   assert.equal(out.evidence?.handle, DEPOSIT.toLowerCase());
 });
 
-test('a FAILED routing with nothing refunded says the input is held by 1Click, never that a refund goes back', async () => {
+test('a FAILED routing with nothing refunded says the input is with the swap service, never that a refund goes back', async () => {
+  // The send off the venue account is the rail's own, so the input has left whatever 1Click did next.
   const { rail: r } = rail({ status: 'FAILED', refundedAmount: '0' });
   const out = await r.execute(draft());
   assert.equal(out.ok, false);
+  assert.equal(out.reason, 'venue_failed_refund_pending');
   assert.match(out.detail, /refunded 0 USDC so far/);
-  assert.match(out.detail, new RegExp(`held by 1Click under handle ${DEPOSIT.toLowerCase()}`));
+  assert.match(out.detail, new RegExp(`left the balance for the swap service's handle ${DEPOSIT.toLowerCase()} and is not back yet`));
   assert.doesNotMatch(out.detail, /refund goes back/);
   assert.ok(out.txids?.includes('0xledgerhash'));
   assert.equal(out.evidence?.refundedAmount, '0');

@@ -313,12 +313,13 @@ test('a generated payload that hands the balance to anything but the quote handl
   assert.equal(calls.submitted.length, 0);
 });
 
-test('a failed status with no refund yet says the input is held at the handle, never that it is back', async () => {
+test('a failed status with no refund yet never says it is back, and names where the input went only off a hash', async () => {
   const { rail } = railOf({ status: 'FAILED' });
   const result = await rail.execute(draftOf());
   assert.equal(result.ok, false);
   assert.match(result.detail, /1click reported FAILED and refunded 0 USDC so far/);
-  assert.match(result.detail, /Nothing is back in your balance until a refund shows there/);
+  assert.match(result.detail, /is not back yet|is not confirmed/);
+  assert.doesNotMatch(result.detail, /refund is credited|went back/);
 });
 
 test('a submit that never answered is reported as signed and unconfirmed, not as failed', async () => {

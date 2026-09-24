@@ -94,6 +94,43 @@ test('a pocket a rail hands back mid-flight is on the row while it is still exec
   await pending;
 });
 
+/* Every venue poll hands the executor its word, and each hand-over wrote an audit line, rewrote
+   proposals.json and sent three frames, changed or not: 151 `submitted` lines over 19 moves in
+   the live log, 21 for one of them (R5, 2026-09-23). A piece that changes nothing writes nothing. */
+test('evidence that repeats what the row already says writes no audit line and no row', async () => {
+  const slow = slowRail('hl_deposit');
+  const h = makeCtx({ rails: [slow.rail] });
+  const pending = h.svc.proposeHlDeposit({ amount: 10 });
+  await slow.started();
+  const hooks = slow.hooks();
+  assert.ok(hooks?.onEvidence !== undefined, 'the executor handed the rail no hooks');
+
+  const put = h.store.put.bind(h.store);
+  let writes = 0;
+  h.store.put = (row) => {
+    writes += 1;
+    return put(row);
+  };
+  const submitted = () => h.eventTypes().filter((t) => t === 'submitted').length;
+
+  hooks.onEvidence({ handle: 'dep1' });
+  hooks.onEvidence({ handle: 'dep1', providerStage: 'PROCESSING' });
+  assert.equal(submitted(), 2);
+  assert.equal(writes, 2);
+
+  for (let i = 0; i < 5; i += 1) hooks.onEvidence({ providerStage: 'PROCESSING' });
+  hooks.onEvidence({ handle: 'dep1' });
+  assert.equal(submitted(), 2, 'five polls that said the same word are not five audit lines');
+  assert.equal(writes, 2, 'and not five rewrites of proposals.json');
+
+  hooks.onEvidence({ providerStage: 'SUCCESS', txids: ['h1'] });
+  assert.equal(submitted(), 3, 'a new word is written the moment it arrives');
+  assert.equal(h.store.list()[0].result?.evidence?.providerStage, 'SUCCESS');
+
+  slow.release({ ok: true, detail: 'late', txids: ['h1'] });
+  await pending;
+});
+
 test('the balance before a move is the wallet total, read from the verifier, not the empty chain holdings', async () => {
   const h = makeCtx({
     intentsUsdc: 24.78,

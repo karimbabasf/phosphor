@@ -151,6 +151,7 @@ type Harness = {
   statusCalls: string[];
   verifierBalance: VerifierBalancePort;
   verifierReads: string[];
+  originReads: string[];
 };
 
 /* What the live API echoes back beside the quote, and what execute now checks it against. A
@@ -184,6 +185,9 @@ function harness(
     /* The verifier's answers in order, one per read, the last one repeating; overrides the
        before/after pair. For the reads after SUCCESS, which are now a loop. */
     verifierSequence?: Array<bigint | null>;
+    /* The balance of the asset SOLD, read before signing and again after a FAILED or REFUNDED,
+       in order, the last repeating. Default: 1000 USDC, enough for every draft here. */
+    origin?: Array<bigint | null>;
     quoteError?: string;
     submitError?: string;
     // How many submit calls get no reply (a TimeoutError) before one answers.
@@ -262,16 +266,22 @@ function harness(
   /* The verifier, before and after. The default is a swap that credits exactly what the quote
      promised: 99 USDT at 6 decimals, comfortably at the draft floor. */
   const verifierReads: string[] = [];
+  const originReads: string[] = [];
   const before = options.verifierBefore === undefined ? 0n : options.verifierBefore;
   const after = options.verifierAfter === undefined ? 99_000_000n : options.verifierAfter;
+  const origin = options.origin ?? [1_000_000_000n];
   const verifierBalance: VerifierBalancePort = async (accountId, assetId) => {
+    if (assetId === ORIGIN_ASSET) {
+      originReads.push(`${accountId}:${assetId}`);
+      return origin[Math.min(originReads.length - 1, origin.length - 1)] ?? null;
+    }
     verifierReads.push(`${accountId}:${assetId}`);
     const sequence = options.verifierSequence;
     if (sequence !== undefined) return sequence[Math.min(verifierReads.length - 1, sequence.length - 1)] ?? null;
     return verifierReads.length === 1 ? before : after;
   };
 
-  return { api, signer, quotes, generated, submitted, submitAttempts, signedPayloads, statusCalls, verifierBalance, verifierReads };
+  return { api, signer, quotes, generated, submitted, submitAttempts, signedPayloads, statusCalls, verifierBalance, verifierReads, originReads };
 }
 
 function railOf(h: Harness, over: Partial<IntentsNativeRailDeps> = {}) {
@@ -818,30 +828,62 @@ test('a watch that runs out is unconfirmed and keeps the hash and the handle for
   assert.equal(result.evidence?.handle, HANDLE);
 });
 
-test('a REFUNDED swap names the amount and says where it landed, which is not a chain address', async () => {
+test('a REFUNDED swap whose balance shows the input back says so, off the balance read', async () => {
   const h = harness({ statuses: [{ status: 'REFUNDED', swapDetails: { refundedAmountFormatted: '100.0', nearTxHashes: ['nearRefund'] } }] });
   const result = await railOf(h).execute(draftOf());
 
   assert.equal(result.ok, false);
-  assert.match(result.detail, /1click reported REFUNDED: 100\.0 USDC went back to/);
-  assert.match(result.detail, /not any chain address/);
-  assert.match(result.detail, new RegExp(OWNER));
+  assert.equal(result.reason, 'refunded');
+  assert.match(result.detail, /1click reported REFUNDED 100\.0 USDC and the USDC balance reads 1000 against 1000 before the swap, so it is back/);
   assert.deepEqual(result.txids, [INTENT_HASH, 'nearRefund']);
   assert.equal(result.evidence?.refundedAmount, '100.0');
   assert.equal(result.evidence?.handle, HANDLE);
+  assert.equal(h.originReads.length, 2, 'the sold coin read before signing and again after the venue answered');
 });
 
-test('a FAILED swap with nothing refunded says the input is held by 1Click under the handle', async () => {
+test('a REFUNDED swap whose balance has not shown the refund yet names where it went, which is not a chain address', async () => {
+  const h = harness({
+    statuses: [{ status: 'REFUNDED', swapDetails: { refundedAmountFormatted: '100.0', nearTxHashes: ['nearRefund'] } }],
+    origin: [1_000_000_000n, 900_000_000n],
+  });
+  const result = await railOf(h).execute(draftOf());
+  assert.equal(result.reason, 'venue_failed_refund_pending');
+  assert.match(result.detail, /1click reported REFUNDED: 100\.0 USDC went back to/);
+  assert.match(result.detail, /not any chain address/);
+  assert.match(result.detail, new RegExp(OWNER));
+});
+
+/* THE THREE wNEAR SWAPS OF 2026-09-23. 1Click said FAILED, refunded 0, no transfer hash, and
+   the card said the input was held by 1Click under the handle. The balance never moved. */
+test('a FAILED swap whose balance never moved says nothing left the balance, never that 1Click holds it', async () => {
   const h = harness({ statuses: [{ status: 'FAILED', swapDetails: { refundedAmountFormatted: '0', refundReason: null } }] });
   const result = await railOf(h).execute(draftOf());
 
   assert.equal(result.ok, false);
-  assert.match(result.detail, /1click reported FAILED and refunded 0 USDC so far/);
-  assert.match(result.detail, new RegExp(`held by 1Click under handle ${HANDLE}`));
-  assert.match(result.detail, /reason not given/);
+  assert.equal(result.reason, 'venue_failed_nothing_moved');
+  assert.match(result.detail, /1click reported FAILED \(reason not given\) and nothing left the balance/);
+  assert.match(result.detail, /reads 1000 against 1000 before the swap/);
+  assert.doesNotMatch(result.detail, /held by 1Click/);
   assert.doesNotMatch(result.detail, /refund is credited/);
   assert.deepEqual(result.txids, [INTENT_HASH]);
   assert.equal(result.evidence?.refundedAmount, '0');
+});
+
+test('a FAILED swap whose input left says it is with the swap service, and one the app could not read says it cannot tell', async () => {
+  const left = harness({ statuses: [{ status: 'FAILED', swapDetails: { refundedAmountFormatted: '0', nearTxHashes: ['nearFunding'] } }] });
+  const out = await railOf(left).execute(draftOf());
+  assert.equal(out.reason, 'venue_failed_refund_pending');
+  assert.match(out.detail, new RegExp(`left the balance for the swap service's handle ${HANDLE} and is not back yet`));
+
+  const dropped = harness({ statuses: [{ status: 'FAILED', swapDetails: {} }], origin: [1_000_000_000n, 900_000_000n] });
+  // A fall with no hash may be another move spending the same coin that minute: not proof.
+  assert.equal((await railOf(dropped).execute(draftOf())).reason, 'stuck_unknown', 'a fall with no hash is not attributed to this swap');
+
+  const unread = harness({ statuses: [{ status: 'FAILED', swapDetails: {} }], origin: [null] });
+  const blind = await railOf(unread).execute(draftOf());
+  assert.equal(blind.reason, 'stuck_unknown');
+  assert.match(blind.detail, /whether the USDC left the balance is not confirmed/);
+  assert.doesNotMatch(blind.detail, /held by 1Click/);
 });
 
 test('an invented status is never terminal, however much it looks like SUCCESS', async () => {

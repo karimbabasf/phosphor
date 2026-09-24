@@ -38,8 +38,9 @@ import { finishTouch } from './proposals/lifecycle.ts';
 import { executeApproved, land, markStalled, watchSettling } from './proposals/execute.ts';
 import { acknowledge, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
 import { proposePolicyChange } from './proposals/draft.ts';
-import { proposeHlDeposit, proposeHlWithdraw, proposeSend, proposeSwap } from './proposals/rails.ts';
+import { decideSwap, prepareSwap, proposeHlDeposit, proposeHlWithdraw, proposeSend } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
+import { swapAssets, swapCheck, swapQuote } from './proposals/swap-reads.ts';
 
 export type { ProposalDeps };
 
@@ -91,7 +92,13 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
 
   return {
     proposePolicyChange: (p) => serialise(() => proposePolicyChange(ctx, p)),
-    proposeSwap: (p) => serialise(() => proposeSwap(ctx, p)),
+    /* The reads (the balance, the price, the simulation) run before the queue and the decision
+       runs in it: the engine against the day's spend as it stands, and the landing that reserves.
+       A swap's seconds of quotes used to hold every approve and refuse behind them. */
+    proposeSwap: async (p) => {
+      const prepared = await prepareSwap(ctx, p);
+      return serialise(() => decideSwap(ctx, prepared));
+    },
     proposeHlDeposit: (p) => serialise(() => proposeHlDeposit(ctx, p)),
     proposeHlWithdraw: (p) => serialise(() => proposeHlWithdraw(ctx, p)),
     proposeSend: (p) => serialise(() => proposeSend(ctx, p)),
@@ -125,5 +132,9 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // behind its reply now, so the queue alone would drain while a signature was in flight.
     settle: (capMs: number) => within(capMs, Promise.all([serialise.idle(), ...ctx.inflight.values()])),
     dailyLimit: (capUsd: number) => dailyLimit(ctx, capUsd),
+    // Reads, outside the serialiser: none reserves budget or writes a row.
+    swapAssets: (params) => swapAssets(ctx, params),
+    swapQuote: (params) => swapQuote(ctx, params),
+    swapCheck: (id: string) => swapCheck(ctx, id),
   };
 }

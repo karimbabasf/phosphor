@@ -109,7 +109,9 @@ async function fetchSpotUsd(product: string, fetchImpl: typeof fetch): Promise<n
 }
 
 /* Best-effort spot prices for the three native gas assets. A failure here must never throw
-   refresh() itself; it falls back to the last known price (or 0 on the very first refresh).
+   refresh() itself; it falls back to the last known price, and with none known the price stays
+   absent. It used to become 0 on the very first refresh, and a price of 0 reads as "worth
+   nothing" wherever a reader forgets to ask whether it is a price at all: unknown stays unknown.
 
    The fallback is what makes the timestamp necessary. Reusing the last known price is the right
    behaviour for a display, which is why it stays, and the wrong behaviour for a cap, because a
@@ -139,8 +141,8 @@ async function resolveLivePrices(
         prices[symbol] = await fetchSpotUsd(product, fetchImpl);
         asOf[symbol] = now();
       } catch {
-        prices[symbol] = fallback[symbol] ?? 0;
-        // The stamp is deliberately NOT touched. This price was not read now.
+        // The last known price stays (copied in above) and so does its stamp: this price was not
+        // read now. With none known the symbol stays absent, never a made-up 0.
       }
     }),
   );

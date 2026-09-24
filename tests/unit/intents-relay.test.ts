@@ -431,6 +431,15 @@ test('an unknown status word is never terminal: the poll goes on and the row end
   for (const word of RELAY_TERMINAL) assert.ok(RELAY_STAGES.has(word), `${word} is not in the stage contract`);
 });
 
+test('the status poll starts a quarter second after publish and doubles to three seconds, like the 1Click rail', async () => {
+  const pending = statusOf('PENDING');
+  const h = harness({ statuses: [pending, pending, pending, pending, pending, statusOf('SETTLED', { nearTxHash: NEAR_TX })] });
+  const result = await h.rail.execute(draftOf(), 'p1', h.hooks);
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(h.statusCalls.length, 6);
+  assert.deepEqual(h.slept.slice(0, 5), [250, 500, 1000, 2000, 3000], 'a settled swap is seen within a block or two, not after a flat 3 s');
+});
+
 test('SETTLED with a balance rise equal to the diff is ok, with the NEAR hash, its explorer link and the measured amount', async () => {
   const h = harness({ statuses: [statusOf('TX_BROADCASTED', { nearTxHash: NEAR_TX }), statusOf('SETTLED', { nearTxHash: NEAR_TX, filledAmounts: ['2000000', '1961996'] })] });
   const result = await h.rail.execute(draftOf(), 'p1', h.hooks);
@@ -472,6 +481,40 @@ test('SETTLED short by one pip is still the swap; short by more is settling, nev
   assert.ok(flat.slept.length > 0, 'the after-read was repeated inside the window');
 });
 
+/* THE PRICE THE CARD SHOWED IS THE PRICE SIGNED, while it is still good. A Yes used to wait on the
+   solvers again, 2.7 to 3.8 s (R5 B3); a quote with more than 15 s to run is signed as it stands,
+   and an older one is priced again. Every quote here expires a minute after it was asked for. */
+test('the click signs the quote the propose checked while it is fresh, and asks again once it has expired', async () => {
+  let clock: { now: number } | null = null;
+  const fresh = (): RelayQuote[] => [quoteOf({ expirationTime: new Date((clock?.now ?? NOW) + 60_000).toISOString() })];
+
+  const soon = harness({ quotes: fresh });
+  clock = soon.clock;
+  assert.equal((await soon.rail.simulate(draftOf())).ok, true);
+  assert.equal(soon.quotes.length, 1);
+  soon.clock.now += 10_000; // clicked ten seconds later: fifty left on the quote
+  const signed = await soon.rail.execute(draftOf(), 'p1', soon.hooks);
+  assert.equal(signed.ok, true, signed.detail);
+  assert.equal(soon.quotes.length, 1, 'a fresh quote was asked for again at the click');
+  assert.deepEqual(soon.publishes[0]?.quoteHashes, [quoteOf().quoteHash]);
+
+  const late = harness({ quotes: fresh });
+  clock = late.clock;
+  assert.equal((await late.rail.simulate(draftOf())).ok, true);
+  late.clock.now += 50_000; // ten seconds left, under the fifteen a signature needs
+  const repriced = await late.rail.execute(draftOf(), 'p1', late.hooks);
+  assert.equal(repriced.ok, true, repriced.detail);
+  assert.equal(late.quotes.length, 2, 'an expiring quote was signed instead of asking again');
+
+  // Used once: a second run of the same move (a held retry) prices again.
+  const twice = harness({ quotes: fresh });
+  clock = twice.clock;
+  await twice.rail.simulate(draftOf());
+  await twice.rail.execute(draftOf(), 'p1', twice.hooks);
+  await twice.rail.execute(draftOf(), 'p2', twice.hooks);
+  assert.equal(twice.quotes.length, 2);
+});
+
 test('a hold below the floor signs nothing and returns held with both numbers in the sentence', async () => {
   const h = harness({ quotes: [quoteOf({ amountOut: '1900000' })] });
   const result = await h.rail.execute(draftOf({ minAmountOut: 1.95 }), 'p1', h.hooks);
@@ -480,7 +523,8 @@ test('a hold below the floor signs nothing and returns held with both numbers in
   assert.match(result.detail, /best price is 1\.9 USDT, your floor is 1\.95 USDT/);
   assert.equal(h.signed.length, 0);
   assert.equal(h.publishes.length, 0);
-  assert.equal(h.saltReads, 0);
+  // The salt and balance reads run beside the quote now, so a hold has read them; it signs nothing.
+  assert.equal(h.saltReads, 1);
   assert.deepEqual(h.evidence, []);
 
   const none = harness({ quotes: [] });

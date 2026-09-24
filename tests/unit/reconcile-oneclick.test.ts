@@ -20,6 +20,7 @@ import { createLedger } from '../../src/ledger/index.ts';
 import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import type { OneClickStatus } from '../../src/intents.ts';
+import type { IntentsActivity } from '../../src/chainscan/index.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { hlDepositCredited } from '../../src/proposals/reconcile.ts';
 import type { AppConfig, Proposal, ProposalService, ProposalStatus, RiskRow } from '../../src/types.ts';
@@ -42,6 +43,8 @@ function setup(
   answer: OneClickStatus | ((handle: string) => OneClickStatus),
   wireClient = true,
   venueCredited?: (p: Proposal) => Promise<boolean>,
+  // The account's intents ledger, as the swap lookup reads it; absent means no ledger to ask.
+  ledger?: IntentsActivity,
 ): Harness {
   const dir = tmpDir();
   const policy = defaultPolicy();
@@ -73,6 +76,9 @@ function setup(
         }
       : {}),
     ...(venueCredited === undefined ? {} : { venueCredited }),
+    ...(ledger === undefined
+      ? {}
+      : { rails: { for: () => null, kinds: () => [], swap: { tokens: async () => [], balance: async () => null, activity: async () => ledger } } }),
   });
   return { svc, dir, asked, audit };
 }
@@ -173,14 +179,77 @@ test('REFUNDED reconciles to failed and names the amount that went back', async 
   assert.match(out.result?.detail ?? '', /REFUNDED: 9\.90/);
 });
 
-test('FAILED stays needs_reconciliation and says the input is held under the handle', async () => {
+/* "The input is held by 1Click under handle" was written here over three swaps whose transfer
+   never ran (2026-09-23). The words now come from what was observed: the ledger, or a hash. */
+function ledgerOf(rows: IntentsActivity['rows']): IntentsActivity {
+  return { account: '0x1111111111111111111111111111111111111111', ok: true, rows, balances: null, partial: false, source: 'nearblocks', explorer: null, note: '' };
+}
+const LONG_AGO = new Date(Date.now() - 3_600_000).toISOString();
+// The swap as a rail writes it, with the account whose ledger is read.
+const OWN_SWAP: Partial<Proposal> = { ...SWAP, draft: { ...(SWAP.draft as object), from: '0x1111111111111111111111111111111111111111' } as unknown as Proposal['draft'] };
+
+test('FAILED with no ledger to ask stays needs_reconciliation and says it is not confirmed, never that 1Click holds it', async () => {
   const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0', refundReason: 'SLIPPAGE' }));
   seed(h.dir);
   const out = await h.svc.reconcile('oc-1');
   assert.equal(out.status, 'needs_reconciliation');
+  assert.equal(out.result?.reason, 'stuck_unknown');
   assert.match(out.result?.detail ?? '', /refunded 0 so far/);
   assert.match(out.result?.detail ?? '', /reason SLIPPAGE/);
-  assert.match(out.result?.detail ?? '', /held by 1Click under handle dep-1/);
+  assert.match(out.result?.detail ?? '', /not confirmed yet/);
+  assert.doesNotMatch(out.result?.detail ?? '', /held by 1Click/);
+});
+
+test('FAILED with a ledger that shows no transfer to the handle closes the row: nothing left the balance', async () => {
+  // Older than the approval, so the page reaches back past it; and nothing went to dep-1.
+  const quiet = ledgerOf([{ cause: 'TRANSFER', token: 'USDC', tokenId: 'nep141:usdc', delta: '-1', counterparty: 'someone.near', hash: 'h0', time: LONG_AGO }]);
+  const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0' }), true, undefined, quiet);
+  seed(h.dir, OWN_SWAP);
+  const out = await h.svc.reconcile('oc-1');
+  assert.equal(out.status, 'failed');
+  assert.equal(out.result?.reason, 'venue_failed_nothing_moved');
+  assert.match(out.result?.detail ?? '', /no transfer to handle dep-1 since this move was approved, so nothing left the balance/);
+  assert.equal(h.svc.view(out).reason?.sentence, "The swap didn't go through. Nothing left your balance.");
+
+  // And a later re-check of the closed row leaves it closed.
+  const again = await h.svc.reconcile('oc-1');
+  assert.equal(again.status, 'failed');
+  assert.equal(again.result?.reason, 'venue_failed_nothing_moved');
+});
+
+test('FAILED with a transfer to the handle on the ledger, or a hash, says the input left and is not back yet', async () => {
+  const sent = ledgerOf([{ cause: 'TRANSFER', token: 'USDC', tokenId: 'nep141:usdc', delta: '-10', counterparty: 'dep-1', hash: 'h1', time: new Date().toISOString() }]);
+  const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0' }), true, undefined, sent);
+  seed(h.dir, OWN_SWAP);
+  const out = await h.svc.reconcile('oc-1');
+  assert.equal(out.status, 'needs_reconciliation');
+  assert.equal(out.result?.reason, 'venue_failed_refund_pending');
+  assert.match(out.result?.detail ?? '', /left the balance for handle dep-1 and is not back yet/);
+
+  const hashed = setup(statusOf({ status: 'FAILED', refundedAmount: '0', nearTxHashes: ['nearFunding'] }));
+  seed(hashed.dir, SWAP);
+  assert.equal((await hashed.svc.reconcile('oc-1')).result?.reason, 'venue_failed_refund_pending');
+});
+
+test('anything leaving the account since the approval, to any account, is not proof nothing left', async () => {
+  // The funding transfer may be filed under another counterparty than the handle; a row this
+  // app cannot tie to the move could still be it, so the row stays open.
+  const other = ledgerOf([{ cause: 'TRANSFER', token: 'USDC', tokenId: 'nep141:usdc', delta: '-10', counterparty: 'intents.near', hash: 'h2', time: new Date().toISOString() }]);
+  const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0' }), true, undefined, other);
+  seed(h.dir, OWN_SWAP);
+  const out = await h.svc.reconcile('oc-1');
+  assert.equal(out.status, 'needs_reconciliation');
+  assert.equal(out.result?.reason, 'stuck_unknown');
+});
+
+test('a busy ledger that does not reach back past the approval proves nothing', async () => {
+  const recent = new Date().toISOString();
+  const rows = Array.from({ length: 50 }, (_, i) => ({ cause: 'TRANSFER', token: 'USDC', tokenId: 'nep141:usdc', delta: '+1', counterparty: 'x.near', hash: `h${i}`, time: recent }));
+  const h = setup(statusOf({ status: 'FAILED' }), true, undefined, ledgerOf(rows));
+  seed(h.dir, { ...OWN_SWAP, decidedAt: new Date(Date.now() - 600_000).toISOString() });
+  const out = await h.svc.reconcile('oc-1');
+  assert.equal(out.status, 'needs_reconciliation');
+  assert.equal(out.result?.reason, 'stuck_unknown');
 });
 
 test('FAILED with no refund reason says "not given"', async () => {
