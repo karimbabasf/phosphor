@@ -8,8 +8,10 @@
    third, and the way through as a plain underlined word. No dot, no colour,
    no box. Sticky, so a long world scrolls under it rather than away from it;
    a soft shadow above it says what is under it, where a hairline would draw
-   a line across the slab. Each view sets its ground (pro.css, basic.css). */
+   a line across the slab. Each view sets its ground (--notice-bg: pro.css,
+   basic.css). */
 .notice {
+  --notice-bg: var(--bg-0);
   position: sticky;
   bottom: 0;
   z-index: 2;
@@ -22,8 +24,43 @@
   font-size: var(--fs-13);
   line-height: 1.45;
   color: var(--text-2);
-  background: var(--bg-0);
+  background: var(--notice-bg);
   box-shadow: 0 -14px 24px -18px rgba(0, 0, 0, 0.7);
+}
+
+/* What scrolls under the notice thins out over the 32 px above it and is gone
+   at its edge, rather than cut through there (the finish review, 2026-09-24:
+   at 1180 and 960 the notice sliced the dials' figures and the Policies
+   heading). A band of the notice's own ground, clear at its top; the slab's
+   foot is that same shade, so the band has no edge of its own. It is up only
+   while the world has more than it shows: a scroll timeline over a world with
+   nothing to scroll is inactive, so the band keeps its resting 0 and a world
+   that fits (Trade) keeps every pixel above the notice. The views keep 32 px
+   free at their foot, so the end of a scroll fades nothing but that. */
+.notice::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 32px;
+  background: linear-gradient(to bottom, transparent, var(--notice-bg));
+  pointer-events: none;
+}
+
+@supports (animation-timeline: scroll()) {
+  .notice::before {
+    opacity: 0;
+    animation-name: notice-band;
+    animation-duration: auto;
+    animation-timing-function: linear;
+    animation-fill-mode: both;
+    animation-timeline: scroll(nearest block);
+  }
+}
+
+@keyframes notice-band {
+  from, to { opacity: 1; }
 }
 
 .notice > .icon {
@@ -65,10 +102,10 @@
 }
 
 /* While the notice is up, whatever the keyboard or a scrollIntoView brings
-   into view lands above it, never under it: a button hidden by the notice
-   takes the click on the notice instead. */
+   into view lands above it and its band, never under them: a button hidden
+   by the notice takes the click on the notice instead. */
 .world:has(> .notice:not([hidden])) {
-  scroll-padding-bottom: 64px;
+  scroll-padding-bottom: 96px;
 }
 
 /* Stacked (a browser tab under 960 wide, never the app), the world is a strip
@@ -78,5 +115,9 @@
   .notice {
     position: static;
     box-shadow: none;
+  }
+
+  .notice::before {
+    content: none;
   }
 }

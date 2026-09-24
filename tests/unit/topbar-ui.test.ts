@@ -130,6 +130,27 @@ test('what needs the person is one calm line at the foot of the world, never in 
   assert.doesNotMatch(rule, /var\(--(warn|down|up|ink)/, 'the notice shouts in a state colour');
 });
 
+/* The finish review, 2026-09-24: at 1180 and 960 the notice cut through what scrolled under it
+   (the dials' figures, the Policies heading), its ground almost the slab's. What scrolls under it
+   now thins out over the 32 px above it into the notice's own ground, and only while the world
+   has more than it shows: a world that fits keeps every pixel above the notice. */
+test('what scrolls under the notice fades into it, and a world that fits keeps every pixel', () => {
+  const band = NOTICE.match(/\.notice::before\s*\{([^}]*)\}/)?.[1] ?? '';
+  assert.match(band, /bottom:\s*100%;/);
+  assert.match(band, /height:\s*32px;/);
+  assert.match(band, /background:\s*linear-gradient\(to bottom, transparent, var\(--notice-bg\)\);/);
+  assert.match(band, /pointer-events:\s*none;/);
+  const gated = NOTICE.slice(NOTICE.indexOf('@supports (animation-timeline: scroll())'));
+  assert.match(gated, /\.notice::before\s*\{[^}]*opacity:\s*0;[^}]*animation-timeline:\s*scroll\(nearest block\);/);
+  // The slab's foot shade is the notice's ground, and so the band's.
+  assert.match(read('../../ui/design/pro.css'), /body\[data-view="vault"\] \.notice \{\s*--notice-bg: color-mix\(in srgb, var\(--bg-1\), var\(--bg-0\) 25%\);/);
+  // Where nothing scrolls under it (Basic's slab, a stacked browser tab), no band at all.
+  assert.match(read('../../ui/design/basic.css'), /body\[data-view="basic"\] \.notice::before \{\s*content: none;/);
+  assert.match(NOTICE.slice(NOTICE.indexOf('@media (max-width: 959px)')), /\.notice::before \{\s*content: none;/);
+  // A key the keyboard brings into view lands above the notice and its band.
+  assert.match(NOTICE, /scroll-padding-bottom:\s*96px;/);
+});
+
 /* Freezing closes every open trading position at the market price (src/main.ts setKill calls
    runner.stopAll, which flattens every position, hand-opened ones too). The bar's confirm says so
    in the Vault's own words, and never that nothing can close a position (hunt B, 2026-09-23). */

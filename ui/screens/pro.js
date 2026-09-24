@@ -51,6 +51,14 @@
   var LEGEND_SHOWN = 4;
   var MOVES_SHOWN = 4;
 
+  /* The shortest arc a dial shows for a share above nothing: 6 of its 100,
+     from the top, a sweep that reads as begun. $100 of a $10,000 cap is 1, and
+     at 1 the round caps met in a dot centred on the top that read as a knob
+     (the finish review, 2026-09-24). A cap is half the 9 wide stroke on the
+     42 radius, 1.7 of the 100. */
+  var MIN_SWEEP = 6;
+  var ARC_CAP = 1.7;
+
   /* A coin's day is read when Pro comes up, and again on the first frame that
      finds it five minutes old while Pro stays up: a line a person reads at a
      glance, not a ticker, and never on a timer of its own. */
@@ -123,7 +131,17 @@
 
     var mix = dom.el('div', 'stmt-mix');
     var ring = ringSvg();
-    if (ring) mix.appendChild(ring.svg);
+    var ringBox = dom.el('div', 'stmt-ring-box');
+    if (ring) ringBox.appendChild(ring.svg);
+    /* The largest share on the disc, for when the legend steps off (pro.css). */
+    var ringLabel = dom.el('p', 'stmt-ring-label');
+    var ringShare = dom.el('span', 'stmt-ring-share num');
+    var ringCoin = dom.el('span', 'stmt-ring-coin');
+    ringLabel.appendChild(ringShare);
+    ringLabel.appendChild(ringCoin);
+    ringLabel.hidden = true;
+    ringBox.appendChild(ringLabel);
+    mix.appendChild(ringBox);
     var legend = dom.el('ul', 'stmt-legend');
     legend.setAttribute('aria-label', 'How your coins split');
     mix.appendChild(legend);
@@ -224,6 +242,9 @@
     refs.caption = caption;
     refs.today = today;
     refs.ring = ring;
+    refs.ringLabel = ringLabel;
+    refs.ringShare = ringShare;
+    refs.ringCoin = ringCoin;
     refs.legend = legend;
     refs.swap = swap;
     refs.add = add;
@@ -389,6 +410,11 @@
       dom.setText(li.children[1], item.word + ' ' + shareText(item.share));
     });
     dom.setHidden(refs.legend, !items.length);
+    /* On the disc, the largest coin's share: the legend's first entry, never the fold. */
+    var top = items.length && items[0].key !== ':rest' ? items[0] : null;
+    dom.setText(refs.ringShare, top ? shareText(top.share) : '');
+    dom.setText(refs.ringCoin, top ? top.word : '');
+    dom.setHidden(refs.ringLabel, !top);
   }
 
   function shareText(share) {
@@ -662,7 +688,13 @@
        dot that reads as a little spent. */
     dom.setAttr(d.node, 'data-empty', fraction === null || shown === 0 ? 'true' : null);
     if (!d.arc) return;
-    var dash = shown > 0 ? (Math.max(shown * 100, 0.5)).toFixed(2) + ' 100' : '0 100';
+    /* What shows runs from the top to the value: the dash starts a cap past the top and
+       stops a cap short, since the round caps reach past both its ends. A full dial is
+       the whole ring, from the top. */
+    var sweep = shown > 0 ? Math.max(shown * 100, MIN_SWEEP) : 0;
+    var whole = sweep >= 100;
+    var dash = !sweep ? '0 100' : (whole ? '100 100' : (sweep - 2 * ARC_CAP).toFixed(2) + ' 100');
+    d.arc.style.strokeDashoffset = sweep && !whole ? String(-ARC_CAP) : '0';
     if (d.arc.getAttribute('data-drawn') !== 'true') {
       d.arc.setAttribute('data-drawn', 'true');
       d.arc.style.strokeDasharray = '0 100';

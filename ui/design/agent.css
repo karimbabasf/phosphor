@@ -330,6 +330,7 @@
    drawn over the scroller (the top fade, Latest) is drawn on the frame, so the scroller's
    own paint is rows and nothing else. */
 .transcript-wrap {
+  --fade-top: transparent 0, transparent 12px, rgb(0 0 0 / 0.45) 34px, #000 64px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -365,9 +366,12 @@
   padding: var(--s-5) 0 var(--s-2);
 }
 
-/* The top of a thread that scrolled thins out under the head. A mask on the scroller rather
-   than a band of the ground's colour over it: the ground carries its own soft light, and a
-   painted band showed its edge against it. On or off with the cut, never per scroll. */
+/* The top of a thread that scrolled thins out under the head, and is gone before it reaches
+   it: nothing in the first 12 px, then in by 64 (the finish review, 2026-09-24: at 960 a line
+   cut through its middle still showed under "Grok is ready" at a third of its strength). A
+   mask on the scroller rather than a band of the ground's colour over it: the ground carries
+   its own soft light, and a painted band showed its edge against it. On or off with the cut,
+   never per scroll. The stops are --fade-top, on .transcript-wrap. */
 .transcript-fade {
   position: absolute;
   left: 0;
@@ -380,8 +384,8 @@
 }
 
 .transcript-wrap[data-cut="top"] > .transcript {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 36px);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 36px);
+  -webkit-mask-image: linear-gradient(to bottom, var(--fade-top));
+  mask-image: linear-gradient(to bottom, var(--fade-top));
 }
 
 /* While Latest is up, the thread thins out under it too, so the key never sits on words. */
@@ -391,8 +395,8 @@
 }
 
 .transcript-wrap[data-cut="top"]:has(> .jump-latest[data-on="true"]) > .transcript {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 36px, #000 calc(100% - 64px), transparent calc(100% - 6px));
-  mask-image: linear-gradient(to bottom, transparent 0, #000 36px, #000 calc(100% - 64px), transparent calc(100% - 6px));
+  -webkit-mask-image: linear-gradient(to bottom, var(--fade-top), #000 calc(100% - 64px), transparent calc(100% - 6px));
+  mask-image: linear-gradient(to bottom, var(--fade-top), #000 calc(100% - 64px), transparent calc(100% - 6px));
 }
 
 /* Every row enters the same way, once: a 180 ms fade and a 6 px rise. */

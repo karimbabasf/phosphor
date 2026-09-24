@@ -163,6 +163,39 @@ test('the card keeps one head row, labels keep their words, and a reply figure s
   assert.doesNotMatch(figure, /font-mono|word-spacing|font-size/);
 });
 
+/* The finish review, 2026-09-24, in the conversation's third of the window (Pro and Trade at
+   1180 and 960, the card 330 to 350 wide): "Swap 50 USDC to ETH" broke beside "Needs your OK",
+   "14.22 USDC ->" left its arrow at the end of a line, and the Fee took a row of its own. */
+test('a narrow card puts its state under the move, leads a second line with the arrow, and keeps its figures on one row', () => {
+  assert.match(block(CARDS, '.tcard'), /container-type:\s*inline-size;/, 'the card is not its own width\'s container');
+  assert.match(block(CARD, '.mcard'), /container-name:\s*mcard;/);
+  const at = CARD.indexOf('@container mcard (max-width: 380px)');
+  assert.ok(at >= 0, 'no narrow card');
+  const narrow = CARD.slice(at, CARD.indexOf('/* ---------- the track', at));
+  // Every stage keeps the state under the move, so a card that lands does not change shape.
+  assert.match(narrow, /grid-template-areas:\s*"marks move"\s*"marks state";/);
+  assert.match(narrow, /\.mcard-state \{[^}]*grid-area: state;[^}]*margin-left: 0;/);
+  // The arrow is drawn at the head of the leg it points to (cards.js's own arrow path), so a
+  // line that has to break breaks before it.
+  assert.match(narrow, /\.mcard-move > \.mcard-arrow \{\s*display: none;/);
+  const arrow = read('ui/screens/cards.js').match(/arrow: \[\s*'',\s*'([^']+)'/)?.[1] ?? '';
+  assert.ok(arrow, 'no arrow glyph in cards.js');
+  assert.ok(narrow.includes(`path d='${arrow}'`), 'the narrow card\'s arrow is not cards.js\'s arrow');
+  assert.match(narrow, /\.mcard-move > \.mcard-arrow \+ \.mcard-leg \{\s*white-space: nowrap;/);
+  // The three figures a size down, each whole.
+  assert.match(narrow, /\.mcard-fact-label \{\s*font-size: var\(--fs-12\);/);
+  assert.match(narrow, /\.mcard-fact b \{\s*font-size: var\(--fs-14\);\s*white-space: nowrap;/);
+});
+
+/* The finish review, 2026-09-24: at 960 a line cut through its middle still showed under "Grok
+   is ready" at a third of its strength. The top fade is clear for its first 12 px. */
+test('the thread\'s top fade is gone before it reaches the head', () => {
+  assert.match(block(AGENT, '.transcript-wrap'), /--fade-top:\s*transparent 0, transparent 12px, rgb\(0 0 0 \/ 0\.45\) 34px, #000 64px;/);
+  assert.match(block(AGENT, '.transcript-wrap[data-cut="top"] > .transcript'), /mask-image: linear-gradient\(to bottom, var\(--fade-top\)\);/);
+  assert.match(block(AGENT, '.transcript-wrap[data-cut="top"]:has(> .jump-latest[data-on="true"]) > .transcript'), /mask-image: linear-gradient\(to bottom, var\(--fade-top\), #000 calc\(100% - 64px\), transparent calc\(100% - 6px\)\);/);
+  assert.doesNotMatch(AGENT, /transparent 0, #000 36px/, 'the short fade is back');
+});
+
 /* The finish review, 2026-09-23. The send key at rest was a 40 percent ghost nobody could find;
    the Details fold animated a margin inside a thread that follows its own foot; and the coin
    pair was two 16 px marks side by side where the comp stacks two 24 px ones. */

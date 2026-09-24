@@ -36,12 +36,16 @@ body[data-view="basic"] #view-basic {
 }
 
 /* The notice at the slab's foot: no box and no rule of its own, the slab is
-   its surface. */
+   its surface. Nothing scrolls under it here, so it draws no band. */
 body[data-view="basic"] .notice {
   position: static;
   background: transparent;
   border-top: 0;
   padding: 2px 24px 18px;
+}
+
+body[data-view="basic"] .notice::before {
+  content: none;
 }
 
 /* ---------- the slab ---------- */
@@ -171,10 +175,12 @@ body[data-view="basic"] .notice {
   margin-top: 16px;
 }
 
-/* The room over Add money: the tiles, and under them the foot line. Its height is whatever
-   the slab leaves, whatever the tiles need, so basic.js fitRows reads it as the room. */
+/* The tiles, and under them the foot line: only as tall as what it shows, so Add money
+   follows the last tile rather than waiting at the slab's foot under a dead band (the finish
+   review, 2026-09-24: 160 px of nothing at 1440 by 900). What the slab can give it is the
+   list's height less the keys, which basic.js fitRows reads off the list. */
 .bal-room {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -437,20 +443,24 @@ body[data-view="basic"] .notice {
   color: var(--text-2);
 }
 
-/* Add money, the one way in, a wide soft key at the slab's foot, and quiet
-   beside it the way to the Policies on the Vault: the same height and corner
-   as Add money, so its hover fill is the same shape. */
+/* Add money, the one way in, a wide soft key under the tiles, and beside it the way to the
+   Policies on the Vault: a second key of the same family (its fill, its light, its height and
+   its corner) as wide as its word, so the two read as a pair with Add money the first. As a
+   bare word beside a filled key it read as a stray (the finish review, 2026-09-24). */
 .bal-actions {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  margin-top: auto;
 }
 
 .bal-rules {
+  --btn-bg: var(--bg-2);
+  --btn-bg-hover: color-mix(in srgb, var(--bg-2), var(--bg-3) 55%);
+  --btn-hi: var(--hi), 0 1px 2px rgba(0, 0, 0, 0.25);
   flex: 0 0 auto;
   min-height: 52px;
+  padding: 0 var(--s-5);
   border-radius: var(--radius-tile);
   font-size: var(--fs-15);
 }
@@ -458,6 +468,7 @@ body[data-view="basic"] .notice {
 .bal-rules > .icon {
   width: 18px;
   height: 18px;
+  color: var(--text-2);
 }
 
 .bal-add {
