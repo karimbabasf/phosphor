@@ -475,13 +475,15 @@ async function closeCoin(coin: string, meta: AssetMeta, mark: number, maxSlippag
   return { closed: stillOpenSz === 0, detail: stillOpenSz === 0 ? `${coin}: closed at ${px}` : `${coin}: ${stillOpenSz} still open after the close at ${px}`, stillOpenSz };
 }
 
-// How much of this plan's own entry filled, in lots, by the venue's word on the entry order:
-// its original size less what was left of it. An entry is never reduce-only, so the venue never
-// shrinks it and the difference is exactly the fill. Null when the venue does not answer for it.
-async function ownFilledLots(h: Held): Promise<number | null> {
+type EntryRead = { lots: number; status: string };
+
+// The venue's word on the plan's own entry order: how much of it filled, in lots (its original
+// size less what was left of it; an entry is never reduce-only, so the venue never shrinks it),
+// and its status word. Null when the venue does not answer for it.
+async function readEntry(h: Held): Promise<EntryRead | null> {
   const cloid = h.cloids.entry;
   if (cloid === undefined) return null;
-  let reply: { status?: unknown; order?: { order?: { origSz?: unknown; sz?: unknown } } } | null;
+  let reply: { status?: unknown; order?: { status?: unknown; order?: { origSz?: unknown; sz?: unknown } } } | null;
   try {
     reply = await info.post({ type: 'orderStatus', user: USER, oid: cloid });
   } catch {
@@ -492,31 +494,67 @@ async function ownFilledLots(h: Held): Promise<number | null> {
   const left = Number(reply.order?.order?.sz);
   if (!Number.isFinite(orig) || !Number.isFinite(left)) return null;
   const f = 10 ** h.meta.szDecimals;
-  return Math.max(0, Math.round(orig * f) - Math.round(left * f));
+  const status = typeof reply.order?.status === 'string' ? reply.order.status : '';
+  return { lots: Math.max(0, Math.round(orig * f) - Math.round(left * f)), status };
+}
+
+/* A read of the entry sizes a close only when it is plain: the venue answered, it shows a fill,
+   the fill is no less than what the app recorded for the plan, and a stop entry reads as filled
+   (a trigger's fill may be booked where its own id does not reach). Anything else could close
+   nothing and then cancel the plan's exits, leaving the position open with no stop, so the
+   close sends nothing instead and the plan keeps its stop and target. */
+function judgeEntry(h: Held, read: EntryRead | null, recordedLots: number): { ok: true; read: EntryRead } | { ok: false; why: string } {
+  const f = 10 ** h.meta.szDecimals;
+  const id = h.plan.id;
+  if (read === null) return { ok: false, why: `the venue did not say how much of ${id}'s entry filled` };
+  if (h.plan.entry.type === 'stop' && read.status !== 'filled') {
+    return { ok: false, why: `${id}'s entry is a stop entry, and the venue reports it as ${read.status === '' ? 'unknown' : read.status} rather than filled, so its fill cannot be read from it` };
+  }
+  if (read.lots === 0) return { ok: false, why: `the venue reports none of ${id}'s entry filled while its position is open` };
+  if (read.lots < recordedLots) {
+    return { ok: false, why: `the venue reports ${read.lots / f} of ${id}'s entry filled, and the app recorded ${recordedLots / f}` };
+  }
+  return { ok: true, read };
+}
+
+function keptSentence(coin: string, why: string): string {
+  return `${coin}: nothing was closed, because ${why}. The plan's stop and target are still in place. To get out now, use Flatten, which closes everything on the account`;
 }
 
 /* A plan's close takes the plan's own share off the venue and nothing more: the smaller of what
    its entry filled and the position on its side of the coin, reduce-only. Size on the coin the
    plan did not open (a trade by hand after it opened) stays where it is, which is what makes a
    close safe to land without a click. Flatten is the door that closes everything. */
-async function closePlan(h: Held, mark: number, maxSlippageBps: number): Promise<{ closed: boolean; detail: string }> {
+async function closePlan(h: Held, mark: number, maxSlippageBps: number, recordedSz: number): Promise<{ closed: boolean; detail: string }> {
   const coin = h.plan.symbol;
   const long = h.plan.side === 'long';
   const f = 10 ** h.meta.szDecimals;
+  const entry = h.cloids.entry;
   const pos = await readPosition(coin);
-  if (pos === null || pos.szi > 0 !== long) return { closed: true, detail: `${coin}: nothing of ${h.plan.id} is open` };
-  const own = await ownFilledLots(h);
-  if (own === null) {
-    return {
-      closed: false,
-      detail:
-        `the venue did not say how much of ${h.plan.id}'s entry filled, so nothing was closed rather than risk closing size on ` +
-        `${coin} that is not this plan's. Try again, or use Flatten to close everything on the account`,
-    };
+  if (pos === null || pos.szi > 0 !== long) {
+    // Nothing of the plan is open. The rest of a resting entry can only add to it, so it goes.
+    if (h.plan.entry.type !== 'market' && entry !== undefined) {
+      const refused = await cancelCloids(h.meta.assetId, [entry]);
+      if (refused.length > 0) return { closed: false, detail: `${coin}: the venue refused to take the rest of ${h.plan.id}'s entry off the book: ${refused.join('; ')}` };
+    }
+    return { closed: true, detail: `${coin}: nothing of ${h.plan.id} is open` };
+  }
+  const recorded = Math.round(Math.max(h.exitSz, recordedSz) * f);
+  // Read before anything is touched, so an answer that cannot be trusted leaves the book as it was.
+  let judged = judgeEntry(h, await readEntry(h), recorded);
+  if (!judged.ok) return { closed: false, detail: keptSentence(coin, judged.why) };
+  // The rest of an entry still resting comes off next, so nothing fills behind the close and
+  // opens the position again, and the fill is final when it is read once more.
+  if (entry !== undefined && (judged.read.status === 'open' || judged.read.status === 'triggered')) {
+    const refused = await cancelCloids(h.meta.assetId, [entry]);
+    if (refused.length > 0) {
+      return { closed: false, detail: keptSentence(coin, `the venue refused to take the rest of ${h.plan.id}'s entry off the book (${refused.join('; ')})`) };
+    }
+    judged = judgeEntry(h, await readEntry(h), recorded);
+    if (!judged.ok) return { closed: false, detail: keptSentence(coin, judged.why) };
   }
   const posLots = Math.round(Math.abs(pos.szi) * f);
-  const lots = Math.min(posLots, own);
-  if (lots <= 0) return { closed: true, detail: `${coin}: nothing of ${h.plan.id} is open` };
+  const lots = Math.min(posLots, judged.read.lots);
   const isBuy = !long;
   const px = roundToValidPrice(aggressiveLimitPrice(mark, isBuy, maxSlippageBps), h.meta.szDecimals, true, isBuy);
   const res = await requireExchange().order([
@@ -535,17 +573,13 @@ async function closePlan(h: Held, mark: number, maxSlippageBps: number): Promise
 async function close(m: Extract<ToChild, { cmd: 'close' }>): Promise<FromChild> {
   const h = held.get(m.id);
   if (h === undefined) return { ev: 'refused', seq: m.seq, id: m.id, reason: `this runner holds no plan ${m.id}` };
-  // The rest of a resting entry comes off first, so nothing fills behind the close and opens
-  // the position again, and what the entry filled is final when the close is sized from it. A
-  // market entry never rests, so it costs no round trip.
-  let entryRefused: string[] = [];
-  if (h.plan.entry.type !== 'market' && h.cloids.entry !== undefined) entryRefused = await cancelCloids(h.meta.assetId, [h.cloids.entry]);
-  const out = await closePlan(h, m.mark, m.maxSlippageBps);
+  // Anything short of closed keeps the plan and its exits exactly as they were.
+  const out = await closePlan(h, m.mark, m.maxSlippageBps, m.exitSz ?? 0);
   if (!out.closed) return { ev: 'error', seq: m.seq, id: m.id, message: out.detail };
   // Flat. The venue usually cancels the exits itself; asking again is free and "already
   // canceled" is success.
   const exits = [h.cloids.stop, h.cloids.target].filter((c): c is string => c !== undefined);
-  const refused = [...entryRefused, ...(await cancelCloids(h.meta.assetId, exits))];
+  const refused = await cancelCloids(h.meta.assetId, exits);
   if (refused.length > 0) return { ev: 'error', seq: m.seq, id: m.id, message: `closed, and the venue refused to cancel what the plan left on the book: ${refused.join('; ')}` };
   held.delete(m.id);
   return { ev: 'closed', seq: m.seq, id: m.id, stillOpenSz: 0, venueMs: venueMs() };
