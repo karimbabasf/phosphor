@@ -29,7 +29,7 @@ import { tradeReads } from './read/trade.ts';
 import { walletReads } from './read/wallet.ts';
 import { handlePropose } from './propose.ts';
 import { handleView } from './view.ts';
-import { handleSetBasicCoins, handleSetViewMode } from './mutation.ts';
+import { handleSetViewMode } from './mutation.ts';
 import { LEAD_ONLY_READ_TOOLS, READ_TOOLS } from './context.ts';
 import type { Ctx, ReadTable } from './context.ts';
 
@@ -148,6 +148,11 @@ function seatSecretRefusal(ctx: Ctx): string {
   );
 }
 
+// The roster as the window draws it (src/http/state.ts agents.members), in one comparable string.
+function rosterShown(ctx: Ctx): string {
+  return JSON.stringify(ctx.agents.roster().map((m) => [m.session, m.client, m.label, m.role, m.parent]));
+}
+
 export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   stampScreen(ctx, res);
   /* The money surface gets the same cross-origin guard the approval and trade routes already
@@ -233,13 +238,18 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     // The client name is agent-controlled. It stays in data, where it is stored
     // verbatim and rendered as data, and out of msg, where a crafted value could
     // dress a heartbeat up as some other event in the log column.
+    const shown = rosterShown(ctx);
     const claim = ctx.agents.claim(body);
     if (!claim.ok) {
       rejectSeat(ctx, claim.error, body, res, claim.revoked === true);
       return;
     }
     if (claim.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
-    ctx.sse.broadcastState();
+    /* A heartbeat arrives every five seconds per agent and used to push a whole state frame to
+       the window each time, which rebuilt the state for nothing (R5). It pushes one now only when
+       the roster the window draws changed: an agent arrived, or renamed itself on its handshake.
+       A seat that timed out elsewhere still shows within the SSE heartbeat's fifteen seconds. */
+    if (claim.edge || rosterShown(ctx) !== shown) ctx.sse.broadcastState();
     sendJson(res, 200, {
       ok: true,
       seat: 'held',
@@ -296,9 +306,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
           ? `chart ${String(body.tool ?? '?')}`
           : op === 'set_view_mode'
             ? `set_view_mode ${String(body.mode ?? '?')}`
-            : op === 'set_basic_coins'
-              ? `set_basic_coins ${(Array.isArray(body.coins) ? body.coins : []).join(' ')}`
-              : `unknown op ${op}`;
+            : `unknown op ${op}`;
   // Contract: every op that reads, proposes or moves the window is audit-logged before
   // dispatch, arguments included. The credentials are not arguments, and a string is kept to
   // its first MAX_LOGGED_CHARS with its length: the log is what log_tail hands every agent.
@@ -320,13 +328,9 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     handleSetViewMode(ctx, body, res);
     return;
   }
-  if (op === 'set_basic_coins') {
-    await handleSetBasicCoins(ctx, body, res);
-    return;
-  }
   fail(
     res,
     400,
-    `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode, set_basic_coins`,
+    `unknown op: ${op}. known ops: hello, bye, read, propose, view, set_view_mode`,
   );
 }

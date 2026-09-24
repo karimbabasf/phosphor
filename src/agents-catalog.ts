@@ -55,9 +55,9 @@ export type AgentEntry = {
   homeEnv: string | null;
   // The default config directory under HOME, for the file-based probe and the Details line.
   homeDir: string | null;
-  // Whether the app can start it in-app under a lockdown file it owns (src/driver.ts). Claude
-  // Code is the one agent with a headless mode whose tool surface the app reads back and
-  // refuses on a surprise; the others start in a terminal and appear in the roster.
+  // Whether the window's chat can run it (src/providers/). Claude Code and Grok have headless
+  // modes whose tool surface the app reads back and refuses on a surprise; the others start in a
+  // terminal and appear in the roster.
   inApp: boolean;
   // Whether the app writes the MCP registration itself, through the vendor's own `mcp add`.
   registers: boolean;
@@ -130,7 +130,7 @@ export const AGENTS: readonly AgentEntry[] = [
     absolute: ['/opt/homebrew/bin/grok', '/usr/local/bin/grok'],
     homeEnv: 'GROK_HOME',
     homeDir: '.grok',
-    inApp: false,
+    inApp: true,
     registers: true,
     install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
     login: 'grok login',
@@ -621,20 +621,32 @@ export async function registerAgent(
 
 /* ---------- the pick ---------- */
 
-export type AgentPick = { agent: AgentId; pickedAt: string };
+// `registered` is the connection the app last wrote into the agent's own config, so a boot can
+// tell when that registration names a path that is gone (src/http/mutation.ts refreshRegistration).
+export type AgentPick = { agent: AgentId; pickedAt: string; registered?: ConnectionSpec };
 
 function pickPath(dataDir: string): string {
   return path.join(dataDir, 'agent.json');
+}
+
+function readSpec(value: unknown): ConnectionSpec | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (typeof v.nodeBin !== 'string' || typeof v.serverPath !== 'string' || typeof v.port !== 'number' || typeof v.dataDir !== 'string') return undefined;
+  return { nodeBin: v.nodeBin, serverPath: v.serverPath, port: v.port, dataDir: v.dataDir };
 }
 
 /* The agent the person picked, or null when nobody has. An unreadable file is no pick rather
    than a boot error: the panel then shows the picker, and nothing else depends on it. */
 export function readPick(dataDir: string): AgentPick | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(pickPath(dataDir), 'utf8')) as { agent?: unknown; pickedAt?: unknown };
+    const parsed = JSON.parse(fs.readFileSync(pickPath(dataDir), 'utf8')) as { agent?: unknown; pickedAt?: unknown; registered?: unknown };
     const entry = agentById(parsed.agent);
     if (entry === null) return null;
-    return { agent: entry.id, pickedAt: typeof parsed.pickedAt === 'string' ? parsed.pickedAt : '' };
+    const pick: AgentPick = { agent: entry.id, pickedAt: typeof parsed.pickedAt === 'string' ? parsed.pickedAt : '' };
+    const registered = readSpec(parsed.registered);
+    if (registered !== undefined) pick.registered = registered;
+    return pick;
   } catch {
     return null;
   }
@@ -645,4 +657,11 @@ export function writePick(dataDir: string, agent: AgentId, now: () => number = D
   fs.mkdirSync(dataDir, { recursive: true });
   atomicWriteJson(pickPath(dataDir), pick);
   return pick;
+}
+
+// Records the connection just written into the picked agent's config, beside the pick.
+export function writeRegistered(dataDir: string, spec: ConnectionSpec): void {
+  const pick = readPick(dataDir);
+  if (pick === null) return;
+  atomicWriteJson(pickPath(dataDir), { ...pick, registered: spec });
 }

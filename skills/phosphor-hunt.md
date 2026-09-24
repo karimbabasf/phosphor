@@ -144,8 +144,9 @@ Manufacturing a marginal idea to have something to show is the expensive failure
 
 ## Fanning out
 
-Workers earn their cost at step 6 and nowhere else. Steps 1 to 5 are single `chart_batch` and
-`chart_scan` calls and are cheaper inline than in a brief.
+Only with `agent_spawn` in your tools (an agent in a terminal; the window's chat has none): then
+workers earn their cost at step 6 and nowhere else. Without it, run step 6 yourself, best
+candidate first. Steps 1 to 5 are single `chart_batch` and `chart_scan` calls either way.
 
 The mechanics, which are properties of the app rather than preferences:
 - `agent_spawn` takes a brief and returns a job id at once. **Three at a time is the cap.**

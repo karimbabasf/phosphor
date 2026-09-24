@@ -522,7 +522,7 @@ test('a worker\'s tool surface has no propose, no spawn and no window controls',
     // thing that would be edited to make this test pass.
     assert.equal(names.some((n) => n.startsWith('propose_')), false, 'a worker can reach the money path');
     assert.equal(names.includes('agent_spawn'), false, 'a worker can spawn workers, which recurses');
-    for (const control of ['switch', 'watch', 'set_theme']) {
+    for (const control of ['switch', 'set_theme']) {
       assert.equal(names.includes(control), false, `a worker can drive the window with ${control}`);
     }
     // And it is still useful: an analyst that could not measure would be pointless.

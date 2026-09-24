@@ -48,7 +48,8 @@ function world(state: DriverState = 'ready') {
     transcript: [] as Array<DriverEvent & { at: number }>,
     driver: {
       status: () => ({ state: driverState }),
-      send: (text: string) => { if (driverState === 'failed') throw new Error('no agent'); sent.push(text); },
+      send: () => { throw new Error('an ending never starts a turn'); },
+      note: (text: string) => { sent.push(text); },
     },
   } as unknown as Chat;
   let now = T0 + 31_000;
@@ -70,22 +71,21 @@ function world(state: DriverState = 'ready') {
   };
 }
 
-test('a move that ends while the agent is idle is told to it at once, in plain words, with the screen tag', () => {
+test('a move that ends while the agent is idle is noted for its next turn at once, and wakes nothing', () => {
   const w = world('ready');
   w.write(failed());
-  assert.equal(w.sent.length, 1);
+  assert.equal(w.sent.length, 1, 'noted, and the fake throws on any send');
   const text = w.sent[0];
-  assert.match(text, /withdrawal from Hyperliquid you proposed/);
+  assert.match(text, /since your last answer, the withdrawal from Hyperliquid you proposed/);
   assert.match(text, /6\.209399 USDC/);
   assert.match(text, /has ended: Failed/);
   assert.match(text, /Action disabled when unified account is active/);
-  assert.match(text, /say nothing/);
-  /* One sentence from the agent, never two (5.6): the notice asks for exactly that. */
-  assert.match(text, /Tell the person in one plain sentence/);
-  assert.doesNotMatch(text, /one or two/);
-  assert.match(text, /\[phosphor: the window is on the basic screen\]$/);
+  /* R3: five wake-ups in eight minutes, each a paragraph over a card the person could see. */
+  assert.match(text, /The card already shows this; mention it only if it bears on what they ask next/);
+  assert.doesNotMatch(text, /Tell the person/);
+  assert.doesNotMatch(text, /the window is on the basic screen/, 'the person\'s own message carries the screen tag');
   assert.equal(w.audited.length, 1);
-  assert.match(w.audited[0], /^app to Assistant:/);
+  assert.match(w.audited[0], /^app note for Assistant:/);
 });
 
 test('the same ending is told once, however many times the row is written', () => {
@@ -153,13 +153,13 @@ test('what the venue said is flattened and fenced before it reaches the agent as
   assert.ok(body.length < 900, `notice is ${body.length} characters`);
 });
 
-test('every ending that waited goes down as ONE turn when the driver is ready', () => {
+test('every ending that waited goes down as ONE note when the driver is ready', () => {
   const w = world('thinking');
   w.write(failed());
   w.write({ ...failed(), id: 'w2' });
   w.setState('ready');
   w.notices.flush(w.chat);
-  assert.equal(w.sent.length, 1, 'two turns written into a driver that is thinking after the first');
+  assert.equal(w.sent.length, 1, 'two notes where one carries both');
   assert.match(w.sent[0], /proposal w1/);
   assert.match(w.sent[0], /proposal w2/);
 });

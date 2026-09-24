@@ -19,8 +19,6 @@
       "TaskStop",
       "SendMessage",
       "ListAgents",
-      "WebFetch",
-      "WebSearch",
       "ToolSearch",
       "Skill",
       "CronCreate",
@@ -46,7 +44,9 @@
       "KillBash"
     ],
     "allow": [
-      "mcp__phosphor__*"
+      "mcp__phosphor__*",
+      "WebSearch",
+      "WebFetch"
     ],
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable"

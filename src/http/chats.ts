@@ -1,16 +1,21 @@
-// The window's own agents: one Claude Code child per open conversation, their transcripts, and
-// the two doors that start one (the globe, which replaces the roster, and the plus, which does
-// not). Everything here used to be a `chats` Map and six functions inside the createServer
-// closure; the registry is the same code with the closure's reads named as arguments.
+// The window's own agents: one child per open conversation, running the agent CLI the person
+// picked, their transcripts, and the two doors that start one (the globe, which replaces the
+// roster, and the plus, which does not). Everything here used to be a `chats` Map and six
+// functions inside the createServer closure; the registry is the same code with the closure's
+// reads named as arguments.
 
 import crypto from 'node:crypto';
+import path from 'node:path';
 
 import type { AppConfig } from '../types.ts';
 import type { Audit } from '../audit.ts';
 import type { AgentPresence } from '../agents.ts';
+import { readPick } from '../agents-catalog.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
 import { createDriver } from '../driver.ts';
-import { buildRole } from '../role.ts';
+import { providerById, unavailable, vendorFor } from '../providers/index.ts';
+import type { ChatVendor } from '../providers/index.ts';
+import { buildRole, customPersona } from '../role.ts';
 import { loadProfile } from '../profile/index.ts';
 import type { ViewMode } from '../types.ts';
 import { PROJECT_DIR } from './context.ts';
@@ -67,9 +72,23 @@ export function createChatRegistry(deps: {
   const MAX_CHATS = 4;
 
   const chats = new Map<string, Chat>();
+  // Which vendor each chat's driver runs, kept beside the chat because a driver is built for one.
+  const vendors = new Map<string, ChatVendor>();
   let chatSeq = 0;
 
+  // The vendor the person picked, read at the moment a chat is built or started.
+  function picked(): ChatVendor {
+    return vendorFor(readPick(cfg.dataDir)?.agent ?? null);
+  }
+
   function driverEvent(chat: Chat, event: DriverEvent): void {
+    /* A delta is the answer being written. It reaches the window and nothing else: the `text`
+       event that closes the same block is what the transcript keeps, so a window that reloads
+       gets each block once, whole. */
+    if (event.kind === 'delta') {
+      sse.broadcast({ type: 'driver', chat: chat.id, event });
+      return;
+    }
     chat.transcript.push({ ...event, at: Date.now() });
     if (chat.transcript.length > TRANSCRIPT_MAX) {
       chat.transcript.splice(0, chat.transcript.length - TRANSCRIPT_MAX);
@@ -86,48 +105,72 @@ export function createChatRegistry(deps: {
     if (event.kind === 'status' && event.state === 'ready') onIdle?.(chat);
   }
 
+  /* THE DRIVER FOR ONE CHAT, running the vendor the person picked. The pick used to be read by
+     the picker and nobody else, so every chat ran Claude Code whatever the Vault said (R3,
+     2026-09-23: Grok picked, eleven Claude sessions started). A pick the chat cannot run gets a
+     driver whose every start fails with that pick's own sentence, never Claude in its place. */
+  function buildDriver(chat: Chat, vendor: ChatVendor): Driver {
+    if (makeDriver) return makeDriver();
+    const provider = providerById(vendor.id);
+    return createDriver({
+      repo: PROJECT_DIR,
+      port: cfg.port,
+      provider: provider ?? unavailable(vendor),
+      // The directory the vendor's child gets as its own: its persona file, and for Grok its
+      // HOME, its config and its copy of the login. Inside the data directory, never the person's.
+      home: path.join(cfg.dataDir, 'agents', vendor.id),
+      surface: 'chat',
+      claudeBin: cfg.driver?.claudeBin,
+      /* The name this child answers to on the roster, so a human reading src/agents.ts through
+         the window can tell four attached agents apart. */
+      label: chat.label,
+      session: chat.session,
+      /* Unset by default, and that is a measured decision rather than an omission. Pinning a
+         faster model looked like the obvious speed win and it is not one: over six runs of two
+         canonical chart prompts, all three models were correct every time, and the medians came
+         out 5.0s on sonnet, 6.2s on the machine default (opus), 8.0s on haiku, which is inside the
+         run-to-run spread on the first two. The time is in the round trips, not the model, so the
+         app takes the vendor's own default. `driver.model` in config.json names a Claude model,
+         so it is passed to Claude Code alone. See scripts/bench-driver.ts. */
+      model: vendor.id === 'claude' ? cfg.driver?.model : undefined,
+      /* The persona, as the child's system prompt. An agent given no role is a general assistant
+         holding a wallet's tools: it offers to write code it cannot write, it asks which screen
+         you meant, and it treats a token name as something that can tell it what to do.
+         src/role.ts is the answer to all three. A `driver.systemPrompt` in config still sets how
+         the agent talks, because somebody running their own Phosphor should be able to change
+         that, and the rules that are facts about the code ride along with it. */
+      systemPrompt:
+        cfg.driver?.systemPrompt === undefined
+          ? buildRole({ root: PROJECT_DIR, view: getView(), profile: loadProfile(cfg.dataDir), agent: vendor.name })
+          : customPersona(cfg.driver.systemPrompt),
+      onEvent: (event) => driverEvent(chat, event),
+    });
+  }
+
   function makeChat(): Chat {
     chatSeq += 1;
     const id = `c${chatSeq}`;
     /* THE SEAT THIS CONVERSATION OWNS, minted here and handed to the child, because a card has
        to be addressable to the conversation that asked for it. It cannot be read back off the
-       driver afterwards: `status().sessionId` is Claude Code's own id once the init event lands.
+       driver afterwards: `status().sessionId` is the vendor's own id once the init event lands.
        Every call this child makes carries it as `session` on /api/mcp. */
     const session = crypto.randomUUID();
     const chat = { id, session, label: `AGENT ${chatSeq}`, transcript: [] } as Partial<Chat> as Chat;
-    chat.driver = makeDriver
-      ? makeDriver()
-      : createDriver({
-            repo: PROJECT_DIR,
-            port: cfg.port,
-            claudeBin: cfg.driver?.claudeBin,
-            /* The name this child answers to on the roster, so a human reading src/agents.ts
-               through the window can tell four attached agents apart. Without it every one of
-               them is called after the client that started it and they are all the same client. */
-            label: chat.label,
-            session: chat.session,
-            /* Unset by default, and that is a measured decision rather than an omission. Pinning
-               a faster model looked like the obvious speed win and it is not one: over six runs
-               of two canonical chart prompts, all three models were correct every time, and the
-               medians came out 5.0s on sonnet, 6.2s on the machine default (opus), 8.0s on haiku,
-               which is inside the run-to-run spread on the first two. Haiku was slower, not
-               faster: it spent thinking tokens the others did not and took an extra round trip
-               more often. The time is in the round trips, not the model, so the app takes the
-               user's own default and `driver.model` in config.json is there for anyone who
-               disagrees. See scripts/bench-driver.ts to re-run the comparison. */
-            model: cfg.driver?.model,
-            /* The role, and the reason it is a default rather than a config field with no value.
-               An agent given no role is a general assistant holding a wallet's tools: it offers
-               to write code it cannot write, it asks which screen you meant, and it treats a
-               token name as something that can tell it what to do. src/role.ts is the answer to
-               all three. A `driver.systemPrompt` in config still wins outright, because somebody
-               running their own Phosphor should be able to change how their own agent talks. */
-            systemPrompt:
-              cfg.driver?.systemPrompt ??
-              buildRole({ root: PROJECT_DIR, view: getView(), profile: loadProfile(cfg.dataDir) }),
-            onEvent: (event) => driverEvent(chat, event),
-          });
+    const vendor = picked();
+    chat.driver = buildDriver(chat, vendor);
+    vendors.set(id, vendor);
     chats.set(id, chat);
+    return chat;
+  }
+
+  /* A chat whose agent is not running is rebuilt when the pick has changed since it was made, so
+     "Start" after picking Grok starts Grok. A running one is left alone: the Vault refuses a new
+     pick while an agent is running (src/http/mutation.ts, agent-pick). */
+  function current(chat: Chat): Chat {
+    const vendor = picked();
+    if (vendors.get(chat.id)?.id === vendor.id || chat.driver.status().running) return chat;
+    chat.driver = buildDriver(chat, vendor);
+    vendors.set(chat.id, vendor);
     return chat;
   }
 
@@ -164,13 +207,15 @@ export function createChatRegistry(deps: {
         role: member.role,
       });
     }
+    const chat = current(primaryChat());
+    const vendor = vendors.get(chat.id)?.name ?? 'the agent';
     audit.append(
       'app_start',
       how === 'human'
-        ? 'in-app driver starting: the app is spawning its own agent'
-        : 'in-app driver starting at boot: the window opens with an agent attached',
+        ? `in-app driver starting: the app is spawning its own agent (${vendor})`
+        : `in-app driver starting at boot: the window opens with an agent attached (${vendor})`,
     );
-    primaryChat().driver.start();
+    chat.driver.start();
     sse.broadcastState();
     return dropped[0]?.client ?? null;
   }
@@ -199,6 +244,7 @@ export function createChatRegistry(deps: {
   function closeChat(chat: Chat): void {
     chat.driver.stop();
     chats.delete(chat.id);
+    vendors.delete(chat.id);
     audit.append('app_start', `in-app driver closed by the human (${chat.label})`, { chat: chat.id });
     sse.broadcastState();
   }
@@ -210,7 +256,11 @@ export function createChatRegistry(deps: {
      rather than a placeholder. The app has to be able to serve this window without spawning an
      agent, so answering here must not create one. The empty id is what the window posts back
      when the human presses the globe, and the POST is where the process is made. */
+  /* `agent` is the vendor, so the window can say "Start Grok", or say where a pick it cannot run
+     here runs instead. At the top it is the pick now, which is what a new chat will run; on each
+     chat it is what that chat's driver runs. */
   function driverPayload(): Record<string, unknown> {
+    const now = picked();
     const open = [...chats.values()].map((chat) => ({
       id: chat.id,
       label: chat.label,
@@ -218,23 +268,28 @@ export function createChatRegistry(deps: {
       // conversation a card was addressed to; the roster on /api/state already names the same
       // ids, and a session id is not a credential (the seat secret is).
       session: chat.session,
+      agent: vendors.get(chat.id) ?? now,
       ...chat.driver.status(),
       transcript: chat.transcript,
     }));
     if (open.length === 0) {
-      open.push({ id: '', label: 'AGENT 1', session: '', state: 'off' as const, sessionId: '', running: false, transcript: [] });
+      open.push({ id: '', label: 'AGENT 1', session: '', agent: now, state: 'off' as const, sessionId: '', running: false, transcript: [] });
     }
     // The flat fields are the first chat's, kept beside the list so anything reading the older
     // single-seat shape still reads something true rather than undefined.
-    const { id: _id, label: _label, transcript: _t, ...flat } = open[0];
-    return { ...flat, chats: open, max: MAX_CHATS };
+    const { id: _id, label: _label, transcript: _t, agent: _a, ...flat } = open[0];
+    return { ...flat, agent: now, chats: open, max: MAX_CHATS };
   }
 
   return {
     size: () => chats.size,
     all: () => [...chats.values()],
-    byId: chatById,
-    primary: primaryChat,
+    // Every door that hands a chat out hands it on the vendor picked now (see current).
+    byId: (id) => {
+      const chat = chatById(id);
+      return chat === null ? null : current(chat);
+    },
+    primary: () => current(primaryChat()),
     event: driverEvent,
     start: startDriver,
     open: openChat,

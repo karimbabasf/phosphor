@@ -46,6 +46,7 @@ import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { mintToken, readWindowToken } from './http/auth.ts';
+import { refreshRegistration } from './http/mutation.ts';
 import { useIdentityValue } from './http/respond.ts';
 import { sweepOrphans, useSeatSecret } from './driver.ts';
 
@@ -314,6 +315,9 @@ if (collected.length > 0) {
     { pids: collected },
   );
 }
+
+// The picked agent's registration names this boot's node and port, or is written again.
+void refreshRegistration(cfg, audit);
 
 // Seed a default policy only when the file is absent. A present-but-corrupt file
 // is left in place: loadPolicy returns null and every write refuses (fail closed)

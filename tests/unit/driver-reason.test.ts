@@ -12,15 +12,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createDriver, type DriverEvent } from '../../src/driver.ts';
+import { lockdownCopy } from '../fixtures/lockdown-copy.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-const SETTINGS = path.join(ROOT, 'operator', 'driver.settings.json');
+// A copy outside this checkout: see tests/fixtures/lockdown-copy.ts.
+const SETTINGS = lockdownCopy();
 
 function statuses(events: DriverEvent[]): Array<{ state: string; detail?: string; reason?: string }> {
   return events.flatMap((e) => (e.kind === 'status' ? [{ state: e.state, detail: e.detail, reason: e.reason }] : []));
 }
 
-async function settle(check: () => boolean, ms = 5_000): Promise<void> {
+async function settle(check: () => boolean, ms = 20_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!check() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
 }

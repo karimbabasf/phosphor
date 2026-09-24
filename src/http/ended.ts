@@ -8,15 +8,19 @@
 //
 // WHAT THIS IS. One subscriber on the proposal store. A row that reaches a terminal stage, that
 // an agent in one of the window's conversations proposed (Proposal.by is that seat), and that
-// this process has not told yet, becomes one turn to that conversation: an app-authored line,
-// fenced and named like the screen tag, saying which move ended, how, and why. The agent turns
-// that into a sentence for the person, or into nothing if the person already knows.
+// this process has not told yet, becomes one note to that conversation: an app-authored line,
+// fenced and named like the screen tag, saying which move ended, how, and why.
+//
+// A NOTE, NEVER A TURN (2026-09-23). It used to go down as a turn of its own, and the agent
+// answered every one: five in eight minutes, each a paragraph repeating a card the person could
+// already see (R3). The driver now holds it (src/driver.ts note) and it rides in front of the
+// person's next message, so the agent knows how its move ended without being woken to say so.
 //
 // WHAT IT IS NOT. Not an approval path and not a retry: it carries no id the agent could act on
-// beyond reading, and it says so. Not a message the window draws: the agent's own reply is what
-// the person sees. Not an interruption: a turn in progress is left alone, the notice waits on
-// the chat and goes down when the driver reports ready, unless the transcript shows the agent
-// read that row's ending itself in the meantime, in which case it is dropped.
+// beyond reading, and it says so. Not a message the window draws: the card already shows the
+// ending. Not an interruption: a turn in progress is left alone, the notice waits on the chat and
+// is noted when the driver reports ready, unless the transcript shows the agent read that row's
+// ending itself in the meantime, in which case it is dropped.
 
 import type { Proposal } from '../types.ts';
 import type { ProposalView } from '../proposals/view.ts';
@@ -27,8 +31,8 @@ export type EndedNoticeDeps = {
   store: { subscribe(fn: (p: Proposal) => void): () => void };
   chats: () => Chat[];
   view: (p: Proposal) => ProposalView;
-  // The screen tag, the same line the human's prompts carry (src/http/mutation.ts, screenTag).
-  tag: () => string;
+  // Unused since a note rides the person's own message, which carries the screen tag already.
+  tag?: () => string;
   audit: Pick<Audit, 'append'>;
   now?: () => number;
 };
@@ -103,9 +107,8 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     if (v.stage === 'confirmed' && v.money.amountOut !== null) ending += ` ${plain(v.money.amountOut)} ${plain(v.money.toSymbol)} arrived.`;
     if (v.error !== null) ending += ` ${plain(v.error.message)}`;
     return (
-      `[phosphor: the ${kind} you proposed (${named}) ${ending} ` +
-      'Tell the person in one plain sentence: what ended and what it means for their money, with the figure that changed. ' +
-      'If they already know, say nothing.]'
+      `[phosphor: since your last answer, the ${kind} you proposed (${named}) ${ending} ` +
+      'The card already shows this; mention it only if it bears on what they ask next.]'
     );
   }
 
@@ -129,18 +132,15 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     return chat.transcript.some((event) => event.kind === 'tool_data' && carries(event.data, notice));
   }
 
-  // One turn, however many endings it carries: the driver flips to thinking on the first
-  // write, and a second write would land inside that turn.
+  // One note, however many endings it carries. It wakes nothing: see the header.
   function send(chat: Chat, notices: Notice[]): void {
     if (notices.length === 0) return;
+    // No agent on this seat any more. The card in the window still says what happened.
+    const state = chat.driver.status().state;
+    if (state === 'stopped' || state === 'failed' || state === 'off') return;
     const text = notices.map((n) => n.text).join('\n\n');
-    try {
-      chat.driver.send(`${text}\n\n${deps.tag()}`);
-    } catch {
-      // No agent on this seat any more. The card in the window still says what happened.
-      return;
-    }
-    deps.audit.append('driver_prompt', `app to ${chat.label}: ${text}`, { chat: chat.id, ids: notices.map((n) => n.id) });
+    chat.driver.note(text);
+    deps.audit.append('driver_prompt', `app note for ${chat.label}: ${text}`, { chat: chat.id, ids: notices.map((n) => n.id) });
   }
 
   function onWrite(p: Proposal): void {

@@ -1,20 +1,19 @@
 // The mutating routes: the browser's five token-checked writes (approve, refuse, kill, the
-// driver, the tab), and the two pieces of app state an agent may set directly (the basic
-// screen's coins, and which window is up).
+// driver, the tab), and the one piece of app state an agent may set directly (which window is
+// up).
 //
 // Everything on this surface either changes money or changes what the human sees while they
 // decide about money, which is why every one of them is audited and every browser door carries
 // the per-boot approval token.
 
+import fs from 'node:fs';
 import path from 'node:path';
 import type http from 'node:http';
 
 import type { ViewMode } from '../types.ts';
-import { writeCoins, MAX_COINS, MIN_COINS } from '../view/coins.ts';
 import { sameOrigin, tokenFingerprint, tokenMatches } from './auth.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
-import { pollPrice } from './chart.ts';
 import { PROJECT_DIR } from './context.ts';
 import type { Ctx } from './context.ts';
 import {
@@ -25,8 +24,9 @@ import {
   registerAgent,
   scanAgents,
   writePick,
+  writeRegistered,
 } from '../agents-catalog.ts';
-import type { AgentCheck, AgentEntry, AgentId, ConnectionSpec } from '../agents-catalog.ts';
+import type { AgentCheck, AgentEntry, AgentId, ConnectionSpec, Registration, Run } from '../agents-catalog.ts';
 import { savePolicyChecked } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import { AXIS_CEILING_USD } from '../policy/engine.ts';
@@ -43,14 +43,76 @@ import { mergePatch, money } from '../proposals/lifecycle.ts';
    checkout it is whatever `node` the person's shell finds. PHOSPHOR_APP_DATA is the shell's own
    mark on the backend it started (src-tauri/src/backend.rs), and nothing else sets it. */
 export function connectionSpec(ctx: Ctx): ConnectionSpec {
+  return connectionSpecFor((ctx as Partial<Ctx>).cfg);
+}
+
+export function connectionSpecFor(cfg: { port?: number; dataDir?: string } | undefined, execPath: string = process.execPath): ConnectionSpec {
   const packaged = process.env.PHOSPHOR_APP_DATA === '1';
-  const cfg = (ctx as Partial<Ctx>).cfg;
   return {
-    nodeBin: packaged ? process.execPath : 'node',
+    nodeBin: packaged ? execPath : 'node',
     serverPath: path.join(PROJECT_DIR, 'src', 'mcp.ts'),
     port: cfg?.port ?? 4177,
     dataDir: cfg?.dataDir ?? path.join(PROJECT_DIR, 'state'),
   };
+}
+
+/* APP TRANSLOCATION. An app opened straight from where it was downloaded runs from a random
+   read-only copy macOS makes under /private/var/folders/.../AppTranslocation/, and every path
+   inside it is gone the next time the app opens. A registration written from there names a node
+   that no longer exists, which is how Grok lost Phosphor on 2026-09-22 (its config.toml still
+   points into a copy that was deleted). So nothing is written from such a path, and the line to
+   paste is withheld too: it would carry the same dead path. */
+export function translocated(spec: ConnectionSpec): boolean {
+  return spec.nodeBin.includes('/AppTranslocation/') || spec.serverPath.includes('/AppTranslocation/');
+}
+
+export const TRANSLOCATED =
+  'Phosphor is running from a temporary copy macOS made. Move it to your Applications folder, open it from there, then pick your agent again.';
+
+function sameSpec(a: ConnectionSpec | undefined, b: ConnectionSpec): boolean {
+  return a !== undefined && a.nodeBin === b.nodeBin && a.serverPath === b.serverPath && a.port === b.port && a.dataDir === b.dataDir;
+}
+
+// A path the registration names that is no longer on this disk. `node` on PATH is a checkout's.
+function gone(file: string): boolean {
+  return path.isAbsolute(file) && !fs.existsSync(file);
+}
+
+/* At boot: the picked agent's registration is written again when it names a different
+   connection than this boot's, or a file that has gone. One `mcp add` when something moved,
+   nothing on an ordinary boot. Called from src/main.ts, never from createServer, because every
+   test builds a server and must not write into a real agent's config. */
+export async function refreshRegistration(
+  cfg: { port: number; dataDir: string },
+  audit: Pick<Ctx['audit'], 'append'>,
+  opts: { execPath?: string; run?: Run } = {},
+): Promise<Registration | null> {
+  const pick = readPick(cfg.dataDir);
+  const entry = pick === null ? null : agentById(pick.agent);
+  if (pick === null || entry === null || !entry.registers) return null;
+  const spec = connectionSpecFor(cfg, opts.execPath);
+  if (translocated(spec)) {
+    audit.append('app_start', `${entry.name} registration left as it was: this copy of the app runs from an App Translocation path`, { agent: pick.agent });
+    return null;
+  }
+  const stale = pick.registered === undefined || !sameSpec(pick.registered, spec) || gone(pick.registered.nodeBin) || gone(pick.registered.serverPath);
+  if (!stale) return null;
+  // A boot never fails over this: the worst outcome is the registration it had before.
+  let registration: Registration;
+  try {
+    registration = await registerAgent(pick.agent, spec, { run: opts.run });
+    if (registration.ok && registration.wrote) writeRegistered(cfg.dataDir, spec);
+  } catch (error) {
+    registration = { ok: false, wrote: false, detail: error instanceof Error ? error.message : String(error) };
+  }
+  audit.append(
+    'app_start',
+    registration.ok
+      ? `${entry.name} registration written again at boot: it named a connection this boot does not have`
+      : `${entry.name} registration could not be written again at boot: ${registration.detail ?? 'no detail'}`,
+    { agent: pick.agent, ok: registration.ok, wrote: registration.wrote },
+  );
+  return registration;
 }
 
 function dataDirOf(ctx: Ctx): string {
@@ -82,10 +144,13 @@ function connectedNow(ctx: Ctx): Array<{ name: string; role: string; calls: numb
    agent in-app, and who is already connected. */
 export function connectionPayload(ctx: Ctx, agent: AgentId): Record<string, unknown> {
   const entry = agentById(agent);
+  const spec = connectionSpec(ctx);
+  const moved = translocated(spec);
   return {
     agent,
     name: entry?.name ?? agent,
-    command: connectionLine(agent, connectionSpec(ctx)),
+    command: moved ? null : connectionLine(agent, spec),
+    ...(moved ? { translocated: true, sentence: TRANSLOCATED } : {}),
     registers: entry?.registers ?? false,
     inApp: entry?.inApp ?? false,
     picked: readPick(dataDirOf(ctx))?.agent ?? null,
@@ -350,10 +415,15 @@ export async function handleMutation(
         });
       }
       /* The registration is written only where there is a binary to write it with: an agent
-         that is not on this Mac gets its sentence and the line to paste, and nothing runs. */
-      const registration = check.state === 'not_installed' || check.state === 'unknown_client'
+         that is not on this Mac gets its sentence and the line to paste, and nothing runs. A copy
+         of the app running from a translocation path writes nothing (see translocated). */
+      const spec = connectionSpec(ctx);
+      const registration: Registration = check.state === 'not_installed' || check.state === 'unknown_client'
         ? { ok: true, wrote: false, detail: null }
-        : await registerAgent(agent, connectionSpec(ctx));
+        : translocated(spec)
+          ? { ok: false, wrote: false, detail: 'refused: the app runs from an App Translocation path' }
+          : await registerAgent(agent, spec);
+      if (registration.ok && registration.wrote) writeRegistered(dataDirOf(ctx), spec);
       if (registration.detail !== null || !registration.ok) {
         ctx.audit.append('app_start', registration.ok
           ? `${agent} registration ${registration.wrote ? 'written' : 'not needed'}${registration.detail === null ? '' : `: ${registration.detail}`}`
@@ -590,73 +660,6 @@ const VIEW_ALIASES: Record<string, ViewMode> = {
   custody: 'vault',
   keys: 'vault',
 };
-
-// The coins the basic screen tracks. Karim, 2026-08-14: "if I don't want Bitcoin, on
-// Ether it changes to whatever I ask it to change it to, and it's saved as my current
-// favorites". The eye on that screen tells the owner this can be asked for, so the ask
-// has to work: a tooltip promising a capability that does not exist is the same class of
-// fault as a balance the app cannot back.
-//
-// Names go through the market catalog rather than being trusted, so "bitcoin", "btc" and
-// "BTC-USD" all land on one product id and a coin nothing can chart is refused with the
-// reason rather than accepted into a screen that would then show a blank row forever.
-export async function handleSetBasicCoins(ctx: Ctx, body: JsonBody, res: http.ServerResponse): Promise<void> {
-  const raw = Array.isArray(body.coins) ? body.coins : [];
-  const asked = raw.map((c) => String(c ?? '').trim()).filter((c) => c.length > 0);
-
-  if (asked.length < MIN_COINS || asked.length > MAX_COINS) {
-    fail(
-      res,
-      400,
-      `the basic screen shows ${MIN_COINS} to ${MAX_COINS} coins, got ${asked.length}`,
-      { coins: ctx.prices.coins },
-    );
-    return;
-  }
-
-  const resolved: string[] = [];
-  const unknown: string[] = [];
-  for (const name of asked) {
-    const ref = ctx.market.resolve(name);
-    if (ref === null) unknown.push(name);
-    else if (!resolved.includes(ref.product)) resolved.push(ref.product);
-  }
-  if (unknown.length > 0) {
-    fail(
-      res,
-      400,
-      `not a market this app can chart: ${unknown.join(', ')}`,
-      { coins: ctx.prices.coins, hint: 'read market_search to find the id, then set that' },
-    );
-    return;
-  }
-
-  const previous = ctx.prices.coins;
-  if (previous.join() === resolved.join()) {
-    sendJson(res, 200, { ok: true, coins: resolved, unchanged: true });
-    return;
-  }
-
-  ctx.prices.coins = resolved;
-  writeCoins(ctx.cfg.dataDir, resolved);
-  // Blank rather than stale while the new coins are fetched. The screen renders a coin
-  // it has no price for as absent, so the band goes short for one poll instead of
-  // showing the old coin's figure under the new coin's name.
-  ctx.prices.readings = resolved.map(() => null);
-  ctx.audit.append('view_changed', `agent set the basic screen coins to ${resolved.join(', ')}`, {
-    from: previous,
-    to: resolved,
-  });
-  ctx.sse.broadcastState();
-  await pollPrice(ctx);
-  ctx.sse.broadcastState();
-  sendJson(res, 200, {
-    ok: true,
-    coins: resolved,
-    from: previous,
-    note: 'saved. this is what the basic screen shows until it is asked to change again',
-  });
-}
 
 export function handleSetViewMode(ctx: Ctx, body: JsonBody, res: http.ServerResponse): void {
   const raw = String(body.mode ?? '').trim().toLowerCase();

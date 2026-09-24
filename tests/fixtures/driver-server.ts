@@ -38,6 +38,8 @@ function snapshot(): LedgerSnapshot {
 export type DriverCalls = {
   starts: number;
   sends: string[];
+  // App context the driver was handed for the next turn (src/http/ended.ts).
+  notes: string[];
   interrupts: number;
   stops: number;
 };
@@ -88,7 +90,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
     keysPath: path.join(dataDir, 'keys.json'),
   };
 
-  const calls: DriverCalls = { starts: 0, sends: [], interrupts: 0, stops: 0 };
+  const calls: DriverCalls = { starts: 0, sends: [], notes: [], interrupts: 0, stops: 0 };
   let state: DriverState = opts.state ?? 'ready';
   const store = createStore(dataDir);
   const agents = opts.seat === undefined ? createAgents() : createAgents(Date.now, MAX_AGENTS, { secret: opts.seat });
@@ -184,6 +186,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
     makeDriver: () => ({
       start: () => { calls.starts += 1; },
       send: (text: string) => { calls.sends.push(text); },
+      note: (text: string) => { calls.notes.push(text); },
       interrupt: () => {
         calls.interrupts += 1;
         return opts.interruptible !== false && state === 'thinking';

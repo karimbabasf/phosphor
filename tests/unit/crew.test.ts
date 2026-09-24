@@ -46,6 +46,7 @@ function harness(): { crew: ReturnType<typeof createCrew>; made: Fake[] } {
           send: (text: string) => {
             fake.sent.push(text);
           },
+          note: () => {},
           interrupt: () => false,
           stop: () => {
             fake.stopped += 1;
@@ -221,6 +222,7 @@ test('every change is announced, so the window and the parent hear about it with
       return {
         start: () => {},
         send: () => {},
+        note: () => {},
         interrupt: () => false,
         stop: () => {},
         status: () => ({ state: 'ready' as const, sessionId: 'f', running: true }),
