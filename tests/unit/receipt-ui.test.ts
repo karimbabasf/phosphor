@@ -224,7 +224,7 @@ function swap(over: Any = {}): Any {
 test('receipt.js exposes the popover, the inline card and the Activity row', () => {
   const rig = boot();
   const R = rig.window.PhosphorReceipt;
-  for (const name of ['open', 'close', 'card', 'row', 'updateRow', 'fill', 'kindWord', 'chainName']) {
+  for (const name of ['open', 'close', 'card', 'row', 'updateRow', 'kindWord', 'chainName']) {
     assert.equal(typeof R[name], 'function', `${name} is a function`);
   }
 });
@@ -447,7 +447,8 @@ test('the unconfirmed outcome says so before the numbers, quotes the rail, names
   }));
   const note = withClass(card, 'receipt-note')[0];
   assert.ok(text(note).startsWith('Not confirmed.'), text(note));
-  assert.ok(text(note).includes('Do not send it again.'));
+  assert.ok(text(note).includes("Still checking whether this went through. I'll update it here."));
+  assert.doesNotMatch(text(note), /send it again/i);
   assert.ok(text(note).includes('held by 1Click under handle abc123'), 'the rail sentence, verbatim');
   const handle = withClass(card, 'receipt-handle')[0];
   assert.ok(handle, 'the handle has its own row');

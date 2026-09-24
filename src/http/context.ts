@@ -7,15 +7,14 @@
 //
 // Ctx is ServerDeps plus the things the server itself owns: the per-boot approval token, the
 // SSE hub, the chat registry, the chart and drawing stores, the team board, the lazy worker
-// crew, the bounded audit tail the basic screen reads, and the small mutable holders (theme,
-// gas fill, the duplicate guard, the seat-refusal log) that used to be `let` bindings inside
-// the closure.
+// crew, and the small mutable holders (theme, gas fill, the duplicate guard, the seat-refusal
+// log) that used to be `let` bindings inside the closure.
 
 import type http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AppConfig, ChainId, LogEvent, Policy, ProposalService, RiskRow, Screen, ScreenBy, ViewMode } from '../types.ts';
+import type { AppConfig, ChainId, Policy, ProposalService, RiskRow, Screen, ScreenBy, ViewMode } from '../types.ts';
 import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { Ledger } from '../ledger/index.ts';
@@ -47,12 +46,6 @@ export const PROJECT_DIR = path.join(__dirname, '..', '..');
 
 export const LOG_LIMIT_MAX = 2000;
 export const CANDLE_LIMIT_MAX = 5000; // one page of history: what the deep venue answers in one call
-
-// How far back the basic screen's "what the assistant did" list is willing to look for
-// five distinct sentences. Runs collapse, so an assistant that read the wallet two
-// hundred times in a row still fills one line, and past this it shows fewer lines rather
-// than reading further: the list is a glance, not the log.
-export const BASIC_EVENT_SCAN = 300;
 
 export const SCAN_TIMEFRAMES_MAX = 6;
 
@@ -359,10 +352,6 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   customIndicators?: CustomIndicators;
   board: Board;
   crew: () => Crew;
-  // The bounded audit tail the basic screen's activity list reads. Seeded once at
-  // construction and appended by the audit subscription, because audit.tail() re-reads the
-  // whole append-only file and buildState runs on every broadcast and every heartbeat.
-  recent: LogEvent[];
   // The lazily built crew, when one exists. `crew()` above makes one; this reads what is
   // already there without resolving the claude binary on an install that never spawned one.
   crewIfAny: () => Crew | null;

@@ -14,7 +14,7 @@
 import http from 'node:http';
 import path from 'node:path';
 
-import type { LogEvent, Screen, ScreenBy, ViewMode } from './types.ts';
+import type { Screen, ScreenBy, ViewMode } from './types.ts';
 import { buildWorkerRole } from './role.ts';
 import { createChartSlots } from './charts.ts';
 import { createSnapshotBroker } from './snapshot.ts';
@@ -23,7 +23,7 @@ import { DEFAULT_THEME, type Theme } from './view/theme.ts';
 import { createBoard } from './board.ts';
 import { createDuplicateGuard, stillInFlight } from './duplicates.ts';
 import { createCrew } from './crew.ts';
-import { BASIC_EVENT_SCAN, PROJECT_DIR } from './http/context.ts';
+import { PROJECT_DIR } from './http/context.ts';
 import type { Ctx, ServerDeps, PhosphorServer, SseHub } from './http/context.ts';
 import { HOST, windowToken } from './http/auth.ts';
 import { createKeystore } from './keystore/index.ts';
@@ -73,10 +73,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const token = deps.token ?? windowToken();
   audit.append('app_start', 'approval surface armed: the window token is held by the window only');
 
-  // The bounded audit tail the basic screen's activity list reads. Seeded once here, then
-  // appended by the SSE hub's own audit subscription. See the note beside it in sse.ts.
-  const recentEvents: LogEvent[] = audit.tail(BASIC_EVENT_SCAN);
-
   // The human's own indicators, read from <dataDir>/indicators here and again whenever the
   // agent lists indicators. The chart resolves 'custom:<slug>' through the loader's map and
   // never through a path; see src/indicators-custom/loader.ts.
@@ -110,8 +106,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     audit,
     charts,
     trade,
-    recent: recentEvents,
-    recentMax: BASIC_EVENT_SCAN,
     candlesQuiet: () => candlePush.quiet(),
     redact: (event) => redactEvent(event, credentialCheck({ agents, token })),
   });
@@ -275,7 +269,6 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     board,
     crew: getCrew,
     crewIfAny: () => crew,
-    recent: recentEvents,
     duplicates,
     seats,
   };

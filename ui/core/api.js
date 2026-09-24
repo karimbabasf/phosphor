@@ -126,10 +126,6 @@
       return net.getJson('/api/receive', { noCache: true });
     },
 
-    receipts: function (limit) {
-      return net.getJson('/api/receipts?limit=' + (limit || 25), { busy: 'activity', label: 'Reading what happened' });
-    },
-
     /* Reveal is two halves on purpose. The POST proves the password and hands
        back a nonce and no material; the GET spends that nonce once, so an
        unattended unlocked window is not a key dump and a reveal cannot be

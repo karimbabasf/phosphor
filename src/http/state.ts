@@ -249,8 +249,8 @@ export function buildState(ctx: Ctx): unknown {
 
      the proposal store   ctx.store.revision(), bumped by every put
      the audit log        ctx.audit.lineCount(), which moves on every line and so covers the policy,
-                          the kill switch, the view, the theme, the agent roster, the board, the
-                          workers and the recent-events list, all of which are written through it
+                          the kill switch, the view, the theme, the agent roster, the board and the
+                          workers, all of which are written through it
      the lock             ctx.keystore.state(), a string compared by value
      the chains           the identity of ctx.ledger.snapshot(), which src/ledger/index.ts holds
                           and replaces on refresh
