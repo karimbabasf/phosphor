@@ -13,7 +13,9 @@ import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
 import { RECEIVE_NETWORKS, receiveNetworkOf } from '../../rails/intents-address.ts';
-import { oneLine } from '../../intents.ts';
+import { baseUnitsToDecimal, oneLine, plainDecimal } from '../../intents.ts';
+import type { IntentsRead } from '../../ledger/intents.ts';
+import type { WalletRow } from '../../types.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
    paste. The window shows the whole string, off a Touch ID open, and that is the only place
@@ -96,6 +98,23 @@ const EVM_ADDRESS = /0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
 
 export function withoutAddresses(line: string): string {
   return line.replace(EVM_ADDRESS, (match) => fingerprint(match));
+}
+
+/* EVERY QUANTITY ALSO AS AN EXACT DECIMAL STRING, beside the number the window reads. The agent
+   copied the number for "swap all my NEAR", 0.8946970287783748, and that double is 67,589,776
+   yocto more than the 0.894697028778374732410224 held (2026-09-23). An intents row prints its
+   raw balance exactly; the trading account's figure is the venue's own USD number in full. Null
+   where the ledger kept no raw balance for the row. */
+function withExactQuantities(rows: WalletRow[], intents: IntentsRead | undefined): Array<WalletRow & { quantityExact: string | null }> {
+  const raw = new Map<string, { base: string; decimals: number }>();
+  for (const h of intents?.ok === true ? intents.holdings : []) {
+    if (h.amountBase !== undefined && /^\d+$/.test(h.amountBase)) raw.set(`${h.accountId.toLowerCase()}|${h.assetId}`, { base: h.amountBase, decimals: h.decimals });
+  }
+  return rows.map((row) => {
+    if (row.kind === 'hyperliquid') return { ...row, quantityExact: plainDecimal(row.quantity) };
+    const hit = row.intents === undefined ? undefined : raw.get(`${row.intents.accountId.toLowerCase()}|${row.intents.assetId}`);
+    return { ...row, quantityExact: hit === undefined ? null : baseUnitsToDecimal(BigInt(hit.base), hit.decimals) };
+  });
 }
 
 const DISCLAIMER =
@@ -181,8 +200,10 @@ export const walletReads: ReadTable = {
   },
   wallet: (ctx, _body, _args, res) => {
     const vault = vaultStatus(ctx);
+    const wallet = buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid());
     sendJson(res, 200, {
-      ...buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid()),
+      ...wallet,
+      rows: withExactQuantities(wallet.rows, ctx.ledger.intents()),
       custody: vault.custody,
       backedUp: vault.backedUp,
     });

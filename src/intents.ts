@@ -20,6 +20,7 @@ import { parseUnits } from 'viem';
 import type { ChainId } from './types.ts';
 import { readTimeout, venueWriteTimeout } from './net.ts';
 import { spendNetworkOf } from './rails/intents-address.ts';
+import { ReasonError } from './rails/reasons.ts';
 
 export const ONECLICK_BASE = 'https://1click.chaindefuser.com';
 
@@ -200,7 +201,7 @@ export function resolveAsset(
 ): AssetPick {
   const net = spendNetworkOf(network);
   if (net === undefined || net.venue === null) {
-    throw new Error(`this app has no chain called ${oneLine(network, 40)}, so nothing can be priced on it`);
+    throw new ReasonError('unsupported_asset', `this app has no chain called ${oneLine(network, 40)}, so nothing can be priced on it`);
   }
   const blockchain = net.venue;
 
@@ -208,7 +209,7 @@ export function resolveAsset(
   const registry = tokens[network as ChainId]?.[symbol];
   if (registry !== undefined) {
     const assetId = assetIdFor(network, registry.tokenId, list, registry.decimals);
-    if (assetId === null) throw new Error(`1click does not list ${symbol} on ${network}`);
+    if (assetId === null) throw new ReasonError('unsupported_asset', `1click does not list ${symbol} on ${network}`);
     const meta = list.find((t) => t.assetId === assetId);
     return { kind: 'one', assetId, decimals: registry.decimals, native: false, priceUsd: meta === undefined ? null : priceOf(meta) };
   }
@@ -216,17 +217,20 @@ export function resolveAsset(
   const spec = NATIVE_ASSET[network as ChainId];
   if (spec !== undefined && spec.symbol === symbol) {
     const matches = nativeAssetMatches(network, list);
-    if (matches.length === 0) throw new Error(`1click lists no native ${symbol} on ${network}`);
+    if (matches.length === 0) throw new ReasonError('unsupported_asset', `1click lists no native ${symbol} on ${network}`);
     if (matches.length > 1) {
-      throw new Error(`1click lists ${matches.length} native ${symbol} on ${network}, so the app cannot tell which one is the coin`);
+      throw new ReasonError('ambiguous_asset', `1click lists ${matches.length} native ${symbol} on ${network}, so the app cannot tell which one is the coin`);
     }
     return { kind: 'one', assetId: matches[0]!.assetId, decimals: spec.decimals, native: true, priceUsd: priceOf(matches[0]!) };
   }
 
+  /* An id is one asset on the whole list, so it is taken wherever the list files it: the chain
+     named beside it is the asker's guess at a home and decides nothing. Requiring the two to
+     agree refused `nep141:btc.omft.near` named on near, where 1Click files it under btc. */
   if (LOOKS_LIKE_ASSET_ID.test(asked)) {
-    const exact = list.find((t) => t.assetId === asked && t.blockchain.toLowerCase() === blockchain);
+    const exact = list.find((t) => t.assetId === asked);
     if (exact === undefined) {
-      throw new Error(`1click lists no asset ${oneLine(asked, 60)} on ${network}`);
+      throw new ReasonError('unsupported_asset', `1click lists no asset ${oneLine(asked, 60)}`);
     }
     return {
       kind: 'one',
@@ -240,7 +244,7 @@ export function resolveAsset(
   const wanted = symbol.toUpperCase();
   const matches = list.filter((t) => t.blockchain.toLowerCase() === blockchain && t.symbol.toUpperCase() === wanted);
   if (matches.length === 0) {
-    throw new Error(`1click lists no ${oneLine(symbol, 20)} on ${network}`);
+    throw new ReasonError('unsupported_asset', `1click lists no ${oneLine(symbol, 20)} on ${network}`);
   }
   if (matches.length > 1) {
     return {
@@ -268,7 +272,7 @@ export function resolveAsset(
 
 // A JS number printed by String() switches to exponent form at 1e21 and below 1e-6.
 // parseUnits wants a plain decimal string, so expand it first.
-function plainDecimal(value: number): string {
+export function plainDecimal(value: number): string {
   const text = String(value);
   const parts = /^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(text);
   if (parts === null) return text;
@@ -318,6 +322,53 @@ export function truncateToBaseUnits(amount: number, decimals: number): bigint {
   const [whole, fraction = ''] = plainDecimal(amount).split('.');
   const kept = fraction.slice(0, decimals);
   return parseUnits(kept === '' ? whole : `${whole}.${kept}`, decimals);
+}
+
+/* EXACT AMOUNTS: a decimal string in, base units out, and no double anywhere between.
+   "Swap all my NEAR" failed three times on 2026-09-23 because the whole balance,
+   894697028778374732410224 yocto, travelled as the double 0.8946970287783748 and came back as
+   894697028778374800000000: 67,589,776 more than was held, so the signed transfer could never
+   run. A double holds about 16 significant digits and a 24-decimal balance needs 24. */
+export const AMOUNT_TEXT = /^\d+(?:\.\d+)?$/;
+const AMOUNT_TEXT_MAX = 80;
+
+// What a caller asked to spend: everything held, or an exact decimal in the coin's own units.
+export type AmountAsk = { all: true } | { all: false; text: string };
+
+/* "all", an exact decimal string, or a number (kept for callers that still send one, and read
+   through its shortest decimal string, never through float math on base units). Null for
+   anything else, zero included: nothing to spend is not an amount. */
+export function amountAsk(value: unknown): AmountAsk | null {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return { all: false, text: plainDecimal(value) };
+  }
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (text.toLowerCase() === 'all') return { all: true };
+  if (text.length > AMOUNT_TEXT_MAX || !AMOUNT_TEXT.test(text) || !/[1-9]/.test(text)) return null;
+  return { all: false, text };
+}
+
+/* A decimal string to base units, exactly. Digits past the coin's precision are CUT, never
+   rounded: what is signed is at most what was asked, the rule truncateToBaseUnits keeps. */
+export function decimalToBaseUnits(text: string, decimals: number): bigint {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`decimals must be an integer in 0..36 (got ${decimals})`);
+  }
+  const parts = /^(\d+)(?:\.(\d+))?$/.exec(text.trim());
+  if (parts === null) throw new Error(`amount must be a plain decimal like 1.25 (got ${oneLine(text, 40)})`);
+  const fraction = (parts[2] ?? '').slice(0, decimals).padEnd(decimals, '0');
+  return BigInt(parts[1] + fraction);
+}
+
+// Base units back to the shortest exact decimal string: 1500000 at 6 decimals is "1.5".
+export function baseUnitsToDecimal(base: bigint, decimals: number): string {
+  const negative = base < 0n;
+  const digits = (negative ? -base : base).toString().padStart(decimals + 1, '0');
+  const whole = digits.slice(0, digits.length - decimals);
+  const fraction = digits.slice(digits.length - decimals).replace(/0+$/, '');
+  return `${negative ? '-' : ''}${whole}${fraction === '' ? '' : `.${fraction}`}`;
 }
 
 // A base-unit field off a quote. Never Number(): 18-decimal amounts do not survive a double, and

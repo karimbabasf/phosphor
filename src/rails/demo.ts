@@ -37,7 +37,7 @@ import type {
 } from '../types.ts';
 import type { PocketRead } from '../ledger/settle.ts';
 import type { RailRegistry } from './index.ts';
-import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS, HYPERCORE_VENUE_MIN_CREDIT_USDC, MIN_DEPOSIT_USDC } from './hypercore-deposit.ts';
+import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS, HYPERCORE_VENUE_MIN_CREDIT_USDC, MAX_FEE_PCT, MIN_DEPOSIT_USDC } from './hypercore-deposit.ts';
 import { HL_ACTIVATION_USDC, INTENTS_USDC_ASSET_ID, MIN_HL_WITHDRAW_USDC } from './hypercore-withdraw.ts';
 import { maxSendableUsdc } from './hl-user-signed.ts';
 import { demoAssetOf, demoAvailableUsdc, demoHolding, loadDemoLedger, moveDemoBalance } from '../ledger/demo.ts';
@@ -336,17 +336,16 @@ async function simulate(draft: WriteDraft): Promise<SimulationResult> {
   }
 }
 
-/* The Hyperliquid deposit, priced the way the live rail prices it: the same floors (7 USDC in
-   so that 5 lands after the flat fee, because the venue keeps anything under 5 delivered), the
-   fee split into its two parts, and the facts the card draws. A refusal names the floor, so a
+/* The Hyperliquid deposit, priced the way the live rail prices it: the same floors (7 USDC in,
+   where the nearly flat fee is under the 5 percent ceiling and 5 still lands), the fee split into
+   its two parts, and the facts the card draws. A refusal names the floor, so a
    demo of "put 2 dollars on Hyperliquid" reads exactly as it would on mainnet. */
 function simulateHlDeposit(draft: HlDepositDraft): SimulationResult {
   const rate = FEES.hl_deposit;
   if (draft.amountUsd < MIN_DEPOSIT_USDC || draft.minCredited < HYPERCORE_VENUE_MIN_CREDIT_USDC) {
     const reason =
-      `${units(draft.amount, 6)} ${draft.symbol} is below the ${MIN_DEPOSIT_USDC} USDC floor. Hyperliquid does not credit a deposit ` +
-      `under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC, it is lost, and the routing fee is nearly flat (about ${units(rate.flat, 2)} USDC), so ` +
-      `${MIN_DEPOSIT_USDC} in is what guarantees ${HYPERCORE_VENUE_MIN_CREDIT_USDC} lands; deposit more at once`;
+      `${units(draft.amount, 6)} ${draft.symbol} is below the ${MIN_DEPOSIT_USDC} USDC floor. Deposits start at ${MIN_DEPOSIT_USDC} USDC because the ` +
+      `routing fee is nearly flat (about ${units(rate.flat, 2)} USDC) and would be over ${MAX_FEE_PCT} percent of anything smaller; deposit more at once`;
     return { ok: false, summary: `REFUSED: fund Hyperliquid with ${units(draft.amount, 6)} ${draft.symbol} - ${reason}`, error: reason };
   }
   const fee = feeFor('hl_deposit', draft.amount);
@@ -357,7 +356,7 @@ function simulateHlDeposit(draft: HlDepositDraft): SimulationResult {
     ok: true,
     summary: [
       `demo: ${units(draft.amount, 6)} ${draft.symbol} leaves NEAR Intents and about ${units(credited, 6)} ${draft.symbol} reaches the trading account.`,
-      `  at least  ${units(draft.minCredited, 6)} USDC, the floor the move is held to; under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} the venue keeps it`,
+      `  at least  ${units(draft.minCredited, 6)} USDC, the floor the move is held to`,
       `  cost      ${fee.toFixed(4)} USDC, ${((fee / draft.amount) * 100).toFixed(2)} percent of the deposit`,
       `  routing   ${routing.toFixed(4)} USDC inside the quote`,
       `  app fee   ${appFee.toFixed(4)} USDC, ${rate.bps} bp, inside the quote`,
@@ -375,8 +374,8 @@ function simulateHlDeposit(draft: HlDepositDraft): SimulationResult {
       // compressed clock: the card and the facts must name one figure (criterion 3.3).
       etaSeconds: TYPICAL_SEC.hl_deposit,
       activity:
-        `Two fees, both inside the quote: routing ${units(routing, 6)} USDC and a ${rate.bps} bp app fee (${units(appFee, 6)} USDC). ` +
-        `Hyperliquid keeps any deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC delivered, so at least ${units(draft.minCredited, 6)} USDC has to land.`,
+        `Two fees, both inside the quote: routing ${units(routing, 6)} USDC and a ${rate.bps} bp app fee (${units(appFee, 6)} USDC); ` +
+        `at least ${units(draft.minCredited, 6)} USDC has to land, or nothing is signed.`,
       explorer: null,
     },
   };

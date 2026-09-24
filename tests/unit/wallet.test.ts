@@ -239,6 +239,8 @@ test('an empty trading account is not a row, and a failed venue read is stale ra
   assert.equal(empty.emptyCount, buildWallet(loadDemoLedger()).emptyCount, 'an unfunded trading account is not an empty holding');
   assert.deepEqual(empty.hyperliquid, { funded: false }, 'the report says so instead');
   assert.deepEqual(buildWallet(loadDemoLedger(), undefined, HL_READ).hyperliquid, { funded: true });
+  // Dust is not funding: the live account held 0.000002 USDC from a venue it was never funded on.
+  assert.deepEqual(buildWallet(loadDemoLedger(), undefined, { ...HL_READ, collateralUsdc: 0.000002, availableUsdc: 0.000002 }).hyperliquid, { funded: false });
   assert.equal(buildWallet(loadDemoLedger()).hyperliquid, undefined, 'a venue never asked has nothing to say');
 
   const failed = buildWallet(loadDemoLedger(), undefined, { ...HL_READ, ok: false, error: 'info down' });

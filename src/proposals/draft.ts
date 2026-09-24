@@ -12,12 +12,15 @@ import type {
   Rail,
   SimulationResult,
   SwapDraft,
+  Verdict,
   WriteDraft,
 } from '../types.ts';
 import { evaluate } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import type { RailDraft, RailKind } from '../rails/index.ts';
+import { isReasonCode, reasonOf } from '../rails/reasons.ts';
+import type { ReasonCode } from '../rails/reasons.ts';
 import { buildCtx, errText, mergePatch, newProposal, ownBook } from './lifecycle.ts';
 import { land } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
@@ -140,16 +143,51 @@ export function ourIntentsAddress(ctx: PCtx, problems: string[]): string {
    passes its params object as this, so a rail never has to know either field by name. */
 export type Origin = { clientKey?: ClientKey; by?: string | null };
 
-export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[], origin?: Origin): Promise<Proposal> {
-  return land(ctx, newProposal(kind, draft, null, { outcome: 'refuse', reasons, rule: 'invalid_draft' }, origin));
+/* A draft the app itself will not file. The rule stays `invalid_draft`, the app's own wall and
+   never the person's; `code` is the cause the card and the agent read (src/rails/reasons.ts):
+   no price, a coin the venue does not list, more than the balance holds. */
+export function refuseDraft(ctx: PCtx, kind: RailKind, draft: RailDraft, reasons: string[], origin?: Origin, code?: ReasonCode): Promise<Proposal> {
+  return land(
+    ctx,
+    newProposal(kind, draft, null, { outcome: 'refuse', reasons, rule: 'invalid_draft', ...(code === undefined ? {} : { reasonCodes: [code] }) }, origin),
+  );
+}
+
+/* The one refusal a quote can lift: a swap spending a coin the app cannot price, into one it can,
+   is valued off what the quote says arrives (proposeRail below). */
+function liftableByQuote(ctx: PCtx, verdict: Verdict, draft: RailDraft, snapshot: LedgerSnapshot): boolean {
+  return (
+    verdict.outcome === 'refuse' &&
+    verdict.rule === 'invalid_amount' &&
+    draft.kind === 'swap' &&
+    !Number.isFinite(draft.amountUsd) &&
+    priceOf(ctx, draft.toSymbol, snapshot) !== null
+  );
+}
+
+/* THE SIMULATION, TAKEN BEFORE THE QUEUE. It is a network read, and a read inside the spend queue
+   holds every approve and refuse behind it (R5 B2). Skipped where the engine refuses the draft as
+   it stands and no quote could change that (a kill switch, a cap), so a refused move still costs
+   no round trip. What it returns is only an input: proposeRail runs the engine again inside the
+   queue, against the policy and the day's spend as they are then, and simulates there itself if
+   the answer has changed since. */
+export async function presimulate(ctx: PCtx, kind: RailKind, draft: RailDraft): Promise<SimulationResult | null> {
+  const rail = ctx.rails.for(draft);
+  if (rail === null) return null;
+  const snapshot = ctx.ledger.snapshot();
+  const verdict = evaluate(draft, buildCtx(ctx, snapshot, loadPolicy(ctx.dataDir)));
+  if (verdict.outcome === 'refuse' && !liftableByQuote(ctx, verdict, draft, snapshot)) return null;
+  return simulateSafely(rail, kind, draft);
 }
 
 // Shared tail for every rail: evaluate, simulate, persist, and execute only if the policy said
-// allow. Nothing here knows which rail it is holding.
-export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, origin?: Origin): Promise<Proposal> {
+// allow. Nothing here knows which rail it is holding. `presimulated` is the simulation a caller
+// took before the queue (presimulate), used instead of asking again.
+export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, origin?: Origin, presimulated?: SimulationResult | null): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   const rail = ctx.rails.for(draft);
+  const simulated = async (r: Rail): Promise<SimulationResult> => presimulated ?? simulateSafely(r, kind, draft);
 
   // The engine runs first because it is pure and its refusals are terminal. An unlisted
   // venue, the kill switch or a cap breach settles the proposal without spending the
@@ -172,21 +210,20 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
      spent side is bounded by nothing the app can see, and a thin route quoting 8 USDC for a
      holding worth far more would otherwise run on its own under the ask line. A move the app
      cannot measure stops for a human, whatever its size. */
-  if (
-    verdict.outcome === 'refuse' &&
-    verdict.rule === 'invalid_amount' &&
-    rail !== null &&
-    draft.kind === 'swap' &&
-    !Number.isFinite(draft.amountUsd) &&
-    priceOf(ctx, draft.toSymbol, snapshot) !== null
-  ) {
+  if (rail !== null && draft.kind === 'swap' && liftableByQuote(ctx, verdict, draft, snapshot)) {
     const unpriced = `This swap spends ${draft.fromSymbol}, which the app cannot price, so it is valued off what the quote says arrives.`;
-    simulation = await simulateSafely(rail, kind, draft);
+    simulation = await simulated(rail);
     const repriced = simulation.ok ? pricedOffQuote(ctx, draft, simulation, snapshot) : draft;
     if (!simulation.ok || repriced === draft) {
       const why = simulation.ok ? 'the quote named no amount arriving, so there is nothing to value it by' : (simulation.error ?? simulation.summary);
-      return land(ctx, 
-        newProposal(kind, draft, simulation, { outcome: 'refuse', reasons: [unpriced, `Simulation failed, so nothing is signed: ${why}`], rule: 'simulation_required' }, origin),
+      return land(ctx,
+        newProposal(
+          kind,
+          draft,
+          simulation,
+          { outcome: 'refuse', reasons: [unpriced, `Simulation failed, so nothing is signed: ${why}`], rule: 'simulation_required', reasonCodes: [causeOf(simulation, 'no_price')] },
+          origin,
+        ),
       );
     }
     draft = repriced;
@@ -216,7 +253,7 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
     );
   }
 
-  if (simulation === null) simulation = await simulateSafely(rail, kind, draft);
+  if (simulation === null) simulation = await simulated(rail);
 
   // policy.outbound.simulateBeforeSign is a constant true and the UI says so, and this is
   // where it is enforced ('simulation_required'). A refusal rather than a pending proposal
@@ -232,6 +269,7 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
           outcome: 'refuse',
           reasons: [...verdict.reasons, `Simulation failed, so nothing is signed: ${simulation.error ?? simulation.summary}`],
           rule: 'simulation_required',
+          reasonCodes: [causeOf(simulation, 'simulation_failed')],
         },
         origin,
       ),
@@ -241,13 +279,21 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
   return land(ctx, newProposal(kind, draft, simulation, verdict, origin));
 }
 
+/* Why a simulation did not pass, as the rail named it: the price moved, nobody quoted, the
+   balance is short. A rail that named no cause, or a simulation that passed and still could not
+   be used, is `fallback`. */
+function causeOf(simulation: SimulationResult, fallback: ReasonCode): ReasonCode {
+  return !simulation.ok && isReasonCode(simulation.reason) ? simulation.reason : fallback;
+}
+
 // A rail that throws inside simulate is a failed simulation, not a crashed proposal.
 async function simulateSafely(rail: Rail, kind: RailKind, draft: RailDraft): Promise<SimulationResult> {
   try {
     return await rail.simulate(draft);
   } catch (err) {
     const message = errText(err);
-    return { ok: false, summary: `${kind} simulation threw: ${message}`, error: message };
+    const reason = reasonOf(err);
+    return { ok: false, summary: `${kind} simulation threw: ${message}`, error: message, ...(reason === undefined ? {} : { reason }) };
   }
 }
 

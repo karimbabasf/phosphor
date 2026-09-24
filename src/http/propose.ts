@@ -10,6 +10,8 @@ import type http from 'node:http';
 import type { ChainId, ClientKey, Proposal } from '../types.ts';
 import { CLIENT_KEY_PATTERN, CLIENT_KEY_WINDOW_MS } from '../types.ts';
 import { fingerprint } from '../duplicates.ts';
+import { amountAsk } from '../intents.ts';
+import { spendNetworkOf } from '../rails/intents-address.ts';
 import { asRecord, errText, fail, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CHAINS, PROPOSE_KINDS } from './context.ts';
@@ -43,7 +45,6 @@ function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): v
     view: ctx.proposals.view(proposal),
     ...(proposal.result === undefined ? {} : { result: proposal.result }),
     ...sendFacts(proposal),
-    ...(proposal.status === 'executing' ? { next: 'executing: the window is drawing it; read proposal_status for the stage and the settled amount' } : {}),
   });
 }
 
@@ -114,6 +115,8 @@ function positiveField(params: JsonBody, name: string, problems: string[]): numb
    proposals.json and every state frame after it. Over the cap is a 400 that names the field,
    like every other shape problem here. */
 export const SYMBOL_MAX = 16;
+// A swap names its coins by ticker or by the venue's asset id, and an id runs past 50 characters.
+export const SWAP_SYMBOL_MAX = 128;
 export const ADDRESS_MAX = 128;
 export const WHERE_MAX = 32;
 export const ID_MAX = 64;
@@ -146,6 +149,32 @@ export function chainField(params: JsonBody, name: string, problems: string[]): 
     return null;
   }
   return raw as ChainId;
+}
+
+/* A swap's chains name where each COIN is from, so any chain the venue lists a coin on is a
+   chain a swap may name: the registry the MCP enum is built from (spendNetworkOf), not the five
+   pinned ones. The door answered "toChain must be one of: eth, base, arb, sol, near" to a swap
+   into BTC while the tool's own schema offered 36 (R1, 2026-09-23). */
+function swapChainField(params: JsonBody, name: string, problems: string[]): string | null {
+  const raw = String(params[name] ?? '').trim().toLowerCase();
+  const net = spendNetworkOf(raw);
+  if (net === undefined || net.venue === null) {
+    problems.push(`${name} must be a chain id the deposit card offers, such as eth, base, arb, sol, near or btc`);
+    return null;
+  }
+  return net.id;
+}
+
+/* "all", an exact decimal string, or a positive number; anything else is named here. The value
+   question (more than is held) is the builder's, which reads the balance. */
+function swapAmountField(params: JsonBody, name: string, problems: string[]): number | string {
+  const raw = params[name];
+  if (typeof raw === 'number') return positiveField(params, name, problems);
+  if (amountAsk(raw) === null) {
+    problems.push(`${name} must be "all" or an exact amount above zero written as a decimal, such as "0.5"`);
+    return '';
+  }
+  return (raw as string).trim();
 }
 
 export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerResponse): Promise<void> {
@@ -277,15 +306,16 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     if (kind === 'swap') {
       // One venue: the balance inside NEAR Intents. chain and toChain name the home chains of
       // the two assets, never a place money lands, so there is no venue field to check.
-      const chain = chainField(params, 'chain', problems);
-      const toChain = params.toChain === undefined ? chain : chainField(params, 'toChain', problems);
-      const fromSymbol = strField(params, 'fromSymbol', problems, SYMBOL_MAX);
-      const toSymbol = strField(params, 'toSymbol', problems, SYMBOL_MAX);
+      const chain = swapChainField(params, 'chain', problems);
+      const toChain = params.toChain === undefined ? chain : swapChainField(params, 'toChain', problems);
+      const fromSymbol = strField(params, 'fromSymbol', problems, SWAP_SYMBOL_MAX);
+      const toSymbol = strField(params, 'toSymbol', problems, SWAP_SYMBOL_MAX);
       // A negative or zero input has no honest swap, and neither does one too large to be
       // represented exactly. Rejected at the edge so it never reaches usdOf, where a negative
       // amount became "$Infinity ... cannot be checked against a limit" and only failed closed
-      // by accident of the arithmetic. Through positiveField now, so one rule covers every kind.
-      const amountIn = positiveField(params, 'amountIn', problems);
+      // by accident of the arithmetic. "all" and an exact decimal string are the exact forms: a
+      // number is read through its shortest decimal, never through float math on base units.
+      const amountIn = swapAmountField(params, 'amountIn', problems);
       // Through positiveField for the same reason amountIn is, and one the rails cannot make up
       // for on their own: minAmountOut is the only slippage protection a swap carries, and a
       // floor of zero is not a floor. It is the one field on this whole surface whose value a

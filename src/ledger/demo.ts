@@ -38,7 +38,12 @@ export function demoAccount(): string {
 
 export function loadDemoLedger(): LedgerSnapshot {
   const raw = readFixture();
-  const prices: Record<string, number> = { ETH: raw.prices.ETH ?? 0, SOL: raw.prices.SOL ?? 0, NEAR: raw.prices.NEAR ?? 0 };
+  // A price the fixture does not carry stays absent, never 0: unknown is not worthless.
+  const prices: Record<string, number> = {};
+  for (const symbol of ['ETH', 'SOL', 'NEAR'] as const) {
+    const price = raw.prices[symbol];
+    if (typeof price === 'number' && Number.isFinite(price) && price > 0) prices[symbol] = price;
+  }
   return { mode: 'demo', fetchedAt: new Date().toISOString(), prices };
 }
 

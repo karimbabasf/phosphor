@@ -271,8 +271,9 @@ test('below the floor the refusal names the venue minimum and the flat fee that 
     const out = await r.simulate(draft({ amount, amountUsd: amount, minCredited: minCreditedFor(amount) }));
     assert.equal(out.ok, false, `${amount} was accepted`);
     assert.match(out.summary, new RegExp(`below the ${MIN_DEPOSIT_USDC} USDC floor`));
-    assert.match(out.summary, new RegExp(`Hyperliquid does not credit a deposit under ${HYPERCORE_VENUE_MIN_CREDIT_USDC} USDC, it is lost`));
-    assert.match(out.summary, new RegExp(`${MIN_DEPOSIT_USDC} in is what guarantees ${HYPERCORE_VENUE_MIN_CREDIT_USDC} lands`));
+    assert.match(out.summary, new RegExp(`Deposits start at ${MIN_DEPOSIT_USDC} USDC because the routing fee is nearly flat`));
+    assert.match(out.summary, /would be over 5 percent of anything smaller/);
+    assert.doesNotMatch(out.summary, /it is lost|does not credit/, 'the retired Bridge2 rule is not this route (Circle CCTP has no minimum)');
     assert.match(out.summary, /flat/);
   }
   assert.equal(calls.quotes.length, 0);
@@ -292,11 +293,11 @@ test('the venue floor is 5 USDC delivered, and the size floor of 7 puts 5 on the
   // beside the cost model that reproduces the live quotes.
 });
 
-test('a draft whose own guarantee is under 5 USDC landing is refused before any quote, and the sentence says the money is lost', async () => {
+test('a draft whose own guarantee is under 5 USDC landing is refused before any quote, and the sentence says what has to land', async () => {
   const { rail: r, calls } = rail();
   const out = await r.simulate(draft({ amount: 7, amountUsd: 7, minCredited: 4.9 }));
   assert.equal(out.ok, false);
-  assert.match(out.summary, /would guarantee only 4\.9000 USDC landing; Hyperliquid does not credit a deposit under 5 USDC, it is lost/);
+  assert.match(out.summary, /would guarantee only 4\.9000 USDC landing, under the 5 USDC a deposit has to land/);
   assert.equal(calls.quotes.length, 0);
   const fine = await r.simulate(draft({ amount: 7, amountUsd: 7, minCredited: minCreditedFor(7) }));
   assert.equal(calls.quotes.length, 1, 'an honest 7 USDC draft was refused before the quote');
@@ -309,7 +310,7 @@ test('a quote guaranteeing under 5 USDC delivered is refused first, whatever the
   const { rail: under } = rail({ quote: { amountOutFormatted: '5.2', amountOut: '520000000', minAmountOut: '499999999' } });
   const lost = await under.simulate(draft());
   assert.equal(lost.ok, false);
-  assert.match(lost.summary, /guarantees only 4\.99999999 USDC landing; Hyperliquid does not credit a deposit under 5 USDC, it is lost/);
+  assert.match(lost.summary, /guarantees only 4\.99999999 USDC landing, under the 5 USDC a deposit has to land/);
   assert.doesNotMatch(lost.summary, /approved draft floors at/, 'the draft floor spoke before the venue floor');
 
   const { rail: at } = rail({ quote: { amountOutFormatted: '5.2', amountOut: '520000000', minAmountOut: '500000000' } });
@@ -414,7 +415,7 @@ test('the simulation carries the fee facts the card draws: the total, the app fe
   assert.match(facts.activity, /at least 9\.51 USDC has to land/);
   assert.match(out.summary, /app fee   0\.0250 USDC, 25 bp, inside the quote/);
   assert.match(out.summary, /routing   0\.3156 USDC inside the quote/);
-  assert.match(out.summary, /at least  9\.51 USDC, the floor the live quote is held to; under 5 the venue keeps it/);
+  assert.match(out.summary, /at least  9\.51 USDC, the floor the live quote is held to\n/);
 });
 
 /* The card printed the draft's double through toFixed(6), which rounds half-up, while the
@@ -603,16 +604,18 @@ test('a refund is reported back into the verifier with the amount the API named,
   assert.equal(out.evidence?.refundedAmount, '9.97');
 });
 
-test('a FAILED order with nothing refunded says the input is held by 1Click, and never that a refund is credited', async () => {
+test('a FAILED order whose input left says it is with the swap service, and never that a refund is credited', async () => {
   // The incident of 2026-09-15: two $10 deposits FAILED at 1Click with refundedAmount 0, and
-  // the rail said the refund was back in the balance. It was not; the money sat at 1Click.
+  // the rail said the refund was back in the balance. It was not; the money sat at 1Click. The
+  // order carries a transfer hash, which is what says the input left.
   const { rail: r } = rail({ status: 'FAILED', refundedAmount: '0' });
   const out = await r.execute(draft());
   assert.equal(out.ok, false);
+  assert.equal(out.reason, 'venue_failed_refund_pending');
   assert.match(out.detail, /1click reported FAILED and refunded 0 USDC so far/);
-  assert.match(out.detail, new RegExp(`held by 1Click under handle ${HANDLE}`));
+  assert.match(out.detail, new RegExp(`left the balance for the swap service's handle ${HANDLE} and is not back yet`));
   assert.match(out.detail, /reason not given/);
-  assert.match(out.detail, /Nothing is back in your balance/);
+  assert.match(out.detail, /It settles when a refund shows in the balance/);
   assert.doesNotMatch(out.detail, /refund is credited/);
   assert.deepEqual(out.txids, ['HASH1', '0xdest']);
   assert.equal(out.evidence?.handle, HANDLE);

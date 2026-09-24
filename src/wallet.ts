@@ -10,9 +10,9 @@ import type { LedgerSnapshot, WalletPlace, WalletRow, WalletView } from './types
 import { intentsUnreadWhy, type IntentsRead } from './ledger/intents.ts';
 import type { HlRead } from './ledger/hyperliquid.ts';
 import { pricedAs } from './proposals/draft.ts';
-
-// Below this a balance renders as $0.00, which is where a row stops carrying information.
-const DUST_USD = 0.005;
+// Below this a balance renders as $0.00, which is where a row stops carrying information: one
+// threshold for a dust row and for a trading account that was never funded.
+import { DUST_USD } from './trade/funding.ts';
 
 // `now` is only for the age of the verifier read (see intentsUnreadWhy); a test pins it.
 export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyperliquid?: HlRead, now: number = Date.now()): WalletView {
@@ -138,7 +138,9 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
     stale.push('hyperliquid');
     if (hyperliquid.error !== undefined) staleWhy.hyperliquid = hyperliquid.error;
   }
-  const hl = hyperliquid !== undefined && hyperliquid.ok ? { funded: hyperliquid.collateralUsdc > 0 } : undefined;
+  // Funded is more than dust: the venue left 0.000002 USDC on a trading account that was never
+  // funded, and "funded" over it hid the one line an empty account needs (src/trade/funding.ts).
+  const hl = hyperliquid !== undefined && hyperliquid.ok ? { funded: hyperliquid.collateralUsdc >= DUST_USD } : undefined;
 
   const unpriced = rows.filter(r => r.priced === false).map(r => r.symbol);
 

@@ -17,6 +17,7 @@ import type { PlanRow } from '../trade/plans.ts';
 import { changeRisk, planRisk } from '../trade/risk.ts';
 import { proposeRail, refuseDraft } from './draft.ts';
 import type { Origin } from './draft.ts';
+import type { ReasonCode } from '../rails/reasons.ts';
 import { land } from './execute.ts';
 import { newProposal } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
@@ -60,11 +61,24 @@ function twinReason(plan: PlanInput | Plan, twin: PlanRow): string {
   return `A ${plan.side} on ${plan.symbol} this size is already live as ${twin.id}${proposal}. Change or cancel it instead of arming a second one on the same coin.`;
 }
 
+/* The other live plan on this plan's coin, when the risk inputs name one. A second plan on a coin
+   would share the venue's one position there, so it is refused before anything is drawn. The
+   field arrives with pg/hl's one-plan-per-coin rule (src/trade/risk.ts sameCoinPlan); read
+   structurally so this file builds on either side of that merge. */
+function liveOnCoin(deps: TradeDeps, plan: PlanInput | Plan): string | null {
+  const inputs = riskInputsFor(deps, { id: 'pl_new', ...plan } as Plan, null) as unknown as { sameCoinPlan?: unknown };
+  return typeof inputs.sameCoinPlan === 'string' ? inputs.sameCoinPlan : null;
+}
+
 export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Proposal> {
   const deps: TradeDeps | undefined = ctx.trade;
   const now = deps?.now ?? Date.now;
   const problems: string[] = [];
+  // The cause the card reads, when the refusal has one of its own.
+  let code: ReasonCode | undefined;
   let plan: Plan | null = null;
+  // The coin a refusal is about when no plan was drawn, so the card can name it.
+  let coin = '';
 
   if (params.planId !== undefined) {
     // "go": the drawn plan arms exactly as it is on screen, id and all, so the chart object and
@@ -94,7 +108,17 @@ export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Prop
       // its own position, two brackets and double margin on one coin (A.F3). Checked before the
       // draw so a refused retry does not even leave a stray idea behind.
       const twin = armedTwin(deps, parsed.plan, null);
+      const other = twin === null ? liveOnCoin(deps, parsed.plan) : null;
       if (twin !== null) problems.push(twinReason(parsed.plan, twin));
+      else if (other !== null) {
+        // Refused before the draw, so a second plan on the coin leaves no stray idea on the chart.
+        problems.push(
+          `${parsed.plan.symbol} already has a live plan (${other}), and the venue keeps one position per coin, so a second ` +
+            `plan would share it. Change or cancel ${other} first`,
+        );
+        code = 'plan_exists';
+        coin = parsed.plan.symbol;
+      }
       // Drawn first, so the card and the chart show the same object while the human decides.
       else plan = planOfRow(deps.runner.draw(parsed.plan, params.by ?? null));
     }
@@ -103,14 +127,14 @@ export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Prop
   const empty: TradeDraft = {
     kind: 'trade',
     op: 'open',
-    plan: plan ?? { id: 'pl_none', symbol: '', side: 'long', sizeUsd: 0, leverage: 1, entry: { type: 'market', maxSlippageBps: 30 }, stop: 0 },
+    plan: plan ?? { id: 'pl_none', symbol: coin, side: 'long', sizeUsd: 0, leverage: 1, entry: { type: 'market', maxSlippageBps: 30 }, stop: 0 },
     hash: '',
     risk: { marginUsd: 0, maxLossUsd: 0, stopSlipUsd: 0, entryRef: 0, liquidationPx: 0, notionalUsd: 0, amountUsd: Number.POSITIVE_INFINITY },
     amountUsd: Number.POSITIVE_INFINITY,
     counterparty: HYPERLIQUID_PERPS_COUNTERPARTY,
   };
   if (deps === undefined) return noSurface(ctx, empty);
-  if (plan === null || problems.length > 0) return refuseDraft(ctx, 'trade', empty, problems, params);
+  if (plan === null || problems.length > 0) return refuseDraft(ctx, 'trade', empty, problems, params, code);
 
   const risk = planRisk(plan, riskInputsFor(deps, plan, plan.id));
   if (!risk.ok) return refuseDraft(ctx, 'trade', { ...empty, plan, hash: planHash(plan) }, [risk.refusal], params);
@@ -164,11 +188,14 @@ export async function proposeTradeChange(ctx: PCtx, params: TradeChangeParams): 
     return landFree(ctx, { ...base, cancel: true, before: approved, after: approved, amountUsd: 0 }, params);
   }
 
+  /* A close only takes risk off: a reduce-only order at the plan's own bound, no new margin, and
+     nothing leaves the venue. So it lands free like a cancel, charges nothing to the day, and
+     still stops at the kill switch and an unreadable policy (landFree). */
   if (params.close === true) {
     if (row.status !== 'open') {
       return refuseDraft(ctx, 'trade', { ...base, before: approved, after: approved }, [`${row.id} is ${row.status}, so there is nothing to close; cancel it instead`], params);
     }
-    return proposeRail(ctx, 'trade', { ...base, close: true, before: approved, after: approved, amountUsd: approved.marginUsd }, params);
+    return landFree(ctx, { ...base, close: true, before: approved, after: approved, amountUsd: 0 }, params);
   }
 
   const plan = planOfRow(row);

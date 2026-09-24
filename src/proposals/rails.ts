@@ -15,8 +15,10 @@ import type {
   Proposal,
   SendParams,
   SendRecipient,
+  SimulationResult,
   SwapDraft,
   SwapParams,
+  SwapSpend,
 } from '../types.ts';
 import {
   HYPERCORE_COUNTERPARTY,
@@ -32,13 +34,42 @@ import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay, payFamilyOf, payLabel, pay
 import { scanNetworkOf, validateAddressForFamily } from '../chainscan/index.ts';
 import type { ChainNetwork } from '../chainscan/index.ts';
 import { recipientFor } from '../recipients.ts';
-import { canonicalSymbol, heldSymbol, oneLine } from '../intents.ts';
-import { ourEvmAddress, ourIntentsAddress, proposeRail, refuseDraft, usdOf } from './draft.ts';
+import { amountAsk, baseUnitsToDecimal, canonicalSymbol, decimalToBaseUnits, heldSymbol, oneLine } from '../intents.ts';
+import type { AmountAsk } from '../intents.ts';
+import { reasonOf } from '../rails/reasons.ts';
+import type { ReasonCode } from '../rails/reasons.ts';
+import { ourEvmAddress, ourIntentsAddress, presimulate, proposeRail, refuseDraft, usdOf } from './draft.ts';
+import { errText } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
 
-export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Proposal> {
+/* A SWAP PROPOSAL IN TWO HALVES, so the spend queue never waits on the network.
+   prepareSwap reads the world: the balance, the price the floor is cut from, the simulation.
+   It holds no lock and reserves nothing, so a second propose, an approve or a refuse is not
+   queued behind its seconds of RPC and quotes (R5 B2). decideSwap runs inside the queue: the
+   engine against the policy and the day's spend as they stand at that moment, and the landing
+   that reserves. Read, decide, reserve stays one step where it has to be one: deciding and
+   reserving. */
+export type PreparedSwap = {
+  params: SwapParams;
+  draft: SwapDraft;
+  refusal: { problems: string[]; code: ReasonCode | undefined } | null;
+  simulation: SimulationResult | null;
+};
+
+export function decideSwap(ctx: PCtx, prepared: PreparedSwap): Promise<Proposal> {
+  const { params, draft, refusal } = prepared;
+  return refusal !== null ? refuseDraft(ctx, 'swap', draft, refusal.problems, params, refusal.code) : proposeRail(ctx, 'swap', draft, params, prepared.simulation);
+}
+
+export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<PreparedSwap> {
   const snapshot = ctx.ledger.snapshot();
   const problems: string[] = [];
+  // The cause of the first problem, which is the one the card and the agent read.
+  let code: ReasonCode | undefined;
+  const refuse = (why: string, cause: ReasonCode): void => {
+    problems.push(why);
+    code ??= cause;
+  };
   const toChain = params.toChain ?? params.chain;
 
   // Both sides are our own account inside the verifier. The agent picks the assets; it has
@@ -61,6 +92,7 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
   // the draft so the row is executed, retried and reconciled by the rail it was drafted for
   // whatever the switch says later. Both rails share the one counterparty: the verifier.
   const relay = swapRailOf(ctx.cfg) === 'relay';
+  const ask = amountAsk(params.amountIn);
   const draft: SwapDraft = {
     kind: 'swap',
     venue: relay ? INTENTS_RELAY_VENUE : 'intents-native',
@@ -68,30 +100,87 @@ export async function proposeSwap(ctx: PCtx, params: SwapParams): Promise<Propos
     toChain,
     fromSymbol,
     toSymbol,
-    amountIn: params.amountIn,
-    amountUsd: usdOf(ctx, fromSymbol, params.amountIn, snapshot),
+    amountIn: ask === null || ask.all ? 0 : Number(ask.text),
+    ...(ask === null || ask.all ? {} : { amountInExact: ask.text }),
+    amountUsd: 0,
     minAmountOut: params.minAmountOut ?? 0,
     from,
     to: from,
     counterparty: relay ? INTENTS_RELAY_COUNTERPARTY : INTENTS_NATIVE_COUNTERPARTY,
     quote: null,
   };
+  if (ask === null) refuse('The amount has to be "all" or a number above zero, like 1.5.', 'invalid_request');
+  const rail = ctx.rails.for(draft);
+
+  /* THE EXACT AMOUNT, AND NEVER MORE THAN IS HELD. The rail names the coin spent and reads what
+     the verifier holds of it; "all" is that figure to the last base unit, an amount is cut to
+     the coin's own decimals, and one larger than the balance is refused here, before any price
+     is asked for. The whole wNEAR balance travelled as a double on 2026-09-23 and came back
+     67,589,776 yocto larger than it was: three signed transfers that could never run. */
+  if (problems.length === 0 && ask !== null) {
+    if (rail !== null && typeof rail.spend === 'function') {
+      try {
+        const spent = await rail.spend(draft);
+        const exact = exactSpend(ask, spent, fromSymbol);
+        if ('why' in exact) refuse(exact.why, exact.cause);
+        else {
+          draft.amountInExact = baseUnitsToDecimal(exact.base, spent.decimals);
+          draft.amountIn = Number(draft.amountInExact);
+        }
+      } catch (err) {
+        refuse(errText(err), reasonOf(err) ?? 'simulation_failed');
+      }
+    } else if (ask.all) {
+      refuse(`This app cannot read the ${fromSymbol} balance here, so it cannot tell how much all of it is. Name an amount instead.`, 'balance_unread');
+    }
+  }
+  draft.amountUsd = usdOf(ctx, fromSymbol, draft.amountIn, snapshot);
 
   /* THE FLOOR COMES OFF THE QUOTE. An agent that names none is not guessing one for us: the
      rail is asked for its floor-free price now and the floor is set one percent under it
      (floorUnderQuote), pinned into the draft before the engine or a person sees the row, so
-     what is approved is what is held. No price is a refusal, never a floor of zero. */
+     what is approved is what is held. No price is a refusal, never a floor of zero, and a
+     refusal says its real cause: the venue not listing a coin used to read as "nobody offered a
+     price" because every error here was swallowed (R1, 2026-09-23). */
   if (params.minAmountOut === undefined && problems.length === 0) {
-    const rail = ctx.rails.for(draft);
-    const priced = rail !== null && typeof rail.quote === 'function' ? await rail.quote(draft).catch(() => null) : null;
-    if (priced === null || !(priced > 0)) {
-      problems.push(`Nobody offered a price for ${fromSymbol} to ${toSymbol} right now, so no floor could be set. Try again in a minute.`);
+    let priced: number | null = null;
+    let failure: unknown = null;
+    if (rail !== null && typeof rail.quote === 'function') {
+      try {
+        priced = await rail.quote(draft);
+      } catch (err) {
+        failure = err;
+      }
+    }
+    if (failure !== null) refuse(`No floor could be set for ${fromSymbol} to ${toSymbol}: ${errText(failure)}`, reasonOf(failure) ?? 'simulation_failed');
+    else if (priced === null || !(priced > 0)) {
+      refuse(`Nobody offered a price for ${fromSymbol} to ${toSymbol} right now, so no floor could be set. Try again in a minute.`, 'no_price');
     } else {
       draft.minAmountOut = floorUnderQuote(priced);
     }
   }
 
-  return problems.length > 0 ? refuseDraft(ctx, 'swap', draft, problems, params) : proposeRail(ctx, 'swap', draft, params);
+  if (problems.length > 0) return { params, draft, refusal: { problems, code }, simulation: null };
+  return { params, draft, refusal: null, simulation: await presimulate(ctx, 'swap', draft) };
+}
+
+/* The base units a swap spends, or why it cannot: "all" is the balance read a moment ago, an
+   amount is cut to the coin's decimals and has to fit inside that balance when it was read. An
+   amount with no read is let through here and held to the balance again before signing. */
+function exactSpend(ask: AmountAsk, spent: SwapSpend, symbol: string): { base: bigint } | { why: string; cause: ReasonCode } {
+  const held = spent.heldBase;
+  const heldText = held === null ? '' : baseUnitsToDecimal(held, spent.decimals);
+  if (ask.all) {
+    if (held === null) return { why: `The ${symbol} balance could not be read just now, so this cannot tell how much all of it is. Try again in a moment.`, cause: 'balance_unread' };
+    if (held === 0n) return { why: `The balance inside NEAR Intents holds no ${symbol}.`, cause: 'insufficient_balance' };
+    return { base: held };
+  }
+  const base = decimalToBaseUnits(ask.text, spent.decimals);
+  if (base === 0n) return { why: `${ask.text} ${symbol} is smaller than the smallest amount of ${symbol} (${spent.decimals} decimals).`, cause: 'invalid_request' };
+  if (held !== null && base > held) {
+    return { why: `The balance inside NEAR Intents holds ${heldText} ${symbol}, less than the ${ask.text} this swap asks for.`, cause: 'insufficient_balance' };
+  }
+  return { base };
 }
 
 // "Put $40 into the trading account." The money leaves the intents balance and nowhere else,

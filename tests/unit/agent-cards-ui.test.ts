@@ -472,7 +472,8 @@ test('a move card follows its proposal: the chip moves with the state frame, in 
   const note = all(failed, 'tcard-reason')[0];
   // One status colour on the face: the chip is red, the sentence under it is body text (alarm 0).
   assert.ok(!note.className.includes('tcard-note-down'), 'the reason is a second red line: ' + note.className);
-  assert.equal(note.textContent, 'The transfer sent the money back: the quote expired before the deposit landed.');
+  // The view's own sentence for the cause (a refund), never the rail's line (B1, 2026-09-23).
+  assert.equal(note.textContent, "The swap didn't go through.");
   assert.ok(!failed.textContent.includes('REFUNDED'), 'the vendor word in capitals: ' + failed.textContent);
   const failedLines = all(failed, 'tcard-details')[0] ? all(all(failed, 'tcard-details')[0], 'tcard-line').map((n: Any) => n.textContent) : [];
   assert.ok(failedLines.some((t: string) => t === 'The transfer calls thisrefunded'), 'the vendor word is not in the fold as evidence: ' + failedLines.join(' | '));

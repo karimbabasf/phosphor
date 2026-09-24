@@ -15,6 +15,7 @@ import { buildWallet } from '../wallet.ts';
 import type { PCtx } from './lifecycle.ts';
 import { TERMINAL, deadlineAtOf, stageOf } from './view.ts';
 import type { ProposalStage } from './view.ts';
+import { reasonOf } from '../rails/reasons.ts';
 
 // Single exit for a freshly evaluated proposal. This is the only place a proposal can become
 // executed without a human, and only on verdict allow.
@@ -244,6 +245,17 @@ function withoutHold(p: Proposal): Proposal {
   return rest;
 }
 
+// Two values say the same thing whatever order their keys arrived in.
+function sameJson(a: unknown, b: unknown): boolean {
+  const sorted = (value: unknown): string =>
+    JSON.stringify(value, (_key, v: unknown) =>
+      v !== null && typeof v === 'object' && !Array.isArray(v)
+        ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([x], [y]) => x.localeCompare(y)))
+        : v,
+    );
+  return sorted(a) === sorted(b);
+}
+
 // What of a rail's evidence goes on the row: everything but the hashes, which have their own
 // field. Named so a rail cannot smuggle a stray key into the store through the hook.
 function pickEvidence(e: RailEvidence): RailEvidence {
@@ -316,6 +328,14 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
       if (current.status !== 'executing') return;
       const txids = [...new Set([...(current.result?.txids ?? []), ...(e.txids ?? [])])];
       const evidence = { ...current.result?.evidence, ...pickEvidence(e) };
+      /* A poll that repeats what the row already says writes nothing: no audit line, no rewrite
+         of proposals.json, no frames. Every poll used to do all three (R5, 2026-09-23). */
+      const unchanged =
+        current.result !== undefined &&
+        sameJson(txids, current.result.txids ?? []) &&
+        sameJson(evidence, current.result.evidence ?? {}) &&
+        (e.pocket === undefined || sameJson(e.pocket, current.pocket));
+      if (unchanged) return;
       ctx.audit.append('submitted', `${p.id}: the venue holds the move; evidence recorded before the wait`, { id: p.id, txids, evidence });
       persist(ctx, { ...current, result: { ok: false, detail: 'submitted, waiting for the venue', txids, evidence }, ...(e.pocket === undefined ? {} : { pocket: e.pocket }) });
     },
@@ -333,8 +353,10 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
     result = await rail.execute(p.draft, p.id, hooks);
   } catch (err) {
     // A rail that throws has said nothing about whether it sent anything, so its message
-    // is passed through as-is rather than summarised into "failed".
-    result = { ok: false, detail: `${p.draft.kind} rail threw: ${errText(err)}` };
+    // is passed through as-is rather than summarised into "failed". A rail that knew why it
+    // stopped (a balance short of the amount, a price that moved) says so in the code.
+    const reason = reasonOf(err);
+    result = { ok: false, detail: `${p.draft.kind} rail threw: ${errText(err)}`, ...(reason === undefined ? {} : { reason }) };
   }
 
   const preflight = withPreflight(ctx.store.get(p.id)?.preflight, result.preflight);
@@ -344,7 +366,7 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
      nonce, nothing at the venue. The row goes back to approved, stamped with when the hold
      began, and the rail runs again in a while. It is a status the card reads, never a
      question: the person already decided, and the app is waiting for the chain. */
-  if (result.held === true) return holdRow(ctx, p, executing, rail, result.detail, checks);
+  if (result.held === true) return holdRow(ctx, p, executing, rail, result.detail, checks, result.reason);
 
   /* THE HASH IS THE RECORD. THE BALANCE IS A DECORATION.
      Both used to be written together, after `balanceAfter`, which is up to fifteen seconds of
@@ -378,7 +400,13 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
      row lands as needs_reconciliation, which already counts against the cap, already has a
      screen, and is re-judged on every ledger refresh below. */
   const settling = !result.ok && result.settling === true;
-  const unconfirmed = !result.ok && (moved || settling);
+  /* AND ONE PROOF THE OTHER WAY. A rail that read the spent balance either side of a venue's
+     failure and found nothing missing from it has shown the move is over and cost nothing:
+     the row closes as failed and charges nobody's day. Without that read a hash still means
+     unconfirmed, as above; the three wNEAR swaps of 2026-09-23 sat open for good, over money
+     that never left. */
+  const provedNothingLeft = result.reason === 'venue_failed_nothing_moved' || result.reason === 'refunded';
+  const unconfirmed = !result.ok && !provedNothingLeft && (moved || settling);
   const status = result.ok ? 'executed' : unconfirmed ? 'needs_reconciliation' : 'failed';
   const settledAt = nowIso();
   ctx.audit.append(
@@ -400,7 +428,13 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
     ...withoutHold(executing),
     status,
     settledAt,
-    result: { ok: result.ok, detail: result.detail, txids, ...(Object.keys(evidence).length === 0 ? {} : { evidence }) },
+    result: {
+      ok: result.ok,
+      detail: result.detail,
+      ...(result.reason === undefined ? {} : { reason: result.reason }),
+      txids,
+      ...(Object.keys(evidence).length === 0 ? {} : { evidence }),
+    },
     balances,
     ...(pocket === undefined ? {} : { pocket }),
     ...checks,
@@ -440,11 +474,11 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
 // Nothing here signs or sends: a held row is an approved row with a stamp, and the only thing
 // that moves it is the rail running again with the checks in front of it.
 
-function holdRow(ctx: PCtx, p: Proposal, executing: Proposal, rail: Rail, reason: string, checks: { preflight?: Preflight[] }): Proposal {
+function holdRow(ctx: PCtx, p: Proposal, executing: Proposal, rail: Rail, reason: string, checks: { preflight?: Preflight[] }, code?: string): Proposal {
   const heldSince = executing.heldSince ?? nowIso();
   const heldFor = Math.max(0, Date.now() - Date.parse(heldSince));
   const { retryMs, maxMs } = heldTiming(ctx);
-  if (heldFor >= maxMs) return expireHold(ctx, executing, `${reason} Held for ${Math.round(heldFor / 60_000)} min without clearing, so it is closed.`, checks);
+  if (heldFor >= maxMs) return expireHold(ctx, executing, `${reason} Held for ${Math.round(heldFor / 60_000)} min without clearing, so it is closed.`, checks, code);
   ctx.audit.append('execution_held', `${p.id}: ${reason} Trying again in ${Math.round(retryMs / 1000)} s.`, { id: p.id, heldSince });
   const held = persist(ctx, { ...executing, status: 'approved', heldSince, ...checks });
   const timer = setTimeout(() => retryHeld(ctx, held.id, rail), retryMs);
@@ -454,9 +488,15 @@ function holdRow(ctx: PCtx, p: Proposal, executing: Proposal, rail: Rail, reason
 
 /* The hold is over and nothing was signed: a failure with no evidence, charged to nobody, with
    the reason on it. Also what the boot sweep writes for a row held when the process stopped. */
-export function expireHold(ctx: PCtx, row: Proposal, detail: string, checks: { preflight?: Preflight[] } = {}): Proposal {
+export function expireHold(ctx: PCtx, row: Proposal, detail: string, checks: { preflight?: Preflight[] } = {}, reason?: string): Proposal {
   ctx.audit.append('execution_held_expired', `${row.id}: ${detail}`, { id: row.id, heldSince: row.heldSince });
-  return persist(ctx, { ...withoutHold(row), status: 'failed', settledAt: nowIso(), result: { ok: false, detail }, ...checks });
+  return persist(ctx, {
+    ...withoutHold(row),
+    status: 'failed',
+    settledAt: nowIso(),
+    result: { ok: false, detail, ...(reason === undefined ? {} : { reason }) },
+    ...checks,
+  });
 }
 
 function retryHeld(ctx: PCtx, id: string, rail: Rail): void {
@@ -590,7 +630,7 @@ export function judgeSettling(ctx: PCtx, p: Proposal): Proposal {
       `The venue reported ${word}, and a later read shows the balance ${place} rose by ${units(delta, pocket.decimals)} ${pocket.symbol}, below the ` +
       `${units(floor, pocket.decimals)} ${pocket.symbol} floor this move was approved with (${units(before, pocket.decimals)} before, ` +
       `${units(after, pocket.decimals)} after). Read the balance for ${pocket.account} before signing another.`;
-    const short = persist(ctx, { ...row, status: 'failed', settledAt: nowIso(), pocket: settled, balances, result: { ok: false, detail, txids, ...kept } });
+    const short = persist(ctx, { ...row, status: 'failed', settledAt: nowIso(), pocket: settled, balances, result: { ok: false, detail, reason: 'short_fill', txids, ...kept } });
     ctx.audit.append('execution_failed', `${row.id}: ${detail}`, { id: row.id, txids });
     return short;
   }

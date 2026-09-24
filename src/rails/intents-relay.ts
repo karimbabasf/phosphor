@@ -21,9 +21,9 @@
 //   4. the executor hears the nonce, the deadline and the quote hash BEFORE publish, so a
 //      process that dies after the signature can be reconciled from the nonce alone.
 //   5. publish_intent, once, with the one safe retry: identical bytes, once, only on no reply.
-//   6. the executor hears the intent hash, then get_status every 3 s for 3 minutes. PENDING and
-//      TX_BROADCASTED go on the row as the relay spells them; a word this app does not know is
-//      never terminal.
+//   6. the executor hears the intent hash, then get_status from 250 ms, doubling to every 3 s,
+//      for 3 minutes. PENDING and TX_BROADCASTED go on the row as the relay spells them; a word
+//      this app does not know is never terminal.
 //   7. SETTLED and the output balance rose by the signed diff (at most 1 pip under, the spec's
 //      allowance for the protocol fee): executed. SETTLED and the balance has not shown it:
 //      settling, the executor's needs_reconciliation path. Anything else: unconfirmed, hash and
@@ -43,9 +43,9 @@
 
 import { formatUnits } from 'viem';
 
-import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft, SwapSimulation } from '../types.ts';
+import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft, SwapQuoteFacts, SwapSimulation, SwapSpend } from '../types.ts';
 import type { OneClickClient, OneClickToken, TokensFile } from '../intents.ts';
-import { oneClickClient, oneLine, resolveAsset, truncateToBaseUnits } from '../intents.ts';
+import { baseUnitsToDecimal, decimalToBaseUnits, oneClickClient, oneLine, resolveAsset, truncateToBaseUnits } from '../intents.ts';
 import { INTENTS_VERIFIER } from '../ledger/intents.ts';
 import { INTENTS_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
 import type { RiseSchedule } from '../ledger/settle.ts';
@@ -57,9 +57,11 @@ import type { RelayClient, RelayPublishResult, RelayQuote, RelayStatus } from '.
 import { MAX_DEADLINE_MS, NONCE_RANDOM_BYTES, buildNonce, buildTokenDiffPayload, checkTokenDiffPayload, deadlineFor, pickQuote } from '../relay/payload.ts';
 import { liveVerifier } from '../relay/verifier.ts';
 import type { VerifierPort } from '../relay/verifier.ts';
-import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
+import { MAX_SLIPPAGE_BPS, QUOTE_REUSE_MS, floorTooLow, floorUnderQuote } from './slippage.ts';
 import { noReply } from './intents-submit.ts';
 import { pickOrExplain } from './asset-words.ts';
+import { ReasonError, reasonOf } from './reasons.ts';
+import { FIRST_POLL_MS, pollUntil } from './watch.ts';
 
 // SwapDraft.venue for this rail. Kind 'swap' is shared with the 1Click rail; the venue routes.
 export const INTENTS_RELAY_VENUE = 'intents-relay';
@@ -72,7 +74,9 @@ export const INTENTS_RELAY_COUNTERPARTY = INTENTS_VERIFIER;
 // published it may be gone, and a dead publish is a signature released for nothing.
 export const RELAY_MIN_QUOTE_AHEAD_MS = 15_000;
 
-// The status poll: three seconds apart, three minutes at most (spec, "The sequence", 6).
+/* The status poll: a quarter second first (FIRST_POLL_MS, the one watch every rail shares),
+   doubling to three seconds apart, three minutes at most (spec, "The sequence", 6). A relay swap
+   settles in a block or two, so a flat three second step was most of the wait a person watched. */
 export const RELAY_POLL_INTERVAL_MS = 3_000;
 export const RELAY_POLL_TIMEOUT_MS = 180_000;
 
@@ -120,6 +124,7 @@ export type IntentsRelayRailDeps = {
   now?: () => number;
   // The app's own randomness for the nonce; a test hands a fixed one to pin the bytes.
   random?: (bytes: number) => Uint8Array;
+  firstPollMs?: number;
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
   maxDeadlineMs?: number;
@@ -193,6 +198,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
   const sleep = deps.sleepImpl ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = deps.now ?? Date.now;
   const random = deps.random ?? randomBytes;
+  const firstPollMs = deps.firstPollMs ?? FIRST_POLL_MS;
   const pollIntervalMs = deps.pollIntervalMs ?? RELAY_POLL_INTERVAL_MS;
   const pollTimeoutMs = deps.pollTimeoutMs ?? RELAY_POLL_TIMEOUT_MS;
   const maxDeadlineMs = deps.maxDeadlineMs ?? MAX_DEADLINE_MS;
@@ -239,27 +245,45 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
        and the number the balance read-back is judged by; against zero every payload passes.
        `floorless` is the one caller that has no floor yet because it is asking for the price
        the floor will be set under (quote below); it never reaches a signature. */
-    if (!floorless && !(draft.minAmountOut > 0)) throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
+    if (!floorless && !(draft.minAmountOut > 0)) throw new ReasonError('invalid_request', 'minAmountOut is 0: refusing to swap with no slippage floor');
 
     // The same registry the 1Click rail reads (resolveAsset): the asset ids are pinned into
     // the plan here at propose time and compared again against the quote before signing.
     const list = await client.tokens();
-    const origin = pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    const origin = originIn(draft, list);
     const dest = pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain);
     if (origin.assetId === dest.assetId) {
-      throw new Error(`${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
+      throw new ReasonError('invalid_request', `${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
     }
     // Both money figures cut toward zero, never rounded: what is signed is at most what was
-    // approved, and the floor held is at most the floor approved (frozen rule 2).
+    // approved, and the floor held is at most the floor approved (frozen rule 2). The amount is
+    // the exact decimal the draft was approved with; a row from before it existed has the double.
     return {
       assetIn: origin.assetId,
       assetOut: dest.assetId,
       inDecimals: origin.decimals,
       outDecimals: dest.decimals,
-      amountBase: truncateToBaseUnits(draft.amountIn, origin.decimals),
+      amountBase: draft.amountInExact !== undefined ? decimalToBaseUnits(draft.amountInExact, origin.decimals) : truncateToBaseUnits(draft.amountIn, origin.decimals),
       minOutBase: floorless ? 0n : truncateToBaseUnits(draft.minAmountOut, dest.decimals),
       list,
     };
+  }
+
+  function originIn(draft: SwapDraft, list: OneClickToken[]): { assetId: string; decimals: number } {
+    return pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+  }
+
+  // What the draft spends and how much of it the verifier holds for us; null is an unread
+  // balance, never zero. Nothing is signed.
+  async function spend(draft: SwapDraft): Promise<SwapSpend> {
+    requireVenue(draft);
+    const origin = originIn(draft, await client.tokens());
+    return { assetId: origin.assetId, decimals: origin.decimals, heldBase: await readBalance(draft.from.toLowerCase(), origin.assetId) };
+  }
+
+  // The amount in the draft's own words: the exact decimal when it carries one.
+  function amountInText(draft: SwapDraft, p: Plan): string {
+    return draft.amountInExact ?? baseUnitsToDecimal(p.amountBase, p.inDecimals);
   }
 
   /* THE PRICE WITH NO FLOOR IN THE QUESTION. The propose-time ask (a short solver wait, this
@@ -278,15 +302,55 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     return Number(formatUnits(BigInt(pick.chosen.amountOut), p.outDecimals));
   }
 
-  // `bounded` is the propose-time ask: a short solver wait and this call's own deadline.
-  async function bestQuote(p: Plan, bounded = false): Promise<ReturnType<typeof pickQuote>> {
+  // The answers the floor-setting ask got, kept for the simulate that follows it (QUOTE_REUSE_MS).
+  const recentQuotes = new Map<string, { at: number; quotes: RelayQuote[] }>();
+
+  /* `bounded` is the propose-time ask: a short solver wait and this call's own deadline. `reuse`
+     is simulate taking the answers quote() just got for the same plan, once; they are picked
+     again against the clock, and a pick that finds nothing still usable asks afresh. */
+  async function bestQuote(p: Plan, bounded = false, reuse = false): Promise<ReturnType<typeof pickQuote>> {
+    const key = `${p.assetIn}|${p.assetOut}|${p.amountBase.toString()}`;
+    const want = { assetIn: p.assetIn, assetOut: p.assetOut, amountIn: p.amountBase, minAheadMs: minQuoteAheadMs };
+    const kept = recentQuotes.get(key);
+    recentQuotes.delete(key);
+    if (reuse && kept !== undefined && now() - kept.at <= QUOTE_REUSE_MS) {
+      const again = pickQuote(kept.quotes, { ...want, now: now() });
+      if (again.chosen !== null) return again;
+    }
     const quotes = await relay.quote({
       assetIn: p.assetIn,
       assetOut: p.assetOut,
       exactAmountIn: p.amountBase.toString(),
       ...(bounded ? { waitMs: RELAY_SIMULATE_WAIT_MS, timeoutMs: simulateQuoteTimeoutMs } : {}),
     });
-    return pickQuote(quotes, { assetIn: p.assetIn, assetOut: p.assetOut, amountIn: p.amountBase, now: now(), minAheadMs: minQuoteAheadMs });
+    if (bounded && !reuse) {
+      for (const [k, v] of recentQuotes) if (now() - v.at > QUOTE_REUSE_MS) recentQuotes.delete(k);
+      recentQuotes.set(key, { at: now(), quotes });
+    }
+    return pickQuote(quotes, { ...want, now: now() });
+  }
+
+  /* One dry quote as fields, for a read that files nothing: the exact amount priced, the best
+     answer, the floor the app would set under it, the fee. No price throws `no_price`. */
+  async function facts(draft: SwapDraft): Promise<SwapQuoteFacts> {
+    const p = await plan(draft, true);
+    let pick: ReturnType<typeof pickQuote>;
+    try {
+      pick = await bestQuote(p, true);
+    } catch (err) {
+      if (noReply(err)) throw new ReasonError('no_price', NO_PRICE_SENTENCE);
+      throw err;
+    }
+    if (pick.chosen === null) throw new ReasonError('no_price', [NO_PRICE_SENTENCE, ...pick.passed].join(' '));
+    const outBase = BigInt(pick.chosen.amountOut);
+    const floor = truncateToBaseUnits(floorUnderQuote(Number(out(p, outBase))), p.outDecimals);
+    return {
+      amountIn: baseUnitsToDecimal(p.amountBase, p.inDecimals),
+      expectedOut: baseUnitsToDecimal(outBase, p.outDecimals),
+      minOut: baseUnitsToDecimal(floor, p.outDecimals),
+      feeUsd: feeUsd(draft, p, pick.chosen),
+      etaSeconds: null,
+    };
   }
 
   function out(p: Plan, base: bigint): string {
@@ -331,7 +395,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
   function priceLines(draft: SwapDraft, p: Plan, quote: RelayQuote): string[] {
     const fee = feeUsd(draft, p, quote);
     return [
-      `intents-relay: ${draft.amountIn} ${draft.fromSymbol} -> ${out(p, BigInt(quote.amountOut))} ${draft.toSymbol}, one atomic swap inside ${INTENTS_VERIFIER}`,
+      `intents-relay: ${amountInText(draft, p)} ${draft.fromSymbol} -> ${out(p, BigInt(quote.amountOut))} ${draft.toSymbol}, one atomic swap inside ${INTENTS_VERIFIER}`,
       `fee ${fee === null ? 'unknown' : '$' + fee.toFixed(4)}, price good for ${goodForSec(quote)}s and re-quoted at your click, ` +
         `floor ${draft.minAmountOut} ${draft.toSymbol} (${p.minOutBase.toString()} base units)`,
     ];
@@ -342,7 +406,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
   }
 
   function noPriceSentence(draft: SwapDraft): string {
-    return `no solver offered a price for ${draft.amountIn} ${draft.fromSymbol} to ${draft.toSymbol} right now`;
+    return `no solver offered a price for ${draft.amountInExact ?? draft.amountIn} ${draft.fromSymbol} to ${draft.toSymbol} right now`;
   }
 
   function valueUsd(draft: SwapDraft): number {
@@ -357,13 +421,13 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
          there were any) on the lines under it for whoever reads the row. */
       let pick: ReturnType<typeof pickQuote>;
       try {
-        pick = await bestQuote(p, true);
+        pick = await bestQuote(p, true, true);
       } catch (err) {
         if (!noReply(err)) throw err;
-        return { ok: false, summary: `REFUSED: ${NO_PRICE_SENTENCE}`, error: NO_PRICE_SENTENCE };
+        return { ok: false, summary: `REFUSED: ${NO_PRICE_SENTENCE}`, error: NO_PRICE_SENTENCE, reason: 'no_price' };
       }
       if (pick.chosen === null) {
-        return { ok: false, summary: [`REFUSED: ${NO_PRICE_SENTENCE}`, ...pick.passed].join('\n'), error: NO_PRICE_SENTENCE };
+        return { ok: false, summary: [`REFUSED: ${NO_PRICE_SENTENCE}`, ...pick.passed].join('\n'), error: NO_PRICE_SENTENCE, reason: 'no_price' };
       }
       const quote = pick.chosen;
       const swap = swapFacts(draft, p, quote);
@@ -373,20 +437,42 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
       // to: a quote under the floor is never signed, and at simulate time that is a refusal.
       if (amountOut < p.minOutBase) {
         const why = floorSentence(draft, p, quote);
-        return { ok: false, summary: [`REFUSED: ${why}`, ...lines].join('\n'), error: why, swap };
+        return { ok: false, summary: [`REFUSED: ${why}`, ...lines].join('\n'), error: why, reason: 'price_moved', swap };
       }
       if (floorTooLow(amountOut, p.minOutBase, MAX_SLIPPAGE_BPS)) {
         const why =
           `the draft floor of ${draft.minAmountOut} ${draft.toSymbol} is more than ${MAX_SLIPPAGE_BPS / 100}% below the ` +
           `${out(p, amountOut)} ${draft.toSymbol} this swap quotes: a floor that low is an invitation to a sandwich, not slippage protection`;
-        return { ok: false, summary: [`REFUSED: ${why}`, ...lines].join('\n'), error: why, swap };
+        return { ok: false, summary: [`REFUSED: ${why}`, ...lines].join('\n'), error: why, reason: 'simulation_failed', swap };
       }
       lines.push(`execution signs one token_diff with the EVM key and transfers nothing; the verifier moves both sides in one call or neither`);
+      keepForClick(p, draft.from, quote);
       return { ok: true, summary: lines.join('\n'), swap };
     } catch (err) {
       const message = errText(err);
-      return { ok: false, summary: `intents-relay simulation failed: ${message}`, error: message };
+      return { ok: false, summary: `intents-relay simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
     }
+  }
+
+  // The quote a propose checked, kept for the click that approves it: used once, and only while
+  // it has more than minQuoteAheadMs to run and still clears the floor.
+  const clickQuotes = new Map<string, RelayQuote>();
+
+  function clickKey(p: Plan, account: string): string {
+    return `${account.toLowerCase()}|${p.assetIn}|${p.assetOut}|${p.amountBase.toString()}`;
+  }
+
+  function keepForClick(p: Plan, account: string, quote: RelayQuote): void {
+    for (const [key, kept] of clickQuotes) if (Date.parse(kept.expirationTime) <= now()) clickQuotes.delete(key);
+    clickQuotes.set(clickKey(p, account), quote);
+  }
+
+  function takeForClick(p: Plan, account: string): RelayQuote | null {
+    const key = clickKey(p, account);
+    const kept = clickQuotes.get(key);
+    clickQuotes.delete(key);
+    if (kept === undefined || Date.parse(kept.expirationTime) - now() < minQuoteAheadMs) return null;
+    return BigInt(kept.amountOut) >= p.minOutBase ? kept : null;
   }
 
   async function execute(draft: SwapDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
@@ -400,53 +486,60 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
       throw new Error(`draft is authored for ${draft.from} but the configured key is ${owner}`);
     }
 
-    /* THE LIVE QUOTE. A relay quote lives about a minute, so a swap that waited for a click is
-       priced again here. At or above the floor: sign. Below, or no price at all: hold, with
-       both numbers in the sentence, and the executor tries again in a while. Nothing is signed
-       on a hold. */
-    const pick = await bestQuote(p);
+    /* THE QUOTE TO SIGN, AND THE THREE READS BESIDE IT. The quote the propose checked is signed
+       while it has more than minQuoteAheadMs to run and still clears the floor: a swap under the
+       ask line, or a click inside the minute, signs the price the card showed without a second
+       wait on the solvers, which cost 2.7 to 3.8 s after every Yes (R5 B3). An older one is
+       priced again here. At or above the floor: sign. Below, or no price at all: hold, with both
+       numbers in the sentence, and the executor tries again in a while. Nothing is signed on a
+       hold. The reads below ran after the quote; they run beside it now (R5 B4).
+
+       The input read fails closed: a balance the verifier reports as short refuses, and a
+       balance this app could not read refuses too, because a signature over money the app has
+       not seen is a signature over a guess (frozen rule 1: a stale read never reads as
+       anything). The output read is what the settle check subtracts from; unread, the settle is
+       chain-checked by the nonce instead. The salt is what the nonce has to carry, and without
+       it no nonce the contract would accept can be made, so that read failing refuses. */
+    const kept = takeForClick(p, account);
+    const [pick, held, beforeBase, salt] = await Promise.all([
+      kept === null ? bestQuote(p) : Promise.resolve({ chosen: kept, passed: [] as string[] }),
+      verifier.balance(account, p.assetIn),
+      verifier.balance(account, p.assetOut),
+      verifier.currentSalt(),
+    ]);
     if (pick.chosen === null) {
       // Every answer the relay gave and why it was passed over rides in the sentence, the same
       // words simulate uses: a hold that says only "no price" hides a relay that did answer.
       return {
         ok: false,
         held: true,
+        reason: 'no_price',
         detail: `${[noPriceSentence(draft), ...pick.passed].join('; ')}. Nothing was signed; the price is asked for again in a while.`,
       };
     }
     const quote = pick.chosen;
     const amountOut = BigInt(quote.amountOut);
     if (amountOut < p.minOutBase) {
-      return { ok: false, held: true, detail: `${floorSentence(draft, p, quote)}. Nothing was signed; the price is asked for again in a while.` };
+      return { ok: false, held: true, reason: 'price_moved', detail: `${floorSentence(draft, p, quote)}. Nothing was signed; the price is asked for again in a while.` };
     }
     if (floorTooLow(amountOut, p.minOutBase, MAX_SLIPPAGE_BPS)) {
-      throw new Error(
+      throw new ReasonError(
+        'simulation_failed',
         `the draft floor of ${draft.minAmountOut} ${draft.toSymbol} is more than ${MAX_SLIPPAGE_BPS / 100}% below the ` +
           `${out(p, amountOut)} ${draft.toSymbol} this swap quotes; refusing to sign against a floor that low`,
       );
     }
 
-    /* THREE READS BEFORE THE KEY: the input balance, the output balance and the salt. The
-       input read fails closed: a balance the verifier reports as short refuses, and a balance
-       this app could not read refuses too, because a signature over money the app has not seen
-       is a signature over a guess (frozen rule 1: a stale read never reads as anything). The
-       output read is what the settle check subtracts from; unread, the settle is chain-checked
-       by the nonce instead. The salt is what the nonce has to carry, and without it no nonce the
-       contract would accept can be made, so that read failing refuses. */
-    const [held, beforeBase, salt] = await Promise.all([
-      verifier.balance(account, p.assetIn),
-      verifier.balance(account, p.assetOut),
-      verifier.currentSalt(),
-    ]);
-    if (held === null) throw new Error('Could not read your balance, so nothing was signed. Try again.');
+    if (held === null) throw new ReasonError('balance_unread', 'Could not read your balance, so nothing was signed. Try again.');
     if (held < p.amountBase) {
-      throw new Error(
+      throw new ReasonError(
+        'insufficient_balance',
         `the balance inside ${INTENTS_VERIFIER} holds ${formatUnits(held, p.inDecimals)} ${draft.fromSymbol}, less than the ` +
-          `${draft.amountIn} ${draft.fromSymbol} this swap spends; nothing was signed`,
+          `${amountInText(draft, p)} ${draft.fromSymbol} this swap spends; nothing was signed`,
       );
     }
     if (salt === null) {
-      throw new Error(`the verifier did not answer with its current salt, so no nonce it would accept could be made; nothing was signed`);
+      throw new ReasonError('simulation_failed', `the verifier did not answer with its current salt, so no nonce it would accept could be made; nothing was signed`);
     }
 
     const signedAt = now();
@@ -492,6 +585,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     if (!sent.answered) {
       return {
         ok: false,
+        reason: 'stuck_unknown',
         detail:
           `the intent was signed and sent to the relay, and the relay did not answer (${oneLine(sent.error, 80)}); ${facts}. ` +
           `THE INTENT IS SIGNED and may still execute until its deadline, so nothing more will be signed: the verifier is asked ` +
@@ -584,7 +678,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
         return {
           ok: true,
           detail:
-            `swapped ${draft.amountIn} ${draft.fromSymbol} for ${out(p, credited)} ${draft.toSymbol} inside ${INTENTS_VERIFIER}, ` +
+            `swapped ${amountInText(draft, p)} ${draft.fromSymbol} for ${out(p, credited)} ${draft.toSymbol} inside ${INTENTS_VERIFIER}, ` +
             `read back from the verifier and matching the signed diff of ${out(p, amountOut)} ${draft.toSymbol} ` +
             `${credited === amountOut ? 'to the unit' : `less the protocol fee (${out(p, amountOut - credited)} ${draft.toSymbol})`}; ${evidence}. ` +
             `Nothing was transferred on any chain and the proceeds are credited to ${account} inside the verifier.`,
@@ -603,7 +697,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
         return {
           ok: true,
           detail:
-            `swapped ${draft.amountIn} ${draft.fromSymbol} for the signed ${out(p, amountOut)} ${draft.toSymbol} inside ${INTENTS_VERIFIER}; ${evidence}. ` +
+            `swapped ${amountInText(draft, p)} ${draft.fromSymbol} for the signed ${out(p, amountOut)} ${draft.toSymbol} inside ${INTENTS_VERIFIER}; ${evidence}. ` +
             `The relay reports it settled on NEAR and the verifier shows the nonce spent; the balance could not be read back, so the amount out is ` +
             'the signed diff rather than an observed figure. Nothing was transferred on any chain.',
           txids,
@@ -639,6 +733,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     // and the nonce on the row for the sweep.
     return {
       ok: false,
+      reason: 'stuck_unknown',
       detail:
         `the intent was published and the relay had not settled it within ${Math.round(pollTimeoutMs / 1000)}s ` +
         `(last status ${oneLine(watch.last.status, 40)}); ${evidence}. THE INTENT IS SIGNED AND PUBLISHED and may still ` +
@@ -648,16 +743,14 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     };
   }
 
-  /* Polls until the relay says an ending word, or the window is spent. Never throws once the
-     intent is published. Every poll tells the executor which word the relay used, as the relay
-     spells it, and hands over the NEAR hash the moment there is one. Bounded by the clock AND
-     by the waits it asked for, so a frozen test clock still ends it. */
+  /* On the watch every rail shares (./watch.ts), until the relay says an ending word or the
+     window is spent. Never throws once the intent is published. Every poll tells the executor
+     which word the relay used, as the relay spells it, and hands over the NEAR hash the moment
+     there is one. */
   async function watchStatus(intentHash: string, hooks?: RailHooks): Promise<{ last: RelayStatus; waitedMs: number }> {
-    const deadline = now() + pollTimeoutMs;
     let last: RelayStatus = { intentHash, status: NOT_POLLED, statusDetails: null, nearTxHash: null, filledAmounts: [] };
     let toldHash = false;
-    let waited = 0;
-    for (;;) {
+    const waitedMs = await pollUntil({ firstMs: firstPollMs, everyMs: pollIntervalMs, timeoutMs: pollTimeoutMs, sleep, now }, async () => {
       try {
         last = await relay.status(intentHash);
         if (last.nearTxHash !== null && !toldHash) {
@@ -670,15 +763,14 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
         } else {
           tell(hooks, { providerStage: last.status });
         }
-        if (RELAY_TERMINAL.includes(last.status)) return { last, waitedMs: waited };
+        return RELAY_TERMINAL.includes(last.status);
       } catch (err) {
         last = { ...last, statusDetails: `status check failed: ${oneLine(errText(err), 80)}` };
+        return false;
       }
-      if (now() + pollIntervalMs > deadline || waited + pollIntervalMs > pollTimeoutMs) return { last, waitedMs: waited };
-      await sleep(pollIntervalMs);
-      waited += pollIntervalMs;
-    }
+    });
+    return { last, waitedMs };
   }
 
-  return { kind: 'swap', valueUsd, simulate, quote, execute };
+  return { kind: 'swap', valueUsd, simulate, quote, spend, facts, execute };
 }

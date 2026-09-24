@@ -116,13 +116,19 @@ export const READ_TOOLS: readonly string[] = [
   'chain_transactions',
   'chain_transaction',
   'intents_activity',
+  // Swaps without filing one (src/http/read/swap.ts): what can be swapped, a dry quote, and one
+  // swap's truth re-read now. None files a row or signs anything.
+  'swap_assets',
+  'swap_quote',
+  'swap_check',
 ];
 /* The reads a worker never gets. A picture is the window the human is reading. The proposal
    list is the lead's own money timeline, and one row's whole story with it: a spawned worker
    exists to measure something and hand back a paragraph, and enumerating what its parent is in
-   the middle of paying for is not that. The proxy withholds all three the same way (src/mcp.ts
-   registerLeadRead); src/http/mcp.ts refuses them by seat role. */
-export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot', 'proposals', 'diagnose'];
+   the middle of paying for is not that. swap_check is one row's story told again. The proxy
+   withholds these the same way (src/mcp.ts registerLeadRead); src/http/mcp.ts refuses them by
+   seat role. */
+export const LEAD_ONLY_READ_TOOLS: readonly string[] = ['chart_snapshot', 'proposals', 'diagnose', 'swap_check'];
 
 /* The one view a worker keeps, and therefore the whole of what LEAD_ONLY_VIEW_TOOLS is not.
    A board post writes one line to a log every agent and the human read; it does not touch the

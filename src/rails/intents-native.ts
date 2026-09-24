@@ -39,18 +39,20 @@
 
 import { formatUnits } from 'viem';
 
-import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft, SwapSimulation } from '../types.ts';
+import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft, SwapQuoteFacts, SwapSimulation, SwapSpend } from '../types.ts';
 import { ERC191_STANDARD, duplicateJsonKey, liveIntentsSigner } from '../intents-sign.ts';
 import type { IntentsSignerPort } from '../intents-sign.ts';
 import {
   ONECLICK_BASE,
-  ONECLICK_TERMINAL,
   baseUnits,
+  baseUnitsToDecimal,
+  decimalToBaseUnits,
   oneClickClient,
   quoteEchoProblems,
   oneLine,
   resolveAsset,
   toBaseUnits,
+  truncateToBaseUnits,
 } from '../intents.ts';
 import type {
   OneClickClient,
@@ -63,11 +65,13 @@ import type {
 import { venueWriteTimeout } from '../net.ts';
 import { INTENTS_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
 import type { RiseSchedule } from '../ledger/settle.ts';
-import { MAX_SLIPPAGE_BPS, floorTooLow } from './slippage.ts';
+import { MAX_SLIPPAGE_BPS, QUOTE_REUSE_MS, floorTooLow, floorUnderQuote } from './slippage.ts';
 import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
-import { submitSignedIntent } from './intents-submit.ts';
+import { noReply, submitSignedIntent } from './intents-submit.ts';
 import { pickOrExplain } from './asset-words.ts';
+import { ReasonError, quoteRefusalReason, reasonOf } from './reasons.ts';
+import { watchOneClick } from './watch.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -131,6 +135,15 @@ export const INTENTS_NO_API_KEY_REASON =
 // three of which are checked before signing. What the cap still catches is a payload with an
 // absurd or missing deadline, which is a sign the shape changed.
 const MAX_DEADLINE_MS = 4 * 24 * 60 * 60 * 1000;
+
+/* THE SLIPPAGE ASKED OF 1CLICK, half a percent, so the floor 1Click enforces sits ABOVE the one
+   the person approved. The app sets its floor one percent under the propose-time quote
+   (floorUnderQuote), and every later quote is held to it: a quote passes when its own minimum,
+   amountOut x (1 - this), is at or above that floor. Asked at one percent, the two floors were cut
+   from two quotes with the same band, so any down-tick between them refused: 5 of 19 swaps on
+   2026-09-23, one over a 0.009% move. At half a percent the price has to fall about half a
+   percent before a check refuses, which is a real reason to stop. */
+export const QUOTE_SLIPPAGE_BPS = 50;
 
 // ---------- base58, for the signature field ----------
 
@@ -759,7 +772,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
        is the one caller with no floor yet, quote() below, which asks the price the floor will
        be set under and never reaches a signature. */
     if (!floorless && !(draft.minAmountOut > 0)) {
-      throw new Error('minAmountOut is 0: refusing to swap with no slippage floor');
+      throw new ReasonError('invalid_request', 'minAmountOut is 0: refusing to swap with no slippage floor');
     }
 
     // No EVM-origin restriction, unlike the oneclick rail. Nothing is signed on the origin
@@ -772,10 +785,10 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     // has no row for an asset with no contract address. Without this, the funding path could
     // deposit ETH and no swap could ever spend it.
     const list = await (api as IntentsApiPort).tokens();
-    const origin = pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    const origin = originIn(draft, list);
     const dest = pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain);
     if (origin.assetId === dest.assetId) {
-      throw new Error(`${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
+      throw new ReasonError('invalid_request', `${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
     }
 
     return {
@@ -783,28 +796,92 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       destinationAsset: dest.assetId,
       originDecimals: origin.decimals,
       destDecimals: dest.decimals,
-      amountBase: toBaseUnits(draft.amountIn, origin.decimals),
+      // The exact decimal the draft was approved with. A row written before it existed carries
+      // the double alone, and the balance read before signing is what guards that one.
+      amountBase: draft.amountInExact !== undefined ? decimalToBaseUnits(draft.amountInExact, origin.decimals) : toBaseUnits(draft.amountIn, origin.decimals),
       minOutBase: floorless ? 0n : toBaseUnits(draft.minAmountOut, dest.decimals),
     };
   }
 
-  function checkQuote(draft: SwapDraft, p: Plan, quote: OneClickQuote): string[] {
-    const problems: string[] = [];
+  // The asset a draft spends, off the one resolver, with its decimals.
+  function originIn(draft: SwapDraft, list: OneClickToken[]): { assetId: string; decimals: number } {
+    return pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+  }
+
+  /* WHAT THE DRAFT SPENDS AND HOW MUCH OF IT IS HELD, for the builder: "all" becomes this exact
+     figure, and an amount above it is refused before any price is asked for. A read that fails
+     is null, never zero. Nothing is signed. */
+  async function spend(draft: SwapDraft): Promise<SwapSpend> {
+    requireVenue(draft);
+    const origin = originIn(draft, await (api as IntentsApiPort).tokens());
+    return { assetId: origin.assetId, decimals: origin.decimals, heldBase: await verifierBalance(draft.from.toLowerCase(), origin.assetId) };
+  }
+
+  type Priced = { quote: OneClickQuote; raw: unknown };
+  // The floor-setting price, kept for simulate to check rather than asked for a second time.
+  const recentDry = new Map<string, { at: number; response: Priced }>();
+
+  function dryKey(p: Plan, account: string): string {
+    return `${p.originAsset}|${p.destinationAsset}|${p.amountBase.toString()}|${account.toLowerCase()}`;
+  }
+
+  /* Every quote this rail asks 1Click for: half a percent of slippage asked (QUOTE_SLIPPAGE_BPS),
+     and a refusal read as its cause. "No liquidity available" is nobody selling, a minimum is a
+     minimum, and a quote that never answered is no price right now. */
+  async function askQuote(dry: boolean, p: Plan, account: string): Promise<Priced> {
+    try {
+      return await (api as IntentsApiPort).quote({
+        dry,
+        originAsset: p.originAsset,
+        destinationAsset: p.destinationAsset,
+        amount: p.amountBase.toString(),
+        account,
+        slippageToleranceBps: QUOTE_SLIPPAGE_BPS,
+      });
+    } catch (err) {
+      if (reasonOf(err) !== undefined) throw err;
+      const message = errText(err);
+      throw new ReasonError(noReply(err) ? 'no_price' : quoteRefusalReason(message), message);
+    }
+  }
+
+  /* A dry quote. `reuse` is simulate: the price quote() asked for a moment ago, for this very
+     plan, is the one it checks, and it is used once. */
+  async function dryQuote(p: Plan, account: string, reuse: boolean): Promise<Priced> {
+    const key = dryKey(p, account);
+    const kept = recentDry.get(key);
+    recentDry.delete(key);
+    if (reuse && kept !== undefined && now() - kept.at <= QUOTE_REUSE_MS) return kept.response;
+    const response = await askQuote(true, p, account);
+    if (!reuse) {
+      for (const [k, v] of recentDry) if (now() - v.at > QUOTE_REUSE_MS) recentDry.delete(k);
+      recentDry.set(key, { at: now(), response });
+    }
+    return response;
+  }
+
+  /* What is wrong with a quote, each with its cause. The floor is the one a market moves: a
+     quote whose own minimum is under the floor the person approved is the price having fallen,
+     `price_moved`. Everything else is a quote this rail will not sign. */
+  type Problem = { text: string; code: 'price_moved' | 'simulation_failed' };
+
+  function checkQuote(draft: SwapDraft, p: Plan, quote: OneClickQuote): Problem[] {
+    const problems: Problem[] = [];
 
     const amountIn = baseUnits(quote.amountIn, 'amountIn');
     if (amountIn !== p.amountBase) {
-      problems.push(
-        `the quote is for ${formatUnits(amountIn, p.originDecimals)} ${draft.fromSymbol}, ` +
-          `not the ${draft.amountIn} the draft names`,
-      );
+      problems.push({
+        text: `the quote is for ${formatUnits(amountIn, p.originDecimals)} ${draft.fromSymbol}, not the ${amountInText(draft, p)} the draft names`,
+        code: 'simulation_failed',
+      });
     }
 
     const minOut = baseUnits(quote.minAmountOut, 'minAmountOut');
     if (minOut < p.minOutBase) {
-      problems.push(
-        `the solver floor of ${formatUnits(minOut, p.destDecimals)} ${draft.toSymbol} is below the ` +
-          `draft floor of ${draft.minAmountOut}`,
-      );
+      problems.push({
+        text: `the solver floor of ${formatUnits(minOut, p.destDecimals)} ${draft.toSymbol} is below the draft floor of ${draft.minAmountOut}`,
+        code: 'price_moved',
+      });
     }
 
     /* And the floor against the price. The check above only says the solver guarantees at least
@@ -812,14 +889,26 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
        Both amounts are base units of the destination asset, so this compares exactly. */
     const amountOut = baseUnits(quote.amountOut, 'amountOut');
     if (floorTooLow(amountOut, p.minOutBase, MAX_SLIPPAGE_BPS)) {
-      problems.push(
-        `the draft floor of ${draft.minAmountOut} ${draft.toSymbol} is more than ${MAX_SLIPPAGE_BPS / 100}% ` +
+      problems.push({
+        text:
+          `the draft floor of ${draft.minAmountOut} ${draft.toSymbol} is more than ${MAX_SLIPPAGE_BPS / 100}% ` +
           `below the ${formatUnits(amountOut, p.destDecimals)} ${draft.toSymbol} this swap quotes: a floor ` +
           'that low is an invitation to a sandwich, not slippage protection',
-      );
+        code: 'simulation_failed',
+      });
     }
 
     return problems;
+  }
+
+  // One cause for a list of problems: the price moving, only when that is all that is wrong.
+  function causeOf(problems: Problem[]): 'price_moved' | 'simulation_failed' {
+    return problems.length > 0 && problems.every((x) => x.code === 'price_moved') ? 'price_moved' : 'simulation_failed';
+  }
+
+  // The amount in the draft's own words: the exact decimal when it carries one.
+  function amountInText(draft: SwapDraft, p: Plan): string {
+    return draft.amountInExact ?? baseUnitsToDecimal(p.amountBase, p.originDecimals);
   }
 
   /* The quote's echo of what we asked for, checked against what we asked for.
@@ -830,7 +919,11 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
 
      The comparison is in src/intents.ts, shared with every rail that quotes. What stays here is
      what this rail asked for, spelled out. */
-  function checkQuoteEcho(p: Plan, owner: string, raw: unknown): string[] {
+  function checkQuoteEcho(p: Plan, owner: string, raw: unknown): Problem[] {
+    return echoProblems(p, owner, raw).map((text) => ({ text, code: 'simulation_failed' as const }));
+  }
+
+  function echoProblems(p: Plan, owner: string, raw: unknown): string[] {
     return quoteEchoProblems(raw, {
       recipient: owner,
       recipientVerb: 'credit',
@@ -851,12 +944,12 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     });
   }
 
-  function priceLines(draft: SwapDraft, quote: OneClickQuote): string[] {
+  function priceLines(draft: SwapDraft, p: Plan, quote: OneClickQuote): string[] {
     const inUsd = Number(quote.amountInUsd);
     const outUsd = Number(quote.amountOutUsd);
     const feeUsd = Number.isFinite(inUsd) && Number.isFinite(outUsd) ? inUsd - outUsd : NaN;
     return [
-      `intents-native: ${draft.amountIn} ${draft.fromSymbol} -> ` +
+      `intents-native: ${amountInText(draft, p)} ${draft.fromSymbol} -> ` +
         `${oneLine(quote.amountOutFormatted, 40)} ${draft.toSymbol}, entirely inside ${INTENTS_VERIFIER}`,
       `fee ${Number.isFinite(feeUsd) ? '$' + feeUsd.toFixed(4) : 'unknown'}, eta ~${Number(quote.timeEstimate)}s, ` +
         `solver floor ${oneLine(quote.minAmountOut, 40)} base units, draft floor ${draft.minAmountOut} ${draft.toSymbol}`,
@@ -892,15 +985,10 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
 
       const p = await plan(draft);
 
-      const response = await (api as IntentsApiPort).quote({
-        dry: true,
-        originAsset: p.originAsset,
-        destinationAsset: p.destinationAsset,
-        amount: p.amountBase.toString(),
-        account: draft.from,
-      });
+      // The price quote() cut the floor from, when propose asked for one a moment ago.
+      const response = await dryQuote(p, draft.from, true);
 
-      const lines = priceLines(draft, response.quote);
+      const lines = priceLines(draft, p, response.quote);
       const swap = swapFacts(p, response.quote);
       // Both checks, in both places. simulate ran checkQuote alone and execute added the echo,
       // so a quote priced to another account passed the approval gate and failed after a human
@@ -909,8 +997,8 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       // checks both against the real key a moment before signing.
       const problems = [...checkQuote(draft, p, response.quote), ...checkQuoteEcho(p, draft.from, response.raw)];
       if (problems.length > 0) {
-        const joined = problems.join('; ');
-        return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined, swap };
+        const joined = problems.map((x) => x.text).join('; ');
+        return { ok: false, summary: [`REFUSED: ${joined}`, ...lines].join('\n'), error: joined, reason: causeOf(problems), swap };
       }
 
       lines.push(
@@ -920,7 +1008,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       return { ok: true, summary: lines.join('\n'), swap };
     } catch (err) {
       const message = errText(err);
-      return { ok: false, summary: `intents-native simulation failed: ${message}`, error: message };
+      return { ok: false, summary: `intents-native simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
     }
   }
 
@@ -939,19 +1027,31 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       throw new Error(`draft is authored for ${draft.from} but the configured key is ${owner}`);
     }
 
-    const response = await client.quote({
-      dry: false,
-      originAsset: p.originAsset,
-      destinationAsset: p.destinationAsset,
-      amount: p.amountBase.toString(),
-      account: owner,
-    });
+    /* THE LIVE QUOTE, AND BESIDE IT THE BALANCE THIS SWAP SPENDS. Nothing is signed for more
+       than is held: a transfer larger than the balance can never execute, 1Click marks it
+       FAILED, and the card used to say the money was held by 1Click when none had left
+       (2026-09-23, three times). Read alongside the quote so it costs no time. A read that fails
+       keeps the swap going, as the after-read does: the signed amount is still the approved one. */
+    const [response, heldBefore] = await Promise.all([askQuote(false, p, owner), verifierBalance(owner.toLowerCase(), p.originAsset)]);
+    if (heldBefore !== null && heldBefore < p.amountBase) {
+      throw new ReasonError(
+        'insufficient_balance',
+        `the balance inside ${INTENTS_VERIFIER} holds ${formatUnits(heldBefore, p.originDecimals)} ${draft.fromSymbol}, less than the ` +
+          `${amountInText(draft, p)} ${draft.fromSymbol} this swap spends; nothing was signed`,
+      );
+    }
     const quote = response.quote;
 
     // The signature is checked beside the amounts and the echo, before the handle is read for
     // anything: a quote 1Click did not sign, or signed with a different handle, stops here.
-    const problems = [...checkQuote(draft, p, quote), ...checkQuoteEcho(p, owner, response.raw), ...quoteSignatureProblems(response, quoteKey)];
-    if (problems.length > 0) throw new Error(`live quote does not match the approved draft: ${problems.join('; ')}`);
+    const problems: Problem[] = [
+      ...checkQuote(draft, p, quote),
+      ...checkQuoteEcho(p, owner, response.raw),
+      ...quoteSignatureProblems(response, quoteKey).map((text) => ({ text, code: 'simulation_failed' as const })),
+    ];
+    if (problems.length > 0) {
+      throw new ReasonError(causeOf(problems), `live quote does not match the approved draft: ${problems.map((x) => x.text).join('; ')}`);
+    }
 
     // For an INTENTS quote this is an account id inside the verifier, not a chain address,
     // and nothing is ever sent to it. It is the handle that ties the signed intent back to
@@ -1080,6 +1180,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         if (delta < p.minOutBase) {
           return {
             ok: false,
+            reason: 'short_fill',
             detail:
               `1click reported SUCCESS, and the balance inside ${INTENTS_VERIFIER} rose by ` +
               `${formatUnits(delta, p.destDecimals)} ${draft.toSymbol}, below the ` +
@@ -1093,7 +1194,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         return {
           ok: true,
           detail:
-            `swapped ${draft.amountIn} ${draft.fromSymbol} for ${formatUnits(delta, p.destDecimals)} ` +
+            `swapped ${amountInText(draft, p)} ${draft.fromSymbol} for ${formatUnits(delta, p.destDecimals)} ` +
             `${draft.toSymbol} inside ${INTENTS_VERIFIER}, read back from the verifier rather than taken ` +
             `from the quote; ${evidence}. Nothing was transferred on any chain and the proceeds are ` +
             `credited to ${owner} inside the verifier.`,
@@ -1108,7 +1209,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       return {
         ok: true,
         detail:
-          `swapped ${draft.amountIn} ${draft.fromSymbol} for a quoted ${oneLine(quote.amountOutFormatted, 40)} ` +
+          `swapped ${amountInText(draft, p)} ${draft.fromSymbol} for a quoted ${oneLine(quote.amountOutFormatted, 40)} ` +
           `${draft.toSymbol} inside ${INTENTS_VERIFIER}; ${evidence}. The verifier balance could not be read ` +
           `back, so the amount out is the solver's figure rather than an observed one. Nothing was transferred ` +
           `on any chain and the proceeds are credited to ${owner} inside the verifier.`,
@@ -1118,13 +1219,26 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       };
     }
 
+    /* FAILED OR REFUNDED: THE BALANCE DECIDES THE WORDS. The spent balance is read again and set
+       against the read taken before the signature. Unchanged is proof nothing left it, whatever
+       the venue's note says: the three wNEAR swaps of 2026-09-23 were FAILED transfers that
+       could never run, and the card said 1Click held money that had not moved. */
     if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
-      return withQuote(describeRefund(watch, depositAddress, {
-        symbol: draft.fromSymbol,
-        refundTarget: `${owner} inside ${INTENTS_VERIFIER}, not any chain address`,
-        evidence,
-        primaryTxid: submitted.intentHash,
-      }), signedQuote);
+      const heldAfter = await verifierBalance(owner.toLowerCase(), p.originAsset);
+      return withQuote(
+        describeRefund(
+          watch,
+          depositAddress,
+          {
+            symbol: draft.fromSymbol,
+            refundTarget: `${owner} inside ${INTENTS_VERIFIER}, not any chain address`,
+            evidence,
+            primaryTxid: submitted.intentHash,
+          },
+          { before: heldBefore, after: heldAfter, amountBase: p.amountBase, decimals: p.originDecimals },
+        ),
+        signedQuote,
+      );
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
@@ -1143,6 +1257,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     // The hash and the handle stay on the row so the swap can be checked later.
     return {
       ok: false,
+      reason: 'stuck_unknown',
       detail:
         `the intent was submitted but 1click did not reach a terminal status within ` +
         `${Math.round(pollTimeoutMs / 1000)}s (last status ${watch.reported}); ${evidence}. ` +
@@ -1153,59 +1268,48 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     };
   }
 
-  // Same contract as the oneclick rail's watcher: polls until terminal, out of attempts or
-  // out of time, and never throws once the intent has been submitted. Every poll tells the
-  // executor which word 1Click used, so the stage on the card is the vendor's own.
-  async function watchStatus(depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
-    const client = api as IntentsApiPort;
-    const deadline = now() + pollTimeoutMs;
-    let last: OneClickStatus = {
-      found: false,
-      status: 'PENDING_DEPOSIT',
-      reported: 'not polled',
-      originTxHashes: [],
-      destinationTxHashes: [],
-      nearTxHashes: [],
-    };
-
-    /* Bounded by the deadline AND by the waits it has already spent. A precomputed attempt
-       count is wrong once the interval ramps, because many more short waits fit inside the
-       same timeout. But the clock alone is not enough either: `now` is injectable and the
-       tests freeze it, so a loop that only reads the clock never leaves. Counting what it
-       asked to sleep for terminates on a stopped clock and agrees with it on a running one. */
-    let waited = 0;
-    for (let attempt = 0; now() < deadline && waited < pollTimeoutMs; attempt += 1) {
-      try {
-        last = await client.status(depositAddress);
-        tell(hooks, { providerStage: last.status });
-        if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return last;
-      } catch (err) {
-        last = { ...last, reported: `status check failed: ${oneLine(errText(err), 80)}` };
-      }
-      const wait = Math.min(pollIntervalMs, firstPollMs * 2 ** attempt);
-      if (now() + wait >= deadline || waited + wait >= pollTimeoutMs) break;
-      await sleep(wait);
-      waited += wait;
-    }
-
-    return last;
+  // The one watch every rail shares (./watch.ts): until terminal or out of time, and never a
+  // throw once the intent is submitted.
+  function watchStatus(depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
+    const plan = { firstMs: firstPollMs, everyMs: pollIntervalMs, timeoutMs: pollTimeoutMs, sleep, now };
+    return watchOneClick(plan, (handle) => (api as IntentsApiPort).status(handle), depositAddress, hooks);
   }
 
   /* THE PRICE WITH NO FLOOR IN THE QUESTION: 1Click's dry quote for the draft's amountIn, read
      as the bought coin's units. Null when the router has no price. Nothing is signed here. */
   async function quote(draft: SwapDraft): Promise<number | null> {
     const p = await plan(draft, true);
-    const response = await (api as IntentsApiPort).quote({
-      dry: true,
-      originAsset: p.originAsset,
-      destinationAsset: p.destinationAsset,
-      amount: p.amountBase.toString(),
-      account: draft.from,
-    });
+    let response: Priced;
+    try {
+      response = await dryQuote(p, draft.from, false);
+    } catch (err) {
+      // Nobody selling is an answer, null. Any other refusal carries its cause to the builder.
+      if (reasonOf(err) === 'no_price') return null;
+      throw err;
+    }
     const out = response.quote.amountOut;
     if (typeof out !== 'string' || !/^\d+$/.test(out)) return null;
     return Number(formatUnits(BigInt(out), p.destDecimals));
   }
 
-  return { kind: 'swap', valueUsd, simulate, quote, execute };
+  /* THE SAME DRY QUOTE AS FIELDS, for a read that files nothing: the exact amount it prices, what
+     arrives, the floor the app would set under it and hold every later quote to, the fee and the
+     time. A refusal throws with its cause. Nothing is signed. */
+  async function facts(draft: SwapDraft): Promise<SwapQuoteFacts> {
+    const p = await plan(draft, true);
+    const q = (await dryQuote(p, draft.from, false)).quote;
+    const out = baseUnits(q.amountOut, 'amountOut');
+    const inUsd = Number(q.amountInUsd);
+    const outUsd = Number(q.amountOutUsd);
+    const floor = truncateToBaseUnits(floorUnderQuote(Number(formatUnits(out, p.destDecimals))), p.destDecimals);
+    return {
+      amountIn: baseUnitsToDecimal(p.amountBase, p.originDecimals),
+      expectedOut: baseUnitsToDecimal(out, p.destDecimals),
+      minOut: baseUnitsToDecimal(floor, p.destDecimals),
+      feeUsd: Number.isFinite(inUsd) && Number.isFinite(outUsd) ? Math.round((inUsd - outUsd) * 10_000) / 10_000 : null,
+      etaSeconds: Number.isFinite(Number(q.timeEstimate)) ? Number(q.timeEstimate) : null,
+    };
+  }
+
+  return { kind: 'swap', valueUsd, simulate, quote, spend, facts, execute };
 }

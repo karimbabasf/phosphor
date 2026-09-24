@@ -71,14 +71,45 @@ export type RefundWords = {
   refundTarget: string; // where a refund of the input lands, as the rail would name it
   evidence: string;
   primaryTxid: string;
+  // The rail moved the input itself and holds the hash of that transfer (a venue send it
+  // broadcast), so the input has left whatever the venue did with it afterwards.
+  inputSent?: boolean;
 };
 
+/* The balance the move spent, read by the rail either side of it, in base units. Null is a read
+   that failed, never a balance of zero. */
+export type InputRead = { before: bigint | null; after: bigint | null; amountBase: bigint; decimals: number };
+
+/* WHETHER THE INPUT LEFT THE BALANCE, from what was observed and nothing else.
+   'yes': the rail sent the input itself, a FAILED order carrying any transfer hash (for a move out
+   of the intents balance, the funding transfer having run), or a REFUNDED order whose balance has
+   not climbed back. 'no': both reads answered and the balance is not below where it started, so
+   nothing is missing from it (a refund that already came back reads the same way). A FAILED order
+   whose balance fell with no hash is 'unknown': another move spending the same coin in the same
+   minute reads exactly the same. */
+export function inputMoved(status: OneClickStatus, read?: InputRead, sent = false): 'yes' | 'no' | 'unknown' {
+  const hashes = status.nearTxHashes.length + status.originTxHashes.length + status.destinationTxHashes.length;
+  if (sent) return 'yes';
+  if (status.status === 'FAILED' && hashes > 0) return 'yes';
+  if (read !== undefined && read.before !== null && read.after !== null) {
+    if (read.after >= read.before) return 'no';
+    return status.status === 'FAILED' ? 'unknown' : 'yes';
+  }
+  return hashes > 0 ? 'yes' : 'unknown';
+}
+
+function units(base: bigint, decimals: number): string {
+  const digits = base.toString().padStart(decimals + 1, '0');
+  const frac = digits.slice(digits.length - decimals).replace(/0+$/, '');
+  return `${digits.slice(0, digits.length - decimals)}${frac === '' ? '' : `.${frac}`}`;
+}
+
 // REFUNDED and FAILED are two facts and get two sentences, each built from a field the API
-// returned. REFUNDED names the amount that went back. FAILED names what was refunded so far,
-// which can be nothing, and says where the input sits: the incident this replaces had three
-// rails announce "a refund is credited back to your balance" over a FAILED with refundedAmount
-// 0, while the money sat with 1Click under the handle.
-export function describeRefund(status: OneClickStatus, handle: string, words: RefundWords): RailResult {
+// returned and from the balance the rail read, when it read one. Nothing here says where the
+// input sits unless something showed it: "held by 1Click under handle" was printed over three
+// FAILED swaps whose input never left the balance (2026-09-23), and "a refund is credited back"
+// over FAILED orders that refunded nothing (2026-09-15). `reason` is the code the card reads.
+export function describeRefund(status: OneClickStatus, handle: string, words: RefundWords, read?: InputRead): RailResult {
   const shortHandle = oneLine(handle, 80);
   const amount = status.refundedAmount;
   const zero = amount === undefined || Number(amount) === 0;
@@ -88,29 +119,64 @@ export function describeRefund(status: OneClickStatus, handle: string, words: Re
     ...(status.refundReason !== undefined ? { refundReason: status.refundReason } : {}),
   };
   const txids = uniqueTxids(words.primaryTxid, status);
+  const moved = inputMoved(status, read, words.inputSent === true);
+  const reading =
+    read !== undefined && read.before !== null && read.after !== null
+      ? `the ${words.symbol} balance reads ${units(read.after, read.decimals)} against ${units(read.before, read.decimals)} before the swap`
+      : `the ${words.symbol} balance was not read either side`;
 
   if (status.status === 'REFUNDED') {
+    if (moved === 'no') {
+      return {
+        ok: false,
+        reason: 'refunded',
+        detail: `1click reported REFUNDED${zero ? '' : ` ${amount} ${words.symbol}`} and ${reading}, so it is back; ${words.evidence}.`,
+        txids,
+        evidence,
+      };
+    }
     return {
       ok: false,
+      reason: zero ? 'stuck_unknown' : 'venue_failed_refund_pending',
       detail: zero
         ? `1click reported REFUNDED and named no refunded amount; whether the ${words.symbol} is back at ` +
-          `${words.refundTarget} is unconfirmed until a read shows it; ${words.evidence}.`
-        : `1click reported REFUNDED: ${amount} ${words.symbol} went back to ${words.refundTarget}; ${words.evidence}. ` +
-          'Read the balance before signing another.',
+          `${words.refundTarget} is unconfirmed until a read shows it; ${reading}; ${words.evidence}.`
+        : `1click reported REFUNDED: ${amount} ${words.symbol} went back to ${words.refundTarget}, and ${reading}; ${words.evidence}. ` +
+          'It settles when the balance shows it.',
       txids,
       evidence,
     };
   }
 
-  const reason = status.refundReason ?? 'not given';
+  const why = status.refundReason ?? 'not given';
+  if (moved === 'no') {
+    return {
+      ok: false,
+      reason: 'venue_failed_nothing_moved',
+      detail: `1click reported FAILED (reason ${why}) and nothing left the balance: ${reading}; ${words.evidence}.`,
+      txids,
+      evidence,
+    };
+  }
+  if (moved === 'yes') {
+    return {
+      ok: false,
+      reason: 'venue_failed_refund_pending',
+      detail:
+        `1click reported FAILED and refunded ${amount ?? '0'} ${words.symbol} so far; the ${words.symbol} left the balance for ` +
+        `the swap service's handle ${shortHandle} and is not back yet; reason ${why}; ${reading}; ${words.evidence}. ` +
+        (zero ? 'It settles when a refund shows in the balance.' : `That refund goes to ${words.refundTarget}.`),
+      txids,
+      evidence,
+    };
+  }
   return {
     ok: false,
+    reason: 'stuck_unknown',
     detail:
-      `1click reported FAILED and refunded ${amount ?? '0'} ${words.symbol} so far; the input is held by 1Click ` +
-      `under handle ${shortHandle}; reason ${reason}; ${words.evidence}. ` +
-      (zero
-        ? 'Nothing is back in your balance until a refund shows there.'
-        : `Only that refund is back at ${words.refundTarget}; read it before signing another.`),
+      `1click reported FAILED and refunded ${amount ?? '0'} ${words.symbol} so far; whether the ${words.symbol} left the balance ` +
+      `is not confirmed, because ${reading} and 1click reports no transfer hash; reason ${why}; ${words.evidence}. ` +
+      'The app keeps checking; read the balance before trying again.',
     txids,
     evidence,
   };
@@ -124,10 +190,11 @@ export function describeIncompleteDeposit(status: OneClickStatus, handle: string
   const seen = status.depositedAmount !== undefined ? `${status.depositedAmount} ${words.symbol}` : `less than the quoted amount of ${words.symbol}`;
   return {
     ok: false,
+    reason: 'venue_failed_refund_pending',
     detail:
       `1click reported INCOMPLETE_DEPOSIT: it saw ${seen} arrive against a quoted ${words.quotedIn} ${words.symbol}, ` +
       `so the order does not run; 1Click's documented behaviour is to refund a short deposit to ${words.refundTarget} at the ` +
-      `quote deadline, and that refund is unconfirmed until it shows there; ${words.evidence}. Do not send more to handle ${shortHandle}.`,
+      `quote deadline, and that refund is unconfirmed until it shows there; ${words.evidence}. Nothing more is sent to handle ${shortHandle}.`,
     txids: uniqueTxids(words.primaryTxid, status),
     evidence: { handle: shortHandle },
   };
@@ -140,6 +207,7 @@ export function describeUnconfirmedSubmit(args: { error: string; handle: string;
   const handle = oneLine(args.handle, 80);
   return {
     ok: false,
+    reason: 'stuck_unknown',
     detail:
       `the intent was signed and its submission is unconfirmed (${oneLine(args.error, 160)}); ` +
       `handle ${handle}, deadline ${oneLine(args.deadline, 40)}. The intent may still be accepted until that deadline. ` +

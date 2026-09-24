@@ -16,7 +16,7 @@ import type { AddressInfo } from 'node:net';
 import type { Proposal } from '../../src/types.ts';
 import { MAX_AGENTS, RESERVED_SEATS, createAgents } from '../../src/agents.ts';
 import { MAX_ARG_CHARS, MAX_LOGGED_CHARS, handleMcp } from '../../src/http/mcp.ts';
-import { ADDRESS_MAX, ID_MAX, NOTE_MAX, SENTENCE_MAX, SYMBOL_MAX, WHERE_MAX } from '../../src/http/propose.ts';
+import { ADDRESS_MAX, ID_MAX, NOTE_MAX, SENTENCE_MAX, SWAP_SYMBOL_MAX, SYMBOL_MAX, WHERE_MAX } from '../../src/http/propose.ts';
 import { capStrings, oversizeString } from '../../src/http/respond.ts';
 import type { Ctx } from '../../src/http/context.ts';
 import { makeHttp, serviceThatAnswers } from './helpers/http.ts';
@@ -58,8 +58,8 @@ test('every free-text field on every propose kind has its own cap', async () => 
     ['send', { to: 'a'.repeat(ADDRESS_MAX + 1), symbol: 'USDC', amount: 1, where: 'eth', confirmed: true }, /^to is 129 characters, over the 128/],
     ['send', { to: FRIEND, symbol: 'USDC', amount: 1, where: 'e'.repeat(WHERE_MAX + 1), confirmed: true }, /^where is 33 characters, over the 32/],
     ['send', { to: FRIEND, symbol: 'USDC', amount: 1, where: 'eth', confirmed: true, note: 'n'.repeat(NOTE_MAX + 1) }, /^note is 281 characters, over the 280/],
-    ['swap', { chain: 'eth', fromSymbol: 'F'.repeat(SYMBOL_MAX + 1), toSymbol: 'USDC', amountIn: 1, minAmountOut: 0.5 }, /^fromSymbol is 17 characters/],
-    ['swap', { chain: 'eth', fromSymbol: 'USDC', toSymbol: 'T'.repeat(SYMBOL_MAX + 1), amountIn: 1, minAmountOut: 0.5 }, /^toSymbol is 17 characters/],
+    ['swap', { chain: 'eth', fromSymbol: 'F'.repeat(SWAP_SYMBOL_MAX + 1), toSymbol: 'USDC', amountIn: 1, minAmountOut: 0.5 }, /^fromSymbol is 129 characters/],
+    ['swap', { chain: 'eth', fromSymbol: 'USDC', toSymbol: 'T'.repeat(SWAP_SYMBOL_MAX + 1), amountIn: 1, minAmountOut: 0.5 }, /^toSymbol is 129 characters/],
     ['hl_deposit', { symbol: 'S'.repeat(SYMBOL_MAX + 1), amount: 10 }, /^symbol is 17 characters/],
     ['trade', { planId: 'p'.repeat(ID_MAX + 1) }, /^planId is 65 characters/],
     ['trade_change', { id: 'i'.repeat(ID_MAX + 1), cancel: true }, /^id is 65 characters/],

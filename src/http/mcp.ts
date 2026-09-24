@@ -24,6 +24,7 @@ import { agentReads } from './read/agents.ts';
 import { chainReads } from './read/chain.ts';
 import { chartReads } from './read/chart.ts';
 import { marketReads } from './read/market.ts';
+import { swapReads } from './read/swap.ts';
 import { tradeReads } from './read/trade.ts';
 import { walletReads } from './read/wallet.ts';
 import { handlePropose } from './propose.ts';
@@ -43,6 +44,7 @@ const READS: ReadTable = {
   ...agentReads,
   ...tradeReads,
   ...chainReads,
+  ...swapReads,
 };
 
 // The table's own keys, for the test that holds READ_TOOLS and this in step. A tool listed in

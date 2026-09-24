@@ -297,7 +297,7 @@ test('a demo deposit under the floor is refused before anything, with the floor 
   const view = h.svc.view(filed);
   assert.equal(view.stage, 'refused');
   assert.match(filed.simulation?.summary ?? '', /below the 7 USDC floor/);
-  assert.match(filed.simulation?.summary ?? '', /under 5 USDC, it is lost/);
+  assert.match(filed.simulation?.summary ?? '', /Deposits start at 7 USDC because the routing fee is nearly flat/);
   assert.equal(filed.result, undefined, 'nothing ran');
   resetDemoBalances();
 });

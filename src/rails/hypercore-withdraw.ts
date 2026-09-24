@@ -53,7 +53,7 @@
 
 import { formatUnits, isAddress } from 'viem';
 import type { HlWithdrawDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
-import { ONECLICK_TERMINAL, baseUnits, oneClickClient, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
+import { baseUnits, oneClickClient, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickStatus, OneClickToken, QuoteEcho } from '../intents.ts';
 import { deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, settledEvidence, tell, uniqueTxids } from './oneclick-words.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
@@ -67,6 +67,7 @@ import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS } from './hypercore-de
 import { INTENTS_SETTLE, watchRise } from '../ledger/settle.ts';
 import type { PocketRead, RiseSchedule } from '../ledger/settle.ts';
 import { appFeeBpsOf } from './intents-spend.ts';
+import { FIRST_POLL_MS, watchOneClick } from './watch.ts';
 import { TYPICAL_SEC } from '../proposals/view.ts';
 
 // ---------- the two ends ----------
@@ -508,24 +509,10 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
   }
 
-  // Every poll tells the executor which word 1Click used, so the stage on the card is the
-  // stage the vendor would confirm rather than a word only this app uses.
-  async function watchStatus(depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
-    const deadline = now() + pollTimeoutMs;
-    const maxPolls = Math.max(1, Math.ceil(pollTimeoutMs / pollIntervalMs));
-    let last: OneClickStatus = { found: false, status: 'PENDING_DEPOSIT', reported: 'not polled', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [] };
-    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
-      try {
-        last = await client.status(depositAddress);
-        tell(hooks, { providerStage: last.status });
-        if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return last;
-      } catch (err) {
-        last = { ...last, reported: `status check failed: ${oneLine(errText(err), 80)}` };
-      }
-      if (now() >= deadline) break;
-      await sleep(pollIntervalMs);
-    }
-    return last;
+  // The one watch every rail shares (./watch.ts): from a quarter second, doubling to this
+  // rail's interval. Every read tells the executor 1Click's own word for the stage.
+  function watchStatus(depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
+    return watchOneClick({ firstMs: FIRST_POLL_MS, everyMs: pollIntervalMs, timeoutMs: pollTimeoutMs, sleep, now }, (handle) => client.status(handle), depositAddress, hooks);
   }
 
   // The venue's own record of the send, keyed on the nonce the action signed with. A `send`
@@ -755,6 +742,8 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
         refundTarget: `the venue account ${draft.from} (the spot side)`,
         evidence,
         primaryTxid: hash,
+        // The send off the venue account is this rail's own, and it has the hash for it.
+        inputSent: true,
       });
       return { ...refund, evidence: { ...refund.evidence, nonce: String(nonce), quote: signedQuote } };
     }
