@@ -218,6 +218,19 @@ test('the coin bought: with none held, four are asked at once and the one that g
   assert.deepEqual([...v.asked].sort(), [ETH_ARB, ETH_BASE, ETH_ETH, ETH_NEAR].sort(), 'near, then Ethereum, Base and Arbitrum; op is fifth and never asked');
 });
 
+test('bridged ETH on near loses to ETH from Ethereum when that quotes more, in swap_quote and propose_swap alike, and wins when it quotes more', async () => {
+  const omftAhead = { [ETH_NEAR]: 0.0015734768, [ETH_ETH]: 0.0015736358 }; // 1 NEAR, live 2026-09-23
+  const quoted = await makeCtx({ intents: wnearHeld(), deps: { rails: wide(pricingRail(omftAhead, null).rail) } }).svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'ETH', amountIn: '0.5' });
+  assert.equal(quoted.to?.assetId, ETH_ETH);
+  const proposed = await makeCtx({ intents: wnearHeld(), deps: { rails: wide(pricingRail(omftAhead, null).rail) } }).svc.proposeSwap({ chain: 'near', fromSymbol: 'NEAR', toSymbol: 'ETH', amountIn: '0.5', minAmountOut: 0.0007 });
+  assert.deepEqual([(proposed.draft as SwapDraft).toChain, (proposed.draft as SwapDraft).toSymbol], ['eth', 'ETH']);
+
+  // By the quote, not by a network: the bridged one wins the day it pays more.
+  const bridgedAhead = { [ETH_NEAR]: 0.0015737, [ETH_ETH]: 0.0015736358 };
+  const flipped = await makeCtx({ intents: wnearHeld(), deps: { rails: wide(pricingRail(bridgedAhead, null).rail) } }).svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'ETH', amountIn: '0.5' });
+  assert.equal(flipped.to?.assetId, ETH_NEAR);
+});
+
 test('the coin bought: when no price comes back, the one on near; when there is none on near, the question', async () => {
   const silent = pricingRail({}, null);
   const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(silent.rail) } });
