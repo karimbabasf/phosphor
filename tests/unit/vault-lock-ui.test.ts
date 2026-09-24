@@ -693,7 +693,7 @@ test('a line from the macOS shell shows after "not answering", and goes after te
   const backup = 'Recovery phrase not backed up.';
   assert.equal(text.textContent, backup);
 
-  const restarted = 'Phosphor stopped and started again. Anything that was moving then shows on Activity as unknown, so check it before you act again.';
+  const restarted = "Phosphor stopped and started again. Anything that was moving then shows as Not confirmed in Pro's Recent moves, so check it before you act again.";
   assert.equal(typeof world.sandbox.__phosphorShellNotice, 'function', 'the shell has no way into the notice');
   world.sandbox.__phosphorShellNotice(restarted);
   assert.equal(notice.hidden, false);
@@ -706,7 +706,7 @@ test('a line from the macOS shell shows after "not answering", and goes after te
   assert.equal(act.hidden, false);
 
   // A click on the line puts it away early; a click on the backup line does nothing to it.
-  world.sandbox.__phosphorShellNotice('The connection line for your agent is on the clipboard. Run it in the folder the agent should work from.');
+  world.sandbox.__phosphorShellNotice('The connection line for your agent is on the clipboard.');
   assert.equal(icon.getAttribute('href'), '#i-copy');
   notice.click();
   assert.equal(text.textContent, backup);
