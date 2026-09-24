@@ -100,24 +100,12 @@ body[data-view="basic"] .notice {
   border-bottom: 1px solid var(--line);
 }
 
-/* A coin: its own mark in its own colour over a wash of that colour
-   (marks.js). NEAR wears a neutral light so the green stays the app's. */
-.bal-coin {
-  position: relative;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  color: var(--coin, var(--text-2));
-  background: color-mix(in srgb, var(--coin, var(--text-3)) 14%, var(--bg-1));
-  border: 1px solid color-mix(in srgb, var(--coin, var(--text-3)) 28%, transparent);
-}
-
-.bal-coin > svg {
-  width: 21px;
-  height: 21px;
+/* A coin: its own logo as its brand draws it (marks.js logo()), a 27 px mark
+   in a 36 px box. The box's clear edge is pulled in on both sides, so the
+   mark itself stands on the row's left edge and 14 px from the words. */
+.bal-row > .bal-coin {
+  --logo: 36px;
+  margin: 0 calc(var(--logo) / -8);
 }
 
 .bal-who {
@@ -205,8 +193,8 @@ body[data-view="basic"] .notice {
 /* While the first read is out: the shape of three rows, never "nothing". */
 .bal-row-skel .bal-coin-skel {
   flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
+  width: 27px;
+  height: 27px;
   border-radius: 50%;
 }
 

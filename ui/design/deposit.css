@@ -5,8 +5,9 @@
    The one coloured thing in this app that is not a state is a brand mark, and
    here the tiles borrow that licence for a moment: colourless at rest, so the
    five read as one quiet choice, and the real network colour under the
-   pointer, so the one about to be picked is unmistakable. The colour never
-   lands on a number. */
+   pointer, so the one about to be picked is unmistakable. The mark on a tile
+   is the network's own logo in its own colours at all times, as every logo in
+   the window is (Karim, 2026-09-23). The colour never lands on a number. */
 
 .netpick {
   display: flex;
@@ -83,11 +84,7 @@
 }
 
 .net-tile .logo {
-  filter: grayscale(1);
-  opacity: 0.72;
-  transition: filter 220ms var(--ease-out),
-              opacity 220ms var(--ease-out),
-              transform 300ms var(--ease-out);
+  transition: transform 300ms var(--ease-out);
 }
 
 .net-tile-name {
@@ -111,8 +108,6 @@
 .net-tile:hover .logo,
 .net-tile:focus-visible .logo,
 .net-tile[aria-current="true"] .logo {
-  filter: none;
-  opacity: 1;
   transform: translateY(-1px) scale(1.06);
 }
 
@@ -132,24 +127,10 @@
   opacity: 0.45;
 }
 
-/* Base's mark is a square of pure blue, which grayscale turns to near black:
-   lifted at rest so it reads as a square like the others read as marks. */
-.net-tile .logo[data-token="BASE"],
-.net-row .logo[data-token="BASE"] {
-  filter: grayscale(1) brightness(3.2);
-}
-
-.net-tile:hover .logo[data-token="BASE"],
-.net-tile:focus-visible .logo[data-token="BASE"],
-.net-tile[aria-current="true"] .logo[data-token="BASE"],
-.net-row:hover .logo[data-token="BASE"],
-.net-row:focus-visible .logo[data-token="BASE"] {
-  filter: none;
-}
-
 /* The search over every network, and the list it opens: the same list a
    token gets, one row per network with what it credits at the right. The
-   rows keep the tiles' rule, colourless until pointed at. */
+   rows keep the tiles' rule: the name takes the network colour when pointed
+   at. */
 .netpick-netlist {
   max-height: min(48vh, 440px);
 }
@@ -170,13 +151,6 @@
 }
 
 .net-row:first-child { border-top: 0; }
-
-.net-row .logo {
-  filter: grayscale(1);
-  opacity: 0.8;
-  transition: filter var(--dur-press) var(--ease-out),
-              opacity var(--dur-press) var(--ease-out);
-}
 
 .net-row-main {
   display: flex;
@@ -207,7 +181,6 @@
 
 @media (hover: hover) and (pointer: fine) {
   .net-row:hover { background: var(--bg-1); }
-  .net-row:hover .logo { filter: none; opacity: 1; }
   .net-row:hover .net-row-name { color: var(--net); }
 }
 
@@ -780,7 +753,6 @@ dialog.deposit-dialog {
   .net-tile,
   .net-tile .logo,
   .net-row,
-  .net-row .logo,
   .netpick-back,
   .ack-row,
   .ack-box,

@@ -14,6 +14,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createContext, runInContext } from 'node:vm';
 
+import { RECEIVE_NETWORKS, SPEND_NETWORKS } from '../../src/rails/intents-address.ts';
+
 const DIR = fileURLToPath(new URL('../../ui/logos/', import.meta.url));
 const MARKS = readFileSync(new URL('../../ui/design/marks.js', import.meta.url), 'utf8');
 
@@ -35,6 +37,57 @@ test('every listed ticker has its file in ui/logos', () => {
 test('every file in ui/logos is listed, so none ships without being drawn', () => {
   const names = new Set(listed().map((ticker) => `${ticker.toLowerCase()}.svg`));
   assert.deepEqual(files.filter((name) => !names.has(name)), []);
+});
+
+// Karim, 2026-09-23: WBTC drew a generic target in the balances panel. The wrapped bitcoins the
+// app names to people (src/proposals/view.ts: "WBTC, nBTC or cbBTC") each draw a real logo.
+test('the wrapped bitcoins draw a real logo, never the monogram', () => {
+  const have = new Set(listed());
+  assert.deepEqual(['WBTC', 'CBBTC', 'NBTC', 'HEMIBTC', 'XBTC'].filter((ticker) => !have.has(ticker)), []);
+});
+
+// A deposit tile draws the chain's mark (src/rails/intents-address.ts `mark`), so every network
+// the app offers money in or out on has its logo here.
+test('every network tile has its logo', () => {
+  const have = new Set(listed());
+  const marks = [...RECEIVE_NETWORKS, ...SPEND_NETWORKS].map((network) => network.mark.toUpperCase());
+  assert.deepEqual([...new Set(marks)].filter((mark) => !have.has(mark)), []);
+});
+
+// A wrapped or bridged ticker wears the file of the coin it carries (LICENSE.md), byte for byte,
+// so a fix to the coin's file cannot leave its copies behind.
+const COPIES: Record<string, string[]> = {
+  'eth.svg': ['weth.svg'],
+  'btc.svg': ['cbbtc.svg', 'hemibtc.svg', 'xbtc.svg', 'nbtc.svg', 'btc(omni).svg'],
+  'usdt.svg': ['usdt0.svg'],
+  'usdc.svg': ['usdc.e.svg', 'usdcx.svg'],
+  'dai.svg': ['xdai.svg'],
+  'xrp.svg': ['fxrp.svg'],
+};
+
+test('a wrapped ticker\'s file is its coin\'s file, byte for byte', () => {
+  const drifted: string[] = [];
+  for (const [coin, copies] of Object.entries(COPIES)) {
+    const original = readFileSync(path.join(DIR, coin));
+    for (const copy of copies) if (!readFileSync(path.join(DIR, copy)).equals(original)) drifted.push(copy);
+  }
+  assert.deepEqual(drifted, []);
+});
+
+// Every mark sits in the middle three quarters of its box, the way the web3icons files draw it,
+// so a row of logos reads at one size. A file drawn edge to edge (a disc from another set, a
+// square tile cut to a disc) widens its viewBox by a sixth of the drawing on each side.
+test('every file keeps the clear edge a logo row is sized by', () => {
+  const off: string[] = [];
+  for (const name of files) {
+    const box = /viewBox="([^"]+)"/.exec(readFileSync(path.join(DIR, name), 'utf8'))?.[1] ?? '';
+    const [x, y, w, h] = box.split(/[\s,]+/).map(Number);
+    if (box === '0 0 24 24' || name === 'hype.svg') continue;
+    const inner = (w as number) * 0.75;
+    const edge = ((w as number) - inner) / 2;
+    if (w !== h || Math.abs((x as number) + edge) > 0.01 || Math.abs((y as number) + edge) > 0.01) off.push(`${name}: ${box}`);
+  }
+  assert.deepEqual(off, []);
 });
 
 // A reference that starts with # stays inside the file (a gradient, a clip path, a reused
