@@ -1,34 +1,29 @@
-/* Pro's header: your money, then your trading account, over the positions.
+/* Pro: the statement.
 
-   Pro is your money and your positions: this header over the positions,
-   orders and the last day's trades, stacked in one scroll (ui/screens/trade.js
-   builds that deck into #view-trade; ui/design/pro.css decides which parts
-   each view shows). Trade has no header of its own: the market leads there,
-   and the trading account sits at its deck's tab row.
+   Pro is the NEAR money in detail (Karim's pick, 2026-09-23, the "statement"
+   mockup): the coins' total with a small ring of how it splits and the two
+   things a person does with it, Swap and Add money; the trading account in one
+   line that leads to Trade, where everything about Hyperliquid lives; the
+   coins as a ledger, each with its price, the line that price drew over the
+   last 24 hours, the change, the amount and the value; and under it the
+   Policies (three soft dials) beside the recent moves.
 
-   Your money is the balance total with what it is, from the same server view
-   the Basic panel draws (state.basic), and the coins it holds in brief. The
-   trading account is what it holds, what is free, what the open plans have in
-   them and the most they can lose if every stop fills. Those come off the trade
-   payload, which trade.js reads on every `trade` frame of the stream and hands
-   over as a `phosphor:trade` event, so nothing here polls. */
+   Everything comes off what the backend already keeps: the wallet's NEAR
+   Intents rows and the Hyperliquid row (state.wallet), the policy and the two
+   rolling 24 hour totals (state.policy, state.dailyLimit, state.autoLimit),
+   the moves still under way (state.proposals), the ones that ended
+   (/api/receipts) and 25 hourly candles per coin (/api/candles). A coin with
+   no candles shows no line and no change, never a made-up one, and a figure
+   the app does not have is left out rather than written as zero. */
 (function () {
   'use strict';
 
   var dom = window.PhosphorDom;
   var store = window.PhosphorState;
+  var net = window.PhosphorNet;
 
-  /* The sentence the one action on an empty trading account sends: the
-     assistant proposes the move, and the card in the thread asks for the
-     click. It never names an amount for the person. */
-  var FUND_ASK = 'Help me add money to my trading account.';
-
-  /* How many coins the header names before it counts the rest. */
-  var COINS_SHOWN = 3;
-
-  /* The ring: Basic's allocation ring at Pro's size, the world's one
-     signature, so the two modes show the same money the same way. The
-     geometry is Basic's scaled to a 120 unit box. */
+  /* The ring: Basic's allocation ring at the statement's size. The geometry is
+     Basic's scaled to a 120 unit box. */
   var SVG_NS = 'http://www.w3.org/2000/svg';
   var R = 52;
   var C = 2 * Math.PI * R;
@@ -43,179 +38,950 @@
   var NEUTRAL = '#e6ddd2';
   var TINTS = { USDC: '#3b8cff', 'USDC.E': '#3b8cff', USDCX: '#3b8cff', ETH: '#b0b4ff', WETH: '#b0b4ff', SOL: '#a86dff' };
 
+  /* The coins that hold a dollar. Their line is drawn when the candles come,
+     like any other coin's; the day across the coins counts them as holding
+     still when they do not. */
+  var STABLES = { USDC: true, 'USDC.E': true, USDCX: true, USDT: true, DAI: true, USDE: true, PYUSD: true, FDUSD: true, USDS: true };
+
+  /* A wrapped coin is priced as the coin it wraps. */
+  var UNDER = { WBTC: 'BTC', CBBTC: 'BTC', WETH: 'ETH', WNEAR: 'NEAR', WSOL: 'SOL' };
+
+  /* How many legend entries the ring carries before it folds the rest into
+     one, and how many moves the panel lists. */
+  var LEGEND_SHOWN = 4;
+  var MOVES_SHOWN = 4;
+
+  /* A coin's day is read when Pro comes up, and again on the first frame that
+     finds it five minutes old while Pro stays up: a line a person reads at a
+     glance, not a ticker, and never on a timer of its own. */
+  var LINES_MS = 5 * 60 * 1000;
+  var MOVES_MS = 30 * 1000;
+
+  /* The words a move under way wears, by kind: the card's own
+     (ui/screens/cards.js), so the list and the thread never say it two ways. */
+  var WORKING_WORDS = { swap: 'Swapping', intents_send: 'Sending', intents_pay: 'Paying out', hl_deposit: 'Funding trading', hl_withdraw: 'Bringing it back' };
+
   var refs = {};
   var mounted = false;
   var ringDrawn = false;
-
-  /* The last trade payload trade.js read, or null before the trade bundle has
-     loaded or its first read has landed. */
-  var trade = null;
+  var lines = {};
+  var receipts = [];
+  var movesAt = 0;
+  var flowSteps = null;
 
   function boot() {
     var host = document.getElementById('view-pro');
     if (!host) return;
     build(host);
     mounted = true;
-    store.subscribe(renderBalance);
-
-    window.addEventListener('phosphor:trade', function (event) {
-      trade = event && event.detail ? event.detail : null;
-      renderTrading();
-    });
-
-    /* The chart and the deck are a late load (ui/core/lazy.js), fetched the
-       first time Pro or Trade is on screen. */
+    store.subscribe(render);
     window.addEventListener('phosphor:view', function (event) {
       var view = event && event.detail ? event.detail.view : null;
-      if (view === 'pro' || view === 'trade') loadTrading();
+      if (view === 'pro') onScreen();
     });
-
-    renderBalance();
-    renderTrading();
+    if (window.PhosphorShell && typeof window.PhosphorShell.view === 'function' && window.PhosphorShell.view() === 'pro') onScreen();
+    render();
   }
 
-  function loadTrading() {
-    if (window.PhosphorLazy && typeof window.PhosphorLazy.load === 'function') window.PhosphorLazy.load('trade');
+  /* Pro is up: the ended moves are read if they are old, and the render reads
+     any coin's day that is missing or five minutes old (ensureLines). The
+     state frames that keep coming while it is up (a heartbeat every 15 s at
+     the least) are what bring an old line back to be read. */
+  function onScreen() {
+    if (Date.now() - movesAt > MOVES_MS) loadMoves();
+    render();
   }
+
+  function isUp() {
+    var shell = window.PhosphorShell;
+    return !!(shell && typeof shell.view === 'function' && shell.view() === 'pro');
+  }
+
+  /* ---------- the build ---------- */
 
   function build(host) {
-    var head = dom.el('section', 'pro-sum');
-    head.setAttribute('aria-label', 'Your money');
+    var root = dom.el('section', 'stmt');
+    root.setAttribute('aria-label', 'Your money');
 
-    /* The balance: the ring of what it holds, the one lead figure on Pro
-       with the server's words for it, and the coins in brief under it, each
-       on a tile washed in its own colour, the ring's colour. */
-    var money = dom.el('div', 'pro-sum-money');
-    money.dataset.surface = 'holdings';
-    var ring = ringSvg();
-    if (ring) {
-      /* On the disc: the largest coin's share, so the ring reads as where the
-         money sits and not as something loading. */
-      var box = dom.el('div', 'pro-ring-box');
-      box.appendChild(ring.svg);
-      var share = dom.el('div', 'pro-ring-share');
-      share.appendChild(dom.el('span', 'pro-ring-pct num'));
-      share.appendChild(dom.el('span', 'pro-ring-coin'));
-      box.appendChild(share);
-      ring.share = share;
-      money.appendChild(box);
-    }
-    var main = dom.el('div', 'pro-sum-main');
-    money.appendChild(main);
-    var lead = dom.el('div', 'pro-sum-lead');
-    var total = dom.el('p', 'pro-sum-total num tick');
+    /* The hero: the total with its day, the ring and its legend, the actions. */
+    var hero = dom.el('header', 'stmt-hero');
+    var lead = dom.el('div', 'stmt-lead');
+    var total = dom.el('p', 'stmt-total num tick');
     total.hidden = true;
-    var skel = dom.el('span', 'skel pro-sum-skel');
+    var skel = dom.el('span', 'skel stmt-total-skel');
     skel.setAttribute('aria-hidden', 'true');
-    var caption = dom.el('p', 'pro-sum-caption');
+    var sub = dom.el('p', 'stmt-sub');
+    var caption = dom.el('span', 'stmt-caption');
+    var today = dom.el('span', 'stmt-today num');
+    today.hidden = true;
+    sub.appendChild(caption);
+    sub.appendChild(today);
     lead.appendChild(total);
     lead.appendChild(skel);
-    lead.appendChild(caption);
-    main.appendChild(lead);
-    var coins = dom.el('ul', 'pro-coins');
-    coins.setAttribute('aria-label', 'What your balance holds');
-    coins.hidden = true;
-    main.appendChild(coins);
-    head.appendChild(money);
+    lead.appendChild(sub);
+    hero.appendChild(lead);
 
-    /* The trading account: one card, its money as the lead figure and what
-       is free, in trades and at most at risk quiet beside it, or one
-       sentence and the way to fill it when there is nothing on it. */
-    var account = dom.el('div', 'pro-sum-account');
-    account.dataset.surface = 'account';
-    account.setAttribute('aria-label', 'Your trading account');
-    account.appendChild(dom.el('h3', 'pro-sum-head', 'Trading account'));
-    var wait = dom.el('span', 'skel pro-sum-wait');
-    wait.setAttribute('aria-hidden', 'true');
-    account.appendChild(wait);
-    var figures = dom.el('dl', 'pro-sum-figures');
-    var note = dom.el('p', 'pro-sum-note');
+    var mix = dom.el('div', 'stmt-mix');
+    var ring = ringSvg();
+    if (ring) mix.appendChild(ring.svg);
+    var legend = dom.el('ul', 'stmt-legend');
+    legend.setAttribute('aria-label', 'How your coins split');
+    mix.appendChild(legend);
+    hero.appendChild(mix);
+
+    var actions = dom.el('div', 'stmt-actions');
+    var swap = button('Swap', 'swap');
+    var add = button('Add money', 'deposit');
+    actions.appendChild(swap);
+    actions.appendChild(add);
+    hero.appendChild(actions);
+    var note = dom.el('p', 'stmt-note');
     note.setAttribute('role', 'status');
     note.hidden = true;
-    var fund = dom.el('button', 'btn btn-sm pro-sum-fund');
-    fund.type = 'button';
-    fund.appendChild(dom.el('span', 'btn-label', 'Add trading money'));
-    fund.hidden = true;
-    account.appendChild(figures);
-    account.appendChild(note);
-    account.appendChild(fund);
-    head.appendChild(account);
+    hero.appendChild(note);
+    root.appendChild(hero);
 
-    host.appendChild(head);
+    /* The trading account, one line, the way to Trade. */
+    var trade = dom.el('button', 'stmt-trade');
+    trade.type = 'button';
+    var marks = window.PhosphorMarks;
+    if (marks && typeof marks.logo === 'function') trade.appendChild(marks.logo('HYPE', 28));
+    var tradeMain = dom.el('span', 'stmt-trade-main');
+    tradeMain.appendChild(dom.el('b', '', 'Trading account'));
+    var tradeFigure = dom.el('span', 'stmt-trade-figure num');
+    tradeMain.appendChild(tradeFigure);
+    trade.appendChild(tradeMain);
+    var go = dom.el('span', 'stmt-trade-go');
+    go.appendChild(dom.el('span', '', 'Open Trade'));
+    var chevron = glyph('chevron-right');
+    if (chevron) go.appendChild(chevron);
+    trade.appendChild(go);
+    trade.hidden = true;
+    root.appendChild(trade);
 
-    refs = {
-      host: host,
-      ring: ring,
-      total: total,
-      skel: skel,
-      caption: caption,
-      coins: coins,
-      account: account,
-      wait: wait,
-      figures: figures,
-      note: note,
-      fund: fund
-    };
+    /* The ledger. Where the price's figure steps out and its column is the
+       line alone, the head says so in fewer words (pro.css). */
+    var ledger = dom.el('section', 'stmt-panel stmt-ledger');
+    ledger.setAttribute('aria-label', 'Your coins');
+    var head = dom.el('div', 'l-row l-head');
+    head.setAttribute('aria-hidden', 'true');
+    head.appendChild(dom.el('span', '', 'Coin'));
+    var priceHead = dom.el('span', 'l-head-price');
+    priceHead.appendChild(dom.el('span', 'l-head-long', 'Price, last 24 hours'));
+    priceHead.appendChild(dom.el('span', 'l-head-short', 'Last 24 hours'));
+    head.appendChild(priceHead);
+    ['24h', 'Amount', 'Value'].forEach(function (word) {
+      head.appendChild(dom.el('span', '', word));
+    });
+    ledger.appendChild(head);
+    var rows = dom.el('ul', 'l-rows');
+    for (var i = 0; i < 3; i += 1) rows.appendChild(skeletonRow());
+    ledger.appendChild(rows);
+    var empty = dom.el('p', 'stmt-empty');
+    empty.hidden = true;
+    ledger.appendChild(empty);
+    root.appendChild(ledger);
 
-    dom.on(fund, 'click', askToFund);
+    /* The policies beside the recent moves. */
+    var duo = dom.el('div', 'stmt-duo');
+    duo.appendChild(buildPolicies());
+    var moves = dom.el('section', 'stmt-panel stmt-moves');
+    moves.setAttribute('aria-label', 'Recent moves');
+    var movesHead = dom.el('header', 'stmt-panel-head');
+    movesHead.appendChild(dom.el('h3', '', 'Recent moves'));
+    moves.appendChild(movesHead);
+    var movesList = dom.el('ul', 'moves');
+    moves.appendChild(movesList);
+    var movesEmpty = dom.el('p', 'stmt-empty', 'Nothing has moved yet.');
+    movesEmpty.hidden = true;
+    moves.appendChild(movesEmpty);
+    duo.appendChild(moves);
+    root.appendChild(duo);
+
+    /* Add money runs its steps here, in place of the ledger and the panels
+       under it, the way it runs in Basic's slab. */
+    var flow = dom.el('section', 'stmt-panel stmt-flow');
+    flow.hidden = true;
+    var flowHead = dom.el('header', 'stmt-panel-head');
+    var flowTitle = dom.el('h3', '', 'Add money');
+    flowTitle.setAttribute('tabindex', '-1');
+    var flowClose = dom.el('button', 'btn btn-quiet btn-sm');
+    flowClose.type = 'button';
+    flowClose.appendChild(dom.el('span', 'btn-label', 'Close'));
+    flowHead.appendChild(flowTitle);
+    flowHead.appendChild(flowClose);
+    var flowBody = dom.el('div', 'stmt-flow-body');
+    flow.appendChild(flowHead);
+    flow.appendChild(flowBody);
+    root.appendChild(flow);
+
+    host.appendChild(root);
+
+    refs.host = host;
+    refs.root = root;
+    refs.total = total;
+    refs.skel = skel;
+    refs.caption = caption;
+    refs.today = today;
+    refs.ring = ring;
+    refs.legend = legend;
+    refs.swap = swap;
+    refs.add = add;
+    refs.note = note;
+    refs.trade = trade;
+    refs.tradeFigure = tradeFigure;
+    refs.ledger = ledger;
+    refs.rows = rows;
+    refs.empty = empty;
+    refs.duo = duo;
+    refs.moves = movesList;
+    refs.movesEmpty = movesEmpty;
+    refs.flow = flow;
+    refs.flowTitle = flowTitle;
+    refs.flowBody = flowBody;
+    refs.flowClose = flowClose;
+
+    dom.on(swap, 'click', askToSwap);
+    dom.on(add, 'click', openFlow);
+    dom.on(flowClose, 'click', closeFlow);
+    dom.on(trade, 'click', function () {
+      var shell = window.PhosphorShell;
+      if (shell && typeof shell.setView === 'function') shell.setView('trade', { fromClick: true });
+    });
+    dom.on(movesList, 'click', onMovePress);
   }
 
-  /* ---------- the balance ---------- */
+  function button(label, icon) {
+    var node = dom.el('button', 'btn stmt-act');
+    node.type = 'button';
+    var g = glyph(icon);
+    if (g) node.appendChild(g);
+    node.appendChild(dom.el('span', 'btn-label', label));
+    return node;
+  }
 
-  /* The figure and the words under it are the server's, the same two the
-     Basic panel prints, so the two modes never disagree about the total. */
-  function renderBalance() {
+  /* A glyph from the icon family, or the bar's own freeze symbol. Nothing where
+     there is no svg to build in (the unit harness). */
+  function glyph(name, className) {
+    if (name === 'freeze') {
+      if (typeof document.createElementNS !== 'function') return null;
+      var svg = document.createElementNS(SVG_NS, 'svg');
+      svg.setAttribute('class', 'icon' + (className ? ' ' + className : ''));
+      svg.setAttribute('aria-hidden', 'true');
+      svg.setAttribute('focusable', 'false');
+      var use = document.createElementNS(SVG_NS, 'use');
+      use.setAttribute('href', '#i-freeze');
+      svg.appendChild(use);
+      return svg;
+    }
+    var icons = window.PhosphorIcons;
+    return icons && typeof icons.svg === 'function' ? icons.svg(name, className) : null;
+  }
+
+  function skeletonRow() {
+    var li = dom.el('li', 'l-row l-skel');
+    li.setAttribute('aria-hidden', 'true');
+    li.appendChild(dom.el('span', 'skel l-skel-coin'));
+    li.appendChild(dom.el('span', 'skel l-skel-line'));
+    return li;
+  }
+
+  /* ---------- the render ---------- */
+
+  function render() {
     if (!mounted || !store.loaded()) return;
-    var basic = (store.get() || {}).basic || {};
-    if (refs.skel.parentNode) refs.skel.parentNode.removeChild(refs.skel);
-    dom.setNumber(refs.total, basic.totalLine || '');
-    dom.setHidden(refs.total, !basic.totalLine);
-    dom.setText(refs.caption, basic.caption || '');
-    dom.setAttr(refs.caption, 'data-alone', basic.totalLine ? null : 'true');
-    var holdings = Array.isArray(basic.holdings) ? basic.holdings : [];
-    renderCoins(holdings);
-    paintRing(holdings);
+    var state = store.get() || {};
+    var coins = coinsOf(state.wallet);
+    if (coins && isUp()) ensureLines(coins);
+    renderHero(state, coins);
+    renderTrade(state.wallet);
+    renderLedger(state, coins);
+    renderPolicies(state);
+    renderMoves(state);
   }
 
-  /* The coins in brief: the largest first, each with its logo and what it is
-     worth, and a count of the rest. The full list is Basic's. Where the
-     header is narrow the third coin gives way to the count (pro.css), so the
-     count carries both numbers and the sheet shows the one that is true. */
-  function renderCoins(holdings) {
-    var shown = holdings.slice(0, COINS_SHOWN);
-    var rest = holdings.length - shown.length;
-    var restNarrow = holdings.length - Math.min(holdings.length, COINS_SHOWN - 1);
-    var items = shown.map(function (h, i) { return { key: String(h.symbol), h: h, third: i === COINS_SHOWN - 1 }; });
-    if (restNarrow > 0) items.push({ key: '+rest', rest: rest, restNarrow: restNarrow });
-    dom.reconcile(refs.coins, items, function (item) {
-      return item.key;
-    }, function (item) {
-      var li = dom.el('li', item.restNarrow ? 'pro-coin pro-coin-rest' : 'pro-coin');
-      if (!item.restNarrow) {
-        var marks = window.PhosphorMarks;
-        if (marks && typeof marks.logo === 'function') li.appendChild(marks.logo(String(item.h.symbol), 20));
-        li.appendChild(dom.el('span', 'pro-coin-name'));
-        li.appendChild(dom.el('span', 'pro-coin-value num'));
-      } else {
-        li.appendChild(dom.el('span', 'pro-coin-name pro-coin-wide'));
-        li.appendChild(dom.el('span', 'pro-coin-name pro-coin-narrow'));
+  /* The NEAR money, one entry per coin: the intents rows of every chain
+     summed by symbol, largest first, a coin with no price last. Null while
+     the intents balance has not been read, which is a different fact from
+     holding nothing. */
+  function coinsOf(wallet) {
+    if (!wallet || !Array.isArray(wallet.rows)) return null;
+    if (Array.isArray(wallet.stale) && wallet.stale.indexOf('intents') >= 0) return null;
+    var by = {};
+    var order = [];
+    wallet.rows.forEach(function (row) {
+      if (!row || row.kind !== 'intents') return;
+      var key = String(row.symbol || '').toUpperCase();
+      if (!key) return;
+      var at = by[key];
+      if (!at) {
+        at = by[key] = { symbol: String(row.symbol), key: key, quantity: 0, valueUsd: 0, priceUsd: null, priced: false };
+        order.push(key);
       }
+      var qty = Number(row.quantity);
+      if (isFinite(qty)) at.quantity += qty;
+      if (row.priced !== false && isFinite(Number(row.valueUsd))) {
+        at.valueUsd += Number(row.valueUsd);
+        at.priced = true;
+        if (isFinite(Number(row.priceUsd)) && Number(row.priceUsd) > 0) at.priceUsd = Number(row.priceUsd);
+      }
+    });
+    var list = order.map(function (key) { return by[key]; });
+    list.sort(function (a, b) {
+      if (a.priced !== b.priced) return a.priced ? -1 : 1;
+      return b.valueUsd - a.valueUsd;
+    });
+    return list;
+  }
+
+  function totalOf(coins) {
+    var sum = 0;
+    coins.forEach(function (c) { if (c.priced) sum += c.valueUsd; });
+    return sum;
+  }
+
+  function renderHero(state, coins) {
+    if (refs.skel.parentNode && coins !== null) refs.skel.parentNode.removeChild(refs.skel);
+    if (coins === null) {
+      dom.setHidden(refs.total, true);
+      dom.setText(refs.caption, state.wallet ? 'Still reading your coins.' : '');
+      dom.setHidden(refs.today, true);
+      paintRing([]);
+      renderLegend([]);
+      return;
+    }
+    var unpriced = coins.filter(function (c) { return !c.priced; }).map(function (c) { return c.symbol; });
+    var priced = coins.some(function (c) { return c.priced; });
+    dom.setNumber(refs.total, priced || !coins.length ? dom.usd(totalOf(coins)) : '');
+    dom.setHidden(refs.total, !(priced || !coins.length));
+    dom.setText(refs.caption, unpriced.length ? 'in your coins, not counting ' + unpriced.join(', ') : 'in your coins');
+    // No "+$X today" beside the total: price moves times today's amounts reads as profit while it
+    // ignores deposits and swaps. Each coin's own 24h change in the ledger is the true signal.
+    dom.setHidden(refs.today, true);
+    paintRing(coins);
+    renderLegend(coins);
+  }
+
+  /* The legend: each coin's share of the priced total beside its tint, the
+     largest first, the rest folded into one entry past four. */
+  function renderLegend(coins) {
+    var priced = coins.filter(function (c) { return c.priced && c.valueUsd > 0; });
+    var sum = totalOf(priced);
+    var items = [];
+    if (sum > 0) {
+      var shown = priced.length > LEGEND_SHOWN ? priced.slice(0, LEGEND_SHOWN - 1) : priced;
+      shown.forEach(function (c) { items.push({ key: c.key, word: c.symbol, share: c.valueUsd / sum, tint: tintOf(c.symbol) }); });
+      if (priced.length > shown.length) {
+        var rest = 0;
+        priced.slice(shown.length).forEach(function (c) { rest += c.valueUsd; });
+        items.push({ key: ':rest', word: 'Other', share: rest / sum, tint: NEUTRAL });
+      }
+    }
+    dom.reconcile(refs.legend, items, function (item) {
+      return item.key;
+    }, function () {
+      var li = dom.el('li', 'stmt-legend-item');
+      li.appendChild(dom.el('i', 'stmt-swatch'));
+      li.appendChild(dom.el('span', ''));
       return li;
     }, function (li, item) {
-      if (item.restNarrow) {
-        dom.setText(li.children[0], item.rest > 0 ? '+' + item.rest + ' more' : '');
-        dom.setHidden(li.children[0], !(item.rest > 0));
-        dom.setText(li.children[1], '+' + item.restNarrow + ' more');
-        dom.setAttr(li, 'data-narrow-only', item.rest > 0 ? null : 'true');
+      if (li.style && typeof li.style.setProperty === 'function') li.style.setProperty('--tint', item.tint);
+      dom.setText(li.children[1], item.word + ' ' + shareText(item.share));
+    });
+    dom.setHidden(refs.legend, !items.length);
+  }
+
+  function shareText(share) {
+    var pct = share * 100;
+    return (pct > 0 && pct < 1 ? '<1' : String(Math.round(pct))) + '%';
+  }
+
+  /* ---------- the trading account ---------- */
+
+  function renderTrade(wallet) {
+    var row = null;
+    var rows = wallet && Array.isArray(wallet.rows) ? wallet.rows : [];
+    for (var i = 0; i < rows.length; i += 1) {
+      if (rows[i] && rows[i].kind === 'hyperliquid') row = rows[i];
+    }
+    var stale = wallet && Array.isArray(wallet.stale) && wallet.stale.indexOf('hyperliquid') >= 0;
+    var funded = wallet && wallet.hyperliquid ? wallet.hyperliquid.funded : null;
+    var text = '';
+    if (stale) text = 'not answering right now';
+    else if (row && isFinite(Number(row.valueUsd))) {
+      var open = row.hyperliquid && typeof row.hyperliquid.openPositions === 'number' ? row.hyperliquid.openPositions : null;
+      text = dom.usd(Number(row.valueUsd)) + (open === null ? '' : ' · ' + (open === 0 ? 'no positions' : open === 1 ? '1 position' : open + ' positions'));
+    } else if (funded === false) text = 'no money in it yet';
+    dom.setText(refs.tradeFigure, text);
+    dom.setHidden(refs.tradeFigure, !text);
+    /* No trading account read at all (none set up, or none read yet): no line,
+       rather than a name with nothing after it. */
+    dom.setHidden(refs.trade, !text);
+    dom.setAttr(refs.trade, 'aria-label', text ? 'Trading account, ' + text + '. Open Trade' : null);
+  }
+
+  /* ---------- the ledger ---------- */
+
+  function renderLedger(state, coins) {
+    if (coins === null) return;
+    var items = coins;
+    dom.reconcile(refs.rows, items, function (c) {
+      return c.key;
+    }, makeRow, fillRow);
+    var small = state.basic && state.basic.smallLine ? String(state.basic.smallLine) : '';
+    var word = !items.length ? 'No coins in your balance yet. Add money and they show here.' : small;
+    dom.setText(refs.empty, word);
+    dom.setHidden(refs.empty, !word);
+    dom.setAttr(refs.ledger, 'data-empty', items.length ? null : 'true');
+  }
+
+  function makeRow(c) {
+    var li = dom.el('li', 'l-row');
+    var coin = dom.el('div', 'l-coin');
+    var marks = window.PhosphorMarks;
+    if (marks && typeof marks.logo === 'function') coin.appendChild(marks.logo(c.symbol, 32));
+    var who = dom.el('div', 'l-who');
+    who.appendChild(dom.el('p', 'l-sym'));
+    who.appendChild(dom.el('p', 'l-amt-under num'));
+    coin.appendChild(who);
+    li.appendChild(coin);
+    var price = dom.el('div', 'l-price');
+    price.appendChild(dom.el('span', 'l-price-figure num'));
+    price.appendChild(dom.el('span', 'l-spark'));
+    li.appendChild(price);
+    li.appendChild(dom.el('p', 'l-num l-chg num'));
+    li.appendChild(dom.el('p', 'l-num l-amt num'));
+    li.appendChild(dom.el('p', 'l-num l-val num tick'));
+    return li;
+  }
+
+  function fillRow(li, c) {
+    var who = li.children[0].children[li.children[0].children.length - 1];
+    dom.setText(who.children[0], c.symbol);
+    var amountText = dom.amount(c.quantity);
+    dom.setText(who.children[1], amountText);
+    var price = li.children[1];
+    dom.setText(price.children[0], c.priceUsd === null ? '' : priceText(c.priceUsd));
+    var line = lines[c.key];
+    paintSpark(price.children[1], line && line.ok ? line : null);
+    var chg = li.children[2];
+    if (line && line.ok) {
+      dom.setText(chg, changeText(line.change));
+      dom.setAttr(chg, 'data-dir', line.change > 0.05 ? 'up' : (line.change < -0.05 ? 'down' : 'flat'));
+    } else {
+      dom.setText(chg, '');
+      dom.setAttr(chg, 'data-dir', null);
+    }
+    dom.setText(li.children[3], amountText);
+    dom.setNumber(li.children[4], c.priced ? dom.usd(c.valueUsd) : 'No price');
+    dom.setAttr(li.children[4], 'data-unpriced', c.priced ? null : 'true');
+  }
+
+  /* A price in the places it needs: two at a dollar and up, more below, so a
+     coin at a fraction of a cent is not printed as $0.00. */
+  function priceText(n) {
+    var abs = Math.abs(n);
+    var places = abs >= 1 ? 2 : (abs >= 0.01 ? 4 : 6);
+    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: places, maximumFractionDigits: places });
+  }
+
+  function changeText(pct) {
+    var rounded = Math.abs(pct) < 0.05 ? 0 : pct;
+    return (rounded > 0 ? '+' : (rounded < 0 ? '-' : '')) + Math.abs(rounded).toFixed(1) + '%';
+  }
+
+  /* The price line: the day's hourly closes as one stroke, drawn in once, in
+     the tone of the day. Nothing at all for a coin with no candles. */
+  function paintSpark(host, line) {
+    var key = line ? line.path : '';
+    if (host.dataset.path === key) return;
+    host.dataset.path = key;
+    dom.clear(host);
+    if (!line || typeof document.createElementNS !== 'function') return;
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'spark');
+    svg.setAttribute('viewBox', '0 0 100 28');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('data-dir', line.change > 0.05 ? 'up' : (line.change < -0.05 ? 'down' : 'flat'));
+    var path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('pathLength', '1');
+    path.setAttribute('d', line.path);
+    svg.appendChild(path);
+    host.appendChild(svg);
+  }
+
+  /* 25 hourly candles per coin: the close 24 bars back is the price a day
+     ago, the same reading the Trade strip makes. Only for a coin whose market
+     the app lists (state.candleProducts): a stablecoin has none, and asking
+     anyway was a 502 and a console error on every opening. A line being read
+     again stays up until the new one lands; a read that fails keeps the last
+     good line, and a coin with none shows none. */
+  function ensureLines(coins) {
+    if (!net || typeof net.getJson !== 'function') return;
+    var now = Date.now();
+    coins.forEach(function (c) {
+      var product = productOf(c.key);
+      if (!product) return;
+      var had = lines[c.key];
+      if (had && (had.pending || now - had.at < LINES_MS)) return;
+      lines[c.key] = had && had.ok ? assign(had, { pending: true }) : { ok: false, pending: true, at: 0 };
+      net.getJson('/api/candles?product=' + encodeURIComponent(product) + '&granularity=3600&limit=25')
+        .then(function (result) {
+          lines[c.key] = assign(lineOf(result && Array.isArray(result.data) ? result.data : []), { at: Date.now() });
+        })
+        .catch(function () {
+          lines[c.key] = assign(had && had.ok ? had : { ok: false }, { pending: false, at: Date.now() });
+        })
+        .then(render);
+    });
+  }
+
+  /* The market a coin's day is read from: the coin's own, or the coin a
+     wrapper stands for, when the app lists it. */
+  function productOf(key) {
+    var products = (store.get() || {}).candleProducts;
+    if (!Array.isArray(products)) return null;
+    var want = (UNDER[key] || key) + '-USD';
+    for (var i = 0; i < products.length; i += 1) {
+      if (String(products[i]).toUpperCase() === want) return String(products[i]);
+    }
+    return null;
+  }
+
+  function assign(into, from) {
+    var out = {};
+    var key;
+    for (key in into) if (Object.prototype.hasOwnProperty.call(into, key)) out[key] = into[key];
+    for (key in from) if (Object.prototype.hasOwnProperty.call(from, key)) out[key] = from[key];
+    return out;
+  }
+
+  function lineOf(candles) {
+    var closes = [];
+    for (var i = 0; i < candles.length; i += 1) {
+      var close = Number(candles[i] && candles[i].c);
+      if (isFinite(close) && close > 0) closes.push(close);
+    }
+    if (closes.length < 2) return { ok: false };
+    var day = closes.slice(-25);
+    var first = day[0];
+    var last = day[day.length - 1];
+    var lo = Math.min.apply(null, day);
+    var hi = Math.max.apply(null, day);
+    var span = hi - lo || 1;
+    var d = '';
+    for (var k = 0; k < day.length; k += 1) {
+      var x = (k / (day.length - 1)) * 100;
+      var y = 26 - ((day[k] - lo) / span) * 24;
+      d += (k ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2);
+    }
+    return { ok: true, change: ((last - first) / first) * 100, path: d };
+  }
+
+  /* ---------- the policies ---------- */
+
+  function buildPolicies() {
+    var card = dom.el('section', 'stmt-policies');
+    card.setAttribute('aria-label', 'Policies');
+    var head = dom.el('header', 'stmt-panel-head');
+    head.appendChild(dom.el('h3', '', 'Policies'));
+    var freeze = dom.el('span', 'stmt-freeze');
+    var g = glyph('freeze');
+    if (g) freeze.appendChild(g);
+    freeze.appendChild(dom.el('span', ''));
+    head.appendChild(freeze);
+    card.appendChild(head);
+    var dials = dom.el('div', 'dials');
+    refs.dialAsk = dial('agent', 'Asks you above');
+    refs.dialCap = dial('cap', 'Never more in one move');
+    refs.dialAuto = dial('agent', 'On its own today, then it asks again');
+    dials.appendChild(refs.dialAsk.node);
+    dials.appendChild(refs.dialCap.node);
+    dials.appendChild(refs.dialAuto.node);
+    card.appendChild(dials);
+    var foot = dom.el('p', 'stmt-policies-foot');
+    card.appendChild(foot);
+    var unread = dom.el('p', 'stmt-empty');
+    unread.hidden = true;
+    card.appendChild(unread);
+    refs.policies = card;
+    refs.freeze = freeze;
+    refs.policiesFoot = foot;
+    refs.policiesUnread = unread;
+    refs.dials = dials;
+    return card;
+  }
+
+  /* One soft dial: a pressed track, the arc of how full it is, the figure on
+     the raised disc in the middle and the words under it. */
+  function dial(tone, caption) {
+    var node = dom.el('figure', 'dial dial-' + tone);
+    var disc = dom.el('div', 'dial-disc');
+    var arc = null;
+    if (typeof document.createElementNS === 'function') {
+      var svg = document.createElementNS(SVG_NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 100 100');
+      svg.setAttribute('aria-hidden', 'true');
+      var track = document.createElementNS(SVG_NS, 'circle');
+      track.setAttribute('class', 'dial-track');
+      track.setAttribute('cx', '50');
+      track.setAttribute('cy', '50');
+      track.setAttribute('r', '42');
+      arc = document.createElementNS(SVG_NS, 'circle');
+      arc.setAttribute('class', 'dial-arc');
+      arc.setAttribute('cx', '50');
+      arc.setAttribute('cy', '50');
+      arc.setAttribute('r', '42');
+      arc.setAttribute('pathLength', '100');
+      svg.appendChild(track);
+      svg.appendChild(arc);
+      disc.appendChild(svg);
+    }
+    var num = dom.el('span', 'dial-num');
+    var figure = dom.el('span', 'dial-figure num tick');
+    var of = dom.el('small', 'dial-of num');
+    num.appendChild(figure);
+    num.appendChild(of);
+    disc.appendChild(num);
+    node.appendChild(disc);
+    node.appendChild(dom.el('figcaption', '', caption));
+    return { node: node, arc: arc, figure: figure, of: of, caption: node.children[1] };
+  }
+
+  /* The arc sweeps in the first time it has a figure and springs to a new
+     one after that; no arc at all where there is no figure to draw. */
+  function setDial(d, fraction, figure, of, caption) {
+    dom.setNumber(d.figure, figure);
+    dom.setAttr(d.figure, 'data-long', String(figure).length > 6 ? 'true' : null);
+    dom.setText(d.of, of || '');
+    dom.setHidden(d.of, !of);
+    if (caption) dom.setText(d.caption, caption);
+    var shown = fraction === null ? 0 : Math.max(0, Math.min(1, fraction));
+    /* Nothing yet is an empty track: a round cap on a zero dash would draw a
+       dot that reads as a little spent. */
+    dom.setAttr(d.node, 'data-empty', fraction === null || shown === 0 ? 'true' : null);
+    if (!d.arc) return;
+    var dash = shown > 0 ? (Math.max(shown * 100, 0.5)).toFixed(2) + ' 100' : '0 100';
+    if (d.arc.getAttribute('data-drawn') !== 'true') {
+      d.arc.setAttribute('data-drawn', 'true');
+      d.arc.style.strokeDasharray = '0 100';
+      forceStyle(d.arc);
+      frame(function () { d.arc.style.strokeDasharray = dash; });
+      return;
+    }
+    d.arc.style.strokeDasharray = dash;
+  }
+
+  function renderPolicies(state) {
+    var policy = state.policy;
+    var out = policy && policy.outbound ? policy.outbound : null;
+    dom.setHidden(refs.dials, !out);
+    dom.setHidden(refs.policiesFoot, !out);
+    dom.setText(refs.policiesUnread, out ? '' : 'Your policies could not be read, so nothing moves until they can.');
+    dom.setHidden(refs.policiesUnread, !!out);
+    var frozen = !!(policy && policy.killSwitch);
+    dom.setText(refs.freeze.lastChild, frozen ? 'Freeze is on' : 'Freeze is off');
+    dom.setAttr(refs.freeze, 'data-on', frozen ? 'true' : null);
+    if (!out) return;
+    var ask = num(out.humanClickAboveUsd);
+    var cap = num(out.maxPerTransactionUsd);
+    setDial(refs.dialAsk, ask !== null && cap ? ask / cap : null, short(ask), '');
+    setDial(refs.dialCap, cap === null ? null : 1, short(cap), '');
+    var auto = state.autoLimit;
+    var allowance = auto && num(auto.capUsd) !== null ? num(auto.capUsd) : num(out.autoApproveDailyUsd);
+    if (auto && num(auto.spentUsd) !== null && allowance) {
+      setDial(refs.dialAuto, num(auto.spentUsd) / allowance, dom.usd(num(auto.spentUsd)), 'of ' + short(allowance), 'On its own today, then it asks again');
+    } else {
+      setDial(refs.dialAuto, null, short(allowance), allowance === null ? '' : 'a day', 'On its own each day, then it asks again');
+    }
+    var daily = num(out.maxPerSessionUsd);
+    dom.setText(refs.policiesFoot, daily === null ? '' : 'Up to ' + short(daily) + ' a day');
+  }
+
+  function num(v) {
+    var n = Number(v);
+    return v === null || v === undefined || !isFinite(n) ? null : n;
+  }
+
+  /* Whole dollars when the figure is whole, and a hundred thousand and up as
+     "$100k" so it keeps to the dial. */
+  function short(n) {
+    if (n === null) return '';
+    if (Math.abs(n) >= 100000) return '$' + Math.round(n / 1000).toLocaleString('en-US') + 'k';
+    return dom.usd(n, n % 1 === 0 ? 0 : 2);
+  }
+
+  /* ---------- the recent moves ---------- */
+
+  /* The moves still under way come off the state frame, which pushes their
+     every change; the ones that ended come off the receipts, read when Pro
+     comes up and when a move ends. Trading on Hyperliquid is Trade's. */
+  function loadMoves() {
+    if (!net || typeof net.getJson !== 'function') return;
+    movesAt = Date.now();
+    net.getJson('/api/receipts?limit=12')
+      .then(function (result) {
+        var page = result && result.data ? result.data : null;
+        receipts = page && Array.isArray(page.receipts) ? page.receipts : [];
+        render();
+      })
+      .catch(function () { /* the panel keeps what it had */ });
+  }
+
+  var endedSeen = {};
+
+  /* The moves under way that the list shows: the ones that move the NEAR
+     money. A trade is Trade's and a policy change is not a move. */
+  var LIVE_KINDS = { swap: true, intents_send: true, intents_pay: true, hl_deposit: true, hl_withdraw: true };
+
+  function renderMoves(state) {
+    var proposals = Array.isArray(state.proposals) ? state.proposals : [];
+    var byId = {};
+    var live = [];
+    var ended = false;
+    proposals.forEach(function (p) {
+      if (!p) return;
+      byId[p.id] = p;
+      if (!LIVE_KINDS[p.kind]) return;
+      var view = p.view || {};
+      /* A late move has stopped expecting the venue and has not ended: it
+         stays in the list as under way, never dropped as if it were over. */
+      if (view.terminal && view.stage !== 'stalled') {
+        if (!endedSeen[p.id]) ended = true;
+        endedSeen[p.id] = true;
         return;
       }
-      dom.setAttr(li, 'data-third', item.third ? 'true' : null);
-      if (li.style && typeof li.style.setProperty === 'function') li.style.setProperty('--tint', tintOf(item.h.symbol));
-      dom.setText(li.children[1], String(item.h.symbol));
-      dom.setAttr(li, 'title', item.h.name && item.h.name !== item.h.symbol ? String(item.h.name) : null);
-      dom.setText(li.children[2], item.h.valueLine || '');
+      var now = liveOf(p, view);
+      var since = view.decidedAt || view.createdAt || p.createdAt;
+      live.push({
+        key: p.id,
+        at: p.createdAt,
+        kind: p.kind,
+        title: titleOf(p.kind, moneyOfRow(p, view), false) || view.sentence || '',
+        state: now.word,
+        dir: now.dir,
+        meta: now.dir === 'going' ? 'Started ' + dom.ago(since) : upper(dom.ago(p.createdAt)),
+        proposal: p
+      });
     });
-    dom.setHidden(refs.coins, items.length === 0);
+    if (ended && isUp() && Date.now() - movesAt > 1500) loadMoves();
+    var done = receipts.filter(function (r) {
+      return r && r.kind !== 'trade' && r.kind !== 'bot' && r.kind !== 'policy_change' && !live.some(function (m) { return m.key === r.id; });
+    }).map(function (r) {
+      var p = byId[r.id];
+      var own = p && p.decidedBy === 'policy';
+      return {
+        key: r.id,
+        at: r.at,
+        kind: r.kind,
+        title: titleOf(r.kind, moneyOfReceipt(r, p), r.status === 'executed') || r.headline || r.summary || 'Something moved',
+        state: endWord(r),
+        dir: endDir(r),
+        meta: upper(dom.ago(r.at)) + (own ? ', on its own' : ''),
+        receipt: r
+      };
+    });
+    var items = live.concat(done).sort(function (a, b) {
+      return Date.parse(b.at || 0) - Date.parse(a.at || 0);
+    }).slice(0, MOVES_SHOWN);
+    dom.reconcile(refs.moves, items, function (m) {
+      return m.key;
+    }, makeMove, fillMove);
+    dom.setHidden(refs.movesEmpty, !!items.length);
+  }
+
+  /* Where a move under way stands, in the card's own words (ui/screens/cards.js
+     plainState): waiting on the person, and on what; working; or coming back. */
+  function liveOf(p, view) {
+    var cards = window.PhosphorCards;
+    var state = cards && typeof cards.plainState === 'function' ? cards.plainState(p) : (view.waitingOn === 'You' ? 'needs_you' : 'working');
+    if (state === 'needs_you') {
+      if (p.status === 'pending_unlock' || view.stage === 'waiting_for_unlock') return { word: 'Unlock to decide', dir: 'ask' };
+      if (p.status === 'awaiting_touch' || view.stage === 'waiting_for_touch') return { word: 'Confirm on your Mac', dir: 'ask' };
+      return { word: 'Needs your OK', dir: 'ask' };
+    }
+    if (state === 'coming_back') return { word: 'Refund on its way', dir: 'going' };
+    if (state === 'done') return { word: 'Done', dir: 'done' };
+    if (state === 'didnt_go_through') return { word: 'Didn\'t go through', dir: 'no' };
+    if (view.stage === 'stalled' || view.late) return { word: 'Taking longer', dir: 'going' };
+    return { word: WORKING_WORDS[p.kind] || 'Working', dir: 'going' };
+  }
+
+  /* A move in a few words, the way the list reads: what, how much, where to.
+     A move that went through says it in the past; the rest say what was asked.
+     The server's own sentence is the fallback for a kind this does not name. */
+  function titleOf(kind, m, done) {
+    if (!m.symbol) return '';
+    var what = (m.amount ? m.amount + ' ' : '') + m.symbol;
+    if (kind === 'swap') return (done ? 'Swapped ' : 'Swap ') + what + (m.toSymbol ? ' to ' + (done && m.got ? m.got + ' ' : '') + m.toSymbol : '');
+    if (kind === 'intents_send' || kind === 'intents_pay') return (done ? 'Sent ' : 'Send ') + what + (m.to ? ' to ' + m.to : '');
+    if (kind === 'hl_deposit') return (done ? 'Moved ' : 'Move ') + what + ' to trading';
+    if (kind === 'hl_withdraw') return (done ? 'Moved ' : 'Move ') + what + ' back from trading';
+    return '';
+  }
+
+  function moneyOfRow(p, view) {
+    var money = view.money || {};
+    var draft = p.draft || {};
+    var asked = money.amountIn !== undefined && money.amountIn !== null ? money.amountIn : (p.kind === 'swap' ? draft.amountIn : draft.amount);
+    return {
+      amount: figureOf(asked),
+      symbol: String(money.symbol || draft.fromSymbol || draft.symbol || ''),
+      toSymbol: String(money.toSymbol || draft.toSymbol || ''),
+      got: figureOf(money.amountOut),
+      to: typeof draft.to === 'string' ? draft.to : ''
+    };
+  }
+
+  /* A receipt names what left and what arrived; the receiver of a send is on
+     its proposal, while the window still holds it. */
+  function moneyOfReceipt(r, p) {
+    var draft = p && p.draft ? p.draft : {};
+    return {
+      amount: figureOf(r.amount),
+      symbol: String(r.symbol || draft.fromSymbol || draft.symbol || ''),
+      toSymbol: String(r.received && r.received.symbol ? r.received.symbol : (draft.toSymbol || '')),
+      got: r.received ? figureOf(r.received.amount) : '',
+      to: typeof draft.to === 'string' ? draft.to : ''
+    };
+  }
+
+  function figureOf(value) {
+    if (value === null || value === undefined || value === '') return '';
+    var n = Number(value);
+    return isFinite(n) && n > 0 ? n.toLocaleString('en-US', { maximumFractionDigits: 8 }) : '';
+  }
+
+  function upper(words) {
+    var text = String(words || '');
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  function endWord(r) {
+    if (r.status === 'failed') return 'Didn\'t go through';
+    if (r.status === 'needs_reconciliation') return 'Not confirmed';
+    return r.kind === 'intents_deposit' ? 'Arrived' : 'Done';
+  }
+
+  function endDir(r) {
+    if (r.status === 'failed') return 'no';
+    if (r.status === 'needs_reconciliation') return 'unsure';
+    return 'done';
+  }
+
+  var MOVE_ICONS = { swap: 'swap', intents_deposit: 'deposit', hl_deposit: 'send', hl_withdraw: 'deposit', intents_withdraw: 'withdraw', intents_send: 'send', intents_pay: 'send', transfer: 'send' };
+
+  function makeMove(m) {
+    var li = dom.el('li', 'move');
+    var tile = dom.el('span', 'move-icon');
+    li.appendChild(tile);
+    var words = dom.el('div', 'move-words');
+    words.appendChild(dom.el('p', 'move-title'));
+    words.appendChild(dom.el('p', 'move-meta'));
+    li.appendChild(words);
+    var st = dom.el('span', 'move-state');
+    st.appendChild(dom.el('span', 'move-state-icon'));
+    st.appendChild(dom.el('span', ''));
+    li.appendChild(st);
+    return li;
+  }
+
+  function fillMove(li, m) {
+    var icon = MOVE_ICONS[m.kind] || 'swap';
+    var tile = li.children[0];
+    if (tile.dataset.icon !== icon) {
+      tile.dataset.icon = icon;
+      dom.clear(tile);
+      var g = glyph(icon);
+      if (g) tile.appendChild(g);
+    }
+    dom.setText(li.children[1].children[0], m.title);
+    dom.setAttr(li.children[1].children[0], 'title', m.title);
+    dom.setText(li.children[1].children[1], m.meta);
+    var st = li.children[2];
+    var mark = { ask: 'waiting', going: 'spin', done: 'check', no: 'refused', unsure: 'warning' }[m.dir] || 'check';
+    if (st.dataset.mark !== mark) {
+      st.dataset.mark = mark;
+      dom.clear(st.children[0]);
+      var s = glyph(mark);
+      if (s) st.children[0].appendChild(s);
+    }
+    dom.setText(st.children[1], m.state);
+    dom.setAttr(st, 'data-dir', m.dir);
+    dom.setAttr(li, 'data-receipt', m.receipt ? 'true' : null);
+    li.__move = m;
+  }
+
+  /* An ended move opens its receipt, the way an Activity row does. */
+  function onMovePress(event) {
+    for (var at = event.target; at && at !== refs.moves; at = at.parentNode) {
+      if (at.__move && at.__move.receipt) {
+        var events = window.PhosphorEvents;
+        if (events && typeof events.emit === 'function') events.emit('receipt:open', { receipt: at.__move.receipt, source: 'pro' });
+        return;
+      }
+    }
+  }
+
+  /* ---------- the actions ---------- */
+
+  /* Swap is said to the assistant: the word goes into the message field and
+     the person says what, from what, how much. Words already in the field are
+     the person's and stay. With no agent to say it to, the note says what to
+     do first. */
+  function askToSwap() {
+    var input = document.querySelector ? document.querySelector('.composer-input') : null;
+    if (input && !input.disabled && typeof input.focus === 'function') {
+      if (!String(input.value || '').trim()) {
+        input.value = 'Swap ';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      input.focus();
+      if (typeof input.setSelectionRange === 'function') input.setSelectionRange(input.value.length, input.value.length);
+      say('');
+      return;
+    }
+    say('Start your agent, then tell it what to swap.');
+  }
+
+  function say(words) {
+    dom.setText(refs.note, words);
+    dom.setHidden(refs.note, !words);
+  }
+
+  /* Add money runs its steps in place of the ledger and the panels under it,
+     and Close puts them back, both on the morph, the focus following. */
+  function openFlow() {
+    if (flowSteps) return;
+    if (window.PhosphorLazy) window.PhosphorLazy.load('qr');
+    swapIn(function () {
+      dom.setHidden(refs.ledger, true);
+      dom.setHidden(refs.duo, true);
+      dom.setHidden(refs.flow, false);
+      flowSteps = window.PhosphorMoneyIn ? (window.PhosphorMoneyIn.render(refs.flowBody, { context: 'basic' }) || {}) : {};
+      if (refs.flowTitle.focus) refs.flowTitle.focus({ preventScroll: true });
+    });
+  }
+
+  function closeFlow() {
+    if (!flowSteps) return;
+    var closing = flowSteps;
+    flowSteps = null;
+    swapIn(function () {
+      if (typeof closing.destroy === 'function') closing.destroy();
+      dom.clear(refs.flowBody);
+      dom.setHidden(refs.flow, true);
+      dom.setHidden(refs.ledger, false);
+      dom.setHidden(refs.duo, false);
+      if (refs.add.focus) refs.add.focus({ preventScroll: true });
+    });
+  }
+
+  function swapIn(change) {
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.morph === 'function') motion.morph(refs.root, change);
+    else change();
   }
 
   /* ---------- the ring ---------- */
@@ -233,50 +999,43 @@
      ring". */
   function ringSvg() {
     if (typeof document.createElementNS !== 'function') return null;
-    var svg = svgEl('svg', { class: 'pro-ring', viewBox: '0 0 120 120', 'aria-hidden': 'true', focusable: 'false' });
+    var svg = svgEl('svg', { class: 'stmt-ring', viewBox: '0 0 120 120', 'aria-hidden': 'true', focusable: 'false' });
     var defs = svgEl('defs', {});
-    var disc = svgEl('radialGradient', { id: 'pro-disc', cx: '50%', cy: '38%', r: '62%' });
-    disc.appendChild(svgEl('stop', { offset: '0', class: 'pro-disc-top' }));
-    disc.appendChild(svgEl('stop', { offset: '1', class: 'pro-disc-foot' }));
+    var disc = svgEl('radialGradient', { id: 'stmt-disc', cx: '50%', cy: '36%', r: '62%' });
+    disc.appendChild(svgEl('stop', { offset: '0', class: 'stmt-disc-top' }));
+    disc.appendChild(svgEl('stop', { offset: '1', class: 'stmt-disc-foot' }));
     defs.appendChild(disc);
     svg.appendChild(defs);
-    svg.appendChild(svgEl('circle', { class: 'pro-ring-disc', cx: '60', cy: '60', r: '44' }));
-    svg.appendChild(svgEl('circle', { class: 'pro-ring-track', cx: '60', cy: '60', r: String(R) }));
-    var pieces = svgEl('g', { class: 'pro-ring-pieces', transform: 'rotate(-90 60 60)' });
+    svg.appendChild(svgEl('circle', { class: 'stmt-ring-disc', cx: '60', cy: '60', r: '46' }));
+    svg.appendChild(svgEl('circle', { class: 'stmt-ring-track', cx: '60', cy: '60', r: String(R) }));
+    var pieces = svgEl('g', { class: 'stmt-ring-pieces', transform: 'rotate(-90 60 60)' });
     svg.appendChild(pieces);
     return { svg: svg, pieces: pieces, byKey: {} };
   }
 
-  /* The pieces, from the priced coins in the order the list reads (largest
-     first); slivers under two percent share one neutral piece. */
-  function piecesOf(holdings) {
+  function piecesOf(coins) {
     var out = [];
-    var sum = 0;
-    var rest = 0;
-    for (var i = 0; i < holdings.length; i += 1) {
-      var usd = Number(holdings[i].valueUsd);
-      if (isFinite(usd) && usd > 0) sum += usd;
-    }
+    var priced = coins.filter(function (c) { return c.priced && c.valueUsd > 0; });
+    var sum = totalOf(priced);
     if (!(sum > 0)) return out;
-    for (var j = 0; j < holdings.length; j += 1) {
-      var value = Number(holdings[j].valueUsd);
-      if (!isFinite(value) || value <= 0) continue;
-      if (value / sum < SLIVER) {
-        rest += value;
-        continue;
+    var rest = 0;
+    priced.forEach(function (c) {
+      if (c.valueUsd / sum < SLIVER) {
+        rest += c.valueUsd;
+        return;
       }
-      out.push({ key: String(holdings[j].symbol), usd: value, colour: tintOf(holdings[j].symbol) });
-    }
+      out.push({ key: c.key, usd: c.valueUsd, colour: tintOf(c.symbol) });
+    });
     if (rest > 0) out.push({ key: ':rest', usd: rest, colour: NEUTRAL });
     return out;
   }
 
   /* Each piece springs to its share when the money moves; the first draw
      grows them out of their places a beat apart, as Basic's does. */
-  function paintRing(holdings) {
+  function paintRing(coins) {
     var ring = refs.ring;
     if (!ring) return;
-    var pieces = piecesOf(holdings);
+    var pieces = piecesOf(coins);
     var sum = 0;
     for (var i = 0; i < pieces.length; i += 1) sum += pieces[i].usd;
     var still = reduced();
@@ -291,7 +1050,7 @@
       var node = ring.byKey[piece.key];
       var born = !node;
       if (born) {
-        node = svgEl('circle', { class: 'pro-ring-piece', cx: '60', cy: '60', r: String(R) });
+        node = svgEl('circle', { class: 'stmt-ring-piece', cx: '60', cy: '60', r: String(R) });
         ring.byKey[piece.key] = node;
         if (!intro && !still && ringDrawn) setDash(node, 0.001, start, false);
       }
@@ -313,11 +1072,6 @@
       if (gone.parentNode) gone.parentNode.removeChild(gone);
       delete ring.byKey[key];
     }
-    dom.setAttr(ring.svg, 'data-empty', pieces.length ? null : 'true');
-    var top = pieces.length && pieces[0].key !== ':rest' ? pieces[0] : null;
-    dom.setText(ring.share.children[0], top ? Math.round(top.usd / sum * 100) + '%' : '');
-    dom.setText(ring.share.children[1], top ? top.key : '');
-    dom.setHidden(ring.share, !top);
     if (pieces.length) ringDrawn = true;
   }
 
@@ -385,118 +1139,6 @@
     h *= 60;
     if (h < 0) h += 360;
     return { h: h, s: s, l: l };
-  }
-
-  /* ---------- the trading account ---------- */
-
-  /* Four answers, each its own sentence, because they mean different things
-     to a person deciding a trade:
-       no read yet, or the venue has not answered (collateral.funded null)
-       the venue is not answering now: the figures read as unknown, never zero
-       nothing on the account, or only dust (collateral.funded false)
-       money on it: what it holds, what is free, what the plans have in them
-       and the most they can lose. */
-  function renderTrading() {
-    if (!mounted) return;
-    var data = trade && trade.data ? trade.data : null;
-    var account = data && data.account ? data.account : null;
-    var collateral = data && data.collateral ? data.collateral : null;
-    var funded = collateral && typeof collateral.funded === 'boolean' ? collateral.funded : null;
-
-    dom.setAttr(refs.host, 'data-quiet', quiet(data) ? 'true' : null);
-
-    if (!data) return say('', [], false, null);
-
-    if (venueDown(data)) {
-      return say('Hyperliquid is not answering. These come back on their own.', [
-        { key: 'equity', label: 'Trading money', value: '--', dim: true },
-        { key: 'free', label: 'Free', value: '--', dim: true }
-      ], false, null);
-    }
-
-    if (funded === null || (account && account.accountKnown === false)) {
-      return say('Checking your trading account.', [], false, null);
-    }
-
-    if (funded === false) {
-      return say('No trading money yet. Once there is some, Pro shows your positions, your orders and what they made.', [], true, false);
-    }
-
-    var items = [];
-    items.push({ key: 'equity', label: 'Trading money', value: usdOr(account && account.equityUsd), dim: !isNum(account && account.equityUsd) });
-    items.push({ key: 'free', label: 'Free', value: usdOr(account && account.freeUsd), dim: !isNum(account && account.freeUsd) });
-    /* What the app's own open plans have posted, and what their stops cap the
-       loss at. Both are the app's sums over its own plans, so they are only
-       worth a tile once a plan is live; a position opened elsewhere is not in
-       them, which the title says. */
-    var inTrades = account && isNum(account.atRiskUsd) ? account.atRiskUsd : 0;
-    if (inTrades > 0) {
-      items.push({ key: 'margin', label: 'In trades', value: dom.usd(inTrades), dim: false, title: 'What your open plans have posted as margin.' });
-      var maxLoss = account && isNum(account.maxLossUsd) ? account.maxLossUsd : null;
-      if (maxLoss !== null && maxLoss > 0) {
-        items.push({ key: 'loss', label: 'Max loss', value: dom.usd(maxLoss), dim: false, title: 'The most your open plans lose if every stop fills, fees in. Positions opened outside Phosphor are not counted.' });
-      }
-    }
-    return say('', items, false, true);
-  }
-
-  function say(note, items, offerFund, funded) {
-    /* Before the first read the card holds the shape of its figure, not an
-       empty head. */
-    dom.setHidden(refs.wait, !!(note || items.length || offerFund));
-    dom.setText(refs.note, note);
-    dom.setHidden(refs.note, !note);
-    dom.setHidden(refs.fund, !offerFund);
-    dom.setAttr(refs.host, 'data-funded', funded === null ? null : (funded ? 'true' : 'false'));
-    dom.reconcile(refs.figures, items, function (item) {
-      return item.key;
-    }, function () {
-      var cell = dom.el('div', 'pro-sum-figure');
-      cell.appendChild(dom.el('dt', 'pro-sum-label'));
-      cell.appendChild(dom.el('dd', 'pro-sum-value num tick'));
-      return cell;
-    }, function (cell, item) {
-      dom.setText(cell.children[0], item.label);
-      dom.setNumber(cell.children[1], item.value);
-      dom.setAttr(cell.children[1], 'data-dim', item.dim ? 'true' : null);
-      dom.setAttr(cell, 'title', item.title || null);
-    });
-    dom.setHidden(refs.figures, !items.length);
-  }
-
-  /* Nothing on the deck to list: no position, no plan and no fill. Pro then
-     draws its header alone, calm, rather than three empty sections. */
-  function quiet(data) {
-    if (!data) return false;
-    var none = function (list) { return !Array.isArray(list) || list.length === 0; };
-    return none(data.positions) && none(data.plans) && none(data.fills);
-  }
-
-  /* The one action on an empty account: ask the assistant, in the thread, in
-     the person's own words. The move it proposes waits for the click on its
-     card like every other. With no agent running the button says what to do
-     first rather than failing quietly. */
-  function askToFund() {
-    var agent = window.PhosphorAgent;
-    var sent = !!(agent && typeof agent.send === 'function' && agent.send(FUND_ASK));
-    if (sent) return;
-    dom.setText(refs.note, 'Start your agent, then ask it to add money to your trading account.');
-    dom.setHidden(refs.note, false);
-  }
-
-  function venueDown(data) {
-    var venue = data && data.venue;
-    if (!venue) return false;
-    return venue.connected === false || !!venue.error;
-  }
-
-  function isNum(value) {
-    return typeof value === 'number' && isFinite(value);
-  }
-
-  /* A figure the venue did not state is a dash, never $0.00. */
-  function usdOr(value) {
-    return isNum(value) ? dom.usd(value) : '--';
   }
 
   window.PhosphorPro = { boot: boot };

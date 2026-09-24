@@ -109,12 +109,21 @@
     add.type = 'button';
     add.appendChild(window.PhosphorIcons.svg('deposit'));
     add.appendChild(dom.el('span', '', 'Add money'));
+    /* Beside Add money, quiet: the Policies, which live on the Vault. It goes
+       there and lands on them (ui/screens/shell.js reveal). */
+    var rules = dom.el('button', 'btn btn-quiet btn-lg bal-rules');
+    rules.type = 'button';
+    rules.appendChild(window.PhosphorIcons.svg('gauge'));
+    rules.appendChild(dom.el('span', 'btn-label', 'Policies'));
+    var actions = dom.el('div', 'bal-actions');
+    actions.appendChild(add);
+    actions.appendChild(rules);
     scroll.appendChild(rows);
     scroll.appendChild(empty);
     room.appendChild(scroll);
     room.appendChild(foot);
     list.appendChild(room);
-    list.appendChild(add);
+    list.appendChild(actions);
     panel.appendChild(list);
 
     /* The deposit steps (ui/screens/moneyin.js) run here, in the slab, rather
@@ -156,12 +165,17 @@
       small: small,
       empty: empty,
       add: add,
+      rules: rules,
       flow: flow,
       title: title,
       flowBody: flowBody
     };
 
     dom.on(add, 'click', openSteps);
+    dom.on(rules, 'click', function () {
+      var shell = window.PhosphorShell;
+      if (shell && typeof shell.setView === 'function') shell.setView('vault', { fromClick: true, reveal: 'policies' });
+    });
     dom.on(done, 'click', closeSteps);
     /* Escape on the network tiles asks whoever holds the picker to close it (ui/screens/netpick.js). */
     dom.on(flowBody, 'netpick:dismiss', function (event) {

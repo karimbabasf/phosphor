@@ -24,6 +24,7 @@ import type { PlanFate } from './proposals/lifecycle.ts';
 import { within } from './shutdown.ts';
 import {
   approve,
+  autoLimit,
   createSerialiser,
   dailyLimit,
   NO_RAILS,
@@ -156,6 +157,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     // behind its reply now, so the queue alone would drain while a signature was in flight.
     settle: (capMs: number) => within(capMs, Promise.all([serialise.idle(), ...ctx.inflight.values()])),
     dailyLimit: (capUsd: number) => dailyLimit(ctx, capUsd),
+    autoLimit: (capUsd: number) => autoLimit(ctx, capUsd),
     // Reads, outside the serialiser: none reserves budget or writes a row.
     swapAssets: (params) => swapAssets(ctx, params),
     swapQuote: (params) => swapQuote(ctx, params),

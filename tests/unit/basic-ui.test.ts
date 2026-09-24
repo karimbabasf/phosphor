@@ -465,6 +465,27 @@ test('the ring gives up its size before the list gives up a tile, and nothing fa
   assert.match(css, /\.bal-row \{[^}]*scroll-snap-align: start;/);
 });
 
+/* Policies live on the Vault (Karim, 2026-09-23). Beside Add money, quiet, one press goes there
+   and asks the shell to bring the Policies into view (ui/screens/shell.js reveal). */
+test('a quiet Policies key beside Add money goes to the Vault\'s Policies', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  const actions = panel.one('bal-actions');
+  const [add, rules] = actions.children;
+  assert.ok(add.className.split(' ').includes('bal-add'), 'Add money is not first');
+  assert.ok(rules.className.split(' ').includes('bal-rules'), 'no Policies key beside Add money');
+  assert.ok(rules.className.split(' ').includes('btn-quiet'), 'the Policies key is not the quiet one');
+  assert.equal(rules.textContent, 'Policies');
+  assert.equal(all(rules, 'icon')[0].dataset.icon, 'gauge');
+  const asked: Any[] = [];
+  panel.win.PhosphorShell = { setView: (name: string, opts: Any) => { asked.push({ name, opts }); } };
+  click(rules);
+  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [{ name: 'vault', opts: { fromClick: true, reveal: 'policies' } }]);
+  // The same height and corner as Add money, so its hover fill is Add money's shape.
+  const css = read('../../ui/design/basic.css');
+  assert.match(css, /\.bal-rules \{[^}]*min-height: 52px;[^}]*border-radius: var\(--radius-tile\);/);
+});
+
 test('the panel carries nothing but the balance: no rules strip, no folds, no brake', () => {
   const source = BASIC_SOURCE.replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const gone of ['strip', 'fold(', 'PhosphorReceipts', 'alloc', 'Nothing is connected', 'Freeze everything', 'phosphor:agent-phase']) {

@@ -1,12 +1,13 @@
-// Pro's money line: the balance total the Basic panel prints, and beside it what the trading
-// account holds, read off the trade payload trade.js hands over on every `trade` frame.
+// Pro, the statement (Karim's pick, 2026-09-23): the NEAR money in detail. The total with its
+// split and the two things to do with it, the trading account in one line to Trade, the coins as
+// a ledger with the day's line and change, the Policies as three dials, and the recent moves.
 //
-// What is held here: the balance is the server's own figure and words (state.basic), never a
-// second sum; the account is one of four answers and never a zero standing in for an unknown
-// (collateral.funded true, false for dust or nothing, null before the venue has answered, and
-// a venue that is not answering); an empty account offers one action, which asks the assistant
-// in the thread and says what to do when no agent is running; nothing here polls; and the
-// trading side's late bundle is asked for the first time Pro or Trade is on screen.
+// What is held here: the total is the NEAR Intents balance alone and never the trading account;
+// a figure the app does not have is left out rather than written as zero (a coin with no price,
+// a coin whose market the app does not list, a trading account nobody has read); the day's lines
+// are read only for listed markets and never on a timer; the dials are the policy's own fields
+// and the engine's own totals; the moves say what they are in a few words and where they stand
+// in the card's words; and nothing Hyperliquid but the one line shows on Pro.
 //
 // Run against the REAL ui/screens/pro.js and ui/core/dom.js over a stand-in DOM, the way the
 // other *-ui tests do.
@@ -21,34 +22,42 @@ type Any = Record<string, any>;
 const DOM = readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8');
 const PRO = readFileSync(new URL('../../ui/screens/pro.js', import.meta.url), 'utf8');
 const CSS = readFileSync(new URL('../../ui/design/pro.css', import.meta.url), 'utf8');
-
-function makeStyle(): Any {
-  const props: Record<string, string> = {};
-  return {
-    setProperty: (name: string, value: string) => { props[name] = value; },
-    removeProperty: (name: string) => { delete props[name]; },
-    getPropertyValue: (name: string) => props[name] ?? '',
-  };
-}
+const SHELL = readFileSync(new URL('../../ui/screens/shell.js', import.meta.url), 'utf8');
+const VAULT = readFileSync(new URL('../../ui/screens/vault.js', import.meta.url), 'utf8');
 
 function makeNode(tagName: string): Any {
   const attrs: Record<string, string> = {};
   const listeners: Record<string, Array<(ev: Any) => void>> = {};
+  const style: Any = {
+    setProperty: (name: string, value: string) => { style[name] = value; },
+    removeProperty: (name: string) => { delete style[name]; },
+    getPropertyValue: (name: string) => style[name] ?? '',
+  };
   const node: Any = {
     tagName,
     id: '',
     className: '',
-    textContent: '',
     hidden: false,
     dataset: {},
-    style: makeStyle(),
+    style,
     childNodes: [],
     parentNode: null,
+    focused: false,
     get children() { return node.childNodes; },
     get firstChild() { return node.childNodes[0] ?? null; },
+    get lastChild() { return node.childNodes[node.childNodes.length - 1] ?? null; },
     get nextSibling() {
       const siblings = node.parentNode?.childNodes ?? [];
       return siblings[siblings.indexOf(node) + 1] ?? null;
+    },
+    get textContent(): string {
+      if (node.childNodes.length === 0) return node.__text ?? '';
+      return node.childNodes.map((c: Any) => c.textContent).join('');
+    },
+    set textContent(value: string) {
+      for (const child of node.childNodes) child.parentNode = null;
+      node.childNodes = [];
+      node.__text = String(value);
     },
     appendChild(child: Any) {
       child.parentNode?.removeChild(child);
@@ -69,14 +78,15 @@ function makeNode(tagName: string): Any {
       child.parentNode = null;
       return child;
     },
-    setAttribute: (name: string, value: string) => { attrs[name] = value; },
+    setAttribute: (name: string, value: string) => { attrs[name] = String(value); },
     getAttribute: (name: string) => attrs[name] ?? null,
     hasAttribute: (name: string) => name in attrs,
     removeAttribute: (name: string) => { delete attrs[name]; },
     addEventListener: (type: string, fn: (ev: Any) => void) => { (listeners[type] = listeners[type] ?? []).push(fn); },
     removeEventListener: () => {},
-    click: () => { for (const fn of listeners.click ?? []) fn({ preventDefault() {} }); },
-    querySelectorAll: () => [],
+    dispatchEvent: (ev: Any) => { for (const fn of listeners[ev.type] ?? []) fn(ev); return true; },
+    click: () => { for (const fn of listeners.click ?? []) fn({ target: node, preventDefault() {} }); },
+    focus: () => { node.focused = true; },
   };
   return node;
 }
@@ -101,180 +111,450 @@ function words(node: Any, out: string[] = []): string[] {
   return out;
 }
 
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
 type Rig = {
   host: Any;
-  state: (next: Any) => void;
-  trade: (data: Any) => void;
+  put: (next: Any) => void;
   view: (name: string) => void;
-  loads: string[];
-  sent: string[];
-  intervals: number;
-  canTalk: (on: boolean) => void;
+  asked: string[];
+  shell: Any;
+  events: Any[];
+  opened: Any[];
+  composer: Any;
+  timers: number;
+  clock: { now: number };
+  candles: Record<string, Any>;
 };
 
-function boot(): Rig {
+function boot(options: { view?: string; candles?: Record<string, Any>; receipts?: Any[] } = {}): Rig {
   const host = makeNode('section');
   host.id = 'view-pro';
   let subscriber: ((state: Any) => void) | null = null;
   let current: Any = {};
   let loaded = false;
-  let talking = true;
-  const loads: string[] = [];
-  const sent: string[] = [];
+  const asked: string[] = [];
+  const events: Any[] = [];
+  const opened: Any[] = [];
   const windowListeners: Record<string, Array<(ev: Any) => void>> = {};
-  let intervals = 0;
+  const clock = { now: Date.parse('2026-09-23T20:00:00Z') };
+  let timers = 0;
+  const candles: Record<string, Any> = options.candles ?? {};
+  const composer = makeNode('textarea');
+  composer.className = 'input composer-input';
+  composer.value = '';
+  composer.disabled = false;
+  composer.getClientRects = () => [{}];
+  const shell: Any = { current: options.view ?? 'pro', set: [] as Any[] };
+  shell.view = () => shell.current;
+  shell.setView = (name: string, opts: Any) => { shell.set.push({ name, opts }); };
+  class FakeDate extends Date {
+    static now() { return clock.now; }
+  }
+  class FakeEvent {
+    type: string;
+    bubbles: boolean;
+    constructor(type: string, init: Any = {}) { this.type = type; this.bubbles = !!init.bubbles; }
+  }
   const document: Any = {
     createElement: (tag: string) => makeNode(tag),
     getElementById: (id: string) => (id === 'view-pro' ? host : null),
+    querySelector: (sel: string) => (sel === '.composer-input' ? composer : null),
   };
   const window: Any = {
     document,
-    setTimeout: () => 0,
+    setTimeout: () => { timers += 1; return 0; },
     clearTimeout: () => {},
-    setInterval: () => { intervals += 1; return 0; },
+    setInterval: () => { timers += 1; return 0; },
     addEventListener: (type: string, fn: (ev: Any) => void) => { (windowListeners[type] = windowListeners[type] ?? []).push(fn); },
-    PhosphorMotion: { reduced: () => true },
+    PhosphorMotion: { reduced: () => true, morph: (_el: Any, change: () => void) => change() },
+    PhosphorShell: shell,
+    PhosphorIcons: { svg: (name: string, cls?: string) => { const n = makeNode('svg'); n.className = 'icon' + (cls ? ' ' + cls : ''); n.dataset.icon = name; return n; } },
+    PhosphorEvents: { emit: (type: string, detail: Any) => { events.push({ type, detail }); } },
+    PhosphorMoneyIn: { render: (target: Any, opts: Any) => { opened.push({ opts }); target.appendChild(makeNode('div')); return { destroy: () => opened.push({ destroyed: true }) }; } },
+    PhosphorCards: { plainState: (row: Any) => (row.view && row.view.state) || 'working' },
     PhosphorState: {
       subscribe: (fn: (state: Any) => void) => { subscriber = fn; },
       get: () => current,
       loaded: () => loaded,
     },
-    PhosphorLazy: { load: (name: string) => { loads.push(name); return Promise.resolve(true); } },
-    PhosphorAgent: { send: (text: string) => { if (!talking) return false; sent.push(text); return true; } },
+    PhosphorNet: {
+      getJson: (path: string) => {
+        asked.push(path);
+        if (path.startsWith('/api/receipts')) return Promise.resolve({ data: { receipts: options.receipts ?? [] }, fresh: true });
+        const product = decodeURIComponent((/product=([^&]+)/.exec(path) || [])[1] || '');
+        const bars = candles[product];
+        if (!bars) return Promise.reject(Object.assign(new Error('no candles'), { status: 502 }));
+        return Promise.resolve({ data: bars, fresh: true });
+      },
+    },
   };
   window.window = window;
-  const ctx = createContext({ window, document, console, Promise });
+  const ctx = createContext({ window, document, console, Promise, Date: FakeDate, Event: FakeEvent });
   runInContext(DOM, ctx);
   runInContext(PRO, ctx);
   window.PhosphorPro.boot();
   const fire = (type: string, detail: Any) => { for (const fn of windowListeners[type] ?? []) fn({ detail }); };
   return {
     host,
-    state: (next: Any) => { current = next; loaded = true; subscriber!(next); },
-    trade: (data: Any) => fire('phosphor:trade', { data }),
-    view: (name: string) => fire('phosphor:view', { view: name }),
-    loads,
-    sent,
-    get intervals() { return intervals; },
-    canTalk: (on: boolean) => { talking = on; },
+    put: (next: Any) => { current = next; loaded = true; subscriber!(next); },
+    view: (name: string) => { shell.current = name; fire('phosphor:view', { view: name }); },
+    asked,
+    shell,
+    events,
+    opened,
+    composer,
+    get timers() { return timers; },
+    clock,
+    candles,
   };
 }
 
-const BASIC = { basic: { totalUsd: 13450.31, totalLine: '$13,450.31', caption: 'in your balance', holdings: [], smallLine: null, emptyLine: null } };
+/* ---------- fixtures ---------- */
 
-function trade(over: Any = {}): Any {
+const PRICES: Record<string, number> = { USDC: 1, ETH: 2684.2, NEAR: 4.42, SOL: 148.2 };
+
+function intents(symbol: string, quantity: number, over: Any = {}): Any {
+  const price = PRICES[symbol] ?? 0;
+  return { kind: 'intents', chain: 'intents', symbol, tokenId: `nep141:${symbol.toLowerCase()}`, quantity, priceUsd: price, valueUsd: quantity * price, share: 0, native: false, ...over };
+}
+
+const HL = { kind: 'hyperliquid', chain: 'hyperliquid', symbol: 'USDC', tokenId: 'hyperliquid:perps', quantity: 1046.82, priceUsd: 1, valueUsd: 1046.82, share: 0, native: false, hyperliquid: { account: '0x1', availableUsdc: 845.42, marginUsedUsd: 201.4, openPositions: 2, unified: false } };
+
+const POLICY = {
+  version: 1,
+  killSwitch: false,
+  outbound: { maxPerTransactionUsd: 10000, maxPerSessionUsd: 25000, humanClickAboveUsd: 100, autoApproveDailyUsd: 500, destinationAllowlist: [], simulateBeforeSign: true },
+  composition: { maxIssuerShare: {}, maxFreezableShare: 1, forbiddenIssuers: [] },
+  sentences: [],
+};
+
+function state(over: Any = {}): Any {
   return {
-    symbol: 'BTC',
-    venue: { connected: true, source: 'ws', ageMs: 300, latencyMs: 120, error: null, degraded: false },
-    account: { equityUsd: 1046.82, freeUsd: 845.42, healthPct: 0.9, unified: false, accountKnown: true, atRiskUsd: 0, maxLossUsd: 0 },
-    collateral: { address: '0x1', perpUsd: 1046.82, spotUsdcUsd: 0, funded: true },
-    positions: [],
+    wallet: {
+      rows: [intents('USDC', 6150), intents('ETH', 1.42), HL, intents('NEAR', 310.5), intents('SOL', 8.1)],
+      stale: [],
+      hyperliquid: { funded: true },
+    },
+    basic: { totalLine: '$13,581.22', caption: 'in your balance', smallLine: null },
+    policy: POLICY,
+    dailyLimit: { capUsd: 25000, spentUsd: 114.22, resetsAt: null },
+    autoLimit: { capUsd: 500, spentUsd: 14.22, resetsAt: null },
+    candleProducts: ['BTC-USD', 'ETH-USD', 'SOL-USD', 'NEAR-USD'],
+    proposals: [],
     ...over,
   };
 }
 
-test('the balance is the server\'s figure and words, the same two the Basic panel prints', () => {
+/* 25 hourly closes from `first` to `last`. */
+function day(first: number, last: number): Any[] {
+  return Array.from({ length: 25 }, (_, i) => {
+    const c = first + (last - first) * (i / 24);
+    return { t: 1_758_600_000 + i * 3600, o: c, h: c, l: c, c, v: 1 };
+  });
+}
+
+function row(rig: Rig, symbol: string): Any {
+  const found = withClass(rig.host, 'l-row').find((r) => r.dataset.key === symbol);
+  assert.ok(found, `no ledger row for ${symbol}`);
+  return found;
+}
+
+/* ---------- the total ---------- */
+
+test('the total is the NEAR money alone: the trading account is its own line, never in the figure', () => {
   const rig = boot();
-  assert.equal(one(rig.host, 'pro-sum-total').hidden, true, 'a figure before the first state frame');
-  assert.equal(withClass(rig.host, 'pro-sum-skel').length, 1, 'the first read has no skeleton');
-  rig.state(BASIC);
-  assert.equal(one(rig.host, 'pro-sum-total').textContent, '$13,450.31');
-  assert.equal(one(rig.host, 'pro-sum-total').hidden, false);
-  assert.equal(one(rig.host, 'pro-sum-caption').textContent, 'in your balance');
-  assert.equal(withClass(rig.host, 'pro-sum-skel').length, 0, 'the skeleton stays after the read');
-  // No figure is the caption alone, never $0.00.
-  rig.state({ basic: { totalUsd: null, totalLine: '', caption: 'Still checking your balance.', holdings: [] } });
-  assert.equal(one(rig.host, 'pro-sum-total').hidden, true);
-  assert.equal(one(rig.host, 'pro-sum-caption').getAttribute('data-alone'), 'true');
+  assert.equal(one(rig.host, 'stmt-total').hidden, true, 'a figure before the first state frame');
+  rig.put(state());
+  assert.equal(one(rig.host, 'stmt-total').textContent, '$12,534.39', 'the total counted the trading account');
+  assert.equal(one(rig.host, 'stmt-total').hidden, false);
+  assert.equal(one(rig.host, 'stmt-caption').textContent, 'in your coins');
+  assert.equal(withClass(rig.host, 'stmt-total-skel').length, 0, 'the skeleton stays after the read');
+  // The coins are the NEAR Intents rows, largest first, and the trading account's USDC is not
+  // folded into the NEAR USDC.
+  const rows = withClass(one(rig.host, 'l-rows'), 'l-row').filter((r) => !r.hidden);
+  assert.deepEqual(rows.map((r) => r.dataset.key), ['USDC', 'ETH', 'NEAR', 'SOL']);
+  assert.equal(one(row(rig, 'USDC'), 'l-val').textContent, '$6,150.00');
+});
+
+test('a balance that could not be read is words, never $0.00, and a coin with no price says so', () => {
+  const rig = boot();
+  rig.put(state({ wallet: { rows: [intents('USDC', 5)], stale: ['intents'], hyperliquid: { funded: true } } }));
+  assert.equal(one(rig.host, 'stmt-total').hidden, true);
+  assert.equal(one(rig.host, 'stmt-caption').textContent, 'Still reading your coins.');
   assert.ok(!words(rig.host).includes('$0.00'), JSON.stringify(words(rig.host)));
+
+  rig.put(state({ wallet: { rows: [intents('USDC', 100), intents('WIF', 2.5, { priceUsd: 0, valueUsd: 0, priced: false })], stale: [], hyperliquid: { funded: true } } }));
+  assert.equal(one(rig.host, 'stmt-caption').textContent, 'in your coins, not counting WIF');
+  const wif = row(rig, 'WIF');
+  assert.equal(one(wif, 'l-val').textContent, 'No price');
+  assert.equal(one(wif, 'l-val').getAttribute('data-unpriced'), 'true');
+  assert.equal(one(wif, 'l-price-figure').textContent, '', 'a price with no price behind it');
 });
 
-test('a funded account is what it holds, what is free, what its plans have in them and the most they can lose', () => {
+test('each coin: its price, the amount under its name and in its own column, and its value', () => {
   const rig = boot();
-  rig.state(BASIC);
-  rig.trade(trade());
-  assert.deepEqual(words(one(rig.host, 'pro-sum-figures')), ['Trading money', '$1,046.82', 'Free', '$845.42']);
-  assert.equal(one(rig.host, 'pro-sum-note').hidden, true);
-  assert.equal(one(rig.host, 'pro-sum-fund').hidden, true, 'a funded account is offered money');
-  // The margin behind the plans is not what can be lost: the stops cap that, and the bigger,
-  // wrong number is the one that scares. Each is named for what it is.
-  rig.trade(trade({ account: { ...trade().account, atRiskUsd: 250, maxLossUsd: 31.2 } }));
-  assert.deepEqual(words(one(rig.host, 'pro-sum-figures')), ['Trading money', '$1,046.82', 'Free', '$845.42', 'In trades', '$250.00', 'Max loss', '$31.20']);
-  const loss = withClass(rig.host, 'pro-sum-figure').find((f) => words(f)[0] === 'Max loss');
-  assert.ok(/every stop fills/.test(loss!.getAttribute('title') ?? ''), 'the max loss does not say what it assumes');
-  for (const value of withClass(rig.host, 'pro-sum-value')) assert.ok(value.className.includes('num'), 'a figure not set as a figure');
+  rig.put(state());
+  const eth = row(rig, 'ETH');
+  assert.equal(one(eth, 'l-sym').textContent, 'ETH');
+  assert.equal(one(eth, 'l-price-figure').textContent, '$2,684.20');
+  assert.equal(one(eth, 'l-amt').textContent, '1.42');
+  assert.equal(one(eth, 'l-amt-under').textContent, '1.42', 'the amount has nowhere to go when its column steps out');
+  assert.equal(one(eth, 'l-val').textContent, '$3,811.56');
+  assert.equal(one(row(rig, 'NEAR'), 'l-price-figure').textContent, '$4.42');
 });
 
-test('dust is not trading money: collateral.funded false reads "No trading money yet", with one action', () => {
-  // The live account held 0.000002 USDC: an equity that is a number is not money a plan can use.
-  const rig = boot();
-  rig.state(BASIC);
-  rig.trade(trade({
-    account: { ...trade().account, equityUsd: 0.000002, freeUsd: 0.000002 },
-    collateral: { address: '0x1', perpUsd: 0.000002, spotUsdcUsd: 0, funded: false },
-  }));
-  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'No trading money yet. Once there is some, Pro shows your positions, your orders and what they made.');
-  assert.equal(one(rig.host, 'pro-sum-note').hidden, false);
-  assert.equal(one(rig.host, 'pro-sum-figures').hidden, true, 'dust drew figures');
-  const fund = one(rig.host, 'pro-sum-fund');
-  assert.equal(fund.hidden, false);
-  assert.equal(words(fund).join(''), 'Add trading money', 'the action says what and where');
-  assert.ok(!fund.className.includes('btn-primary'), 'green is for Approve');
+/* ---------- the day ---------- */
+
+test('the day\'s line and change are read only for markets the app lists, and a coin without one shows neither', async () => {
+  const rig = boot({ candles: { 'ETH-USD': day(2636.74, 2684.2), 'SOL-USD': day(143.74, 148.2) } });
+  rig.put(state({ candleProducts: ['ETH-USD', 'SOL-USD'] }));
+  await tick();
+  const days = rig.asked.filter((p) => p.startsWith('/api/candles'));
+  assert.deepEqual(days.map((p) => /product=([^&]+)/.exec(p)![1]).sort(), ['ETH-USD', 'SOL-USD'], 'USDC or NEAR was asked for a market the app does not list');
+  assert.ok(days.every((p) => p.includes('granularity=3600') && p.includes('limit=25')), 'a day is 25 hourly bars');
+  assert.equal(one(row(rig, 'ETH'), 'l-chg').textContent, '+1.8%');
+  assert.equal(one(row(rig, 'ETH'), 'l-chg').getAttribute('data-dir'), 'up');
+  assert.equal(one(row(rig, 'NEAR'), 'l-chg').textContent, '', 'NEAR has no read day and drew a change');
+  assert.equal(one(row(rig, 'USDC'), 'l-chg').textContent, '');
+  // The day across the coins needs every coin that is not a dollar: NEAR has none, so no figure.
+  assert.equal(one(rig.host, 'stmt-today').hidden, true, 'a day for some of the money was written as if it were all of it');
 });
 
-test('the one action asks the assistant in the thread, and says what to do first when no agent is running', () => {
-  const rig = boot();
-  rig.state(BASIC);
-  rig.trade(trade({ collateral: { address: '0x1', perpUsd: 0, spotUsdcUsd: 0, funded: false } }));
-  one(rig.host, 'pro-sum-fund').click();
-  assert.deepEqual(rig.sent, ['Help me add money to my trading account.']);
-  rig.canTalk(false);
-  one(rig.host, 'pro-sum-fund').click();
-  assert.equal(rig.sent.length, 1, 'a message went nowhere');
-  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'Start your agent, then ask it to add money to your trading account.');
+test('the total carries no day figure; each coin says its own 24h change', async () => {
+  // Price moves times today's amounts read as profit while ignoring deposits and swaps
+  // (lead's call, 2026-09-24), so the head shows no "+$X today" even with every line read.
+  const rig = boot({ candles: { 'ETH-USD': day(2636.74, 2684.2), 'SOL-USD': day(143.74, 148.2), 'NEAR-USD': day(4.5287, 4.42) } });
+  rig.put(state());
+  await tick();
+  const today = one(rig.host, 'stmt-today');
+  assert.equal(today.hidden, true);
+  assert.equal(one(row(rig, 'NEAR'), 'l-chg').textContent, '-2.4%');
+  assert.equal(one(row(rig, 'NEAR'), 'l-chg').getAttribute('data-dir'), 'down');
 });
 
-test('a venue that has not answered is a wait, and one that is not answering reads unknown, never empty', () => {
-  const rig = boot();
-  rig.state(BASIC);
-  rig.trade(trade({ collateral: { address: null, perpUsd: null, spotUsdcUsd: null, funded: null } }));
-  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'Checking your trading account.');
-  assert.equal(one(rig.host, 'pro-sum-fund').hidden, true, 'an unanswered venue was offered money');
-  rig.trade(trade({ account: { ...trade().account, accountKnown: false, equityUsd: null, freeUsd: null } }));
-  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'Checking your trading account.');
-  rig.trade(trade({ venue: { connected: false, source: 'none', ageMs: null, latencyMs: null, error: 'no route to host', degraded: true } }));
-  assert.deepEqual(words(one(rig.host, 'pro-sum-figures')), ['Trading money', '--', 'Free', '--']);
-  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'Hyperliquid is not answering. These come back on their own.', 'unknown figures with no sentence');
-  for (const value of withClass(rig.host, 'pro-sum-value')) assert.equal(value.getAttribute('data-dim'), 'true');
-  assert.ok(!words(rig.host).some((w) => w.startsWith('No trading money')), 'a silent venue was called empty');
-});
-
-test('nothing here polls: the account follows the stream through trade.js, and the late bundle loads on Pro', () => {
-  const rig = boot();
-  assert.equal(rig.intervals, 0, 'Pro started a timer');
-  assert.doesNotMatch(PRO, /setInterval|api\.trade\(/, 'Pro reads the venue on its own clock again');
+test('a day is read once and again only when a frame finds it five minutes old: no timer, no ticker', async () => {
+  const rig = boot({ candles: { 'ETH-USD': day(2636.74, 2684.2) } });
+  rig.put(state({ candleProducts: ['ETH-USD'] }));
+  await tick();
+  const count = () => rig.asked.filter((p) => p.startsWith('/api/candles')).length;
+  assert.equal(count(), 1);
+  rig.put(state({ candleProducts: ['ETH-USD'] }));
+  rig.clock.now += 4 * 60 * 1000;
+  rig.put(state({ candleProducts: ['ETH-USD'] }));
+  await tick();
+  assert.equal(count(), 1, 'a line was read again before it was five minutes old');
+  rig.clock.now += 2 * 60 * 1000;
+  rig.put(state({ candleProducts: ['ETH-USD'] }));
+  await tick();
+  assert.equal(count(), 2, 'a five minute old line was not read again');
+  // A read that fails keeps the last good line rather than blanking the row.
+  delete rig.candles['ETH-USD'];
+  rig.clock.now += 6 * 60 * 1000;
+  rig.put(state({ candleProducts: ['ETH-USD'] }));
+  await tick();
+  await tick();
+  assert.equal(one(row(rig, 'ETH'), 'l-chg').textContent, '+1.8%', 'a failed re-read blanked a good line');
+  assert.equal(rig.timers, 0, 'Pro started a timer');
+  assert.doesNotMatch(PRO, /setInterval|setTimeout/, 'Pro reads on a clock of its own again');
+  // Off Pro, nothing is read.
   rig.view('basic');
-  rig.view('vault');
-  assert.deepEqual(rig.loads, []);
-  rig.view('pro');
-  assert.deepEqual(rig.loads, ['trade']);
-  rig.view('trade');
-  assert.deepEqual(rig.loads, ['trade', 'trade'], 'Trade does not ask for its bundle');
-  // Before the bundle has read anything the account side is empty, not a guess.
-  assert.equal(one(rig.host, 'pro-sum-figures').hidden, true);
-  assert.equal(one(rig.host, 'pro-sum-note').hidden, true);
+  rig.clock.now += 10 * 60 * 1000;
+  rig.put(state({ candleProducts: ['ETH-USD'] }));
+  assert.equal(count(), 3, 'a day was read while Pro was not on screen');
 });
 
-test('Pro is its header over the deck alone, Trade is the market, the chart and the deck, and both share the Vault\'s two track stage', () => {
-  assert.match(CSS, /body\[data-view="pro"\] #view-trade,\s*body\[data-view="trade"\] #view-trade\s*\{\s*display:\s*flex;/, 'the deck is not on both');
-  assert.match(CSS, /body\[data-view="trade"\] #view-pro\s*\{\s*display:\s*none;/, 'Trade still draws Pro\'s header');
-  assert.match(CSS, /body\[data-view="pro"\] \.trade-wrap > \.trade-strip,\s*body\[data-view="pro"\] \.trade-wrap > \.trade-main,\s*body\[data-view="pro"\] \.trade-wrap > \.split-h\s*\{\s*display:\s*none;/, 'Pro draws the market or the chart');
-  assert.match(CSS, /body\[data-view="pro"\] \.trade-wrap > \.trade-rail\s*\{\s*display:\s*flex;\s*flex:\s*1 1 auto;/, 'the deck is not the whole of Pro under the line');
-  assert.match(CSS, /body\[data-view="pro"\] \.trade-rail > \.trade-tabs\s*\{\s*display:\s*none;/, 'Pro stacks the three panels, it has no tabs');
-  // One width on all three, so the conversation holds still when the tab changes.
+/* ---------- the trading account ---------- */
+
+test('the trading account is one line that leads to Trade, and no line when no account was read', () => {
+  const rig = boot();
+  rig.put(state());
+  const line = one(rig.host, 'stmt-trade');
+  assert.equal(line.hidden, false);
+  assert.deepEqual(words(line), ['Trading account', '$1,046.82 · 2 positions', 'Open Trade']);
+  line.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(rig.shell.set)), [{ name: 'trade', opts: { fromClick: true } }]);
+
+  // Nothing about the account read: no line at all, not a name with nothing after it.
+  rig.put(state({ wallet: { rows: [intents('USDC', 10)], stale: [], hyperliquid: undefined } }));
+  assert.equal(one(rig.host, 'stmt-trade').hidden, true);
+  // An account with nothing on it, and one the venue is not answering for, say so.
+  rig.put(state({ wallet: { rows: [intents('USDC', 10)], stale: [], hyperliquid: { funded: false } } }));
+  assert.deepEqual(words(one(rig.host, 'stmt-trade')), ['Trading account', 'no money in it yet', 'Open Trade']);
+  rig.put(state({ wallet: { rows: [intents('USDC', 10)], stale: ['hyperliquid'], hyperliquid: undefined } }));
+  assert.deepEqual(words(one(rig.host, 'stmt-trade')), ['Trading account', 'not answering right now', 'Open Trade']);
+  // A single open position is one position, and none is none.
+  rig.put(state({ wallet: { rows: [intents('USDC', 10), { ...HL, hyperliquid: { ...HL.hyperliquid, openPositions: 0 } }], stale: [], hyperliquid: { funded: true } } }));
+  assert.deepEqual(words(one(rig.host, 'stmt-trade'))[1], '$1,046.82 · no positions');
+});
+
+test('Pro draws nothing of Hyperliquid but that line, and asks nothing of the trade bundle', () => {
+  const rig = boot();
+  rig.put(state({ proposals: [{ id: 't1', kind: 'trade', createdAt: '2026-09-23T19:59:00Z', status: 'pending', draft: { kind: 'trade' }, view: { state: 'needs_you', sentence: 'Long ETH, $250 notional, stop 2,590', terminal: false, money: {} } }] }));
+  rig.view('pro');
+  assert.ok(!words(rig.host).some((w) => /Long ETH/.test(w)), 'a trade is in Pro\'s moves');
+  assert.doesNotMatch(PRO, /load\('trade'\)|api\.trade\(|phosphor:trade/, 'Pro reads the trading side again');
+  assert.doesNotMatch(CSS, /body\[data-view="pro"\] #view-trade/, 'the deck is back on Pro');
+  assert.doesNotMatch(CSS, /trade-rail|trade-panels|trade-strip/, 'Pro styles the deck again');
+});
+
+/* ---------- the policies ---------- */
+
+test('Policies: three dials from the policy and the engine\'s own total, the day\'s ceiling under them', () => {
+  const rig = boot();
+  rig.put(state());
+  const card = one(rig.host, 'stmt-policies');
+  assert.equal(card.getAttribute('aria-label'), 'Policies');
+  assert.deepEqual(withClass(card, 'dial-figure').map((f) => f.textContent), ['$100', '$10,000', '$14.22']);
+  assert.deepEqual(withClass(card, 'dial-of').filter((n) => !n.hidden).map((n) => n.textContent), ['of $500']);
+  assert.deepEqual(withClass(card, 'dial').map((d) => d.childNodes[1].textContent), ['Asks you above', 'Never more in one move', 'On its own today, then it asks again']);
+  assert.equal(one(card, 'stmt-policies-foot').textContent, 'Up to $25,000 a day');
+  assert.deepEqual(words(one(card, 'stmt-freeze')), ['Freeze is off']);
+  assert.ok(withClass(card, 'dial-figure').every((f) => f.className.includes('num')), 'a figure not set as a figure');
+
+  rig.put(state({ policy: { ...POLICY, killSwitch: true } }));
+  assert.deepEqual(words(one(rig.host, 'stmt-freeze')), ['Freeze is on']);
+  assert.equal(one(rig.host, 'stmt-freeze').getAttribute('data-on'), 'true');
+});
+
+test('policies that cannot be read are one sentence, and no dial draws a number it was not given', () => {
+  const rig = boot();
+  rig.put(state({ policy: null, dailyLimit: null, autoLimit: null }));
+  assert.equal(one(rig.host, 'dials').hidden, true);
+  assert.equal(one(rig.host, 'stmt-policies-foot').hidden, true);
+  assert.ok(words(one(rig.host, 'stmt-policies')).includes('Your policies could not be read, so nothing moves until they can.'));
+  // A backend without the auto total: the third dial is the allowance itself, named as that,
+  // never a spent figure it does not have.
+  rig.put(state({ autoLimit: undefined }));
+  const auto = withClass(rig.host, 'dial')[2];
+  assert.equal(one(auto, 'dial-figure').textContent, '$500');
+  assert.equal(auto.childNodes[1].textContent, 'On its own each day, then it asks again');
+  assert.equal(auto.getAttribute('data-empty'), 'true', 'an arc was drawn for a total nobody read');
+});
+
+/* ---------- the recent moves ---------- */
+
+const RECEIPTS = [
+  { id: 'p_auto', kind: 'swap', at: '2026-09-23T19:58:00Z', status: 'executed', headline: 'Changed $14.22 of your US dollars (USDC) into Ether (ETH).', summary: '', amount: 14.22, symbol: 'USDC', received: { symbol: 'ETH', amount: 0.0053 } },
+  { id: 'p_fund', kind: 'hl_deposit', at: '2026-09-23T17:00:00Z', status: 'executed', headline: 'Moved $100.00 of your US dollars (USDC) to your Hyperliquid trading account.', summary: '', amount: 100, symbol: 'USDC', received: null },
+  { id: 'p_trade', kind: 'trade', at: '2026-09-23T16:30:00Z', status: 'executed', headline: 'Closed your ETH long.', summary: '', amount: null, symbol: null, received: null },
+  { id: 'p_fail', kind: 'swap', at: '2026-09-23T15:00:00Z', status: 'failed', headline: 'Tried to change $10.00 of your US dollars (USDC) into Solana (SOL).', summary: '', amount: 10, symbol: 'USDC', received: { symbol: 'SOL', amount: 0 } },
+];
+
+function waiting(): Any {
+  return {
+    id: 'p_wait', kind: 'swap', createdAt: '2026-09-23T19:59:40Z', status: 'pending',
+    draft: { kind: 'swap', fromSymbol: 'USDC', toSymbol: 'ETH', amountIn: 50 },
+    view: { state: 'needs_you', stage: 'waiting_for_you', terminal: false, waitingOn: 'You', sentence: '50 USDC to ETH, inside NEAR Intents', createdAt: '2026-09-23T19:59:40Z', decidedAt: null, money: { symbol: 'USDC', toSymbol: 'ETH', amountIn: '50', amountOut: null } },
+  };
+}
+
+test('recent moves: newest first, a few words each, the state in the card\'s words, and no trade', async () => {
+  const rig = boot({ receipts: RECEIPTS });
+  rig.put(state({ proposals: [waiting(), { id: 'p_auto', kind: 'swap', createdAt: '2026-09-23T19:57:50Z', status: 'executed', decidedBy: 'policy', draft: { kind: 'swap' }, view: { terminal: true, state: 'done' } }] }));
+  rig.view('pro');
+  await tick();
+  const moves = withClass(one(rig.host, 'moves'), 'move');
+  assert.deepEqual(moves.map((m) => one(m, 'move-title').textContent), [
+    'Swap 50 USDC to ETH',
+    'Swapped 14.22 USDC to 0.0053 ETH',
+    'Moved 100 USDC to trading',
+    'Swap 10 USDC to SOL',
+  ]);
+  assert.deepEqual(moves.map((m) => words(one(m, 'move-state')).join('')), ['Needs your OK', 'Done', 'Done', 'Didn\'t go through']);
+  assert.equal(one(moves[0], 'move-state').getAttribute('data-dir'), 'ask', 'the ask does not wear the live light');
+  assert.equal(one(moves[1], 'move-meta').textContent, '2 minutes ago, on its own', 'a move the policy ran does not say so');
+  assert.equal(one(moves[0], 'move-meta').textContent, 'Just now');
+  // An ended move opens its receipt.
+  one(rig.host, 'moves').dispatchEvent({ type: 'click', target: one(moves[1], 'move-title') });
+  assert.equal(rig.events.at(-1)?.type, 'receipt:open');
+  assert.equal(rig.events.at(-1)?.detail.receipt.id, 'p_auto');
+});
+
+test('a move under way says what it is doing, and a late one stays in the list as under way', async () => {
+  const rig = boot();
+  const going = { ...waiting(), id: 'p_go', status: 'executing', view: { ...waiting().view, state: 'working', stage: 'PENDING', waitingOn: '1Click', decidedAt: '2026-09-23T19:59:00Z' } };
+  const late = { ...waiting(), id: 'p_late', kind: 'intents_send', status: 'executing', createdAt: '2026-09-23T19:30:00Z', draft: { kind: 'intents_send', symbol: 'NEAR', amount: 25, to: 'maya.near' }, view: { state: 'working', stage: 'stalled', terminal: true, settlesForward: true, createdAt: '2026-09-23T19:30:00Z', decidedAt: '2026-09-23T19:30:00Z', money: { symbol: 'NEAR', toSymbol: 'NEAR', amountIn: '25' } } };
+  rig.put(state({ proposals: [going, late] }));
+  const moves = withClass(one(rig.host, 'moves'), 'move');
+  assert.deepEqual(moves.map((m) => one(m, 'move-title').textContent), ['Swap 50 USDC to ETH', 'Send 25 NEAR to maya.near']);
+  assert.deepEqual(moves.map((m) => words(one(m, 'move-state')).join('')), ['Swapping', 'Taking longer']);
+  assert.equal(one(moves[0], 'move-meta').textContent, 'Started 1 minute ago');
+});
+
+/* ---------- the two things to do ---------- */
+
+test('Swap puts the word in the box for the person to finish, and says what to do first with no agent', () => {
+  const rig = boot();
+  rig.put(state());
+  const [swap, add] = withClass(one(rig.host, 'stmt-actions'), 'stmt-act');
+  assert.deepEqual([words(swap), words(add)], [['Swap'], ['Add money']]);
+  assert.ok(!swap.className.includes('btn-primary') && !add.className.includes('btn-primary'), 'green is for Approve');
+  swap.click();
+  assert.equal(rig.composer.value, 'Swap ');
+  assert.equal(rig.composer.focused, true);
+  assert.equal(one(rig.host, 'stmt-note').hidden, true);
+  // Words the person already typed stay: the box is theirs.
+  rig.composer.value = 'what is ETH doing';
+  swap.click();
+  assert.equal(rig.composer.value, 'what is ETH doing');
+  rig.composer.disabled = true;
+  swap.click();
+  assert.equal(one(rig.host, 'stmt-note').textContent, 'Start your agent, then tell it what to swap.');
+  assert.equal(one(rig.host, 'stmt-note').hidden, false);
+});
+
+test('Add money runs the deposit steps in place of the ledger, and Close puts the page back', () => {
+  const rig = boot();
+  rig.put(state());
+  const add = withClass(one(rig.host, 'stmt-actions'), 'stmt-act')[1];
+  add.click();
+  assert.equal(one(rig.host, 'stmt-flow').hidden, false);
+  assert.equal(one(rig.host, 'stmt-ledger').hidden, true);
+  assert.equal(one(rig.host, 'stmt-duo').hidden, true);
+  assert.equal(one(rig.host, 'stmt-total').hidden, false, 'the total left the screen while the money lands');
+  assert.equal(rig.opened.length, 1, 'the existing deposit steps were not opened');
+  const close = withClass(one(rig.host, 'stmt-flow'), 'btn')[0];
+  close.click();
+  assert.equal(one(rig.host, 'stmt-flow').hidden, true);
+  assert.equal(one(rig.host, 'stmt-ledger').hidden, false);
+  assert.ok(rig.opened.some((o) => o.destroyed), 'the steps kept their watch after Close');
+  assert.equal(add.focused, true, 'focus goes back to Add money');
+});
+
+/* ---------- the layout ---------- */
+
+test('the statement reflows the way the mockup does, and keeps the stage every world shares', () => {
+  // One width on Pro, Trade and the Vault, so the conversation holds still when the tab changes.
   assert.match(CSS, /body\[data-view="pro"\] \.stage,\s*body\[data-view="trade"\] \.stage,\s*body\[data-view="vault"\] \.stage\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\) clamp\(560px, min\(var\(--trade, 66\.667vw\), calc\(100vw - 380px\)\), 1400px\);/);
   assert.equal((CSS.match(/grid-template-columns:\s*minmax\(0, 1fr\) clamp\(/g) || []).length, 1, 'a second stage width');
-  const line = CSS.slice(CSS.indexOf('/* ---------- the header'));
-  assert.ok(line.length > 200, 'the header section moved');
-  assert.doesNotMatch(line, /--ink|--up|--down/, 'the header wears a state colour');
+  // Its own width, not the world's: the world is still on its way while the stage slides.
+  assert.match(CSS, /#view-pro\s*\{\s*container-type:\s*inline-size;\s*container-name:\s*prostmt;/);
+  // 860: the legend and the amount column step out; 700: the panels stack, the price is its line.
+  const at860 = CSS.slice(CSS.indexOf('@container prostmt (max-width: 860px)'));
+  assert.match(at860, /\.stmt-legend\s*\{\s*display:\s*none;/);
+  assert.match(at860, /\.l-row > :nth-child\(4\)\s*\{\s*display:\s*none;/);
+  const at700 = CSS.slice(CSS.indexOf('@container prostmt (max-width: 700px)'));
+  assert.match(at700, /\.stmt-duo\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(at700, /\.l-head-short\s*\{\s*display:\s*inline;/, 'the price head wraps on a narrow page');
+  // Beside the policies at 1180, a move keeps its whole line and its state steps down beside the
+  // time, rather than cutting "Swap 50 USDC to ETH" before where the money goes.
+  const narrow = CSS.slice(CSS.indexOf('@container moves (max-width: 360px)'));
+  assert.match(narrow, /"icon title title"\s*"icon meta state"/);
+  assert.match(narrow, /\.move-words \{ display: contents; \}/);
+  // The app's default window (780 tall) is a short one.
+  assert.match(CSS, /@media \(max-height: 800px\)\s*\{\s*\.stmt-moves \.move:nth-child\(n\+4\)\s*\{\s*display:\s*none;/);
+});
+
+/* ---------- Policies, one press from Basic ---------- */
+
+test('the Vault\'s Policies row is the place Basic\'s button lands, brought into view once the tracks have landed', () => {
+  assert.match(VAULT, /row\('Policies', 'rules'\)/);
+  assert.match(VAULT, /setAttribute\('data-reveal', 'policies'\)/);
+  // Measured once the slide is over, not as the view comes up: measured mid-slide it landed the
+  // row's head 179 px above the slab at 1180 by 780.
+  assert.match(SHELL, /sliding = window\.setTimeout\(function \(\) \{\s*endSlide\(\);\s*if \(pendingReveal\) reveal\(\);\s*\}, slideMs\(\) \+ 60\);/);
+  assert.match(SHELL, /function revealSoon\(\) \{[\s\S]*?if \(!sliding\) reveal\(\);/);
+  assert.match(SHELL, /world\.scrollTo\(\{ top: top, behavior: 'smooth' \}\)/, 'the world does not glide there');
+  assert.doesNotMatch(SHELL.slice(SHELL.indexOf('function lightOnce')), /--ink|--up\b|ink\)/, 'the arrival lights in green, the live move\'s light');
 });
