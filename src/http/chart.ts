@@ -16,6 +16,7 @@ import type { JsonBody } from './respond.ts';
 import { CANDLE_LIMIT_MAX } from './context.ts';
 import { feedFor, type FeedState } from '../market/push.ts';
 import { isBase64, SNAPSHOT_MAX_BYTES } from '../snapshot.ts';
+import { markIfCarried } from '../web-read.ts';
 import type { Ctx } from './context.ts';
 import type { Source } from '../trade/view.ts';
 
@@ -251,7 +252,7 @@ function plansOnChart(ctx: Ctx, product: string): number {
 
 // Every plan row on the trading payload. Guarded, because the plan store is the execution unit's
 // and a server built without one (every chart test) has no plans at all.
-function planRows(ctx: Ctx): Record<string, unknown>[] {
+function planRows(ctx: Pick<Ctx, 'trade'>): Record<string, unknown>[] {
   let payload: unknown;
   try {
     payload = ctx.trade.payload();
@@ -288,6 +289,23 @@ export function linesHeld(ctx: Ctx): Map<string, { id: string; status: string }>
     }
   }
   return out;
+}
+
+/* Every line id a plan names, whatever its status, and every one a trade card names. The boot
+   raises the id counters past them (seed in src/charts.ts), because the file that keeps the
+   counters can be missing or set aside, and the next line drawn would take the id of the line a
+   plan or a card was written against. The watcher reads a line by id alone. */
+export function linesNamed(ctx: Pick<Ctx, 'trade' | 'store'>): string[] {
+  const named: string[] = [];
+  const from = (when: unknown): void => {
+    for (const condition of Array.isArray(when) ? when : []) {
+      const line = (condition as { at?: { line?: unknown } } | null)?.at?.line;
+      if (typeof line === 'string') named.push(line);
+    }
+  };
+  for (const plan of planRows(ctx)) from(plan.when);
+  for (const p of ctx.store.list()) if (p.draft.kind === 'trade' && p.draft.op === 'open') from(p.draft.plan.when);
+  return named;
 }
 
 /* The drawing store's half of a clear, for the two doors that clear: the agent's chart_draw and
@@ -447,6 +465,14 @@ export function chartPayload(ctx: Ctx, slot = 0, part: ChartPart = 'full'): unkn
   };
 }
 
+/* The labels a read of one chart, or a picture of it, puts in front of an agent: the market on
+   screen's levels, marks, lines and zones. A seat handed one that was written after a web read
+   has read the page's words too (src/web-read.ts). */
+export function labelsOnScreen(slot: ChartSlot): { webRead?: true }[] {
+  const state = slot.store.state();
+  return [...state.levels, ...state.marks, ...slot.drawings.on(state.view.product)];
+}
+
 // The agent's view of the same thing: no arrays of pixels, every number in context.
 /* `by` is the session asking, and it is what makes the housekeeping block answer the question
    an agent actually has. "Nine agent objects are on this chart" is not actionable; "three are
@@ -470,6 +496,7 @@ export async function chartRead(ctx: Ctx, by?: string | null, opts: { slot?: Cha
       housekeeping: chart.housekeeping(by, slot.drawings.list()),
       drawings: slot.drawings.on(state.view.product),
     };
+    markIfCarried(by, labelsOnScreen(slot));
     return opts.full === true ? buildRead(args) : buildCompactRead({ ...args, chart: slot.index });
   } catch (err) {
     return {

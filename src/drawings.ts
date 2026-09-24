@@ -7,7 +7,9 @@
 //      silently repoint a trigger at a different line, which is the worst possible kind of
 //      bug on a money surface: nothing errors, the bot just starts watching the wrong price.
 //      The counters are kept with the drawings across a restart (src/markings.ts) for the same
-//      reason: a plan in plans.json can outlive the process that minted its line.
+//      reason: a plan in plans.json can outlive the process that minted its line. A boot can find
+//      no file, so they are also raised past every line id a plan or a card names (seed in
+//      src/charts.ts), and an id a waiting plan holds is never minted at all (nextId below).
 //   2. Eviction under the cap takes the oldest AGENT drawing. A human drawing is never
 //      evicted to make room for an agent one, because the human did not consent to their
 //      own work being dropped by something the agent did.
@@ -27,6 +29,7 @@
 
 import type { Line } from './analysis/trendline.ts';
 import { markingLabel } from './chart-label.ts';
+import { webReadStamp } from './web-read.ts';
 
 export type Drawing = {
   id: string;
@@ -46,12 +49,14 @@ export type Drawing = {
   // A price band, and optionally the span of time it covers. Without t1 and t2 it runs the
   // width of the chart, which is what a supply zone usually means.
   zone?: { low: number; high: number; t1?: number; t2?: number };
+  // The agent that wrote the label had read a web page in that chat (src/web-read.ts).
+  webRead?: true;
 };
 
 export type DrawingStore = {
   // Refuses, by throwing a sentence, a shape the chart cannot draw: a line through one instant,
-  // a zone of no height, a number that is not finite.
-  add(d: Omit<Drawing, 'id' | 'createdAt'>): Drawing;
+  // a zone of no height, a number that is not finite. The web-read stamp is the store's to take.
+  add(d: Omit<Drawing, 'id' | 'createdAt' | 'webRead'>): Drawing;
   get(id: string): Drawing | undefined;
   // Every market's.
   list(): Drawing[];
@@ -63,7 +68,7 @@ export type DrawingStore = {
   // narrows it to one market; absent, it reaches every market the store keeps.
   clear(source?: 'human' | 'agent', by?: string | null, product?: string): number;
   // The ids a plan is waiting on. Replaces the previous set; none of them is removed by clear,
-  // the cap or remove until a later call drops them from the set.
+  // the cap or remove, or minted for a new line, until a later call drops them from the set.
   hold(ids: Iterable<string>): void;
   held(id: string): boolean;
   count(): number;
@@ -76,6 +81,12 @@ const PREFIX: Record<Drawing['kind'], string> = { trendline: 'tl', zone: 'zn' };
 // Exported so the chart's housekeeping block can say how full this store is beside its own caps.
 export const DRAWINGS_MAX = 200;
 export const DRAWINGS_PER_MARKET = 60;
+// The largest number an id carries: nine digits, the longest the markings file keeps.
+export const ID_MAX = 999_999_999;
+/* The most a plan's line id raises the counters at boot. An agent can write an idea naming any
+   tl_N without a click, and a counter pushed near ID_MAX would leave every later line with an id
+   too long to keep. From here there are still nine hundred million to mint. */
+export const SEED_MAX = 100_000_000;
 
 // Whether a drawing belongs on the chart of this market. One with no product predates the field;
 // it was made on whatever was on screen, so it is read as being on the market on screen.
@@ -164,10 +175,17 @@ export function createDrawingStore(opts?: DrawingStoreOptions): DrawingStore {
   let heldIds = new Set<string>();
   const idShape = new RegExp(`^${prefix.replace(/[^a-z0-9_]/gi, '')}(tl|zn)_(\\d{1,9})$`);
 
+  // Past any id a waiting plan holds, too. A plan can name a line that is not drawn (its own went
+  // with a markings file that was set aside, or the plan named one ahead of the counter), and the
+  // watcher would fire it on whichever line took that id next.
   function nextId(kind: Drawing['kind']): string {
     const p = PREFIX[kind];
-    counters[p] = (counters[p] ?? 0) + 1;
-    return `${prefix}${p}_${counters[p]}`;
+    let id: string;
+    do {
+      counters[p] = (counters[p] ?? 0) + 1;
+      id = `${prefix}${p}_${counters[p]}`;
+    } while (heldIds.has(id));
+    return id;
   }
 
   // The oldest agent drawing among these that no plan holds, or undefined when there is none.
@@ -199,7 +217,7 @@ export function createDrawingStore(opts?: DrawingStoreOptions): DrawingStore {
     add(d) {
       const shape = shaped(d);
       if (typeof shape === 'string') throw new Error(shape);
-      const full: Drawing = { ...shape, id: nextId(shape.kind), createdAt: now() };
+      const full: Drawing = { ...shape, ...webReadStamp(shape.source, d.by), id: nextId(shape.kind), createdAt: now() };
       items.set(full.id, full);
       evictIfNeeded(full.product);
       onChange(full.source, full.by ?? null);
@@ -240,7 +258,7 @@ export function createDrawingStore(opts?: DrawingStoreOptions): DrawingStore {
         if (typeof shape === 'string') continue;
         // The id's kind is the drawing's kind, or a trigger naming it would read the wrong shape.
         if (PREFIX[shape.kind] !== m[1]) continue;
-        items.set(d.id, { ...shape, id: d.id, createdAt: finite(d.createdAt) ? d.createdAt : now() });
+        items.set(d.id, { ...shape, ...(d.webRead === true ? { webRead: true } : {}), id: d.id, createdAt: finite(d.createdAt) ? d.createdAt : now() });
         const k = m[1] as string;
         counters[k] = Math.max(counters[k] ?? 0, Number(m[2]));
         n += 1;

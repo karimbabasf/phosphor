@@ -12,6 +12,12 @@
 // stamps the row (Proposal.webRead); land() in src/proposals/execute.ts reads that stamp, never
 // this set. A swap whose reads outlived its turn used to land after the mark had gone and run
 // with no click (path B). Keyed by the seat a proposal records as `by`.
+//
+// CARRIED BY A CHART LABEL. A label is kept across quitting (src/markings.ts), so up to 48
+// characters of a page outlived the chat that read it and reached the next chat with no mark
+// (audit finding 12). A label an agent writes while its seat is marked is stamped the same way
+// (webRead on the level, the mark or the drawing, kept in the file), and a seat that a read hands
+// a stamped label back to is marked as if it had read the page itself.
 
 const marked = new Set<string>();
 
@@ -27,4 +33,20 @@ export function clearWebRead(seat: string): void {
 
 export function webReadBy(seat: string | undefined): boolean {
   return seat !== undefined && marked.has(seat);
+}
+
+// The stamp a label takes as it is written: only an agent's, and only while its seat is marked.
+export function webReadStamp(source: string, by: unknown): { webRead?: true } {
+  return source === 'agent' && typeof by === 'string' && marked.has(by) ? { webRead: true } : {};
+}
+
+// Called by every read that hands labels to an agent, with the labels it hands over.
+export function markIfCarried(seat: unknown, labels: Iterable<{ webRead?: true }>): void {
+  if (typeof seat !== 'string' || seat === '') return;
+  for (const label of labels) {
+    if (label.webRead === true) {
+      marked.add(seat);
+      return;
+    }
+  }
 }

@@ -105,6 +105,8 @@ export async function bootChartServer(
     // that restarts passes the dir the first boot used.
     keep?: boolean;
     dataDir?: string;
+    // The plans on the trading payload from the start, the way a restart finds plans.json.
+    plans?: unknown[];
   } = {},
 ): Promise<ChartHarness> {
   const dataDir = opts.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chart-'));
@@ -117,7 +119,7 @@ export async function bootChartServer(
   const audit = createAudit(dataDir);
   const store = createStore(dataDir);
   let view: ViewMode = opts.view ?? 'trade';
-  let plans: unknown[] = [];
+  let plans: unknown[] = opts.plans ?? [];
   const tradeView = createTradeView('BTC');
   const fetches: { product: string; baseSec: number; bars: number; endSec: number | null; startedAt: number; endedAt: number }[] = [];
 

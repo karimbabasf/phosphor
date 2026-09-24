@@ -13,7 +13,7 @@
 
 import { createChartStore, parseTimeframe, timeframeLabel, MIN_TIMEFRAME_SEC } from './chart.ts';
 import type { ChartSnapshot } from './chart.ts';
-import { createDrawingStore } from './drawings.ts';
+import { createDrawingStore, SEED_MAX } from './drawings.ts';
 import type { Drawing, DrawingStore } from './drawings.ts';
 import type { IndicatorSpec } from './indicators.ts';
 
@@ -40,6 +40,11 @@ export type ChartSlots = {
   // For a fresh set of slots at boot. Comparison charts come back in order and stop at the first
   // gap, because the layout is always slots 0 to n.
   restore(saved: SlotsSnapshot, report?: (line: string) => void): void;
+  /* For the boot too, file or no file: the counters go past every line id named here (every plan
+     and trade card's, linesNamed in src/http/chart.ts). The file that keeps them is missing on the
+     first boot of the version that keeps it and empty after one set aside, and a line drawn next
+     took the id of the one a waiting plan was approved against (audit finding 13). */
+  seed(ids: Iterable<string>): void;
   // Told after any chart or drawing changes, and after the layout does.
   onChange(fn: () => void): () => void;
 };
@@ -153,6 +158,17 @@ export function createChartSlots(
     }
   }
 
+  // The primary's shape only, the one a plan may name, and no further than SEED_MAX.
+  function seed(ids: Iterable<string>): void {
+    for (const id of ids) {
+      const m = /^(tl|zn)_(\d{1,9})$/.exec(String(id));
+      if (m === null) continue;
+      const k = m[1] as string;
+      const n = Number(m[2]);
+      if (n <= SEED_MAX && n > (counters[k] ?? 0)) counters[k] = n;
+    }
+  }
+
   return {
     primary,
     slot,
@@ -160,6 +176,7 @@ export function createChartSlots(
     list,
     snapshot,
     restore,
+    seed,
     onChange(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);

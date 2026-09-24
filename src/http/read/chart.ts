@@ -5,10 +5,11 @@ import { digestSeries, resolveScanTimeframe, timeframeLabel } from '../../chart.
 import { runBatch } from '../../batch.ts';
 import { analysisHandlers } from '../../analysis/index.ts';
 import { errText, fail, intParam, sendJson } from '../respond.ts';
-import { chartDigest, chartRead, customIndicatorsOf, linesHeld, loadCandles, resolveIndicator } from '../chart.ts';
+import { chartDigest, chartRead, customIndicatorsOf, labelsOnScreen, linesHeld, loadCandles, resolveIndicator } from '../chart.ts';
 import type { ChartDigest } from '../chart.ts';
 import { slotOf } from '../view.ts';
 import { SNAPSHOT_TTL_MS } from '../../snapshot.ts';
+import { markIfCarried } from '../../web-read.ts';
 import { CANDLE_LIMIT_MAX, SCAN_TIMEFRAMES_MAX } from '../context.ts';
 import type { ReadTable } from '../context.ts';
 
@@ -75,7 +76,7 @@ export const chartReads: ReadTable = {
      the window on another screen, or one that did not answer in time) the digest alone comes
      back and says which. Asking a window that is not on the trade screen would wait the whole
      TTL for nothing, so that case is answered without asking. */
-  chart_snapshot: async (ctx, _body, args, res) => {
+  chart_snapshot: async (ctx, body, args, res) => {
     const found = slotOf(ctx, args.chart);
     if (!found.ok) return fail(res, 400, found.error);
     const { slot } = found;
@@ -94,6 +95,8 @@ export const chartReads: ReadTable = {
     if (got === null) {
       return sendJson(res, 200, { digest: `${digest}. No picture: the window did not answer within ${SNAPSHOT_TTL_MS / 1000} s` });
     }
+    // The picture shows every label on the market on screen, and a model reads them off it.
+    markIfCarried(body.session, labelsOnScreen(slot));
     sendJson(res, 200, { image: got.jpegBase64, mimeType: 'image/jpeg', digest });
   },
   chart_scan: async (ctx, _body, args, res) => {

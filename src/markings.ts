@@ -31,7 +31,7 @@ import { LIMITS, PROVIDER_CHOICES } from './chart.ts';
 import type { ChartIndicatorRecipe, ChartLevel, ChartMark } from './chart.ts';
 import type { SlotsSnapshot } from './charts.ts';
 import type { Drawing } from './drawings.ts';
-import { DRAWINGS_MAX } from './drawings.ts';
+import { DRAWINGS_MAX, ID_MAX } from './drawings.ts';
 import { OVERLAYS } from './trade/view.ts';
 import type { OverlayName } from './trade/view.ts';
 import { MIN_TIMEFRAME_SEC, servable } from './market/aggregate.ts';
@@ -64,6 +64,8 @@ const PRICE = z.number().gt(-1e15).lt(1e15);
 const EPOCH_SEC = z.number().min(0).max(1e11);
 // Cleaned and cut again on the way in (src/chart-label.ts); this only bounds what is read.
 const LABEL = z.string().max(256);
+// The label's web-read stamp (src/web-read.ts). A file from before it has none: unstamped.
+const WEB_READ = z.literal(true).optional();
 const STORE_ID = z.string().regex(/^[a-z0-9:_-]{1,48}-\d{1,9}$/);
 const TYPE = z.string().regex(/^(?:[a-z][a-z0-9_]{0,31}|custom:[a-z0-9-]{1,32})$/);
 const PARAMS = z
@@ -73,13 +75,14 @@ const PARAMS = z
 const provenance = { source: SOURCE, by: BY, createdAt: CREATED, product: PRODUCT, granularitySec: GRANULARITY };
 
 const INDICATOR = z.object({ id: STORE_ID, type: TYPE, params: PARAMS, ...provenance });
-const LEVEL = z.object({ id: STORE_ID, price: PRICE, label: LABEL, ...provenance });
-const MARK = z.object({ id: STORE_ID, t: EPOCH_SEC, label: LABEL, ...provenance });
+const LEVEL = z.object({ id: STORE_ID, price: PRICE, label: LABEL, webRead: WEB_READ, ...provenance });
+const MARK = z.object({ id: STORE_ID, t: EPOCH_SEC, label: LABEL, webRead: WEB_READ, ...provenance });
 const ANCHOR = z.object({ t: EPOCH_SEC, price: PRICE });
 const DRAWING = z.object({
   id: z.string().regex(/^(?:c[1-3]_)?(?:tl|zn)_\d{1,9}$/),
   kind: z.enum(['trendline', 'zone']),
   label: LABEL,
+  webRead: WEB_READ,
   source: SOURCE,
   by: BY,
   product: PRODUCT.optional(),
@@ -106,7 +109,9 @@ const CHART = z.object({
   marks: LIST,
   drawings: LIST,
 });
-const COUNTER = z.number().int().min(0).max(1e8).catch(0);
+// Past what an id can carry is held at the ceiling, not read as 0: a counter back at 0 hands every
+// id out again.
+const COUNTER = z.number().int().min(0).transform((n) => Math.min(n, ID_MAX)).catch(0);
 const OVERLAY_SWITCHES = z.object(Object.fromEntries(OVERLAYS.map((name) => [name, z.boolean().optional()])) as Record<OverlayName, z.ZodOptional<z.ZodBoolean>>);
 const FILE = z.object({
   version: z.literal(MARKINGS_VERSION),
