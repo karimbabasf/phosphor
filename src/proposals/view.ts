@@ -203,7 +203,7 @@ export const STAGE_COPY: Record<ProposalStage, string> = {
   confirmed: 'Done. The balance shows it.',
   failed: 'It did not go through. The reason is on the card. Nothing more will be signed.',
   declined: 'You said no. Nothing moved.',
-  refused: 'A rule you set stopped it. Nothing moved. Change the limit in the Vault if you want it to go.',
+  refused: 'A rule you set stopped it. Nothing moved. Change it in Vault, under Policies, if you want it to go.',
   stalled: 'Late: nothing has changed since the last update. The app keeps checking; nothing more is signed.',
 };
 
@@ -689,13 +689,13 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft, seen: Seen =
     case 'needs_approval':
       return 'This one waits for your OK. Nothing moves until you say yes.';
     case 'over_trade_cap':
-      return "That's over your limit for one move, so nothing moved. Ask for less, or ask me to raise the limit; your limits are in Vault, under Limits.";
+      return "That's over your limit for one move, so nothing moved. Ask for less, or ask me to raise the limit; your limits are in Vault, under Policies.";
     case 'over_daily_cap':
       return 'That would go past your daily limit, so nothing moved. Try a smaller amount, or wait for the limit to free up.';
     case 'kill_switch':
       return "Everything is frozen, so nothing moved. Unfreeze it from the top bar when you're ready.";
     case 'policy_rule':
-      return 'One of your rules stopped this, so nothing moved. Change the limit in the Vault if you want it to go.';
+      return 'One of your rules stopped this, so nothing moved. Change it in Vault, under Policies, if you want it to go.';
     case 'rules_unreadable':
       return "Your rules couldn't be read, so nothing can move right now.";
     case 'unpriced':
