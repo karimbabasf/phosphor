@@ -38,6 +38,9 @@
     market_search: 'looking up a market',
     log_tail: 'reading the log',
     research: 'reading the news',
+    web_search: 'searching the web',
+    web_fetch: 'reading a page',
+    x_search: 'searching X',
     skill: 'reading its instructions',
     trade_read: 'reading the account',
     deposit: 'getting a deposit address',
@@ -87,7 +90,6 @@
     agent_jobs: 'talking to the helpers',
     /* the window itself */
     switch: 'switching the screen',
-    watch: 'changing the coins you watch',
     set_theme: 'recolouring the window',
     start: 'starting up'
   };
@@ -95,6 +97,9 @@
   /* The tools that reach past this machine. Developer mode names them on their row. */
   var LEAVES = {
     research: true,
+    web_search: true,
+    web_fetch: true,
+    x_search: true,
     chain_address: true,
     chain_transactions: true,
     chain_transaction: true,
@@ -267,6 +272,14 @@
      printed a second time as a row. */
   var failure = null;
 
+  /* THE PICK: the agent a new chat runs (GET /api/driver `agent`). One that runs outside this
+     window (Codex in a terminal) has no Start here; its sentence says where it runs instead. */
+  var pick = null;
+
+  function awayReason() {
+    return pick && pick.inApp === false && typeof pick.reason === 'string' && pick.reason ? pick.reason : '';
+  }
+
   /* THE TURN. One record from the moment a prompt goes out until the turn ends, in three
      states, each one an event rather than a guess: `thinking` (sent, nothing back yet),
      `calling` (a tool is open) and `writing` (words are arriving). The working line reads it,
@@ -431,7 +444,7 @@
     emptyInner.appendChild(emptyTitle);
     emptyInner.appendChild(emptyNote);
     var emptyActions = dom.el('div', 'agent-empty-actions');
-    var startBig = button('btn btn-primary', 'Start your assistant', '', 'Starting');
+    var startBig = button('btn', 'Start your assistant', '', 'Starting');
     var connectBtn = button('btn btn-ghost', 'Connect your own');
     emptyActions.appendChild(startBig);
     emptyActions.appendChild(connectBtn);
@@ -731,7 +744,7 @@
       host.appendChild(dom.el('p', 'body dim', 'Its transcript on this window is deleted. Your wallet, limits and open positions are untouched.'));
       var actions = dom.el('div', 'dock-actions');
       var keep = button('btn btn-ghost', 'Keep running');
-      var off = button('btn btn-danger', 'Turn off');
+      var off = button('btn', 'Turn off');
       actions.appendChild(keep);
       actions.appendChild(off);
       host.appendChild(actions);
@@ -1078,14 +1091,16 @@
     var refs = node.refs;
     var empty = !hasConversation();
     var failed = failure !== null && canStart();
+    var away = canStart() ? awayReason() : '';
 
-    dom.setHidden(refs.note, !failed);
-    dom.setText(refs.noteText, failed ? failure.reason : '');
+    dom.setHidden(refs.note, !failed && !away);
+    dom.setText(refs.noteText, failed ? failure.reason : away);
+    dom.setHidden(refs.retry, !failed);
     dom.setAttr(refs.note, 'title', failed && failure.detail ? failure.detail : null);
 
     /* The card already asks once, in the middle of the column; the head's Start takes over
      the moment there is a transcript to keep company. */
-    dom.setHidden(refs.start, empty || failed || !canStart());
+    dom.setHidden(refs.start, empty || failed || !!away || !canStart());
     dom.setHidden(refs.stopAgent, !canTalk());
 
     var sheet = view === 'connect' && empty && canStart();
@@ -1313,7 +1328,7 @@
       dom.setText(refs.emptyNote, COPY.offLine);
     }
     dom.setHidden(refs.emptyActions, !canStart());
-    dom.setHidden(refs.startBig, phase === 'error');
+    dom.setHidden(refs.startBig, phase === 'error' || !!awayReason());
   }
 
   function renderSheet(node) {
@@ -1379,7 +1394,9 @@
     if (block.type === 'sheet') {
       /* A card another screen asked to show, at the thread's end, closed by its own
          buttons. It lives in this window only and is never part of the stored chat. */
+      /* A quiet one (a reminder) is a line in the thread, not a card. */
       var wrap = dom.el('div', 'chat-sheet');
+      if (block.quiet) wrap.setAttribute('data-quiet', 'true');
       var inner = dom.el('section', 'chat-sheet-card');
       wrap.appendChild(inner);
       block.build(inner, function () { removeBlock(block); });
@@ -1413,6 +1430,7 @@
       : (block.type === 'error' ? 'chat-error'
         : (block.type === 'note' ? 'chat-note' : 'chat-reply'));
     var chat = dom.el('div', 'chat-row ' + kind);
+    if (block.devOnly) chat.setAttribute('data-dev-only', '');
     chat.appendChild(dom.el('span', 'chat-who'));
     /* A reply is rendered, the others are set as text. The renderer builds elements and
        sets strings: nothing a model writes reaches the DOM as markup. */
@@ -1530,12 +1548,12 @@
 
   /* The backup nudge, the recovery words, Turn off the assistant: a card at the thread's
      end, in view, and the conversation pane shown if it was hidden. */
-  function showCard(build) {
+  function showCard(build, opts) {
     if (typeof build !== 'function') return;
     openSteps = null;
     jumpAll = true;
     reveal();
-    pushBlock({ type: 'sheet', build: build, at: Date.now() });
+    pushBlock({ type: 'sheet', build: build, quiet: !!(opts && opts.quiet), at: Date.now() });
   }
 
   /* THE GATE STAYS REACHABLE. A pane hidden while a move waits would be a window arranged to
@@ -1713,7 +1731,9 @@
     if (event.kind === 'error') {
       turn = null;
       if (failure && failure.detail && failure.detail === String(event.message)) return;
-      pushBlock({ type: 'note', text: event.message });
+      /* A log line, not something the assistant said: developer mode shows it. The sentence a
+         person needs comes on the failed status, beside Retry. */
+      pushBlock({ type: 'note', text: event.message, devOnly: true });
       return;
     }
   }
@@ -1734,6 +1754,14 @@
   function endTurn() {
     for (var i = 0; i < blocks.length; i += 1) {
       var block = blocks[i];
+      /* A block that streamed and never got its whole copy was cut short by a stop: what
+         arrived is what was said, so it stays, and stops reading as still arriving. */
+      if (block.type === 'reply' && block.live !== null && block.live !== undefined) {
+        block.done = joined(block.done, block.live);
+        block.live = null;
+        block.text = block.done;
+        continue;
+      }
       if (block.type === 'card' && block.kind === 'move' && block.data && block.data.placeholder === true && !block.data.failed) {
         block.data = { placeholder: true, failed: true, kind: block.data.kind };
         block.rev = (block.rev || 0) + 1;
@@ -1909,6 +1937,7 @@
       var data = result.data || {};
       var chat = (data.chats && data.chats[0]) || {};
       if (chat.id) chatId = String(chat.id);
+      if (data.agent && typeof data.agent === 'object') pick = data.agent;
       if (Array.isArray(chat.transcript)) {
         for (var i = 0; i < chat.transcript.length; i += 1) ingest(chat.transcript[i], true);
         endTurn();

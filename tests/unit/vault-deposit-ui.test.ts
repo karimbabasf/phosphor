@@ -202,7 +202,7 @@ type World = {
   card: () => Any | null;
 };
 
-function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) => Any | null; ack?: boolean } = {}): World {
+function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) => Any | null; ack?: boolean; notice?: boolean } = {}): World {
   const body = makeNode('body');
   const page = makeNode('div');
   const calls: Any[] = [];
@@ -214,7 +214,7 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
   const doc: Any = {
     body,
     createElement: makeNode,
-    getElementById: (id: string) => (id === 'page' ? page : null),
+    getElementById: (id: string) => (id === 'page' ? page : id === 'notice' && options.notice ? makeNode('div') : null),
     addEventListener() {},
   };
 
@@ -248,7 +248,7 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
     view: () => 'vault',
   };
   sandbox.PhosphorToast = { show: (message: string) => { toasts.push(message); } };
-  sandbox.PhosphorDecision = { showCard: (build: (host: Any, done: () => void) => void) => { const host = makeNode('div'); cards.push(host); build(host, () => {}); } };
+  sandbox.PhosphorDecision = { showCard: (build: (host: Any, done: () => void) => void, opts?: Any) => { const host = makeNode('div'); host.opts = opts; cards.push(host); build(host, () => {}); } };
   sandbox.PhosphorVault = { startReveal() { calls.push({ route: 'startReveal' }); } };
   sandbox.PhosphorLock = { focus() { calls.push({ route: 'lockFocus' }); } };
   sandbox.PhosphorApi = {
@@ -653,10 +653,17 @@ test('with money in and the phrase not proven, the backup card is up once per st
   world.store.put(Object.assign({}, world.store.get(), { basic: { totalUsd: 12.5 } }));
   const card = world.card();
   assert.ok(card, 'no reminder with money in and no backup');
-  assert.ok(textOf(card).includes('You have money in. Back up now.'));
+  /* In the thread it is one quiet line in the balances panel's words, never the big card with
+     a green button: the panel's foot says the same thing (lead, 2026-09-23). */
+  assert.equal(card.opts && card.opts.quiet, true, 'the reminder asked the thread for a card, not a line');
+  assert.ok(textOf(card).includes('Your recovery phrase is not backed up yet.'), String(textOf(card)));
   const buttons = find(card, 'button');
-  assert.equal(buttons[0].getAttribute('aria-label'), 'Not now');
-  assert.equal(buttons[1].textContent, 'Back up now');
+  assert.equal(buttons.length, 2, 'the line has its action and the X, nothing else');
+  assert.equal(buttons[0].textContent, 'Back it up');
+  assert.ok(!String(buttons[0].className).includes('btn-primary'), 'the reminder is green');
+  assert.equal(buttons[1].getAttribute('aria-label'), 'Not now');
+  buttons[0].click();
+  assert.ok(world.calls.some((c) => c.route === 'startReveal'), 'Back it up did not go to Reveal');
   // A later frame with the same facts does not raise a second card this session.
   world.store.put(Object.assign({}, world.store.get(), { basic: { totalUsd: 13 } }));
   assert.equal(world.card(), card, 'the reminder came back inside one session');
@@ -677,3 +684,12 @@ test('the reminder waits while a request is waiting, and never shows for an empt
   proven.store.put(Object.assign({}, proven.store.get(), { basic: { totalUsd: 500 } }));
   assert.equal(proven.card(), null, 'a reminder for a wallet whose phrase is proven');
 });
+
+/* The frame's notice carries "not backed up" at the foot of the window whenever it is true, so
+   the thread does not say it a second time. */
+test('with the frame\'s notice on the page, the thread shows no backup reminder of its own', () => {
+  const world = build({ vault: { custody: 'secure-enclave', backedUp: false }, notice: true });
+  world.store.put(Object.assign({}, world.store.get(), { basic: { totalUsd: 12.5 } }));
+  assert.equal(world.card(), null, 'the thread said what the notice already says');
+});
+

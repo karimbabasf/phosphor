@@ -36,7 +36,6 @@
     var names = (state ? 'mark ' : '') + (className || '');
     if (names.trim()) svg.setAttribute('class', names.trim());
     if (state) svg.setAttribute('data-state', state);
-    svg.setAttribute('viewBox', '0 0 58.05 64.75');
     svg.setAttribute('focusable', 'false');
     svg.setAttribute('aria-hidden', 'true');
     var use = document.createElementNS(SVG_NS, 'use');

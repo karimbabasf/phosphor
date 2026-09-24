@@ -720,9 +720,9 @@
      build. They sit in the thread, at its end, as the move cards do: nothing covers the
      conversation any more. `build(host, close)` fills the card and calls close when it is
      done with it. */
-  function showCard(build) {
+  function showCard(build, opts) {
     var agent = window.PhosphorAgent;
-    if (agent && typeof agent.showCard === 'function') agent.showCard(build);
+    if (agent && typeof agent.showCard === 'function') agent.showCard(build, opts);
   }
 
   /* The Touch ID sentence can move on its own when the dialog opens: the vault slice carries

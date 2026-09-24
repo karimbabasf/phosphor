@@ -269,8 +269,8 @@ test('kindFor names the card by the tool, prefix or not, and falls back to the f
   assert.equal(kindFor('mcp__phosphor__propose_trade'), 'move');
   assert.equal(kindFor('proposal_status'), 'move');
   assert.equal(kindFor('deposit'), 'deposit');
-  assert.equal(kindFor('watch', { chain: 'base', asset: 'USDC', watching: 'watching' }), 'deposit');
-  assert.equal(kindFor('watch', { ok: true, coins: ['BTC', 'ETH'] }), 'kv');
+  /* `watch` is gone from the tools (pg/agent), and its deposit-shaped answer with it. */
+  assert.equal(kindFor('watch', { chain: 'base', asset: 'USDC', watching: 'watching' }), 'kv');
   assert.equal(kindFor('policy_show'), 'kv');
 });
 
@@ -560,13 +560,15 @@ test('a floor prints as a quantity, cut and never rounded up', () => {
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { chain: 'arb', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'wNEAR', amountIn: 7.0069, minAmountOut: 1.988851425812084254220825 },
     data: { id: 's1', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap', swap: { receives: '2.0089', receivesAtLeast: '1.988851425812084254220825', feeUsd: 0.03, etaSeconds: 45 } } } });
   const card = world.cardNodes('move')[0];
-  assert.ok(faceOf(card).includes('You get at least 1.98885 wNEAR'), faceOf(card));
+  /* wNEAR is the stored name of NEAR inside NEAR Intents; the card says NEAR. */
+  assert.ok(faceOf(card).includes('You get at least 1.98885 NEAR'), faceOf(card));
+  assert.ok(!faceOf(card).includes('wNEAR'), faceOf(card));
   assert.ok(!card.textContent.includes('1.988851425812'), card.textContent);
 
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { chain: 'arb', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'wNEAR', amountIn: 7, minAmountOut: 5.934637 },
     data: { id: 'f1', status: 'pending', verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap', swap: { receives: '6', receivesAtLeast: '5.934637', feeUsd: 0.03, etaSeconds: 45 } } } });
   const second = world.cardNodes('move')[1];
-  assert.ok(faceOf(second).includes('at least 5.93463 wNEAR'), faceOf(second));
+  assert.ok(faceOf(second).includes('at least 5.93463 NEAR'), faceOf(second));
   assert.ok(!second.textContent.includes('5.93464'));
   assert.equal(world.cards.floorText(1234567), '1,234,560');
   assert.equal(world.cards.floorText(0.000123456789), '0.000123456');
@@ -655,8 +657,8 @@ test('a refused deposit says the reason and nothing else', () => {
 
 test('any other whitelisted answer is two columns of facts, numbers in mono', () => {
   const world = build();
-  world.ask('watch btc');
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__watch', input: {}, data: { ok: true, coins: ['BTC', 'ETH'], count: 2, screen: { view: 'basic' } } });
+  world.ask('can I swap btc?');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__swap_check', input: {}, data: { ok: true, coins: ['BTC', 'ETH'], count: 2, screen: { view: 'basic' } } });
   const card = world.cardNodes('kv')[0];
   assert.ok(card, 'no facts card');
   const keys = all(card, 'tcard-kv-key').map((k) => k.textContent);
