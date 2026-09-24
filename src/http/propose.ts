@@ -174,7 +174,7 @@ function swapAmountField(params: JsonBody, name: string, problems: string[]): nu
     problems.push(`${name} must be "all" or an exact amount above zero written as a decimal, such as "0.5"`);
     return '';
   }
-  return (raw as string).trim();
+  return raw as string;
 }
 
 export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerResponse): Promise<void> {

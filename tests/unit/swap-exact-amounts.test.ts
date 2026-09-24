@@ -36,11 +36,11 @@ test('the recon arithmetic: the double scales 67,589,776 yocto above the balance
 
 test('amountAsk takes "all", an exact decimal, or a number through its shortest decimal, and nothing else', () => {
   assert.deepEqual(amountAsk('all'), { all: true });
-  assert.deepEqual(amountAsk(' ALL '), { all: true });
+  assert.deepEqual(amountAsk('ALL'), { all: true });
   assert.deepEqual(amountAsk(THE_EXACT), { all: false, text: THE_EXACT });
   assert.deepEqual(amountAsk(THE_DOUBLE), { all: false, text: '0.8946970287783748' });
   assert.deepEqual(amountAsk(1e-7), { all: false, text: '0.0000001' });
-  for (const bad of ['0', '0.000', '-1', '1e5', '1,5', '', 'half', '.5', '5.', 0, -2, Number.NaN, Infinity, null, {}, '9'.repeat(81)]) {
+  for (const bad of ['0', '0.000', '-1', '+1', '1e5', '1E5', '0x10', '1,5', ' 1.5', '1.5 ', ' all', 'Infinity', 'NaN', '', 'half', '.5', '5.', 0, -2, Number.NaN, Infinity, null, {}, '9'.repeat(81)]) {
     assert.equal(amountAsk(bad), null, `${String(bad)} is not an amount`);
   }
 });

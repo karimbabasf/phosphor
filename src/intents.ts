@@ -336,18 +336,18 @@ const AMOUNT_TEXT_MAX = 80;
 export type AmountAsk = { all: true } | { all: false; text: string };
 
 /* "all", an exact decimal string, or a number (kept for callers that still send one, and read
-   through its shortest decimal string, never through float math on base units). Null for
-   anything else, zero included: nothing to spend is not an amount. */
+   through its shortest decimal string, never through float math on base units). Strict: no sign,
+   exponent, hex, whitespace, Infinity or NaN, and "all" in any case but nothing around it. Null
+   for anything else, zero included: nothing to spend is not an amount. */
 export function amountAsk(value: unknown): AmountAsk | null {
   if (typeof value === 'number') {
     if (!Number.isFinite(value) || value <= 0) return null;
     return { all: false, text: plainDecimal(value) };
   }
   if (typeof value !== 'string') return null;
-  const text = value.trim();
-  if (text.toLowerCase() === 'all') return { all: true };
-  if (text.length > AMOUNT_TEXT_MAX || !AMOUNT_TEXT.test(text) || !/[1-9]/.test(text)) return null;
-  return { all: false, text };
+  if (value.toLowerCase() === 'all') return { all: true };
+  if (value.length > AMOUNT_TEXT_MAX || !AMOUNT_TEXT.test(value) || !/[1-9]/.test(value)) return null;
+  return { all: false, text: value };
 }
 
 /* A decimal string to base units, exactly. Digits past the coin's precision are CUT, never
