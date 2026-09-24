@@ -206,7 +206,7 @@
   function readable(err, nothingLeft) {
     var message = (err && err.message) || String(err);
     if (err && err.name === 'TimeoutError') {
-      return 'Still checking whether this went through. I\'ll update it here.';
+      return 'Still checking whether this went through. Check again for the latest.';
     }
     if (/Failed to fetch|NetworkError|Load failed/i.test(message)) {
       message = 'The app is not answering. It may have stopped.';

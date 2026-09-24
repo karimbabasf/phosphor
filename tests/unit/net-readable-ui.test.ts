@@ -39,7 +39,7 @@ test('a timed out write says the app is still checking, never that nothing left 
   const readable = load();
   const message = readable(timeout(), true);
   assert.doesNotMatch(message, /Nothing left/i, 'the timeout must not claim the wallet is untouched');
-  assert.equal(message, "Still checking whether this went through. I'll update it here.");
+  assert.equal(message, 'Still checking whether this went through. Check again for the latest.');
 });
 
 test('an ordinary error still carries "Nothing left your wallet" when the caller knows it', () => {

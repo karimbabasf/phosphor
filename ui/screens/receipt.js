@@ -358,7 +358,7 @@
     if (unconfirmed(receipt)) {
       var warn = dom.el('p', 'receipt-note');
       warn.dataset.tone = 'warn';
-      dom.setText(warn, 'Not confirmed. Still checking whether this went through. I\'ll update it here.'
+      dom.setText(warn, 'Not confirmed. Still checking whether this went through. Check again for the latest.'
         + (receipt.summary ? ' ' + String(receipt.summary) : ''));
       card.appendChild(warn);
     } else if (receipt.status === 'failed' && receipt.refunded) {
@@ -421,7 +421,7 @@
           var status = answer && answer.status;
           if (status === 'needs_reconciliation') {
             var said = answer && typeof answer.detail === 'string' && answer.detail.trim();
-            dom.setText(error, said ? 'Checked again just now: ' + said : 'Still checking whether this went through. I\'ll update it here.');
+            dom.setText(error, said ? 'Checked again just now: ' + said : 'Still checking whether this went through. Check again for the latest.');
             error.hidden = false;
             return;
           }
