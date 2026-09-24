@@ -84,7 +84,8 @@ test('the persona forbids self-approval in the words the gate enforces', () => {
 
 test('an answer is one to three short lines, the outcome first with its one figure in bold', () => {
   const text = role();
-  assert.ok(text.includes('One to three short lines'));
+  // A line is a sentence: read as a short paragraph, it let three paragraphs pass for three lines.
+  assert.ok(text.includes('One to three short lines, one sentence each'));
   assert.ok(text.includes('the one number that matters in **bold**'));
   assert.ok(text.includes('one short question with a default'));
   assert.ok(text.includes('a short list only when there are two to four choices'));
@@ -97,6 +98,10 @@ test('the card is the receipt, and the agent never repeats it', () => {
   assert.ok(text.includes('Never repeat it, not even in other words'));
   assert.ok(text.includes('After a move card, add only what the card does not say: a next step, a short why, or one warm line'));
   assert.ok(text.includes('say nothing unless there is a next step'));
+  // The live eval of 2026-09-24: "It's on its way and should land in about 3 minutes" (S1), and a
+  // card they asked to see read back field by field (S4, S5).
+  assert.ok(text.includes('never a promise of when it lands or finishes'));
+  assert.ok(text.includes('say only which one is up, with no figure, time or status'));
 });
 
 /* The UI sweep of 2026-09-23 (hunt-a #16): under a card saying exactly that, the agent wrote "That
@@ -166,7 +171,17 @@ test('a failed or late move is checked before anything is said about it', () => 
 test('the persona sends the agent to check a swap before proposing one, in exact amounts', () => {
   const text = role();
   assert.ok(text.includes('swap_assets and swap_quote answer that and file nothing'));
+  assert.ok(text.includes('run swap_quote before every propose_swap'));
   assert.ok(text.includes('propose_swap takes "all" or the exact amount as text, never a rounded number'));
+});
+
+/* The live eval of 2026-09-24: asked how to put money in, the agent asked for the coin and the
+   network and never said why (S25); asked for a $6 deposit, it offered $7 without reading what
+   they hold (S26). */
+test('a deposit always names its network and warns, and an amount is read before it is offered', () => {
+  const text = role();
+  assert.ok(text.includes('on every deposit, card or not, name the network and warn in one line that a coin sent on the wrong network is lost'));
+  assert.ok(text.includes('read it before you say what they hold or offer an amount'));
 });
 
 test('a send is read back whole, with the address read first', () => {
@@ -201,7 +216,7 @@ test('the persona is short enough to be read, and carries half the old weight', 
   /* 22,603 characters on 2026-09-22, sent in front of the person's first message under Claude
      Code's own coding-agent prompt. It is the system prompt now and the ceiling is 10,000: the
      rules that repeated the card and forced reads are gone, and the voice is examples rather than
-     paragraphs. Measured 7,994 with a view and a vendor. */
+     paragraphs. Measured 9,949 with a view and a vendor. */
   const text = buildRole({ root: ROOT, view: 'trade', agent: 'Claude Code' });
   assert.ok(text.length > 3000, 'the persona got gutted');
   assert.ok(text.length < 10_000, `the persona is ${text.length} characters`);
