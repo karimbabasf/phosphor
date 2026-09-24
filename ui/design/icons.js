@@ -160,6 +160,21 @@
       'M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15H4z',
       'M4 15V6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15M4 15h16M2 18.5h20'
     ],
+    /* A dial with its needle: a limit, how far toward it. */
+    gauge: [
+      'M4 16a8 8 0 0 1 16 0z',
+      'M4 16a8 8 0 0 1 16 0M12 16l3.5-4.5M4 19.5h16'
+    ],
+    /* A key: its bow, its shaft and two teeth. */
+    key: [
+      'M8 9a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z',
+      'M8 9a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM11.5 12.5H20M16.5 12.5v2.5M19.5 12.5v2'
+    ],
+    /* A bin with its lid: taking something off this Mac. */
+    trash: [
+      'M6 7h12l-1 12a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z',
+      'M4 7h16M9.5 7V5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M10 11v6M14 11v6'
+    ],
     /* A check on its own, no ring: the tick inside a box that is already the
        shape (the acknowledgement on Add money). */
     check: [

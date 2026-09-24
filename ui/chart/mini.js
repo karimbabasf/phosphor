@@ -40,7 +40,7 @@
   var AXIS_H = 16;
   var PAD_TOP = 6;
   var PRICE_PAD = 0.06;
-  var FONT = '11px "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+  var FONT = '11px "Geist", ui-sans-serif, system-ui, sans-serif';
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   /* The tokens' shipped values (ui/design/tokens.css), for the frame drawn
@@ -55,6 +55,19 @@
     down: '#ff6b5b',
     agent: '#B79CFF'
   };
+
+  /* Figures in the engine's tabular Geist (chart.js chartText), or plain canvas text where the
+     engine is not loaded. */
+  function text(ctx, words, x, y) {
+    var t = window.chartText;
+    if (t && typeof t.draw === 'function') t.draw(ctx, words, x, y);
+    else ctx.fillText(words, x, y);
+  }
+
+  function textWidth(ctx, words) {
+    var t = window.chartText;
+    return t && typeof t.width === 'function' ? t.width(ctx, words) : ctx.measureText(words).width;
+  }
 
   var stage = null;
   var minis = {};
@@ -309,7 +322,7 @@
     var candles = Array.isArray(payload.candles) ? payload.candles : [];
     if (!candles.length) {
       ctx.fillStyle = tokens.text3;
-      ctx.fillText(payload.meta && payload.meta.error ? 'No candles' : 'Waiting for candles', 8, 16);
+      text(ctx, payload.meta && payload.meta.error ? 'No candles' : 'Waiting for candles', 8, 16);
       return;
     }
 
@@ -336,7 +349,7 @@
        cents is never clipped at the edge of a narrow cell. */
     var axisW = AXIS_MIN_W;
     for (var g0 = 0; g0 <= 3; g0 += 1) {
-      var labelW = ctx.measureText(priceText(lo + (span * g0) / 3, decimals)).width + 12;
+      var labelW = textWidth(ctx, priceText(lo + (span * g0) / 3, decimals)) + 12;
       if (labelW > axisW) axisW = labelW;
     }
     var plotW = w - axisW;
@@ -361,7 +374,7 @@
       ctx.moveTo(0, gy);
       ctx.lineTo(plotW, gy);
       ctx.stroke();
-      ctx.fillText(priceText(price, decimals), plotW + 6, Math.max(top + 6, Math.min(bottom - 6, yOf(price))));
+      text(ctx, priceText(price, decimals), plotW + 6, Math.max(top + 6, Math.min(bottom - 6, yOf(price))));
     }
 
     /* The time axis: the first bar, the middle one and the last. */
@@ -370,7 +383,7 @@
       var label = stampOf(candles[stamps[s]].t, granularity, candles[start].t);
       var tx = xOf(stamps[s]);
       ctx.textAlign = s === 0 ? 'left' : s === stamps.length - 1 ? 'right' : 'center';
-      ctx.fillText(label, s === 0 ? Math.max(2, tx) : s === stamps.length - 1 ? Math.min(plotW - 2, tx) : tx, bottom + AXIS_H / 2 + 1);
+      text(ctx, label, s === 0 ? Math.max(2, tx) : s === stamps.length - 1 ? Math.min(plotW - 2, tx) : tx, bottom + AXIS_H / 2 + 1);
     }
     ctx.textAlign = 'left';
 
@@ -455,7 +468,7 @@
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = alpha(ink, 0.9);
-      ctx.fillText(String(level.label || '') + ' ' + priceText(level.price, decimals), 5, Math.max(top + 7, y - 8));
+      text(ctx, String(level.label || '') + ' ' + priceText(level.price, decimals), 5, Math.max(top + 7, y - 8));
     }
   }
 
@@ -474,7 +487,7 @@
       ctx.fillRect(0, boxTop, plotW, boxBottom - boxTop);
       ctx.fillStyle = alpha(ink, 0.8);
       ctx.textAlign = 'right';
-      ctx.fillText(String(d.label || ''), plotW - 4, boxTop + 9);
+      text(ctx, String(d.label || ''), plotW - 4, boxTop + 9);
       ctx.textAlign = 'left';
     }
   }
@@ -517,7 +530,7 @@
       ctx.restore();
       ctx.fillStyle = alpha(ink, 0.85);
       ctx.textAlign = 'right';
-      ctx.fillText(String(d.label || ''), plotW - 4, Math.max(top + 8, Math.min(bottom - 4, y1 - 6)));
+      text(ctx, String(d.label || ''), plotW - 4, Math.max(top + 8, Math.min(bottom - 4, y1 - 6)));
       ctx.textAlign = 'left';
     }
   }

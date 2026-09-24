@@ -33,7 +33,7 @@
   grid-template-areas:
     "mark name  act"
     "mark state act"
-    ".    more  more";
+    ".    more  act";
   column-gap: var(--s-3);
   row-gap: 1px;
   align-items: center;
@@ -100,10 +100,14 @@
   color: var(--text-3);
 }
 
-/* Under the name: the app's sentence, the fold, the line to run. They share
-   the one area and stack in it. */
+/* Under the name: the app's sentence and the fold, in the words' column, so
+   the action stands centred beside all of the words (the tile's third line
+   included); the line to run takes the width under it all. */
 .agentrow-line,
-.agentrow-how,
+.agentrow-how {
+  grid-column: 2;
+}
+
 .agentrow-cmd {
   grid-column: 2 / -1;
 }

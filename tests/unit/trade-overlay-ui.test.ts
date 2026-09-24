@@ -217,5 +217,31 @@ test('the legend and the overlays share one column, so no two labels print on on
   const sorted = [...distinct].sort((a, b) => a - b);
   for (let i = 1; i < sorted.length; i += 1) assert.ok(sorted[i] - sorted[i - 1] >= 13, `two labels ${sorted[i] - sorted[i - 1]} px apart`);
   assert.equal(printed[0][0], 'BTC');
-  assert.equal(printed[0][1], 16, 'the column starts at y 16');
+  assert.equal(printed[0][1], s.LEGEND_Y, 'the market line sits in its strip');
+  assert.ok(printed[0][1] + 8 <= L.priceTop, 'above the plot, clear of every candle');
+  const column = printed.filter(([, y]) => y !== s.LEGEND_Y).map(([, y]) => y);
+  assert.ok(column.every((y) => y - 8 >= L.priceTop), `the column starts inside the pane: ${JSON.stringify(column)}`);
+});
+
+test('a plan line off the pane is a chip on the price axis, not a label over the candles', () => {
+  const s = load();
+  // Candles run 96 to 104: the stop at 80 and the target at 120 are both off the pane.
+  const L = ready(s, { symbol: 'BTC', overlays: { planStop: true }, positions: [], orders: [], fills: [], plans: [plan({ stop: 80, target: 120 })] });
+  s.CHART_AXIS_CHIPS = [];
+  const { ctx } = fakeCtx();
+  s.drawTradeOverlays(ctx, L);
+  assert.deepEqual(s.CHART_SCENE_LABELS.map((l: Any) => l.text), ['Plan long  100.0'], 'only the line on the pane labels the column');
+  const chips = s.CHART_AXIS_CHIPS.map((c: Any) => [c.word, c.edge, c.tone]);
+  assert.deepEqual(chips, [
+    ['Stop', 'bottom', 'down'],
+    ['Target', 'top', 'ink'],
+  ]);
+  const laid = s.chipLayout(L);
+  const top = laid.find((c: Any) => c.edge === 'top');
+  const bottom = laid.find((c: Any) => c.edge === 'bottom');
+  assert.ok(top.y >= L.priceTop && bottom.y + s.CHIP_H <= L.priceTop + L.priceHeight, 'both inside the pane on the axis');
+  const drawn: string[] = [];
+  const hud: Any = { ...fakeCtx().ctx, fillText: (t: string) => drawn.push(String(t)) };
+  s.drawAxisChips(hud, { ...L, chips: laid });
+  assert.ok(drawn.includes('Stop') && drawn.includes('80.0'), JSON.stringify(drawn));
 });

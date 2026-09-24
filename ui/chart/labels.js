@@ -85,7 +85,7 @@ function labelDraw(ctx, placed, inkOf, pad) {
         labelGlyph(ctx, parts[p].glyph, x, item.labelY, ink);
       } else {
         ctx.fillStyle = ink;
-        ctx.fillText(parts[p].text, x, item.labelY);
+        labelDrawText(ctx, parts[p].text, x, item.labelY);
       }
       x += labelPartWidth(ctx, parts[p]) + 6;
     }
@@ -103,7 +103,7 @@ function labelDraw(ctx, placed, inkOf, pad) {
 }
 
 function labelPartWidth(ctx, part) {
-  var measured = part.glyph ? LABEL_GLYPH_W : ctx.measureText(part.text).width;
+  var measured = part.glyph ? LABEL_GLYPH_W : labelTextWidth(ctx, part.text);
   return typeof part.width === 'number' && part.width > measured ? part.width : measured;
 }
 
@@ -144,4 +144,17 @@ function labelGlyph(ctx, name, x, baseline, ink) {
   ctx.lineTo(cx + 3.5, cy - dir * 2);
   ctx.closePath();
   ctx.fill();
+}
+
+/* The label column's figures are the engine's tabular Geist (chart.js chartText), and plain
+   canvas text where the engine is not loaded. */
+function labelDrawText(ctx, text, x, y) {
+  var t = typeof window !== 'undefined' && window.chartText;
+  if (t && typeof t.draw === 'function') t.draw(ctx, text, x, y);
+  else ctx.fillText(text, x, y);
+}
+
+function labelTextWidth(ctx, text) {
+  var t = typeof window !== 'undefined' && window.chartText;
+  return t && typeof t.width === 'function' ? t.width(ctx, text) : ctx.measureText(text).width;
 }

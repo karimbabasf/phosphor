@@ -26,8 +26,26 @@
   /* How many coins the header names before it counts the rest. */
   var COINS_SHOWN = 3;
 
+  /* The ring: Basic's allocation ring at Pro's size, the world's one
+     signature, so the two modes show the same money the same way. The
+     geometry is Basic's scaled to a 120 unit box. */
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  var R = 52;
+  var C = 2 * Math.PI * R;
+  var GAP = 9;
+  var MIN_DASH = 3;
+  var SLIVER = 0.02;
+  var STAGGER_MS = 70;
+
+  /* The tints are Basic's (ui/screens/basic.js): a coin whose brand colour is
+     green, or that has none, wears the neutral, because green is the app's
+     own light; the three blue to violet brands are lifted apart by eye. */
+  var NEUTRAL = '#e6ddd2';
+  var TINTS = { USDC: '#3b8cff', 'USDC.E': '#3b8cff', USDCX: '#3b8cff', ETH: '#b0b4ff', WETH: '#b0b4ff', SOL: '#a86dff' };
+
   var refs = {};
   var mounted = false;
+  var ringDrawn = false;
 
   /* The last trade payload trade.js read, or null before the trade bundle has
      loaded or its first read has landed. */
@@ -64,10 +82,26 @@
     var head = dom.el('section', 'pro-sum');
     head.setAttribute('aria-label', 'Your money');
 
-    /* The balance: the one lead figure on Pro, with the server's words for
-       it, and the coins it holds in brief under it. */
+    /* The balance: the ring of what it holds, the one lead figure on Pro
+       with the server's words for it, and the coins in brief under it, each
+       on a tile washed in its own colour, the ring's colour. */
     var money = dom.el('div', 'pro-sum-money');
     money.dataset.surface = 'holdings';
+    var ring = ringSvg();
+    if (ring) {
+      /* On the disc: the largest coin's share, so the ring reads as where the
+         money sits and not as something loading. */
+      var box = dom.el('div', 'pro-ring-box');
+      box.appendChild(ring.svg);
+      var share = dom.el('div', 'pro-ring-share');
+      share.appendChild(dom.el('span', 'pro-ring-pct num'));
+      share.appendChild(dom.el('span', 'pro-ring-coin'));
+      box.appendChild(share);
+      ring.share = share;
+      money.appendChild(box);
+    }
+    var main = dom.el('div', 'pro-sum-main');
+    money.appendChild(main);
     var lead = dom.el('div', 'pro-sum-lead');
     var total = dom.el('p', 'pro-sum-total num tick');
     total.hidden = true;
@@ -77,19 +111,23 @@
     lead.appendChild(total);
     lead.appendChild(skel);
     lead.appendChild(caption);
-    money.appendChild(lead);
+    main.appendChild(lead);
     var coins = dom.el('ul', 'pro-coins');
     coins.setAttribute('aria-label', 'What your balance holds');
     coins.hidden = true;
-    money.appendChild(coins);
+    main.appendChild(coins);
     head.appendChild(money);
 
-    /* The trading account: its figures as tiles, or one sentence and the
-       way to fill it when there is nothing on it. */
+    /* The trading account: one card, its money as the lead figure and what
+       is free, in trades and at most at risk quiet beside it, or one
+       sentence and the way to fill it when there is nothing on it. */
     var account = dom.el('div', 'pro-sum-account');
     account.dataset.surface = 'account';
     account.setAttribute('aria-label', 'Your trading account');
     account.appendChild(dom.el('h3', 'pro-sum-head', 'Trading account'));
+    var wait = dom.el('span', 'skel pro-sum-wait');
+    wait.setAttribute('aria-hidden', 'true');
+    account.appendChild(wait);
     var figures = dom.el('dl', 'pro-sum-figures');
     var note = dom.el('p', 'pro-sum-note');
     note.setAttribute('role', 'status');
@@ -107,11 +145,13 @@
 
     refs = {
       host: host,
+      ring: ring,
       total: total,
       skel: skel,
       caption: caption,
       coins: coins,
       account: account,
+      wait: wait,
       figures: figures,
       note: note,
       fund: fund
@@ -132,39 +172,219 @@
     dom.setHidden(refs.total, !basic.totalLine);
     dom.setText(refs.caption, basic.caption || '');
     dom.setAttr(refs.caption, 'data-alone', basic.totalLine ? null : 'true');
-    renderCoins(Array.isArray(basic.holdings) ? basic.holdings : []);
+    var holdings = Array.isArray(basic.holdings) ? basic.holdings : [];
+    renderCoins(holdings);
+    paintRing(holdings);
   }
 
   /* The coins in brief: the largest first, each with its logo and what it is
-     worth, and a count of the rest. The full list is Basic's. */
+     worth, and a count of the rest. The full list is Basic's. Where the
+     header is narrow the third coin gives way to the count (pro.css), so the
+     count carries both numbers and the sheet shows the one that is true. */
   function renderCoins(holdings) {
     var shown = holdings.slice(0, COINS_SHOWN);
     var rest = holdings.length - shown.length;
-    var items = shown.map(function (h) { return { key: String(h.symbol), h: h }; });
-    if (rest > 0) items.push({ key: '+rest', rest: rest });
+    var restNarrow = holdings.length - Math.min(holdings.length, COINS_SHOWN - 1);
+    var items = shown.map(function (h, i) { return { key: String(h.symbol), h: h, third: i === COINS_SHOWN - 1 }; });
+    if (restNarrow > 0) items.push({ key: '+rest', rest: rest, restNarrow: restNarrow });
     dom.reconcile(refs.coins, items, function (item) {
       return item.key;
     }, function (item) {
-      var li = dom.el('li', item.rest ? 'pro-coin pro-coin-rest' : 'pro-coin');
-      if (!item.rest) {
+      var li = dom.el('li', item.restNarrow ? 'pro-coin pro-coin-rest' : 'pro-coin');
+      if (!item.restNarrow) {
         var marks = window.PhosphorMarks;
-        if (marks && typeof marks.logo === 'function') li.appendChild(marks.logo(String(item.h.symbol), 18));
+        if (marks && typeof marks.logo === 'function') li.appendChild(marks.logo(String(item.h.symbol), 20));
         li.appendChild(dom.el('span', 'pro-coin-name'));
         li.appendChild(dom.el('span', 'pro-coin-value num'));
       } else {
-        li.appendChild(dom.el('span', 'pro-coin-name'));
+        li.appendChild(dom.el('span', 'pro-coin-name pro-coin-wide'));
+        li.appendChild(dom.el('span', 'pro-coin-name pro-coin-narrow'));
       }
       return li;
     }, function (li, item) {
-      if (item.rest) {
-        dom.setText(li.children[0], '+' + item.rest + ' more');
+      if (item.restNarrow) {
+        dom.setText(li.children[0], item.rest > 0 ? '+' + item.rest + ' more' : '');
+        dom.setHidden(li.children[0], !(item.rest > 0));
+        dom.setText(li.children[1], '+' + item.restNarrow + ' more');
+        dom.setAttr(li, 'data-narrow-only', item.rest > 0 ? null : 'true');
         return;
       }
+      dom.setAttr(li, 'data-third', item.third ? 'true' : null);
+      if (li.style && typeof li.style.setProperty === 'function') li.style.setProperty('--tint', tintOf(item.h.symbol));
       dom.setText(li.children[1], String(item.h.symbol));
       dom.setAttr(li, 'title', item.h.name && item.h.name !== item.h.symbol ? String(item.h.name) : null);
       dom.setText(li.children[2], item.h.valueLine || '');
     });
     dom.setHidden(refs.coins, items.length === 0);
+  }
+
+  /* ---------- the ring ---------- */
+
+  function svgEl(tag, attrs) {
+    var node = document.createElementNS(SVG_NS, tag);
+    for (var name in attrs) {
+      if (Object.prototype.hasOwnProperty.call(attrs, name)) node.setAttribute(name, attrs[name]);
+    }
+    return node;
+  }
+
+  /* Built in the svg namespace, never from markup. Null where there is no
+     svg namespace (the unit harness), and every caller reads that as "no
+     ring". */
+  function ringSvg() {
+    if (typeof document.createElementNS !== 'function') return null;
+    var svg = svgEl('svg', { class: 'pro-ring', viewBox: '0 0 120 120', 'aria-hidden': 'true', focusable: 'false' });
+    var defs = svgEl('defs', {});
+    var disc = svgEl('radialGradient', { id: 'pro-disc', cx: '50%', cy: '38%', r: '62%' });
+    disc.appendChild(svgEl('stop', { offset: '0', class: 'pro-disc-top' }));
+    disc.appendChild(svgEl('stop', { offset: '1', class: 'pro-disc-foot' }));
+    defs.appendChild(disc);
+    svg.appendChild(defs);
+    svg.appendChild(svgEl('circle', { class: 'pro-ring-disc', cx: '60', cy: '60', r: '44' }));
+    svg.appendChild(svgEl('circle', { class: 'pro-ring-track', cx: '60', cy: '60', r: String(R) }));
+    var pieces = svgEl('g', { class: 'pro-ring-pieces', transform: 'rotate(-90 60 60)' });
+    svg.appendChild(pieces);
+    return { svg: svg, pieces: pieces, byKey: {} };
+  }
+
+  /* The pieces, from the priced coins in the order the list reads (largest
+     first); slivers under two percent share one neutral piece. */
+  function piecesOf(holdings) {
+    var out = [];
+    var sum = 0;
+    var rest = 0;
+    for (var i = 0; i < holdings.length; i += 1) {
+      var usd = Number(holdings[i].valueUsd);
+      if (isFinite(usd) && usd > 0) sum += usd;
+    }
+    if (!(sum > 0)) return out;
+    for (var j = 0; j < holdings.length; j += 1) {
+      var value = Number(holdings[j].valueUsd);
+      if (!isFinite(value) || value <= 0) continue;
+      if (value / sum < SLIVER) {
+        rest += value;
+        continue;
+      }
+      out.push({ key: String(holdings[j].symbol), usd: value, colour: tintOf(holdings[j].symbol) });
+    }
+    if (rest > 0) out.push({ key: ':rest', usd: rest, colour: NEUTRAL });
+    return out;
+  }
+
+  /* Each piece springs to its share when the money moves; the first draw
+     grows them out of their places a beat apart, as Basic's does. */
+  function paintRing(holdings) {
+    var ring = refs.ring;
+    if (!ring) return;
+    var pieces = piecesOf(holdings);
+    var sum = 0;
+    for (var i = 0; i < pieces.length; i += 1) sum += pieces[i].usd;
+    var still = reduced();
+    var intro = !ringDrawn && !still && pieces.length > 0;
+    var seen = {};
+    var at = 0;
+    for (var k = 0; k < pieces.length; k += 1) {
+      var piece = pieces[k];
+      var len = pieces.length === 1 ? C : piece.usd / sum * C;
+      var dash = pieces.length === 1 ? C : Math.max(MIN_DASH, len - GAP);
+      var start = pieces.length === 1 ? 0 : at + GAP / 2;
+      var node = ring.byKey[piece.key];
+      var born = !node;
+      if (born) {
+        node = svgEl('circle', { class: 'pro-ring-piece', cx: '60', cy: '60', r: String(R) });
+        ring.byKey[piece.key] = node;
+        if (!intro && !still && ringDrawn) setDash(node, 0.001, start, false);
+      }
+      node.style.stroke = piece.colour;
+      if (node.parentNode !== ring.pieces || ring.pieces.children[k] !== node) ring.pieces.insertBefore(node, ring.pieces.children[k] || null);
+      if (intro) {
+        setDash(node, 0.001, start, false);
+        growLater(node, dash, start, k * STAGGER_MS);
+      } else {
+        if (born && !still && ringDrawn) forceStyle(node);
+        setDash(node, dash, start, !still && ringDrawn);
+      }
+      seen[piece.key] = true;
+      at += len;
+    }
+    for (var key in ring.byKey) {
+      if (!Object.prototype.hasOwnProperty.call(ring.byKey, key) || seen[key]) continue;
+      var gone = ring.byKey[key];
+      if (gone.parentNode) gone.parentNode.removeChild(gone);
+      delete ring.byKey[key];
+    }
+    dom.setAttr(ring.svg, 'data-empty', pieces.length ? null : 'true');
+    var top = pieces.length && pieces[0].key !== ':rest' ? pieces[0] : null;
+    dom.setText(ring.share.children[0], top ? Math.round(top.usd / sum * 100) + '%' : '');
+    dom.setText(ring.share.children[1], top ? top.key : '');
+    dom.setHidden(ring.share, !top);
+    if (pieces.length) ringDrawn = true;
+  }
+
+  function setDash(node, dash, start, animate) {
+    node.style.transition = animate ? '' : 'none';
+    node.style.transitionDelay = '0ms';
+    node.style.strokeDasharray = dash.toFixed(3) + ' ' + C.toFixed(3);
+    node.style.strokeDashoffset = (-start).toFixed(3);
+  }
+
+  function growLater(node, dash, start, delay) {
+    forceStyle(node);
+    frame(function () {
+      node.style.transition = '';
+      node.style.transitionDelay = delay + 'ms';
+      node.style.strokeDasharray = dash.toFixed(3) + ' ' + C.toFixed(3);
+      node.style.strokeDashoffset = (-start).toFixed(3);
+    });
+  }
+
+  function forceStyle(node) {
+    if (typeof node.getBoundingClientRect === 'function') node.getBoundingClientRect();
+  }
+
+  function frame(fn) {
+    var raf = window.requestAnimationFrame;
+    if (typeof raf === 'function') raf(function () { raf(fn); });
+    else fn();
+  }
+
+  function reduced() {
+    var motion = window.PhosphorMotion;
+    return !!(motion && typeof motion.reduced === 'function' && motion.reduced());
+  }
+
+  function tintOf(symbol) {
+    var key = String(symbol || '').trim().toUpperCase();
+    if (Object.prototype.hasOwnProperty.call(TINTS, key)) return TINTS[key];
+    var marks = window.PhosphorMarks;
+    var hex = marks && typeof marks.colourFor === 'function' ? marks.colourFor(symbol) : '';
+    var hsl = hslOf(hex);
+    if (!hsl) return NEUTRAL;
+    if (hsl.s > 0.35 && hsl.h >= 80 && hsl.h <= 170) return NEUTRAL;
+    var l = Math.min(0.88, Math.max(0.64, hsl.l));
+    var s = Math.min(0.95, hsl.s);
+    return 'hsl(' + Math.round(hsl.h) + ', ' + Math.round(s * 100) + '%, ' + Math.round(l * 100) + '%)';
+  }
+
+  function hslOf(hex) {
+    var m = /^#([0-9a-f]{6})$/i.exec(String(hex || ''));
+    if (!m) return null;
+    var r = parseInt(m[1].slice(0, 2), 16) / 255;
+    var g = parseInt(m[1].slice(2, 4), 16) / 255;
+    var b = parseInt(m[1].slice(4, 6), 16) / 255;
+    var max = Math.max(r, g, b);
+    var min = Math.min(r, g, b);
+    var l = (max + min) / 2;
+    var d = max - min;
+    if (d === 0) return { h: 0, s: 0, l: l };
+    var s = d / (1 - Math.abs(2 * l - 1));
+    var h;
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+    return { h: h, s: s, l: l };
   }
 
   /* ---------- the trading account ---------- */
@@ -221,6 +441,9 @@
   }
 
   function say(note, items, offerFund, funded) {
+    /* Before the first read the card holds the shape of its figure, not an
+       empty head. */
+    dom.setHidden(refs.wait, !!(note || items.length || offerFund));
     dom.setText(refs.note, note);
     dom.setHidden(refs.note, !note);
     dom.setHidden(refs.fund, !offerFund);

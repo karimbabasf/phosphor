@@ -105,8 +105,8 @@ test('the chart draws in the window\'s own inks before the stylesheet is in', ()
   assert.equal(s.danger(1), 'rgba(' + triple(token('down')) + ', 1)');
   assert.equal(s.lineInk(1), 'rgba(' + triple(token('line')) + ', 1)');
   assert.equal(s.text2(0.7), 'rgba(' + triple(token('text-2')) + ', 0.7)');
-  assert.ok(s.CHART_FONT.startsWith('11px "Geist Mono"'), s.CHART_FONT);
-  assert.ok(s.CHART_FONT_SMALL.startsWith('9px "Geist Mono"'), s.CHART_FONT_SMALL);
+  assert.ok(s.CHART_FONT.startsWith('11px "Geist"'), s.CHART_FONT);
+  assert.ok(s.CHART_FONT_SMALL.startsWith('9px "Geist"'), s.CHART_FONT_SMALL);
 });
 
 test('the shipped defaults leave the chart on its tokens, and a chosen colour wins', () => {
@@ -139,7 +139,8 @@ test('volume is a default, not a word you have to know', () => {
   // About 14 percent of the usable height: read as a shape beside the price, not as a series
   // with values to pick off. Capped at the same ceiling every other pane has, so volume cannot
   // eat a tall chart.
-  const usable = 600 - 18 - 3;
+  // The legend's strip (PAD_TOP) sits above the pane and is not part of the budget.
+  const usable = 600 - 18 - s.PAD_TOP;
   const want = Math.min(usable * 0.14, 96);
   assert.ok(Math.abs(pane.height - want) < 1, `expected ~${want}, got ${pane.height}`);
   assert.equal(layout.priceHeight, usable - pane.height);
@@ -431,12 +432,27 @@ test('the cross that removes a study shows under the pointer and nowhere else', 
 
 // ---------- the face ----------
 
-test('every number on the canvas is set in Geist Mono at 11 px, the face the rail uses', () => {
-  // The system monospace it replaces was the one place the window fell back to whatever the OS
-  // had, so the axis and the rail could disagree about the shape of a digit.
+test('every number on the canvas is set in Geist at 11 px, the face the text around it uses', () => {
+  // Figures in a second face sat on another baseline beside the words; the canvas speaks the
+  // window's own face and draws its digits to one width itself.
   const s = loadChartUi();
-  assert.ok(s.CHART_FONT.startsWith('11px "Geist Mono"'), s.CHART_FONT);
-  assert.ok(s.CHART_FONT_SMALL.startsWith('9px "Geist Mono"'), s.CHART_FONT_SMALL);
+  assert.ok(s.CHART_FONT.startsWith('11px "Geist"'), s.CHART_FONT);
+  assert.ok(s.CHART_FONT_SMALL.startsWith('9px "Geist"'), s.CHART_FONT_SMALL);
+});
+
+test('Geist digits are drawn one to a cell, so a price that ticks moves nothing beside it', () => {
+  const s = loadChartUi();
+  // A face whose 1 is narrower than its 8, as Geist's are.
+  const drawn: Array<[string, number]> = [];
+  const ctx = {
+    font: '11px "Geist" test-proportional',
+    textAlign: 'left',
+    measureText: (t: string) => ({ width: String(t).split('').reduce((w, ch) => w + (ch === '1' ? 4 : ch === ',' ? 3 : 7), 0) }),
+    fillText: (t: string, x: number) => drawn.push([String(t), x]),
+  };
+  assert.equal(s.textWidth(ctx, '11,111'), s.textWidth(ctx, '88,888'), 'one width for any five digits');
+  s.drawText(ctx, '1,8', 10, 0);
+  assert.deepEqual(drawn, [['1', 11.5], [',', 17], ['8', 20]], 'each digit centred in a 7 px cell');
 });
 
 test('the waiting scene speaks in sentence case, not tracked caps', () => {

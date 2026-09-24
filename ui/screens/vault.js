@@ -136,13 +136,23 @@
     return { node: node, head: head, body: body };
   }
 
-  /* A row is a tile: its name and one line on the left, its value or its
-     action on the right, and anything it opens under both. */
+  /* A row is a tile: its glyph on a small raised tile before its name, as
+     an agent's row leads with its mark, one line under the name, its value
+     or its action on the right, and anything it opens under both. */
+  var ROW_GLYPHS = { freeze: 'freeze', window: 'lock', backup: 'shield', rules: 'gauge', custody: 'key', recovery: 'retry', addresses: 'deposit', danger: 'trash' };
+
   function row(title, surface) {
     var node = dom.el('div', 'vault-row');
     if (surface) node.dataset.surface = surface;
     var main = dom.el('div', 'vault-row-main');
     var head = dom.el('div', 'vault-row-head');
+    var glyph = surface && ROW_GLYPHS[surface] ? (surface === 'freeze' ? freezeGlyph() : icon(ROW_GLYPHS[surface])) : null;
+    if (glyph) {
+      var tile = dom.el('span', 'vault-row-icon');
+      tile.setAttribute('aria-hidden', 'true');
+      tile.appendChild(glyph);
+      head.appendChild(tile);
+    }
     var name = dom.el('h3', 'vault-row-title', title);
     head.appendChild(name);
     main.appendChild(head);

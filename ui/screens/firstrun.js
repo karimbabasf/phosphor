@@ -454,11 +454,13 @@
   /* 0. THE WELCOME, and the one authored moment on this surface. The field is
      already fading up; the mark, the name, the line and the button arrive
      after it, one behind the other, each lifting 12 px and clearing from a
-     6 px blur over 400 ms. The whole thing is done inside 1.2 s and plays once
-     per open: Back to this screen finds it already there. Reduced motion shows
-     everything at once, opacity only. */
+     6 px blur over 400 ms, and the mark traces on as it lands, slab by slab,
+     with a bloom of its light under it. It plays once per open: Back to this
+     screen finds it already there. Reduced motion shows everything at once,
+     opacity only, the mark still and whole. */
   function screenWelcome() {
-    var mark = markBlock();
+    // The trace-on plays with the entrance, once per open (firstrun.css).
+    var mark = markBlock(welcomed ? null : 'trace');
     var title = dom.el('h1', 'firstrun-welcome-title', 'Welcome to Phosphor');
     card.appendChild(title);
     var line = dom.el('p', 'firstrun-welcome-line', 'Your money stays on this Mac, under a key only you hold. Your assistant does the work. You decide what needs your click.');

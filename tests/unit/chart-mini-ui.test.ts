@@ -277,13 +277,13 @@ test('the header is the coin in the first tone and the timeframe in the third, a
   assert.ok(String(last.className).includes('mono'), 'a number not in the mono face');
 });
 
-test('the canvas carries the candles, the price plot, the level, the line and the zone, in Geist Mono', async () => {
+test('the canvas carries the candles, the price plot, the level, the line and the zone, in Geist', async () => {
   const world = build({ 1: slotPayload(1), 2: null });
   world.mini.boot();
   await settle();
   const [canvas] = withClass(world.stage, 'mini-canvas');
   const calls = canvas.ctx.calls as Array<{ op: string; args: unknown[] }>;
-  assert.ok(canvas.ctx.font.startsWith('11px "Geist Mono"'), canvas.ctx.font);
+  assert.ok(canvas.ctx.font.startsWith('11px "Geist"'), canvas.ctx.font);
   // 40 visible bars: each is a body (fillRect), so at least that many after the ground.
   const bodies = calls.filter((c) => c.op === 'fillRect').length;
   assert.ok(bodies >= 41, `${bodies} rects for 40 candles and the ground`);

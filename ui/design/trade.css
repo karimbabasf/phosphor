@@ -1359,11 +1359,17 @@
 
 .pos-row > .pos-asset { grid-area: asset; }
 .pos-row > .pos-result { grid-area: result; }
-.pos-row > .trade-row-foot { grid-area: act; }
 .pos-row > .pos-stats { grid-area: stats; }
 .pos-row > .pos-track { grid-area: track; display: none; }
-.pos-row > .trade-confirm,
+.pos-row > .trade-confirm { grid-area: confirm; }
 .pos-row > .trade-callout { grid-column: 1 / -1; }
+
+/* The last slot is one width whether it holds Close or "Opened elsewhere",
+   so the profit's right edge is one line down the deck. */
+.pos-row > .trade-row-foot {
+  grid-area: act;
+  width: 116px;
+}
 
 .pos-asset {
   display: flex;
@@ -1436,6 +1442,7 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
 .pos-result {
   display: flex;
   align-items: baseline;
+  justify-content: flex-end;
   gap: var(--s-2);
   min-width: 0;
 }
@@ -1517,6 +1524,11 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
     grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) auto auto;
     grid-template-areas: "asset stats result act";
   }
+  .pos-row[data-confirming="true"] {
+    grid-template-areas:
+      "asset stats result act"
+      "confirm confirm confirm confirm";
+  }
   .pos-stats { padding-left: 0; }
 }
 
@@ -1584,21 +1596,42 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
 .trade-cond[data-holds="true"] { color: var(--text); }
 .trade-cond[data-holds="true"] .trade-cond-mark { color: var(--text-2); }
 
-/* THE CONFIRM. It grows under its own card, a raised surface inside the
-   tile: the sentence with its figures, a refusal in plain words when there is
-   one, the app's own reason behind Details, and the two answers at the right,
-   the harmless one first. */
+/* THE CONFIRM. The card itself asks, the way a move card does in the chat:
+   it lifts onto the raised surface, its head stays where it was, its figures
+   and its track step aside, and the sentence with its figures, a refusal in
+   plain words when there is one, the app's own reason behind Details and the
+   two answers (the harmless one first) take their place. No surface of its
+   own: a card inside a card was the thing to lose. Close keeps its slot,
+   unseen, so the profit does not move while the card asks. */
+.pos-row[data-confirming="true"],
+.plan-row[data-confirming="true"] {
+  background: var(--surface-raised);
+  box-shadow: var(--raise);
+  cursor: default;
+}
+
+.pos-row[data-confirming="true"] {
+  grid-template-areas:
+    "asset result act"
+    "confirm confirm confirm";
+}
+
+.pos-row[data-confirming="true"] > .pos-stats,
+.pos-row[data-confirming="true"] > .pos-track,
+.plan-row[data-confirming="true"] > .trade-conds { display: none; }
+
+.pos-row[data-confirming="true"] > .trade-row-foot > .trade-act,
+.plan-row[data-confirming="true"] > .trade-row-foot > .trade-act { visibility: hidden; }
+
 .trade-confirm {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 2px;
-  padding: 14px var(--s-4);
-  border-radius: 14px;
-  background: var(--surface-pop);
-  box-shadow: var(--raise-sm);
+  padding-left: 36px;
   cursor: default;
 }
+
+.plan-row > .trade-confirm { padding-left: 0; }
 
 .trade-confirm-text {
   margin: 0;
@@ -1880,12 +1913,27 @@ body[data-view="pro"] .pos-figure {
 
 body[data-view="pro"] .pos-row > .pos-track:not([hidden]) { display: grid; }
 
+body[data-view="pro"] .pos-row[data-confirming="true"] {
+  grid-template-areas:
+    "asset result act"
+    "confirm confirm confirm";
+}
+
+body[data-view="pro"] .pos-row[data-confirming="true"] > .pos-track:not([hidden]) { display: none; }
+
+body[data-view="pro"] .pos-row > .trade-confirm { padding-left: 40px; }
+
 @container deck (min-width: 1000px) {
   body[data-view="pro"] .pos-row {
     grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) auto auto;
     grid-template-areas:
       "asset stats result act"
       "track track track track";
+  }
+  body[data-view="pro"] .pos-row[data-confirming="true"] {
+    grid-template-areas:
+      "asset stats result act"
+      "confirm confirm confirm confirm";
   }
 }
 
