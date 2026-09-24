@@ -94,8 +94,25 @@ test('an answer is one to three short lines, the outcome first with its one figu
 test('the card is the receipt, and the agent never repeats it', () => {
   const text = role();
   assert.ok(text.includes('The card in the window is the receipt'));
-  assert.ok(text.includes('Never repeat it'));
+  assert.ok(text.includes('Never repeat it, not even in other words'));
+  assert.ok(text.includes('After a move card, add only what the card does not say: a next step, a short why, or one warm line'));
   assert.ok(text.includes('say nothing unless there is a next step'));
+});
+
+/* The UI sweep of 2026-09-23 (hunt-a #16): under a card saying exactly that, the agent wrote "That
+   swap did not go through. Nothing left your balance, so your 4 USDC is still there." */
+test('the persona shows a reply under a card, before and after, twice', () => {
+  const text = role();
+  const at = text.indexOf('Under a move card');
+  assert.ok(at > 0 && at < text.indexOf('THE MONEY.'), 'the examples ride with the voice');
+  const block = text.slice(at, text.indexOf('THE MONEY.'));
+  assert.equal((block.match(/^Not: "/gm) ?? []).length, 2);
+  assert.equal((block.match(/^Say: "/gm) ?? []).length, 2);
+  assert.ok(block.includes('Not: "That swap did not go through. Nothing left your balance, so your 4 USDC is still there."'));
+  for (const say of block.split('\n').filter((l) => l.startsWith('Say: '))) {
+    assert.ok(say.slice('Say: '.length).split(/\s+/).length <= 12, `an after runs long: ${say}`);
+    assert.ok(!/USDC|balance|went through|did not go/.test(say), `an after repeats the card: ${say}`);
+  }
 });
 
 test('the examples sound like the voice, and carry no jargon', () => {
