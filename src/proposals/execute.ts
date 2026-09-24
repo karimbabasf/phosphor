@@ -12,6 +12,7 @@ import { buildCtx, errText, mergePatch, nowIso, persist, totalUsdOf, enclaveGate
 import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
 import { buildWallet } from '../wallet.ts';
+import { WEB_READ_REASON, webReadBy } from '../web-read.ts';
 import type { PCtx } from './lifecycle.ts';
 import { TERMINAL, deadlineAtOf, stageOf } from './view.ts';
 import type { ProposalStage } from './view.ts';
@@ -46,6 +47,11 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
         reasons: [...p.verdict.reasons, 'Money leaving for another address always needs a human click, whatever the size.'],
       },
     };
+  }
+  // And any move the chat's agent proposes after it read the web, until the person's next
+  // message: a page can talk an agent into a move (src/web-read.ts).
+  if (p.verdict.outcome === 'allow' && webReadBy(p.by)) {
+    p = { ...p, verdict: { outcome: 'needs_approval', reasons: [...p.verdict.reasons, WEB_READ_REASON] } };
   }
 
   if (p.verdict.outcome === 'refuse') {

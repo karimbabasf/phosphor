@@ -19,10 +19,10 @@
 // forgotten: an agent that reads balances and addresses and can fetch any URL can be talked by a
 // hostile page into putting them in one. What it cannot do is move money to anyone: a send and a
 // withdrawal wait for the person's click at any size (src/proposals/execute.ts land()), and no
-// tool takes an address but propose_send. Under the auto-approve limit a swap, a deposit to the
-// person's own Hyperliquid account or a trade can still run on its own, which is the policy's
-// number to set. The persona tells the agent a page is data and never to put their figures in a
-// search or a URL; that is prose, and the two walls above are code.
+// tool takes an address but propose_send. Nor can a page talk it into a move of the person's own
+// money: after a web call, every move it proposes waits for the click until the person's next
+// message (src/web-read.ts). The persona tells the agent a page is data and never to put their
+// figures in a search or a URL; that is prose, and the three walls above are code.
 //
 // That check is the point. A deny list is a claim about a tool surface that changes with every
 // release, so a deny list alone goes stale silently and the failure is invisible. Written on
@@ -44,6 +44,7 @@ import path from 'node:path';
 import { claude } from './providers/claude.ts';
 import { userAuthFile } from './providers/grok.ts';
 import type { Provider, SpawnSpec } from './providers/types.ts';
+import { clearWebRead, markWebRead } from './web-read.ts';
 
 export { assertSurface, buildArgv, resolveClaudeBin } from './providers/claude.ts';
 
@@ -519,6 +520,17 @@ export function createDriver(opts: DriverOptions) {
   let draining: number | null = null;
   let held: string | null = null;
 
+  /* Whether the last turn to end was cut short (a stop, a failure, a stop of the whole chat). A
+     proposal that turn made may still be landing, so the web-read mark (src/web-read.ts) is kept
+     through the next turn. Not reset by start(): a chat restarted after a stop is the same case. */
+  let stoppedLast = false;
+
+  // A message of the person's starts its turn: the web-read mark ends here, unless the turn
+  // before it was cut short.
+  function freshTurn(): void {
+    if (!stoppedLast) clearWebRead(seat);
+  }
+
   /* App-authored context waiting for the person's next message (src/http/ended.ts: a move that
      ended since the last answer). It never starts a turn of its own: waking the agent for a card
      the person can already see cost a paragraph each time (R3, five in eight minutes). */
@@ -553,9 +565,9 @@ export function createDriver(opts: DriverOptions) {
   /* Every failure names itself twice: `message` is the log line, exact and technical, and
      `reason` is the one plain sentence the window shows beside its Retry. */
   function fail(message: string, reason: string): void {
+    letGo();
     set('failed', message, reason);
     opts.onEvent({ kind: 'error', message });
-    letGo();
     kill();
     forget();
     bury();
@@ -564,6 +576,7 @@ export function createDriver(opts: DriverOptions) {
   // A stop or a failure: the turn in flight ends nothing when its process exits, and a message
   // waiting for it goes nowhere.
   function letGo(): void {
+    if (state === 'thinking') stoppedLast = true;
     turn = null;
     held = null;
   }
@@ -678,6 +691,7 @@ export function createDriver(opts: DriverOptions) {
           if (id !== '') calls.set(id, { name: block.name, input: block.input, meta: true });
           continue;
         }
+        if (call.kind === 'web') markWebRead(seat);
         const input = call.kind === 'web' ? block.input : call.input;
         if (id !== '') calls.set(id, { name: call.name, input, meta: false });
         opts.onEvent({ kind: 'tool', name: call.name, input });
@@ -753,9 +767,12 @@ export function createDriver(opts: DriverOptions) {
       // an error. The next result after an interrupt is the stopped answer's: Claude answers in order.
       const stopped = interrupted;
       interrupted = false;
+      stoppedLast = stopped;
       opts.onEvent({ kind: 'turn_end', error: event.is_error === true && !stopped, turns });
       owed = Math.max(0, owed - 1);
-      if (owed > 0 || state === 'failed' || state === 'stopped') return;
+      if (state === 'failed' || state === 'stopped') return;
+      // The next message the person sent starts its turn now.
+      if (owed > 0) return freshTurn();
       set('ready', stopped ? 'the human stopped this answer' : undefined);
     }
   }
@@ -903,6 +920,7 @@ export function createDriver(opts: DriverOptions) {
     if (!live) return;
     const stopped = interrupted;
     interrupted = false;
+    stoppedLast = stopped;
     if (!said) opts.onEvent({ kind: 'turn_end', error: !stopped && code !== 0, turns: 0 });
     // A message sent while this turn was ending goes the moment its process group is gone.
     if (held !== null) return;
@@ -934,6 +952,7 @@ export function createDriver(opts: DriverOptions) {
 
   // turn transport: one message, one process.
   function dispatch(body: string): void {
+    freshTurn();
     interrupted = false;
     // No session the vendor holds yet (a fresh start, or a turn that never reached init): a
     // new id, never one grok may already have.
@@ -1023,6 +1042,8 @@ export function createDriver(opts: DriverOptions) {
       return;
     }
     if (!child) throw new Error('driver: no agent is running');
+    // Behind a turn still running, this message starts when that one's result is out.
+    if (owed === 0) freshTurn();
     child.stdin.write(provider.encodeTurn!(body));
     owed += 1;
     notes = [];

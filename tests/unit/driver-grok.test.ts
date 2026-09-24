@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { createDriver } from '../../src/driver.ts';
 import type { Driver, DriverEvent } from '../../src/driver.ts';
 import { grok, sessionDir } from '../../src/providers/grok.ts';
+import { webReadBy } from '../../src/web-read.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -261,6 +262,13 @@ test('a page read with grok\'s web_fetch is shown as a web read, never drawn as 
     assert.equal(calls[1].ok, true);
     const cards = w.events.filter((e) => e.kind === 'tool_data').map((e) => (e as { name: string }).name);
     assert.deepEqual(cards, ['mcp__phosphor__wallet']);
+    // The chat's seat is marked, so what it proposes now waits for a click (src/web-read.ts), and
+    // the person's next message clears it.
+    const seat = /seat=(\S+)$/.exec(w.argv()[0])?.[1] ?? '';
+    assert.equal(webReadBy(seat), true, 'a page read on Grok marks the chat');
+    w.driver.send('second');
+    await until(() => turnEnds(w) === 2 && w.driver.status().state === 'ready');
+    assert.equal(webReadBy(seat), false, 'the next message clears the mark');
   } finally {
     w.done();
   }

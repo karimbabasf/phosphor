@@ -4,7 +4,7 @@
 # event carrying the whole block, then content_block_stop. It records its argv in claude-argv.txt
 # and each turn in turns.jsonl, both under TMPDIR, and answers every turn the same way. A turn
 # that says WEB-FETCH reads a page first; one that says SERVER-TOOL carries a tool the API ran.
-# One that says SLOW-ANSWER runs until an interrupt comes down stdin, then ends the way claude
+# One that says SLOW-ANSWER (after any page read) runs until an interrupt comes down stdin, then ends the way claude
 # 2.1.281 did when interrupted (measured 2026-09-23): the control_response, the partial block
 # whole, the user line, and a result with subtype error_during_execution. It takes 0.3 s over
 # that, so a message written right behind the interrupt arrives before the stopped answer's
@@ -27,6 +27,12 @@ while IFS= read -r line; do
   case "$line" in *'"control_request"'*) continue ;; esac
   printf '%s\n' "$line" >> "${TMPDIR:-/tmp}/turns.jsonl"
   case "$line" in
+    *WEB-FETCH*)
+      printf '%s\n' '{"type":"assistant","message":{"id":"msg_w","role":"assistant","content":[{"type":"tool_use","id":"toolu_w","name":"WebFetch","input":{"url":"https://near.ai","prompt":"What is NEAR AI, in one line?"}}]}}'
+      printf '%s\n' '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_w","content":"NEAR AI runs private AI inference in hardware enclaves."}]}}'
+      ;;
+  esac
+  case "$line" in
     *SLOW-ANSWER*)
       printf '%s\n' '{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_slow"}}}'
       printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}'
@@ -43,10 +49,6 @@ while IFS= read -r line; do
       ;;
   esac
   case "$line" in
-    *WEB-FETCH*)
-      printf '%s\n' '{"type":"assistant","message":{"id":"msg_w","role":"assistant","content":[{"type":"tool_use","id":"toolu_w","name":"WebFetch","input":{"url":"https://near.ai","prompt":"What is NEAR AI, in one line?"}}]}}'
-      printf '%s\n' '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_w","content":"NEAR AI runs private AI inference in hardware enclaves."}]}}'
-      ;;
     *SERVER-TOOL*)
       printf '%s\n' '{"type":"assistant","message":{"id":"msg_s","role":"assistant","content":[{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"near ai"}}]}}'
       ;;
