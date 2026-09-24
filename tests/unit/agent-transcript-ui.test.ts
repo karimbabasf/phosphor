@@ -148,7 +148,7 @@ function all(node: Node, className: string, found: Node[] = []): Node[] {
   return found;
 }
 
-function build(options: { command?: string } = {}) {
+function build(options: { command?: string; driverData?: Record<string, unknown> } = {}) {
   const sends: string[] = [];
   /* The shared receipt card (ui/screens/receipt.js) is somebody else's: the column hands it the
      receipt and places what comes back. The stub records what it was handed and returns one
@@ -210,7 +210,7 @@ function build(options: { command?: string } = {}) {
         }
         return Promise.resolve({});
       },
-      driverState: () => Promise.resolve({ data: { state: 'ready', chats: [{ id: 'c1', transcript: [] }] } }),
+      driverState: () => Promise.resolve({ data: Object.assign({ state: 'ready', chats: [{ id: 'c1', transcript: [] }] }, options.driverData ?? {}) }),
       connection: () => Promise.resolve({ command: options.command ?? '', connected: [] }),
     },
     PhosphorEvents: {
@@ -279,6 +279,7 @@ function build(options: { command?: string } = {}) {
     actions,
     /* A card another screen asked to show, at the thread's end (PhosphorAgent.showCard). */
     sheets: () => all(host, 'chat-sheet-card'),
+    showCard: (fill: (host: Node, done: () => void) => void, opts?: Record<string, unknown>) => (win.PhosphorAgent as { showCard: (b: unknown, o: unknown) => void }).showCard(fill, opts),
     root,
     /* A row grew, a card opened, the window changed size: the observer's call. */
     grew() {
@@ -1060,3 +1061,66 @@ test('a reply that grows keeps the paragraphs it already drew and appends the ne
   assert.equal(paragraphs[0], first, 'the first paragraph was rebuilt rather than kept');
   assert.equal(paragraphs[1].textContent, 'Most of it is USDC.');
 });
+
+/* ---------- The driver's contract (pg/agent, 2026-09-23) ----------
+
+   A block that got deltas and no whole copy was cut short by a stop; an error frame is a log
+   line; the web tools arrive with no prefix; and the picked agent may run outside the window. */
+
+test('a reply stopped mid-stream keeps what arrived and stops reading as arriving', () => {
+  const world = build();
+  world.type('what do I hold?');
+  world.emit({ kind: 'delta', block: 4, text: 'You hold two ' });
+  world.emit({ kind: 'status', state: 'stopped' });
+  assert.equal(world.replyRows().length, 1);
+  assert.equal(all(world.replyRows()[0], 'chat-text')[0].textContent, 'You hold two ');
+  assert.equal(world.replyRows()[0].getAttribute('data-streaming'), null, 'a stopped reply still reads as arriving');
+});
+
+test('an error frame is a log line for developer mode, never a line of the chat', () => {
+  const world = build();
+  world.type('hi');
+  world.emit({ kind: 'error', message: 'stderr: a line only an engineer reads' });
+  const notes = world.noteRows();
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].getAttribute('data-dev-only'), '', 'the log line shows outside developer mode');
+});
+
+test('the web tools say what they do in plain words and are named as leaving the machine', () => {
+  const world = build();
+  world.type('any news on SOL?');
+  world.emit({ kind: 'tool', name: 'web_search', input: { query: 'SOL' } });
+  assert.equal(world.workingWords(), 'Searching the web');
+  world.emit({ kind: 'tool_result', name: 'web_search', ok: true });
+  world.emit({ kind: 'tool', name: 'web_fetch', input: {} });
+  assert.equal(world.workingWords(), 'Reading a page');
+  world.emit({ kind: 'tool', name: 'x_search', input: {} });
+  assert.equal(world.workingWords(), 'Searching X');
+});
+
+test('an agent that runs outside this window gets its sentence where Start would be', async () => {
+  const reason = 'Codex runs in your terminal, not in this chat. Start it there and it joins this window.';
+  const world = build({ driverData: { state: 'off', agent: { id: 'codex', name: 'Codex', inApp: false, reason } } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  world.emit({ kind: 'status', state: 'stopped' });
+  assert.equal(world.note().hidden, false, 'the sentence is not in the head');
+  assert.equal(world.noteText(), reason);
+  assert.equal(world.retry().hidden, true, 'a Retry for an agent that does not start here');
+  const starts = all(world.host, 'btn').filter((b) => b.textContent === 'Start your assistant');
+  assert.ok(starts.length > 0 && starts.every((b) => b.hidden === true), 'a Start for an agent that runs elsewhere');
+});
+
+/* A reminder (the backup nudge) asks to be quiet: a line in the thread, not a card with a green
+   button beside the move that is waiting (lead, 2026-09-23). And no button in the chat is
+   green or red: green is the mark's, the live move's and Approve's, red a real loss's. */
+test('a quiet card from another screen is a line in the thread, and nothing in the chat is green or red', () => {
+  const world = build();
+  world.showCard((host: Node) => { host.appendChild(make('span')); }, { quiet: true });
+  world.showCard((host: Node) => { host.appendChild(make('span')); });
+  const sheets = all(world.host, 'chat-sheet');
+  assert.equal(sheets.length, 2);
+  assert.equal(sheets[0].getAttribute('data-quiet'), 'true');
+  assert.equal(sheets[1].getAttribute('data-quiet'), null);
+  assert.doesNotMatch(AGENT_SOURCE, /btn-primary|btn-danger/, 'a green or red button in the chat');
+});
+

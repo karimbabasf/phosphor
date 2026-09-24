@@ -247,17 +247,47 @@
       var p = proposals[i];
       if (p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch')) return;
     }
+    /* The frame's notice (#notice, shell.js) says "not backed up" at the foot of the window for
+       as long as it is true; the same line in the thread would say it twice, and two nudges for
+       one thing is the anxiety this app is built against (lead, 2026-09-23). */
+    if (typeof document.getElementById === 'function' && document.getElementById('notice')) return;
     booted = true;
     showBackupCard();
   }
 
   function showBackupCard() {
     if (window.PhosphorDecision && typeof window.PhosphorDecision.showCard === 'function') {
-      window.PhosphorDecision.showCard(function (host, done) {
-        dom.clear(host);
-        buildBackup(host, done);
-      });
+      window.PhosphorDecision.showCard(buildBackupLine, { quiet: true });
     }
+  }
+
+  /* In the thread the reminder is one quiet line in the balances panel's own words, with the
+     way to do it and an X that puts it away until the next start. The panel's foot says the
+     same thing, so this never shouts over it, and green stays the waiting move's and its
+     Approve's. */
+  function buildBackupLine(host, done) {
+    dom.clear(host);
+    var line = dom.el('div', 'chat-sheet-line');
+    line.appendChild(dom.el('span', 'chat-sheet-words', 'Your recovery phrase is not backed up yet.'));
+    var go = dom.el('button', 'btn btn-quiet btn-sm chat-sheet-go');
+    go.type = 'button';
+    go.appendChild(dom.el('span', 'btn-label', 'Back it up'));
+    line.appendChild(go);
+    var away = dom.el('button', 'dock-close');
+    away.type = 'button';
+    away.setAttribute('aria-label', 'Not now');
+    away.title = 'Not now';
+    var icons = window.PhosphorIcons;
+    away.appendChild(icons && typeof icons.svg === 'function' ? icons.svg('close') : dom.el('span', 'sr-only', 'Not now'));
+    line.appendChild(away);
+    host.appendChild(line);
+    dom.on(away, 'click', function () { done(); });
+    dom.on(go, 'click', function () {
+      done();
+      if (window.PhosphorVault && typeof window.PhosphorVault.startReveal === 'function') {
+        window.PhosphorVault.startReveal();
+      }
+    });
   }
 
   function buildBackup(host, done) {

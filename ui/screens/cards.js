@@ -1197,14 +1197,22 @@
      You get at least 0.1843 ETH · Fee $0.21", the number in mono and its coin in the reading
      face. Built once per shape, and the numbers roll (dom.setNumber) when a later frame moves
      them. */
+  /* What a person calls a coin. wNEAR is the name the verifier stores for NEAR held inside
+     NEAR Intents, the same coin (src/proposals/view.ts plainSymbol); the mark still looks up
+     the stored name. */
+  function coinWord(symbol) {
+    var s = String(symbol || '');
+    return s.toUpperCase() === 'WNEAR' ? 'NEAR' : s;
+  }
+
   function factsFor(move, legs) {
     var from = legs.from || move.from;
     var out = [];
     var kind = move.kind;
-    var toSymbol = String((legs.to && legs.to.symbol) || (move.to && move.to.symbol) || '');
+    var toSymbol = coinWord((legs.to && legs.to.symbol) || (move.to && move.to.symbol) || '');
     var inFact = null;
     if (from && from.amount !== null && from.amount !== undefined) {
-      inFact = from.usd ? [dom.usd(from.amount), ''] : [amountText(from.amount), String(from.symbol || '')];
+      inFact = from.usd ? [dom.usd(from.amount), ''] : [amountText(from.amount), coinWord(from.symbol)];
     }
     var floorFact = move.floor !== null && move.floor !== undefined ? [floorText(move.floor), toSymbol] : null;
     var words;
@@ -1295,13 +1303,13 @@
       || move.kind === 'intents_withdraw' || move.kind === 'intents_deposit' || move.kind === 'hl_deposit' || move.kind === 'hl_withdraw';
     if (twoLegs && from && from.symbol) {
       var fromAmount = from.amount !== null && from.amount !== undefined ? amountText(from.amount) : '';
-      parts.push({ kind: 'amount', value: fromAmount, symbol: String(from.symbol || '') });
+      parts.push({ kind: 'amount', value: fromAmount, symbol: coinWord(from.symbol) });
       parts.push({ kind: 'arrow' });
       var word = destinationWord(move, legs);
       if (move.kind === 'swap') {
         var toAmount = plain.state !== 'didnt_go_through' && to && to.amount !== null && to.amount !== undefined ? amountText(to.amount) : '';
         var soft = toAmount && plain.state !== 'done' ? (to.floor ? 'at least' : 'about') : '';
-        parts.push({ kind: 'amount', value: toAmount, symbol: String((to && to.symbol) || ''), soft: soft });
+        parts.push({ kind: 'amount', value: toAmount, symbol: coinWord(to && to.symbol), soft: soft });
       } else if (word) {
         parts.push({ kind: 'word', value: word });
       }
@@ -1972,7 +1980,6 @@
     var shown = shownCard(data);
     if (shown) return shown.kind;
     if (KINDS[name]) return KINDS[name];
-    if (name === 'watch' && isObject(data) && typeof data.chain === 'string' && (data.asset !== undefined || data.watching !== undefined)) return 'deposit';
     return 'kv';
   }
 

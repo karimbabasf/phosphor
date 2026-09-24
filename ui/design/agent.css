@@ -659,6 +659,39 @@ ol.chat-list li::marker {
   margin-top: 0;
 }
 
+/* A quiet one (the backup reminder) is a line in the thread, not a card: the words in the
+   assistant's own column, the way to do it as a quiet text button, and the X. */
+.chat-sheet[data-quiet="true"] .chat-sheet-card {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.chat-sheet-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-2);
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.chat-sheet-words {
+  min-width: 0;
+}
+
+/* The action reads as words in the line: no inset of its own, so when the line wraps it sits
+   under the sentence's first letter rather than a step in from it. */
+.chat-sheet-line .chat-sheet-go {
+  --btn-fg: var(--text);
+  padding-inline: 0;
+}
+
+.chat-sheet-line .dock-close {
+  margin: 0 0 0 auto;
+}
+
 /* ---------- the way back down, and the one thing waiting ---------- */
 
 /* LATEST: small and quiet on the thread's bottom edge, only while the person is above the
