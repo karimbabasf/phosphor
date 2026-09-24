@@ -187,10 +187,12 @@ test('a narrow card puts its state under the move, leads a second line with the 
   assert.match(narrow, /\.mcard-fact b \{\s*font-size: var\(--fs-14\);\s*white-space: nowrap;/);
 });
 
-/* The finish review, 2026-09-24: at 960 a line cut through its middle still showed under "Grok
-   is ready" at a third of its strength. The top fade is clear for its first 12 px. */
+/* The finish reviews, 2026-09-24: at 960 a line cut through its middle still showed under "Grok
+   is ready" at a third of its strength, and then a card whose words had gone still showed its
+   bottom edge and shadow there as an empty rounded shape. The top fade is clear for its first
+   20 px and under a tenth to 38, past a card's bottom edge and the heart of its shadow. */
 test('the thread\'s top fade is gone before it reaches the head', () => {
-  assert.match(block(AGENT, '.transcript-wrap'), /--fade-top:\s*transparent 0, transparent 12px, rgb\(0 0 0 \/ 0\.45\) 34px, #000 64px;/);
+  assert.match(block(AGENT, '.transcript-wrap'), /--fade-top:\s*transparent 0, transparent 20px, rgb\(0 0 0 \/ 0\.1\) 38px, rgb\(0 0 0 \/ 0\.42\) 56px, #000 80px;/);
   assert.match(block(AGENT, '.transcript-wrap[data-cut="top"] > .transcript'), /mask-image: linear-gradient\(to bottom, var\(--fade-top\)\);/);
   assert.match(block(AGENT, '.transcript-wrap[data-cut="top"]:has(> .jump-latest[data-on="true"]) > .transcript'), /mask-image: linear-gradient\(to bottom, var\(--fade-top\), #000 calc\(100% - 64px\), transparent calc\(100% - 6px\)\);/);
   assert.doesNotMatch(AGENT, /transparent 0, #000 36px/, 'the short fade is back');

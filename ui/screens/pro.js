@@ -51,12 +51,14 @@
   var LEGEND_SHOWN = 4;
   var MOVES_SHOWN = 4;
 
-  /* The shortest arc a dial shows for a share above nothing: 6 of its 100,
+  /* The shortest arc a dial shows for a share above nothing: 8 of its 100,
      from the top, a sweep that reads as begun. $100 of a $10,000 cap is 1, and
-     at 1 the round caps met in a dot centred on the top that read as a knob
-     (the finish review, 2026-09-24). A cap is half the 9 wide stroke on the
-     42 radius, 1.7 of the 100. */
-  var MIN_SWEEP = 6;
+     at 1 the round caps met in a dot centred on the top that read as a knob;
+     at 6 with a round cap at both ends the arc was still mostly its two caps,
+     a capsule that read as a knob too (the finish reviews, 2026-09-24). So an
+     arc leaves the top square and only its head is round. The head is half
+     the 9 wide stroke on the 42 radius, 1.7 of the 100. */
+  var MIN_SWEEP = 8;
   var ARC_CAP = 1.7;
 
   /* A coin's day is read when Pro comes up, and again on the first frame that
@@ -639,12 +641,13 @@
     return card;
   }
 
-  /* One soft dial: a pressed track, the arc of how full it is, the figure on
-     the raised disc in the middle and the words under it. */
+  /* One soft dial: a pressed track, the arc of how full it is with its round
+     head, the figure on the raised disc in the middle and the words under it. */
   function dial(tone, caption) {
     var node = dom.el('figure', 'dial dial-' + tone);
     var disc = dom.el('div', 'dial-disc');
     var arc = null;
+    var head = null;
     if (typeof document.createElementNS === 'function') {
       var svg = document.createElementNS(SVG_NS, 'svg');
       svg.setAttribute('viewBox', '0 0 100 100');
@@ -654,14 +657,11 @@
       track.setAttribute('cx', '50');
       track.setAttribute('cy', '50');
       track.setAttribute('r', '42');
-      arc = document.createElementNS(SVG_NS, 'circle');
-      arc.setAttribute('class', 'dial-arc');
-      arc.setAttribute('cx', '50');
-      arc.setAttribute('cy', '50');
-      arc.setAttribute('r', '42');
-      arc.setAttribute('pathLength', '100');
+      arc = dialCircle('dial-arc');
+      head = dialCircle('dial-head');
       svg.appendChild(track);
       svg.appendChild(arc);
+      svg.appendChild(head);
       disc.appendChild(svg);
     }
     var num = dom.el('span', 'dial-num');
@@ -672,11 +672,23 @@
     disc.appendChild(num);
     node.appendChild(disc);
     node.appendChild(dom.el('figcaption', '', caption));
-    return { node: node, arc: arc, figure: figure, of: of, caption: node.children[1] };
+    return { node: node, arc: arc, head: head, figure: figure, of: of, caption: node.children[1] };
+  }
+
+  /* The dial's circle measured in hundredths, for a dash that says how full. */
+  function dialCircle(className) {
+    var circle = document.createElementNS(SVG_NS, 'circle');
+    circle.setAttribute('class', className);
+    circle.setAttribute('cx', '50');
+    circle.setAttribute('cy', '50');
+    circle.setAttribute('r', '42');
+    circle.setAttribute('pathLength', '100');
+    return circle;
   }
 
   /* The arc sweeps in the first time it has a figure and springs to a new
-     one after that; no arc at all where there is no figure to draw. */
+     one after that, its head riding its end; no arc at all where there is no
+     figure to draw. */
   function setDial(d, fraction, figure, of, caption) {
     dom.setNumber(d.figure, figure);
     dom.setAttr(d.figure, 'data-long', String(figure).length > 6 ? 'true' : null);
@@ -688,21 +700,27 @@
        dot that reads as a little spent. */
     dom.setAttr(d.node, 'data-empty', fraction === null || shown === 0 ? 'true' : null);
     if (!d.arc) return;
-    /* What shows runs from the top to the value: the dash starts a cap past the top and
-       stops a cap short, since the round caps reach past both its ends. A full dial is
-       the whole ring, from the top. */
+    /* What shows runs from the top to the value: the arc leaves the top square and stops a
+       head short, and the head, a dot the stroke's width, sits on its end, so its round
+       edge lands on the value. A full dial is the whole ring, its head where it closes. */
     var sweep = shown > 0 ? Math.max(shown * 100, MIN_SWEEP) : 0;
     var whole = sweep >= 100;
-    var dash = !sweep ? '0 100' : (whole ? '100 100' : (sweep - 2 * ARC_CAP).toFixed(2) + ' 100');
-    d.arc.style.strokeDashoffset = sweep && !whole ? String(-ARC_CAP) : '0';
+    var reach = !sweep ? 0 : (whole ? 100 : sweep - ARC_CAP);
+    var dash = !sweep ? '0 100' : (whole ? '100 100' : reach.toFixed(2) + ' 100');
+    var at = !sweep ? '0' : (whole ? '-99.99' : (-reach).toFixed(2));
     if (d.arc.getAttribute('data-drawn') !== 'true') {
       d.arc.setAttribute('data-drawn', 'true');
       d.arc.style.strokeDasharray = '0 100';
+      d.head.style.strokeDashoffset = '0';
       forceStyle(d.arc);
-      frame(function () { d.arc.style.strokeDasharray = dash; });
+      frame(function () {
+        d.arc.style.strokeDasharray = dash;
+        d.head.style.strokeDashoffset = at;
+      });
       return;
     }
     d.arc.style.strokeDasharray = dash;
+    d.head.style.strokeDashoffset = at;
   }
 
   function renderPolicies(state) {

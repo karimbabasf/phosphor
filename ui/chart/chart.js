@@ -4126,12 +4126,18 @@ function renderChartStatus() {
     // One control carrying the count, not a count and a control: the bar has one row and the
     // status line shares it with the segment, the command and Layers.
     var many = CHART.agentObjects === 1 ? 'drawing' : 'drawings';
-    var clear = chartButton('chart-extra', 'Clear ' + CHART.agentObjects);
-    // The noun steps off on the narrowest chart (ui/design/trade.css), so the control stays whole
-    // on the bar's one row rather than sliding under Layers.
+    var clear = chartButton('chart-extra', '');
+    // On the narrowest chart the words step off for the bin beside the count (ui/design/trade.css),
+    // so the control stays whole on the bar's one row; its name is the whole sentence at every width.
+    var icons = window.PhosphorIcons;
+    var bin = icons && typeof icons.svg === 'function' ? icons.svg('trash', 'chart-extra-icon') : null;
+    if (bin) clear.appendChild(bin);
+    clear.appendChild(chartSpan('chart-extra-verb', 'Clear'));
+    clear.appendChild(chartSpan('chart-extra-count', String(CHART.agentObjects)));
     clear.appendChild(chartSpan('chart-extra-word', many));
     clear.id = 'chart-clear-agent';
     clear.dataset.extra = '1';
+    clear.setAttribute('aria-label', 'Clear ' + CHART.agentObjects + ' ' + many);
     clear.title = 'Your assistant drew ' + CHART.agentObjects + ' ' + many + ' on this market. Clear them.';
     cluster.appendChild(clear);
   }
@@ -4501,7 +4507,9 @@ function wireChart() {
   var meta = document.getElementById('chart-status');
   if (meta) {
     meta.addEventListener('click', function (ev) {
-      var id = ev.target && ev.target.id;
+      // A press on a word or the bin inside a control is a press on the control.
+      var hit = ev.target && ev.target.closest ? ev.target.closest('button') : ev.target;
+      var id = hit && hit.id;
       if (id === 'chart-live') {
         setPan(0);
         chartInvalidate(true);

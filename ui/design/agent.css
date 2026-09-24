@@ -330,7 +330,7 @@
    drawn over the scroller (the top fade, Latest) is drawn on the frame, so the scroller's
    own paint is rows and nothing else. */
 .transcript-wrap {
-  --fade-top: transparent 0, transparent 12px, rgb(0 0 0 / 0.45) 34px, #000 64px;
+  --fade-top: transparent 0, transparent 20px, rgb(0 0 0 / 0.1) 38px, rgb(0 0 0 / 0.42) 56px, #000 80px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -367,11 +367,14 @@
 }
 
 /* The top of a thread that scrolled thins out under the head, and is gone before it reaches
-   it: nothing in the first 12 px, then in by 64 (the finish review, 2026-09-24: at 960 a line
-   cut through its middle still showed under "Grok is ready" at a third of its strength). A
-   mask on the scroller rather than a band of the ground's colour over it: the ground carries
-   its own soft light, and a painted band showed its edge against it. On or off with the cut,
-   never per scroll. The stops are --fade-top, on .transcript-wrap. */
+   it: nothing in the first 20 px, under a tenth to 38, then easing in to full by 80. A card
+   leaves its bottom edge and its dropped shadow 20 to 50 px under its last line, so a fade
+   that came in faster drew a card whose words had gone as an empty rounded shape under
+   "Grok is ready" (the finish reviews, 2026-09-24; before that, a line cut through its middle
+   at a third of its strength). A mask on the scroller rather than a band of the ground's
+   colour over it: the ground carries its own soft light, and a painted band showed its edge
+   against it. On or off with the cut, never per scroll. The stops are --fade-top, on
+   .transcript-wrap. */
 .transcript-fade {
   position: absolute;
   left: 0;
