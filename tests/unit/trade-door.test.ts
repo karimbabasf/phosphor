@@ -24,10 +24,10 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
-import { riskInputsFor, tradeRail } from '../../src/trade/rail.ts';
+import { tradeRail } from '../../src/trade/rail.ts';
 import type { TradeDeps } from '../../src/trade/rail.ts';
 import { planHash, validatePlanInput } from '../../src/trade/plan.ts';
-import type { Plan, PlanInput } from '../../src/trade/plan.ts';
+import type { PlanInput } from '../../src/trade/plan.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -302,8 +302,7 @@ test('a close charges nothing to the day and lands without a click, and the kill
 /* ONE PLAN PER COIN, REFUSED BEFORE THE DRAW. The rule is pg/hl's (src/trade/risk.ts
    sameCoinPlan); the propose side refuses a second plan on a coin before drawing it, so a refusal
    leaves no stray idea on the chart. Skipped until the risk inputs carry the field. */
-const onePlanPerCoin = 'sameCoinPlan' in (riskInputsFor({ runner: fakeRunner(), meta: () => ({ assetId: 3, szDecimals: 4, maxLeverage: 25 }), mark: () => 100, free: () => 1000 } as unknown as TradeDeps, { id: 'pl_x', ...PLAN } as unknown as Plan, null) as object);
-test('a second plan on a coin that already has a live one is refused before anything is drawn', { skip: onePlanPerCoin ? false : 'the one-plan-per-coin rule lands with pg/hl' }, async () => {
+test('a second plan on a coin that already has a live one is refused before anything is drawn', async () => {
   const h = setup(1000);
   openRow(h.runner, 'pl_live', 'agent-1');
   const drawn = h.runner.rows.size;
