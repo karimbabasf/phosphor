@@ -231,6 +231,28 @@ test('while a swap of a coin is being watched, a new swap of the same coin waits
   assert.equal(other.status, 'executed', 'another coin is not held back');
 });
 
+/* A SUBMIT NOBODY ANSWERED HOLDS A LIVE SIGNATURE TOO (audit, finding 11). A stuck_unknown row can
+   still run until its deadline, like a watched one, so a repeat with a changed amount (which the
+   duplicate guard does not catch) waits for a click beside it. Past the deadline and its grace the
+   transfer can no longer run, and nothing is held. */
+test('an unconfirmed swap whose signed transfer can still run holds a changed-amount swap of the same coin until its deadline', async () => {
+  const signed = (deadline: string): RailEvidence => ({ handle: 'dep-1', nonce: NONCE, deadline });
+  const answers = [{ ok: false, reason: 'stuck_unknown', detail: 'the intent was signed and its submission is unconfirmed', txids: [], evidence: signed(new Date(Date.now() + 3 * 60_000).toISOString()) }];
+  const h = makeCtx({ rails: [railThat('swap', async () => answers.shift() ?? { ok: true, detail: 'swapped', txids: ['intent-2'] })] });
+  const first = await landed(h, h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 20, minAmountOut: 19.8 }));
+  assert.equal(first.status, 'needs_reconciliation');
+  assert.equal(first.result?.reason, 'stuck_unknown');
+
+  const again = await landed(h, h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 21, minAmountOut: 20.8 }));
+  assert.equal(again.status, 'pending', 'the same coin, while the first may still run');
+  assert.equal(again.verdict.reasons.at(-1), 'An earlier swap of this coin may still go through, so this one waits for your OK.');
+
+  const later = makeCtx({ rails: [railThat('swap', async () => ({ ok: true, detail: 'swapped', txids: ['intent-3'] }))] });
+  later.store.put({ ...first, result: { ...first.result!, evidence: signed(new Date(Date.now() - GRACE_AND_A_MINUTE).toISOString()) } });
+  const after = await landed(later, later.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 21, minAmountOut: 20.8 }));
+  assert.equal(after.status, 'executed', 'past its deadline the first can no longer run');
+});
+
 // ---------- reconcile ----------
 
 const GRACE_AND_A_MINUTE = 6 * 60_000;

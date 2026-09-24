@@ -195,3 +195,25 @@ test('a listed price 1Click last updated more than two minutes ago is not govern
   const p = await landed(h, h.svc.proposeSwap(swapOut()));
   assert.equal(p.status, 'pending');
 });
+
+/* THE LIST CANNOT CHECK ITSELF (audit, finding 10). 1Click prices the whole BTC family off one
+   number, so a glitch that lists WBTC at $84 lists cbBTC at $84 too, and the quote's value of what
+   arrives is the same wrong number. A bought coin priced only by the list checks nothing: the swap
+   waits for a click. */
+test('a swap between two coins priced only by the list waits for a click, however small the list makes it', async () => {
+  const ran: SwapDraft[] = [];
+  const base = railThat('swap', async (draft) => {
+    ran.push(draft as SwapDraft);
+    return { ok: true, detail: 'swapped', txids: ['intent-h'] };
+  });
+  const rail: Rail = {
+    ...base,
+    spend: async () => ({ assetId: WBTC, decimals: 8, heldBase: 100_000_000n }),
+    simulate: async () => ({ ok: true, summary: 'About 0.9995 cbBTC.', swap: { receives: '0.9995', receivesAtLeast: '0.9895', feeUsd: 1, etaSeconds: 12 } }),
+  };
+  const h = makeCtx({ intents: readOf([holding(WBTC, 'WBTC', '100000000', 8, 84), holding(CBBTC, 'cbBTC', '100000000', 8, 84)]), rails: [rail] });
+  const p = await landed(h, h.svc.proposeSwap({ chain: 'eth', fromSymbol: 'WBTC', toChain: 'base', toSymbol: 'cbBTC', amountIn: 'all', minAmountOut: 0.9895 }));
+  assert.equal(p.status, 'pending', `${p.status} ${p.decidedBy ?? ''}`);
+  assert.match(p.verdict.reasons.at(-1) ?? '', /nothing in its quote can check that price/);
+  assert.equal(ran.length, 0, 'nothing ran on the list checked against itself');
+});
