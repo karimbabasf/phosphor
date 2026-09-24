@@ -2,9 +2,9 @@
 
    The trading side reads top to bottom: your money in one line (this file),
    then the market, the chart, and the positions and orders under it
-   (ui/screens/trade.js, which builds into #view-trade). The two views show
-   together on Pro, and on Trade, which is the same screen under the name the
-   server still uses for it (ui/design/pro.css).
+   (ui/screens/trade.js, which builds into #view-trade). The two show together
+   on Pro, the one trading screen: the shell reads the server's 'trade' as
+   Pro (ui/screens/shell.js, ui/design/pro.css).
 
    Your money is the balance total with what it is, from the same server view
    the Basic panel draws (state.basic), and beside it the trading account:
@@ -45,7 +45,7 @@
        first time the trading side is on screen. */
     window.addEventListener('phosphor:view', function (event) {
       var view = event && event.detail ? event.detail.view : null;
-      if (view === 'pro' || view === 'trade') loadTrading();
+      if (view === 'pro') loadTrading();
     });
 
     renderBalance();

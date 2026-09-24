@@ -51,7 +51,7 @@ type Node = {
   removeAttribute(name: string): void;
   addEventListener(type: string, handler: (event?: unknown) => void): void;
   removeEventListener(): void;
-  querySelector(): null;
+  querySelector(selector: string): Node | null;
   __keyed?: Record<string, Node>;
   __on: Record<string, Array<(event?: unknown) => void>>;
 };
@@ -123,7 +123,15 @@ function make(tag: string): Node {
     (node.__on[type] ??= []).push(handler);
   };
   node.removeEventListener = () => {};
-  node.querySelector = () => null;
+  /* A class selector is enough for the column: it asks a button for its .btn-label. */
+  node.querySelector = (selector: string) => {
+    if (!selector.startsWith('.')) return null;
+    for (const child of node.children) {
+      const found = all(child, selector.slice(1))[0];
+      if (found) return found;
+    }
+    return null;
+  };
   /* The scroller's one write. A browser eases it; the stub lands it, so a test reads where the
      column asked to be rather than a frame of the way there. */
   (node as unknown as { scrollTo: (opts: { top: number }) => void }).scrollTo = (opts) => {
@@ -159,6 +167,7 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
   const driverHandlers: Array<(frame: unknown) => void> = [];
   const agentsHandlers: Array<(slice: unknown) => void> = [];
   const busHandlers: Record<string, Array<(payload: unknown) => void>> = {};
+  const windowHandlers: Record<string, Array<() => void>> = {};
   const actions: string[] = [];
 
   const host = make('div');
@@ -191,6 +200,7 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
     clearInterval: () => {},
     getComputedStyle: () => ({ lineHeight: '21px', paddingTop: '8px', paddingBottom: '8px' }),
     dispatchEvent: () => true,
+    addEventListener: (type: string, handler: () => void) => { (windowHandlers[type] ??= []).push(handler); },
     PhosphorNet: { readable: (e: Error) => String(e.message) },
     PhosphorShell: { setPending: () => {} },
     PhosphorToast: { show: () => {} },
@@ -317,6 +327,10 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
     },
     bus: (type: string, payload: unknown) => {
       for (const handler of busHandlers[type] ?? []) handler(payload);
+    },
+    /* An event on the window, the way another screen says something to the column. */
+    windowEvent: (type: string) => {
+      for (const handler of windowHandlers[type] ?? []) handler();
     },
     noteRows: () => all(host, 'chat-note'),
     built,
@@ -1124,3 +1138,25 @@ test('a quiet card from another screen is a line in the thread, and nothing in t
   assert.doesNotMatch(AGENT_SOURCE, /btn-primary|btn-danger/, 'a green or red button in the chat');
 });
 
+
+test('Start names the picked agent, and a pick in the Vault renames it on the spot', async () => {
+  // GET /api/driver carries the pick as `agent` (src/providers/index.ts vendorFor); the Vault's
+  // list dispatches `phosphor:agent` after every pick the app stored, and the column reads again.
+  const data: Record<string, unknown> = { state: 'off', agent: { id: 'grok', name: 'Grok', inApp: true, reason: null } };
+  const world = build({ driverData: data });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const starts = (): string[] => all(world.host, 'btn-label').map((l) => l.textContent).filter((t) => t.startsWith('Start'));
+  assert.ok(starts().length >= 2, JSON.stringify(starts()));
+  assert.ok(starts().every((t) => t === 'Start Grok'), JSON.stringify(starts()));
+
+  data.agent = { id: 'claude', name: 'Claude Code', inApp: true, reason: null };
+  world.windowEvent('phosphor:agent');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(starts().every((t) => t === 'Start Claude Code'), JSON.stringify(starts()));
+
+  // A pick the chat cannot run keeps the plain word; its sentence is the head's note.
+  data.agent = { id: 'codex', name: 'Codex', inApp: false, reason: 'Codex runs in your terminal, not in this chat. Start it there and it joins this window.' };
+  world.windowEvent('phosphor:agent');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(starts().every((t) => t === 'Start your assistant'), JSON.stringify(starts()));
+});

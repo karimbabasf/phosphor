@@ -245,7 +245,7 @@ test('a venue that has not answered is a wait, and one that is not answering rea
   assert.ok(!words(rig.host).some((w) => w.startsWith('No trading money')), 'a silent venue was called empty');
 });
 
-test('nothing here polls: the account follows the stream through trade.js, and the late bundle loads on Pro and Trade', () => {
+test('nothing here polls: the account follows the stream through trade.js, and the late bundle loads on Pro', () => {
   const rig = boot();
   assert.equal(rig.intervals, 0, 'Pro started a timer');
   assert.doesNotMatch(PRO, /setInterval|api\.trade\(/, 'Pro reads the venue on its own clock again');
@@ -253,17 +253,17 @@ test('nothing here polls: the account follows the stream through trade.js, and t
   rig.view('vault');
   assert.deepEqual(rig.loads, []);
   rig.view('pro');
-  rig.view('trade');
-  assert.deepEqual(rig.loads, ['trade', 'trade']);
+  assert.deepEqual(rig.loads, ['trade']);
   // Before the bundle has read anything the account side is empty, not a guess.
   assert.equal(one(rig.host, 'pro-sum-figures').hidden, true);
   assert.equal(one(rig.host, 'pro-sum-note').hidden, true);
 });
 
-test('Pro and Trade are one screen: both views show together, on a two track stage shared with the Vault', () => {
-  assert.match(CSS, /body\[data-view="pro"\] #view-trade,\s*body\[data-view="trade"\] #view-pro\s*\{\s*display:\s*flex;/);
+test('one trading screen: the money line and the trading side show together on Pro, on a two track stage shared with the Vault', () => {
+  assert.match(CSS, /body\[data-view="pro"\] #view-trade\s*\{\s*display:\s*flex;/);
+  assert.doesNotMatch(CSS, /data-view="trade"/, 'a second trading state is back');
   assert.match(CSS, /grid-template-columns:\s*minmax\(0, 1fr\) clamp\(560px, var\(--trade, 55vw\), 1400px\);/);
-  for (const view of ['pro', 'trade', 'vault']) {
+  for (const view of ['pro', 'vault']) {
     assert.ok(CSS.includes(`body[data-view="${view}"] .stage,`) || CSS.includes(`body[data-view="${view}"] .stage {`), `${view} does not take the shared stage`);
   }
   const line = CSS.slice(CSS.indexOf('/* ---------- the money line'), CSS.indexOf('/* ---------- the receipts list'));

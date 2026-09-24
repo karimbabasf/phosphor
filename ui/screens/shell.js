@@ -15,17 +15,17 @@
   var events = window.PhosphorEvents;
   var store = window.PhosphorState;
 
-  var VIEWS = ['basic', 'pro', 'trade', 'vault'];
+  var VIEWS = ['basic', 'pro', 'vault'];
 
-  /* The switch has three words and the window four views: Trade is part of
-     Pro, reached from Pro's trading card or by a chart the assistant opens,
-     and while it is up the switch says Pro. */
-  var TAB_OF = { basic: 'basic', pro: 'pro', trade: 'pro', vault: 'vault' };
+  /* One trading screen, Pro. The server still names it 'trade' when a chart
+     tool moves the window, and the window reads that as Pro. */
+  var ALIASES = { trade: 'pro' };
 
   /* A view that needs a script the window did not fetch at boot asks for it
-     here, the first time it opens (ui/core/lazy.js). The agent picker on the
-     Vault tab lives in the first run's script. */
-  var NEEDS = { trade: 'trade', vault: 'firstrun' };
+     here, the first time it opens (ui/core/lazy.js): Pro's trading side is the
+     trade bundle, and the agent list on the Vault lives in the first run's
+     script. */
+  var NEEDS = { pro: 'trade', vault: 'firstrun' };
 
   var refs = {};
   var currentView = 'basic';
@@ -52,7 +52,6 @@
     wireTabs();
     wireBrake();
     wireLayout();
-    wireRestore();
     wireNotice();
     wireStream();
 
@@ -70,6 +69,7 @@
   function readInitialView() {
     var params = new URLSearchParams(window.location.search);
     var wanted = params.get('view');
+    if (ALIASES[wanted]) wanted = ALIASES[wanted];
     if (VIEWS.indexOf(wanted) >= 0) {
       pinned = wanted;
       return wanted;
@@ -156,6 +156,7 @@
 
   function setView(name, options) {
     var opts = options || {};
+    if (ALIASES[name]) name = ALIASES[name];
     if (VIEWS.indexOf(name) < 0) return;
     var changed = name !== currentView;
     currentView = name;
@@ -168,7 +169,7 @@
     }
     for (var j = 0; j < refs.tabs.length; j += 1) {
       var tab = refs.tabs[j];
-      var selected = tab.dataset.tab === TAB_OF[name];
+      var selected = tab.dataset.tab === name;
       dom.setAttr(tab, 'aria-selected', selected ? 'true' : 'false');
       // The roving half of the tabs pattern. See wireTabs for why this is a brake question.
       tab.tabIndex = selected ? 0 : -1;
@@ -470,21 +471,11 @@
   /* ---------- Layout ----------
 
      Every pane the mode that is up can hide, as a check row: on means on
-     screen. It is on the bar while Pro or Trade is up, the modes with panes
-     to arrange; Basic and the Vault have none (layout.css hides it there). The
+     screen. It is on the bar while Pro is up, the mode with panes to
+     arrange; Basic and the Vault have none (layout.css hides it there). The
      state is ui/split.js's; this menu only mirrors it, and it re-reads it each
      time it opens, each time a pane changes and each time the view changes, so
      an eye-off press in a header and a press here never disagree. */
-
-  /* The assistant column's way back: a small tab on the world's left edge,
-     drawn only while the column is hidden (trade.css keys it off the stage's
-     data-pane attribute). */
-  function wireRestore() {
-    var split = window.PhosphorSplit;
-    if (!refs.stage || !split || typeof split.paneRestore !== 'function') return;
-    var back = split.paneRestore('conversation');
-    if (back) refs.stage.appendChild(back);
-  }
 
   function wireLayout() {
     if (!refs.layoutButton || !refs.layoutPop || !refs.layoutRows) return;

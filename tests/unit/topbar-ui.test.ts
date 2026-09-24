@@ -52,11 +52,13 @@ test('the mark sits in the brand row at left, drawn from the one symbol, and now
   assert.equal(end().includes('phosphor-mark'), false, 'the end of the bar draws the mark');
 });
 
-test('the switch is Basic, Pro and Vault, and Trade is part of Pro', () => {
+test('the switch is Basic, Pro and Vault, and the server\'s trade is Pro: one trading screen', () => {
   const tabs = [...bar().matchAll(/data-tab="(\w+)"/g)].map((m) => m[1]);
   assert.deepEqual(tabs, ['basic', 'pro', 'vault']);
-  assert.ok(/TAB_OF = \{ basic: 'basic', pro: 'pro', trade: 'pro', vault: 'vault' \}/.test(SHELL), 'the shell does not light Pro while Trade is up');
-  assert.ok(/VIEWS = \[[^\]]*'trade'/.test(SHELL), 'Trade is no longer a view the window can show');
+  assert.match(SHELL, /var VIEWS = \['basic', 'pro', 'vault'\];/, 'the window shows a view the switch has no word for');
+  assert.match(SHELL, /var ALIASES = \{ trade: 'pro' \};/, 'a chart tool\'s trade is not read as Pro');
+  assert.match(SHELL, /function setView\(name, options\) \{\s*var opts = options \|\| \{\};\s*if \(ALIASES\[name\]\) name = ALIASES\[name\];/, 'setView does not read trade as Pro');
+  assert.doesNotMatch(SHELL, /TAB_OF/, 'a second trading state is back');
 });
 
 test('nothing in the bar reports state: no pills, no dots, no lock timer, no stream word', () => {

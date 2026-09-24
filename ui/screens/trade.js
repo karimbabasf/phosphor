@@ -1,8 +1,8 @@
 /* Pro's trading side: the market, the chart, and one tabbed panel under it.
 
    It builds into #view-trade, which shows under the money line of
-   ui/screens/pro.js on Pro and on Trade (the server's older name for the same
-   screen). The conversation stays on the left the whole time.
+   ui/screens/pro.js on Pro, the one trading screen (the shell reads the
+   server's 'trade' as Pro). The conversation stays on the left the whole time.
 
    THREE PANES, READ TOP TO BOTTOM. The market line is the coin with its logo
    (which is also the market picker), the price, the day's change as a signed
@@ -131,10 +131,8 @@
 
   var charted = false;
 
-  /* Pro, or Trade: the same screen, the second being the name the server still
-     moves the window to when a chart tool runs. */
   function isTradingView(view) {
-    return view === 'pro' || view === 'trade';
+    return view === 'pro';
   }
 
   function startChart() {

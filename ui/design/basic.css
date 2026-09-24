@@ -28,20 +28,6 @@ body[data-view="basic"] .notice {
   padding-inline: var(--s-6);
 }
 
-/* The assistant cannot be put away on Basic: it is the screen. A column
-   hidden on Trade stays hidden there and comes back here. */
-body[data-view="basic"] .stage[data-pane-conversation="hidden"] {
-  grid-template-columns: minmax(0, 1fr) var(--panel-w);
-}
-
-body[data-view="basic"] .stage[data-pane-conversation="hidden"] > .conversation {
-  display: flex;
-}
-
-body[data-view="basic"] .stage > .pane-show {
-  display: none;
-}
-
 /* ---------- the panel ---------- */
 
 .bal {
@@ -320,8 +306,7 @@ body[data-view="basic"] .stage > .pane-show {
 /* Under 1100 the panel gives up its reading width before the conversation
    gives up any: 360 wide, with the room around the figures tightened. */
 @media (max-width: 1099px) {
-  body[data-view="basic"] .stage,
-  body[data-view="basic"] .stage[data-pane-conversation="hidden"] {
+  body[data-view="basic"] .stage {
     grid-template-columns: minmax(0, 1fr) 360px;
   }
 
@@ -342,8 +327,7 @@ body[data-view="basic"] .stage > .pane-show {
    no narrower than 960): the balances sit above the conversation as a band
    that scrolls on its own. */
 @media (max-width: 959px) {
-  body[data-view="basic"] .stage,
-  body[data-view="basic"] .stage[data-pane-conversation="hidden"] {
+  body[data-view="basic"] .stage {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }

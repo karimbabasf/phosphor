@@ -385,10 +385,6 @@ var SPLIT_PANES = {
   deck: { host: '.trade-wrap', label: 'Positions and orders', view: 'pro' },
 };
 
-/* Trade is Pro's trading side under the name the server still uses for it. */
-function splitViewOf(view) {
-  return view === 'trade' ? 'pro' : view;
-}
 
 function splitPaneKey(name) {
   return SPLIT_PANE_PREFIX + name;
@@ -457,11 +453,10 @@ function splitPaneToggle(name) {
    that view draws; given nothing, all of them. */
 function splitPaneList(view) {
   var out = [];
-  var mode = splitViewOf(view);
   for (var name in SPLIT_PANES) {
     if (!Object.prototype.hasOwnProperty.call(SPLIT_PANES, name)) continue;
     var conf = SPLIT_PANES[name];
-    if (mode && conf.view && conf.view !== mode) continue;
+    if (view && conf.view && conf.view !== view) continue;
     out.push({ name: name, label: conf.label, hidden: splitPaneHidden(name) });
   }
   return out;
