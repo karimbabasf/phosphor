@@ -520,6 +520,9 @@ export async function swapCheck(ctx: PCtx, id: string): Promise<SwapCheckReply> 
   if (p.status === 'executed') summary = 'It went through.';
   else if (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch') summary = `It hasn't been sent: it waits for your OK.${holding}`;
   else if (p.status === 'policy_refused' || p.status === 'refused') summary = `It was never sent, so nothing left your balance.${holding}`;
+  // The signed transfer can still run until its deadline, so "nothing left" is not over yet.
+  else if (p.status === 'needs_reconciliation' && p.result?.reason === 'venue_failed_watching' && moved !== 'yes')
+    summary = `It didn't go through, and nothing has left your balance yet. The app keeps an eye on it for a few minutes; don't send it again until then.${holding}`;
   else if (moved === 'no' && (status === 'FAILED' || status === 'NOT_FOUND_OR_NOT_VALID' || p.status === 'failed')) summary = `It didn't go through. Nothing left your balance.${holding}`;
   else if (moved === 'no') summary = `Nothing has left your balance yet${word === null ? '' : `; the swap service says ${word}`}.${holding}`;
   else if (moved === 'yes' && refunded === true) summary = `Your ${symbol} left and the swap service reports a refund${refundedAmount !== null && Number(refundedAmount) > 0 ? ` of ${refundedAmount}` : ''}.${holding}`;

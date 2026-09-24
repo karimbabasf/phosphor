@@ -185,8 +185,9 @@ export async function reconcileOpen(ctx: PCtx): Promise<number> {
     .list()
     .filter(
       (p) =>
-        p.status === 'needs_reconciliation' &&
-        (typeof p.result?.evidence?.handle === 'string' || p.pocket !== undefined || (isRelaySwap(p) && typeof p.result?.evidence?.nonce === 'string')),
+        (p.status === 'needs_reconciliation' &&
+          (typeof p.result?.evidence?.handle === 'string' || p.pocket !== undefined || (isRelaySwap(p) && typeof p.result?.evidence?.nonce === 'string'))) ||
+        closedWhileLive(p, now),
     )
     .filter((p) => now - Date.parse(p.settledAt ?? p.decidedAt ?? p.createdAt) < ONECLICK_SWEEP_MAX_AGE_MS);
   let changed = 0;
@@ -200,6 +201,43 @@ export async function reconcileOpen(ctx: PCtx): Promise<number> {
     }
   }
   return changed;
+}
+
+/* A 1Click row closed as "nothing moved" while the transfer it signed could still run: what the
+   balance rule wrote before the transfer's own nonce decided (the audit of 2026-09-23). Swept
+   again until the deadline has passed, so a transfer that runs late reopens the row. */
+function closedWhileLive(p: Proposal, now: number): boolean {
+  const evidence = p.result?.evidence;
+  return (
+    p.status === 'failed' &&
+    p.result?.reason === 'venue_failed_nothing_moved' &&
+    typeof evidence?.handle === 'string' &&
+    !isRelaySwap(p) &&
+    now < Date.parse(evidence.deadline ?? '') + RELAY_DEADLINE_GRACE_MS
+  );
+}
+
+/* A ROW WAITING OUT A SIGNED TRANSFER'S DEADLINE is asked again on the first ledger refresh after
+   the deadline and its grace, not on the ten-minute sweep, so the card that says "a few minutes"
+   closes near the minute it can. Once per row: a row that answer does not settle is the sweep's.
+   One listener per proposal service, like watchSettling (src/proposals/execute.ts). */
+const watchingDeadlines = new WeakSet<PCtx>();
+
+export function watchDeadlines(ctx: PCtx): void {
+  if (watchingDeadlines.has(ctx) || ctx.ledger.onRefresh === undefined) return;
+  watchingDeadlines.add(ctx);
+  const asked = new Set<string>();
+  ctx.ledger.onRefresh(() => {
+    const now = Date.now();
+    for (const p of ctx.store.list()) {
+      if (p.status !== 'needs_reconciliation' || p.result?.reason !== 'venue_failed_watching' || asked.has(p.id)) continue;
+      if (!(now >= Date.parse(p.result.evidence?.deadline ?? '') + RELAY_DEADLINE_GRACE_MS)) continue;
+      asked.add(p.id);
+      void reconcileProposal(ctx, p.id, true).catch((err: unknown) => {
+        ctx.audit.append('error', `${p.id}: the re-check after its deadline failed: ${errText(err)}`, { id: p.id });
+      });
+    }
+  });
 }
 
 // Where the venue's word starts inside a detail, behind the rail's own sentence. Written by
@@ -286,6 +324,12 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
     });
   };
 
+  /* A SIGNED TRANSFER CAN RUN UNTIL ITS DEADLINE, and the verifier judges that by its own clock,
+     so "nothing moved" is only an answer once the deadline and the skew grace are behind us
+     (the audit of 2026-09-23). A row with no deadline on it never signed a transfer. */
+  const deadline = Date.parse(p.result?.evidence?.deadline ?? '');
+  const canStillRun = Number.isFinite(deadline) && Date.now() < deadline + RELAY_DEADLINE_GRACE_MS;
+
   if (status.status === 'SUCCESS') {
     const settled = status.settledAmountOut !== undefined ? `1click settled this: ${status.settledAmountOut} arrived.` : '1click reports this settled.';
     /* A ROW WITH A POCKET IS SETTLED BY ITS BALANCE, not by this word. The rail read the balance
@@ -344,20 +388,31 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
   if (status.status === 'FAILED') {
     const amount = status.refundedAmount ?? '0';
     const why = status.refundReason ?? 'not given';
-    // A row the rail already proved untouched stays closed: FAILED is the word it was closed on.
-    if (p.status === 'failed' && (p.result?.reason === 'venue_failed_nothing_moved' || p.result?.reason === 'refunded')) return p;
-    /* THE LEDGER, BEFORE ANY WORDS. The funding transfer of a 1Click order goes from our account
-       to this handle, so the intents ledger either shows it or does not. "Held by 1Click under
-       handle" was written here over three swaps whose transfer never ran (2026-09-23) and kept
-       those rows open for good. A transfer hash the venue reports is the same fact the ledger
-       would show. */
+    // A row closed on a transfer that can no longer run stays closed: FAILED is the word it was closed on.
+    if (p.status === 'failed' && !canStillRun && (p.result?.reason === 'venue_failed_nothing_moved' || p.result?.reason === 'refunded')) return p;
+    /* THE TRANSFER ITSELF, BEFORE ANY WORDS. A transfer hash the venue reports, then the verifier's
+       word on the signed transfer's nonce, then the intents ledger, which shows a transfer to this
+       handle or does not. "Held by 1Click under handle" was written here over three swaps whose
+       transfer never ran (2026-09-23) and kept those rows open for good. */
     const hashes = status.nearTxHashes.length + status.originTxHashes.length + status.destinationTxHashes.length;
-    const ledger = hashes > 0 ? 'yes' : await ledgerSaysMoved(ctx, p, handle);
-    if (ledger === 'no') {
+    const { moved: ledger, byNonce } = hashes > 0 ? { moved: 'yes' as const, byNonce: false } : await transferRan(ctx, p, handle);
+    if (ledger === 'no' && canStillRun) {
+      const notYet = byNonce ? 'the verifier shows the signed transfer has not run (its nonce is unspent)' : `the intents ledger shows no transfer to handle ${handle} yet`;
+      return write(
+        'needs_reconciliation',
+        false,
+        `1click reported FAILED (reason ${why}) and ${notYet}, but it can still run until ${new Date(deadline).toISOString()}; this stays open and counted, and is checked again after that.`,
+        byNonce ? 'venue_failed_watching' : 'stuck_unknown',
+      );
+    }
+    // An unspent nonce with no deadline on the row says nothing about when it stops; it waits below.
+    if (ledger === 'no' && (!byNonce || Number.isFinite(deadline))) {
       return write(
         'failed',
         false,
-        `1click reported FAILED (reason ${why}) and the intents ledger shows no transfer to handle ${handle} since this move was approved, so nothing left the balance.`,
+        byNonce
+          ? `1click reported FAILED (reason ${why}), and the deadline (${new Date(deadline).toISOString()}) passed with the signed transfer never run: the verifier shows its nonce unspent, so nothing left the balance.`
+          : `1click reported FAILED (reason ${why}) and the intents ledger shows no transfer to handle ${handle} since this move was approved, so nothing left the balance.`,
         'venue_failed_nothing_moved',
       );
     }
@@ -378,7 +433,43 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
   }
   // Not terminal yet, or an address 1Click does not know: change nothing, say what it is waiting on.
   const said = status.found ? status.status : 'an address 1Click does not recognise yet';
+  /* Unless the transfer this row signed is past its deadline and never ran: then the input never
+     left and now never can, whatever 1Click is still waiting for. A submit 1Click refused, or a
+     transfer it never ran, ends here rather than reading unconfirmed for a week. */
+  if (typeof p.result?.evidence?.nonce === 'string' && Number.isFinite(deadline) && !canStillRun) {
+    const { moved, byNonce } = await transferRan(ctx, p, handle);
+    if (moved === 'no' && byNonce) {
+      return write(
+        'failed',
+        false,
+        `1click reports ${said}, and the deadline (${new Date(deadline).toISOString()}) passed with the signed transfer never run: the verifier shows its nonce unspent, so nothing left the balance.`,
+        'venue_failed_nothing_moved',
+      );
+    }
+  }
   return write(p.status, p.result?.ok ?? false, `1click has not settled this: it reports ${said}. Nothing has changed; check again shortly.`);
+}
+
+/* Whether the signed transfer ran: the verifier's word on its nonce when the row carries one and
+   that word still means something, else the intents ledger below. `byNonce` says which answered,
+   because only the nonce can tell "not yet" from "never" once the deadline has passed. */
+async function transferRan(ctx: PCtx, p: Proposal, handle: string): Promise<{ moved: 'yes' | 'no' | 'unknown'; byNonce: boolean }> {
+  const nonce = p.result?.evidence?.nonce;
+  const verifier = ctx.rails.relay;
+  const from = (p.draft as { from?: unknown }).from;
+  // Only an intents nonce is the verifier's to answer for; a Hyperliquid row's nonce is the venue's.
+  const parts = decodeNonce(nonce);
+  if (parts !== null && verifier !== undefined && typeof from === 'string' && from !== '') {
+    const spent = await verifier.nonceUsed(from.toLowerCase(), nonce as string);
+    if (spent === true) return { moved: 'yes', byNonce: true };
+    /* Unspent is an answer only while the verifier still keeps the nonce: inside the nonce's own
+       life and under a salt it has not retired, after which a spent nonce is pruned and reads
+       unspent too (garbage_collector.rs). Otherwise the ledger decides. */
+    if (spent === false && Date.now() <= parts.deadlineMs && (await verifier.saltValid?.(parts.salt)) === true) {
+      return { moved: 'no', byNonce: true };
+    }
+  }
+  return { moved: await ledgerSaysMoved(ctx, p, handle), byNonce: false };
 }
 
 /* What the account's intents ledger says about a transfer to this handle since the move was

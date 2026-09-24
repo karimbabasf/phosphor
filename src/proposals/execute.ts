@@ -406,11 +406,12 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
      row lands as needs_reconciliation, which already counts against the cap, already has a
      screen, and is re-judged on every ledger refresh below. */
   const settling = !result.ok && result.settling === true;
-  /* AND ONE PROOF THE OTHER WAY. A rail that read the spent balance either side of a venue's
-     failure and found nothing missing from it has shown the move is over and cost nothing:
-     the row closes as failed and charges nobody's day. Without that read a hash still means
-     unconfirmed, as above; the three wNEAR swaps of 2026-09-23 sat open for good, over money
-     that never left. */
+  /* AND ONE PROOF THE OTHER WAY. A refund the balance shows back, or a signed transfer that
+     never ran and can no longer run, is a move that is over and cost nothing: the row closes as
+     failed and charges nobody's day. A balance that merely reads the same is not that proof (a
+     same-coin credit hides a transfer that ran, and one that has not run can still run until its
+     deadline), so a FAILED swap whose transfer is unspent stays open as venue_failed_watching
+     until reconcile sees the deadline pass (the audit of 2026-09-23). */
   const provedNothingLeft = result.reason === 'venue_failed_nothing_moved' || result.reason === 'refunded';
   const unconfirmed = !result.ok && !provedNothingLeft && (moved || settling);
   const status = result.ok ? 'executed' : unconfirmed ? 'needs_reconciliation' : 'failed';

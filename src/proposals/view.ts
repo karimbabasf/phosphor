@@ -692,6 +692,8 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft): string {
       return `${The} didn't go through. Nothing left your balance.`;
     case 'venue_failed_nothing_moved':
       return `${The} didn't go through. Nothing left your balance.`;
+    case 'venue_failed_watching':
+      return `${The} didn't go through. Your ${sym} hasn't moved; I'm keeping an eye on it for a few minutes.`;
     case 'venue_failed_refund_pending':
       return `${The} didn't go through. Your ${sym} is with the swap service until it comes back to your balance; the app keeps checking.`;
     case 'refunded':

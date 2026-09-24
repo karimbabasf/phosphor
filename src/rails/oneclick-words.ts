@@ -74,6 +74,10 @@ export type RefundWords = {
   // The rail moved the input itself and holds the hash of that transfer (a venue send it
   // broadcast), so the input has left whatever the venue did with it afterwards.
   inputSent?: boolean;
+  /* The transfer the rail signed, asked of the verifier by its nonce: spent is the transfer having
+     run, unspent is a transfer that has not and can until `until`, its deadline. Null when the
+     verifier did not answer; absent for a rail that does not ask. */
+  intent?: { spent: boolean | null; until: string };
 };
 
 /* The balance the move spent, read by the rail either side of it, in base units. Null is a read
@@ -81,20 +85,20 @@ export type RefundWords = {
 export type InputRead = { before: bigint | null; after: bigint | null; amountBase: bigint; decimals: number };
 
 /* WHETHER THE INPUT LEFT THE BALANCE, from what was observed and nothing else.
-   'yes': the rail sent the input itself, a FAILED order carrying any transfer hash (for a move out
-   of the intents balance, the funding transfer having run), or a REFUNDED order whose balance has
-   not climbed back. 'no': both reads answered and the balance is not below where it started, so
-   nothing is missing from it (a refund that already came back reads the same way). A FAILED order
-   whose balance fell with no hash is 'unknown': another move spending the same coin in the same
-   minute reads exactly the same. */
-export function inputMoved(status: OneClickStatus, read?: InputRead, sent = false): 'yes' | 'no' | 'unknown' {
+   A FAILED order goes by the transfer itself: any transfer hash, or the verifier showing the
+   signed transfer's nonce spent, is 'yes'; the nonce unspent is 'no', for now; anything else is
+   'unknown'. Never by the balance: a same-coin credit in the same minute hides a transfer that
+   ran (the audit of 2026-09-23). A REFUNDED order goes by the balance: back where it started is
+   'no', since the refund came home; below it is 'yes'. And the rail sending the input itself is
+   'yes' whatever the venue said. */
+export function inputMoved(status: OneClickStatus, read?: InputRead, sent = false, intent?: RefundWords['intent']): 'yes' | 'no' | 'unknown' {
   const hashes = status.nearTxHashes.length + status.originTxHashes.length + status.destinationTxHashes.length;
   if (sent) return 'yes';
-  if (status.status === 'FAILED' && hashes > 0) return 'yes';
-  if (read !== undefined && read.before !== null && read.after !== null) {
-    if (read.after >= read.before) return 'no';
-    return status.status === 'FAILED' ? 'unknown' : 'yes';
+  if (status.status === 'FAILED') {
+    if (hashes > 0 || intent?.spent === true) return 'yes';
+    return intent?.spent === false ? 'no' : 'unknown';
   }
+  if (read !== undefined && read.before !== null && read.after !== null) return read.after >= read.before ? 'no' : 'yes';
   return hashes > 0 ? 'yes' : 'unknown';
 }
 
@@ -105,7 +109,8 @@ function units(base: bigint, decimals: number): string {
 }
 
 // REFUNDED and FAILED are two facts and get two sentences, each built from a field the API
-// returned and from the balance the rail read, when it read one. Nothing here says where the
+// returned and from what the rail read (the balance for a refund, the signed transfer's nonce
+// for a failure), when it read one. Nothing here says where the
 // input sits unless something showed it: "held by 1Click under handle" was printed over three
 // FAILED swaps whose input never left the balance (2026-09-23), and "a refund is credited back"
 // over FAILED orders that refunded nothing (2026-09-15). `reason` is the code the card reads.
@@ -119,7 +124,7 @@ export function describeRefund(status: OneClickStatus, handle: string, words: Re
     ...(status.refundReason !== undefined ? { refundReason: status.refundReason } : {}),
   };
   const txids = uniqueTxids(words.primaryTxid, status);
-  const moved = inputMoved(status, read, words.inputSent === true);
+  const moved = inputMoved(status, read, words.inputSent === true, words.intent);
   const reading =
     read !== undefined && read.before !== null && read.after !== null
       ? `the ${words.symbol} balance reads ${units(read.after, read.decimals)} against ${units(read.before, read.decimals)} before the swap`
@@ -149,11 +154,15 @@ export function describeRefund(status: OneClickStatus, handle: string, words: Re
   }
 
   const why = status.refundReason ?? 'not given';
+  /* Not run is not over: the transfer can still run until its deadline, so the row stays open and
+     counted, and reconcile closes it once the deadline has passed with the nonce still unspent. */
   if (moved === 'no') {
     return {
       ok: false,
-      reason: 'venue_failed_nothing_moved',
-      detail: `1click reported FAILED (reason ${why}) and nothing left the balance: ${reading}; ${words.evidence}.`,
+      reason: 'venue_failed_watching',
+      detail:
+        `1click reported FAILED (reason ${why}), and the verifier shows the signed transfer has not run: its nonce is unspent. ` +
+        `It can still run until ${oneLine(words.intent?.until, 40)}, so this stays open and counted until then; ${words.evidence}.`,
       txids,
       evidence,
     };
@@ -164,7 +173,7 @@ export function describeRefund(status: OneClickStatus, handle: string, words: Re
       reason: 'venue_failed_refund_pending',
       detail:
         `1click reported FAILED and refunded ${amount ?? '0'} ${words.symbol} so far; the ${words.symbol} left the balance for ` +
-        `the swap service's handle ${shortHandle} and is not back yet; reason ${why}; ${reading}; ${words.evidence}. ` +
+        `the swap service's handle ${shortHandle} and is not back yet; reason ${why}; ${words.evidence}. ` +
         (zero ? 'It settles when a refund shows in the balance.' : `That refund goes to ${words.refundTarget}.`),
       txids,
       evidence,
@@ -175,8 +184,8 @@ export function describeRefund(status: OneClickStatus, handle: string, words: Re
     reason: 'stuck_unknown',
     detail:
       `1click reported FAILED and refunded ${amount ?? '0'} ${words.symbol} so far; whether the ${words.symbol} left the balance ` +
-      `is not confirmed, because ${reading} and 1click reports no transfer hash; reason ${why}; ${words.evidence}. ` +
-      'The app keeps checking; read the balance before trying again.',
+      `is not confirmed, because 1click reports no transfer hash${words.intent === undefined ? '' : ' and the verifier did not answer for the signed transfer'}; ` +
+      `reason ${why}; ${words.evidence}. The app keeps checking; read the balance before trying again.`,
     txids,
     evidence,
   };
