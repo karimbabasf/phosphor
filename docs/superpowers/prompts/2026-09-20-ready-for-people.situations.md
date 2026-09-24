@@ -64,7 +64,7 @@ mechanics; a row whose state the demo rails cannot produce is marked in the run 
 | A43 | policy_change | refused (F) | a patch the schema refuses (invalid_patch) |
 | A44 | policy_change | waiting_for_you | lowering a cap, the before and after figures on the card |
 
-## B. Failures, refusals and late moves (26 rows, all F)
+## B. Failures, refusals and late moves (28 rows, all F)
 
 | id | situation | reach |
 |---|---|---|
@@ -94,6 +94,8 @@ mechanics; a row whose state the demo rails cannot produce is marked in the run 
 | B24 | below the HL floor | propose_hl_deposit 2 USDC (floor named) |
 | B25 | unified-account withdraw refusal or the sendAsset path | propose_hl_withdraw on a unified account; not reachable in demo: the unified-account withdraw refusal is a live Hyperliquid seam (hl-user-signed.ts); the demo rail signs nothing, so it cannot produce the refusal. Needs node B to add a demo seam |
 | B26 | relay expired (NOT_FOUND_OR_NOT_VALID) | a relay swap whose price expired before settling, nothing moved |
+| B27 | provider FAILED on a swap, nothing moved | a swap 1Click reported FAILED whose transfer never ran, so nothing left the balance (Karim's swaps, 2026-09-15 and 2026-09-23) |
+| B28 | refused: no price | propose_swap with no floor for a coin nobody quotes, so no floor could be set |
 
 ## C. Onboarding (15 rows, FLOW where marked)
 

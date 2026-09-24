@@ -1,13 +1,11 @@
 // The send card, rendered.
 //
-// The one card a person reads before money leaves for somebody else, drawn by
-// ui/screens/sendcard.js on two surfaces: the decision dock (the real decision.js, with the
-// buttons) and the conversation (the real cards.js, from a tool answer that carries no draft).
-// Rendered against the same stub DOM the other card tests use, and held to what a person would
-// see: the full address in groups of four, a copy that puts the normalised address on the
-// clipboard, an explorer link to the right explorer and nowhere else, the first-send badge, the
-// stacked layout under 560 px, the fingerprint while Touch ID is up, and no deciding button of
-// its own.
+// ui/screens/sendcard.js draws a send in full: the route, the address in groups of four, the
+// facts and the first-send badge. The decision dock that drew it is gone; a send is decided on
+// its move card in the thread (decision-card-ui.test.ts, agent-cards-ui.test.ts), and this file
+// holds the renderer itself to what a person would see: a copy that puts the normalised address
+// on the clipboard, an explorer link to the right explorer and nowhere else, the stacked layout
+// under 560 px, and no deciding button of its own.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,8 +14,6 @@ import { createContext, runInContext } from 'node:vm';
 
 const read = (p: string): string => readFileSync(new URL(p, import.meta.url), 'utf8');
 const SENDCARD = read('../../ui/screens/sendcard.js');
-const DECISION = read('../../ui/screens/decision.js');
-const CARDS = read('../../ui/screens/cards.js');
 const LINKS = read('../../ui/core/links.js');
 const CHECKS = read('../../ui/screens/checks.js');
 import { fillChains } from '../fixtures/chains.ts';
@@ -164,8 +160,8 @@ function byTag(n: Node, tag: string, out: Node[] = []): Node[] {
   return out;
 }
 
-/* The dock and the card in one sandbox, the way index.html loads them, over the proposals and
-   the vault slice the test hands in. The clipboard is a stub that records what was written. */
+/* The send card built on its own over the first proposal the test hands in, with the vault slice
+   beside it. The clipboard is a stub that records what was written. */
 function loadDock(proposals: unknown[], vault: Record<string, unknown> = {}) {
   const dock = node('div');
   const card = node('div');
@@ -205,17 +201,16 @@ function loadDock(proposals: unknown[], vault: Record<string, unknown> = {}) {
   runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(CHECKS, sandbox, { filename: 'ui/screens/checks.js' });
   runInContext(SENDCARD, sandbox, { filename: 'ui/screens/sendcard.js' });
-  runInContext(DECISION, sandbox, { filename: 'ui/screens/decision.js' });
-  const win = sandbox.window as { PhosphorDecision: { boot: () => void; render: () => void }; PhosphorSendCard: Record<string, (...a: unknown[]) => unknown> };
-  win.PhosphorDecision.boot();
+  const win = sandbox.window as { PhosphorSendCard: Record<string, (...a: unknown[]) => unknown> };
+  void listener;
   return {
     card,
     clipboard,
     approved,
     sendCard: win.PhosphorSendCard,
     render: () => {
-      if (listener !== null) listener();
-      else win.PhosphorDecision.render();
+      card.children = [];
+      win.PhosphorSendCard.build(card, win.PhosphorSendCard.viewOf(proposals[0]), { width: 640 });
     },
   };
 }
@@ -262,7 +257,7 @@ function payProposal(over: Record<string, unknown> = {}, draftOver: Record<strin
   };
 }
 
-test('the dock draws the send card: the head, the route with the full address in groups, the facts and the first-send badge', () => {
+test('the send card draws the head, the route with the full address in groups, the facts and the first-send badge', () => {
   const ui = loadDock([payProposal()], { custody: 'secure-enclave' });
   ui.render();
   const root = all(ui.card, 'sendcard')[0];
@@ -389,34 +384,6 @@ test('the route stacks under 560 px and not above, by a class the card owns', ()
   assert.equal(ui.sendCard.STACK_BELOW, 560);
 });
 
-test('the dock\'s buttons around a send say what the click starts, and go dead with a fingerprint while Touch ID is up', async () => {
-  const enclave = loadDock([payProposal()], { custody: 'secure-enclave' });
-  enclave.render();
-  let labels = all(enclave.card, 'btn-label').map((l) => l.textContent);
-  assert.deepEqual(labels.filter((l) => l !== 'Copy' && l !== 'Explorer'), ['No', 'Approve, then Touch ID']);
-
-  const password = loadDock([payProposal()], { custody: 'password' });
-  password.render();
-  labels = all(password.card, 'btn-label').map((l) => l.textContent);
-  assert.deepEqual(labels.filter((l) => l !== 'Copy' && l !== 'Explorer'), ['No', 'Approve']);
-
-  const touching = loadDock([payProposal({ status: 'awaiting_touch' })], { custody: 'secure-enclave', waiting: { reason: 'Approve: Pay 0.01 ETH to 0xb583...5DB0 on Ethereum ($24.40)' } });
-  touching.render();
-  const primary = all(touching.card, 'btn-primary')[0]!;
-  assert.equal(primary.disabled, true);
-  assert.equal(primary.getAttribute('data-touch'), 'true');
-  assert.equal(all(primary, 'sendcard-finger').length, 1, 'no fingerprint on the waiting button');
-  assert.equal(all(primary, 'btn-label')[0]?.textContent, 'Waiting for Touch ID');
-  assert.equal(all(touching.card, 'sendcard-status')[0]?.textContent, 'Touch ID');
-  assert.equal(all(touching.card, 'touch-reason')[0]?.textContent, 'Approve: Pay 0.01 ETH to 0xb583...5DB0 on Ethereum ($24.40)');
-
-  // The yes is the dock's: clicking it approves that proposal and nothing in the card does.
-  const yes = all(enclave.card, 'btn-primary')[0]!;
-  fire(yes, 'click');
-  assert.deepEqual(enclave.approved, ['p-pay']);
-  await new Promise((resolve) => setImmediate(resolve));
-});
-
 test('a refused send keeps the card and says why in red', () => {
   const refused = payProposal({ status: 'policy_refused', verdict: { outcome: 'refuse', rule: 'simulation_required', reasons: ['Simulation failed, so nothing is signed: the receiving address is unusable.'] } });
   const ui = loadDock([refused]);
@@ -437,53 +404,6 @@ test('nothing in the card reaches the DOM as markup, and the card never approves
   const long = new RegExp(`[${String.fromCharCode(0x2014, 0x2013)}]`);
   assert.equal(long.test(SENDCARD), false, 'a long dash reached sendcard.js');
   assert.equal(long.test(read('../../ui/design/sendcard.css')), false, 'a long dash reached sendcard.css');
-});
-
-/* The conversation: cards.js draws the same card from a tool answer that carries no draft, so
-   the address comes off the reply's `send` facts (src/http/propose.ts) and never off the
-   assistant's argument. */
-test('the thread draws the send card from the reply\'s send facts, not from the tool argument', () => {
-  const sandbox: Record<string, unknown> = {
-    window: {
-      PhosphorDom: domFor(),
-      PhosphorIcons: { svg: (name: string) => { const n = node('svg'); n.className = 'icon'; n.attrs['data-icon'] = name; return n; } },
-      PhosphorMarks: { logo: (symbol: string) => { const n = node('span'); n.className = 'logo'; n.attrs['data-token'] = String(symbol).toUpperCase(); return n; } },
-      PhosphorReceipt: { chainName: (id: string) => id },
-      setTimeout: () => 0,
-    },
-    navigator: {},
-    document: { createElement: (tag: string) => node(tag), createElementNS: (_ns: string, tag: string) => node(tag), addEventListener: () => {} },
-    console,
-    URL,
-  };
-  createContext(sandbox);
-  fillChains(sandbox, (src, name) => runInContext(src, sandbox, { filename: name }));
-  runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
-  runInContext(SENDCARD, sandbox, { filename: 'ui/screens/sendcard.js' });
-  runInContext(CARDS, sandbox, { filename: 'ui/screens/cards.js' });
-  const cards = (sandbox.window as { PhosphorCards: { render: (kind: string, data: unknown, extra: unknown) => Node; kindFor: (name: string) => string } }).PhosphorCards;
-  assert.equal(cards.kindFor('propose_send'), 'move');
-  const reply = {
-    id: 'p-pay',
-    status: 'pending',
-    verdict: { outcome: 'needs_approval', reasons: [] },
-    simulation: payProposal().simulation,
-    send: { kind: 'intents_pay', where: 'eth', to: FRIEND, symbol: 'ETH', amount: 0.01, amountUsd: 24.4, recipient: { known: false, count: 0, lastAt: null, ownAddress: false } },
-  };
-  // The argument spells the address in lowercase; the card shows the app's checksummed spelling.
-  // The thread draws every move in one skeleton (ui/screens/cards.js moveCard): the receiver
-  // is the whole address on the leg the money lands on, in groups of four, with a Copy.
-  const card = cards.render('move', reply, { name: 'propose_send', input: { to: FRIEND.toLowerCase(), symbol: 'eth', amount: 0.01, where: 'eth', confirmed: true } });
-  const address = all(card, 'tcard-leg-address')[0];
-  assert.ok(address, 'the thread drew no address on the send card');
-  assert.equal(all(address!, 'tcard-leg-group').map((g) => g.textContent).join(''), FRIEND);
-  assert.equal(address!.getAttribute('data-address'), FRIEND);
-  const from = all(card, 'tcard-leg').find((leg) => leg.getAttribute('data-leg') === 'from');
-  assert.ok(from?.textContent.includes('0.01 ETH'), String(from?.textContent));
-  assert.ok(all(card, 'tcard-line').some((line) => line.textContent === 'This addressfirst send'), 'the first send is not named');
-  assert.equal(all(card, 'btn-primary').length, 0, 'the thread card grew a deciding button');
-  assert.equal(all(card, 'tcard-title')[0]?.textContent, 'Pay');
-  assert.equal(all(card, 'sendcard').length, 0, 'the dock\'s own card is nested inside the thread card');
 });
 
 // ---------- the checks and the hold ----------
@@ -524,13 +444,13 @@ test('a row that ran its checks draws them folded in the slot, closed, with the 
   assert.equal(all(twice.card, 'checks-summary')[0]?.textContent, 'Waiting on 1 of 5');
 });
 
-test('a held row says Holding, what it waits for and for how long, and the dock shows it without a button', () => {
+test('a held row says Holding, what it waits for and for how long, and offers no button', () => {
   const now = Date.parse('2026-09-17T10:07:30.000Z');
   const held = payProposal({ status: 'approved', heldSince: '2026-09-17T10:05:00.000Z', decidedBy: 'human', decidedAt: '2026-09-17T10:05:00.000Z', preflight: [PREFLIGHT] });
   const ui = loadDock([held]);
   ui.render();
   const root = all(ui.card, 'sendcard')[0];
-  assert.ok(root, 'the dock draws the held send');
+  assert.ok(root, 'no card for the held send');
   assert.equal(root.getAttribute('data-status'), 'held');
   const pill = all(root, 'sendcard-status')[0];
   assert.equal(pill?.textContent, 'Holding');
@@ -560,7 +480,6 @@ test('an approved row that is not held is Sending, with no hold line', () => {
   ui.sendCard.build(host, view, {});
   assert.equal(all(host, 'sendcard-status')[0]?.textContent, 'Sending');
   assert.equal(all(host, 'sendcard-hold').length, 0);
-  assert.equal(all(ui.card, 'sendcard').length, 0, 'the dock has nothing to show for a row that is sending');
 });
 
 /* A payout on a chain the card never had a row for. The five-row table in this file printed the

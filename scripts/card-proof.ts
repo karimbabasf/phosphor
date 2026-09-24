@@ -1,14 +1,15 @@
 // One card per move, proved in a browser: the scripted agent (tests/eval/agent.ts) plays a
 // swap scenario through the app's own conversation, the demo rail walks the row through
 // every stage, and headless Chromium watches the window. It counts `.chat-card` per proposal
-// id at the end (criterion 5.1: exactly one), records every stage the card showed with the
-// clock, the words, the card's height and the delay between the row changing on the server
-// and the word changing on screen (5.3, 2.3), reads the fade the stylesheet put on the state
-// word, and photographs the card at every stage at two column widths.
+// id at the end (criterion 5.1: exactly one), records every state the card showed with its
+// words, its height and the delay between the row changing on the server and the word
+// changing on screen (5.3, 2.3), reads the fade the stylesheet put on the state word, checks
+// that a working card carries no clock until it is late, and photographs the card at every
+// state.
 //
 // Run: node scripts/card-proof.ts [--scenario S29] [--port 4204] [--out <dir>]
-// It stages the repo the way scripts/eval.ts does, boots a demo app on the port with a data
-// dir under state/, and quits everything it started. playwright-core is not a dependency of
+// It stages the repo the way scripts/eval.ts does, boots a demo app on the port with a
+// throwaway data dir, and quits everything it started. playwright-core is not a dependency of
 // this repo: point PLAYWRIGHT_CORE at a copy (the npx cache has one) and it uses the headless
 // shell that copy knows; PROOF_BROWSER names another Chromium binary.
 
@@ -34,8 +35,8 @@ const flag = (name: string, fallback: string): string => {
   return at === -1 ? fallback : (args[at + 1] ?? fallback);
 };
 const SCENARIO = flag('--scenario', 'S29');
-// The window's width for the walk: 1280 is the dock's wide fixture, 700 puts the card column at
-// about 400, the narrow one (vault State 2026-09-18).
+// The window's width for the walk: 1280 and 1440 are the wide windows, 700 puts the card column
+// at about 400, the narrow one (vault State 2026-09-18).
 const WIDTH = Number(flag('--width', '1280'));
 const PORT = Number(flag('--port', process.env.PHOSPHOR_PORT ?? '4204'));
 const OUT = path.resolve(flag('--out', path.join(ROOT, 'docs', 'superpowers', 'prompts', 'ready-for-people', 'evidence-d', `card-proof-${WIDTH}`)));
@@ -108,7 +109,19 @@ async function bootApp(stage: string, dataDir: string): Promise<{ base: string; 
   for (const [key, value] of Object.entries(process.env)) if (typeof value === 'string') env[key] = value;
   const child = spawn(process.execPath, ['src/main.ts'], {
     cwd: stage,
-    env: { ...env, HOME: path.join(stage, 'home'), ACC_PORT: String(PORT), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir, PHOSPHOR_DEMO_STAGE_SCALE: process.env.PHOSPHOR_DEMO_STAGE_SCALE ?? '1' },
+    /* The scripted agent first on PATH as well as at the scratch HOME's own path: the agent
+       catalog walks PATH before $HOME/.local/bin, so without this the real Claude Code on PATH
+       was the child (2026-09-23: it started, found no login under the scratch HOME and said
+       "Not logged in", and the proof saw no card). */
+    env: {
+      ...env,
+      HOME: path.join(stage, 'home'),
+      PATH: `${path.join(stage, 'home', '.local', 'bin')}:${env.PATH ?? ''}`,
+      PHOSPHOR_PORT: String(PORT),
+      PHOSPHOR_MODE: 'demo',
+      PHOSPHOR_DATA_DIR: dataDir,
+      PHOSPHOR_DEMO_STAGE_SCALE: process.env.PHOSPHOR_DEMO_STAGE_SCALE ?? '1',
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as AppProcess;
   child.stdin.write(`${token}\n`);
@@ -157,27 +170,28 @@ async function post(base: string, route: string, body: unknown): Promise<{ statu
 
 // ---------- the page-side probe ----------
 
-// What the window shows for every move card: per proposal id, the count of hosts, the state
-// word, the stage line, the fold state, the card's box and the fade the stylesheet applied.
+// What the window shows for every move card: per proposal id, the count of hosts, the plain
+// state, the state word and its line, whether it is late, the fold, the card's box and the fade
+// the stylesheet applied.
 const PROBE = `(() => {
   const out = {};
   const hosts = Array.from(document.querySelectorAll('.chat-card'));
   for (const host of hosts) {
-    const card = host.querySelector('.tcard[data-card="move"]');
+    const card = host.querySelector('.mcard[data-card="move"]');
     if (!card) continue;
     const id = card.id.replace(/^card-proposal-/, '');
-    const word = card.querySelector('.tcard-state');
-    const copy = card.querySelector('.tcard-stage-copy');
+    const word = card.querySelector('.mcard-state-word');
+    const copy = card.querySelector('.mcard-line');
     const box = card.getBoundingClientRect();
     const cs = word ? getComputedStyle(word) : null;
     const entry = out[id] || (out[id] = { hosts: 0 });
     entry.hosts += 1;
+    entry.state = card.getAttribute('data-state');
+    entry.late = card.getAttribute('data-late') === 'true';
     entry.word = word ? word.textContent : null;
     entry.fade = word ? word.getAttribute('data-fade') : null;
     entry.animation = cs ? cs.animationName + ' ' + cs.animationDuration : null;
     entry.copy = copy ? copy.textContent : null;
-    entry.clock = (card.querySelector('.tcard-stage-since') || {}).textContent || null;
-    entry.open = card.getAttribute('data-open');
     entry.details = (card.querySelector('.tcard-details') || { getAttribute: () => null }).getAttribute('data-open');
     entry.top = Math.round(box.top);
     entry.height = Math.round(box.height);
@@ -187,7 +201,7 @@ const PROBE = `(() => {
 })()`;
 
 /* A picture of one card by its box, taken now. Playwright's element screenshot waits for the
-   element to hold still and to be visible by its own rules, and a card whose clock ticks and
+   element to hold still and to be visible by its own rules, and a card whose track moves and
    whose column scrolls never is; the box off the layout and a clip of the viewport is the
    picture a person sees at that moment. */
 async function shoot(page: Json, id: string, file: string): Promise<void> {
@@ -210,7 +224,8 @@ async function main(): Promise<void> {
   if (scenario === undefined) throw new Error(`no scenario ${SCENARIO}`);
   fs.mkdirSync(OUT, { recursive: true });
   const stage = stageRepo(scenario);
-  const dataDir = path.join(ROOT, 'state', `card-proof-${Date.now()}`);
+  // A throwaway data directory outside every working copy: a demo boot keeps its key file there.
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-card-proof-data-'));
   seedDataDir(dataDir, scenario);
   const app = await bootApp(stage, dataDir);
   const require = createRequire(import.meta.url);
@@ -264,7 +279,7 @@ async function main(): Promise<void> {
       for (const [id, entry] of Object.entries(seen.cards as Record<string, Json>)) {
         if (lastWord[id] !== entry.word) {
           const lag = serverChangedAt[id] === undefined ? null : shown - serverChangedAt[id];
-          result.stages.push({ at: shown - started, source: 'window', id, word: entry.word, copy: entry.copy, clock: entry.clock, hosts: entry.hosts, fade: entry.fade, animation: entry.animation, height: entry.height, open: entry.open, details: entry.details, lagMs: lag });
+          result.stages.push({ at: shown - started, source: 'window', id, state: entry.state, late: entry.late, word: entry.word, copy: entry.copy, text: entry.text, hosts: entry.hosts, fade: entry.fade, animation: entry.animation, height: entry.height, details: entry.details, lagMs: lag });
           if (lag !== null && lastWord[id] !== undefined) result.latencyMs.push(lag);
           if (lastWord[id] !== undefined) {
             result.heights.push({ from: lastHeight[id], to: entry.height, jump: Math.abs(entry.height - (lastHeight[id] ?? entry.height)) });
@@ -281,8 +296,8 @@ async function main(): Promise<void> {
         }
       }
       const terminal = ((state.proposals as Json[]) ?? []).length > 0 && ((state.proposals as Json[]) ?? []).every((row: Json) => row.view?.terminal === true);
-      if (terminal && Object.keys(seen.cards).length > 0 && Object.values(seen.cards as Record<string, Json>).every((c: Json) => c.word && /Confirmed|Failed|Declined|Refused|Refunded|Late/.test(c.word))) {
-        // Give the receipts feed a moment to arrive, then read the final picture.
+      if (terminal && Object.keys(seen.cards).length > 0 && Object.values(seen.cards as Record<string, Json>).every((c: Json) => c.state === 'done' || c.state === 'didnt_go_through')) {
+        // Let the last fade and the fold settle, then read the final picture.
         await sleep(2500);
         done = true;
       }
@@ -292,10 +307,10 @@ async function main(): Promise<void> {
     const finalWide = (await page.evaluate(PROBE)) as Json;
     result.replies = finalWide.replies;
     /* The whole window at the end, the card scrolled into view, and the card open at its fold. */
-    await page.evaluate(`(() => { const n = document.querySelector('.chat-card .tcard[data-card="move"]'); if (n) n.scrollIntoView({ block: 'center' }); })()`);
+    await page.evaluate(`(() => { const n = document.querySelector('.chat-card .mcard[data-card="move"]'); if (n) n.scrollIntoView({ block: 'center' }); })()`);
     await sleep(400);
     await page.screenshot({ path: path.join(OUT, 'window.png') });
-    await page.evaluate(`(() => { const b = document.querySelector('.tcard-details-head'); if (b) b.click(); })()`);
+    await page.evaluate(`(() => { const b = document.querySelector('.chat-card .mcard-details-toggle'); if (b) b.click(); })()`);
     await sleep(500);
     await page.evaluate(`(() => { const n = document.querySelector('.tcard-details'); if (n) n.scrollIntoView({ block: 'end' }); })()`);
     await sleep(300);
@@ -311,12 +326,15 @@ async function main(): Promise<void> {
     const words = result.stages.filter((s: Json) => s.source === 'window').map((s: Json) => s.word);
     const lags = result.latencyMs as number[];
     const jumps = (result.heights as Json[]).filter((h) => h.tick !== true).map((h) => h.jump as number);
+    // A working card that is not late shows no time at all: its only sign of time is the track.
+    const clocked = (result.stages as Json[]).filter((s) => s.source === 'window' && s.state === 'working' && s.late !== true && /\d+\s?(s|m|sec|min)\b/.test(String(s.text ?? '')));
     result.pass = {
       '5.1 one card per id': ids.length > 0 && ids.every((id) => finalWide.cards[id].hosts === 1) && finalWide.receipts === 0,
       '5.3 stage word changed with the fade': (result.fade as Json[]).length > 0 && (result.fade as Json[]).every((f) => /chatcard-fade-[ab] 0\.24s/.test(String(f.animation))),
       '5.3 no layout jump over 8 px': jumps.every((j) => j <= 8),
       '2.3 stage on screen under 500 ms': lags.length > 0 && lags.every((ms) => ms < 500),
       '5.4 only table words on the card': words.every((w: unknown) => typeof w === 'string' && !/[A-Z]{3,}_[A-Z]|SUCCESS|PROCESSING|KNOWN_DEPOSIT/.test(w)),
+      '5.3 no clock on a working card before it is late': clocked.length === 0,
       stagesSeen: words,
       lagsMs: lags,
       heightJumps: jumps,

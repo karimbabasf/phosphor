@@ -1,9 +1,10 @@
 // What the conversation column shows a person while their agent is working.
 //
 // The trust-boundary properties are asserted next door in agent-panel-ui.test.ts. This file is
-// about the other half of the column's job, which is telling the truth about what is happening:
-// one row per thing the human said, a row per call that names what the call was about, and one
-// line that keeps saying the agent is alive for as long as it is.
+// about the other half of the column's job, which is telling the truth about what is happening,
+// calmly: one row per thing the human said, one quiet working line with the step in plain words
+// while the agent is at it, the reply streamed as it is written, no clock anywhere, and a column
+// that stays at its end while the person is there and holds still when they scroll up to read.
 //
 // It drives the real ui/screens/agent.js against a DOM small enough to read. The stub is not a
 // browser: it is the handful of node operations ui/core/dom.js actually uses, which is what
@@ -156,19 +157,19 @@ function build(options: { command?: string } = {}) {
   const built: unknown[] = [];
   let reject: ((err: Error) => void) | null = null;
   const driverHandlers: Array<(frame: unknown) => void> = [];
-  const receiptHandlers: Array<(list: unknown[], state: string) => void> = [];
   const agentsHandlers: Array<(slice: unknown) => void> = [];
   const busHandlers: Record<string, Array<(payload: unknown) => void>> = {};
   const actions: string[] = [];
-  const confirms: Node[] = [];
 
   const host = make('div');
   const composerHost = make('div');
 
+  const root = { dataset: {} as Record<string, string> };
+  const sizes: Array<() => void> = [];
   const sandbox: Record<string, unknown> = {
     console,
     navigator: {},
-    document: { createElement: (tag: string) => make(tag), addEventListener: () => {} },
+    document: { createElement: (tag: string) => make(tag), addEventListener: () => {}, documentElement: root },
   };
   /* Timers are collected rather than run, so a test can say when they fire. The starting floor
      below is the only thing here that depends on one, and running it eagerly would erase the
@@ -191,17 +192,12 @@ function build(options: { command?: string } = {}) {
     getComputedStyle: () => ({ lineHeight: '21px', paddingTop: '8px', paddingBottom: '8px' }),
     dispatchEvent: () => true,
     PhosphorNet: { readable: (e: Error) => String(e.message) },
-    PhosphorShell: { setPending: () => {}, updateField: () => {} },
+    PhosphorShell: { setPending: () => {} },
     PhosphorToast: { show: () => {} },
-    /* The decision dock (ui/screens/decision.js): a card handed a builder. The stub builds it
-       into a node the test can read and press, and records that it was asked. */
-    PhosphorDecision: {
-      showCard: (build: (host: unknown, done: () => void) => void) => {
-        const card = make('div');
-        card.className = 'dock-card';
-        confirms.push(card);
-        build(card, () => { card.setAttribute('data-done', 'true'); });
-      },
+    /* The observer the column pins its end with: fired by hand, the way a row that grew would. */
+    ResizeObserver: function ResizeObserverStub(this: Record<string, unknown>, fn: () => void) {
+      sizes.push(fn);
+      this.observe = () => {};
     },
     PhosphorApi: {
       driver: (body: { action: string; text?: string }) => {
@@ -222,15 +218,6 @@ function build(options: { command?: string } = {}) {
         if (type === 'driver') driverHandlers.push(handler);
         else (busHandlers[type] ??= []).push(handler);
       },
-    },
-    /* The receipts feed (ui/screens/receipts.js): the column subscribes, asks for one read,
-       and is handed the whole list on every change. The test delivers lists by hand. */
-    PhosphorReceipts: {
-      onChange: (fn: (list: unknown[], state: string) => void) => {
-        receiptHandlers.push(fn);
-        fn([], 'idle');
-      },
-      load: () => {},
     },
     PhosphorReceipt: {
       chainName: (id: string) => ({ base: 'Base', sol: 'Solana' })[id] ?? id,
@@ -290,7 +277,13 @@ function build(options: { command?: string } = {}) {
     emit,
     sends,
     actions,
-    confirms,
+    /* A card another screen asked to show, at the thread's end (PhosphorAgent.showCard). */
+    sheets: () => all(host, 'chat-sheet-card'),
+    root,
+    /* A row grew, a card opened, the window changed size: the observer's call. */
+    grew() {
+      for (const fn of sizes) fn();
+    },
     fail: (message: string) => reject?.(new Error(message)),
     type(text: string) {
       input.value = text;
@@ -299,7 +292,9 @@ function build(options: { command?: string } = {}) {
     saidRows: () => all(host, 'chat-said'),
     replyRows: () => all(host, 'chat-reply'),
     stepRows: () => all(host, 'step'),
-    turnBar: () => all(composerHost, 'turn-bar')[0],
+    /* The one quiet line while the agent works: the mark and the step in plain words. */
+    working: () => all(host, 'chat-working')[0],
+    workingWords: () => all(host, 'chat-working-words')[0]?.textContent ?? null,
     seat: () => all(host, 'agent-seat')[0].getAttribute('data-seat'),
     card: () => all(host, 'agent-empty-inner')[0].textContent,
     cardHidden: () => all(host, 'agent-empty')[0].hidden,
@@ -331,15 +326,11 @@ function build(options: { command?: string } = {}) {
       const due = timers.splice(0, timers.length);
       for (const timer of due) timer.fn();
     },
-    receipts: (list: unknown[]) => {
-      for (const handler of receiptHandlers) handler(list, 'ready');
-    },
     cards: () => all(host, 'receipt-card'),
-    /* The scroller and the pill that offers the way back down. */
+    /* The scroller and Latest, the quiet way back down. */
     list: () => all(host, 'transcript')[0],
     pill: () => all(host, 'jump-latest')[0],
     pillOn: () => all(host, 'jump-latest')[0].getAttribute('data-on') === 'true',
-    pillCount: () => all(host, 'jump-count')[0].textContent,
     /* Put the person part way up a long transcript: the box is 400 tall, the content 2000,
        and the top is where they are reading. */
     scrollUp() {
@@ -402,7 +393,7 @@ test('a prompt the app never took says so on the row that carries it', async () 
   world.fail('the assistant is not running');
   await new Promise((r) => setImmediate(r));
   assert.equal(world.saidRows()[0].getAttribute('data-state'), 'failed');
-  assert.equal(world.turnBar().hidden, true, 'the bar kept counting for a turn that never started');
+  assert.equal(world.working(), undefined, 'the working line stayed up for a turn that never started');
 });
 
 test('two identical prompts each get their own row and their own receipt', () => {
@@ -447,64 +438,61 @@ test('nothing but a scalar reaches a step row', () => {
   assert.ok(text.length < 120, `a step row ran to ${text.length} characters`);
 });
 
-test('the turn bar is up for the whole answer and gone after it', () => {
-  /* The old build put a thinking row in the transcript and removed it on the first frame, so the
-     two longest silences in a turn (before the first call, and while the answer is written) had
-     nothing on screen at all. */
+test('one quiet line says what the agent is doing, and it becomes the reply when the words arrive', () => {
+  /* The two longest silences in a turn (before the first call, and while the answer is written)
+     used to have nothing on screen, and then a head clock, a step row and a turn bar all said the
+     same thing at once. Now there is one line, the mark and the step in plain words, and nothing
+     at all once the reply itself is arriving. */
   const world = build();
-  assert.equal(world.turnBar().hidden, true);
+  assert.equal(world.working(), undefined);
 
   world.type('what am I holding');
-  assert.equal(world.turnBar().hidden, false);
-  assert.equal(world.turnBar().textContent.includes('thinking'), true);
+  assert.equal(world.workingWords(), 'Thinking');
+  const rows = all(world.host, 'transcript-rows')[0].children;
+  assert.equal(rows[rows.length - 1], world.working(), 'the working line is not at the thread\'s end');
 
-  world.emit({ kind: 'tool', name: 'mcp__phosphor__balances', input: {} });
-  assert.equal(world.turnBar().hidden, false);
-  assert.equal(world.turnBar().textContent.includes('working'), true);
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
+  assert.equal(world.workingWords(), 'Reading your wallet');
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__wallet', ok: true });
+  assert.equal(world.workingWords(), 'Thinking');
 
-  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__balances', ok: true });
   world.emit({ kind: 'text', text: 'You hold 3.27 dollars.' });
-  assert.equal(world.turnBar().textContent.includes('writing the answer'), true);
+  assert.equal(world.working(), undefined, 'the working line stayed under the reply');
+  assert.equal(world.replyRows().length, 1);
 
   world.emit({ kind: 'turn_end', error: false, turns: 1 });
-  assert.equal(world.turnBar().hidden, true);
+  assert.equal(world.working(), undefined);
 });
 
-test('the seat light in the head names the open call in its own words and settles to Ready', () => {
-  /* The head carried a pill that said "Working" in a border. The status line says what the work
-     is, in the words the step row uses, and goes back to the state word when the turn is over. */
+test('no clock ticks anywhere in the conversation', () => {
+  /* Karim, 2026-09-23: three clocks ticked (the head at ten a second, "1 step, 0.0 s", "12s of
+     about 30s"). A working agent is a line of words; a late move says so on its own card. */
+  assert.doesNotMatch(AGENT_SOURCE, /setInterval/, 'agent.js runs a timer');
   const world = build();
-  const status = all(world.host, 'agent-status')[0];
-  const verb = all(status, 'status-verb')[0];
-  const elapsed = all(status, 'status-elapsed')[0];
-  assert.equal(status.getAttribute('data-state'), 'ready');
-  assert.equal(verb.textContent, 'Ready');
-  assert.equal(elapsed.hidden, true, 'a clock with nothing to time');
-
   world.type('what is btc doing');
   world.emit({ kind: 'tool', name: 'mcp__phosphor__chart_read', input: { product: 'BTC-USD' } });
-  assert.equal(status.getAttribute('data-state'), 'working');
-  assert.equal(verb.textContent, 'Reading the chart');
-  assert.equal(elapsed.hidden, false);
-  assert.ok(/\d s$/.test(elapsed.textContent), elapsed.textContent);
-  /* The head is the live clock; the row is the record. While the call runs the row carries no
-     seconds (the head is counting them, one screen up), and it gets its duration when the
-     call settles. */
-  const rowTime = () => all(world.stepRows()[0], 'step-time')[0].textContent;
-  assert.equal(rowTime(), '', 'the live row counted the same seconds as the head');
-
   world.emit({ kind: 'tool_result', name: 'mcp__phosphor__chart_read', ok: true });
-  assert.ok(/^\d+(\.\d)? s$/.test(rowTime()), `a settled row has no duration: "${rowTime()}"`);
-  assert.equal(verb.textContent, 'Thinking');
-  world.emit({ kind: 'text', text: 'Up on the 15m.' });
-  assert.equal(verb.textContent, 'Writing the answer');
+  world.emit({ kind: 'turn_end', error: false, turns: 1 });
+  assert.equal(all(world.host, 'status-elapsed').length, 0, 'the head still carries a clock');
+  assert.equal(all(world.host, 'step-time').length, 0, 'a step row still carries a duration');
+  assert.doesNotMatch(world.host.textContent, /\d+(\.\d)? s\b/, 'seconds are printed in the column');
+});
 
+test('the chat tells the header mark whether it is idle, working or done', () => {
+  const world = build();
+  assert.equal(world.root.dataset.agent, 'idle');
+  world.type('what do I hold?');
+  assert.equal(world.root.dataset.agent, 'working');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
+  assert.equal(world.root.dataset.agent, 'working');
+  world.emit({ kind: 'text', text: 'Two coins.' });
   world.emit({ kind: 'turn_end', error: false, turns: 1 });
   world.emit({ kind: 'status', state: 'ready' });
-  assert.equal(status.getAttribute('data-state'), 'ready');
-  assert.equal(verb.textContent, 'Ready');
-  assert.equal(elapsed.hidden, true);
-  assert.equal(status.getAttribute('data-live'), null, 'the column wrote the attribute the beam owns');
+  assert.equal(world.root.dataset.agent, 'done');
+  world.type('and my positions?');
+  assert.equal(world.root.dataset.agent, 'working');
+  world.emit({ kind: 'status', state: 'stopped' });
+  assert.equal(world.root.dataset.agent, 'idle');
 });
 
 test('the composer arms on text and leaves the screen when nobody of ours can take a message', () => {
@@ -532,27 +520,21 @@ test('the composer arms on text and leaves the screen when nobody of ours can ta
   assert.equal(composer.hidden, false, 'the box did not come back with the assistant');
 });
 
-test('a client of the person\'s own at the wheel reads Connected in the head, with no composer', () => {
+test('a client of the person\'s own at the wheel is named on the card, with no composer', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'off' });
-  const status = all(world.host, 'agent-status')[0];
-  const verb = all(world.host, 'status-verb')[0];
   const composer = all(world.composerHost, 'agent-composer')[0];
-  assert.equal(verb.textContent, 'Off');
-  assert.equal(status.getAttribute('data-state'), 'off');
+  assert.equal(world.seat(), 'off');
 
   /* The roster names somebody: the seat is taken, though nothing of ours is at work. */
   world.agents([{ client: 'claude-code', role: 'operator', ops: 2 }]);
-  assert.equal(verb.textContent, 'Connected', 'the head said Off over a card saying somebody was at the wheel');
-  assert.equal(status.getAttribute('data-state'), 'connected');
   assert.equal(world.seat(), 'own');
   assert.ok(world.card().includes('Your own agent is at the wheel.'), world.card());
   assert.ok(world.card().includes('Talk to it from its own terminal.'), world.card());
   assert.equal(composer.hidden, true, 'a box that cannot reach the attached client was offered');
 
   world.agents([]);
-  assert.equal(verb.textContent, 'Off');
-  assert.equal(status.getAttribute('data-state'), 'off');
+  assert.equal(world.seat(), 'off');
   assert.equal(composer.hidden, true);
 });
 
@@ -563,11 +545,10 @@ test('idle connections fold into one quiet row and are not called an agent at th
   // members that had never made a call. Attached is not driving.
   const world = build();
   world.emit({ kind: 'status', state: 'off' });
-  const verb = all(world.host, 'status-verb')[0];
   const idle = (n: number) => Array.from({ length: n }, (_, i) => ({ session: 's' + i, client: 'claude-code', label: 'claude-code', role: 'operator', ops: 0 }));
 
   world.agents(idle(5));
-  assert.equal(verb.textContent, 'Connected', 'five connections are still a connection');
+  assert.equal(world.seat(), 'own', 'five connections are still a connection');
   let rows = all(world.host, 'agent-client');
   assert.equal(rows.length, 1, 'five idle connections drew ' + rows.length + ' rows');
   assert.equal(rows[0].getAttribute('data-idle'), 'true');
@@ -651,59 +632,18 @@ test('a first move whose start fails keeps its words in the box and sends nothin
   assert.equal(world.input.value, rows[2].textContent);
 });
 
-/* ---------- The receipt card ----------
+/* ---------- Receipts ----------
 
-   Karim, 2026-09-14, on the assistant's prose after a swap (a line, a Sold / Received / Fee /
-   Where table, the id, a balance sentence): "when trades happen I dont want to see this, I want
-   to see a nice card, simple, no unnecessary info, and the intent id should be a clickable link".
-   The card is drawn from the app's own receipt, never from what the assistant wrote. */
+   A move made anywhere has one card, in the thread, drawn from its row and changed in place
+   (agent-cards-ui.test.ts). The chat's own receipt feed never ran and is gone, and a receipt
+   opened from Activity opens there: the thread is not posted a second card for the same money. */
 
-test('a move that lands mid conversation posts one shared card, drawn from the receipt', () => {
+test('a receipt opened elsewhere in the window posts nothing into the thread', () => {
   const world = build();
-  world.receipts([]);
-  world.type('swap 0.049 sol to usdc');
-  world.emit({ kind: 'tool', name: 'mcp__phosphor__swap', input: { amount: 0.049, symbol: 'SOL' } });
-  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__swap', ok: true });
-  world.receipts([receipt()]);
-
-  assert.equal(world.cards().length, 1);
-  /* Built by PhosphorReceipt.card from the app's own receipt, untouched: the headline, the id
-     and the url the server built all reach the card, which decides its own link from them. */
-  assert.equal(world.built.length, 1);
-  const handed = world.built[0] as Record<string, unknown>;
-  assert.equal(handed.headline, 'Changed about $5 of your Solana (SOL) into USDC.');
-  assert.deepEqual(handed.txids, [{ chain: 'near', hash: 'EafozJ2XkQ9mRtb7n16c', url: null }]);
-  assert.equal(world.cards()[0].getAttribute('data-inline'), 'true', 'the thread got the popover, not the inline card');
-  // The card closed the steps block, so the next call starts a new one under the card.
-  world.emit({ kind: 'tool', name: 'mcp__phosphor__wallet', input: {} });
-  const order = all(world.host, 'transcript')[0].children.map((n) => n.className.split(' ')[0]);
-  assert.deepEqual(order.slice(-2), ['receipt-card', 'steps-block'], order.join(' > '));
-});
-
-test("the explorer url the server built reaches the card untouched, so the card can link it", () => {
-  const world = build();
-  world.receipts([]);
-  const url = 'https://basescan.org/tx/0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab';
-  const txids = [{ chain: 'base', hash: '0xabc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890ab', url }];
-  world.receipts([receipt({ id: 'p2', toChain: 'base', txids })]);
-  assert.equal(world.cards().length, 1);
-  const handed = world.built[0] as Record<string, unknown>;
-  assert.deepEqual(handed.txids, txids, 'the column rewrote the receipt on its way to the card');
-  assert.equal(handed.toChain, 'base');
-});
-
-test('only a move that executed in this session gets a card, and only once', () => {
-  const world = build();
-  const old = receipt({ id: 'old', at: new Date(Date.now() - 60_000).toISOString() });
-  const failed = receipt({ id: 'bad', status: 'failed' });
-  world.receipts([failed, old]);
-  assert.equal(world.cards().length, 0, 'what happened before the window opened is the Activity list, not a card');
-  world.receipts([receipt(), failed, old]);
-  assert.equal(world.cards().length, 1);
-  world.receipts([receipt(), failed, old]);
-  assert.equal(world.cards().length, 1, 'a re-read of the same list drew the card again');
-  world.receipts([receipt({ id: 'bad', status: 'executed' }), receipt(), old]);
-  assert.equal(world.cards().length, 2, 'a move read back as executed after failing got no card');
+  world.bus('receipt:open', { receipt: receipt(), source: 'activity' });
+  assert.equal(world.cards().length, 0);
+  assert.equal(world.built.length, 0);
+  assert.equal(world.cardHidden(), false, 'a receipt took the empty card\'s place');
 });
 
 test('text that follows text in one turn is one reply row', () => {
@@ -744,24 +684,57 @@ test('a reply renders as elements and never as markup', () => {
   assert.ok(walk(row).includes('strong'));
 });
 
-test('an agent that stops mid answer takes the turn bar with it', () => {
+test('an agent that stops mid answer takes the working line with it', () => {
   const world = build();
   world.type('read the chart');
   world.emit({ kind: 'tool', name: 'mcp__phosphor__chart_read', input: {} });
-  assert.equal(world.turnBar().hidden, false);
+  assert.ok(world.working());
 
   world.emit({ kind: 'status', state: 'stopped' });
-  assert.equal(world.turnBar().hidden, true, 'the bar counted on for an agent that had stopped');
+  assert.equal(world.working(), undefined, 'the line stayed up for an agent that had stopped');
 });
 
-test('the turn bar does not repeat the step row above it', () => {
-  // Both lines were saying the tool phrase, one under the other. The steps answer "on what", the
-  // bar answers "still going".
+test('the working line says the step in plain words, and the arguments stay in developer mode', () => {
   const world = build();
   world.type('read the news');
   world.emit({ kind: 'tool', name: 'mcp__phosphor__research', input: { query: 'SOL funding' } });
-  assert.equal(world.turnBar().textContent.includes('SOL funding'), false);
+  assert.equal(world.workingWords(), 'Reading the news');
   assert.equal(world.stepRows()[0].textContent.includes('SOL funding'), true);
+  assert.equal(all(world.host, 'steps-block')[0].getAttribute('data-dev-only'), '', 'the step row shows outside developer mode');
+});
+
+/* ---------- Streaming ----------
+
+   Replies used to arrive one whole model block at a time: nothing, then a paragraph. The driver
+   streams the words as they are written (contract 4, src/driver.ts): `{ kind: 'delta', block,
+   text }` for each piece, then the `text` event with the same block number, whole. */
+
+test('a reply streams into one row as it is written, and the whole block takes its place', () => {
+  const world = build();
+  world.type('what do I hold?');
+  world.emit({ kind: 'delta', block: 1, text: 'You hold ' });
+  assert.equal(world.working(), undefined, 'the working line stayed up while words arrived');
+  assert.equal(world.replyRows().length, 1);
+  assert.equal(all(world.replyRows()[0], 'chat-text')[0].textContent, 'You hold ');
+  world.emit({ kind: 'delta', block: 1, text: 'two coins.' });
+  assert.equal(all(world.replyRows()[0], 'chat-text')[0].textContent, 'You hold two coins.');
+  assert.equal(world.replyRows()[0].getAttribute('data-streaming'), 'true');
+  /* The block, whole: it replaces what streamed rather than printing it twice. */
+  world.emit({ kind: 'text', text: 'You hold two coins.', block: 1 });
+  assert.equal(world.replyRows().length, 1);
+  assert.equal(all(world.replyRows()[0], 'chat-text')[0].textContent, 'You hold two coins.');
+  assert.equal(world.replyRows()[0].getAttribute('data-streaming'), null);
+  /* The next block of the same reply streams under it, on a new paragraph. */
+  world.emit({ kind: 'delta', block: 2, text: 'Most of it is USDC.' });
+  assert.equal(world.replyRows().length, 1);
+  assert.equal(all(world.replyRows()[0], 'chat-p').length, 2);
+  world.emit({ kind: 'text', text: 'Most of it is USDC.', block: 2 });
+  assert.equal(all(world.replyRows()[0], 'chat-p').map((p) => p.textContent).join(' | '), 'You hold two coins. | Most of it is USDC.');
+  /* Work between two stretches of words starts a new reply after it. */
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__chart_read', input: {} });
+  assert.equal(world.workingWords(), 'Reading the chart');
+  world.emit({ kind: 'delta', block: 3, text: 'And the chart is up.' });
+  assert.equal(world.replyRows().length, 2);
 });
 
 test('another conversation does not print into this one', () => {
@@ -845,7 +818,6 @@ test('a start that failed says so under the status, in plain words, with a Retry
   world.runTimers();
   assert.equal(world.seat(), 'error');
   assert.equal(world.noteText(), 'Claude Code is not installed on this Mac.');
-  assert.equal(all(world.host, 'agent-status')[0].getAttribute('data-failed'), 'true');
   assert.ok(!world.card().includes('driver:'), 'the raw driver string reached the card');
   assert.equal(world.cardHidden(), false, 'the failure buried the card under a row');
   assert.equal(world.saidRows().length + world.replyRows().length + world.noteRows().length, 0, 'the technical line was printed as a row');
@@ -855,12 +827,11 @@ test('a start that failed says so under the status, in plain words, with a Retry
   assert.equal(world.note().hidden, true, 'the old reason is still up while a new start runs');
 });
 
-test('while it starts the card says so once and the status line says Starting', () => {
+test('while it starts the card says so once', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'starting', detail: 'Starting your assistant.' });
   assert.equal(world.note().hidden, true, 'a failure line is up with nothing having failed');
-  assert.ok(world.card().includes('Starting your assistant.'));
-  assert.equal(all(world.host, 'status-verb')[0].textContent, 'Starting...');
+  assert.equal((world.card().match(/Starting your assistant\./g) ?? []).length, 1);
 });
 
 test('an assistant that leaves mid conversation says why under the status, and Turn off says nothing', () => {
@@ -875,7 +846,6 @@ test('an assistant that leaves mid conversation says why under the status, and T
   assert.equal(world.note().hidden, false, 'with the card gone, nothing carries the reason');
   assert.equal(world.noteText(), 'The assistant stopped: it exited with code 1.');
   assert.equal(world.input.disabled, true, 'the box is open with nobody to send to');
-  assert.equal(all(world.host, 'status-verb')[0].textContent, 'Off');
 
   /* A stop the person asked for: the state word alone. */
   world.press('Retry');
@@ -891,7 +861,7 @@ test('a first move on a quiet column whose start never reports back says so, and
   world.emit({ kind: 'status', state: 'off' });
   const rows = all(world.host, 'suggest');
   fire(rows[0], 'click');
-  assert.equal(all(world.host, 'status-verb')[0].textContent, 'Starting...');
+  assert.equal(world.seat(), 'coming');
   /* Nothing comes back. The start watch fires, and the failure waits the starting floor. */
   world.runTimers();
   world.runTimers();
@@ -955,14 +925,6 @@ test('while an answer runs the composer button is Stop, and it interrupts', () =
   assert.equal(field.getAttribute('data-mode'), null);
 });
 
-test('a receipt opened anywhere in the window is posted into the thread as the shared card', () => {
-  const world = build();
-  world.bus('receipt:open', { receipt: receipt(), source: 'activity' });
-  assert.equal(world.cards().length, 1);
-  assert.equal((world.built[0] as Record<string, unknown>).id, 'p1');
-  assert.equal(world.cardHidden(), true, 'a card in the thread and the empty card at once');
-});
-
 test('Turn off asks first, on a card of its own, and only the card\'s Turn off quits: the process stops, the chat closes, and the column is empty again', async () => {
   const world = build();
   world.emit({ kind: 'status', state: 'starting' });
@@ -975,8 +937,10 @@ test('Turn off asks first, on a card of its own, and only the card\'s Turn off q
   assert.equal(world.cardHidden(), true, 'a transcript and the empty card at once');
   world.press('Turn off');
   assert.deepEqual(world.actions, ['prompt'], 'the process was stopped before the person confirmed');
-  assert.equal(world.confirms.length, 1, 'no confirmation card');
-  const card = world.confirms[0];
+  assert.equal(world.sheets().length, 1, 'no confirmation card in the thread');
+  const card = world.sheets()[0];
+  const rows = all(world.host, 'transcript-rows')[0].children;
+  assert.equal(rows[rows.length - 1].children[0], card, 'the card is not at the thread\'s end');
   const words = all(card, 'title').map((n) => n.textContent);
   assert.deepEqual(words, ['Turn off the assistant?']);
   /* The card says what will happen and what will not. */
@@ -988,14 +952,14 @@ test('Turn off asks first, on a card of its own, and only the card\'s Turn off q
 
   /* Keep running: the card goes and nothing was sent. */
   fire(all(card, 'btn')[0], 'click');
-  assert.equal(card.getAttribute('data-done'), 'true');
+  assert.equal(world.sheets().length, 0, 'the card outlived its own Keep running');
   assert.deepEqual(world.actions, ['prompt']);
   assert.equal(world.saidRows().length, 1, 'keeping it running lost the transcript');
 
   /* Turn off on the card: stop, then close, in that order, and then the column is what it was
      before anybody started: the card with nobody at the wheel, no rows, the head reading Off. */
   world.press('Turn off');
-  const again = world.confirms[1];
+  const again = world.sheets()[0];
   fire(all(again, 'btn')[1], 'click');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
@@ -1006,7 +970,6 @@ test('Turn off asks first, on a card of its own, and only the card\'s Turn off q
   assert.ok(world.card().includes('Nobody is at the wheel'), world.card());
   assert.equal(world.seat(), 'off');
   assert.equal(world.actionsHidden(), false, 'the card offers no way to start again');
-  assert.equal(all(world.host, 'status-verb')[0].textContent, 'Off');
   assert.equal(all(world.composerHost, 'agent-composer')[0].hidden, true, 'the composer stayed open with nobody to talk to');
 });
 
@@ -1027,21 +990,37 @@ test('new content while the person is scrolled up leaves the scroll alone and of
   const world = build();
   world.type('what do I hold?');
   world.emit({ kind: 'text', text: 'You hold two coins.' });
-  assert.equal(world.pillOn(), false, 'the pill is up while the person is at the end');
+  assert.equal(world.pillOn(), false, 'Latest is up while the person is at the end');
 
   world.scrollUp();
   world.emit({ kind: 'text', text: 'Most of it is USDC.' });
+  world.grew();
   assert.equal(world.list().scrollTop, 0, 'a new block moved a person who had scrolled up');
-  assert.equal(world.pillOn(), true, 'nothing told them a row landed');
-  assert.equal(world.pillCount(), '', 'one arrival is not a count');
-
-  /* A second arrival counts, and the count is of what they have not seen. */
+  assert.equal(world.pillOn(), true, 'nothing offered the way down');
+  assert.equal(world.pill().textContent, 'Latest');
   world.emit({ kind: 'said', text: 'and my positions?' }, 'c1');
-  assert.equal(world.pillCount(), '2');
   assert.equal(world.list().scrollTop, 0);
 });
 
-test('pressing the pill scrolls to the end and puts the pill away', () => {
+/* THE COLUMN STAYS AT ITS END. A card that grows in place, a reply that streams and a window
+   that changes size moved nothing the old mark could see, so the bottom slipped under the fold.
+   While the person is at the end, any change of size keeps them there. */
+test('at the end, the column stays at the end through anything that changes its size', () => {
+  const world = build();
+  world.type('what do I hold?');
+  const list = world.list();
+  list.clientHeight = 400;
+  list.scrollHeight = 2000;
+  list.scrollTop = 1600;
+  world.grew();
+  /* A card below the fold grew by 300 px, and nothing else happened. */
+  list.scrollHeight = 2300;
+  world.grew();
+  assert.equal(list.scrollTop, 1900, 'the growth slipped under the fold');
+  assert.equal(world.pillOn(), false);
+});
+
+test('pressing Latest scrolls to the end and puts it away', () => {
   const world = build();
   world.type('what do I hold?');
   world.scrollUp();

@@ -1,28 +1,20 @@
-/* Waiting for you: the decision dock.
+/* The decision: the part of a move card that asks.
 
-   One request at a time, in plain English, with what it costs and why it is
-   being asked. It sits inside the conversation column between the transcript and
-   the composer, so a person can ask the assistant about a request before
-   deciding it, and it follows them across every mode because the column does.
+   A move that needs the person is one card in the thread (ui/screens/cards.js), and this
+   file draws the part of that card that decides: the figures a rule change or a trade is
+   judged on, the lock and Touch ID lines, and Cancel and Approve. There is no dock any more.
+   Karim, 2026-09-23: a status card covered the whole chat, and he did not know where to
+   look. The card is where the move lives, so the question is asked there and nowhere else.
 
-   It is a region and not a modal. There is no Escape and no focus trap: the only
-   ways out of a pending ask are No and Yes, and a card that stole the caret out
-   of the composer every time a request landed would be taking the keyboard away
-   from the one person it is asking.
+   The card calls ask() when a row first waits on the person and again only when askKey()
+   changes, so a heartbeat never rebuilds a button under a finger. It reads the server's row
+   and nothing else, and this is the only file that calls approve or refuse: nothing an
+   assistant writes can draw these buttons.
 
-   It draws from the server's pending list and from nothing else. It is the one
-   region in the column in amber, so a transcript row cannot impersonate it.
-
-   Two parts, whatever it shows: a body that scrolls and a foot that does not.
-   The buttons, the queue line and any error live in the foot, so they are on
-   screen however long the card above them runs. A card that put Yes and No at
-   the bottom of a scrolling region, behind a scrollbar macOS hides, was a card
-   with no visible way to answer it (2026-09-18).
-
-   The policy diff logic is carried over from ui/approvals.js. It is real domain
-   logic: a rendered sentence that carries a LIST is why an approval box used to
-   fill with addresses, and a reader who has to spot one changed token inside
-   twenty lines of hex is a reader who approves without checking. */
+   The policy diff logic is carried over from ui/approvals.js. It is real domain logic: a
+   rendered sentence that carries a LIST is why an approval box used to fill with addresses,
+   and a reader who has to spot one changed token inside twenty lines of hex is a reader who
+   approves without checking. */
 (function () {
   'use strict';
 
@@ -31,36 +23,18 @@
   var api = window.PhosphorApi;
   var store = window.PhosphorState;
 
-  /* How long the answer stays on screen. Long enough after a yes for the receipt
-     to arrive and be worth showing, short enough after a no that the dock is not
-     sitting on a decision already made. */
-  var DONE_MS = 6000;
-  var REFUSED_MS = 2000;
-
   /* The sentence src/view/basic.ts uses for the same address, word for word. A
      quoter-chosen address is never described as the person's own wallet. */
   var VENUE_CHOSE = 'an address the swap service chose, not your wallet';
 
-  var refs = {};
-  var showing = null;
-  var held = null;
-  var flashTimer = 0;
-  /* A receipt the dock put down to take a waiting request, kept whole so it can
-     go back up with the moment it first drew. See render(). */
-  var parked = null;
-
-  /* A Touch ID dialog that closes without an answer puts the row back to
-     pending and writes nothing on it. The dock remembers which row it last
-     drew waiting on the sensor, so that row's next pending card can say the
-     dialog closed and nothing moved, instead of coming back blank. */
-  var touchSeen = null;
-  var touchNote = null;
-
-  /* A venue id is an enum. The one live venue is already in the headline
-     ("inside NEAR Intents"), so a row naming it again would say the same thing
-     twice and in the rail's spelling; the retired ones that older rows still
-     carry get their words. */
+  /* A venue id is an enum. The one live venue is already in the card, so a line naming it
+     again would say the same thing twice and in the rail's spelling; the retired ones that
+     older rows still carry get their words. */
   var VENUE_WORDS = { 'intents-native': null, 'intents-relay': null, 'oneclick': '1Click, on NEAR Intents', 'uniswap-v3': 'Uniswap v3' };
+
+  /* Long enough that a tap already on its way down lands on nothing when a card appears
+     under the pointer, short enough that a person who meant to press does not notice. */
+  var ARM_MS = 600;
 
   /* ---------- the policy diff, carried over ---------- */
 
@@ -136,9 +110,9 @@
     }
     /* A USD cap line carries no colon (src/policy/render.ts), so the pass above
        cannot pair it and four raised caps printed as four removals and then four
-       additions, to pair by eye at the bottom of a scrolling card. Anything left
-       over pairs on the sentence's own opening words instead, and prints as one
-       line: what it was, then what it becomes. */
+       additions, to pair by eye. Anything left over pairs on the sentence's own
+       opening words instead, and prints as one line: what it was, then what it
+       becomes. */
     var leftover = [];
     for (var k = 0; k < added.length; k += 1) if (!usedAdded[k]) leftover.push(added[k]);
     var loose = [];
@@ -183,29 +157,14 @@
          home chains, never a place the money goes. */
       return 'Swap ' + draft.fromSymbol + ' for ' + draft.toSymbol + ' inside NEAR Intents';
     }
-    if (draft.kind === 'trade') return tradeHeadline(draft);
-    /* Rows an older build wrote. Nothing proposes these any more; they still
-       have to read as a sentence when the store hands one back. */
-    if (draft.kind === 'consolidate') {
-      return 'Gather ' + draft.symbol + ' onto ' + draft.toChain;
-    }
-    if (draft.kind === 'transfer' && draft.leg) {
-      return 'Move ' + draft.leg.symbol + ' from ' + draft.leg.fromChain + ' to ' + draft.leg.toChain;
-    }
-    if (draft.kind === 'mandate_arm') {
-      return draft.symbol ? 'Arm a trading rule on ' + draft.symbol : 'Arm a trading rule';
-    }
-    if (draft.kind === 'mandate') return 'Arm a rule';
+    if (draft.kind === 'trade' || draft.kind === 'trade_change') return tradeHeadline(draft);
     if (draft.kind === 'policy_change') return 'Change your limits';
     if (draft.kind === 'hl_deposit') return 'Fund the trading account';
     if (draft.kind === 'hl_withdraw') return 'Bring collateral back from trading';
-    return kindWords(proposal.kind);
+    return kindWords(draft.kind || proposal.kind);
   }
 
-  /* ---------- the trade card ---------- */
-
-  /* The plan's own words: what opens, or what changes on a plan by its id. The
-     numbers a person decides on are in tradeFacts below; the headline is the verb. */
+  /* The plan's own words: what opens, or what changes on a plan by its id. */
   function tradeHeadline(draft) {
     if (draft.op === 'open') {
       var plan = draft.plan || {};
@@ -222,6 +181,25 @@
     return 'Change the stop on ' + id;
   }
 
+  /* A kind nobody wrote a sentence for still has to read as a sentence: the store keeps rows
+     naming kinds this app can no longer propose. Underscores taken out is English, and the
+     raw enum is not. */
+  function kindWords(kind) {
+    var words = String(kind === null || kind === undefined ? '' : kind).replace(/_/g, ' ').trim();
+    if (!words) return 'A request';
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+
+  function amountOf(proposal) {
+    var draft = proposal.draft || {};
+    if (typeof draft.amountUsd === 'number') return draft.amountUsd;
+    if (draft.leg && typeof draft.leg.amountUsd === 'number') return draft.leg.amountUsd;
+    if (typeof draft.maxTotalUsd === 'number') return draft.maxTotalUsd;
+    return null;
+  }
+
+  /* ---------- the trade's risk ---------- */
+
   function px(value) {
     if (typeof value !== 'number' || !isFinite(value)) return '';
     return String(value);
@@ -232,6 +210,15 @@
     if (entry.type === 'limit') return 'limit at ' + px(entry.px) + ', held by the exchange';
     if (entry.type === 'stop') return 'stop entry at ' + px(entry.px) + ', then up to ' + (entry.maxSlippageBps || 30) + ' bps';
     return 'market, up to ' + (entry.maxSlippageBps || 30) + ' bps slippage';
+  }
+
+  /* One fact for the risk grid. A figure the engine did not price prints nothing (dom.usd),
+     and a sentence built around the gap ("up to  more") is left out rather than shown with a
+     hole in it. */
+  function addFact(host, label, value) {
+    var text = String(value || '');
+    if (!text || text.charAt(0) === ' ' || /\s\s/.test(text) || /\sto\s*$/.test(text)) return;
+    host.push([label, text]);
   }
 
   /* The risk facts, on every trade card. An open shows what the plan puts at
@@ -268,532 +255,53 @@
     addFact(host, 'Liquidation near', px(typeof after.liquidationPx === 'number' ? Math.round(after.liquidationPx * 100) / 100 : NaN));
   }
 
-  /* A kind nobody wrote a sentence for still has to read as a sentence. This is
-     reachable: the store keeps rows naming kinds this app can no longer propose,
-     yield_deposit and the two pool kinds among them, and one of those can still
-     reach the unknown-outcome card. Underscores taken out is not a headline
-     somebody wrote, but it is English, and the raw enum is not. */
-  function kindWords(kind) {
-    var words = String(kind === null || kind === undefined ? '' : kind).replace(/_/g, ' ').trim();
-    if (!words) return 'A request';
-    return words.charAt(0).toUpperCase() + words.slice(1);
+  /* Label at the left, the figure at the right in mono, no rule between the rows. */
+  function factGrid(facts) {
+    var grid = dom.el('div', 'mcard-grid');
+    for (var i = 0; i < facts.length; i += 1) {
+      grid.appendChild(dom.el('span', 'mcard-grid-label', facts[i][0]));
+      grid.appendChild(dom.el('span', 'mcard-grid-value mono', facts[i][1]));
+    }
+    return grid;
   }
 
-  function amountOf(proposal) {
-    var draft = proposal.draft || {};
-    if (typeof draft.amountUsd === 'number') return draft.amountUsd;
-    if (draft.leg && typeof draft.leg.amountUsd === 'number') return draft.leg.amountUsd;
-    if (typeof draft.maxTotalUsd === 'number') return draft.maxTotalUsd;
-    return null;
-  }
+  /* ---------- whose row, and whether it waits ---------- */
 
-  /* ---------- what is on the dock ---------- */
-
-  function boot() {
-    refs.dock = document.getElementById('overlay');
-    refs.card = document.getElementById('overlay-card');
-    /* Escape closes a card that is only being read (a receipt, a shown card, a held or live
-       row). It never touches an ask: a decision is a click on Yes or No and nothing else. */
-    dom.on(document, 'keydown', function (event) {
-      if (event.key !== 'Escape' || !showing || dockState(showing.kind) !== 'read') return;
-      event.preventDefault();
-      close();
-    });
-    store.select('proposals', render);
-    /* The Touch ID sentence under a card that is waiting on the sensor comes off
-       the vault slice, which can move on its own when the dialog closes. */
-    store.select('vault', function () {
-      if (showing && showing.kind === 'ask') render();
-    });
-  }
-
-  /* awaiting_touch is still waiting on the person: the click landed and the
-     Touch ID dialog that names the move is up. The card stays, with its buttons
-     dead, until the enclave answers or the dialog is cancelled. */
+  /* awaiting_touch is still waiting on the person: the click landed and the Touch ID dialog
+     that names the move is up. */
   function isWaiting(p) {
-    return p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch');
+    return !!p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch');
   }
 
-  /* Filed rows ("Got it") stay unconfirmed in Activity and in the day's total; the dock
-     just stops asking about them until the venue's word changes and the server unfiles them.
-     A row that is still moving is not unread yet, however long it has taken: the live card
-     below counts it, and this one only takes over once the view has stopped. */
-  function isUnread(p) {
-    if (!p || p.status !== 'needs_reconciliation' || p.acknowledgedAt) return false;
-    return !p.view || p.view.terminal === true;
-  }
-
-  /* ASK 1: EVERY PENDING MOVE IS ON SCREEN WHILE IT RUNS.
-
-     Karim, 2026-09-18, after approving a deposit: "the window showed no pending
-     or animated feedback anywhere. No way to watch what was happening live."
-     The dock used to go dark the moment a click landed, and the only thing that
-     knew anything was the assistant's last read. A row whose view has not
-     reached an end keeps the dock, drawn as the same card the conversation
-     draws, so the two cannot say different things. */
-  function isLive(p) {
-    return !!(p && p.view && p.view.terminal !== true && !isWaiting(p) && !isHeld(p));
-  }
-
-  /* A row the preflight is holding: approved, nothing signed, the app retrying
-     on its own. The dock shows it so the person who just clicked can see what
-     it is waiting for; it asks nothing and offers no button. */
-  function isHeld(p) {
-    return p && p.status === 'approved' && typeof p.heldSince === 'string';
-  }
-
-  /* Newest on top. A request the assistant filed a second ago is the one the
-     person is looking for; an older one that has waited this long can wait for
-     the next click. */
-  function newestFirst(list) {
-    return list.slice().sort(function (a, b) {
-      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
-    });
-  }
-
-  /* The row the dock is holding, and the moment its buttons come back after a
-     replacement. Both live here rather than on the entry, because they outlive
-     any one card. */
-  var pinned = null;
-  var armAt = 0;
-  var lastDrawn = null;
-  /* The row the dock is watching move, and when it ended. Both outlive any one card, like the
-     pin above: the card is rebuilt on every frame and the beat is about the row. */
-  var watched = null;
-  var endedAt = 0;
-  var endedTimer = 0;
-  // How long the finished card holds the dock. Long enough to read one line and a figure.
-  var ENDED_MS = 6000;
-
-  function rowById(list, id) {
-    for (var i = 0; i < list.length; i += 1) {
-      if (list[i] && list[i].id === id) return list[i];
-    }
-    return null;
-  }
-
-  function render() {
-    /* An answer already given owns the dock until its own timer runs out, and a
-       receipt is something a person is reading. */
-    if (flashTimer) return;
-
-    var state = store.get() || {};
-    var list = Array.isArray(state.proposals) ? state.proposals : [];
-
-    /* A REQUEST OUTRANKS ANYTHING THERE IS TO READ. The backup nudge borrows this
-       slot through showCard, and it held it: a $250 deposit filed while it was up
-       drew nothing, the topbar said "1 waiting", and the dock showed a card about
-       a recovery phrase. The receipt is the same class with a longer reach: every
-       approval that settles ends in one (flash -> showReceiptFor), and it closes
-       on its own Close button alone, so a waiting ask stayed off screen for as
-       long as nobody clicked. Both step aside here and the receipt is kept, so
-       the person gets back what they were reading. Everything else in the slot
-       keeps it until it closes itself. */
-    if (showing && showing.kind !== 'ask' && showing.kind !== 'unread' && showing.kind !== 'held' && showing.kind !== 'live') {
-      var yields = showing.kind === 'card' || showing.kind === 'receipt';
-      if (!yields || !list.some(isWaiting)) return;
-      if (showing.kind === 'receipt') parked = showing;
-    }
-
-    /* THE DOCK DOES NOT SWAP A CARD UNDER THE READER.
-
-       It used to draw the newest waiting row, so a second request arriving while
-       somebody read the first replaced it in place: the amount, the address and
-       the kind all changed under a live Yes, with nothing saying so. A person
-       reaching for the button approved a request they had never seen.
-
-       The row the dock drew is pinned until it is answered or leaves the list.
-       Anything newer is counted, and the count is a line at the top of the card
-       that moves to the next one when it is tapped. */
-    var waiting = newestFirst(list.filter(isWaiting));
-    if (waiting.length) {
-      var at = 0;
-      for (var w = 0; w < waiting.length; w += 1) {
-        if (waiting[w].id === pinned) at = w;
-      }
-      pinned = waiting[at].id;
-      open({ kind: 'ask', proposal: waiting[at], queued: waiting.length - 1 });
-      return;
-    }
-    pinned = null;
-
-    /* The receipt that stepped aside above, back now the request is answered.
-       It keeps the moment it first drew: past the beat a receipt is given
-       (DONE_MS, the flash it comes out of) the person has read it or has moved
-       on, and putting it back would be the dock talking about old news. */
-    if (parked) {
-      var back = parked;
-      parked = null;
-      if (Date.now() - back.at < DONE_MS) {
-        open({ kind: 'receipt', receipt: back.receipt, at: back.at, queued: 0 });
-        return;
-      }
-    }
-
-    var held = newestFirst(list.filter(isHeld));
-    if (held.length) {
-      open({ kind: 'held', proposal: held[0], queued: 0 });
-      return;
-    }
-
-    var live = newestFirst(list.filter(isLive));
-    if (live.length) {
-      watched = live[0].id;
-      endedAt = 0;
-      open({ kind: 'live', proposal: live[0], queued: 0 });
-      return;
-    }
-
-    /* THE LAST BEAT, and it is the one the person is waiting for. The live card was dropped on
-       the frame that ended the move: the last thing on screen said "Waiting for the venue to
-       credit it" and then the dock went dark, which reads as the app losing interest at the
-       exact moment the money landed. The row the dock was watching holds it for a few seconds
-       once it ends, drawn in its end state (Confirmed, Failed, Late), and then the dock goes.
-       An ask outranks it: this sits below the waiting branch on purpose. */
-    var ended = watched === null ? null : rowById(list, watched);
-    if (ended && ended.view && ended.view.terminal === true) {
-      if (!endedAt) endedAt = Date.now();
-      if (Date.now() - endedAt < ENDED_MS) {
-        if (endedTimer) window.clearTimeout(endedTimer);
-        endedTimer = window.setTimeout(function () { endedTimer = 0; render(); }, ENDED_MS);
-        open({ kind: 'live', proposal: ended, queued: 0 });
-        return;
-      }
-    }
-    watched = null;
-    endedAt = 0;
-
-    var unread = newestFirst(list.filter(isUnread));
-    if (unread.length) {
-      open({ kind: 'unread', proposal: unread[0], queued: 0 });
-      return;
-    }
-
-    if (showing) close();
-  }
-
-  /* Everything the card draws that a later state frame can change. A heartbeat
-     that rebuilt the card would restart its enter and drop the focus a person
-     had put on No. */
-  function signature(entry) {
-    var p = entry.proposal || {};
-    var sim = p.simulation || {};
-    /* The deposit address and the summary both arrive with the quote, which can
-       land after the card is already up. A signature that ignored them would
-       leave a person reading a card that had since learned where the money goes. */
-    var deposits = Array.isArray(sim.depositAddresses) ? sim.depositAddresses.length : 0;
-    var diff = sim.policyDiff ? (sim.policyDiff.after || []).length : 0;
-    /* A held row redraws on every retry: each one appends its checks. */
-    var checks = Array.isArray(p.preflight) ? p.preflight.length : 0;
-    var swap = sim.swap || {};
-    /* The view is what the live card draws, so a stage that moved is a redraw.
-       The counter inside it runs on its own and needs no frame. */
-    var view = p.view || {};
-    return [entry.kind, p.id, p.status, view.stage || '', view.lastChangeAt || '', view.providerStage || '',
-      entry.queued, sim.feeUsd, sim.gasUsd, p.heldSince || '', checks,
-      sim.priceImpact, sim.amountOut, deposits, diff, sim.summary || '',
-      swap.receives || '', swap.receivesAtLeast || '', swap.feeUsd, swap.etaSeconds,
-      (Array.isArray(p.verdict && p.verdict.reasons) ? p.verdict.reasons.join(' ') : ''),
-      (p.verdict && p.verdict.reason) || '',
-      p.status === 'awaiting_touch' ? touchReason() : '',
-      touchNote === p.id ? 'touch-note' : ''].join('|');
-  }
-
-  /* What the Touch ID dialog says, as the backend composed it. Shown under the
-     dead Yes so the person can check the window and the dialog agree. */
-  function touchReason() {
-    var state = store.get() || {};
-    var waiting = state.vault && state.vault.waiting;
-    return waiting && typeof waiting.reason === 'string' ? waiting.reason : '';
-  }
-
-  function open(next) {
-    if (next.kind === 'ask') noteTouch(next.proposal);
-    var drawing = next.proposal ? String(next.proposal.id) : null;
-    if (drawing !== null && lastDrawn !== null && drawing !== lastDrawn) armAt = Date.now() + REARM_MS;
-    if (drawing !== null) lastDrawn = drawing;
-    var keyed = next.kind === 'ask' || next.kind === 'unread' || next.kind === 'held' || next.kind === 'live';
-    if (keyed && showing && showing.signature === signature(next)) return;
-    next.signature = keyed ? signature(next) : null;
-    showing = next;
-    frame();
-    if (next.kind === 'ask') buildAsk(next);
-    else if (next.kind === 'live') buildLive(next.proposal);
-    else if (next.kind === 'held') buildHeld(next.proposal);
-    else if (next.kind === 'unread') buildUnread(next.proposal);
-    else if (next.kind === 'receipt') buildReceipt(next.receipt);
-    else if (next.kind === 'card') next.build(refs.body, close);
-    if (next.kind === 'receipt' || next.kind === 'card') pinLastRow();
-    /* Amber means a person still has to answer. A receipt and a recovery card
-       are things to read, so they take the quiet edge instead. */
-    dom.setAttr(refs.dock, 'data-state', dockState(next.kind));
-    dom.setHidden(refs.dock, false);
-    settle();
-    window.PhosphorShell.updateField();
-    hold(next.proposal);
-  }
-
-  /* A card somebody else builds into the body (the backup nudge, the recovery
-     words, a receipt, Turn off the assistant) ends in its own row of buttons.
-     The row moves to the foot, so a long card to read keeps its Done or Close
-     on screen the way an ask keeps its answer, and the builder's file knows
-     nothing about the dock's two parts. */
-  function pinLastRow() {
-    var last = refs.body.lastElementChild;
-    if (!last) return;
-    var cls = ' ' + String(last.className) + ' ';
-    if (cls.indexOf(' dock-actions ') < 0 && cls.indexOf(' screen-actions ') < 0) return;
-    refs.foot.appendChild(last);
-  }
-
-  function dockState(kind) {
-    if (kind === 'receipt' || kind === 'card' || kind === 'held' || kind === 'live') return 'read';
-    return null;
-  }
-
-  function close() {
-    showing = null;
-    touchSeen = null;
-    touchNote = null;
-    dom.setHidden(refs.dock, true);
-    dom.setAttr(refs.dock, 'data-state', null);
-    dom.setAttr(refs.card, 'data-more', null);
-    dom.clear(refs.card);
-    /* The body it was measuring is gone, so the observer goes with it rather than
-       pointing at a detached node until the next card is built. */
-    if (refs.sizes) refs.sizes.disconnect();
-    refs.body = null;
-    refs.foot = null;
-    refs.note = null;
-    hold(null);
-    window.PhosphorShell.updateField();
-    render();
-  }
-
-  /* The dock holds an amber edge while a card is up, so the thing being decided
-     is lit in the place it lives. The edge is one attribute on the surface
-     (design/agent.css draws it), written here rather than by a separate layer
-     that used to fly a dot to it. */
-  function hold(proposal) {
-    var want = proposal ? refs.dock : null;
-    if (want === held) return;
-    if (held) {
-      dom.setAttr(held, 'data-glow', null);
-      dom.setAttr(held, 'data-glow-tone', null);
-    }
-    if (want) {
-      dom.setAttr(want, 'data-glow-tone', 'wait');
-      dom.setAttr(want, 'data-glow', 'on');
-    }
-    held = want;
-  }
-
-  /* ---------- the ask ---------- */
-
-  /* A send is the one ask whose card is drawn by another file: the same card
-     the thread shows (ui/screens/sendcard.js), with the full address in
-     groups, the chain, the fees and the receiver's history. The dock keeps
-     what is its own: the lock banner, the error line and the buttons. */
-  function isSend(draft) {
-    return (draft.kind === 'intents_send' || draft.kind === 'intents_pay') && !!window.PhosphorSendCard;
-  }
-
-  /* Long enough that a tap already on its way down lands on nothing, short
-     enough that a person who meant to press does not notice. */
-  var REARM_MS = 600;
-
-  function buildAsk(entry) {
-    var proposal = entry.proposal;
-    var draft = proposal.draft || {};
-    var locked = proposal.status === 'pending_unlock';
-    var touching = proposal.status === 'awaiting_touch';
-    var send = isSend(draft);
-    var body = refs.body;
-    /* THE FACTS SCROLL, THE ANSWER DOES NOT, AND THE ANSWER NEVER COVERS A FACT.
-
-       The buttons are in the foot, after the body in reading order, and the
-       fold of secondary lines comes after them. Three shapes failed before
-       this one. In the foot with nothing telling a person the body went on, a
-       live Yes at 390 sat under a card whose address was below the fold. In
-       the body's own flow, under the facts, No and Approve sat 156 px under
-       the fold on a send card at the app's default window. Sticky at the
-       bottom of the scrolling body, the row was painted over the address it
-       approves at scroll 0 at three of four window sizes, because a stuck
-       element sits on the in-flow lines that fill the scrollport's last
-       pixels. Outside the scroll container the row cannot overlap a fact: the
-       scrollport ends where the foot begins, and a line that does not fit is
-       clipped under the body's fade (data-more, settle()) rather than covered.
-       A person who reaches the buttons with the fade showing knows the card
-       goes on, and the address is one scroll away, whole and unhidden. */
-    var foot = refs.foot;
-
-    /* One quiet line, at the top, for everything else that is waiting. It is the
-       only way another request reaches this card, and it takes a tap. */
-    if (entry.queued > 0) {
-      var next = dom.el('button', 'dock-next');
-      next.type = 'button';
-      next.appendChild(dom.el('span', '', entry.queued === 1
-        ? '1 more waiting, next'
-        : entry.queued + ' more waiting, next'));
-      next.appendChild(dom.el('span', 'chev'));
-      dom.on(next, 'click', function () { showNext(proposal.id); });
-      body.appendChild(next);
-    }
-
-    var rest = [];
-    if (send) {
-      var sendCard = window.PhosphorSendCard;
-      body.id = 'dock-ask';
-      body.appendChild(dom.el('p', 'label dock-kicker', locked ? 'Unlock to decide' : (touching ? 'Confirm on your Mac' : 'Waiting for you')));
-      sendCard.build(body, sendCard.viewOf(proposal), { width: body.clientWidth });
-      if (locked) body.appendChild(lockBanner());
-    } else {
-      rest = buildAskBody(body, proposal, draft, locked, touching) || [];
-    }
-
-    /* A request that arrived while the wallet was shut. It was authored and
-       checked against the limits; what is missing is the ability to sign. So the
-       card asks for the lock first and does not offer Yes, because a Yes it
-       could not act on would be a click that did nothing. */
-    if (locked) {
-      var lockedActions = dom.el('div', 'dock-actions');
-      var lockedNo = dom.el('button', 'btn btn-ghost');
-      lockedNo.appendChild(dom.el('span', 'btn-label', 'No'));
-      dom.setAttr(lockedNo, 'data-pending-label', 'Refusing');
-      var unlock = dom.el('button', 'btn btn-primary');
-      unlock.appendChild(dom.el('span', 'btn-label', 'Unlock'));
-      lockedActions.appendChild(lockedNo);
-      lockedActions.appendChild(unlock);
-      foot.appendChild(lockedActions);
-
-      dom.on(lockedNo, 'click', function () {
-        decide(api.refuse, proposal.id, [lockedNo, unlock], lockedNo, 'Refused.', REFUSED_MS, null);
-      });
-      dom.on(unlock, 'click', function () {
-        /* The dock steps aside for the lock screen. It comes back on its own:
-           render() runs on the next state frame, and by then this request is
-           pending rather than pending_unlock. */
-        showing = null;
-        dom.setHidden(refs.dock, true);
-        hold(null);
-        window.PhosphorLock.focus();
-      });
-      return;
-    }
-
-    var actions = dom.el('div', 'dock-actions');
-    var no = dom.el('button', 'btn btn-ghost');
-    no.appendChild(dom.el('span', 'btn-label', 'No'));
-    dom.setAttr(no, 'data-pending-label', 'Refusing');
-    var yes = dom.el('button', 'btn btn-primary');
-    /* On a send the primary says what the click starts: the Touch ID dialog
-       that names the receiver, on an enclave wallet, and plain approval on a
-       password wallet. Every other ask keeps its one-word Yes. */
-    var yesLabel = dom.el('span', 'btn-label', send ? (enclave() ? 'Approve, then Touch ID' : 'Approve') : 'Yes');
-    yes.appendChild(yesLabel);
-    dom.setAttr(yes, 'data-pending-label', 'Approving');
-    /* The one thing in the window that breathes, and only while the answer is
-       the person's to give: design/components.css draws it. */
-    if (!locked && !touching) dom.setAttr(yes, 'data-live', 'true');
-    actions.appendChild(no);
-    actions.appendChild(yes);
-    foot.appendChild(actions);
-    /* The secondary lines come under the answer, closed. Opening them grows
-       the foot and the body gives up the room, so they never push the answer. */
-    if (rest.length) buildReport(foot, 'The rest of it', rest.join('\n'), false);
-
-    /* A card that has just replaced another one holds its buttons for 600 ms,
-       so a tap already on its way down cannot land on a request nobody read.
-       See render(): the dock pins a row, and this covers the moment it lets go. */
-    if (armAt > Date.now()) {
-      yes.disabled = true;
-      no.disabled = true;
-      var wait = armAt - Date.now();
-      window.setTimeout(function () {
-        if (!yes.isConnected) return;
-        yes.disabled = false;
-        no.disabled = false;
-      }, wait);
-    }
-
-    /* The click has landed and the system dialog owns the moment. Both buttons
-       go dead: a second Yes would be a second ask, and the backend only takes a
-       No on a row that is pending. The dialog's own sentence sits under them so
-       the window and the dialog can be checked against each other. It all comes
-       back on the next frame, as approved or as pending again. */
-    if (touching) {
-      if (send) {
-        /* The button is the waiting state now, so it stops reserving room for
-           a swap it will not make and holds the fingerprint beside the word. */
-        dom.setAttr(yes, 'data-pending-label', null);
-        dom.clear(yes);
-        yes.appendChild(window.PhosphorSendCard.fingerprint());
-        yes.appendChild(dom.el('span', 'btn-label', 'Waiting for Touch ID'));
-      } else {
-        dom.setText(yesLabel, 'Touch ID: confirm on your Mac');
-      }
-      yes.disabled = true;
-      no.disabled = true;
-      dom.setAttr(yes, 'data-touch', 'true');
-      /* Right under the dead buttons, above the fold of secondary lines. */
-      foot.insertBefore(dom.el('p', 'meta touch-reason',
-        touchReason() || 'The Touch ID dialog is up. Confirm it there, or cancel to come back here.'),
-        actions.nextSibling);
-      return;
-    }
-
-    /* Back from the sensor with no answer: the dialog was cancelled, timed out
-       or the relay died. The row is pending again and the audit log knows why;
-       the person who reached for the sensor gets told here, over live buttons. */
-    if (touchNote === proposal.id) {
-      say('warn', 'Touch ID closed without an answer. Nothing moved. Yes asks again.');
-    }
-
-    dom.on(yes, 'click', function () {
-      decide(api.approve, proposal.id, [yes, no], yes, 'Approved.', DONE_MS, proposal.id);
-    });
-    dom.on(no, 'click', function () {
-      decide(api.refuse, proposal.id, [yes, no], no, 'Refused.', REFUSED_MS, null);
-    });
-  }
-
-  /* The reader asked for the next one. The pin moves on, the card is rebuilt
-     from the next state frame's rows, and its buttons come back after the
-     re-arm like any other replacement. */
-  function showNext(currentId) {
-    var state = store.get() || {};
-    var list = Array.isArray(state.proposals) ? state.proposals : [];
-    var waiting = newestFirst(list.filter(isWaiting));
-    if (waiting.length < 2) return;
-    var at = 0;
-    for (var i = 0; i < waiting.length; i += 1) {
-      if (waiting[i].id === currentId) at = i;
-    }
-    pinned = waiting[(at + 1) % waiting.length].id;
-    showing = null;
-    render();
-  }
-
-  /* Whether this wallet asks for a finger on a click: the vault slice says
-     which custody the keystore has. Absent means the password path. */
+  /* Whether this wallet asks for a finger on a click: the vault slice says which custody the
+     keystore has. Absent means the password path. */
   function enclave() {
     var state = store.get() || {};
     var vault = state.vault || {};
     return vault.custody === 'secure-enclave';
   }
 
-  /* THE ASK IS THE CARD.
+  /* What the Touch ID dialog says, as the backend composed it, so the window and the dialog
+     can be checked against each other. */
+  function touchReason() {
+    var state = store.get() || {};
+    var waiting = state.vault && state.vault.waiting;
+    return waiting && typeof waiting.reason === 'string' ? waiting.reason : '';
+  }
 
-     Karim, 2026-09-18: the confirmation cards are "too noisy, badly formatted".
-     The dock had its own grammar, so the same move looked like one thing while
-     it was being decided and another thing while it ran.
+  /* A Touch ID dialog that closes without an answer puts the row back to pending and writes
+     nothing on it. The last row seen on the sensor is remembered, so its next ask can say the
+     dialog closed and nothing moved, instead of coming back blank. */
+  var touchSeen = null;
+  var touchNote = null;
 
-     One shape for both. The dock draws the move card (screens/cards.js), with
-     its two pockets, its figures in mono and its state word, and adds only what
-     the decision needs: the fee, when the quote runs out, the address in full,
-     and the two buttons. Everything the venue said folds. */
-  function isObject(value) {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  function noteTouch(proposal) {
+    if (proposal.status === 'awaiting_touch') {
+      touchSeen = proposal.id;
+      return;
+    }
+    if (proposal.status === 'pending' && touchSeen === proposal.id) touchNote = proposal.id;
+    if (touchSeen === proposal.id) touchSeen = null;
   }
 
   function quoteOf(proposal) {
@@ -809,37 +317,26 @@
     return left < 90 ? left + 's' : Math.round(left / 60) + 'm';
   }
 
-  /* The card wants a view. A proposal waiting on a person has not moved yet, so
-     the window builds the one the backend would: waiting_for_you, the draft's
-     own figures, and the quote's fee frozen as it was drawn. */
-  function askView(proposal, draft) {
-    /* The backend builds this for every row on the state frame, and it is the
-       one that carries the sentence and the real clocks. The window only builds
-       its own for a propose answer that has not reached a state frame yet. */
-    if (isObject(proposal.view)) return proposal.view;
-    var quote = quoteOf(proposal) || {};
-    var sim = proposal.simulation || {};
-    return {
-      sentence: headlineOf(proposal),
-      id: proposal.id, kind: draft.kind, stage: 'waiting_for_you',
-      stageLabel: 'Waiting for you', providerStage: null, waitingOn: 'You',
-      terminal: false, outcome: 'pending',
-      createdAt: proposal.createdAt, decidedAt: null, settledAt: null,
-      lastChangeAt: proposal.createdAt, elapsedSec: 0, sinceChangeSec: 0,
-      typicalSec: typeof quote.etaSeconds === 'number' ? quote.etaSeconds : null,
-      deadlineAt: null, correlationId: quote.handle || null, error: null, txs: [],
-      money: {
-        symbol: String(draft.symbol || draft.fromSymbol || ''),
-        amountIn: typeof draft.amount === 'number' ? dom.qty(draft.amount) : null,
-        feeUsd: typeof sim.feeUsd === 'number' ? sim.feeUsd : null,
-        amountOut: typeof quote.amountOut === 'number' ? dom.qty(quote.amountOut) : null,
-        fromPocket: null, toPocket: null, beforeUsd: null, afterUsd: null
-      }
-    };
+  /* Everything the ask draws that a later state frame can change. A frame that rebuilt the
+     buttons would restart their breath and drop the focus a person had put on Cancel. */
+  function askKey(proposal) {
+    var p = proposal || {};
+    if (!isWaiting(p)) return '';
+    noteTouch(p);
+    var sim = p.simulation || {};
+    var diff = sim.policyDiff ? (sim.policyDiff.after || []).length : 0;
+    var view = p.view || {};
+    return [p.id, p.status, sim.feeUsd, sim.summary || '', diff,
+      (Array.isArray(view.changes) ? view.changes.length : 0),
+      (Array.isArray(p.verdict && p.verdict.reasons) ? p.verdict.reasons.join(' ') : ''),
+      touchNote === p.id ? 'touch-note' : '',
+      expiryWords(quoteOf(p)) === 'expired' ? 'expired' : ''].join('|');
   }
 
-  /* THE APP'S OWN WORDS FOR THE MONEY AXES. The engine names them as fields;
-     these are the same limits in the words the Basic screen already uses. */
+  /* ---------- the ask ---------- */
+
+  /* THE APP'S OWN WORDS FOR THE MONEY AXES. The engine names them as fields; these are the
+     same limits in the words the Basic screen already uses. */
   var AXIS_WORDS = {
     humanClickAboveUsd: 'Asks you above',
     maxPerTransactionUsd: 'Refuses above, at once',
@@ -847,16 +344,13 @@
     autoApproveDailyUsd: 'Asks again once auto-approved moves pass'
   };
 
-  /* THE APP'S OWN ARITHMETIC, BESIDE THE AGENT'S WORDS.
-
-     One row per axis the patch moves, off verdict.changes: what it is, what it
-     was, what it becomes, and the multiple when the jump is ten times or more.
-     The engine computes these from the patch and the policy in force, so this
-     is the one part of a rule-change card the agent cannot write. */
+  /* THE APP'S OWN ARITHMETIC, BESIDE THE AGENT'S WORDS. One row per axis the patch moves,
+     off the view's changes: what it is, what it was, what it becomes, and the multiple when
+     the jump is ten times or more. The engine computes these, so this is the one part of a
+     rule-change card the agent cannot write. */
   function buildChanges(host, changes) {
     if (!Array.isArray(changes) || !changes.length) return false;
-    var wrap = dom.el('div', 'stack-2 policy-diff');
-    wrap.appendChild(dom.el('p', 'label', 'What changes'));
+    var wrap = dom.el('div', 'policy-diff');
     for (var i = 0; i < changes.length; i += 1) {
       var c = changes[i];
       if (!c || typeof c.axis !== 'string') continue;
@@ -866,10 +360,9 @@
       figures.appendChild(dom.el('span', 'mono axis-before', dom.usd(c.before, 0)));
       figures.appendChild(dom.el('span', 'axis-to', 'to'));
       var after = dom.el('span', 'mono axis-after', dom.usd(c.after, 0));
-      dom.setAttr(after, 'data-tone', c.after > c.before ? 'down' : 'up');
+      dom.setAttr(after, 'data-tone', c.after > c.before ? 'looser' : 'tighter');
       figures.appendChild(after);
-      /* Ten times or more is the jump a person has to be told about in one
-         word, because four figures apart read as four figures. */
+      /* Ten times or more is the jump a person has to be told about in one word. */
       if (typeof c.factor === 'number' && c.factor >= 10) {
         figures.appendChild(dom.el('span', 'mono axis-factor', Math.round(c.factor) + 'x'));
       }
@@ -880,538 +373,71 @@
     return true;
   }
 
-  /* The agent's sentence, under the app's arithmetic and named as the agent's.
-     It used to be the first line on the card, which put the wording of the
-     thing being judged above the judgement. */
+  /* The agent's sentence, under the app's arithmetic and named as the agent's. */
   function buildSaid(host, sentence) {
     if (typeof sentence !== 'string' || sentence.trim() === '') return;
-    var wrap = dom.el('div', 'stack-2 dock-said');
-    wrap.appendChild(dom.el('p', 'label', 'The assistant said'));
-    wrap.appendChild(dom.el('p', 'body dim', sentence));
+    var wrap = dom.el('div', 'mcard-said');
+    wrap.appendChild(dom.el('span', 'mcard-said-who', 'The assistant said'));
+    wrap.appendChild(dom.el('p', 'mcard-said-text', sentence));
     host.appendChild(wrap);
   }
 
-  function buildAskBody(host, proposal, draft, locked, touching) {
-    host.id = 'dock-ask';
-    var cards = window.PhosphorCards;
-
-    /* No kicker above the card. The dock's own amber edge says a person is being
-       waited on, and the card says it again in its state word: three times in
-       one card was the noise this rewrite exists to cut. The two states the
-       edge cannot say get one line, because they are instructions. */
-    if (locked || touching) {
-      host.appendChild(dom.el('p', 'label dock-kicker', locked ? 'Unlock to decide' : 'Confirm on your Mac'));
-    }
-
-    var view = askView(proposal, draft);
-    /* A rule change's first line is the app's, always. Every other kind keeps
-       view.sentence, because the backend builds that one out of the draft's own
-       fields; only a policy change's sentence is text the agent typed. */
-    var policy = draft.kind === 'policy_change';
-    var shown = policy ? Object.assign({}, view, { sentence: headlineOf(proposal) }) : view;
-    if (cards && typeof cards.render === 'function') {
-      var row = Object.assign({}, proposal, { view: shown });
-      host.appendChild(cards.render('move', row, {
-        name: 'proposal_status', input: { id: proposal.id }, at: proposal.createdAt, open: true
-      }));
-    } else {
-      host.appendChild(dom.el('h2', 'title', shown.sentence || headlineOf(proposal)));
-    }
-
-    /* The arithmetic first, then the words that asked for it. Before the row's first state
-       frame the window builds the view itself (askView) and its sentence IS this headline,
-       so there is nothing the assistant said yet to quote and the card would say the same
-       line twice. */
-    if (policy) {
-      if (!buildChanges(host, view.changes)) buildPolicyDiff(host, proposal);
-      if (view.sentence !== shown.sentence) buildSaid(host, view.sentence);
-    }
-
-    if (locked) host.appendChild(lockBanner());
-
-    var left = expiryWords(quoteOf(proposal));
-    if (left) {
-      var note = dom.el('p', 'meta ask-expiry', left === 'expired'
-        ? 'This quote has run out. Yes asks for a fresh one.'
-        : 'This quote holds for ' + left + '.');
-      if (left === 'expired') dom.setAttr(note, 'data-tone', 'down');
-      host.appendChild(note);
-    }
-
-    if (draft.kind === 'trade' || draft.kind === 'trade_change') {
-      var risk = dom.el('div', 'facts');
-      tradeFacts(risk, draft);
-      host.appendChild(risk);
-    }
-
-    var destinations = destinationsOf(proposal);
-    if (destinations.length) {
-      var dwrap = dom.el('div', 'stack-2 destinations');
-      var stays = destinations.length === 1 && destinations[0].own;
-      dwrap.appendChild(dom.el('p', 'label', stays ? 'Stays in your account' : 'Where it goes'));
-      for (var d = 0; d < destinations.length; d += 1) {
-        var drow = dom.el('div', 'destination');
-        dom.setAttr(drow, 'data-chosen', destinations[d].chosenBy);
-        drow.appendChild(addressLine(destinations[d].address));
-        drow.appendChild(dom.el('p', 'meta', destinations[d].label));
-        dwrap.appendChild(drow);
-      }
-      host.appendChild(dwrap);
-    }
-
-    /* Handed back rather than drawn, because the fold holds only the secondary
-       lines and it belongs under the answer, not between the facts and it. */
-    var more = [];
-    more.push('Why you are being asked: ' + whyLine(proposal));
-    /* A venue whose words are null is the one the headline already names, and "Through null"
-       was on every native swap's fold until 2026-09-20. */
-    var through = draft.venue ? venueWords(draft.venue) : null;
-    if (through) more.push('Through ' + through);
-    var summary = typeof (proposal.simulation || {}).summary === 'string' ? proposal.simulation.summary.trim() : '';
-    if (summary && draft.kind !== 'policy_change') more.push(summary);
-    return more;
-  }
-
-  function lockBanner() {
-    var banner = dom.el('div', 'banner');
-    banner.dataset.tone = 'warn';
-    banner.appendChild(dom.el('span', '', 'The app is locked, so this is waiting. Nothing has moved and nothing will until you unlock and decide.'));
-    return banner;
-  }
-
-  /* ---------- the venue's report ---------- */
-
-  /* The rail's lines, whole, behind a toggle that says how many there are. The
-     same fold the checks use: height through a grid track, so it opens as a
-     motion. `open` is the starting state. The text stays one node: a plan's
-     note rides inside the summary, and the card must not lift it out into a
-     line of its own that could pass for a label. */
-  function buildReport(host, word, summary, open) {
-    var count = summary.split('\n').length;
-    var section = dom.el('div', 'dock-report');
-    var toggle = dom.el('button', 'dock-report-toggle');
-    toggle.type = 'button';
-    toggle.appendChild(dom.el('span', 'dock-report-word', word));
-    toggle.appendChild(dom.el('span', 'dock-report-count', count === 1 ? '1 line' : count + ' lines'));
-    toggle.appendChild(dom.el('span', 'dock-report-chevron'));
-    section.appendChild(toggle);
-
-    var fold = dom.el('div', 'dock-report-fold');
-    var inner = dom.el('div', 'dock-report-inner');
-    inner.appendChild(dom.el('p', 'body dock-summary', summary));
-    fold.appendChild(inner);
-    section.appendChild(fold);
-
-    function apply() {
-      dom.setAttr(section, 'data-open', open ? 'true' : 'false');
-      dom.setAttr(toggle, 'aria-expanded', open ? 'true' : 'false');
-    }
-    dom.on(toggle, 'click', function () {
-      open = !open;
-      apply();
-      /* The fold runs for 200 ms; the fade under the body follows it. */
-      settle();
-      window.setTimeout(settle, 240);
-    });
-    apply();
-    host.appendChild(section);
-  }
-
-  /* ---------- the held row ---------- */
-
-  /* A send draws its own card, which already carries the hold line and the
-     folded checks. Any other kind gets the headline, the same hold line, and
-     the checks under it. No buttons: there is nothing to decide. */
-  /* ---------- the live row ---------- */
-
-  /* The same card the conversation draws, in the dock, with nothing to press.
-     One object, one set of words: the card and the assistant read the same view,
-     so they cannot disagree about what stage this is at or when it settled. */
-  function liveKicker(view) {
-    if (view.waitingOn) return 'Waiting on ' + String(view.waitingOn);
-    if (view.stage === 'stalled') return 'Still watching';
-    if (view.stage === 'confirmed') return 'Done';
-    if (view.terminal === true) return 'Ended';
-    return 'Working';
-  }
-
-  function buildLive(proposal) {
-    var host = refs.body;
-    var cards = window.PhosphorCards;
-    var view = proposal.view || {};
-    /* The kicker says what the dock is doing with this row, so it has to end when the row does:
-       it read "Working" over a card that said Confirmed for the beat an ended card holds. A
-       stalled row is the exception in both directions: nobody is being waited on and it is not
-       finished either, because the next balance read still settles it. */
-    host.appendChild(dom.el('p', 'label dock-kicker', liveKicker(view)));
-    if (!cards || typeof cards.render !== 'function') {
-      host.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
-      host.appendChild(dom.el('p', 'body', String(view.stageLabel || '')));
-      return;
-    }
-    host.appendChild(cards.render('move', proposal, {
-      name: 'proposal_status',
-      input: { id: proposal.id },
-      at: proposal.createdAt,
-      open: true
-    }));
-  }
-
-  function buildHeld(proposal) {
+  /* The rule change, as the engine rendered it either side of the patch. It comes off
+     `simulation.policyDiff`. The draft's own `sentence` is the assistant's wording and is
+     deliberately NOT drawn here: the assistant does not get to write the ask it is asking
+     about. The store's sentences are the fallback for the before. */
+  function buildPolicyDiff(host, proposal) {
+    var state = store.get() || {};
     var draft = proposal.draft || {};
-    var sendCard = window.PhosphorSendCard;
-    var host = refs.body;
-    if (isSend(draft)) {
-      sendCard.build(host, sendCard.viewOf(proposal), { width: host.clientWidth });
-      return;
-    }
-    host.appendChild(dom.el('p', 'label dock-kicker', 'Holding'));
-    /* The move as a card rather than a headline, so the figures, the stage word
-       and the counter are the same ones the conversation shows. */
-    var cards = window.PhosphorCards;
-    if (proposal.view && cards && typeof cards.render === 'function') {
-      host.appendChild(cards.render('move', proposal, {
-        name: 'proposal_status', input: { id: proposal.id }, at: proposal.createdAt, open: true
-      }));
-    } else {
-      host.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
-    }
-    var line = dom.el('p', 'body dock-hold');
-    dom.setAttr(line, 'data-tone', 'warn');
-    dom.setText(line, sendCard && typeof sendCard.heldLine === 'function' ? sendCard.heldLine(proposal) : 'Waiting for the checks to clear. Nothing is signed until they do.');
-    host.appendChild(line);
-    var checks = window.PhosphorChecks;
-    var preflight = sendCard && typeof sendCard.preflightOf === 'function' ? sendCard.preflightOf(proposal) : null;
-    if (preflight && checks && typeof checks.fold === 'function') checks.fold(host, preflight, {});
-  }
+    var sim = proposal.simulation || {};
+    var rendered = sim.policyDiff || {};
+    var before = rendered.before
+      || state.sentences
+      || (state.policy && state.policy.sentences)
+      || [];
+    var after = rendered.after || draft.sentences || draft.afterSentences || [];
+    if (!after.length) return;
+    var entries = refineDiff(diffOf(before, after));
+    if (!entries.length) return;
 
-  /* ---------- the unread outcome ---------- */
-
-  /* The one state a person cannot act on alone: money may have left and the venue has not
-     said where it landed. The dock keeps it up rather than filing it away, because the only
-     thing that clears it is the venue: Reconcile asks again, and "Got it" files the card
-     without settling anything (the row stays unconfirmed in Activity and in the day's total,
-     and comes back the moment the venue says something new).
-
-     THE CARD SAYS WHAT THE ROW KNOWS. The row's own sentence is the rail's observation plus
-     the venue's last word ("1click reported FAILED and refunded 0 so far; the input is held
-     by 1Click under handle ..."). A generic "we cannot read what happened" on top of that is
-     a lie by omission, and it is what a person read on 2026-09-15 while the row underneath
-     already knew. The generic line is kept only for a row that carries no sentence at all. */
-  /* Two ends of a handle, the way the chat card shortens every id (cards.js shortId). */
-  function shortEnds(value) {
-    var id = String(value || '');
-    return id.length > 20 ? id.slice(0, 8) + '...' + id.slice(-8) : id;
-  }
-
-  function unreadSentence(proposal) {
-    var said = proposal && proposal.result && proposal.result.detail;
-    if (typeof said === 'string' && said.trim()) return said.trim();
-    return 'We sent this and we cannot read what happened to it. Do not send it again.';
-  }
-
-  function buildUnread(proposal) {
-    var body = refs.body;
-    var foot = refs.foot;
-    body.appendChild(dom.el('p', 'label dock-kicker', 'Not confirmed.'));
-    body.appendChild(dom.el('h2', 'title', headlineOf(proposal)));
-
-    var banner = dom.el('div', 'banner');
-    banner.dataset.tone = 'warn';
-    banner.appendChild(dom.el('span', '', unreadSentence(proposal)));
-    body.appendChild(banner);
-
-    var handle = proposal.result && proposal.result.evidence && proposal.result.evidence.handle;
-    if (handle) {
-      var where = dom.el('p', 'body dim');
-      /* The whole handle sat on the face beside "Quote handle", a raw id in a sentence (3.1);
-         the face keeps the instruction, and the id is under the card's Details, two ends only. */
-      dom.setText(where, 'Do not send it again. Reference ' + shortEnds(handle) + ', under Details.');
-      body.appendChild(where);
-    }
-
-    var actions = dom.el('div', 'dock-actions');
-    var again = dom.el('button', 'btn btn-primary');
-    again.appendChild(dom.el('span', 'btn-label', 'Check again'));
-    dom.setAttr(again, 'data-pending-label', 'Checking');
-    actions.appendChild(again);
-    var gotIt = dom.el('button', 'btn');
-    gotIt.appendChild(dom.el('span', 'btn-label', 'Got it'));
-    dom.setAttr(gotIt, 'data-pending-label', 'Filing');
-    actions.appendChild(gotIt);
-    foot.appendChild(actions);
-
-    dom.on(again, 'click', function () {
-      hush();
-      window.PhosphorShell.setPending(again, true);
-      api.reconcile(proposal.id)
-        .then(function (answer) {
-          /* Still unconfirmed is an answer, and the card stays up on it: closing would look
-             like it had been settled. What it shows is the venue's word from this check, not
-             a stock sentence about the chain. */
-          if (answer && answer.status === 'needs_reconciliation') {
-            var said = typeof answer.detail === 'string' && answer.detail.trim() ? answer.detail.trim() : null;
-            dom.setText(banner.firstChild, said || unreadSentence(proposal));
-            say('warn', said ? 'Checked again just now. Still unconfirmed, nothing to do here until the venue moves.' : 'Still no answer. Nothing has changed. Do not send it again.');
-            return null;
-          }
-          return window.PhosphorShell.refresh({}).then(function () {
-            showing = null;
-            render();
-          });
-        })
-        .catch(function (err) {
-          say('down', net.readable(err));
-        })
-        .finally(function () {
-          window.PhosphorShell.setPending(again, false);
-        });
-    });
-
-    dom.on(gotIt, 'click', function () {
-      hush();
-      window.PhosphorShell.setPending(gotIt, true);
-      api.acknowledge(proposal.id)
-        .then(function () {
-          return window.PhosphorShell.refresh({}).then(function () {
-            showing = null;
-            render();
-          });
-        })
-        .catch(function (err) {
-          say('down', net.readable(err));
-        })
-        .finally(function () {
-          window.PhosphorShell.setPending(gotIt, false);
-        });
-    });
-  }
-
-  /* ---------- deciding ---------- */
-
-  function decide(route, id, buttons, pressed, word, ms, receiptId) {
-    /* The button is the gate, so the gate reads its own state. A click event can be
-       dispatched at a button that is off and no pointer or key can reach one, which makes
-       this a belt over script already inside the page; the re-arm and the Touch ID wait both
-       work by turning these off, and neither should be answerable from a stale handler. */
-    if (pressed && pressed.disabled) return;
-    for (var i = 0; i < buttons.length; i += 1) buttons[i].disabled = true;
-    hush();
-    touchNote = null;
-    window.PhosphorShell.setPending(pressed, true);
-    route(id)
-      .then(function (answer) {
-        return window.PhosphorShell.refresh({}).then(function () { return answer; });
-      })
-      .then(function (answer) {
-        /* An enclave wallet answers a Yes with awaiting_touch: the dialog is up
-           and nothing is decided. There is nothing to flash. The refreshed frame
-           redraws this card in its waiting state, and render() is called again
-           here in case that frame was one the cache had already seen. */
-        if (answer && answer.status === 'awaiting_touch') {
-          showing = null;
-          render();
-          return;
-        }
-        flash(word, ms, receiptId);
-      })
-      .catch(function (err) {
-        /* The problem and the recovery, in the foot where the buttons are, so
-           a card however long shows it without a scroll. The buttons come back
-           only on failure: a click that landed leaves them dead until the next
-           state frame, so a second click cannot ride on a stale render. */
-        say('down', net.readable(err, true));
-        for (var j = 0; j < buttons.length; j += 1) buttons[j].disabled = false;
-      })
-      .finally(function () {
-        window.PhosphorShell.setPending(pressed, false);
-      });
-  }
-
-  /* The answer, held on the dock for its own beat. A card that vanished on the
-     click would leave a person unsure which button had landed, and the receipt
-     is worth waiting a few seconds for. */
-  function flash(word, ms, receiptId) {
-    if (flashTimer) window.clearTimeout(flashTimer);
-    /* Whatever takes the dock from a receipt keeps it, and this takes it too: the frame that
-       lands while the answer is in flight can put a parked receipt back before the flash is
-       called, and the flash would then be the thing that lost it. */
-    if (showing && showing.kind === 'receipt') parked = showing;
-    showing = { kind: 'flash' };
-    hold(null);
-    frame();
-    dom.setAttr(refs.dock, 'data-state', receiptId ? 'done' : 'refused');
-    refs.body.appendChild(dom.el('h2', 'title', word));
-    dom.setHidden(refs.dock, false);
-    window.PhosphorShell.updateField();
-    settle();
-    flashTimer = window.setTimeout(function () {
-      flashTimer = 0;
-      showing = null;
-      if (receiptId) {
-        showReceiptFor(receiptId);
-        return;
+    var wrap = dom.el('div', 'policy-diff');
+    for (var i = 0; i < entries.length; i += 1) {
+      var entry = entries[i];
+      if (entry.kind === 'swapped') {
+        var swapped = dom.el('div', 'axis-row');
+        swapped.appendChild(dom.el('span', 'axis-name', entry.before));
+        var toWrap = dom.el('span', 'axis-figures');
+        toWrap.appendChild(dom.el('span', 'axis-to', 'to'));
+        toWrap.appendChild(dom.el('span', 'axis-after', entry.after));
+        swapped.appendChild(toWrap);
+        wrap.appendChild(swapped);
+        continue;
       }
-      close();
-    }, ms);
-  }
-
-  /* The receipt carries the proposal's own id, so the row this dock just decided
-     is the one that opens. Nothing to show is not a failure: a rail can take
-     longer than the beat, and Activity has the row either way. */
-  function showReceiptFor(id) {
-    var receipts = window.PhosphorReceipts;
-    if (!receipts || typeof receipts.find !== 'function') {
-      close();
-      return;
+      if (entry.kind === 'line') {
+        var line = dom.el('p', 'policy-line');
+        dom.setAttr(line, 'data-sign', entry.sign === '+' ? 'added' : 'removed');
+        dom.setText(line, (entry.sign === '+' ? 'Added: ' : 'Removed: ') + entry.text);
+        wrap.appendChild(line);
+        continue;
+      }
+      var block = dom.el('div', 'policy-rule');
+      block.appendChild(dom.el('p', 'policy-rule-name', entry.label));
+      for (var g = 0; g < entry.gained.length; g += 1) {
+        block.appendChild(dom.el('p', 'addr policy-gained', '+ ' + entry.gained[g]));
+      }
+      for (var l = 0; l < entry.lost.length; l += 1) {
+        block.appendChild(dom.el('p', 'addr policy-lost', '- ' + entry.lost[l]));
+      }
+      if (entry.unchanged > 0) {
+        block.appendChild(dom.el('p', 'policy-same', entry.unchanged + ' unchanged'));
+      }
+      wrap.appendChild(block);
     }
-    receipts.find(id).then(function (found) {
-      if (found) showReceipt(found);
-      else close();
-    }).catch(function () { close(); });
+    host.appendChild(wrap);
   }
 
-  /* ---------- the frame: a body that scrolls, a foot that does not ---------- */
-
-  /* Every card the dock draws is built into these two. The body holds what a
-     person reads and scrolls when the card is taller than its share of the
-     column; the foot holds the answer (the note, the queue line, the buttons)
-     and is always on screen. Rebuilt on every open: the reconciler's idea of
-     what is on screen goes with the nodes it named. */
-  function frame() {
-    dom.clear(refs.card);
-    dom.setAttr(refs.card, 'data-more', null);
-    refs.body = dom.el('div', 'dock-body');
-    refs.foot = dom.el('div', 'dock-foot');
-    refs.note = null;
-    refs.card.appendChild(refs.body);
-    refs.card.appendChild(refs.foot);
-    dom.on(refs.body, 'scroll', settle, { passive: true });
-    if (typeof ResizeObserver === 'function') {
-      if (!refs.sizes) refs.sizes = new ResizeObserver(settle);
-      refs.sizes.disconnect();
-      refs.sizes.observe(refs.body);
-    }
-  }
-
-  /* Whether there is more card below the body's bottom edge. The card carries
-     the answer as data-more, and the stylesheet fades the last lines into the
-     foot while it is true: that fade is what tells a person the buttons sit
-     under more card, on a platform whose scrollbars hide until touched. A
-     document without layout (the tests) measures nothing and says nothing. */
-  function settle() {
-    var body = refs.body;
-    if (!body || typeof body.scrollHeight !== 'number') return;
-    var more = body.scrollHeight - body.clientHeight - body.scrollTop > 4;
-    dom.setAttr(refs.card, 'data-more', more ? 'true' : null);
-  }
-
-  /* One line in the foot, above the buttons: the problem and the recovery,
-     red for a click that did not land, amber for a state worth knowing. One
-     node, reused, so two errors in a row do not stack. */
-  function say(tone, text) {
-    var foot = refs.foot;
-    if (!foot) return;
-    if (!refs.note) {
-      refs.note = dom.el('div', 'banner dock-note');
-      refs.note.setAttribute('role', 'status');
-      refs.note.appendChild(dom.el('span', ''));
-      foot.insertBefore(refs.note, foot.firstChild);
-    }
-    dom.setAttr(refs.note, 'data-tone', tone);
-    dom.setText(refs.note.firstChild, text);
-    refs.note.hidden = false;
-  }
-
-  function hush() {
-    if (refs.note) refs.note.hidden = true;
-  }
-
-  /* The dock's memory of the sensor. A row drawn while awaiting_touch that
-     comes back pending is a dialog that closed without an answer. */
-  function noteTouch(proposal) {
-    if (!proposal) return;
-    if (proposal.status === 'awaiting_touch') {
-      touchSeen = proposal.id;
-      return;
-    }
-    if (proposal.status === 'pending' && touchSeen === proposal.id) touchNote = proposal.id;
-    touchSeen = null;
-  }
-
-  /* ---------- the card's parts ---------- */
-
-  /* A fact is a label and a value on one grid row, the value on the right. A
-     wide one (a sentence, not a number) takes the row for itself, label over
-     value, so it wraps as prose instead of as a ragged right-aligned column. */
-  function addFact(host, label, value, tone, wide) {
-    if (!value) return;
-    var row = dom.el('div', wide ? 'fact fact--wide' : 'fact');
-    row.appendChild(dom.el('span', 'label', label));
-    var body = dom.el('span', 'body', value);
-    if (tone) dom.setAttr(body, 'data-tone', tone);
-    row.appendChild(body);
-    host.appendChild(row);
-  }
-
-  /* A fee that can be under a cent keeps its digits (dom.fee); the rest of
-     the card rounds to cents. */
-  function money(value) {
-    return typeof dom.fee === 'function' ? dom.fee(value) : dom.usd(value);
-  }
-
-  function etaWords(seconds) {
-    var s = Math.max(0, Math.round(seconds));
-    if (s < 60) return s + ' seconds';
-    var m = Math.round(s / 60);
-    return m === 1 ? 'a minute' : m + ' minutes';
-  }
-
-  /* The fee row. It reads the swap fields first, then the older slots a
-     simulation might carry. When the rail priced nothing as a number the row
-     says so in those words: "No fee was quoted." sat over a summary line that
-     named the fee, and a card that contradicts itself is a card nobody can
-     check. No simulation at all is its own sentence. */
-  function costLine(proposal) {
-    var sim = proposal.simulation;
-    if (!sim) return 'Not quoted.';
-    var swap = sim.swap || {};
-    var parts = [];
-    if (typeof swap.feeUsd === 'number') parts.push(money(swap.feeUsd) + ' in fees');
-    else if (typeof sim.feeUsd === 'number') parts.push(money(sim.feeUsd) + ' in fees');
-    if (typeof sim.gasUsd === 'number') parts.push(money(sim.gasUsd) + ' in network fees');
-    if (typeof sim.priceImpact === 'number') parts.push(dom.pct(sim.priceImpact) + ' price impact');
-    if (parts.length) return parts.join(', ');
-    return sim.swap ? 'The venue did not price a fee.' : 'See what the venue reports, below.';
-  }
-
-  /* The address in groups of four, the way the send card prints it (ui/screens/sendcard.js
-     groupsOf): a 42-character run broke after its 41st character at 400 px and a lone digit
-     sat on its own line. The groups are the send card's own classes so they wrap as a set. */
-  function addressLine(address) {
-    var line = dom.el('p', 'addr sendcard-address');
-    dom.setAttr(line, 'data-address', address);
-    var sendCard = window.PhosphorSendCard;
-    var groups = sendCard && typeof sendCard.groupsOf === 'function' ? sendCard.groupsOf(address) : [String(address)];
-    for (var i = 0; i < groups.length; i += 1) line.appendChild(dom.el('span', 'sendcard-group', groups[i]));
-    return line;
-  }
-
-  function venueWords(venue) {
-    var id = String(venue);
-    if (Object.prototype.hasOwnProperty.call(VENUE_WORDS, id)) return VENUE_WORDS[id];
-    return id.replace(/[-_]+/g, ' ');
-  }
-
-  /* The engine writes `reasons`, an array, and has since the verdict type was
-     written. This asked for `reason` and always fell through to the guess below,
-     so a card built on a rule the person had never seen said "your limits say
-     so" instead of naming the rule.
-
-     The array is the engine's trail: a restatement of the move first ("swap of
-     $2.00 to intents.near."), then the rule that fired. The card is asking why,
-     so it shows the rule, which is the last line, and leaves the restatement
-     to the headline that already says it. */
+  /* The engine writes `reasons`, an array: a restatement of the move first, then the rule
+     that fired. The card is asking why, so it shows the rule, which is the last line. */
   function whyLine(proposal) {
     var verdict = proposal.verdict || {};
     if (Array.isArray(verdict.reasons) && verdict.reasons.length) {
@@ -1424,29 +450,21 @@
     var threshold = state.policy && state.policy.outbound
       ? state.policy.outbound.humanClickAboveUsd
       : null;
-    if (amount !== null && typeof threshold === 'number' && amount > threshold) {
-      return 'It is above the ' + dom.usd(threshold, 0) + ' you said to ask about.';
+    var limit = dom.usd(threshold, 0);
+    if (amount !== null && typeof threshold === 'number' && amount > threshold && limit) {
+      return 'It is above the ' + limit + ' you said to ask about.';
     }
     return 'Your limits say this one needs a click.';
   }
 
-  /* Where the money actually lands, every address in full, labelled by who chose
-     it.
-
-     This read `simulation.destinations`, a field no simulation has ever carried,
-     so the only addresses on the card were the ones this app picked. The venue
-     mints a fresh deposit address per quote, which is why it can never sit on an
-     allowlist, and it is the address the funds are signed over to. The backend
-     records it in `depositAddresses` for this card and says so in a comment.
-     Showing the allowlisted leg while hiding that one is the exact shape of F2:
-     an amount that was correct while the screen named the wrong destination. */
+  /* Where the money actually lands, every address in full, labelled by who chose it. The
+     venue mints a fresh deposit address per quote, which is why it can never sit on an
+     allowlist, and it is the address the funds are signed over to: showing the allowlisted
+     leg while hiding that one is the exact shape of F2, an amount that was correct while the
+     screen named the wrong destination. */
   function destinationsOf(proposal) {
     var draft = proposal.draft || {};
     var out = [];
-    /* A swap inside the verifier credits the account it spends from: `to` is
-       `from`. The address still goes on the card in full, but under words that
-       say the money is not leaving, because a full 0x address under "Where it
-       goes" reads as a send to somebody. */
     var own = typeof draft.from === 'string' ? draft.from.trim().toLowerCase() : '';
     pushDestination(out, draft.to, 'app', own);
     if (draft.leg) pushDestination(out, draft.leg.to, 'app', own);
@@ -1469,8 +487,8 @@
     if (!clean.length) return;
     for (var i = 0; i < out.length; i += 1) {
       if (out[i].address.toLowerCase() !== clean.toLowerCase()) continue;
-      /* An address that is both is still one the venue minted, and under
-         disclosing is the failure this whole function exists to prevent. */
+      /* An address that is both is still one the venue minted, and under disclosing is the
+         failure this whole function exists to prevent. */
       if (chosenBy === 'venue') {
         out[i].chosenBy = 'venue';
         out[i].own = false;
@@ -1487,92 +505,245 @@
     });
   }
 
-  /* The rule change, as the engine rendered it either side of the patch.
+  /* The address in groups of four, the way the send card prints it, so it wraps as a set and
+     a lone digit never sits on its own line. */
+  function addressLine(address) {
+    var line = dom.el('p', 'addr sendcard-address');
+    dom.setAttr(line, 'data-address', address);
+    var sendCard = window.PhosphorSendCard;
+    var groups = sendCard && typeof sendCard.groupsOf === 'function' ? sendCard.groupsOf(address) : [String(address)];
+    for (var i = 0; i < groups.length; i += 1) line.appendChild(dom.el('span', 'sendcard-group', groups[i]));
+    return line;
+  }
 
-     It comes off `simulation.policyDiff`, which is where the server has always
-     put it. This read `draft.sentences`, a field no proposal has ever carried,
-     so the one card in the window whose whole job is to show what a rule change
-     does was showing nothing at all. The draft's own `sentence` is the
-     assistant's wording and is deliberately NOT rendered here: the assistant
-     does not get to write the ask it is asking about.
+  function venueWords(venue) {
+    var id = String(venue);
+    if (Object.prototype.hasOwnProperty.call(VENUE_WORDS, id)) return VENUE_WORDS[id];
+    return id.replace(/[-_]+/g, ' ');
+  }
 
-     The store's sentences are the fallback for the before, so a diff still
-     renders if a simulation arrives without one. */
-  function buildPolicyDiff(host, proposal) {
-    var state = store.get() || {};
+  function detailLine(label, value) {
+    var row = dom.el('div', 'tcard-line');
+    row.setAttribute('data-wrap', 'true');
+    row.appendChild(dom.el('span', 'tcard-line-label', label));
+    row.appendChild(dom.el('span', 'tcard-line-value', value));
+    return row;
+  }
+
+  /* The secondary lines, for the card's Details: why it asks, where the money goes, how long
+     the price holds, the route, and the rail's own summary. True, and one click away. */
+  function askDetails(proposal) {
     var draft = proposal.draft || {};
-    var sim = proposal.simulation || {};
-    var rendered = sim.policyDiff || {};
-    var before = rendered.before
-      || state.sentences
-      || (state.policy && state.policy.sentences)
-      || [];
-    var after = rendered.after || draft.sentences || draft.afterSentences || [];
-    if (!after.length) return;
-    var entries = refineDiff(diffOf(before, after));
-    if (!entries.length) return;
-
-    var wrap = dom.el('div', 'stack-2 policy-diff');
-    wrap.appendChild(dom.el('p', 'label', 'What changes'));
-    for (var i = 0; i < entries.length; i += 1) {
-      var entry = entries[i];
-      if (entry.kind === 'swapped') {
-        var swapped = dom.el('div', 'axis-row');
-        swapped.appendChild(dom.el('span', 'axis-name down', entry.before));
-        var toWrap = dom.el('span', 'axis-figures');
-        toWrap.appendChild(dom.el('span', 'axis-to', 'to'));
-        toWrap.appendChild(dom.el('span', 'axis-after up', entry.after));
-        swapped.appendChild(toWrap);
-        wrap.appendChild(swapped);
-        continue;
-      }
-      if (entry.kind === 'line') {
-        var line = dom.el('p', 'body ' + (entry.sign === '+' ? 'up' : 'down'));
-        dom.setText(line, (entry.sign === '+' ? 'Added: ' : 'Removed: ') + entry.text);
-        wrap.appendChild(line);
-        continue;
-      }
-      var block = dom.el('div', 'stack-2');
-      block.appendChild(dom.el('p', 'body strong', entry.label));
-      for (var g = 0; g < entry.gained.length; g += 1) {
-        block.appendChild(dom.el('p', 'addr up', '+ ' + entry.gained[g]));
-      }
-      for (var l = 0; l < entry.lost.length; l += 1) {
-        block.appendChild(dom.el('p', 'addr down', '- ' + entry.lost[l]));
-      }
-      if (entry.unchanged > 0) {
-        block.appendChild(dom.el('p', 'meta', entry.unchanged + ' unchanged'));
-      }
-      wrap.appendChild(block);
+    var out = [detailLine('Why it asks', whyLine(proposal))];
+    var destinations = destinationsOf(proposal);
+    for (var d = 0; d < destinations.length; d += 1) {
+      var where = dom.el('div', 'destination');
+      dom.setAttr(where, 'data-chosen', destinations[d].chosenBy);
+      where.appendChild(dom.el('span', 'tcard-line-label', destinations[d].own ? 'Stays in' : 'Goes to'));
+      where.appendChild(addressLine(destinations[d].address));
+      where.appendChild(dom.el('span', 'destination-who', destinations[d].label));
+      out.push(where);
     }
-    host.appendChild(wrap);
+    var left = expiryWords(quoteOf(proposal));
+    if (left && left !== 'expired') out.push(detailLine('The price holds for', left));
+    var through = draft.venue ? venueWords(draft.venue) : null;
+    if (through) out.push(detailLine('Through', through));
+    var summary = typeof (proposal.simulation || {}).summary === 'string' ? proposal.simulation.summary.trim() : '';
+    if (summary && draft.kind !== 'policy_change') out.push(dom.el('p', 'tcard-note mcard-summary', summary));
+    return out;
   }
 
-  /* ---------- the receipt ---------- */
-
-  function buildReceipt(receipt) {
-    window.PhosphorReceipt.fill(refs.body, receipt, close);
+  /* One line in the ask, under the buttons: the problem and the recovery after a click that
+     did not land. One node, reused, so two errors in a row do not stack. */
+  function say(note, text) {
+    dom.setText(note, text);
+    note.hidden = false;
   }
 
-  /* A newer receipt is the one the person just earned, so it replaces any older
-     one still parked rather than queueing behind it. */
-  function showReceipt(receipt) {
-    parked = null;
-    open({ kind: 'receipt', receipt: receipt, at: Date.now(), queued: 0 });
+  function hush(note) {
+    note.hidden = true;
   }
 
-  /* The same slot, filled by a caller. A request still outranks it: render()
-     puts the decision back the moment this closes. */
+  /* Rows that have been asked about, and when, for the re-arm. */
+  var firstAsked = {};
+
+  /* THE ASK. What the card adds to its face for this kind, the row of buttons, and the lines
+     for its Details. Cancel first, so the harmless answer is the one the hand reaches, and
+     the two share the row rather than filling it. Approve breathes while the answer is the
+     person's to give (components.css), and only then. */
+  function ask(proposal) {
+    var p = proposal || {};
+    var draft = p.draft || {};
+    var view = p.view || {};
+    var locked = p.status === 'pending_unlock';
+    var touching = p.status === 'awaiting_touch';
+    var face = dom.el('div', 'mcard-ask-face');
+
+    if (draft.kind === 'policy_change') {
+      if (!buildChanges(face, view.changes)) buildPolicyDiff(face, p);
+      if (view.sentence && view.sentence !== headlineOf(p)) buildSaid(face, view.sentence);
+    }
+    if (draft.kind === 'trade' || draft.kind === 'trade_change') {
+      var risk = [];
+      tradeFacts(risk, draft);
+      if (risk.length) face.appendChild(factGrid(risk));
+    }
+    if (locked) face.appendChild(dom.el('p', 'mcard-ask-line', 'The app is locked, so this is waiting. Nothing moves until you unlock and decide.'));
+    if (touching) face.appendChild(dom.el('p', 'mcard-ask-line mcard-touch', touchReason() || 'The Touch ID dialog is up. Confirm it there, or cancel it to come back here.'));
+    if (!touching && touchNote === p.id) face.appendChild(dom.el('p', 'mcard-ask-line', 'Touch ID closed without an answer. Nothing moved. Approve asks again.'));
+    if (expiryWords(quoteOf(p)) === 'expired') face.appendChild(dom.el('p', 'mcard-ask-line', 'This price has run out. Approve asks for a fresh one.'));
+
+    var buttons = dom.el('div', 'mcard-buttons');
+    var note = dom.el('p', 'mcard-note');
+    note.setAttribute('role', 'status');
+    note.hidden = true;
+    var cancel = dom.el('button', 'btn btn-ghost mcard-cancel');
+    cancel.type = 'button';
+    cancel.appendChild(dom.el('span', 'btn-label', 'Cancel'));
+    dom.setAttr(cancel, 'data-pending-label', 'Cancelling');
+    var yes = dom.el('button', 'btn btn-primary mcard-approve');
+    yes.type = 'button';
+    buttons.appendChild(cancel);
+    buttons.appendChild(yes);
+
+    dom.on(cancel, 'click', function () {
+      decide(api.refuse, p.id, [yes, cancel], cancel, note);
+    });
+
+    if (locked) {
+      /* A request that arrived while the wallet was shut. It was checked against the limits;
+         what is missing is the ability to sign, so the card asks for the lock first and offers
+         no Approve it could not act on. */
+      yes.appendChild(dom.el('span', 'btn-label', 'Unlock'));
+      dom.on(yes, 'click', function () {
+        if (window.PhosphorLock && typeof window.PhosphorLock.focus === 'function') window.PhosphorLock.focus();
+      });
+    } else if (touching) {
+      /* The click has landed and the system dialog owns the moment. Both buttons go dead: a
+         second Approve would be a second ask. It all comes back on the next frame. */
+      yes.appendChild(dom.el('span', 'btn-label', 'Confirm on your Mac'));
+      dom.setAttr(yes, 'data-touch', 'true');
+      yes.disabled = true;
+      cancel.disabled = true;
+    } else {
+      yes.appendChild(dom.el('span', 'btn-label', 'Approve'));
+      dom.setAttr(yes, 'data-pending-label', enclave() ? 'Waiting for Touch ID' : 'Approving');
+      dom.setAttr(yes, 'data-live', 'true');
+      dom.on(yes, 'click', function () {
+        touchNote = null;
+        decide(api.approve, p.id, [yes, cancel], yes, note);
+      });
+    }
+
+    /* A card that appears under a pointer holds its buttons for a beat, so a tap already on
+       its way down cannot land on a request nobody read. */
+    if (!Object.prototype.hasOwnProperty.call(firstAsked, p.id)) firstAsked[p.id] = Date.now();
+    var wait = firstAsked[p.id] + ARM_MS - Date.now();
+    if (wait > 0 && !touching) {
+      yes.disabled = true;
+      cancel.disabled = true;
+      window.setTimeout(function () {
+        if (yes.isConnected === false) return;
+        yes.disabled = false;
+        cancel.disabled = false;
+      }, wait);
+    }
+
+    return { face: face.firstChild ? face : null, buttons: buttons, note: note, details: askDetails(p) };
+  }
+
+  /* ---------- deciding ---------- */
+
+  /* The click and nothing after it: no flash, no receipt to close. The next state frame
+     repaints the card in its new state (working, then done), where the person is already
+     looking. The buttons stay dead after a click that landed, so a second click cannot ride
+     on a stale render; they come back only on a failure, beside the line that says why. */
+  function decide(route, id, buttons, pressed, note) {
+    if (pressed && pressed.disabled) return;
+    for (var i = 0; i < buttons.length; i += 1) buttons[i].disabled = true;
+    hush(note);
+    window.PhosphorShell.setPending(pressed, true);
+    var landed = false;
+    route(id)
+      .then(function () {
+        landed = true;
+        return window.PhosphorShell.refresh({});
+      })
+      .catch(function (err) {
+        if (landed) return;
+        say(note, net.readable(err, true));
+        for (var j = 0; j < buttons.length; j += 1) buttons[j].disabled = false;
+      })
+      .finally(function () {
+        /* Letting go of the wait turns the button back on; a click that landed keeps both
+           off until the frame that answers it redraws the card. */
+        window.PhosphorShell.setPending(pressed, false);
+        if (landed) for (var k = 0; k < buttons.length; k += 1) buttons[k].disabled = true;
+      });
+  }
+
+  /* "Try again", where the view offers it: a quiet button that asks the assistant for the
+     same move again, as the person's own message in the thread. The card never re-proposes on
+     its own, and a new move is a new card with its own Approve. */
+  function retryButton(proposal) {
+    var agent = window.PhosphorAgent;
+    if (!agent || typeof agent.send !== 'function') return null;
+    var again = dom.el('button', 'btn btn-ghost btn-sm mcard-retry');
+    again.type = 'button';
+    again.appendChild(dom.el('span', 'btn-label', 'Try again'));
+    dom.on(again, 'click', function () {
+      again.disabled = true;
+      agent.send(retryWords(proposal));
+    });
+    return again;
+  }
+
+  function retryWords(proposal) {
+    var draft = (proposal && proposal.draft) || {};
+    if (draft.kind === 'swap' && draft.fromSymbol && draft.toSymbol) {
+      var amount = draft.amountInExact !== undefined ? draft.amountInExact : draft.amountIn;
+      return 'Try that again: swap ' + (amount !== undefined ? amount + ' ' : '') + draft.fromSymbol + ' into ' + draft.toSymbol + '.';
+    }
+    return 'Try that again.';
+  }
+
+  /* What a held move waits on, in the send card's words when it has them. */
+  function heldLine(proposal) {
+    var sendCard = window.PhosphorSendCard;
+    var said = sendCard && typeof sendCard.heldLine === 'function' ? sendCard.heldLine(proposal) : '';
+    return said || 'Waiting for the checks to clear. Nothing is signed until they do.';
+  }
+
+  /* ---------- a card another screen shows ---------- */
+
+  /* The backup nudge, the recovery words and Turn off the assistant are cards other screens
+     build. They sit in the thread, at its end, as the move cards do: nothing covers the
+     conversation any more. `build(host, close)` fills the card and calls close when it is
+     done with it. */
   function showCard(build) {
-    open({ kind: 'card', build: build, queued: 0 });
+    var agent = window.PhosphorAgent;
+    if (agent && typeof agent.showCard === 'function') agent.showCard(build);
+  }
+
+  /* The Touch ID sentence can move on its own when the dialog opens: the vault slice carries
+     it, and every card waiting on the sensor takes the new words where it stands. */
+  function boot() {
+    if (!store || typeof store.select !== 'function') return;
+    store.select('vault', function () {
+      var reason = touchReason();
+      if (!reason || typeof document.querySelectorAll !== 'function') return;
+      var lines = document.querySelectorAll('.mcard-touch');
+      for (var i = 0; i < lines.length; i += 1) dom.setText(lines[i], reason);
+    });
   }
 
   window.PhosphorDecision = {
     boot: boot,
-    render: render,
-    showReceipt: showReceipt,
+    ask: ask,
+    askKey: askKey,
+    retryButton: retryButton,
+    heldLine: heldLine,
     showCard: showCard,
-    close: close,
     diffOf: diffOf,
     refineDiff: refineDiff,
     headlineOf: headlineOf

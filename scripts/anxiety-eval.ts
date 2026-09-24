@@ -15,6 +15,7 @@
 // Run:  node scripts/anxiety-eval.ts                 the whole list, 3 runs, leg a and leg b
 //       node scripts/anxiety-eval.ts --rows A06,B01  some rows
 //       node scripts/anxiety-eval.ts --runs 1 --judge none --no-flows   pictures only, fast
+//       node scripts/anxiety-eval.ts --width 1280  a narrower window (the column stays 860)
 // Output: scripts/scratch/anxiety/<timestamp>/<row>.png, <row>.json, summary.md, summary.json,
 // and the table on the terminal. Exit 0 when every judged row and every flow passes.
 //
@@ -27,7 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { STAGE_COPY, type ProposalStage } from '../src/proposals/view.ts';
 import { bootApp, errText, makeWallet, ROOT, sleep, stageRepo, stopAll, type App } from './anxiety/app.ts';
-import { browserDone, connectBrowser, type Browser, type Clip, type Page } from './anxiety/capture.ts';
+import { browserDone, connectBrowser, VIEWPORT, type Browser, type Clip, type Page } from './anxiety/capture.ts';
 import { jevAvailable, runJev, scoreFlow, writeFlowEvidence, type Flow } from './anxiety/flows.ts';
 import { castVotes, probeJudge, rowVerdict, type Judge, type Vote } from './anxiety/judge.ts';
 import { isCardRow, loadRows, type Row } from './anxiety/rows.ts';
@@ -50,6 +51,7 @@ const VOTES = Math.max(1, Math.min(5, Number(flag('--votes') ?? 3) || 3));
 const JUDGE = flag('--judge') ?? 'auto';
 const FLOWS = !args.includes('--no-flows');
 const VERBOSE = args.includes('--verbose');
+const WIDTH = Math.max(900, Math.min(2560, Number(flag('--width') ?? VIEWPORT.width) || VIEWPORT.width));
 const STAMP = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const OUT = path.resolve(flag('--out') ?? path.join(OUT_ROOT, STAMP));
 
@@ -110,14 +112,17 @@ async function lastReplyOf(app: App): Promise<string> {
 }
 
 /* The synthesized reply for a proposal shot: the view's own sentence, then the one line of copy
-   for the stage the card is on. Both are the app's words from src/proposals/view.ts, so the
-   reply cannot describe a stage the card does not, and it is exactly the two facts the brief
-   says to build it from. Three sentences at most, which the pair never exceeds. */
+   the view gives for the stage the card is on. Both are the app's words from
+   src/proposals/view.ts, so the reply cannot describe a stage the card does not, and it is
+   exactly the two facts the brief says to build it from. The view's copy, not the stage's stock
+   line: a move that did not go through carries its real cause there, and the stock "A rule you
+   set stopped it" over a swap nobody priced was the misattribution the card was fixed for.
+   Three sentences at most, which the pair never exceeds. */
 async function synthReply(app: App, id: string): Promise<string> {
   const view = await app.view(id);
   if (view === null) return '';
   const sentence = typeof view.sentence === 'string' ? view.sentence : '';
-  const copy = STAGE_COPY[view.stage as ProposalStage] ?? '';
+  const copy = typeof view.stageCopy === 'string' && view.stageCopy !== '' ? view.stageCopy : (STAGE_COPY[view.stage as ProposalStage] ?? '');
   return [sentence, copy].filter((part) => part !== '').join('. ').replace(/\.\./g, '.');
 }
 
@@ -204,6 +209,7 @@ async function playScene(browser: Browser, stage: string, scene: Scene, run: num
   try {
     if (scene.seed.wallet !== false) await makeWallet(app);
     page = await browser.open(`${app.base}/?token=${app.token}`);
+    if (WIDTH !== VIEWPORT.width) await page.viewport(WIDTH, VIEWPORT.height);
     await page.waitFor('!!document.querySelector(".conversation")', 15_000, 'the window');
     await page.column(860);
     await sleep(600);
@@ -325,7 +331,7 @@ async function judgeAll(judge: Judge, list: Array<{ sample: Sample; shot: { file
 // ---------- main ----------
 
 async function main(): Promise<number> {
-  log(`anxiety eval: ${wanted.length} of ${rows.length} rows, ${RUNS} run(s), ${VOTES} vote(s), judge ${JUDGE}, out ${OUT}`);
+  log(`anxiety eval: ${wanted.length} of ${rows.length} rows, ${RUNS} run(s), ${VOTES} vote(s), judge ${JUDGE}, window ${WIDTH} px, out ${OUT}`);
   const claimed = claimedRows();
   const browser = await connectBrowser();
   const stage = stageRepo();

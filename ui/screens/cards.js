@@ -5,14 +5,15 @@
    holds. Karim, 2026-09-15: "when I ask how much I won it just prints a boring
    white table". Now the driver hands the window the answer itself
    (src/driver.ts, the tool_data event) and this file turns it into a card:
-   holdings with their marks, positions with their profit in tone, a swap with
-   a status chip, a deposit address with a button that opens the real card.
-   The assistant's words stay short around it.
+   holdings with their marks, positions with their profit, a deposit address
+   with a button that opens the real card, and one card per move that changes
+   in place as the move runs. The assistant's words stay short around it.
 
    Every card is built with PhosphorDom and strings set as text. Nothing here
-   reads a value as markup, and the one button this file draws opens the
-   deposit card, which decides nothing. The look lives in ui/design/cards.css:
-   this file writes classes and data attributes, never a style. */
+   reads a value as markup. The one card that decides anything is the move card,
+   and its buttons are ui/screens/decision.js's, drawn from the server's row. The
+   look lives in ui/design/cards.css and ui/design/chatcard.css: this file writes
+   classes and data attributes, never a style. */
 (function () {
   'use strict';
 
@@ -44,6 +45,11 @@
     chevron: [
       '',
       'M9 6l6 6-6 6'
+    ],
+    /* What leaves, then what arrives: the arrow between the two legs of a move. */
+    arrow: [
+      '',
+      'M5 12h14M13 6l6 6-6 6'
     ]
   };
 
@@ -192,7 +198,7 @@
   }
 
   /* How long ago, in the fewest characters that still read: the head line
-     has a title, a chip and a figure to fit beside it in a 440 px column. */
+     has a title, a state word and a figure to fit beside it in a 440 px column. */
   function relative(at) {
     if (at === null || at === undefined || at === '') return '';
     var when = at instanceof Date ? at : new Date(typeof at === 'number' ? at : String(at));
@@ -211,7 +217,7 @@
 
      Karim, 2026-09-15: "when a card is open in chat I cannot for some reason
      close it, bad UX again." So every card is a one-line head that says the
-     whole thing (the icon, the title, a status chip, the figure, how long ago,
+     whole thing (the icon, the title, a state word, the figure, how long ago,
      a chevron) over a body that opens and closes under it. The head is the
      control: a click, Enter or Space toggles it, and the body's height runs
      through a grid track rather than a jump. The open state is the caller's
@@ -229,7 +235,6 @@
     head.appendChild(headIcon);
     var titleNode = dom.el('span', 'tcard-title', title);
     head.appendChild(titleNode);
-    if (o.chip) head.appendChild(o.chip);
     var figure = dom.el('span', 'tcard-figure mono', o.amount || '');
     if (o.tone) figure.setAttribute('data-tone', o.tone);
     dom.setHidden(figure, !o.amount);
@@ -284,18 +289,6 @@
     var handle = { setOpen: setOpen, isOpen: function () { return open; }, toggle: toggle };
     card.__fold = handle;
     return { card: card, body: body, head: head, fold: handle, title: titleNode, figure: figure, state: word };
-  }
-
-  function chip(state, label, withIcon) {
-    var node = dom.el('span', 'tcard-chip');
-    node.setAttribute('data-state', state);
-    if (state === 'pending' || state === 'watching' || state === 'seen') {
-      node.appendChild(dom.el('span', 'tcard-chip-dot'));
-    } else if (withIcon) {
-      node.appendChild(icon(withIcon, 'tcard-chip-icon'));
-    }
-    node.appendChild(dom.el('span', 'tcard-chip-label', label));
-    return node;
   }
 
   function emptyLine(body, title, hint) {
@@ -401,10 +394,7 @@
     body.appendChild(list);
     moreLine(body, held.rows.length - shown.length + held.dropped, 'assets');
 
-    var foot = dom.el('div', 'tcard-total');
-    foot.appendChild(dom.el('span', 'tcard-total-label', 'Total'));
-    foot.appendChild(mono('tcard-total-value', totalText(total, unpriced)));
-    body.appendChild(foot);
+    /* The total is the head's figure, once. A Total row under the list said it twice. */
     if (unpriced.length) body.appendChild(dom.el('div', 'tcard-note', unpriced.join(', ') + ' not priced, so the total leaves it out.'));
 
     var stale = Array.isArray(data.stale) ? data.stale : [];
@@ -566,22 +556,13 @@
     return parts.card;
   }
 
-  /* ---------- the move card: a swap, a trade, a deposit or a withdrawal ---------- */
+  /* ---------- the move card: a swap, a send, a trade, a rule change ---------- */
 
-  /* THE CARD READS THE VIEW.
-
-     Karim, 2026-09-18: the card said "Confirmed at 14:20" while the assistant
-     said the deposit was still settling, and the clock on the card was the
-     moment he clicked, not the moment the money landed. Two maps of the same
-     truth, a step out of order. There is one now: src/proposals/view.ts builds
-     a ProposalView, proposal_status returns it, /api/state carries it on every
-     proposal, and everything below reads it. */
-  /* The view, from either shape it reaches the window in: beside the row as `view` (a
-     propose reply, a state frame row, `show`), or as the whole payload, which is how
-     proposal_status answers. Null where neither is there, which is a payload older than the
-     view, and the card then draws the facts it has and no stage word: the state frame fills
-     it in a moment, and a word made up here meanwhile would be the second stage table this
-     file must not keep. */
+  /* THE CARD READS THE VIEW. src/proposals/view.ts builds one ProposalView per row,
+     proposal_status returns it and /api/state carries it on every proposal, so the card and
+     the assistant read the same truth. The view comes beside the row as `view` (a propose
+     reply, a state frame row, `show`) or as the whole payload (proposal_status). Null where
+     neither is there, which is a payload older than the view. */
   function viewOf(data) {
     if (!isObject(data)) return null;
     if (isObject(data.view)) return data.view;
@@ -589,14 +570,7 @@
     return null;
   }
 
-  function stateOf(view) {
-    if (!view) return { tone: 'running', label: '' };
-    return { tone: STAGE_TONE[view.stage] || 'running', label: String(view.stageLabel || '') };
-  }
-
-  /* How long, in the fewest characters that still carry the seconds: this
-     number ticks once a second on a live card, so it is the one figure on the
-     window that has to stay narrow and readable at the same time. */
+  /* How long a finished move took, in the fewest characters that still read. */
   function spanWords(seconds) {
     var n = Math.max(0, Math.round(Number(seconds) || 0));
     if (n < 60) return n + 's';
@@ -605,12 +579,14 @@
     return Math.floor(minutes / 60) + 'h ' + String(minutes % 60).padStart(2, '0') + 'm';
   }
 
-  /* The same duration, rounded, for a typical figure nobody times to the second. */
-  function aboutWords(seconds) {
-    var n = Math.max(0, Math.round(Number(seconds) || 0));
-    if (n < 60) return n + 's';
-    if (n < 3600) return Math.round(n / 60) + 'm';
-    return Math.round(n / 3600) + 'h';
+  /* The one clock the card ever shows, and only once a move is late. It moves in steps a
+     person reads rather than as a stopwatch: five seconds at a time under a minute, whole
+     minutes after that. */
+  function lateWords(seconds) {
+    var n = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (n < 60) return (n - (n % 5)) + 's';
+    if (n < 3600) return Math.floor(n / 60) + 'm';
+    return Math.floor(n / 3600) + 'h ' + String(Math.floor((n % 3600) / 60)).padStart(2, '0') + 'm';
   }
 
   /* A duration a person would say: "about a minute", "about 2 minutes", "45 seconds". */
@@ -627,9 +603,7 @@
     return Math.max(0, (Date.now() - then) / 1000);
   }
 
-  /* One label at the left, one figure at the right, in mono. The figure is
-     right anchored so a counter that grows a digit takes the gap rather than
-     pushing the label, which is what keeps a ticking card still. */
+  /* One label at the left, one figure at the right, in mono. */
   function factLine(body, label, value, tone, wrap) {
     if (value === '' || value === null || value === undefined) return null;
     var row = dom.el('div', 'tcard-line');
@@ -642,25 +616,8 @@
     return figure;
   }
 
-  /* A second is the beat, and only the digits move. The timer stops itself the
-     first time it wakes up outside the document, which is every re-render, so a
-     conversation that has drawn a hundred cards is running one timer per card
-     that is still on screen and none for the rest. */
-  function tick(node, paint) {
-    paint();
-    if (typeof window.setInterval !== 'function') return;
-    var id = window.setInterval(function () {
-      if (!node.isConnected) {
-        window.clearInterval(id);
-        return;
-      }
-      paint();
-    }, 1000);
-  }
-
   /* An id a person can read past: the two ends, eight characters each, and the
-     whole thing one click away on the Copy beside it. A hash printed whole is
-     the line that pushed every other fact off a 400 px card. */
+     whole thing one click away on the Copy beside it. */
   function shortId(value) {
     var s = String(value || '');
     if (s.length <= 20) return s;
@@ -714,38 +671,41 @@
     return row;
   }
 
-  /* A line of evidence with every hash in it cut to its two ends: a rail's own sentence names
-     the intent hash and the transaction hash whole, and a whole one is the line that pushed
-     every other fact off a 400 px card (3.1). A hash is 64 hex characters (66 with its 0x) or a
-     base58 signature of 64 or more; an address is 40 hex or a shorter base58 run and stays
-     whole, because a shortened receiver is what a substituted one hides behind (frozen rule 3). */
+  /* A line of evidence with every hash in it cut to its two ends. A hash is 64 hex characters
+     (66 with its 0x) or a base58 signature of 64 or more; an address is 40 hex or a shorter
+     base58 run and stays whole, because a shortened receiver is what a substituted one hides
+     behind. */
   function shortenIds(text) {
     return String(text || '').replace(/0x[0-9a-fA-F]{64}\b|\b[0-9a-fA-F]{64}\b|\b[1-9A-HJ-NP-Za-km-z]{64,}\b/g, function (id) { return shortId(id); });
   }
 
-  /* The vendor's word for a phase, in lower case with its underscores gone: evidence for a
-     support ticket, never a headline. KNOWN_DEPOSIT_TX reads "known deposit tx". */
+  /* The vendor's word for a phase, in lower case with its underscores gone: evidence for
+     Details, never a headline. */
   function vendorWord(stage) {
     return String(stage || '').toLowerCase().replace(/_/g, ' ');
   }
 
-  /* The reason a move stopped, as one plain sentence for the face of the card: the rule that
-     refused it in the policy's own words, or the first sentence of what the rail said, with
-     any brace, bracket or quote run stripped and the rest cut. The rail's whole line stays
-     behind Details, where it is evidence rather than the thing a person reads first. */
+  /* The first sentence of a rail's or a rule's line, with any brace, bracket or quote run
+     stripped and the rest cut. The whole line stays behind Details. */
   function reasonSentence(text) {
     var s = String(text || '').replace(/[{}\[\]"`]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!s) return '';
-    var end = s.search(/[.!?](\s|$)/);
-    if (end !== -1) s = s.slice(0, end + 1);
-    if (s.length > 140) s = s.slice(0, 137).replace(/\s+\S*$/, '') + '...';
+    var first = s.search(/[.!?](\s|$)/);
+    if (first !== -1) {
+      /* Two short sentences read better than one cut: "Nobody offered a price for this swap
+         right now. Nothing moved." */
+      var rest = s.slice(first + 1).trim();
+      var second = rest.search(/[.!?](\s|$)/);
+      s = second !== -1 && first + second < 150 ? s.slice(0, first + 1) + ' ' + rest.slice(0, second + 1) : s.slice(0, first + 1);
+    }
+    if (s.length > 160) s = s.slice(0, 157).replace(/\s+\S*$/, '') + '...';
     return s;
   }
 
-  /* Everything the card needs, from any of the three shapes a move arrives in:
-     the answer to a propose (an id, a status, a verdict and a simulation, with
-     the tool's own input beside it), a proposal read back with its draft, or a
-     receipt from the history surface. */
+  /* Everything the card needs, from any of the shapes a move arrives in: the answer to a
+     propose (an id, a status, a verdict and a simulation, with the tool's own input beside
+     it), a proposal read back with its draft, a state frame row, or a placeholder drawn from
+     the propose call itself before any row exists. */
   function moveOf(name, input, data) {
     var args = isObject(input) ? input : {};
     var draft = isObject(data.draft) ? data.draft : null;
@@ -754,17 +714,15 @@
     var sendFacts = isObject(data.send) ? data.send : null;
     var view = viewOf(data);
     var kind = String((draft && draft.kind) || (view && view.kind) || data.kind || (sendFacts && sendFacts.kind) || bare(name).replace(/^propose_/, '') || 'move');
-    var state = stateOf(view);
     var move = {
       kind: kind,
-      title: TITLES[kind] || 'Move',
+      title: TITLES[kind] || kindWords(kind),
       id: typeof data.id === 'string' ? data.id : (view && typeof view.id === 'string' ? view.id : ''),
       from: null,
       to: null,
       feeUsd: null,
+      floor: null,
       quote: '',
-      stage: state.tone,
-      label: state.label,
       reason: '',
       detail: '',
       summary: ''
@@ -776,18 +734,18 @@
     var result = isObject(data.result) ? data.result : null;
     if (sim && typeof sim.summary === 'string') move.summary = sim.summary;
     if (typeof data.headline === 'string') move.summary = data.headline;
-    /* The view's own line wins over anything the window would compose: one
-       sentence per move, written once, printed by the card and quoted by the
-       assistant, so the two cannot describe the same move differently. */
     if (view && typeof view.sentence === 'string' && view.sentence) move.summary = view.sentence;
 
-    /* The reason a move did not happen, in the plainest words on hand: the view's own error
-       for a refusal or a failure, else what the row itself carries. The stage word says that
-       it stopped; this says why, in one sentence; the rail's whole line goes behind Details. */
+    /* The reason a move did not happen, in the plainest words on hand: the view's reason (the
+       cause's one sentence, and the engineer's line behind it), else its error, else what the
+       row itself carries. The rail's whole line goes behind Details. */
     var rail = result && typeof result.detail === 'string' ? result.detail : (sim && typeof sim.error === 'string' ? sim.error : '');
-    if (view && isObject(view.error) && view.error.message) {
+    var why = view && isObject(view.reason) && typeof view.reason.sentence === 'string' && view.reason.sentence ? view.reason : null;
+    if (why && why.code !== 'needs_approval') {
+      move.reason = String(why.sentence);
+      move.detail = typeof why.details === 'string' ? why.details : '';
+    } else if (view && isObject(view.error) && view.error.message) {
       move.detail = String(view.error.message);
-      /* A late row's reason is its clock, which the stage line already counts. */
       move.reason = view.stage === 'stalled' ? '' : reasonSentence(view.error.message);
     } else if (status === 'policy_refused' && verdict && Array.isArray(verdict.reasons) && verdict.reasons.length) {
       move.reason = reasonSentence(verdict.reasons[verdict.reasons.length - 1]);
@@ -797,36 +755,34 @@
       move.detail = rail;
       move.reason = reasonSentence(rail || 'The venue did not take it.');
     }
+    if (!move.detail && rail) move.detail = rail;
 
-    /* The legs. A draft names them exactly; a propose's own arguments name
-       them well enough; a receipt names them as what left and what arrived. */
     var d = draft || {};
     if (kind === 'swap') {
       var q = isObject(d.quote) ? d.quote : null;
-      /* Both legs sit inside NEAR Intents: chain and toChain on a swap name the
-         assets' home chains, not places the money goes. */
       move.from = { symbol: d.fromSymbol || args.fromSymbol, place: 'intents', amount: num(d.amountIn !== undefined ? d.amountIn : args.amountIn) };
       move.to = { symbol: d.toSymbol || args.toSymbol, place: 'intents', amount: q ? num(q.amountOut) : null, about: true };
       if (q) move.feeUsd = num(q.feeUsd);
-      /* The floor the fill is held to. It is the protection on a swap, so it
-         stays on the card whether the rail quoted it or the draft named it. */
-      /* Through floorText whichever source names it: the rail's floor is a string in base
-         precision, and a 24-place wNEAR figure printed whole (2026-09-20). */
-      var floor = sim && isObject(sim.swap) && num(sim.swap.receivesAtLeast) !== null ? floorText(num(sim.swap.receivesAtLeast)) : null;
-      if (floor === null && num(args.minAmountOut) !== null) floor = floorText(num(args.minAmountOut));
-      if (floor === null && d.minAmountOut !== undefined && num(d.minAmountOut) !== null) floor = floorText(num(d.minAmountOut));
-      if (floor !== null) move.quote = 'at least ' + floor + ' ' + String(move.to.symbol || '');
+      /* The floor the fill is held to: the protection on a swap, whether the rail quoted it
+         or the draft named it. */
+      var floor = sim && isObject(sim.swap) && num(sim.swap.receivesAtLeast) !== null ? num(sim.swap.receivesAtLeast) : null;
+      if (floor === null && num(args.minAmountOut) !== null) floor = num(args.minAmountOut);
+      if (floor === null && d.minAmountOut !== undefined && num(d.minAmountOut) !== null) floor = num(d.minAmountOut);
+      move.floor = floor;
+      if (floor !== null) move.quote = 'at least ' + floorText(floor) + ' ' + String(move.to.symbol || '');
       if (move.to.amount === null && sim && isObject(sim.swap) && num(sim.swap.receives) !== null) move.to.amount = num(sim.swap.receives);
       if (move.feeUsd === null && sim && isObject(sim.swap) && num(sim.swap.feeUsd) !== null) move.feeUsd = num(sim.swap.feeUsd);
     } else if (kind === 'intents_deposit') {
       move.from = { symbol: d.symbol || args.symbol, place: d.chain || args.chain, amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.minCredited), floor: true };
+      move.floor = num(d.minCredited);
     } else if (kind === 'intents_withdraw') {
       move.from = { symbol: d.symbol || args.symbol, place: 'intents', amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = { symbol: d.symbol || args.symbol, place: d.chain || args.chain, amount: num(d.minReceived), floor: true };
+      move.floor = num(d.minReceived);
     } else if (kind === 'intents_send' || kind === 'intents_pay') {
       /* The receiver is the fact this card exists to show: the whole address, never
-         shortened, on the leg the money lands on, with where it lands beside it. */
+         shortened, where the decision is made. */
       var send = sendFacts || {};
       var sendSim = sim && isObject(sim.send) ? sim.send : null;
       var where = kind === 'intents_send' ? 'intents' : String(d.network || send.where || args.where || '');
@@ -839,16 +795,14 @@
         address: String(d.to || send.to || args.to || ''),
         explorer: sendSim && sendSim.explorer ? sendSim.explorer : null
       };
+      move.floor = move.to.amount;
       if (sendSim && num(sendSim.feeUsd) !== null) move.feeUsd = num(sendSim.feeUsd);
       move.recipient = isObject(d.recipient) ? d.recipient : (isObject(send.recipient) ? send.recipient : null);
       move.activity = sendSim && sendSim.activity ? String(sendSim.activity) : '';
       move.preflight = Array.isArray(data.preflight) && data.preflight.length ? data.preflight[data.preflight.length - 1] : null;
     } else if (kind === 'hl_deposit' || kind === 'hl_withdraw') {
-      /* The same shape as the swap card: the leg says what the quote expects ("about"), the
-         facts line holds the floor the rail holds the venue to ("at least"), and the settled
-         figure replaces both once the row confirms. The leg used to print the floor while the
-         summary said the quote, two numbers for one fact (node B's review, 2026-09-20). A row
-         whose quote named no expected figure keeps the floor on the leg, as before. */
+      /* The leg says what the quote expects ("about"), the facts hold the floor the rail
+         holds the venue to ("at least"), and the settled figure replaces both once it lands. */
       var hlSim = sim && isObject(sim.send) ? sim.send : null;
       var hlFloor = hlSim && num(hlSim.arrivesAtLeast) !== null ? num(hlSim.arrivesAtLeast) : num(kind === 'hl_deposit' ? d.minCredited : d.minReceived);
       var hlArrives = hlSim && num(hlSim.arrives) !== null ? num(hlSim.arrives) : null;
@@ -858,15 +812,16 @@
       move.to = hlArrives !== null
         ? { symbol: 'USDC', place: outPocket, amount: hlArrives, about: true }
         : { symbol: 'USDC', place: outPocket, amount: hlFloor, floor: true };
+      move.floor = hlFloor;
       if (hlArrives !== null && hlFloor !== null) move.quote = 'at least ' + floorText(hlFloor) + ' USDC';
       if (hlSim && num(hlSim.feeUsd) !== null) move.feeUsd = num(hlSim.feeUsd);
     } else if (kind === 'trade' || kind === 'trade_change') {
       var plan = isObject(d.plan) ? d.plan : (isObject(args.plan) ? args.plan : null);
       if (plan) {
         move.title = (plan.side === 'short' ? 'Short ' : 'Long ') + String(plan.symbol || '');
-        /* The collateral, not the notional. The figure that leads a trade card is
-           the one the policy governs and the one that can be lost; the notional
-           is a multiple of it and reads beside that multiple. */
+        move.coin = String(plan.symbol || '');
+        /* The collateral, not the notional: the figure the policy governs and the one that
+           can be lost. */
         var stake = num(d.amountUsd !== undefined ? d.amountUsd : (isObject(d.risk) ? d.risk.marginUsd : null));
         move.from = { symbol: 'USDC', place: 'hyperliquid', amount: stake === null ? num(plan.sizeUsd) : stake, usd: true, label: 'at stake' };
         var stop = num(plan.stop);
@@ -891,22 +846,24 @@
       if (isObject(data.received)) move.to = { symbol: data.received.symbol, place: data.toChain, amount: num(data.received.amount) };
       move.feeUsd = num(data.feesUsd);
     }
-    /* A rule change's sentence is the one string on a proposal that the agent
-       types rather than the app composes, so the view's line wins wherever there
-       is one and the draft's own words are the fallback for a payload with no
-       view. The dock passes the app's fixed line in that slot, and the dock is
-       the card that decides whether to trust what the agent wrote. */
+    /* A rule change's sentence is the one string on a proposal that the agent types rather
+       than the app composes, so the view's line wins wherever there is one. */
     if (kind === 'policy_change' && !(view && view.sentence)) {
       move.summary = String(d.sentence || args.sentence || move.summary || '');
     }
     return move;
   }
 
+  /* A kind nobody wrote a word for still reads as words, never as the raw enum. */
+  function kindWords(kind) {
+    var words = String(kind === null || kind === undefined ? '' : kind).replace(/_/g, ' ').trim();
+    if (!words) return 'Move';
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+
   /* A floor to six significant figures, CUT rather than rounded. It is a promise the rail holds
-     the venue to, so it keeps more places than a balance does and never says more than the
-     rail does: rounding half-up printed 5.934637 as 5.93464, a floor the venue could legally
-     land under (review, 2026-09-20). Read by a person, so it does not keep all twenty-four of
-     a NEAR figure's places either. */
+     the venue to, so it never says more than the rail does: rounding half-up printed 5.934637
+     as 5.93464, a floor the venue could legally land under. */
   function floorText(value) {
     var n = Number(value);
     if (!isFinite(n)) return '';
@@ -916,9 +873,17 @@
     return cut.toLocaleString('en-US', { maximumSignificantDigits: 6 });
   }
 
-  /* The address in groups of four so a person can check it against what they
-     typed, group by group. A named NEAR account stays whole: splitting
-     alice.near into syllables helps nobody. */
+  /* An amount on the card's face: four places for a whole coin, four significant figures under
+     one, so 0.00149 ETH reads as 0.00149 and not as 0.0015. */
+  function amountText(value) {
+    var n = num(value);
+    if (n === null) return '';
+    if (Math.abs(n) >= 1 || n === 0) return dom.qty(n);
+    return n.toLocaleString('en-US', { maximumSignificantDigits: 4 });
+  }
+
+  /* The address in groups of four so a person can check it against what they typed, group
+     by group. A named NEAR account stays whole: splitting alice.near helps nobody. */
   function groupsOf(address) {
     var s = String(address || '');
     if (s === '') return [];
@@ -928,70 +893,52 @@
     return out;
   }
 
-  function legRow(leg, role) {
-    var row = dom.el('div', 'tcard-leg');
-    row.setAttribute('data-leg', role);
-    row.appendChild(logo(leg.symbol || '', 20));
-    var text = dom.el('span', 'tcard-leg-text');
-    var amount = dom.el('span', 'tcard-leg-amount');
-    if (leg.amount !== null && leg.amount !== undefined) {
-      if (leg.floor) amount.appendChild(dom.el('span', 'tcard-leg-floor', 'at least '));
-      else if (leg.about) amount.appendChild(dom.el('span', 'tcard-leg-floor', 'about '));
-      amount.appendChild(mono('', leg.usd ? dom.usd(leg.amount) : (leg.floor ? floorText(leg.amount) : dom.qty(leg.amount))));
-      amount.appendChild(dom.el('span', 'tcard-leg-symbol', leg.usd ? String(leg.symbol || '') : ' ' + String(leg.symbol || '')));
-    } else {
-      amount.appendChild(dom.el('span', 'tcard-leg-symbol', String(leg.symbol || '')));
+  /* A receiver on the face of a send: every character in groups, a Copy, the explorer link
+     when the server built one, and whether this is the first send to it: a first send to an
+     address is the one a person should look at twice. */
+  function addressBlock(address, explorer, recipient) {
+    var wrap = dom.el('div', 'mcard-address');
+    var line = dom.el('p', 'mcard-address-line mono');
+    var groups = groupsOf(address);
+    for (var i = 0; i < groups.length; i += 1) line.appendChild(dom.el('span', 'tcard-leg-group', groups[i]));
+    dom.setAttr(line, 'data-address', address);
+    wrap.appendChild(line);
+    var actions = dom.el('div', 'tcard-leg-actions');
+    actions.appendChild(copyButton(address));
+    if (explorerUrl(explorer)) {
+      var link = dom.el('a', 'btn btn-quiet btn-sm tcard-leg-explorer');
+      setHref(link, explorer);
+      link.target = '_blank';
+      link.rel = 'noreferrer noopener';
+      link.appendChild(dom.el('span', 'btn-label', 'Explorer'));
+      link.appendChild(icon('external'));
+      actions.appendChild(link);
     }
-    text.appendChild(amount);
-    var where = leg.place ? chainName(leg.place) : '';
-    var placeText = where ? (leg.place === 'intents' ? 'inside ' : role === 'from' ? 'from ' : 'to ') + where : '';
-    if (leg.label) placeText = placeText ? leg.label + ', ' + placeText : leg.label;
-    if (placeText) text.appendChild(dom.el('span', 'tcard-leg-place', placeText));
-    /* A send lands on an address, and the address is the whole point: every character,
-       in groups of four, a Copy, and the explorer link when the server built one. */
-    if (leg.address) {
-      var address = dom.el('p', 'tcard-leg-address mono');
-      var groups = groupsOf(leg.address);
-      for (var i = 0; i < groups.length; i += 1) address.appendChild(dom.el('span', 'tcard-leg-group', groups[i]));
-      dom.setAttr(address, 'data-address', leg.address);
-      text.appendChild(address);
-      var actions = dom.el('div', 'tcard-leg-actions');
-      actions.appendChild(copyButton(leg.address));
-      if (explorerUrl(leg.explorer)) {
-        var link = dom.el('a', 'btn btn-quiet btn-sm tcard-leg-explorer');
-        setHref(link, leg.explorer);
-        link.target = '_blank';
-        link.rel = 'noreferrer noopener';
-        link.appendChild(dom.el('span', 'btn-label', 'Explorer'));
-        link.appendChild(icon('external'));
-        actions.appendChild(link);
-      }
-      text.appendChild(actions);
-    }
-    row.appendChild(text);
-    return row;
-  }
-
-  function headFigure(leg) {
-    if (!leg || leg.amount === null || leg.amount === undefined) return '';
-    return leg.usd ? dom.usd(leg.amount) : dom.qty(leg.amount) + ' ' + String(leg.symbol || '');
+    wrap.appendChild(actions);
+    var known = isObject(recipient) && recipient.known === true;
+    var count = known ? (num(recipient.count) || 0) : 0;
+    var note = dom.el('p', 'mcard-address-note', known
+      ? 'Sent here ' + count + (count === 1 ? ' time before.' : ' times before.')
+      : 'First send to this address.');
+    dom.setAttr(note, 'data-first', known ? null : 'true');
+    wrap.appendChild(note);
+    return wrap;
   }
 
   function moveIcon(kind) {
     if (kind === 'trade' || kind === 'trade_change') return icon('long');
     if (kind === 'intents_deposit' || kind === 'hl_deposit') return icon('deposit');
     if (kind === 'intents_withdraw' || kind === 'intents_send' || kind === 'intents_pay' || kind === 'hl_withdraw') return icon('withdraw');
+    if (kind === 'policy_change') return icon('armed');
     return icon('swap');
   }
 
-  /* The legs, off the view's money: what left, what arrives, and the two
-     pockets by name. A view is the only place that knows both sides after the
-     rail has answered, so it wins over the draft wherever it has the figure. */
+  /* The legs, off the view's money: what left, what arrives, and the two pockets by name. A
+     view is the only place that knows both sides after the rail has answered, so it wins over
+     the draft wherever it has the figure. */
   function viewLegs(view, fallback) {
     var money = isObject(view.money) ? view.money : {};
     var symbol = String(money.symbol || (fallback.from && fallback.from.symbol) || '');
-    /* The coin that arrives is not the coin spent on a swap. Both legs used to read the one
-       symbol, so a confirmed swap into wNEAR said "2.0097 USDC" (2026-09-20). */
     var toSymbol = String(money.toSymbol || (fallback.to && fallback.to.symbol) || symbol);
     var from = money.amountIn === null || money.amountIn === undefined ? fallback.from : {
       symbol: symbol,
@@ -1001,11 +948,9 @@
       label: fallback.from ? fallback.from.label : undefined
     };
     var base = fallback.to || {};
-    var landed = view.stage === 'confirmed';
-    /* Confirmed, the figure is what arrived and it is a fact. Before that a leg that carries
-       a floor keeps the floor ("at least"), because the view's figure is the quote's expected
-       amount and printing that under "at least" promised more than the rail holds the venue
-       to; a leg without a floor shows the expected figure as "about". */
+    var landed = view.stage === 'confirmed' || view.state === 'done';
+    /* Landed, the figure is what arrived and it is a fact. Before that a leg that carries a
+       floor keeps the floor, and one without shows the quote's expected figure as "about". */
     var keepFloor = base.floor === true && !landed && base.amount !== null && base.amount !== undefined;
     var to = (money.amountOut === null || money.amountOut === undefined) && !keepFloor ? fallback.to : {
       symbol: toSymbol,
@@ -1019,9 +964,7 @@
     return { from: from, to: to, feeUsd: money.feeUsd === null || money.feeUsd === undefined ? fallback.feeUsd : num(money.feeUsd) };
   }
 
-  /* The view names a pocket by its label ("NEAR Intents", "Hyperliquid") and a draft names it
-     by its id; legRow decides "inside" against the id, so a label has to come back to one or
-     the out leg of a swap reads "to NEAR Intents" over money that never left it. */
+  /* The view names a pocket by its label ("NEAR Intents", "Hyperliquid") and a draft by its id. */
   function pocketId(pocket) {
     if (!pocket) return '';
     var text = String(pocket);
@@ -1031,10 +974,38 @@
     return window.PhosphorChains ? window.PhosphorChains.idOf(text) : text;
   }
 
-  /* A text that changes with a fade rather than a cut. The new words are set at once and
-     fade in over 240 ms (ui/design/chatcard.css); the attribute alternates between two names
-     so the animation restarts on every change and never on a repaint that changed nothing.
-     The first paint sets no fade: the card's own entrance already carries it in. */
+  function reducedMotion() {
+    var motion = window.PhosphorMotion;
+    return !!(motion && typeof motion.reduced === 'function' && motion.reduced());
+  }
+
+  /* A card that changes state eases to its new height rather than jumping (criterion 5.3): the
+     facts and the buttons leaving after a yes, a late line arriving, a working card's two lines
+     becoming the done card's one. The height is held where it was for a frame and let go to
+     where it is now; the column's follow keeps its end in view through it. */
+  var EASE_MS = 240;
+
+  function easeHeight(card, from, memo) {
+    if (!(from > 0) || reducedMotion() || typeof card.getBoundingClientRect !== 'function') return;
+    var to = card.getBoundingClientRect().height;
+    if (!(Math.abs(to - from) > 1)) return;
+    window.clearTimeout(memo.easeTimer);
+    card.style.transition = 'none';
+    card.style.overflow = 'hidden';
+    card.style.height = from + 'px';
+    card.getBoundingClientRect();
+    card.style.transition = 'height ' + EASE_MS + 'ms var(--ease-out)';
+    card.style.height = to + 'px';
+    memo.easeTimer = window.setTimeout(function () {
+      card.style.height = '';
+      card.style.overflow = '';
+      card.style.transition = '';
+    }, EASE_MS + 40);
+  }
+
+  /* A text that changes with a fade rather than a cut. The attribute alternates between two
+     names so the animation restarts on every change and never on a repaint that changed
+     nothing. The first paint sets no fade: the card's own entrance already carries it in. */
   function fadeText(node, text, memo, key) {
     var next = String(text || '');
     if (memo[key] === next) return false;
@@ -1049,10 +1020,9 @@
     return true;
   }
 
-  /* THE ONE FOLD under the facts: who decided and when, the reference support asks for, the
-     hash where the money is, the vendor's own word on a move that stopped, and a send's
-     checks. Closed until a person opens it, and the open state is the caller's so it
-     survives every repaint. */
+  /* THE ONE FOLD: who decided and when, the reference support asks for, the hash where the
+     money is, the venue's own words on a move that stopped, and a send's checks. Closed until
+     a person opens it, and the open state is the caller's so it survives every repaint. */
   function detailsFold(opts) {
     var o = opts || {};
     var wrap = dom.el('div', 'tcard-details');
@@ -1071,214 +1041,609 @@
     function apply() {
       dom.setAttr(wrap, 'data-open', open ? 'true' : 'false');
       dom.setAttr(head, 'aria-expanded', open ? 'true' : 'false');
-      dom.setAttr(head, 'aria-label', (open ? 'Close' : 'Open') + ' the details');
+    }
+    function set(next, tell) {
+      open = !!next;
+      apply();
+      if (tell && typeof o.onToggle === 'function') o.onToggle(open);
     }
     dom.on(head, 'click', function (event) {
       if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
-      open = !open;
-      apply();
-      if (typeof o.onToggle === 'function') o.onToggle(open);
+      set(!open, true);
     });
     apply();
-    return { wrap: wrap, body: body, isOpen: function () { return open; }, setOpen: function (next) { open = !!next; apply(); } };
+    return {
+      wrap: wrap,
+      head: head,
+      body: body,
+      isOpen: function () { return open; },
+      setOpen: function (next) { set(next, false); },
+      toggle: function () { set(!open, true); }
+    };
   }
 
-  /* ONE CARD PER MOVE, ONE SKELETON FOR EVERY KIND, REPAINTED IN PLACE.
+  /* ---------- the plain state ---------- */
 
-     The head: what it is, how much, and the stage word. The body: the two legs (what leaves,
-     what arrives and the two pockets), the facts (at least, fee), the stage line (the one
-     sentence of copy for the stage and the clock since it last changed), the reason when it
-     stopped, and one fold for the checks and the reference. A swap, a deposit, a payout and
-     a rule change differ in their facts and never in their shape.
+  /* FOUR STATES, NOT TWENTY-THREE. Karim, 2026-09-23: statuses felt delayed, three clocks
+     ticked and a person did not know where to look. A move is working, needs you, done, or
+     did not go through, and a working move is late once it runs past its usual time. The view
+     names the state (contract 5); a view from before that field is read through its stage. */
+  var PLAIN_STATES = { working: true, needs_you: true, done: true, didnt_go_through: true };
+  var WAITING_STAGES = { waiting_for_you: true, waiting_for_unlock: true, waiting_for_touch: true };
+  var WAITING_STATUS = { pending: true, pending_unlock: true, awaiting_touch: true };
 
-     The card is built once and painted: `node.__paint(data, extra)` takes the next row and
-     changes the words that changed, so a stage change is a fade on the state word and the
-     stage line, the clock moves, the legs keep their place and a fold a person closed stays
-     closed. Rebuilding the card on every frame replayed its entrance and dropped the folds
-     (Karim, 2026-09-18, on a card that jumped every time its row moved). */
+  /* The word a working card wears, by kind. Only the kind: which vendor phase the rail is in is
+     evidence for Details, never the face. */
+  var WORKING_WORDS = {
+    swap: 'Swapping',
+    intents_send: 'Sending',
+    intents_pay: 'Paying out',
+    intents_withdraw: 'Withdrawing',
+    intents_deposit: 'Depositing',
+    hl_deposit: 'Funding trading',
+    hl_withdraw: 'Bringing it back',
+    trade: 'Placing the trade',
+    trade_change: 'Changing the trade',
+    policy_change: 'Saving the change'
+  };
+
+  /* A usual duration for a kind whose view names none, so the progress track has a pace. */
+  var USUAL_SEC = 45;
+
+  function rowState(row, status) {
+    if (row.placeholder === true) return row.failed === true ? 'didnt_go_through' : 'working';
+    if (WAITING_STATUS[status]) return 'needs_you';
+    if (status === 'executed') return 'done';
+    if (status === 'failed' || status === 'refused' || status === 'policy_refused') return 'didnt_go_through';
+    if (isObject(row.verdict) && row.verdict.outcome === 'refuse') return 'didnt_go_through';
+    if (isObject(row.simulation) && row.simulation.ok === false && !row.status) return 'didnt_go_through';
+    return 'working';
+  }
+
+  /* The sentence under a move that did not go through: what happened, where the money is,
+     what to do. The view's reason when it has one, else the plainest line on hand. */
+  function didntSentence(row, view, move) {
+    if (view && isObject(view.reason) && typeof view.reason.sentence === 'string' && view.reason.sentence) return String(view.reason.sentence);
+    if (row.placeholder === true) return 'This did not reach your wallet. Nothing moved.';
+    var stage = view ? view.stage : '';
+    if (stage === 'declined' || row.status === 'refused') return 'You said no. Nothing moved.';
+    /* A rule's refusal is the app's own sentence about its own rule, and it is true to the
+       cause (no price, a cap, a failed check). A venue's failure is the venue's words, which
+       stay behind Details: the face gets the app's plain copy for that end instead. */
+    if ((stage === 'refused' || row.status === 'policy_refused' || (!view && isObject(row.verdict) && row.verdict.outcome === 'refuse')) && move.reason) return move.reason;
+    if (stage === 'failed') return 'It did not go through, and nothing more will be signed. Check your balance before you try again.';
+    if (view && view.stageCopy) return String(view.stageCopy);
+    return 'It did not go through. Check your balance before you try again.';
+  }
+
+  function plainOf(row, view, move) {
+    var status = typeof row.status === 'string' ? row.status : '';
+    var state = view && PLAIN_STATES[view.state] ? view.state : null;
+    if (!state && view) {
+      if (WAITING_STAGES[view.stage]) state = 'needs_you';
+      else if (view.stage === 'confirmed') state = 'done';
+      else if (view.terminal === true && view.stage !== 'stalled') state = 'didnt_go_through';
+      else state = 'working';
+    }
+    if (!state) state = rowState(row, status);
+    var stage = view ? String(view.stage || '') : '';
+    var start = (view && (view.decidedAt || view.createdAt)) || row.decidedAt || row.createdAt || null;
+    /* `late` is the view's { elapsedSec, typicalSec } once a working move runs past its usual
+       time. The elapsed figure is counted here from the click, so the words move between
+       frames. */
+    var lateView = view && isObject(view.late) ? view.late : null;
+    var typical = view && num(view.typicalSec) !== null && num(view.typicalSec) > 0 ? num(view.typicalSec) : (lateView && num(lateView.typicalSec) > 0 ? num(lateView.typicalSec) : null);
+    var elapsed = secondsSince(start);
+    if (elapsed === null && lateView && num(lateView.elapsedSec) !== null) elapsed = num(lateView.elapsedSec);
+    var flagged = !!view && (view.late === true || lateView !== null || stage === 'stalled');
+    var late = state === 'working' && !row.placeholder && (flagged || (typical !== null && elapsed !== null && elapsed > typical));
+    return {
+      state: state,
+      stage: stage,
+      late: late,
+      start: start,
+      typical: typical,
+      elapsed: elapsed,
+      took: view && num(view.tookSec) !== null && num(view.tookSec) > 0 ? num(view.tookSec) : null,
+      held: stage === 'held' || (status === 'approved' && typeof row.heldSince === 'string'),
+      locked: status === 'pending_unlock' || stage === 'waiting_for_unlock',
+      touching: status === 'awaiting_touch' || stage === 'waiting_for_touch',
+      declined: stage === 'declined',
+      placeholder: row.placeholder === true,
+      retry: !!view && isObject(view.reason) && view.reason.retry === true,
+      sentence: state === 'didnt_go_through' ? didntSentence(row, view, move) : ''
+    };
+  }
+
+  function stateWords(plain, move) {
+    if (plain.state === 'needs_you') {
+      if (plain.locked) return 'Unlock to decide';
+      if (plain.touching) return 'Confirm on your Mac';
+      return 'Needs your OK';
+    }
+    if (plain.state === 'done') return plain.took !== null ? 'Done · ' + spanWords(plain.took) : 'Done';
+    if (plain.state === 'didnt_go_through') return plain.declined ? 'Cancelled' : "Didn't go through";
+    if (plain.placeholder) return move.kind === 'swap' ? 'Checking prices' : 'Getting ready';
+    if (plain.late) return 'Taking longer · ' + lateWords(plain.elapsed);
+    if (plain.held) return 'Waiting to start';
+    return WORKING_WORDS[move.kind] || 'Working';
+  }
+
+  /* ---------- the live cards' one clock ---------- */
+
+  /* One timer for every working card on screen, at a second, and only while one is working:
+     it moves the late words and nothing else. Each card says when it is done with it. */
+  var liveCards = [];
+  var liveTimer = 0;
+
+  function watchLive(fn) {
+    if (liveCards.indexOf(fn) === -1) liveCards.push(fn);
+    if (!liveTimer && typeof window.setInterval === 'function') liveTimer = window.setInterval(tickLive, 1000);
+  }
+
+  function tickLive() {
+    for (var i = liveCards.length - 1; i >= 0; i -= 1) {
+      if (liveCards[i]() === false) liveCards.splice(i, 1);
+    }
+    if (!liveCards.length && liveTimer) {
+      window.clearInterval(liveTimer);
+      liveTimer = 0;
+    }
+  }
+
+  /* ---------- the move card ---------- */
+
+  /* A line of figures parted by a quiet dot, each a word and a figure: "You pay 500 USDC ·
+     You get at least 0.1843 ETH · Fee $0.21", the number in mono and its coin in the reading
+     face. Built once per shape, and the numbers roll (dom.setNumber) when a later frame moves
+     them. */
+  function factsFor(move, legs) {
+    var from = legs.from || move.from;
+    var out = [];
+    var kind = move.kind;
+    var toSymbol = String((legs.to && legs.to.symbol) || (move.to && move.to.symbol) || '');
+    var inFact = null;
+    if (from && from.amount !== null && from.amount !== undefined) {
+      inFact = from.usd ? [dom.usd(from.amount), ''] : [amountText(from.amount), String(from.symbol || '')];
+    }
+    var floorFact = move.floor !== null && move.floor !== undefined ? [floorText(move.floor), toSymbol] : null;
+    var words;
+    if (kind === 'swap') words = ['You pay', 'You get at least'];
+    else if (kind === 'intents_send' || kind === 'intents_pay') words = ['You send', 'They get at least'];
+    else if (kind === 'intents_withdraw' || kind === 'intents_deposit' || kind === 'hl_deposit' || kind === 'hl_withdraw') words = ['You move', 'Arrives at least'];
+    else return out;
+    if (inFact) out.push([words[0], inFact[0], inFact[1]]);
+    if (floorFact) out.push([words[1], floorFact[0], floorFact[1]]);
+    var fee = legs.feeUsd !== null && legs.feeUsd !== undefined ? dom.fee(legs.feeUsd) : '';
+    if (fee) out.push(['Fee', fee, '']);
+    return out;
+  }
+
+  function paintFacts(host, facts, memo) {
+    var shape = facts.map(function (f) { return f[0] + ':' + f[2]; }).join('|');
+    if (memo.factShape !== shape) {
+      memo.factShape = shape;
+      dom.clear(host);
+      memo.factValues = [];
+      for (var i = 0; i < facts.length; i += 1) {
+        if (i > 0) host.appendChild(dom.el('span', 'mcard-dot', '·'));
+        var part = dom.el('span', 'mcard-fact');
+        part.appendChild(dom.el('span', '', facts[i][0] + ' '));
+        var value = dom.el('b', 'mcard-fact-value');
+        var figure = dom.el('span', 'mono');
+        value.appendChild(figure);
+        if (facts[i][2]) value.appendChild(dom.el('span', '', ' ' + facts[i][2]));
+        part.appendChild(value);
+        host.appendChild(part);
+        memo.factValues.push(figure);
+      }
+    }
+    for (var j = 0; j < facts.length; j += 1) dom.setNumber(memo.factValues[j], facts[j][1]);
+    dom.setHidden(host, !facts.length);
+  }
+
+  /* The coin marks at the head: the two a swap moves between, overlapped, or the one coin a
+     send or a trade is about, or the kind's own glyph in a disc when no coin says it. */
+  function paintMarks(host, move, legs, memo) {
+    var from = (legs.from && legs.from.symbol) || (move.from && move.from.symbol) || '';
+    var to = (legs.to && legs.to.symbol) || (move.to && move.to.symbol) || '';
+    var key;
+    if (move.kind === 'swap' && from && to) key = 'pair:' + from + ':' + to;
+    else if (move.coin) key = 'coin:' + move.coin;
+    else if (from && move.kind !== 'policy_change' && move.kind !== 'trade_change') key = 'coin:' + from;
+    else key = 'glyph:' + move.kind;
+    if (memo.marks === key) return;
+    memo.marks = key;
+    dom.clear(host);
+    var parts = key.split(':');
+    if (parts[0] === 'pair') {
+      host.appendChild(logo(parts[1], 24));
+      host.appendChild(logo(parts[2], 24));
+      dom.setAttr(host, 'data-pair', 'true');
+      return;
+    }
+    dom.setAttr(host, 'data-pair', null);
+    if (parts[0] === 'coin') {
+      host.appendChild(logo(parts[1], 24));
+      return;
+    }
+    var disc = dom.el('span', 'mcard-glyph');
+    disc.appendChild(moveIcon(move.kind));
+    host.appendChild(disc);
+  }
+
+  /* What the move is, in one line: "4 USDC -> about 0.00149 ETH" for a swap, "5 USDC -> alice.near"
+     for a send, the plan's own words for a trade or a rule. The amounts roll. */
+  function destinationWord(move, legs) {
+    var kind = move.kind;
+    var to = legs.to || move.to || {};
+    if (kind === 'intents_send' || kind === 'intents_pay') {
+      var address = String(to.address || '');
+      return address.length > 24 ? shortId(address) : address;
+    }
+    if (kind === 'hl_deposit') return 'trading account';
+    if (kind === 'hl_withdraw' || kind === 'intents_deposit') return 'your balance';
+    if (kind === 'intents_withdraw') return to.place ? chainName(to.place) : '';
+    return '';
+  }
+
+  function paintMove(host, move, legs, plain, memo, headline) {
+    var from = legs.from || move.from;
+    var to = legs.to || move.to;
+    var parts = [];
+    var twoLegs = move.kind === 'swap' || move.kind === 'intents_send' || move.kind === 'intents_pay'
+      || move.kind === 'intents_withdraw' || move.kind === 'intents_deposit' || move.kind === 'hl_deposit' || move.kind === 'hl_withdraw';
+    if (twoLegs && from && from.symbol) {
+      var fromAmount = from.amount !== null && from.amount !== undefined ? amountText(from.amount) : '';
+      parts.push({ kind: 'amount', value: fromAmount, symbol: String(from.symbol || '') });
+      parts.push({ kind: 'arrow' });
+      var word = destinationWord(move, legs);
+      if (move.kind === 'swap') {
+        var toAmount = plain.state !== 'didnt_go_through' && to && to.amount !== null && to.amount !== undefined ? amountText(to.amount) : '';
+        var soft = toAmount && plain.state !== 'done' ? (to.floor ? 'at least' : 'about') : '';
+        parts.push({ kind: 'amount', value: toAmount, symbol: String((to && to.symbol) || ''), soft: soft });
+      } else if (word) {
+        parts.push({ kind: 'word', value: word });
+      }
+    } else {
+      parts.push({ kind: 'title', value: headline || move.title });
+      if (from && from.usd && from.amount !== null && from.amount !== undefined) parts.push({ kind: 'amount', value: dom.usd(from.amount), symbol: '', bare: true });
+    }
+    var shape = parts.map(function (p) {
+      return p.kind === 'amount' ? 'a:' + p.symbol + ':' + (p.soft || '') + ':' + (p.value ? '1' : '0') : p.kind + ':' + (p.kind === 'arrow' ? '' : p.value);
+    }).join('|');
+    if (memo.moveShape !== shape) {
+      memo.moveShape = shape;
+      dom.clear(host);
+      memo.moveNumbers = [];
+      for (var i = 0; i < parts.length; i += 1) {
+        var p = parts[i];
+        if (p.kind === 'arrow') {
+          host.appendChild(glyph('arrow', 'mcard-arrow'));
+          continue;
+        }
+        if (p.kind === 'title' || p.kind === 'word') {
+          host.appendChild(dom.el('span', p.kind === 'title' ? 'mcard-title' : 'mcard-word', p.value));
+          continue;
+        }
+        var leg = dom.el('span', 'mcard-leg');
+        if (p.soft) leg.appendChild(dom.el('span', 'mcard-soft', p.soft + ' '));
+        var figure = dom.el('span', 'mono mcard-num');
+        leg.appendChild(figure);
+        if (p.symbol) leg.appendChild(dom.el('span', 'mcard-sym', (p.value ? ' ' : '') + p.symbol));
+        host.appendChild(leg);
+        memo.moveNumbers.push(figure);
+      }
+    }
+    var n = 0;
+    for (var k = 0; k < parts.length; k += 1) {
+      if (parts[k].kind !== 'amount') continue;
+      var node = memo.moveNumbers[n];
+      n += 1;
+      if (node) dom.setNumber(node, parts[k].value);
+    }
+  }
+
+  /* ONE CARD PER MOVE, AND IT CHANGES IN PLACE.
+
+     Karim, 2026-09-23: a status card covered the whole chat, statuses felt late, three clocks
+     ticked and tool steps cluttered the thread. The move lives here and nowhere else: one
+     compact card in the thread, built once and repainted by `node.__paint(row, extra)` on
+     every state frame. Working, it is one line with a hairline track easing along its bottom
+     edge at the move's usual pace; needing the person, it opens one line of figures and the
+     two buttons, and Approve breathes; done, it folds to "Done · 6s"; did not go through, it
+     says what happened, where the money is and what to do. The venue's own words and the ids
+     sit behind Details. No clock shows until a move is late. */
   function moveCard(data, extra) {
     var meta = extra || {};
-    var first = moveOf(meta.name, meta.input, data);
-    var parts = shell('move', moveIcon(first.kind), first.title, {
-      state: { tone: 'running', label: '' },
-      amount: '',
-      open: meta.open,
-      onToggle: meta.onToggle
-    });
-    var card = parts.card;
-    var body = parts.body;
+    var card = dom.el('section', 'tcard mcard');
+    card.setAttribute('data-card', 'move');
 
-    var legsHost = dom.el('div', 'tcard-legs');
-    var sentence = dom.el('div', 'tcard-sentence');
-    var facts = dom.el('div', 'tcard-facts mono');
-    var priceLine = dom.el('div', 'tcard-facts tcard-price');
-    /* The stage line is the copy over the clock, and both keep their room whatever they say:
-       two lines for the copy, one for the clock, so a stage whose sentence runs long and an
-       ending that stops the clock move nothing under them (5.3). */
-    var stage = dom.el('div', 'tcard-stage');
-    var copy = dom.el('span', 'tcard-stage-copy');
-    var clockCell = dom.el('div', 'tcard-stage-clock');
-    var clockFigure = mono('tcard-stage-since', '');
-    var clockUsual = dom.el('span', 'tcard-stage-usual', '');
-    clockCell.appendChild(clockFigure);
-    clockCell.appendChild(clockUsual);
-    stage.appendChild(copy);
-    stage.appendChild(clockCell);
-    /* The reason under a refused or failed move is body text, not a second red line: the
-       state chip already carries the tone, and a red chip beside a red sentence read as two
-       alarms at once to the anxiety judge (B01, B03, B11, B12, 2026-09-21). */
-    var reason = dom.el('div', 'tcard-note tcard-reason');
+    var head = dom.el('div', 'mcard-head');
+    var marks = dom.el('span', 'mcard-marks');
+    var moveLine = dom.el('span', 'mcard-move');
+    var stateBox = dom.el('span', 'mcard-state');
+    var stateIcon = dom.el('span', 'mcard-state-icon');
+    var stateWord = dom.el('span', 'mcard-state-word');
+    stateBox.appendChild(stateIcon);
+    stateBox.appendChild(stateWord);
+    head.appendChild(marks);
+    head.appendChild(moveLine);
+    head.appendChild(stateBox);
+    card.appendChild(head);
+
+    var body = dom.el('div', 'mcard-body');
+    var line = dom.el('p', 'mcard-line');
+    var facts = dom.el('p', 'mcard-facts');
+    var address = dom.el('div', 'mcard-extra mcard-to');
+    var decide = dom.el('div', 'mcard-extra mcard-decide');
+    /* One row for what can be pressed: Details at the left, the answers at the right. */
+    var bar = dom.el('div', 'mcard-bar');
+    var toggle = dom.el('button', 'mcard-details-toggle');
+    toggle.type = 'button';
+    toggle.appendChild(glyph('chevron', 'mcard-details-chevron'));
+    toggle.appendChild(dom.el('span', '', 'Details'));
+    var actions = dom.el('div', 'mcard-actions');
+    bar.appendChild(toggle);
+    bar.appendChild(actions);
+    var note = dom.el('div', 'mcard-note-slot');
     var details = detailsFold({ open: meta.detailsOpen === true, onToggle: meta.onDetailsToggle });
-    body.appendChild(legsHost);
-    body.appendChild(sentence);
+    body.appendChild(line);
     body.appendChild(facts);
-    body.appendChild(priceLine);
-    body.appendChild(stage);
-    body.appendChild(reason);
+    body.appendChild(address);
+    body.appendChild(decide);
+    body.appendChild(bar);
+    body.appendChild(note);
     body.appendChild(details.wrap);
+    card.appendChild(body);
+
+    /* The hairline along the bottom edge while the move works, easing toward the end over the
+       move's usual time and holding short of it until the move lands. */
+    var track = dom.el('span', 'mcard-track');
+    track.setAttribute('aria-hidden', 'true');
+    track.appendChild(dom.el('span', 'mcard-track-fill'));
+    card.appendChild(track);
 
     var memo = {};
-    var live = { since: null, fallback: 0, running: false };
-    var ticking = false;
+    var last = { row: data, meta: meta };
+    var ask = null;
 
-    function paintClock() {
-      if (!live.running) return;
-      var seconds = secondsSince(live.since);
-      dom.setText(clockFigure, spanWords(seconds === null ? live.fallback : seconds));
+    /* Working and done cards fold to their head, and the head opens the Details under it. A
+       card that asks or that did not go through shows Details as its own quiet line instead,
+       so the head of a card with buttons on it is never itself a button. */
+    function headToggles() {
+      return card.getAttribute('data-state') === 'working' || card.getAttribute('data-state') === 'done';
+    }
+    dom.on(head, 'click', function () {
+      if (!headToggles()) return;
+      details.toggle();
+      paint(last.row, last.meta);
+    });
+    dom.on(head, 'keydown', function (event) {
+      if (!headToggles()) return;
+      if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
+      event.preventDefault();
+      details.toggle();
+      paint(last.row, last.meta);
+    });
+    dom.on(toggle, 'click', function () {
+      details.toggle();
+      paint(last.row, last.meta);
+    });
+
+    /* The line under the head: why it did not go through, what a held move waits on, what a
+       late one is doing. One sentence, never the venue's raw words. */
+    function lineFor(plain, view, row, stale) {
+      var decision = window.PhosphorDecision;
+      if (plain.state === 'didnt_go_through') return plain.sentence;
+      if (stale) return 'This is no longer waiting on you. Activity has what happened to it.';
+      if (plain.state !== 'working') return '';
+      if (plain.held) return decision && typeof decision.heldLine === 'function' ? decision.heldLine(row) : 'Waiting for the checks to clear. Nothing is signed until they do.';
+      if (plain.late) {
+        /* A late move the app cannot vouch for yet ("we can't confirm yet whether this went
+           through") says so in the view's words; a plain slow one says it is only slow. */
+        if (view && isObject(view.reason) && view.reason.code !== 'needs_approval' && view.reason.sentence) return String(view.reason.sentence);
+        return view && view.stage === 'stalled' && view.stageCopy ? String(view.stageCopy) : 'This is taking longer than usual. Nothing needs you, and this card changes the moment it lands.';
+      }
+      return '';
+    }
+
+    /* The second's work on a working card: the late word and its line, nothing else. */
+    function liveTick() {
+      if (!card.isConnected || card.getAttribute('data-state') !== 'working') return false;
+      var row = isObject(last.row) ? last.row : {};
+      var move = moveOf(last.meta.name, last.meta.input, row);
+      var view = viewOf(row);
+      var plain = plainOf(row, view, move);
+      if (plain.state !== 'working') return false;
+      var wasLate = card.getAttribute('data-late') === 'true';
+      fadeText(stateWord, stateWords(plain, move), memo, 'word');
+      if (plain.late !== wasLate) paint(last.row, last.meta);
+      return true;
     }
 
     function paint(next, more) {
       var m = more || meta;
-      if (typeof m.detailsOpen === 'boolean' && details.isOpen() !== m.detailsOpen) details.setOpen(m.detailsOpen);
-      var move = moveOf(m.name, m.input, next);
-      var view = viewOf(next);
+      last = { row: next, meta: m };
+      var row = isObject(next) ? next : {};
+      /* The caller's open state wins only when the caller changed it: a head click toggles the
+         fold between two frames, and the frame after it still carries the old value. */
+      if (typeof m.detailsOpen === 'boolean' && m.detailsOpen !== memo.metaOpen) {
+        memo.metaOpen = m.detailsOpen;
+        if (details.isOpen() !== m.detailsOpen) details.setOpen(m.detailsOpen);
+      }
+      var move = moveOf(m.name, m.input, row);
+      var view = viewOf(row);
       var legs = view ? viewLegs(view, move) : move;
-      var state = stateOf(view);
+      var plain = plainOf(row, view, move);
+      var decision = window.PhosphorDecision;
       if (move.id) card.id = 'card-proposal-' + move.id;
+      var state = plain.state;
+      /* THE BUTTONS ARE THE SERVER'S. A card offers Cancel and Approve only on the state
+         frame's own row, and only while that frame lists it as waiting: a reply that came
+         through the conversation can draw the move and never the question, and a stored reply
+         from last week says pending forever. Until the frame lands (a few milliseconds) the card
+         shows the move without buttons. */
+      var asking = state === 'needs_you' && m.waiting === true && m.live === true;
+      var stale = state === 'needs_you' && m.waiting === false;
+      var fresh = card.getAttribute('data-state') === 'working' && state === 'done' && memo.painted === true;
+      /* The height before a change of state, read only then: a repaint that changes nothing
+         never forces a layout. */
+      var turning = memo.painted === true && card.isConnected && (card.getAttribute('data-state') !== state || (card.getAttribute('data-late') === 'true') !== plain.late);
+      var fromHeight = turning && typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect().height : 0;
+      dom.setAttr(card, 'data-state', state);
+      dom.setAttr(card, 'data-kind', move.kind);
+      dom.setAttr(card, 'data-late', plain.late ? 'true' : null);
+      dom.setAttr(card, 'data-lit', fresh ? 'true' : (state === 'done' ? card.getAttribute('data-lit') : null));
+      memo.painted = true;
 
-      dom.setText(parts.title, move.title);
-      var figure = headFigure(legs.from);
-      dom.setText(parts.figure, figure);
-      dom.setHidden(parts.figure, !figure);
-      fadeText(parts.state, state.label, memo, 'label');
-      dom.setAttr(parts.state, 'data-state', state.tone);
-      dom.setHidden(parts.state, !state.label);
+      paintMarks(marks, move, legs, memo);
+      /* A rule change and a change to a trade are said in the app's own sentence; an open
+         trade by its plan ("Long BTC") and its stake. */
+      var draftOp = isObject(row.draft) ? row.draft.op : undefined;
+      var sentenceKind = move.kind === 'policy_change' || move.kind === 'trade_change' || (move.kind === 'trade' && draftOp !== undefined && draftOp !== 'open');
+      var headline = decision && typeof decision.headlineOf === 'function' && sentenceKind
+        ? decision.headlineOf(Object.assign({}, row, { draft: row.draft || { kind: move.kind } }))
+        : '';
+      paintMove(moveLine, move, legs, plain, memo, headline);
 
-      /* The legs are rebuilt only when what they say changes, so a tick or a stage that
-         moved nothing about the money leaves them alone. */
-      var legKey = JSON.stringify([legs.from, legs.to]);
-      if (memo.legs !== legKey) {
-        memo.legs = legKey;
-        dom.clear(legsHost);
-        if (legs.from) legsHost.appendChild(legRow(legs.from, 'from'));
-        if (legs.to) legsHost.appendChild(legRow(legs.to, 'to'));
+      var word = stale ? 'No longer waiting' : stateWords(plain, move);
+      fadeText(stateWord, word, memo, 'word');
+      var iconName = state === 'done' ? 'done' : (asking && !plain.locked ? 'waiting' : '');
+      if (memo.icon !== iconName) {
+        memo.icon = iconName;
+        dom.clear(stateIcon);
+        if (iconName) stateIcon.appendChild(icon(iconName, 'mcard-state-glyph'));
       }
-      dom.setHidden(legsHost, !(legs.from || legs.to));
-      /* The sentence, unless both pockets are already drawn: a card that shows what
-         left and what lands does not need a line saying the same thing again. */
-      var line = move.summary && !(legs.from && legs.to) ? move.summary : '';
-      dom.setText(sentence, line);
-      dom.setHidden(sentence, !line);
+      dom.setHidden(stateIcon, !iconName);
 
-      var factBits = [];
-      if (move.quote) factBits.push(move.quote);
-      if (legs.feeUsd !== null && legs.feeUsd !== undefined) factBits.push('fee ' + dom.fee(legs.feeUsd));
-      dom.setText(facts, factBits.join(', '));
-      dom.setHidden(facts, !factBits.length);
-      /* A relay quote holds for about a minute and a click can come later than that: the
-         rail re-quotes at the click, and the card says so while the row waits on the person
-         (the relay rail hands simulation.swap.priceGoodForSec). */
-      var priceFor = view && view.stage === 'waiting_for_you' && isObject(next.simulation) && isObject(next.simulation.swap) ? num(next.simulation.swap.priceGoodForSec) : null;
-      dom.setText(priceLine, priceFor !== null && priceFor > 0 ? 'Price good for ' + roughWords(priceFor) + ', re-quoted at your click' : '');
-      dom.setHidden(priceLine, !(priceFor !== null && priceFor > 0));
+      var lineText = lineFor(plain, view, row, stale);
+      fadeText(line, lineText, memo, 'line');
+      dom.setHidden(line, !lineText);
 
-      /* The stage line: the one sentence the table gives this stage, and the clock since it
-         last changed. A stalled row is terminal and still counting, which is the whole
-         statement it makes; every other end stops the clock. */
-      var open = !!view && (!view.terminal || view.stage === 'stalled');
-      fadeText(copy, view ? String(view.stageCopy || '') : '', memo, 'copy');
-      live.running = open;
-      live.since = view ? view.lastChangeAt : null;
-      live.fallback = view ? Number(view.sinceChangeSec) || 0 : 0;
-      /* Open, the clock counts this stage against the typical figure. Ended with money moved
-         (confirmed, failed, refunded), it says how long the whole move took. A no from the
-         person or from a rule has no duration worth a line, and the line keeps its room. */
-      var took = !open && view && typeof view.tookSec === 'number' && view.tookSec > 0 && (view.stage === 'confirmed' || view.stage === 'failed' || view.stage === 'FAILED' || view.stage === 'REFUNDED' || view.stage === 'NOT_FOUND_OR_NOT_VALID');
-      if (open) {
-        dom.setText(clockUsual, typeof view.typicalSec === 'number' && view.typicalSec > 0 ? 'of about ' + aboutWords(view.typicalSec) : 'on this step');
-        paintClock();
-        if (!ticking) {
-          ticking = true;
-          tick(clockFigure, paintClock);
-        }
-      } else if (took) {
-        dom.setText(clockFigure, spanWords(view.tookSec));
-        dom.setText(clockUsual, 'end to end');
-      } else {
-        dom.setText(clockFigure, '');
-        dom.setText(clockUsual, '');
+      /* The figures a decision is made on, only while it is being made. */
+      paintFacts(facts, state === 'needs_you' ? factsFor(move, legs) : [], memo);
+
+      /* A send names its receiver on the face, whole, while the person decides. */
+      var receiver = state === 'needs_you' && legs.to && legs.to.address ? String(legs.to.address) : '';
+      if (memo.receiver !== receiver) {
+        memo.receiver = receiver;
+        dom.clear(address);
+        if (receiver) address.appendChild(addressBlock(receiver, legs.to.explorer, move.recipient));
       }
-      dom.setAttr(clockCell, 'data-empty', open || took ? null : 'true');
-      dom.setHidden(stage, !view);
+      dom.setHidden(address, !receiver);
 
-      dom.setText(reason, move.reason);
-      dom.setHidden(reason, !move.reason);
-
-      /* The fold: rebuilt each paint, it is a handful of lines and the state of the fold
-         lives on the fold rather than in them. */
-      var fold = details.body;
-      dom.clear(fold);
-      if (view) {
-        /* Who decided is the fact, and the clock is only its time. A policy decision carries
-           a decidedAt too (an auto-run under the ask line, a refusal by a rule), and reading
-           the clock alone said the human had clicked on every one of them (Karim's transcript,
-           2026-09-20). A refusal by a rule names no decider. */
-        if (view.decidedAt && view.decidedBy === 'human') factLine(fold, 'You clicked at', clock(view.decidedAt));
-        else if (view.decidedAt && view.decidedBy === 'policy' && view.stage !== 'refused') factLine(fold, 'Your rules allowed it at', clock(view.decidedAt));
-        /* "Confirmed at" belongs to a move that was confirmed. A refusal, a failure and a
-           refund all carry the moment they ended, and the word for that is not confirmed. */
-        if (view.settledAt) {
-          var done = view.stage === 'confirmed';
-          factLine(fold, done ? 'Confirmed at' : 'Ended at', clock(view.settledAt), done ? 'up' : null);
-        }
-        var txs = Array.isArray(view.txs) ? view.txs : [];
-        for (var i = 0; i < txs.length; i += 1) {
-          var leg = txs[i];
-          if (!leg || !leg.hash) continue;
-          referenceLine(fold, leg.running ? 'Where it is now' : (LEG_WORD[leg.leg] || 'Hash'), leg.hash, leg.explorer);
-        }
-        if (view.correlationId) referenceLine(fold, 'Reference', view.correlationId, null);
-        /* The vendor's own word is evidence on a move that stopped or is late and noise under
-           a word that already says Confirmed: it sits here, in the app's case, never on the
-           face of the card (5.4). */
-        if (view.providerStage && view.stage !== 'confirmed') factLine(fold, 'The transfer calls this', vendorWord(view.providerStage));
-        if (move.detail && move.detail !== move.reason) {
-          var recorded = dom.el('div', 'tcard-line tcard-recorded');
-          recorded.setAttribute('data-wrap', 'true');
-          recorded.appendChild(dom.el('span', 'tcard-line-label', 'What the app recorded'));
-          recorded.appendChild(dom.el('span', 'tcard-line-value', shortenIds(String(move.detail).replace(/\s+/g, ' ').trim())));
-          fold.appendChild(recorded);
-        }
-      } else if (move.id) {
-        referenceLine(fold, 'Reference', move.id, null);
-      }
-      if (move.kind === 'intents_send' || move.kind === 'intents_pay') {
-        var r = move.recipient;
-        var known = r && r.known === true;
-        var count = known ? (num(r.count) || 0) : 0;
-        factLine(fold, 'This address', known ? 'sent to ' + count + (count === 1 ? ' time before' : ' times before') : 'first send', known ? null : 'down');
-        if (move.activity) fold.appendChild(dom.el('div', 'tcard-note', move.activity));
-        if (move.preflight && window.PhosphorChecks && typeof window.PhosphorChecks.fold === 'function') {
-          window.PhosphorChecks.fold(fold, move.preflight, { open: false });
+      /* The deciding parts (decision.js): a rule change's arithmetic, a trade's risk, the lock
+         and Touch ID lines, and the two buttons. Rebuilt only when what they say changes, so a
+         heartbeat never rebuilds a button under a finger. */
+      var askKey = asking && decision && typeof decision.askKey === 'function' ? decision.askKey(row) : '';
+      /* "Try again" only where the view offers it, and never beside an ask. */
+      var retryKey = !asking && state === 'didnt_go_through' && plain.retry && decision && typeof decision.retryButton === 'function' ? 'retry:' + move.id : '';
+      if (memo.askKey !== askKey || memo.retryKey !== retryKey) {
+        memo.askKey = askKey;
+        memo.retryKey = retryKey;
+        dom.clear(decide);
+        dom.clear(actions);
+        dom.clear(note);
+        ask = null;
+        if (askKey) {
+          ask = decision.ask(row);
+          if (ask.face) decide.appendChild(ask.face);
+          actions.appendChild(ask.buttons);
+          note.appendChild(ask.note);
+        } else if (retryKey) {
+          var again = decision.retryButton(row);
+          if (again) actions.appendChild(again);
         }
       }
-      dom.setHidden(details.wrap, !fold.children.length);
+      dom.setHidden(decide, !decide.firstChild);
+
+      paintDetails(details.body, move, view, row, ask);
+      var hasDetails = !!details.body.firstChild;
+      var folds = headToggles();
+      /* A card that folds to its head opens its Details from the head; one that asks, or did
+         not go through, has the quiet Details toggle in its bar. The fold's own head is never
+         drawn on a move card. */
+      dom.setHidden(details.head, true);
+      dom.setHidden(details.wrap, !hasDetails || (folds && !details.isOpen()));
+      var toggled = !folds && hasDetails;
+      dom.setHidden(toggle, !toggled);
+      dom.setAttr(toggle, 'aria-expanded', details.isOpen() ? 'true' : 'false');
+      dom.setAttr(bar, 'data-open', details.isOpen() ? 'true' : null);
+      dom.setHidden(bar, !toggled && !actions.firstChild);
+      dom.setHidden(note, !note.firstChild);
+      var bodyShown = !!lineText || !facts.hidden || !!receiver || !!decide.firstChild || !bar.hidden || !details.wrap.hidden;
+      dom.setHidden(body, !bodyShown);
+
+      var toggles = folds && hasDetails;
+      dom.setAttr(head, 'role', toggles ? 'button' : null);
+      dom.setAttr(head, 'tabindex', toggles ? '0' : null);
+      dom.setAttr(head, 'aria-expanded', toggles ? (details.isOpen() ? 'true' : 'false') : null);
+
+      /* The track: a pace off the usual time, resumed from where the move is, so a repaint
+         never restarts it. Off the moment the move stops working. */
+      var usual = plain.typical || USUAL_SEC;
+      var into = plain.elapsed === null ? 0 : Math.min(plain.elapsed, usual);
+      track.style.setProperty('--track-dur', usual + 's');
+      track.style.setProperty('--track-at', '-' + into.toFixed(1) + 's');
+      if (state === 'working') watchLive(liveTick);
+      if (turning) easeHeight(card, fromHeight, memo);
     }
 
     card.__paint = paint;
     card.__details = details;
     paint(data, meta);
     return card;
+  }
+
+  /* The Details lines, rebuilt each paint: a handful of lines, and the fold's open state lives
+     on the fold rather than in them. */
+  function paintDetails(fold, move, view, row, ask) {
+    dom.clear(fold);
+    if (ask && ask.details) {
+      for (var a = 0; a < ask.details.length; a += 1) fold.appendChild(ask.details[a]);
+    }
+    if (view) {
+      if (view.decidedAt && view.decidedBy === 'human') factLine(fold, 'You approved it at', clock(view.decidedAt));
+      else if (view.decidedAt && view.decidedBy === 'policy' && view.stage !== 'refused') factLine(fold, 'Your rules allowed it at', clock(view.decidedAt));
+      if (view.settledAt) {
+        var done = view.stage === 'confirmed';
+        factLine(fold, done ? 'Landed at' : 'Ended at', clock(view.settledAt));
+      }
+      var txs = Array.isArray(view.txs) ? view.txs : [];
+      for (var i = 0; i < txs.length; i += 1) {
+        var leg = txs[i];
+        if (!leg || !leg.hash) continue;
+        referenceLine(fold, leg.running ? 'Where it is now' : (LEG_WORD[leg.leg] || 'Hash'), leg.hash, leg.explorer);
+      }
+      if (view.correlationId) referenceLine(fold, 'Reference', view.correlationId, null);
+      if (view.providerStage && view.stage !== 'confirmed') factLine(fold, 'The venue says', vendorWord(view.providerStage));
+    } else if (move.id) {
+      referenceLine(fold, 'Reference', move.id, null);
+    }
+    var priceFor = view && view.stage === 'waiting_for_you' && isObject(row.simulation) && isObject(row.simulation.swap) ? num(row.simulation.swap.priceGoodForSec) : null;
+    if (priceFor !== null && priceFor > 0) fold.appendChild(dom.el('div', 'tcard-note', 'Price good for ' + roughWords(priceFor) + ', checked again when you approve.'));
+    if (move.detail && move.detail !== move.reason) {
+      var recorded = dom.el('div', 'tcard-line tcard-recorded');
+      recorded.setAttribute('data-wrap', 'true');
+      recorded.appendChild(dom.el('span', 'tcard-line-label', 'The full record'));
+      recorded.appendChild(dom.el('span', 'tcard-line-value', shortenIds(String(move.detail).replace(/\s+/g, ' ').trim())));
+      fold.appendChild(recorded);
+    }
+    if (move.kind === 'intents_send' || move.kind === 'intents_pay') {
+      var r = move.recipient;
+      var known = r && r.known === true;
+      var count = known ? (num(r.count) || 0) : 0;
+      factLine(fold, 'This address', known ? 'sent to ' + count + (count === 1 ? ' time before' : ' times before') : 'first send');
+      if (move.activity) fold.appendChild(dom.el('div', 'tcard-note', move.activity));
+    }
+    /* The checks the app ran before signing, folded: every kind that runs a preflight carries
+       them, and a held move is waiting on them. */
+    var sendCard = window.PhosphorSendCard;
+    var checks = sendCard && typeof sendCard.preflightOf === 'function' ? sendCard.preflightOf(row) : move.preflight;
+    if (checks && window.PhosphorChecks && typeof window.PhosphorChecks.fold === 'function') {
+      window.PhosphorChecks.fold(fold, checks, { open: false });
+    }
   }
 
   /* ---------- the transaction card ---------- */
@@ -1497,7 +1862,7 @@
     var symbol = String(data.asset || data.symbol || '');
     var state = DEPOSIT_STATES[String(data.watching)] || DEPOSIT_STATES.show;
     var parts = shell('deposit', icon('deposit'), ok ? 'Deposit ' + symbol + ' on ' + (data.network || chainName(chain)) : 'Deposit', {
-      chip: ok ? chip(state[0], state[1], state[0] === 'landed' ? 'done' : '') : chip('failed', 'Not shown', 'refused'),
+      state: ok ? { tone: state[0], label: state[1] } : { tone: 'failed', label: 'Not shown' },
       at: extra.at,
       open: extra.open,
       onToggle: extra.onToggle
@@ -1630,31 +1995,6 @@
     return kvCard(safe, meta);
   }
 
-  /* THE RECEIPT, IN A SHELL IT CAN CLOSE.
-
-     The shared receipt card (ui/screens/receipt.js) is the whole record of a
-     move: the amount, the fee, the chain, the hash, the explorer link. It is
-     right in a popover and too tall for a thread, and it had no way to close.
-     Wrapped here, unchanged, under a one-line head that says the move, its
-     outcome, the amount and how long ago. The head folds it. */
-  function wrapReceipt(receipt, node, extra) {
-    var r = isObject(receipt) ? receipt : {};
-    var meta = extra || {};
-    var kind = String(r.kind || 'move');
-    var amount = num(r.amount);
-    var figure = amount === null ? '' : dom.qty(amount) + ' ' + String(r.symbol || '');
-    /* No stage word on this head: the receipt inside carries its own outcome, and the words
-       for a stage live in src/proposals/view.ts, which a receipt does not carry. */
-    var parts = shell('receipt', moveIcon(kind), TITLES[kind] || 'Move', {
-      amount: figure,
-      at: r.at || meta.at,
-      open: meta.open,
-      onToggle: meta.onToggle
-    });
-    if (node) parts.body.appendChild(node);
-    return parts.card;
-  }
-
   /* The fold handle of a card built here, for whoever holds the node. */
   function foldOf(node) {
     return node && node.__fold ? node.__fold : null;
@@ -1674,10 +2014,17 @@
     return out.join(', ');
   }
 
+  /* A row's plain state, for the conversation around the card: which cards wait on the
+     person, and whether anything is still working. */
+  function plainState(data) {
+    var row = isObject(data) ? data : {};
+    return plainOf(row, viewOf(row), moveOf('', null, row)).state;
+  }
+
   window.PhosphorCards = {
     render: render,
     kindFor: kindFor,
-    wrapReceipt: wrapReceipt,
+    plainState: plainState,
     foldOf: foldOf,
     floorText: floorText,
     glyph: glyph,

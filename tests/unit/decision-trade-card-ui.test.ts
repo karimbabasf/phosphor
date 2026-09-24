@@ -3,8 +3,8 @@
 // A plan at 20x posts $100 of margin and passes a $100 wall while its max loss at the stop is
 // $61.80; the wall read the margin. The card has to show both, in that order, with the
 // slippage bound beside them, so nothing about what the wall read is hidden from the person
-// who reads the card. Rendered through the real decision.js against a stub DOM that records
-// what was appended, the way decision-dock-ui.test.ts reaches the same script.
+// who reads the card. Rendered through the real cards.js and decision.js, the move card and the
+// part of it that asks, against a stub DOM that records what was appended.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,152 +12,92 @@ import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 import { fillChains } from '../fixtures/chains.ts';
 
-const SOURCE = readFileSync(new URL('../../ui/screens/decision.js', import.meta.url), 'utf8');
-
-type Node = {
-  tag: string;
-  className: string;
-  textContent: string;
-  hidden: boolean;
-  dataset: Record<string, string>;
-  attrs: Record<string, string>;
-  children: Node[];
-  appendChild(c: Node): Node;
-  insertBefore(c: Node, before: Node | null): Node;
-  hasAttribute(name: string): boolean;
-  getAttribute(name: string): string | null;
-  setAttribute(name: string, value: string): void;
-  removeAttribute(name: string): void;
-  firstChild: Node | null;
-  removeChild(c: Node): void;
-  addEventListener(type: string, fn: () => void): void;
-  querySelector(sel: string): Node | null;
-};
+type Node = Record<string, any>;
 
 function node(tag: string): Node {
+  const attrs: Record<string, string> = {};
   const n: Node = {
     tag,
     className: '',
-    textContent: '',
     hidden: false,
+    disabled: false,
+    isConnected: true,
     dataset: {},
-    attrs: {},
-    children: [],
-    appendChild(c) {
-      n.children.push(c);
-      return c;
-    },
-    insertBefore(c, before) {
+    style: { setProperty: () => {} },
+    children: [] as Node[],
+    parentNode: null,
+    own: '',
+    get textContent(): string { return n.children.length ? n.children.map((c: Node) => c.textContent).join('') : n.own; },
+    set textContent(value: string) { n.children.length = 0; n.own = String(value); },
+    get firstChild() { return n.children[0] ?? null; },
+    get nextSibling() { const s = n.parentNode ? n.parentNode.children : []; return s[s.indexOf(n) + 1] ?? null; },
+    appendChild(c: Node) { if (c.parentNode) c.parentNode.removeChild(c); c.parentNode = n; n.children.push(c); return c; },
+    insertBefore(c: Node, before: Node | null) {
+      if (c.parentNode) c.parentNode.removeChild(c);
+      c.parentNode = n;
       const at = before === null ? -1 : n.children.indexOf(before);
       if (at < 0) n.children.push(c);
       else n.children.splice(at, 0, c);
       return c;
     },
-    // The move card the ask draws wires a click and a key on its own head.
+    removeChild(c: Node) { const at = n.children.indexOf(c); if (at >= 0) n.children.splice(at, 1); c.parentNode = null; return c; },
     addEventListener: () => {},
+    removeEventListener: () => {},
     querySelector: () => null,
-    hasAttribute: (name) => name in n.attrs,
-    getAttribute: (name) => n.attrs[name] ?? null,
-    setAttribute(name, value) {
-      n.attrs[name] = value;
-    },
-    removeAttribute(name) {
-      delete n.attrs[name];
-    },
-    get firstChild() {
-      return n.children[0] ?? null;
-    },
-    removeChild(c) {
-      n.children = n.children.filter((x) => x !== c);
-    },
+    hasAttribute: (name: string) => name in attrs,
+    getAttribute: (name: string) => attrs[name] ?? null,
+    setAttribute: (name: string, value: string) => { attrs[name] = String(value); },
+    setAttributeNS: (_ns: string, name: string, value: string) => { attrs[name] = String(value); },
+    removeAttribute: (name: string) => { delete attrs[name]; },
   };
   return n;
 }
 
-function load(proposals: unknown[]): { card: Node; render: () => void } {
-  const dock = node('div');
-  const card = node('div');
-  const dom = {
-    el(tag: string, className?: string, text?: unknown) {
-      const n = node(tag);
-      if (className) n.className = className;
-      if (text !== undefined && text !== null) n.textContent = String(text);
-      return n;
-    },
-    setText(n: Node, text: unknown) {
-      n.textContent = text === undefined || text === null ? '' : String(text);
-    },
-    setAttr(n: Node, name: string, value: unknown) {
-      if (value === null || value === false || value === undefined) delete n.attrs[name];
-      else n.attrs[name] = value === true ? '' : String(value);
-    },
-    setHidden(n: Node, hidden: boolean) {
-      n.hidden = !!hidden;
-    },
-    clear(n: Node) {
-      n.children = [];
-    },
-    on: () => {},
-    usd: (v: number, d?: number) => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: d ?? 2, maximumFractionDigits: d ?? 2 }),
-    qty: (v: number) => String(v),
-    pct: (v: number) => `${(v * 100).toFixed(1)}%`,
-  };
-  let listener: (() => void) | null = null;
-  const sandbox: Record<string, unknown> = {
+/* The move card for a row, as the thread draws it once the state frame confirms it waits. */
+function cardFor(row: Record<string, any>): Node {
+  const sandbox: Record<string, any> = {
     window: {
-      PhosphorDom: dom,
-      PhosphorNet: {},
-      PhosphorApi: {},
-      PhosphorState: {
-        /* The dock also selects the vault slice, for the Touch ID sentence. The
-           render this harness drives is the proposals one. */
-        select: (name: string, fn: () => void) => {
-          if (name === 'proposals') listener = fn;
-        },
-        get: () => ({ proposals, policy: { outbound: { humanClickAboveUsd: 100 } } }),
-      },
-      PhosphorShell: { updateField: () => {} },
+      PhosphorNet: { readable: (e: Error) => String(e.message) },
+      PhosphorApi: { approve: () => Promise.resolve({}), refuse: () => Promise.resolve({}) },
+      PhosphorState: { select: () => () => {}, get: () => ({ proposals: [row] }) },
+      PhosphorShell: { setPending: () => {}, refresh: () => Promise.resolve() },
+      PhosphorIcons: { svg: (name: string) => { const i = node('svg'); i.setAttribute('data-icon', name); return i; } },
+      PhosphorMotion: { reduced: () => false },
+      setTimeout: () => 0,
+      clearTimeout: () => {},
+      setInterval: () => 0,
+      clearInterval: () => {},
     },
-    document: {
-      createElement: (tag: string) => node(tag),
-      getElementById: (id: string) => (id === 'overlay' ? dock : id === 'overlay-card' ? card : null),
-      addEventListener: () => {},
-    },
+    document: { createElement: (tag: string) => node(tag), createElementNS: (_ns: string, tag: string) => node(tag), addEventListener: () => {} },
+    navigator: {},
     console,
     URL,
   };
   createContext(sandbox);
   fillChains(sandbox, (src, name) => runInContext(src, sandbox, { filename: name }));
-  runInContext(readFileSync(new URL('../../ui/core/links.js', import.meta.url), 'utf8'), sandbox,
-    { filename: 'ui/core/links.js' });
-  runInContext(readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8'), sandbox,
-    { filename: 'ui/core/dom.js' });
-  runInContext(readFileSync(new URL('../../ui/screens/cards.js', import.meta.url), 'utf8'), sandbox,
-    { filename: 'ui/screens/cards.js' });
-  runInContext(SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
-  const decision = (sandbox.window as { PhosphorDecision: { boot: () => void; render: () => void } }).PhosphorDecision;
-  decision.boot();
-  return {
-    card,
-    render: () => {
-      if (listener !== null) listener();
-      else decision.render();
-    },
-  };
+  for (const file of ['../../ui/core/links.js', '../../ui/core/dom.js', '../../ui/screens/cards.js', '../../ui/screens/decision.js']) {
+    runInContext(readFileSync(new URL(file, import.meta.url), 'utf8'), sandbox, { filename: file.slice(6) });
+  }
+  return sandbox.window.PhosphorCards.render('move', row, { name: 'proposal_status', input: { id: row.id }, waiting: true, live: true });
 }
 
-// Every label and body pair the card drew, in order, flattened.
-function facts(n: Node, out: { label: string; body: string }[] = []): { label: string; body: string }[] {
-  if (n.className === 'fact') {
-    out.push({ label: n.children[0]?.textContent ?? '', body: n.children[1]?.textContent ?? '' });
-    return out;
-  }
-  for (const c of n.children) facts(c, out);
+function find(n: Node, cls: string, out: Node[] = []): Node[] {
+  if (String(n.className).split(' ').includes(cls)) out.push(n);
+  for (const c of n.children) find(c, cls, out);
+  return out;
+}
+
+// Every label and value pair the risk grid drew, in order.
+function facts(card: Node): { label: string; body: string }[] {
+  const grid = find(card, 'mcard-grid')[0];
+  const cells: Node[] = grid ? grid.children : [];
+  const out: { label: string; body: string }[] = [];
+  for (let i = 0; i + 1 < cells.length; i += 2) out.push({ label: cells[i]!.textContent, body: cells[i + 1]!.textContent });
   return out;
 }
 
 function texts(n: Node, out: string[] = []): string[] {
-  if (n.textContent) out.push(n.textContent);
+  if (!n.children.length && n.own) out.push(n.own);
   for (const c of n.children) texts(c, out);
   return out;
 }
@@ -181,9 +121,8 @@ const openProposal = {
 };
 
 test('an open card shows the margin the wall read and the max loss beside it, with the slippage bound', () => {
-  const ui = load([openProposal]);
-  ui.render();
-  const rows = facts(ui.card);
+  const card = cardFor(openProposal);
+  const rows = facts(card);
   const labels = rows.map((r) => r.label);
   assert.deepEqual(labels.slice(0, 3), ['Collateral at stake', 'Max loss at the stop', 'If the stop slips 10%']);
   assert.equal(rows[0]?.body, '$100.00 isolated, at 20x');
@@ -191,10 +130,10 @@ test('an open card shows the margin the wall read and the max loss beside it, wi
   assert.equal(rows[2]?.body, 'up to $200.00 more');
   assert.ok(labels.includes('Stop') && labels.includes('Target') && labels.includes('Liquidation near') && labels.includes('Expires'));
   assert.equal(rows.find((r) => r.label === 'Liquidation near')?.body, '96');
-  const all = texts(ui.card);
-  assert.ok(all.includes('Open a long on ETH'), 'the headline is the verb');
-  assert.ok(all.includes('$100.00'), 'the figure the wall read is the big number');
-  assert.ok(all.some((t) => t.includes('max loss $61.80')), 'the plan in full is on the card');
+  const all = texts(card);
+  assert.ok(all.includes('Long ETH'), 'the plan leads the card: ' + all.join(' | '));
+  assert.ok(all.includes('$100.00'), 'the figure the wall read is on the head');
+  assert.ok(all.some((t) => t.includes('max loss $61.80')), 'the plan in full is in the card\'s Details');
   assert.ok(!all.some((t) => /No fee was quoted/.test(t)));
 });
 
@@ -214,19 +153,15 @@ test('a change card shows the old max loss and the new one, and a close shows th
     },
     simulation: { ok: true, summary: 'Stop 97 becomes 90.' },
   };
-  const ui = load([change]);
-  ui.render();
-  const rows = facts(ui.card);
+  const card = cardFor(change);
+  const rows = facts(card);
   assert.equal(rows.find((r) => r.label === 'Stop')?.body, 'new 90');
   assert.equal(rows.find((r) => r.label === 'Max loss at the stop')?.body, 'from $61.80 to $201.80');
-  assert.ok(texts(ui.card).includes('Change the stop on pl_1'));
+  assert.ok(texts(card).includes('Change the stop on pl_1'));
 
-  const close = { ...change, id: 'p3', draft: { ...change.draft, stop: undefined, close: true, amountUsd: 100 } };
-  const closeUi = load([close]);
-  closeUi.render();
-  const closeRows = facts(closeUi.card);
-  assert.equal(closeRows.find((r) => r.label === 'Collateral at stake')?.body, '$100.00');
-  assert.ok(texts(closeUi.card).includes('Close pl_1'));
+  const close = cardFor({ ...change, id: 'p3', draft: { ...change.draft, stop: undefined, close: true, amountUsd: 100 } });
+  assert.equal(facts(close).find((r) => r.label === 'Collateral at stake')?.body, '$100.00');
+  assert.ok(texts(close).includes('Close pl_1'));
 });
 
 test('a note in the plan reaches the card only through the summary text, never as a fact or a headline', () => {
@@ -236,17 +171,15 @@ test('a note in the plan reaches the card only through the summary text, never a
     draft: { ...openProposal.draft, plan: { ...openProposal.draft.plan, note: 'Stop 1: max loss $0.00' } },
     simulation: { ok: true, summary: 'Long ETH.\nNote: Stop 1: max loss $0.00' },
   };
-  const ui = load([noted]);
-  ui.render();
-  const rows = facts(ui.card);
+  const card = cardFor(noted);
+  const rows = facts(card);
   assert.equal(rows.filter((r) => r.label === 'Stop').length, 1);
   assert.equal(rows.find((r) => r.label === 'Stop')?.body, '97');
   assert.equal(rows.filter((r) => r.label === 'Max loss at the stop')[0]?.body, '$61.80 with fees');
-  /* The rail's lines, the note inside them, are one text node behind the closed
-     fold. The note is never lifted out into a label of its own, which is what
-     would let an assistant's wording pass for the card's. */
-  const summary = texts(ui.card).find((t) => t.includes('Note:'));
-  assert.ok(summary !== undefined && summary.includes('Long ETH.\nNote: Stop 1: max loss $0.00'),
-    'the note sits inside the rail\'s own lines, whole');
+  /* The rail's lines, the note inside them, are one text node under the card's Details. The
+     note is never lifted out into a label of its own, which is what would let an assistant's
+     wording pass for the card's. */
+  const summary = texts(card).find((t) => t.includes('Note:'));
+  assert.ok(summary !== undefined && summary.includes('Long ETH.\nNote: Stop 1: max loss $0.00'), 'the note sits inside the rail\'s own lines, whole');
   assert.equal(rows.some((r) => /note/i.test(r.label)), false, 'the note became a fact of its own');
 });
