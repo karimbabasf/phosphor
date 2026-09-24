@@ -343,18 +343,10 @@
     return out;
   }
 
+  /* Only an agent that is doing something earns a row: an idle connection is plumbing, and a
+     person reading "1 connected, no call yet" learns nothing they can act on. */
   function rosterRows() {
-    var list = ownAgents();
-    var rows = workingAgents();
-    var idle = list.length - rows.length;
-    if (idle > 0) {
-      var line;
-      if (rows.length) line = idle + ' more connected, idle';
-      else if (idle === 1) line = '1 connected, no call yet';
-      else line = idle + ' connected, none has made a call yet';
-      rows = rows.concat([{ idle: true, count: idle, name: line, role: '', calls: 0 }]);
-    }
-    return rows;
+    return workingAgents();
   }
 
   /* The newest call still open, which is the step the working line names. */
