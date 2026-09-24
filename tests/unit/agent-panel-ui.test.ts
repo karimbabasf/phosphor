@@ -78,7 +78,7 @@ test('the panel builds no control that decides anything', () => {
   // Keep running and Turn off are the confirmation card's two answers (2026-09-16): the card
   // decides nothing about money, only whether the assistant's process ends. Latest is the quiet
   // control on the thread's bottom edge: it scrolls, and that is all it does.
-  const allowed = ['Start your assistant', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep running', 'Latest'];
+  const allowed = ['Start your agent', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep running', 'Latest'];
   assert.ok(labels.length > 0, 'the panel builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');

@@ -858,7 +858,7 @@
         return;
       }
       if (check.inApp && check.state === 'installed_and_logged_in' && !started && !state.connected) {
-        replaceActions('Start ' + check.name, function (button) {
+        replaceActions('Start your agent', function (button) {
           window.PhosphorShell.setPending(button, true);
           api.driver({ action: 'start', chat: '' })
             .then(function (answer) {

@@ -1,8 +1,9 @@
-/* Pro's trading side: the market, the chart, and one tabbed panel under it.
+/* Trade: the market, the chart, and one tabbed panel under it.
 
-   It builds into #view-trade, which shows under the money line of
-   ui/screens/pro.js on Pro, the one trading screen (the shell reads the
-   server's 'trade' as Pro). The conversation stays on the left the whole time.
+   It builds into #view-trade, under the money line of ui/screens/pro.js. Pro
+   shows the same line over the tabbed panel alone, so the positions and
+   orders are one element on both (ui/design/pro.css). The conversation stays
+   on the left the whole time.
 
    THREE PANES, READ TOP TO BOTTOM. The market line is the coin with its logo
    (which is also the market picker), the price, the day's change as a signed
@@ -90,17 +91,20 @@
     mounted = true;
 
     /* The stream says the trading view moved; the payload is read once per
-       frame. This is what keeps positions and orders current on Pro. */
+       frame. This is what keeps positions and orders current on Pro and Trade. */
     events.on('trade', function () { refresh(); });
 
     /* The chart engine's own boot wires listeners, starts a 5 s watchdog and a
        one second bar-close timer. None of that should run in a window whose
-       owner never opens Pro, so it starts the first time the trading side is
-       on screen and never before. The day's candles are read on the same cue. */
+       owner never opens Trade, so it starts the first time the chart is on
+       screen and never before. The day's candles are read on the same cue.
+       Pro shows the deck alone, so it only reads the payload. */
     window.addEventListener('phosphor:view', function (event) {
-      if (!event.detail || !isTradingView(event.detail.view)) return;
-      startChart();
+      var view = event.detail ? event.detail.view : null;
+      if (view !== 'pro' && !isTradingView(view)) return;
       refresh();
+      if (!isTradingView(view)) return;
+      startChart();
       loadRange();
     });
     refresh();
@@ -131,8 +135,9 @@
 
   var charted = false;
 
+  /* The view that draws the market line and the chart. */
   function isTradingView(view) {
-    return view === 'pro';
+    return view === 'trade';
   }
 
   function startChart() {

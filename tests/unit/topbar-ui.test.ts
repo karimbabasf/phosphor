@@ -2,7 +2,8 @@
 //
 // Karim, 2026-09-14, on the pills, the white mark tile and the outlined red button that used
 // to sit there: "they look like ai slop". 2026-09-23, the locked Basic layout: a calm 64 px bar,
-// Basic, Pro and Vault at its centre, one quiet freeze control at its end whose confirm step is
+// Basic, Pro, Trade and Vault at its centre (Trade back as its own tab the same day, Karim hated
+// it folded into Pro), one quiet freeze control at its end whose confirm step is
 // a small in-app panel, and the "No backup", lock-timer and "Live" pills gone from it. The bar
 // is static markup in ui/index.html and the shell only writes words and states into it, so the
 // contract is read off the files as text.
@@ -52,13 +53,13 @@ test('the mark sits in the brand row at left, drawn from the one symbol, and now
   assert.equal(end().includes('phosphor-mark'), false, 'the end of the bar draws the mark');
 });
 
-test('the switch is Basic, Pro and Vault, and the server\'s trade is Pro: one trading screen', () => {
+test('the switch is Basic, Pro, Trade and Vault, one word per view, and the server\'s trade is Trade', () => {
   const tabs = [...bar().matchAll(/data-tab="(\w+)"/g)].map((m) => m[1]);
-  assert.deepEqual(tabs, ['basic', 'pro', 'vault']);
-  assert.match(SHELL, /var VIEWS = \['basic', 'pro', 'vault'\];/, 'the window shows a view the switch has no word for');
-  assert.match(SHELL, /var ALIASES = \{ trade: 'pro' \};/, 'a chart tool\'s trade is not read as Pro');
-  assert.match(SHELL, /function setView\(name, options\) \{\s*var opts = options \|\| \{\};\s*if \(ALIASES\[name\]\) name = ALIASES\[name\];/, 'setView does not read trade as Pro');
-  assert.doesNotMatch(SHELL, /TAB_OF/, 'a second trading state is back');
+  assert.deepEqual(tabs, ['basic', 'pro', 'trade', 'vault']);
+  assert.match(HTML, /data-tab="trade" data-surface="tab-trade" aria-selected="false">Trade<\/button>/, 'the Trade tab has no word');
+  assert.match(SHELL, /var VIEWS = \['basic', 'pro', 'trade', 'vault'\];/, 'the window shows a view the switch has no word for');
+  assert.doesNotMatch(SHELL, /ALIASES/, 'a chart tool\'s trade is read as another view');
+  assert.doesNotMatch(SHELL, /TAB_OF/, 'a tab stands for two views');
 });
 
 test('nothing in the bar reports state: no pills, no dots, no lock timer, no stream word', () => {
@@ -110,7 +111,7 @@ test('the Layout menu is on the bar before the brake, and only on the modes with
   const button = tail.slice(tail.lastIndexOf('<button', menu), tail.indexOf('</button>', menu));
   assert.ok(/class="layout opens"/.test(button), 'the Layout button is not on the opening grammar');
   assert.ok(button.includes('aria-haspopup="menu"') && button.includes('aria-controls="bar-layout"'), 'the button does not name its menu');
-  assert.match(LAYOUT, /body\[data-view="basic"\] \.layout-wrap,\s*body\[data-view="vault"\] \.layout-wrap\s*\{\s*display:\s*none;/, 'Layout shows on a mode with nothing to arrange');
+  assert.match(LAYOUT, /body\[data-view="basic"\] \.layout-wrap,\s*body\[data-view="pro"\] \.layout-wrap,\s*body\[data-view="vault"\] \.layout-wrap\s*\{\s*display:\s*none;/, 'Layout shows on a mode with nothing to arrange');
   assert.ok(SHELL.includes('PhosphorSplit.panes(currentView)'), 'the shell does not list the panes of the current view');
   assert.ok(SHELL.includes('PhosphorSplit.setPane('), 'a press in the menu reaches nothing');
   assert.ok(SHELL.includes("'phosphor:pane'"), 'an eye-off press in a header would leave the menu stale');

@@ -142,8 +142,8 @@ html, body {
   min-width: 0;
 }
 
-/* Layout: which panes are on screen, as a menu of check rows, on Pro and
-   Trade. Basic and the Vault have nothing to arrange. The sheet (trade.css
+/* Layout: which panes are on screen, as a menu of check rows, on Trade.
+   Basic, Pro and the Vault have nothing to arrange. The sheet (trade.css
    draws .pop and the check rows) hangs off the bar's right side, so it opens
    to the left. */
 .layout-wrap {
@@ -152,6 +152,7 @@ html, body {
 }
 
 body[data-view="basic"] .layout-wrap,
+body[data-view="pro"] .layout-wrap,
 body[data-view="vault"] .layout-wrap {
   display: none;
 }

@@ -793,7 +793,7 @@ test('under reduced motion the price changes the same way', async () => {
 test('the day reads from 25 hourly candles: the change against the close a day ago, signed, the high and the low', async () => {
   // 25 bars: the first is the bar that closed a day ago, the 24 since are the day.
   const candles = Array.from({ length: 25 }, (_, i) => ({ t: 0, o: 61000, h: i === 10 ? 63500 : 61500, l: i === 3 ? 58200 : 60500, c: i === 0 ? 61700 : 61000, v: 1 }));
-  const world = await renderPayload(flat(), { candles, view: 'pro' });
+  const world = await renderPayload(flat(), { candles, view: 'trade' });
   await new Promise((resolve) => setImmediate(resolve));
   const [change] = withClass(world.host, 'trade-change');
   const value = change.childNodes[1];
