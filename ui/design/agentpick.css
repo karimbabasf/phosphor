@@ -1,206 +1,209 @@
-/* The agent picker: six tiles, one sentence, a fold, wherever it is drawn (the
-   first run's assistant step and the Vault tab's Agent panel). ui/screens/firstrun.js
-   builds it as window.PhosphorAgentPick.
+/* The agent list: one row per agent, wherever it is drawn (the Vault and the
+   first run's assistant step). ui/screens/firstrun.js builds it as
+   window.PhosphorAgentPick.
 
-   The grammar is the network picker's (deposit.css .net-tile): colourless tiles
-   at rest, the one under the pointer or picked in its own colour, a mark over a
-   name. Two differences, both because these names are words rather than
-   tickers: the grid is three across and two down at every width, so "Claude
-   Desktop or a chat app" is never ellipsised into "Claude Des...", and the mark
-   is a monogram in the tile's colour rather than a coin file. */
+   A row reads left to right: the agent's mark, its name, its state in a word,
+   and its one action. What to do next, when there is something to do, sits
+   under the name: the line to run in a terminal, with Copy, or one sentence
+   from the app. Rows are ruled, not boxed, the way the balances panel rules
+   its coins, and nothing is coloured: the marks are monograms on the raised
+   ground, and the one in use says so in words. */
 
 .agentpick {
   display: flex;
   flex-direction: column;
-  gap: var(--s-4);
+  gap: var(--s-3);
   min-width: 0;
-  /* Its own container, like the network picker: it is drawn in the wizard's
-     card and in a Vault panel, and the grid answers to the room it has. */
   container-type: inline-size;
 }
 
-.agentpick-lead {
-  font-size: var(--fs-14);
-  line-height: 1.55;
-  color: var(--text-2);
+.agentlist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
 }
 
-.agentpick-grid {
+.agentrow {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--s-2);
-}
-
-/* Under 420 px of room (a 400 px column) three tiles leave no line long
-   enough for the longest name, so the six go two across and three down. */
-@container (max-width: 419px) {
-  .agentpick-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.agent-tile {
-  --net: var(--text-2);
-  display: flex;
-  flex-direction: column;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "mark name state act"
+    ".    more more  more";
+  column-gap: var(--s-3);
   align-items: center;
-  justify-content: center;
-  gap: var(--s-2);
-  min-height: 92px;
-  min-width: 0;
-  padding: var(--s-3) var(--s-2);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--bg-1);
-  color: var(--text-2);
-  font-size: var(--fs-12);
-  font-weight: 500;
-  letter-spacing: -0.005em;
-  text-align: center;
-  cursor: pointer;
-  transition: border-color 200ms var(--ease-out),
-              background-color 200ms var(--ease-out),
-              color 200ms var(--ease-out),
-              transform var(--dur-press) var(--ease-out);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
 }
 
-/* The monogram: a ring in the tile's colour with two letters in it, grey at
-   rest like the coin marks beside it in the network picker. */
-.agent-tile-mark {
+.agentrow-mark {
+  grid-area: mark;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  border: 1.5px solid currentColor;
-  font-family: var(--font-mono);
-  font-size: var(--fs-12);
-  font-weight: 600;
-  letter-spacing: 0;
-  opacity: 0.72;
-  transition: opacity 220ms var(--ease-out), transform 300ms var(--ease-out);
-}
-
-.agent-tile-name {
-  line-height: 1.25;
-  max-width: 100%;
-  /* Two lines at most: the longest name is five words. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* The tag under the name on a tile the scan found on this Mac. Words, not a
-   dot: a light with no sentence is what the person cannot act on. */
-.agent-tile-tag {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
   font-size: var(--fs-11);
-  font-weight: 400;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.agentrow[aria-current="true"] .agentrow-mark {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+/* The text column is two areas of the grid: the name on the row's line, and
+   what comes next under it. `display: contents` hands its children to the
+   row's grid. */
+.agentrow-text {
+  display: contents;
+}
+
+.agentrow-name {
+  grid-area: name;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-15);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentrow-state {
+  grid-area: state;
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.3;
+  color: var(--text-2);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* A state that stands between the person and the agent reads one tone
+   quieter than one that is ready to go. */
+.agentrow[data-state="install"] .agentrow-state,
+.agentrow[data-state="cannot"] .agentrow-state,
+.agentrow[data-state="checking"] .agentrow-state {
   color: var(--text-3);
-  line-height: 1.2;
 }
 
-/* The fill says picked (or about to be, under the pointer); keyboard focus is
-   the app's own ring (reset.css :focus-visible, ink), never the tile's colour:
-   a ring in the brand colour read as a second picked tile beside the real one
-   (C review, 2026-09-20). Colour is for picked only. */
-.agent-tile:hover,
-.agent-tile[aria-current="true"] {
-  border-color: var(--net);
-  color: var(--net);
-  background: color-mix(in srgb, var(--net) 10%, var(--bg-1));
+.agentrow-line {
+  grid-area: more;
+  margin: 2px 0 0;
+  max-width: 62ch;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-3);
 }
 
-.agent-tile:hover .agent-tile-mark,
-.agent-tile[aria-current="true"] .agent-tile-mark {
-  opacity: 1;
-  transform: translateY(-1px) scale(1.06);
+.agentrow-line + .agentrow-cmd {
+  grid-row: 3;
 }
 
-.agent-tile:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
+/* The line to run: the command in mono on the conversation's ground, so it
+   reads as something to copy rather than a sentence, and Copy beside it. */
+.agentrow-cmd {
+  grid-area: more;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  margin-top: var(--s-2);
 }
 
-.agent-tile:active {
-  transform: scale(0.97);
+.agentrow-code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px var(--s-3);
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line);
+  background: var(--bg-0);
+  font-size: var(--fs-12);
+  line-height: 18px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.agent-tile[data-busy="true"] {
-  cursor: progress;
-}
-
-/* ---------- the sentence and the fold ---------- */
-
-/* One sentence, and the light in front of it. The light is off until the
-   agent is on the door; the sentence carries every other state in words.
-   Nothing said yet is nothing drawn: no lone light over an empty line. */
-.agentpick-line:has(.agentpick-sentence:empty) {
+.agentrow-code::-webkit-scrollbar {
   display: none;
 }
 
-.agentpick-line {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--s-2);
-  min-height: 1.55em;
-  font-size: var(--fs-14);
-  line-height: 1.55;
-  color: var(--text);
-}
-
-.agentpick-line[data-tone="warn"] { color: var(--warn); }
-.agentpick-line[data-tone="down"] { color: var(--down); }
-.agentpick-line[data-tone="dim"] { color: var(--text-2); }
-
-.agentpick-light {
+.agentrow-copy {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  margin-top: 0.55em;
-  border-radius: 50%;
-  background: var(--text-3);
-  opacity: 0.5;
-  transition: background-color 300ms var(--ease-out), opacity 300ms var(--ease-out);
+  gap: var(--s-1);
 }
 
-.agentpick-light[data-state="ready"] {
-  background: var(--live);
-  opacity: 1;
+.agentrow-copy .icon {
+  width: 14px;
+  height: 14px;
 }
 
-/* The line a person pastes: a read-only field with Copy beside it, shown only
-   where the line IS the next step (another agent) or behind Details. */
-.agentpick-paste .input {
-  font-family: var(--font-mono);
-  font-size: var(--fs-12);
-}
-
-.agentpick-fold {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-3) var(--s-4);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--bg-2);
-}
-
-.agentpick-fold-line {
-  font-size: var(--fs-12);
-  line-height: 1.5;
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-
-.agentpick-fold-line code {
-  font-size: var(--fs-12);
-}
-
-/* The toggle for the fold is a quiet chip-sized button at the end of the sentence row. */
-.agentpick-tools {
+.agentrow-act {
+  grid-area: act;
   display: flex;
   align-items: center;
-  gap: var(--s-2);
-  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 64px;
+  min-height: 30px;
+}
+
+.agentrow-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.agentrow-current .icon {
+  color: var(--text-2);
+}
+
+/* The list's one sentence: a check under way, an answer that did not come,
+   a pick the app refused. A refusal asks the person to do something, so it
+   takes the waiting colour. */
+.agentpick-status {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.agentpick-status[data-tone="warn"] {
+  color: var(--warn);
+}
+
+.agentpick-foot {
+  display: flex;
+  margin-left: calc(var(--s-3) * -1);
+}
+
+/* Narrow (a 400 px first-run card at its smallest): the state drops under
+   the name, beside the action. */
+@container (max-width: 419px) {
+  .agentrow {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "mark name  act"
+      ".    state act"
+      ".    more  more";
+  }
+
+  .agentrow-state {
+    text-align: left;
+  }
 }

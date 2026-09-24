@@ -1,45 +1,25 @@
-/* Phosphor trade surface: the strip, the chart, the deck under it, and the
-   panes that can be hidden. Everything the trade screen draws lives here;
-   layout.css keeps the stage and the views, screens.css the other screens.
+/* Phosphor trade surface: Pro's trading side under the money line. The
+   market line, the chart, the deck under it, and the panes that can be
+   hidden. layout.css keeps the stage and the views, pro.css the stage's
+   shape on Pro and the money line.
 
-   THE WRAP IS A COLUMN OF FOUR. The strip (its own height), the chart with
-   its bar (the rest, never under 364 px), the handle (6 px), the deck (its
-   120 px floor by default, or whatever the handle was dragged to, as --deck
-   written on the wrap by ui/split.js). A flex column rather than a
+   THE WRAP IS A COLUMN OF FOUR. The market line (its own height), the chart
+   with its bar (the rest, never under 364 px), the handle (6 px), the deck
+   (its 120 px floor by default, or whatever the handle was dragged to, as
+   --deck written on the wrap by ui/split.js). A flex column rather than a
    grid, and the order matters: the chart takes every spare pixel, and when a
-   notice on the strip leaves less than the chart's floor, the deck gives
-   before the world scrolls. A grid shares spare room equally between two
-   tracks, which shrank the deck while the chart still had room. */
+   notice on the market line leaves less than the chart's floor, the deck
+   gives before the world scrolls.
 
-/* ---------- the stage on trade ----------
-
-   The chart has first claim on the width here, so the conversation's share
-   is smaller than on the other views: the floor on anything under 1500 px,
-   and still a real column on a 27 inch screen. */
-body[data-view="trade"] .stage {
-  --conv-w: 24vw;
-}
+   ONE COLOUR RULE. Green is the mark, the live move and Approve; red is a
+   real loss. Nothing on this surface is coloured for a side, a direction or
+   a feed state: those are words and signs in the text tones. The candles on
+   the canvas keep the chart's own palette (ui/chart/chart.js). */
 
 /* ---------- hidden panes ----------
 
-   ui/split.js writes data-pane-<name>="hidden" on the host; the template
-   drops the pane's track and the pane and its handle leave the flow. Nothing
-   is measured: the neighbours take the room because the grid says so. */
-.stage[data-pane-conversation="hidden"] {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.stage[data-pane-conversation="hidden"] > .conversation,
-.stage[data-pane-conversation="hidden"] > .split-v {
-  display: none;
-}
-
-@media (max-width: 959px) {
-  .stage[data-pane-conversation="hidden"] {
-    grid-template-rows: minmax(0, 1fr);
-  }
-}
-
+   ui/split.js writes data-pane-<name>="hidden" on the wrap; the pane and its
+   handle leave the flow and the neighbour takes the room. */
 .trade-wrap[data-pane-chart="hidden"] > .trade-main,
 .trade-wrap[data-pane-chart="hidden"] > .split-h,
 .trade-wrap[data-pane-deck="hidden"] > .trade-rail,
@@ -81,8 +61,7 @@ body[data-view="trade"] .stage {
 
 /* The way back: the same 30 px ghost, wearing the eye, drawn only while its
    pane is hidden. The deck's sits in the chart bar, the chart's in the deck's
-   tab row, and the assistant column's is a small tab on the world's left
-   edge, quiet until pointed at. */
+   tab row. */
 .pane-show {
   display: none;
   flex: 0 0 auto;
@@ -103,25 +82,8 @@ body[data-view="trade"] .stage {
   display: inline-grid;
 }
 
-.stage[data-pane-conversation="hidden"] > .pane-show[data-pane="conversation"] {
-  display: inline-grid;
-  position: absolute;
-  z-index: 3;
-  left: 0;
-  top: var(--s-3);
-  width: 22px;
-  height: 40px;
-  border: 1px solid var(--line);
-  border-left: 0;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: var(--bg-1);
-}
-
 @media (hover: hover) and (pointer: fine) {
   .pane-show:hover { color: var(--text); background: var(--bg-2); }
-  .stage[data-pane-conversation="hidden"] > .pane-show[data-pane="conversation"]:hover {
-    border-color: var(--line-strong);
-  }
 }
 
 .pane-show:focus-visible {
@@ -158,42 +120,32 @@ body[data-view="trade"] .stage {
 .trade-wrap > .split-h { flex: 0 0 6px; }
 
 /* The deck's height is its flex basis, so the handle's one property write
-   sizes it. It opens at its floor (Karim, 2026-09-16: "default this to being
-   as small as possible when the trade page is open"): the tab row and two
-   rows under it, which is "Nothing open." with air, or one open position.
-   The handle drags it taller and ui/split.js remembers the drag. It shrinks
-   only once the chart above it is at its own floor. */
+   sizes it. It opens small (Karim, 2026-09-16: "default this to being as
+   small as possible when the trade page is open"): the tab row, the column
+   heads and two positions, so a second position is not behind a scroll on
+   the first look. The handle drags it taller or down to its 120 px floor and
+   ui/split.js remembers the drag. It shrinks only once the chart above it is
+   at its own floor. */
 .trade-rail {
-  flex: 0 1 var(--deck, 120px);
+  flex: 0 1 var(--deck, 172px);
   min-height: 120px;
 }
 
-/* ---------- the strip ----------
+/* ---------- the market line ----------
 
-   One row, read left to right: the market, the venue, the price with the
-   day's change under it, the day's extremes, then the account on the right.
-   Hairline under it, no surface of its own: it is a header, not a card.
+   One row, read left to right: the market (the picker), the price with the
+   day's change beside it, the day's high and low past a hairline, and the
+   venue at the far end. Hairline under it, no surface of its own: it is a
+   header, not a card.
 
    THE ROW IS AS TALL AS ITS CONTENT. Twelve pixels above and below, and the
-   height follows the tallest group, which is the price block. A fixed height
+   height follows the tallest group, which is the price. A fixed height
    squeezed the labels onto their values (Karim, 2026-09-15: "the top looks
-   super squished and squeezed"; 2026-09-16: "looks squeezed, not pro at
-   all"). Everything sits on a 4 px rhythm: 12 px of padding, 24 px between
-   groups, 4 px between the price and its change, 16 px lines for the labels
-   and the values.
+   super squished and squeezed"). Everything sits on a 4 px rhythm.
 
-   ONE BASELINE. The price and every figure beside it sit on the price's
-   baseline, the way an exchange header reads, with the labels above the
-   values and the change under the price. The market and the venue are
-   controls, so they centre on the line instead. A figure's label is a float,
-   which is what keeps the value the block's first line and so its baseline
-   (a label over the value in a column would hand the block the label's
-   baseline instead).
-
-   ONE LINE OR TWO, NEVER A SQUEEZE. A world of 900 px or more holds the
-   whole header on one line. Under that the day's figures drop to one line
-   under the price, each label beside its value, and under 580 px (the
-   assistant column at its widest on the smallest window) they go. */
+   ONE LINE, NEVER A SQUEEZE. Nothing on the line shrinks under its number:
+   on a narrow trading side the venue goes first, then the day's figures,
+   and the market and its price always stay. */
 .trade-strip {
   display: flex;
   flex-direction: column;
@@ -202,64 +154,30 @@ body[data-view="trade"] .stage {
 }
 
 .strip-row {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: var(--s-3) var(--s-5);
-  padding: var(--s-3) var(--s-5);
+  gap: var(--s-5);
+  min-height: 60px;
+  padding: var(--s-3) var(--s-5) var(--s-3) var(--s-4);
   min-width: 0;
 }
 
-.strip-row > .trade-symbol-wrap { grid-area: 1 / 1; }
-.strip-row > .trade-venue { grid-area: 1 / 2; }
-.strip-row > .strip-price { grid-area: 1 / 3; }
-.strip-row > .strip-stats { grid-area: 1 / 4; justify-self: end; }
-.strip-row > .strip-day { grid-area: 2 / 3 / 3 / 5; }
+.strip-row > * { flex: 0 0 auto; }
 
-.strip-row > .strip-price,
-.strip-row > .strip-day,
-.strip-row > .strip-stats {
-  align-self: baseline;
+/* A hairline between the price and the day's figures, so the two read as
+   neighbours rather than as one run of digits. */
+.strip-row > .strip-day {
+  padding-left: var(--s-5);
+  border-left: 1px solid var(--line);
 }
 
-/* The two controls centre on the price's own 32 px line, not on the block
-   with the change under it: the market is 32 px tall, the venue 26. */
-.strip-row > .trade-symbol-wrap { align-self: start; }
-.strip-row > .trade-venue {
-  align-self: start;
-  margin-top: 3px;
-}
+.strip-row > .trade-venue { margin-left: auto; }
 
-@container world (min-width: 900px) {
-  .strip-row {
-    display: flex;
-    align-items: center;
-  }
-  /* Every cell keeps its own width: nothing on the line shrinks under its
-     number. The account's figures push to the right. */
-  .strip-row > * { flex: 0 0 auto; }
-  .strip-row > .strip-stats { margin-left: auto; }
-  /* A hairline between the price block and the day's figures, so the two
-     read as neighbours rather than as one run of digits. */
-  .strip-row > .strip-day {
-    padding-left: var(--s-5);
-    border-left: 1px solid var(--line);
-  }
-}
-
-/* The day on one line under the price: each figure is its label then its
-   value, side by side. */
 @container world (max-width: 899px) {
-  .strip-day .strip-stat {
-    display: flex;
-    align-items: baseline;
-    gap: var(--s-2);
-  }
-  .strip-day .strip-label { float: none; }
-  .strip-day .strip-value { clear: none; }
+  .strip-row > .trade-venue { display: none; }
 }
 
-@container world (max-width: 579px) {
+@container world (max-width: 619px) {
   .strip-row > .strip-day { display: none; }
 }
 
@@ -274,9 +192,9 @@ body[data-view="trade"] .stage {
   --opens-bg: transparent;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 var(--s-2) 0 6px;
+  gap: var(--s-2);
+  height: 36px;
+  padding: 0 var(--s-2);
   border-radius: var(--radius-sm);
   color: var(--text);
 }
@@ -292,7 +210,6 @@ body[data-view="trade"] .stage {
   width: 20px;
   height: 20px;
 }
-
 
 .trade-mark-coin {
   font-size: var(--fs-15);
@@ -310,51 +227,28 @@ body[data-view="trade"] .stage {
               color var(--dur-press) var(--ease-out);
 }
 
-/* The venue: mark, name, and the account socket's dot. */
+/* The venue: its mark and its name in the quiet tone, a word and not a
+   pill. Whether its socket answers is said on the notice line, in words. */
 .trade-venue {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 var(--s-3) 0 var(--s-2);
-  border-radius: var(--radius-pill);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  font-size: var(--fs-12);
+  gap: var(--s-2);
+  font-size: var(--fs-13);
   font-weight: 500;
-  color: var(--text-2);
+  color: var(--text-3);
   white-space: nowrap;
 }
 
-
-.trade-venue-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-3);
-  flex: 0 0 auto;
-}
-
-.trade-venue[data-feed="live"] .trade-venue-dot {
-  background: var(--up);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 18%, transparent);
-}
-
-.trade-venue[data-feed="delayed"] .trade-venue-dot { background: var(--warn); }
-.trade-venue[data-feed="down"] .trade-venue-dot { background: var(--down); }
-
-/* THE PRICE BLOCK. The price at 32 px mono, 500, tight, tabular; the cents
-   one size and one step quieter, so the whole reads as a figure with a
-   point in it rather than a run of characters. Under it, on its own line,
-   the day's change in the direction's colour with a quiet "24h" after it.
-   The tick is the digits' colour: the direction's colour at once, the text
-   colour 600 ms later. Never a box, never a wash. */
+/* THE PRICE. The chart's last trade in mono at 24 px, 500, tight, tabular;
+   the cents one size and one step quieter, so the whole reads as a figure
+   with a point in it rather than a run of characters. The day's change sits
+   beside it on the same baseline, signed, in the quiet tone, with "24h"
+   after it. Never coloured: the digits are the news. */
 .strip-price {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--s-1);
+  align-items: baseline;
+  gap: var(--s-3);
   min-width: 0;
 }
 
@@ -362,7 +256,7 @@ body[data-view="trade"] .stage {
   display: inline-flex;
   align-items: baseline;
   font-family: var(--font-mono);
-  font-size: var(--fs-32);
+  font-size: var(--fs-24);
   font-weight: 500;
   line-height: 1;
   letter-spacing: -0.03em;
@@ -378,21 +272,6 @@ body[data-view="trade"] .stage {
   letter-spacing: -0.01em;
 }
 
-.px[data-tick="up"] { animation: px-tick-up 600ms var(--ease-out) both; }
-.px[data-tick="down"] { animation: px-tick-down 600ms var(--ease-out) both; }
-
-.px[data-tick] .px-cents { color: inherit; }
-
-@keyframes px-tick-up {
-  from { color: var(--up); }
-  to { color: var(--text); }
-}
-
-@keyframes px-tick-down {
-  from { color: var(--down); }
-  to { color: var(--text); }
-}
-
 /* The change: the value first, the "24h" after it, on one line. The label
    is first in the markup, as on every figure, and ordered after here. */
 .strip-price .trade-change {
@@ -402,29 +281,23 @@ body[data-view="trade"] .stage {
   gap: var(--s-2);
 }
 
-.strip-price .trade-change .strip-label { float: none; order: 2; }
-.strip-price .trade-change .strip-value { clear: none; order: 1; }
+.strip-price .trade-change .strip-label { float: none; order: 2; color: var(--text-3); }
+.strip-price .trade-change .strip-value { clear: none; order: 1; color: var(--text-2); }
 
-/* The day's extremes and the account, as small figures: the label at 11 px
-   over the value at 13 px mono, each on a 16 px line, twenty-four pixels
-   between figures. The label floats so the value is the block's first line
-   (see the strip's note on the baseline); the value clears it and takes the
-   line under. Whole-pixel lines, so the row's height is one too: a fraction
-   here became a one pixel scroll of the world on the smallest window. */
-.strip-day,
-.strip-stats {
+/* The day's extremes, as small figures: the label at 11 px over the value
+   at 13 px mono, each on a 16 px line, twenty-four pixels between figures.
+   The label floats so the value is the block's first line; the value clears
+   it and takes the line under. Whole-pixel lines, so the row's height is one
+   too: a fraction here became a one pixel scroll of the world. */
+.strip-day {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--s-5);
 }
 
 .strip-stat {
   flex: 0 0 auto;
   display: block;
-}
-
-.strip-stats .strip-stat {
-  text-align: right;
 }
 
 .strip-label {
@@ -436,11 +309,6 @@ body[data-view="trade"] .stage {
   letter-spacing: 0.02em;
   color: var(--text-2);
   white-space: nowrap;
-}
-
-.strip-stats .strip-label {
-  float: right;
-  clear: right;
 }
 
 .strip-value {
@@ -456,18 +324,12 @@ body[data-view="trade"] .stage {
   white-space: nowrap;
 }
 
-.strip-value.dim { color: var(--text-2); }
-
-/* The change is plain coloured text: the sign is the news. */
-.trade-change .strip-value[data-dir="up"] { color: var(--up); }
-.trade-change .strip-value[data-dir="down"] { color: var(--down); }
-
 /* THE NOTICE. What the venue says when it has something to say, on its own
    line under the row: a 14 px icon for the kind of news and the sentence
    beside it, in the quiet text, on no ground of its own. A boxed wash under
-   the strip read as a second header (Karim, 2026-09-16); a line of quiet
-   text reads as a status. Warn and down keep their colour, which is the
-   whole signal. Nothing is reserved for it; the chart under the strip
+   the strip read as a second header (Karim, 2026-09-16), and a venue that is
+   slow is not a loss, so no kind of news takes a colour here: the icon and
+   the words carry it. Nothing is reserved for it; the chart under the strip
    flexes. */
 .trade-strip .trade-line {
   display: flex;
@@ -478,7 +340,7 @@ body[data-view="trade"] .stage {
   padding: 0 var(--s-5) var(--s-3);
   font-size: var(--fs-12);
   line-height: 18px;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .trade-line .trade-line-icon {
@@ -486,7 +348,7 @@ body[data-view="trade"] .stage {
   width: 14px;
   height: 14px;
   margin-top: 2px;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* The sentence takes the rest of the icon's line and wraps inside it. */
@@ -507,10 +369,6 @@ body[data-view="trade"] .stage {
   color: var(--text-3);
   overflow-wrap: anywhere;
 }
-
-.trade-line[data-tone="warn"] { color: var(--warn); }
-.trade-line[data-tone="down"] { color: var(--down); }
-.trade-line[data-tone] .trade-line-icon { color: currentColor; }
 
 /* ---------- popovers ----------
 
@@ -578,15 +436,11 @@ body[data-view="trade"] .stage {
   color: var(--text);
 }
 
-.trade-option[aria-selected="true"] { color: var(--text); }
-
-.trade-option[aria-selected="true"]::after {
-  content: "";
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ink);
+/* The market on the chart now: the text tone and the heavier weight, not a
+   coloured dot. */
+.trade-option[aria-selected="true"] {
+  color: var(--text);
+  font-weight: 600;
 }
 
 /* Check rows are the shared component (components.css, .check-row and
@@ -639,10 +493,10 @@ body[data-view="trade"] .stage {
    status group on the right and the eyes past a hairline, all at 26 px. The
    command gives way first when the chart is narrow, down to a floor its
    placeholder still reads at; the status group never squeezes, because a
-   wrapped word in it reads as two states. Under 900 px of chart (ten cells,
-   the command, Layers, the status with both pills up and the eyes need about
-   880) the segment takes the first row alone and its cells stretch across
-   it; the rest wrap under it as one row, on purpose. */
+   wrapped word in it reads as two states. Under 700 px of chart (ten cells,
+   the command at its floor, Layers, the status and the eyes need about 690)
+   the segment takes the first row alone and its cells stretch across it; the
+   rest wrap under it as one row, on purpose. */
 .chart-bar {
   flex: 0 0 auto;
   display: flex;
@@ -662,7 +516,7 @@ body[data-view="trade"] .stage {
   position: relative;
   display: inline-flex;
   align-items: center;
-  flex: 1 1 120px;
+  flex: 1 1 96px;
   min-width: 96px;
   max-width: 176px;
 }
@@ -714,7 +568,7 @@ body[data-view="trade"] .stage {
 
 .chart-bar .chart-bar-eyes:empty { display: none; }
 
-@container trade (max-width: 899px) {
+@container trade (max-width: 699px) {
   .chart-bar .seg { flex: 0 0 100%; }
   .chart-bar .seg-cells { width: 100%; }
   .chart-bar .chart-cmd-wrap { max-width: none; }
@@ -818,13 +672,12 @@ body[data-view="trade"] .stage {
   color: var(--text);
 }
 
-/* THE STATUS GROUP. One dot that answers "is this price current", the state
-   word beside it in the text face, the venue's round trip in mono after
-   that, then the engine's two situational controls (the way back to live,
-   the agent's object count) as ghost pills at the bar's control height. The
-   dot carries the colour; the word only takes it when the news is bad, and
-   amber is the app's colour for waiting on something, so a delayed feed
-   reads the same here as everywhere else. Nothing in the group wraps. */
+/* THE STATUS GROUP. The state word the engine writes ("live", "delayed",
+   "offline") in the quiet tone, the venue's round trip in mono after it
+   while the feed is live, then the engine's two situational controls (the
+   way back to live, the agent's object count) as ghost buttons at the bar's
+   control height. No dot and no colour: a feed that is late says so in its
+   word. Nothing in the group wraps. */
 .chartstatus {
   display: flex;
   align-items: center;
@@ -843,7 +696,7 @@ body[data-view="trade"] .stage {
   padding: 0 var(--s-1);
   font-size: var(--fs-12);
   font-weight: 500;
-  color: var(--text-2);
+  color: var(--text-3);
   white-space: nowrap;
 }
 
@@ -851,12 +704,13 @@ body[data-view="trade"] .stage {
   font-weight: 500;
 }
 
+.feed b::first-letter {
+  text-transform: uppercase;
+}
+
+/* The engine still writes a dot element; it is not drawn. */
 .feed i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  flex: 0 0 auto;
+  display: none;
 }
 
 /* The venue's round trip, shown only while the feed reads live. A latency on
@@ -870,24 +724,9 @@ body[data-view="trade"] .stage {
 
 .feed:not([data-feed="live"]) .feed-ms { display: none; }
 
-.feed[data-feed="live"] i {
-  background: var(--up);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 18%, transparent);
-}
-
-.feed[data-feed="delayed"] { color: var(--warn); }
-.feed[data-feed="offline"] { color: var(--text-3); }
-
-/* A read is out. The dot fades rather than spinning, because a chart that is
-   refreshing is still showing real bars and a spinner would say otherwise. */
-.feed[data-busy="1"] i {
-  animation: feedpulse 900ms var(--ease-in-out) infinite;
-}
-
-@keyframes feedpulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
+/* A feed that is late or down is news, so its word steps up one tone. */
+.feed[data-feed="delayed"],
+.feed[data-feed="offline"] { color: var(--text-2); }
 
 /* The two pills the engine appends (span.timeframe[data-extra]): ghost
    buttons on the bar's height and radius, the words in mono because one of
@@ -1103,8 +942,8 @@ body[data-view="trade"] .stage {
   transition: color var(--dur-press) var(--ease-out);
 }
 
-/* The underline: two pixels of ink over the hairline, only under the active
-   tab. */
+/* The underline: two pixels of the text tone over the hairline, only under
+   the active tab. */
 .trade-tab::after {
   content: "";
   position: absolute;
@@ -1118,7 +957,7 @@ body[data-view="trade"] .stage {
 }
 
 .trade-tab[aria-selected="true"] { color: var(--text); }
-.trade-tab[aria-selected="true"]::after { background: var(--ink); }
+.trade-tab[aria-selected="true"]::after { background: var(--text); }
 
 @media (hover: hover) and (pointer: fine) {
   .trade-tab:hover { color: var(--text); }
@@ -1172,31 +1011,30 @@ body[data-view="trade"] .stage {
   font-size: var(--fs-12);
 }
 
-/* A pill: the side of a fill or a position, the state of a plan. 11/500,
-   the direction's colour on its wash, or quiet on the raised ground. */
-.trade-pill {
+/* A side, a state, a Buy or a Sell: a word in the quiet tone at 12/500, with
+   the icon family's glyph where the word has one. Never a pill and never a
+   colour, except the two waits on a person, which take the waiting colour. */
+.pos-side,
+.tx-side,
+.trade-row-state {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-2);
   font-family: var(--font-ui);
-  font-size: var(--fs-11);
+  font-size: var(--fs-12);
   font-weight: 500;
   line-height: 1;
-  letter-spacing: 0;
   color: var(--text-2);
   white-space: nowrap;
 }
 
-.trade-pill[data-tone="up"] { color: var(--up); background: var(--up-wash); }
-.trade-pill[data-tone="down"] { color: var(--down); background: var(--down-wash); }
-.trade-pill[data-tone="warn"] { color: var(--warn); background: var(--warn-wash); }
-.trade-pill[data-tone="ink"] { color: var(--text); }
-.trade-pill[data-tone="ink"] .icon { color: var(--ink); }
-.trade-pill .icon { width: 12px; height: 12px; }
+.pos-side .icon,
+.trade-row-state .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.trade-row-state[data-tone="warn"] { color: var(--warn); }
 
 /* ---------- a row on the deck ----------
 
@@ -1236,15 +1074,16 @@ body[data-view="trade"] .stage {
 
 /* THE OPEN ROWS: a table. Headings in 11/500 muted over the columns, then one
    line per position: the coin with its logo and side, then the six figures in
-   mono, Close at the end. The list scrolls sideways before a column is
-   squeezed under its number. */
+   mono, Close at the end. Its floor, gaps included, fits the trading side at
+   its own 560 px floor less the list's padding; under that the list scrolls
+   sideways before a column is squeezed under its number. */
 .pos-head,
 .pos-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.3fr) repeat(4, minmax(72px, 1fr)) repeat(2, minmax(56px, 0.7fr)) 72px;
-  column-gap: var(--s-3);
+  grid-template-columns: minmax(150px, 1.3fr) repeat(4, minmax(64px, 1fr)) repeat(2, minmax(52px, 0.7fr)) 64px;
+  column-gap: 10px;
   align-items: center;
-  min-width: 640px;
+  min-width: 644px;
 }
 
 .trade-open .trade-list { overflow-x: auto; }
@@ -1298,12 +1137,19 @@ body[data-view="trade"] .stage {
 .pos-row > .trade-row-foot { justify-self: end; }
 .pos-row > .trade-callout { grid-column: 1 / -1; }
 
-/* THE WAITING ROWS. The sentence and its pill on one line, the conditions as
-   dots under it, Cancel at the right. */
+/* A profit is a signed figure in the text tone; a loss is the one figure on
+   the deck that takes red, because it is money the person has lost. */
+.trade-pnl.loss { color: var(--down); }
+
+/* THE ORDERS. One line each: the sentence, its state, Cancel at the right,
+   and the conditions under the sentence, each with a check or a clock. The
+   head's two parts join the row's grid. */
 .plan-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  column-gap: var(--s-3);
+  row-gap: var(--s-2);
+  align-items: center;
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
@@ -1312,11 +1158,15 @@ body[data-view="trade"] .stage {
 .plan-row:last-child { border-bottom: 0; }
 
 .plan-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--s-3);
+  display: contents;
 }
+
+.plan-row .trade-row-line { grid-column: 1; grid-row: 1; }
+.plan-row .trade-row-state { grid-column: 2; grid-row: 1; }
+.plan-row > .trade-row-foot { grid-column: 3; grid-row: 1; }
+.plan-row > .trade-row-foot:empty { display: none; }
+.plan-row > .trade-conds { grid-column: 1 / -1; grid-row: 2; }
+.plan-row > .trade-callout { grid-column: 1 / -1; }
 
 .trade-row-line {
   font-size: var(--fs-14);
@@ -1326,7 +1176,7 @@ body[data-view="trade"] .stage {
   min-width: 0;
 }
 
-.plan-head .trade-pill { margin-top: 2px; flex: 0 0 auto; }
+
 
 .trade-conds {
   display: flex;
@@ -1346,26 +1196,20 @@ body[data-view="trade"] .stage {
   color: var(--text-2);
 }
 
-.trade-cond-dot {
+.trade-cond-mark {
   flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  border: 1px solid var(--text-3);
-  background: transparent;
-  transition: background-color var(--dur-press) var(--ease-out),
-              border-color var(--dur-press) var(--ease-out);
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
 }
 
-.trade-cond[data-holds="true"] .trade-cond-dot {
-  border-color: var(--ink);
-  background: var(--ink);
-}
+.trade-cond[data-holds="true"] { color: var(--text); }
+.trade-cond[data-holds="true"] .trade-cond-mark { color: var(--text-2); }
 
-/* THE TAPE. One line per fill: the clock, the side, the coin with its logo,
-   the size, the value coloured by side, and the explorer link at the end. An
-   ended plan takes the glyph and its sentence across the middle. Rows are
-   ruled, not boxed; a fill row opens the receipt and takes the hover ground. */
+/* THE TAPE. One line per fill: the clock, Buy or Sell, the coin with its
+   logo, the size, the value, and the explorer link at the end. An ended plan
+   takes the glyph and its sentence across the middle. Rows are ruled, not
+   boxed; a fill row opens the receipt and takes the hover ground. */
 .tape-head,
 .done-row {
   display: grid;
@@ -1433,10 +1277,9 @@ body[data-view="trade"] .stage {
   white-space: nowrap;
 }
 
-/* The value takes the side's colour, the same as the pill beside it: a buy
-   green, a sell red. On an ended plan it is the closed figure, by its sign. */
-.done-row > .tx-amount[data-dir="up"] { color: var(--up); }
-.done-row > .tx-amount[data-dir="down"] { color: var(--down); }
+/* A fill's value is plain whichever side it was. On an ended plan it is the
+   closed figure, signed, and red only when the plan closed at a loss. */
+.done-row > .tx-amount[data-dir="loss"] { color: var(--down); }
 
 .done-row > .tx-link {
   grid-column: 6;
@@ -1452,8 +1295,9 @@ body[data-view="trade"] .stage {
   width: 20px;
   height: 20px;
   border-radius: var(--radius-xs);
-  color: var(--ink);
-  transition: background-color var(--dur-press) var(--ease-out);
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
 }
 
 .tx-open:focus-visible {
@@ -1489,7 +1333,7 @@ body[data-view="trade"] .stage {
 
 @media (hover: hover) and (pointer: fine) {
   .fill-row:hover { background: var(--bg-2); }
-  .tx-open:hover { background: var(--ink-wash); }
+  .tx-open:hover { color: var(--text); background: var(--bg-1); }
   .trade-symbol:hover .chev-icon,
   .layers:hover .chev-icon { transform: translateY(1px); color: var(--text-2); }
   .trade-option:hover {
@@ -1522,66 +1366,14 @@ body[data-view="trade"] .stage {
   color: var(--text-2);
 }
 
-/* ---------- Pro: the Trading panel's positions ----------
-
-   The same row as the trade screen's open rows, folded for a panel a third as
-   wide: the coin with its logo and side on the first line with the profit at
-   the right, the size, entry and mark in mono under them. */
-.pro-pos {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
-  column-gap: var(--s-3);
-  row-gap: 2px;
-  align-items: center;
-  font-size: var(--fs-13);
-}
-
-.pro-pos-asset {
-  grid-column: 1;
-  grid-row: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  min-width: 0;
-}
-
-
-.pro-pos-coin {
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-
-.pro-pos-lev {
-  font-size: var(--fs-12);
-  color: var(--text-3);
-}
-
-.pro-pos-pnl {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
-  white-space: nowrap;
-}
-
-.pro-pos-meta {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px var(--s-3);
-  padding-left: 28px;
-  font-size: var(--fs-12);
-  color: var(--text-2);
-}
-
 /* ---------- narrow worlds ---------- */
 
 /* When the chart can no longer hold a usable plot at the world's width, the
-   world scrolls and the deck sits under the chart at its own height, which is
-   the fallback the brief allows. The threshold is the width at which the
-   chart drops under about 530 px beside the conversation column. */
-@container world (max-width: 859px) {
+   world scrolls and the deck sits under the chart at its own height. On Pro
+   the trading side never goes under 560 (pro.css), so this is the stacked
+   browser window under 960 wide, where the world is the whole width and
+   short. */
+@container world (max-width: 559px) {
   /* flex: 0 0 auto, not the base row's 1 1: stacked, the wrap is taller than the
      world and must say so. The chart takes the room the world has to spare;
      the deck is as tall as its list. */
@@ -1602,8 +1394,6 @@ body[data-view="trade"] .stage {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .px[data-tick] { animation: none; color: var(--text); }
-  .feed[data-busy="1"] i { animation: none; opacity: 0.6; }
   .trade-symbol:hover .chev-icon,
   .layers:hover .chev-icon { transform: none; }
   .pop { transition-duration: 1ms; }

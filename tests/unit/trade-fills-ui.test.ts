@@ -429,6 +429,9 @@ async function renderPayload(data: unknown, opts: Options = {}): Promise<World> 
   sandbox.window = {
     document: sandbox.document,
     addEventListener: () => {},
+    // The phosphor:trade hand-off to Pro's money line, recorded.
+    CustomEvent: function (type: string, init?: { detail?: unknown }) { return { type, detail: init?.detail }; },
+    dispatchEvent: (ev: unknown) => { (sandbox.window.__tradeEvents = sandbox.window.__tradeEvents ?? []).push(ev); },
     setTimeout: setTimer,
     clearTimeout: clearTimer,
     PhosphorMotion: { reduced: () => opts.reduced === true },
@@ -525,23 +528,25 @@ test('a fill is one line under headings: the clock, the side, the coin, the size
   const [row] = fillRows(world.host);
   assert.ok(row !== undefined, 'no fill row on the tape');
   assert.equal(row.side, 'Buy');
-  assert.equal(row.node.childNodes[1].dataset.tone, 'up', 'a buy is toned up');
+  assert.equal(row.node.childNodes[1].dataset.side, 'buy');
+  assert.equal(row.node.childNodes[1].dataset.tone, undefined, 'a buy is a word, not a green pill');
   assert.equal(row.coin, 'BTC');
   assert.equal(row.size, '0.001', 'the list never said what was bought');
   assert.equal(row.value, '$60.00');
-  assert.equal(row.node.childNodes[4].dataset.dir, 'up', 'a buy takes its value in the side colour, green, the same as its pill');
+  assert.equal(row.node.childNodes[4].dataset.dir, undefined, 'a value is plain whichever side it was');
   assert.ok(row.node.childNodes[3].className.includes('mono'), 'a size is set in the mono face');
   assert.ok(row.node.childNodes[4].className.includes('mono'), 'a value is set in the mono face');
 });
 
-test('a sell is toned down, value included', async () => {
+test('a sell is a word, not a loss: no red on the side or the value', async () => {
   const data = payload(0.001, 5);
   data.fills = [fill({ side: 'sell' })];
   const { host } = await renderPayload(data);
   const [row] = fillRows(host);
   assert.equal(row.side, 'Sell');
-  assert.equal(row.node.childNodes[1].dataset.tone, 'down');
-  assert.equal(row.node.childNodes[4].dataset.dir, 'down', 'a sell chip in red over a green value');
+  assert.equal(row.node.childNodes[1].dataset.side, 'sell');
+  assert.equal(row.node.childNodes[1].dataset.tone, undefined);
+  assert.equal(row.node.childNodes[4].dataset.dir, undefined);
 });
 
 test('a fill carries the time it happened', async () => {
@@ -592,7 +597,7 @@ test('a done plan sits in the tape with the reason it ended, one line each, newe
   assert.equal(rows[0].childNodes[3].dataset.dir, undefined);
 });
 
-test('a done plan whose payload carries what it closed for shows the figure, signed and by its sign', async () => {
+test('a done plan whose payload carries what it closed for shows the figure, signed, and red only for a loss', async () => {
   const data = flat();
   data.plans = [
     openPlan({ id: 'pl_w', status: 'done', endReason: 'targeted', closedPnlUsd: 412.5, updatedAt: ago(20 * MINUTE) }),
@@ -602,10 +607,10 @@ test('a done plan whose payload carries what it closed for shows the figure, sig
   const rows = withClass(host, 'done-row').filter((r) => r.className.includes('ended-row'));
   assert.equal(rows.length, 2);
   assert.equal(rows[0].childNodes[3].textContent, '+$412.50');
-  assert.equal(rows[0].childNodes[3].dataset.dir, 'up');
+  assert.equal(rows[0].childNodes[3].dataset.dir, undefined, 'a profit is a signed figure, never green');
   assert.ok(rows[0].childNodes[3].className.includes('mono'), 'a figure is set in the mono face');
   assert.equal(rows[1].childNodes[3].textContent, '-$63.20');
-  assert.equal(rows[1].childNodes[3].dataset.dir, 'down');
+  assert.equal(rows[1].childNodes[3].dataset.dir, 'loss', 'a loss is the one figure that takes red');
 });
 
 test('the tape is the last 24 hours, and Show more reveals the next twenty older rows', async () => {
@@ -617,7 +622,7 @@ test('the tape is the last 24 hours, and Show more reveals the next twenty older
   ];
   const world = await renderPayload(data);
   assert.equal(withClass(world.host, 'done-row').length, 5);
-  const doneCount = () => tabs(world.host).filter((t) => t.label === 'Done')[0].count;
+  const doneCount = () => tabs(world.host).filter((t) => t.label === 'History')[0].count;
   assert.equal(doneCount(), '5', 'the tab counts the day');
   const [more] = withClass(world.host, 'trade-more');
   assert.ok(more !== undefined, 'no Show more under the tape');
@@ -725,16 +730,15 @@ test('pressing a fill row opens the receipt card with the fill mapped to the rec
 
 // ---------- the strip ----------
 
-test('the strip is the coin, the venue, the mark, free collateral and what the plans put at risk', async () => {
+test('the market line is the coin, the price and the venue; the account\'s figures are the money line\'s', async () => {
   const { host, lines } = await renderPayload(funded());
   assert.ok(!lines.includes('No trading money yet.'), `a funded account was told it had none: ${JSON.stringify(lines)}`);
-  assert.ok(lines.includes('Free'), JSON.stringify(lines));
-  assert.ok(lines.includes('$3,100.25'), JSON.stringify(lines));
-  assert.ok(lines.includes('At risk'), JSON.stringify(lines));
-  assert.ok(lines.includes('$6,000.00'), JSON.stringify(lines));
-  // Two figures on the strip and no third: the exchange header carries what a person checks
-  // before a plan, and the loss at the stops is on the open row as the stop's distance.
+  // What the trading account holds is on Pro's money line (ui/screens/pro.js), once: the
+  // market line under it carries the market and nothing about the account.
+  assert.ok(!lines.includes('Free'), JSON.stringify(lines));
+  assert.ok(!lines.includes('At risk'), JSON.stringify(lines));
   assert.ok(!lines.includes('Max loss'), JSON.stringify(lines));
+  assert.equal(withClass(host, 'strip-stats').length, 0, 'the strip still builds an account column');
   // The coin is a name set in the text face, on the market control, with its logo before it.
   const [coin] = withClass(host, 'trade-mark-coin');
   assert.equal(coin.textContent, 'BTC');
@@ -743,9 +747,18 @@ test('the strip is the coin, the venue, the mark, free collateral and what the p
   assert.equal(symbol.childNodes[0].dataset.coin, 'BTC');
   const [venue] = withClass(host, 'trade-venue');
   assert.ok(textOf(venue).includes('Hyperliquid'), 'the venue is not named');
+  assert.equal(withClass(host, 'trade-venue-dot').length, 0, 'the venue wears a status dot');
 });
 
-test('the price ticks in colour: a rise marks the digits up, a fall marks them down', async () => {
+test('every read hands the payload to the money line, as one phosphor:trade event', async () => {
+  const world = await renderPayload(funded());
+  const seen = world.window.__tradeEvents as Array<{ type: string; detail: { data: { symbol: string } } }>;
+  assert.ok(Array.isArray(seen) && seen.length >= 1, 'no phosphor:trade event after a read');
+  assert.equal(seen[seen.length - 1].type, 'phosphor:trade');
+  assert.equal(seen[seen.length - 1].detail.data.symbol, 'BTC');
+});
+
+test('the price changes in place and is never coloured: no tick either way', async () => {
   const world = await renderPayload(flat());
   const [px] = withClass(world.host, 'px');
   // The figure is two spans, the cents one step quieter, and reads as one price.
@@ -757,20 +770,16 @@ test('the price ticks in colour: a rise marks the digits up, a fall marks them d
   world.set(up);
   await world.refresh();
   assert.equal(textOf(px).join(''), '$60,010.00');
-  assert.equal(px.dataset.tick, 'up');
+  assert.equal(px.dataset.tick, undefined);
   const down = flat();
   down.markets = [{ coin: 'BTC', markPx: 59990, szDecimals: 5, maxLeverage: 20, assetId: 0 }];
   world.set(down);
   await world.refresh();
-  assert.equal(px.dataset.tick, 'down');
-  // The same number again is not a tick, and the mark is written as plain text, never as
-  // markup.
-  world.set(down);
-  await world.refresh();
-  assert.equal(px.dataset.tick, 'down');
+  assert.equal(textOf(px).join(''), '$59,990.00');
+  assert.equal(px.dataset.tick, undefined);
 });
 
-test('reduced motion skips the tick', async () => {
+test('under reduced motion the price changes the same way', async () => {
   const world = await renderPayload(flat(), { reduced: true });
   const up = flat();
   up.markets = [{ coin: 'BTC', markPx: 60010, szDecimals: 5, maxLeverage: 20, assetId: 0 }];
@@ -781,7 +790,7 @@ test('reduced motion skips the tick', async () => {
   assert.equal(px.dataset.tick, undefined);
 });
 
-test('the day reads from 25 hourly candles: the change against the close a day ago, plain and coloured, the high and the low', async () => {
+test('the day reads from 25 hourly candles: the change against the close a day ago, signed, the high and the low', async () => {
   // 25 bars: the first is the bar that closed a day ago, the 24 since are the day.
   const candles = Array.from({ length: 25 }, (_, i) => ({ t: 0, o: 61000, h: i === 10 ? 63500 : 61500, l: i === 3 ? 58200 : 60500, c: i === 0 ? 61700 : 61000, v: 1 }));
   const world = await renderPayload(flat(), { candles, view: 'trade' });
@@ -810,10 +819,9 @@ test('the day reads -- until the candles have landed, and never a number for ano
   assert.equal(withClass(world.host, 'trade-low')[0].childNodes[1].textContent, '--');
 });
 
-test('max loss is not on the strip', async () => {
+test('no account figure is on the market line, max loss least of all', async () => {
   const { lines } = await renderPayload(flat());
-  assert.ok(lines.includes('At risk'), JSON.stringify(lines));
-  assert.ok(lines.includes('$0.00'), JSON.stringify(lines));
+  assert.ok(!lines.includes('At risk'), JSON.stringify(lines));
   assert.ok(!lines.includes('Max loss'), `a max loss spent a figure: ${JSON.stringify(lines)}`);
 });
 
@@ -829,23 +837,20 @@ test('an account the feed has not settled yet says nothing: no line, no figures,
   assert.ok(!lines.some((l) => l.startsWith('No trading money yet')), JSON.stringify(lines));
   const [line] = withClass(host, 'trade-line');
   assert.equal(line.hidden, true, 'a wait is not news');
-  assert.equal(withClass(host, 'strip-stats')[0].hidden, true, 'no figures while none are known');
 });
 
-test('no money at all is one sentence that names the next step, with the clock ahead of it', async () => {
+test('an empty or dust-only account is the money line\'s to say: the market line stays quiet', async () => {
+  // collateral.funded false is dust or nothing (src/trade/state.ts). Pro's money line says
+  // "No trading money yet" with its one action (ui/screens/pro.js); saying it here too was
+  // the same sentence twice on one screen.
   const data = flat();
-  data.account = { equityUsd: null, freeUsd: null, healthPct: null, unified: false, accountKnown: true, atRiskUsd: 0, maxLossUsd: 0 };
+  data.account = { equityUsd: 0.000002, freeUsd: 0.000002, healthPct: null, unified: false, accountKnown: true, atRiskUsd: 0, maxLossUsd: 0 };
+  data.collateral = { address: null, perpUsd: 0.000002, spotUsdcUsd: 0, funded: false };
   data.fills = [];
   const world = await renderPayload(data);
-  assert.ok(world.lines.includes('No trading money yet. Ask your assistant to fund it.'), JSON.stringify(world.lines));
+  assert.ok(!world.lines.some((l) => l.startsWith('No trading money yet')), JSON.stringify(world.lines));
   const [line] = withClass(world.host, 'trade-line');
-  assert.equal(line.hidden, false);
-  assert.equal(line.dataset.tone, undefined, 'an empty account is not a fault');
-  assert.equal(line.childNodes[0].dataset.icon, 'waiting', 'the clock, not the deposit tray');
-  // The line is written once: a payload that says the same thing keeps the node.
-  const icon = line.childNodes[0];
-  await world.refresh();
-  assert.equal(line.childNodes[0], icon, 'the icon was rebuilt for a sentence that did not change');
+  assert.equal(line.hidden, true);
 });
 
 test('the mark price is on the rail whether or not anything is open', async () => {
@@ -875,11 +880,13 @@ test('an unreachable venue says so in plain words rather than drawing its last n
   assert.ok(raw.hasAttribute('data-dev-only'), 'the raw error is on screen without the developer switch');
 });
 
-test('the venue notice is drawn in the tone of the news: red with the link struck through for a shut socket, amber with a warning for an open one that errors', async () => {
-  // The notice under the strip carries a data-tone the stylesheet washes and a drawn icon
-  // ahead of the sentence (2026-09-15). A shut socket and an open socket that answers with an
-  // error are different news and read differently; a wait is quiet; and with nothing to say
-  // the row is gone rather than empty.
+test('the venue notice says which kind of news it is: the link struck through for a shut socket, a warning for an open one that errors, a clock for a wait', async () => {
+  // The notice under the strip carries a data-tone and a drawn icon ahead of the sentence
+  // (2026-09-15). A shut socket and an open socket that answers with an error are different
+  // news and read differently, by their icon and their words: a slow venue is not a loss, so
+  // the stylesheet colours neither. With nothing to say the row is gone rather than empty.
+  const sheet = readFileSync(new URL('../../ui/design/trade.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(sheet, /\.trade-line\[data-tone="(down|warn)"\]\s*\{[^}]*color/, 'a venue notice is coloured');
   // The notice is [icon][sentence][raw]: the raw span carries the venue's own words behind
   // the developer switch (data-dev-only) and is hidden outright while there are none.
   const shut = flat();
@@ -933,19 +940,15 @@ test('the venue notice is drawn in the tone of the news: red with the link struc
   assert.equal(gone.childNodes[1].textContent, '');
 });
 
-test('an unreachable venue leaves the figures unknown rather than calling them empty', async () => {
-  // Silence is not the same answer as zero. Printing the empty state here would be the window
-  // stating a fact the venue has not stated. At risk is the app's own sum over its own plans,
-  // so that one is still a number.
+test('an unreachable venue is never told it has no money', async () => {
+  // Silence is not the same answer as zero. The market line says the venue is not answering;
+  // the money line reads the figures as unknown (tests/unit/pro-money-ui.test.ts).
   const data = flat();
   data.account = { equityUsd: null, freeUsd: null, healthPct: null, unified: false, accountKnown: true, atRiskUsd: 0, maxLossUsd: 0 };
   data.venue = { connected: false, source: 'none', ageMs: null, latencyMs: null, error: 'no route to host', degraded: true };
-  const { host, lines } = await renderPayload(data);
+  const { lines } = await renderPayload(data);
   assert.ok(!lines.some((l) => l.startsWith('No trading money yet')), JSON.stringify(lines));
-  const [free] = withClass(host, 'strip-stats')[0].childNodes;
-  assert.equal(free.childNodes[0].textContent, 'Free');
-  assert.equal(free.childNodes[1].textContent, '--', 'free must read as unknown, not as empty');
-  assert.ok(free.childNodes[1].className.includes('dim'));
+  assert.ok(lines.includes('Not connected to Hyperliquid. Trying again.'), JSON.stringify(lines));
 });
 
 // ---------- Open ----------
@@ -959,7 +962,8 @@ test('an open position is one line under headings: the coin and side, size, entr
   assert.ok(row !== undefined, 'no position row');
   const asset = row.childNodes[0];
   assert.equal(textOf(asset).join(' '), 'BTC Long 5x');
-  assert.equal(asset.childNodes[2].dataset.tone, 'up', 'a long is toned up');
+  assert.equal(asset.childNodes[2].dataset.side, 'long');
+  assert.equal(asset.childNodes[2].dataset.tone, undefined, 'a side is a word, never a colour');
   assert.equal(row.childNodes[1].textContent, '0.5', 'no size');
   assert.equal(row.childNodes[2].textContent, '$58,000.00', 'no entry');
   assert.equal(row.childNodes[3].textContent, '$60,000.00', 'no mark');
@@ -970,17 +974,18 @@ test('an open position is one line under headings: the coin and side, size, entr
   assert.equal(row.childNodes[6].textContent, '+3.3%', 'no target distance');
   for (let i = 1; i <= 6; i += 1) assert.ok(row.childNodes[i].className.includes('mono'), `column ${i} is not in the mono face`);
   const [pnl] = withClass(host, 'trade-pnl');
-  assert.ok(pnl.className.includes('up'), 'a profit is toned up');
+  assert.ok(!pnl.className.includes('up') && !pnl.className.includes('loss'), 'a profit is a signed figure in the text tone');
   assert.ok(pnl.className.includes('mono'), 'a number is set in the mono face');
 });
 
-test('a short is toned down, and the headings go with the last position', async () => {
+test('a short is a word, not a loss, and the headings go with the last position', async () => {
   const data = funded();
   data.positions[0] = { ...data.positions[0], side: 'short' } as never;
   const world = await renderPayload(data);
   const [row] = withClass(world.host, 'pos-row');
-  assert.equal(row.childNodes[0].childNodes[2].textContent, 'Short');
-  assert.equal(row.childNodes[0].childNodes[2].dataset.tone, 'down');
+  assert.equal(textOf(row.childNodes[0].childNodes[2]).join(''), 'Short');
+  assert.equal(row.childNodes[0].childNodes[2].dataset.side, 'short');
+  assert.equal(row.childNodes[0].childNodes[2].dataset.tone, undefined);
   const none = funded();
   none.positions = [];
   world.set(none);
@@ -988,13 +993,13 @@ test('a short is toned down, and the headings go with the last position', async 
   assert.equal(withClass(world.host, 'pos-head')[0].hidden, true, 'headings over nothing');
 });
 
-test('a loss is toned down and carries its sign', async () => {
+test('a loss is the one figure that takes red, and it carries its sign', async () => {
   const data = funded();
   data.positions[0] = { ...data.positions[0], unrealisedUsd: -42.5 } as never;
   const { host } = await renderPayload(data);
   const [pnl] = withClass(host, 'trade-pnl');
   assert.equal(pnl.textContent, '-$42.50');
-  assert.ok(pnl.className.includes('down'));
+  assert.ok(pnl.className.includes('loss'));
 });
 
 test('a position with no open plan behind it takes its exits from the working triggers', async () => {
@@ -1054,7 +1059,7 @@ test('a position the app holds no open plan for has no Close, because there is n
 
 // ---------- Waiting ----------
 
-test('a waiting plan is one English line, an Armed pill with the armed icon, its conditions as dots, and Cancel', async () => {
+test('a waiting plan is one English line, Armed with the armed icon in a word, its conditions with a check or a clock, and Cancel', async () => {
   const { host, lines } = await renderPayload(funded());
   assert.ok(lines.includes('Long ETH $200 at 3x, market, stop 3,180, target 3,420'), JSON.stringify(lines));
   // The price in a condition is grouped like the prices on the line above it, and the
@@ -1063,10 +1068,13 @@ test('a waiting plan is one English line, an Armed pill with the armed icon, its
   assert.ok(lines.includes('volume on the 1h is at least 1.5x its 20-bar average'), JSON.stringify(lines));
   const conds = withClass(host, 'trade-cond');
   assert.deepEqual(conds.map((c) => c.dataset.holds), ['true', 'false']);
+  assert.equal(withClass(host, 'trade-cond-dot').length, 0, 'a condition wears a dot');
+  assert.ok(conds.every((c) => c.childNodes[0].className.includes('trade-cond-mark')), 'a condition has no mark before it');
   assert.ok(!lines.includes('pl_a1'), `the id is not the line a person reads: ${JSON.stringify(lines)}`);
   const [state] = withClass(host, 'trade-row-state');
   assert.equal(textOf(state).join(''), 'Armed');
-  assert.equal(state.dataset.tone, 'ink');
+  assert.equal(state.dataset.tone, undefined, 'armed is working, not green');
+  assert.ok(!state.className.includes('trade-pill'), 'the state is a word, not a pill');
   assert.ok(state.childNodes[0].className.includes('icon'), 'no armed icon before the word');
   assert.ok(!state.className.includes('warn'));
   const [cancel] = buttons(host).filter((b) => b.textContent === 'Cancel');
@@ -1126,7 +1134,7 @@ test('an idea is listed under waiting as an Idea with its conditions unmet and n
   assert.ok(lines.includes('Long ETH $200 at 3x, market, stop 3,180, target 3,420'), JSON.stringify(lines));
   assert.ok(lines.includes('Idea'), JSON.stringify(lines));
   const [state] = withClass(host, 'trade-row-state');
-  assert.equal(state.dataset.tone, undefined, 'an idea is the quiet pill');
+  assert.equal(state.dataset.tone, undefined, 'an idea is the quiet word');
   assert.ok(!state.className.includes('warn'));
   // No holds on an idea: the conditions still print, from the plan's own words, all hollow.
   const conds = withClass(host, 'trade-cond');
@@ -1158,10 +1166,10 @@ test('nothing open, nothing waiting and nothing done is one line each, with no e
   assert.ok(!lines.some((l) => l.includes('land here as they happen')), JSON.stringify(lines));
 });
 
-test('the deck is three tabs, Open, Waiting and Done, in that order, each with its count', async () => {
+test('the deck is three tabs, Positions, Orders and History, in that order, each with its count', async () => {
   const { host } = await renderPayload(funded());
   const list = tabs(host);
-  assert.deepEqual(list.map((t) => t.label), ['Open', 'Waiting', 'Done']);
+  assert.deepEqual(list.map((t) => t.label), ['Positions', 'Orders', 'History']);
   assert.deepEqual(list.map((t) => t.count), ['1', '1', '0']);
   for (const t of list) {
     assert.equal(t.node.getAttribute('role'), 'tab');
@@ -1170,7 +1178,7 @@ test('the deck is three tabs, Open, Waiting and Done, in that order, each with i
   // A zero is written, quietly.
   assert.equal(list[2].node.childNodes[1].dataset.zero, 'true');
   assert.equal(list[0].node.childNodes[1].dataset.zero, undefined);
-  // Open is up first; the other two panels are hidden, not absent.
+  // Positions is up first; the other two panels are hidden, not absent.
   assert.deepEqual(list.map((t) => t.selected), [true, false, false]);
   const panels = withClass(host, 'trade-panel');
   assert.deepEqual(panels.map((p) => p.getAttribute('role')), ['tabpanel', 'tabpanel', 'tabpanel']);

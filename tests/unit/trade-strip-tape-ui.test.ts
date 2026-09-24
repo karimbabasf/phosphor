@@ -282,7 +282,7 @@ test('a candle frame for the market on the strip moves the price, with no /api/t
   assert.equal(w.frames(), 1, 'one animation frame asked for');
   w.flush();
   assert.equal(price(w), '$60,050.00');
-  assert.equal(w.px.dataset.tick, 'up', 'a rise ticks the digits up');
+  assert.equal(w.px.dataset.tick, undefined, 'the price changes in place and is never coloured: no tick');
   assert.equal(w.fetches(), before, 'the tape must not cost a fetch');
 });
 
@@ -294,7 +294,7 @@ test('a frame for another market leaves the strip alone', async () => {
   assert.equal(w.px.dataset.tick, undefined);
 });
 
-test('a burst of frames paints once, with the newest value, and ticks against the last figure shown', async () => {
+test('a burst of frames paints once, with the newest value', async () => {
   const w = await boot(payload());
   w.emit('candle', frame('BTC-USD', 60060));
   w.emit('candle', frame('BTC-USD', 60040));
@@ -302,13 +302,12 @@ test('a burst of frames paints once, with the newest value, and ticks against th
   assert.equal(w.frames(), 1, 'three frames must fold into one paint');
   w.flush();
   assert.equal(price(w), '$59,990.00');
-  assert.equal(w.px.dataset.tick, 'down', 'the tick is the newest value against the figure that was on screen');
   // The next burst paints again, once.
   w.emit('candle', frame('BTC-USD', 60000));
   assert.equal(w.frames(), 1);
   w.flush();
   assert.equal(price(w), '$60,000.00');
-  assert.equal(w.px.dataset.tick, 'up');
+  assert.equal(w.px.dataset.tick, undefined);
 });
 
 test('a mark that lands after the tape has spoken does not pull the figure back; it is the title', async () => {
@@ -319,7 +318,6 @@ test('a mark that lands after the tape has spoken does not pull the figure back;
   await w.refresh();
   assert.equal(price(w), '$60,050.00', 'the mark stepped the figure back');
   assert.equal(w.px.title, 'Hyperliquid mark $60,010.00');
-  assert.equal(w.px.dataset.tick, 'up', 'a refresh that changes nothing on screen is not a tick');
 });
 
 test('the day folds the live bar in: the change against the close a day ago, the high and the low', async () => {
@@ -360,7 +358,7 @@ test('a frame from a venue the strip does not name is ignored', async () => {
   assert.equal(price(w), '$60,000.00');
 });
 
-test('reduced motion paints the tape without the tick', async () => {
+test('reduced motion paints the tape the same way, with nothing to switch off', async () => {
   const w = await boot(payload(), { reduced: true });
   w.emit('candle', frame('BTC-USD', 60050));
   w.flush();
