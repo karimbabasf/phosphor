@@ -385,6 +385,24 @@ test('Add money opens the deposit steps in the panel, over nothing, and Done put
   assert.equal(add.focused, true, 'focus goes back to the control that opened the steps');
 });
 
+test('Escape on the network tiles closes the steps, and says so to the picker', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  click(panel.one('bal-add'));
+  const body = panel.one('bal-flow-body');
+  let stopped = false;
+  for (const handler of body.__on['netpick:dismiss'] ?? []) handler({ preventDefault: () => { stopped = true; } });
+  assert.equal(stopped, true, 'the picker was not told the steps closed');
+  assert.equal(panel.one('bal-flow').hidden, true);
+  assert.equal(panel.one('bal-list').hidden, false);
+  assert.ok(panel.calls.some((c) => c.route === 'moneyin.destroy'));
+
+  // Closed, the panel lets the event go by.
+  let again = false;
+  for (const handler of body.__on['netpick:dismiss'] ?? []) handler({ preventDefault: () => { again = true; } });
+  assert.equal(again, false);
+});
+
 test('the panel carries nothing but the balance: no rules strip, no folds, no brake', () => {
   const source = BASIC_SOURCE.replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const gone of ['strip', 'fold(', 'PhosphorReceipts', 'alloc', 'Nothing is connected', 'Freeze everything', 'phosphor:agent-phase']) {

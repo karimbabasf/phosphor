@@ -72,5 +72,5 @@ test('the three hook classes are on the buttons that carry them', () => {
   const hooks = new Map(list.map((f) => [f.family, f.sites.map((s) => `${s.file}:${s.line}`)]));
   assert.ok(hooks.has('check-row layers-row'), 'the check row lost its hook');
   assert.ok(hooks.has('btn btn-ghost btn-sm tcard-open'));
-  assert.ok(hooks.has('btn btn-quiet btn-sm sendcard-copy'));
+  assert.ok(hooks.has('btn btn-quiet btn-sm receipt-copy'));
 });

@@ -91,12 +91,13 @@
     transfer: 'Transfer'
   };
 
-  var DEPOSIT_STATES = {
-    show: ['watching', 'Watching for your deposit'],
-    watching: ['watching', 'Watching for your deposit'],
-    seen: ['seen', 'Seen'],
-    landed: ['landed', 'Landed'],
-    stopped: ['watching', 'Not watching']
+  /* The watch's phase as the deposit card's one word (src/vault/watch.ts), said only while the
+     watch the card started is the one running. */
+  var DEPOSIT_WORDS = {
+    watching: 'Watching',
+    seen: 'Arriving',
+    bridged: 'Almost there',
+    credited: 'In your balance'
   };
 
   /* The stage names the colour, not a second vocabulary: waiting is on the
@@ -923,6 +924,14 @@
      link when the server built one; the network it lands on; and whether this is the first send
      to it: a first send to an address is the one a person should look at twice. A named account
      is already whole in the card's head, so it is not printed a second time. */
+  /* An address's groups in the tones Add money prints them in (ui/design/deposit.css): the
+     "0x" quiet, the first and the last group, the ones a person checks, in the text colour, and
+     the rest a step quieter. */
+  function groupTone(i, first, count) {
+    if (i < first) return 'addr-prefix';
+    return count - first > 2 && i !== first && i !== count - 1 ? 'addr-mid' : 'addr-end';
+  }
+
   function addressBlock(address, explorer, recipient, place) {
     var wrap = dom.el('div', 'mcard-address');
     if (!isNamedAccount(address)) {
@@ -931,8 +940,7 @@
       var groups = groupsOf(address);
       var first = groups[0] === '0x' ? 1 : 0;
       for (var i = 0; i < groups.length; i += 1) {
-        var key = groups.length > 2 && (i === first || i === groups.length - 1);
-        line.appendChild(dom.el('span', 'tcard-leg-group' + (key ? ' tcard-leg-group-key' : ''), groups[i]));
+        line.appendChild(dom.el('span', 'tcard-leg-group ' + groupTone(i, first, groups.length), groups[i]));
       }
       dom.setAttr(line, 'data-address', address);
       row.appendChild(line);
@@ -1269,13 +1277,15 @@
     else return out;
     if (inFact) out.push([words[0], inFact[0], inFact[1]]);
     if (floorFact) out.push([words[1], floorFact[0], floorFact[1]]);
-    var fee = legs.feeUsd !== null && legs.feeUsd !== undefined ? dom.fee(legs.feeUsd) : '';
-    if (fee) out.push(['Fee', fee, '']);
+    /* A fee of nothing is said in words, quietly, not as a bold $0.00. */
+    var feeUsd = legs.feeUsd !== null && legs.feeUsd !== undefined ? num(legs.feeUsd) : null;
+    if (feeUsd === 0) out.push(['Fee', 'No fee', '', 'quiet']);
+    else if (feeUsd !== null) out.push(['Fee', dom.fee(feeUsd), '']);
     return out;
   }
 
   function paintFacts(host, facts, memo) {
-    var shape = facts.map(function (f) { return f[0] + ':' + f[2]; }).join('|');
+    var shape = facts.map(function (f) { return f[0] + ':' + f[2] + ':' + (f[3] || ''); }).join('|');
     if (memo.factShape !== shape) {
       memo.factShape = shape;
       dom.clear(host);
@@ -1284,6 +1294,7 @@
         var part = dom.el('span', 'mcard-fact');
         part.appendChild(dom.el('span', 'mcard-fact-label', facts[i][0]));
         var value = dom.el('b', 'mcard-fact-value');
+        if (facts[i][3] === 'quiet') value.setAttribute('data-quiet', 'true');
         var figure = dom.el('span', 'num');
         value.appendChild(figure);
         if (facts[i][2]) value.appendChild(dom.el('span', '', ' ' + facts[i][2]));
@@ -1671,7 +1682,7 @@
       }
       dom.setHidden(decide, !decide.firstChild);
 
-      paintDetails(details.body, move, view, row, ask);
+      paintDetails(details.body, move, view, row, ask, state);
       var hasDetails = !!details.body.firstChild;
       var folds = headToggles();
       /* A card that folds to its head opens its Details from the head; one that asks, or did
@@ -1711,8 +1722,9 @@
 
   /* The Details lines, rebuilt each paint: a handful of lines, and the fold's open state lives
      on the fold rather than in them. */
-  function paintDetails(fold, move, view, row, ask) {
+  function paintDetails(fold, move, view, row, ask, state) {
     dom.clear(fold);
+    var ended = state === 'done' || state === 'didnt_go_through' || state === 'coming_back';
     if (ask && ask.details) {
       for (var a = 0; a < ask.details.length; a += 1) fold.appendChild(ask.details[a]);
     }
@@ -1730,18 +1742,27 @@
         referenceLine(fold, leg.running ? 'Where it is now' : (LEG_WORD[leg.leg] || 'Hash'), leg.hash, leg.explorer);
       }
       if (view.correlationId) referenceLine(fold, 'Reference', view.correlationId, null);
-      /* The service's own word for where the move is, capitalised as a word a person reads. */
+      /* The service's own word for where the move is is evidence for an engineer, in developer
+         mode only. A person reads the plain line when the service refused the move. */
       if (view.providerStage && view.stage !== 'confirmed') {
         var said = vendorWord(view.providerStage);
-        factLine(fold, move.kind === 'swap' ? 'The swap service said' : 'The service said', said.charAt(0).toUpperCase() + said.slice(1));
+        var stageLine = dom.el('div', 'tcard-line');
+        stageLine.setAttribute('data-dev-only', '');
+        stageLine.appendChild(dom.el('span', 'tcard-line-label', move.kind === 'swap' ? 'The swap service said' : 'The service said'));
+        stageLine.appendChild(fig('tcard-line-value', said.charAt(0).toUpperCase() + said.slice(1)));
+        fold.appendChild(stageLine);
+        if (ended && /^(FAILED|REFUNDED)$/i.test(String(view.providerStage))) {
+          fold.appendChild(dom.el('div', 'tcard-note', move.kind === 'swap' ? 'The swap service turned it down.' : 'The service turned it down.'));
+        }
       }
     } else if (move.id) {
       referenceLine(fold, 'Reference', move.id, null);
     }
     var priceFor = view && view.stage === 'waiting_for_you' && isObject(row.simulation) && isObject(row.simulation.swap) ? num(row.simulation.swap.priceGoodForSec) : null;
     if (priceFor !== null && priceFor > 0) fold.appendChild(dom.el('div', 'tcard-note', 'Price good for ' + roughWords(priceFor) + ', checked again when you approve.'));
-    if (move.detail && move.detail !== move.reason) {
-      /* The rail's own line is evidence for an engineer: it shows in developer mode only. */
+    if (ended && move.detail && move.detail !== move.reason) {
+      /* The rail's own line is evidence for an engineer: it shows in developer mode only, and
+         only once the move has ended. */
       var recorded = dom.el('div', 'tcard-line tcard-recorded');
       recorded.setAttribute('data-wrap', 'true');
       recorded.setAttribute('data-dev-only', '');
@@ -1758,8 +1779,8 @@
     }
     /* The checks the app ran before signing, folded: every kind that runs a preflight carries
        them, and a held move is waiting on them. */
-    var sendCard = window.PhosphorSendCard;
-    var checks = sendCard && typeof sendCard.preflightOf === 'function' ? sendCard.preflightOf(row) : move.preflight;
+    var decision = window.PhosphorDecision;
+    var checks = decision && typeof decision.preflightOf === 'function' ? decision.preflightOf(row) : move.preflight;
     if (checks && window.PhosphorChecks && typeof window.PhosphorChecks.fold === 'function') {
       window.PhosphorChecks.fold(fold, checks, { open: false });
     }
@@ -1975,13 +1996,15 @@
 
   /* ---------- the deposit card ---------- */
 
+  /* The agent is told only the address's ends; the card draws the whole address from the
+     window's own read of the wallet, and says in words where it cannot. */
   function depositCard(data, extra) {
     var ok = data.ok !== false;
     var chain = String(data.chain || '');
     var symbol = String(data.asset || data.symbol || '');
-    var state = DEPOSIT_STATES[String(data.watching)] || DEPOSIT_STATES.show;
-    var parts = shell('deposit', icon('deposit'), ok ? 'Deposit ' + symbol + ' on ' + (data.network || chainName(chain)) : 'Deposit', {
-      state: ok ? { tone: state[0], label: state[1] } : { tone: 'failed', label: 'Not shown' },
+    var place = String(data.network || chainName(chain));
+    var parts = shell('deposit', icon('deposit'), ok ? 'Deposit ' + symbol + ' on ' + place : 'Deposit', {
+      state: ok ? { tone: 'watching', label: '' } : { tone: 'failed', label: 'Not shown' },
       at: extra.at,
       open: extra.open,
       onToggle: extra.onToggle
@@ -1996,25 +2019,17 @@
     var row = dom.el('div', 'tcard-row tcard-deposit-row');
     row.appendChild(logo(chain, 20));
     var name = dom.el('span', 'tcard-row-name');
-    name.appendChild(dom.el('span', 'tcard-symbol', String(data.network || chainName(chain))));
-    var tail = '';
+    name.appendChild(dom.el('span', 'tcard-symbol', place));
     var print = String(data.addressFingerprint || '');
     var m = /([A-Za-z0-9]{4})$/.exec(print);
-    if (m) tail = m[1];
-    if (tail) {
-      var ends = dom.el('span', 'tcard-place');
+    var ends = null;
+    if (m) {
+      ends = dom.el('span', 'tcard-place');
       ends.appendChild(dom.el('span', '', 'address ends in '));
-      ends.appendChild(fig('tcard-tail', tail));
+      ends.appendChild(ident('tcard-tail', m[1]));
       name.appendChild(ends);
     }
     row.appendChild(name);
-    /* The app checked the address against its own key: said with the check, in words. */
-    var checked = dom.el('span', 'tcard-note tcard-checked');
-    if (data.addressVerified === true) {
-      checked.appendChild(icon('done', 'tcard-checked-glyph'));
-      checked.appendChild(dom.el('span', '', 'Address checked'));
-    }
-    row.appendChild(checked);
     body.appendChild(row);
 
     /* What the network asks of a deposit, on the row's own text column, in words. */
@@ -2024,17 +2039,205 @@
     if (data.memo) facts.push('a memo is required');
     if (facts.length) body.appendChild(dom.el('div', 'tcard-facts tcard-deposit-facts', facts.join(', ') + '.'));
 
-    var actions = dom.el('div', 'tcard-actions');
+    var slot = dom.el('div', 'tcard-deposit');
+    body.appendChild(slot);
+
+    depositAddress(chain, print).then(function (found) {
+      if (found.address) {
+        if (ends) dom.setHidden(ends, true);
+        drawDeposit(slot, found, chain);
+      } else {
+        refuseDeposit(slot, found, chain, symbol);
+      }
+    });
+    followWatch(parts, data, extra.at);
+    return parts.card;
+  }
+
+  /* The short form src/http/read/wallet.ts gives the agent. */
+  function printOf(address) {
+    return address.length > 12 ? address.slice(0, 6) + '...' + address.slice(-4) : address;
+  }
+
+  function watchNow() {
+    var store = window.PhosphorState;
+    var now = store && typeof store.get === 'function' ? store.get() : null;
+    return now && isObject(now.deposit) ? now.deposit : null;
+  }
+
+  /* The address is drawn only where Add money would draw it (ui/screens/netpick.js): the wallet
+     file unedited, the wallet open, the network's address unchanged and the one the watch
+     holds, and its ends the ones the agent was told. */
+  function depositAddress(chain, print) {
+    var moneyIn = window.PhosphorMoneyIn;
+    var api = window.PhosphorApi;
+    var read = moneyIn && typeof moneyIn.load === 'function'
+      ? moneyIn.load()
+      : (api && typeof api.intentsReceive === 'function' ? api.intentsReceive().then(function (r) { return r && r.data ? r.data : null; }) : null);
+    var unread = { refused: 'The address could not be read here. Add money shows it.', open: true };
+    return Promise.resolve(read).then(function (report) {
+      if (!isObject(report)) return unread;
+      if (report.tampered) return { refused: 'The wallet file on this Mac has been edited, so no address in it can be trusted.' };
+      var networks = Array.isArray(report.networks) ? report.networks : [];
+      var network = null;
+      for (var i = 0; i < networks.length; i += 1) {
+        if (isObject(networks[i]) && networks[i].id === chain) network = networks[i];
+      }
+      if (network && typeof network.changed === 'string' && network.changed) return { refused: network.changed };
+      if (!network || network.unavailable || typeof network.address !== 'string' || !network.address) {
+        return { refused: 'No deposit address on this network right now.' };
+      }
+      if (report.verified !== true) return { refused: 'The whole address shows once the wallet is open.', open: true };
+      var watch = watchNow();
+      var held = watch && watch.chain === chain && typeof watch.address === 'string' && watch.address ? watch.address : network.address;
+      if (printOf(network.address) !== print || held !== network.address) {
+        return { refused: 'This address is not the one your agent was given, so nothing is shown.' };
+      }
+      return { address: network.address, memo: typeof network.memo === 'string' && network.memo ? network.memo : null };
+    }, function () { return unread; });
+  }
+
+  /* The address in a well, Copy and the QR code under it, and one line that says what the last
+     press found. A memo network gets no QR code: a scanned address leaves the memo out. */
+  function drawDeposit(slot, found, chain) {
+    var pick = window.PhosphorNetPick;
+    var said = dom.el('p', 'tcard-note tcard-deposit-said');
+    said.setAttribute('role', 'status');
+    dom.setHidden(said, true);
+    function say(text) {
+      dom.setText(said, text || '');
+      dom.setHidden(said, !text);
+    }
+
+    var row = dom.el('div', 'mcard-address-row');
+    var well = dom.el('div', 'mcard-address-line tcard-deposit-well');
+    well.appendChild(pick && typeof pick.addressBlock === 'function'
+      ? pick.addressBlock(found.address, typeof pick.kindOf === 'function' ? pick.kindOf(chain) : undefined)
+      : dom.el('span', 'addr', found.address));
+    row.appendChild(well);
+    row.appendChild(checkedCopy(found.address, 'address', say));
+    slot.appendChild(row);
+
+    var qr = null;
+    var actions = null;
+    if (found.memo) {
+      var memo = dom.el('div', 'mcard-address-row tcard-deposit-memo');
+      var memoLine = dom.el('p', 'mcard-address-line id');
+      memoLine.appendChild(dom.el('span', 'tcard-deposit-memo-label', 'Memo '));
+      memoLine.appendChild(dom.el('span', 'addr-end', found.memo));
+      memo.appendChild(memoLine);
+      memo.appendChild(checkedCopy(found.memo, 'memo', say));
+      slot.appendChild(memo);
+      slot.appendChild(said);
+      slot.appendChild(dom.el('p', 'tcard-note', 'Put the memo in the memo or tag field when you send. Without it the money reaches nobody and is not refunded.'));
+    } else {
+      slot.appendChild(said);
+      actions = dom.el('div', 'tcard-actions tcard-deposit-actions');
+      qr = dom.el('div', 'qr tcard-qr');
+      var canvas = dom.el('canvas');
+      canvas.setAttribute('role', 'img');
+      canvas.setAttribute('aria-label', 'QR code of the deposit address');
+      qr.appendChild(canvas);
+      dom.setHidden(qr, true);
+      var show = dom.el('button', 'btn btn-quiet btn-sm tcard-show-qr');
+      show.type = 'button';
+      var label = dom.el('span', 'btn-label', 'Show QR code');
+      show.appendChild(label);
+      var drawn = false;
+      dom.on(show, 'click', function () {
+        if (!qr.hidden) {
+          dom.setHidden(qr, true);
+          dom.setText(label, 'Show QR code');
+          return;
+        }
+        var lazy = window.PhosphorLazy;
+        Promise.resolve(lazy && typeof lazy.load === 'function' ? lazy.load('qr') : true).then(function () {
+          var check = drawn ? { ok: true } : (pick && typeof pick.drawChecked === 'function'
+            ? pick.drawChecked(canvas, found.address, 128)
+            : { ok: false, why: 'The QR code cannot be drawn here.' });
+          if (!check.ok) {
+            say(check.why + ' Copy the address instead.');
+            return;
+          }
+          drawn = true;
+          say('');
+          dom.setHidden(qr, false);
+          dom.setText(label, 'Hide QR code');
+        });
+      });
+      actions.appendChild(show);
+      slot.appendChild(actions);
+      slot.appendChild(qr);
+    }
+  }
+
+  /* Copy that reads the clipboard back and says what it found (ui/screens/netpick.js). */
+  function checkedCopy(value, what, say) {
+    var copy = dom.el('button', 'btn btn-quiet btn-sm tcard-copy');
+    copy.type = 'button';
+    var label = dom.el('span', 'btn-label', what === 'memo' ? 'Copy memo' : 'Copy');
+    copy.appendChild(label);
+    dom.on(copy, 'click', function () {
+      var pick = window.PhosphorNetPick;
+      if (pick && typeof pick.copyChecked === 'function') pick.copyChecked(value, say, what);
+      else copyToClipboard(value, label);
+    });
+    return copy;
+  }
+
+  /* Where the card cannot draw the address, the sentence takes its place; where Add money can
+     still get there (the wallet to open, a read to try again), the way there is one press. */
+  function refuseDeposit(slot, found, chain, symbol) {
+    slot.appendChild(dom.el('p', 'tcard-note', found.refused));
+    var deposit = window.PhosphorDeposit;
+    if (!found.open || !deposit || typeof deposit.open !== 'function') return;
+    var actions = dom.el('div', 'tcard-actions tcard-deposit-actions');
     var open = dom.el('button', 'btn btn-ghost btn-sm tcard-open');
     open.type = 'button';
-    open.appendChild(dom.el('span', 'btn-label', 'Show address and QR'));
-    dom.on(open, 'click', function () {
-      var deposit = window.PhosphorDeposit;
-      if (deposit && typeof deposit.open === 'function') deposit.open({ chain: chain, symbol: symbol });
-    });
+    open.appendChild(dom.el('span', 'btn-label', 'Open in Add money'));
+    dom.on(open, 'click', function () { deposit.open({ chain: chain, symbol: symbol }); });
     actions.appendChild(open);
-    body.appendChild(actions);
-    return parts.card;
+    slot.appendChild(actions);
+  }
+
+  /* The word follows the running watch while it is this card's own: the same network and coin,
+     begun around when the card was. A card drawn again from a stored conversation is older than
+     any watch running now, and says nothing. Until the first frame of its watch arrives, a new
+     card says what the tool answered. */
+  function followWatch(parts, data, at) {
+    var word = parts.state;
+    if (!word) return;
+    var when = typeof at === 'number' ? at : Date.now();
+    var chain = String(data.chain || '');
+    var symbol = String(data.asset || data.symbol || '').toUpperCase();
+    var followed = false;
+    function paint(watch) {
+      var started = isObject(watch) ? Date.parse(watch.startedAt) : NaN;
+      var mine = isObject(watch) && watch.chain === chain && String(watch.symbol || '').toUpperCase() === symbol
+        && started >= when - 120000 && started <= when + 10000;
+      var phase = null;
+      if (mine) {
+        followed = true;
+        phase = watch.phase;
+      } else if (!followed && Date.now() - when < 120000) {
+        phase = data.watching;
+      }
+      var label = DEPOSIT_WORDS[phase] || '';
+      dom.setText(word, label);
+      word.setAttribute('data-state', phase === 'credited' ? 'landed' : 'watching');
+      dom.setHidden(word, !label);
+    }
+    paint(null);
+    var store = window.PhosphorState;
+    if (!store || typeof store.select !== 'function') return;
+    var off = null;
+    off = store.select('deposit', function (watch) {
+      if (off && parts.card.isConnected === false) {
+        off();
+        return;
+      }
+      paint(watch);
+    });
   }
 
   /* ---------- the key-value card ---------- */

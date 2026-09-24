@@ -86,9 +86,14 @@
 /* A pending button is disabled as well, and that is what stops a second press on a
    wait that can run to a minute. It keeps its full weight though: the spinner and
    the progress verb already say what is happening, and dimming it on top of that
-   would read as "not available" rather than "working". */
+   would read as "not available" rather than "working". Any other disabled button is
+   a ghost of itself: no fill, a hairline where its edge is, its word in the third
+   tone. A key at half strength read as mud (hunt B, 2026-09-23). */
 .btn:disabled:not([data-pending="true"]) {
-  opacity: 0.5;
+  opacity: 1;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--text-3);
 }
 
 /* The primary is lit from inside: a brighter top edge and a shade at its
@@ -133,15 +138,12 @@
 }
 
 /* The copy button: the quiet small variant with the 14 px glyph a hair from
-   its word, the same on the receipt (.receipt-copy) and the send card
-   (.sendcard-copy), so one address copies the way another does. */
-.receipt-copy,
-.sendcard-copy {
+   its word, on the receipt (.receipt-copy) and on a move card's receiver. */
+.receipt-copy {
   gap: var(--s-1);
 }
 
-.receipt-copy > .icon,
-.sendcard-copy > .icon {
+.receipt-copy > .icon {
   width: 14px;
   height: 14px;
 }
@@ -635,11 +637,13 @@ button.chip[aria-pressed="true"] {
 
 /* ---------- Check row ----------
 
-   A row in a menu that switches one thing on or off: a drawn 12 px box that
-   fills with the accent when on (aria-checked), the word beside it. The bar's
-   Layout menu and the chart's Layers menu are the two, and both build it as
-   .check-row holding an .check. The box has corners, not a curve: a round one
-   read as a radio, and these rows are never one-of. */
+   A row in a menu that switches one thing on or off: an 18 px soft box with a
+   tick in it when on (aria-checked), the word beside it. The bar's Layout menu
+   and the chart's Layers menu are the two, and both build it as .check-row
+   holding an .check with the icon set's tick inside. On is the box raised a
+   step with the tick drawn in the text's tone, never a green fill: on the
+   trading side green reads as a price going up. The box has corners, not a
+   curve: a round one read as a radio, and these rows are never one-of. */
 .check-row {
   display: flex;
   align-items: center;
@@ -672,18 +676,36 @@ button.chip[aria-pressed="true"] {
 
 .check {
   flex: 0 0 auto;
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  border: 1px solid var(--line-strong);
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1.5px solid var(--line-strong);
   background: transparent;
+  color: var(--text);
   transition: background-color var(--dur-press) var(--ease-out),
               border-color var(--dur-press) var(--ease-out);
 }
 
 .check-row[aria-checked="true"] .check {
-  border-color: var(--ink);
-  background: var(--ink);
+  border-color: transparent;
+  background: var(--bg-3);
+  box-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.1);
+}
+
+.check > .icon {
+  width: 14px;
+  height: 14px;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity var(--dur-press) var(--ease-out),
+              transform var(--dur-release) var(--ease-spring);
+}
+
+.check-row[aria-checked="true"] .check > .icon {
+  opacity: 1;
+  transform: none;
 }
 
 /* ---------- Banner ---------- */

@@ -126,7 +126,6 @@ const SMALL_FLOOR: Array<[file: string, selector: string, prop: string]> = [
   ['components.css', 'button.chip', 'min-height'],
   ['components.css', '.check-row', 'min-height'],
   ['checks.css', '.checks-toggle', 'min-height'],
-  ['sendcard.css', '.sendcard-info', 'height'],
   ['receipt.css', '.receipt-close', 'height'],
 ];
 
@@ -143,8 +142,12 @@ test('every pressable that is not a .btn holds the small variant', () => {
 test('the check row is one component, and the trade sheet keeps no copy of it', () => {
   const components = css('components.css');
   assert.match(components, /\.check-row\s*\{[^}]*min-height:\s*30px;/);
-  assert.match(components, /\.check-row\[aria-checked="true"\] \.check\s*\{[^}]*background:\s*var\(--ink\);/);
-  assert.match(components, /\.check\s*\{[^}]*border-radius:\s*3px;/, 'the box went round again and reads as a radio');
+  /* On is the box a step up with a tick in it, never a green fill: on the trading side green
+     reads as a price going up (hunt B, 2026-09-23). */
+  assert.match(components, /\.check-row\[aria-checked="true"\] \.check\s*\{[^}]*background:\s*var\(--bg-3\);/);
+  assert.doesNotMatch(components.match(/\.check-row\[aria-checked="true"\] \.check\s*\{[^}]*\}/)?.[0] ?? '', /--ink/, 'the box fills green again');
+  assert.match(components, /\.check\s*\{[^}]*border-radius:\s*6px;/, 'the box went round again and reads as a radio');
+  assert.match(components, /\.check-row\[aria-checked="true"\] \.check > \.icon\s*\{[^}]*opacity:\s*1;/, 'no tick shows in a box that is on');
   const trade = css('trade.css');
   assert.doesNotMatch(trade, /\.layers-row\s*\{/, 'trade.css draws the check row a second time');
   assert.doesNotMatch(trade, /\.layers-check\s*\{/);
@@ -154,14 +157,18 @@ test('the deposit card\'s open button sits on the text column', () => {
   assert.match(css('cards.css'), /\.tcard-open\s*\{\s*margin-left:\s*calc\(20px \+ var\(--s-3\)\);\s*\}/);
 });
 
-test('the copy button is drawn once for the receipt and the send card', () => {
+/* The send card is gone (hunt B, 2026-09-23): a send is decided on its move card, and the
+   window no longer loads the old card's sheet or script. */
+test('the copy button is drawn once for the receipt, and the send card is gone', () => {
   const components = css('components.css');
-  assert.match(components, /\.receipt-copy,\s*\.sendcard-copy\s*\{\s*gap:\s*var\(--s-1\);/);
-  assert.match(components, /\.receipt-copy > \.icon,\s*\.sendcard-copy > \.icon\s*\{[^}]*width:\s*14px;/);
+  assert.match(components, /\.receipt-copy\s*\{\s*gap:\s*var\(--s-1\);/);
+  assert.match(components, /\.receipt-copy > \.icon\s*\{[^}]*width:\s*14px;/);
   assert.doesNotMatch(css('receipt.css'), /\.receipt-copy > \.icon/);
-  assert.doesNotMatch(css('sendcard.css'), /\.sendcard-address-actions \.icon/);
-  // The Explorer link beside it keeps the same 14 px glyph.
-  assert.match(css('sendcard.css'), /\.sendcard-explorer > \.icon\s*\{[^}]*width:\s*14px;/);
+  assert.doesNotMatch(components, /sendcard/);
+  const html = fs.readFileSync(new URL('../../ui/index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /sendcard/, 'the window still loads the send card');
+  assert.ok(!fs.existsSync(new URL('../../ui/screens/sendcard.js', import.meta.url)), 'the send card script is still in the tree');
+  assert.ok(!fs.existsSync(new URL('../../ui/design/sendcard.css', import.meta.url)), 'the send card sheet is still in the tree');
 });
 
 /* Soft depth (2026-09-23): a button is a raised layer with no outline, so hover lifts its fill a
@@ -175,16 +182,6 @@ test('hover lifts the fill in the family\'s own colour, and a pressed chip is li
   assert.match(components, /\.btn:active:not\(:disabled\)\s*\{[^}]*background:\s*var\(--btn-bg-active\);/);
   assert.match(components, /\.btn:active:not\(:disabled\)\s*\{[^}]*transform:\s*scale\(var\(--scale-press\)\);/);
   assert.match(components, /button\.chip\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--ink-wash\);/);
-});
-
-test('the send card\'s info disc is 16 px to read and 30 px to press', () => {
-  const sendcard = css('sendcard.css');
-  const button = sendcard.match(/\.sendcard-info\s*\{([^}]*)\}/);
-  const disc = sendcard.match(/\.sendcard-info > span\s*\{([^}]*)\}/);
-  assert.equal(px(declared(button?.[1] ?? '', 'width')), 30);
-  assert.equal(px(declared(button?.[1] ?? '', 'height')), 30);
-  assert.equal(px(declared(disc?.[1] ?? '', 'width')), 16);
-  assert.match(disc?.[1] ?? '', /border:\s*1px solid var\(--line-strong\)/);
 });
 
 test('a quiet button keeps the floor\'s 24 px around its word', () => {
@@ -239,7 +236,6 @@ test('every pressable that is not a .btn has a press, on the shared wash, and th
   assert.ok(rows, 'no shared press for the rows');
   assert.match(rows?.[1] ?? '', /background-color:\s*var\(--press\);/);
   assert.doesNotMatch(rows?.[1] ?? '', /transform/, 'a row that spans its column keeps its edges still');
-  assert.match(press, /\.sendcard-info:active > span/);
   assert.doesNotMatch(press, /\.dock-next|\.dock-report-toggle|\.holding-head/, 'a press for a control nothing builds any more');
   assert.match(css('components.css'), /\.opens:active\s*\{[^}]*background-color:\s*color-mix\(in srgb, var\(--text\) 12%, var\(--opens-bg, transparent\)\);/);
   assert.doesNotMatch(css('components.css'), /\.dock-close:active|\.check-row:active\s*\{/, 'the press left components.css, where it lost the cascade');

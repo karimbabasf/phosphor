@@ -170,7 +170,7 @@ function world(state: Record<string, any> = {}, api: Record<string, any> = {}): 
   };
   createContext(sandbox);
   fillChains(sandbox, (src, name) => runInContext(src, sandbox, { filename: name }));
-  for (const file of ['../../ui/core/links.js', '../../ui/core/dom.js', '../../ui/screens/checks.js', '../../ui/screens/sendcard.js']) {
+  for (const file of ['../../ui/core/links.js', '../../ui/core/dom.js', '../../ui/screens/checks.js']) {
     runInContext(readFileSync(new URL(file, import.meta.url), 'utf8'), sandbox, { filename: file.slice(6) });
   }
   runInContext(CARDS, sandbox, { filename: 'ui/screens/cards.js' });
@@ -241,9 +241,9 @@ test('the deciding buttons are built in decision.js and every one is named', () 
   assert.ok(labels.length > 0, 'decision.js builds no buttons at all, so this test is not looking at it');
   const allowed = ['Cancel', 'Approve', 'Unlock', 'Confirm on your Mac', 'Try again'];
   for (const label of labels) assert.ok(allowed.includes(label as string), `decision.js built a button labelled "${label}"`);
-  /* Nothing else in the window approves or refuses: the card's skeleton, the thread and the
-     send card only place what decision.js built. */
-  for (const file of ['ui/screens/cards.js', 'ui/screens/agent.js', 'ui/screens/sendcard.js']) {
+  /* Nothing else in the window approves or refuses: the card's skeleton and the thread only
+     place what decision.js built. */
+  for (const file of ['ui/screens/cards.js', 'ui/screens/agent.js']) {
     const text = readFileSync(new URL('../../' + file, import.meta.url), 'utf8');
     assert.equal(/api\.approve|api\.refuse|\/api\/approve|\/api\/refuse/.test(text), false, file + ' decides a move');
   }
@@ -661,6 +661,28 @@ test('a held deposit says what it is waiting for, keeps the checks in Details, a
   assert.ok(text.some((t) => /^Waiting for Arbitrum gas to settle/.test(t) && t.endsWith('Nothing is signed until it clears.')), text.join(' | '));
   assert.equal(find(card, 'checks').length, 1, 'the checks are not in Details');
   assert.deepEqual(labelsOf(card), [], 'a held move offers a button');
+});
+
+// "Why it asks" is a sentence: it stands under its label and breaks between words, where a
+// hash on a figure line breaks anywhere (a 960 px window split "whatever" in two, 2026-09-23).
+test('why it asks is a sentence under its label, and the figures stay at the line end', () => {
+  const card = cardFor(swapProposal({ status: 'pending' }));
+  const sentence = find(card, 'tcard-sentence');
+  assert.equal(sentence.length, 1, 'why it asks is not drawn as a sentence');
+  assert.equal(textOf(sentence[0], true)[0], 'Why it asks');
+  const figures = find(card, 'tcard-line').filter((line) => !String(line.className).includes('tcard-sentence'));
+  assert.ok(figures.every((line) => find(line, 'tcard-line-label').length === 1));
+});
+
+// The held line lives in decision.js now the send card is gone: the newest preflight's reason
+// and the whole minutes since the hold began.
+test('the held line says what the checks wait on and for how long, on its own clock', () => {
+  const decision = world({ proposals: [] }).sandbox.window.PhosphorDecision;
+  const row = { status: 'approved', heldSince: '2026-09-17T10:05:00.000Z', preflight: [{ holdReason: 'Waiting for Ethereum gas to settle' }, 'torn'] };
+  assert.equal(decision.heldLine(row, Date.parse('2026-09-17T10:07:30.000Z')), 'Waiting for Ethereum gas to settle (2 min). Nothing is signed until it clears.');
+  assert.equal(decision.heldLine(row, Date.parse('2026-09-17T10:05:20.000Z')), 'Waiting for Ethereum gas to settle (under a minute). Nothing is signed until it clears.');
+  assert.equal(decision.preflightOf(row).holdReason, 'Waiting for Ethereum gas to settle', 'a torn entry hid the newest preflight');
+  assert.equal(decision.heldLine({ status: 'pending' }), 'Waiting for the checks to clear. Nothing is signed until they do.');
 });
 
 // 2026-09-15 and 2026-09-23: a swap 1Click reported FAILED, the card printed the rail's whole

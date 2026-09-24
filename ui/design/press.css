@@ -26,8 +26,7 @@
 .brake-btn:active,
 .notice-act:active,
 .bal-add:active,
-.vault-seg-cell:active,
-.sendcard-info:active > span {
+.vault-seg-cell:active {
   transform: scale(var(--scale-press));
   background-color: var(--press);
 }

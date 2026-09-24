@@ -143,6 +143,12 @@
 
     dom.on(add, 'click', openSteps);
     dom.on(done, 'click', closeSteps);
+    /* Escape on the network tiles asks whoever holds the picker to close it (ui/screens/netpick.js). */
+    dom.on(flowBody, 'netpick:dismiss', function (event) {
+      if (!steps) return;
+      event.preventDefault();
+      closeSteps();
+    });
     dom.on(scroll, 'scroll', paintCut);
   }
 
