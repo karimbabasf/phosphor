@@ -910,7 +910,7 @@ export type ProposalService = {
   settle(capMs: number): Promise<boolean>;
   // The rolling 24h cap as the window shows it: the same spend figure the engine budgets on,
   // plus when the oldest counted spend leaves the window and capacity returns.
-  dailyLimit(capUsd: number): { capUsd: number; spentUsd: number; resetsAt: string | null };
+  dailyLimit(capUsd: number): { capUsd: number; spentUsd: number; resetsAt: string | null; autoSpentUsd?: number };
   /* The three swap reads (src/proposals/swap-reads.ts). None files a row, signs anything or
      takes the spend queue: what can be swapped, a dry quote, and one swap's truth re-read now.
      Optional so a stand-in service without a venue need not carry them. */

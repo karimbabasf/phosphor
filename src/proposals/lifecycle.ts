@@ -674,7 +674,7 @@ export async function refuse(ctx: PCtx, id: string): Promise<Proposal> {
    proposals.json on every call, and that file is durable (src/fsatomic.ts) and refuses to read as
    empty when it is damaged (src/store.ts). The two failures that COULD have lost it are closed
    elsewhere; this is the read that depends on them. */
-type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
+type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null; autoSpentUsd: number };
 
 /* WHAT THE ROLLING 24 HOUR CAP CHARGES FOR, in one predicate, read by both the number on screen
    and the number a proposal is refused against. Two copies of this is how a gauge comes to read
@@ -726,6 +726,8 @@ export function dailyLimit(ctx: PCtx, capUsd: number): DailyLimit {
     capUsd,
     spentUsd: counted.reduce((sum, row) => sum + row.usd, 0),
     resetsAt: oldest === null ? null : new Date(oldest + SESSION_WINDOW_MS).toISOString(),
+    // What ran without a click in the same window: the figure the auto-approve allowance budgets on.
+    autoSpentUsd: autoApprovedSpentUsd(ctx),
   };
 }
 
