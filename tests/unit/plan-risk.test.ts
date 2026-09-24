@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { liquidationPrice } from '../../src/hl/liquidation.ts';
 import { changeRisk, planRisk, STOP_SLIP_FRACTION } from '../../src/trade/risk.ts';
 import type { RiskInputs } from '../../src/trade/risk.ts';
+import { riskInputsFor } from '../../src/trade/rail.ts';
 import type { Plan } from '../../src/trade/plan.ts';
 
 function plan(over: Partial<Plan> = {}): Plan {
@@ -35,7 +36,7 @@ function inputs(over: Partial<RiskInputs> = {}): RiskInputs {
     maxLeverage: 40,
     freeCollateralUsd: 1000,
     takerFeeBps: 4.5,
-    sameCoinLeverage: null,
+    sameCoinPlan: null,
     ...over,
   };
 }
@@ -127,13 +128,27 @@ test('an off-grid price is refused by name rather than rounded in silence', () =
   assert.match(refusal(plan({ target: 66000.5 })), /target .* grid/);
 });
 
-test('leverage above the coin maximum and leverage that disagrees with the coin are refused', () => {
+test('a multiple above the coin maximum is refused, and so is one at the maximum whose stop is past liquidation', () => {
   assert.match(refusal(plan({ leverage: 41 })), /40x/);
-  assert.match(refusal(plan(), inputs({ sameCoinLeverage: 10 })), /10x/);
-  assert.equal(planRisk(plan(), inputs({ sameCoinLeverage: 20 })).ok, true);
   // The fixture's own stop, 1.56% under the entry, is past liquidation at 40x: the venue would
   // take the position first, so the plan is refused rather than priced.
   assert.match(refusal(plan({ leverage: 40 })), /liquidation/);
+});
+
+test('a coin whose venue details have not loaded yet is refused in words that say so, not as a 0x maximum', () => {
+  const pricing = { runner: { plans: () => [] }, meta: () => null, mark: () => 64000, free: () => 1000 };
+  const out = refusal(plan(), riskInputsFor(pricing, plan(), null));
+  assert.match(out, /details for BTC have not loaded yet/);
+  assert.match(out, /try again in a minute/);
+  assert.doesNotMatch(out, /0x/);
+});
+
+test('one plan per coin: a coin with another live plan takes no second one, and the refusal names the first', () => {
+  const out = refusal(plan(), inputs({ sameCoinPlan: 'pl_first' }));
+  assert.match(out, /BTC already has a live plan \(pl_first\)/);
+  assert.match(out, /one position per coin/);
+  assert.match(out, /Change or cancel pl_first first/);
+  assert.equal(planRisk(plan(), inputs({ sameCoinPlan: null })).ok, true);
 });
 
 test('margin above free collateral is refused; unknown collateral is not a refusal', () => {

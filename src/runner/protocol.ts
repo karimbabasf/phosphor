@@ -23,8 +23,10 @@ export type ToChild =
   // Every coin the host names is closed at the human's own bound, and every cloid it names is
   // cancelled. The child holds books for armed coins only, so the host names the rest.
   | { cmd: 'flatten'; seq: number; coins: { coin: string; meta: AssetMeta; mark: number }[]; cancels: { assetId: number; cloid: string }[] }
-  // Cancel whatever exits are still resting for a plan that is finished, and forget it.
-  | { cmd: 'release'; seq: number; id: string }
+  // Cancel whatever a finished plan left on the book, its exits and the rest of a part-filled
+  // entry, and forget it. The host names the cloids and the asset too, so a child that never
+  // held the plan (a fresh one after a restart) still takes them off. A cancel only reduces.
+  | { cmd: 'release'; seq: number; id: string; assetId?: number; cloids?: string[] }
   | { cmd: 'disarm'; seq: number; id: string }
   | { cmd: 'kill'; seq: number };
 

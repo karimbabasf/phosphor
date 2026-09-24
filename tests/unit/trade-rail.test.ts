@@ -309,11 +309,19 @@ test('two identical proposeTrade calls arm one plan; the second is refused and n
   assert.equal(h.runner.calls.filter((c) => c.startsWith('arm ')).length, 1, 'arm ran once');
 });
 
-test('a different size on the same coin is not a twin and arms', async () => {
+test('a different plan on a coin that already has a live one is refused at propose: one plan per coin', async () => {
   const h = setup();
-  await landed(h, h.svc.proposeTrade({ plan: plan(), by: 'agent-1' }));
-  const other = await landed(h, h.svc.proposeTrade({ plan: plan({ sizeUsd: 400 }), by: 'agent-1' }));
-  assert.equal(other.status, 'executed', JSON.stringify(other.verdict));
+  const first = await landed(h, h.svc.proposeTrade({ plan: plan(), by: 'agent-1' }));
+  assert.equal(first.status, 'executed', JSON.stringify(first.verdict));
+  const firstId = [...h.runner.rows.values()].find((r) => r.status === 'waiting')?.id ?? '';
+  for (const other of [plan({ sizeUsd: 400 }), plan({ side: 'short', stop: 110, target: 90 })]) {
+    const p = await landed(h, h.svc.proposeTrade({ plan: other, by: 'agent-1' }));
+    assert.equal(p.status, 'policy_refused', JSON.stringify(p.verdict));
+    assert.match(JSON.stringify(p.verdict), new RegExp(`already has a live plan \\(${firstId}\\)`));
+  }
   const armed = [...h.runner.rows.values()].filter((r) => r.status === 'waiting');
-  assert.equal(armed.length, 2);
+  assert.equal(armed.length, 1, 'the first plan alone holds the coin');
+  // Another coin is its own.
+  const btc = await landed(h, h.svc.proposeTrade({ plan: plan({ symbol: 'BTC' }), by: 'agent-1' }));
+  assert.equal(btc.status, 'executed', JSON.stringify(btc.verdict));
 });

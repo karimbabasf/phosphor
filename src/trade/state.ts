@@ -726,6 +726,9 @@ export type TradeRead = {
     equityAtFivePctAdverse: number | null;
     atRiskUsd: number;
     maxLossUsd: number;
+    // The screen's own rule (collateralFrom): dust is not trading money. Null when the venue
+    // has not answered.
+    funded: boolean | null;
   };
   venue: TradePayload['venue'];
   positions: {
@@ -800,6 +803,9 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
   const a = payload.account;
 
   const bits = [
+    // First, because it is the sentence the person needs: equity that rounds to $0.00 on an
+    // account holding dust reads as funded otherwise.
+    ...(payload.collateral.funded === false ? ['no trading money yet: the account holds nothing a plan can use, so a deposit comes first'] : []),
     `equity ${money(a.equityUsd)}`,
     `free ${money(a.freeUsd)}`,
     `maintenance ${money(a.maintenanceUsd)}`,
@@ -846,6 +852,7 @@ export function buildTradeRead(payload: TradePayload): TradeRead {
       equityAtFivePctAdverse: a.equityAtFivePctAdverse,
       atRiskUsd: a.atRiskUsd,
       maxLossUsd: a.maxLossUsd,
+      funded: payload.collateral.funded,
     },
     venue: payload.venue,
     positions: payload.positions.map((p) => ({

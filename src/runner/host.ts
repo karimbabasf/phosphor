@@ -36,7 +36,7 @@ import { planHash, TIMEFRAME_SEC, validatePlanInput } from '../trade/plan.ts';
 import type { Plan, PlanInput, Timeframe } from '../trade/plan.ts';
 import { bookkeepingOf } from '../trade/plans.ts';
 import type { EndReason, PlanRow, PlanStore } from '../trade/plans.ts';
-import { DEFAULT_TAKER_FEE_BPS, planRisk } from '../trade/risk.ts';
+import { DEFAULT_TAKER_FEE_BPS, planRisk, sameCoinRefusal } from '../trade/risk.ts';
 import { evaluate } from '../trade/watch.ts';
 import type { Bar, MarketView } from '../trade/watch.ts';
 import { isFromChild } from './protocol.ts';
@@ -135,6 +135,7 @@ const SWEEP_MS = 5_000;
 const FOLLOW_MS = 60_000;
 const DEFAULT_REPLY_MS = 15_000;
 const KILL_AFTER_MS = 3_000;
+const MIDS_RETRY_MS = 300;
 
 function live(row: PlanRow): boolean {
   return row.status === 'waiting' || row.status === 'placed' || row.status === 'open';
@@ -189,6 +190,9 @@ export function createRunnerHost(deps: HostDeps) {
 
   const firing = new Set<string>();
   const protecting = new Set<string>();
+  // Coins with an arm in flight: the row is not live until the child has answered, and a
+  // second arm on the coin in that gap must still find it taken.
+  const arming = new Set<string>();
   // Which plans the child holds right now. Only these can fire, and a command for any other
   // live row re-arms it first: a child that died took its plans with it.
   const armedInChild = new Set<string>();
@@ -220,12 +224,44 @@ export function createRunnerHost(deps: HostDeps) {
     armedInChild.delete(row.id);
     record({ type: 'done', id: row.id, symbol: row.symbol, reason, ...(venueMs !== undefined ? { venueMs } : {}) });
     deps.session?.disarm(row.id);
-    if (child !== null && child.connected) {
-      // Not awaited: a finished plan's leftover exit is the venue's own cancel most of the time,
-      // and "already canceled" is success in the child.
-      void request({ cmd: 'release', id: row.id }).catch(() => undefined);
-    }
+    release(row);
     maybeStopChild();
+  }
+
+  /* A finished plan leaves nothing on the book: not its exits, and not the rest of a limit entry
+     that part-filled, which would fill later into a position no row tracks and no stop covers.
+     The running child is told the cloids, so it cancels them whether or not it still holds the
+     plan. With no child running, one is started only when the account feed shows one of them
+     still resting, and let go again once it has answered. Not awaited: "already canceled" is
+     success in the child, and most of the time the venue has cancelled the exits itself. */
+  function release(row: PlanRow): void {
+    // A row read off a file edited by hand can carry no cloids at all.
+    const own: Partial<PlanRow['cloids']> = row.cloids ?? {};
+    const cloids = [own.entry, own.stop, own.target].filter((c): c is string => typeof c === 'string' && c !== '');
+    const running = child !== null && child.connected;
+    const resting = cloids.filter((c) => account?.orders.some((o) => o.cloid === c) === true);
+    if (!running && resting.length === 0) return;
+    const meta = metaFor(row.symbol);
+    const command: Command = { cmd: 'release', id: row.id, ...(meta !== null ? { assetId: meta.assetId } : {}), cloids };
+    const answered = (reply: FromChild): void => {
+      if (reply.ev === 'error' && resting.length > 0) {
+        record({ type: 'error', id: row.id, message: `${row.id} ended and ${row.symbol} still has its orders resting on the venue: ${reply.message}` });
+      }
+    };
+    if (running) {
+      void request(command).then(answered, () => undefined);
+      return;
+    }
+    if (meta === null) {
+      record({ type: 'error', id: row.id, message: `${row.id} ended and ${row.symbol} still has its orders resting on the venue, with no venue metadata to cancel them by` });
+      return;
+    }
+    void ensureChild()
+      .then(() => request(command))
+      .then(answered, (err: unknown) => {
+        record({ type: 'error', id: row.id, message: `${row.id} ended and ${row.symbol} still has its orders resting on the venue; the runner could not start to cancel them: ${err instanceof Error ? err.message : String(err)}` });
+      })
+      .finally(() => maybeStopChild());
   }
 
   function liveRows(): PlanRow[] {
@@ -356,8 +392,12 @@ export function createRunnerHost(deps: HostDeps) {
     }, KILL_AFTER_MS).unref();
   }
 
+  // Held while flatten finishes many plans at once: each finish would let the child go after
+  // the first one, and the next plan's release would start another to cancel its orders.
+  let finishing = 0;
+
   function maybeStopChild(): void {
-    if (childNeeded()) return;
+    if (finishing > 0 || childNeeded()) return;
     if (child === null) return;
     const doomed = child;
     child = null;
@@ -444,6 +484,13 @@ export function createRunnerHost(deps: HostDeps) {
       if (wasBlind !== out.blind) persist(row);
       if (!out.holds || view.mark === null) continue;
       if (now() >= Date.parse(row.expiresAt ?? '')) continue;
+      // Armed alone on its coin, and it still has to be alone when it comes due: a position
+      // opened by hand meanwhile, or two plans left on disk by an older version.
+      const taken = coinTaken(row.symbol, row.id, true);
+      if (taken !== null) {
+        finish(row, `failed:${taken}`);
+        continue;
+      }
       void fire(row, view.mark);
     }
   }
@@ -563,6 +610,20 @@ export function createRunnerHost(deps: HostDeps) {
   function positionOn(coin: string): { szi: number; entryPx: number } | null {
     if (account === null) return null;
     return account.positions.find((p) => p.coin === coin && p.szi !== 0) ?? null;
+  }
+
+  /* One plan per coin (sameCoinRefusal in src/trade/risk.ts). A coin is taken by another live
+     plan, by an arm in flight, or by a position that no plan here made: a plan's exits would
+     close all of it. `venue` narrows the plans to the ones on the book, which is the question
+     at the moment a waiting plan fires. The sentence that says so, or null. */
+  function coinTaken(coin: string, exceptId: string, venue = false): string | null {
+    const other = liveRows().find((r) => r.id !== exceptId && r.symbol === coin && (!venue || r.status === 'placed' || r.status === 'open'));
+    if (other !== undefined) return sameCoinRefusal(coin, other.id);
+    if (!venue && arming.has(coin)) return `another plan on ${coin} is being armed right now, and the venue keeps one position per coin`;
+    if (positionOn(coin) !== null) {
+      return `${coin} already has a position open that no plan here made, and a plan's stop and target would close all of it. Close it first, or trade another coin`;
+    }
+    return null;
   }
 
   function endReasonFor(row: PlanRow): EndReason {
@@ -771,16 +832,18 @@ export function createRunnerHost(deps: HostDeps) {
     };
   }
 
+  // The plans on the book take the coin here. Two plans on disk from before one-plan-per-coin
+  // both re-arm while neither is on the book, and the first to come due takes the coin (tick).
   function liveInputs(row: PlanRow) {
     const meta = metaFor(row.symbol);
     const same = liveRows().find((r) => r.id !== row.id && r.symbol === row.symbol && r.status !== 'waiting');
     return {
       mark: deps.mark(row.symbol) ?? Number.NaN,
       szDecimals: meta?.szDecimals ?? 0,
-      maxLeverage: meta?.maxLeverage ?? 0,
+      maxLeverage: meta?.maxLeverage ?? null,
       freeCollateralUsd: deps.free(),
       takerFeeBps: DEFAULT_TAKER_FEE_BPS,
-      sameCoinLeverage: same === undefined ? null : same.leverage,
+      sameCoinPlan: same === undefined ? null : same.id,
       ...(row.fillPx !== undefined ? { entryPx: row.fillPx } : {}),
     };
   }
@@ -790,6 +853,100 @@ export function createRunnerHost(deps: HostDeps) {
   async function ensureArmed(row: PlanRow): Promise<{ ok: true } | { ok: false; reason: string }> {
     if (armedInChild.has(row.id) && child !== null && child.connected) return { ok: true };
     return armRow(row);
+  }
+
+  // ---------- flatten ----------
+
+  // The venue's mid for every coin, for a coin the feed does not watch. Asked twice before a
+  // coin is given up as unpriced: a person pressed the button and is waiting on the answer.
+  async function readMids(): Promise<Record<string, string> | null> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const mids = await info.post<Record<string, string>>({ type: 'allMids' });
+        if (mids !== null && typeof mids === 'object') return mids;
+      } catch {
+        // asked once more below
+      }
+      if (attempt === 0) await (deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(MIDS_RETRY_MS);
+    }
+    return null;
+  }
+
+  /* THE BIG RED ONE, and the kill switch's first move. Every coin with a live plan or a
+     position is closed at a hundred basis points, after every resting entry comes off the book.
+     A coin is closed only against a price and the venue's metadata for it: a coin the feed does
+     not watch is priced from the venue's mids, and one that still has neither is reported STILL
+     OPEN, never counted closed. A plan on a coin that did not close stays live with its exits
+     resting, the one protection that position has; the rest finish, and the release takes their
+     exits off. Returns the coins still open. */
+  async function flattenAll(): Promise<{ ok: boolean; detail: string; stillOpen: string[] }> {
+    const positions = new Set((account?.positions ?? []).filter((p) => p.szi !== 0).map((p) => p.coin));
+    const wanted = new Set<string>([...liveRows().map((r) => r.symbol), ...positions]);
+    if (wanted.size === 0) return { ok: true, detail: 'nothing was open, and no plan was live', stillOpen: [] };
+    // Open on the venue as far as this process can tell: a position, a plan on the book, or a
+    // coin on an account that has not been read yet.
+    const onVenue = (coin: string): boolean => account === null || positions.has(coin) || liveRows().some((r) => r.symbol === coin && r.status !== 'waiting');
+    const marks = new Map<string, number>();
+    for (const coin of wanted) {
+      const mark = deps.mark(coin);
+      if (mark !== null && Number.isFinite(mark) && mark > 0) marks.set(coin, mark);
+    }
+    if ([...wanted].some((coin) => !marks.has(coin) && onVenue(coin))) {
+      const mids = await readMids();
+      for (const coin of wanted) {
+        const mid = Number(mids?.[coin]);
+        if (!marks.has(coin) && Number.isFinite(mid) && mid > 0) marks.set(coin, mid);
+      }
+    }
+    const coins: { coin: string; meta: AssetMeta; mark: number }[] = [];
+    const stuck = new Map<string, string>();
+    for (const coin of wanted) {
+      const meta = metaFor(coin);
+      const mark = marks.get(coin);
+      if (meta !== null && mark !== undefined) coins.push({ coin, meta, mark });
+      else if (onVenue(coin)) stuck.set(coin, meta === null ? 'no venue metadata to size the close' : 'no price to bound the close');
+    }
+    const cancels: { assetId: number; cloid: string }[] = [];
+    for (const row of liveRows()) {
+      const meta = metaFor(row.symbol);
+      const entry = row.cloids?.entry;
+      if (meta !== null && typeof entry === 'string') cancels.push({ assetId: meta.assetId, cloid: entry });
+    }
+    let reply: FromChild;
+    try {
+      await ensureChild();
+      reply = await request({ cmd: 'flatten', coins, cancels });
+    } catch (err) {
+      reply = { ev: 'error', seq: 0, id: null, message: err instanceof Error ? err.message : String(err) };
+    }
+    if (reply.ev !== 'flat') {
+      const open = [...wanted].filter(onVenue);
+      return { ok: false, detail: `nothing was closed: ${reply.ev === 'error' ? reply.message : `unexpected ${reply.ev}`}`, stillOpen: open };
+    }
+    const childKept = new Set(reply.stillOpen);
+    for (const coin of reply.stillOpen) stuck.set(coin, 'the venue did not close it');
+    finishing += 1;
+    try {
+      for (const row of liveRows()) {
+        if (row.status !== 'waiting' && stuck.has(row.symbol)) {
+          // The child let go of every plan on a coin it was not asked to close.
+          if (!childKept.has(row.symbol)) armedInChild.delete(row.id);
+          continue;
+        }
+        finish(row, row.status === 'open' ? 'closed' : 'cancelled');
+      }
+    } finally {
+      finishing -= 1;
+    }
+    maybeStopChild();
+    if (stuck.size === 0) return { ok: true, detail: reply.detail === '' ? 'every plan finished' : reply.detail, stillOpen: [] };
+    const names = [...stuck.keys()];
+    const why = [...stuck].map(([coin, reason]) => `${coin}: ${reason}`).join('; ');
+    return {
+      ok: false,
+      detail: `${names.join(', ')} did NOT close and ${names.length === 1 ? 'is' : 'are'} STILL OPEN (${why}). Close by hand, or press Flatten again. ${reply.detail}`.trim(),
+      stillOpen: names,
+    };
   }
 
   function nextId(): string {
@@ -859,11 +1016,23 @@ export function createRunnerHost(deps: HostDeps) {
          placed entry or an open position, fire again, and on the child's refusal finish the
          plan and release the exits that protect it. A live plan is armed once. */
       if (known !== undefined && live(known)) return { ok: false, reason: `${row.id} is already ${known.status}` };
+      /* Two cards for two plans on one coin can both be clicked. The propose and the card
+         refuse the second while the first is live; this is the check with no gap, taken before
+         the first await. */
+      const taken = coinTaken(row.symbol, row.id);
       // The idea row keeps its bookkeeping and loses its plan: what the human clicked is what
       // runs, and an idea the agent kept editing while the card waited is not that.
       const next: PlanRow = { ...(known === undefined ? {} : bookkeepingOf(known)), ...row, status: 'waiting' };
       delete next.endReason;
-      const out = await armRow(next);
+      let out: Awaited<ReturnType<typeof armRow>> = { ok: false, reason: taken ?? '' };
+      if (taken === null) {
+        arming.add(row.symbol);
+        try {
+          out = await armRow(next);
+        } finally {
+          arming.delete(row.symbol);
+        }
+      }
       if (!out.ok) {
         // The plan was approved and the runner could not take it: a row that says so beats a
         // proposal that says executed and a plan that is nowhere.
@@ -944,44 +1113,11 @@ export function createRunnerHost(deps: HostDeps) {
       return { ok: true, detail: `${id} closed` };
     },
 
-    // The big red one: every position closed at a hundred basis points, every resting entry and
-    // exit cancelled, every plan finished. Consults no kill switch: it only reduces.
+    // The big red one: every position closed at a hundred basis points, every resting entry
+    // cancelled, every plan finished. Consults no kill switch: it only reduces.
     async flatten(): Promise<{ ok: boolean; detail: string }> {
-      const coins = new Map<string, { coin: string; meta: AssetMeta; mark: number }>();
-      const consider = (coin: string): void => {
-        if (coins.has(coin)) return;
-        const meta = metaFor(coin);
-        const mark = deps.mark(coin);
-        if (meta !== null && mark !== null) coins.set(coin, { coin, meta, mark });
-      };
-      for (const row of liveRows()) consider(row.symbol);
-      for (const p of account?.positions ?? []) if (p.szi !== 0) consider(p.coin);
-      const cancels: { assetId: number; cloid: string }[] = [];
-      for (const row of liveRows()) {
-        const meta = metaFor(row.symbol);
-        if (meta === null) continue;
-        for (const cloid of Object.values(row.cloids)) if (typeof cloid === 'string') cancels.push({ assetId: meta.assetId, cloid });
-      }
-      try {
-        await ensureChild();
-      } catch (err) {
-        return { ok: false, detail: err instanceof Error ? err.message : String(err) };
-      }
-      const reply = await request({ cmd: 'flatten', coins: [...coins.values()], cancels });
-      if (reply.ev !== 'flat') {
-        return { ok: false, detail: reply.ev === 'error' ? reply.message : `unexpected ${reply.ev}` };
-      }
-      for (const row of liveRows()) {
-        if (row.status === 'open') finish(row, reply.stillOpen.includes(row.symbol) ? 'failed:the venue did not close it' : 'closed');
-        else finish(row, 'cancelled');
-      }
-      if (reply.stillOpen.length > 0) {
-        return {
-          ok: false,
-          detail: `${reply.stillOpen.join(', ')} did NOT close and ${reply.stillOpen.length === 1 ? 'is' : 'are'} STILL OPEN. Close by hand. ${reply.detail}`,
-        };
-      }
-      return { ok: true, detail: reply.detail === '' ? 'nothing open, every plan finished' : reply.detail };
+      const out = await flattenAll();
+      return { ok: out.ok, detail: out.detail };
     },
 
     status(): { plans: PlanRow[]; child: 'off' | 'on'; watching: string[] } {
@@ -1098,11 +1234,27 @@ export function createRunnerHost(deps: HostDeps) {
       generation += 1;
       starting = null;
       const doomed = child;
-      if (doomed !== null && doomed.connected && liveRows().length > 0) {
-        const out = await api.flatten();
+      /* Anything on the venue is closed, whether or not a runner is up and whether or not a
+         plan made it: a position opened by hand, or one a finished plan left behind, is still
+         the account's money at risk. A runner is started for it if none is running. */
+      const onVenue = liveRows().some((r) => r.status !== 'waiting') || (account?.positions ?? []).some((p) => p.szi !== 0);
+      let stillOpen: string[] = [];
+      if (onVenue || (doomed !== null && doomed.connected && liveRows().length > 0)) {
+        const out = await flattenAll();
+        stillOpen = out.stillOpen;
         if (!out.ok) record({ type: 'error', id: null, message: `${reason}: ${out.detail}` });
       }
-      for (const row of liveRows()) finish(row, `failed:${reason}`);
+      // A plan whose coin did not close keeps its exits resting, the one protection that
+      // position has, and stays on the books until the feed sees it flat.
+      finishing += 1;
+      try {
+        for (const row of liveRows()) {
+          if (row.status !== 'waiting' && stillOpen.includes(row.symbol)) continue;
+          finish(row, `failed:${reason}`);
+        }
+      } finally {
+        finishing -= 1;
+      }
       for (const session of deps.session?.armed() ?? []) deps.session?.disarm(session.id);
       stopTimers();
       if (child !== null) {

@@ -227,8 +227,10 @@ function classifyHash(
     return { place: 'intents', kind: 'intent' };
   }
   // A hash a trade recorded is the venue's own ledger hash: the venue's explorer resolves
-  // it and no chain does, so it never goes looking for an EVM receipt.
-  if (place === 'hyperliquid' && toPlace === 'hyperliquid') return { place: 'hyperliquid', kind: 'chain' };
+  // it and no chain does, so it never goes looking for an EVM receipt. So is a 0x hash on a
+  // move that starts on the venue (a withdrawal): no EVM chain is in that move, and the
+  // fallback below sent the reader to an Etherscan page that does not exist.
+  if (place === 'hyperliquid' && (toPlace === 'hyperliquid' || EVM_HASH.test(hash))) return { place: 'hyperliquid', kind: 'chain' };
   if (EVM_HASH.test(hash)) {
     // A hash carries no chain id, so which EVM chain it was mined on is a guess until a
     // receipt is read: the first hash of a move is the one this app broadcast on the origin,

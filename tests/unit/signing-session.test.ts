@@ -140,7 +140,8 @@ test('an expired session locks a waiting plan, which stays waiting and says so',
   const clock = { now: Date.now() };
   const h = host(() => clock.now);
   await h.runner.arm(plan('m1', 60_000));
-  await h.runner.arm(plan('m2', 10 * 60_000));
+  // BTC: one plan per coin.
+  await h.runner.arm(plan('m2', 10 * 60_000, { symbol: 'BTC' }));
 
   clock.now += 61_000;
   const taken = h.runner.sweepSigningSessions();
@@ -193,7 +194,7 @@ test('stopping everything takes every signing session with it', async () => {
   const clock = { now: Date.now() };
   const h = host(() => clock.now);
   await h.runner.arm(plan('m1', 60 * 60_000));
-  await h.runner.arm(plan('m2', 60 * 60_000));
+  await h.runner.arm(plan('m2', 60 * 60_000, { symbol: 'BTC' }));
   await h.runner.stopAll('kill switch');
   assert.deepEqual(h.session.armed(), [], 'freeze everything means no key is held anywhere');
 });

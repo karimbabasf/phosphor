@@ -21,6 +21,7 @@ import type { PlanRow } from '../../src/trade/plans.ts';
 import { planHash } from '../../src/trade/plan.ts';
 import type { PlanInput } from '../../src/trade/plan.ts';
 import type { Bar } from '../../src/trade/watch.ts';
+import type { InfoClient } from '../../src/hl/info.ts';
 
 const META = { assetId: 3, szDecimals: 4, maxLeverage: 25 };
 
@@ -139,7 +140,22 @@ function fresh(h: Harness): void {
   h.runner.onAccount(account({ atMs: h.clock.now }));
 }
 
-function harness(over: { key?: `0x${string}` | null; keyDelayMs?: number; bars?: (coin: string, tf: string, count: number) => Promise<Bar[]>; mark?: number | null; killSwitch?: boolean; dir?: string } = {}): Harness {
+type HarnessOptions = {
+  key?: `0x${string}` | null;
+  keyDelayMs?: number;
+  bars?: (coin: string, tf: string, count: number) => Promise<Bar[]>;
+  mark?: number | null;
+  // Per coin, where a test needs one coin watched and another not.
+  markFor?: (coin: string) => number | null;
+  metaFor?: (coin: string) => typeof META | null;
+  info?: InfoClient;
+  // Answers every forked child starts with, for a child the host forks on its own.
+  answers?: FakeChild['answers'];
+  killSwitch?: boolean;
+  dir?: string;
+};
+
+function harness(over: HarnessOptions = {}): Harness {
   const dir = over.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
   const forked: FakeChild[] = [];
   const events: RunnerEvent[] = [];
@@ -158,9 +174,10 @@ function harness(over: { key?: `0x${string}` | null; keyDelayMs?: number; bars?:
     killSwitch: () => over.killSwitch === true,
     onEvent: (e) => events.push(e),
     store: createPlanStore(dir),
-    meta: () => META,
-    mark: () => (over.mark === undefined ? 100 : over.mark),
+    meta: (coin) => (over.metaFor === undefined ? META : over.metaFor(coin)),
+    mark: (coin) => (over.markFor !== undefined ? over.markFor(coin) : over.mark === undefined ? 100 : over.mark),
     free: () => 1000,
+    ...(over.info !== undefined ? { info: over.info } : {}),
     bars: over.bars === undefined ? undefined : (coin, tf, count) => over.bars!(coin, tf, count),
     approval: (id) => approvals.get(id) ?? null,
     agentApproved: async () => agentOk.value,
@@ -168,6 +185,7 @@ function harness(over: { key?: `0x${string}` | null; keyDelayMs?: number; bars?:
     replyMs: 500,
     forkImpl: (() => {
       const child = new FakeChild();
+      if (over.answers !== undefined) child.answers = { ...over.answers };
       forked.push(child);
       return child as unknown as ChildProcess;
     }) as never,
@@ -210,7 +228,7 @@ test('a market entry that filled whole is open at once, protected by its bracket
   const child = h.forked[0];
   child.answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: { entry: 1, stop: 2, target: 3 }, filledSz: 9.9, avgPx: 100.2, cloids: { entry: 'a', stop: 'b', target: 'c' }, gen: 1, venueMs: 12 } : null);
   // The arm already fired with the default answer; arm a second plan for this one.
-  await h.runner.arm(row({ id: 'pl_2' }));
+  await h.runner.arm(row({ id: 'pl_2', symbol: 'BTC' }));
   await settle();
   const r = h.runner.get('pl_2');
   assert.equal(r?.status, 'open');
@@ -298,10 +316,10 @@ test('an open plan whose position is gone is done, with the reason read off the 
   fresh(h);
   await h.runner.arm(row());
   h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a', stop: 'b', target: 'c' }, gen: 1, venueMs: 12 } : null);
-  await h.runner.arm(row({ id: 'pl_2' }));
+  await h.runner.arm(row({ id: 'pl_2', symbol: 'BTC' }));
   await settle();
   assert.equal(h.runner.get('pl_2')?.status, 'open');
-  h.runner.onAccount(account({ positions: [], fills: [{ coin: 'ETH', px: 90.2, sizeCoin: 10, atMs: Date.now(), closedPnlUsd: -98 }] }));
+  h.runner.onAccount(account({ positions: [], fills: [{ coin: 'BTC', px: 90.2, sizeCoin: 10, atMs: Date.now(), closedPnlUsd: -98 }] }));
   await settle();
   assert.equal(h.runner.get('pl_2')?.status, 'done');
   assert.equal(h.runner.get('pl_2')?.endReason, 'stopped');
@@ -309,11 +327,246 @@ test('an open plan whose position is gone is done, with the reason read off the 
   assert.ok(h.events.some((e) => e.type === 'done' && e.id === 'pl_2' && e.reason === 'stopped'));
 });
 
+test('a plan that ends names its entry and its exits to the runner, so the rest of a part-filled limit entry comes off the book too', async () => {
+  const h = harness();
+  fresh(h);
+  await h.runner.arm(row({ entry: { type: 'limit', px: 95 } }));
+  await settle();
+  h.runner.onAccount(account({ positions: [{ coin: 'ETH', szi: 5, entryPx: 95 }], orders: [{ coin: 'ETH', cloid: '0xentry' }] }));
+  await settle();
+  assert.equal(h.runner.get('pl_1')?.status, 'open');
+  // The target filled and the position is gone; the rest of the entry still rests.
+  h.runner.onAccount(account({ positions: [], orders: [{ coin: 'ETH', cloid: '0xentry' }], fills: [{ coin: 'ETH', px: 120, sizeCoin: 5, atMs: Date.now(), closedPnlUsd: 120 }] }));
+  await settle();
+  assert.equal(h.runner.get('pl_1')?.status, 'done');
+  const release = h.forked[0].of('release').find((m) => m.cmd === 'release' && m.id === 'pl_1');
+  assert.ok(release !== undefined && release.cmd === 'release');
+  assert.equal(release.assetId, META.assetId);
+  assert.deepEqual([...(release.cloids ?? [])].sort(), ['0xentry', '0xstop', '0xtarget']);
+});
+
+test('after a restart with no runner running, an ended plan whose entry still rests starts one to take it off the book, then lets it go', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const openRow = row({ status: 'open', entry: { type: 'limit', px: 95 }, cloids: { entry: '0xentry', stop: '0xstop', target: '0xtarget' }, gen: 2, exitSz: 5, fillPx: 95 });
+  createPlanStore(dir).put(openRow);
+  const h = harness({ dir });
+  // The position closed while the app was down, and the rest of the entry is still resting.
+  h.runner.onAccount(account({ positions: [], orders: [{ coin: 'ETH', cloid: '0xentry' }] }));
+  await h.runner.reconcile(10);
+  await settle();
+  assert.equal(h.runner.get('pl_1')?.status, 'done');
+  assert.equal(h.forked.length, 1, 'a runner was started for the cancel alone');
+  const release = h.forked[0].of('release')[0];
+  assert.ok(release !== undefined && release.cmd === 'release');
+  assert.deepEqual([...(release.cloids ?? [])].sort(), ['0xentry', '0xstop', '0xtarget']);
+  assert.equal(h.forked[0].killed || h.forked[0].of('kill').length > 0, true, 'and it was let go once nothing needed it');
+});
+
+test('a plan that ended with nothing of its own resting starts no runner', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  createPlanStore(dir).put(row({ status: 'open', cloids: { entry: '0xentry', stop: '0xstop' }, gen: 1, exitSz: 5, fillPx: 100 }));
+  const h = harness({ dir });
+  h.runner.onAccount(account({ positions: [], orders: [{ coin: 'ETH', cloid: '0xsomeone-else' }] }));
+  await h.runner.reconcile(10);
+  await settle();
+  assert.equal(h.runner.get('pl_1')?.status, 'done');
+  assert.equal(h.forked.length, 0);
+});
+
+// ---------- one plan per coin ----------
+
+const LATER = (): string => new Date(Date.now() + 86_400_000).toISOString();
+
+test('one plan per coin: a second plan on a coin with a live one is refused at arm, with a row that says why', async () => {
+  const h = harness();
+  fresh(h);
+  const first = await h.runner.arm(row({ id: 'pl_1', when: [{ type: 'time', after: LATER() }] }));
+  assert.equal(first.ok, true);
+  const second = await h.runner.arm(row({ id: 'pl_2', side: 'short', stop: 110, target: 90 }));
+  assert.equal(second.ok, false);
+  assert.match(second.ok ? '' : second.reason, /ETH already has a live plan \(pl_1\)/);
+  assert.equal(h.runner.get('pl_2')?.status, 'done');
+  assert.match(String(h.runner.get('pl_2')?.endReason), /^failed:ETH already has a live plan/);
+  assert.equal(h.forked[0].of('arm').length, 1, 'the second plan never reached the child');
+  assert.equal(h.runner.get('pl_1')?.status, 'waiting', 'the first plan is untouched');
+});
+
+test('one plan per coin: two arms on one coin at the same moment, only one is taken', async () => {
+  const h = harness({ keyDelayMs: 20 });
+  fresh(h);
+  const [a, b] = await Promise.all([
+    h.runner.arm(row({ id: 'pl_a', when: [{ type: 'time', after: LATER() }] })),
+    h.runner.arm(row({ id: 'pl_b', when: [{ type: 'time', after: LATER() }] })),
+  ]);
+  assert.deepEqual([a.ok, b.ok], [true, false]);
+  assert.match(b.ok ? '' : b.reason, /being armed right now/);
+  assert.equal(h.runner.status().plans.filter((r) => r.status === 'waiting').length, 1);
+});
+
+test('a coin with a position that no plan made takes no plan: its stop and target would close all of it', async () => {
+  const h = harness();
+  h.runner.onAccount(account({ positions: [{ coin: 'ETH', szi: 2, entryPx: 100 }] }));
+  const out = await h.runner.arm(row());
+  assert.equal(out.ok, false);
+  assert.match(out.ok ? '' : out.reason, /ETH already has a position open that no plan here made/);
+  assert.equal(h.forked.length, 0, 'no runner was started for it');
+  const btc = await h.runner.arm(row({ id: 'pl_btc', symbol: 'BTC', when: [{ type: 'time', after: LATER() }] }));
+  assert.equal(btc.ok, true, 'another coin is free');
+});
+
+test('a waiting plan that comes due onto a position opened meanwhile does not fire, and says why', async () => {
+  const h = harness();
+  fresh(h);
+  await h.runner.arm(row({ when: [{ type: 'time', after: new Date(h.clock.now + 5_000).toISOString() }] }));
+  await settle();
+  h.runner.onAccount(account({ positions: [{ coin: 'ETH', szi: 2, entryPx: 100 }] }));
+  h.clock.now += 6_000;
+  h.runner.onMarket('ETH', { t: 60, o: 100, h: 100, l: 100, c: 100, v: 1 });
+  await settle();
+  assert.equal(h.forked[0].of('fire').length, 0);
+  assert.equal(h.runner.get('pl_1')?.status, 'done');
+  assert.match(String(h.runner.get('pl_1')?.endReason), /position open that no plan here made/);
+});
+
+// ---------- flatten and the kill switch ----------
+
+const HEALTHY = { ok: true, consecutiveFailures: 0, lastError: null, lastLatencyMs: null, backoffUntilMs: null };
+
+function mids(answer: () => Record<string, string>): InfoClient & { asked: unknown[] } {
+  const asked: unknown[] = [];
+  return {
+    asked,
+    async post<T>(body: unknown): Promise<T> {
+      asked.push(body);
+      return answer() as T;
+    },
+    health: () => HEALTHY,
+  };
+}
+
+// An open plan as it sits on disk: its fill protected by a stop and a target.
+function openOn(id: string, symbol: string): PlanRow {
+  return row({ id, symbol, status: 'open', cloids: { entry: `${id}.entry`, stop: `${id}.stop`, target: `${id}.target` }, gen: 2, exitSz: 5, fillPx: 100 });
+}
+
+function withRows(...rows: PlanRow[]): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const store = createPlanStore(dir);
+  for (const r of rows) store.put(r);
+  return dir;
+}
+
+test('flatten prices a coin the feed does not watch from the venue mids, and closes a position no plan made', async () => {
+  const info = mids(() => ({ DOGE: '0.25', ETH: '100' }));
+  const h = harness({ info, markFor: (coin) => (coin === 'ETH' ? 100 : null) });
+  h.runner.onAccount(account({ positions: [{ coin: 'DOGE', szi: 100, entryPx: 0.24 }] }));
+  const out = await h.runner.flatten();
+  assert.equal(out.ok, true, out.detail);
+  const sent = h.forked[0].of('flatten')[0];
+  assert.ok(sent !== undefined && sent.cmd === 'flatten');
+  assert.deepEqual(sent.coins, [{ coin: 'DOGE', meta: META, mark: 0.25 }]);
+  assert.deepEqual(info.asked, [{ type: 'allMids' }]);
+});
+
+test('flatten never says nothing is open while a coin it cannot price is open: that plan stays live and keeps its exits', async () => {
+  const info = mids(() => {
+    throw new Error('the venue is not answering');
+  });
+  const h = harness({ dir: withRows(openOn('pl_doge', 'DOGE')), info, markFor: (coin) => (coin === 'ETH' ? 100 : null) });
+  h.runner.onAccount(account({ positions: [{ coin: 'DOGE', szi: 5, entryPx: 0.24 }, { coin: 'ETH', szi: 2, entryPx: 100 }] }));
+  const out = await h.runner.flatten();
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /DOGE did NOT close and is STILL OPEN/);
+  assert.match(out.detail, /no price/);
+  assert.doesNotMatch(out.detail, /nothing (was )?open/);
+  assert.equal(info.asked.length, 2, 'the mids were asked for twice before giving up on the price');
+  const sent = h.forked[0].of('flatten')[0];
+  assert.ok(sent !== undefined && sent.cmd === 'flatten');
+  assert.deepEqual(sent.coins.map((c) => c.coin), ['ETH'], 'only what can be priced is closed');
+  assert.equal(h.runner.get('pl_doge')?.status, 'open', 'never marked closed');
+  assert.equal(h.forked[0].of('release').length, 0, 'its exits stay: they are all that protects it');
+});
+
+test('a coin with no venue metadata is reported STILL OPEN, never marked closed', async () => {
+  const h = harness({ metaFor: (coin) => (coin === 'ETH' ? META : null) });
+  h.runner.onAccount(account({ positions: [{ coin: 'XYZ', szi: 5, entryPx: 1 }] }));
+  const out = await h.runner.flatten();
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /XYZ did NOT close and is STILL OPEN/);
+  assert.match(out.detail, /metadata/);
+});
+
+test('a coin the venue did not close keeps its plan live with its exits, the rest finish, and only entries are cancelled up front', async () => {
+  const h = harness({
+    dir: withRows(openOn('pl_eth', 'ETH'), openOn('pl_btc', 'BTC')),
+    answers: { flatten: (m) => (m.cmd === 'flatten' ? { ev: 'flat', seq: m.seq, stillOpen: ['ETH'], detail: 'ETH: the venue refused the close' } : null) },
+  });
+  h.runner.onAccount(account({ positions: [{ coin: 'ETH', szi: 5, entryPx: 100 }, { coin: 'BTC', szi: 5, entryPx: 100 }] }));
+  const out = await h.runner.flatten();
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /ETH did NOT close and is STILL OPEN/);
+  const sent = h.forked[0].of('flatten')[0];
+  assert.ok(sent !== undefined && sent.cmd === 'flatten');
+  assert.deepEqual(sent.cancels.map((c) => c.cloid).sort(), ['pl_btc.entry', 'pl_eth.entry']);
+  assert.equal(h.runner.get('pl_eth')?.status, 'open');
+  assert.equal(h.runner.get('pl_btc')?.status, 'done');
+  assert.equal(h.runner.get('pl_btc')?.endReason, 'closed');
+  const released = h.forked[0].of('release').map((m) => (m.cmd === 'release' ? m.id : ''));
+  assert.deepEqual(released, ['pl_btc']);
+});
+
+test('flatten releases every plan it finished through the one runner it started, then lets it go', async () => {
+  const h = harness({ dir: withRows(openOn('pl_btc', 'BTC'), openOn('pl_sol', 'SOL')) });
+  h.runner.onAccount(account({
+    positions: [{ coin: 'BTC', szi: 5, entryPx: 100 }, { coin: 'SOL', szi: 5, entryPx: 100 }],
+    orders: [{ coin: 'BTC', cloid: 'pl_btc.stop' }, { coin: 'SOL', cloid: 'pl_sol.stop' }],
+  }));
+  const out = await h.runner.flatten();
+  assert.equal(out.ok, true, out.detail);
+  await settle();
+  assert.equal(h.forked.length, 1, 'one runner for the whole flatten');
+  const released = h.forked[0].of('release').map((m) => (m.cmd === 'release' ? m.id : '')).sort();
+  assert.deepEqual(released, ['pl_btc', 'pl_sol']);
+  assert.equal(h.forked[0].of('kill').length, 1, 'and it is let go once the releases are on their way');
+});
+
+test('flatten with nothing open and no live plan says so, and starts no runner', async () => {
+  const h = harness();
+  fresh(h);
+  const out = await h.runner.flatten();
+  assert.equal(out.ok, true);
+  assert.match(out.detail, /nothing was open/);
+  assert.equal(h.forked.length, 0);
+});
+
+test('the kill switch closes a position no plan made, starting a runner to do it', async () => {
+  const h = harness();
+  h.runner.onAccount(account({ positions: [{ coin: 'ETH', szi: 2, entryPx: 100 }] }));
+  await h.runner.stopAll('kill switch');
+  assert.equal(h.forked.length, 1);
+  const sent = h.forked[0].of('flatten')[0];
+  assert.ok(sent !== undefined && sent.cmd === 'flatten');
+  assert.deepEqual(sent.coins.map((c) => c.coin), ['ETH']);
+});
+
+test('the kill switch keeps a plan whose coin did not close, with its exits, and says it is still open', async () => {
+  const h = harness({
+    dir: withRows(openOn('pl_eth', 'ETH')),
+    answers: { flatten: (m) => (m.cmd === 'flatten' ? { ev: 'flat', seq: m.seq, stillOpen: ['ETH'], detail: 'ETH: the venue refused the close' } : null) },
+  });
+  h.runner.onAccount(account({ positions: [{ coin: 'ETH', szi: 5, entryPx: 100 }] }));
+  await h.runner.stopAll('kill switch');
+  assert.equal(h.runner.get('pl_eth')?.status, 'open');
+  assert.equal(h.forked[0].of('release').length, 0);
+  assert.ok(h.events.some((e) => e.type === 'error' && /ETH did NOT close and is STILL OPEN/.test(e.message)));
+});
+
 test('cancel is refused on an open plan, cancels a placed one through the child, and finishes a waiting one at once', async () => {
   const h = harness();
   fresh(h);
-  await h.runner.arm(row({ id: 'pl_w', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] }));
-  await h.runner.arm(row({ id: 'pl_p', entry: { type: 'limit', px: 95 } }));
+  // One plan per coin, so three coins.
+  await h.runner.arm(row({ id: 'pl_w', symbol: 'SOL', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] }));
+  await h.runner.arm(row({ id: 'pl_p', symbol: 'BTC', entry: { type: 'limit', px: 95 } }));
   h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a', stop: 'b' }, gen: 1, venueMs: 12 } : null);
   await h.runner.arm(row({ id: 'pl_o' }));
   await settle();
@@ -358,7 +611,7 @@ test('close goes through the child at the given bound and finishes the plan', as
   fresh(h);
   await h.runner.arm(row());
   h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a' }, gen: 1, venueMs: 12 } : null);
-  await h.runner.arm(row({ id: 'pl_2' }));
+  await h.runner.arm(row({ id: 'pl_2', symbol: 'BTC' }));
   await settle();
   const out = await h.runner.close('pl_2', 30);
   assert.equal(out.ok, true, out.detail);
@@ -374,14 +627,15 @@ test('every host event that came from a child reply carries the venue round trip
   fresh(h);
   await h.runner.arm(row({ id: 'pl_p', entry: { type: 'limit', px: 95 } }));
   h.forked[0].answers.fire = (m) => (m.cmd === 'fire' ? { ev: 'placed', seq: m.seq, id: m.id, oids: {}, filledSz: 10, avgPx: 100, cloids: { entry: 'a', stop: 'b' }, gen: 1, venueMs: 12 } : null);
-  await h.runner.arm(row({ id: 'pl_o' }));
-  await h.runner.arm(row({ id: 'pl_w', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] }));
+  // One plan per coin, so three coins.
+  await h.runner.arm(row({ id: 'pl_o', symbol: 'BTC' }));
+  await h.runner.arm(row({ id: 'pl_w', symbol: 'SOL', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] }));
   await settle();
   const of = (type: RunnerEvent['type'], id: string): RunnerEvent | undefined => h.events.find((e) => e.type === type && 'id' in e && e.id === id);
   assert.deepEqual(of('placed', 'pl_p'), { type: 'placed', id: 'pl_p', symbol: 'ETH', filledSz: 0, venueMs: 7 });
   assert.equal((of('placed', 'pl_o') as { venueMs?: number } | undefined)?.venueMs, 12, 'the child answer is the source, not a constant');
 
-  h.runner.onAccount(account({ positions: [{ coin: 'ETH', szi: 5, entryPx: 95 }] }));
+  h.runner.onAccount(account({ positions: [{ coin: 'ETH', szi: 5, entryPx: 95 }, { coin: 'BTC', szi: 10, entryPx: 100 }] }));
   await settle();
   assert.deepEqual(of('protected', 'pl_p'), { type: 'protected', id: 'pl_p', symbol: 'ETH', sz: 5, venueMs: 8 });
 
@@ -389,10 +643,10 @@ test('every host event that came from a child reply carries the venue round trip
   assert.equal((of('changed', 'pl_p') as { venueMs?: number } | undefined)?.venueMs, 9);
 
   await h.runner.close('pl_o', 30);
-  assert.deepEqual(of('done', 'pl_o'), { type: 'done', id: 'pl_o', symbol: 'ETH', reason: 'closed', venueMs: 11 });
+  assert.deepEqual(of('done', 'pl_o'), { type: 'done', id: 'pl_o', symbol: 'BTC', reason: 'closed', venueMs: 11 });
 
   await h.runner.cancel('pl_w');
-  assert.deepEqual(of('done', 'pl_w'), { type: 'done', id: 'pl_w', symbol: 'ETH', reason: 'cancelled' }, 'a waiting plan is cancelled without the venue, so there is no round trip to report');
+  assert.deepEqual(of('done', 'pl_w'), { type: 'done', id: 'pl_w', symbol: 'SOL', reason: 'cancelled' }, 'a waiting plan is cancelled without the venue, so there is no round trip to report');
 });
 
 test('the API wallet is checked once per child before the first fire, and a revoked one fails the plan', async () => {
@@ -423,7 +677,7 @@ test('the expiry sweep finishes a waiting plan and cancels a placed one', async 
   const h = harness();
   fresh(h);
   await h.runner.arm(row({ id: 'pl_w', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }], expiresAt: new Date(Date.now() + 60_000).toISOString() }));
-  await h.runner.arm(row({ id: 'pl_p', entry: { type: 'limit', px: 95 }, expiresAt: new Date(Date.now() + 60_000).toISOString() }));
+  await h.runner.arm(row({ id: 'pl_p', symbol: 'BTC', entry: { type: 'limit', px: 95 }, expiresAt: new Date(Date.now() + 60_000).toISOString() }));
   await settle();
   h.clock.now += 61_000;
   h.runner.sweep();
@@ -559,7 +813,7 @@ test('a fire reply flagged ambiguous leaves the plan placed under a fresh cloid,
   const child = h.forked[0];
   child.answers.fire = (m) =>
     m.cmd === 'fire' ? { ev: 'error', seq: m.seq, id: m.id, message: 'runner command fire failed: ECONNRESET', ambiguous: true } : null;
-  await h.runner.arm(row({ id: 'pl_2' }));
+  await h.runner.arm(row({ id: 'pl_2', symbol: 'BTC' }));
   await settle();
   const r = h.runner.get('pl_2');
   assert.equal(r?.status, 'placed', 'the venue may hold it, so it is placed, not failed');
@@ -574,7 +828,7 @@ test('a fire error with no ambiguous flag and no timeout wording still finishes 
   const child = h.forked[0];
   child.answers.fire = (m) =>
     m.cmd === 'fire' ? { ev: 'error', seq: m.seq, id: m.id, message: 'a bug in the child' } : null;
-  await h.runner.arm(row({ id: 'pl_2' }));
+  await h.runner.arm(row({ id: 'pl_2', symbol: 'BTC' }));
   await settle();
   const r = h.runner.get('pl_2');
   assert.equal(r?.status, 'done');

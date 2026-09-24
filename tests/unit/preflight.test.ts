@@ -49,27 +49,63 @@ function surgeArb(): ArbGasRead {
   return quietArb({ perArbGasTotal: 21_000_000n, perL1CalldataByte: 7_751_200_000n, l1BaseFeeEstimateWei: 484_450_000_000n });
 }
 
-test('the sweep model: the 09-15 surge needs 300,024 gas against the vendor limit of 300,000 and is blocked', () => {
-  assert.equal(SWEEP_L2_GAS_UNITS, 145_000);
+// A read that puts exactly `units` of L1 data into the 420-byte sweep at an L2 price of 0.021
+// gwei: 50,000 wei per byte is one unit.
+function arbWithL1(units: number): ArbGasRead {
+  return quietArb({ perArbGasTotal: 21_000_000n, perL1CalldataByte: BigInt(units) * 50_000n });
+}
+
+// Every relayer sweep that failed since 2026-05-28, by the L1 data its receipt carried
+// (gasUsedForL1). Four surges, six orders, all sent at the 300,000 limit, none recovered.
+const RELAYER_FAILURES = [
+  { at: '2026-08-19', l1: 244_611 },
+  { at: '2026-08-21', l1: 75_253 },
+  { at: '2026-09-11', l1: 75_254 },
+  { at: '2026-09-11', l1: 76_096 },
+  { at: '2026-09-15', l1: 155_024 },
+  { at: '2026-09-15', l1: 63_426 },
+];
+
+test('the sweep model: calibrated from the chain, the 09-15 surge needs 392,024 gas against the vendor limit of 300,000 and is blocked', () => {
+  // The second 09-15 sweep ran out after 234,720 of execution with 63,426 of L1 charged, so
+  // 236,574 of execution was not enough; the receipts of the sweeps that went through report
+  // 203k to 208k because a receipt is not what a sweep has to be sent with.
+  assert.equal(SWEEP_L2_GAS_UNITS, 237_000);
   assert.equal(SWEEP_CALLDATA_BYTES, 420);
   assert.equal(VENDOR_SWEEP_GAS_LIMIT, 300_000);
   assert.equal(l1DataUnits(surgeArb()), 155_024);
   const surge = sweepEstimate(surgeArb());
-  assert.equal(surge?.gasUnits, 300_024);
+  assert.equal(surge?.gasUnits, 392_024);
   assert.equal(surge?.limit, 300_000);
   assert.equal(surge?.verdict, 'blocked');
+  // The smallest failure on record is over the limit in the model too.
+  assert.equal(sweepEstimate(arbWithL1(63_426))?.verdict, 'blocked');
 });
 
 test('the sweep model: a quiet hour is ok, the band up to the limit is elevated, a zero L2 price is unreadable', () => {
   const quiet = sweepEstimate(quietArb());
   assert.equal(quiet?.l1DataUnits, 392);
-  assert.equal(quiet?.gasUnits, 145_392);
+  assert.equal(quiet?.gasUnits, 237_392);
   assert.equal(quiet?.verdict, 'ok');
-  // 100,000 gas of L1 data: 245,000, inside the elevated band.
-  const elevated = sweepEstimate(quietArb({ perArbGasTotal: 20_000_000n, perL1CalldataByte: 4_761_904_761n }));
-  assert.equal(elevated?.gasUnits, 245_000);
+  // 40,000 gas of L1 data: 277,000, under the limit and too close to it to send.
+  const elevated = sweepEstimate(arbWithL1(40_000));
+  assert.equal(elevated?.gasUnits, 277_000);
   assert.equal(elevated?.verdict, 'elevated');
   assert.equal(sweepEstimate(quietArb({ perArbGasTotal: 0n })), null);
+});
+
+test('the sweeps that went through are ok: 150 relayer sweeps on 2026-09-21 and 09-22 carried 271 to 14,445 of L1', () => {
+  for (const l1 of [271, 2_190, 14_445]) {
+    assert.equal(sweepEstimate(arbWithL1(l1))?.verdict, 'ok', `${l1} of L1 data`);
+  }
+});
+
+test('the six relayer failures on record: every one holds the deposit, and nothing is signed', async () => {
+  for (const f of RELAYER_FAILURES) {
+    const p = await runPreflight('hl_deposit', hlDraft(), quoteOf(), depsOf({ arb: arbWithL1(f.l1) }));
+    assert.equal(check(p, 'gas').state, 'fail', `${f.at}, ${f.l1} of L1 data`);
+    assert.equal(p.verdict, 'hold', `${f.at}, ${f.l1} of L1 data`);
+  }
 });
 
 test('readArbGas asks the precompile for both views and the chain for the base fee, and answers null when the read fails', async () => {
@@ -213,8 +249,8 @@ test('a quiet hour: five checks, all ok, and the verdict is ok', async () => {
   assert.equal(p.verdict, 'ok');
   assert.equal(p.holdReason, undefined);
   const gas = check(p, 'gas');
-  assert.equal(gas.value, '145,392 / 300,000');
-  assert.deepEqual(gas.series, [145_392]);
+  assert.equal(gas.value, '237,392 / 300,000');
+  assert.deepEqual(gas.series, [237_392]);
   assert.equal(gas.limit, 300_000);
   assert.match(gas.detail, /300,000 gas limit/);
   const coverage = check(p, 'coverage');
@@ -226,25 +262,57 @@ test('a quiet hour: five checks, all ok, and the verdict is ok', async () => {
 test('the 09-15 replay: the sweep is blocked, the gas check fails and the verdict is hold', async () => {
   const deps = depsOf({ arb: surgeArb() });
   // An hour of quiet readings before the surge, so the sentence can say how far above them it is.
-  for (let i = 30; i >= 1; i -= 1) deps.history.arb.push(NOW - i * 60_000, 145_392);
+  for (let i = 30; i >= 1; i -= 1) deps.history.arb.push(NOW - i * 60_000, 237_392);
   const p = await runPreflight('hl_deposit', hlDraft(), quoteOf(), deps);
   const gas = check(p, 'gas');
   assert.equal(gas.state, 'fail');
-  assert.equal(gas.value, '300,024 / 300,000');
-  assert.match(gas.detail, /2\.1x the hourly average/);
+  assert.equal(gas.value, '392,024 / 300,000');
+  assert.match(gas.detail, /1\.7x the hourly average/);
+  assert.match(gas.detail, /run out of gas/);
   assert.equal(gas.series?.length, 31);
-  assert.equal(gas.series?.[30], 300_024);
+  assert.equal(gas.series?.[30], 392_024);
   assert.equal(p.verdict, 'hold');
-  assert.equal(p.holdReason, 'Waiting for Arbitrum gas to settle');
+  assert.match(p.holdReason ?? '', /^Arbitrum fees are spiking/);
 });
 
-test('elevated gas warns without holding, and an Arbitrum read that failed warns rather than pretends', async () => {
-  const elevated = await runPreflight('hl_deposit', hlDraft(), quoteOf(), depsOf({ arb: quietArb({ perArbGasTotal: 20_000_000n, perL1CalldataByte: 4_761_904_761n }) }));
+// The two dash characters the app never shows, built from their code points.
+const DASHES = new RegExp(`[${String.fromCharCode(0x2013)}${String.fromCharCode(0x2014)}]`);
+
+// The hold is what the person reads on the card: what is happening, that the money has not
+// moved, and when to look again. Plain words, no gas units.
+function assertPlainHold(reason: string | undefined): void {
+  assert.ok(reason !== undefined, 'a hold carries a reason');
+  assert.match(reason, /your money has not moved/i);
+  assert.match(reason, /try again in a few minutes/i);
+  assert.doesNotMatch(reason, /gas|gwei|L1|relayer|sweep/i);
+  assert.doesNotMatch(reason, DASHES);
+}
+
+test('an HL deposit fails closed: elevated gas holds it, and so does an Arbitrum that did not answer', async () => {
+  const elevated = await runPreflight('hl_deposit', hlDraft(), quoteOf(), depsOf({ arb: arbWithL1(40_000) }));
+  assert.equal(check(elevated, 'gas').state, 'fail');
+  assert.match(check(elevated, 'gas').detail, /too close to the limit/);
+  assert.equal(elevated.verdict, 'hold');
+  assertPlainHold(elevated.holdReason);
+  assert.match(elevated.holdReason ?? '', /^Arbitrum fees are spiking/);
+
+  const unread = await runPreflight('hl_deposit', hlDraft(), quoteOf(), depsOf({ arb: null }));
+  assert.equal(check(unread, 'gas').state, 'fail');
+  assert.equal(check(unread, 'gas').value, 'Not read');
+  assert.equal(unread.verdict, 'hold');
+  assertPlainHold(unread.holdReason);
+  assert.match(unread.holdReason ?? '', /^Arbitrum is not answering/);
+
+  const zeroPrice = await runPreflight('hl_deposit', hlDraft(), quoteOf(), depsOf({ arb: quietArb({ perArbGasTotal: 0n }) }));
+  assert.equal(zeroPrice.verdict, 'hold', 'a price the app cannot divide by is not a read');
+});
+
+test('a plain payout to Arbitrum has no relayer sweep behind it: elevated gas and an unread chain warn there, and only a blocked sweep holds', async () => {
+  const elevated = await runPreflight('intents_pay', payDraft({ network: 'arbitrum' }), quoteOf(), depsOf({ arb: arbWithL1(40_000) }));
   assert.equal(check(elevated, 'gas').state, 'warn');
   assert.equal(elevated.verdict, 'ok');
-  const unread = await runPreflight('hl_deposit', hlDraft(), quoteOf(), depsOf({ arb: null }));
+  const unread = await runPreflight('intents_pay', payDraft({ network: 'arbitrum' }), quoteOf(), depsOf({ arb: null }));
   assert.equal(check(unread, 'gas').state, 'warn');
-  assert.equal(check(unread, 'gas').value, 'Not read');
   assert.equal(unread.verdict, 'ok');
 });
 
@@ -378,7 +446,7 @@ test('the live runner reads Arbitrum through the client it is handed, keeps samp
   const port = { owner: OWNER, originAsset: hlDraft().originAsset, venue: { dryQuote: async () => ({}), status: async () => ({}) } };
   const first = await live.run('hl_deposit', hlDraft(), quoteOf(), port);
   assert.equal(first.verdict, 'ok');
-  assert.deepEqual(check(first, 'gas').series, [145_392]);
+  assert.deepEqual(check(first, 'gas').series, [237_392]);
   const before = reads;
   clock += 60_000;
   await new Promise((resolve) => setTimeout(resolve, 40));

@@ -33,10 +33,11 @@ const META = { assetId: 3, szDecimals: 4, maxLeverage: 25 };
 const USER = '0x2222222222222222222222222222222222222222';
 const KEY = `0x${'11'.repeat(32)}` as `0x${string}`;
 
-function row(id: string, after: string, createdAt: string): PlanRow {
+// Each plan on a coin of its own: a coin takes one plan at a time.
+function row(id: string, after: string, createdAt: string, symbol: string): PlanRow {
   const plan = {
     id,
-    symbol: 'ETH',
+    symbol,
     side: 'long' as const,
     sizeUsd: 1000,
     leverage: 5,
@@ -103,7 +104,7 @@ test('twenty fires: frame to venue post and fire command to venue post, p95 unde
 
   const createdAt = new Date(base).toISOString();
   for (let i = 0; i < FIRES; i += 1) {
-    const out = await runner.arm(row(`pl_${i}`, new Date(base + (i + 1) * STEP_MS).toISOString(), createdAt));
+    const out = await runner.arm(row(`pl_${i}`, new Date(base + (i + 1) * STEP_MS).toISOString(), createdAt, `COIN${i}`));
     assert.equal(out.ok, true, out.ok ? '' : out.reason);
   }
   runner.onAccount(account(clock.now));
@@ -118,7 +119,7 @@ test('twenty fires: frame to venue post and fire command to venue post, p95 unde
     const answered = new Promise<RunnerEvent>((resolve) => placed.set(id, resolve));
     const t = Math.floor(clock.now / 60_000) * 60;
     const before = performance.now();
-    runner.onMarket('ETH', { t, o: 100, h: 100, l: 100, c: 100, v: 1 });
+    runner.onMarket(`COIN${i}`, { t, o: 100, h: 100, l: 100, c: 100, v: 1 });
     const e = await answered;
     assert.equal(e.type, 'placed');
     const posts = v.state.arrivals.filter((a) => a.path === '/exchange');
