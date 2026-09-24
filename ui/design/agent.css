@@ -55,6 +55,14 @@
   overflow-wrap: anywhere;
 }
 
+/* The picked agent's logo ahead of the sentence about where it runs, pulled
+   in so it sits a word's space from the words rather than a column's. */
+.agent-note-mark {
+  display: inline-flex;
+  flex: none;
+  margin-right: -6px;
+}
+
 /* Somebody else's agents, under the head, one quiet row apiece. */
 .agent-clients {
   flex: 0 0 auto;

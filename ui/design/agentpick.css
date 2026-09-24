@@ -6,8 +6,9 @@
    and its one action. What to do next, when there is something to do, sits
    under the name: the line to run in a terminal, with Copy, or one sentence
    from the app. Rows are ruled, not boxed, the way the balances panel rules
-   its coins, and nothing is coloured: the marks are monograms on the raised
-   ground, and the one in use says so in words. */
+   its coins, and each mark is the agent's own logo drawn the way a coin's
+   is: in its brand's colours, with nothing behind it. The one in use says so
+   in words, never by its mark. */
 
 .agentpick {
   display: flex;
@@ -36,26 +37,14 @@
   border-bottom: 1px solid var(--line);
 }
 
-.agentrow-mark {
+/* A 27 px mark in a 36 px box (marks.js agent()), the balances panel's size;
+   the box's clear edge is pulled in so the mark fills the 28 px column. */
+.agentrow > .agentrow-mark {
   grid-area: mark;
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  font-size: var(--fs-11);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-2);
+  --logo: 36px;
+  margin: calc(var(--logo) / -8);
   user-select: none;
   -webkit-user-select: none;
-}
-
-.agentrow[aria-current="true"] .agentrow-mark {
-  color: var(--text);
-  border-color: var(--line-strong);
 }
 
 /* The text column is two areas of the grid: the name on the row's line, and
