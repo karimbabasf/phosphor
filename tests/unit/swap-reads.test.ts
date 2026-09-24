@@ -231,6 +231,18 @@ test('swap_check on the FAILED wNEAR swap: the ledger shows nothing left, and th
   assert.equal(h.store.get('8b589eca')?.status, 'needs_reconciliation', 'a read writes nothing');
 });
 
+test('swap_check on a FAILED swap whose signed transfer can still run says nothing has left yet, not that it is over', async () => {
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: registry(venueRail().rail, QUIET_LEDGER), oneClickStatus: async () => failedStatus() } });
+  const row = failedSwap();
+  h.store.put({ ...row, result: { ...row.result!, reason: 'venue_failed_watching' } });
+  const reply = await h.svc.swapCheck!('8b589eca');
+  assert.equal(reply.moved, 'no');
+  assert.equal(
+    reply.summary,
+    "It didn't go through, and nothing has left your balance yet. The app keeps an eye on it for a few minutes; don't send it again until then. You hold 0.894697028778374732410224 NEAR.",
+  );
+});
+
 test('swap_check says the coin left when the ledger shows the transfer to the handle, and cannot tell when there is no ledger', async () => {
   const sent: IntentsActivity = { ...QUIET_LEDGER, rows: [{ cause: 'TRANSFER', token: 'wNEAR', tokenId: WNEAR, delta: '-0.89', counterparty: HANDLE, hash: 'Tx1', time: new Date().toISOString() }] };
   const h = makeCtx({ intents: wnearHeld(), deps: { rails: registry(venueRail().rail, sent), oneClickStatus: async () => failedStatus() } });

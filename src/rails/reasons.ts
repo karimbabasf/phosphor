@@ -33,6 +33,9 @@ export const REASON_CODES = [
   // After the click.
   'not_sent',
   'venue_failed_nothing_moved',
+  // The venue failed it and the signed transfer has not run, but can until its deadline: open,
+  // counted, and watched until then.
+  'venue_failed_watching',
   'venue_failed_refund_pending',
   'refunded',
   'short_fill',

@@ -36,7 +36,7 @@ import {
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { finishTouch } from './proposals/lifecycle.ts';
 import { executeApproved, land, markStalled, watchSettling } from './proposals/execute.ts';
-import { acknowledge, reconcileOnBoot, reconcileOpen, reconcileProposal } from './proposals/reconcile.ts';
+import { acknowledge, reconcileOnBoot, reconcileOpen, reconcileProposal, watchDeadlines } from './proposals/reconcile.ts';
 import { proposePolicyChange } from './proposals/draft.ts';
 import { decideSwap, prepareSwap, proposeHlDeposit, proposeHlWithdraw, proposeSend } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
@@ -61,8 +61,10 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
   };
 
   const serialise = createSerialiser();
-  // Rows left settling by a process that stopped are re-judged on the ledger's next refresh.
+  // Rows left settling by a process that stopped are re-judged on the ledger's next refresh, and
+  // a FAILED swap waiting out its transfer's deadline is asked again once the deadline has passed.
   watchSettling(ctx);
+  watchDeadlines(ctx);
 
   /* THE VIEW'S TWO SEAMS, and the settle one is the fix for two sources of truth.
      A row still waiting on a venue's credit is re-judged against the balance the ledger last

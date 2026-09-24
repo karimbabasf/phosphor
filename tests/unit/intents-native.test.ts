@@ -45,6 +45,7 @@ import type {
   IntentsApiPort,
   IntentsNativeRailDeps,
   VerifierBalancePort,
+  NonceUsedPort,
   IntentsSignerPort,
 } from '../../src/rails/intents-native.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
@@ -127,6 +128,9 @@ function quoteOf(over: Record<string, unknown> = {}): OneClickQuote {
 }
 
 const DEADLINE = new Date(NOW + 5 * 60_000).toISOString();
+// What the rail signs instead: the same payload with the deadline cut to three minutes.
+const SIGNED_DEADLINE = new Date(NOW + 3 * 60_000).toISOString();
+const NONCE = 'Vij2xgAlKBKzwGNqwogWQxiy87p9jW5Omfg+L9bXBDw=';
 
 // The erc191 payload is a JSON *string*, which is what the signature covers.
 function payloadOf(over: Record<string, unknown> = {}): string {
@@ -134,7 +138,7 @@ function payloadOf(over: Record<string, unknown> = {}): string {
     signer_id: OWNER,
     verifying_contract: INTENTS_VERIFIER,
     deadline: DEADLINE,
-    nonce: 'Vij2xgAlKBKzwGNqwogWQxiy87p9jW5Omfg+L9bXBDw=',
+    nonce: NONCE,
     intents: [{ intent: 'token_diff', diff: { [ORIGIN_ASSET]: '-100000000', [DEST_ASSET]: '99850000' } }],
     ...over,
   });
@@ -152,6 +156,8 @@ type Harness = {
   verifierBalance: VerifierBalancePort;
   verifierReads: string[];
   originReads: string[];
+  nonceUsed: NonceUsedPort;
+  nonceAsks: string[];
 };
 
 /* What the live API echoes back beside the quote, and what execute now checks it against. A
@@ -195,6 +201,8 @@ function harness(
     intent?: Partial<GeneratedIntent>;
     payload?: string;
     statuses?: Array<{ status: string; swapDetails?: Record<string, unknown> } | null>;
+    // The verifier's word on the signed transfer's nonce: spent, unspent, or no answer. Default unspent.
+    spent?: boolean | null;
     // Applied to the quote response AFTER it is signed: what a proxy between this app and the
     // API would do to it. Left out, the response arrives as signed.
     tamper?: (signed: Record<string, unknown>) => Record<string, unknown>;
@@ -281,7 +289,13 @@ function harness(
     return verifierReads.length === 1 ? before : after;
   };
 
-  return { api, signer, quotes, generated, submitted, submitAttempts, signedPayloads, statusCalls, verifierBalance, verifierReads, originReads };
+  const nonceAsks: string[] = [];
+  const nonceUsed: NonceUsedPort = async (accountId, nonce) => {
+    nonceAsks.push(`${accountId}:${nonce}`);
+    return options.spent === undefined ? false : options.spent;
+  };
+
+  return { api, signer, quotes, generated, submitted, submitAttempts, signedPayloads, statusCalls, verifierBalance, verifierReads, originReads, nonceUsed, nonceAsks };
 }
 
 function railOf(h: Harness, over: Partial<IntentsNativeRailDeps> = {}) {
@@ -293,6 +307,7 @@ function railOf(h: Harness, over: Partial<IntentsNativeRailDeps> = {}) {
     signer: h.signer,
     // Injected, so no test reaches a real NEAR node, and so the after-check can be driven.
     verifierBalance: h.verifierBalance,
+    nonceUsed: h.nonceUsed,
     now: () => NOW,
     sleepImpl: async () => {},
     pollIntervalMs: 1,
@@ -619,12 +634,12 @@ test('execute quotes, generates, signs and submits, and transfers nothing', asyn
   // The intent was generated for our own account against the quote's handle.
   assert.deepEqual(h.generated, [{ signerId: OWNER, depositAddress: HANDLE }]);
 
-  // Signed exactly as returned: the bytes the signature covers are the bytes the API sent,
-  // not a re-serialised copy of them.
+  // Signed as returned but for the deadline, cut to three minutes: the bytes the signature covers
+  // are the bytes the API sent with that one value replaced, not a re-serialised copy of them.
   assert.equal(h.signedPayloads.length, 1);
-  assert.equal(h.signedPayloads[0], payloadOf());
+  assert.equal(h.signedPayloads[0], payloadOf().replace(DEADLINE, SIGNED_DEADLINE));
   assert.equal(h.submitted.length, 1);
-  assert.equal(h.submitted[0].payload, payloadOf());
+  assert.equal(h.submitted[0].payload, h.signedPayloads[0]);
   assert.match(h.submitted[0].signature, /^secp256k1:[1-9A-HJ-NP-Za-km-z]+$/);
 
   assert.equal(result.ok, true);
@@ -750,7 +765,7 @@ test('a submit that throws after the signature is reported as signed and unconfi
   assert.doesNotMatch(result.detail, /Nothing was signed/);
   assert.deepEqual(result.txids, []);
   assert.equal(result.evidence?.handle, HANDLE);
-  assert.equal(result.evidence?.deadline, DEADLINE);
+  assert.equal(result.evidence?.deadline, SIGNED_DEADLINE);
 });
 
 test('a submit with no reply is resent once with the same bytes, and the key is used exactly once', async () => {
@@ -814,7 +829,7 @@ test('the executor hears the handle after the signature and the hash after the s
   assert.deepEqual(order.slice(0, 3), ['evidence:', `evidence:${INTENT_HASH}`, 'poll']);
   // The signed quote rides on both, so a row that dies inside the wait still has what 1Click signed.
   const { quote: signedQuote, ...rest } = heard[0] as { quote?: unknown; handle?: string; deadline?: string };
-  assert.deepEqual(rest, { handle: HANDLE, deadline: DEADLINE });
+  assert.deepEqual(rest, { handle: HANDLE, deadline: SIGNED_DEADLINE, nonce: NONCE });
   assert.equal((signedQuote as { depositAddress?: string } | undefined)?.depositAddress, HANDLE);
   assert.equal(heard[1].handle, HANDLE);
 });
@@ -854,35 +869,38 @@ test('a REFUNDED swap whose balance has not shown the refund yet names where it 
 });
 
 /* THE THREE wNEAR SWAPS OF 2026-09-23. 1Click said FAILED, refunded 0, no transfer hash, and
-   the card said the input was held by 1Click under the handle. The balance never moved. */
-test('a FAILED swap whose balance never moved says nothing left the balance, never that 1Click holds it', async () => {
+   the card said the input was held by 1Click under the handle. The transfer had not run. It could
+   still have, until its deadline, so the swap is not over: open, counted, and watched. */
+test('a FAILED swap whose signed transfer has not run says so, never that 1Click holds it, and is not over', async () => {
   const h = harness({ statuses: [{ status: 'FAILED', swapDetails: { refundedAmountFormatted: '0', refundReason: null } }] });
   const result = await railOf(h).execute(draftOf());
 
   assert.equal(result.ok, false);
-  assert.equal(result.reason, 'venue_failed_nothing_moved');
-  assert.match(result.detail, /1click reported FAILED \(reason not given\) and nothing left the balance/);
-  assert.match(result.detail, /reads 1000 against 1000 before the swap/);
+  assert.equal(result.reason, 'venue_failed_watching');
+  assert.match(result.detail, /1click reported FAILED \(reason not given\), and the verifier shows the signed transfer has not run/);
+  assert.match(result.detail, new RegExp(`It can still run until ${SIGNED_DEADLINE}`));
+  assert.deepEqual(h.nonceAsks, [`${OWNER.toLowerCase()}:${NONCE}`], 'asked by the nonce of the payload it signed');
   assert.doesNotMatch(result.detail, /held by 1Click/);
   assert.doesNotMatch(result.detail, /refund is credited/);
   assert.deepEqual(result.txids, [INTENT_HASH]);
   assert.equal(result.evidence?.refundedAmount, '0');
 });
 
-test('a FAILED swap whose input left says it is with the swap service, and one the app could not read says it cannot tell', async () => {
+test('a FAILED swap whose input left says it is with the swap service, and one the verifier could not answer for says it cannot tell', async () => {
   const left = harness({ statuses: [{ status: 'FAILED', swapDetails: { refundedAmountFormatted: '0', nearTxHashes: ['nearFunding'] } }] });
   const out = await railOf(left).execute(draftOf());
   assert.equal(out.reason, 'venue_failed_refund_pending');
   assert.match(out.detail, new RegExp(`left the balance for the swap service's handle ${HANDLE} and is not back yet`));
 
-  const dropped = harness({ statuses: [{ status: 'FAILED', swapDetails: {} }], origin: [1_000_000_000n, 900_000_000n] });
-  // A fall with no hash may be another move spending the same coin that minute: not proof.
-  assert.equal((await railOf(dropped).execute(draftOf())).reason, 'stuck_unknown', 'a fall with no hash is not attributed to this swap');
+  // No hash, and the nonce spent: the transfer ran, whatever the balance reads.
+  const spent = harness({ statuses: [{ status: 'FAILED', swapDetails: {} }], spent: true, origin: [1_000_000_000n, 1_010_000_000n] });
+  assert.equal((await railOf(spent).execute(draftOf())).reason, 'venue_failed_refund_pending');
 
-  const unread = harness({ statuses: [{ status: 'FAILED', swapDetails: {} }], origin: [null] });
+  const unread = harness({ statuses: [{ status: 'FAILED', swapDetails: {} }], spent: null });
   const blind = await railOf(unread).execute(draftOf());
   assert.equal(blind.reason, 'stuck_unknown');
   assert.match(blind.detail, /whether the USDC left the balance is not confirmed/);
+  assert.match(blind.detail, /the verifier did not answer for the signed transfer/);
   assert.doesNotMatch(blind.detail, /held by 1Click/);
 });
 

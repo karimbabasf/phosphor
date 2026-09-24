@@ -118,23 +118,47 @@ export const INTENTS_NO_API_KEY_REASON =
   `No 1Click partner API key is set (${INTENTS_API_KEY_ENV}), so this swap runs on the public fee tier. ` +
   'Quoting, intent generation and submission all work unauthenticated; a key only buys a better rate.';
 
-// A signed intent stays spendable until its deadline, so a server-chosen deadline far in the
-// future is a window in which a signature we have already released could be presented again.
-//
-// This was one hour, chosen as "generous for a swap the API estimates at ~42s". Measured
-// against the live API on 2026-08-13, generate-intent returns a deadline 72 hours out, so the
-// one-hour cap refused every honest payload and the rail could never have executed.
-//
-// Four days, and the reason it is safe to be this loose is that the deadline is not what
-// prevents replay: the nonce is. Every payload carries one, and intents.near tracks spent
-// nonces per account (verified 2026-08-13: the contract answers the view method
-// `is_nonce_used({account_id, nonce})`, which returned false for an unspent nonce), so a
-// second presentation of the same signed bytes is rejected however long the deadline runs.
-// The deadline only bounds how long a signature that was never submitted stays live, and
-// that signature authorises one fixed amount of one fixed asset to one fixed receiver, all
-// three of which are checked before signing. What the cap still catches is a payload with an
-// absurd or missing deadline, which is a sign the shape changed.
-const MAX_DEADLINE_MS = 4 * 24 * 60 * 60 * 1000;
+/* HOW LONG THE SIGNED TRANSFER CAN RUN: three minutes, whatever 1Click generated. The nonce stops
+   a second run of the same bytes (intents.near answers `is_nonce_used`, verified 2026-08-13), but
+   it does nothing about the FIRST run arriving late. generate-intent writes a deadline 72 hours
+   out and takes no deadline of its own (openapi, read 2026-09-23), so a swap 1Click called FAILED
+   could still have its transfer run for three days after the card said nothing had moved (the
+   audit of 2026-09-23). The deadline is cut here before signing, and nothing else in the payload is.
+   Three minutes because 1Click estimates 12 s for a whole swap inside the verifier (live dry quote,
+   2026-09-23) and the transfer is its first step; because the status watch below gives up at five,
+   so a watch that runs out finds the transfer already run or dead; and because the quote's own
+   deposit window is ten, so the transfer can never land on a quote 1Click has stopped honouring.
+   A transfer that misses it is dead, which costs a retry and never money. */
+export const SIGNED_DEADLINE_MS = 3 * 60 * 1000;
+
+/* The payload with its deadline brought forward to `latestMs`, as the same bytes with that one
+   value replaced. Unchanged when the deadline is already that soon, and unchanged when the value
+   cannot be found exactly once: checkIntentPayload then refuses the long deadline, because which
+   of two deadlines to cut is a guess. */
+export function shortenDeadline(raw: string, latestMs: number): string {
+  let deadline: unknown;
+  try {
+    deadline = (JSON.parse(raw) as Record<string, unknown> | null)?.['deadline'];
+  } catch {
+    return raw;
+  }
+  if (typeof deadline !== 'string' || !(Date.parse(deadline) > latestMs)) return raw;
+  const found = [...raw.matchAll(/"deadline"\s*:\s*"([^"\\]*)"/g)];
+  if (found.length !== 1 || found[0]![1] !== deadline) return raw;
+  const at = found[0]!.index! + found[0]![0].length - deadline.length - 1;
+  return `${raw.slice(0, at)}${new Date(latestMs).toISOString()}${raw.slice(at + deadline.length)}`;
+}
+
+// The nonce a payload carries, for the evidence: what the verifier is asked by afterwards. Read
+// after checkIntentPayload has accepted the payload, so it is a non-empty string there.
+export function intentNonce(raw: string): string | undefined {
+  try {
+    const nonce = (JSON.parse(raw) as Record<string, unknown> | null)?.['nonce'];
+    return typeof nonce === 'string' && nonce !== '' ? nonce : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /* THE SLIPPAGE ASKED OF 1CLICK, half a percent, so the floor 1Click enforces sits ABOVE the one
    the person approved. The app sets its floor one percent under the propose-time quote
@@ -634,6 +658,10 @@ function amountOf(value: unknown, what: string): bigint | string {
    reader already existed in src/ledger/intents.ts and nothing on this path ever called it. */
 export type VerifierBalancePort = (accountId: string, assetId: string) => Promise<bigint | null>;
 
+// Whether the verifier has spent a nonce for this account: the signed transfer having run. Null
+// when the read failed, which is never "unspent".
+export type NonceUsedPort = (accountId: string, nonce: string) => Promise<boolean | null>;
+
 export type IntentsNativeRailDeps = {
   keysPath: string;
   tokens: TokensFile;
@@ -649,6 +677,7 @@ export type IntentsNativeRailDeps = {
   firstPollMs?: number;
   maxDeadlineMs?: number;
   verifierBalance?: VerifierBalancePort;
+  nonceUsed?: NonceUsedPort;
   // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
   // key its own fake signs with, and nothing else ever sets it.
   quoteKey?: string;
@@ -673,6 +702,18 @@ export function liveVerifierBalance(fetchImpl?: typeof fetch): VerifierBalancePo
         rpcUrl: nearChainSpec().rpcUrl,
         fetchImpl: fetchImpl ?? fetch,
       });
+    } catch {
+      return null;
+    }
+  };
+}
+
+// The same view the relay rail's reconcile asks (src/relay/verifier.ts). Never throws.
+export function liveNonceUsed(fetchImpl?: typeof fetch): NonceUsedPort {
+  return async (accountId, nonce) => {
+    try {
+      const { liveVerifier } = await import('../relay/verifier.ts');
+      return await liveVerifier(fetchImpl ?? fetch).nonceUsed(accountId, nonce);
     } catch {
       return null;
     }
@@ -711,7 +752,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   // Start at a quarter second and double up to the interval, so a fast swap is seen fast
   // and a slow one still backs off to one poll every 5s.
   const firstPollMs = deps.firstPollMs ?? 250;
-  const maxDeadlineMs = deps.maxDeadlineMs ?? MAX_DEADLINE_MS;
+  const maxDeadlineMs = deps.maxDeadlineMs ?? SIGNED_DEADLINE_MS;
   const quoteKey = deps.quoteKey;
   const settleSchedule = deps.settleSchedule ?? INTENTS_SETTLE;
 
@@ -719,6 +760,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   // comment on INTENTS_NO_API_KEY_REASON for what was re-tested and when.
   const api = deps.api ?? intentsApi({ apiKey: apiKey ?? '', fetchImpl: deps.fetchImpl, client: deps.client });
   const verifierBalance = deps.verifierBalance ?? liveVerifierBalance(deps.fetchImpl);
+  const nonceUsed = deps.nonceUsed ?? liveNonceUsed(deps.fetchImpl);
 
   type Plan = {
     originAsset: string;
@@ -1085,7 +1127,9 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       );
     }
 
-    const payloadProblems = checkIntentPayload(generated.payload, {
+    // The deadline cut to SIGNED_DEADLINE_MS, and then the whole payload checked, that cap included.
+    const shortened = typeof generated.payload === 'string' ? shortenDeadline(generated.payload, now() + SIGNED_DEADLINE_MS) : generated.payload;
+    const payloadProblems = checkIntentPayload(shortened, {
       signerId: owner,
       originAsset: p.originAsset,
       destinationAsset: p.destinationAsset,
@@ -1099,13 +1143,15 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       throw new Error(`refusing to sign the intent 1click generated: ${payloadProblems.join('; ')}`);
     }
 
-    // Signed exactly as returned. The payload string is not re-serialised, re-ordered or
-    // normalised anywhere above: the signature has to cover the same bytes the verifier will
-    // parse, and a round trip through JSON.parse and JSON.stringify would not guarantee that.
-    const payload = generated.payload as string;
+    // Signed as returned but for the deadline. The payload string is not re-serialised,
+    // re-ordered or normalised anywhere above: the signature has to cover the same bytes the
+    // verifier will parse, and a round trip through JSON.parse and JSON.stringify would not
+    // guarantee that.
+    const payload = shortened as string;
     const deadline = intentDeadline(payload) ?? 'unknown';
+    const nonce = intentNonce(payload);
     const signature = await signer.signErc191(keysPath, payload);
-    tell(hooks, { handle: depositAddress, deadline, quote: signedQuote });
+    tell(hooks, { handle: depositAddress, deadline, ...(nonce === undefined ? {} : { nonce }), quote: signedQuote });
 
     // Nothing throws from here on, and the key is never used again for this move: the rule and
     // the one safe retry are described at the top of src/rails/intents-spend.ts. A submit that
@@ -1116,7 +1162,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       return withQuote(describeUnconfirmedSubmit({ error: sent.error, handle: depositAddress, deadline }), signedQuote);
     }
     const submitted: SubmittedIntent = sent.intent;
-    tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline, quote: signedQuote });
+    tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline, ...(nonce === undefined ? {} : { nonce }), quote: signedQuote });
     const evidence = `intent ${submitted.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
     const watch = await watchStatus(depositAddress, hooks);
@@ -1219,26 +1265,31 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       };
     }
 
-    /* FAILED OR REFUNDED: THE BALANCE DECIDES THE WORDS. The spent balance is read again and set
-       against the read taken before the signature. Unchanged is proof nothing left it, whatever
-       the venue's note says: the three wNEAR swaps of 2026-09-23 were FAILED transfers that
-       could never run, and the card said 1Click held money that had not moved. */
-    if (watch.status === 'REFUNDED' || watch.status === 'FAILED') {
+    const refundWords = {
+      symbol: draft.fromSymbol,
+      refundTarget: `${owner} inside ${INTENTS_VERIFIER}, not any chain address`,
+      evidence,
+      primaryTxid: submitted.intentHash,
+    };
+
+    // REFUNDED is 1Click's word that the input came back; the balance read against the one taken
+    // before the signature shows whether it has.
+    if (watch.status === 'REFUNDED') {
       const heldAfter = await verifierBalance(owner.toLowerCase(), p.originAsset);
       return withQuote(
-        describeRefund(
-          watch,
-          depositAddress,
-          {
-            symbol: draft.fromSymbol,
-            refundTarget: `${owner} inside ${INTENTS_VERIFIER}, not any chain address`,
-            evidence,
-            primaryTxid: submitted.intentHash,
-          },
-          { before: heldBefore, after: heldAfter, amountBase: p.amountBase, decimals: p.originDecimals },
-        ),
+        describeRefund(watch, depositAddress, refundWords, { before: heldBefore, after: heldAfter, amountBase: p.amountBase, decimals: p.originDecimals }),
         signedQuote,
       );
+    }
+
+    /* FAILED: THE INTENT'S OWN NONCE DECIDES, NEVER THE BALANCE. A balance that reads the same
+       after proves nothing: a same-coin credit landing in the watch hides a transfer that ran, and
+       a transfer that has not run can still run until its deadline (the audit of 2026-09-23).
+       Spent is the input gone; unspent is a row that stays open and counted until the deadline,
+       which reconcile then closes for real (src/proposals/reconcile.ts). */
+    if (watch.status === 'FAILED') {
+      const spent = nonce === undefined ? null : await nonceUsed(owner.toLowerCase(), nonce);
+      return withQuote(describeRefund(watch, depositAddress, { ...refundWords, intent: { spent, until: deadline } }), signedQuote);
     }
 
     if (watch.status === 'INCOMPLETE_DEPOSIT') {
