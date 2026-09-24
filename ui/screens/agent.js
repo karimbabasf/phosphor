@@ -683,8 +683,14 @@
   }
 
   /* Height from content, capped at six lines, and measured from zero so deleting a line
-     gives the space back. */
+     gives the space back. The field holds its height while the box is at zero. WebKit lays
+     the page out at that zero, so without the hold the thread was a line taller for one
+     layout, a thread at its end was clamped a line short, and the follow pulled it back:
+     once the box held two lines the thread jumped on every key (2026-09-24). */
   function autogrow(input) {
+    var field = input.parentNode;
+    var held = field && field.style && field.offsetHeight > 0 ? field.offsetHeight : 0;
+    if (held) field.style.minHeight = held + 'px';
     input.style.height = 'auto';
     var style = window.getComputedStyle(input);
     var line = parseFloat(style.lineHeight);
@@ -695,6 +701,7 @@
     var cap = Math.round(COMPOSER_MAX_LINES * line + pad);
     input.style.height = Math.min(content, cap) + border + 'px';
     input.style.overflowY = content > cap ? 'auto' : 'hidden';
+    if (held) field.style.minHeight = '';
   }
 
   /* ---------- actions ---------- */
