@@ -157,5 +157,54 @@
     return node;
   }
 
-  window.PhosphorMarks = { colourFor: colourFor, colour: colourFor, logo: logo, COLOURS: COLOURS, LOGOS: LOGOS };
+  /* The agents' own marks, files in ui/logos/agents/ (see LICENSE.md there),
+     keyed by the catalog's agent id. Claude Code and Claude Desktop are both
+     Claude. A brand drawn in one colour (Grok, Hermes) is drawn through its
+     file in the text colour, so it reads on whatever ground the theme sets
+     rather than as black on black. */
+  var AGENT_LOGOS = { claude: 'claude', desktop: 'claude', codex: 'codex', grok: 'grok', hermes: 'hermes' };
+  var ONE_COLOUR = { grok: true, hermes: true };
+
+  /* An agent's mark, in the same box and at the same size as a coin's logo.
+     Another agent is any MCP client at all, so it draws the icon set's link
+     rather than anybody's brand; an id this file does not know draws the
+     monogram of its name. */
+  function agent(id, size, name) {
+    var key = String(id === null || id === undefined ? '' : id).trim().toLowerCase();
+    var node = document.createElement('span');
+    node.className = 'logo';
+    node.setAttribute('data-agent', key);
+    node.setAttribute('aria-hidden', 'true');
+    if (size) node.style.setProperty('--logo', size + 'px');
+    var icons = window.PhosphorIcons;
+    if (key === 'mcp' && icons && typeof icons.svg === 'function') {
+      node.appendChild(icons.svg('link', 'logo-icon'));
+      return node;
+    }
+    var file = hasOwn(AGENT_LOGOS, key) ? AGENT_LOGOS[key] : '';
+    if (!file) return fallback(node, String(name || key).toUpperCase());
+    var src = './logos/agents/' + file + '.svg';
+    if (ONE_COLOUR[file]) {
+      var ink = document.createElement('span');
+      ink.className = 'logo-ink';
+      ink.style.setProperty('-webkit-mask-image', 'url("' + src + '")');
+      ink.style.setProperty('mask-image', 'url("' + src + '")');
+      node.appendChild(ink);
+      return node;
+    }
+    var img = document.createElement('img');
+    img.alt = '';
+    img.decoding = 'async';
+    img.draggable = false;
+    img.onerror = function () { fallback(node, String(name || key).toUpperCase()); };
+    img.src = src;
+    node.appendChild(img);
+    return node;
+  }
+
+  function hasOwn(object, key) {
+    return Object.prototype.hasOwnProperty.call(object, key);
+  }
+
+  window.PhosphorMarks = { colourFor: colourFor, colour: colourFor, logo: logo, agent: agent, COLOURS: COLOURS, LOGOS: LOGOS, AGENT_LOGOS: AGENT_LOGOS };
 })();

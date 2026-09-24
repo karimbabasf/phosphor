@@ -1082,15 +1082,15 @@
 
   var COPIED_MS = 1500;
 
-  /* The six entries in the catalog's order, with the mark each row draws. The
-     sentences never live here. */
+  /* The six entries in the catalog's order. Each row draws the agent's own
+     logo (marks.js agent()). The sentences never live here. */
   var AGENTS = [
-    { id: 'claude', name: 'Claude Code', mark: 'CC' },
-    { id: 'codex', name: 'Codex', mark: 'Cx' },
-    { id: 'hermes', name: 'Hermes', mark: 'He' },
-    { id: 'grok', name: 'Grok', mark: 'Gr' },
-    { id: 'mcp', name: 'Another agent', mark: 'A' },
-    { id: 'desktop', name: 'Claude Desktop or a chat app', mark: 'Ch' }
+    { id: 'claude', name: 'Claude Code' },
+    { id: 'codex', name: 'Codex' },
+    { id: 'hermes', name: 'Hermes' },
+    { id: 'grok', name: 'Grok' },
+    { id: 'mcp', name: 'Another agent' },
+    { id: 'desktop', name: 'Claude Desktop or a chat app' }
   ];
 
   /* The words this file owns: the state names, and what the list says while
@@ -1168,6 +1168,18 @@
     return 'checking';
   }
 
+  /* The agent's own mark, in the box a coin's logo takes. Without marks.js
+     (a screen drawn on its own) it is the name's first letter. */
+  function agentMark(entry) {
+    var marks = window.PhosphorMarks;
+    var mark = marks && typeof marks.agent === 'function'
+      ? marks.agent(entry.id, null, entry.name)
+      : dom.el('span', 'logo', entry.name.charAt(0));
+    mark.className += ' agentrow-mark';
+    mark.setAttribute('aria-hidden', 'true');
+    return mark;
+  }
+
   function render(host, options) {
     var opts = options || {};
     if (host.__agentpick && typeof host.__agentpick.destroy === 'function') host.__agentpick.destroy();
@@ -1230,9 +1242,7 @@
     function buildRow(entry) {
       var node = dom.el('li', 'agentrow');
       node.dataset.agent = entry.id;
-      var mark = dom.el('span', 'agentrow-mark', entry.mark);
-      mark.setAttribute('aria-hidden', 'true');
-      node.appendChild(mark);
+      node.appendChild(agentMark(entry));
 
       var text = dom.el('div', 'agentrow-text');
       var name = dom.el('p', 'agentrow-name', entry.name);

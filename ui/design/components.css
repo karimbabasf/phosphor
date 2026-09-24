@@ -295,6 +295,36 @@ button[data-pending-label] > :not(.btn-pending) {
   background: color-mix(in srgb, var(--text) 10%, var(--bg-1));
 }
 
+/* An agent's mark (marks.js agent()). A brand drawn in one colour shows
+   through its own file in the text colour; Another agent is the icon set's
+   link in the quiet tone, drawn to the same three quarters. */
+.logo[data-agent]:not([data-fallback]) {
+  color: var(--text);
+}
+
+.logo-ink {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: currentColor;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  pointer-events: none;
+}
+
+.logo[data-agent="mcp"]:not([data-fallback]) {
+  color: var(--text-2);
+}
+
+.logo-icon {
+  width: 75%;
+  height: 75%;
+}
+
 /* Trimmed to the capital's height, so the letter centres on the disc by its
    ink rather than by the font's line box. */
 .logo-initial {

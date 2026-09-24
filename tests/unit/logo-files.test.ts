@@ -17,17 +17,28 @@ import { createContext, runInContext } from 'node:vm';
 import { RECEIVE_NETWORKS, SPEND_NETWORKS } from '../../src/rails/intents-address.ts';
 
 const DIR = fileURLToPath(new URL('../../ui/logos/', import.meta.url));
+const AGENT_DIR = path.join(DIR, 'agents');
 const MARKS = readFileSync(new URL('../../ui/design/marks.js', import.meta.url), 'utf8');
 
-// The list as the window sees it: the real marks.js, run the way the *-ui tests run it.
-function listed(): string[] {
+// The lists as the window sees them: the real marks.js, run the way the *-ui tests run it.
+function marks(): Record<string, any> {
   const sandbox: Record<string, any> = { window: {} };
   createContext(sandbox);
   runInContext(MARKS, sandbox, { filename: 'ui/design/marks.js' });
-  return Array.from(sandbox.window.PhosphorMarks.LOGOS as string[]);
+  return sandbox.window.PhosphorMarks;
+}
+
+function listed(): string[] {
+  return Array.from(marks().LOGOS as string[]);
 }
 
 const files = readdirSync(DIR).filter((name) => name.endsWith('.svg')).sort();
+const agentFiles = readdirSync(AGENT_DIR).filter((name) => name.endsWith('.svg')).sort();
+// Every file the window can load, as [the name a failure prints, its path].
+const everyFile: Array<[string, string]> = [
+  ...files.map((name): [string, string] => [name, path.join(DIR, name)]),
+  ...agentFiles.map((name): [string, string] => [`agents/${name}`, path.join(AGENT_DIR, name)]),
+];
 
 test('every listed ticker has its file in ui/logos', () => {
   const missing = listed().filter((ticker) => !files.includes(`${ticker.toLowerCase()}.svg`));
@@ -37,6 +48,17 @@ test('every listed ticker has its file in ui/logos', () => {
 test('every file in ui/logos is listed, so none ships without being drawn', () => {
   const names = new Set(listed().map((ticker) => `${ticker.toLowerCase()}.svg`));
   assert.deepEqual(files.filter((name) => !names.has(name)), []);
+});
+
+// Karim, 2026-09-23: the agent list drew monograms. Every agent the catalog names draws a real
+// logo from ui/logos/agents, except Another agent, which is any client and draws the link icon.
+test('every agent in the catalog has its logo in ui/logos/agents, and every file there is drawn', () => {
+  const named = marks().AGENT_LOGOS as Record<string, string>;
+  const ids = ['claude', 'codex', 'hermes', 'grok', 'desktop'];
+  assert.deepEqual(ids.filter((id) => !Object.prototype.hasOwnProperty.call(named, id)), []);
+  const wanted = new Set(Object.values(named).map((file) => `${file}.svg`));
+  assert.deepEqual([...wanted].filter((name) => !agentFiles.includes(name)), []);
+  assert.deepEqual(agentFiles.filter((name) => !wanted.has(name)), []);
 });
 
 // Karim, 2026-09-23: WBTC drew a generic target in the balances panel. The wrapped bitcoins the
@@ -79,8 +101,8 @@ test('a wrapped ticker\'s file is its coin\'s file, byte for byte', () => {
 // square tile cut to a disc) widens its viewBox by a sixth of the drawing on each side.
 test('every file keeps the clear edge a logo row is sized by', () => {
   const off: string[] = [];
-  for (const name of files) {
-    const box = /viewBox="([^"]+)"/.exec(readFileSync(path.join(DIR, name), 'utf8'))?.[1] ?? '';
+  for (const [name, file] of everyFile) {
+    const box = /viewBox="([^"]+)"/.exec(readFileSync(file, 'utf8'))?.[1] ?? '';
     const [x, y, w, h] = box.split(/[\s,]+/).map(Number);
     if (box === '0 0 24 24' || name === 'hype.svg') continue;
     const inner = (w as number) * 0.75;
@@ -105,8 +127,7 @@ const RULES: Array<[string, RegExp]> = [
 
 test('no logo file carries anything that could run or reach outside it', () => {
   const found: string[] = [];
-  for (const name of files) {
-    const file = path.join(DIR, name);
+  for (const [name, file] of everyFile) {
     const text = readFileSync(file, 'utf8');
     for (const [what, pattern] of RULES) if (pattern.test(text)) found.push(`${name}: ${what}`);
     if (statSync(file).size > 40 * 1024) found.push(`${name}: over 40 KB`);

@@ -143,6 +143,12 @@
     'link-off': [
       'M7 7h3v10H7a5 5 0 0 1 0-10zM14 7h3a5 5 0 0 1 0 10h-3z',
       'M9.5 17H7a5 5 0 0 1 0-10h2.5M14.5 7H17a5 5 0 0 1 3.9 8.1M9 12h2.5M4 4l16 16'
+    ],
+    /* The same two links, joined: a connection. Another agent, any client that
+       connects. */
+    link: [
+      'M7 7h3v10H7a5 5 0 0 1 0-10zM14 7h3a5 5 0 0 1 0 10h-3z',
+      'M9.5 17H7a5 5 0 0 1 0-10h2.5M14.5 7H17a5 5 0 0 1 0 10h-2.5M8.5 12h7'
     ]
   };
 

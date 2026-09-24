@@ -22,6 +22,8 @@ const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
 const VAULT = read('../../ui/screens/vault.js');
 const FIRSTRUN = read('../../ui/screens/firstrun.js');
+const MARKS = read('../../ui/design/marks.js');
+const CSS = read('../../ui/design/agentpick.css');
 
 /* ---------- a DOM small enough to read ---------- */
 
@@ -191,6 +193,7 @@ function build(): World {
   };
   sandbox.PhosphorNet = { readable: (e: Any) => `RAW:${String(e && e.message ? e.message : e)}` };
   sandbox.PhosphorMotion = { reduced: () => true };
+  sandbox.PhosphorIcons = { svg: (name: string, className?: string) => { const n = makeNode('svg'); n.className = `icon ${className ?? ''}`.trim(); n.dataset.icon = name; return n; } };
   sandbox.PhosphorShell = {
     setPending(button: Any, pending: boolean) { button.disabled = !!pending; button.pending = !!pending; },
     refresh: () => Promise.resolve(),
@@ -215,6 +218,7 @@ function build(): World {
   createContext(sandbox);
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
+  runInContext(MARKS, sandbox, { filename: 'ui/design/marks.js' });
   runInContext(FIRSTRUN, sandbox, { filename: 'ui/screens/firstrun.js' });
   runInContext(VAULT, sandbox, { filename: 'ui/screens/vault.js' });
 
@@ -288,11 +292,40 @@ test('opening the Vault scans this Mac; one row per agent in the catalog\'s orde
   const world = await opened();
   assert.equal(world.calls.filter((c) => c.action === 'agent-scan').length, 1);
   assert.deepEqual(rows(world).map((r: Any) => r.dataset.agent), ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']);
-  assert.deepEqual(rows(world).map((r: Any) => find(r, '.agentrow-mark')[0].textContent), ['CC', 'Cx', 'He', 'Gr', 'A', 'Ch']);
+  assert.deepEqual(rows(world).map((r: Any) => find(r, '.agentrow-mark')[0].getAttribute('data-agent')), ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']);
   assert.deepEqual(rows(world).map((r: Any) => find(r, '.agentrow-name')[0].textContent),
     ['Claude Code', 'Codex', 'Hermes', 'Grok', 'Another agent', 'Claude Desktop or a chat app']);
   assert.equal(find(section(world), '.chip').length, 0);
   assert.equal(find(section(world), '.agent-tile').length, 0);
+});
+
+/* Karim, 2026-09-23, on monogram discs (CC, Cx, He, Gr, A, Ch) in this list: each agent is
+   its own logo, drawn the way a coin's is. Claude Code and Claude Desktop are both Claude, a
+   brand drawn in one colour shows through its file in the text colour, and Another agent, any
+   client at all, is the icon set's link rather than anybody's brand. */
+test('each row draws its agent\'s own logo, never a monogram and never a tinted disc', async () => {
+  const world = await opened();
+  const markOf = (id: string): Any => find(rowOf(world, id), '.agentrow-mark')[0];
+  const file = (id: string): string => {
+    const mark = markOf(id);
+    const img = mark.childNodes.find((c: Any) => c.tagName === 'IMG');
+    if (img) return img.src;
+    const ink = mark.childNodes.find((c: Any) => String(c.className).split(' ').includes('logo-ink'));
+    return ink ? ink.style['mask-image'] : '';
+  };
+  assert.equal(file('claude'), './logos/agents/claude.svg');
+  assert.equal(file('desktop'), './logos/agents/claude.svg');
+  assert.equal(file('codex'), './logos/agents/codex.svg');
+  assert.equal(file('grok'), 'url("./logos/agents/grok.svg")');
+  assert.equal(file('hermes'), 'url("./logos/agents/hermes.svg")');
+  assert.equal(markOf('mcp').childNodes[0].dataset.icon, 'link');
+  for (const id of ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']) {
+    const mark = markOf(id);
+    assert.ok(String(mark.className).split(' ').includes('logo'), `${id}: the mark is the shared logo`);
+    assert.equal(mark.getAttribute('data-fallback'), null, `${id} drew a monogram`);
+    assert.equal(find(mark, '.logo-initial').length, 0);
+  }
+  assert.doesNotMatch(CSS, /\.agentrow-mark\s*\{[^}]*(background|border)/, 'a disc is back behind the mark');
 });
 
 test('every row says one plain state, and the line that says how when there is something to do', async () => {

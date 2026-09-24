@@ -405,8 +405,12 @@
     var head = dom.el('div', 'agent-head');
     var note = dom.el('div', 'agent-note');
     note.setAttribute('role', 'status');
+    /* The picked agent's own logo, when the note is about where it runs. */
+    var noteMark = dom.el('span', 'agent-note-mark');
+    noteMark.hidden = true;
     var noteText = dom.el('span', 'agent-note-text');
     var retry = button('btn btn-ghost btn-sm agent-retry', 'Retry', '', 'Starting');
+    note.appendChild(noteMark);
     note.appendChild(noteText);
     note.appendChild(retry);
     note.hidden = true;
@@ -541,6 +545,7 @@
       stopAgent: stopAgent,
       connect: connectBtn,
       note: note,
+      noteMark: noteMark,
       noteText: noteText,
       retry: retry,
       empty: empty,
@@ -1086,6 +1091,20 @@
     });
   }
 
+  /* The pick is the app's own setting (GET /api/driver), so its logo can stand beside the
+     sentence. A client's self-chosen name in the roster never draws one: a mark would vouch for
+     a name the app has no way to check. */
+  function paintNoteMark(host, id) {
+    var marks = window.PhosphorMarks;
+    var shown = marks && typeof marks.agent === 'function' ? String(id || '') : '';
+    if (host.__agent !== shown) {
+      dom.clear(host);
+      if (shown) host.appendChild(marks.agent(shown, 20, pick && pick.name));
+      host.__agent = shown;
+    }
+    dom.setHidden(host, !shown);
+  }
+
   function render(node) {
     var refs = node.refs;
     var empty = !hasConversation();
@@ -1093,6 +1112,7 @@
     var away = canStart() ? awayReason() : '';
     dom.setHidden(refs.note, !failed && !away);
     dom.setText(refs.noteText, failed ? failure.reason : away);
+    paintNoteMark(refs.noteMark, !failed && away ? pick.id : '');
     dom.setHidden(refs.retry, !failed);
     dom.setAttr(refs.note, 'title', failed && failure.detail ? failure.detail : null);
 

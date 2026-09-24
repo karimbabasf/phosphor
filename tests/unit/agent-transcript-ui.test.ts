@@ -18,6 +18,7 @@ import { createContext, runInContext } from 'node:vm';
 const DOM_SOURCE = readFileSync(new URL('../../ui/core/dom.js', import.meta.url), 'utf8');
 const AGENT_SOURCE = readFileSync(new URL('../../ui/screens/agent.js', import.meta.url), 'utf8');
 const MARKDOWN_SOURCE = readFileSync(new URL('../../ui/core/markdown.js', import.meta.url), 'utf8');
+const MARKS_SOURCE = readFileSync(new URL('../../ui/design/marks.js', import.meta.url), 'utf8');
 
 type Node = {
   tag: string;
@@ -65,7 +66,7 @@ function make(tag: string): Node {
     attrs: {} as Record<string, string>,
     dataset: {} as Record<string, string>,
     hidden: false,
-    style: {} as Record<string, string>,
+    style: { setProperty(name: string, value: string) { (this as Record<string, unknown>)[name] = value; } } as Record<string, any>,
     rows: 1,
     value: '',
     disabled: false,
@@ -266,6 +267,7 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
   };
   createContext(sandbox);
   runInContext(DOM_SOURCE, sandbox, { filename: 'ui/core/dom.js' });
+  runInContext(MARKS_SOURCE, sandbox, { filename: 'ui/design/marks.js' });
   runInContext(MARKDOWN_SOURCE, sandbox, { filename: 'ui/core/markdown.js' });
   runInContext(AGENT_SOURCE, sandbox, { filename: 'ui/screens/agent.js' });
 
@@ -1119,6 +1121,11 @@ test('an agent that runs outside this window gets its sentence where Start would
   world.emit({ kind: 'status', state: 'stopped' });
   assert.equal(world.note().hidden, false, 'the sentence is not in the head');
   assert.equal(world.noteText(), reason);
+  const mark = all(world.host, 'agent-note-mark')[0];
+  assert.equal(mark.hidden, false, 'the sentence names Codex without its logo');
+  const logo = all(mark, 'logo')[0];
+  assert.equal(logo.attrs['data-agent'], 'codex');
+  assert.equal((logo.children[0] as unknown as Record<string, unknown>).src, './logos/agents/codex.svg');
   assert.equal(world.retry().hidden, true, 'a Retry for an agent that does not start here');
   const starts = all(world.host, 'btn').filter((b) => b.textContent === 'Start your agent');
   assert.ok(starts.length > 0 && starts.every((b) => b.hidden === true), 'a Start for an agent that runs elsewhere');
