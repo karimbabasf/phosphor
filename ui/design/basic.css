@@ -437,16 +437,37 @@ body[data-view="basic"] .notice {
   color: var(--text-2);
 }
 
-/* Add money: the one way in, a wide soft key at the slab's foot. */
-.bal-add {
+/* Add money, the one way in, a wide soft key at the slab's foot, and quiet
+   beside it the way to the Policies on the Vault: the same height and corner
+   as Add money, so its hover fill is the same shape. */
+.bal-actions {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: auto;
+}
+
+.bal-rules {
+  flex: 0 0 auto;
+  min-height: 52px;
+  border-radius: var(--radius-tile);
+  font-size: var(--fs-15);
+}
+
+.bal-rules > .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.bal-add {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--s-2);
-  width: 100%;
+  min-width: 0;
   min-height: 52px;
-  margin-top: auto;
   padding: 0 var(--s-4);
   border-radius: var(--radius-tile);
   background: var(--add-bg, var(--bg-2));
@@ -679,7 +700,8 @@ body[data-view="basic"] .notice {
     text-align: left;
   }
 
-  .bal-add {
+  .bal-add,
+  .bal-rules {
     min-height: 44px;
   }
 }

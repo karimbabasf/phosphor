@@ -18,10 +18,11 @@
   var VIEWS = ['basic', 'pro', 'trade', 'vault'];
 
   /* A view that needs a script the window did not fetch at boot asks for it
-     here, the first time it opens (ui/core/lazy.js): Pro's positions and
-     orders and Trade's chart are the trade bundle, and the agent list on the
-     Vault lives in the first run's script. */
-  var NEEDS = { pro: 'trade', trade: 'trade', vault: 'firstrun' };
+     here, the first time it opens (ui/core/lazy.js): Trade's chart and deck are
+     the trade bundle, and the agent list on the Vault lives in the first run's
+     script. Pro reads nothing from the trade bundle since it became the NEAR
+     money's statement (2026-09-23), so opening it fetches nothing. */
+  var NEEDS = { trade: 'trade', vault: 'firstrun' };
 
   var refs = {};
   var currentView = 'basic';
@@ -159,6 +160,8 @@
        the view at once, so the tracks never slid and the way back to Basic snapped. */
     if (!changed && (dipping || sliding)) return;
     currentView = name;
+    if (opts.reveal) pendingReveal = String(opts.reveal);
+    else if (changed) pendingReveal = null;
 
     if (NEEDS[name] && window.PhosphorLazy) window.PhosphorLazy.load(NEEDS[name]);
 
@@ -214,6 +217,73 @@
          is told to re-measure once its view is on screen. */
       window.dispatchEvent(new CustomEvent('phosphor:view', { detail: { view: currentView } }));
     }
+    if (pendingReveal) revealSoon();
+  }
+
+  /* A section asked for by name (Basic's Policies button asks for the Vault's
+     "policies"). It is brought into view once the view is up and its tracks
+     have landed, and measured then: measured as the view came up, while the
+     tracks were still sliding, the Policies row came to rest with its head
+     179 px above the slab at 1180 by 780. The world glides until the section
+     sits just under its top and the section lights once, in the neutral light
+     (a place arrived at, not money that moved); one look after the glide
+     catches a list the view filled on the way in and pushed it down. */
+  var pendingReveal = null;
+  var REVEAL_GAP = 16;
+
+  /* On the next frame, by when a slide has started if the switch has one; the
+     slide's own end brings it in then (slide below). */
+  function revealSoon() {
+    var raf = window.requestAnimationFrame;
+    var run = function () { if (!sliding) reveal(); };
+    if (typeof raf === 'function') raf(run);
+    else run();
+  }
+
+  function reveal() {
+    var name = pendingReveal;
+    pendingReveal = null;
+    var world = refs.views;
+    if (!name || !world || typeof world.querySelector !== 'function') return;
+    var target = world.querySelector('.view[data-active="true"] [data-reveal="' + name + '"]');
+    if (!target || typeof target.getBoundingClientRect !== 'function') return;
+    var still = window.PhosphorMotion.reduced();
+    glideTo(world, target, still);
+    if (still) return;
+    window.setTimeout(function () {
+      if (!restsAt(world, target)) glideTo(world, target, false);
+    }, 900);
+    lightOnce(target);
+  }
+
+  function glideTo(world, target, still) {
+    var top = Math.max(0, target.getBoundingClientRect().top - world.getBoundingClientRect().top + world.scrollTop - REVEAL_GAP);
+    if (still || typeof world.scrollTo !== 'function') world.scrollTop = top;
+    else world.scrollTo({ top: top, behavior: 'smooth' });
+  }
+
+  /* Just under the top, or as near it as the end of the page lets it be. */
+  function restsAt(world, target) {
+    var off = target.getBoundingClientRect().top - world.getBoundingClientRect().top;
+    var atEnd = world.scrollHeight - world.clientHeight - world.scrollTop < 2;
+    return Math.abs(off - REVEAL_GAP) < 24 || (atEnd && off >= 0 && off < world.clientHeight);
+  }
+
+  /* The tiles' own light (--dur-glow-in, --dur-glow-out) in the ground's
+     warm light rather than green: an edge that arrives fast and decays slow,
+     laid over the section's own shadow. */
+  function lightOnce(target) {
+    if (typeof target.animate !== 'function') return;
+    var hi = String(window.getComputedStyle(document.documentElement).getPropertyValue('--hi-rgb') || '').trim() || '255, 232, 220';
+    var own = window.getComputedStyle(target).boxShadow;
+    var base = own && own !== 'none' ? own + ', ' : '';
+    var off = '0 0 0 1.5px rgba(' + hi + ', 0), 0 14px 30px -14px rgba(' + hi + ', 0)';
+    var on = '0 0 0 1.5px rgba(' + hi + ', 0.34), 0 14px 30px -14px rgba(' + hi + ', 0.24)';
+    target.animate([
+      { boxShadow: base + off },
+      { boxShadow: base + on, offset: 0.05 },
+      { boxShadow: base + off }
+    ], { duration: 2520, delay: 320, easing: 'linear' });
   }
 
   /* THE SWITCH. The views on screen dip out over DIP_MS, the world switches,
@@ -285,7 +355,10 @@
     void stage.offsetWidth;
     stage.dataset.moving = 'true';
     stage.style.gridTemplateColumns = to;
-    sliding = window.setTimeout(endSlide, slideMs() + 60);
+    sliding = window.setTimeout(function () {
+      endSlide();
+      if (pendingReveal) reveal();
+    }, slideMs() + 60);
   }
 
   function endSlide() {

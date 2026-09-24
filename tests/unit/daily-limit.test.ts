@@ -67,7 +67,7 @@ function permissivePolicy(): Policy {
 }
 
 // Written straight to the store, so the fixture states the row rather than the route that made it.
-function spend(dir: string, id: string, usd: number, status: ProposalStatus, agoMs = 0, txids?: string[]): void {
+function spend(dir: string, id: string, usd: number, status: ProposalStatus, agoMs = 0, txids?: string[], decidedBy: 'policy' | 'human' = 'policy'): void {
   const at = new Date(Date.now() - agoMs).toISOString();
   createStore(dir).put({
     ...(txids === undefined ? {} : { result: { ok: false, detail: 'part done', txids } }),
@@ -76,7 +76,7 @@ function spend(dir: string, id: string, usd: number, status: ProposalStatus, ago
     kind: 'intents_deposit' as unknown as Proposal['kind'],
     createdAt: at,
     decidedAt: at,
-    decidedBy: 'policy',
+    decidedBy,
     status,
     draft: {
       kind: 'intents_deposit',
@@ -95,7 +95,7 @@ function spend(dir: string, id: string, usd: number, status: ProposalStatus, ago
 test('an empty history spends nothing and has nothing to reset', () => {
   const svc = serviceOn(tmpDir());
   const limit = svc.dailyLimit(25_000);
-  assert.deepEqual(limit, { capUsd: 25_000, spentUsd: 0, resetsAt: null, autoSpentUsd: 0 });
+  assert.deepEqual(limit, { capUsd: 25_000, spentUsd: 0, resetsAt: null });
 });
 
 test('the figure on screen is the figure the engine budgets on', () => {
@@ -107,16 +107,6 @@ test('the figure on screen is the figure the engine budgets on', () => {
   assert.equal(svc.dailyLimit(25_000).spentUsd, 500);
 });
 
-test('the auto-run figure rides beside the spend and never exceeds it', () => {
-  const dir = tmpDir();
-  const svc = serviceOn(dir);
-  spend(dir, 'a', 400, 'executed');
-  const limit = svc.dailyLimit(25_000);
-  const auto = limit.autoSpentUsd ?? Number.NaN;
-  assert.ok(Number.isFinite(auto) && auto >= 0, String(auto));
-  assert.ok(auto <= limit.spentUsd, auto + ' > ' + limit.spentUsd);
-});
-
 test('it survives a restart, because it was never in memory', () => {
   const dir = tmpDir();
   serviceOn(dir);
@@ -125,6 +115,22 @@ test('it survives a restart, because it was never in memory', () => {
   // A second service over the same directory: what a restart actually is.
   const restarted = serviceOn(dir);
   assert.equal(restarted.dailyLimit(25_000).spentUsd, 750);
+});
+
+test('the moves the policy ran on its own are their own figure, the one the auto ceiling budgets on', () => {
+  const dir = tmpDir();
+  const svc = serviceOn(dir);
+  assert.deepEqual(svc.autoLimit?.(500), { capUsd: 500, spentUsd: 0, resetsAt: null });
+  const sixHoursAgo = 6 * 60 * 60 * 1000;
+  spend(dir, 'auto-old', 40, 'executed', sixHoursAgo);
+  spend(dir, 'auto-new', 2.5, 'executed', 60_000);
+  spend(dir, 'clicked', 900, 'executed', 60_000, undefined, 'human');
+  spend(dir, 'auto-gone', 70, 'executed', DAY_MS + 60_000);
+  const auto = svc.autoLimit?.(500);
+  assert.equal(auto?.capUsd, 500);
+  assert.equal(auto?.spentUsd, 42.5, 'a click is the person deciding, and a day-old move has left the window');
+  assert.ok(Math.abs(Date.parse(auto?.resetsAt ?? '') - (Date.now() - sixHoursAgo + DAY_MS)) < 5_000);
+  assert.equal(svc.dailyLimit(25_000).spentUsd, 942.5, 'the whole day still counts both');
 });
 
 test('a spend older than the window has left it', () => {

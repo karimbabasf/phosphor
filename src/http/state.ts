@@ -189,6 +189,13 @@ export function buildState(ctx: Ctx): unknown {
        An unreadable policy has no cap to state, so the whole block is null rather than a zero
        that would read as "nothing left to spend". */
     dailyLimit: policy === null ? null : ctx.proposals.dailyLimit(policy.outbound.maxPerSessionUsd),
+    /* The moves the policy ran on its own in the same rolling 24h, against the allowance they
+       run up to before it asks again (outbound.autoApproveDailyUsd): the figure the engine's
+       auto ceiling budgets on, for the Policies dials. Null with no policy or no allowance. */
+    autoLimit:
+      policy === null || typeof policy.outbound.autoApproveDailyUsd !== 'number' || typeof ctx.proposals.autoLimit !== 'function'
+        ? null
+        : ctx.proposals.autoLimit(policy.outbound.autoApproveDailyUsd),
     // Every string in here is agent-authored (client names, labels, board posts) and is
     // rendered as text, never as markup. It is here so the status bar can say WHICH agents
     // are driving: "an agent is connected" is a weaker answer than "claude-code since 19:12"

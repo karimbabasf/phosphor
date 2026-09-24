@@ -893,7 +893,12 @@
   }
 
   function buildLimits(host) {
-    var r = row('Limits', 'rules');
+    /* "Policies" is the section's name everywhere it is named (Karim,
+       2026-09-23): this row, Pro's card and Basic's button, which lands here
+       (data-reveal, ui/screens/shell.js). The lines inside still say "limit"
+       where that reads naturally. */
+    var r = row('Policies', 'rules');
+    r.node.setAttribute('data-reveal', 'policies');
     refs.limitsRow = r.node;
 
     /* The ask line is the one a person can change here, so its editor opens

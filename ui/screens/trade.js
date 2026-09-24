@@ -107,12 +107,12 @@
        one second bar-close timer. None of that should run in a window whose
        owner never opens Trade, so it starts the first time the chart is on
        screen and never before. The day's candles are read on the same cue.
-       Pro shows the deck alone, so it only reads the payload. */
+       Hyperliquid lives on Trade alone (Pro is the NEAR money since
+       2026-09-23), so nothing else reads it. */
     window.addEventListener('phosphor:view', function (event) {
       var view = event.detail ? event.detail.view : null;
-      if (view !== 'pro' && !isTradingView(view)) return;
-      refresh();
       if (!isTradingView(view)) return;
+      refresh();
       startChart();
       loadRange();
     });

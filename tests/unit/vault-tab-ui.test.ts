@@ -344,7 +344,7 @@ test('three sections in reading order, the assistant and Safety side by side fir
   assert.deepEqual(find(world.view, '.vault-row').map((r: Any) => r.dataset.surface),
     ['freeze', 'window', 'backup', 'rules', 'custody', 'recovery', 'addresses', 'danger']);
   assert.deepEqual(find(world.view, '.vault-row-title').map((t: Any) => t.textContent),
-    ['Freeze', 'Locks after', 'Recovery phrase', 'Limits', 'Keys', 'Restore', 'Addresses', 'Forget']);
+    ['Freeze', 'Locks after', 'Recovery phrase', 'Policies', 'Keys', 'Restore', 'Addresses', 'Forget']);
   assert.equal(find(world.view, '.panel').length, 0, 'a card is back on the Vault');
   assert.equal(find(world.view, '.chip').length, 0, 'a status chip is back on the Vault');
   assert.equal(find(world.view, '.dot').length, 0, 'a dot is back on the Vault');

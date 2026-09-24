@@ -160,6 +160,11 @@
       'M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15H4z',
       'M4 15V6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5V15M4 15h16M2 18.5h20'
     ],
+    /* An open circle: something under way (turned by the sheet while it is). */
+    spin: [
+      '',
+      'M21 12a9 9 0 1 1-6.22-8.56'
+    ],
     /* A dial with its needle: a limit, how far toward it. */
     gauge: [
       'M4 16a8 8 0 0 1 16 0z',

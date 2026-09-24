@@ -39,13 +39,15 @@ type Site = { file: string; code: string; count: number; why: 'links' | 'fragmen
 /* Every line in ui/ that writes a destination, and why it may.
    'links' is the one writer, which refuses anything off the list before it
    writes. 'fragment' is a reference into this same document (an SVG sprite) and
-   can never be a url. Nothing else belongs here: a fourth entry means a screen
-   started building its own links again. */
+   can never be a url. Nothing else belongs here: an entry that is neither means a
+   screen started building its own links again. */
 const ALLOWED: Site[] = [
   { file: 'core/dom.js', code: "use.setAttribute('href', '#phosphor-mark');", count: 1, why: 'fragment' },
   { file: 'core/links.js', code: 'anchor.href = safe;', count: 1, why: 'links' },
   { file: 'design/icons.js', code: "use.setAttribute('href', '#i-' + name);", count: 1, why: 'fragment' },
-  // The Vault's frozen row draws the bar's own freeze glyph, which index.html holds as a symbol.
+  // The Vault's frozen row and the head of Pro's Policies draw the bar's own freeze glyph, which
+  // index.html holds as a symbol.
+  { file: 'screens/pro.js', code: "use.setAttribute('href', '#i-freeze');", count: 1, why: 'fragment' },
   { file: 'screens/vault.js', code: "use.setAttribute('href', '#i-freeze');", count: 1, why: 'fragment' },
 ];
 

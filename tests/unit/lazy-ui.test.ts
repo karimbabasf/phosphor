@@ -25,7 +25,9 @@ test('index.html fetches no QR library, no chart, no trade screen and no first r
   assert.ok(at('core/lazy.js') > 0, 'the loader is not in the window');
   assert.ok(at('core/lazy.js') < at('screens/lock.js') && at('core/lazy.js') < at('app.js'), 'the stand-ins arrive after the screens that call them');
   assert.match(read('screens/netpick.js'), /Promise\.all\(\[load\(\), lazy \? lazy\.load\('qr'\) : null\]\)/, 'an address can be drawn before its QR libraries are in');
-  assert.match(read('screens/shell.js'), /var NEEDS = \{ pro: 'trade', trade: 'trade', vault: 'firstrun' \};/);
+  // Pro is the NEAR money's statement and reads nothing from the trade bundle (2026-09-23), so
+  // opening it fetches nothing; Trade and the Vault still fetch theirs.
+  assert.match(read('screens/shell.js'), /var NEEDS = \{ trade: 'trade', vault: 'firstrun' \};/);
 });
 
 /* ---------- the loader, run ---------- */

@@ -674,7 +674,7 @@ export async function refuse(ctx: PCtx, id: string): Promise<Proposal> {
    proposals.json on every call, and that file is durable (src/fsatomic.ts) and refuses to read as
    empty when it is damaged (src/store.ts). The two failures that COULD have lost it are closed
    elsewhere; this is the read that depends on them. */
-type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null; autoSpentUsd: number };
+type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
 
 /* WHAT THE ROLLING 24 HOUR CAP CHARGES FOR, in one predicate, read by both the number on screen
    and the number a proposal is refused against. Two copies of this is how a gauge comes to read
@@ -726,8 +726,6 @@ export function dailyLimit(ctx: PCtx, capUsd: number): DailyLimit {
     capUsd,
     spentUsd: counted.reduce((sum, row) => sum + row.usd, 0),
     resetsAt: oldest === null ? null : new Date(oldest + SESSION_WINDOW_MS).toISOString(),
-    // What ran without a click in the same window: the figure the auto-approve allowance budgets on.
-    autoSpentUsd: autoApprovedSpentUsd(ctx),
   };
 }
 
@@ -752,16 +750,27 @@ export function sessionSpentUsd(ctx: PCtx): number {
    sub-threshold moves the human never saw is bounded by something smaller than the session cap.
    A human-approved move does not count: the person already made that decision at the card. */
 export function autoApprovedSpentUsd(ctx: PCtx): number {
+  return autoLimit(ctx, 0).spentUsd;
+}
+
+/* The auto-approved slice as the window shows it, the way dailyLimit shows the whole: the same
+   figure the engine's ceiling budgets on (autoApprovedSpentUsd reads it from here, so the dial
+   and the refusal cannot drift), the allowance it runs against, and when the oldest counted
+   auto move leaves the 24h window. */
+export function autoLimit(ctx: PCtx, capUsd: number): DailyLimit {
   const cutoff = Date.now() - SESSION_WINDOW_MS;
-  return ctx.store
+  const counted = ctx.store
     .list()
     .filter(countsAgainstCap)
     .filter(p => p.decidedBy === 'policy')
-    .filter(p => {
-      const at = Date.parse(p.decidedAt ?? p.createdAt);
-      return Number.isFinite(at) && at >= cutoff;
-    })
-    .reduce((sum, p) => sum + totalUsdOf(p.draft), 0);
+    .map(p => ({ at: Date.parse(p.decidedAt ?? p.createdAt), usd: totalUsdOf(p.draft) }))
+    .filter(row => Number.isFinite(row.at) && row.at >= cutoff);
+  const oldest = counted.reduce<number | null>((min, row) => (min === null || row.at < min ? row.at : min), null);
+  return {
+    capUsd,
+    spentUsd: counted.reduce((sum, row) => sum + row.usd, 0),
+    resetsAt: oldest === null ? null : new Date(oldest + SESSION_WINDOW_MS).toISOString(),
+  };
 }
 
 
