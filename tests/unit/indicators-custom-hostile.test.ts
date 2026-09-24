@@ -246,7 +246,8 @@ test('markup and script tags in a title reach the label as text, and the legend 
   assert.equal(result.plots[0]?.key, 'img-src-x-onerror-alert-1');
   assert.match(result.state, /^<\/script><b>x<\/b> /);
   // The legend is drawn on a canvas, and the chart code has no HTML sink at all. The label
-  // reaches the column as a text part (chart.js) and the column types it with fillText (labels.js).
+  // reaches the column as a text part (chart.js) and the column types it with fillText, through
+  // the engine's tabular text (labels.js labelDrawText, chart.js drawText).
   for (const file of ['chart.js', 'labels.js', 'trade-overlay.js']) {
     const source = fs.readFileSync(path.join(UI, file), 'utf8');
     assert.equal(/innerHTML|insertAdjacentHTML|outerHTML|document\.write/.test(source), false, `${file} has an HTML sink`);
@@ -254,7 +255,9 @@ test('markup and script tags in a title reach the label as text, and the legend 
   const chart = fs.readFileSync(path.join(UI, 'chart.js'), 'utf8');
   assert.match(chart, /text: labelText\(indicator\.label\)/);
   const labels = fs.readFileSync(path.join(UI, 'labels.js'), 'utf8');
-  assert.match(labels, /ctx\.fillText\(parts\[p\]\.text/);
+  assert.match(labels, /labelDrawText\(ctx, parts\[p\]\.text/);
+  assert.match(labels, /else ctx\.fillText\(text, x, y\)/);
+  assert.match(chart, /function drawText\(ctx, text, x, y\) \{[\s\S]*?ctx\.fillText\(s, x, y\)/);
 });
 
 test('six plots over 2000 bars compute in under 50 ms, and so does a refusal', () => {

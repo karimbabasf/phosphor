@@ -157,17 +157,89 @@ function chartTheme(theme) {
 }
 window.chartTheme = chartTheme;
 
-/* Geist Mono, the face every number in the window is set in, at 11 px on the canvas. The
-   system monospace it replaces was the one place the window fell back to whatever the OS
-   had, so the axis and the rail could disagree about the shape of a digit. */
-var CHART_FONT = '11px "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
-var CHART_FONT_SMALL = '9px "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+/* Geist, the face every word and every figure in the window is set in, at 11 px on the
+   canvas: the axis, the legend, the time labels and the price tag are figures on the text's
+   own line, as they are everywhere else in the window. */
+var CHART_FONT = '11px "Geist", ui-sans-serif, system-ui, sans-serif';
+var CHART_FONT_SMALL = '9px "Geist", ui-sans-serif, system-ui, sans-serif';
+
+/* Tabular figures on a canvas. A canvas cannot turn font-variant-numeric on, and Geist's own
+   digits are proportional (a 1 is half an 8), so a price that ticked moved everything beside
+   it. A run of digits is drawn one digit to a cell as wide as the face's widest digit, each
+   centred in its cell, and everything else is drawn as the words it is, so a column of prices
+   reads down its decimal point and the words keep their own spacing. Every figure the engine
+   and the label column draw goes through these two. */
+var CHART_TEXT_CELLS = {};
+function digitCell(ctx) {
+  var key = ctx.font;
+  if (CHART_TEXT_CELLS[key] === undefined) {
+    var wide = 0;
+    var narrow = Infinity;
+    for (var d = 0; d <= 9; d++) {
+      var w = ctx.measureText(String(d)).width;
+      wide = Math.max(wide, w);
+      narrow = Math.min(narrow, w);
+    }
+    // A face whose digits are one width already (a fallback, a mono) is drawn as it is.
+    CHART_TEXT_CELLS[key] = { cell: wide, even: wide - narrow < 0.01 };
+  }
+  return CHART_TEXT_CELLS[key];
+}
+
+function textRuns(text) {
+  return String(text).match(/[0-9]+|[^0-9]+/g) || [];
+}
+
+function textWidth(ctx, text) {
+  var s = String(text);
+  var digits = digitCell(ctx);
+  if (digits.even || !/[0-9]/.test(s)) return ctx.measureText(s).width;
+  var runs = textRuns(s);
+  var width = 0;
+  for (var i = 0; i < runs.length; i++) {
+    width += /^[0-9]/.test(runs[i]) ? runs[i].length * digits.cell : ctx.measureText(runs[i]).width;
+  }
+  return width;
+}
+
+function drawText(ctx, text, x, y) {
+  var s = String(text);
+  var digits = digitCell(ctx);
+  if (digits.even || !/[0-9]/.test(s)) {
+    ctx.fillText(s, x, y);
+    return;
+  }
+  var align = ctx.textAlign;
+  var total = textWidth(ctx, s);
+  var at = align === 'right' || align === 'end' ? x - total : (align === 'center' ? x - total / 2 : x);
+  var runs = textRuns(s);
+  ctx.textAlign = 'left';
+  for (var i = 0; i < runs.length; i++) {
+    if (/^[0-9]/.test(runs[i])) {
+      for (var k = 0; k < runs[i].length; k++) {
+        var ch = runs[i].charAt(k);
+        ctx.fillText(ch, at + (digits.cell - ctx.measureText(ch).width) / 2, y);
+        at += digits.cell;
+      }
+    } else {
+      ctx.fillText(runs[i], at, y);
+      at += ctx.measureText(runs[i]).width;
+    }
+  }
+  ctx.textAlign = align;
+}
+window.chartText = { draw: drawText, width: textWidth };
 var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /* Geometry, in CSS pixels. PRICE_MIN is the promise that nothing gets squeezed: a pane that
    would push the price pane under it is dropped and reported, never crammed in. */
 var AXIS_BOTTOM = 18;
-var PAD_TOP = 3;
+/* The legend's own strip above the plot. The market line used to print over the top candles;
+   it has 22 px of its own now, centred on LEGEND_Y, and the pane starts under it. */
+var PAD_TOP = 22;
+var LEGEND_Y = 11;
+/* The first line of the label column, measured down from the top of the price pane. */
+var COLUMN_Y = 10;
 var PRICE_MIN = 150;
 var PANE_MIN = 56;
 var PANE_MAX = 96;
@@ -363,6 +435,16 @@ function chartLabelPad() {
 var CHART_SCENE_LABELS = [];
 function chartLabel(item) {
   CHART_SCENE_LABELS.push(item);
+}
+
+/* A level off the top or the bottom of the pane has no line to draw, and a label pinned to the
+   plot's edge printed over the candles. It becomes a chip on the price axis instead, at the edge
+   it went off: a short word, an arrow and the price, in the line's own ink. Collected while the
+   scene draws, stacked once it has (chipLayout), drawn by the hud. Item: {price, edge 'top' or
+   'bottom', word, tone, ring}. */
+var CHART_AXIS_CHIPS = [];
+function chartAxisChip(item) {
+  CHART_AXIS_CHIPS.push(item);
 }
 
 /* Whether the agent is pointing at this object right now. ui/screens/trade.js owns the
@@ -725,8 +807,8 @@ function buildLayout(width, height, ctx) {
 
   var decimals = decimalsFor(span, candles, start, end);
   var widest = Math.max(
-    ctx.measureText(priceText(high, decimals)).width,
-    ctx.measureText(priceText(low, decimals)).width
+    textWidth(ctx, priceText(high, decimals)),
+    textWidth(ctx, priceText(low, decimals))
   );
   var wanted = clampNum(Math.ceil(widest) + 16, 66, 112);
   /* The axis is measured from the frame just drawn and applied to the next one, which is fine
@@ -1096,6 +1178,7 @@ function drawScene() {
   var L = buildLayout(width, height, ctx);
   CHART_LAYOUT = L;
   CHART_SCENE_LABELS = [];
+  CHART_AXIS_CHIPS = [];
   maybeBackfill(L);
 
   drawPriceGrid(ctx, L);
@@ -1112,6 +1195,10 @@ function drawScene() {
   // orders, fills. Defined in ui/trade-overlay.js, which only the trading page loads, so on
   // the pro page this is one typeof check and the chart is exactly what it was before.
   if (typeof drawTradeOverlays === 'function') drawTradeOverlays(ctx, L);
+  // The axis prices go down last, once every off-pane level has asked for a chip, so a price
+  // under a chip is left out rather than half covered by it.
+  L.chips = chipLayout(L);
+  drawPriceLabels(ctx, L);
   drawPanes(ctx, L);
   drawAxisFrame(ctx, L);
 }
@@ -1243,14 +1330,14 @@ function drawWaiting(ctx, width, height) {
   var midY = top + area / 2;
   var block = state.live && !still && Date.now() % 1000 < 500 ? ' █' : '  ';
   var headText = state.head + block;
-  var headWidth = ctx.measureText(headText).width;
-  var subWidth = ctx.measureText(state.sub).width;
+  var headWidth = textWidth(ctx, headText);
+  var subWidth = textWidth(ctx, state.sub);
   ctx.fillStyle = C_BG;
   ctx.fillRect(cx - Math.max(headWidth, subWidth) / 2 - 8, midY - 15, Math.max(headWidth, subWidth) + 16, 30);
   ctx.fillStyle = CHART.meta.error ? danger(0.9) : textInk(0.85);
-  ctx.fillText(headText, cx, midY - 6);
+  drawText(ctx, headText, cx, midY - 6);
   ctx.fillStyle = text2(0.85);
-  ctx.fillText(state.sub, cx, midY + 8);
+  drawText(ctx, state.sub, cx, midY + 8);
   ctx.textAlign = 'left';
 
   // The loop, and its own stop condition: the moment there is something true to draw, this
@@ -1276,10 +1363,127 @@ function drawPriceGrid(ctx, L) {
     labels.push([value, y]);
   }
   ctx.stroke();
+  L.gridLabels = labels;
+}
+
+/* The prices down the axis, beside the grid lines drawPriceGrid laid. None prints inside the
+   last price's band or under a chip: two numbers stacked in one place is the one thing that
+   would make the price that matters harder to read. */
+function drawPriceLabels(ctx, L) {
+  var labels = L.gridLabels || [];
+  var chips = L.chips || [];
+  ctx.fillStyle = text2(0.8);
+  ctx.textAlign = 'left';
   for (var i = 0; i < labels.length; i++) {
     var y = labels[i][1];
     if (L.reserved && y > L.reserved.top && y < L.reserved.bottom) continue;
-    ctx.fillText(priceText(labels[i][0], L.decimals), L.plotWidth + 6, y);
+    var covered = false;
+    for (var c = 0; c < chips.length; c++) {
+      if (y > chips[c].y - 7 && y < chips[c].y + CHIP_H + 7) covered = true;
+    }
+    if (covered) continue;
+    drawText(ctx, priceText(labels[i][0], L.decimals), L.plotWidth + 6, y);
+  }
+}
+
+/* ---------- the axis chips ---------- */
+
+var CHIP_H = 29;
+var CHIP_GAP = 3;
+var CHIP_MAX = 3;
+var CHIP_FONT = '10px "Geist", ui-sans-serif, system-ui, sans-serif';
+
+/* Stack the chips at the edge each went off, in price order (the highest at the top of either
+   stack), clear of the last price's band, three to an edge. A fourth is not dropped in silence:
+   the outermost chip then says how many more sit past it. */
+function chipLayout(L) {
+  var top = L.priceTop;
+  var bottom = L.priceTop + L.priceHeight;
+  var reserved = L.reserved;
+  function clash(y) {
+    return reserved && y < reserved.bottom && y + CHIP_H > reserved.top;
+  }
+  function edge(name) {
+    var list = CHART_AXIS_CHIPS.filter(function (chip) {
+      return chip.edge === name;
+    });
+    // Nearest the pane first, so a cut keeps the levels the price will reach soonest.
+    list.sort(function (a, b) {
+      return name === 'top' ? a.price - b.price : b.price - a.price;
+    });
+    var more = Math.max(0, list.length - CHIP_MAX);
+    list = list.slice(0, CHIP_MAX);
+    if (more && list.length) list[list.length - 1] = Object.assign({}, list[list.length - 1], { more: more });
+    return list;
+  }
+  var laid = [];
+  var ups = edge('top').reverse();
+  var y = top + 2;
+  var upFloor = top;
+  for (var i = 0; i < ups.length; i++) {
+    if (clash(y)) y = reserved.bottom + CHIP_GAP;
+    if (y + CHIP_H > bottom) break;
+    laid.push(Object.assign({}, ups[i], { y: y }));
+    upFloor = y + CHIP_H;
+    y += CHIP_H + CHIP_GAP;
+  }
+  var downs = edge('bottom').reverse();
+  y = bottom - 2 - CHIP_H;
+  for (var j = 0; j < downs.length; j++) {
+    if (clash(y)) y = reserved.top - CHIP_GAP - CHIP_H;
+    if (y < upFloor + CHIP_GAP) break;
+    laid.push(Object.assign({}, downs[j], { y: y }));
+    y -= CHIP_H + CHIP_GAP;
+  }
+  return laid;
+}
+
+/* The word as wide as the room, cut with an ellipsis when it is not. */
+function fitWord(ctx, word, room) {
+  var text = String(word || '');
+  if (textWidth(ctx, text) <= room) return text;
+  while (text.length > 1 && textWidth(ctx, text + '\u2026') > room) text = text.slice(0, -1);
+  return text.replace(/\s+$/, '') + '\u2026';
+}
+
+/* A chip is two lines on a tinted ground: the word over the price, with the arrow beside the
+   word saying which way the level went off. Tinted, never filled: the last price tag stays
+   the one solid block on the axis. */
+function drawAxisChips(ctx, L) {
+  var chips = L.chips || [];
+  if (!chips.length) return;
+  var x = L.plotWidth + 3;
+  var w = L.padRight - 5;
+  for (var i = 0; i < chips.length; i++) {
+    var chip = chips[i];
+    var ink = chartInk(chip.tone, 0.95);
+    ctx.fillStyle = chartInk(chip.tone, 0.14);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.beginPath();
+      ctx.roundRect(x, chip.y, w, CHIP_H, 5);
+      ctx.fill();
+    } else {
+      ctx.fillRect(x, chip.y, w, CHIP_H);
+    }
+    if (chip.ring) {
+      ctx.strokeStyle = chartInk('warn', 0.95);
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x - 0.5, chip.y - 0.5, w + 1, CHIP_H + 1);
+      ctx.lineWidth = 1;
+    }
+    ctx.font = CHIP_FONT;
+    ctx.textAlign = 'left';
+    var word = chip.more ? chip.word + ' +' + chip.more : chip.word;
+    var room = w - 8;
+    // The arrow gives way to the word when both do not fit: the chip's edge already says which
+    // way the level went, the word is the only thing that says what it is.
+    var arrow = textWidth(ctx, word) + LABEL_GLYPH_W + 3 <= room;
+    if (arrow) labelGlyph(ctx, chip.edge === 'top' ? 'up' : 'down', x + 3, chip.y + 14, ink);
+    ctx.fillStyle = chartInk(chip.tone, 0.8);
+    drawText(ctx, fitWord(ctx, word, arrow ? room - LABEL_GLYPH_W - 3 : room), x + (arrow ? LABEL_GLYPH_W + 6 : 4), chip.y + 10);
+    ctx.font = CHART_FONT;
+    ctx.fillStyle = ink;
+    drawText(ctx, priceText(chip.price, L.decimals), L.plotWidth + 6, chip.y + 21);
   }
 }
 
@@ -1365,8 +1569,8 @@ function drawTimeGrid(ctx, L) {
     var tick = ticks[k];
     ctx.fillStyle = tick.major ? textInk(0.8) : text2(0.8);
     // A label centred on a tick at the edge would lose half of itself; it is slid inside.
-    var half = ctx.measureText(tick.text).width / 2;
-    ctx.fillText(tick.text, clampNum(tick.x, half + 1, L.plotWidth - half - 1), bottom + 9);
+    var half = textWidth(ctx, tick.text) / 2;
+    drawText(ctx, tick.text, clampNum(tick.x, half + 1, L.plotWidth - half - 1), bottom + 9);
   }
   ctx.textAlign = 'left';
 }
@@ -1585,7 +1789,7 @@ function drawPanes(ctx, L) {
     for (var gl = 0; gl < guides.length; gl++) {
       var ly = paneYOf(pane, guides[gl].value);
       if (ly < pane.top + 2 || ly > pane.top + pane.height - 2) continue;
-      ctx.fillText(guides[gl].label, L.plotWidth + 6, ly);
+      drawText(ctx, guides[gl].label, L.plotWidth + 6, ly);
     }
 
     var plots = ind.plots || [];
@@ -1607,8 +1811,8 @@ function drawPanes(ctx, L) {
     // through its guides, and printing the edges again only collides with them.
     if (!ind.range) {
       ctx.fillStyle = text2(0.7);
-      ctx.fillText(paneText(pane.high), L.plotWidth + 6, pane.top + 7);
-      ctx.fillText(paneText(pane.low), L.plotWidth + 6, pane.top + pane.height - 6);
+      drawText(ctx, paneText(pane.high), L.plotWidth + 6, pane.top + 7);
+      drawText(ctx, paneText(pane.low), L.plotWidth + 6, pane.top + pane.height - 6);
     }
   }
 }
@@ -1666,15 +1870,8 @@ function drawLevels(ctx, L) {
     var ring = chartSpotOn('level', level.id);
     if (y < top || y > bottom) {
       // Off the top or the bottom of what is on screen. The line cannot be drawn where it
-      // belongs, so its label is pinned to the edge it went off, with a drawn arrow saying
-      // which way (labels.js labelGlyph), and it joins the column like every other label.
-      chartLabel({
-        y: y < top ? top + 6 : bottom - 6,
-        parts: [{ glyph: y < top ? 'up' : 'down', tone: tone, alpha: 0.6 }]
-          .concat(labelLead(level.source, 0.6))
-          .concat([{ text: labelText(level.label) + ' ' + priceText(level.price, L.decimals), tone: tone, alpha: 0.6 }]),
-        ring: ring
-      });
+      // belongs, so it becomes a chip on the price axis at the edge it went off.
+      chartAxisChip({ price: level.price, edge: y < top ? 'top' : 'bottom', word: labelText(level.label), tone: tone, ring: ring });
       continue;
     }
     ctx.strokeStyle = fromAgent ? agentInk(0.5) : accent(0.7);
@@ -1779,9 +1976,9 @@ function drawDrawings(ctx, L) {
 function drawEdgeLabel(ctx, label, fromAgent, right, y, spot) {
   ctx.fillStyle = accent(fromAgent ? 0.6 : 0.85);
   ctx.textAlign = 'right';
-  ctx.fillText(label, right, y);
+  drawText(ctx, label, right, y);
   ctx.textAlign = 'left';
-  var width = ctx.measureText(label).width;
+  var width = textWidth(ctx, label);
   var left = right - width;
   if (fromAgent) {
     left -= LABEL_GLYPH_W + 2;
@@ -1822,7 +2019,7 @@ function drawMarks(ctx, L) {
     ctx.translate(x - 3, L.axisTop - 4);
     ctx.rotate(-Math.PI / 2);
     ctx.fillStyle = markInk(0.55);
-    ctx.fillText(labelText(mark.label), 0, 0);
+    drawText(ctx, labelText(mark.label), 0, 0);
     ctx.restore();
   }
 }
@@ -1838,7 +2035,7 @@ function drawAxisFrame(ctx, L) {
   ctx.strokeStyle = lineInk(1);
   ctx.lineWidth = 1 / DPR;
   ctx.beginPath();
-  ctx.moveTo(hair(L.plotWidth), 0);
+  ctx.moveTo(hair(L.plotWidth), L.priceTop);
   ctx.lineTo(hair(L.plotWidth), L.axisTop);
   ctx.moveTo(0, hair(L.axisTop));
   ctx.lineTo(L.width, hair(L.axisTop));
@@ -1855,6 +2052,7 @@ function drawHud() {
   var L = CHART_LAYOUT;
   if (!L) return;
 
+  drawAxisChips(ctx, L);
   drawLastPrice(ctx, L);
   drawCrosshair(ctx, L);
   drawLegend(ctx, L);
@@ -1889,7 +2087,7 @@ function drawLastPrice(ctx, L) {
   ctx.fillStyle = up ? C_UP : C_DOWN;
   ctx.fillRect(L.plotWidth + 1, boxTop, L.padRight - 1, 16);
   ctx.fillStyle = C_BG;
-  ctx.fillText(text, L.plotWidth + 5, boxTop + 8);
+  drawText(ctx, text, L.plotWidth + 5, boxTop + 8);
 
   /* The countdown is not a second price and must not read as one. Sharing the tag's left edge
      and its type size was the whole problem: two numbers in one column, stacked, and the eye
@@ -1917,7 +2115,7 @@ function drawLastPrice(ctx, L) {
     ctx.font = CHART_FONT_SMALL;
     ctx.fillStyle = text2(0.75);
     ctx.textAlign = 'center';
-    ctx.fillText(countdownText(closesIn), left + wide / 2, ruleTop + 7);
+    drawText(ctx, countdownText(closesIn), left + wide / 2, ruleTop + 7);
     ctx.textAlign = 'left';
     ctx.font = CHART_FONT;
   }
@@ -1951,18 +2149,18 @@ function drawCrosshair(ctx, L) {
     ctx.fillStyle = C_HI;
     ctx.fillRect(L.plotWidth + 1, top, L.padRight - 1, 16);
     ctx.fillStyle = C_BG;
-    ctx.fillText(label, L.plotWidth + 5, top + 8);
+    drawText(ctx, label, L.plotWidth + 5, top + 8);
   }
 
   var candle = CHART.candles[index];
   var stamp = crosshairStamp(candle.t, CHART.view.granularitySec);
   ctx.font = CHART_FONT;
-  var width = ctx.measureText(stamp).width + 10;
+  var width = textWidth(ctx, stamp) + 10;
   var boxX = clampNum(x - width / 2, 0, L.plotWidth - width);
   ctx.fillStyle = C_HI;
   ctx.fillRect(boxX, L.axisTop + 1, width, 15);
   ctx.fillStyle = C_BG;
-  ctx.fillText(stamp, boxX + 5, L.axisTop + 9);
+  drawText(ctx, stamp, boxX + 5, L.axisTop + 9);
 }
 
 function paneValueAt(L, y) {
@@ -2001,7 +2199,7 @@ function drawLegend(ctx, L) {
      ticks from 999.99 to 1,000.01 moves nothing to its right: a legend that jittered on every
      tick was the one thing on the surface that looked cheaper than the numbers on it. */
   var items = [];
-  var valueW = Math.max(ctx.measureText(priceText(L.high, L.decimals)).width, ctx.measureText(priceText(L.low, L.decimals)).width);
+  var valueW = Math.max(textWidth(ctx, priceText(L.high, L.decimals)), textWidth(ctx, priceText(L.low, L.decimals)));
   var head = [
     { text: coinOf(identity.product), tone: 'hi' },
     { text: timeframeOf(identity.granularitySec), tone: 'text2', alpha: 0.85 }
@@ -2014,15 +2212,17 @@ function drawLegend(ctx, L) {
   // Round before choosing the sign, or a bar that moved a hundredth of a percent down
   // prints "-0.00%", which reads as a rendering fault rather than as a flat bar.
   var rounded = Math.abs(change) < 0.005 ? 0 : change;
-  head.push({ text: (rounded > 0 ? '+' : rounded < 0 ? '' : ' ') + rounded.toFixed(2) + '%', tone: dir, alpha: 1, width: ctx.measureText('+00.00%').width });
-  items.push({ y: LABEL_TOP, parts: head, legend: true });
+  head.push({ text: (rounded > 0 ? '+' : rounded < 0 ? '' : ' ') + rounded.toFixed(2) + '%', tone: dir, alpha: 1, width: textWidth(ctx, '+00.00%') });
+  // The market line has the strip above the plot to itself, so nothing is under it to pad.
+  labelDraw(ctx, [{ y: LEGEND_Y, labelY: LEGEND_Y, parts: head, legend: true }], chartInk, null);
 
+  var columnTop = L.priceTop + COLUMN_Y;
   for (var o = 0; o < L.overlays.length; o++) {
-    items.push(legendItem(L, L.overlays[o], index, LABEL_TOP + LABEL_PITCH * (o + 1)));
+    items.push(legendItem(L, L.overlays[o], index, columnTop + LABEL_PITCH * o));
   }
   for (var s = 0; s < CHART_SCENE_LABELS.length; s++) items.push(CHART_SCENE_LABELS[s]);
 
-  var laid = labelLayout(items, 0, L.priceTop + L.priceHeight);
+  var laid = labelLayout(items, columnTop - LABEL_TOP, L.priceTop + L.priceHeight);
   var boxes = labelDraw(ctx, laid.placed, chartInk, chartLabelPad());
   for (var b = 0; b < boxes.length; b++) {
     var placed = boxes[b].item;
@@ -2083,8 +2283,8 @@ function drawChartNotes(ctx, L) {
   if (!VOLUME_ON) {
     var back = '+ volume';
     ctx.fillStyle = text2(0.55);
-    ctx.fillText(back, x, y);
-    var wide = ctx.measureText(back).width;
+    drawText(ctx, back, x, y);
+    var wide = textWidth(ctx, back);
     // The only way back once the pane is put away, so it is a hit target rather than a label.
     CHART_HITS.push({ x: x - 2, y: y - 7, w: wide + 4, h: 14, remove: VOLUME_ID });
     x += wide + 12;
@@ -2093,8 +2293,8 @@ function drawChartNotes(ctx, L) {
   if (L.dropped.length) {
     var full = 'no room for: ' + L.dropped.join(', ');
     ctx.fillStyle = C_DOWN;
-    ctx.fillText(full, x, y);
-    x += ctx.measureText(full).width + 12;
+    drawText(ctx, full, x, y);
+    x += textWidth(ctx, full) + 12;
   }
 
   // The left edge of history: older bars on their way, or the venue's own first bar on screen.
@@ -2104,7 +2304,7 @@ function drawChartNotes(ctx, L) {
   else if (historyBegins() && L.start === 0) notes.push('History starts here');
   if (notes.length === 0) return;
   ctx.fillStyle = text2(0.55);
-  ctx.fillText(notes.join('   '), x, y);
+  drawText(ctx, notes.join('   '), x, y);
 }
 
 /* The title line of a sub-pane: the same line a price overlay gets in the column, drawn at
@@ -3395,10 +3595,14 @@ function chartBoot() {
   wireChart();
   chartInvalidate(true);
   // A canvas draws with whatever face is loaded when it draws, and the first frame can land
-  // before the vendored mono is. One repaint once it is in, so the axis is not left in the
+  // before the vendored face is. One repaint once it is in, so the axis is not left in the
   // fallback face until something else moves.
   if (document.fonts && typeof document.fonts.load === 'function') {
-    document.fonts.load(CHART_FONT).then(function () { chartInvalidate(true); }, function () {});
+    document.fonts.load(CHART_FONT).then(function () {
+      // The digit cells were measured in whatever face was in; measure them again in Geist.
+      CHART_TEXT_CELLS = {};
+      chartInvalidate(true);
+    }, function () {});
   }
   void refreshChart();
   // A floor under the push stream: a dead socket or an idle book still refreshes.

@@ -224,7 +224,7 @@ test('a stored size that no longer fits is clamped, and the stored one is left a
 });
 
 test('on Pro and the Vault the divider sizes the world, inside its range, and never squeezes the conversation', () => {
-  // The world is clamp(560px, var(--trade, 55vw), 1400px) in pro.css, and the handle carries
+  // The world is clamp(560px, var(--trade, 62vw), 1400px) in pro.css, and the handle carries
   // the same two numbers. It sits to the right of the conversation, so dragging right shrinks
   // it: the sign is -1. The conversation gives the room and keeps 400 of it.
   const conf = load().SPLIT_PAGES.stage.conversation;

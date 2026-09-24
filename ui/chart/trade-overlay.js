@@ -51,26 +51,17 @@ function tradeSigned(n) {
   return (v > 0 ? '+' : '') + tradeUsd(v).replace('$-', '-$');
 }
 
-/* One horizontal price line, with its label handed to the column. Off-pane lines are pinned
-   to the edge with an arrow, matching what drawLevels does for agent levels, so the two behave
-   the same way under a zoom. Off-range is the NORMAL case for a stop that sits a long way down. */
+/* One horizontal price line, with its label handed to the column. An off-pane line becomes a
+   chip on the price axis (chartAxisChip), as drawLevels does for agent levels, so the two behave
+   the same way under a zoom. Off-range is the NORMAL case for a stop that sits a long way down,
+   and the chip carries the short word (spec.chip) rather than the whole label. */
 function tradeLine(ctx, L, spec) {
   var y = L.yOf(spec.price);
   var top = L.priceTop;
   var bottom = L.priceTop + L.priceHeight;
   var text = spec.label + '  ' + priceText(spec.price, L.decimals);
   if (y < top || y > bottom) {
-    // Pinned to the edge it went off, behind a drawn arrow (labels.js labelGlyph). A top pin
-    // asks for a place under the legend's lines rather than over them, and a bottom pin sits
-    // clear of the pane rule, where the volume pane writes its own name.
-    chartLabel({
-      y: y < top ? top + LABEL_TOP + LABEL_PITCH * 2 : bottom - 18,
-      parts: [
-        { glyph: y < top ? 'up' : 'down', tone: spec.tone, alpha: 0.6 },
-        { text: text, tone: spec.tone, alpha: 0.6 }
-      ],
-      ring: spec.ring === true
-    });
+    chartAxisChip({ price: spec.price, edge: y < top ? 'top' : 'bottom', word: spec.chip || spec.label, tone: spec.tone, ring: spec.ring === true });
     return;
   }
   ctx.strokeStyle = chartInk(spec.tone, spec.alpha === undefined ? 0.85 : spec.alpha);
@@ -230,11 +221,11 @@ function drawTradeOrders(ctx, L, orders) {
     // The side as a drawn triangle ahead of the words: pointing right for a buy, left for a
     // sell, the same ink as the words. Everything sits to the left of the dotted line's start.
     var tag = tradeUsd(o.notionalUsd) + (o.reduceOnly ? ' reduce' : '');
-    var width = ORDER_GLYPH_W + ctx.measureText(tag).width;
+    var width = ORDER_GLYPH_W + textWidth(ctx, tag);
     var tagX = L.plotWidth * 0.72 - width - 4;
     orderGlyph(ctx, buy, tagX, y + 3, chartInk(tone, 0.75));
     ctx.fillStyle = chartInk(tone, 0.75);
-    ctx.fillText(tag, tagX + ORDER_GLYPH_W, y + 3);
+    drawText(ctx, tag, tagX + ORDER_GLYPH_W, y + 3);
     drawSpotRing(ctx, tagX, y + 3, width, chartSpotOn('order', String(o.oid)));
   }
 }
@@ -270,15 +261,16 @@ function drawPlan(ctx, L, plan, showStop) {
     price: entry,
     tone: 'agent',
     label: 'Plan ' + side,
+    chip: 'Plan ' + side,
     dash: [6, 4],
     alpha: 0.85,
     ring: ring
   });
   if (stop !== null && showStop) {
-    tradeLine(ctx, L, { price: stop, tone: 'down', label: 'Stop', dash: [6, 4], alpha: 0.8 });
+    tradeLine(ctx, L, { price: stop, tone: 'down', label: 'Stop', chip: 'Stop', dash: [6, 4], alpha: 0.8 });
   }
   if (target !== null) {
-    tradeLine(ctx, L, { price: target, tone: 'ink', label: 'Target', dash: [6, 4], alpha: 0.8 });
+    tradeLine(ctx, L, { price: target, tone: 'ink', label: 'Target', chip: 'Target', dash: [6, 4], alpha: 0.8 });
   }
 }
 
@@ -319,6 +311,7 @@ function drawTradeOverlays(ctx, L) {
         price: p.liqPx,
         tone: 'down',
         label: 'Liquidation ' + p.coin,
+        chip: 'Liquidation',
         width: 1.5,
         alpha: 0.9
       });
@@ -329,6 +322,7 @@ function drawTradeOverlays(ctx, L) {
         price: p.entryPx,
         tone: 'text',
         label: (long ? 'Long ' : 'Short ') + tradeUsd(p.notionalUsd) + ' at ' + p.leverage + 'x  ' + tradeSigned(p.unrealisedUsd),
+        chip: 'Entry',
         width: 1.5,
         alpha: 0.9,
         ring: chartSpotOn('position', String(p.coin).toUpperCase())
@@ -352,6 +346,7 @@ function drawTradeOverlays(ctx, L) {
         price: tr.triggerPx,
         tone: tr.role === 'stop' ? 'down' : 'ink',
         label: (tr.role === 'stop' ? 'Stop ' : 'Target ') + tradeUsd(tr.notionalUsd),
+        chip: tr.role === 'stop' ? 'Stop' : 'Target',
         dash: [4, 4],
         alpha: 0.8,
         ring: chartSpotOn('order', String(tr.oid))

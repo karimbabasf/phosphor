@@ -38,7 +38,7 @@
    explorer link when the fill carries one.
 
    The two controls on the deck, Close and Cancel, are the only way a person
-   reduces exposure from here. A press grows a confirm under its own card that
+   reduces exposure from here. A press turns its own card into a question that
    says what will happen in figures, answered by two buttons with no timer,
    never a dialog; they post to the human door, /api/trade/action, which no
    agent tool opens onto.
@@ -1681,8 +1681,9 @@
     setStat(stats.children[1], isNum(mark) ? priceText(mark) : '--', '');
     var liq = liquidationOf(p);
     setStat(stats.children[2], liq.figure, liq.sub, liq.none);
-    setStat(stats.children[3], exits.stop !== null ? priceText(exits.stop) : 'No stop', where(exits.stop, mark), exits.stop === null);
-    setStat(stats.children[4], exits.target !== null ? priceText(exits.target) : 'No target', where(exits.target, mark), exits.target === null);
+    var stopFrom = isNum(p.entryPx) ? where(exits.stop, p.entryPx, 'entry') : where(exits.stop, mark, 'mark');
+    setStat(stats.children[3], exits.stop !== null ? priceText(exits.stop) : 'No stop', stopFrom, exits.stop === null);
+    setStat(stats.children[4], exits.target !== null ? priceText(exits.target) : 'No target', where(exits.target, mark, 'mark'), exits.target === null);
 
     paintTrack(row.children[4], p, exits, mark, liq);
     paintFoot(row.children[2], exits.plan);
@@ -1704,14 +1705,17 @@
     };
   }
 
-  /* Where a price sits against the mark, in words: "5.2% below", "6.0% above".
-     Words rather than a sign, because a signed percentage beside a price
-     reads as that price's change. */
-  function where(price, mark) {
-    if (!isNum(price) || !isNum(mark) || mark <= 0) return '';
-    var pct = ((price - mark) / mark) * 100;
-    if (Math.abs(pct) < 0.05) return 'at the mark';
-    return Math.abs(pct).toFixed(1) + '% ' + (pct < 0 ? 'below' : 'above');
+  /* Where a price sits against a reference, in words: "3.5% under entry",
+     "6.0% over mark". Words rather than a sign, because a signed percentage
+     beside a price reads as that price's change. The stop is measured from
+     the entry, the way the agent says it ("3.5 percent under your entry"),
+     since that is the share of the entry the plan risks; the target from
+     the mark, since that is how far the price still has to go. */
+  function where(price, ref, word) {
+    if (!isNum(price) || !isNum(ref) || ref <= 0) return '';
+    var pct = ((price - ref) / ref) * 100;
+    if (Math.abs(pct) < 0.05) return 'at ' + word;
+    return Math.abs(pct).toFixed(1) + '% ' + (pct < 0 ? 'under ' : 'over ') + word;
   }
 
   /* The stop and the target a position is protected by. The open plan on the
@@ -2428,8 +2432,8 @@
 
   /* ---------- Close and Cancel ----------
 
-     A press grows a confirm under its own card (motion.js morph), never a
-     dialog and never a timer: the sentence says what will happen in figures,
+     A press turns the card itself into the question (motion.js morph), never
+     a dialog and never a timer: the sentence says what will happen in figures,
      "Close 0.25 ETH at about $4,012. About $219 goes back to your trading
      money, with $17.80 profit.", and two buttons answer it, focus on the
      harmless one. A refusal stays in the card in plain words, with the app's
@@ -2461,9 +2465,20 @@
       paintConfirm(before);
     }
     confirm = { key: key, action: button.dataset.action, id: button.dataset.id, row: row.dataset.spotKey, phase: 'ask', say: '', detail: '' };
-    morph(row, function () { paintConfirm(row); });
+    morph(row, function () { paintConfirm(row); }).then(function () { reveal(row); });
     var keep = confirmButton(row, 'keep');
-    if (keep && keep.focus) keep.focus();
+    if (keep && keep.focus) keep.focus({ preventScroll: true });
+  }
+
+  /* The asking card has to be on screen whole: a card at the foot of the
+     deck asked under the recovery notice, its answers cut off. Once it has
+     grown, the deck and the world scroll just enough (the world's scroll
+     padding keeps it clear of the notice), and not at all when it fits. */
+  function reveal(row) {
+    if (!row || !confirm || confirm.row !== row.dataset.spotKey) return;
+    if (typeof row.scrollIntoView !== 'function') return;
+    var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    row.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
   }
 
   function rowByKey(spotKey) {
@@ -2476,8 +2491,8 @@
 
   function morph(row, change) {
     var motion = window.PhosphorMotion;
-    if (motion && typeof motion.morph === 'function') motion.morph(row, change);
-    else change();
+    var done = motion && typeof motion.morph === 'function' ? motion.morph(row, change) : change();
+    return done && typeof done.then === 'function' ? done : Promise.resolve();
   }
 
   function confirmOf(row) {
@@ -2495,7 +2510,9 @@
     return actions ? actions.children[role === 'keep' ? 0 : 1] : null;
   }
 
-  /* The confirm under a card, painted from the open confirm and the numbers
+  /* The card itself asks, the way a move card does in the chat: its head
+     stays, its figures step aside (trade.css) and the sentence and the two
+     answers take their place, painted from the open confirm and the numbers
      on screen now, so "at about" follows the mark while the person reads. */
   function paintConfirm(row) {
     var open = confirm && confirm.row === row.dataset.spotKey ? confirm : null;

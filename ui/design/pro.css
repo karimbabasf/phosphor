@@ -3,23 +3,23 @@
 
    THE STAGE ON PRO, TRADE AND THE VAULT. Two tracks, the way Basic lays its
    own: the conversation takes what is left and the world is a panel on the
-   right. Only the panel's width differs, because a chart in Basic's reading
-   width is a phone chart: on Pro and Trade it is 55 percent of the window
-   between 560 and 1400, or whatever the divider was dragged to (--trade,
-   ui/split.js). The Vault takes a little more, 62 percent, so its two
-   columns stand side by side at the window's default size instead of one
-   long column (Karim, 2026-09-15: "I hate how the vault has to be so
-   scrollable"). The divider sits over the boundary rather than in a track of
-   its own, so the grid keeps Basic's shape. Under 960 wide (a browser, never
-   the app) the stacked layout in layout.css stands. */
+   right. Only the panel's width differs from Basic, because a chart in
+   Basic's reading width is a phone chart. It is ONE width on all three, 62
+   percent of the window between 560 and 1400, or whatever the divider was
+   dragged to (--trade, ui/split.js), never leaving the conversation under
+   the 400 the divider keeps for it, so the conversation holds still when
+   the tab changes. 62 is the Vault's number: at the window's default size
+   its two columns stand side by side (vault.css) with room for a sentence
+   beside each action, instead of one long column (Karim, 2026-09-15: "I
+   hate how the vault has to be so scrollable"). The divider sits over the
+   boundary rather than in a track of its own, so the grid keeps Basic's
+   shape. Under 960 wide (a browser, never the app) the stacked layout in
+   layout.css stands. */
 @media (min-width: 960px) {
   body[data-view="pro"] .stage,
-  body[data-view="trade"] .stage {
-    grid-template-columns: minmax(0, 1fr) clamp(560px, var(--trade, 55vw), 1400px);
-  }
-
+  body[data-view="trade"] .stage,
   body[data-view="vault"] .stage {
-    grid-template-columns: minmax(0, 1fr) clamp(560px, max(var(--trade, 55vw), 62vw), 1400px);
+    grid-template-columns: minmax(0, 1fr) clamp(560px, min(var(--trade, 62vw), calc(100vw - 400px)), 1400px);
   }
 
   body[data-view="pro"] .stage > .conversation,
@@ -170,10 +170,12 @@ body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
 
 /* ---------- the header ----------
 
-   The balance is the one lead figure: 40 px, the server's words for it
-   beside it, and the coins it holds in brief under it as quiet tiles. Then
-   the trading account under its own head, each figure a tile with its label
-   over its value. */
+   The world's signature first: the allocation ring of what the balance
+   holds, Basic's ring at Pro's size, with the balance beside it as the one
+   lead figure (40 px, the server's words for it) and the coins in brief
+   under it, each on a tile washed in its own colour, the ring's colour. Then
+   the trading account as one card: its money as the card's figure, and what
+   is free, in trades and at most at risk quiet beside it. */
 .pro-sum {
   display: flex;
   flex-direction: column;
@@ -185,9 +187,83 @@ body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
 
 .pro-sum-money {
   display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+
+.pro-sum-main {
+  flex: 1 1 auto;
+  display: flex;
   flex-direction: column;
   gap: var(--s-4);
   min-width: 0;
+}
+
+/* THE RING. A raised disc, a pressed track and the pieces, one per coin in
+   its tint; each springs to its share when the money moves. The largest
+   coin's share sits on the disc. */
+.pro-ring-box {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+}
+
+.pro-ring-box > * {
+  grid-area: 1 / 1;
+}
+
+.pro-ring {
+  display: block;
+  width: 112px;
+  height: 112px;
+  overflow: visible;
+}
+
+.pro-ring-share {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  pointer-events: none;
+}
+
+.pro-ring-pct {
+  font-size: var(--fs-18);
+  font-weight: 550;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.pro-ring-coin {
+  font-size: var(--fs-11);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-3);
+}
+
+.pro-ring[data-empty="true"] { opacity: 0.6; }
+
+.pro-disc-top { stop-color: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 3%); }
+.pro-disc-foot { stop-color: color-mix(in srgb, var(--bg-1), var(--bg-2) 30%); }
+
+.pro-ring-disc {
+  fill: url(#pro-disc);
+}
+
+.pro-ring-track {
+  fill: none;
+  stroke: rgba(var(--hi-rgb), 0.045);
+  stroke-width: 9;
+}
+
+.pro-ring-piece {
+  fill: none;
+  stroke-width: 9;
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--dur-ring) var(--ease-spring),
+              stroke-dashoffset var(--dur-ring) var(--ease-spring);
 }
 
 .pro-sum-lead {
@@ -228,8 +304,9 @@ body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
   color: var(--text);
 }
 
-/* The coins in brief: a logo, the name and what it is worth, on a quiet
-   tile each. Words, not pills: no shadow under them, only the tile's light. */
+/* The coins in brief: a logo, the name and what it is worth, each on a tile
+   whose coin colour washes in from the left and fades before the figure, as
+   Basic's rows do. */
 .pro-coins {
   display: flex;
   flex-wrap: wrap;
@@ -243,10 +320,12 @@ body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  height: 34px;
-  padding: 0 var(--s-3) 0 var(--s-2);
-  border-radius: 12px;
-  background: var(--tile);
+  height: 38px;
+  padding: 0 12px 0 9px;
+  border-radius: 14px;
+  background: linear-gradient(100deg,
+    color-mix(in oklab, var(--tint, var(--text-3)) 22%, var(--tile)) 0%,
+    var(--tile) 72%);
   box-shadow: var(--hi);
   font-size: var(--fs-13);
   color: var(--text-2);
@@ -259,7 +338,7 @@ body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
 }
 
 .pro-coin-rest {
-  padding: 0 var(--s-3);
+  padding: 0 var(--s-2);
   background: transparent;
   box-shadow: none;
   color: var(--text-3);
@@ -270,37 +349,54 @@ body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
   color: var(--text-3);
 }
 
+/* The count's two numbers: the wide header names three coins, the narrow one
+   two, and the count says how many it left out. */
+.pro-coin-rest > .pro-coin-narrow,
+.pro-coin-rest[data-narrow-only="true"] {
+  display: none;
+}
+
+/* THE TRADING ACCOUNT. One card rather than four equal tiles: its head, its
+   money as the card's figure at the left, and the rest quiet at the right,
+   label over value, on one line where it fits. */
 .pro-sum-account {
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+  padding: 16px 20px 18px;
+  border-radius: var(--radius-card);
+  background: linear-gradient(170deg, color-mix(in srgb, var(--tile), rgb(var(--hi-rgb)) 3%), var(--tile) 60%);
+  box-shadow: var(--hi), var(--raise-sm);
 }
 
 .pro-sum-head {
   margin: 0;
-  font-size: var(--fs-14);
+  font-size: var(--fs-13);
   font-weight: 550;
   letter-spacing: 0;
   color: var(--text-2);
 }
 
+.pro-sum-wait {
+  width: 140px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+}
+
 .pro-sum-figures {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
-  gap: var(--s-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 28px;
   margin: 0;
 }
 
 .pro-sum-figure {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
-  padding: 12px 14px 13px;
-  border-radius: var(--radius-tile);
-  background: var(--tile);
-  box-shadow: var(--hi);
 }
 
 .pro-sum-label {
@@ -308,21 +404,40 @@ body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
   font-size: var(--fs-12);
   font-weight: 500;
   line-height: 16px;
-  color: var(--text-2);
+  color: var(--text-3);
   white-space: nowrap;
 }
 
 .pro-sum-value {
   margin: 0;
-  font-size: var(--fs-18);
-  font-weight: 550;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-  color: var(--text);
+  font-size: var(--fs-15);
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--text-2);
   white-space: nowrap;
 }
 
-.pro-sum-value[data-dim="true"] { color: var(--text-3); }
+/* The card's figure: the trading money, large, in the text tone, taking the
+   room the others leave so they sit together at the right. */
+.pro-sum-figure:first-child {
+  flex: 1 1 auto;
+}
+
+.pro-sum-figure:first-child > .pro-sum-label {
+  color: var(--text-2);
+}
+
+.pro-sum-figure:first-child > .pro-sum-value {
+  font-size: var(--fs-28);
+  font-weight: 550;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.pro-sum-value[data-dim="true"],
+.pro-sum-figure:first-child > .pro-sum-value[data-dim="true"] { color: var(--text-3); }
 
 .pro-sum-note {
   margin: 0;
@@ -338,15 +453,30 @@ body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
   margin-top: var(--s-1);
 }
 
-/* The quiet Pro: the header alone in the middle of the slab, centred, so an
-   empty trading account reads as a calm start rather than a broken table. */
+/* The quiet Pro: the header alone in the middle of the slab, the ring over
+   the balance, centred, so an empty trading account reads as a calm start
+   rather than a broken table. */
 #view-pro[data-quiet="true"] .pro-sum {
   align-items: center;
   text-align: center;
   padding-bottom: var(--s-7);
 }
 
-#view-pro[data-quiet="true"] .pro-sum-money,
+#view-pro[data-quiet="true"] .pro-sum-money {
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+#view-pro[data-quiet="true"] .pro-ring {
+  width: 148px;
+  height: 148px;
+}
+
+#view-pro[data-quiet="true"] .pro-ring-pct {
+  font-size: var(--fs-24);
+}
+
+#view-pro[data-quiet="true"] .pro-sum-main,
 #view-pro[data-quiet="true"] .pro-sum-account {
   align-items: center;
 }
@@ -356,17 +486,45 @@ body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
   justify-content: center;
 }
 
+#view-pro[data-quiet="true"] .pro-sum-account {
+  width: min(100%, 560px);
+}
+
 #view-pro[data-quiet="true"] .pro-sum-figures {
-  width: min(100%, 600px);
+  justify-content: center;
+}
+
+#view-pro[data-quiet="true"] .pro-sum-figure:first-child {
+  flex: 0 1 auto;
 }
 
 #view-pro[data-quiet="true"] .pro-sum-fund {
   align-self: center;
 }
 
+@container prosum (max-width: 719px) {
+  .pro-coin[data-third="true"] { display: none; }
+  .pro-coin-rest[data-narrow-only="true"] { display: inline-flex; }
+  .pro-coin-rest > .pro-coin-wide { display: none; }
+  .pro-coin-rest > .pro-coin-narrow { display: inline; }
+}
+
+@container prosum (max-width: 519px) {
+  .pro-ring {
+    width: 92px;
+    height: 92px;
+  }
+  .pro-ring-pct { font-size: var(--fs-15); }
+  .pro-sum-money { gap: var(--s-4); }
+  .pro-coins { gap: 6px; }
+  .pro-coin { padding: 0 10px 0 8px; }
+  .pro-coin-rest { padding: 0 2px; }
+  .pro-sum-figures { gap: 10px 20px; }
+}
+
 @container prosum (max-width: 439px) {
   .pro-sum-total { font-size: var(--fs-32); }
-  .pro-sum-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pro-ring-box { display: none; }
 }
 
 /* A short window: Pro scrolls as one page, header and all, so the positions

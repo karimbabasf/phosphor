@@ -148,10 +148,50 @@
   padding: var(--s-4) 0 var(--s-2);
 }
 
+/* THE MOMENT. The welcome's mark is larger and traces on as it arrives:
+   the slabs light from the back to the front, each hot and cooling to the
+   green, and the cut glints last, the same light the window opens with
+   (mark.css), slower, because here it is the thing to watch. A bloom of the
+   same green rises under it and decays with it, once, the way a phosphor
+   screen holds a trace. */
 .firstrun-welcome .firstrun-mark {
-  width: 43px;
-  height: 48px;
-  margin-bottom: var(--s-2);
+  position: relative;
+  width: 58px;
+  height: 64px;
+  margin-bottom: var(--s-3);
+}
+
+.firstrun-welcome .firstrun-mark svg {
+  position: relative;
+}
+
+.firstrun-welcome .firstrun-mark::before {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--ink) 30%, transparent), transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.firstrun-welcome .firstrun-mark:has(> svg.mark[data-state="trace"])::before {
+  animation: firstrun-bloom 2600ms cubic-bezier(0.16, 1, 0.3, 1) 520ms both;
+}
+
+.firstrun-mark svg.mark[data-state="trace"] {
+  animation:
+    mark-in-1 640ms var(--ease-out) 520ms both,
+    mark-in-2 640ms var(--ease-out) 660ms both,
+    mark-in-3 640ms var(--ease-out) 800ms both,
+    mark-in-4 640ms var(--ease-out) 940ms both,
+    mark-glint 560ms var(--ease-out) 1080ms both;
+}
+
+@keyframes firstrun-bloom {
+  0% { opacity: 0; transform: scale(0.7); }
+  22% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0.12; transform: scale(1.05); }
 }
 
 .firstrun-welcome-title {
@@ -522,5 +562,10 @@
   .choice,
   .choice-tick .icon {
     transition: none;
+  }
+
+  .firstrun-mark svg.mark[data-state="trace"],
+  .firstrun-welcome .firstrun-mark:has(> svg.mark[data-state="trace"])::before {
+    animation: none;
   }
 }

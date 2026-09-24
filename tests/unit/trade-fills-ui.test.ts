@@ -1031,9 +1031,10 @@ test('an open position is a card of labelled figures: the coin and side, size, p
   // The liquidation price with how far the mark is from it: on a 5x position the number that
   // decides whether the money survives.
   assert.deepEqual(stat(row, 'pos-liq'), { label: 'Liquidation', figure: '$52,800.00', sub: '12% away', none: false });
-  // The approved prices, with where each sits from the mark in words rather than a sign.
-  assert.deepEqual(stat(row, 'pos-stop'), { label: 'Stop', figure: '$57,000.00', sub: '5.0% below', none: false });
-  assert.deepEqual(stat(row, 'pos-target'), { label: 'Target', figure: '$62,000.00', sub: '3.3% above', none: false });
+  // The approved prices in words rather than a sign: the stop from the entry, as the agent says
+  // it ("1.7 percent under your entry"), the target from the mark.
+  assert.deepEqual(stat(row, 'pos-stop'), { label: 'Stop', figure: '$57,000.00', sub: '1.7% under entry', none: false });
+  assert.deepEqual(stat(row, 'pos-target'), { label: 'Target', figure: '$62,000.00', sub: '3.3% over mark', none: false });
 });
 
 test('a position the venue says cannot be liquidated reads None, and one it has not said reads unknown', async () => {
@@ -1081,7 +1082,7 @@ test('a position with no open plan behind it takes its exits from the working tr
   ] as never;
   const { host } = await renderPayload(data);
   const [row] = withClass(host, 'pos-row');
-  assert.deepEqual(stat(row, 'pos-stop'), { label: 'Stop', figure: '$54,000.00', sub: '10.0% below', none: false });
+  assert.deepEqual(stat(row, 'pos-stop'), { label: 'Stop', figure: '$54,000.00', sub: '6.9% under entry', none: false });
   assert.deepEqual(stat(row, 'pos-target'), { label: 'Target', figure: 'No target', sub: '', none: true }, 'a dash reads as missing data, not as unprotected');
 });
 
