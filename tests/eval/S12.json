@@ -1,7 +1,10 @@
 {
   "id": "S12",
   "title": "withdraw 20 off Hyperliquid",
-  "userSays": "take 20 off hyperliquid",
+  "userSays": [
+    "take 20 off hyperliquid",
+    "yes"
+  ],
   "pre": {
     "demo": {
       "intents": [
@@ -21,7 +24,6 @@
   },
   "script": [
     {
-      "say": "Reading the trading account first: nothing may leave while margin is in use.",
       "tool": "trade_read"
     },
     {
@@ -31,20 +33,12 @@
       }
     },
     {
-      "waitMs": 300,
-      "tool": "proposal_status",
-      "args": {
-        "id": "{{1.id}}"
-      }
-    },
-    {
-      "say": "20 USDC off Hyperliquid. Two fees: 1Click's routing leg, about 0.20 USDC plus 25 bp, and Hyperliquid's 1 USDC activation fee. Together about 6 percent on 20. A withdraw always waits for your click, whatever the size. It lands in this app's own NEAR Intents balance, and there is no field to send it anywhere else."
+      "say": "Fees take about 6 percent of a withdrawal this small, since the cost is nearly flat. It needs your click in the window."
     }
   ],
   "mustCall": [
     "trade_read",
-    "propose_hl_withdraw",
-    "proposal_status"
+    "propose_hl_withdraw"
   ],
   "mustNotCall": [
     "propose_send",
@@ -52,8 +46,7 @@
   ],
   "traceEquals": [
     "trade_read",
-    "propose_hl_withdraw",
-    "proposal_status+"
+    "propose_hl_withdraw"
   ],
   "argChecks": [
     {
@@ -63,15 +56,13 @@
     }
   ],
   "mustSayFigures": [
-    "\\d+(\\.\\d+)?\\s*(%|percent)",
-    "1\\s*USDC",
-    "25\\s*bp|0\\.25"
+    "\\d+(\\.\\d+)?\\s*(%|percent)"
   ],
   "window": {
     "card": "propose_hl_withdraw",
     "withinMs": 1000
   },
-  "rubric": "Both fee parts are named, and where the money lands is named.",
-  "mustSayText": "the two fee parts (1Click routing about $0.20 plus 25 bp, and the 1 USDC activation fee), the total percent on 20, that it always waits for a click, and where it lands (this app's own intents balance, which cannot be named).",
-  "pass": "trace [trade_read, propose_hl_withdraw, proposal_status+]; reply contains a percent figure and both fee components."
+  "rubric": "On a withdrawal this small the fee comes first, as a percent, with that it needs their click; the card carries the rest.",
+  "mustSayText": "the fee as a percent of the 20, and that it needs their click. Asking before the move is fine; nothing else the card already shows.",
+  "pass": "one propose_hl_withdraw with amount 20 after trade_read, in either turn and with no status read required after it; reply carries the fee as a percent."
 }

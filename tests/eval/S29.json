@@ -11,36 +11,31 @@
   },
   "script": [
     {
-      "say": "Reading which USDC you hold before I quote anything.",
       "tool": "wallet"
     },
     {
-      "say": "Proposing 7 USDC into NEAR, which lands inside NEAR Intents as wNEAR, the same coin in its wrapped form.",
-      "tool": "propose_swap",
+      "tool": "swap_quote",
       "args": {
-        "chain": "eth",
-        "toChain": "near",
         "fromSymbol": "USDC",
         "toSymbol": "NEAR",
-        "amountIn": 7,
-        "minAmountOut": 2.2
+        "amountIn": "7"
       }
     },
     {
-      "waitMs": 300,
-      "tool": "proposal_status",
+      "tool": "propose_swap",
       "args": {
-        "id": "{{1.id}}"
+        "fromSymbol": "USDC",
+        "toSymbol": "NEAR",
+        "amountIn": "7"
       }
     },
     {
-      "say": "7 USDC in, about 2.25 wNEAR out, floor 2.2 wNEAR, which is about 2 percent under the quote. Under your $10 ask line, so it runs on its own; the card follows it."
+      "say": "Swapping 7 USDC for about {{1.expectedOut}} NEAR now."
     }
   ],
   "mustCall": [
-    "wallet",
-    "propose_swap",
-    "proposal_status"
+    "wallet|swap_quote|swap_assets",
+    "propose_swap"
   ],
   "mustNotCall": [
     "propose_send",
@@ -52,16 +47,11 @@
   },
   "ordering": [
     [
-      "wallet",
+      "wallet|swap_quote|swap_assets",
       "propose_swap"
     ]
   ],
   "argChecks": [
-    {
-      "tool": "propose_swap",
-      "path": "toChain",
-      "equals": "near"
-    },
     {
       "tool": "propose_swap",
       "path": "toSymbol",
@@ -70,7 +60,7 @@
     {
       "tool": "propose_swap",
       "path": "amountIn",
-      "equals": 7
+      "matches": "^7(\\.0+)?$"
     },
     {
       "tool": "propose_swap",
@@ -79,8 +69,7 @@
     }
   ],
   "mustSayFigures": [
-    "\\b7\\b",
-    "\\d+(\\.\\d+)?\\s*(%|percent)"
+    "\\b7\\b"
   ],
   "mustNotSay": [
     "unambiguous",
@@ -88,13 +77,15 @@
     "cannot be quoted",
     "does not list",
     "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-    "proposal_status|propose_swap|mcp__phosphor__"
+    "proposal_status|propose_swap|swap_quote|mcp__phosphor__",
+    "\\bwNEAR\\b",
+    "\\b(floor|slippage)\\b"
   ],
   "window": {
     "card": "propose_swap",
     "withinMs": 1000
   },
-  "rubric": "The agent proposes the swap on the first ask instead of negotiating the wrapper with the person, and says briefly that NEAR inside NEAR Intents lands as wNEAR, the same coin. The reply is at most three sentences and sixty words, and it names no id and no tool.",
-  "mustSayText": "what is being spent, the expected wNEAR out, the floor in tokens and as a percent, that it is under the ask line so it runs on its own, and that NEAR lands as wNEAR, the same coin. At most three sentences and sixty words; no id, no tool name.",
-  "pass": "one propose_swap with toChain near and toSymbol NEAR or wNEAR, minAmountOut absent or > 0, wallet read first, no sentence about the router not listing NEAR."
+  "rubric": "The agent proposes the swap on the first ask instead of negotiating with the person, and says it in plain words: what is being spent and about how much NEAR it gets. At most three short lines; no id, no tool name, and NEAR is called NEAR.",
+  "mustSayText": "what is being spent and about how much NEAR it gets. One to three short lines; no minimum, no percent, no id, no tool name, no wNEAR.",
+  "pass": "one propose_swap buying NEAR (NEAR or wNEAR), amountIn 7, minAmountOut absent or > 0, a read before it; no sentence about the swap service not listing NEAR."
 }

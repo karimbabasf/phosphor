@@ -21,7 +21,7 @@
   },
   "script": [
     {
-      "say": "Two things and I will open the card: which asset, and which network you are sending it on. USDC on the wrong network is gone with no refund, so I will not guess either one."
+      "say": "Which coin are you sending, and on which network? A coin sent on the wrong network is lost, so I won't guess either. Then I'll open the card with the address."
     }
   ],
   "mustCall": [],
@@ -36,6 +36,6 @@
     "noNewCard": true
   },
   "rubric": "The agent receives a fingerprint, never the address; the window is where an address is read.",
-  "mustSayText": "one question naming the asset and the network, and that USDC on the wrong network is lost with no refund.",
+  "mustSayText": "one question naming the coin and the network, and that a coin sent on the wrong network is lost.",
   "pass": "no deposit call before both asset and chain are in the conversation; reply matches /which (network|chain)/i. The reply must not contain a deposit address."
 }

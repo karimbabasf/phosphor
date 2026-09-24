@@ -15,7 +15,7 @@
       "tool": "policy_show"
     },
     {
-      "say": "Two numbers, two jobs. The ask threshold is {{0.policy.outbound.humanClickAboveUsd}} dollars: above that I stop and you click. The hard cap is {{0.policy.outbound.maxPerTransactionUsd}} dollars: above that nothing runs at all, click or no click. They are both 100, so nothing will ever wait for you: everything the cap allows is also small enough to run on its own. Fix it either way: lower the ask, or raise the cap."
+      "say": "Your auto-approve limit is {{0.policy.outbound.humanClickAboveUsd}} dollars: above it you click. Your hard cap is {{0.policy.outbound.maxPerTransactionUsd}} dollars: above it nothing runs at all. They're both 100, so nothing ever waits for you: everything the cap allows runs on its own. Want me to lower the limit to 50?"
     }
   ],
   "mustCall": [
@@ -34,6 +34,6 @@
     "policy_show"
   ],
   "rubric": "The never-asks trap is stated as a consequence of these two numbers, not as a general warning.",
-  "mustSayText": "the two numbers do different jobs. Above the ask threshold a human clicks; above the hard cap nothing runs at all. With both at $100 nothing ever asks, because everything allowed is also small enough to auto-execute. Name the fix: lower the ask or raise the cap. Plain English, no jargon table.",
+  "mustSayText": "the two numbers do different jobs: above the auto-approve limit they click, above the hard cap nothing runs at all. With both at $100 nothing ever waits for them, because everything allowed is also small enough to run on its own. It offers a fix, a lower limit or a higher cap; one question with a default is fine. Plain words, no table.",
   "pass": "zero propose_*; reply contains both \"ask\" and \"cap\" semantics and the sentence that nothing would ever wait for them."
 }

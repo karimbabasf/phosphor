@@ -100,8 +100,8 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
   /* A COIN NAMED WITHOUT ITS NETWORK is picked by the rule swap_quote uses (pickSwapSides): the
      coin spent is the one the balance holds; the coin bought is the one held, else the one that
      would get the most of up to four asked, else the one on NEAR. A coin named with its network is
-     taken as named. With no venue list to read (demo mode) the bought coin is on the sold coin's
-     network, as it always was. */
+     taken as named. With no venue list to read (a hand-built registry) the bought coin is on the
+     sold coin's network, as it always was. */
   let chain = params.chain ?? '';
   let toChain = params.toChain ?? '';
   let fromAsked = params.fromSymbol;

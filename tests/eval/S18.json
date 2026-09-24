@@ -28,11 +28,18 @@
         "status": "failed",
         "draft": {
           "kind": "swap",
+          "venue": "intents-native",
           "chain": "eth",
+          "toChain": "eth",
           "fromSymbol": "USDC",
           "toSymbol": "ETH",
           "amountIn": 40,
-          "minAmountOut": 0.008
+          "amountUsd": 40,
+          "minAmountOut": 0.008,
+          "from": "0x1111111111111111111111111111111111111111",
+          "to": "0x1111111111111111111111111111111111111111",
+          "counterparty": "intents.near",
+          "quote": null
         },
         "simulation": {
           "ok": true,
@@ -77,22 +84,18 @@
       }
     },
     {
-      "tool": "diagnose",
+      "tool": "swap_check",
       "args": {
         "id": "ev-s18-swap"
       }
     },
     {
-      "tool": "wallet"
-    },
-    {
-      "say": "The swap six minutes ago: the quote expired before the deposit landed. Nothing left the balance: it still reads {{2.totalUsd}} USD."
+      "say": "Your 40 USDC swap to ETH didn't go through: the price quote ran out before it started. Nothing left your balance: you still hold {{1.balance.now}} USDC."
     }
   ],
   "mustCall": [
     "proposals",
-    "diagnose",
-    "wallet"
+    "swap_check|diagnose"
   ],
   "mustNotCall": [
     "propose_send",
@@ -104,12 +107,13 @@
     "propose_policy_change"
   ],
   "mustSayFigures": [
-    "six minutes|6 minutes"
+    "\\b40\\b",
+    "1,?850"
   ],
   "mustNotSay": [
     "which (one|operation|move|swap)"
   ],
-  "rubric": "It names which operation, when, the reason, and that the balance is unchanged.",
-  "mustSayText": "which operation, when, the failure reason from the log, and that the balance is unchanged with the figure.",
-  "pass": "trace starts with log_tail; zero user-facing questions; reply contains the audit reason substring."
+  "rubric": "It names the move, the reason in plain words, and that their money never left.",
+  "mustSayText": "which move (the 40 USDC swap to ETH), the reason in plain words, and that nothing left their balance, with the balance figure.",
+  "pass": "trace finds the move and checks it (swap_check, or diagnose) with zero propose_*; zero questions back; reply names the swap and the unchanged balance."
 }

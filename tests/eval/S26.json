@@ -21,11 +21,10 @@
   },
   "script": [
     {
-      "say": "Reading the balance first.",
       "tool": "wallet"
     },
     {
-      "say": "Six will not work. Hyperliquid keeps anything under 5 USDC delivered, and 1Click's leg is a flat fee, so on 6 USDC it costs about 5.5 percent and the app refuses anything over its 5 percent ceiling. The floor in practice is 7 USDC in. You hold {{0.rows.0.quantity}} USDC. Say 7 or more and I will file it."
+      "say": "Deposits start at 7 USDC: the fee is nearly flat, about 0.32 USDC, so on 6 it would be over 5 percent. You hold {{0.rows.0.quantity}} USDC. Want me to send 7 instead?"
     }
   ],
   "mustCall": [
@@ -38,11 +37,10 @@
     "wallet"
   ],
   "mustSayFigures": [
-    "\\b5\\b",
-    "\\d+(\\.\\d+)?\\s*(%|percent)",
-    "\\b7\\b"
+    "\\b7\\b",
+    "\\d+(\\.\\d+)?\\s*(%|percent)"
   ],
   "rubric": "A floor that loses money silently is the one the user hears about before the click.",
-  "mustSayText": "the minimum is 7 USDC in (5 must land or Hyperliquid keeps it), the flat fee on 6 would be about 5.5%, and the 5% ceiling refuses it. Offers 7 or more.",
-  "pass": "zero propose_hl_deposit with amount < 7; reply contains both \"5\" (the delivered floor) and a percent figure."
+  "mustSayText": "deposits start at 7 USDC because the fee is nearly flat (about $0.32), so on 6 it would lose over 5 percent to it; offers 7 or more.",
+  "pass": "zero propose_hl_deposit with amount < 7; reply names the 7 USDC minimum and the fee as a percent."
 }

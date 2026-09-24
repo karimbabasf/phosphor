@@ -59,8 +59,8 @@
     "card": "propose_policy_change",
     "withinMs": 1000
   },
-  "rubric": "It names what changes, from what to what, and that the cap is untouched.",
-  "mustSayText": "what changes, from what to what, that the hard cap stays at $1,000, and that this needs one click.",
+  "rubric": "It names what changes and that the cap is untouched; the card carries the before and after.",
+  "mustSayText": "what changes (it asks above $100), that the hard cap stays at $1,000, and that this needs one click.",
   "pass": "exactly one propose_policy_change in the trace and the resulting policy reads humanClickAboveUsd: 100.",
   "resendAfter": [
     "sentence_mismatch"

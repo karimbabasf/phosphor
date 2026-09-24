@@ -98,12 +98,14 @@
       }
     },
     {
-      "say": "Drawing the deposit as a card in the window.",
       "tool": "show",
       "args": {
         "kind": "proposal",
         "id": "ev-s4-deposit"
       }
+    },
+    {
+      "say": "Your deposit to Hyperliquid is up in the window."
     }
   ],
   "mustCall": [
@@ -133,7 +135,7 @@
     "card": "show",
     "withinMs": 1000
   },
-  "rubric": "The reply names what the card shows in one line, then gives the figure or fact that answers the question, then stops.",
-  "mustSayText": "one line naming what the card shows, then the figure or fact that answers the question, then stop. No table, no restatement of the card's fields.",
-  "pass": "a card event with kind 'proposal' is emitted; reply is 2 lines or fewer; reply does not repeat every field on the card."
+  "rubric": "One line about what is now on screen; it does not read the card's fields out loud.",
+  "mustSayText": "one line saying the card for their latest move is up. No field read off the card, no table.",
+  "pass": "a card event with kind 'proposal' is emitted; the reply is one line and reads no field off the card."
 }

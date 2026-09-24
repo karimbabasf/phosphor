@@ -6,11 +6,13 @@
 // memory rather than in the file: the fixture is a checked-in asset and an installed app reads
 // it out of a read-only bundle, so a demo move edits nothing on disk and a restart is a fresh
 // wallet. Nothing applies these but the reads below, so `wallet`, the composition and a
-// settling proposal all see the same balance.
+// settling proposal all see the same balance. Each move is also kept as the intents ledger rows
+// it would have written, so the swap reads can ask what left the balance (demoActivity).
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { LedgerSnapshot } from '../types.ts';
+import type { IntentsActivity, IntentsRow } from '../chainscan/index.ts';
 import type { IntentsRead } from './intents.ts';
 import type { HlRead } from './hyperliquid.ts';
 
@@ -55,15 +57,31 @@ export function loadDemoLedger(): LedgerSnapshot {
 export type DemoBalanceMove = {
   intents?: Array<DemoHolding>; // `amount` is the signed change, not a total
   hyperliquidUsdc?: number;
+  // Who the intents legs moved to or from (the swap service's handle) and the move's hash, for
+  // the ledger rows below. Absent writes rows with no counterparty.
+  trail?: { counterparty: string | null; hash: string };
 };
 
 const movedIntents = new Map<string, DemoHolding>();
 let movedHyperliquidUsdc = 0;
+// Oldest first, as they happened.
+const ledgerRows: IntentsRow[] = [];
 
 export function moveDemoBalance(move: DemoBalanceMove): void {
+  const time = new Date().toISOString();
   for (const row of move.intents ?? []) {
     const held = movedIntents.get(row.assetId);
     movedIntents.set(row.assetId, held === undefined ? { ...row } : { ...held, amount: held.amount + row.amount });
+    if (row.amount === 0) continue;
+    ledgerRows.push({
+      cause: 'TRANSFER',
+      token: row.symbol,
+      tokenId: row.assetId,
+      delta: `${row.amount < 0 ? '-' : '+'}${Number(Math.abs(row.amount).toFixed(Math.min(row.decimals, 8)))}`,
+      counterparty: move.trail?.counterparty ?? null,
+      hash: move.trail?.hash ?? 'demo',
+      time,
+    });
   }
   movedHyperliquidUsdc += move.hyperliquidUsdc ?? 0;
 }
@@ -71,6 +89,24 @@ export function moveDemoBalance(move: DemoBalanceMove): void {
 export function resetDemoBalances(): void {
   movedIntents.clear();
   movedHyperliquidUsdc = 0;
+  ledgerRows.length = 0;
+}
+
+/* The intents ledger of the demo account, newest first: the rows this run's moves wrote and
+   nothing else, since the fixture's opening balances have no history. The shape the live read
+   answers in (src/chainscan/index.ts), whole and never partial, so a swap whose money never
+   left reads as nothing leaving rather than as unknown. */
+export function demoActivity(account: string, limit: number): IntentsActivity {
+  return {
+    account,
+    ok: true,
+    rows: [...ledgerRows].reverse().slice(0, Math.max(0, limit)),
+    balances: null,
+    partial: false,
+    source: 'demo',
+    explorer: null,
+    note: 'demo mode: the moves this run made, read from memory rather than a chain',
+  };
 }
 
 // What the fixture plus this run's moves holds of one asset, and how the verifier spells it.
@@ -84,13 +120,26 @@ export function demoHolding(assetId: string): DemoHolding | null {
 }
 
 // The asset the fixture keys a symbol by, for a demo move that has only a symbol to go on. The
-// fixture's own rows first, then the few assets it does not list but prices.
+// fixture's own rows first, then the few assets it does not list but prices. An asset id (it
+// carries a colon, a ticker never does) is that asset, which is how the swap reads name a coin.
 export function demoAssetOf(symbol: string): DemoHolding | null {
+  const byId = symbol.includes(':') ? demoAssets().find((h) => h.assetId === symbol.trim()) : undefined;
+  if (byId !== undefined) return { ...byId, amount: 0 };
   const upper = symbol.trim().toUpperCase();
   const held = readFixture().intents.find((h) => h.symbol.toUpperCase() === upper);
   if (held !== undefined) return { ...held, amount: 0 };
   const known = UNHELD_ASSETS[upper];
   return known === undefined ? null : { ...known, amount: 0 };
+}
+
+// Every asset demo mode knows by id, once each: the fixture's rows, the ones it prices but does
+// not list, and any a move has credited. Amounts are not balances here; demoHolding reads those.
+export function demoAssets(): DemoHolding[] {
+  const out = new Map<string, DemoHolding>();
+  for (const h of [...readFixture().intents, ...Object.values(UNHELD_ASSETS), ...movedIntents.values()]) {
+    if (!out.has(h.assetId)) out.set(h.assetId, { ...h, amount: 0 });
+  }
+  return [...out.values()];
 }
 
 // NEAR inside the verifier is wrap.near, which the live token list and the wallet row call wNEAR

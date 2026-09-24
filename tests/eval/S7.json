@@ -88,15 +88,11 @@
       }
     },
     {
-      "tool": "wallet"
-    },
-    {
-      "say": "The deposit failed: the deposit window expired before the transfer landed. Nothing moved, and the balance still reads 7.5425 USDC."
+      "say": "Your deposit didn't go through: it took too long, so it was called off before anything moved. Your {{1.view.money.amountIn}} USDC never left your balance."
     }
   ],
   "mustCall": [
-    "diagnose",
-    "wallet"
+    "diagnose"
   ],
   "mustNotCall": [
     "propose_send",
@@ -108,13 +104,12 @@
     "propose_policy_change"
   ],
   "traceEquals": [
-    "diagnose",
-    "wallet"
+    "diagnose"
   ],
   "mustSayFigures": [
-    "7\\.5425"
+    "7\\.54"
   ],
-  "rubric": "The reason is in plain words and the balance is quoted.",
-  "mustSayText": "it failed, the reason in plain words, that nothing moved, and the balance now. Never \"unconfirmed\" as the whole answer.",
-  "pass": "trace [proposal_status, log_tail, wallet]; reply contains the audit reason string and the current balance."
+  "rubric": "Short and warm: it failed, why in plain words, and that their money never left, with the figure.",
+  "mustSayText": "it failed, the reason in plain words, and that nothing moved: their money is still in their balance. Never \"unconfirmed\" as the whole answer.",
+  "pass": "trace [diagnose], free reads around it allowed; reply names the reason in plain words and that nothing moved, with the amount to the cent."
 }

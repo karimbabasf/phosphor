@@ -23,6 +23,7 @@ import { base58Encode } from '../chain/near.ts';
 
 import type {
   AppConfig,
+  ChainId,
   HlDepositDraft,
   HlWithdrawDraft,
   IntentsPayDraft,
@@ -33,14 +34,20 @@ import type {
   RailResult,
   SimulationResult,
   SwapDraft,
+  SwapQuoteFacts,
   WriteDraft,
 } from '../types.ts';
+import { NATIVE_ASSET } from '../intents.ts';
+import type { OneClickToken } from '../intents.ts';
 import type { PocketRead } from '../ledger/settle.ts';
-import type { RailRegistry } from './index.ts';
+import type { RailRegistry, SwapLookup } from './index.ts';
 import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS, HYPERCORE_VENUE_MIN_CREDIT_USDC, MAX_FEE_PCT, MIN_DEPOSIT_USDC } from './hypercore-deposit.ts';
 import { HL_ACTIVATION_USDC, INTENTS_USDC_ASSET_ID, MIN_HL_WITHDRAW_USDC } from './hypercore-withdraw.ts';
 import { maxSendableUsdc } from './hl-user-signed.ts';
-import { demoAssetOf, demoAvailableUsdc, demoHolding, loadDemoLedger, moveDemoBalance } from '../ledger/demo.ts';
+import { ReasonError } from './reasons.ts';
+import { floorUnderQuote } from './slippage.ts';
+import { demoActivity, demoAssetOf, demoAssets, demoAvailableUsdc, demoHolding, loadDemoLedger, loadDemoReads, moveDemoBalance } from '../ledger/demo.ts';
+import type { DemoBalanceMove } from '../ledger/demo.ts';
 import type { RailKind } from './kinds.ts';
 import { pricedAs } from '../proposals/draft.ts';
 import { TYPICAL_SEC } from '../proposals/view.ts';
@@ -186,7 +193,53 @@ export function demoRails(deps: DemoRailDeps): RailRegistry {
   return {
     for: (draft: WriteDraft) => table.get(draft.kind as RailKind) ?? null,
     kinds: () => [...table.keys()],
+    swap: demoSwapLookup(),
   };
+}
+
+/* THE SWAP READS' VENUE IN DEMO: the coins the fixture can price, listed the way 1Click lists its
+   own, the balance the wallet reads, and the ledger rows this run's moves wrote. Without it
+   swap_assets, swap_quote and swap_check said no swap venue was wired while propose_swap still
+   walked the demo swap rail, and an agent that quotes before it swaps told the person swaps were
+   off. The fixture holds one account, this app's own, so the account asked about is not looked at. */
+export function demoSwapLookup(): SwapLookup {
+  return {
+    tokens: async () => demoTokenList(),
+    balance: async (_account, assetId) => heldBaseOf(assetId),
+    activity: async (account, limit) => demoActivity(account, limit),
+  };
+}
+
+// The venue's list: every asset demo mode knows that the fixture can price. A chain's own gas
+// coin is listed with no contract, the way 1Click lists a native coin.
+function demoTokenList(): OneClickToken[] {
+  const list: OneClickToken[] = [];
+  for (const asset of demoAssets()) {
+    const price = demoPrice(asset.symbol);
+    if (price === null) continue;
+    const native = NATIVE_ASSET[asset.originChain as ChainId]?.symbol === asset.symbol.toUpperCase();
+    list.push({
+      assetId: asset.assetId,
+      decimals: asset.decimals,
+      blockchain: asset.originChain,
+      symbol: asset.symbol,
+      ...(native ? {} : { contractAddress: contractOf(asset.assetId) }),
+      price,
+    });
+  }
+  return list;
+}
+
+// The contract an omft id wraps (nep141:eth-0xa0b8...omft.near), else the NEAR account it names.
+function contractOf(assetId: string): string {
+  const account = assetId.replace(/^nep\d+:/, '');
+  return /-(0x[0-9a-fA-F]{40})\./.exec(account)?.[1] ?? account;
+}
+
+// What the fixture holds of one asset in base units, off the same read the wallet shows.
+function heldBaseOf(assetId: string): bigint {
+  const held = loadDemoReads().intents.holdings.find((h) => h.assetId === assetId)?.amountBase;
+  return held === undefined ? 0n : BigInt(held);
 }
 
 /* The five kinds that move money between the two pockets or out of them. `trade` is not one:
@@ -209,8 +262,12 @@ function demoRail(kind: RailKind, deps: DemoRailDeps, knobs: DemoKnobs): Rail {
     simulate: async (draft) => simulate(draft),
     execute: (draft, _id, hooks) => walk(draft, hooks, deps, knobs),
   };
-  // The floor-free price for a swap, the same fixture arithmetic simulate prices with.
-  if (kind === 'swap') rail.quote = async (draft) => swapQuote(draft as SwapDraft)?.out ?? null;
+  // The floor-free price for a swap, the same fixture arithmetic simulate prices with, and the
+  // same quote as fields for the swap reads.
+  if (kind === 'swap') {
+    rail.quote = async (draft) => swapQuote(draft as SwapDraft)?.out ?? null;
+    rail.facts = async (draft) => swapFacts(draft as SwapDraft);
+  }
   built.add(rail);
   return rail;
 }
@@ -240,7 +297,9 @@ function feeFor(kind: string, amount: number): number {
 const DOLLARS = new Set(['USDC', 'USDT', 'DAI', 'USD']);
 
 function demoPrice(symbol: string): number | null {
-  const upper = symbol.trim().toUpperCase();
+  // A coin the swap reads name by its id is priced by the ticker the fixture gives it.
+  const named = symbol.includes(':') ? (demoAssetOf(symbol)?.symbol ?? symbol) : symbol;
+  const upper = named.trim().toUpperCase();
   if (DOLLARS.has(upper)) return 1;
   const price = loadDemoLedger().prices[pricedAs(upper)];
   return typeof price === 'number' && price > 0 ? price : null;
@@ -269,6 +328,26 @@ function swapQuote(draft: SwapDraft): { out: number; feeUsd: number } | null {
   const usdIn = draft.amountIn * inPrice;
   const feeUsd = feeFor('swap', usdIn);
   return { out: (usdIn - feeUsd) / outPrice, feeUsd };
+}
+
+/* The same quote as fields, for swap_quote and swap_assets (src/proposals/swap-reads.ts): what
+   arrives, the floor the app would set under it, the fee and the walk's own time. A coin the
+   fixture cannot price is nobody offering one, the answer the live rail gives. */
+function swapFacts(draft: SwapDraft): SwapQuoteFacts {
+  const quote = swapQuote(draft);
+  if (quote === null) {
+    const missing = demoPrice(draft.fromSymbol) === null ? draft.fromSymbol : draft.toSymbol;
+    throw new ReasonError('no_price', `the demo fixture has no price for ${missing}`);
+  }
+  const outDecimals = demoAssetOf(draft.toSymbol)?.decimals ?? 8;
+  const walk = walkOf(draft);
+  return {
+    amountIn: draft.amountInExact ?? units(draft.amountIn, demoAssetOf(draft.fromSymbol)?.decimals ?? 8),
+    expectedOut: units(quote.out, outDecimals),
+    minOut: units(floorUnderQuote(quote.out), outDecimals),
+    feeUsd: Number(quote.feeUsd.toFixed(4)),
+    etaSeconds: Math.round((STAGE_MS * walk.stages.length + CREDIT_MS) / 1000),
+  };
 }
 
 // ---------- simulation ----------
@@ -456,9 +535,12 @@ type DemoMove = {
   decimals: number;
   symbol: string;
   pocket: PocketRead | null;
-  credit: () => void;
+  // The trail is the handle and hash the walk minted, written onto the demo ledger's rows.
+  credit: (trail: Trail) => void;
   detail: string;
 };
+
+type Trail = NonNullable<DemoBalanceMove['trail']>;
 
 function moveFor(draft: WriteDraft): DemoMove | null {
   switch (draft.kind) {
@@ -493,10 +575,11 @@ function hlDepositMove(draft: HlDepositDraft): DemoMove {
       after: null,
       floor: base(draft.minCredited, HYPERCORE_USDC_DECIMALS),
     },
-    credit: () => {
+    credit: (trail) => {
       moveDemoBalance({
         intents: spent === null ? [] : [{ ...spent, amount: -draft.amount }],
         hyperliquidUsdc: credited,
+        trail,
       });
     },
     detail: `demo: ${units(credited, 6)} ${draft.symbol} reached the trading account. Nothing was signed and no money moved.`,
@@ -524,11 +607,12 @@ function hlWithdrawMove(draft: HlWithdrawDraft): DemoMove | null {
       after: null,
       floor: base(draft.minReceived, landing.decimals),
     },
-    credit: () => {
+    credit: (trail) => {
       moveDemoBalance({
         intents: [{ ...landing, amount: received }],
         // The venue takes the activation fee beside the amount, so the account falls by both.
         hyperliquidUsdc: -(draft.amount + HL_ACTIVATION_USDC),
+        trail,
       });
     },
     detail: `demo: ${units(received, 6)} ${draft.symbol} reached NEAR Intents. Nothing was signed and no money moved.`,
@@ -554,12 +638,13 @@ function swapMove(draft: SwapDraft): DemoMove | null {
       after: null,
       floor: base(draft.minAmountOut, bought.decimals),
     },
-    credit: () => {
+    credit: (trail) => {
       moveDemoBalance({
         intents: [
           { ...sold, amount: -draft.amountIn },
           { ...bought, amount: quote.out },
         ],
+        trail,
       });
     },
     detail: `demo: ${units(quote.out, bought.decimals)} ${draft.toSymbol} is what the balance holds now. Nothing was signed and no money moved.`,
@@ -576,8 +661,8 @@ function sendMove(draft: IntentsSendDraft | IntentsPayDraft): DemoMove {
     // Like the live send rails: the receiver's balance is not this app's to read, so the row
     // confirms on the rail's word rather than on a pocket that would never rise here.
     pocket: null,
-    credit: () => {
-      moveDemoBalance({ intents: spent === null ? [] : [{ ...spent, amount: -draft.amount }] });
+    credit: (trail) => {
+      moveDemoBalance({ intents: spent === null ? [] : [{ ...spent, amount: -draft.amount }], trail });
     },
     detail: `demo: ${units(arrives, 8)} ${draft.symbol} reached ${draft.to}. Nothing was signed and no money moved.`,
   };
@@ -681,8 +766,9 @@ async function walk(draft: WriteDraft, hooks: RailHooks | undefined, deps: DemoR
      not shown the money, and the row waits in `crediting` until a balance read proves it. The
      credit lands after the executor has written that row, and the ledger is re-read on the spot
      so the same read the wallet panel is about to show is what judges it. */
+  const trail = { counterparty: quote.correlationId, hash: intentHash };
   if (move.pocket !== null) {
-    void creditLater(move, deps, CREDIT_MS * knobs.stageScale);
+    void creditLater(move, deps, CREDIT_MS * knobs.stageScale, trail);
     return {
       ok: false,
       settling: true,
@@ -693,7 +779,7 @@ async function walk(draft: WriteDraft, hooks: RailHooks | undefined, deps: DemoR
     };
   }
 
-  move.credit();
+  move.credit(trail);
   await deps.refresh().catch(() => undefined);
   return { ok: true, detail: move.detail, txids: [intentHash], evidence };
 }
@@ -741,8 +827,9 @@ async function walkRelaySwap(move: DemoMove, hooks: RailHooks | undefined, deps:
     settledAmountOut: units(move.arrives, move.decimals),
     explorerUrl,
   };
+  const trail = { counterparty: intentHash, hash: nearHash };
   if (move.pocket !== null) {
-    void creditLater(move, deps, CREDIT_MS * knobs.stageScale);
+    void creditLater(move, deps, CREDIT_MS * knobs.stageScale, trail);
     return {
       ok: false,
       settling: true,
@@ -752,14 +839,14 @@ async function walkRelaySwap(move: DemoMove, hooks: RailHooks | undefined, deps:
       pocket: move.pocket,
     };
   }
-  move.credit();
+  move.credit(trail);
   await deps.refresh().catch(() => undefined);
   return { ok: true, detail: move.detail, txids: [intentHash, nearHash], evidence };
 }
 
-async function creditLater(move: DemoMove, deps: DemoRailDeps, afterMs: number): Promise<void> {
+async function creditLater(move: DemoMove, deps: DemoRailDeps, afterMs: number, trail: Trail): Promise<void> {
   await sleep(afterMs);
-  move.credit();
+  move.credit(trail);
   await deps.refresh().catch(() => undefined);
 }
 
@@ -884,8 +971,9 @@ async function hlWalk(draft: HlDepositDraft | HlWithdrawDraft, hooks: RailHooks 
   // Both Hyperliquid kinds carry a pocket, so both settle the way their live rails do: the router
   // is done, the venue has not shown the money, and the row waits in `crediting` until a balance
   // read proves it. The credit lands after the executor has written that row.
+  const trail = { counterparty: quote.correlationId, hash: intentHash };
   if (move.pocket !== null) {
-    void creditLater(move, deps, CREDIT_MS * knobs.stageScale);
+    void creditLater(move, deps, CREDIT_MS * knobs.stageScale, trail);
     return {
       ok: false,
       settling: true,
@@ -896,7 +984,7 @@ async function hlWalk(draft: HlDepositDraft | HlWithdrawDraft, hooks: RailHooks 
     };
   }
 
-  move.credit();
+  move.credit(trail);
   await deps.refresh().catch(() => undefined);
   return { ok: true, detail: move.detail, txids: [intentHash], evidence };
 }

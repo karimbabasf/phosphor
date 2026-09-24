@@ -18,8 +18,9 @@
 //   2. Demo mode holds NO LIVE rails. The demo ledger is a fixture, not a chain, so nothing
 //      here may reach for an RPC and a private key that the demo user never meant to involve.
 //      It holds the demo rails instead (./demo.ts): five kinds that sign nothing, send
-//      nothing and walk the stages a real rail reports, against the fixture's own balances.
-//      They are built here and only here, and only under this mode.
+//      nothing and walk the stages a real rail reports, against the fixture's own balances,
+//      and a swap lookup that answers the swap reads off the same fixture. They are built
+//      here and only here, and only under this mode.
 
 import type { AppConfig, ChainId, Rail, WriteDraft } from '../types.ts';
 import type { OneClickToken, TokensFile } from '../intents.ts';
@@ -62,8 +63,9 @@ export type RailRegistry = {
   relay?: RelayLookup;
   /* What the swap reads (src/proposals/swap-reads.ts) ask the venue and the chain: the token
      list the swap rails resolve against, one balance inside the verifier, and the account's
-     intents ledger history. All three are reads. Absent in demo mode and in any registry a test
-     builds by hand, where the swap reads say there is no venue to ask. */
+     intents ledger history. All three are reads. Demo mode answers them off its fixture
+     (./demo.ts, demoSwapLookup); absent in any registry a test builds by hand, where the swap
+     reads say there is no venue to ask. */
   swap?: SwapLookup;
 };
 

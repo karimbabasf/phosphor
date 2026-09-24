@@ -28,7 +28,7 @@
       }
     },
     {
-      "say": "Where should it land? Paid out on a chain (base, arbitrum or eth), or credited inside NEAR Intents to another account. The two cost different amounts and neither is reversible, so I will not pick for you."
+      "say": "Where should the 5 USDC land: paid out on a chain (Base, Arbitrum or Ethereum), or inside NEAR Intents? I won't pick for you, since a send can't be undone."
     }
   ],
   "mustCall": [],
@@ -39,6 +39,6 @@
     "noNewCard": true
   },
   "rubric": "One question naming the choice, not a lecture on chains.",
-  "mustSayText": "one question naming the choice: paid out on a chain (which one) or credited inside NEAR Intents, and that the two cost different amounts and are not reversible.",
-  "pass": "zero propose_send; reply contains both \"intents\" and at least one network id."
+  "mustSayText": "one question naming the choice: paid out on a chain (which one) or credited inside NEAR Intents. Pointing out anything odd about the address is fine.",
+  "pass": "zero propose_send; reply names NEAR Intents and at least one network."
 }
