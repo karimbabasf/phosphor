@@ -343,8 +343,8 @@ test('the paged route refuses a forged Host like every other read', async () => 
    second, permanently, on a payload that had not changed.
 
    The build is cached behind the things it reads: the store's revision, the audit's line count,
-   the lock state and the ledger snapshot's identity, plus a one second ceiling for the handful of
-   inputs with no hook (the price poll, the lending view, the idle countdown). */
+   the lock state and the ledger snapshot's identity, plus a one second ceiling for the inputs
+   with no hook, such as the idle countdown. */
 
 function getWithEtag(urlBase: string, etag: string): Promise<{ status: number; body: string; etag: string | null }> {
   const u = new URL(urlBase + '/api/state');

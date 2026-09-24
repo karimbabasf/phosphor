@@ -514,8 +514,7 @@ button[data-pending-label] > :not(.btn-pending) {
 /* A chip that is pressed is a small button and holds the small variant's
    height; a chip that only says something keeps the 26 px pill. The pressed
    one (aria-pressed) sits in the ink wash with its text at full strength, on
-   every chip alike: the vault's frost choices, the activity filters, the
-   suggestions. */
+   every chip alike: the vault's frost choices and the suggestions. */
 button.chip {
   min-height: 30px;
   cursor: pointer;

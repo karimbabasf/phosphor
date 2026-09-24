@@ -21,8 +21,8 @@
     });
 
     /* The server owns which view is on screen, because the assistant can move
-       it with `switch` and a chart tool called while pro is up moves it to
-       trade. The window follows rather than arguing. */
+       it with `switch`; the server's 'trade' is Pro here (ui/screens/shell.js).
+       The window follows rather than arguing. */
     store.select('view', function (view) {
       if (view && !window.PhosphorShell.isPinned()) window.PhosphorShell.setView(view, {});
     });

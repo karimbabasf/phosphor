@@ -18,7 +18,6 @@
 .lock-eye:active,
 .netpick-back:active,
 .netpick-link:active,
-.activity-link:active,
 .netsel:active,
 .trade-tab:active,
 .steps-fold:active,
@@ -33,7 +32,6 @@
 
 .checks-toggle:active,
 .net-row:active,
-.activity-rows > .tx.receipt-row:active,
 .tx.receipt-row:active,
 .jump-latest:active,
 .tcard-details-head:active,

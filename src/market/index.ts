@@ -19,8 +19,8 @@ import { atr as wilderAtr } from '../analysis/regime.ts';
 // back. Five minutes outlives a person flipping timeframes and does not outlive a window that
 // was closed.
 const WATCH_IDLE_MS = 300_000;
-// How many markets the rail follows at once. The chart is one, the trading window one, and the
-// basic screen's three prices are three. Six leaves a spare and is nowhere near a catalogue.
+// How many markets the rail follows at once. A full layout is four charts (src/charts.ts), and a
+// waiting plan's coin is one more. Six leaves a spare and is nowhere near a catalogue.
 const WATCH_MAX = 6;
 
 /* How far back the bars in hand actually reach. */
@@ -103,10 +103,10 @@ export function createMarketData(deps: MarketDeps = {}) {
 
      Demand-driven, exactly like the fill behind read(): no read, no subscription. The
      alternative was for the server to tell the rail what the chart is looking at, which means
-     the chart's view, the trading window's watchlist and the basic screen's three prices each
-     grow a wire into this module, and any window that closes without saying so leaves a
-     socket subscribed to a market nobody can see. Reading is the one signal every one of them
-     already sends, it is exact, and it expires on its own. */
+     the chart's view and the trading window's watchlist each grow a wire into this module, and
+     any window that closes without saying so leaves a socket subscribed to a market nobody can
+     see. Reading is the one signal every one of them already sends, it is exact, and it expires
+     on its own. */
   const watched = new Map<string, { ref: LiveRef; at: number }>();
   let tracking = '';
 

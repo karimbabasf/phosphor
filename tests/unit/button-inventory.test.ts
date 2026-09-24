@@ -53,8 +53,6 @@ test('the helpers are read at their call sites, never at their definition', () =
   assert.ok(yes, 'the card\'s Approve was not found');
   const cancel = sites.find((s) => s.file === 'ui/screens/decision.js' && s.family === 'btn btn-ghost mcard-cancel');
   assert.equal(cancel?.pending, 'Cancelling');
-  const more = sites.find((s) => s.file === 'ui/screens/receipts.js' && s.label === '"See all"');
-  assert.equal(more?.family, 'btn btn-ghost activity-more', 'receipts.js button() builds a fixed class, and the call site wears it');
 });
 
 test('the bar in index.html builds the brake glyph, and its confirm step is the small variant', () => {

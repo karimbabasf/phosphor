@@ -417,11 +417,6 @@
     var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off', 'Turning off');
     controls.appendChild(start);
     controls.appendChild(stopAgent);
-    var split = window.PhosphorSplit;
-    if (split && typeof split.paneControl === 'function') {
-      var hide = split.paneControl('conversation');
-      if (hide) controls.appendChild(hide);
-    }
     head.appendChild(controls);
     host.appendChild(head);
 
@@ -1550,23 +1545,12 @@
   /* ---------- a card another screen shows ---------- */
 
   /* The backup nudge, the recovery words, Turn off the assistant: a card at the thread's
-     end, in view, and the conversation pane shown if it was hidden. */
+     end, in view. */
   function showCard(build, opts) {
     if (typeof build !== 'function') return;
     openSteps = null;
     jumpAll = true;
-    reveal();
     pushBlock({ type: 'sheet', build: build, quiet: !!(opts && opts.quiet), at: Date.now() });
-  }
-
-  /* THE GATE STAYS REACHABLE. A pane hidden while a move waits would be a window arranged to
-     hide the one control that stops money moving, so a card that needs the person shows the
-     conversation again. */
-  function reveal() {
-    var split = window.PhosphorSplit;
-    if (split && typeof split.paneHidden === 'function' && typeof split.setPane === 'function' && split.paneHidden('conversation')) {
-      split.setPane('conversation', true);
-    }
   }
 
   /* ---------- wiring ---------- */
@@ -1889,7 +1873,6 @@
           openSteps = null;
           blocks.push({ type: 'card', kind: 'move', name: 'proposal_status', input: { id: row.id }, data: row, fromLive: true, at: createdAt(row) || Date.now(), open: true, waiting: isWaitingRow(row), key: 'b' + (seq += 1) });
         }
-        if (isWaitingRow(row)) reveal();
         moved = true;
       }
       if (blocks.length > TRANSCRIPT_CAP) blocks.splice(0, blocks.length - TRANSCRIPT_CAP);
