@@ -1156,9 +1156,10 @@ test('Start says Start your agent whatever is picked, and a pick in the Vault is
   assert.ok(starts().every((t) => t === 'Start your agent'), JSON.stringify(starts()));
 
   // A pick the chat cannot run keeps the same word; its sentence is the head's note.
-  data.agent = { id: 'codex', name: 'Codex', inApp: false, reason: 'Codex runs in your terminal, not in this chat. Start it there and it joins this window.' };
+  const codex = { id: 'codex', name: 'Codex', inApp: false, reason: 'Codex runs in your terminal, not in this chat. Start it there and it joins this window.' };
+  data.agent = codex;
   world.windowEvent('phosphor:agent');
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(starts().every((t) => t === 'Start your agent'), JSON.stringify(starts()));
-  assert.equal(world.noteText(), data.agent.reason, 'the pick was not read again');
+  assert.equal(world.noteText(), codex.reason, 'the pick was not read again');
 });
