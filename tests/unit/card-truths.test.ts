@@ -98,9 +98,10 @@ test('and it is being checked: the sweep asks the venue by its handle and writes
 
 // ---------- 12: the refused sentence ----------
 
-test('a refusal by a rule says where the limit changes, never "the window"', () => {
-  assert.equal(reasonSentence('policy_rule', SWAP), 'One of your rules stopped this, so nothing moved. Change the limit in the Vault if you want it to go.');
-  assert.equal(STAGE_COPY.refused, 'A rule you set stopped it. Nothing moved. Change the limit in the Vault if you want it to go.');
+test('a refusal by a rule says where it changes, Vault under Policies, never "the window"', () => {
+  assert.equal(reasonSentence('policy_rule', SWAP), 'One of your rules stopped this, so nothing moved. Change it in Vault, under Policies, if you want it to go.');
+  assert.equal(STAGE_COPY.refused, 'A rule you set stopped it. Nothing moved. Change it in Vault, under Policies, if you want it to go.');
+  assert.equal(reasonSentence('over_trade_cap', SWAP), "That's over your limit for one move, so nothing moved. Ask for less, or ask me to raise the limit; your limits are in Vault, under Policies.");
   for (const code of ['over_trade_cap', 'over_daily_cap', 'kill_switch', 'policy_rule', 'rules_unreadable'] as const) {
     assert.doesNotMatch(reasonSentence(code, SWAP), /the window/, code);
   }
