@@ -1,0 +1,141 @@
+/* The mark, and the one kind of motion it has: phosphor persistence. Light
+   arrives fast and decays slow, and nothing ever changes size.
+
+   The symbol in ui/index.html is brand/phosphor-mark.svg cut into five pieces:
+   m1 to m4 are the four slabs from the back to the front, and m5 is the cut
+   inside the front slab, dark at rest. Each piece reads two numbers off the
+   svg that draws it: --mN, how lit it is (its fill opacity), and --hN, how hot
+   (how far its green is mixed toward white). Custom properties are the one
+   thing that crosses into a <use> copy, so every animation below writes those
+   numbers on the host and never touches a path.
+
+   Anyone draws the mark with <svg class="mark" data-state="..."><use
+   href="#phosphor-mark"/></svg>, in the colour of the element that holds it.
+
+     html[data-boot]            the one-time trace-on, about 700 ms
+     data-state="working"       a scan: each piece brightens and decays in turn
+     data-state="done"          one bright flash that decays over 2.4 s
+     html[data-agent]           the same two states, on the mark in the top bar
+
+   All of it is off under reduced motion: the mark stands still, fully lit. */
+
+@property --m1 { syntax: "<number>"; inherits: true; initial-value: 1; }
+@property --m2 { syntax: "<number>"; inherits: true; initial-value: 1; }
+@property --m3 { syntax: "<number>"; inherits: true; initial-value: 1; }
+@property --m4 { syntax: "<number>"; inherits: true; initial-value: 1; }
+@property --m5 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --h1 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --h2 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --h3 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --h4 { syntax: "<number>"; inherits: true; initial-value: 0; }
+@property --h5 { syntax: "<number>"; inherits: true; initial-value: 0; }
+
+/* The fill the pieces fall back to when a browser cannot mix a colour: the
+   host's own, so an old engine draws a still, whole mark rather than a black
+   one. */
+svg.mark {
+  fill: currentColor;
+  overflow: visible;
+}
+
+/* ---------- the trace-on ----------
+
+   The page opens with the mark faint, as the splash left it, and the slabs
+   light from the back to the front, each arriving hot and cooling to the
+   green; the cut glints last. shell.js takes html[data-boot] away once it is
+   done, and every piece is already where it rests. */
+html[data-boot] svg.mark {
+  animation:
+    mark-in-1 440ms var(--ease-out) 60ms both,
+    mark-in-2 440ms var(--ease-out) 150ms both,
+    mark-in-3 440ms var(--ease-out) 240ms both,
+    mark-in-4 440ms var(--ease-out) 330ms both,
+    mark-glint 380ms var(--ease-out) 420ms both;
+}
+
+@keyframes mark-in-1 { 0% { --m1: 0.12; --h1: 0; } 22% { --m1: 1; --h1: 0.6; } 100% { --m1: 1; --h1: 0; } }
+@keyframes mark-in-2 { 0% { --m2: 0.12; --h2: 0; } 22% { --m2: 1; --h2: 0.6; } 100% { --m2: 1; --h2: 0; } }
+@keyframes mark-in-3 { 0% { --m3: 0.12; --h3: 0; } 22% { --m3: 1; --h3: 0.6; } 100% { --m3: 1; --h3: 0; } }
+@keyframes mark-in-4 { 0% { --m4: 0.12; --h4: 0; } 22% { --m4: 1; --h4: 0.6; } 100% { --m4: 1; --h4: 0; } }
+@keyframes mark-glint { 0% { --m5: 0; --h5: 0.5; } 30% { --m5: 0.45; } 100% { --m5: 0; --h5: 0; } }
+
+/* ---------- working ----------
+
+   A beam goes round the five pieces once every 1.4 s, back slab to front and
+   then the cut, a fifth of the cycle apart, so one piece is always being hit.
+   Each is full and hot at once, cools within a tenth of the cycle, and fades
+   to half before the beam comes round again. */
+svg.mark[data-state="working"],
+html[data-agent="working"] .topbar svg.mark {
+  animation:
+    mark-scan-1 1400ms linear 0ms infinite,
+    mark-scan-2 1400ms linear 280ms infinite,
+    mark-scan-3 1400ms linear 560ms infinite,
+    mark-scan-4 1400ms linear 840ms infinite,
+    mark-scan-5 1400ms linear 1120ms infinite;
+}
+
+@keyframes mark-scan-1 {
+  0% { --m1: 1; --h1: 0.45; animation-timing-function: var(--ease-out); }
+  12% { --h1: 0.1; }
+  58% { --m1: 0.5; --h1: 0; }
+  100% { --m1: 0.5; --h1: 0; }
+}
+
+@keyframes mark-scan-2 {
+  0% { --m2: 1; --h2: 0.45; animation-timing-function: var(--ease-out); }
+  12% { --h2: 0.1; }
+  58% { --m2: 0.5; --h2: 0; }
+  100% { --m2: 0.5; --h2: 0; }
+}
+
+@keyframes mark-scan-3 {
+  0% { --m3: 1; --h3: 0.45; animation-timing-function: var(--ease-out); }
+  12% { --h3: 0.1; }
+  58% { --m3: 0.5; --h3: 0; }
+  100% { --m3: 0.5; --h3: 0; }
+}
+
+@keyframes mark-scan-4 {
+  0% { --m4: 1; --h4: 0.45; animation-timing-function: var(--ease-out); }
+  12% { --h4: 0.1; }
+  58% { --m4: 0.5; --h4: 0; }
+  100% { --m4: 0.5; --h4: 0; }
+}
+
+@keyframes mark-scan-5 {
+  0% { --m5: 0.4; --h5: 0.4; animation-timing-function: var(--ease-out); }
+  40% { --m5: 0; --h5: 0; }
+  100% { --m5: 0; --h5: 0; }
+}
+
+/* ---------- done ----------
+
+   Everything at once, white hot, and then the long exponential cool of a
+   phosphor screen: most of the heat is gone in the first half second and the
+   last of it takes the rest. */
+svg.mark[data-state="done"],
+html[data-agent="done"] .topbar svg.mark {
+  animation: mark-flash 2400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes mark-flash {
+  0% {
+    --m1: 1; --m2: 1; --m3: 1; --m4: 1; --m5: 0.55;
+    --h1: 0.75; --h2: 0.75; --h3: 0.75; --h4: 0.75; --h5: 0.75;
+  }
+  100% {
+    --m1: 1; --m2: 1; --m3: 1; --m4: 1; --m5: 0;
+    --h1: 0; --h2: 0; --h3: 0; --h4: 0; --h5: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  svg.mark,
+  html[data-boot] svg.mark,
+  svg.mark[data-state="working"],
+  svg.mark[data-state="done"],
+  html[data-agent] .topbar svg.mark {
+    animation: none;
+  }
+}

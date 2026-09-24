@@ -1,404 +1,377 @@
-/* Basic: one 640 px column, read top to bottom: the total, the rules, what is
-   held, then two folds. The column is as tall as what it holds and the world
-   (#views) scrolls it: a wallet of twenty coins is a longer list, never a
-   list cut off inside its card. The cards wear the same head as Pro's
-   (pro.css .card); this file adds what only this column has. */
+/* Basic: the conversation takes the window and the balances sit in a calm
+   panel on its right, a reading width wide (--panel-w). The panel is the
+   world on this mode: it scrolls on its own and the notice line (layout.css)
+   sits at its foot. Everything in it is a figure or a word about the money,
+   and nothing in it is boxed: hairlines between rows, the ground one step up. */
 
-/* ---------- the column ---------- */
+/* ---------- the stage on Basic ---------- */
 
-#view-basic .basic-col {
-  gap: var(--s-3);
-  padding: var(--s-6) var(--s-5) var(--s-5);
+body[data-view="basic"] .stage {
+  grid-template-columns: minmax(0, 1fr) var(--panel-w);
 }
 
-/* ---------- the hero ---------- */
+body[data-view="basic"] .stage > .split-v {
+  display: none;
+}
 
-/* The hero is unboxed: the total sits on the ground, and the one sentence under
-   it is the state of the money. A border here would say the assistant can act
-   on a number, which is the one thing this part of the column is not. */
-.hero {
-  position: relative;
-  z-index: 1;
+body[data-view="basic"] .conversation {
+  border-right: 0;
+}
+
+body[data-view="basic"] .world {
+  background: var(--bg-1);
+  border-left: 1px solid var(--line);
+}
+
+body[data-view="basic"] .notice {
+  background: var(--bg-1);
+  padding-inline: var(--s-6);
+}
+
+/* The assistant cannot be put away on Basic: it is the screen. A column
+   hidden on Trade stays hidden there and comes back here. */
+body[data-view="basic"] .stage[data-pane-conversation="hidden"] {
+  grid-template-columns: minmax(0, 1fr) var(--panel-w);
+}
+
+body[data-view="basic"] .stage[data-pane-conversation="hidden"] > .conversation {
+  display: flex;
+}
+
+body[data-view="basic"] .stage > .pane-show {
+  display: none;
+}
+
+/* ---------- the panel ---------- */
+
+.bal {
   display: flex;
   flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-3) 0 var(--s-2);
+  padding: calc(var(--s-6) + var(--s-2)) var(--s-6) var(--s-6);
 }
 
-/* The total: the largest quiet thing on the page, in the mono face so it lines
-   up with every other number the person will read under it. The slot keeps
-   its line while there is no number yet, so the hero does not jump when the
-   first total lands. */
-.hero .balance {
-  font-family: var(--font-mono);
+.bal-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* The total: the largest thing on the screen and the quietest, in the mono
+   face so it lines up with every figure under it. */
+.bal-total {
+  margin: 0;
   font-size: var(--fs-40);
   font-weight: 500;
-  letter-spacing: -0.02em;
-  line-height: 1.05;
-  min-height: 1.05em;
+  line-height: 1;
+  letter-spacing: -0.035em;
   color: var(--text);
-}
-
-/* The change since the window opened, between the total and the sentence:
-   mono at 13, in the direction's colour, and absent when there is none. */
-.hero-delta {
-  font-size: var(--fs-13);
-  line-height: 1.4;
-  color: var(--text-2);
-}
-
-.hero-delta[data-dir="up"] { color: var(--up); }
-.hero-delta[data-dir="down"] { color: var(--down); }
-
-/* One sentence under the total, and it is the state of the money rather than a
-   caption on it. */
-.hero-line {
-  font-size: var(--fs-14);
-  line-height: 1.5;
-  color: var(--text-2);
-}
-
-/* What the money is made of: a 6 px pill the width of the column, one segment
-   per coin by share, each in the coin's own brand colour. It is the one
-   coloured thing on the page. */
-.alloc {
-  display: flex;
-  gap: 2px;
-  height: 6px;
-  flex: 0 0 auto;
-  margin-top: calc(-1 * var(--s-1));
-  border-radius: var(--radius-pill);
-  overflow: hidden;
-}
-
-.alloc-seg {
-  flex: 1 1 0;
-  min-width: 4px;
-  background: var(--coin, var(--text-3));
-}
-
-/* ---------- the rules strip ---------- */
-
-/* One sentence about the safety model. Hairlines rather than a box, because a
-   box in this window means the assistant can act on the thing inside it, and
-   these are the rules it acts under. It is still a surface: the glow marks it
-   when policy_show lands. The icon at its left is the ask rule's, from the
-   Policy card, so the line reads as a rule. */
-.strip {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--s-3);
-  padding: var(--s-3) 0;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  font-size: var(--fs-14);
-  font-weight: 500;
-  line-height: 1.5;
-  color: var(--text-2);
-}
-
-.strip-glyph {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  margin-top: 1px;
-  color: var(--text-3);
-  display: grid;
-  place-items: center;
-}
-
-.strip-glyph .icon { width: 20px; height: 20px; }
-
-.strip-text { min-width: 0; }
-
-/* ---------- what you hold ---------- */
-
-/* The list under the card head, every row of it: the dust under a dollar is
-   counted in the note below rather than listed. The list carries the 16 px
-   under its last row; the note, when there is one, sits in that space and
-   carries its own 16 under itself. */
-.hold-list {
-  padding: 0 var(--card-x) var(--s-4);
-}
-
-.hold-note {
-  padding: 0 var(--card-x) var(--s-4);
-  color: var(--text-3);
-}
-
-/* Basic's rows are 52 tall: the logo, the plain name, and at the right the
-   value over the amount, no slack in either, because the list is read as one
-   column of numbers rather than as ten cards. */
-.hold-list .row {
-  position: relative;
-  isolation: isolate;
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  min-height: 52px;
-  padding: var(--s-2) 0;
-  border-top: 1px solid var(--line);
-  min-width: 0;
-}
-
-.hold-list .row:first-child { border-top: 0; }
-
-/* The mark's box, a flex box so the logo inside stays one too and the
-   fallback disc keeps its initial centred. */
-.row-mark {
-  display: flex;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-}
-
-.row-mark > * {
-  width: 24px;
-  height: 24px;
-}
-
-.hold-list .row-main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.row-name {
-  display: block;
-  font-size: var(--fs-14);
-  font-weight: 500;
-  line-height: 1.4;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.hold-list .row-side {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-  text-align: right;
+.bal-total-skel {
+  width: 62%;
+  height: var(--fs-40);
 }
 
-/* The value line: the change sits to the left of the value, in the direction's
-   colour, and is only there while the row is marked changed. */
-.row-value {
-  display: flex;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: var(--s-2);
-}
-
-.row-usd {
-  font-size: var(--fs-15);
-  line-height: 1.3;
-  color: var(--text);
-}
-
-.row-qty {
-  font-size: var(--fs-12);
+.bal-caption {
+  margin: 0;
+  font-size: var(--fs-14);
   line-height: 1.4;
-  color: var(--text-3);
-}
-
-.row-delta {
-  font-size: var(--fs-12);
-  line-height: 1.2;
-  opacity: 0;
-  transition: opacity 600ms var(--ease-out);
-}
-
-.row-delta[data-dir="up"] { color: var(--up); }
-.row-delta[data-dir="down"] { color: var(--down); }
-
-/* The tint a change lands on is a layer under the row's content that fades on
-   opacity, never a background colour that repaints the row: in fast, out
-   slow, once. The row isolates so the layer can sit under its own text
-   without falling behind the card. The shared afterglow on
-   .row[data-changed] is overridden here. */
-.hold-list .row::before {
-  content: "";
-  position: absolute;
-  inset: 0 calc(-1 * var(--s-2));
-  z-index: -1;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--coin, var(--live)) 8%, transparent);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 600ms var(--ease-out);
-}
-
-.hold-list .row[data-changed="true"] {
-  background: transparent;
-  transition: none;
-}
-
-.hold-list .row[data-changed="true"]::before {
-  opacity: 1;
-  transition: opacity 120ms var(--ease-out);
-}
-
-.hold-list .row[data-changed="true"] .row-delta {
-  opacity: 1;
-  transition: opacity 120ms var(--ease-out);
-}
-
-/* An empty card in a 640 column is one sentence, and it does not need a
-   card's worth of air around it to say so. */
-.hold-list .empty {
-  padding: var(--s-5) var(--s-4);
-}
-
-/* ---------- the folds ---------- */
-
-/* A fold is a card shut: one row, the title at the left and one line of
-   summary at the right with the chevron after it, and the chevron says it
-   opens. The row is a size down from an open card's head (15 over 18): what
-   is shut is secondary to what is open, and a row that reads as a heading
-   with nothing under it reads as a broken card.
-
-   THE WHOLE CARD IS THE CONTROL WHILE IT IS SHUT. The head used to take a
-   wash of its own under the pointer, inset by the card's padding, which drew
-   a lit box inside the card's box (Karim, 2026-09-16: "this looks like shit,
-   i hate these components"). Now the shut card lights the way every panel
-   that opens does (components.css .opens): its own edge and its own ground,
-   nothing inside it. Open, the head is a row like any other: the title
-   brightens under the pointer and nothing is painted. */
-.fold {
-  /* The card's 24 px inset stays at the sides and goes at the top: the row
-     is the head's own 16 above and below, nothing more. */
-  padding-top: 0;
-  overflow: hidden;
-  transition: border-color var(--dur-press) var(--ease-out),
-              background-color var(--dur-press) var(--ease-out);
-}
-
-/* 16 above and below the row, the card's own inset at the sides, and the
-   title and the summary centred on one line rather than on a baseline: the
-   chevron sits on the line too, and a baseline would drop it. Two classes
-   deep, because pro.css (loaded after this file) sets the shared head's
-   padding and alignment on .card-head alone. */
-.fold > .fold-head {
-  width: 100%;
-  align-items: center;
-  padding: var(--s-4) var(--card-x);
-  border-bottom: 0;
-  background: transparent;
-  cursor: pointer;
-}
-
-.fold > .fold-head .card-title {
-  font-size: var(--fs-15);
-  line-height: 1.35;
-}
-
-/* The summary: Sora 13 in the second tone, with any number in it in the
-   mono face (basic.js builds the Activity line from spans). */
-.fold > .fold-head .card-meta {
-  font-size: var(--fs-13);
-  line-height: 1.35;
   color: var(--text-2);
 }
 
-.fold-head-right {
+/* No figure to caption: the words take the figure's place and its weight. */
+.bal-caption[data-alone="true"] {
+  font-size: var(--fs-16);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+/* ---------- what you hold ---------- */
+
+.bal-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.bal-rows {
+  margin: calc(var(--s-6) + var(--s-1)) 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.bal-rows:empty {
+  border-top: 0;
+}
+
+.bal-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--s-3);
-  min-width: 0;
+  gap: 14px;
+  min-height: 72px;
+  border-bottom: 1px solid var(--line);
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .fold:not([data-open="true"]):hover {
-    border-color: var(--line-strong);
-    background: var(--bg-2);
-  }
-  .fold-head:hover .card-meta { color: var(--text); }
-  .fold-head:hover .fold-mark { color: var(--text-2); }
-}
-
-.fold-head:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: -2px;
-  border-radius: var(--radius-sm);
-}
-
-/* The chevron turns over in 200 ms as the fold opens, on the window's own
-   ease-out, and turns back on the way shut. */
-.fold-mark {
-  width: 16px;
-  height: 16px;
+/* A coin: its own mark in its own colour over a wash of that colour
+   (marks.js). NEAR wears a neutral light so the green stays the app's. */
+.bal-coin {
+  position: relative;
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  color: var(--text-3);
-  transition: transform 200ms var(--ease-out),
-              color var(--dur-press) var(--ease-out);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--coin, var(--text-2));
+  background: color-mix(in srgb, var(--coin, var(--text-3)) 14%, var(--bg-1));
+  border: 1px solid color-mix(in srgb, var(--coin, var(--text-3)) 28%, transparent);
 }
 
-.fold-mark .icon { width: 16px; height: 16px; }
-
-.fold[data-open="true"] .fold-mark {
-  transform: rotate(180deg);
+.bal-coin > svg {
+  width: 21px;
+  height: 21px;
 }
 
-.fold[data-open="true"] > .fold-head {
-  border-bottom: 1px solid var(--line);
-}
-
-/* THE TRACK. The body sits on one grid row that is nothing while the fold
-   is shut and its own height once open, and the row's size is what moves
-   over the 200 ms, so the card grows to fit rather than popping. The clip
-   between them is what lets the row reach nothing: it has no padding of its
-   own to hold the row open, and it hides what the row cannot show yet. Shut,
-   the track is invisible and inert (basic.js sets the attribute), so a
-   person tabbing down the column never lands behind a shut fold. */
-.fold-reveal {
-  display: grid;
-  grid-template-rows: 0fr;
-  visibility: hidden;
-  transition: grid-template-rows 200ms var(--ease-out),
-              visibility 0s linear 200ms;
-}
-
-.fold[data-open="true"] > .fold-reveal {
-  grid-template-rows: 1fr;
-  visibility: visible;
-  transition-delay: 0s, 0s;
-}
-
-.fold-clip {
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* Open, the body breathes: 24 above the first line, 24 under the last. */
-.fold-body {
-  padding: var(--s-5) var(--card-x) var(--s-5);
-}
-
-.fold[data-surface="moneyin"] .fold-body {
-  padding-top: var(--s-4);
-}
-
-/* The Activity fold: the rows sit flush under the head, the filters (once
-   "See all" opens them) above the rows on the card's ground. */
-.fold[data-surface="activity"] .fold-body {
+.bal-who {
+  position: relative;
   display: flex;
   flex-direction: column;
-  padding-top: 0;
+  gap: 7px;
+  min-width: 0;
 }
 
-.fold[data-surface="activity"] .activity-filters {
-  padding: var(--s-3) 0;
-  border-bottom: 1px solid var(--line);
+.bal-sym {
+  font-size: var(--fs-15);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.005em;
+  color: var(--text);
 }
 
-/* ---------- reduced motion ---------- */
+.bal-amt {
+  font-size: var(--fs-13);
+  line-height: 1;
+  color: var(--text-2);
+}
 
-/* The fold opens at once and the chevron simply points the other way. */
+.bal-usd {
+  position: relative;
+  margin-left: auto;
+  font-size: var(--fs-15);
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* A coin nobody can price says so in words, in the quiet tone, never as a
+   figure. */
+.bal-usd[data-unpriced="true"] {
+  font-family: var(--font-ui);
+  font-size: var(--fs-13);
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-3);
+}
+
+/* THE LIGHT. A row whose figure moved lights once, like phosphor: the wash
+   under it arrives in 120 ms and decays over 2.4 s, and its dollars warm
+   toward the mark's green on the same clock. basic.js holds the attribute
+   for the arrival and lets go for the decay. The wash runs to the panel's
+   edges, behind the row's own contents. */
+.bal-row::before {
+  content: "";
+  position: absolute;
+  inset: -1px calc(var(--s-6) * -1);
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--ink) 11%, transparent),
+    color-mix(in srgb, var(--ink) 4%, transparent) 55%,
+    transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-glow-out) var(--ease-out);
+}
+
+.bal-row[data-lit="true"]::before {
+  opacity: 1;
+  transition-duration: var(--dur-glow-in);
+}
+
+.bal-row > .bal-usd,
+.bal-row .bal-amt {
+  transition: color var(--dur-glow-out) var(--ease-out),
+              text-shadow var(--dur-glow-out) var(--ease-out);
+}
+
+.bal-row[data-lit="true"] > .bal-usd:not([data-unpriced]) {
+  color: color-mix(in oklab, var(--text), var(--ink) 30%);
+  text-shadow: 0 0 16px color-mix(in srgb, var(--ink) 40%, transparent);
+  transition-duration: var(--dur-glow-in);
+}
+
+.bal-row[data-lit="true"] .bal-amt {
+  color: var(--text);
+  transition-duration: var(--dur-glow-in);
+}
+
+/* While the first read is out: the shape of three rows, never "nothing". */
+.bal-row-skel .bal-coin-skel {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
+.bal-row-skel .skel.grow {
+  flex: 1 1 auto;
+  height: 14px;
+}
+
+.bal-small {
+  margin: var(--s-4) 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.bal-empty {
+  margin: var(--s-6) 0 0;
+  max-width: 34ch;
+  font-size: var(--fs-14);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+/* Add money: one quiet way in, the icon family's tray and a word. */
+.bal-add {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 36px;
+  margin-top: var(--s-5);
+  padding: 0 14px 0 var(--s-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  font-size: var(--fs-14);
+  font-weight: 500;
+  color: var(--text-2);
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.bal-add > .icon {
+  width: 18px;
+  height: 18px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bal-add:hover {
+    color: var(--text);
+    background: var(--bg-2);
+    border-color: var(--line-strong);
+  }
+}
+
+.bal-add:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+/* ---------- adding money, in place ---------- */
+
+.bal-flow {
+  margin-top: calc(var(--s-6) + var(--s-1));
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+  animation: bal-flow-in var(--dur-enter) var(--ease-out);
+}
+
+@keyframes bal-flow-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+.bal-flow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+
+.bal-flow-title {
+  margin: 0;
+  font-size: var(--fs-16);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--text);
+}
+
+.bal-flow-title:focus {
+  outline: none;
+}
+
+/* ---------- narrower windows ---------- */
+
+/* Under 1100 the panel gives up its reading width before the conversation
+   gives up any: 360 wide, with the room around the figures tightened. */
+@media (max-width: 1099px) {
+  body[data-view="basic"] .stage,
+  body[data-view="basic"] .stage[data-pane-conversation="hidden"] {
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+
+  .bal {
+    padding-inline: var(--s-5);
+  }
+
+  .bal-row::before {
+    inset-inline: calc(var(--s-5) * -1);
+  }
+
+  body[data-view="basic"] .notice {
+    padding-inline: var(--s-5);
+  }
+}
+
+/* A window too narrow for two columns (a browser, never the app, which opens
+   no narrower than 960): the balances sit above the conversation as a band
+   that scrolls on its own. */
+@media (max-width: 959px) {
+  body[data-view="basic"] .stage,
+  body[data-view="basic"] .stage[data-pane-conversation="hidden"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  body[data-view="basic"] .world {
+    max-height: 40vh;
+    border-left: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  body[data-view="basic"] .conversation {
+    border-top: 0;
+  }
+}
+
+/* Reduced motion: the steps appear without rising, and a row that moved
+   changes its figure without the light (dom.js already skips the roll). */
 @media (prefers-reduced-motion: reduce) {
-  .fold-reveal,
-  .fold-mark { transition: none; }
+  .bal-flow { animation: none; }
+
+  .bal-row::before { display: none; }
+
+  .bal-row[data-lit="true"] > .bal-usd:not([data-unpriced]) {
+    color: var(--text);
+    text-shadow: none;
+  }
+
+  .bal-row[data-lit="true"] .bal-amt {
+    color: var(--text-2);
+  }
 }

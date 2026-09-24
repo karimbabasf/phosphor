@@ -1,15 +1,12 @@
-/* Basic: one 640 px column, for a person who has never held a wallet.
+/* Basic: the balances panel beside the conversation.
 
-   The one job is to answer "is my money OK" and get one safe yes or no out of
-   them. No prices, no donut, no chains, no hex, no percentages under an hour.
+   One job: say where the money is, calmly, and let a person add more. The total
+   in the mono face, what that figure is in words under it, one row per coin,
+   and one way to add money. Every sentence arrives from the server
+   (src/view/basic.ts); this file places them and moves the numbers.
 
-   The eye lands on the total first, the rules second, what is held third: the
-   hero is unboxed, the total is the largest quiet thing on the page and the one
-   sentence under it says what is happening to the money right now. Under it the
-   rules strip, which is the safety model in one line and the surface
-   policy_show lands on. Everything below the strip is a surface, because a
-   bordered box is the mark of something the assistant can touch, and static
-   text is not given one. */
+   A row whose figure moved rolls to the new one and lights once, the way
+   phosphor does: the light arrives fast and decays slow. */
 (function () {
   'use strict';
 
@@ -17,35 +14,20 @@
   var store = window.PhosphorState;
   var marks = window.PhosphorMarks;
 
-  /* How long a row that just moved keeps its tint and its delta: long enough to
-     be seen by someone who was reading the number above, short enough that
-     three ticks in a row do not leave the list lit. */
-  var CHANGED_MS = 1200;
+  /* How long a row's light takes to arrive (--dur-glow-in in tokens.css).
+     Taking the attribute away hands the row to the stylesheet's slow decay
+     (--dur-glow-out). */
+  var GLOW_IN_MS = 120;
 
-  /* How many receipts the Activity fold shows before "See all". */
-  var FOLD_ROWS = 5;
+  /* NEAR's own mark is the app's green, and green in this window means the
+     mark, the live move and Approve. Its row wears a neutral light instead. */
+  var NEUTRAL = '#D5D8DD';
+  var NEUTRAL_COINS = { NEAR: true, WNEAR: true };
 
   var refs = {};
   var mounted = false;
-
-  /* The first total the window saw this session. The frame carries no day
-     change, so the one honest comparison is against the moment the person
-     opened the window. */
-  var firstTotal = null;
-
-  /* One icon from the window's set (ui/design/icons.js). */
-  function icon(name, className) {
-    return window.PhosphorIcons.svg(name, className);
-  }
-
-  /* A token mark at a size (ui/design/marks.js). */
-  function logo(symbol, size) {
-    return marks.logo(symbol, size);
-  }
-
-  function colourOf(symbol) {
-    return marks.colour(symbol);
-  }
+  var filled = false;
+  var steps = null;
 
   function boot() {
     var host = document.getElementById('view-basic');
@@ -53,466 +35,180 @@
     build(host);
     mounted = true;
     store.subscribe(render);
-    /* The hero sentence is the assistant's state as much as the money's, and the
-       phase moves on driver frames the store never sees. */
-    window.addEventListener('phosphor:agent-phase', renderState);
   }
 
   function build(host) {
-    var col = dom.el('div', 'basic-col');
+    var panel = dom.el('section', 'bal');
+    panel.dataset.surface = 'holdings';
+    panel.setAttribute('aria-label', 'Your balance');
 
-    /* The hero has no field and no box of its own. A second canvas at a second
-       cell size drew a rectangle you could see the edges of, and a border here
-       would say the assistant can act on a number. The one page field runs
-       behind the column and the total is the largest quiet thing on it. */
-    var hero = dom.el('section', 'hero');
-    var total = dom.el('p', 'balance mono tick');
-    total.dataset.role = 'total';
-    /* The change since the window opened, in the direction's colour, and only
-       while there is one: a zero is nothing to say, and a number the frame
-       does not carry is never invented. */
-    var delta = dom.el('p', 'hero-delta mono tick');
-    delta.dataset.role = 'delta';
-    delta.hidden = true;
-    var line = dom.el('p', 'hero-line');
-    line.dataset.role = 'state';
-    hero.appendChild(total);
-    hero.appendChild(delta);
-    hero.appendChild(line);
-    col.appendChild(hero);
+    var head = dom.el('div', 'bal-head');
+    var total = dom.el('p', 'bal-total mono tick');
+    var totalSkel = dom.el('span', 'skel bal-total-skel');
+    var caption = dom.el('p', 'bal-caption');
+    head.appendChild(total);
+    head.appendChild(totalSkel);
+    head.appendChild(caption);
+    panel.appendChild(head);
 
-    /* What the money is made of: one segment per coin by share, each in the
-       coin's own colour. It is the one coloured thing on the page and it is
-       information, so it carries no label and no box. */
-    var alloc = dom.el('div', 'alloc');
-    alloc.setAttribute('aria-hidden', 'true');
-    alloc.hidden = true;
-    col.appendChild(alloc);
+    var list = dom.el('div', 'bal-list');
+    var rows = dom.el('ul', 'bal-rows');
+    rows.setAttribute('aria-label', 'What you hold');
+    for (var i = 0; i < 3; i += 1) rows.appendChild(skeletonRow());
+    var small = dom.el('p', 'bal-small');
+    small.hidden = true;
+    var empty = dom.el('p', 'bal-empty');
+    empty.hidden = true;
+    var add = dom.el('button', 'bal-add');
+    add.type = 'button';
+    add.appendChild(window.PhosphorIcons.svg('deposit'));
+    add.appendChild(dom.el('span', '', 'Add money'));
+    list.appendChild(rows);
+    list.appendChild(small);
+    list.appendChild(empty);
+    list.appendChild(add);
+    panel.appendChild(list);
 
-    var warning = dom.el('div', 'banner');
-    warning.dataset.tone = 'warn';
-    warning.setAttribute('role', 'alert');
-    warning.hidden = true;
-    var warnText = dom.el('span');
-    warnText.dataset.role = 'warning';
-    warning.appendChild(warnText);
-    col.appendChild(warning);
+    /* The deposit steps (ui/screens/moneyin.js) run here, in the panel, rather
+       than in a dialog over the window: nothing covers the conversation, and
+       the total stays in view to watch the money land. */
+    var flow = dom.el('div', 'bal-flow');
+    flow.hidden = true;
+    var flowHead = dom.el('div', 'bal-flow-head');
+    var title = dom.el('h2', 'bal-flow-title', 'Add money');
+    title.setAttribute('tabindex', '-1');
+    var done = dom.el('button', 'btn btn-quiet btn-sm bal-done');
+    done.type = 'button';
+    done.appendChild(dom.el('span', 'btn-label', 'Done'));
+    flowHead.appendChild(title);
+    flowHead.appendChild(done);
+    var flowBody = dom.el('div', 'bal-flow-body');
+    flow.appendChild(flowHead);
+    flow.appendChild(flowBody);
+    panel.appendChild(flow);
 
-    /* Your rules, one strip. It teaches the safety model in a sentence and it is
-       where policy_show lands, so it is a surface without being a box. The
-       icon at its left is the one Pro's Policy card gives the ask rule, so
-       the sentence reads as a rule rather than a stray line of text. */
-    var strip = dom.el('p', 'strip');
-    strip.dataset.surface = 'rules';
-    var glyph = dom.el('span', 'strip-glyph');
-    glyph.appendChild(icon('waiting'));
-    strip.appendChild(glyph);
-    var stripText = dom.el('span', 'strip-text');
-    strip.appendChild(stripText);
-    col.appendChild(strip);
-
-    var hold = card('What you hold', 'holdings');
-    var holdBody = dom.el('div', 'hold-list');
-    hold.node.appendChild(holdBody);
-    var smallNote = dom.el('p', 'meta hold-note');
-    smallNote.hidden = true;
-    hold.node.appendChild(smallNote);
-    col.appendChild(hold.node);
-
-    var moneyIn = fold('Money in', 'Where to send money', 'moneyin');
-    col.appendChild(moneyIn.node);
-
-    var activity = fold('Activity', 'Last 24 hours', 'activity');
-    col.appendChild(activity.node);
-
-    host.appendChild(col);
-
-    /* The five newest receipts of the last day, and "See all" for the rest with
-       the same chips Pro has. The list reads only once the fold opens: a window
-       that never looks at Activity does not read receipts. */
-    var activityList = window.PhosphorReceipts.list(activity.body, {
-      compact: true,
-      chips: false,
-      limit: FOLD_ROWS,
-      window: '24h',
-      kind: 'all',
-      source: 'activity',
-      onMeta: function (meta) { setMeta(activity.meta, activityMeta(meta)); }
-    });
+    host.appendChild(panel);
 
     refs = {
       total: total,
-      delta: delta,
-      state: line,
-      alloc: alloc,
-      warning: warning,
-      warnText: warnText,
-      strip: strip,
-      stripText: stripText,
-      hold: hold,
-      holdBody: holdBody,
-      smallNote: smallNote,
-      moneyIn: moneyIn,
-      activity: activity,
-      activityList: activityList
+      totalSkel: totalSkel,
+      caption: caption,
+      list: list,
+      rows: rows,
+      small: small,
+      empty: empty,
+      add: add,
+      flow: flow,
+      title: title,
+      flowBody: flowBody
     };
 
-    moneyIn.onOpen(function () {
-      window.PhosphorMoneyIn.render(moneyIn.body);
-    });
-    var read = false;
-    activity.onOpen(function () {
-      if (read) return;
-      read = true;
-      activityList.load();
-    });
+    dom.on(add, 'click', openSteps);
+    dom.on(done, 'click', closeSteps);
   }
 
-  /* A CARD IS A TITLE, ONE LINE OF META, A HAIRLINE, AND ITS CONTENT: the
-     same head Pro's cards wear, so the two screens are one window read at two
-     distances. */
-  function card(title, surface) {
-    var node = dom.el('section', 'panel card');
-    node.dataset.surface = surface;
-    var head = dom.el('div', 'card-head');
-    head.appendChild(dom.el('h2', 'card-title', title));
-    var meta = dom.el('p', 'card-meta');
-    meta.hidden = true;
-    head.appendChild(meta);
-    node.appendChild(head);
-    return { node: node, head: head, meta: meta };
+  function skeletonRow() {
+    var row = dom.el('li', 'bal-row bal-row-skel');
+    row.setAttribute('aria-hidden', 'true');
+    row.appendChild(dom.el('span', 'skel bal-coin-skel'));
+    row.appendChild(dom.el('span', 'skel grow'));
+    return row;
   }
 
-  /* A fold is the same card shut: the head is the control, the meta says what
-     is behind it, and the chevron says it opens. The body sits on a track
-     (basic.css .fold-reveal) that the open state grows from nothing over 200
-     ms, and the track is inert while shut, so nothing behind a shut fold can
-     take focus or be read. */
-  function fold(title, note, surface) {
-    var node = dom.el('section', 'fold card');
-    node.dataset.surface = surface;
-    var head = dom.el('button', 'fold-head card-head');
-    head.type = 'button';
-    head.setAttribute('aria-expanded', 'false');
-    head.appendChild(dom.el('span', 'card-title', title));
-    var right = dom.el('span', 'fold-head-right');
-    var meta = dom.el('span', 'card-meta', note);
-    right.appendChild(meta);
-    var mark = dom.el('span', 'fold-mark');
-    mark.setAttribute('aria-hidden', 'true');
-    mark.appendChild(icon('chevron-down'));
-    right.appendChild(mark);
-    head.appendChild(right);
-    var reveal = dom.el('div', 'fold-reveal');
-    reveal.setAttribute('inert', '');
-    var clip = dom.el('div', 'fold-clip');
-    var body = dom.el('div', 'fold-body');
-    clip.appendChild(body);
-    reveal.appendChild(clip);
-    node.appendChild(head);
-    node.appendChild(reveal);
+  /* ---------- adding money ---------- */
 
-    var opened = [];
-    dom.on(head, 'click', function () {
-      var open = node.dataset.open === 'true';
-      if (open) {
-        delete node.dataset.open;
-        reveal.setAttribute('inert', '');
-        head.setAttribute('aria-expanded', 'false');
-        return;
-      }
-      node.dataset.open = 'true';
-      reveal.removeAttribute('inert');
-      head.setAttribute('aria-expanded', 'true');
-      for (var i = 0; i < opened.length; i += 1) opened[i]();
-    });
+  function openSteps() {
+    if (steps) return;
+    if (window.PhosphorLazy) window.PhosphorLazy.load('qr');
+    dom.setHidden(refs.list, true);
+    dom.setHidden(refs.flow, false);
+    steps = window.PhosphorMoneyIn.render(refs.flowBody, { context: 'basic' }) || {};
+    if (refs.title.focus) refs.title.focus();
+  }
 
-    return {
-      node: node,
-      body: body,
-      meta: meta,
-      onOpen: function (fn) { opened.push(fn); }
-    };
+  function closeSteps() {
+    if (steps && typeof steps.destroy === 'function') steps.destroy();
+    steps = null;
+    dom.clear(refs.flowBody);
+    dom.setHidden(refs.flow, true);
+    dom.setHidden(refs.list, false);
+    if (refs.add.focus) refs.add.focus();
   }
 
   /* ---------- render ---------- */
 
   function render() {
-    if (!mounted) return;
-    var state = store.get() || {};
-    var basic = state.basic || {};
+    if (!mounted || !store.loaded()) return;
+    var basic = (store.get() || {}).basic || {};
 
+    if (refs.totalSkel.parentNode) refs.totalSkel.parentNode.removeChild(refs.totalSkel);
     dom.setNumber(refs.total, basic.totalLine || '');
-    renderDelta(basic);
-    renderState();
-    renderRules(state);
+    dom.setHidden(refs.total, !basic.totalLine);
+    dom.setText(refs.caption, basic.caption || '');
+    dom.setAttr(refs.caption, 'data-alone', basic.totalLine ? null : 'true');
 
-    dom.setText(refs.warnText, basic.warning || '');
-    dom.setHidden(refs.warning, !basic.warning);
+    var holdings = Array.isArray(basic.holdings) ? basic.holdings : [];
+    dom.reconcile(refs.rows, holdings, keyOf, createRow, fillRow);
+    filled = true;
 
-    renderHoldings(basic, state);
+    dom.setText(refs.small, basic.smallLine || '');
+    dom.setHidden(refs.small, !basic.smallLine);
+    dom.setText(refs.empty, basic.emptyLine || '');
+    dom.setHidden(refs.empty, !basic.emptyLine);
   }
 
-  /* The change since the window opened. A total the frame could not settle
-     (still checking, or checking after a write) is null, and null is not a
-     number to compare, so the line waits rather than guessing; the first real
-     total after the window opened is the mark everything after is measured
-     from. Under half a cent either way, there is nothing to say. */
-  function renderDelta(basic) {
-    var total = typeof basic.totalUsd === 'number' && isFinite(basic.totalUsd) ? basic.totalUsd : null;
-    if (total !== null && firstTotal === null) firstTotal = total;
-    var change = total === null || firstTotal === null ? 0 : total - firstTotal;
-    if (Math.abs(change) < 0.005) {
-      dom.setHidden(refs.delta, true);
-      return;
-    }
-    var up = change > 0;
-    dom.setAttr(refs.delta, 'data-dir', up ? 'up' : 'down');
-    dom.setNumber(refs.delta, (up ? '+' : '-') + dom.usd(Math.abs(change), 2) + ' since you opened');
-    dom.setHidden(refs.delta, false);
+  function keyOf(holding) {
+    return holding.symbol;
   }
 
-  /* Five sentences, one of them true. The order is the window's order: a locked
-     wallet outranks a pending ask, which outranks a number still being checked
-     (the server's checkingLine, under the number and never in its slot), which
-     outranks a working assistant. */
-  function renderState() {
-    if (!mounted) return;
-    var state = store.get() || {};
-    var lock = state.lock || {};
-    var basic = state.basic || {};
-    var word = 'Nothing is connected to it right now.';
-    if (lock.state === 'locked' || lock.state === 'no_wallet' || lock.state === 'needs_migration') {
-      word = 'Locked. Nothing moves.';
-    } else if (pendingCount(state) > 0) {
-      word = 'Waiting for you.';
-    } else if (basic.checkingLine) {
-      word = basic.checkingLine;
-    } else if (window.PhosphorAgent && typeof window.PhosphorAgent.isWorking === 'function'
-      && window.PhosphorAgent.isWorking()) {
-      word = 'Your assistant is reading it.';
-    }
-    dom.setText(refs.state, word);
+  function createRow(holding) {
+    var row = dom.el('li', 'bal-row');
+    var mark = dom.el('span', 'bal-coin');
+    mark.setAttribute('aria-hidden', 'true');
+    marks.paint(mark, holding.symbol);
+    if (NEUTRAL_COINS[String(holding.symbol).toUpperCase()]) mark.style.setProperty('--coin', NEUTRAL);
+    var who = dom.el('span', 'bal-who');
+    who.appendChild(dom.el('span', 'bal-sym'));
+    who.appendChild(dom.el('span', 'bal-amt mono tick'));
+    row.appendChild(mark);
+    row.appendChild(who);
+    row.appendChild(dom.el('span', 'bal-usd mono tick'));
+    /* A coin that arrives after the panel has drawn once is a row that moved:
+       it lights like one. The first fill of all is not a change. */
+    if (filled) row.__shown = '';
+    return row;
   }
 
-  function pendingCount(state) {
-    if (!Array.isArray(state.proposals)) return 0;
-    var count = 0;
-    for (var i = 0; i < state.proposals.length; i += 1) {
-      var p = state.proposals[i];
-      if (p && (p.status === 'pending' || p.status === 'pending_unlock')) count += 1;
-    }
-    return count;
-  }
-
-  /* The three numbers a person has to know, in the order they meet them: the one
-     that stops the assistant and asks, then the two that stop it outright. */
-  function renderRules(state) {
-    var out = (state.policy && state.policy.outbound) || {};
-    var parts = [];
-    if (typeof out.humanClickAboveUsd === 'number') {
-      parts.push('Asks you above ' + dom.usd(out.humanClickAboveUsd, 0) + '.');
-    }
-    if (typeof out.maxPerTransactionUsd === 'number' && typeof out.maxPerSessionUsd === 'number') {
-      parts.push('Refuses above ' + dom.usd(out.maxPerTransactionUsd, 0) + ' at once and '
-        + dom.usd(out.maxPerSessionUsd, 0) + ' a day.');
-    } else if (typeof out.maxPerTransactionUsd === 'number') {
-      parts.push('Refuses above ' + dom.usd(out.maxPerTransactionUsd, 0) + ' at once.');
-    }
-    dom.setText(refs.stripText, parts.length ? parts.join(' ') : 'No limits are set yet.');
-  }
-
-  /* Dust is not an answer to "is my money OK". A row worth under a dollar is
-     counted rather than listed, so the list is the things a person would
-     actually name if you asked them what they had. */
-  function renderHoldings(basic, state) {
-    /* A read that failed and a wallet with nothing in it both arrive here as an
-       empty list, and they are opposite answers to the one question this screen
-       exists for. The banner above already says the read failed; the panel used
-       to sit under it saying the wallet is empty and telling a person to go and
-       send themselves money. */
-    var wallet = (state && state.wallet) || {};
-    var unread = Array.isArray(wallet.stale) && wallet.stale.length > 0;
-    var all = Array.isArray(basic.holdings) ? basic.holdings : [];
-    var holdings = [];
-    var small = 0;
-    for (var h = 0; h < all.length; h += 1) {
-      if (Number(all[h].valueUsd) >= 1) holdings.push(all[h]);
-      else small += 1;
-    }
-    dom.setText(refs.smallNote, small === 0 ? '' : (small === 1
-      ? 'One smaller holding, not listed.'
-      : small + ' smaller holdings, not listed.'));
-    dom.setHidden(refs.smallNote, small === 0);
-
-    renderAlloc(holdings);
-
-    if (!holdings.length && !store.loaded()) {
-      renderHoldSkeleton();
-      return;
-    }
-    if (!holdings.length) {
-      dom.clear(refs.holdBody);
-      delete refs.holdBody.dataset.skeleton;
-      refs.holdBody.__keyed = null;
-      dom.setHidden(refs.hold.meta, true);
-      refs.holdBody.appendChild(unread
-        ? emptyBlock('Could not read what you hold',
-          'This is not a wallet with nothing in it. The app will show what is there as soon as the read works.')
-        : emptyBlock('Nothing here yet',
-          'Open Money in and send something to one of your addresses.'));
-      return;
-    }
-    if (refs.holdBody.dataset.skeleton === 'true') {
-      dom.clear(refs.holdBody);
-      delete refs.holdBody.dataset.skeleton;
-    }
-
-    dom.setText(refs.hold.meta, holdings.length === 1 ? '1 coin' : holdings.length + ' coins');
-    dom.setHidden(refs.hold.meta, false);
-
-    dom.reconcile(refs.holdBody, holdings, function (row) {
-      return row.name;
-    }, function () {
-      var node = dom.el('div', 'row');
-      node.appendChild(dom.el('span', 'row-mark'));
-      var main = dom.el('div', 'row-main');
-      main.appendChild(dom.el('span', 'row-name'));
-      var side = dom.el('div', 'row-side');
-      /* The value line holds the change beside the value, so a number that
-         moved says by how much, in the direction's colour, for a moment. */
-      var value = dom.el('div', 'row-value');
-      value.appendChild(dom.el('span', 'row-delta mono'));
-      value.appendChild(dom.el('span', 'row-usd mono tick'));
-      side.appendChild(value);
-      side.appendChild(dom.el('span', 'row-qty mono'));
-      node.appendChild(main);
-      node.appendChild(side);
-      return node;
-    }, function (node, row) {
-      var mark = node.children[0];
-      var symbol = symbolOf(row.name);
-      if (mark.dataset.symbol !== symbol) {
-        mark.dataset.symbol = symbol;
-        dom.clear(mark);
-        mark.appendChild(logo(symbol, 24));
-        /* The row reads the coin's colour too, for the tint a change lands on. */
-        var colour = colourOf(symbol);
-        if (colour) node.style.setProperty('--coin', colour);
-        else node.style.removeProperty('--coin');
-      }
-      dom.setText(node.children[1].children[0], row.name);
-      dom.setNumber(node.children[2].children[0].children[1], row.valueLine);
-      dom.setText(node.children[2].children[1], row.quantityLine);
-      markChanged(node, row);
-    });
-  }
-
-  /* The bar under the hero. Shares are of what is listed, and one coin makes
-     no shape, so the bar waits for a second one. A coin without a brand
-     colour takes the quiet text colour, which the stylesheet falls back to. */
-  function renderAlloc(holdings) {
-    var total = 0;
-    for (var i = 0; i < holdings.length; i += 1) total += Math.max(0, Number(holdings[i].valueUsd) || 0);
-    var shown = holdings.length >= 2 && total > 0;
-    dom.reconcile(refs.alloc, shown ? holdings : [], function (row) {
-      return row.name;
-    }, function () {
-      return dom.el('span', 'alloc-seg');
-    }, function (seg, row) {
-      var share = Math.max(0, Number(row.valueUsd) || 0) / total;
-      seg.style.flexGrow = String(share);
-      var colour = colourOf(symbolOf(row.name));
-      if (colour) seg.style.setProperty('--coin', colour);
-      else seg.style.removeProperty('--coin');
-      seg.title = row.name + ', ' + dom.pct(share, 0);
-    });
-    dom.setHidden(refs.alloc, !shown);
-  }
-
-  /* This screen is given names rather than tickers, because a person who has
-     never held a wallet reads "US dollars (USDC)" and not "USDC". The mark is
-     drawn off the ticker inside the name, and a name with no ticker in it, like
-     the pooled row, gets the generic coin. */
-  function symbolOf(name) {
-    var text = String(name || '');
-    var found = /\(([A-Za-z0-9]+)\)\s*$/.exec(text);
-    if (found) return found[1];
-    return /^[A-Za-z0-9]{2,6}$/.test(text) ? text : '';
-  }
-
-  /* A row whose number just moved tints in its coin's colour for a moment and
-     says by how much beside the value, so a change that arrived while the
-     person was reading something else is still visible when they look back.
-     The first fill is not a change. */
-  function markChanged(node, row) {
-    var next = row.valueLine === undefined || row.valueLine === null ? '' : String(row.valueLine);
-    var had = node.dataset.shown;
-    var usd = Number(row.valueUsd);
-    var was = node.__usd;
-    node.dataset.shown = next;
-    node.__usd = isFinite(usd) ? usd : undefined;
-    if (had === undefined || had === next) return;
-    var delta = node.children[2].children[0].children[0];
-    var moved = isFinite(usd) && typeof was === 'number' ? usd - was : 0;
-    if (Math.abs(moved) >= 0.005) {
-      dom.setAttr(delta, 'data-dir', moved > 0 ? 'up' : 'down');
-      dom.setText(delta, (moved > 0 ? '+' : '-') + dom.usd(Math.abs(moved), 2));
+  function fillRow(row, holding) {
+    var who = row.children[1];
+    var usd = row.children[2];
+    var priced = holding.valueLine !== null && holding.valueLine !== undefined;
+    dom.setText(who.children[0], holding.symbol);
+    dom.setNumber(who.children[1], holding.quantityLine);
+    if (!priced) {
+      dom.setText(usd, 'price unavailable');
+    } else if (usd.getAttribute('data-unpriced') === 'true') {
+      dom.setText(usd, holding.valueLine);
     } else {
-      dom.setText(delta, '');
+      dom.setNumber(usd, holding.valueLine);
     }
-    node.dataset.changed = 'true';
-    if (node.__changeTimer) window.clearTimeout(node.__changeTimer);
-    node.__changeTimer = window.setTimeout(function () {
-      delete node.dataset.changed;
-      node.__changeTimer = 0;
-    }, CHANGED_MS);
+    dom.setAttr(usd, 'data-unpriced', priced ? null : 'true');
+    row.setAttribute('aria-label', [holding.name || holding.symbol, holding.quantityLine,
+      priced ? holding.valueLine : 'price unavailable'].join(', '));
+    light(row, holding);
   }
 
-  function renderHoldSkeleton() {
-    if (refs.holdBody.dataset.skeleton === 'true') return;
-    refs.holdBody.dataset.skeleton = 'true';
-    dom.clear(refs.holdBody);
-    for (var i = 0; i < 3; i += 1) {
-      var row = dom.el('div', 'row');
-      var left = dom.el('div', 'skel grow');
-      left.style.height = '16px';
-      var right = dom.el('div', 'skel');
-      right.style.height = '16px';
-      right.style.width = '84px';
-      row.appendChild(left);
-      row.appendChild(right);
-      refs.holdBody.appendChild(row);
-    }
-  }
-
-  /* The fold's one line of meta: the window, then what it cost, the way the
-     Pro card says it. Before the fold has read anything it names the window.
-     The parts are strings for words and { mono } for the one number, so the
-     fee lands in the mono face (type.css: numbers are Geist Mono) while the
-     words stay in Sora. */
-  function activityMeta(meta) {
-    var words = meta.words.charAt(0).toUpperCase() + meta.words.slice(1);
-    if (meta.state === 'error') return [words + ', unread'];
-    if (meta.state === 'loading' && !meta.count) return [words];
-    if (!meta.total) return [words + ', nothing yet'];
-    if (!(meta.feesUsd > 0)) return [words + ', no fees'];
-    return [words + ', ', { mono: dom.fee(meta.feesUsd) }, ' in fees'];
-  }
-
-  function setMeta(node, parts) {
-    dom.clear(node);
-    for (var i = 0; i < parts.length; i += 1) {
-      var part = parts[i];
-      node.appendChild(typeof part === 'string' ? dom.el('span', '', part) : dom.el('span', 'mono', part.mono));
-    }
-  }
-
-  function emptyBlock(title, note) {
-    var empty = dom.el('div', 'empty');
-    empty.appendChild(dom.el('p', 'empty-title', title));
-    empty.appendChild(dom.el('p', '', note));
-    return empty;
+  function light(row, holding) {
+    var shown = holding.quantityLine + '|' + (holding.valueLine || '');
+    var had = row.__shown;
+    row.__shown = shown;
+    if (had === undefined || had === shown) return;
+    row.dataset.lit = 'true';
+    if (row.__litTimer) window.clearTimeout(row.__litTimer);
+    row.__litTimer = window.setTimeout(function () {
+      delete row.dataset.lit;
+      row.__litTimer = 0;
+    }, GLOW_IN_MS);
   }
 
   window.PhosphorBasic = { boot: boot };

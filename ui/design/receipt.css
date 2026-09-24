@@ -402,7 +402,7 @@ button.tx:focus-visible {
   height: 14px;
 }
 
-/* The sentence: Sora 14/500, two lines at most. */
+/* The sentence: Geist 14/500, two lines at most. */
 .receipt-row > .tx-title {
   font-weight: 500;
 }

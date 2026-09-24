@@ -150,24 +150,32 @@
     }
     if (agent) {
       root.setProperty('--agent', css(agent));
-      root.setProperty('--agent-wash', alpha(agent, 0.13));
       root.setProperty('--agent-edge', alpha(agent, 0.28));
     }
 
-    /* A canvas cannot read a custom property, so the chart and the pattern are
-       told directly. Both are optional: the window paints correctly without
-       either of them mounted. */
+    canvas = {
+      bg: css(ground),
+      panel: css(mix(ground, lift, 0.035)),
+      line: css(mix(ground, lift, 0.11)),
+      text: readToken('--text', '#ECEEF1'),
+      accent: css(accent),
+      up: up ? css(up) : null,
+      down: down ? css(down) : null
+    };
+    repaint();
+  }
+
+  /* A canvas cannot read a custom property, so the chart and the pattern are
+     told directly. All of them are optional: the window paints correctly
+     without any of them mounted, and the chart, which loads only when Trade
+     first opens (ui/core/lazy.js), is told again once it is there. */
+  var canvas = null;
+
+  function repaint() {
+    if (!canvas) return;
     if (typeof window.chartTheme === 'function') {
       try {
-        window.chartTheme({
-          bg: css(ground),
-          panel: css(mix(ground, lift, 0.035)),
-          line: css(mix(ground, lift, 0.11)),
-          text: readToken('--text', '#ECEEF1'),
-          accent: css(accent),
-          up: up ? css(up) : null,
-          down: down ? css(down) : null
-        });
+        window.chartTheme(canvas);
       } catch (err) {
         console.error('[theme] chart', err);
       }
@@ -188,5 +196,5 @@
     }
   }
 
-  window.PhosphorTheme = { apply: apply };
+  window.PhosphorTheme = { apply: apply, repaint: repaint };
 })();

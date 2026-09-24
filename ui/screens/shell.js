@@ -1,10 +1,11 @@
 /* Phosphor shell: the top bar, the stage, and the one place the app decides
    what the window is showing.
 
-   One document, one stream, one stage. The conversation column is mounted
-   once here and stays on screen in every mode; the world beside it swaps
-   views with a crossfade rather than a navigation, so switching modes never
-   reloads and never flashes. */
+   One document, one stream, one stage. The conversation is mounted once here
+   and stays on screen in every mode; the world beside it swaps views with a
+   crossfade rather than a navigation, so switching modes never reloads and
+   never flashes. On Basic the conversation takes the window and the world is
+   the balances panel on the right. */
 (function () {
   'use strict';
 
@@ -16,8 +17,20 @@
 
   var VIEWS = ['basic', 'pro', 'trade', 'vault'];
 
+  /* The switch has three words and the window four views: Trade is part of
+     Pro, reached from Pro's trading card or by a chart the assistant opens,
+     and while it is up the switch says Pro. */
+  var TAB_OF = { basic: 'basic', pro: 'pro', trade: 'pro', vault: 'vault' };
+
+  /* A view that needs a script the window did not fetch at boot asks for it
+     here, the first time it opens (ui/core/lazy.js). The agent picker on the
+     Vault tab lives in the first run's script. */
+  var NEEDS = { trade: 'trade', vault: 'firstrun' };
+
   var refs = {};
   var currentView = 'basic';
+  var connection = 'live';
+  var offlineText = '';
 
   function boot() {
     refs.page = document.getElementById('page');
@@ -28,28 +41,25 @@
     refs.views = document.getElementById('views');
     refs.tabs = Array.prototype.slice.call(document.querySelectorAll('[data-tab]'));
     refs.tabsIndicator = document.getElementById('tabs-indicator');
-    refs.lockChip = document.getElementById('chip-lock');
-    refs.waitingChip = document.getElementById('chip-waiting');
-    refs.backupChip = document.getElementById('chip-backup');
-    refs.feedChip = document.getElementById('chip-feed');
-    refs.freeze = document.getElementById('btn-freeze');
+    refs.brake = document.getElementById('btn-freeze');
+    refs.brakePanel = document.getElementById('brake-panel');
     refs.layoutButton = document.getElementById('btn-layout');
     refs.layoutPop = document.getElementById('bar-layout');
     refs.layoutRows = document.getElementById('bar-layout-rows');
-    refs.offline = document.getElementById('offline-bar');
+    refs.notice = document.getElementById('notice');
 
     mountConversation();
     wireTabs();
-    wireFreeze();
+    wireBrake();
     wireLayout();
     wireRestore();
-    wireBackupChip();
+    wireNotice();
     wireStream();
 
     window.PhosphorShell.setView(readInitialView(), { silent: true });
     refresh({ first: true });
     if (typeof window.splitBoot === 'function') window.splitBoot();
-    bootSweep();
+    endBoot();
   }
 
   /* ?view= pins the window to one mode and the server's own value is ignored.
@@ -73,35 +83,19 @@
 
   /* ---------- the one page-load moment ---------- */
 
-  /* A single light sweeps the topbar's hairline. Once, after first paint, never
-     again in the session, and not under reduced motion. */
-  function bootSweep() {
-    if (!refs.topbar || window.PhosphorMotion.reduced()) return;
-    window.requestAnimationFrame(function () {
-      dom.setAttr(refs.topbar, 'data-boot', 'true');
-      window.setTimeout(function () {
-        dom.setAttr(refs.topbar, 'data-boot', null);
-      }, 700);
-    });
+  /* The mark traces on as the page opens (ui/design/mark.css, keyed on
+     html[data-boot], which the document is served with). It is taken away
+     once the trace has run, so nothing replays it for the rest of the
+     session; with motion reduced there is nothing to wait for. */
+  function endBoot() {
+    var root = document.documentElement;
+    if (!root || !root.hasAttribute('data-boot')) return;
+    window.setTimeout(function () {
+      root.removeAttribute('data-boot');
+    }, window.PhosphorMotion.reduced() ? 0 : 900);
   }
 
-  /* The afterglow field that used to sit behind the conversation column is gone
-     (2026-09-15: the panel is flat, and the mark alone carries the live state).
-     Callers in decision.js and agent.js still poke this on every state change,
-     so it stays as the one place a column-wide pulse would be decided. */
-  function updateField() {}
-
-  /* The same filter ui/screens/decision.js draws from. awaiting_touch counts: the
-     click landed but the Touch ID dialog has not answered, so the person still
-     owes the window something. */
-  function pendingOf(state) {
-    if (!Array.isArray(state.proposals)) return [];
-    return state.proposals.filter(function (p) {
-      return p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch');
-    });
-  }
-
-  /* ---------- the conversation column ---------- */
+  /* ---------- the conversation ---------- */
 
   /* Mounted once, here, and never inside a view: it is the constant. */
   function mountConversation() {
@@ -115,13 +109,10 @@
 
   /* A tablist is ONE tab stop, and on this app that is a safety property rather than an
      accessibility nicety. ux/flow.md budgets the brake at two tab stops from a cold load,
-     because the primary control on a trading surface is the thing that stops it. Three
-     separately tabbable mode buttons pushed "Freeze everything" to the fourth stop.
+     because the primary control on a trading surface is the thing that stops it.
 
      So: roving tabindex. Only the selected tab is in the tab order, and the arrows move
-     between them, which is what the ARIA tabs pattern asks for anyway. Without the arrow
-     half, tabindex -1 would make the other two modes unreachable from a keyboard, which
-     would be a worse bug than the one being fixed. */
+     between them, which is what the ARIA tabs pattern asks for anyway. */
   function focusTab(index) {
     var count = refs.tabs.length;
     if (count === 0) return;
@@ -147,6 +138,7 @@
       });
     }
     window.addEventListener('resize', dom.debounce(placeIndicator, 100));
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(placeIndicator);
   }
 
   /* The segmented control's indicator slides to the selected word. Measured
@@ -168,23 +160,20 @@
     var changed = name !== currentView;
     currentView = name;
 
+    if (NEEDS[name] && window.PhosphorLazy) window.PhosphorLazy.load(NEEDS[name]);
+
     for (var i = 0; i < VIEWS.length; i += 1) {
       var node = document.getElementById('view-' + VIEWS[i]);
       if (node) dom.setAttr(node, 'data-active', VIEWS[i] === name ? 'true' : null);
     }
     for (var j = 0; j < refs.tabs.length; j += 1) {
       var tab = refs.tabs[j];
-      var selected = tab.dataset.tab === name;
+      var selected = tab.dataset.tab === TAB_OF[name];
       dom.setAttr(tab, 'aria-selected', selected ? 'true' : 'false');
       // The roving half of the tabs pattern. See wireTabs for why this is a brake question.
       tab.tabIndex = selected ? 0 : -1;
     }
     dom.setAttr(document.body, 'data-view', name);
-    /* The stream chip is a different fact from the chart's feed line, and the
-       trade screen already carries the feed line in its bar. Two live words in
-       one eyeline read as one fact said twice, so the chip stays for the other
-       screens and steps off this one. */
-    dom.setHidden(refs.feedChip, name === 'trade');
     placeIndicator();
     renderLayout();
 
@@ -224,29 +213,19 @@
   /* ---------- the stream ---------- */
 
   function wireStream() {
-    events.onConnection(function (connection) {
-      var offline = connection === 'offline' || connection === 'reconnecting' || connection === 'stale';
-      dom.setHidden(refs.offline, !offline);
-      if (offline) startHealthPoll(connection);
+    events.onConnection(function (next) {
+      connection = next;
+      var down = next === 'offline' || next === 'reconnecting' || next === 'stale';
+      if (down) startHealthPoll(next);
       else stopHealthPoll();
-      /* Three words for the stream, each with its own dot: live, delayed
-         (connecting, reconnecting, or a stream that has gone quiet and is
-         being replaced), and offline, which is the app not answering at all.
-         The bar under this one carries the sentence; this is the glance. */
-      if (refs.feedChip) {
-        var tone = connection === 'live' ? 'up' : (connection === 'offline' ? 'off' : 'warn');
-        dom.setAttr(refs.feedChip, 'data-tone', tone);
-        dom.setText(refs.feedChip.querySelector('[data-role="feed-text"]'),
-          tone === 'up' ? 'Live' : (tone === 'off' ? 'Offline' : 'Delayed'));
-      }
+      renderNotice();
     });
 
     events.on('state', function () { refresh({}); });
     events.on('reattach', function () { refresh({}); });
     /* One proposal moved. The object rides in /api/state, never on the frame
        (src/http/sse.ts), so the frame is only the push and this is the read it
-       asks for. Nothing listened for it before, so a card counting a stage out
-       waited on the debounced state frame behind it. */
+       asks for. */
     events.on('proposal', function () { refresh({}); });
     events.on('lock', function (frame) {
       var state = store.get() || {};
@@ -269,18 +248,22 @@
     events.start();
   }
 
+  function isDown() {
+    return connection === 'offline' || connection === 'reconnecting' || connection === 'stale';
+  }
+
   /* The health poll. It runs ONLY while the stream is down: a window with a live
      stream is already being told everything, and a poll beside it would be a
      second, slower answer to a question already settled. Ten seconds is slow
      enough to be free and fast enough that a person who restarts the backend
-     sees the banner clear before they reach for the reload.
+     sees the line clear before they reach for the reload.
 
      What it buys is the difference between "the app is not answering" and "the
      app is answering and something in it is broken", which is `lastError`. */
   var healthTimer = 0;
 
-  function startHealthPoll(connection) {
-    sayOffline(connection, null);
+  function startHealthPoll(next) {
+    sayOffline(next, null);
     if (healthTimer) return;
     healthTimer = window.setInterval(pollHealth, 10000);
     pollHealth();
@@ -303,13 +286,12 @@
       });
   }
 
-  function sayOffline(connection, lastError) {
-    if (!refs.offline) return;
-    var text = connection === 'reconnecting'
+  function sayOffline(next, lastError) {
+    offlineText = next === 'reconnecting'
       ? 'Reconnecting to the app.'
-      : 'The app stopped answering. What you see here is the last thing it said.';
-    if (lastError) text += ' It last reported: ' + lastError;
-    dom.setText(refs.offline.querySelector('[data-role="offline-text"]'), text);
+      : 'The app stopped answering. What you see is the last thing it said.';
+    if (lastError) offlineText += ' It last reported: ' + lastError;
+    renderNotice();
   }
 
   function refresh(options) {
@@ -324,107 +306,179 @@
       });
   }
 
-  /* ---------- the status cluster ---------- */
+  /* ---------- the notice ----------
 
-  function renderStatus() {
-    var state = store.get() || {};
-    var lock = state.lock || { state: 'unlocked', idleLocksInSec: null };
-
-    /* A word with a short form for a narrow bar carries it as data-short
-       (layout.css swaps the two under 1420 wide); the words that do not
-       shorten carry none. */
-    if (refs.lockChip) {
-      var locked = lock.state !== 'unlocked';
-      var word = 'Unlocked';
-      var short = null;
-      if (lock.state === 'locked') word = 'Locked';
-      else if (lock.state === 'no_wallet') word = 'No wallet';
-      else if (lock.state === 'needs_migration') { word = 'Keys not encrypted'; short = 'Not encrypted'; }
-      else if (typeof lock.idleLocksInSec === 'number' && lock.idleLocksInSec > 0) {
-        var minutes = Math.max(1, Math.round(lock.idleLocksInSec / 60));
-        word = 'Locks in ' + minutes + ' min';
-        short = minutes + ' min';
-      }
-      dom.setText(refs.lockChip.querySelector('[data-role="lock-text"]'), word);
-      dom.setAttr(refs.lockChip, 'data-short', short);
-      dom.setAttr(refs.lockChip, 'data-tone', locked ? 'warn' : null);
+     One line, and only while something needs the person, most urgent first:
+     the app is not answering, nothing can move (a freeze, or rules that cannot
+     be read), or a wallet exists that has not been proven backed up, which is
+     one bad disk away from gone. Words and a way through; no dot, no colour. */
+  function noticeOf(state) {
+    if (isDown()) return { icon: 'link-off', text: offlineText };
+    var basic = state.basic || {};
+    if (basic.warning) {
+      if (frozenIn(state)) return { icon: 'freeze', text: basic.warning, act: 'Unfreeze', run: openBrake };
+      return { icon: 'warning', text: basic.warning };
     }
-
-    if (refs.waitingChip) {
-      var pending = pendingOf(state);
-      dom.setHidden(refs.waitingChip, pending.length === 0);
-      dom.setText(refs.waitingChip.querySelector('[data-role="waiting-text"]'),
-        pending.length === 1 ? '1 waiting' : pending.length + ' waiting');
+    var vault = state.vault || {};
+    if (vault.custody && vault.backedUp === false) {
+      return { icon: 'lock', text: 'Your recovery phrase is not backed up yet.', act: 'Back it up', run: openBackup };
     }
-
-    if (refs.freeze) {
-      var frozen = !!(state.policy && state.policy.killSwitch);
-      dom.setText(refs.freeze.querySelector('.btn-label'),
-        frozen ? 'Everything is frozen' : 'Freeze everything');
-      /* Both faces move with the state: the word on the button and the word it
-         waits under are the same fact, read in two tenses. */
-      dom.setAttr(refs.freeze, 'data-pending-label', frozen ? 'Unfreezing' : 'Freezing');
-      dom.setAttr(refs.freeze, 'data-frozen', frozen ? 'true' : null);
-    }
-
-    /* Quiet, and there until the phrase has been typed back: a wallet that
-       exists and has not been proven backed up is one bad disk away from gone. */
-    if (refs.backupChip) {
-      var vault = state.vault || {};
-      var exposed = !!vault.custody && vault.backedUp === false;
-      dom.setHidden(refs.backupChip, !exposed);
-      dom.setAttr(refs.backupChip, 'data-short', 'No backup');
-    }
-
-    updateField();
+    return null;
   }
 
-  /* The badge is a way in, not just a word: it lands on the Vault tab, where
-     Reveal and Prove are. */
-  function wireBackupChip() {
-    if (!refs.backupChip) return;
-    dom.on(refs.backupChip, 'click', function () {
-      setView('vault', { fromClick: true });
-      if (window.PhosphorVault && typeof window.PhosphorVault.focusRecovery === 'function') {
-        window.PhosphorVault.focusRecovery();
-      }
-    });
+  var noticeRun = null;
+
+  function wireNotice() {
+    if (!refs.notice) return;
+    refs.noticeIcon = refs.notice.querySelector('[data-role="notice-icon"]');
+    refs.noticeText = refs.notice.querySelector('[data-role="notice-text"]');
+    refs.noticeAct = refs.notice.querySelector('[data-role="notice-act"]');
+    if (refs.noticeAct) {
+      dom.on(refs.noticeAct, 'click', function () {
+        if (noticeRun) noticeRun();
+      });
+    }
   }
 
-  function wireFreeze() {
-    if (!refs.freeze) return;
-    dom.on(refs.freeze, 'click', function () {
-      var state = store.get() || {};
-      var frozen = !!(state.policy && state.policy.killSwitch);
-      if (!frozen) {
-        window.PhosphorConfirm.ask({
-          title: 'Freeze everything',
-          body: 'This cancels every working order and disarms every rule. It does not close a position: nothing in this app can do that.',
-          confirm: 'Freeze everything',
-          tone: 'down'
-        }).then(function (yes) {
-          if (yes) doFreeze(true);
-        });
-        return;
-      }
-      doFreeze(false);
+  function renderNotice() {
+    if (!refs.notice) return;
+    var say = noticeOf(store.get() || {});
+    dom.setHidden(refs.notice, !say);
+    if (!say) {
+      noticeRun = null;
+      return;
+    }
+    if (refs.noticeIcon) dom.setAttr(refs.noticeIcon, 'href', '#i-' + say.icon);
+    dom.setText(refs.noticeText, say.text);
+    dom.setText(refs.noticeAct, say.act || '');
+    dom.setHidden(refs.noticeAct, !say.act);
+    noticeRun = say.run || null;
+  }
+
+  /* The way through from "not backed up": the Vault tab, where Reveal and
+     Prove are. */
+  function openBackup() {
+    setView('vault', { fromClick: true });
+    if (window.PhosphorVault && typeof window.PhosphorVault.focusRecovery === 'function') {
+      window.PhosphorVault.focusRecovery();
+    }
+  }
+
+  /* ---------- the brake ----------
+
+     One glyph at the end of the bar, neutral at rest. Its confirm step is a
+     small panel under it, never a dialog over the window, and the one red in
+     the window is that panel's Freeze button. Frozen, the glyph says so in a
+     word, and the same panel is the way back. */
+  var BRAKE_WORDS = {
+    off: {
+      title: 'Freeze everything?',
+      body: 'This cancels every working order and disarms every rule. It does not close a position: nothing in this app can do that.',
+      keep: 'Cancel',
+      go: 'Freeze everything',
+      pending: 'Freezing'
+    },
+    on: {
+      title: 'Everything is frozen.',
+      body: 'The assistant cannot move any money until you unfreeze.',
+      keep: 'Keep frozen',
+      go: 'Unfreeze',
+      pending: 'Unfreezing'
+    }
+  };
+
+  function frozenIn(state) {
+    return !!(state.policy && state.policy.killSwitch);
+  }
+
+  function wireBrake() {
+    if (!refs.brake || !refs.brakePanel) return;
+    refs.brakeWord = refs.brake.querySelector('[data-role="brake-word"]');
+    refs.brakeTitle = document.getElementById('brake-title');
+    refs.brakeBody = document.getElementById('brake-body');
+    refs.brakeKeep = refs.brakePanel.querySelector('[data-role="brake-keep"]');
+    refs.brakeGo = refs.brakePanel.querySelector('[data-role="brake-go"]');
+    var wrap = refs.brake.parentNode;
+
+    dom.on(refs.brake, 'click', function () {
+      if (refs.brakePanel.hidden) openBrake();
+      else closeBrake(true);
     });
+    dom.on(refs.brakeKeep, 'click', function () { closeBrake(true); });
+    dom.on(refs.brakeGo, 'click', function () {
+      doFreeze(!frozenIn(store.get() || {}));
+    });
+    dom.on(document, 'keydown', function (event) {
+      if (event.key !== 'Escape' || refs.brakePanel.hidden) return;
+      event.preventDefault();
+      closeBrake(true);
+    });
+    dom.on(document, 'click', function (event) {
+      if (refs.brakePanel.hidden) return;
+      for (var at = event.target; at; at = at.parentNode) {
+        if (at === wrap || at === refs.noticeAct) return;
+      }
+      closeBrake(false);
+    });
+    renderBrake();
+  }
+
+  function renderBrake() {
+    if (!refs.brake) return;
+    var frozen = frozenIn(store.get() || {});
+    var words = BRAKE_WORDS[frozen ? 'on' : 'off'];
+    dom.setAttr(refs.brake, 'data-frozen', frozen ? 'true' : null);
+    dom.setAttr(refs.brake, 'aria-label', frozen ? 'Everything is frozen' : 'Freeze everything');
+    dom.setAttr(refs.brake, 'title', frozen ? 'Everything is frozen' : 'Freeze everything');
+    if (refs.brakeWord) dom.setHidden(refs.brakeWord, !frozen);
+    if (!refs.brakeGo) return;
+    dom.setText(refs.brakeTitle, words.title);
+    dom.setText(refs.brakeBody, words.body);
+    dom.setText(refs.brakeKeep.querySelector('.btn-label'), words.keep);
+    dom.setText(refs.brakeGo.querySelector('.btn-label'), words.go);
+    dom.setAttr(refs.brakeGo, 'data-pending-label', words.pending);
+    refs.brakeGo.className = frozen ? 'btn btn-sm' : 'btn btn-danger btn-sm';
+  }
+
+  /* The harmless answer takes the focus, so Enter on an open panel cancels. */
+  function openBrake() {
+    if (!refs.brakePanel) return;
+    renderBrake();
+    dom.setHidden(refs.brakePanel, false);
+    dom.setAttr(refs.brake, 'aria-expanded', 'true');
+    if (refs.brakeKeep && refs.brakeKeep.focus) refs.brakeKeep.focus();
+  }
+
+  function closeBrake(returnFocus) {
+    if (!refs.brakePanel || refs.brakePanel.hidden) return;
+    dom.setHidden(refs.brakePanel, true);
+    dom.setAttr(refs.brake, 'aria-expanded', 'false');
+    if (returnFocus && refs.brake.focus) refs.brake.focus();
+  }
+
+  function doFreeze(on) {
+    setPending(refs.brakeGo, true);
+    api.kill(on)
+      .then(function () { return refresh({}); })
+      .then(function () { closeBrake(true); })
+      .catch(function (err) {
+        window.PhosphorToast.show(net.readable(err), 'down');
+      })
+      .finally(function () { setPending(refs.brakeGo, false); });
   }
 
   /* ---------- Layout ----------
 
      Every pane the mode that is up can hide, as a check row: on means on
-     screen. The state is ui/split.js's; this menu only mirrors it, and it
-     re-reads it each time it opens, each time a pane changes and each time
-     the view changes, so an eye-off press in a header and a press here never
-     disagree. It is on the bar rather than on the trade strip because the bar
-     is on every mode: the assistant hidden on Basic has to come back from
-     Basic (Karim, 2026-09-15: "when i hide the chat thing, i cant bring it
-     back"). */
+     screen. It is on the bar while Pro or Trade is up, the modes with panes
+     to arrange; Basic and the Vault have none (layout.css hides it there). The
+     state is ui/split.js's; this menu only mirrors it, and it re-reads it each
+     time it opens, each time a pane changes and each time the view changes, so
+     an eye-off press in a header and a press here never disagree. */
+
   /* The assistant column's way back: a small tab on the world's left edge,
      drawn only while the column is hidden (trade.css keys it off the stage's
-     data-pane attribute). The Layout menu still lists it; this is the one a
-     hand reaches for. */
+     data-pane attribute). */
   function wireRestore() {
     var split = window.PhosphorSplit;
     if (!refs.stage || !split || typeof split.paneRestore !== 'function') return;
@@ -495,35 +549,26 @@
     window.PhosphorSplit.setPane(row.dataset.pane, on);
   }
 
-  function doFreeze(on) {
-    setPending(refs.freeze, true);
-    api.kill(on)
-      .then(function () { return refresh({}); })
-      .catch(function (err) {
-        window.PhosphorToast.show(net.readable(err), 'down');
-      })
-      .finally(function () { setPending(refs.freeze, false); });
-  }
-
   /* A pending button swaps its label for the progress verb and stops accepting
      the press. Every wait in this window goes through here.
 
      `disabled` is the half that was missing, and it mattered most on Unlock.
      That request does not answer until every proposal queued behind the lock has
      been sent, which is a rail apiece and can be a minute, so the window looked
-     frozen and the natural thing to do was press it again. The dataset flag and
-     aria-busy said "working" to a screen reader and to the stylesheet and to
-     nothing else: the button still took the click. */
+     frozen and the natural thing to do was press it again. */
   function setPending(button, pending) {
     if (!button) return;
     if (pending) {
+      var label = button.getAttribute('data-pending-label') || 'Working';
       var slot = button.querySelector('.btn-pending');
       if (!slot) {
         slot = dom.el('span', 'btn-pending');
         slot.appendChild(dom.el('span', 'spinner'));
-        slot.appendChild(dom.el('span', 'btn-pending-label', button.getAttribute('data-pending-label') || 'Working'));
+        slot.appendChild(dom.el('span', 'btn-pending-label', label));
         button.appendChild(slot);
       }
+      /* The brake waits under two verbs, Freezing and Unfreezing, on one button. */
+      dom.setText(slot.querySelector('.btn-pending-label'), label);
       button.dataset.pending = 'true';
       button.setAttribute('aria-busy', 'true');
       button.disabled = true;
@@ -534,16 +579,19 @@
     button.disabled = false;
   }
 
+  function render() {
+    renderBrake();
+    renderNotice();
+  }
+
   window.PhosphorShell = {
     boot: boot,
     setView: setView,
     view: view,
     refresh: refresh,
-    renderStatus: renderStatus,
     setPending: setPending,
-    updateField: updateField,
     isPinned: isPinned
   };
 
-  store.subscribe(renderStatus);
+  store.subscribe(render);
 })();

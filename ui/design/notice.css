@@ -1,0 +1,63 @@
+/* The notice: the one line the window speaks in when something needs the
+   person, at the foot of the world (ui/index.html #notice, written by
+   ui/screens/shell.js). Its own sheet because it is the one thing in the frame
+   that sticks, and layout.css holds nothing that does. */
+
+/* One line at the foot of the world, and only while something needs the
+   person (shell.js decides which): words in the second tone, a glyph in the
+   third, and the way through as a plain underlined word. No dot, no colour,
+   no box. Sticky, so a long world scrolls under it rather than away from it. */
+.notice {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: auto;
+  padding: var(--s-2) var(--s-5);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  color: var(--text-2);
+  background: var(--bg-0);
+  border-top: 1px solid var(--line);
+}
+
+.notice > .icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+
+/* One line where it fits. Where it does not, the words wrap inside their own
+   box, so the glyph and the way through stay beside them. */
+.notice-text {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.notice-act {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 var(--s-1);
+  margin: 0 calc(var(--s-1) * -1);
+  border-radius: var(--radius-xs);
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .notice-act:hover { text-decoration-color: var(--text-2); }
+}
+
+.notice-act:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}

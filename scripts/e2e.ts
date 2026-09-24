@@ -308,9 +308,7 @@ async function run(): Promise<void> {
     `id=${proposalId} status=${proposal.status} verdict=${proposal.verdict?.outcome}`,
   );
 
-  // With something actually pending, the two view-mode guarantees are checkable:
-  // the switch is refused, and the basic model carries the real governed amount
-  // rather than a label that merely says "basic".
+  // With something actually pending, the view-mode guarantee is checkable.
   // The switch used to be REFUSED while a decision waited, so an agent could not move a human
   // away from it. ui/approvals.js now draws the pending block on all three windows, so the
   // decision travels with the human and the refusal guarded nothing. Disclosure replaced it:
@@ -324,13 +322,6 @@ async function run(): Promise<void> {
   await callTool(client, 'switch', { mode: 'pro' });
   const stillPro = await getJson('/api/state');
   check('and the window is where it was asked to be', stillPro.view === 'pro', `view=${stillPro.view}`);
-
-  const basicAsk = (stillPro.basic as Json)?.ask as Json | null;
-  check(
-    'the basic view carries the live proposal, not just a label',
-    basicAsk !== null && basicAsk?.kind === 'policy_change' && String(basicAsk?.headline ?? '').length > 0,
-    `kind=${basicAsk?.kind} headline=${String(basicAsk?.headline ?? '').slice(0, 80)}`,
-  );
 
   const before = await getJson('/api/state');
   const totalBefore = Number((before.wallet as Json)?.totalUsd);

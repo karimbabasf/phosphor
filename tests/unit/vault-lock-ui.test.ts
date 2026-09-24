@@ -4,8 +4,8 @@
 // window asks for, draws, or imitates a password. The lock screen is one
 // button that raises the system dialog; the first run is one button that makes
 // the wallet and one Touch ID that proves it opens; the shell routes the
-// deposit watcher's frames and wears the "not backed up" badge until the
-// phrase has been typed back. Each is run for real over a small DOM.
+// deposit watcher's frames and says "not backed up" in its notice line until
+// the phrase has been typed back. Each is run for real over a small DOM.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -168,15 +168,16 @@ type World = {
 
 function build(state: Any, sources: string[]): World {
   const nodes: Record<string, Any> = {};
-  for (const id of ['screen-lock', 'screen-firstrun', 'page', 'chip-lock', 'chip-waiting', 'chip-backup', 'chip-feed']) {
+  for (const id of ['screen-lock', 'screen-firstrun', 'page', 'notice']) {
     nodes[id] = makeNode('div');
   }
-  for (const id of ['chip-lock', 'chip-waiting', 'chip-feed']) {
-    const text = makeNode('span');
-    text.setAttribute('data-role', id.replace('chip-', '') + '-text');
-    nodes[id].appendChild(text);
+  // The notice line at the foot of the world: a glyph, the words, and the way through.
+  for (const [tag, role] of [['use', 'notice-icon'], ['span', 'notice-text'], ['button', 'notice-act']]) {
+    const part = makeNode(tag);
+    part.setAttribute('data-role', role);
+    nodes.notice.appendChild(part);
   }
-  nodes['chip-backup'].hidden = true;
+  nodes.notice.hidden = true;
   const body = makeNode('body');
   const calls: Any[] = [];
   const answer: Any = {
@@ -511,7 +512,7 @@ test('without an enclave the software first run keeps its screens after the welc
 
 /* ---------- the shell ---------- */
 
-test('the shell routes deposit frames to the store and the card, and wears the backup badge', async () => {
+test('the shell routes deposit frames to the store and the card, and says "not backed up" in the notice', async () => {
   const state = {
     lock: { state: 'unlocked', idleLocksInSec: null },
     vault: vaultState({ state: 'unlocked', backedUp: false }),
@@ -537,33 +538,50 @@ test('the shell routes deposit frames to the store and the card, and wears the b
   world.events.deposit[0]({ type: 'deposit' });
   assert.equal(world.calls.filter((c) => c.route === 'deposit.onFrame').length, 1);
 
-  // The badge: on while a wallet exists and is not proven backed up, off once it is.
-  const badge = world.nodes['chip-backup'];
-  assert.equal(badge.hidden, false, 'no badge on a wallet that is not backed up');
+  // The notice: on while a wallet exists and is not proven backed up, off once it is.
+  const notice = world.nodes.notice;
+  const text = find(notice, '[data-role="notice-text"]')[0];
+  const act = find(notice, '[data-role="notice-act"]')[0];
+  assert.equal(notice.hidden, false, 'nothing said about a wallet that is not backed up');
+  assert.equal(text.textContent, 'Your recovery phrase is not backed up yet.');
+  assert.equal(act.textContent, 'Back it up');
+  assert.equal(act.hidden, false);
   world.put({ vault: vaultState({ state: 'unlocked', backedUp: true }) });
-  assert.equal(badge.hidden, true, 'the badge stayed after the phrase was proven');
+  assert.equal(notice.hidden, true, 'the line stayed after the phrase was proven');
   world.put({ vault: vaultState({ custody: null, state: 'no_wallet', backedUp: false }) });
-  assert.equal(badge.hidden, true, 'a badge with no wallet to back up');
+  assert.equal(notice.hidden, true, 'a backup line with no wallet to back up');
 
-  // The badge is a way in.
-  badge.click();
+  // The line is a way in.
+  world.put({ vault: vaultState({ state: 'unlocked', backedUp: false }) });
+  act.click();
   assert.ok(world.calls.some((c) => c.route === 'focusRecovery'));
 });
 
-test('awaiting_touch counts as waiting on the bar', async () => {
+test('the notice says the one thing that matters most: the app not answering, then a freeze, then the backup', async () => {
   const state = {
     lock: { state: 'unlocked', idleLocksInSec: null },
-    vault: vaultState({ state: 'unlocked', backedUp: true }),
-    proposals: [{ id: 'p1', status: 'awaiting_touch', createdAt: '2026-09-14T10:00:00.000Z', draft: {} }],
-    policy: {},
+    vault: vaultState({ state: 'unlocked', backedUp: false }),
+    proposals: [],
+    policy: { killSwitch: true },
+    basic: { warning: 'You have frozen everything. The assistant cannot move any money.' },
     deposit: null,
   };
   const world = build(state, [SHELL]);
   world.sandbox.PhosphorShell.boot();
   await flush();
-  const chip = world.nodes['chip-waiting'];
-  assert.equal(chip.hidden, false);
-  assert.equal(find(chip, '[data-role="waiting-text"]')[0].textContent, '1 waiting');
+  const notice = world.nodes.notice;
+  const text = find(notice, '[data-role="notice-text"]')[0];
+  const act = find(notice, '[data-role="notice-act"]')[0];
+  const icon = find(notice, '[data-role="notice-icon"]')[0];
+  assert.equal(text.textContent, 'You have frozen everything. The assistant cannot move any money.');
+  assert.equal(act.textContent, 'Unfreeze');
+  assert.equal(icon.getAttribute('href'), '#i-freeze');
+
+  // Rules that cannot be read have nothing to press.
+  world.put({ policy: {}, basic: { warning: 'The safety rules cannot be read, so every move is being refused.' } });
+  assert.equal(text.textContent, 'The safety rules cannot be read, so every move is being refused.');
+  assert.equal(act.hidden, true);
+  assert.equal(icon.getAttribute('href'), '#i-warning');
 });
 
 test('the Vault tab is one of the views the shell knows', () => {

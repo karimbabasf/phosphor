@@ -22,6 +22,9 @@
 .netsel:active,
 .trade-tab:active,
 .steps-fold:active,
+.brake-btn:active,
+.notice-act:active,
+.bal-add:active,
 .sendcard-info:active > span {
   transform: scale(0.97);
   background-color: var(--press);
@@ -30,7 +33,6 @@
 .dock-next:active,
 .dock-report-toggle:active,
 .checks-toggle:active,
-.fold-head:active,
 .holding-head.opens:active,
 .net-row:active,
 .activity-rows > .tx.receipt-row:active,

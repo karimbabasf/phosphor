@@ -1,10 +1,12 @@
 /* Phosphor layout: one stage, two columns, three modes.
 
-   The conversation column is the constant. It is on screen in every mode, in
-   the same place, and never below the fold. The world beside it is everything
-   the assistant can touch, and it is the only part that changes with the mode.
-   The window does not scroll as a page: the world scrolls, the transcript
-   scrolls, and the two never move each other. */
+   The conversation is the constant. It is on screen in every mode, in the
+   same place, and never below the fold. The world beside it is everything the
+   assistant can touch, and it is the only part that changes with the mode: on
+   Basic it is the balances panel, a reading width on the right, and the
+   conversation takes the rest (basic.css). The window does not scroll as a
+   page: the world scrolls, the transcript scrolls, and the two never move each
+   other. */
 
 html, body {
   height: 100%;
@@ -19,68 +21,35 @@ html, body {
   width: 100%;
 }
 
-/* ---------- Top bar ---------- */
+/* ---------- Top bar ----------
+
+   Three things and nothing that reports state: the mark and the name at the
+   left, the mode switch at the centre, the brake at the right. The two side
+   columns share the room equally, so the switch sits at the true centre. */
 
 .topbar {
   position: relative;
   z-index: 40;
   display: grid;
-  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: var(--s-4);
   height: var(--topbar-h);
-  padding: 0 var(--s-4);
+  padding: 0 var(--s-5);
   background: var(--bg-0);
   border-bottom: 1px solid var(--line);
   flex: 0 0 auto;
 }
 
-/* The two side columns share the room equally, so the tabs sit centred, and
-   the cluster shortens its words before it asks for more (below). A side
-   column grows past its half only when its content cannot fit in it, which
-   is the 960 px minimum with every chip showing: the tabs move over by that
-   much and nothing overlaps, where equal columns let the cluster run under
-   the tabs. */
-.topbar > * {
-  min-width: 0;
-}
-
-/* The one page-load moment: a light sweeps the topbar's hairline once. The
-   shell adds data-boot after first paint and removes it when the sweep is
-   done, so nothing repeats. */
-.topbar::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  bottom: -1px;
-  height: 1px;
-  width: 22%;
-  background: linear-gradient(90deg, transparent, var(--live), transparent);
-  opacity: 0;
-  transform: translateX(-100%);
-  pointer-events: none;
-}
-
-.topbar[data-boot="true"]::after {
-  animation: bootsweep 600ms var(--ease-in-out) both;
-}
-
-@keyframes bootsweep {
-  0% { opacity: 0; transform: translateX(-100%); }
-  15% { opacity: 1; }
-  85% { opacity: 1; }
-  100% { opacity: 0; transform: translateX(460%); }
-}
-
 /* The brand row: the mark and the word, as the banner sets them. Not a
    control. It says whose window this is and nothing else, so it has no hover,
-   no menu and no focus ring. */
+   no menu and no focus ring. The mark's motion is mark.css's. */
 .brand {
   display: flex;
   align-items: center;
-  gap: var(--s-2);
-  flex: 0 0 auto;
-  height: 28px;
+  gap: 10px;
+  justify-self: start;
+  min-width: 0;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -88,20 +57,21 @@ html, body {
 .brand-mark {
   flex: 0 0 auto;
   width: 20px;
-  height: 20px;
+  height: 22px;
   color: var(--ink);
 }
 
 .brand-word {
   font-size: var(--fs-15);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
   line-height: 1;
   color: var(--text);
 }
 
 /* The mode switch: a segmented control whose indicator slides between the
-   three words instead of each word lighting on its own. */
+   three words instead of each word lighting on its own. Quiet: the ground one
+   step up, a hairline, and the selected word on the step above that. */
 .tabs {
   position: relative;
   display: flex;
@@ -119,7 +89,6 @@ html, body {
   top: 3px;
   left: 0;
   height: calc(100% - 6px);
-  width: 0;
   border-radius: var(--radius-pill);
   background: var(--bg-2);
   border: 1px solid var(--line-strong);
@@ -131,8 +100,6 @@ html, body {
   pointer-events: none;
 }
 
-/* The bar's controls hold the small variant's 30 px (components.css, the
-   floor), in a 48 px bar. */
 .tab {
   position: relative;
   z-index: 1;
@@ -158,128 +125,35 @@ html, body {
   color: var(--text);
 }
 
-/* A tab is also a surface: a tool aimed at a mode that is not on screen lands
-   on its word. */
-.tab[data-glow="on"] {
-  color: var(--live);
+.tab:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 1px;
+  border-radius: var(--radius-pill);
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .tab:hover:not([aria-selected="true"]) {
-    color: var(--text);
-  }
-}
-
-/* The bar's right side: one quiet line of state, then the brake. Sixteen
-   between the pieces, because they are words in a line rather than a row of
-   controls, and the one control among them is the last thing. */
-.status-cluster {
+/* The bar's end: the brake, and on the modes that have panes to arrange, the
+   Layout menu before it. */
+.bar-end {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--s-4);
+  gap: var(--s-2);
+  justify-self: end;
   min-width: 0;
 }
 
-/* A NARROW BAR. The cluster's column is half of what the tabs leave: at 1180
-   that is 425 px, and with every chip showing (a pending ask, no backup, the
-   lock's countdown, the stream, the brake) the full words need 543. Under
-   1420 wide the pieces sit 12 apart and the words that have a short form
-   (shell.js writes it as data-short) swap to it: "No backup", "15 min". While
-   the person is being waited on, the stream steps off the bar, because the
-   ask is the word that matters and the offline bar still says when the
-   stream is gone. That holds the worst case at 1180 with room to spare, and
-   nothing ever overlaps the tabs. */
-@media (max-width: 1419px) {
-  .status-cluster {
-    gap: var(--s-3);
-  }
-
-  .bar-state[data-short] > span:not(.status-dot),
-  .bar-lock[data-short] > [data-role="lock-text"] {
-    display: none;
-  }
-
-  .bar-state[data-short]::after,
-  .bar-lock[data-short]::after {
-    content: attr(data-short);
-  }
-
-  #chip-waiting:not([hidden]) ~ #chip-feed {
-    display: none;
-  }
-}
-
-/* The stream and a pending ask are status lines: a dot and a word, no pill.
-   The dot is the state. Live is up, delayed is the warning colour, offline is
-   the quietest grey; a pending ask is the warning colour too, because it is
-   the person the window is waiting on. */
-.bar-state {
-  font-size: var(--fs-12);
-  font-weight: 500;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-
-.bar-state[data-tone="up"] > .status-dot { background: var(--up); }
-.bar-state[data-tone="warn"] > .status-dot { background: var(--warn); }
-.bar-state[data-tone="off"] > .status-dot { background: var(--text-3); }
-
-/* A state that is also a button (Not backed up opens the Vault) is a
-   pressable and says so: the floor's height, a pointer, and the word
-   lifting under it. The dot and the size stay those of the lines beside it. */
-button.bar-state {
-  min-height: 30px;
-  padding: 0 var(--s-2);
-  margin: 0 calc(var(--s-2) * -1);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: color var(--dur-press) var(--ease-out),
-              background-color var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  button.bar-state:hover {
-    color: var(--text);
-    background: var(--bg-2);
-  }
-}
-
-button.bar-state:active { transform: scale(0.97); }
-
-/* The lock: a lock and a word, at the same size as the state beside it. A
-   locked wallet reads in the warning colour, which the shell writes as the
-   same data-tone the chip carried. */
-.bar-lock {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 20px;
-  font-size: var(--fs-12);
-  font-weight: 500;
-  line-height: 1.4;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-
-.bar-lock-glyph {
-  flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  color: var(--text-3);
-}
-
-.bar-lock[data-tone="warn"] { color: var(--warn); }
-.bar-lock[data-tone="warn"] .bar-lock-glyph { color: var(--warn); }
-
-/* Layout: which panes are on screen, as a menu of check rows. On the bar
-   because the bar is on every mode, so a pane hidden anywhere comes back from
-   anywhere. An icon and a word on the opening grammar, at the brake's height;
-   the sheet (trade.css draws .pop and the check rows) hangs off the bar's right
-   edge, so it opens to the left. */
+/* Layout: which panes are on screen, as a menu of check rows, on Pro and
+   Trade. Basic and the Vault have nothing to arrange. The sheet (trade.css
+   draws .pop and the check rows) hangs off the bar's right side, so it opens
+   to the left. */
 .layout-wrap {
   position: relative;
   flex: 0 0 auto;
+}
+
+body[data-view="basic"] .layout-wrap,
+body[data-view="vault"] .layout-wrap {
+  display: none;
 }
 
 .layout {
@@ -288,7 +162,7 @@ button.bar-state:active { transform: scale(0.97); }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
+  height: 32px;
   padding: 0 var(--s-3) 0 var(--s-2);
   border-radius: var(--radius-sm);
   font-size: var(--fs-12);
@@ -310,36 +184,124 @@ button.bar-state:active { transform: scale(0.97); }
   transform-origin: top right;
 }
 
-/* Freeze everything: the safety control, so it keeps its words, and a solid
-   quiet button rather than an outlined red one, in the small variant's box
-   (index.html gives it btn-sm). The wash deepens on hover and the whole thing
-   presses; frozen, it fills, because a frozen app is a state the bar has to
-   show, not a button waiting to be pressed. */
-.btn.freeze {
-  --btn-bg: var(--down-wash);
-  --btn-fg: var(--down);
-  --btn-edge: transparent;
-  --btn-edge-hover: transparent;
-  --btn-bg-active: color-mix(in srgb, var(--down) 30%, transparent);
-  border: 0;
+/* The brake: one glyph in a hairline box, the second text tone at rest, the
+   size of the switch beside it. Frozen, it says so in a word and holds the
+   raised ground, because a frozen app is a state the bar has to show. Never
+   red: red is the confirm step's. */
+.brake {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.brake-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 6px;
   border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out),
+              border-color var(--dur-press) var(--ease-out),
+              transform var(--dur-press) var(--ease-out);
+}
+
+.brake-btn .icon {
+  width: 18px;
+  height: 18px;
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .btn.freeze:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--down) 22%, transparent);
+  .brake-btn:hover {
+    color: var(--text);
+    background: var(--bg-2);
+    border-color: var(--line-strong);
   }
 }
 
-.btn.freeze[data-frozen="true"] {
-  --btn-bg: var(--down);
-  --btn-fg: var(--on-ink);
+.brake-btn:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .btn.freeze[data-frozen="true"]:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--down) 88%, var(--bg-0));
-  }
+.brake-btn[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+}
+
+.brake-btn[data-frozen="true"] {
+  padding: 0 10px 0 8px;
+  color: var(--text);
+  background: var(--bg-1);
+  border-color: var(--line-strong);
+}
+
+.brake-word {
+  font-size: var(--fs-13);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+
+/* The confirm step, under the glyph and nowhere else: a small panel that
+   floats, so it carries the lift. It covers the top of the balances panel for
+   the moment it is open, never the conversation. */
+.brake-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 60;
+  width: 320px;
+  padding: var(--s-4);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--lift-sm);
+  transform-origin: top right;
+  animation: brake-in var(--dur-enter) var(--ease-out);
+}
+
+@keyframes brake-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+.brake-title {
+  margin: 0;
+  font-size: var(--fs-14);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.brake-body {
+  margin: 6px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.brake-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+
+/* The panel opens with the harmless answer focused. The window's ring is the
+   mark's green, and a green ring on Cancel beside the red Freeze reads as the
+   way to go: the two answers here wear the bar's neutral ring. */
+.brake-actions > .btn:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brake-panel { animation: none; }
 }
 
 /* ---------- The stage ---------- */
@@ -473,43 +435,8 @@ button.bar-state:active { transform: scale(0.97); }
   padding: var(--s-5) var(--s-4);
 }
 
-/* A BAR TOO NARROW FOR THREE COLUMNS.
-
-   Under about 900 the three columns cannot all hold their content: the tabs
-   were squeezed to 8 px while their words kept painting, straight through the
-   status lines and the brake beside them. Two rows instead of a squeeze, so
-   every control keeps its word and nothing overlaps. The bar grows by one row
-   rather than shrinking anything a person reaches for, and the brake stays the
-   last thing in it. */
-@media (max-width: 899px) {
-  .topbar {
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-areas:
-      "brand tabs"
-      "cluster cluster";
-    height: auto;
-    row-gap: var(--s-2);
-    padding-block: var(--s-2);
-  }
-
-  .brand { grid-area: brand; }
-
-  .tabs {
-    grid-area: tabs;
-    justify-self: end;
-  }
-
-  .status-cluster {
-    grid-area: cluster;
-    flex-wrap: wrap;
-    row-gap: var(--s-2);
-  }
-}
-
-/* Narrower still and the name does not fit beside the modes. The mark carries
-   it: it is the thing the app is recognised by, and it is still the whole
-   brand block, so the bar keeps its anchor. */
-@media (max-width: 479px) {
+/* Narrow, the name steps off and the mark carries the brand alone. */
+@media (max-width: 559px) {
   .brand-word { display: none; }
 }
 

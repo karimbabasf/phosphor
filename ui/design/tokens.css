@@ -43,8 +43,6 @@
   --agent: #B79CFF;
   --live: var(--ink);
 
-  /* Where the afterglow settles before it reaches the ground. */
-  --glow-ash: #0F3A1E;
 
   /* Tints derived from the five slots. theme.js rewrites these with the slots. */
   --ink-wash: rgba(63, 255, 108, 0.08);
@@ -52,17 +50,15 @@
   --up-wash: rgba(63, 255, 108, 0.14);
   --down-wash: rgba(255, 90, 110, 0.14);
   --warn-wash: rgba(245, 185, 66, 0.14);
-  --agent-wash: rgba(183, 156, 255, 0.13);
   --agent-edge: rgba(183, 156, 255, 0.28);
   --live-edge: var(--ink-edge);
-  --live-glow: 0 0 5px var(--live);
 
   /* The press on a pressable that is not a button: a wash of the text, one
      shade past any hover wash (components.css). */
   --press: color-mix(in srgb, var(--text) 12%, transparent);
 
   /* Type */
-  --font-ui: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-ui: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --fs-11: 11px;
   --fs-12: 12px;
@@ -78,7 +74,6 @@
   --fs-32: 32px;
   --fs-40: 40px;
   --fs-44: 44px;
-  --fs-56: 44px;
 
   /* Space. A four-step rhythm, everything is a multiple of 4. */
   --s-1: 4px;
@@ -114,21 +109,21 @@
   --dur-glow-in: 120ms;
   --dur-glow-out: 2400ms;
 
-  /* Layout. The conversation column takes a share of the window between two
-     floors and the world is the rest, so a 27 inch screen gets a wider
-     transcript and a 13 inch laptop still gets a chart (Karim, 2026-09-15:
-     "make sure this thing looks good on any screen, regardless of the
-     resolution"). The Basic column and the Pro grid grow with the world up to
-     a measure that still reads. Nothing here is a fixed pixel width. */
-  --topbar-h: 48px;
+  /* Layout. On Basic the conversation takes the window and the balances panel
+     holds a reading width on the right (--panel-w). On the other modes the
+     conversation column takes a share of the window between two floors and
+     the world is the rest, so a 27 inch screen gets a wider transcript and a
+     13 inch laptop still gets a chart (Karim, 2026-09-15: "make sure this
+     thing looks good on any screen, regardless of the resolution"). Nothing
+     here is a fixed pixel width. */
+  --topbar-h: 64px;
+  --panel-w: clamp(420px, 30vw, 480px);
   --conv-w: 30vw;
   --conv-min: 360px;
   --conv-max: 760px;
   --world-min: 560px;
   --basic-col: min(760px, 100%);
   --pro-max: min(1680px, 100%);
-  --rail-w: 320px;
-  --gutter: 24px;
 
   /* Depth. Two shadows in the whole app, for the few things that float. */
   --lift: 0 12px 40px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
@@ -159,7 +154,6 @@
     --fs-32: 36px;
     --fs-40: 45px;
     --fs-44: 49px;
-    --fs-56: 49px;
 
     --s-2: 9px;
     --s-3: 13px;

@@ -1138,7 +1138,10 @@
 
       show('address', node);
       skeleton(body);
-      load().then(function () {
+      /* The QR libraries come with the first address drawn, not with the
+         window (ui/core/lazy.js). */
+      var lazy = window.PhosphorLazy;
+      Promise.all([load(), lazy ? lazy.load('qr') : null]).then(function () {
         if (!state.alive || state.stageNode !== node) return;
         drawAddress(body, n);
       });
