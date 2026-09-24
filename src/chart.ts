@@ -15,6 +15,7 @@ import type { Provider } from './market/catalog.ts';
 import type { Drawing } from './drawings.ts';
 import { DRAWINGS_PER_MARKET, drawnOn } from './drawings.ts';
 import { markingLabel } from './chart-label.ts';
+import { webReadStamp } from './web-read.ts';
 import { lineAt } from './analysis/trendline.ts';
 import { indicatorSpec, normaliseParams, warmupBars, pctChange } from './indicators.ts';
 import { atr as wilderAtr } from './analysis/regime.ts';
@@ -77,8 +78,9 @@ export type ChartIndicator = Provenance & {
   pane: 'price' | 'own';
 };
 
-export type ChartLevel = Provenance & { id: string; price: number; label: string };
-export type ChartMark = Provenance & { id: string; t: number; label: string };
+// `webRead`: the agent that wrote the label had read a web page in that chat (src/web-read.ts).
+export type ChartLevel = Provenance & { id: string; price: number; label: string; webRead?: true };
+export type ChartMark = Provenance & { id: string; t: number; label: string; webRead?: true };
 
 // Sloped objects (trend lines and zones) are deliberately NOT here. They live in
 // src/drawings.ts, the one store the browser renders. This file used to keep a second list of
@@ -640,7 +642,7 @@ export function createChartStore(
       return { ok: false, notes: [], error: `${LIMITS.levelsTotal} price levels across your markets is the maximum. chart_draw clear with everywhere: true, or clear them where they are.` };
     }
     const id = nextId('level');
-    state.levels.push({ id, price, label: markingLabel(args.label, source, `level ${price}`), ...stamp(source, by) });
+    state.levels.push({ id, price, label: markingLabel(args.label, source, `level ${price}`), ...stamp(source, by), ...webReadStamp(source, by) });
     bump(source, by);
     return { ok: true, notes: [], id };
   }
@@ -655,7 +657,7 @@ export function createChartStore(
       return { ok: false, notes: [], error: `${LIMITS.marksTotal} marks across your markets is the maximum. chart_draw clear with everywhere: true, or clear them where they are.` };
     }
     const id = nextId('mark');
-    state.marks.push({ id, t: Math.round(t), label: markingLabel(args.label, source, 'mark'), ...stamp(source, by) });
+    state.marks.push({ id, t: Math.round(t), label: markingLabel(args.label, source, 'mark'), ...stamp(source, by), ...webReadStamp(source, by) });
     bump(source, by);
     return { ok: true, notes: [], id };
   }

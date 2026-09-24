@@ -13,6 +13,7 @@
 import type { Candle } from '../types.ts';
 import type { Handler } from '../batch.ts';
 import type { DrawingStore } from '../drawings.ts';
+import { markIfCarried } from '../web-read.ts';
 import { pivots } from './pivots.ts';
 import { lineAt, touches, fitThroughPivots } from './trendline.ts';
 import type { Line } from './trendline.ts';
@@ -312,7 +313,12 @@ export function analysisHandlers(deps: AnalysisDeps): Record<string, Handler> {
       });
     },
 
-    drawings_list: () => deps.drawings.list(),
+    // Every market's labels, so a label written after a web read marks the seat that lists it.
+    drawings_list: () => {
+      const list = deps.drawings.list();
+      markIfCarried(deps.author?.by, list);
+      return list;
+    },
 
     drawings_remove: (a) => ({ removed: deps.drawings.remove(str(a.id, '')) }),
 

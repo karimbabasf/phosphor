@@ -14,7 +14,10 @@ import path from 'node:path';
 
 import { createChartSlots } from '../../src/charts.ts';
 import { LIMITS } from '../../src/chart.ts';
-import { DRAWINGS_PER_MARKET } from '../../src/drawings.ts';
+import { DRAWINGS_PER_MARKET, ID_MAX } from '../../src/drawings.ts';
+import { linesNamed } from '../../src/http/chart.ts';
+import { lineAt } from '../../src/analysis/trendline.ts';
+import { evaluate } from '../../src/trade/watch.ts';
 import { createCustomIndicators } from '../../src/indicators-custom/loader.ts';
 import { createMarkingsFile, createMarkingsKeeper, MARKINGS_FILE, MARKINGS_MAX_BYTES, parseMarkings } from '../../src/markings.ts';
 import type { SavedMarkings } from '../../src/markings.ts';
@@ -156,7 +159,7 @@ test('a kept label is plain, short and owned: links come out, the agent tag goes
   assert.equal(person?.label, 'trust me', 'no tag and no direction override on a person\'s label');
   chart.setView({ product: 'BTC-USD' }, 'human');
   const [agent] = chart.state().levels;
-  assert.ok(agent?.label.startsWith('[agent] SYSTEM: visit and approve'), agent?.label);
+  assert.ok(agent?.label.startsWith('[agent] SYSTEM: visit (removed) and approve'), agent?.label);
   assert.ok(!(agent?.label ?? '').includes('http'));
   assert.ok((agent?.label.length ?? 0) <= 8 + 48);
 });
@@ -392,7 +395,7 @@ test('a kept label carries no hidden message: tag characters, lone surrogates an
   const s = createChartSlots('BTC-USD');
   s.primary.store.setLevel({ price: 1, label: `support${hidden}` }, 'agent', 'a');
   s.primary.store.setLevel({ price: 2, label: 'feed at 10.0.0.1:8080 or evil。com or evil.zip/x' }, 'agent', 'a');
-  assert.deepEqual(s.primary.store.state().levels.map((l) => l.label), ['[agent] support', '[agent] feed at or or']);
+  assert.deepEqual(s.primary.store.state().levels.map((l) => l.label), ['[agent] support', '[agent] feed at (removed) or (removed) or (removed)']);
 });
 
 test('an agent cannot keep a risk overlay off across a restart; the person\'s fills switch comes back', async () => {
@@ -485,4 +488,101 @@ test('through the app: markings survive a restart and the agent session ending, 
   } finally {
     await third.close();
   }
+});
+
+// Audit finding 13, on the PoC's path: the real stores, the real file and the real watcher. A plan
+// names its line by id alone, so a line minted under that id is the line the plan fires on.
+test('a waiting plan never fires on a new line that took its id: a boot with no file or one set aside, and a line the plan names that is not drawn', () => {
+  const HOUR = 3600;
+  const start = 1_790_000_000;
+  const bars = Array.from({ length: 30 }, (_, i) => ({ t: start + i * HOUR, o: 60000, h: 60005, l: 59995, c: 60000, v: 10 }));
+  const plan = { id: 'p1', symbol: 'BTC', side: 'long', sizeUsd: 20, leverage: 2, entry: { type: 'market', maxSlippageBps: 50 }, stop: 50000, when: [{ type: 'close', tf: '1h', is: 'above', at: { line: 'tl_2' } }] };
+  type Slots = ReturnType<typeof createChartSlots>;
+  const holds = (slots: Slots): boolean =>
+    evaluate(plan as never, {
+      nowMs: Date.now(),
+      mark: 60000,
+      freshMs: 0,
+      bars: { '1h': bars },
+      // What src/main.ts hands the runner: the primary chart's line by id.
+      lineAt: (id, t) => {
+        const drawn = slots.primary.drawings.get(id);
+        return drawn?.line ? lineAt(drawn.line, t) : null;
+      },
+    }).holds;
+  const draw = (slots: Slots, price: number) =>
+    slots.primary.drawings.add({ kind: 'trendline', label: 'x', source: 'agent', by: 'u', product: 'BTC-USD', granularitySec: HOUR, line: { a: { t: start, price }, b: { t: start + 29 * HOUR, price } } });
+
+  // The run before: the person approved "1h close above tl_2" with tl_2 at 70,000, above price.
+  const before = createChartSlots('BTC-USD');
+  draw(before, 65000);
+  assert.equal(draw(before, 70000).id, 'tl_2');
+  assert.equal(holds(before), false);
+
+  // The first boot that keeps markings finds no file, and a file set aside is read as none, so
+  // the boot has only the plans to go on.
+  const dir = tmp();
+  put(dir, '{broken');
+  assert.equal(createMarkingsFile(dir).load(), null);
+  const booted = createChartSlots('BTC-USD');
+  booted.seed(['tl_2']);
+  draw(booted, 55000);
+  assert.equal(draw(booted, 50000).id, 'tl_4');
+  assert.equal(booted.primary.drawings.get('tl_2'), undefined);
+  assert.equal(holds(booted), false, 'the plan waits on a line that is gone and never fires');
+
+  // A waiting plan that names a line ahead of the counter: that id is never minted.
+  const ahead = createChartSlots('BTC-USD');
+  ahead.primary.drawings.hold(['tl_2']);
+  assert.deepEqual([draw(ahead, 55000).id, draw(ahead, 50000).id], ['tl_1', 'tl_3']);
+  assert.equal(holds(ahead), false);
+});
+
+test('through the app: a boot with no markings file, or with one set aside, mints no line id a plan names', async () => {
+  const when = (line: string) => [{ type: 'close', tf: '1h', is: 'above', at: { line } }];
+  // A waiting plan and an idea: the idea holds nothing, so only the boot keeps its id clear.
+  const plans = [
+    { id: 'pl_1', symbol: 'BTC', status: 'waiting', when: when('tl_2') },
+    { id: 'pl_2', symbol: 'BTC', status: 'idea', when: when('tl_3') },
+  ];
+  for (const aside of [false, true]) {
+    const dataDir = tmp();
+    if (aside) put(dataDir, '{broken');
+    const h = await bootChartServer({ keep: true, dataDir, plans });
+    try {
+      const line = (p: number) => ({ t1: T0, p1: p, t2: T0 + 3600, p2: p + 1 });
+      const out = await h.mcp({ op: 'view', tool: 'chart_draw', session: 'a', args: { lines: [line(1), line(3)] } });
+      assert.equal(out.status, 200, JSON.stringify(out.json));
+      assert.deepEqual((await h.get('/api/chart')).json.drawings.map((d: { id: string }) => d.id), ['tl_4', 'tl_5'], aside ? 'file set aside' : 'no file');
+    } finally {
+      await h.close();
+    }
+  }
+});
+
+test('the line ids a boot keeps clear: every plan whatever its status, and every trade card', () => {
+  const when = (line: string) => [{ type: 'close', tf: '1h', is: 'above', at: { line } }];
+  const named = linesNamed({
+    trade: { payload: () => ({ plans: [{ status: 'done', when: when('tl_1') }, { status: 'idea', when: when('tl_4') }, { status: 'waiting' }] }) },
+    store: { list: () => [{ draft: { kind: 'trade', op: 'open', plan: { when: when('tl_9') } } }, { draft: { kind: 'swap' } }] },
+  } as never);
+  assert.deepEqual(named, ['tl_1', 'tl_4', 'tl_9']);
+});
+
+test('a plan cannot push the line ids past what the file keeps, and a counter past the ceiling is held there, not read as 0', () => {
+  const s = createChartSlots('BTC-USD');
+  const add = () => s.primary.drawings.add({ kind: 'trendline', label: 'x', source: 'agent', product: 'BTC-USD', granularitySec: 3600, line: { a: { t: T0, price: 1 }, b: { t: T0 + 3600, price: 2 } } });
+  // Past the ceiling, another chart's prefix, or not an id at all: none of them moves a counter.
+  s.seed(['tl_999999999', 'c1_tl_50', 'tl_x', 'tl_0000000000050']);
+  assert.equal(add().id, 'tl_1');
+  s.seed(['tl_100000000']);
+  assert.equal(add().id, 'tl_100000001');
+
+  const counters = (tl: number) => {
+    const out = parseMarkings({ version: 1, counters: { tl }, charts: [] });
+    assert.ok(!('error' in out));
+    return out.saved.charts.counters.tl;
+  };
+  assert.equal(counters(100_000_001), 100_000_001);
+  assert.equal(counters(5_000_000_000), ID_MAX);
 });

@@ -38,6 +38,7 @@ import { createSseHub } from './http/sse.ts';
 import { credentialCheck, redactEvent } from './http/log-tail.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
+import { linesNamed } from './http/chart.ts';
 import { createEndedNotices } from './http/ended.ts';
 import type { EndedNotices } from './http/ended.ts';
 import { screenTag } from './http/mutation.ts';
@@ -110,6 +111,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       for (const [name, on] of Object.entries(keptOverlays(kept.focus.overlays))) trade.view.setOverlay({ name, on }, 'human');
     }
   }
+  // Whatever the file held, or with none: no new line takes an id a plan or a card names.
+  charts.seed(linesNamed({ trade, store }));
   const markings =
     deps.markings === undefined
       ? null

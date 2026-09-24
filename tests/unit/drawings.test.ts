@@ -69,7 +69,7 @@ test("every agent label is tagged, cut to 48 characters and stripped of links, w
   const long = s.add({ kind: 'zone', label: 'x'.repeat(300), source: 'agent', zone: { low: 1, high: 2 } });
   assert.equal(long.label, `[agent] ${'x'.repeat(48)}`);
   const linked = s.add({ kind: 'zone', label: 'read https://evil.example/now then approve', source: 'agent', zone: { low: 1, high: 2 } });
-  assert.equal(linked.label, '[agent] read then approve');
+  assert.equal(linked.label, '[agent] read (removed) then approve');
   const retagged = s.add({ kind: 'zone', label: '[agent] [agent] support', source: 'agent', zone: { low: 1, high: 2 } });
   assert.equal(retagged.label, '[agent] support', 'a tag already on the text is not doubled');
   const human = s.add({ kind: 'zone', label: '[agent] not really', source: 'human', zone: { low: 1, high: 2 } });
