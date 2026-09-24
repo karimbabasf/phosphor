@@ -124,7 +124,7 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    (`DESTINATION_CHAIN` for a payout, `INTENTS` for a send), both assets and the amount. No echo,
    no signature.
 
-The card (`ui/screens/sendcard.js`) is what the person reads before the click: the amount, the
+The card (`ui/screens/cards.js`, its question in `ui/screens/decision.js`) is what the person reads before the click: the amount, the
 route from their balance through the bridge to the destination, the full address in groups of
 four with a copy and an explorer link the server built, the chain, the token, what arrives at
 least, the fee with the bridge's flat part named, the time, and whether they have paid this
