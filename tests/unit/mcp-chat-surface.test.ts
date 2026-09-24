@@ -112,6 +112,18 @@ test('the swap reads take exactly propose_swap\'s own names, and swap_check one 
   for (const name of ['amountIn', 'chain', 'fromSymbol', 'toChain', 'toSymbol']) assert.ok(swap.includes(name), name);
 });
 
+// The app finds each coin itself (src/proposals/swap-reads.ts, resolveSwapSides), so a network the
+// agent guessed could only pick a coin the person did not mean.
+test('a swap names a network only when the person did: neither is required, and the text says so', async () => {
+  const { tools } = await listed('chat');
+  for (const name of ['propose_swap', 'swap_quote']) {
+    const tool = tools.find((t) => t.name === name);
+    const required = (tool?.inputSchema as { required?: string[] } | undefined)?.required ?? [];
+    assert.ok(!required.includes('chain') && !required.includes('toChain'), `${name} still requires a network: ${required.join(', ')}`);
+    assert.match(tool?.description ?? '', /only when they named that network/, name);
+  }
+});
+
 test('what the chat is handed stays well under half of what it was', async () => {
   /* 62,641 characters of tool JSON on 2026-09-22 (46 tools, measured over stdio like this). The
      chat surface drops ten tools and every description says what the tool does and its limits,
