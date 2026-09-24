@@ -14,7 +14,7 @@ import path from 'node:path';
 import { VERSION } from './version.ts';
 import { seatSecretPath } from './agents.ts';
 import { listSkills, readSkill } from './skills.ts';
-import { ALWAYS_CLICK_TOOLS, CHAT_WITHHELD, handshakeInstructions } from './persona.ts';
+import { ALWAYS_CLICK_TOOLS, CHAT_WITHHELD, SCREENS, handshakeInstructions } from './persona.ts';
 import { THEME_SLOTS, SLOT_MEANING, COLOURWAYS, COLOURWAY_LABEL } from './view/theme.ts';
 import { readTimeout, venueWriteTimeout } from './net.ts';
 import { contentFor } from './mcp-content.ts';
@@ -867,6 +867,7 @@ registerView(
     'volatility, ichimoku, volume, scalp, clean) replaces your studies, { set }, { add }, { remove };',
     'three sub-panes and eight overlays at most. levels: horizontal lines. marks: moments in time.',
     'lines: through two (time, price) anchors. zones: a price band. chart: 0 to 3; omit for the primary.',
+    'The chart is on the trade screen: when they want to see it, switch to trade.',
   ].join(' '),
   {
     chart: z.number().int().min(0).max(3).optional(),
@@ -998,7 +999,7 @@ registerRead(
 
 registerView(
   'trade_focus',
-  `Points the trading surface at one market. The chart follows. ${TRADE_ANSWER}`,
+  `Points the trading surface at one market, and the chart on the trade screen follows. It shows only on trade: when they asked to see it, switch to trade as well. ${TRADE_ANSWER}`,
   { symbol: z.string() },
 );
 
@@ -1216,8 +1217,9 @@ if (ROLE !== 'analyst')
     {
       description: [
         'Switches the screen they are looking at, the moment they name one ("switch to trading"): never',
-        'ask which. basic is chat and balances; pro adds charts, positions and orders; trade is the',
-        'Hyperliquid surface; vault is custody, addresses, the recovery phrase and the kill switch.',
+        'ask which.',
+        ...SCREENS.map((s) => `${s.key}: ${s.shows}`),
+        'To show a coin or a chart: switch to trade, then trade_focus it.',
         'Aliases: trading, hft, perps and hyperliquid mean trade; simple and plain mean basic; operator',
         'and advanced mean pro. The answer lists any moves still waiting for their click: say how many.',
         'Moves no money.',

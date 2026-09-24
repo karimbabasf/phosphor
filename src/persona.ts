@@ -18,6 +18,22 @@ export const IDENTITY: readonly string[] = [
   "Phosphor is an app on this person's Mac that holds their real money, inside NEAR Intents and on Hyperliquid, and you work it for them through its tools.",
 ];
 
+/* THE FOUR SCREENS as they are since the 2026-09-23 layout: what each one shows, in words the agent
+   can say. Basic lost its chart, and an agent still carrying the old map told Karim it would "open
+   BTC on the basic screen". The switch tool, the terminal greeting and the persona all read this. */
+export const SCREENS: readonly { key: 'basic' | 'pro' | 'trade' | 'vault'; name: string; shows: string }[] = [
+  { key: 'basic', name: 'Basic', shows: 'the chat and their balances (a ring with the total, a tile per coin, Add money). No charts.' },
+  { key: 'pro', name: 'Pro', shows: 'balances, the trading account, positions, orders, the last 24 hours.' },
+  { key: 'trade', name: 'Trade', shows: 'one market: its chart, with positions and orders.' },
+  { key: 'vault', name: 'Vault', shows: 'agents and safety: freeze, lock, backup, limits.' },
+];
+
+export const WINDOW: readonly string[] = [
+  `Four screens. ${SCREENS.map((s) => `${s.name}: ${s.shows}`).join(' ')}`,
+  'Charts are on Trade only. Asked to see a coin, a chart or a market: switch to trade, trade_focus the coin, and say so in one line ("Opened BTC on Trade."). Never offer a view that does not exist.',
+  'Never bring up their screen unless they ask: small talk gets small talk.',
+];
+
 // The propose tools that wait for a click at any size. Named once here and read by the tool
 // descriptions, so a tool cannot say "always waits" in one sentence and "may run on its own" in
 // the next, which two of them did until 2026-09-11.
@@ -103,6 +119,7 @@ export function handshakeInstructions(root: string, surface: 'chat' | 'terminal'
     [
       "You are Phosphor's assistant.",
       ...IDENTITY,
+      ...WINDOW,
       '',
       'Call `start` first: it returns the live state (network, balance, what waits for a click, the auto-approve limit, which screen is up) and the index of every tool. Never ask the person how to use this app.',
       '',

@@ -96,10 +96,12 @@ function factLines(f: GreetingFacts): string[] {
   ];
 }
 
+// The four screens as they are (src/persona.ts SCREENS says what each shows to the agent).
 const MODES: readonly { key: ViewMode; name: string; line: string }[] = [
-  { key: 'basic', name: 'BASIC', line: 'plain English, one decision at a time, written for a non-technical human' },
-  { key: 'pro', name: 'PRO', line: 'the operator deck: wallet, composition, policy, audit log, transactions' },
-  { key: 'trade', name: 'TRADING', line: 'hyperliquid perpetuals: chart, positions, plans, high-frequency work' },
+  { key: 'basic', name: 'BASIC', line: 'the chat and your balances; no charts' },
+  { key: 'pro', name: 'PRO', line: 'your money and positions: balances, trading account, orders, 24 hours' },
+  { key: 'trade', name: 'TRADE', line: 'the market: the chart, positions and orders' },
+  { key: 'vault', name: 'VAULT', line: 'agents and safety: freeze, lock, backup, limits' },
 ];
 
 // The whole point of the greeting. Anything an agent might otherwise ask a human how to do is
@@ -124,7 +126,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
   {
     group: 'switch the window',
     items: [
-      { tool: 'switch', does: 'move the app between basic, pro, trade and vault. One word is enough: "switch to trading".' },
+      { tool: 'switch', does: 'move the app between basic, pro, trade and vault. One word is enough: "switch to trading". A chart is only on trade: to show a coin, switch to trade and trade_focus it.' },
       {
         tool: 'set_theme',
         does: "recolour the window: accent (the one hue everything is drawn in), background, up, down, agent (what you draw). Hex only, reset:true restores the default green. The approval gate's red is not a slot, and a colour that would leave anything unreadable is refused.",
@@ -248,7 +250,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
   {
     group: 'point a human at something',
     items: [
-      { tool: 'trade_focus', does: 'point the trading surface at one market. The chart follows.' },
+      { tool: 'trade_focus', does: 'point the trading surface at one market; the chart on trade follows.' },
       { tool: 'trade_highlight', does: 'point at one row or chart object (position, order, fill, plan, level, line, indicator) and say why. When you explain something, point at it.' },
       { tool: 'trade_overlay', does: 'toggle entry, liquidation, stops, targets, orders, fills, plan wall.' },
       { tool: 'trade_clear', does: 'remove what you put on the surface.' },

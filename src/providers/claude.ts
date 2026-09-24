@@ -101,6 +101,23 @@ export function assertSurface(tools: unknown): string[] {
     .map((t) => (typeof t === 'string' ? t : JSON.stringify(t)));
 }
 
+/* The built-ins this Claude Code release has, as the driver profile names them: every one but the
+   web tools is on its deny list, and tests/lockdown.test.ts holds that list to the installed
+   binary. Read once. A profile that cannot be read makes every name a built-in, the strict answer;
+   the driver does not start without the profile anyway. */
+let builtins: ReadonlySet<string> | null | undefined;
+function claudeBuiltins(): ReadonlySet<string> | null {
+  if (builtins !== undefined) return builtins;
+  try {
+    const profile = JSON.parse(fs.readFileSync(new URL('../../operator/driver.settings.json', import.meta.url), 'utf8')) as { permissions?: { deny?: unknown } };
+    const deny = profile.permissions?.deny;
+    builtins = Array.isArray(deny) ? new Set([...deny.filter((t): t is string => typeof t === 'string'), ...Object.keys(WEB_TOOLS)]) : null;
+  } catch {
+    builtins = null;
+  }
+  return builtins;
+}
+
 // The persona file for one session: in the app's own directory, readable by this user alone.
 export function personaFile(home: string, sessionId: string): string {
   return path.join(home, `persona-${sessionId}.txt`);
@@ -145,7 +162,11 @@ export const claude: Provider = {
     if (server === true) return { kind: 'builtin', name: `server ${name}` };
     if (name.startsWith(MCP_PREFIX)) return { kind: 'phosphor', name, input };
     // Own keys only: `in` would also pass "constructor" and "toString".
-    return Object.hasOwn(WEB_TOOLS, name) ? { kind: 'web', name: WEB_TOOLS[name] } : { kind: 'builtin', name };
+    if (Object.hasOwn(WEB_TOOLS, name)) return { kind: 'web', name: WEB_TOOLS[name] };
+    // Another server's tool, or a built-in the profile keeps out: a real tool, so the session ends.
+    const known = claudeBuiltins();
+    if (name.startsWith('mcp__') || known === null || known.has(name)) return { kind: 'builtin', name };
+    return { kind: 'unknown', name };
   },
   result(content) {
     return content;

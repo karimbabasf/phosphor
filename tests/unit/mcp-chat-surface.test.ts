@@ -124,6 +124,18 @@ test('a swap names a network only when the person did: neither is required, and 
   }
 });
 
+test('switch describes the four screens as they are, and a coin is shown on trade', async () => {
+  const { tools } = await listed('chat');
+  const text = tools.find((t) => t.name === 'switch')?.description ?? '';
+  assert.ok(text.includes('basic: the chat and their balances'), text);
+  assert.ok(text.includes('No charts.'));
+  assert.ok(text.includes('trade: one market: its chart'));
+  assert.ok(text.includes('vault: agents and safety'));
+  assert.ok(text.includes('To show a coin or a chart: switch to trade, then trade_focus it.'));
+  assert.ok(!text.includes('pro adds charts'));
+  assert.match(tools.find((t) => t.name === 'trade_focus')?.description ?? '', /shows only on trade/);
+});
+
 test('what the chat is handed stays well under half of what it was', async () => {
   /* 62,641 characters of tool JSON on 2026-09-22 (46 tools, measured over stdio like this). The
      chat surface drops ten tools and every description says what the tool does and its limits,

@@ -4,6 +4,9 @@
 # event carrying the whole block, then content_block_stop. It records its argv in claude-argv.txt
 # and each turn in turns.jsonl, both under TMPDIR, and answers every turn the same way. A turn
 # that says WEB-FETCH reads a page first; one that says SERVER-TOOL carries a tool the API ran.
+# UNKNOWN-TOOL calls a tool by a name no tool has and gets claude's refusal back, as a model that
+# said `switch` for mcp__phosphor__switch did live; BASH-TOOL, WRITE-TOOL and OTHER-SERVER-TOOL
+# reach for a real tool outside the lockdown.
 # One that says SLOW-ANSWER (after any page read) runs until an interrupt comes down stdin, then ends the way claude
 # 2.1.281 did when interrupted (measured 2026-09-23): the control_response, the partial block
 # whole, the user line, and a result with subtype error_during_execution. It takes 0.3 s over
@@ -49,8 +52,21 @@ while IFS= read -r line; do
       ;;
   esac
   case "$line" in
+    *OTHER-SERVER-TOOL*)
+      printf '%s\n' '{"type":"assistant","message":{"id":"msg_o","role":"assistant","content":[{"type":"tool_use","id":"toolu_o","name":"mcp__other__peek","input":{}}]}}'
+      ;;
     *SERVER-TOOL*)
       printf '%s\n' '{"type":"assistant","message":{"id":"msg_s","role":"assistant","content":[{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"near ai"}}]}}'
+      ;;
+    *UNKNOWN-TOOL*)
+      printf '%s\n' '{"type":"assistant","message":{"id":"msg_u","role":"assistant","content":[{"type":"tool_use","id":"toolu_u","name":"switch","input":{"mode":"trade"}}]}}'
+      printf '%s\n' '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_u","content":"<tool_use_error>Error: No such tool available: switch</tool_use_error>","is_error":true}]}}'
+      ;;
+    *BASH-TOOL*)
+      printf '%s\n' '{"type":"assistant","message":{"id":"msg_b","role":"assistant","content":[{"type":"tool_use","id":"toolu_b","name":"Bash","input":{"command":"ls"}}]}}'
+      ;;
+    *WRITE-TOOL*)
+      printf '%s\n' '{"type":"assistant","message":{"id":"msg_w2","role":"assistant","content":[{"type":"tool_use","id":"toolu_w2","name":"Write","input":{"file_path":"/tmp/x","content":"x"}}]}}'
       ;;
   esac
   printf '%s\n' '{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_a"}}}'

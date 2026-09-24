@@ -60,6 +60,17 @@ const META_TOOLS = ['search_tool', 'use_tool'] as const;
 // Grok's own web search and page reading, by the names its stream and --tools use.
 const WEB_TOOLS = ['web_search', 'web_fetch'] as const;
 const SERVER = 'phosphor';
+/* Grok 1.0.40's other built-ins, as its init line listed them with no --tools (measured
+   2026-09-23), with Agent and the shell's other spelling. A call to one ends the session; a name
+   that is none of them and no server's is turned away by grok itself (see ToolCall 'unknown'). */
+const GROK_BUILTINS: ReadonlySet<string> = new Set([
+  'run_terminal_command', 'run_terminal_cmd', 'read_file', 'search_replace', 'list_dir', 'grep', 'write',
+  'kill_command_or_subagent', 'get_command_or_subagent_output', 'todo_write', 'monitor', 'workflow',
+  'scheduler_create', 'scheduler_delete', 'scheduler_list', 'enter_plan_mode', 'exit_plan_mode',
+  'ask_user_question', 'send_feedback', 'image_gen', 'image_edit', 'image_to_video', 'reference_to_video', 'Agent',
+]);
+// A tool of some MCP server in grok's spelling, server__tool.
+const SERVER_TOOL = /^[A-Za-z0-9_-]+?__[A-Za-z0-9_.-]+$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function resolveGrokBin(override?: string): string {
@@ -260,9 +271,12 @@ export const grok: Provider = {
       if (typeof call.tool_name === 'string' && call.tool_name.startsWith(`${SERVER}__`)) {
         return { kind: 'phosphor', name: `${MCP_PREFIX}${call.tool_name.slice(SERVER.length + 2)}`, input: call.tool_input ?? {} };
       }
-      return { kind: 'builtin', name: `use_tool ${String(call.tool_name)}` };
+      // Another server's tool is a real one; a name no server has is turned away by use_tool.
+      const named = `use_tool ${String(call.tool_name)}`;
+      return typeof call.tool_name === 'string' && SERVER_TOOL.test(call.tool_name) ? { kind: 'builtin', name: named } : { kind: 'unknown', name: named };
     }
-    return { kind: 'builtin', name };
+    if (GROK_BUILTINS.has(name) || SERVER_TOOL.test(name)) return { kind: 'builtin', name };
+    return { kind: 'unknown', name };
   },
   /* use_tool answers { type: "MCP", tool_name, server_name, output: { OkayOutput: "<the tool's
      own text>" } } (measured). The tool's text is what the card is drawn from; any other output

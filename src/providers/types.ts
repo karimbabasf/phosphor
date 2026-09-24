@@ -45,8 +45,13 @@ export type ToolCall =
   // The vendor's own web search or page reading, under one name for both vendors. Allowed on
   // Karim's decision of 2026-09-23 (research anything, not only crypto); never a card.
   | { kind: 'web'; name: 'web_search' | 'web_fetch' }
-  // Anything else. The session ends on it.
-  | { kind: 'builtin'; name: string };
+  // A real tool outside the allowlist: a vendor built-in, or another MCP server's tool. The
+  // session ends on it.
+  | { kind: 'builtin'; name: string }
+  /* A name no tool has (a bare `switch` for mcp__phosphor__switch, seen live on 2026-09-23). It can
+     run nothing: the CLI turns it away and the model tries again, so the chat goes on and only the
+     developer's log hears of it (the lead's call of 2026-09-23). */
+  | { kind: 'unknown'; name: string };
 
 export type Provider = {
   id: ProviderId;
