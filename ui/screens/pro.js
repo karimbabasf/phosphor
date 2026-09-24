@@ -251,7 +251,7 @@
 
   /* The one action on an empty account: ask the assistant, in the thread, in
      the person's own words. The move it proposes waits for the click on its
-     card like every other. With nobody at the wheel the button says what to do
+     card like every other. With no agent running the button says what to do
      first rather than failing quietly. */
   function askToFund() {
     var agent = window.PhosphorAgent;

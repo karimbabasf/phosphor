@@ -339,7 +339,7 @@
     host.appendChild(head);
     host.appendChild(dom.el('p', 'body dim', 'Your recovery phrase is the only way back to this wallet. Reveal it once, write it down, and type three words back to prove it.'));
     var actions = dom.el('div', 'screen-actions');
-    var go = dom.el('button', 'btn btn-primary');
+    var go = dom.el('button', 'btn');
     go.type = 'button';
     go.appendChild(dom.el('span', 'btn-label', 'Back up now'));
     actions.appendChild(go);

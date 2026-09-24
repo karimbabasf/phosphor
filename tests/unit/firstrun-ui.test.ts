@@ -361,7 +361,7 @@ test('Claude Code signed in: Use is one round trip, the step offers Start your a
   primary(screen).click();
   await flush();
   assert.ok(world.calls.some((c) => c.action === 'start'), 'Start did not post the start');
-  assert.equal(status(screen), 'Claude Code is at the wheel.');
+  assert.equal(status(screen), 'Claude Code is ready.');
   assert.equal(primary(screen).textContent, 'Continue');
   primary(screen).click();
   assert.equal(screen.hidden, true, 'Continue on the last step did not close the first run');

@@ -389,11 +389,23 @@ test('a step change hands the focus to the new step: its title, or the tile of t
   assert.equal(focusedNow?.dataset.network, 'sol', 'back on the tiles the focus is not on the network in hand');
 });
 
+// The folded list leads with the two a person most likely holds; the line under it opens the rest.
+function unfold(world: Any): void {
+  const more = find(world.host, '.netpick-link').find((b: Any) => b.dataset.role === 'more-tokens');
+  assert.ok(more, 'no way to the rest of the tokens');
+  more.click();
+}
+
 test('the token list is sorted the way a wallet sorts: the chain coin, USDC, USDT, then by name', async () => {
   const world = build({ ack: true });
   world.render({ stage: 'tokens', network: 'eth' });
   await flush();
+  // The chain's coin and USDC lead; the other four wait behind one line, not a wall of tickers.
+  assert.deepEqual(find(world.host, '.token-row').map((r: Any) => r.dataset.symbol), ['ETH', 'USDC']);
+  assert.equal(textOf(find(world.host, '.netpick-tokfoot')[0]).join(''), '4 more tokens');
+  unfold(world);
   assert.deepEqual(find(world.host, '.token-row').map((r: Any) => r.dataset.symbol), ['ETH', 'USDC', 'USDT', 'DAI', 'PYUSD', 'WBTC']);
+  assert.equal(textOf(find(world.host, '.netpick-tokfoot')[0]).join(''), 'Show fewer');
   assert.deepEqual(world.pick.sortTokens([{ symbol: 'b' }, { symbol: 'USDT' }, { symbol: 'a' }, { symbol: 'SOL' }, { symbol: 'USDC' }], 'SOL').map((t: Any) => t.symbol), ['SOL', 'USDC', 'USDT', 'a', 'b']);
 });
 
@@ -401,6 +413,7 @@ test('every minimum is in the token\'s own unit, in mono at the right, and the b
   const world = build({ ack: true });
   world.render({ stage: 'tokens', network: 'eth' });
   await flush();
+  unfold(world);
   const mins = find(world.host, '.token-min');
   // A floor under a millionth of the coin is dust and says so in words rather than in zeros.
   assert.deepEqual(mins.map((n: Any) => n.textContent), ['No minimum', 'Min 0.001 USDC', 'Min 0.001 USDT', 'Min 0.001 DAI', 'Min 0.001 PYUSD', 'Min 0.0001 WBTC']);
@@ -430,7 +443,8 @@ test('the search narrows by prefix first, then by what contains the letters, and
   assert.equal(find(world.host, '.netpick-list')[0].hidden, true);
   input.value = '';
   input.dispatch('input');
-  assert.equal(find(world.host, '.token-row').length, 6);
+  // A search shows every match; cleared, the list folds back to its two.
+  assert.equal(find(world.host, '.token-row').length, 2);
   assert.equal(empty.hidden, true);
 });
 
@@ -445,7 +459,9 @@ test('the acknowledgement gates the address once per install: ticked, remembered
   assert.equal(ack.textContent, 'I understand only the tokens above can be sent here. Anything else sent to this address is lost.');
   const go = buttonNamed(world.host, 'Show the address');
   assert.equal(go.disabled, true);
-  assert.ok(String(go.className).includes('btn-primary'), 'the first-time button is not the primary one');
+  // The first-time button is the plain neutral one: green is for the mark, the live move,
+  // success and Approve, and showing an address is none of those.
+  assert.equal(String(go.className), 'btn', 'the first-time button is not the neutral primary');
   const box = find(world.host, '.ack-input')[0];
   assert.equal(box.type, 'checkbox');
   go.click();
@@ -681,6 +697,7 @@ test('in the Vault card the address is handed off, the way back is not offered, 
   await flush();
   assert.equal(root(world).dataset.context, 'vault');
   assert.equal(buttonNamed(world.host, 'Change network'), undefined, 'a Change network link under a network menu');
+  unfold(world);
   const contracts = find(world.host, '.token-contract');
   assert.equal(contracts.length, 6, 'a contract line per token');
   assert.ok(contracts.every((n: Any) => n.hasAttribute('data-dev-only')), 'a contract line a person sees without the developer switch');
