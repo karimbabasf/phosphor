@@ -5,6 +5,38 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.0
+
+Built 2026-09-24, the production pass. Tagged v0.10.0 on 2026-09-24.
+
+- Swaps work for every coin 1Click lists, by name, with the exact amount you hold. "All" of a coin
+  now means every last unit: a rounding bug made every swap from NEAR ask for a hair more than the
+  balance, so those swaps could never run. A coin named without its network is the one you hold,
+  or the one that quotes the most.
+- A swap asks for its price once, so a small move in the market no longer refuses it and the card
+  appears sooner. A swap that fails says so plainly, says when nothing left your balance, and keeps
+  watching a signed transfer until it can no longer run.
+- Every coin 1Click lists has a price in your balance. A move is judged at the larger of the listed
+  price and what the quote says arrives, so a wrong listed price can never make a move look small.
+- A new window: warm, soft layers, the conversation on the left and your money on the right.
+  Basic shows the chat and your balances in a ring with a tile per coin. Pro is a statement of your
+  coins with each coin's day, your policies as three dials, and your recent moves. Trade holds
+  everything for Hyperliquid. Vault holds your agents, your policies and your safety controls.
+- A move lives in the chat as one card that changes in place, from working to done, with Approve
+  on the card when your click is needed. Nothing covers the conversation any more.
+- Replies stream in and the chat follows them to the end. Typing no longer shakes the thread, every
+  panel opens and closes smoothly, and switching screens slides.
+- Real logos for every coin and every agent, and figures that sit on the line of the text.
+- The chat runs the agent you pick in the Vault, Claude Code or Grok, and it talks short and plain.
+  It can look things up on the web; after it reads a page, every move in that chat waits for your
+  click.
+- Hyperliquid: a deposit waits while Arbitrum fees spike instead of risking the money, stop prices
+  on coins under $1 are rounded correctly, a plan that ends cancels the rest of its entry, a close
+  never takes more than its own plan, and Flatten never reports a position closed while it is open.
+- Chart markings, studies and layouts are kept per market across a quit until you or the agent
+  clear them. A stop or a liquidation level always has its own label on the price axis.
+- When the app cannot start, it says so in its own window with Try again, instead of a system alert.
+
 ## 0.9.3
 
 Built 2026-09-22, the first-week fixes. Tagged v0.9.3 on 2026-09-22.
