@@ -104,10 +104,10 @@ test('the down slot holds the text floor: a dim red is refused, the shipped red 
   const dim = applyPatch(DEFAULT_THEME, { down: '#a0505c' });
   assert.equal(dim.ok, false);
   // The ratio in the error is the one on the raised surface (the lower of the two the check reads).
-  assert.match(dim.ok ? '' : dim.error, /down #a0505c on #0e0f13 is 2\.9\d:1, under the 4\.5:1/);
-  const shipped = applyPatch(DEFAULT_THEME, { down: '#ff5a6e' });
+  assert.match(dim.ok ? '' : dim.error, /down #a0505c on #161210 is 2\.8\d:1, under the 4\.5:1/);
+  const shipped = applyPatch(DEFAULT_THEME, { down: '#ff6b5b' });
   assert.equal(shipped.ok, true);
-  assert.ok(contrastRatio('#ff5a6e', DEFAULT_THEME.background) >= MIN_TEXT_CONTRAST);
+  assert.ok(contrastRatio('#ff6b5b', DEFAULT_THEME.background) >= MIN_TEXT_CONTRAST);
 });
 
 test('a background nothing can be read on is refused', () => {
@@ -237,6 +237,20 @@ test('reset goes back to the colourway, whatever the slots were', () => {
   assert.equal(out.ok, true);
   if (!out.ok) return;
   assert.deepEqual(out.theme, colourwayTheme('green-on-black'));
+});
+
+/* Soft depth moved the colourway's own slots (2026-09-23). A theme.json written before that by a
+   reset, or by a set_theme that changed one slot, holds the old shipped values for the rest; they
+   meant "the colourway", so they read back as today's, and a slot somebody chose stays theirs. */
+test('a theme file holding the colourway\'s old slots reads as the warm charcoal, and a chosen slot stays', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'phosphor-theme-'));
+  writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ accent: '#3fff6c', background: '#0e0f13', up: '#3fff6c', down: '#ff5a6e', agent: '#c9b3ff', profile: 'green-on-black' }));
+  const read = readTheme(dir);
+  assert.equal(read.background, '#161210');
+  assert.equal(read.accent, '#52e893');
+  assert.equal(read.up, '#52e893');
+  assert.equal(read.down, '#ff6b5b');
+  assert.equal(read.agent, '#c9b3ff');
 });
 
 test('a white ground is refused because the gate red cannot be read on it', () => {

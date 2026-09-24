@@ -121,9 +121,9 @@ test('the renderer never assigns innerHTML and builds no control', () => {
   assert.equal(/\.innerHTML\s*=/.test(SOURCE), false);
   assert.equal(/insertAdjacentHTML|outerHTML|document\.write|createContextualFragment/.test(SOURCE), false);
   const md = load();
-  md.render('# Title\n\n- one\n- [two](https://x.test)\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\ncode\n```\n**bold** `x` *em*');
+  md.render('# Title\n\n- one\n- [two](https://x.test)\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\ncode\n```\n**bold** `x` *em*\n\n> a quote with [a link](https://x.test)');
   const tags = new Set(md.built);
-  const allowed = new Set(['div', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span']);
+  const allowed = new Set(['div', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'blockquote']);
   for (const tag of tags) assert.ok(allowed.has(tag), `the renderer built a <${tag}>`);
   assert.equal(tags.has('a'), false, 'a link is text, not a control');
   assert.equal(tags.has('button'), false);
@@ -147,6 +147,30 @@ test('a table is a real table built element by element', () => {
   assert.equal(withClass(rows[0], 'down').length, 1);
   assert.equal(withClass(rows[1], 'up').length, 1);
   assert.ok(withClass(host, 'chat-table').length === 1, 'the table sits in a wrapper that can scroll sideways');
+});
+
+/* Hunt A, 2026-09-23: "> Prices move" printed its ">", and a column of figures sat under a
+   header aligned the other way. A quote is its own quiet block, and a header whose column is all
+   figures is aligned with them. */
+test('a quoted line is a quiet block without its marker', () => {
+  const md = load();
+  const host = md.render('Before you send:\n\n> Prices move\n> fast here\n\nThen approve.');
+  const quotes = all(host, 'blockquote');
+  assert.equal(quotes.length, 1);
+  assert.ok(quotes[0].className.split(' ').includes('chat-quote'));
+  assert.equal(quotes[0].textContent.includes('>'), false, 'the marker is printed');
+  assert.ok(quotes[0].textContent.includes('Prices move'), quotes[0].textContent);
+  assert.ok(quotes[0].textContent.includes('fast here'), quotes[0].textContent);
+  assert.equal(all(host, 'p').length, 3, 'the text around the quote lost its paragraphs');
+});
+
+test('a header whose column is all figures lines up with them', () => {
+  const md = load();
+  const host = md.render('| Coin | Amount | Note |\n|---|---|---|\n| ETH | 1.42 | kept |\n| SOL | 8.10 | 5 |');
+  const th = all(host, 'th');
+  assert.equal(th[0].className.split(' ').includes('num'), false);
+  assert.ok(th[1].className.split(' ').includes('num'), 'a figures column has its header on the other side');
+  assert.equal(th[2].className.split(' ').includes('num'), false, 'a mixed column was aligned as figures');
 });
 
 test('a heading is a label, never larger than the body', () => {

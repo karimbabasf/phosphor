@@ -197,6 +197,7 @@
     }
     dom.setAttr(document.body, 'data-view', currentView);
     renderLayout();
+    renderBrake();
 
     if (changed) {
       /* The world is the one scroller and the views share it, so a screen
@@ -419,14 +420,16 @@
   var BRAKE_WORDS = {
     off: {
       title: 'Freeze everything?',
-      body: 'This cancels every working order and disarms every rule. It does not close a position: nothing in this app can do that.',
+      body: "Your agent can't move any money until you unfreeze. Nothing you hold is sold.",
+      /* Said only where trading is on screen: on Basic there are no orders to talk about. */
+      trading: ' Working orders are cancelled, and open positions stay open.',
       keep: 'Cancel',
       go: 'Freeze everything',
       pending: 'Freezing'
     },
     on: {
       title: 'Everything is frozen.',
-      body: 'The assistant cannot move any money until you unfreeze.',
+      body: "Your agent can't move any money until you unfreeze.",
       keep: 'Keep frozen',
       go: 'Unfreeze',
       pending: 'Unfreezing'
@@ -490,7 +493,8 @@
     if (refs.brakeWord) dom.setHidden(refs.brakeWord, !frozen);
     if (!refs.brakeGo) return;
     dom.setText(refs.brakeTitle, words.title);
-    dom.setText(refs.brakeBody, words.body);
+    var trading = currentView === 'pro' || currentView === 'trade';
+    dom.setText(refs.brakeBody, words.body + (trading && words.trading ? words.trading : ''));
     dom.setText(refs.brakeKeep.querySelector('.btn-label'), words.keep);
     dom.setText(refs.brakeGo.querySelector('.btn-label'), words.go);
     dom.setAttr(refs.brakeGo, 'data-pending-label', words.pending);

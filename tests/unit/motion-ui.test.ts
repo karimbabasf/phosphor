@@ -1,6 +1,6 @@
 // How things open, close and change in the window, in one grammar (Karim, 2026-09-23: "there
 // are no smooth animations when clicking out of stuff"). A popover, panel, confirm, menu or
-// dialog grows from 0.96 and fades in over 220 ms and goes back the same way in 160 ms;
+// dialog grows from 0.96 and fades in over 220 ms and goes back the same way in 200 ms on the exit curve;
 // clicking outside, Escape and the close button take the same exit; nothing leaves the screen
 // before its exit is over; a card or a panel that changes size slides to it; the world dips
 // between views; and none of it moves with motion reduced. The sheets are read as text, and
@@ -71,14 +71,17 @@ function node(height = 100): Any {
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-test('one grammar: the tokens, the sheet and the script say 0.96, 220 ms in and 160 ms out', () => {
+test('one grammar: the tokens, the sheet and the script say 0.96, 220 ms in and 200 ms out on the exit curve', () => {
   assert.match(TOKENS, /--dur-open:\s*220ms;/);
-  assert.match(TOKENS, /--dur-close:\s*160ms;/);
+  assert.match(TOKENS, /--dur-close:\s*200ms;/);
+  /* A close at 160 ms on the ease-out was half gone in 21 to 42 ms and read as a snap (hunt B). */
+  assert.match(TOKENS, /--ease-exit:\s*cubic-bezier\(0\.4, 0, 0\.6, 1\);/);
+  assert.match(MOTION, /var EXIT_EASE = 'cubic-bezier\(0\.4, 0, 0\.6, 1\)';/);
   assert.match(TOKENS, /--dur-morph:\s*240ms;/);
   assert.match(TOKENS, /--dur-view:\s*200ms;/);
   assert.match(TOKENS, /--scale-open:\s*0\.96;/);
   assert.match(MOTION, /var OPEN_MS = 220;/, 'the script and the token disagree on the way in');
-  assert.match(MOTION, /var CLOSE_MS = 160;/, 'the script and the token disagree on the way out');
+  assert.match(MOTION, /var CLOSE_MS = 200;/, 'the script and the token disagree on the way out');
   assert.match(MOTION, /var MORPH_MS = 240;/);
   assert.match(MOTION, /var SCALE_FROM = 0\.96;/);
   const links = [...HTML.matchAll(/<link rel="stylesheet" href="\.\/design\/([\w.-]+\.css)">/g)].map((m) => m[1]);
@@ -96,6 +99,7 @@ test('a thing that opens by its hidden attribute keeps its box for the exit and 
   assert.match(hidden, /transform:\s*scale\(var\(--scale-open\)\);/);
   assert.match(hidden, /pointer-events:\s*none;/, 'a Freeze on its way out can still be pressed');
   assert.match(hidden, /transition-duration:\s*var\(--dur-close\);/, 'the way out is not the faster one');
+  assert.match(hidden, /transition-timing-function:\s*var\(--ease-exit\);/, 'the way out snaps on the ease-out');
   assert.match(CSS, /@starting-style\s*\{\s*\[data-motion="pop"\]:not\(\[hidden\]\)\s*\{\s*opacity:\s*0;\s*transform:\s*scale\(var\(--scale-open\)\);/);
   assert.match(HTML, /<div class="brake-panel" id="brake-panel"[^>]*data-motion="pop" hidden>/, 'the freeze confirm snaps');
   assert.doesNotMatch(HTML, /id="screen-lock"[^>]*data-motion/, 'the lock screen has its own unlock moment');
@@ -135,7 +139,8 @@ test('a close keeps the node until its exit is over, then hides it; one opened a
   M.leave(el, () => { hidden += 1; });
   assert.equal(hidden, 0, 'the node went before its exit');
   assert.deepEqual(JSON.parse(JSON.stringify(el.anims[0].frames)), [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(0.96)' }]);
-  assert.equal(el.anims[0].options.duration, 160);
+  assert.equal(el.anims[0].options.duration, 200);
+  assert.equal(el.anims[0].options.easing, 'cubic-bezier(0.4, 0, 0.6, 1)');
   assert.equal(el.style.pointerEvents, 'none', 'a node on its way out can be pressed');
   el.anims[0].finish();
   await settle();
@@ -162,7 +167,7 @@ test('a dialog closes after its card and scrim have gone, and one asked for agai
   M.closeDialog(dialog);
   assert.equal(dialog.open, true, 'the dialog closed before its exit');
   assert.equal(dialog.getAttribute('data-closing'), 'true');
-  assert.equal(timers[0].ms, 160);
+  assert.equal(timers[0].ms, 200);
   runTimers();
   assert.equal(dialog.open, false);
   assert.equal(dialog.getAttribute('data-closing'), null);

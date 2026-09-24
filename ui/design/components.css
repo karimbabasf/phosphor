@@ -1,6 +1,13 @@
 /* Phosphor components. Every pressable presses. Every wait names a noun.
-   Panels carry no shadow: depth is ground steps and hairlines, light is the
-   glow the assistant leaves on a surface. */
+   Soft depth: a surface is a soft layer on the warm ground, lifted by a
+   gradient, a hairline of light on its top edge and a soft shadow under it,
+   never boxed by a hairline. Light is the glow the assistant leaves. */
+
+/* One ring for everything that takes the keyboard (reset.css draws the ring; this is its
+   colour, the same everywhere). */
+:focus-visible {
+  outline-color: var(--focus-ring);
+}
 
 /* ---------- Button ---------- */
 
@@ -10,29 +17,37 @@
    is not a .btn holds the small variant's height at least, so a finger finds
    the quiet ones too. A family that wants to be shorter than its variant is
    the wrong variant, not a shorter button. */
+/* SOFT BUTTONS. A button is a small raised layer: its fill, a hairline of
+   light along its top edge (--btn-hi) and no outline. It squishes when
+   pressed and springs back when let go: the press lands in --dur-press and
+   the release rides --ease-spring. */
 .btn {
-  --btn-bg: var(--bg-2);
+  --btn-bg: var(--bg-3);
   --btn-fg: var(--text);
-  --btn-edge: var(--line-strong);
-  --btn-edge-hover: var(--text-3);
-  --btn-bg-active: var(--bg-2);
+  --btn-edge: transparent;
+  --btn-edge-hover: transparent;
+  --btn-bg-hover: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 6%);
+  --btn-bg-active: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 9%);
+  --btn-hi: inset 0 1px 0 rgba(var(--hi-rgb), 0.07);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--s-2);
   min-height: 36px;
   padding: 0 var(--s-4);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-btn);
   background: var(--btn-bg);
   color: var(--btn-fg);
   border: 1px solid var(--btn-edge);
+  box-shadow: var(--btn-hi);
   font-size: var(--fs-14);
-  font-weight: 500;
+  font-weight: 550;
   letter-spacing: -0.01em;
   white-space: nowrap;
-  transition: transform var(--dur-press) var(--ease-out),
+  transition: transform var(--dur-release) var(--ease-spring),
               background-color var(--dur-press) var(--ease-out),
               border-color var(--dur-press) var(--ease-out),
+              box-shadow var(--dur-press) var(--ease-out),
               color var(--dur-press) var(--ease-out),
               opacity var(--dur-press) var(--ease-out);
 }
@@ -48,23 +63,24 @@
 @media (hover: hover) and (pointer: fine) {
   .btn:hover:not(:disabled) {
     border-color: var(--btn-edge-hover);
+    background: var(--btn-bg-hover);
   }
   .btn-primary:hover:not(:disabled) {
     background: color-mix(in srgb, var(--ink) 88%, #FFFFFF);
   }
   .btn-ghost:hover:not(:disabled) {
-    background: var(--bg-2);
-  }
-  .btn-danger:hover:not(:disabled) {
-    background: var(--down-wash);
+    background: var(--btn-bg-hover);
   }
 }
 
 /* The press: the box gives 3 percent and the fill steps one shade, so a
-   click reads on a still frame and not only in motion. */
+   click reads on a still frame and not only in motion. It lands fast; the
+   way back is the spring on .btn. */
 .btn:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: scale(var(--scale-press));
   background: var(--btn-bg-active);
+  transition-duration: 100ms, var(--dur-press), var(--dur-press), var(--dur-press), var(--dur-press), var(--dur-press);
+  transition-timing-function: var(--ease-out);
 }
 
 /* A pending button is disabled as well, and that is what stops a second press on a
@@ -75,19 +91,23 @@
   opacity: 0.5;
 }
 
+/* The primary is lit from inside: a brighter top edge and a shade at its
+   foot, so the green reads as a key rather than a sticker. */
 .btn-primary {
   --btn-bg: var(--ink);
   --btn-fg: var(--on-ink);
   --btn-edge: var(--ink);
   --btn-edge-hover: color-mix(in srgb, var(--ink) 88%, #FFFFFF);
   --btn-bg-active: color-mix(in srgb, var(--ink) 78%, #FFFFFF);
-  font-weight: 500;
+  --btn-hi: inset 0 1px 0 rgba(255, 255, 255, 0.38), inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+  font-weight: 600;
 }
 
+/* Ghost: the same soft layer one step lower, for the second answer. */
 .btn-ghost {
-  --btn-bg: transparent;
-  --btn-edge: var(--line);
-  --btn-bg-active: var(--bg-2);
+  --btn-bg: var(--bg-2);
+  --btn-bg-hover: color-mix(in srgb, var(--bg-2), var(--bg-3) 70%);
+  --btn-bg-active: var(--bg-3);
 }
 
 /* Quiet: no edge, no fill, the second text tone. The label stays on the text
@@ -99,16 +119,17 @@
   --btn-bg: transparent;
   --btn-edge: transparent;
   --btn-fg: var(--text-2);
-  --btn-bg-active: var(--bg-2);
+  --btn-bg-hover: var(--bg-2);
+  --btn-bg-active: var(--bg-3);
+  --btn-hi: none;
   padding: 0 var(--s-3);
 }
 
 .btn-danger {
-  --btn-bg: transparent;
+  --btn-bg: var(--bg-3);
   --btn-fg: var(--down);
-  --btn-edge: color-mix(in srgb, var(--down) 40%, transparent);
-  --btn-edge-hover: color-mix(in srgb, var(--down) 70%, transparent);
-  --btn-bg-active: var(--down-wash);
+  --btn-bg-hover: color-mix(in srgb, var(--bg-3), var(--down) 10%);
+  --btn-bg-active: color-mix(in srgb, var(--bg-3), var(--down) 16%);
 }
 
 /* The copy button: the quiet small variant with the 14 px glyph a hair from
@@ -144,11 +165,11 @@
 @keyframes ask-breathe {
   0%, 100% {
     background: var(--ink);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ink) 26%, transparent);
+    box-shadow: var(--btn-hi), 0 0 0 1px color-mix(in srgb, var(--ink) 10%, transparent), 0 0 0 0 color-mix(in srgb, var(--ink) 0%, transparent);
   }
   50% {
     background: color-mix(in srgb, #FFFFFF 12%, var(--ink));
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--ink) 20%, transparent);
+    box-shadow: var(--btn-hi), 0 0 0 5px color-mix(in srgb, var(--ink) 22%, transparent), 0 0 18px 2px color-mix(in srgb, var(--ink) 22%, transparent);
   }
 }
 
@@ -354,13 +375,17 @@ button[data-pending-label] > :not(.btn-pending) {
 
 /* ---------- Panel and card ---------- */
 
+/* A panel is a soft layer: the raised gradient, the light along its top edge
+   and a short soft shadow. The 1 px edge stays in the box, clear, so a panel
+   that opens (.opens) can draw it without moving a pixel. */
 .panel {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--raise-sm);
 }
 
 /* ---------- What a surface says about itself ----------
@@ -387,8 +412,8 @@ button[data-pending-label] > :not(.btn-pending) {
 }
 
 .panel.opens {
-  --opens-line: var(--line);
-  --opens-bg: var(--bg-1);
+  --opens-line: transparent;
+  --opens-bg: var(--bg-2);
 }
 
 /* The caret is drawn, not typed. A glyph in a label reads as an arrow in the
@@ -428,7 +453,7 @@ button[data-pending-label] > :not(.btn-pending) {
    specificity, later file wins), so ten families pressed like a hover. */
 
 .opens:focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
   border-color: var(--line-strong);
 }
@@ -461,9 +486,10 @@ button[data-pending-label] > :not(.btn-pending) {
 }
 
 .card {
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--radius-card);
+  box-shadow: var(--raise);
   padding: var(--s-5);
 }
 
@@ -547,7 +573,8 @@ button[data-pending-label] > :not(.btn-pending) {
   padding: 0 var(--s-3);
   border-radius: var(--radius-pill);
   background: var(--bg-2);
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
+  box-shadow: var(--hi);
   font-size: var(--fs-12);
   font-weight: 500;
   color: var(--text-2);
@@ -561,14 +588,15 @@ button[data-pending-label] > :not(.btn-pending) {
 button.chip {
   min-height: 30px;
   cursor: pointer;
-  transition: transform var(--dur-press) var(--ease-out),
+  transition: transform var(--dur-release) var(--ease-spring),
               border-color var(--dur-press) var(--ease-out),
               background-color var(--dur-press) var(--ease-out),
               color var(--dur-press) var(--ease-out);
 }
 
 button.chip:active {
-  transform: scale(0.97);
+  transform: scale(var(--scale-press));
+  transition-duration: 100ms, var(--dur-press), var(--dur-press), var(--dur-press);
 }
 
 button.chip[aria-pressed="true"] {
@@ -579,7 +607,7 @@ button.chip[aria-pressed="true"] {
 
 @media (hover: hover) and (pointer: fine) {
   button.chip:hover {
-    border-color: var(--text-3);
+    background: var(--bg-3);
     color: var(--text);
   }
 }
@@ -638,7 +666,7 @@ button.chip[aria-pressed="true"] {
 }
 
 .check-row:focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
@@ -665,9 +693,10 @@ button.chip[aria-pressed="true"] {
   align-items: flex-start;
   gap: var(--s-3);
   padding: var(--s-3) var(--s-4);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
   background: var(--bg-2);
+  box-shadow: var(--hi);
   font-size: var(--fs-13);
   color: var(--text-2);
 }
@@ -815,13 +844,16 @@ button.chip[aria-pressed="true"] {
 
 /* ---------- Input ---------- */
 
+/* A field is pressed into its surface: the tile fill, no outline, and on
+   focus a hairline of the second text tone. */
 .input {
   width: 100%;
   min-height: 40px;
   padding: 0 var(--s-3);
-  border-radius: var(--radius-sm);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--tile);
+  border: 1px solid transparent;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
   color: var(--text);
   font-size: var(--fs-14);
   transition: border-color var(--dur-press) var(--ease-out);
@@ -884,9 +916,9 @@ textarea.input {
   pointer-events: auto;
   max-width: 380px;
   padding: var(--s-3) var(--s-4);
-  border-radius: var(--radius-sm);
-  background: var(--bg-1);
-  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-pop);
+  border: 1px solid transparent;
   box-shadow: var(--lift);
   font-size: var(--fs-13);
   opacity: 1;
@@ -988,13 +1020,13 @@ textarea.input {
   border-radius: var(--radius-xs);
   border: 1px solid transparent;
   background: var(--bg-2);
-  font-family: var(--font-mono);
+  font-family: var(--font-num);
   font-size: var(--fs-20);
+  font-weight: 500;
   line-height: 1.25;
   letter-spacing: -0.02em;
   color: var(--text);
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: var(--num-features);
   transition: background-color var(--dur-number) var(--ease-out),
               border-color var(--dur-number) var(--ease-out);
 }
@@ -1037,13 +1069,13 @@ textarea.input {
 }
 
 .stat > .value {
-  font-family: var(--font-mono);
+  font-family: var(--font-num);
   font-size: var(--fs-15);
+  font-weight: 500;
   line-height: 1.3;
   color: var(--text);
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  font-variant-numeric: var(--num-features);
+  letter-spacing: -0.005em;
   white-space: nowrap;
 }
 
@@ -1086,7 +1118,7 @@ textarea.input {
   place-items: center;
   border-radius: var(--radius-pill);
   background: var(--bg-2);
-  border: 1px solid var(--line);
+  box-shadow: var(--hi);
   color: var(--text-2);
 }
 
@@ -1113,12 +1145,12 @@ textarea.input {
   grid-column: 3;
   grid-row: 1;
   justify-self: end;
-  font-family: var(--font-mono);
+  font-family: var(--font-num);
   font-size: var(--fs-14);
+  font-weight: 500;
   line-height: 1.4;
   color: var(--text);
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: var(--num-features);
   white-space: nowrap;
 }
 
@@ -1129,11 +1161,11 @@ textarea.input {
   grid-column: 3;
   grid-row: 2;
   justify-self: end;
-  font-family: var(--font-mono);
+  font-family: var(--font-num);
   font-size: var(--fs-12);
   line-height: 1.4;
   color: var(--text-3);
-  font-feature-settings: "tnum" 1;
+  font-variant-numeric: var(--num-features);
   white-space: nowrap;
 }
 
@@ -1192,11 +1224,10 @@ textarea.input {
   flex: 0 0 auto;
   min-width: 5ch;
   text-align: right;
-  font-family: var(--font-mono);
+  font-family: var(--font-num);
   font-size: var(--fs-13);
   color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
+  font-variant-numeric: var(--num-features);
 }
 
 /* The live button keeps its ring and stops asking: a still edge at the breath's
@@ -1204,7 +1235,7 @@ textarea.input {
 @media (prefers-reduced-motion: reduce) {
   .btn-primary[data-live="true"]:not(:disabled) {
     animation: none;
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ink) 20%, transparent);
+    box-shadow: var(--btn-hi), 0 0 0 4px color-mix(in srgb, var(--ink) 20%, transparent);
   }
 }
 

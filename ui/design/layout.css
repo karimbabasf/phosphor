@@ -13,19 +13,28 @@ html, body {
   overflow: hidden;
 }
 
+/* The ground: warm charcoal with two soft pools of its own light, one high
+   behind the balances and one low at the left, so it is never a flat fill.
+   Everything else sits on it as a layer. */
 #page {
   position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
   width: 100%;
+  background:
+    radial-gradient(1000px 720px at 82% -12%, var(--ground-glow-1) 0%, transparent 62%),
+    radial-gradient(900px 700px at -12% 112%, var(--ground-glow-2) 0%, transparent 60%),
+    var(--bg-0);
 }
 
 /* ---------- Top bar ----------
 
    Three things and nothing that reports state: the mark and the name at the
    left, the mode switch at the centre, the brake at the right. The two side
-   columns share the room equally, so the switch sits at the true centre. */
+   columns share the room equally, so the switch sits at the true centre. The
+   bar is the ground itself: no fill and no rule under it, the switch pressed
+   into it as a well and the brake raised off it. */
 
 .topbar {
   position: relative;
@@ -35,9 +44,8 @@ html, body {
   align-items: center;
   gap: var(--s-4);
   height: var(--topbar-h);
-  padding: 0 var(--s-5);
-  background: var(--bg-0);
-  border-bottom: 1px solid var(--line);
+  padding: 0 18px 0 22px;
+  background: transparent;
   flex: 0 0 auto;
 }
 
@@ -56,46 +64,51 @@ html, body {
 
 .brand-mark {
   flex: 0 0 auto;
-  width: 20px;
-  height: 22px;
+  width: 22px;
+  height: 24px;
   color: var(--ink);
 }
 
 .brand-word {
-  font-size: var(--fs-15);
+  font-size: var(--fs-16);
   font-weight: 600;
-  letter-spacing: -0.012em;
+  letter-spacing: -0.015em;
   line-height: 1;
   color: var(--text);
 }
 
-/* The mode switch: a segmented control whose indicator slides between the
-   three words instead of each word lighting on its own. Quiet: the ground one
-   step up, a hairline, and the selected word on the step above that. */
+/* The mode switch: a segmented control pressed into the ground as a well,
+   with a raised thumb that springs between the words instead of each word
+   lighting on its own. */
+/* The well clips its thumb, so the spring's last few pixels of give never poke past its
+   rounded end when the thumb lands on the first or the last word. */
 .tabs {
   position: relative;
   display: flex;
   align-items: center;
   gap: 0;
-  padding: 3px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-1);
-  border: 1px solid var(--line);
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--well-bg);
+  box-shadow: var(--well);
   isolation: isolate;
+  overflow: clip;
 }
 
 .tabs-indicator {
   position: absolute;
-  top: 3px;
+  top: 4px;
   left: 0;
-  height: calc(100% - 6px);
-  border-radius: var(--radius-pill);
-  background: var(--bg-2);
-  border: 1px solid var(--line-strong);
+  height: calc(100% - 8px);
+  border-radius: 12px;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 5%),
+    color-mix(in srgb, var(--bg-2), var(--bg-3) 55%));
+  box-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
   transform: translateX(var(--tab-x, 0px));
   width: var(--tab-w, 0px);
-  transition: transform var(--dur-swap) var(--ease-in-out),
-              width var(--dur-swap) var(--ease-in-out);
+  transition: transform var(--dur-spring) var(--ease-spring-soft),
+              width var(--dur-spring) var(--ease-spring-soft);
   z-index: 0;
   pointer-events: none;
 }
@@ -103,14 +116,14 @@ html, body {
 .tab {
   position: relative;
   z-index: 1;
-  height: 30px;
+  height: 32px;
   padding: 0 var(--s-4);
-  border-radius: var(--radius-pill);
-  font-size: var(--fs-13);
-  font-weight: 500;
+  border-radius: 12px;
+  font-size: var(--fs-14);
+  font-weight: 550;
   color: var(--text-2);
-  transition: color var(--dur-press) var(--ease-out),
-              transform var(--dur-press) var(--ease-out);
+  transition: color 250ms var(--ease-out),
+              transform var(--dur-release) var(--ease-spring);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -118,7 +131,8 @@ html, body {
 }
 
 .tab:active {
-  transform: scale(0.97);
+  transform: scale(var(--scale-press));
+  transition-duration: 250ms, 100ms;
 }
 
 .tab[aria-selected="true"] {
@@ -128,7 +142,7 @@ html, body {
 .tab:focus-visible {
   outline: 2px solid var(--text-2);
   outline-offset: 1px;
-  border-radius: var(--radius-pill);
+  border-radius: 12px;
 }
 
 /* The bar's end: the brake, and on the modes that have panes to arrange, the
@@ -185,10 +199,10 @@ body[data-view="vault"] .layout-wrap {
   transform-origin: top right;
 }
 
-/* The brake: one glyph in a hairline box, the second text tone at rest, the
-   size of the switch beside it. Frozen, it says so in a word and holds the
-   raised ground, because a frozen app is a state the bar has to show. Never
-   red: red is the confirm step's. */
+/* The brake: one glyph on a small raised square, the second text tone at
+   rest. Frozen, it says so in a word and its glyph takes the ice blue,
+   because a frozen app is a state the bar has to show. Never red: red is the
+   confirm step's. */
 .brake {
   position: relative;
   flex: 0 0 auto;
@@ -199,28 +213,27 @@ body[data-view="vault"] .layout-wrap {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 32px;
-  min-width: 32px;
-  padding: 0 6px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
+  height: 38px;
+  min-width: 38px;
+  padding: 0 9px;
+  border-radius: var(--radius-btn);
+  background: var(--bg-2);
+  box-shadow: var(--raise-sm);
   color: var(--text-2);
   transition: color var(--dur-press) var(--ease-out),
               background-color var(--dur-press) var(--ease-out),
-              border-color var(--dur-press) var(--ease-out),
-              transform var(--dur-press) var(--ease-out);
+              transform var(--dur-release) var(--ease-spring);
 }
 
 .brake-btn .icon {
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .brake-btn:hover {
     color: var(--text);
-    background: var(--bg-2);
-    border-color: var(--line-strong);
+    background: color-mix(in srgb, var(--bg-2), var(--bg-3) 60%);
   }
 }
 
@@ -231,15 +244,18 @@ body[data-view="vault"] .layout-wrap {
 
 .brake-btn[aria-expanded="true"] {
   color: var(--text);
-  background: var(--bg-2);
-  border-color: var(--line-strong);
+  background: var(--bg-3);
 }
 
 .brake-btn[data-frozen="true"] {
-  padding: 0 10px 0 8px;
+  padding: 0 12px 0 10px;
   color: var(--text);
-  background: var(--bg-1);
-  border-color: var(--line-strong);
+  background: var(--bg-3);
+  box-shadow: var(--raise-sm), inset 0 0 0 1.5px color-mix(in oklab, #a9d8ff 45%, transparent);
+}
+
+.brake-btn[data-frozen="true"] .icon {
+  color: #a9d8ff;
 }
 
 .brake-word {
@@ -254,21 +270,20 @@ body[data-view="vault"] .layout-wrap {
    corner and goes back into it (data-motion="pop", ui/design/motion.css). */
 .brake-panel {
   position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + 12px);
   right: 0;
   z-index: 60;
-  width: 320px;
-  padding: var(--s-4);
-  border-radius: var(--radius);
-  background: var(--bg-1);
-  border: 1px solid var(--line-strong);
-  box-shadow: var(--lift-sm);
+  width: 332px;
+  padding: 18px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-pop);
+  box-shadow: var(--lift);
   transform-origin: top right;
 }
 
 .brake-title {
   margin: 0;
-  font-size: var(--fs-14);
+  font-size: var(--fs-16);
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.35;
@@ -277,16 +292,28 @@ body[data-view="vault"] .layout-wrap {
 
 .brake-body {
   margin: 6px 0 0;
-  font-size: var(--fs-13);
+  font-size: var(--fs-14);
   line-height: 1.5;
   color: var(--text-2);
+  text-wrap: pretty;
 }
 
 .brake-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--s-2);
   margin-top: var(--s-4);
+}
+
+/* The one red in the window: the freeze itself, filled, its word in the
+   ground colour so it reads at 6:1 on the red. */
+.brake-actions > .btn-danger {
+  --btn-bg: var(--down);
+  --btn-fg: var(--bg-0);
+  --btn-bg-hover: color-mix(in srgb, var(--down) 88%, #FFFFFF);
+  --btn-bg-active: color-mix(in srgb, var(--down) 80%, #FFFFFF);
+  --btn-hi: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -2px 0 rgba(0, 0, 0, 0.12);
 }
 
 /* The panel opens with the harmless answer focused. The window's ring is the
@@ -295,6 +322,15 @@ body[data-view="vault"] .layout-wrap {
 .brake-actions > .btn:focus-visible {
   outline: 2px solid var(--text-2);
   outline-offset: 2px;
+}
+
+/* The harmless answer is a soft key of its own, not a bare word beside the red one. */
+.brake-actions > .btn-quiet {
+  --btn-bg: var(--bg-3);
+  --btn-bg-hover: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 6%);
+  --btn-bg-active: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 9%);
+  --btn-fg: var(--text);
+  --btn-hi: inset 0 1px 0 rgba(var(--hi-rgb), 0.07);
 }
 
 /* ---------- The stage ---------- */
@@ -315,7 +351,7 @@ body[data-view="vault"] .layout-wrap {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--bg-0);
+  background: transparent;
   border-right: 1px solid var(--line);
   container-type: inline-size;
   container-name: conversation;
@@ -330,7 +366,7 @@ body[data-view="vault"] .layout-wrap {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  padding: var(--s-4) var(--s-4) var(--s-3);
+  padding: var(--s-4) var(--s-5) var(--s-3);
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
@@ -356,7 +392,7 @@ body[data-view="vault"] .layout-wrap {
      scrollbar. */
   overflow-x: hidden;
   overscroll-behavior: contain;
-  background: var(--bg-0);
+  background: transparent;
   display: flex;
   flex-direction: column;
   container-type: inline-size;
@@ -457,9 +493,9 @@ body[data-view="vault"] .layout-wrap {
   position: relative;
   z-index: 1;
   width: min(520px, 100%);
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--surface-raised);
+  border: 1px solid transparent;
+  border-radius: var(--radius-card);
   box-shadow: var(--lift);
   padding: var(--s-6);
   display: flex;
@@ -470,7 +506,8 @@ body[data-view="vault"] .layout-wrap {
 .screen-steps {
   font-size: var(--fs-12);
   color: var(--text-3);
-  font-family: var(--font-mono);
+  font-family: var(--font-num);
+  font-variant-numeric: var(--num-features);
 }
 
 .screen-actions {

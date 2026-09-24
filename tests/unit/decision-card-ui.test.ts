@@ -300,7 +300,7 @@ test('a swap card asks with its figures on one line and keeps the rest one click
   assert.equal(addr.length, 1, 'no address line');
   assert.equal(textOf(addr[0], true).join(''), ADDR, 'the address is not whole');
   assert.equal(find(addr[0], 'sendcard-group').length, 11, 'the address is not in groups of four');
-  assert.ok(details.some((t) => t.includes('your NEAR Intents account, the one it spends from')));
+  assert.ok(details.some((t) => t.includes('your balance, where it already is')), details.join(' | '));
   assert.ok(details.some((t) => t.includes('solver floor 17605238 base units')), 'the rail\'s lines are not in Details');
   assert.equal(details.some((t) => /No fee was quoted/.test(t)), false);
 });
@@ -748,6 +748,64 @@ test('a working move the view calls late says so on its own card', () => {
   assert.match(faceOf(card), /Taking longer · 3m/);
 });
 
+/* A refund on its way (src/proposals/view.ts coming_back, 2026-09-23): money that left and is
+   coming back is not over, and never "Didn't go through", which reads as nothing moved. The card
+   says so calmly, prints the reason's sentence, draws no amount that will not arrive, and offers
+   no second try while the first one's money is still out. */
+test('a refund on its way says so calmly, with its sentence, no amount to come and no second try', () => {
+  const sentence = "The swap didn't go through. Your USDC is with the swap service until it comes back to your balance; the app keeps checking.";
+  const card = cardFor(swapProposal({
+    status: 'failed',
+    view: { id: 's1', kind: 'swap', stage: 'FAILED', state: 'coming_back', terminal: false, money: {}, txs: [], reason: { code: 'venue_failed_refund_pending', sentence, details: null, retry: true } },
+  }), {}, { waiting: false });
+  assert.equal(card.getAttribute('data-state'), 'coming_back');
+  const face = faceOf(card);
+  assert.match(face, /Refund on its way/);
+  assert.ok(face.includes(sentence), face);
+  assert.equal(face.includes("Didn't go through"), false, 'the state word says nothing moved');
+  assert.equal(face.includes('0.0177'), false, 'the card promises the SOL that will not arrive');
+  assert.deepEqual(labelsOf(card), [], 'a second try while the first one\'s money is out');
+});
+
+/* A finished move with a catch (view.note): less arrived than was approved. It is done, and the
+   one sentence about the shortfall sits under the head where it is read. */
+test('a done move that brought less than approved says so under its head', () => {
+  const note = 'The swap went through, but only 0.00034 WBTC arrived, less than the 0.00035 you approved.';
+  const card = cardFor(swapProposal({
+    status: 'executed',
+    view: { id: 's1', kind: 'swap', stage: 'confirmed', state: 'done', terminal: true, money: {}, txs: [], reason: { code: 'short_fill', sentence: note, details: null, retry: false }, note, tookSec: 9 },
+  }), {}, { waiting: false });
+  assert.equal(card.getAttribute('data-state'), 'done');
+  assert.match(faceOf(card), /Done · 9s/);
+  assert.ok(faceOf(card).includes(note), faceOf(card));
+  assert.equal(card.getAttribute('data-note'), 'true');
+
+  const clean = cardFor(swapProposal({
+    status: 'executed',
+    view: { id: 's1', kind: 'swap', stage: 'confirmed', state: 'done', terminal: true, money: {}, txs: [], reason: null, note: null, tookSec: 9 },
+  }), {}, { waiting: false });
+  assert.equal(clean.getAttribute('data-note'), null);
+  assert.equal(find(clean, 'mcard-body')[0]?.hidden, true, 'a clean done card grew a body');
+});
+
+/* Still checking (stuck_unknown, venue_failed_watching) arrives as working and late: the card
+   keeps its track, says it is taking longer, and prints the reason, never "Didn't go through". */
+test('a move the app is still checking stays working and late, with the reason as its line', () => {
+  const at = new Date(Date.now() - 400_000).toISOString();
+  const sentence = "Still checking whether this went through. I'll update it here.";
+  const card = cardFor(swapProposal({
+    status: 'failed',
+    decidedAt: at,
+    view: { id: 's1', kind: 'swap', stage: 'FAILED', state: 'working', terminal: false, decidedAt: at, money: {}, txs: [], late: { elapsedSec: 400, typicalSec: 45 }, reason: { code: 'stuck_unknown', sentence, details: null, retry: false } },
+  }), {}, { waiting: false });
+  assert.equal(card.getAttribute('data-state'), 'working');
+  const face = faceOf(card);
+  assert.match(face, /Taking longer · 6m/);
+  assert.ok(face.includes(sentence), face);
+  assert.equal(face.includes("Didn't go through"), false);
+  assert.deepEqual(labelsOf(card), []);
+});
+
 test('a rule change with no state frame yet says its headline once', () => {
   const card = cardFor({
     id: 'p1',
@@ -794,7 +852,7 @@ test('a send asks on its card with the receiver whole, and Touch ID is said wher
   const card = cardIn(w, pay());
   w.timers.splice(0).forEach((fn) => fn());
   const face = faceOf(card);
-  assert.match(face, /You send 0\.01 ETH · They get at least 0\.0098406 ETH · Fee \$0\.15/);
+  assert.match(face, /You send 0\.01 ETH They get at least 0\.0098406 ETH Fee \$0\.15/);
   assert.ok(face.includes('First send to this address.'), face);
   const address = find(card, 'mcard-address-line')[0];
   assert.equal(address.getAttribute('data-address'), FRIEND);

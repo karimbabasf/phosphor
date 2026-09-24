@@ -13,7 +13,7 @@
    directions, plus the agent's own colour.
 
      accent      -> --ink        the primary action fill, and the label on it
-     background  -> --bg-0       the window ground, with --bg-1 and --bg-2 derived
+     background  -> --bg-0       the window ground, with --bg-1 to --bg-3 derived
      up          -> --up         price up, positive delta, the live dot
      down        -> --down       price down, negative delta, danger, No
      agent       -> --agent      the agent chip, the transcript accent, working
@@ -26,7 +26,7 @@
    other half of the same rule.
 
    THE COLOURWAY is the one thing in the theme that is not a colour. The window
-   has one, green on black, and it is the stylesheet itself: tokens.css keeps
+   has one, green on warm charcoal, and it is the stylesheet itself: tokens.css keeps
    the tokens no slot reaches (the text, the amber, the lift) on :root, so the
    name rides along in the theme and nothing here acts on it. The text colour
    still cannot be named by anything in a session. */
@@ -60,10 +60,13 @@
     return 'rgba(' + parts[0] + ', ' + parts[1] + ', ' + parts[2] + ', ' + a + ')';
   }
 
-  /* The two raised surfaces are mixed from the ground toward the accent's own
-     luminance direction rather than carried as extra slots. A ground the agent
-     lightens has to bring its panels with it, or a light background would put
-     near-black panels on it and the window would invert. */
+  /* The raised surfaces are mixed from the ground rather than carried as extra
+     slots. A ground the agent lightens has to bring its panels with it, or a
+     light background would put near-black panels on it and the window would
+     invert. On a dark ground they lift toward a light of the ground's own hue
+     (the ground scaled to full brightness, halfway to white), so warm charcoal
+     gets warm layers and a cool ground cool ones; src/view/theme.ts
+     raisedSurface() runs the same arithmetic. */
   function mix(from, to, amount) {
     var out = [];
     for (var i = 0; i < 3; i += 1) {
@@ -74,6 +77,12 @@
 
   function luminance(parts) {
     return (0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2]) / 255;
+  }
+
+  function liftOf(ground) {
+    if (luminance(ground) > 0.5) return [0, 0, 0];
+    var top = Math.max(ground[0], ground[1], ground[2]) || 1;
+    return mix([255, 255, 255], [ground[0] * 255 / top, ground[1] * 255 / top, ground[2] * 255 / top], 0.5);
   }
 
   /* WCAG contrast, the same arithmetic the server runs, so the label on the
@@ -120,13 +129,15 @@
     last = key;
 
     var root = document.documentElement.style;
-    var lift = luminance(ground) > 0.5 ? [0, 0, 0] : [255, 255, 255];
+    var lift = liftOf(ground);
 
     root.setProperty('--bg-0', css(ground));
     root.setProperty('--bg-1', css(mix(ground, lift, 0.035)));
-    root.setProperty('--bg-2', css(mix(ground, lift, 0.07)));
+    root.setProperty('--bg-2', css(mix(ground, lift, 0.08)));
+    root.setProperty('--bg-3', css(mix(ground, lift, 0.13)));
     root.setProperty('--line', css(mix(ground, lift, 0.11)));
     root.setProperty('--line-strong', css(mix(ground, lift, 0.17)));
+    root.setProperty('--hi-rgb', lift.join(', '));
 
     root.setProperty('--ink', css(accent));
     /* The label on the action fill is the ground it sits on: black letters on
@@ -157,7 +168,7 @@
       bg: css(ground),
       panel: css(mix(ground, lift, 0.035)),
       line: css(mix(ground, lift, 0.11)),
-      text: readToken('--text', '#ECEEF1'),
+      text: readToken('--text', '#f8f0e8'),
       accent: css(accent),
       up: up ? css(up) : null,
       down: down ? css(down) : null

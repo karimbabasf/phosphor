@@ -537,7 +537,7 @@ test('the composer arms on text and leaves the screen when nobody of ours can ta
   assert.equal(composer.hidden, false, 'the box did not come back with the assistant');
 });
 
-test('a client of the person\'s own at the wheel is named on the card, with no composer', () => {
+test('a client of the person\'s own that is working is named on the card, with no composer', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'off' });
   const composer = all(world.composerHost, 'agent-composer')[0];
@@ -546,7 +546,7 @@ test('a client of the person\'s own at the wheel is named on the card, with no c
   /* The roster names somebody: the seat is taken, though nothing of ours is at work. */
   world.agents([{ client: 'claude-code', role: 'operator', ops: 2 }]);
   assert.equal(world.seat(), 'own');
-  assert.ok(world.card().includes('Your own agent is at the wheel.'), world.card());
+  assert.ok(world.card().includes('Your own agent is working.'), world.card());
   assert.ok(world.card().includes('Talk to it from its own terminal.'), world.card());
   assert.equal(composer.hidden, true, 'a box that cannot reach the attached client was offered');
 
@@ -555,7 +555,7 @@ test('a client of the person\'s own at the wheel is named on the card, with no c
   assert.equal(composer.hidden, true);
 });
 
-test('idle connections fold into one quiet row and are not called an agent at the wheel', () => {
+test('idle connections fold into one quiet row and are not called a working agent', () => {
   // Karim, 2026-09-18, with five rows reading "phosphor-mcp, can ask · 0 calls" over a card
   // saying "Your own agent is at the wheel": "this also looks like a bug". Every Claude Code
   // session on the Mac starts the proxy, which announces itself on boot, so the roster held five
@@ -573,6 +573,7 @@ test('idle connections fold into one quiet row and are not called an agent at th
   assert.ok(world.card().includes('Your own agents are connected.'), world.card());
   assert.ok(world.card().includes('None has made a move yet.'), world.card());
   assert.ok(!world.card().includes('at the wheel'), world.card());
+  assert.ok(!world.card().includes('is working'), world.card());
 
   /* One of them goes to work: it gets its own row, named, and the rest stay folded. */
   const five = idle(5);
@@ -583,7 +584,7 @@ test('idle connections fold into one quiet row and are not called an agent at th
   assert.equal(rows[0].textContent, 'claude-code, can ask3 calls');
   assert.equal(rows[0].getAttribute('data-idle'), null);
   assert.equal(rows[1].textContent, '4 more connected, idle');
-  assert.ok(world.card().includes('Your own agent is at the wheel.'), world.card());
+  assert.ok(world.card().includes('Your own agent is working.'), world.card());
 
   /* One idle connection is said in the singular. */
   world.agents(idle(1));
@@ -637,8 +638,11 @@ test('a first move whose start fails keeps its words in the box and sends nothin
   assert.deepEqual(world.sends, []);
   assert.equal(world.input.value, rows[2].textContent, 'the words were lost with the start');
   assert.equal(world.input.disabled, true);
-  assert.equal(world.note().hidden, false, 'nothing under the status says what went wrong');
-  assert.equal(world.noteText(), 'Claude Code is not installed on this Mac.');
+  /* With no conversation yet the failure is the centre card's, with Retry in Start's place
+     (hunt A, 2026-09-23: the reason sat in 13 px text in the corner). */
+  assert.ok(world.card().includes('Your agent stopped.'), world.card());
+  assert.ok(world.card().includes('Claude Code is not installed on this Mac.'), world.card());
+  assert.equal(world.note().hidden, true, 'the failure is said twice, in the corner as well');
 
   /* A later start that works does not fire the old question on its own: the failure ended the
      press, and the words are in the box for the person to send. */
@@ -771,7 +775,7 @@ test('another conversation does not print into this one', () => {
 
    Karim, 2026-09-08: "i need much better feedback when i click start an agent, right now nothing
    changes." He was right and the reason was structural. The empty card keyed on an empty
-   transcript and nothing else, so it went on saying "Nobody is at the wheel" and offering a Start
+   transcript and nothing else, so it went on saying nobody was there and offering a Start
    button for the whole time an agent was up and simply had not been spoken to yet. The chip in the
    corner changed. Nothing he was looking at did. */
 
@@ -779,7 +783,8 @@ test('the card says nobody is there only when nobody is there', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'off' });
   assert.equal(world.seat(), 'off');
-  assert.ok(world.card().includes('Nobody is at the wheel'));
+  assert.ok(world.card().includes('Your agent is off.'), world.card());
+  assert.ok(!world.card().includes('at the wheel'), 'the card still says the agent drives');
   assert.equal(world.actionsHidden(), false, 'Start is the thing to do here and it is not offered');
 });
 
@@ -787,8 +792,8 @@ test('an agent that is up does not get asked to start again', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'ready' });
   assert.equal(world.seat(), 'live');
-  assert.ok(world.card().includes('at the wheel'));
-  assert.ok(!world.card().includes('Nobody'), 'the card still says nobody is driving a running agent');
+  assert.ok(world.card().includes('Your agent is ready.'), world.card());
+  assert.ok(!world.card().includes('is off'), 'the card still says a running agent is off');
   assert.equal(world.actionsHidden(), true, 'Start is offered to somebody whose agent is running');
 });
 
@@ -826,7 +831,7 @@ test('a window that opens onto a running agent does not steal focus', () => {
   assert.equal((world.input as unknown as { focused: boolean }).focused, false);
 });
 
-test('a start that failed says so under the status, in plain words, with a Retry', () => {
+test('a start that failed says so on the centre card, in plain words, with a Retry in Start\'s place', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'starting' });
   world.emit({ kind: 'status', state: 'failed', detail: 'driver: the claude CLI was not found. Install Claude Code.', reason: 'Claude Code is not installed on this Mac.' });
@@ -834,7 +839,9 @@ test('a start that failed says so under the status, in plain words, with a Retry
   world.emit({ kind: 'error', message: 'driver: the claude CLI was not found. Install Claude Code.' });
   world.runTimers();
   assert.equal(world.seat(), 'error');
-  assert.equal(world.noteText(), 'Claude Code is not installed on this Mac.');
+  assert.ok(world.card().includes('Claude Code is not installed on this Mac.'), world.card());
+  assert.ok(world.card().includes('Retry'), 'the card offers no way back');
+  assert.ok(!world.card().includes('Start your agent'), 'the card offers a plain Start over a failure');
   assert.ok(!world.card().includes('driver:'), 'the raw driver string reached the card');
   assert.equal(world.cardHidden(), false, 'the failure buried the card under a row');
   assert.equal(world.saidRows().length + world.replyRows().length + world.noteRows().length, 0, 'the technical line was printed as a row');
@@ -848,7 +855,7 @@ test('while it starts the card says so once', () => {
   const world = build();
   world.emit({ kind: 'status', state: 'starting', detail: 'Starting your assistant.' });
   assert.equal(world.note().hidden, true, 'a failure line is up with nothing having failed');
-  assert.equal((world.card().match(/Starting your assistant\./g) ?? []).length, 1);
+  assert.equal((world.card().match(/Starting your agent\./g) ?? []).length, 1, world.card());
 });
 
 test('an assistant that leaves mid conversation says why under the status, and Turn off says nothing', () => {
@@ -882,13 +889,13 @@ test('a first move on a quiet column whose start never reports back says so, and
   /* Nothing comes back. The start watch fires, and the failure waits the starting floor. */
   world.runTimers();
   world.runTimers();
-  assert.equal(world.noteText(), 'The assistant did not answer in time.');
+  assert.ok(world.card().includes('The assistant did not answer in time.'), world.card());
   assert.equal(world.input.value, rows[0].textContent, 'the words were lost with the start');
   world.press('Retry');
   assert.deepEqual(world.actions, ['start', 'start']);
 });
 
-test('the connect sheet takes the card\'s place and closes the moment somebody is at the wheel', async () => {
+test('the connect sheet takes the card\'s place and closes the moment an agent is ready', async () => {
   const world = build({ command: 'claude mcp add phosphor -- node /repo/src/mcp.ts' });
   /* The command arrives from the backend after mount. */
   await new Promise((r) => setImmediate(r));
@@ -916,7 +923,7 @@ test('the connect sheet takes the card\'s place and closes the moment somebody i
   world.emit({ kind: 'status', state: 'ready' });
   world.runTimers();
   assert.equal(world.sheet().hidden, true, 'the Ready card carries the mcp-add block');
-  assert.ok(world.card().includes('at the wheel'));
+  assert.ok(world.card().includes('Your agent is ready.'), world.card());
 });
 
 test('the child\'s stderr is a quiet note that does not bury the card', () => {
@@ -974,7 +981,7 @@ test('Turn off asks first, on a card of its own, and only the card\'s Turn off q
   assert.equal(world.saidRows().length, 1, 'keeping it running lost the transcript');
 
   /* Turn off on the card: stop, then close, in that order, and then the column is what it was
-     before anybody started: the card with nobody at the wheel, no rows, the head reading Off. */
+     before anybody started: the card saying the agent is off, no rows, the head reading Off. */
   world.press('Turn off');
   const again = world.sheets()[0];
   fire(all(again, 'btn')[1], 'click');
@@ -984,7 +991,7 @@ test('Turn off asks first, on a card of its own, and only the card\'s Turn off q
   assert.equal(world.saidRows().length, 0, 'the old transcript stayed on screen after the quit');
   assert.equal(world.replyRows().length, 0);
   assert.equal(world.cardHidden(), false, 'the empty card did not come back');
-  assert.ok(world.card().includes('Nobody is at the wheel'), world.card());
+  assert.ok(world.card().includes('Your agent is off.'), world.card());
   assert.equal(world.seat(), 'off');
   assert.equal(world.actionsHidden(), false, 'the card offers no way to start again');
   assert.equal(all(world.composerHost, 'agent-composer')[0].hidden, true, 'the composer stayed open with nobody to talk to');

@@ -1,8 +1,10 @@
-/* Basic: the conversation takes the window and the balances sit in a calm
-   panel on its right, a reading width wide (--panel-w). The panel is the
-   world on this mode: it scrolls on its own and the notice line (layout.css)
-   sits at its foot. Everything in it is a figure or a word about the money,
-   and nothing in it is boxed: hairlines between rows, the ground one step up. */
+/* Basic: the conversation takes the window and the balances sit on a soft
+   slab on its right, a reading width wide (--panel-w). The slab is the world
+   on this mode. At its top a ring splits the total by coin with the total
+   inside it; under it one soft tile per coin, tinted by the coin's own colour;
+   at its foot one way to add money, and under that the notice line when
+   something needs the person. The ring, the total and Add money never scroll
+   away: a list longer than the slab scrolls inside it and fades at the cut. */
 
 /* ---------- the stage on Basic ---------- */
 
@@ -18,124 +20,277 @@ body[data-view="basic"] .conversation {
   border-right: 0;
 }
 
+/* The slab sits where the world's slab sits on every mode (pro.css draws the same one for Pro,
+   Trade and the Vault): flush under the bar, inset 16 from the window's right and bottom, the
+   same radius, surface and shadow, so switching modes never moves its edge. */
 body[data-view="basic"] .world {
-  background: var(--bg-1);
-  border-left: 1px solid var(--line);
+  margin: 0 16px 16px 0;
+  border-radius: var(--radius-slab);
+  background: var(--surface-slab);
+  box-shadow: var(--slab-shadow);
+  overflow: hidden;
 }
 
+body[data-view="basic"] #view-basic {
+  min-height: 0;
+}
+
+/* The notice at the slab's foot: no box and no rule of its own, the slab is
+   its surface. */
 body[data-view="basic"] .notice {
-  background: var(--bg-1);
-  padding-inline: var(--s-6);
+  position: static;
+  background: transparent;
+  border-top: 0;
+  padding: 2px 24px 18px;
 }
 
-/* ---------- the panel ---------- */
+/* ---------- the slab ---------- */
 
 .bal {
   display: flex;
   flex-direction: column;
-  padding: calc(var(--s-6) + var(--s-2)) var(--s-6) var(--s-6);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 22px 22px 22px;
 }
+
+/* ---------- the ring and the total ---------- */
 
 .bal-head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  height: 252px;
 }
 
-/* The total: the largest thing on the screen and the quietest, in the mono
-   face so it lines up with every figure under it. */
+.bal-ring {
+  grid-area: 1 / 1;
+  display: block;
+  width: 244px;
+  height: 244px;
+  overflow: visible;
+}
+
+.bal-disc-top { stop-color: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 3%); }
+.bal-disc-foot { stop-color: color-mix(in srgb, var(--bg-1), var(--bg-2) 30%); }
+
+.bal-ring-disc {
+  fill: url(#bal-disc);
+}
+
+.bal-ring-track {
+  fill: none;
+  stroke: rgba(var(--hi-rgb), 0.045);
+  stroke-width: 14;
+}
+
+/* Each coin's piece springs to its share: a new split lands with a little
+   give, a beat past and back. */
+.bal-ring-piece {
+  fill: none;
+  stroke-width: 14;
+  stroke-linecap: round;
+  transition: stroke-dasharray var(--dur-ring) var(--ease-spring),
+              stroke-dashoffset var(--dur-ring) var(--ease-spring);
+}
+
+/* The figure and its words, on the disc. The disc is 184 of the ring's 244,
+   and the figure keeps ten pixels from its edge at any length: basic.js
+   steps it down (--fit) past what the disc holds at the full size. */
+.bal-centre {
+  grid-area: 1 / 1;
+  position: relative;
+  z-index: 1;
+  width: 164px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
 .bal-total {
   margin: 0;
-  font-size: var(--fs-40);
-  font-weight: 500;
-  line-height: 1;
+  font-size: calc(31px * var(--fit, 1));
+  font-weight: 550;
+  line-height: 1.1;
   letter-spacing: -0.035em;
   color: var(--text);
   white-space: nowrap;
+  transition: color var(--dur-glow-out) var(--ease-out);
 }
 
 .bal-total-skel {
-  width: 62%;
-  height: var(--fs-40);
+  width: 128px;
+  height: 30px;
 }
 
 .bal-caption {
   margin: 0;
-  font-size: var(--fs-14);
-  line-height: 1.4;
+  max-width: 100%;
+  font-size: var(--fs-13);
+  line-height: 1.35;
   color: var(--text-2);
+  text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 
 /* No figure to caption: the words take the figure's place and its weight. */
 .bal-caption[data-alone="true"] {
-  font-size: var(--fs-16);
-  line-height: 1.5;
+  font-size: var(--fs-15);
+  line-height: 1.4;
   color: var(--text);
+}
+
+/* A caption too long for the disc sits under the ring on a line's width. */
+.bal-under {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  margin: 2px auto 0;
+  max-width: 34ch;
+  text-align: center;
+}
+
+/* The total that moved warms toward the mark's green and cools back, on the
+   same clock as the tiles. */
+.bal-head[data-lit="true"] .bal-total {
+  color: color-mix(in oklab, var(--text), var(--ink) 45%);
+  transition-duration: var(--dur-glow-in);
 }
 
 /* ---------- what you hold ---------- */
 
 .bal-list {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+/* The tiles, the tiny-balances line and the empty line scroll together inside
+   the slab when there are more than it holds; Add money stays put under them.
+   The scroller keeps a few pixels round the tiles so a tile that lifts is not
+   cut by it. */
+.bal-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: -4px -4px 0;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.bal-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.bal-scroll[data-cut="top"] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
+}
+
+.bal-scroll[data-cut="bottom"] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+}
+
+.bal-scroll[data-cut="both"] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
 }
 
 .bal-rows {
-  margin: calc(var(--s-6) + var(--s-1)) 0 0;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
   padding: 0;
   list-style: none;
-  border-top: 1px solid var(--line);
 }
 
-.bal-rows:empty {
-  border-top: 0;
-}
-
+/* A TILE. The coin's own colour washes in from the left and fades out
+   before the figures, so the words always stand on the tile's own ground. */
 .bal-row {
   position: relative;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 14px;
-  min-height: 72px;
-  border-bottom: 1px solid var(--line);
+  min-height: 64px;
+  padding: 12px 16px 12px 12px;
+  border-radius: var(--radius-tile);
+  background: linear-gradient(100deg,
+    color-mix(in oklab, var(--tint, var(--text-3)) var(--tint-share, 22%), var(--tile)) 0%,
+    var(--tile) 62%);
+  box-shadow: var(--hi);
+  transition: transform var(--dur-spring) var(--ease-spring);
 }
 
-/* A coin: its own logo as its brand draws it (marks.js logo()), a 27 px mark
-   in a 36 px box. The box's clear edge is pulled in on both sides, so the
-   mark itself stands on the row's left edge and 14 px from the words. */
+/* A coin: its own logo as its brand draws it (marks.js logo()), a 30 px mark
+   in a 40 px box, nothing behind it. */
 .bal-row > .bal-coin {
-  --logo: 36px;
-  margin: 0 calc(var(--logo) / -8);
+  --logo: 40px;
 }
 
+.bal-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 12px;
+}
+
+/* The words take what the dollars leave. A long name gives way (it ends in an ellipsis), a
+   figure never does: when the amount and the dollars cannot share a line, the dollars take a
+   line of their own. The name adds nothing to the width the words ask for (width 0, then the
+   whole column), so only the amount decides when to wrap. */
 .bal-who {
   position: relative;
+  flex: 1 1 auto;
+  min-width: min(9ch, 100%);
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  min-width: 0;
+  gap: 3px;
 }
 
 .bal-sym {
+  width: 0;
+  min-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--fs-15);
-  font-weight: 500;
-  line-height: 1;
+  font-weight: 550;
+  line-height: 1.25;
   letter-spacing: -0.005em;
   color: var(--text);
 }
 
 .bal-amt {
+  white-space: nowrap;
   font-size: var(--fs-13);
-  line-height: 1;
+  line-height: 1.25;
   color: var(--text-2);
 }
 
 .bal-usd {
   position: relative;
+  flex: 0 0 auto;
   margin-left: auto;
   font-size: var(--fs-15);
   font-weight: 500;
-  line-height: 1;
+  line-height: 1.25;
   color: var(--text);
   white-space: nowrap;
 }
@@ -143,29 +298,31 @@ body[data-view="basic"] .notice {
 /* A coin nobody can price says so in words, in the quiet tone, never as a
    figure. */
 .bal-usd[data-unpriced="true"] {
-  font-family: var(--font-ui);
   font-size: var(--fs-13);
   font-weight: 400;
   letter-spacing: 0;
   color: var(--text-3);
 }
 
-/* THE LIGHT. A row whose figure moved lights once, like phosphor: the wash
-   under it arrives in 120 ms and decays over 2.4 s, and its dollars warm
-   toward the mark's green on the same clock. basic.js holds the attribute
-   for the arrival and lets go for the decay. The wash runs to the panel's
-   edges, behind the row's own contents. */
+/* THE LIGHT. A tile whose figure moved lights once, like phosphor: a green
+   edge and a soft green shadow under it arrive in 120 ms and decay over
+   2.4 s, the tile lifts and springs back, and its figures warm toward the
+   mark's green on the same clock. basic.js holds the attribute for the
+   arrival and lets go for the decay. */
 .bal-row::before {
   content: "";
   position: absolute;
-  inset: -1px calc(var(--s-6) * -1);
-  background: linear-gradient(90deg,
-    color-mix(in srgb, var(--ink) 11%, transparent),
-    color-mix(in srgb, var(--ink) 4%, transparent) 55%,
-    transparent);
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--ink) 55%, transparent),
+              0 14px 30px -14px color-mix(in srgb, var(--ink) 50%, transparent);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-glow-out) var(--ease-out);
+}
+
+.bal-row[data-lit="true"] {
+  transform: translateY(-3px);
 }
 
 .bal-row[data-lit="true"]::before {
@@ -173,28 +330,31 @@ body[data-view="basic"] .notice {
   transition-duration: var(--dur-glow-in);
 }
 
-.bal-row > .bal-usd,
+.bal-row .bal-usd,
 .bal-row .bal-amt {
-  transition: color var(--dur-glow-out) var(--ease-out),
-              text-shadow var(--dur-glow-out) var(--ease-out);
+  transition: color var(--dur-glow-out) var(--ease-out);
 }
 
-.bal-row[data-lit="true"] > .bal-usd:not([data-unpriced]) {
-  color: color-mix(in oklab, var(--text), var(--ink) 30%);
-  text-shadow: 0 0 16px color-mix(in srgb, var(--ink) 40%, transparent);
+.bal-row[data-lit="true"] .bal-usd:not([data-unpriced]) {
+  color: color-mix(in oklab, var(--text), var(--ink) 45%);
   transition-duration: var(--dur-glow-in);
 }
 
 .bal-row[data-lit="true"] .bal-amt {
-  color: var(--text);
+  color: color-mix(in oklab, var(--text-2), var(--ink) 45%);
   transition-duration: var(--dur-glow-in);
 }
 
-/* While the first read is out: the shape of three rows, never "nothing". */
+/* While the first read is out: the shape of three tiles, never "nothing". */
+.bal-row-skel {
+  background: var(--tile);
+}
+
 .bal-row-skel .bal-coin-skel {
   flex: 0 0 auto;
-  width: 27px;
-  height: 27px;
+  width: 30px;
+  height: 30px;
+  margin: 0 5px;
   border-radius: 50%;
 }
 
@@ -204,51 +364,55 @@ body[data-view="basic"] .notice {
 }
 
 .bal-small {
-  margin: var(--s-4) 0 0;
+  margin: 0 4px;
   font-size: var(--fs-12);
   line-height: 1.45;
   color: var(--text-3);
 }
 
 .bal-empty {
-  margin: var(--s-6) 0 0;
+  margin: 4px 4px 0;
   max-width: 34ch;
   font-size: var(--fs-14);
   line-height: 1.55;
   color: var(--text-2);
 }
 
-/* Add money: one quiet way in, the icon family's tray and a word. */
+/* Add money: the one way in, a wide soft key at the slab's foot. */
 .bal-add {
-  align-self: flex-start;
-  display: inline-flex;
+  flex: 0 0 auto;
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--s-2);
-  min-height: 36px;
-  margin-top: var(--s-5);
-  padding: 0 14px 0 var(--s-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  font-size: var(--fs-14);
-  font-weight: 500;
-  color: var(--text-2);
-  transition: color var(--dur-press) var(--ease-out),
-              background-color var(--dur-press) var(--ease-out),
-              border-color var(--dur-press) var(--ease-out),
-              transform var(--dur-press) var(--ease-out);
+  width: 100%;
+  min-height: 52px;
+  margin-top: auto;
+  padding: 0 var(--s-4);
+  border-radius: var(--radius-tile);
+  background: var(--add-bg, var(--bg-2));
+  box-shadow: var(--add-hi, var(--hi), 0 1px 2px rgba(0, 0, 0, 0.25));
+  font-size: var(--fs-15);
+  font-weight: 550;
+  color: var(--add-fg, var(--text));
+  transition: transform var(--dur-release) var(--ease-spring),
+              background-color var(--dur-press) var(--ease-out);
 }
 
 .bal-add > .icon {
   width: 18px;
   height: 18px;
+  color: var(--add-icon, var(--text-2));
 }
 
 @media (hover: hover) and (pointer: fine) {
   .bal-add:hover {
-    color: var(--text);
-    background: var(--bg-2);
-    border-color: var(--line-strong);
+    background: var(--add-bg-hover, color-mix(in srgb, var(--bg-2), var(--bg-3) 55%));
   }
+}
+
+.bal-add:active {
+  transition-duration: 100ms, var(--dur-press);
 }
 
 .bal-add:focus-visible {
@@ -256,12 +420,59 @@ body[data-view="basic"] .notice {
   outline-offset: 2px;
 }
 
+/* An empty wallet: Add money is the main key, lit in the text's own tone (green is Approve's).
+   Said through the key's own variables, so no rule here outweighs its press in press.css. */
+.bal[data-empty="true"] {
+  --add-bg: var(--text);
+  --add-bg-hover: color-mix(in srgb, var(--text) 88%, #FFFFFF);
+  --add-fg: var(--bg-0);
+  --add-icon: var(--bg-0);
+  --add-hi: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
 /* ---------- adding money, in place ---------- */
 
+/* The steps take the list's place, and the ring steps back to a small one
+   beside the total so they have the room. */
+.bal[data-flow="true"] .bal-head {
+  height: auto;
+  grid-template-columns: 64px minmax(0, 1fr);
+  justify-items: start;
+  column-gap: 16px;
+}
+
+.bal[data-flow="true"] .bal-ring {
+  width: 64px;
+  height: 64px;
+}
+
+.bal[data-flow="true"] .bal-ring-piece,
+.bal[data-flow="true"] .bal-ring-track {
+  stroke-width: 18;
+}
+
+.bal[data-flow="true"] .bal-centre {
+  grid-area: 1 / 2;
+  width: 100%;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.bal[data-flow="true"] .bal-total {
+  font-size: calc(26px * var(--fit, 1));
+}
+
+.bal[data-flow="true"] .bal-under {
+  display: none;
+}
+
 .bal-flow {
-  margin-top: calc(var(--s-6) + var(--s-1));
-  padding-top: var(--s-4);
-  border-top: 1px solid var(--line);
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 18px -22px 0;
+  padding: 0 22px 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .bal-flow-head {
@@ -284,59 +495,143 @@ body[data-view="basic"] .notice {
   outline: none;
 }
 
-/* ---------- narrower windows ---------- */
+/* ---------- shorter and narrower windows ---------- */
 
-/* Under 1100 the panel gives up its reading width before the conversation
-   gives up any: 360 wide, with the room around the figures tightened. */
+/* A short window (the app opens as short as 700): the ring gives up a
+   little of its size before the list gives up a tile. */
+@media (max-height: 760px) {
+  .bal-head { height: 212px; }
+  .bal-ring { width: 204px; height: 204px; }
+  .bal-centre { width: 138px; }
+  .bal-total { font-size: calc(27px * var(--fit, 1)); }
+}
+
+/* A 27 inch screen: the ring grows with the type. */
+@media (min-width: 2000px) and (min-height: 900px) {
+  .bal-head { height: 300px; }
+  .bal-ring { width: 292px; height: 292px; }
+  .bal-centre { width: 196px; }
+  .bal-total { font-size: calc(36px * var(--fit, 1)); }
+}
+
+/* Under 1100 the slab gives up its reading width before the conversation
+   gives up any. */
 @media (max-width: 1099px) {
   body[data-view="basic"] .stage {
     grid-template-columns: minmax(0, 1fr) 360px;
   }
 
   .bal {
-    padding-inline: var(--s-5);
+    padding-inline: 18px;
   }
 
-  .bal-row::before {
-    inset-inline: calc(var(--s-5) * -1);
-  }
-
-  body[data-view="basic"] .notice {
-    padding-inline: var(--s-5);
+  .bal-flow {
+    margin-inline: -18px;
+    padding-inline: 18px;
   }
 }
 
-/* A window too narrow for two columns (a browser, never the app, which opens
-   no narrower than 960): the balances sit above the conversation as a band
-   that scrolls on its own. */
+/* A window under the app's own floor (a browser, never the app, which opens
+   no narrower than 960): still two columns, the slab at 320. */
 @media (max-width: 959px) {
+  body[data-view="basic"] .stage {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  /* The other modes stack here (layout.css); Basic keeps its two columns in their order. */
+  body[data-view="basic"] .world,
+  body[data-view="basic"] .conversation {
+    order: 0;
+  }
+
+  body[data-view="basic"] .conversation {
+    border-top: 0;
+  }
+
+  body[data-view="basic"] .notice {
+    padding-inline: 18px;
+  }
+}
+
+/* Narrower than two columns hold: the slab sits above the conversation as a
+   band, its ring small beside the total, and the tiles scroll inside it. */
+@media (max-width: 859px) {
   body[data-view="basic"] .stage {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
 
   body[data-view="basic"] .world {
-    max-height: 40vh;
-    border-left: 0;
-    border-bottom: 1px solid var(--line);
+    order: 1;
+    max-height: 46vh;
+    margin: 4px 12px 8px;
   }
 
   body[data-view="basic"] .conversation {
+    order: 3;
     border-top: 0;
+  }
+
+  .bal {
+    padding: 16px;
+  }
+
+  .bal-head {
+    height: auto;
+    grid-template-columns: 64px minmax(0, 1fr);
+    justify-items: start;
+    column-gap: 16px;
+  }
+
+  .bal-ring {
+    width: 64px;
+    height: 64px;
+  }
+
+  .bal-ring-piece,
+  .bal-ring-track {
+    stroke-width: 18;
+  }
+
+  .bal-centre {
+    grid-area: 1 / 2;
+    width: 100%;
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .bal-total {
+    font-size: calc(26px * var(--fit, 1));
+  }
+
+  .bal-under {
+    justify-content: flex-start;
+    margin-left: 80px;
+    text-align: left;
+  }
+
+  .bal-add {
+    min-height: 44px;
   }
 }
 
-/* Reduced motion: a row that moved changes its figure without the light
-   (dom.js already skips the roll, motion.js the steps' fade). */
+/* Reduced motion: a tile that moved changes its figure without the light
+   and without the lift (dom.js already skips the roll, motion.js the steps'
+   fade), and the ring lands on its split at once. */
 @media (prefers-reduced-motion: reduce) {
   .bal-row::before { display: none; }
 
-  .bal-row[data-lit="true"] > .bal-usd:not([data-unpriced]) {
+  .bal-row[data-lit="true"] { transform: none; }
+
+  .bal-row[data-lit="true"] .bal-usd:not([data-unpriced]),
+  .bal-head[data-lit="true"] .bal-total {
     color: var(--text);
-    text-shadow: none;
   }
 
   .bal-row[data-lit="true"] .bal-amt {
     color: var(--text-2);
   }
+
+  .bal-ring-piece { transition: none; }
 }

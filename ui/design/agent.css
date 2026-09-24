@@ -1,11 +1,12 @@
 /* The conversation (ui/screens/agent.js): the thread, the working line, the way back down,
    the one line that says a move is waiting, and the composer.
 
-   Calm, fast and true. One measure of 720 px centred in the column, near-black ground, the
-   person's words in a quiet bubble on the right and the assistant's words bare on the left.
-   Green is the mark's alone here, and the live move's and Approve's on the card. Figures are
-   in the mono face. Motion: rows enter in 180 ms with a 6 px rise, nothing else moves on its
-   own, and all of it stops under reduced motion. */
+   Calm, fast and true. One measure of 720 px centred in the column on the warm ground, the
+   person's words in a soft raised bubble on the right and the assistant's words bare on the
+   left. Green is the mark's alone here, and the live move's and Approve's on the card. A
+   figure is set in the words' own face with tabular numerals, on the sentence's line.
+   Motion: rows enter in 180 ms with a 6 px rise, nothing else moves on its own, and all of
+   it stops under reduced motion. */
 
 .conversation {
   --thread-w: 720px;
@@ -13,9 +14,8 @@
 
 /* ---------- the head ---------- */
 
-/* No name and no status line: the header mark says whether the assistant is working and
-   the thread says what it is doing. What is left is why it stopped, with a Retry, and the
-   one control, at the right of the measure. */
+/* Which agent it is on the left in one quiet line, why it stopped (with a Retry) in that
+   line's place when something went wrong, and the one control at the right of the measure. */
 .agent-head {
   flex: 0 0 auto;
   display: flex;
@@ -23,8 +23,53 @@
   justify-content: flex-end;
   gap: var(--s-3);
   width: min(100%, var(--thread-w));
-  min-height: 32px;
+  min-height: 40px;
   margin: 0 auto;
+}
+
+.agent-who {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  font-size: calc(var(--fs-13) + 0.5px);
+  line-height: 1.4;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+/* Frozen: the line wraps rather than cut its sentence, and the ice blue the brake wears marks
+   it as the same state. */
+.agent-who[data-frozen="true"] {
+  white-space: normal;
+}
+
+.agent-who[data-frozen="true"] .agent-who-name {
+  color: #a9d8ff;
+}
+
+.agent-who[hidden] { display: none; }
+
+.agent-who-mark {
+  display: inline-flex;
+  flex: none;
+  margin-right: 6px;
+}
+
+.agent-who-mark[hidden] { display: none; }
+
+.agent-who-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 550;
+  color: var(--text);
+}
+
+.agent-who-state {
+  flex: none;
+  white-space: pre;
 }
 
 .agent-controls {
@@ -33,6 +78,18 @@
   align-items: center;
   gap: var(--s-2);
   margin-left: auto;
+}
+
+/* The one control is a small soft key raised off the ground, in the text's tone. */
+.agent-controls .btn {
+  --btn-bg: var(--bg-2);
+  --btn-bg-hover: color-mix(in srgb, var(--bg-2), var(--bg-3) 60%);
+  --btn-bg-active: var(--bg-3);
+  --btn-fg: var(--text);
+  --btn-hi: var(--raise-sm);
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 12px;
 }
 
 /* WHAT WENT WRONG: one sentence and the Retry beside it, in the second text tone. */
@@ -182,20 +239,14 @@
   margin-top: var(--s-1);
 }
 
-.agent-rule {
-  width: 100%;
-  height: 1px;
-  margin: var(--s-2) 0 0;
-  border: 0;
-  background: var(--line);
-}
-
-/* THE FIRST MOVES: three questions a person can put to the assistant with one press. */
+/* THE FIRST MOVES: three short questions a person can put to the assistant with one press,
+   on one row under the answers. */
 .agent-suggest {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: var(--s-2);
+  margin-top: var(--s-3);
 }
 
 .suggest {
@@ -251,8 +302,8 @@
   width: 100%;
   padding: var(--s-3) 84px var(--s-3) var(--s-3);
   border-radius: var(--radius);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
+  background: var(--tile);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 .connection-line {
@@ -314,8 +365,9 @@
   padding: var(--s-5) 0 var(--s-2);
 }
 
-/* The top of a thread that scrolled thins out under the head. One gradient on the frame,
-   on or off by opacity, so crossing the edge costs the scroller no repaint. */
+/* The top of a thread that scrolled thins out under the head. A mask on the scroller rather
+   than a band of the ground's colour over it: the ground carries its own soft light, and a
+   painted band showed its edge against it. On or off with the cut, never per scroll. */
 .transcript-fade {
   position: absolute;
   left: 0;
@@ -325,11 +377,23 @@
   z-index: 2;
   pointer-events: none;
   opacity: 0;
-  background: linear-gradient(to bottom, var(--bg-0), transparent);
-  transition: opacity var(--dur-press) var(--ease-out);
 }
 
-.transcript-wrap[data-cut="top"] > .transcript-fade { opacity: 1; }
+.transcript-wrap[data-cut="top"] > .transcript {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 36px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 36px);
+}
+
+/* While Latest is up, the thread thins out under it too, so the key never sits on words. */
+.transcript-wrap:has(> .jump-latest[data-on="true"]) > .transcript {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 6px));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 64px), transparent calc(100% - 6px));
+}
+
+.transcript-wrap[data-cut="top"]:has(> .jump-latest[data-on="true"]) > .transcript {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 36px, #000 calc(100% - 64px), transparent calc(100% - 6px));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 36px, #000 calc(100% - 64px), transparent calc(100% - 6px));
+}
 
 /* Every row enters the same way, once: a 180 ms fade and a 6 px rise. */
 @keyframes row-in {
@@ -372,7 +436,8 @@
   overflow-wrap: anywhere;
 }
 
-/* THE PERSON. On the right, in a quiet bubble that hugs what was said. */
+/* THE PERSON. On the right, in a soft raised bubble that hugs what was said, its corner
+   toward the person tucked in. */
 .chat-said {
   align-self: flex-end;
   align-items: flex-end;
@@ -380,13 +445,13 @@
 }
 
 .chat-said .chat-text {
-  padding: 10px 16px 11px;
-  border-radius: 18px 18px 6px 18px;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
+  padding: 11px 18px 12px;
+  border-radius: 22px 22px 8px 22px;
+  background: color-mix(in srgb, var(--bg-2), var(--bg-3) 55%);
+  box-shadow: var(--hi);
   line-height: 1.45;
   transition: color var(--dur-enter) var(--ease-out),
-              border-color var(--dur-enter) var(--ease-out);
+              background-color var(--dur-enter) var(--ease-out);
 }
 
 /* A message the app has not taken responsibility for yet: the words in full, held back a
@@ -440,34 +505,32 @@
   text-wrap: pretty;
 }
 
-/* The key figure: bold in a reply is the number the sentence is about, so it wears the
-   mono face at the text's own weight step. A mono space is a whole cell wide, so "4 USDC"
-   read as two spaces; the word gap comes back to the reading face's. */
+/* The key figure: bold in a reply is the number the sentence is about. It is the sentence's
+   own face and size a weight step up, with tabular lining numerals, so it sits on the
+   sentence's baseline at its x-height (Karim, 2026-09-23: the mono figures were not "in a
+   straight line" with the words around them). */
 .chat-text strong,
 .chat-text b {
-  font-family: var(--font-mono);
-  font-weight: 500;
-  font-size: 0.97em;
-  letter-spacing: -0.01em;
-  word-spacing: -0.3em;
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-num);
+  font-weight: 600;
+  font-variant-numeric: var(--num-features);
   color: var(--text);
 }
 
-/* A heading is a label, never larger than the body. */
+/* A heading is the body's own size a weight up, in the text colour: smaller and greyer read
+   as a caption under the words it heads. */
 .chat-h {
-  font-size: var(--fs-13);
-  font-weight: 500;
-  color: var(--text-2);
+  font-size: var(--fs-15);
+  font-weight: 600;
+  color: var(--text);
   line-height: 1.4;
   margin-top: var(--s-1);
 }
 
-/* Lists, clean: a small quiet marker and the line's own words. */
+/* Lists, clean: a small quiet marker inside the reply's own edge and the line's own words. */
 .chat-list {
   margin: 0;
-  padding-left: 1.1em;
+  padding-left: 1.6em;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -490,25 +553,45 @@ ol.chat-list li {
 }
 
 ol.chat-list li::marker {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-family: var(--font-num);
+  font-variant-numeric: var(--num-features);
 }
 
 .chat-text.md code {
   font-family: var(--font-mono);
   font-size: 0.9em;
-  padding: 0 4px;
+  padding: 1px 5px;
   border-radius: var(--radius-xs);
   background: var(--bg-2);
   color: var(--text);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* A quoted line: a quiet block pressed into the column, in the second text tone. A soft well
+   rather than a coloured rule down its edge. */
+.chat-quote {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--tile);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+  color: var(--text-2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-quote .chat-p {
+  color: inherit;
 }
 
 .chat-code {
   margin: 0;
-  padding: var(--s-2) var(--s-3);
-  border-radius: var(--radius-sm);
-  background: var(--bg-1);
-  border: 1px solid var(--line);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius);
+  background: var(--tile);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
   font-family: var(--font-mono);
   font-size: var(--fs-13);
   line-height: 1.5;
@@ -563,17 +646,14 @@ ol.chat-list li::marker {
 .chat-table th.num,
 .chat-table td.num {
   text-align: right;
-  font-family: var(--font-mono);
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-num);
+  font-variant-numeric: var(--num-features);
   white-space: nowrap;
 }
 
 .md-n {
-  font-family: var(--font-mono);
-  font-size: 0.97em;
-  font-feature-settings: "tnum" 1;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-num);
+  font-variant-numeric: var(--num-features);
 }
 
 /* The app's own failure to send, named. */
@@ -632,7 +712,7 @@ ol.chat-list li::marker {
 .chat-card {
   align-self: flex-start;
   width: 100%;
-  max-width: 560px;
+  max-width: 580px;
   min-width: 0;
 }
 
@@ -641,7 +721,7 @@ ol.chat-list li::marker {
 .chat-sheet {
   align-self: flex-start;
   width: 100%;
-  max-width: 560px;
+  max-width: 580px;
   min-width: 0;
 }
 
@@ -649,10 +729,10 @@ ol.chat-list li::marker {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  padding: var(--s-4);
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: var(--bg-1);
+  padding: 18px;
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: var(--raise);
   overflow-wrap: anywhere;
 }
 
@@ -674,6 +754,7 @@ ol.chat-list li::marker {
   padding: 0;
   border: 0;
   background: none;
+  box-shadow: none;
 }
 
 .chat-sheet-line {
@@ -703,8 +784,9 @@ ol.chat-list li::marker {
 
 /* ---------- the way back down, and the one thing waiting ---------- */
 
-/* LATEST: small and quiet on the thread's bottom edge, only while the person is above the
-   end. No shadow and not the width of the column. */
+/* LATEST: a small soft key on the thread's bottom edge, only while the person is above the
+   end. No drop shadow (a shadowed pill over the thread reads as a stray menu), not the width
+   of the column, and it springs up into place. */
 .jump-latest {
   position: absolute;
   left: 50%;
@@ -713,18 +795,19 @@ ol.chat-list li::marker {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 var(--s-3) 0 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-pill);
-  background: var(--bg-1);
-  color: var(--text-2);
+  height: 32px;
+  padding: 0 14px 0 10px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--bg-3);
+  color: var(--text);
   font-size: var(--fs-13);
+  font-weight: 500;
   cursor: pointer;
   visibility: hidden;
   opacity: 0;
-  transform: translate(-50%, 6px);
-  transition: transform 180ms var(--ease-out),
+  transform: translate(-50%, 8px);
+  transition: transform var(--dur-spring) var(--ease-spring),
               opacity 180ms var(--ease-out),
               color var(--dur-press) var(--ease-out),
               visibility 0s linear 180ms;
@@ -744,7 +827,7 @@ ol.chat-list li::marker {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .jump-latest:hover { color: var(--text); border-color: var(--text-3); }
+  .jump-latest:hover { background: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 6%); }
 }
 
 .jump-latest:active {
@@ -756,23 +839,48 @@ ol.chat-list li::marker {
   outline-offset: 2px;
 }
 
-/* WAITING FOR YOUR OK: one line above the box while a card that needs the person is out of
-   view, and a press takes them to it. The clock is the card's own. */
+/* WAITING FOR YOUR OK: a soft key above the box while a card that needs the person is out
+   of view, and a press takes them to it. It sits in the column's flow, never over the thread;
+   the card's own clock is its one green, and the move is named in words. */
 .agent-waiting {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  width: min(calc(100% - 2 * var(--s-4)), var(--thread-w));
-  min-height: 32px;
+  width: min(calc(100% - 2 * var(--s-5)), var(--thread-w));
+  min-height: 40px;
   margin: 0 auto;
-  padding: 0 2px;
+  padding: 0 14px;
   border: 0;
-  background: transparent;
-  color: var(--text-2);
-  font-size: var(--fs-13);
+  border-radius: var(--radius-btn);
+  background: var(--bg-2);
+  box-shadow: var(--raise-sm);
+  color: var(--text);
+  font-size: var(--fs-14);
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
   animation: row-in 180ms var(--ease-out) both;
+  transition: background-color var(--dur-press) var(--ease-out),
+              transform var(--dur-release) var(--ease-spring);
+}
+
+.agent-waiting-words {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agent-waiting-show {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.agent-waiting-chevron {
+  width: 14px;
+  height: 14px;
 }
 
 .agent-waiting[hidden] { display: none; }
@@ -785,11 +893,12 @@ ol.chat-list li::marker {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .agent-waiting:hover { color: var(--text); }
+  .agent-waiting:hover { background: color-mix(in srgb, var(--bg-2), var(--bg-3) 60%); }
 }
 
 .agent-waiting:active {
-  color: var(--text);
+  transform: scale(var(--scale-press));
+  transition-duration: var(--dur-press), 100ms;
 }
 
 .agent-waiting:focus-visible {
@@ -921,41 +1030,42 @@ ol.chat-list li::marker {
 
 /* ---------- the composer ---------- */
 
-/* THE BOX. One field on the first step up from the ground, a strong hairline, the 16 px
-   radius, the textarea bare inside it growing to six lines, and one round button. Focus
-   lifts the edge a tone, never to green: green is the mark's, the live move's and
-   Approve's. */
+/* THE BOX. One soft raised field, the 24 px radius, the textarea bare inside it growing to
+   six lines, and one round button. Focus draws a soft ring of the text's own tone, never
+   green: green is the mark's, the live move's and Approve's. */
 .agent-composer {
-  width: min(calc(100% - 2 * var(--s-4)), var(--thread-w));
+  width: min(calc(100% - 2 * var(--s-5)), var(--thread-w));
   margin: 0 auto;
-  padding: var(--s-3) 0 var(--s-5);
+  padding: var(--s-3) 0 22px;
 }
 
 .composer-field {
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  min-height: 54px;
-  padding: 7px 8px 7px 18px;
-  border-radius: 16px;
-  background: var(--bg-1);
-  border: 1px solid var(--line-strong);
-  transition: border-color var(--dur-press) var(--ease-out);
+  min-height: 58px;
+  padding: 9px 9px 9px 20px;
+  border-radius: var(--radius-xl);
+  background: var(--bg-2);
+  border: 0;
+  box-shadow: var(--raise);
+  transition: box-shadow var(--dur-press) var(--ease-out);
 }
 
 .composer-field:focus-within {
-  border-color: var(--text-3);
+  box-shadow: var(--raise), 0 0 0 1.5px color-mix(in srgb, var(--text-3) 55%, transparent);
 }
 
 .agent-composer .input {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 38px;
+  min-height: 40px;
   max-height: none;
-  padding: 8px 0;
+  padding: 9px 0;
   border: 0;
   border-radius: 0;
   background: transparent;
+  box-shadow: none;
   font-size: var(--fs-15);
   line-height: 1.45;
   field-sizing: fixed;
@@ -976,23 +1086,24 @@ ol.chat-list li::marker {
   cursor: default;
 }
 
-/* The button: dim and out while the box is empty, the arrow in the text colour once there
-   are words, and a stop square while an answer is running. */
+/* The button: a soft round key, quiet while the box is empty, lit in the text's own tone
+   with the arrow in the ground's once there are words, and a stop square while an answer is
+   running. */
 .composer-send {
   flex: 0 0 auto;
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   display: grid;
   place-items: center;
   border-radius: var(--radius-pill);
-  background: var(--bg-2);
-  border: 1px solid var(--line-strong);
+  background: var(--bg-3);
+  border: 0;
+  box-shadow: var(--hi);
   color: var(--text-2);
-  opacity: 0.55;
+  opacity: 0.7;
   transition: background-color var(--dur-press) var(--ease-out),
               color var(--dur-press) var(--ease-out),
-              border-color var(--dur-press) var(--ease-out),
-              transform var(--dur-press) var(--ease-out),
+              transform var(--dur-release) var(--ease-spring),
               opacity var(--dur-press) var(--ease-out);
 }
 
@@ -1007,18 +1118,24 @@ ol.chat-list li::marker {
 .composer-send .btn-pending { gap: 0; }
 .composer-send .btn-pending-label { display: none; }
 
-.composer-field[data-armed="true"] .composer-send:not(:disabled),
+.composer-field[data-armed="true"] .composer-send:not(:disabled) {
+  opacity: 1;
+  background: var(--text);
+  color: var(--bg-0);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
 .composer-field[data-mode="stop"] .composer-send:not(:disabled) {
   opacity: 1;
   color: var(--text);
-  border-color: var(--text-3);
 }
 
 .composer-field[data-mode="stop"] .composer-send .composer-send-glyph { display: none; }
 .composer-field[data-mode="stop"] .composer-send .composer-stop-glyph { display: block; }
 
 .composer-send:active:not(:disabled) {
-  transform: scale(0.96);
+  transform: scale(0.92);
+  transition-duration: var(--dur-press), var(--dur-press), 100ms, var(--dur-press);
 }
 
 .composer-send:disabled {
@@ -1032,9 +1149,12 @@ ol.chat-list li::marker {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .composer-field[data-armed="true"] .composer-send:hover:not(:disabled),
+  .composer-field[data-armed="true"] .composer-send:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text) 88%, #FFFFFF);
+  }
+
   .composer-field[data-mode="stop"] .composer-send:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--text) 10%, var(--bg-2));
+    background: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 8%);
   }
 }
 
@@ -1055,6 +1175,8 @@ ol.chat-list li::marker {
   .agent-waiting {
     animation: none;
   }
+
+  .agent-waiting:active { transform: none; }
 
   .jump-latest,
   .jump-latest[data-on="true"] {

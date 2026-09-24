@@ -298,6 +298,29 @@ test('a wallet read draws its card only when the person asked about their money,
   assert.equal(byAttr(card, 'data-token', 'USDC').length, 1, 'the USDC row carries no mark');
 });
 
+/* The card says a holding the way the panel beside it does (hunt A, 2026-09-23): the panel's
+   quantity, no "NEAR Intents" under money that is simply in the balance, and "under $0.01"
+   rather than a $0.00 that reads as worthless. */
+test('the wallet card words a holding the way the panel does', () => {
+  const world = build();
+  world.ask('what do I hold');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__wallet', input: {}, data: {
+    totalUsd: 6200.004, byChain: { intents: 6200.004 }, stale: [], emptyCount: 0,
+    rows: [
+      { kind: 'intents', chain: 'intents', symbol: 'USDC', quantity: 6200, valueUsd: 6200, priced: true, native: false },
+      { kind: 'intents', chain: 'intents', symbol: 'NEAR', quantity: 310.5, valueUsd: 0.004, priced: true, native: false },
+      { kind: 'wallet', chain: 'base', symbol: 'ETH', quantity: 0.0000012, valueUsd: 0.0001, priced: true, native: true },
+    ],
+  } });
+  const card = world.cardNodes('balance')[0];
+  const qty = all(card, 'tcard-qty').map((n: Any) => n.textContent);
+  assert.deepEqual(qty, ['6,200.00', '310.50', '0.000001']);
+  assert.equal(card.textContent.includes('NEAR Intents'), false, card.textContent);
+  assert.equal(all(card, 'tcard-place').length, 1, 'money outside the balance lost its place');
+  assert.equal(card.textContent.includes('$0.00'), false, card.textContent);
+  assert.ok(card.textContent.includes('under $0.01'), card.textContent);
+});
+
 test('an empty wallet says so in words, with the way in', () => {
   const world = build();
   world.ask('balance');
@@ -397,7 +420,8 @@ test('a proposed swap is one card from the ask to the end, and a refusal says wh
   assert.equal(card.getAttribute('data-state'), 'needs_you');
   assert.equal(stateWord(card), 'Needs your OK');
   assert.match(faceOf(card), /0\.05 SOL about 4\.98 USDC/);
-  assert.match(faceOf(card), /You pay 0\.05 SOL · You get at least 4\.9 USDC · Fee \$0\.02/);
+  assert.match(faceOf(card), /You pay 0\.05 SOL You get at least 4\.9 USDC Fee \$0\.02/);
+  assert.deepEqual(all(card, 'mcard-fact-label').map((n) => n.textContent), ['You pay', 'You get at least', 'Fee'], 'each figure is not under its own label');
   assert.equal(all(card, 'mcard-approve').length, 0, 'the reply alone drew the question');
 
   world.proposals([filed]);
@@ -638,11 +662,13 @@ test('the deposit card names the network, the tail of the address, the watch sta
   assert.ok(card.textContent.includes('Deposit USDC on Base'), card.textContent);
   assert.equal(all(card, 'tcard-tail')[0].textContent, '9Xk2');
   /* The state is a word, not a pill with a dot. */
-  assert.equal(all(card, 'tcard-state')[0].textContent, 'Watching');
+  assert.equal(all(card, 'tcard-state')[0].textContent, 'Watching for your deposit');
+  assert.ok(card.textContent.includes('Address checked'), 'the checked address is a bare grey word');
+  assert.ok(card.textContent.includes('At least 1 USDC.'), card.textContent);
   assert.equal(all(card, 'tcard-chip').length, 0, 'a status pill is back');
   assert.equal(byAttr(card, 'data-token', 'BASE').length, 1, 'no network mark');
   const button = all(card, 'tcard-open')[0];
-  assert.equal(button.textContent, 'Open the deposit card');
+  assert.equal(button.textContent, 'Show address and QR');
   fire(button, 'click');
   assert.equal(JSON.stringify(world.opened), JSON.stringify([{ chain: 'base', symbol: 'USDC' }]));
 });
@@ -656,7 +682,7 @@ test('a refused deposit says the reason and nothing else', () => {
   assert.equal(all(card, 'tcard-open').length, 0, 'a button to open a card that cannot open');
 });
 
-test('any other whitelisted answer is two columns of facts, numbers in mono', () => {
+test('any other whitelisted answer is two columns of facts, numbers set as figures', () => {
   const world = build();
   world.ask('can I swap btc?');
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__swap_check', input: {}, data: { ok: true, coins: ['BTC', 'ETH'], count: 2, screen: { view: 'basic' } } });
@@ -666,7 +692,7 @@ test('any other whitelisted answer is two columns of facts, numbers in mono', ()
   assert.deepEqual(keys, ['coins', 'count'], 'ok and screen are noise, not facts');
   const values = all(card, 'tcard-kv-value');
   assert.equal(values[0].textContent, 'BTC, ETH');
-  assert.ok(values[1].className.includes('mono'), 'a number not in mono');
+  assert.ok(values[1].className.split(' ').includes('num'), 'a number not set as a figure');
 });
 
 test('a data card opens by default and stays where the person left it', () => {
@@ -769,7 +795,7 @@ test('a chain_address answer is a small data block through the facts card, and i
   const value = (key: string): Any => values[keys.indexOf(key)];
   assert.equal(value('address').textContent, '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045');
   assert.equal(value('tx count').textContent, '1842');
-  assert.ok(value('tx count').className.includes('mono'), 'the count is not in the mono face');
+  assert.ok(value('tx count').className.split(' ').includes('num'), 'the count is not set as a figure');
   assert.equal(value('tokens').textContent, '2 items');
 });
 
@@ -851,19 +877,43 @@ test('a send names its receiver whole on the face while the person decides', () 
   world.proposals([filed]);
   const card = world.cardNodes('move')[0];
   assert.equal(stateWord(card), 'Needs your OK');
-  assert.match(faceOf(card), /^25 USDC 0xAbCdEf...ABCDEF01/, faceOf(card));
+  /* A payout names the chain it lands on (hunt A, 2026-09-23): the same address on another
+     chain is somebody else's money. */
+  assert.match(faceOf(card), /^25 USDC 0xAbCdEf...ABCDEF01 on Ethereum/, faceOf(card));
   const address = all(card, 'mcard-address-line')[0];
   assert.ok(address, 'no address on the face');
   assert.equal(address.getAttribute('data-address'), to);
   assert.equal(all(address, 'tcard-leg-group').map((g: Any) => g.textContent).join(''), to, 'the address is not whole');
-  assert.equal(all(address, 'tcard-leg-group')[1].textContent, 'CdEf');
+  /* "0x" and then ten groups of four, so the groups start where the address does; the first
+     and the last, the ones a person checks, carry a heavier weight. */
+  const groups = all(address, 'tcard-leg-group');
+  assert.deepEqual(groups.slice(0, 3).map((g: Any) => g.textContent), ['0x', 'AbCd', 'Ef01']);
+  assert.equal(groups.length, 11);
+  assert.deepEqual(all(address, 'tcard-leg-group-key').map((g: Any) => g.textContent), ['AbCd', 'EF01']);
+  assert.ok(faceOf(card).includes('An Ethereum address. First send to this address.'), faceOf(card));
   assert.equal(all(card, 'tcard-copy').filter((b: Any) => all(b, 'btn-label')[0]).length >= 1, true, 'no Copy on the address');
   assert.equal(all(card, 'tcard-leg-explorer').length, 1, 'no explorer link on the address');
-  assert.match(faceOf(card), /You send 25 USDC · They get at least 24\.6 USDC · Fee \$0\.30/);
+  assert.match(faceOf(card), /You send 25 USDC They get at least 24\.6 USDC Fee \$0\.30/);
   assert.ok(faceOf(card).includes('First send to this address.'), faceOf(card));
   const lines = detailsOf(card);
   assert.ok(lines.some((t) => t === 'This address first send'), lines.join(' | '));
   assert.ok(lines.some((t) => t.includes('never been used on Ethereum')), lines.join(' | '));
+});
+
+/* A named account is its own check: alice.near is whole in the card's head, so the face does not
+   print it a second time as a block of groups; the first-send line stays. */
+test('a send to a named account is not printed twice, and still says it is the first send', () => {
+  const world = build();
+  const to = 'alice.near';
+  const draft = { kind: 'intents_send', symbol: 'USDC', amount: 5, amountUsd: 5, from: 'you.near', to, counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, ownAddress: false } };
+  const filed = withView({ id: 'n1', kind: 'intents_send', status: 'pending', createdAt: '2026-09-20T10:00:00Z', draft, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'send', send: { arrives: '5', arrivesAtLeast: '5', feeUsd: 0, etaSeconds: 5 } } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_send', input: { amount: 5, symbol: 'USDC', to }, data: { id: 'n1', status: 'pending', verdict: filed.verdict, simulation: filed.simulation, view: filed.view } });
+  world.proposals([filed]);
+  const card = world.cardNodes('move')[0];
+  assert.match(faceOf(card), /^5 USDC alice\.near/, faceOf(card));
+  assert.equal(all(card, 'mcard-address-line').length, 0, 'the named account is printed twice');
+  assert.ok(faceOf(card).includes('First send to this address.'), faceOf(card));
+  assert.equal(faceOf(card).includes(' on '), false, 'a send inside NEAR Intents names a chain');
 });
 
 test('a late move says it is late with the minutes, and a held one says what it waits on', () => {
@@ -927,7 +977,7 @@ test('a Hyperliquid move asks with its floor once, and lands with what arrived',
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_hl_withdraw', input: { amount: 20 }, data: row('pending') });
   const card = world.cardNodes('move')[0];
   assert.match(faceOf(card), /^20 USDC your balance Needs your OK/);
-  assert.match(faceOf(card), /You move 20 USDC · Arrives at least 19\.67 USDC · Fee \$0\.25/);
+  assert.match(faceOf(card), /You move 20 USDC Arrives at least 19\.67 USDC Fee \$0\.25/);
   assert.equal((faceOf(card).match(/19\.67/g) || []).length, 1, 'the floor is printed twice');
 
   world.proposals([row('executed', { decidedAt: '2026-09-20T10:00:20Z', decidedBy: 'human', settledAt: '2026-09-20T10:03:00Z',
@@ -939,7 +989,7 @@ test('a Hyperliquid move asks with its floor once, and lands with what arrived',
 /* THE ONE THING WAITING. A card that needs the person, scrolled out of view, is one quiet line
    above the box, and the line takes them to it: the card in the middle of the column, the focus
    on the card and never on a button. Latest steps aside while it is up. */
-test('a waiting card out of view is one quiet line above the box, and the line takes the person to it', () => {
+test('a waiting card out of view is one soft key above the box that names the move, and it takes the person to it', () => {
   const world = build();
   const row = withView({ id: 'wt1', kind: 'swap', status: 'pending', createdAt: new Date().toISOString(), draft: SWAP_DRAFT, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' } });
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: {}, data: row });
@@ -958,7 +1008,9 @@ test('a waiting card out of view is one quiet line above the box, and the line t
   assert.ok(waitLine, 'no waiting line');
   assert.equal(waitLine.hidden, false, 'the line is not up for a card out of view');
   assert.equal(all(world.host, 'jump-latest')[0].getAttribute('data-on'), null, 'Latest is up beside the waiting line');
-  assert.equal(all(waitLine, 'agent-waiting-words')[0].textContent, 'Waiting for your OK');
+  /* The line names the move that waits (hunt A, 2026-09-23: a grey "Waiting for your OK" was
+     the only sign money waited on the person). */
+  assert.equal(all(waitLine, 'agent-waiting-words')[0].textContent, 'Your swap waits for your OK');
   fire(waitLine, 'click');
   assert.equal(list.scrollTop, 1600 - 600 - 140, 'the card is not brought to the middle of the column');
   assert.equal(card.focused, true, 'the focus is not on the card');

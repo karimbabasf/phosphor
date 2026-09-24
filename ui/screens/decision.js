@@ -255,12 +255,12 @@
     addFact(host, 'Liquidation near', px(typeof after.liquidationPx === 'number' ? Math.round(after.liquidationPx * 100) / 100 : NaN));
   }
 
-  /* Label at the left, the figure at the right in mono, no rule between the rows. */
+  /* Label at the left, the figure at the right, no rule between the rows. */
   function factGrid(facts) {
     var grid = dom.el('div', 'mcard-grid');
     for (var i = 0; i < facts.length; i += 1) {
       grid.appendChild(dom.el('span', 'mcard-grid-label', facts[i][0]));
-      grid.appendChild(dom.el('span', 'mcard-grid-value mono', facts[i][1]));
+      grid.appendChild(dom.el('span', 'mcard-grid-value num', facts[i][1]));
     }
     return grid;
   }
@@ -357,14 +357,14 @@
       var row = dom.el('div', 'axis-row');
       row.appendChild(dom.el('span', 'axis-name', AXIS_WORDS[c.axis] || c.axis));
       var figures = dom.el('span', 'axis-figures');
-      figures.appendChild(dom.el('span', 'mono axis-before', dom.usd(c.before, 0)));
+      figures.appendChild(dom.el('span', 'num axis-before', dom.usd(c.before, 0)));
       figures.appendChild(dom.el('span', 'axis-to', 'to'));
-      var after = dom.el('span', 'mono axis-after', dom.usd(c.after, 0));
+      var after = dom.el('span', 'num axis-after', dom.usd(c.after, 0));
       dom.setAttr(after, 'data-tone', c.after > c.before ? 'looser' : 'tighter');
       figures.appendChild(after);
       /* Ten times or more is the jump a person has to be told about in one word. */
       if (typeof c.factor === 'number' && c.factor >= 10) {
-        figures.appendChild(dom.el('span', 'mono axis-factor', Math.round(c.factor) + 'x'));
+        figures.appendChild(dom.el('span', 'num axis-factor', Math.round(c.factor) + 'x'));
       }
       row.appendChild(figures);
       wrap.appendChild(row);
@@ -501,7 +501,7 @@
       address: clean,
       chosenBy: chosenBy,
       own: isOwn,
-      label: chosenBy === 'venue' ? VENUE_CHOSE : (isOwn ? 'your NEAR Intents account, the one it spends from' : 'the destination this app chose')
+      label: chosenBy === 'venue' ? VENUE_CHOSE : (isOwn ? 'your balance, where it already is' : 'the destination this app chose')
     });
   }
 

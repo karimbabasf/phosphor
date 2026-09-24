@@ -70,15 +70,28 @@ export type Palette = {
   gate: string;
 };
 
+// Soft depth since 2026-09-23 (Karim picked it from three looks): the mark's green, softened, on
+// a warm charcoal ground. The name stays green-on-black: it is the key a theme.json and an agent
+// already use, and it is still the mark's green on the darkest ground the window has.
 export const COLOURWAY_PALETTE: Readonly<Record<Colourway, Palette>> = {
   'green-on-black': {
-    slots: { accent: '#3fff6c', background: '#0e0f13', up: '#3fff6c', down: '#ff5a6e', agent: '#b79cff' },
-    text: '#eceef1',
-    text2: '#9ba1ab',
-    text3: '#828890',
+    slots: { accent: '#52e893', background: '#161210', up: '#52e893', down: '#ff6b5b', agent: '#b79cff' },
+    text: '#f8f0e8',
+    text2: '#bcaea1',
+    text3: '#9a8c7f',
     warn: '#f5b942',
-    gate: '#ff3b30',
+    gate: '#ff4d40',
   },
+};
+
+// The colourway's own slots before soft depth. A theme.json written by a reset, or by a
+// set_theme that changed one slot, carries the rest as they shipped then; read back, they mean
+// the colourway, so they come back as today's colours rather than repainting the old ground.
+const RETIRED: Readonly<Partial<Record<ThemeSlot, readonly string[]>>> = {
+  accent: ['#3fff6c'],
+  background: ['#0e0f13'],
+  up: ['#3fff6c'],
+  down: ['#ff5a6e'],
 };
 
 // How a colourway is described to the agent and labelled for the human, one line each.
@@ -156,14 +169,19 @@ export function contrastRatio(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-/* The lightest surface the window paints on a ground: ui/theme.js lifts --bg-2 seven percent
-   toward white on a dark ground (toward black on a light one), the same arithmetic, so a slot
-   is held to the surface a word in it can actually sit on, not only to the ground. */
+/* The surface a word sits on most: ui/theme.js lifts --bg-2 eight percent from the ground toward
+   a light of the ground's own hue (the ground scaled to full brightness, halfway to white) on a
+   dark ground, and toward black on a light one. The same arithmetic, so a slot is held to the
+   surface a word in it can actually sit on, not only to the ground. */
 export function raisedSurface(background: string): string {
   const ground = rgbOf(background);
-  const lift = luminance(background) > 0.5 ? 0 : 255;
-  const step = (from: number): number => Math.round(from + (lift - from) * 0.07);
-  return '#' + [ground.r, ground.g, ground.b].map((c) => step(c).toString(16).padStart(2, '0')).join('');
+  const channels = [ground.r, ground.g, ground.b];
+  const top = Math.max(...channels) || 1;
+  const lift = luminance(background) > 0.5
+    ? [0, 0, 0]
+    : channels.map((c) => Math.round(255 + (c * 255 / top - 255) * 0.5));
+  const step = (from: number, to: number): number => Math.round(from + (to - from) * 0.08);
+  return '#' + channels.map((c, i) => step(c, lift[i] as number).toString(16).padStart(2, '0')).join('');
 }
 
 type ThemeOutcome =
@@ -227,8 +245,8 @@ export function applyPatch(current: Theme, patch: Record<string, unknown>): Them
     { what: "the approval gate's red", colour: COLOURWAY_PALETTE[next.profile].gate, floor: MIN_TEXT_CONTRAST },
     { what: 'up', colour: next.up, floor: MIN_MARK_CONTRAST },
     // Down is text as much as it is a candle: Turn off, Failed, the amount that left, No. A
-    // down colour the window sets words in holds the text floor (the shipped #ff5a6e reads
-    // at 5.98:1 on the raised ground); the candle shares it.
+    // down colour the window sets words in holds the text floor (the shipped #ff6b5b reads
+    // at 5.54:1 on the raised ground); the candle shares it.
     { what: 'down', colour: next.down, floor: MIN_TEXT_CONTRAST },
   ];
   for (const check of checks) {
@@ -263,7 +281,7 @@ export function readTheme(dataDir: string): Theme {
     const out: Theme = colourwayTheme(profile);
     for (const slot of THEME_SLOTS) {
       const colour = normaliseColour(parsed[slot]);
-      if (colour !== null) out[slot] = colour;
+      if (colour !== null && !(RETIRED[slot] ?? []).includes(colour)) out[slot] = colour;
     }
     // A file that was hand-edited past the floor is treated as absent rather than obeyed.
     const check = applyPatch(colourwayTheme(profile), out as unknown as Record<string, unknown>);

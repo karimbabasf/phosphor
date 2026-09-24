@@ -1,29 +1,26 @@
 /* The move card in the thread (ui/screens/cards.js moveCard, ui/screens/decision.js ask).
 
-   One compact card per move that changes in place. The head says the whole move on one
-   line: the coin marks, "4 USDC -> 0.00149 ETH" with the figures in mono, and the state word
-   at the right. Working, a hairline track eases along the bottom edge. Needing the person,
-   the card opens one line of figures and Cancel and Approve, and its edge takes a trace of
-   green. Done, it is one line, "Done · 6s". Nothing in it can push text past its edge. */
+   One compact card per move that changes in place: a soft raised layer in the thread. The
+   head says the whole move on one line: the coin marks, "4 USDC -> 0.00149 ETH" with the
+   figures in the words' face, and the state at the right. Working, a soft track fills along
+   its foot. Needing the person, the card opens its figures, label over figure, and Cancel
+   and Approve, and Approve breathes. Done, it is one line, "Done · 6s", and its check pops
+   on a green disc. Nothing in it can push text past its edge. */
 
 .mcard {
-  --card-bg: var(--bg-1);
+  --card-bg: var(--bg-2);
   /* Where the words start: past the marks, so the lines under the head sit on the move's
      own left edge. A pair of marks is wider than one. */
-  --text-x: 48px;
+  --text-x: 52px;
   position: relative;
-  background: var(--card-bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  transition: border-color var(--dur-enter) var(--ease-out);
+  background: var(--surface-raised);
+  border: 0;
+  border-radius: var(--radius-card);
+  box-shadow: var(--raise);
 }
 
 .mcard:has(> .mcard-head > .mcard-marks[data-pair]) {
-  --text-x: 67px;
-}
-
-.mcard[data-state="needs_you"] {
-  border-color: color-mix(in srgb, var(--ink) 36%, var(--line));
+  --text-x: 70px;
 }
 
 /* ---------- the head ---------- */
@@ -36,9 +33,9 @@
   align-items: center;
   flex-wrap: nowrap;
   gap: 12px;
-  min-height: 50px;
-  padding: 12px 16px 12px 12px;
-  border-radius: calc(var(--radius) - 1px);
+  min-height: 56px;
+  padding: 14px 18px 14px 16px;
+  border-radius: var(--radius-card);
   outline: none;
 }
 
@@ -49,7 +46,7 @@
 
 @media (hover: hover) and (pointer: fine) {
   .mcard-head[role="button"]:hover {
-    background: color-mix(in srgb, var(--bg-2) 60%, var(--card-bg));
+    background: rgba(var(--hi-rgb), 0.03);
   }
 }
 
@@ -66,7 +63,7 @@
 /* Two marks side by side, their boxes' clear edges overlapped so the two logos sit a hair
    apart. No cutout ring: a brand's mark is often not a disc, and a ring would bite into it. */
 .mcard-marks .logo {
-  --logo: 24px;
+  --logo: 26px;
 }
 
 .mcard-marks[data-pair] .logo + .logo {
@@ -77,11 +74,11 @@
 .mcard-glyph {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
+  background: var(--bg-3);
+  box-shadow: var(--hi);
   color: var(--text-2);
 }
 
@@ -96,10 +93,10 @@
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   flex-wrap: wrap;
   gap: 2px 8px;
-  font-size: var(--fs-14);
+  font-size: var(--fs-15);
   font-weight: 500;
   line-height: 1.35;
   color: var(--text);
@@ -112,11 +109,10 @@
   min-width: 0;
 }
 
+/* A figure in the move line is the line's own size and face: it sits on the words'
+   baseline at their x-height. */
 .mcard-num {
-  font-size: 14.5px;
   font-weight: 500;
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
 }
 
 .mcard-soft {
@@ -126,8 +122,9 @@
 
 .mcard-arrow {
   flex: 0 0 auto;
-  width: 15px;
-  height: 15px;
+  align-self: center;
+  width: 16px;
+  height: 16px;
   color: var(--text-3);
 }
 
@@ -135,10 +132,11 @@
    green of Approve; everything else is the second text tone, done included. */
 .mcard-state {
   flex: 0 0 auto;
+  align-self: center;
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   font-size: var(--fs-13);
   line-height: 1.2;
   color: var(--text-2);
@@ -153,8 +151,36 @@
 .mcard-state-icon[hidden] { display: none; }
 
 .mcard-state-glyph {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
+}
+
+/* DONE: the check on a green disc. On a card that turns done in front of the person it pops,
+   from a third of its size on the spring, a beat after the word; a card that was already done
+   when it was drawn simply has it. */
+.mcard-state-icon[data-icon="done"] {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--on-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.mcard-state-tick {
+  display: block;
+  width: 14px;
+  height: 14px;
+  color: inherit;
+}
+
+@keyframes mcard-pop {
+  from { opacity: 0; transform: scale(0.3); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.mcard[data-lit="true"] .mcard-state-icon[data-icon="done"] {
+  animation: mcard-pop var(--dur-spring) var(--ease-spring) 60ms both;
 }
 
 .mcard[data-state="needs_you"] .mcard-state {
@@ -190,8 +216,8 @@
 .mcard-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 0 16px 16px var(--text-x);
+  gap: 14px;
+  padding: 0 18px 18px var(--text-x);
   min-width: 0;
 }
 
@@ -212,62 +238,80 @@
   color: var(--text-2);
 }
 
-/* The figures a decision is made on, on one ruled line, parted by a quiet dot. */
+/* The figures a decision is made on, read at a glance: each its label over its figure, side
+   by side, wrapping to a second row (never under another's words) when the card is narrow. */
 .mcard-facts {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  row-gap: 2px;
+  align-items: flex-start;
+  gap: 10px 36px;
   margin: 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-  font-size: var(--fs-13);
-  line-height: 1.5;
-  color: var(--text-2);
 }
 
 .mcard-facts[hidden] { display: none; }
 
 .mcard-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mcard-fact-label {
+  font-size: calc(var(--fs-12) + 0.5px);
+  line-height: 1.3;
+  color: var(--text-3);
   white-space: nowrap;
 }
 
 .mcard-fact b {
-  font-size: var(--fs-13);
+  font-size: var(--fs-15);
   font-weight: 500;
+  line-height: 1.3;
   color: var(--text);
-}
-
-.mcard-dot {
-  padding: 0 8px;
-  color: var(--text-3);
-}
-
-/* A narrow card lists its facts one to a line: wrapped in a row, a separator hung at the end
-   of a line with nothing after it. */
-@container (max-width: 440px) {
-  .mcard-facts {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .mcard-dot { display: none; }
-  .mcard-fact { white-space: normal; }
+  overflow-wrap: anywhere;
 }
 
 .mcard-extra[hidden] { display: none; }
 
-/* A send's receiver, whole, in groups of four, with its Copy. */
+/* A send's receiver, whole, in groups of four, with its Copy, on a small well so it reads as
+   the one string to check character by character. */
 .mcard-address {
   display: flex;
   flex-direction: column;
   gap: var(--s-1);
 }
 
+.mcard-address-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.mcard-address-row > .mcard-address-line {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mcard-address-row > .tcard-copy {
+  flex: 0 0 auto;
+}
+
+/* The first and the last group of a hex address, the ones a person checks, a step heavier. */
+.tcard-leg-group-key {
+  font-weight: 600;
+}
+
 .mcard-address-line {
   margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--tile);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
   font-size: var(--fs-13);
-  line-height: 1.5;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
   color: var(--text);
   word-break: break-all;
   overflow-wrap: anywhere;
@@ -429,12 +473,14 @@
 }
 
 /* Compact: the buttons are as wide as their words. A click that waits shows the spinner in
-   the label's place rather than a wider verb, so nothing on the card moves. */
+   the label's place rather than a wider verb, so nothing on the card moves. Cancel is the soft
+   quiet key, Approve the lit green one. */
 .mcard-buttons .btn {
-  padding: 0 var(--s-4);
-  border-radius: var(--radius-sm);
-  font-size: 13.5px;
-  font-weight: 600;
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: var(--radius-btn);
+  font-size: var(--fs-14);
+  font-weight: 550;
   letter-spacing: -0.005em;
 }
 
@@ -442,12 +488,16 @@
 .mcard-buttons .btn-pending-label { display: none; }
 
 .mcard-buttons .btn-ghost {
-  --btn-edge: var(--line-strong);
-  --btn-fg: var(--text-2);
+  --btn-bg: var(--bg-3);
+  --btn-bg-hover: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 6%);
+  --btn-bg-active: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 9%);
+  --btn-fg: var(--text);
+  --btn-hi: inset 0 1px 0 rgba(var(--hi-rgb), 0.07);
 }
 
 .mcard-approve {
-  padding: 0 20px;
+  padding: 0 24px;
+  font-weight: 600;
 }
 
 /* After a click that did not land: the problem and the recovery, beside the buttons. */
@@ -464,6 +514,14 @@
 
 .mcard-retry {
   align-self: flex-start;
+}
+
+/* A second answer on a card stands on the card's own step up, so it reads as a key. */
+.mcard .btn-ghost,
+.tcard .btn-ghost {
+  --btn-bg: var(--bg-3);
+  --btn-bg-hover: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 6%);
+  --btn-bg-active: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 9%);
 }
 
 /* ---------- the rule change ---------- */
@@ -562,7 +620,7 @@
 /* ---------- the details ---------- */
 
 .tcard-details {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid rgba(var(--hi-rgb), 0.06);
 }
 
 .tcard-details[hidden] { display: none; }
@@ -640,7 +698,7 @@
 }
 
 .mcard-body > .tcard-details[data-open="false"] {
-  margin-top: -12px;
+  margin-top: -14px;
 }
 
 .mcard .tcard-details-body {
@@ -697,29 +755,36 @@
 
 /* ---------- the track ---------- */
 
-/* While the move works: a hairline along the bottom edge, easing toward the end over the
-   move's usual time and holding short of it until the move lands. cards.js sets the pace
-   and where in it the move already is, so a repaint resumes rather than restarts it. */
+/* While the move works: a soft rounded track at the card's foot, inside its edges, filling
+   toward the end over the move's usual time and holding short of it until the move lands.
+   cards.js sets the pace and where in it the move already is, so a repaint resumes rather
+   than restarts it. The working card keeps room for it under the head. */
 .mcard-track {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
+  left: 18px;
+  right: 18px;
+  bottom: 10px;
+  height: 5px;
   overflow: hidden;
-  border-radius: 0 0 var(--radius) var(--radius);
+  border-radius: 5px;
+  background: rgba(var(--hi-rgb), 0.07);
   pointer-events: none;
   opacity: 0;
-  transition: opacity 600ms var(--ease-out);
+  transition: opacity 300ms var(--ease-out);
 }
 
 .mcard-track-fill {
   display: block;
   width: 100%;
   height: 100%;
-  background: color-mix(in srgb, var(--ink) 72%, transparent);
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--ink), #000 12%), color-mix(in oklab, var(--ink), #fff 35%));
   transform-origin: left center;
   transform: scaleX(0);
+}
+
+.mcard[data-state="working"] {
+  padding-bottom: 14px;
 }
 
 .mcard[data-state="working"] .mcard-track {
@@ -740,11 +805,23 @@
   to { transform: scaleX(0.92); }
 }
 
+/* Landed on screen: the fill runs on from where the move was to the end while the track
+   fades, so the last stretch is seen to finish rather than jump. cards.js hands over where
+   the fill was (--track-from). */
+@keyframes mcard-finish {
+  from { transform: scaleX(var(--track-from, 0.92)); }
+  to { transform: scaleX(1); }
+}
+
+.mcard[data-lit="true"] .mcard-track-fill {
+  animation: mcard-finish 240ms var(--ease-out) both;
+}
+
 /* THE MOMENT IT LANDS. A card that turns done while on screen lights its edge once and lets
-   it decay, the way phosphor does: in fast, out over 2.4 seconds. */
+   it decay, the way phosphor does: in fast, out over 2.4 seconds, while its check pops. */
 @keyframes mcard-lit {
-  from { border-color: color-mix(in srgb, var(--ink) 55%, var(--line)); }
-  to { border-color: var(--line); }
+  from { box-shadow: var(--raise), 0 0 0 2px color-mix(in srgb, var(--ink) 55%, transparent); }
+  to { box-shadow: var(--raise), 0 0 0 2px transparent; }
 }
 
 .mcard[data-lit="true"] {
@@ -754,7 +831,9 @@
 @media (prefers-reduced-motion: reduce) {
   .mcard-state-word[data-fade],
   .mcard-line[data-fade],
-  .mcard[data-lit="true"] {
+  .mcard[data-lit="true"],
+  .mcard[data-lit="true"] .mcard-state-icon[data-icon="done"],
+  .mcard[data-lit="true"] .mcard-track-fill {
     animation: none;
   }
 

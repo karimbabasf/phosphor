@@ -56,7 +56,8 @@ test('the renderer builds nothing that decides anything', () => {
   // are inert: a table, a list, a label, a span. Not a button, not a link, not a form.
   const tags = MARKDOWN.match(/el\('([a-z]+)'/g)?.map((m) => m.replace(/^el\('/, '').replace(/'$/, '')) ?? [];
   assert.ok(tags.length > 0, 'the renderer builds no elements, so this test is not looking at it');
-  const inert = ['div', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span'];
+  // A quote (2026-09-23) is a blockquote: it holds text and nothing that can be pressed.
+  const inert = ['div', 'p', 'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'blockquote'];
   for (const tag of tags) assert.ok(inert.includes(tag), `the renderer builds a <${tag}>`);
   // Every element is named by a literal in this file, so no tag name can come from the text.
   const sites = MARKDOWN.match(/(?<![A-Za-z_])el\(([^,)]*)/g)?.map((m) => m.replace(/^el\(/, '').trim()) ?? [];

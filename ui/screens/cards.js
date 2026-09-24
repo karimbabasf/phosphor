@@ -46,6 +46,13 @@
       '',
       'M9 6l6 6-6 6'
     ],
+    /* The check a done move pops, drawn heavier than the line glyphs because it sits on a
+       filled disc at a small size. */
+    tick: [
+      '',
+      'M6.5 12.5l3.6 3.6L17.5 8.5',
+      2.8
+    ],
     /* What leaves, then what arrives: the arrow between the two legs of a move. */
     arrow: [
       '',
@@ -85,8 +92,8 @@
   };
 
   var DEPOSIT_STATES = {
-    show: ['watching', 'Ready'],
-    watching: ['watching', 'Watching'],
+    show: ['watching', 'Watching for your deposit'],
+    watching: ['watching', 'Watching for your deposit'],
     seen: ['seen', 'Seen'],
     landed: ['landed', 'Landed'],
     stopped: ['watching', 'Not watching']
@@ -154,7 +161,7 @@
     var stroke = document.createElementNS(SVG_NS, 'path');
     stroke.setAttribute('fill', 'none');
     stroke.setAttribute('stroke', 'currentColor');
-    stroke.setAttribute('stroke-width', '1.5');
+    stroke.setAttribute('stroke-width', String(parts[2] || 1.5));
     stroke.setAttribute('stroke-linecap', 'round');
     stroke.setAttribute('stroke-linejoin', 'round');
     stroke.setAttribute('d', parts[1]);
@@ -175,8 +182,14 @@
     return dom.el('span', 'logo', String(symbol || '').charAt(0));
   }
 
-  function mono(className, text) {
-    return dom.el('span', 'mono ' + (className || ''), text);
+  /* A figure, in the words' face with tabular numerals, and an id, hash or address, in the mono
+     face because each of its characters is read on its own. */
+  function fig(className, text) {
+    return dom.el('span', 'num ' + (className || ''), text);
+  }
+
+  function ident(className, text) {
+    return dom.el('span', 'id ' + (className || ''), text);
   }
 
   function signed(value) {
@@ -235,7 +248,7 @@
     head.appendChild(headIcon);
     var titleNode = dom.el('span', 'tcard-title', title);
     head.appendChild(titleNode);
-    var figure = dom.el('span', 'tcard-figure mono', o.amount || '');
+    var figure = dom.el('span', 'tcard-figure num', o.amount || '');
     if (o.tone) figure.setAttribute('data-tone', o.tone);
     dom.setHidden(figure, !o.amount);
     head.appendChild(figure);
@@ -382,13 +395,17 @@
     for (var i = 0; i < shown.length; i += 1) {
       var h = shown[i];
       var row = dom.el('div', 'tcard-row tcard-holding');
-      row.appendChild(logo(h.symbol, 20));
+      row.appendChild(logo(h.symbol, 24));
       var name = dom.el('span', 'tcard-row-name');
       name.appendChild(dom.el('span', 'tcard-symbol', h.symbol));
-      if (h.place) name.appendChild(dom.el('span', 'tcard-place', chainName(h.place)));
+      /* Only money outside the balance names its place: inside NEAR Intents is the balance. */
+      if (h.place && h.place !== 'intents') name.appendChild(dom.el('span', 'tcard-place', chainName(h.place)));
       row.appendChild(name);
-      row.appendChild(mono('tcard-qty', dom.qty(h.quantity)));
-      row.appendChild(mono('tcard-usd' + (h.priced ? '' : ' tcard-unpriced'), h.priced ? dom.usd(h.usd) : 'not priced'));
+      /* The panel's words and figures for the same holding: its quantity, "under $0.01" rather
+         than a $0.00 that says the coin is worth nothing, "price unavailable" for no price. */
+      row.appendChild(fig('tcard-qty', dom.amount(h.quantity)));
+      var worth = !h.priced ? 'price unavailable' : (h.usd > 0 && h.usd < 0.005 ? 'under $0.01' : dom.usd(h.usd));
+      row.appendChild(fig('tcard-usd' + (h.priced ? '' : ' tcard-unpriced'), worth));
       list.appendChild(row);
     }
     body.appendChild(list);
@@ -452,7 +469,7 @@
     line.appendChild(pill);
     name.appendChild(line);
 
-    var facts = dom.el('span', 'tcard-row-facts mono');
+    var facts = dom.el('span', 'tcard-row-facts num');
     var size = num(p.sizeCoin);
     var notional = num(p.notionalUsd);
     var entry = num(p.entryPx);
@@ -468,9 +485,9 @@
     var pnl = num(p.unrealisedUsd);
     var value = dom.el('span', 'tcard-pnl');
     value.setAttribute('data-tone', tone(pnl));
-    value.appendChild(mono('tcard-pnl-usd', pnl === null ? '' : signed(pnl)));
+    value.appendChild(fig('tcard-pnl-usd', pnl === null ? '' : signed(pnl)));
     var roe = num(p.roePct);
-    if (roe !== null) value.appendChild(mono('tcard-pnl-pct', (roe > 0 ? '+' : '') + roe.toFixed(1) + '%'));
+    if (roe !== null) value.appendChild(fig('tcard-pnl-pct', (roe > 0 ? '+' : '') + roe.toFixed(1) + '%'));
     row.appendChild(value);
     return row;
   }
@@ -481,7 +498,7 @@
     row.appendChild(logo(coin, 20));
     var name = dom.el('span', 'tcard-row-name');
     name.appendChild(dom.el('span', 'tcard-symbol', coin));
-    var facts = dom.el('span', 'tcard-row-facts mono');
+    var facts = dom.el('span', 'tcard-row-facts num');
     var size = num(f.sizeCoin);
     var px = num(f.px);
     facts.appendChild(dom.el('span', 'tcard-fact', (f.side === 'sell' ? 'sold ' : 'bought ') + (size === null ? '' : dom.qty(size) + ' ') + coin));
@@ -492,7 +509,7 @@
     var pnl = num(f.closedPnlUsd);
     var value = dom.el('span', 'tcard-pnl');
     value.setAttribute('data-tone', tone(pnl));
-    value.appendChild(mono('tcard-pnl-usd', pnl === null ? '' : signed(pnl)));
+    value.appendChild(fig('tcard-pnl-usd', pnl === null ? '' : signed(pnl)));
     row.appendChild(value);
     return row;
   }
@@ -531,7 +548,7 @@
       summary.setAttribute('data-tone', tone(sum));
       if (priced > 0) {
         summary.appendChild(dom.el('span', 'tcard-summary-word', sum >= 0 ? 'Up' : 'Down'));
-        summary.appendChild(mono('tcard-summary-value', dom.usd(Math.abs(sum))));
+        summary.appendChild(fig('tcard-summary-value', dom.usd(Math.abs(sum))));
         summary.appendChild(dom.el('span', 'tcard-summary-tail', 'on ' + open.length + (open.length === 1 ? ' open position' : ' open positions')));
       } else {
         summary.appendChild(dom.el('span', 'tcard-summary-word', open.length + (open.length === 1 ? ' open position' : ' open positions')));
@@ -603,13 +620,13 @@
     return Math.max(0, (Date.now() - then) / 1000);
   }
 
-  /* One label at the left, one figure at the right, in mono. */
+  /* One label at the left, one figure at the right. */
   function factLine(body, label, value, tone, wrap) {
     if (value === '' || value === null || value === undefined) return null;
     var row = dom.el('div', 'tcard-line');
     if (wrap) row.setAttribute('data-wrap', 'true');
     row.appendChild(dom.el('span', 'tcard-line-label', label));
-    var figure = mono('tcard-line-value', value);
+    var figure = fig('tcard-line-value', value);
     if (tone) figure.setAttribute('data-tone', tone);
     row.appendChild(figure);
     body.appendChild(row);
@@ -655,7 +672,7 @@
     var right = dom.el('span', 'tcard-ref-value');
     var href = explorerUrl(url);
     if (href) {
-      var link = dom.el('a', 'mono tcard-line-value tcard-link');
+      var link = dom.el('a', 'id tcard-line-value tcard-link');
       setHref(link, url);
       link.target = '_blank';
       link.rel = 'noreferrer noopener';
@@ -663,7 +680,7 @@
       link.appendChild(icon('external', 'tcard-link-glyph'));
       right.appendChild(link);
     } else {
-      right.appendChild(mono('tcard-line-value', shortId(id)));
+      right.appendChild(ident('tcard-line-value', shortId(id)));
     }
     right.appendChild(copyButton(id));
     row.appendChild(right);
@@ -884,27 +901,45 @@
 
   /* The address in groups of four so a person can check it against what they typed, group
      by group. A named NEAR account stays whole: splitting alice.near helps nobody. */
+  /* A hex address is "0x" and then its forty characters in tens of four, so the groups a
+     person compares start where the address does; a base58 key is fours from its start. */
   function groupsOf(address) {
     var s = String(address || '');
     if (s === '') return [];
-    if (!/^0x[0-9a-fA-F]{40}$/.test(s) && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s)) return [s];
-    var out = [];
-    for (var i = 0; i < s.length; i += 4) out.push(s.slice(i, i + 4));
+    var hex = /^0x[0-9a-fA-F]{40}$/.test(s);
+    if (!hex && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s)) return [s];
+    var out = hex ? ['0x'] : [];
+    for (var i = hex ? 2 : 0; i < s.length; i += 4) out.push(s.slice(i, i + 4));
     return out;
   }
 
-  /* A receiver on the face of a send: every character in groups, a Copy, the explorer link
-     when the server built one, and whether this is the first send to it: a first send to an
-     address is the one a person should look at twice. */
-  function addressBlock(address, explorer, recipient) {
+  /* A NEAR account or a similar name reads as itself: alice.near is its own check. */
+  function isNamedAccount(address) {
+    return /^(?!0x)[a-z0-9_-]+(\.[a-z0-9_-]+)+$/i.test(String(address || ''));
+  }
+
+  /* A receiver on the face of a send: every character in groups with the first and the last
+     group, the ones a person checks, a step heavier, and its Copy at the line's end; the explorer
+     link when the server built one; the network it lands on; and whether this is the first send
+     to it: a first send to an address is the one a person should look at twice. A named account
+     is already whole in the card's head, so it is not printed a second time. */
+  function addressBlock(address, explorer, recipient, place) {
     var wrap = dom.el('div', 'mcard-address');
-    var line = dom.el('p', 'mcard-address-line mono');
-    var groups = groupsOf(address);
-    for (var i = 0; i < groups.length; i += 1) line.appendChild(dom.el('span', 'tcard-leg-group', groups[i]));
-    dom.setAttr(line, 'data-address', address);
-    wrap.appendChild(line);
+    if (!isNamedAccount(address)) {
+      var row = dom.el('div', 'mcard-address-row');
+      var line = dom.el('p', 'mcard-address-line id');
+      var groups = groupsOf(address);
+      var first = groups[0] === '0x' ? 1 : 0;
+      for (var i = 0; i < groups.length; i += 1) {
+        var key = groups.length > 2 && (i === first || i === groups.length - 1);
+        line.appendChild(dom.el('span', 'tcard-leg-group' + (key ? ' tcard-leg-group-key' : ''), groups[i]));
+      }
+      dom.setAttr(line, 'data-address', address);
+      row.appendChild(line);
+      row.appendChild(copyButton(address));
+      wrap.appendChild(row);
+    }
     var actions = dom.el('div', 'tcard-leg-actions');
-    actions.appendChild(copyButton(address));
     if (explorerUrl(explorer)) {
       var link = dom.el('a', 'btn btn-quiet btn-sm tcard-leg-explorer');
       setHref(link, explorer);
@@ -914,12 +949,13 @@
       link.appendChild(icon('external'));
       actions.appendChild(link);
     }
-    wrap.appendChild(actions);
+    if (actions.firstChild) wrap.appendChild(actions);
     var known = isObject(recipient) && recipient.known === true;
     var count = known ? (num(recipient.count) || 0) : 0;
-    var note = dom.el('p', 'mcard-address-note', known
+    var network = place ? (/^[aeiou]/i.test(place) ? 'An ' : 'A ') + place + ' address. ' : '';
+    var note = dom.el('p', 'mcard-address-note', network + (known
       ? 'Sent here ' + count + (count === 1 ? ' time before.' : ' times before.')
-      : 'First send to this address.');
+      : 'First send to this address.'));
     dom.setAttr(note, 'data-first', known ? null : 'true');
     wrap.appendChild(note);
     return wrap;
@@ -984,6 +1020,10 @@
      becoming the done card's one. The height is held where it was for a frame and let go to
      where it is now; the column's follow keeps its end in view through it. */
   var EASE_MS = 240;
+
+  /* A fold closing: its fade, on the exit curve (--ease-exit, --dur-close). */
+  var CLOSE_FADE_MS = 200;
+  var EXIT_EASE = 'cubic-bezier(0.4, 0, 0.6, 1)';
 
   function easeHeight(card, from, memo) {
     if (!(from > 0) || reducedMotion() || typeof card.getBoundingClientRect !== 'function') return;
@@ -1064,11 +1104,13 @@
 
   /* ---------- the plain state ---------- */
 
-  /* FOUR STATES, NOT TWENTY-THREE. Karim, 2026-09-23: statuses felt delayed, three clocks
-     ticked and a person did not know where to look. A move is working, needs you, done, or
-     did not go through, and a working move is late once it runs past its usual time. The view
-     names the state (contract 5); a view from before that field is read through its stage. */
-  var PLAIN_STATES = { working: true, needs_you: true, done: true, didnt_go_through: true };
+  /* FIVE STATES, NOT TWENTY-THREE. Karim, 2026-09-23: statuses felt delayed, three clocks
+     ticked and a person did not know where to look. A move is working, needs you, done, did not
+     go through, or is coming back (money that left and is on its way back: not over, and never
+     "Didn't go through", which reads as nothing moved), and a working move is late once it runs
+     past its usual time. The view names the state (contract 5); a view from before that field is
+     read through its stage. */
+  var PLAIN_STATES = { working: true, needs_you: true, done: true, didnt_go_through: true, coming_back: true };
   var WAITING_STAGES = { waiting_for_you: true, waiting_for_unlock: true, waiting_for_touch: true };
   var WAITING_STATUS = { pending: true, pending_unlock: true, awaiting_touch: true };
 
@@ -1104,6 +1146,7 @@
      what to do. The view's reason when it has one, else the plainest line on hand. */
   function didntSentence(row, view, move) {
     if (view && isObject(view.reason) && typeof view.reason.sentence === 'string' && view.reason.sentence) return String(view.reason.sentence);
+    if (view && view.state === 'coming_back') return 'This did not go through. Your money is on its way back to your balance, and this card changes when it lands.';
     if (row.placeholder === true) return 'This did not reach your wallet. Nothing moved.';
     var stage = view ? view.stage : '';
     if (stage === 'declined' || row.status === 'refused') return 'You said no. Nothing moved.';
@@ -1151,7 +1194,9 @@
       declined: stage === 'declined',
       placeholder: row.placeholder === true,
       retry: !!view && isObject(view.reason) && view.reason.retry === true,
-      sentence: state === 'didnt_go_through' ? didntSentence(row, view, move) : ''
+      sentence: state === 'didnt_go_through' || state === 'coming_back' ? didntSentence(row, view, move) : '',
+      /* A finished move with a catch: less arrived than was approved (view.note). */
+      note: state === 'done' && view && typeof view.note === 'string' ? view.note : ''
     };
   }
 
@@ -1163,6 +1208,7 @@
     }
     if (plain.state === 'done') return plain.took !== null ? 'Done · ' + spanWords(plain.took) : 'Done';
     if (plain.state === 'didnt_go_through') return plain.declined ? 'Cancelled' : "Didn't go through";
+    if (plain.state === 'coming_back') return 'Refund on its way';
     if (plain.placeholder) return move.kind === 'swap' ? 'Checking prices' : 'Getting ready';
     if (plain.late) return 'Taking longer · ' + lateWords(plain.elapsed);
     if (plain.held) return 'Waiting to start';
@@ -1193,10 +1239,11 @@
 
   /* ---------- the move card ---------- */
 
-  /* A line of figures parted by a quiet dot, each a word and a figure: "You pay 500 USDC ·
-     You get at least 0.1843 ETH · Fee $0.21", the number in mono and its coin in the reading
-     face. Built once per shape, and the numbers roll (dom.setNumber) when a later frame moves
-     them. */
+  /* The figures a decision is made on, side by side and read at a glance: each its label
+     over its figure ("You pay" over "500 USDC", "You get at least" over "0.1843 ETH", "Fee"
+     over "$0.21"), the figure in the words' face with tabular numerals. They wrap to a second
+     row, never under each other's words, when the card is narrow. Built once per shape, and
+     the numbers roll (dom.setNumber) when a later frame moves them. */
   /* What a person calls a coin. wNEAR is the name the verifier stores for NEAR held inside
      NEAR Intents, the same coin (src/proposals/view.ts plainSymbol); the mark still looks up
      the stored name. */
@@ -1234,11 +1281,10 @@
       dom.clear(host);
       memo.factValues = [];
       for (var i = 0; i < facts.length; i += 1) {
-        if (i > 0) host.appendChild(dom.el('span', 'mcard-dot', '·'));
         var part = dom.el('span', 'mcard-fact');
-        part.appendChild(dom.el('span', '', facts[i][0] + ' '));
+        part.appendChild(dom.el('span', 'mcard-fact-label', facts[i][0]));
         var value = dom.el('b', 'mcard-fact-value');
-        var figure = dom.el('span', 'mono');
+        var figure = dom.el('span', 'num');
         value.appendChild(figure);
         if (facts[i][2]) value.appendChild(dom.el('span', '', ' ' + facts[i][2]));
         part.appendChild(value);
@@ -1282,12 +1328,31 @@
 
   /* What the move is, in one line: "4 USDC -> about 0.00149 ETH" for a swap, "5 USDC -> alice.near"
      for a send, the plan's own words for a trade or a rule. The amounts roll. */
+  /* A payout's network by name ("Base"): its receiver is outside the balance, and the same
+     address on another chain is somebody else's money. A send to a NEAR account stays inside
+     NEAR Intents and names none. */
+  var CHAIN_WORDS = { eth: 'Ethereum', ethereum: 'Ethereum', arb: 'Arbitrum', arbitrum: 'Arbitrum', base: 'Base', op: 'Optimism', pol: 'Polygon', avax: 'Avalanche', bsc: 'BNB Chain', sol: 'Solana', solana: 'Solana', btc: 'Bitcoin', bitcoin: 'Bitcoin', near: 'NEAR', ton: 'TON', sui: 'Sui', tron: 'Tron', doge: 'Dogecoin', xrp: 'XRP Ledger' };
+
+  function payoutPlace(move, legs) {
+    if (move.kind !== 'intents_pay') return '';
+    var to = legs.to || move.to || {};
+    var place = String(to.place || '');
+    if (!place || place === 'intents') return '';
+    /* The state frame's chain table names it; before that frame lands, the common ids have
+       their names here rather than printing "eth". */
+    var name = String(chainName(place) || '');
+    if (name && name !== place) return name;
+    return Object.prototype.hasOwnProperty.call(CHAIN_WORDS, place.toLowerCase()) ? CHAIN_WORDS[place.toLowerCase()] : place;
+  }
+
   function destinationWord(move, legs) {
     var kind = move.kind;
     var to = legs.to || move.to || {};
     if (kind === 'intents_send' || kind === 'intents_pay') {
       var address = String(to.address || '');
-      return address.length > 24 ? shortId(address) : address;
+      var short = address.length > 24 ? shortId(address) : address;
+      var where = payoutPlace(move, legs);
+      return where ? short + ' on ' + where : short;
     }
     if (kind === 'hl_deposit') return 'trading account';
     if (kind === 'hl_withdraw' || kind === 'intents_deposit') return 'your balance';
@@ -1307,7 +1372,7 @@
       parts.push({ kind: 'arrow' });
       var word = destinationWord(move, legs);
       if (move.kind === 'swap') {
-        var toAmount = plain.state !== 'didnt_go_through' && to && to.amount !== null && to.amount !== undefined ? amountText(to.amount) : '';
+        var toAmount = plain.state !== 'didnt_go_through' && plain.state !== 'coming_back' && to && to.amount !== null && to.amount !== undefined ? amountText(to.amount) : '';
         var soft = toAmount && plain.state !== 'done' ? (to.floor ? 'at least' : 'about') : '';
         parts.push({ kind: 'amount', value: toAmount, symbol: coinWord(to && to.symbol), soft: soft });
       } else if (word) {
@@ -1336,7 +1401,7 @@
         }
         var leg = dom.el('span', 'mcard-leg');
         if (p.soft) leg.appendChild(dom.el('span', 'mcard-soft', p.soft + ' '));
-        var figure = dom.el('span', 'mono mcard-num');
+        var figure = dom.el('span', 'num mcard-num');
         leg.appendChild(figure);
         if (p.symbol) leg.appendChild(dom.el('span', 'mcard-sym', (p.value ? ' ' : '') + p.symbol));
         host.appendChild(leg);
@@ -1382,7 +1447,7 @@
 
     var body = dom.el('div', 'mcard-body');
     var line = dom.el('p', 'mcard-line');
-    var facts = dom.el('p', 'mcard-facts');
+    var facts = dom.el('div', 'mcard-facts');
     var address = dom.el('div', 'mcard-extra mcard-to');
     var decide = dom.el('div', 'mcard-extra mcard-decide');
     /* One row for what can be pressed: Details at the left, the answers at the right. */
@@ -1434,8 +1499,11 @@
     });
     dom.on(toggle, 'click', flipDetails);
 
-    /* Details open as the card grows to hold them, fading in, and close by fading out
-       before the card shrinks back over them (ui/design/motion.js). */
+    /* Details open as the card grows to hold them, fading in (ui/design/motion.js). They close
+       at once: the fold collapses on its own grid transition while it fades on the exit curve,
+       and the last few pixels (the body's padding, once nothing is left in it) ease at the end.
+       Fading out first and shrinking after left the click a quarter of a second with nothing
+       moving (hunt A, 2026-09-23). */
     function flipDetails() {
       var motion = window.PhosphorMotion;
       var opening = !details.isOpen();
@@ -1445,14 +1513,32 @@
       };
       if (!motion || typeof motion.morph !== 'function') change();
       else if (opening) motion.morph(card, change, { fade: details.wrap });
-      else motion.swap(card, details.wrap, change);
+      else closeDetails(change);
+    }
+
+    function closeDetails(change) {
+      if (reducedMotion() || typeof details.wrap.animate !== 'function') {
+        change();
+        return;
+      }
+      memo.closing = true;
+      var fade = details.wrap.animate([{ opacity: 1 }, { opacity: 0 }], { duration: CLOSE_FADE_MS, easing: EXIT_EASE, fill: 'forwards' });
+      change();
+      window.setTimeout(function () {
+        memo.closing = false;
+        var from = typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect().height : 0;
+        paint(last.row, last.meta);
+        fade.cancel();
+        easeHeight(card, from, memo);
+      }, CLOSE_FADE_MS + 10);
     }
 
     /* The line under the head: why it did not go through, what a held move waits on, what a
        late one is doing. One sentence, never the venue's raw words. */
     function lineFor(plain, view, row, stale) {
       var decision = window.PhosphorDecision;
-      if (plain.state === 'didnt_go_through') return plain.sentence;
+      if (plain.state === 'didnt_go_through' || plain.state === 'coming_back') return plain.sentence;
+      if (plain.state === 'done') return plain.note;
       if (stale) return 'This is no longer waiting on you. Activity has what happened to it.';
       if (plain.state !== 'working') return '';
       if (plain.held) return decision && typeof decision.heldLine === 'function' ? decision.heldLine(row) : 'Waiting for the checks to clear. Nothing is signed until they do.';
@@ -1508,9 +1594,15 @@
          never forces a layout. */
       var turning = memo.painted === true && card.isConnected && (card.getAttribute('data-state') !== state || (card.getAttribute('data-late') === 'true') !== plain.late);
       var fromHeight = turning && typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect().height : 0;
+      /* Where the working fill stood the moment the move landed, so it finishes from there. */
+      if (fresh && typeof window.getComputedStyle === 'function') {
+        var at = /^matrix\(([-0-9.e]+)/.exec(window.getComputedStyle(track.firstChild).transform || '');
+        if (at) track.style.setProperty('--track-from', at[1]);
+      }
       dom.setAttr(card, 'data-state', state);
       dom.setAttr(card, 'data-kind', move.kind);
       dom.setAttr(card, 'data-late', plain.late ? 'true' : null);
+      dom.setAttr(card, 'data-note', plain.note ? 'true' : null);
       dom.setAttr(card, 'data-lit', fresh ? 'true' : (state === 'done' ? card.getAttribute('data-lit') : null));
       memo.painted = true;
 
@@ -1526,11 +1618,15 @@
 
       var word = stale ? 'No longer waiting' : stateWords(plain, move);
       fadeText(stateWord, word, memo, 'word');
+      /* Done is a check on a green disc, and it pops the moment the move lands on screen
+         (chatcard.css, keyed on data-lit); waiting is the clock of the icon set. */
       var iconName = state === 'done' ? 'done' : (asking && !plain.locked ? 'waiting' : '');
       if (memo.icon !== iconName) {
         memo.icon = iconName;
         dom.clear(stateIcon);
-        if (iconName) stateIcon.appendChild(icon(iconName, 'mcard-state-glyph'));
+        if (iconName === 'done') stateIcon.appendChild(glyph('tick', 'mcard-state-tick'));
+        else if (iconName) stateIcon.appendChild(icon(iconName, 'mcard-state-glyph'));
+        dom.setAttr(stateIcon, 'data-icon', iconName || null);
       }
       dom.setHidden(stateIcon, !iconName);
 
@@ -1546,7 +1642,7 @@
       if (memo.receiver !== receiver) {
         memo.receiver = receiver;
         dom.clear(address);
-        if (receiver) address.appendChild(addressBlock(receiver, legs.to.explorer, move.recipient));
+        if (receiver) address.appendChild(addressBlock(receiver, legs.to.explorer, move.recipient, payoutPlace(move, legs)));
       }
       dom.setHidden(address, !receiver);
 
@@ -1582,7 +1678,7 @@
          not go through, has the quiet Details toggle in its bar. The fold's own head is never
          drawn on a move card. */
       dom.setHidden(details.head, true);
-      dom.setHidden(details.wrap, !hasDetails || (folds && !details.isOpen()));
+      dom.setHidden(details.wrap, !hasDetails || (folds && !details.isOpen() && !memo.closing));
       var toggled = !folds && hasDetails;
       dom.setHidden(toggle, !toggled);
       dom.setAttr(toggle, 'aria-expanded', details.isOpen() ? 'true' : 'false');
@@ -1634,15 +1730,21 @@
         referenceLine(fold, leg.running ? 'Where it is now' : (LEG_WORD[leg.leg] || 'Hash'), leg.hash, leg.explorer);
       }
       if (view.correlationId) referenceLine(fold, 'Reference', view.correlationId, null);
-      if (view.providerStage && view.stage !== 'confirmed') factLine(fold, 'The venue says', vendorWord(view.providerStage));
+      /* The service's own word for where the move is, capitalised as a word a person reads. */
+      if (view.providerStage && view.stage !== 'confirmed') {
+        var said = vendorWord(view.providerStage);
+        factLine(fold, move.kind === 'swap' ? 'The swap service said' : 'The service said', said.charAt(0).toUpperCase() + said.slice(1));
+      }
     } else if (move.id) {
       referenceLine(fold, 'Reference', move.id, null);
     }
     var priceFor = view && view.stage === 'waiting_for_you' && isObject(row.simulation) && isObject(row.simulation.swap) ? num(row.simulation.swap.priceGoodForSec) : null;
     if (priceFor !== null && priceFor > 0) fold.appendChild(dom.el('div', 'tcard-note', 'Price good for ' + roughWords(priceFor) + ', checked again when you approve.'));
     if (move.detail && move.detail !== move.reason) {
+      /* The rail's own line is evidence for an engineer: it shows in developer mode only. */
       var recorded = dom.el('div', 'tcard-line tcard-recorded');
       recorded.setAttribute('data-wrap', 'true');
+      recorded.setAttribute('data-dev-only', '');
       recorded.appendChild(dom.el('span', 'tcard-line-label', 'The full record'));
       recorded.appendChild(dom.el('span', 'tcard-line-value', shortenIds(String(move.detail).replace(/\s+/g, ' ').trim())));
       fold.appendChild(recorded);
@@ -1736,11 +1838,11 @@
     row.appendChild(dom.el('span', 'tcard-line-label', label));
     var href = explorerUrl(url);
     if (!href) {
-      row.appendChild(mono('tcard-line-value', text));
+      row.appendChild(ident('tcard-line-value', text));
       body.appendChild(row);
       return row;
     }
-    var link = dom.el('a', 'mono tcard-line-value tcard-link');
+    var link = dom.el('a', 'id tcard-line-value tcard-link');
     setHref(link, url);
     link.target = '_blank';
     link.rel = 'noreferrer noopener';
@@ -1843,9 +1945,9 @@
         var line = dom.el('div', 'tcard-line');
         var left = dom.el('span', 'tcard-line-label');
         left.appendChild(dom.el('span', '', row.word));
-        if (row.other && !isAddress(row.other)) left.appendChild(mono('tcard-line-other', ' ' + String(row.other)));
+        if (row.other && !isAddress(row.other)) left.appendChild(fig('tcard-line-other', ' ' + String(row.other)));
         line.appendChild(left);
-        line.appendChild(mono('tcard-line-value', (row.amount ? row.amount + ' ' + row.symbol : '') + (row.time ? '  ' + clock(row.time) : '')));
+        line.appendChild(fig('tcard-line-value', (row.amount ? row.amount + ' ' + row.symbol : '') + (row.time ? '  ' + clock(row.time) : '')));
         body.appendChild(line);
       }
       moreLine(body, found.rows.length - shown.length + found.dropped, 'rows');
@@ -1902,23 +2004,30 @@
     if (tail) {
       var ends = dom.el('span', 'tcard-place');
       ends.appendChild(dom.el('span', '', 'address ends in '));
-      ends.appendChild(mono('tcard-tail', tail));
+      ends.appendChild(fig('tcard-tail', tail));
       name.appendChild(ends);
     }
     row.appendChild(name);
-    row.appendChild(dom.el('span', 'tcard-note', data.addressVerified === true ? 'verified' : ''));
+    /* The app checked the address against its own key: said with the check, in words. */
+    var checked = dom.el('span', 'tcard-note tcard-checked');
+    if (data.addressVerified === true) {
+      checked.appendChild(icon('done', 'tcard-checked-glyph'));
+      checked.appendChild(dom.el('span', '', 'Address checked'));
+    }
+    row.appendChild(checked);
     body.appendChild(row);
 
+    /* What the network asks of a deposit, on the row's own text column, in words. */
     var facts = [];
     var min = num(data.minDeposit);
-    if (min !== null && min > 0) facts.push('at least ' + dom.qty(min) + ' ' + symbol);
-    if (data.memo) facts.push('memo required');
-    if (facts.length) body.appendChild(dom.el('div', 'tcard-facts mono', facts.join(', ')));
+    if (min !== null && min > 0) facts.push('At least ' + dom.qty(min) + ' ' + symbol);
+    if (data.memo) facts.push('a memo is required');
+    if (facts.length) body.appendChild(dom.el('div', 'tcard-facts tcard-deposit-facts', facts.join(', ') + '.'));
 
     var actions = dom.el('div', 'tcard-actions');
     var open = dom.el('button', 'btn btn-ghost btn-sm tcard-open');
     open.type = 'button';
-    open.appendChild(dom.el('span', 'btn-label', 'Open the deposit card'));
+    open.appendChild(dom.el('span', 'btn-label', 'Show address and QR'));
     dom.on(open, 'click', function () {
       var deposit = window.PhosphorDeposit;
       if (deposit && typeof deposit.open === 'function') deposit.open({ chain: chain, symbol: symbol });
@@ -1973,7 +2082,7 @@
     var shown = facts.slice(0, MAX_FACTS);
     for (var i = 0; i < shown.length; i += 1) {
       grid.appendChild(dom.el('span', 'tcard-kv-key', shown[i].key));
-      grid.appendChild(dom.el('span', 'tcard-kv-value' + (shown[i].numeric ? ' mono' : ''), shown[i].value));
+      grid.appendChild(dom.el('span', 'tcard-kv-value' + (shown[i].numeric ? ' num' : ''), shown[i].value));
     }
     parts.body.appendChild(grid);
     moreLine(parts.body, facts.length - shown.length, 'facts');

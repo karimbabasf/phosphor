@@ -259,6 +259,17 @@
     return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 8 });
   }
 
+  /* How much of a coin, the way the balances panel prints it (src/view/basic.ts quantity):
+     two places at least, and more the smaller the amount, so a card and the panel say one
+     holding the same way. */
+  function amount(value) {
+    var n = Number(value);
+    if (!isFinite(n)) return '0';
+    var abs = Math.abs(n);
+    var digits = abs >= 1000 ? 2 : abs >= 1 ? 4 : 6;
+    return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: digits });
+  }
+
   /* Fees are the one figure that runs from a tenth of a cent to a few dollars,
      so the places follow the number: two unless two would round it to zero. */
   function fee(value) {
@@ -325,6 +336,7 @@
     usd: usd,
     fee: fee,
     qty: qty,
+    amount: amount,
     pct: pct,
     ago: ago,
     clock: clock,
