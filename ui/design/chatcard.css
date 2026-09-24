@@ -63,15 +63,10 @@
   align-items: center;
 }
 
+/* Two marks side by side, their boxes' clear edges overlapped so the two logos sit a hair
+   apart. No cutout ring: a brand's mark is often not a disc, and a ring would bite into it. */
 .mcard-marks .logo {
   --logo: 24px;
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px var(--card-bg);
-}
-
-.mcard-marks[data-pair] .logo:first-child {
-  position: relative;
-  z-index: 1;
 }
 
 .mcard-marks[data-pair] .logo + .logo {

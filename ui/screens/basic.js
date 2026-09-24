@@ -19,11 +19,6 @@
      (--dur-glow-out). */
   var GLOW_IN_MS = 120;
 
-  /* NEAR's own mark is the app's green, and green in this window means the
-     mark, the live move and Approve. Its row wears a neutral light instead. */
-  var NEUTRAL = '#D5D8DD';
-  var NEUTRAL_COINS = { NEAR: true, WNEAR: true };
-
   var refs = {};
   var mounted = false;
   var filled = false;
@@ -163,10 +158,8 @@
 
   function createRow(holding) {
     var row = dom.el('li', 'bal-row');
-    var mark = dom.el('span', 'bal-coin');
-    mark.setAttribute('aria-hidden', 'true');
-    marks.paint(mark, holding.symbol);
-    if (NEUTRAL_COINS[String(holding.symbol).toUpperCase()]) mark.style.setProperty('--coin', NEUTRAL);
+    var mark = marks.logo(holding.symbol);
+    mark.className += ' bal-coin';
     var who = dom.el('span', 'bal-who');
     who.appendChild(dom.el('span', 'bal-sym'));
     who.appendChild(dom.el('span', 'bal-amt mono tick'));

@@ -403,23 +403,6 @@
               color var(--dur-press) var(--ease-out);
 }
 
-.netsel-option .logo {
-  filter: grayscale(1);
-  opacity: 0.8;
-  transition: filter var(--dur-press) var(--ease-out),
-              opacity var(--dur-press) var(--ease-out);
-}
-
-.netsel-option .logo[data-token="BASE"] {
-  filter: grayscale(1) brightness(3.2);
-}
-
-.netsel-option[data-active="true"] .logo[data-token="BASE"],
-.netsel-option:hover .logo[data-token="BASE"],
-.netsel-option[aria-selected="true"] .logo[data-token="BASE"] {
-  filter: none;
-}
-
 .netsel-option-name {
   flex: 1 1 auto;
 }
@@ -430,13 +413,6 @@
 .netsel-option:hover {
   background: var(--bg-1);
   color: var(--text);
-}
-
-.netsel-option[data-active="true"] .logo,
-.netsel-option:hover .logo,
-.netsel-option[aria-selected="true"] .logo {
-  filter: none;
-  opacity: 1;
 }
 
 .netsel-option[aria-selected="true"] {
@@ -498,7 +474,6 @@
   .netsel,
   .netsel .chev-icon,
   .netsel-option,
-  .netsel-option .logo,
   .vault-seg-cell {
     transition: none;
   }

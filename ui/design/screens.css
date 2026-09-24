@@ -226,33 +226,6 @@ dialog.confirm::backdrop {
   border: 1px solid var(--line);
 }
 
-/* ---------- the coin disc (marks.disc), shared by every screen ---------- */
-
-/* 20 px of mark inside a 28 px disc. The mark draws in the coin's own colour
-   (--coin, set by ui/design/marks.js) over a wash of that colour, with a ring
-   at a quarter strength, so ETH, SOL and USDC are three different rows before
-   a word is read. A coin with no colour draws in the text colour on the plain
-   surface, as before. The wash is mixed on top of the surface so it holds
-   whatever the surface is. */
-.coin-mark {
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-pill);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  color: var(--coin, var(--text));
-}
-
-.coin-mark[style*="--coin"] {
-  background: color-mix(in srgb, var(--coin) 14%, var(--bg-1));
-  border-color: color-mix(in srgb, var(--coin) 28%, transparent);
-}
-
-.coin-mark svg { display: block; }
-
 /* ---------- the vault tab ---------- */
 
 /* The column, the grid and the Addresses card are ui/design/vault.css. */

@@ -193,15 +193,51 @@ test('one row per coin: its mark, its symbol, how much of it, and the dollars at
   assert.equal(all(eth, 'bal-amt')[0].textContent, '1.42');
   assert.equal(all(eth, 'bal-usd')[0].textContent, '$3785.10');
   assert.equal(eth.getAttribute('aria-label'), 'Ether (ETH), 1.42, $3785.10', 'a screen reader hears the plain name and both figures');
-  assert.equal(all(eth, 'bal-coin')[0].style.props['--coin'], '#627EEA', 'the mark wears the coin colour');
+  assert.equal(eth.children[0], all(eth, 'bal-coin')[0], 'the mark leads the row');
 });
 
-test('NEAR wears a neutral mark, because green belongs to the app', () => {
+/* Karim, 2026-09-23, on a dim glyph in a tinted ring and a generic target for WBTC: the logos
+   are shit. A row's mark is the coin's own logo file, drawn as its brand draws it, and nothing
+   sits behind it. */
+function markOf(panel: ReturnType<typeof build>, symbol: string): Any {
+  return all(panel.row(symbol), 'bal-coin')[0];
+}
+
+test('each row draws its coin\'s own logo file, WBTC included, with no disc behind it', () => {
   const panel = build();
-  panel.put(frame('$11,357.51', COINS));
-  const mark = all(panel.row('NEAR'), 'bal-coin')[0];
-  assert.notEqual(mark.style.props['--coin'], '#00EC97');
-  assert.equal(mark.style.props['--coin'], '#D5D8DD');
+  panel.put(frame('$11,357.51', [...COINS, coin('SOL', 800, '4.10'), coin('WBTC', 600, '0.0061')]));
+  for (const [symbol, file] of [['USDC', 'usdc'], ['ETH', 'eth'], ['SOL', 'sol'], ['WBTC', 'wbtc']]) {
+    const mark = markOf(panel, symbol!);
+    assert.ok(mark.className.split(' ').includes('logo'), `${symbol}: the mark is the shared logo`);
+    assert.equal(mark.getAttribute('data-token'), symbol);
+    assert.equal(mark.getAttribute('data-fallback'), null, `${symbol} drew its monogram`);
+    assert.equal(mark.children.length, 1);
+    assert.equal(mark.children[0].tag, 'img');
+    assert.equal(mark.children[0].src, `./logos/${file}.svg`);
+    assert.equal(all(mark, 'logo-initial').length, 0);
+  }
+});
+
+test('wNEAR draws NEAR\'s logo and keeps its own symbol', () => {
+  const panel = build();
+  panel.put(frame('$1,372.41', [coin('wNEAR', 1372.41, '310.50', 'Wrapped NEAR (wNEAR)')]));
+  const mark = markOf(panel, 'wNEAR');
+  assert.equal(mark.getAttribute('data-token'), 'NEAR');
+  assert.equal(mark.children[0].src, './logos/near.svg');
+  assert.equal(all(panel.row('wNEAR'), 'bal-sym')[0].textContent, 'wNEAR');
+});
+
+test('a coin with no logo draws its first letter on a neutral disc, never a stand-in glyph', () => {
+  const panel = build();
+  panel.put(frame('$1,000.00', [coin('$WIF', 1000, '400.00'), coin('PENGU', null, '9,000')]));
+  for (const [symbol, letter] of [['$WIF', 'W'], ['PENGU', 'P']]) {
+    const mark = markOf(panel, symbol!);
+    assert.equal(mark.getAttribute('data-fallback'), 'true');
+    assert.equal(all(mark, 'img').length + mark.children.filter((c: Any) => c.tag === 'img').length, 0, `${symbol} asked for a file that is not there`);
+    const initial = all(mark, 'logo-initial')[0];
+    assert.equal(initial.textContent, letter);
+    assert.ok(!initial.className.split(' ').includes('mono'), 'the monogram is in the UI face');
+  }
 });
 
 test('a coin with no price says "price unavailable", never $0.00', () => {

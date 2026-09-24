@@ -5,7 +5,13 @@ Every file here except `hype.svg` is the "branded" SVG from `@web3icons/core` 4.
 exceptions taken from `spothq/cryptocurrency-icons` 0.18.1, CC0: `xrp.svg` and `wbtc.svg` are
 that set's disc versions, because the web3icons marks for those two are white glyphs alone and
 would vanish on a light surface, and `xlm.svg` is too, because the web3icons mark for it is a
-black glyph alone and would vanish on a dark one.
+black glyph alone and would vanish on a dark one. Those three discs fill their whole box, so each
+file's `viewBox` is widened to put the disc in the middle three quarters of it, where every
+web3icons mark sits, and a row of logos reads at one size.
+
+`frax.svg`, `xaut.svg` and `aleo.svg` are the same package's "background" versions for the same
+reason (FRAX's and XAUT's branded marks are white glyphs, ALEO's a black one), with the square
+tile each is drawn on cut to its disc and the `viewBox` widened the same way.
 
 `hype.svg` is Hyperliquid's own mark (Hyperliquid_Blob_Green.svg from the brand kit linked at
 https://hyperliquid.gitbook.io/hyperliquid-docs/brand-kit). It is a trademark of Hyperliquid,
@@ -14,12 +20,14 @@ used here under the brand kit's terms to identify the venue, and is not MIT.
 Chain marks (`arb.svg`, `base.svg`, `ton.svg`, `abs.svg`, `bera.svg`, `mon.svg`, `move.svg`,
 `robinhood.svg`, `scroll.svg`, `strk.svg`) are the network icons from the same package.
 `strk.svg` is the Starknet network icon rather than the package's STRK token file, because that
-file draws another project's mark.
+file draws another project's mark. `xpl.svg` (Plasma, whose coin the package's own metadata draws
+with the network icon) and `xlayer.svg` (X Layer) are network icons too, in the "background"
+version because their branded marks are black glyphs alone, cut to a disc as above.
 
 A wrapped or bridged ticker's file is a byte copy of the file for the coin it carries, under that
-file's license: `weth.svg` of `eth.svg`; `cbbtc.svg`, `hemibtc.svg`, `xbtc.svg` and
-`btc(omni).svg` of `btc.svg`; `usdt0.svg` of `usdt.svg`; `usdc.e.svg` of `usdc.svg`; `xdai.svg`
-of `dai.svg`; and `fxrp.svg` of `xrp.svg`.
+file's license: `weth.svg` of `eth.svg`; `cbbtc.svg`, `hemibtc.svg`, `xbtc.svg`, `nbtc.svg` and
+`btc(omni).svg` of `btc.svg`; `usdt0.svg` of `usdt.svg`; `usdc.e.svg` and `usdcx.svg` of
+`usdc.svg`; `xdai.svg` of `dai.svg`; and `fxrp.svg` of `xrp.svg`.
 
 ## MIT License (@web3icons/core)
 
