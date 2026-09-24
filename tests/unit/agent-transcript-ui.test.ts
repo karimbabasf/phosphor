@@ -555,7 +555,9 @@ test('a client of the person\'s own that is working is named on the card, with n
   assert.equal(composer.hidden, true);
 });
 
-test('idle connections fold into one quiet row and are not called a working agent', () => {
+test('idle connections draw no row and are not called a working agent', () => {
+  // Karim, 2026-09-23, on the folded line "1 connected, no call yet": "this is pissing me off".
+  // An idle connection is plumbing; only an agent at work earns a row.
   // Karim, 2026-09-18, with five rows reading "phosphor-mcp, can ask · 0 calls" over a card
   // saying "Your own agent is at the wheel": "this also looks like a bug". Every Claude Code
   // session on the Mac starts the proxy, which announces itself on boot, so the roster held five
@@ -567,29 +569,26 @@ test('idle connections fold into one quiet row and are not called a working agen
   world.agents(idle(5));
   assert.equal(world.seat(), 'own', 'five connections are still a connection');
   let rows = all(world.host, 'agent-client');
-  assert.equal(rows.length, 1, 'five idle connections drew ' + rows.length + ' rows');
-  assert.equal(rows[0].getAttribute('data-idle'), 'true');
-  assert.equal(rows[0].textContent, '5 connected, none has made a call yet');
+  assert.equal(rows.length, 0, 'five idle connections drew ' + rows.length + ' rows');
   assert.ok(world.card().includes('Your own agents are connected.'), world.card());
   assert.ok(world.card().includes('None has made a move yet.'), world.card());
   assert.ok(!world.card().includes('at the wheel'), world.card());
   assert.ok(!world.card().includes('is working'), world.card());
 
-  /* One of them goes to work: it gets its own row, named, and the rest stay folded. */
+  /* One of them goes to work: it gets its own row, named, and the idle rest stay unseen. */
   const five = idle(5);
   five[2] = { ...five[2], ops: 3 };
   world.agents(five);
   rows = all(world.host, 'agent-client');
-  assert.equal(rows.length, 2, rows.map((r) => r.textContent).join(' | '));
+  assert.equal(rows.length, 1, rows.map((r) => r.textContent).join(' | '));
   assert.equal(rows[0].textContent, 'claude-code, can ask3 calls');
   assert.equal(rows[0].getAttribute('data-idle'), null);
-  assert.equal(rows[1].textContent, '4 more connected, idle');
   assert.ok(world.card().includes('Your own agent is working.'), world.card());
 
-  /* One idle connection is said in the singular. */
+  /* One idle connection draws no row either. */
   world.agents(idle(1));
   rows = all(world.host, 'agent-client');
-  assert.equal(rows[0].textContent, '1 connected, no call yet');
+  assert.equal(rows.length, 0, rows.map((r) => r.textContent).join(' | '));
   assert.ok(world.card().includes('Your own agent is connected.'), world.card());
   assert.ok(world.card().includes('It has not made a move yet.'), world.card());
 
