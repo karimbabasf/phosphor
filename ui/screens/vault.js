@@ -126,6 +126,22 @@
     return { node: node, body: body, act: act };
   }
 
+  /* A step opening or closing inside a row (ui/design/motion.js): the row's
+     height slides and the step fades in; on the way back the step fades out
+     first and the row closes after it. Focus moves inside `change`, once the
+     control it goes to is on screen. */
+  function grow(rowNode, change, shown) {
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.morph === 'function' && rowNode) motion.morph(rowNode, change, { fade: shown });
+    else change();
+  }
+
+  function shrink(rowNode, leaving, change, shown) {
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.swap === 'function' && rowNode) motion.swap(rowNode, leaving, change, { fade: shown });
+    else change();
+  }
+
   function button(label, kind, pending) {
     var node = dom.el('button', 'btn ' + (kind || 'btn-ghost btn-sm'));
     node.type = 'button';
@@ -220,6 +236,7 @@
     confirm.appendChild(refs.freezeError);
     r.body.appendChild(confirm);
     refs.freezeConfirm = confirm;
+    refs.freezeRow = r.node;
 
     dom.on(refs.freezeOpen, 'click', function () {
       if (refs.freezeConfirm.hidden) openFreeze();
@@ -256,17 +273,21 @@
 
   function openFreeze() {
     renderFreeze(store.get() || {});
-    dom.setHidden(refs.freezeError, true);
-    dom.setHidden(refs.freezeConfirm, false);
-    dom.setHidden(refs.freezeOpen, true);
-    if (refs.freezeKeep.focus) refs.freezeKeep.focus();
+    grow(refs.freezeRow, function () {
+      dom.setHidden(refs.freezeError, true);
+      dom.setHidden(refs.freezeConfirm, false);
+      dom.setHidden(refs.freezeOpen, true);
+      if (refs.freezeKeep.focus) refs.freezeKeep.focus();
+    }, refs.freezeConfirm);
   }
 
   function closeFreeze(returnFocus) {
     if (!refs.freezeConfirm || refs.freezeConfirm.hidden) return;
-    dom.setHidden(refs.freezeConfirm, true);
-    dom.setHidden(refs.freezeOpen, false);
-    if (returnFocus && refs.freezeOpen.focus) refs.freezeOpen.focus();
+    shrink(refs.freezeRow, refs.freezeConfirm, function () {
+      dom.setHidden(refs.freezeConfirm, true);
+      dom.setHidden(refs.freezeOpen, false);
+      if (returnFocus && refs.freezeOpen.focus) refs.freezeOpen.focus();
+    }, refs.freezeOpen);
   }
 
   function doFreeze(on) {
@@ -589,9 +610,11 @@
   function wipePhrase() {
     phrase = null;
     if (!refs.recoveryFlow) return;
-    dom.clear(refs.recoveryFlow);
-    refs.recoveryFlow.hidden = true;
-    delete refs.recoveryFlow.dataset.step;
+    grow(refs.recoveryRow, function () {
+      dom.clear(refs.recoveryFlow);
+      refs.recoveryFlow.hidden = true;
+      delete refs.recoveryFlow.dataset.step;
+    });
     if (refs.reveal) refs.reveal.disabled = false;
     if (refs.restore) refs.restore.disabled = false;
   }
@@ -630,14 +653,20 @@
   /* A reveal that failed says so where the words would have been. */
   function flowProblem(words) {
     var flow = refs.recoveryFlow;
-    dom.clear(flow);
-    flow.hidden = false;
-    flow.dataset.step = 'problem';
-    flow.appendChild(text('vault-error', words));
+    grow(refs.recoveryRow, function () {
+      dom.clear(flow);
+      flow.hidden = false;
+      flow.dataset.step = 'problem';
+      flow.appendChild(text('vault-error', words));
+    }, flow);
   }
 
   function showWords() {
     if (!phrase) return;
+    grow(refs.recoveryRow, drawWords, refs.recoveryFlow);
+  }
+
+  function drawWords() {
     var flow = refs.recoveryFlow;
     dom.clear(flow);
     flow.hidden = false;
@@ -708,6 +737,10 @@
 
   function showProve() {
     if (!phrase) return;
+    grow(refs.recoveryRow, drawProve, refs.recoveryFlow);
+  }
+
+  function drawProve() {
     var flow = refs.recoveryFlow;
     dom.clear(flow);
     flow.hidden = false;
@@ -981,7 +1014,9 @@
     dom.on(document, 'click', function (event) {
       if (menu.dataset.open !== 'true') return;
       if (within(event.target, wrap)) return;
-      closeMenu();
+      /* The focus goes back to the button unless the click gave it to something else. */
+      var active = document.activeElement;
+      closeMenu(!active || active === document.body || within(active, wrap));
     });
 
     renderSelect();
@@ -1024,12 +1059,12 @@
     if (menu.focus) menu.focus();
   }
 
-  function closeMenu() {
+  function closeMenu(returnFocus) {
     var menu = refs.netselMenu;
     if (!menu) return;
     delete menu.dataset.open;
     dom.setAttr(refs.netselButton, 'aria-expanded', 'false');
-    if (refs.netselButton && refs.netselButton.focus) refs.netselButton.focus();
+    if (returnFocus !== false && refs.netselButton && refs.netselButton.focus) refs.netselButton.focus();
   }
 
   function onMenuKey(event) {
@@ -1207,9 +1242,11 @@
     refs.forgetStep = step;
 
     dom.on(refs.forgetOpen, 'click', function () {
-      dom.setHidden(step, false);
-      dom.setHidden(refs.forgetOpen, true);
-      refs.forgetInput.focus();
+      grow(r.node, function () {
+        dom.setHidden(step, false);
+        dom.setHidden(refs.forgetOpen, true);
+        refs.forgetInput.focus();
+      }, step);
     });
     dom.on(keep, 'click', closeForget);
     dom.on(refs.forgetInput, 'input', function () {
@@ -1223,9 +1260,12 @@
   function closeForget() {
     refs.forgetInput.value = '';
     refs.forget.disabled = true;
-    dom.setHidden(refs.forgetError, true);
-    dom.setHidden(refs.forgetStep, true);
-    dom.setHidden(refs.forgetOpen, false);
+    shrink(refs.forgetRow, refs.forgetStep, function () {
+      dom.setHidden(refs.forgetError, true);
+      dom.setHidden(refs.forgetStep, true);
+      dom.setHidden(refs.forgetOpen, false);
+      if (refs.forgetOpen.focus) refs.forgetOpen.focus();
+    }, refs.forgetOpen);
   }
 
   function forgetWallet() {

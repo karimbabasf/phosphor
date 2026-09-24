@@ -128,12 +128,19 @@
     seenStart = deposit.startedAt || null;
     current = deposit;
     build();
-    if (!dialog.open) dialog.showModal();
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.openDialog === 'function') motion.openDialog(dialog);
+    else if (!dialog.open) dialog.showModal();
     fill();
   }
 
+  /* The card and its scrim go out together before the dialog closes
+     (ui/design/motion.js). */
   function close() {
-    if (dialog && dialog.open) dialog.close();
+    if (!dialog || !dialog.open) return;
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.closeDialog === 'function') motion.closeDialog(dialog);
+    else dialog.close();
   }
 
   function isOpen() {
@@ -146,6 +153,7 @@
     if (!dialog) {
       dialog = document.createElement('dialog');
       dialog.className = 'confirm deposit-dialog';
+      dialog.setAttribute('data-motion', 'dialog');
       dialog.setAttribute('aria-label', 'Deposit');
       document.body.appendChild(dialog);
       /* Escape and a click on the backdrop close the card. Neither stops the

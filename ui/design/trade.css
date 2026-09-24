@@ -372,9 +372,10 @@
 
 /* ---------- popovers ----------
 
-   The market list, Layers, and the bar's Layout menu (layout.css places it):
-   one raised sheet under its button, scaled in from its own corner over
-   150 ms and out the same way. */
+   The market list, Layers, the Vault's network list and the bar's Layout menu
+   (layout.css places it): one raised sheet under its button, grown from its
+   own corner over --dur-open and back into it over --dur-close, the grammar
+   of ui/design/motion.css. Hidden, it keeps its box until the fade is over. */
 .pop {
   position: absolute;
   top: calc(100% + var(--s-1));
@@ -388,17 +389,18 @@
   box-shadow: var(--lift-sm);
   opacity: 0;
   visibility: hidden;
-  transform: scale(0.97);
+  transform: scale(var(--scale-open));
   transform-origin: top left;
-  transition: opacity 150ms var(--ease-out),
-              transform 150ms var(--ease-out),
-              visibility 0s linear 150ms;
+  transition: opacity var(--dur-close) var(--ease-out),
+              transform var(--dur-close) var(--ease-out),
+              visibility 0s linear var(--dur-close);
 }
 
 .pop[data-open="true"] {
   opacity: 1;
   visibility: visible;
   transform: none;
+  transition-duration: var(--dur-open), var(--dur-open), 0s;
   transition-delay: 0s;
 }
 

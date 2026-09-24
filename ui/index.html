@@ -35,6 +35,7 @@
 <link rel="stylesheet" href="./design/assetpick.css">
 <link rel="stylesheet" href="./design/sendcard.css">
 <link rel="stylesheet" href="./design/checks.css">
+<link rel="stylesheet" href="./design/motion.css">
 <link rel="stylesheet" href="./design/press.css">
 </head>
 <body data-view="basic">
@@ -93,7 +94,7 @@
           <svg class="icon" aria-hidden="true" focusable="false"><use href="#i-freeze"/></svg>
           <span class="brake-word" data-role="brake-word" hidden>Frozen</span>
         </button>
-        <div class="brake-panel" id="brake-panel" role="dialog" aria-labelledby="brake-title" aria-describedby="brake-body" hidden>
+        <div class="brake-panel" id="brake-panel" role="dialog" aria-labelledby="brake-title" aria-describedby="brake-body" data-motion="pop" hidden>
           <p class="brake-title" id="brake-title"></p>
           <p class="brake-body" id="brake-body"></p>
           <div class="brake-actions">
@@ -135,9 +136,9 @@
 </div>
 
 <div class="screen" id="screen-lock" hidden></div>
-<div class="screen" id="screen-firstrun" hidden></div>
-<div class="screen" id="screen-terms" hidden></div>
-<div class="screen" id="screen-migrate" hidden></div>
+<div class="screen" id="screen-firstrun" data-motion="screen" hidden></div>
+<div class="screen" id="screen-terms" data-motion="screen" hidden></div>
+<div class="screen" id="screen-migrate" data-motion="screen" hidden></div>
 
 <!-- The QR libraries, the trade screen with its chart engine, and the first run are not here:
      ui/core/lazy.js fetches each the first time a screen that uses it opens. -->

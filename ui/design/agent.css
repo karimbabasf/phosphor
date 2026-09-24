@@ -109,6 +109,7 @@
 }
 
 .agent-empty {
+  grid-area: 1 / 1;
   display: grid;
   place-items: center;
   width: 100%;
@@ -202,6 +203,7 @@
 
 /* THE CONNECT SHEET, in the card's place. Left aligned: it holds a command. */
 .agent-connect {
+  grid-area: 1 / 1;
   width: 100%;
   max-width: 48ch;
   display: flex;
@@ -210,7 +212,6 @@
   gap: var(--s-3);
   padding: var(--s-5) var(--s-3);
   text-align: left;
-  animation: row-in 180ms var(--ease-out) both;
 }
 
 .agent-connect-title {

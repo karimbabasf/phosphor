@@ -29,7 +29,7 @@ dialog.receipt-dialog > .receipt-card {
    chart behind it repaints. It fades in with the card (moment 3). */
 dialog.receipt-dialog::backdrop {
   background: color-mix(in srgb, var(--bg-0) 72%, transparent);
-  animation: receipt-scrim var(--dur-enter) var(--ease-out) both;
+  animation: receipt-scrim var(--dur-enter) var(--ease-out) backwards;
 }
 
 @keyframes receipt-scrim {

@@ -18,6 +18,10 @@
                                     something that has `finished` and stop(),
                                     even where the vendored file is not there
 
+     enter, leave, morph, swap, openDialog, closeDialog
+                                 -> opening, closing and a change of height,
+                                    in one place (OPENING, CLOSING below)
+
    window.Motion (ui/vendor/motion-13.3.0.js) is loaded by index.html before
    this file. Screen code reaches it through animate() above and asks
    reduced() before any authored moment.
@@ -327,6 +331,172 @@
     return { finished: Promise.resolve(), stop: function () {}, cancel: function () {} };
   }
 
+  /* OPENING, CLOSING AND CHANGING SIZE.
+
+     A popover, a panel, a confirm, a menu or a dialog grows out of the control
+     that opened it: from 96 percent and nothing, over 220 ms on the window's
+     ease-out, and back the same way in 160 ms. Anything that opens by its
+     `hidden` attribute gets that from ui/design/motion.css alone
+     ([data-motion="pop"]); these are the parts a stylesheet cannot do. The
+     numbers are the tokens (--dur-open, --dur-close, --dur-morph,
+     --scale-open in ui/design/tokens.css), repeated here because the Web
+     Animations API takes milliseconds, not a custom property.
+
+       enter(el, opts)          an element just shown grows in (opts.scale
+                                false: a fade alone, for something in the flow)
+       leave(el, done, opts)    an element goes out, then done() hides or
+                                removes it: nothing is taken away before its
+                                exit ends, and one entered again meanwhile is
+                                left alone
+       morph(el, change, opts)  change() runs at once and el's height slides
+                                from what it was to what it is; opts.fade
+                                (an element or a list) fades in as it grows
+       swap(el, out, change, opts)
+                                out fades away first, then morph(el, change)
+       openDialog(d)            showModal, or keep open a dialog mid-close
+       closeDialog(d, then)     the dialog and its scrim go out, then close()
+
+     With motion reduced, or with no Web Animations API (the unit harness),
+     each is the plain change, at once. */
+  var OPEN_MS = 220;
+  var CLOSE_MS = 160;
+  var MORPH_MS = 240;
+  var SCALE_FROM = 0.96;
+  var EASE = 'cubic-bezier(0.23, 1, 0.32, 1)';
+
+  function moves(el) {
+    return !!el && typeof el.animate === 'function' && !reduced();
+  }
+
+  function settle(anim, then) {
+    return anim.finished.then(then, function () { /* cancelled: the next move owns the node */ });
+  }
+
+  function enter(el, opts) {
+    if (!moves(el)) return Promise.resolve();
+    var o = opts || {};
+    if (el.__leave) {
+      el.__leave.cancel();
+      el.__leave = null;
+      el.style.pointerEvents = '';
+    }
+    var from = o.scale === false ? { opacity: 0 } : { opacity: 0, transform: 'scale(' + SCALE_FROM + ')' };
+    var to = o.scale === false ? { opacity: 1 } : { opacity: 1, transform: 'none' };
+    var anim = el.animate([from, to], { duration: OPEN_MS, easing: EASE });
+    return settle(anim, function () {});
+  }
+
+  function leave(el, done, opts) {
+    var finish = typeof done === 'function' ? done : function () {};
+    if (!moves(el)) {
+      finish();
+      return Promise.resolve();
+    }
+    if (el.__leave) return el.__leave.finished.catch(function () {});
+    var o = opts || {};
+    var to = o.scale === false ? { opacity: 0 } : { opacity: 0, transform: 'scale(' + SCALE_FROM + ')' };
+    var anim = el.animate([{ opacity: 1, transform: 'none' }, to], { duration: CLOSE_MS, easing: EASE, fill: 'forwards' });
+    el.__leave = anim;
+    el.style.pointerEvents = 'none';
+    return settle(anim, function () {
+      if (el.__leave !== anim) return;
+      el.__leave = null;
+      el.style.pointerEvents = '';
+      finish();
+      anim.cancel();
+    });
+  }
+
+  function listOf(value) {
+    if (!value) return [];
+    return Array.isArray(value) ? value : [value];
+  }
+
+  function morph(el, change, opts) {
+    var o = opts || {};
+    if (!moves(el)) {
+      change();
+      return Promise.resolve();
+    }
+    var from = el.getBoundingClientRect().height;
+    if (el.__morph) el.__morph.cancel();
+    change();
+    var to = el.getBoundingClientRect().height;
+    var fades = listOf(o.fade);
+    for (var i = 0; i < fades.length; i += 1) {
+      if (fades[i] && typeof fades[i].animate === 'function') {
+        fades[i].animate([{ opacity: 0 }, { opacity: 1 }], { duration: MORPH_MS, easing: EASE });
+      }
+    }
+    if (Math.abs(to - from) < 1) {
+      el.__morph = null;
+      el.style.overflow = el.__overflow || '';
+      return Promise.resolve();
+    }
+    if (el.__overflow === undefined) el.__overflow = el.style.overflow;
+    el.style.overflow = 'hidden';
+    var anim = el.animate([{ height: from + 'px' }, { height: to + 'px' }], { duration: MORPH_MS, easing: EASE });
+    el.__morph = anim;
+    return settle(anim, function () {
+      if (el.__morph !== anim) return;
+      el.__morph = null;
+      el.style.overflow = el.__overflow || '';
+    });
+  }
+
+  function swap(el, out, change, opts) {
+    var leaving = listOf(out).filter(function (node) {
+      return node && !node.hidden && typeof node.getClientRects === 'function' && node.getClientRects().length > 0;
+    });
+    if (!moves(el) || leaving.length === 0) return morph(el, change, opts);
+    /* A confirm on its way out cannot be pressed: its Freeze is still drawn. */
+    var exits = leaving.map(function (node) {
+      node.style.pointerEvents = 'none';
+      return node.animate([{ opacity: 1 }, { opacity: 0 }], { duration: CLOSE_MS, easing: EASE, fill: 'forwards' });
+    });
+    return Promise.all(exits.map(function (anim) { return anim.finished.catch(function () {}); })).then(function () {
+      var done = morph(el, change, opts);
+      for (var i = 0; i < exits.length; i += 1) {
+        exits[i].cancel();
+        leaving[i].style.pointerEvents = '';
+      }
+      return done;
+    });
+  }
+
+  function openDialog(dialog) {
+    if (!dialog) return;
+    if (dialog.__closing) {
+      window.clearTimeout(dialog.__closing);
+      dialog.__closing = 0;
+      dialog.removeAttribute('data-closing');
+    }
+    if (!dialog.open && typeof dialog.showModal === 'function') dialog.showModal();
+  }
+
+  /* The exit is ui/design/motion.css's, keyed on data-closing, so the scrim
+     fades with the card; the close waits it out. */
+  function closeDialog(dialog, then) {
+    var after = typeof then === 'function' ? then : function () {};
+    if (!dialog || !dialog.open) {
+      after();
+      return;
+    }
+    if (!moves(dialog)) {
+      dialog.close();
+      after();
+      return;
+    }
+    if (dialog.__closing) return;
+    dialog.setAttribute('data-closing', 'true');
+    dialog.__closing = window.setTimeout(function () {
+      dialog.__closing = 0;
+      dialog.removeAttribute('data-closing');
+      if (dialog.open) dialog.close();
+      after();
+    }, CLOSE_MS);
+  }
+
   /* Written at boot, once, on the root: the one place the stylesheet reads
      the spring from. Guarded, because the file also runs where there is no
      document to write to. */
@@ -367,6 +537,12 @@
     fitCanvas: fitCanvas,
     spring: spring,
     springDuration: springDuration,
+    enter: enter,
+    leave: leave,
+    morph: morph,
+    swap: swap,
+    openDialog: openDialog,
+    closeDialog: closeDialog,
     handles: function () { return handles.slice(); }
   };
 })();

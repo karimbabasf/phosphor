@@ -157,10 +157,6 @@
 
     if (NEEDS[name] && window.PhosphorLazy) window.PhosphorLazy.load(NEEDS[name]);
 
-    for (var i = 0; i < VIEWS.length; i += 1) {
-      var node = document.getElementById('view-' + VIEWS[i]);
-      if (node) dom.setAttr(node, 'data-active', VIEWS[i] === name ? 'true' : null);
-    }
     for (var j = 0; j < refs.tabs.length; j += 1) {
       var tab = refs.tabs[j];
       var selected = tab.dataset.tab === name;
@@ -168,25 +164,12 @@
       // The roving half of the tabs pattern. See wireTabs for why this is a brake question.
       tab.tabIndex = selected ? 0 : -1;
     }
-    dom.setAttr(document.body, 'data-view', name);
     placeIndicator();
-    renderLayout();
 
-    /* Nothing animates on a keyboard-initiated action, and a swap the server
-       asked for is not something the person triggered either. */
-    if (changed && !opts.silent && opts.fromClick && !window.PhosphorMotion.reduced()) {
-      refs.views.dataset.swapping = 'true';
-      window.setTimeout(function () { delete refs.views.dataset.swapping; }, 220);
-    }
-
-    if (changed) {
-      /* The world is the one scroller and the views share it, so a screen
-         opens at its top rather than wherever the last one was scrolled to. */
-      if (refs.views) refs.views.scrollTop = 0;
-      /* Canvases mounted in a hidden view have no size to fit to, so the chart
-         is told to re-measure once its view is on screen. */
-      window.dispatchEvent(new CustomEvent('phosphor:view', { detail: { view: name } }));
-    }
+    /* A swap the server asked for is not something the person triggered, so it
+       lands at once; so does anything while a dip is not possible. */
+    if (changed && !opts.silent && opts.fromClick && canDip()) dip();
+    else showView(changed);
 
     /* A person's switch is written to the server, so the state frame, the
        assistant's `start` and the line under every tool result say the screen
@@ -199,6 +182,74 @@
         console.warn('[shell] the server did not take the view', err);
       });
     }
+  }
+
+  /* The world as the current view draws it. */
+  function showView(changed) {
+    if (dipping) {
+      window.clearTimeout(dipping.timer);
+      for (var k = 0; k < dipping.anims.length; k += 1) dipping.anims[k].cancel();
+      dipping = null;
+    }
+    for (var i = 0; i < VIEWS.length; i += 1) {
+      var node = document.getElementById('view-' + VIEWS[i]);
+      if (node) dom.setAttr(node, 'data-active', VIEWS[i] === currentView ? 'true' : null);
+    }
+    dom.setAttr(document.body, 'data-view', currentView);
+    renderLayout();
+
+    if (changed) {
+      /* The world is the one scroller and the views share it, so a screen
+         opens at its top rather than wherever the last one was scrolled to. */
+      if (refs.views) refs.views.scrollTop = 0;
+      /* Canvases mounted in a hidden view have no size to fit to, so the chart
+         is told to re-measure once its view is on screen. */
+      window.dispatchEvent(new CustomEvent('phosphor:view', { detail: { view: currentView } }));
+    }
+  }
+
+  /* THE SWITCH. The views on screen dip out over DIP_MS, the world switches,
+     and the new views come up over RISE_MS: --dur-view in all, and the parts
+     two views share (Pro and Trade share the money line and the deck) never
+     jump into place in sight. Between Basic and the others the stage's track
+     slides to its new width meanwhile (data-moving, ui/design/motion.css), so
+     the conversation moves once, smoothly. A second click inside the dip
+     lands on the latest view; the tab's indicator moves at the click. */
+  var DIP_MS = 70;
+  var RISE_MS = 170;
+  var dipping = null;
+
+  function canDip() {
+    return !!refs.views && typeof refs.views.animate === 'function' && !window.PhosphorMotion.reduced();
+  }
+
+  function shownViews() {
+    return Array.prototype.filter.call(refs.views.querySelectorAll('.view'), function (node) {
+      return node.getClientRects().length > 0;
+    });
+  }
+
+  function dip() {
+    if (dipping) return;
+    var anims = shownViews().map(function (node) {
+      return node.animate([{ opacity: 1 }, { opacity: 0 }], { duration: DIP_MS, easing: 'ease-out', fill: 'forwards' });
+    });
+    dipping = {
+      anims: anims,
+      timer: window.setTimeout(function () {
+        var leaving = dipping.anims;
+        dipping = null;
+        if (refs.stage) refs.stage.dataset.moving = 'true';
+        showView(true);
+        shownViews().forEach(function (node) {
+          node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: RISE_MS, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+        });
+        for (var i = 0; i < leaving.length; i += 1) leaving[i].cancel();
+        window.setTimeout(function () {
+          if (refs.stage && !dipping) delete refs.stage.dataset.moving;
+        }, RISE_MS + 60);
+      }, DIP_MS)
+    };
   }
 
   function view() {
@@ -413,9 +464,20 @@
       for (var at = event.target; at; at = at.parentNode) {
         if (at === wrap || at === refs.noticeAct) return;
       }
-      closeBrake(false);
+      closeBrake(focusStayed(refs.brakePanel));
     });
     renderBrake();
+  }
+
+  /* A click outside a panel closes it, and the focus goes back to the control
+     that opened it unless the click gave it to something else. */
+  function focusStayed(panel) {
+    var active = document.activeElement;
+    if (!active || active === document.body) return true;
+    for (var at = active; at; at = at.parentNode) {
+      if (at === panel) return true;
+    }
+    return false;
   }
 
   function renderBrake() {
@@ -435,7 +497,10 @@
     refs.brakeGo.className = frozen ? 'btn btn-sm' : 'btn btn-danger btn-sm';
   }
 
-  /* The harmless answer takes the focus, so Enter on an open panel cancels. */
+  /* The harmless answer takes the focus, so Enter on an open panel cancels. The
+     panel grows out of the glyph and goes back into it (data-motion="pop" in
+     ui/index.html, ui/design/motion.css): hidden is the whole of the close, and
+     the panel keeps its box until the fade is over. */
   function openBrake() {
     if (!refs.brakePanel) return;
     renderBrake();
@@ -484,10 +549,10 @@
       var first = refs.layoutRows.children[0];
       if (first && first.focus) first.focus();
     }
-    function close() {
+    function close(returnFocus) {
       dom.setAttr(pop, 'data-open', null);
       dom.setAttr(button, 'aria-expanded', 'false');
-      if (button.focus) button.focus();
+      if (returnFocus !== false && button.focus) button.focus();
     }
     dom.on(button, 'click', function () {
       if (pop.dataset.open === 'true') close();
@@ -503,7 +568,7 @@
       for (var at = event.target; at; at = at.parentNode) {
         if (at === wrap) return;
       }
-      close();
+      close(focusStayed(pop));
     });
     window.addEventListener('phosphor:pane', renderLayout);
     renderLayout();

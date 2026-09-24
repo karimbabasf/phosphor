@@ -464,6 +464,7 @@
     if (current) close();
     var dialog = document.createElement('dialog');
     dialog.className = 'receipt-dialog';
+    dialog.setAttribute('data-motion', 'card');
     dialog.dataset.source = (opts && opts.source) || '';
     var node = build(receipt, { onClose: close });
     node.tabIndex = -1;
@@ -485,12 +486,16 @@
     return dialog;
   }
 
+  /* The card and its scrim go out before the dialog closes and leaves the
+     document (ui/design/motion.js closeDialog). */
   function close() {
     var dialog = current;
     if (!dialog) return;
     current = null;
-    if (dialog.open && typeof dialog.close === 'function') dialog.close();
-    else dialog.remove();
+    var motion = window.PhosphorMotion;
+    if (!dialog.open || typeof dialog.close !== 'function') dialog.remove();
+    else if (motion && typeof motion.closeDialog === 'function') motion.closeDialog(dialog);
+    else dialog.close();
   }
 
   function isOpen() {

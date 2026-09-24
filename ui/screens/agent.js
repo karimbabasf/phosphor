@@ -428,6 +428,9 @@
     /* THE CENTRE: the card, or the connect sheet in its place. */
     var centre = dom.el('div', 'agent-centre');
     var empty = dom.el('div', 'agent-empty');
+    /* The card and the sheet share one cell of the centre and cross-fade
+       (ui/design/motion.css). */
+    empty.setAttribute('data-motion', 'pop');
     var emptyInner = dom.el('div', 'agent-empty-inner');
     var emptySeat = dom.el('div', 'agent-seat');
     emptySeat.setAttribute('aria-hidden', 'true');
@@ -458,6 +461,7 @@
     centre.appendChild(empty);
 
     var sheet = dom.el('div', 'agent-connect');
+    sheet.setAttribute('data-motion', 'pop');
     sheet.hidden = true;
     sheet.appendChild(dom.el('p', 'agent-connect-title', COPY.connectTitle));
     sheet.appendChild(dom.el('p', 'agent-connect-line', COPY.connectLine));
@@ -1393,7 +1397,12 @@
       if (block.quiet) wrap.setAttribute('data-quiet', 'true');
       var inner = dom.el('section', 'chat-sheet-card');
       wrap.appendChild(inner);
-      block.build(inner, function () { removeBlock(block); });
+      /* It fades out before it leaves the thread (ui/design/motion.js). */
+      block.build(inner, function () {
+        var motion = window.PhosphorMotion;
+        if (motion && typeof motion.leave === 'function') motion.leave(wrap, function () { removeBlock(block); }, { scale: false });
+        else removeBlock(block);
+      });
       return wrap;
     }
     if (block.type === 'working') {
@@ -1432,6 +1441,14 @@
     return chat;
   }
 
+  /* A card on screen that changes state slides to its new height rather than jumping
+     (ui/design/motion.js); a row being built has nothing on screen to slide from. */
+  function reshape(row, change) {
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.morph === 'function' && row.isConnected) motion.morph(row, change);
+    else change();
+  }
+
   function updateBlock(row, block) {
     if (block.type === 'card') {
       var cards = window.PhosphorCards;
@@ -1439,11 +1456,15 @@
       /* A move card repaints itself in place on every change of its row; any other card is
          settled when it lands and is drawn again only when its data moved. */
       if (shown && typeof shown.__paint === 'function') {
-        if (row.__rev !== block.rev || row.__waiting !== block.waiting || row.__live !== block.fromLive) shown.__paint(block.data, cardOptions(block));
+        if (row.__rev !== block.rev || row.__waiting !== block.waiting || row.__live !== block.fromLive) {
+          reshape(row, function () { shown.__paint(block.data, cardOptions(block)); });
+        }
       } else if (row.__rev !== block.rev && cards && typeof cards.render === 'function') {
-        var fresh = cards.render(block.kind, block.data, cardOptions(block));
-        row.insertBefore(fresh, shown);
-        if (shown) row.removeChild(shown);
+        reshape(row, function () {
+          var fresh = cards.render(block.kind, block.data, cardOptions(block));
+          row.insertBefore(fresh, shown);
+          if (shown) row.removeChild(shown);
+        });
       }
       row.__rev = block.rev;
       row.__waiting = block.waiting;

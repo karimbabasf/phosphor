@@ -1,0 +1,119 @@
+/* Phosphor motion: how things open, close and change, in one sheet.
+
+   ONE GRAMMAR. A popover, a panel, a confirm, a menu or a dialog grows out of
+   the control that opened it, from --scale-open and nothing, over --dur-open
+   on the window's ease-out, and goes back the same way over --dur-close, a
+   little faster than it came. Clicking outside, Escape and the close button
+   all land on the same attribute, so all three take the same exit. Nothing
+   leaves the screen before its exit is over: an element closed by its hidden
+   attribute keeps its box while it fades (display is transitioned as a
+   discrete step at the end), and ui/design/motion.js waits out the rest, a
+   dialog, a node that is removed, a change of height. The popovers drawn as
+   .pop keep their own rules in trade.css on the same tokens.
+
+   Under reduced motion nothing here moves: the change lands at once. */
+
+/* ---------- anything that opens by its hidden attribute ---------- */
+
+[data-motion="pop"] {
+  transition: opacity var(--dur-open) var(--ease-out),
+              transform var(--dur-open) var(--ease-out),
+              display var(--dur-open) allow-discrete;
+}
+
+[data-motion="pop"][hidden] {
+  opacity: 0;
+  transform: scale(var(--scale-open));
+  pointer-events: none;
+  transition-duration: var(--dur-close);
+}
+
+@starting-style {
+  [data-motion="pop"]:not([hidden]) {
+    opacity: 0;
+    transform: scale(var(--scale-open));
+  }
+}
+
+/* A screen over the whole window (the first run, the terms, the move to the
+   new wallet) has no control to grow from: it fades. The lock has its own
+   unlock moment (ui/screens/lock.js) and is not one of them. */
+[data-motion="screen"] {
+  transition: opacity var(--dur-open) var(--ease-out),
+              display var(--dur-open) allow-discrete;
+}
+
+[data-motion="screen"][hidden] {
+  opacity: 0;
+  pointer-events: none;
+  transition-duration: var(--dur-close);
+}
+
+@starting-style {
+  [data-motion="screen"]:not([hidden]) {
+    opacity: 0;
+  }
+}
+
+/* ---------- dialogs ----------
+
+   The card and its scrim come in together (data-motion="dialog"; the receipt
+   card brings its own entrance, ui/screens/receipt.js). The way out is the
+   same for every dialog: data-closing, which motion.js closeDialog sets for
+   --dur-close before it calls close(). WebKit takes a closed dialog out of
+   the top layer at once, so a transition on the close itself is never seen. */
+dialog[data-motion] {
+  transition: opacity var(--dur-open) var(--ease-out),
+              transform var(--dur-open) var(--ease-out);
+}
+
+dialog[data-motion]::backdrop {
+  transition: opacity var(--dur-open) var(--ease-out);
+}
+
+@starting-style {
+  dialog[data-motion="dialog"][open] {
+    opacity: 0;
+    transform: scale(var(--scale-open));
+  }
+
+  dialog[data-motion="dialog"][open]::backdrop {
+    opacity: 0;
+  }
+}
+
+dialog[data-motion][data-closing="true"] {
+  opacity: 0;
+  transform: scale(var(--scale-open));
+  pointer-events: none;
+  transition-duration: var(--dur-close);
+}
+
+dialog[data-motion][data-closing="true"]::backdrop {
+  opacity: 0;
+  transition-duration: var(--dur-close);
+}
+
+/* ---------- the world changing views ----------
+
+   ui/screens/shell.js dips the views out, switches, and brings the new ones
+   in. Between Basic and the other three the world's track changes width, and
+   while data-moving is on the stage it slides there instead of snapping, so
+   the conversation narrows or widens once, smoothly. Only then: a drag of
+   the divider or a resize of the window must follow the hand at once. */
+.stage[data-moving="true"] {
+  transition: grid-template-columns var(--dur-view) var(--ease-out);
+}
+
+.world {
+  transition: background-color var(--dur-view) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-motion],
+  [data-motion]::backdrop,
+  .stage[data-moving="true"],
+  .world {
+    transition: none !important;
+  }
+}

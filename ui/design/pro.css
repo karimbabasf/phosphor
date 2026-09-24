@@ -86,10 +86,16 @@ body[data-view="pro"] .trade-wrap > .split-h {
 }
 
 /* On Pro the deck is the view, so Trade's Layout choice to hide it does not
-   reach here. */
+   reach here, and its row carries no eye to hide it or to bring the chart
+   back: those are Trade's. */
 body[data-view="pro"] .trade-wrap > .trade-rail {
   display: flex;
   flex: 1 1 auto;
+}
+
+body[data-view="pro"] .trade-wrap .trade-tabs .pane-hide[data-pane],
+body[data-view="pro"] .trade-wrap .trade-tabs .pane-show[data-pane] {
+  display: none;
 }
 
 /* ---------- the money line ----------
