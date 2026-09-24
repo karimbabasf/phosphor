@@ -76,9 +76,9 @@ test('the panel builds no control that decides anything', () => {
   // suggestion pills carry the questions in SUGGESTIONS. No other site builds a <button>.
   const labels = SOURCE.match(/\bbutton\('[^']*', '([^']+)'/g) ?? [];
   // Keep running and Turn off are the confirmation card's two answers (2026-09-16): the card
-  // decides nothing about money, only whether the assistant's process ends. Jump to latest is
-  // the pill at the foot of the scroller: it scrolls, and that is all it does.
-  const allowed = ['Start your assistant', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep running', 'Jump to latest'];
+  // decides nothing about money, only whether the assistant's process ends. Latest is the quiet
+  // control on the thread's bottom edge: it scrolls, and that is all it does.
+  const allowed = ['Start your assistant', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep running', 'Latest'];
   assert.ok(labels.length > 0, 'the panel builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');
@@ -90,6 +90,8 @@ test('the panel builds no control that decides anything', () => {
     "dom.el('button', 'chip suggest', SUGGESTIONS[s]);",
     "dom.el('button', 'composer-send');",
     "dom.el('button', 'steps-fold');",
+    // "Waiting for your OK": it scrolls to the card that asks, and decides nothing.
+    "dom.el('button', 'agent-waiting');",
   ];
   for (const site of sites) assert.ok(known.includes(site.trim()), `an unknown button site: ${site.trim()}`);
   assert.equal(/\bapprove\b|\brefuse\b/i.test(SOURCE), false, 'the panel names an approval route');
@@ -116,20 +118,24 @@ test('the phase is readable before a frame has arrived', () => {
 
 test('a tool that only asks never reads as a tool that did it', () => {
   const agent = load();
-  // The propose and do pairs are deliberately one word apart, because that word
-  // is the entire difference between asking and moving money.
-  assert.equal(agent.toolLabel('propose_swap'), 'asking to swap');
-  assert.equal(agent.toolLabel('swap'), 'swapping');
-  assert.equal(agent.toolLabel('propose_send'), 'asking to send');
-  assert.equal(agent.toolLabel('intents_send'), 'sending inside NEAR Intents');
+  // Asking gets a move ready; only the doing moves money, and the words keep them apart. The
+  // working line reads these ("Checking prices", "Swapping"), so each is plain words.
+  const pairs: Array<[string, string, string, string]> = [
+    ['propose_swap', 'checking prices', 'swap', 'swapping'],
+    ['propose_send', 'getting a send ready', 'intents_send', 'sending'],
+    ['propose_trade', 'getting a trade ready', 'trade', 'placing the trade'],
+    ['propose_trade_change', 'getting a change ready', 'trade_change', 'changing the trade'],
+    ['propose_hl_deposit', 'getting the move ready', 'hl_deposit', 'funding trading'],
+  ];
+  for (const [ask, asking, act, doing] of pairs) {
+    assert.equal(agent.toolLabel(ask), asking);
+    assert.equal(agent.toolLabel(act), doing);
+    assert.notEqual(asking, doing);
+    assert.doesNotMatch(asking, /\b(swapped|sent|paid|placed|funded|moved|done)\b/, `${ask} reads as done: ${asking}`);
+  }
   assert.equal(agent.toolLabel('intents_pay'), 'paying out');
-  assert.equal(agent.toolLabel('propose_trade'), 'proposing a trade');
-  assert.equal(agent.toolLabel('trade'), 'opening a trade');
-  assert.equal(agent.toolLabel('propose_trade_change'), 'proposing a change');
-  assert.equal(agent.toolLabel('trade_change'), 'changing a trade');
   assert.equal(agent.toolLabel('trade_plan'), 'drawing a plan');
-  assert.equal(agent.toolLabel('propose_hl_deposit'), 'asking to fund trading');
-  assert.equal(agent.toolLabel('propose_policy_change'), 'asking to change a rule');
+  assert.equal(agent.toolLabel('propose_policy_change'), 'getting the change ready');
 });
 
 test('every tool the server offers has a phrase, not an id', () => {
@@ -138,7 +144,9 @@ test('every tool the server offers has a phrase, not an id', () => {
   const agent = load();
   assert.equal(agent.toolLabel('chain_address'), 'looking up an address');
   assert.equal(agent.toolLabel('chain_transaction'), 'reading a transaction');
-  assert.equal(agent.toolLabel('intents_activity'), 'reading the NEAR Intents history');
+  assert.equal(agent.toolLabel('intents_activity'), 'reading your history');
+  assert.equal(agent.toolLabel('swap_quote'), 'checking prices');
+  assert.equal(agent.toolLabel('swap_check'), 'checking the swap');
   assert.equal(agent.toolLabel('set_theme'), 'recolouring the window');
 });
 

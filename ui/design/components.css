@@ -128,7 +128,7 @@
 /* THE ONE THING ON THE PAGE THAT BREATHES.
 
    A ring just outside the live button's edge, 2.6 seconds, with the fill
-   lifting a shade under it. It runs on the dock's Approve or Yes and nowhere
+   lifting a shade under it. It runs on Approve on a move card and nowhere
    else, and only while the answer is the person's to give: the moment the
    click lands the button is disabled and the breath stops.
 
@@ -630,6 +630,13 @@ button.chip[aria-pressed="true"] {
   color: var(--text-2);
 }
 
+/* A long unbroken run (an id, an address) wraps inside the banner instead of widening it:
+   a flex item's minimum width is its longest word unless it is told otherwise. */
+.banner > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .banner[data-tone="warn"] {
   border-color: color-mix(in srgb, var(--warn) 40%, transparent);
   background: var(--warn-wash);
@@ -640,6 +647,52 @@ button.chip[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--down) 40%, transparent);
   background: var(--down-wash);
   color: var(--text);
+}
+
+/* ---------- A card's head and its answers ----------
+
+   A card another screen builds (the backup nudge, the asset pick, the recovery words, Turn
+   off the assistant) opens with its title and, when it can be put away, one quiet X at the
+   right; its answers sit together at its right edge, the harmless one first. */
+.dock-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.dock-close {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: -5px -7px 0 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+.dock-close .icon { width: 16px; height: 16px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .dock-close:hover { color: var(--text); background: var(--bg-2); }
+}
+
+.dock-close:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: -2px;
+}
+
+.dock-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
 }
 
 /* ---------- Meter ---------- */
@@ -916,16 +969,6 @@ textarea.input {
 
 .tag[data-flash="true"][data-dir="up"] { background: color-mix(in srgb, var(--up) 26%, var(--bg-1)); }
 .tag[data-flash="true"][data-dir="down"] { background: color-mix(in srgb, var(--down) 26%, var(--bg-1)); }
-
-/* The change beside the price: signed, one decimal, in the direction's colour,
-   at 13 px so the price stays the loud thing. */
-.tag-delta {
-  font-size: var(--fs-13);
-  letter-spacing: 0;
-}
-
-.tag-delta[data-dir="up"] { color: var(--up); }
-.tag-delta[data-dir="down"] { color: var(--down); }
 
 /* A FIGURE. The label above, the value under it in mono, side by side in a
    row of them. The opposite reading order to a fact row, on purpose: a fact

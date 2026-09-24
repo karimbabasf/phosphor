@@ -408,6 +408,56 @@ const providerRefunded = seededScene(
   'REFUNDED',
 );
 
+/* A swap 1Click reported FAILED whose funding transfer never ran, as reconcile closes it once
+   the intents ledger shows nothing went to the handle: failed, nothing left the balance, the
+   venue's line and the handle behind it (Karim's swaps, 2026-09-15 and 2026-09-23). The agent
+   quotes the view's reason, which is the card's own sentence. */
+const FAILED_HANDLE = 'fd16a579c2e84b1d9a3f6e0c7b5d2a8f4e1c9b3d7a6f0e2c8b4d1a9f3e7c5b2d';
+
+function swapFailedRow(id: string, ago: number): Record<string, unknown> {
+  return {
+    id,
+    kind: 'swap',
+    createdAt: { agoSec: ago + 20 },
+    status: 'failed',
+    draft: { kind: 'swap', venue: 'intents-native', chain: 'eth', toChain: 'eth', fromSymbol: 'USDC', toSymbol: 'ETH', amountIn: 4, amountInExact: '4', amountUsd: 4, minAmountOut: 0.00147, to: DEMO_ACCOUNT, counterparty: 'intents.near' },
+    simulation: { ok: true, notes: [], swap: { receives: '0.00149', receivesAtLeast: '0.00147', feeUsd: 0.01, etaSeconds: 45 } },
+    verdict: { outcome: 'allow', reasons: ['swap of $4.00 to intents.near.', '$4.00 is under the $100.00 click threshold.'] },
+    decidedBy: 'policy',
+    decidedAt: { agoSec: ago },
+    settledAt: { agoSec: Math.max(0, ago - 70) },
+    lastChangeAt: { agoSec: Math.max(0, ago - 70) },
+    result: {
+      ok: false,
+      reason: 'venue_failed_nothing_moved',
+      detail: `1click reported FAILED (reason not given) and the intents ledger shows no transfer to handle ${FAILED_HANDLE} since this move was approved, so nothing left the balance.`,
+      evidence: { providerStage: 'FAILED', handle: FAILED_HANDLE, quote: { correlationId: `corr-${id}`, timestamp: '2026-09-23T00:00:00.000Z', signature: 'sig', depositAddress: '0x3333333333333333333333333333333333333333' } },
+    },
+    balances: { beforeUsd: 4012, afterUsd: 4012 },
+  };
+}
+
+const swapFailedNothingMoved = seededScene(
+  'swap-provider-failed-nothing-moved',
+  'B27',
+  { proposals: [swapFailedRow('anx-b27', 240)] },
+  'anx-b27',
+  'What happened to my swap?',
+  `{{0.sentence|The swap}}: {{0.reason.sentence|${STAGE_COPY.failed}}}`,
+  'failed',
+);
+
+/* Nobody quoting a price: a swap asked with no floor for a coin no solver prices, so the floor
+   cannot be cut off a quote and the ask is refused before anything is drawn. It is the market's
+   problem, and the card and the reply must not send the person to their rules. */
+const noPrice = refusalScene('refused-no-price', ['B28'], {}, 'Swap 50 USDC to XYZ.', {
+  steps: [
+    { tool: 'propose_swap', args: { chain: 'eth', toChain: 'eth', fromSymbol: 'USDC', toSymbol: 'XYZ', amountIn: 50 } },
+    { tool: 'proposal_status', args: { id: '{{0.id|none}}' } },
+    { say: '{{1.reason.sentence|Nobody offered a price for USDC to XYZ right now, so nothing moved. Try again in a minute.}}' },
+  ],
+});
+
 /* A failed move, read back: the agent's sentence about it (E03) is the same reply as the card
    (B15), because a seeded failure is reported by the read-back turn, not by a fresh notice. */
 const railFailed: Scene = {
@@ -935,7 +985,8 @@ const holdings: Scene = {
   seed: {},
   play: async (ctx) => {
     await ctx.app.chat('What do I hold?', {
-      steps: [{ tool: 'wallet', args: {} }, { say: 'You hold ${{0.totalUsd|?}} in all, in the two pockets on the card. Nothing is waiting on you.' }],
+      // The total as the card prints it, never the tool's raw float ($4011.9999999999995).
+      steps: [{ tool: 'wallet', args: {} }, { say: 'Everything you hold is on the card, in its two pockets. Nothing is waiting on you.' }],
     });
     await ctx.capture('F02');
   },
@@ -963,6 +1014,8 @@ export const SCENES: Scene[] = [
   railFailed,
   providerFailed,
   providerRefunded,
+  swapFailedNothingMoved,
+  noPrice,
   stalled,
   declined,
   venueOutage,

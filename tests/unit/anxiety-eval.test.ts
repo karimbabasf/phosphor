@@ -9,6 +9,7 @@ import { median, parseVote, PASS_MAX_VOTE, RUBRIC, rowVerdict } from '../../scri
 import { counts, markdownTable, worstThree, type RowResult } from '../../scripts/anxiety/table.ts';
 import { scoreFlow } from '../../scripts/anxiety/flows.ts';
 import { endingReply, fill } from '../../scripts/anxiety/agent.ts';
+import { claimedRows } from '../../scripts/anxiety/scenes.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -101,13 +102,24 @@ test('markUnreachable adds the mark in place, once, and returns null for an unkn
   assert.equal(markUnreachable(SAMPLE, 'Z99', 'x'), null, 'an unknown row is null, never a silent no-op');
 });
 
-test('the real situation file parses to 98 rows and marks its unreachable ones', () => {
+test('the real situation file parses to 100 rows and marks its unreachable ones', () => {
   const file = path.join(ROOT, 'docs', 'superpowers', 'prompts', '2026-09-20-ready-for-people.situations.md');
   const rows = parseRows(fs.readFileSync(file, 'utf8'));
-  assert.equal(rows.length, 98, 'the list is 98 rows');
+  assert.equal(rows.length, 100, 'the list is 100 rows');
   assert.ok(rows.filter((r) => r.flow).length >= 4, 'the flow rows are marked');
   // Every marked row names a reason, never a bare mark.
   for (const row of rows.filter((r) => r.unreachable !== null)) assert.ok((row.unreachable as string).length > 0, `${row.id} has a reason`);
+});
+
+/* A row no scene plays is a hole in the score that only shows at run time, as "no scene reaches
+   this row". Karim's two real swap failures (1Click FAILED with nothing moved, and nobody
+   quoting a price) were missing from the list for a week; each row now has its scene. */
+test('every row in the situation file is played by a scene or marked not reachable', () => {
+  const file = path.join(ROOT, 'docs', 'superpowers', 'prompts', '2026-09-20-ready-for-people.situations.md');
+  const claimed = claimedRows();
+  const orphans = parseRows(fs.readFileSync(file, 'utf8')).filter((r) => r.unreachable === null && !claimed.has(r.id)).map((r) => r.id);
+  assert.deepEqual(orphans, []);
+  assert.ok(claimed.has('B27') && claimed.has('B28'), 'the two swap failures have no scene');
 });
 
 // ---------- the judge's arithmetic ----------

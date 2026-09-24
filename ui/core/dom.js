@@ -28,10 +28,14 @@
   var SVG_NS = 'http://www.w3.org/2000/svg';
   var XLINK_NS = 'http://www.w3.org/1999/xlink';
 
-  function mark(className) {
+  /* With a state it is the animated mark of contract 6: `svg.mark[data-state]`, which
+     ui/design/mark.css draws idle, working or done. */
+  function mark(className, state) {
     if (typeof document.createElementNS !== 'function') return null;
     var svg = document.createElementNS(SVG_NS, 'svg');
-    if (className) svg.setAttribute('class', className);
+    var names = (state ? 'mark ' : '') + (className || '');
+    if (names.trim()) svg.setAttribute('class', names.trim());
+    if (state) svg.setAttribute('data-state', state);
     svg.setAttribute('viewBox', '0 0 58.05 64.75');
     svg.setAttribute('focusable', 'false');
     svg.setAttribute('aria-hidden', 'true');
@@ -74,16 +78,20 @@
 
      Only digits roll; the currency sign, the separators and the spaces stay
      as plain text so the width and the baseline never move. When the browser
-     cannot animate (the unit harness, reduced motion) the old crossfade
-     through data-ticking runs instead, and the node's textContent is the whole
-     contract either way: it always reads as the plain value. */
-  var ROLL_MS = 380;
+     cannot animate (the unit harness, reduced motion) the value is set at once,
+     and the node's textContent is the whole contract either way: it always
+     reads as the plain value. 400 ms on the window's ease-out, the number
+     grammar the design contract names. */
+  var ROLL_MS = 400;
+  var ROLL_EASE = 'cubic-bezier(0.23, 1, 0.32, 1)';
 
   function setNumber(node, text) {
     if (!node) return;
     var value = text === undefined || text === null ? '' : String(text);
     if (node.textContent === value) return;
-    if (!node.textContent || window.PhosphorMotion.reduced() || !canRoll(node)) {
+    var motion = window.PhosphorMotion;
+    var still = !!(motion && typeof motion.reduced === 'function' && motion.reduced());
+    if (!node.textContent || still || !canRoll(node)) {
       node.textContent = value;
       return;
     }
@@ -110,9 +118,7 @@
     var token = (node.__roll || 0) + 1;
     node.__roll = token;
 
-    var ease = window.PhosphorMotion && window.PhosphorMotion.spring
-      ? window.PhosphorMotion.spring()
-      : 'cubic-bezier(0.23, 1, 0.32, 1)';
+    var ease = ROLL_EASE;
     while (node.firstChild) node.removeChild(node.firstChild);
     var pending = [];
     var changed = 0;
@@ -219,9 +225,18 @@
 
   /* ---------- Formatting ---------- */
 
-  function usd(value, digits) {
+  /* An unknown value prints nothing, never $0.00: null, undefined, an empty
+     string and anything that is not a number are "we do not know", and a zero
+     in their place told a person their money was gone. A real 0 is still $0.00. */
+  function known(value) {
+    if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
     var n = Number(value);
-    if (!isFinite(n)) return '$0.00';
+    return isFinite(n) ? n : null;
+  }
+
+  function usd(value, digits) {
+    var n = known(value);
+    if (n === null) return '';
     var d = digits === undefined ? 2 : digits;
     var sign = n < 0 ? '-' : '';
     return sign + '$' + Math.abs(n).toLocaleString('en-US', {
@@ -248,8 +263,8 @@
   /* Fees are the one figure that runs from a tenth of a cent to a few dollars,
      so the places follow the number: two unless two would round it to zero. */
   function fee(value) {
-    var n = Number(value);
-    if (!isFinite(n)) return '';
+    var n = known(value);
+    if (n === null) return '';
     if (n === 0) return '$0.00';
     return usd(n, Math.abs(n) < 0.01 ? 4 : 2);
   }

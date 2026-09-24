@@ -49,9 +49,10 @@ test('every family draws hover, active and focus, and every .btn family disabled
 test('the helpers are read at their call sites, never at their definition', () => {
   assert.ok(!list.some((f) => f.family === 'className'), 'agent.js button(className, ...) was read as a family');
   assert.ok(!list.some((f) => /kind \|\| 'btn-ghost'/.test(f.family)), 'the netpick and vault helpers were read as a family');
-  const yes = sites.find((s) => s.file === 'ui/screens/decision.js' && s.pending === 'Approving');
-  assert.ok(yes, 'the dock\'s Yes was not found');
-  assert.equal(yes?.family, 'btn btn-primary');
+  const yes = sites.find((s) => s.file === 'ui/screens/decision.js' && s.family === 'btn btn-primary mcard-approve');
+  assert.ok(yes, 'the card\'s Approve was not found');
+  const cancel = sites.find((s) => s.file === 'ui/screens/decision.js' && s.family === 'btn btn-ghost mcard-cancel');
+  assert.equal(cancel?.pending, 'Cancelling');
   const more = sites.find((s) => s.file === 'ui/screens/receipts.js' && s.label === '"See all"');
   assert.equal(more?.family, 'btn btn-ghost activity-more', 'receipts.js button() builds a fixed class, and the call site wears it');
 });

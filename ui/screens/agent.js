@@ -1,15 +1,19 @@
 /* The conversation column. It is on screen in every mode, in the same place,
-   and it is the product: what a person asked, what the assistant did to answer,
-   and what it said back.
+   and it is the product: what a person asked, what the assistant said back, and
+   the one card per move that shows where the money is.
 
    Two properties keep it safe and neither is a tidiness preference. Nothing the
-   assistant writes reaches the DOM as markup, and this file draws no control
-   that decides anything. An approval is a physical click on the dock below,
-   which is drawn from server state, so a transcript row cannot impersonate one.
+   assistant writes reaches the DOM as markup, and nothing the assistant writes
+   can draw a control that decides anything. The buttons that answer a move are
+   on its card, drawn by ui/screens/decision.js from the server's row, so a
+   transcript row cannot impersonate one.
 
-   The column lights nothing itself either, and it no longer announces its
-   steps: the beam that listened for them is gone, and a window event with no
-   listener is a path that cannot be read and cannot be tested.
+   CALM, FAST AND TRUE (Karim, 2026-09-23: the chat raised his anxiety). No card
+   covers the thread, no clock ticks, and the tool steps a turn runs stay out of
+   it (developer mode shows them). While the assistant works there is one quiet
+   line with the mark and the step in plain words, and it becomes the reply when
+   the words arrive, streamed as they are written. The column stays at the bottom
+   while the person is there and holds still when they scroll up to read.
 
    The look lives in ui/design/agent.css. This file writes state as attributes
    and text, never as style. */
@@ -21,34 +25,33 @@
   var api = window.PhosphorApi;
   var events = window.PhosphorEvents;
 
-  /* A tool call is the honest unit of "what the agent actually did", so it is
-     rendered as its own row with a phrase rather than a tool id. The propose and
-     do pairs below are deliberately one word apart ("asking to swap" against
-     "swapping"), because that word is the entire difference between them. */
+  /* The step a tool call is, in plain words. The working line shows the open
+     call's phrase ("Checking prices", "Swapping"); developer mode shows every
+     call as a row with its arguments. The propose and do pairs stay one word
+     apart where they differ, because that word is the whole difference. */
   var TOOL_PHRASES = {
     /* reading */
     wallet: 'reading your wallet',
     composition: 'checking what you hold',
-    policy_show: 'reading the policy',
-    proposal_status: 'checking the approval',
+    policy_show: 'reading your limits',
+    proposal_status: 'checking on the move',
     market_search: 'looking up a market',
     log_tail: 'reading the log',
-    /* The tools that leave this machine (LEAVES), and the row says so in its
-       own words beside the phrase. A person watching their wallet app reach
-       the internet is entitled to see that happen. */
     research: 'reading the news',
     skill: 'reading its instructions',
     trade_read: 'reading the account',
-    deposit: 'showing a deposit address',
-    /* public chain data, read only, and it leaves the machine too */
+    deposit: 'getting a deposit address',
     chain_address: 'looking up an address',
     chain_transactions: 'reading an address\'s history',
     chain_transaction: 'reading a transaction',
-    intents_activity: 'reading the NEAR Intents history',
+    intents_activity: 'reading your history',
+    swap_assets: 'looking up coins',
+    swap_quote: 'checking prices',
+    swap_check: 'checking the swap',
     /* the chart */
     chart_read: 'reading the chart',
     chart_scan: 'scanning the timeframes',
-    chart_snapshot: 'taking a picture of the chart',
+    chart_snapshot: 'looking at the chart',
     chart_draw: 'drawing on the chart',
     chart_layout: 'arranging the charts',
     chart_batch: 'redrawing the chart',
@@ -57,28 +60,25 @@
     trade_highlight: 'highlighting the chart',
     trade_overlay: 'drawing on the chart',
     trade_plan: 'drawing a plan',
-    trade_batch: 'redrawing the account',
+    trade_batch: 'reading the account',
     trade_clear: 'clearing the chart',
-    /* The human's own profile: a note that they now understand a concept,
-       so the next session does not explain it again. The concept rides on
-       the row (ARG_FIELDS), so the row says what was noted. */
-    profile_learned: 'noting for next time that you now understand',
+    profile_learned: 'noting that for next time',
     /* asking. None of these moves anything: each puts a request in the gate. */
-    propose_swap: 'asking to swap',
-    propose_send: 'asking to send',
-    propose_trade: 'proposing a trade',
-    propose_trade_change: 'proposing a change',
-    propose_hl_deposit: 'asking to fund trading',
-    propose_hl_withdraw: 'asking to bring collateral back',
-    propose_policy_change: 'asking to change a rule',
+    propose_swap: 'checking prices',
+    propose_send: 'getting a send ready',
+    propose_trade: 'getting a trade ready',
+    propose_trade_change: 'getting a change ready',
+    propose_hl_deposit: 'getting the move ready',
+    propose_hl_withdraw: 'getting the move ready',
+    propose_policy_change: 'getting the change ready',
     /* doing, once a human has said yes */
     swap: 'swapping',
-    intents_send: 'sending inside NEAR Intents',
+    intents_send: 'sending',
     intents_pay: 'paying out',
-    trade: 'opening a trade',
-    trade_change: 'changing a trade',
+    trade: 'placing the trade',
+    trade_change: 'changing the trade',
     hl_deposit: 'funding trading',
-    hl_withdraw: 'bringing collateral back',
+    hl_withdraw: 'bringing it back',
     /* the helpers */
     agent_spawn: 'starting a helper',
     agent_roster: 'checking the helpers',
@@ -92,9 +92,7 @@
     start: 'starting up'
   };
 
-  /* The tools that reach past this machine: the news, and the public chain
-     reads. The step row names them, because a wallet app opening the internet
-     is a fact a person is owed in words. */
+  /* The tools that reach past this machine. Developer mode names them on their row. */
   var LEAVES = {
     research: true,
     chain_address: true,
@@ -103,34 +101,32 @@
     intents_activity: true
   };
 
-  /* WHAT the call was about, not just what kind of call it was. The tool event
-     already carries the arguments the model sent, and dropping them was the
-     difference between "reading prices" and "reading prices, SOL-PERP 1h": one
-     says a category of work is happening, the other proves the app is working
-     on the thing that was asked for.
-
-     Read through a fixed list of field names rather than by tool, so a tool
-     added later says something without a second table to keep in step. Values
-     come from a language model, so each one is cut to length and only strings,
-     numbers and booleans are ever read: an object stringifies to nothing a
-     person can use, and this row is not the place to find out. */
+  /* What a call was about, for developer mode's rows: a fixed list of field names rather
+     than a table per tool, each value cut to length, and only strings, numbers and booleans. */
   var ARG_FIELDS = [
     'product', 'symbol', 'query', 'coins', 'mode', 'name', 'indicator',
     'chain', 'toChain', 'venue', 'label', 'text', 'sentence', 'what', 'source', 'id', 'concept'
   ];
   var ARG_MAX = 38;
 
+  /* The kind of move each propose drafts, so the card can say what it is before any row
+     exists. A send drafts either of two kinds; the row names which once it lands. */
+  var PROPOSE_KINDS = {
+    propose_swap: 'swap',
+    propose_send: 'intents_send',
+    propose_trade: 'trade',
+    propose_trade_change: 'trade_change',
+    propose_hl_deposit: 'hl_deposit',
+    propose_hl_withdraw: 'hl_withdraw',
+    propose_policy_change: 'policy_change'
+  };
+
   var TRANSCRIPT_CAP = 400;
-  var TICK_MS = 100;
   var STICK_PX = 40;
-  /* How long the column counts as still at the end after it asked the
-     scroller to ease there. A smooth scroll is not at the bottom on the very
-     next frame, and a row that lands during it must not read that as "the
-     person scrolled up". A wheel turn ends the follow at once. */
-  var FOLLOW_MS = 600;
-  var JUMP_S = 0.32;
-  /* Six lines, and the line's height is read off the box rather than written
-     down here: the fallback is only for a computed style that says `normal`. */
+  /* The follow: the column eases to its end on one motion that retargets as rows grow,
+     with this time constant, so a reply streaming in reads as one glide and not a restart
+     per word. */
+  var FOLLOW_TAU_MS = 70;
   var COMPOSER_MAX_LINES = 6;
   var COMPOSER_LINE_FALLBACK_PX = 21;
 
@@ -141,73 +137,62 @@
      answers from what it already holds, in the words a person would use. */
   var SUGGESTIONS = ['What do I hold?', 'Is anything waiting on me?', 'Find a trade on BTC'];
 
-  /* The card's sentences, in one place. The title says who is at the wheel and
-     the line under it says the one next thing to do. */
+  /* A question about what the person holds. A wallet read in a turn that asked one draws
+     its card; any other wallet read was a check on the way to something else, and the
+     balances beside the chat already show the money. */
+  var ASKS_HOLDINGS = /\b(hold|holding|holdings|balance|balances|wallet|portfolio|how much|what do i have|what have i got|my money|worth)\b/i;
+
+  /* The card's sentences, in one place. */
   var COPY = {
     offTitle: 'Nobody is at the wheel.',
     offLine: 'Start your assistant, or connect one you already use.',
     comingTitle: 'Taking the wheel.',
     comingLine: 'Starting your assistant.',
     liveTitle: 'Your assistant is at the wheel.',
-    liveLine: 'Tell it what to do. It picks up your wallet, the policy and the chart on your first message.',
+    liveLine: 'Tell it what to do. It picks up your wallet, your limits and the chart on your first message.',
     ownTitle: 'Your own agent is at the wheel.',
-    ownLine: 'Talk to it from its own terminal. Its moves land in Activity.',
-    /* Attached is not driving. Every Claude Code session on the Mac starts the
-       proxy, and the proxy announces itself on boot, so the roster fills with
-       members that have never made a call (Karim, 2026-09-18, five of them:
-       "this also looks like a bug"). The card says so in those words. */
+    ownLine: 'Talk to it from its own terminal. Its moves land here as cards.',
     idleTitle: 'Your own agent is connected.',
-    idleLine: 'It has not made a move yet. Talk to it from its terminal; its moves land in Activity.',
+    idleLine: 'It has not made a move yet. Talk to it from its terminal; its moves land here as cards.',
     idleManyTitle: 'Your own agents are connected.',
-    idleManyLine: 'None has made a move yet. Talk to one from its terminal; its moves land in Activity.',
+    idleManyLine: 'None has made a move yet. Talk to one from its terminal; its moves land here as cards.',
     connectTitle: 'Connect your own agent',
     connectLine: 'Any MCP client can drive Phosphor.',
     connectHint: 'Paste this into your terminal, then send a message from there.',
     waiting: 'Waiting for a connection...',
     connected: 'Connected',
-    /* The one failure the window can only decide for itself: a start that
-       never reported back. Every other reason arrives from the driver. */
     noAnswer: 'The assistant did not answer in time.',
-    /* A failed start that named no reason. It should not happen, and when it
-       does the person still gets a sentence rather than a blank line. */
-    failedUnsaid: 'The assistant could not start.'
+    failedUnsaid: 'The assistant could not start.',
+    thinking: 'Thinking'
   };
 
   /* How long a start may sit at "Starting..." before the window says so. Ready
-     arrives on the child's spawn event (src/driver.ts), a few hundred
-     milliseconds after the click, so twenty seconds is not a start that is
-     slow, it is one that has stopped reporting. The window only says it: the
-     next frame from the driver still wins. */
+     arrives on the child's spawn event, a few hundred milliseconds after the
+     click, so twenty seconds is not a start that is slow, it is one that has
+     stopped reporting. The next frame from the driver still wins. */
   var START_TIMEOUT_MS = 20000;
-
-  /* THE RECEIPT CARD. When a move this app made lands as a receipt
-     (src/http/receipts.ts, read through ui/screens/receipts.js), the
-     transcript shows the shared card (ui/screens/receipt.js,
-     PhosphorReceipt.card) drawn from that receipt and never from the
-     assistant's prose. Karim, 2026-09-14: "when trades happen I dont want to
-     see this, I want to see a nice card, simple, no unnecessary info, and the
-     intent id should be a clickable link". The card decides its own link,
-     from the url the server built; this column only places it. */
 
   function icon(name, className) {
     return window.PhosphorIcons.svg(name, className);
   }
 
+  function bareName(name) {
+    return String(name || '').replace(/^mcp__phosphor__/, '');
+  }
+
   /* typeof, not truthiness: the tool id arrives from a language model, and a
      lookup on a plain object hands back Object.prototype's own members for ids
-     like `constructor`. A function stringified into a transcript is not a phrase. */
+     like `constructor`. */
   function toolLabel(name) {
-    var id = String(name || 'tool').replace(/^mcp__phosphor__/, '');
-    var phrase = TOOL_PHRASES[id];
+    var id = bareName(name) || 'tool';
+    var phrase = Object.prototype.hasOwnProperty.call(TOOL_PHRASES, id) ? TOOL_PHRASES[id] : null;
     return typeof phrase === 'string' ? phrase : id;
   }
 
   function leavesMachine(name) {
-    return LEAVES[String(name || '').replace(/^mcp__phosphor__/, '')] === true;
+    return LEAVES[bareName(name)] === true;
   }
 
-  /* One scalar, trimmed and bounded. An array of scalars reads as a list
-     because that is what `coins` and the chart's clear lists are. */
   function argText(value) {
     if (typeof value === 'string') return value.trim();
     if (typeof value === 'number' && isFinite(value)) return String(value);
@@ -223,12 +208,6 @@
     return '';
   }
 
-  /* The subject of the call in a few words. An amount leads when there is one,
-     because the number is the thing a person looks for on a row that moves
-     money, and it is followed by what the number counts. */
-  /* An id on a step row is the two ends of it: a whole one is thirty-six characters a
-     person cannot read and does not need to, and the card under the row carries it in full
-     behind its Copy (3.1). */
   function shortId(value) {
     var s = String(value || '');
     return s.length <= 20 ? s : s.slice(0, 8) + '...' + s.slice(-8);
@@ -252,9 +231,7 @@
     return joined;
   }
 
-  /* The scalar arguments of a call, kept beside the row for the trace: the
-     screen a `switch` moved to is the one thing a listener has to know that the
-     phrase does not say. Nothing nested is kept. */
+  /* The scalar arguments of a call, kept beside the row for the trace. */
   function scalarArgs(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
     var out = null;
@@ -268,6 +245,11 @@
     return out;
   }
 
+  function sentence(text) {
+    var value = String(text || '');
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+
   var mounts = [];
   var blocks = [];
   var seq = 0;
@@ -275,132 +257,50 @@
   var connection = { command: '' };
   var roster = [];
   var openSteps = null;
-  var ticker = 0;
 
-  /* WHAT THE CENTRE SHOWS while there is no transcript: the card, or the
-     connect sheet in its place. The sheet is the only thing that ever holds
-     the mcp-add command, and it can only be opened while nobody is at the
-     wheel. The moment somebody is (starting, ready, working) it closes, so a
-     Ready card never carries a block meant for a terminal. That is the whole
-     fix for the command that used to stay on screen after Start: the block
-     was hidden by its own toggle and by nothing else. */
+  /* WHAT THE CENTRE SHOWS while there is no transcript: the card, or the connect sheet in
+     its place. The sheet can only be open while nobody is at the wheel. */
   var view = 'card';
 
-  /* THE ONE THING THAT WENT WRONG, in words. Set from a failed start or an
-     exit the person did not ask for, shown under the status line with a Retry,
-     and cleared by the next start. `reason` is the driver's plain sentence;
-     `detail` is its technical line, kept so the error frame that follows the
-     same failure is not printed a second time as a row. */
+  /* THE ONE THING THAT WENT WRONG, in words: the driver's plain sentence under the head,
+     with a Retry, and its technical line kept so the error frame that follows is not
+     printed a second time as a row. */
   var failure = null;
 
-  /* THE TURN, and why it is not a transcript row.
-
-     The old build put a "thinking" row in the transcript, removed it the moment
-     any frame arrived, and never brought it back. So the two longest silences
-     in a turn were the two with nothing on screen: before the first tool call,
-     and after the last one while the answer is being written. A person watching
-     that has no way to tell a working agent from a dead one.
-
-     This is one record that lives from the moment a prompt goes out until the
-     turn ends. Three states, each one an event rather than a guess: `thinking`
-     (sent, nothing back yet), `calling` (a tool is open) and `writing` (text
-     has arrived and no tool is open). The seat light in the head shows it (the
-     verb and the clock come from this record), and the turn bar under the
-     transcript is clipped out of sight by the stylesheet and kept as the live
-     region a screen reader hears. */
+  /* THE TURN. One record from the moment a prompt goes out until the turn ends, in three
+     states, each one an event rather than a guess: `thinking` (sent, nothing back yet),
+     `calling` (a tool is open) and `writing` (words are arriving). The working line reads it,
+     so the two longest silences in a turn (before the first call, and after the last) are
+     never a blank column. No clock: the line says what is happening, not for how long. */
   var turn = null;
 
-  /* The read cards drawn so far in this turn (ui/screens/cards.js kinds other than a move), so
-     the next card can take their place: at most one read card per turn, and none under a move. */
+  /* Whether the last turn ended since the person last spoke: the header mark shows it. */
+  var turnDone = false;
+
+  /* The read cards drawn so far in this turn, so the next can take their place: at most
+     one read card per turn, and none under a move. */
   var turnReadBlocks = [];
 
-  /* WHICH CONVERSATION THIS COLUMN IS. The stream carries every chat's events
-     and the app opens up to four, so an untagged reader printed another
-     conversation's tool calls into this one and lit the window for work this
-     agent never did. The column adopts the first chat it hears from and
-     ignores the rest. */
+  /* What the person asked in this turn, so a wallet read draws its card only when they
+     asked about their money. */
+  var turnAsk = '';
+
+  /* WHICH CONVERSATION THIS COLUMN IS. The stream carries every chat's events and the app
+     opens up to four; the column adopts the first chat it hears from and ignores the rest. */
   var chatId = null;
 
-  /* Five phases for the rest of the window, five words for the person. A
-     stopped assistant is off: the word is the same whether the person turned
-     it off or it left on its own, and the line under the status is what
-     tells those two apart. Off with somebody else's agent attached over MCP
-     is a sixth word, Connected: nobody of ours is at the wheel, but the seat
-     is not empty. */
-  var STATE_WORDS = {
-    idle: 'Off',
-    starting: 'Starting...',
-    connected: 'Ready',
-    working: 'Working',
-    error: 'Could not start'
-  };
+  /* The rows the last state frame carried, by id: every waiting row and the twenty most
+     recent decided ones (src/http/state.ts), each with its view. Null until the first frame. */
+  var liveRows = null;
 
-  /* The state as the stylesheet reads it: one word per light. */
-  var STATE_ATTR = {
-    idle: 'off',
-    starting: 'starting',
-    connected: 'ready',
-    working: 'working',
-    error: 'error'
-  };
+  /* Whether the stored transcript has been read back. Until it has, a waiting row's card
+     is not drawn from the state frame: the transcript may already hold it, in its place. */
+  var restored = false;
+  var bootAt = Date.now();
 
-  function stateAttr() {
-    if (ownAttached()) return 'connected';
-    return STATE_ATTR[phase] || 'off';
-  }
-
-  /* Somebody else's agent is at the wheel: the built-in one is off, not
-     failed, and the roster names a client. */
-  function ownAttached() {
-    return phase === 'idle' && ownAgents().length > 0;
-  }
-
-  /* The newest call still open, which is the one the status line names. Read
-     off the blocks rather than off the open steps block, because a receipt
-     card closes that block while the call that produced it can still be
-     running. */
-  function liveStep() {
-    for (var b = blocks.length - 1; b >= 0; b -= 1) {
-      var block = blocks[b];
-      if (block.type !== 'steps' || block.done) continue;
-      var steps = block.steps;
-      for (var i = steps.length - 1; i >= 0; i -= 1) {
-        if (steps[i].state === 'live') return steps[i];
-      }
-    }
-    return null;
-  }
-
-  function sentence(text) {
-    var value = String(text || '');
-    return value.charAt(0).toUpperCase() + value.slice(1);
-  }
-
-  /* WHAT THE STATUS LINE SAYS. The state word, until the assistant is at
-     work: then the open call's own words ("Reading the chart"), the turn's
-     state between calls ("Thinking", "Writing the answer"), and a plain
-     "Working" only when the column knows it is busy and nothing more, which
-     is a window that opened onto a turn already under way. */
-  function statusVerb() {
-    if (ownAttached()) return COPY.connected;
-    if (phase !== 'working') return STATE_WORDS[phase] || 'Off';
-    var step = liveStep();
-    if (step) return sentence(step.label);
-    if (turn) return sentence(turnLine());
-    return STATE_WORDS.working;
-  }
-
-  /* When the work being shown began: the turn, so the head's clock is how
-     long the whole answer has taken (each step row already carries its own),
-     else the open call, else nothing, because a clock with no start would
-     have to invent one. */
-  function statusStartedAt() {
-    if (phase !== 'working') return 0;
-    if (turn) return turn.startedAt;
-    var step = liveStep();
-    if (step) return step.startedAt;
-    return 0;
-  }
+  /* The working line, the one row that is not a block: it is drawn at the end while the
+     turn is thinking or calling, and it gives way to the reply the moment words arrive. */
+  var WORKING = { type: 'working', key: 'working' };
 
   function isWorking() {
     return phase === 'working';
@@ -414,15 +314,11 @@
     return phase === 'idle' || phase === 'error';
   }
 
-  /* Somebody else's agent, attached over MCP while the built-in one is off.
-     The roster lists the built-in child too once it has attached, so it is
-     only read while this column knows nobody of its own is at the wheel. */
+  /* Somebody else's agent, attached over MCP while the built-in one is off. */
   function ownAgents() {
     return canStart() ? roster : [];
   }
 
-  /* The members that have done something. The rest are attached and idle,
-     which the roster folds into one line and the card does not call driving. */
   function workingAgents() {
     var out = [];
     var list = ownAgents();
@@ -430,8 +326,6 @@
     return out;
   }
 
-  /* The roster as drawn: one row per member at work, then one quiet row for
-     everyone attached and idle, however many. */
   function rosterRows() {
     var list = ownAgents();
     var rows = workingAgents();
@@ -446,19 +340,36 @@
     return rows;
   }
 
+  /* The newest call still open, which is the step the working line names. */
+  function liveStep() {
+    for (var b = blocks.length - 1; b >= 0; b -= 1) {
+      var block = blocks[b];
+      if (block.type !== 'steps' || block.done) continue;
+      var steps = block.steps;
+      for (var i = steps.length - 1; i >= 0; i -= 1) {
+        if (steps[i].state === 'live') return steps[i];
+      }
+    }
+    return null;
+  }
+
+  function workingWords() {
+    var step = liveStep();
+    return step ? sentence(step.label) : COPY.thinking;
+  }
+
   /* ---------- mount ---------- */
 
   function mount(host, options) {
     if (!host) return null;
     var opts = options || {};
-    /* mark is what the transcript held at the last render, so the next one can
-       tell an arrival from a redraw; unseen counts arrivals since the person
-       was last at the end; followUntil is the clock the column is easing
-       down on. */
-    var node = { host: host, composerHost: opts.composerHost || null, refs: {}, live: [], mark: '', unseen: 0, followUntil: 0, lastTop: 0 };
+    /* pinned: the column is at its end and follows what lands; following: the follow motion
+       is running; lastTop: where the scroller was, to tell a person scrolling up from a row
+       that shrank. */
+    var node = { host: host, composerHost: opts.composerHost || null, refs: {}, pinned: true, following: false, lastTop: 0 };
     build(node);
     mounts.push(node);
-    render(node, mounts.length === 1);
+    render(node);
     return node;
   }
 
@@ -475,44 +386,24 @@
     var host = node.host;
     dom.clear(host);
 
-    /* THE HEAD. The name, the seat light, and one control. */
+    /* THE HEAD. No name and no status line: the header mark says whether the assistant is
+       working, and the thread says what it is doing. What is left is what a person may need
+       to press or read: why it stopped, with a Retry, and the one control. */
     var head = dom.el('div', 'agent-head');
-    var title = dom.el('div', 'agent-title');
-    title.appendChild(dom.el('span', 'agent-name', 'Assistant'));
-    /* THE SEAT LIGHT. One status line beside the name, in the shared grammar
-       (components.css): a 6 px dot, the verb, and the seconds. The dot is
-       the app's own mark, hollow while nobody is at the wheel and solid while
-       somebody is, and it never moves. What says "working" is the verb, which
-       is the tool's own words, and the clock beside it, which counts. */
-    var status = dom.el('div', 'status-line agent-status');
-    status.id = 'agent-status';
-    var dot = dom.el('span', 'status-light');
-    var mark = dom.mark('status-mark');
-    if (mark) dot.appendChild(mark);
-    var ring = dom.el('span', 'status-ring');
-    ring.setAttribute('aria-hidden', 'true');
-    dot.appendChild(ring);
-    var verb = dom.el('span', 'status-verb', 'Off');
-    var elapsed = dom.el('span', 'status-elapsed');
-    elapsed.hidden = true;
-    status.appendChild(dot);
-    status.appendChild(verb);
-    status.appendChild(elapsed);
-    title.appendChild(status);
-    head.appendChild(title);
+    var note = dom.el('div', 'agent-note');
+    note.setAttribute('role', 'status');
+    var noteText = dom.el('span', 'agent-note-text');
+    var retry = button('btn btn-ghost btn-sm agent-retry', 'Retry', '', 'Starting');
+    note.appendChild(noteText);
+    note.appendChild(retry);
+    note.hidden = true;
+    head.appendChild(note);
 
-    /* One control at the right, and only one at a time: Turn off while
-       somebody is at the wheel, Start when the card that offers it has
-       scrolled away under a transcript. Stopping an answer is the composer's
-       button, where the answer was sent from. */
     var controls = dom.el('div', 'agent-controls');
-    var start = button('btn btn-primary btn-sm', 'Start your assistant', '', 'Starting');
+    var start = button('btn btn-ghost btn-sm', 'Start your assistant', '', 'Starting');
     var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off', 'Turning off');
     controls.appendChild(start);
     controls.appendChild(stopAgent);
-    /* The pane's own hide control (ui/split.js, drawn by trade.css), last in
-       the cluster. The Layout menu on the bar brings the pane back, on every
-       mode. Guarded until the trade branch lands the pane API. */
     var split = window.PhosphorSplit;
     if (split && typeof split.paneControl === 'function') {
       var hide = split.paneControl('conversation');
@@ -521,49 +412,18 @@
     head.appendChild(controls);
     host.appendChild(head);
 
-    /* WHAT WENT WRONG, under the status it belongs to: one sentence and a
-       Retry, present only while there is a failure to name. It is the same
-       line whether the card is on screen or a transcript is, so a person
-       whose assistant died mid conversation reads the reason in the head
-       rather than losing it under the last message. */
-    var note = dom.el('div', 'agent-note');
-    note.setAttribute('role', 'status');
-    var noteText = dom.el('span', 'agent-note-text');
-    var retry = button('chip agent-retry', 'Retry', '', 'Starting');
-    note.appendChild(noteText);
-    note.appendChild(retry);
-    note.hidden = true;
-    host.appendChild(note);
-
-    /* Who else is holding the reins. A second client that can ask for money is
-       not a detail, so it is named under the head rather than behind a fold. */
+    /* Who else is holding the reins. A second client that can ask for money is not a
+       detail, so it is named under the head rather than behind a fold. */
     var clients = dom.el('div', 'agent-clients');
     host.appendChild(clients);
 
     /* THE CENTRE: the card, or the connect sheet in its place. */
     var centre = dom.el('div', 'agent-centre');
-
-    /* THE CARD, AND WHY IT HAS THREE ANSWERS.
-
-       It used to be one card keyed on nothing but an empty transcript, so it
-       said "Nobody is at the wheel" and offered a Start button for the whole
-       time an agent was running and simply had not been spoken to yet. Starting
-       one changed the chip and nothing else, because the biggest thing on the
-       screen went on saying the opposite. Karim, 2026-09-08: "I need much
-       better feedback when I click start an agent, right now nothing changes."
-
-       The three states are the three true answers to "is anybody there": no,
-       coming, and yes. The seat, the headline and the buttons all follow the
-       phase, and the Start button is drawn only in the state where starting is
-       a thing that can be done. */
     var empty = dom.el('div', 'agent-empty');
     var emptyInner = dom.el('div', 'agent-empty-inner');
-    /* The seat is the mark: 40 px of the window's own light. Muted when
-       nobody is there, waking while one comes up, lit with one soft glow
-       once one is. It is the only thing in the panel that glows. */
     var emptySeat = dom.el('div', 'agent-seat');
     emptySeat.setAttribute('aria-hidden', 'true');
-    var seatMark = dom.mark('agent-seat-mark');
+    var seatMark = dom.mark('agent-seat-mark', 'idle');
     if (seatMark) emptySeat.appendChild(seatMark);
     emptyInner.appendChild(emptySeat);
     var emptyTitle = dom.el('p', 'agent-empty-title', COPY.offTitle);
@@ -576,11 +436,6 @@
     emptyActions.appendChild(startBig);
     emptyActions.appendChild(connectBtn);
     emptyInner.appendChild(emptyActions);
-
-    /* THREE FIRST MOVES. A card that only says nobody is there is a dead end:
-       the person has an assistant and no idea what to say to it. Each pill is
-       a real question this window can answer, and pressing one asks it: on a
-       live column at once, on a quiet one by starting the assistant first. */
     var rule = dom.el('hr', 'agent-rule');
     emptyInner.appendChild(rule);
     var suggest = dom.el('div', 'agent-suggest');
@@ -594,9 +449,6 @@
     empty.appendChild(emptyInner);
     centre.appendChild(empty);
 
-    /* THE CONNECT SHEET. In the card's place, not over it: a title, one line,
-       the command with its Copy inside, the hint, a status line that reads
-       the roster, and the way back. */
     var sheet = dom.el('div', 'agent-connect');
     sheet.hidden = true;
     sheet.appendChild(dom.el('p', 'agent-connect-title', COPY.connectTitle));
@@ -608,9 +460,8 @@
     block.appendChild(copy);
     sheet.appendChild(block);
     sheet.appendChild(dom.el('p', 'agent-connect-hint', COPY.connectHint));
-    var connectStatus = dom.el('div', 'status-line agent-connect-status');
-    connectStatus.appendChild(dom.el('span', 'status-dot'));
-    var connectVerb = dom.el('span', 'status-verb', COPY.waiting);
+    var connectStatus = dom.el('p', 'agent-connect-status');
+    var connectVerb = dom.el('span', '', COPY.waiting);
     connectStatus.appendChild(connectVerb);
     sheet.appendChild(connectStatus);
     var back = button('btn btn-ghost btn-sm agent-connect-back', 'Back');
@@ -618,56 +469,38 @@
     centre.appendChild(sheet);
     host.appendChild(centre);
 
-    /* THE SCROLLER, IN A FRAME THAT DOES NOT SCROLL. The transcript is the
-       one thing in the column that moves, so the things drawn over it (the
-       edge fades, the way back down) sit on the frame around it rather than
-       inside it, and the scroller itself carries nothing but rows. */
+    /* THE THREAD. The scroller spans the column, so a wheel anywhere over it scrolls; the
+       rows sit in one centred measure inside it, and that measure is what the resize
+       observer watches: any row that grows, a card that opens, a reply that streams. */
     var wrap = dom.el('div', 'transcript-wrap');
     var list = dom.el('div', 'transcript');
-    list.setAttribute('role', 'log');
-    list.setAttribute('aria-live', 'polite');
+    var rows = dom.el('div', 'transcript-rows');
+    rows.setAttribute('role', 'log');
+    rows.setAttribute('aria-live', 'polite');
+    list.appendChild(rows);
     wrap.appendChild(list);
-    /* No scrollbar (agent.css hides it): the transcript fades at the edge
-       that has more behind it, the way every list in the window does. The
-       fade is two gradients laid over the frame, never a mask on the scroller:
-       a mask keeps WebKit scrolling on the main thread. cuts() says which
-       edge has more behind it. */
     var fadeTop = dom.el('div', 'transcript-fade');
     fadeTop.setAttribute('data-edge', 'top');
-    var fadeBottom = dom.el('div', 'transcript-fade');
-    fadeBottom.setAttribute('data-edge', 'bottom');
     wrap.appendChild(fadeTop);
-    wrap.appendChild(fadeBottom);
-    /* THE WAY BACK DOWN. A person who scrolled up to read is left where they
-       are when a row lands (Karim, 2026-09-16: "when i send a new message it
-       doesnt auto scroll me all the way down or at least give me an arrow I
-       can click if I have scrolled up to go straight down"), and this is the
-       arrow: one round pill at the foot of the scroller, the count of what
-       landed while they were away when it is more than one. It decides
-       nothing: it scrolls. */
-    var jump = button('jump-latest', 'Jump to latest', 'Jump to the latest message');
-    jump.appendChild(icon('chevron-down', 'jump-glyph'));
-    var jumpCount = dom.el('span', 'jump-count mono');
-    jump.appendChild(jumpCount);
+    /* THE WAY BACK DOWN. A person who scrolled up to read is left where they are when a row
+       lands; this small quiet control on the thread's bottom edge takes them to the latest. */
+    var jump = button('jump-latest', 'Latest', 'Go to the latest message');
+    jump.insertBefore(icon('chevron-down', 'jump-glyph'), jump.firstChild);
     wrap.appendChild(jump);
     host.appendChild(wrap);
-    cuts(list, wrap);
 
-    /* The turn bar is text and one dot: no control, nothing that decides
-       anything. Heard and not seen (agent.css clips it): the seat light says
-       the same words with the same clock. */
-    var turnBar = dom.el('div', 'turn-bar');
-    turnBar.setAttribute('role', 'status');
-    turnBar.setAttribute('aria-live', 'polite');
-    turnBar.appendChild(dom.el('span', 'turn-dot'));
-    turnBar.appendChild(dom.el('span', 'turn-what'));
-    turnBar.appendChild(dom.el('span', 'turn-time'));
-    turnBar.hidden = true;
+    /* THE ONE THING WAITING. A move that needs the person, on a card they have scrolled
+       away from, is one quiet line above the box, and the line takes them to it. */
+    var waitLine = dom.el('button', 'agent-waiting');
+    waitLine.type = 'button';
+    waitLine.appendChild(icon('waiting', 'agent-waiting-glyph'));
+    var waitWords = dom.el('span', 'agent-waiting-words', 'Waiting for your OK');
+    waitLine.appendChild(waitWords);
+    waitLine.hidden = true;
 
-    /* THE COMPOSER. One pill on a raised ground, a hairline that turns ink
-       on focus, the textarea bare inside it growing to six lines, and one
-       round ink button at the right: the send arrow, which becomes a stop
-       square while an answer is running. Enter sends. */
+    /* THE COMPOSER. One field, the textarea bare inside it growing to six lines, and one
+       round button at the right: the send arrow, which becomes a stop square while an
+       answer is running. Enter sends. */
     var composer = dom.el('form', 'agent-composer');
     var field = dom.el('div', 'composer-field');
     var input = dom.el('textarea', 'input composer-input');
@@ -685,15 +518,11 @@
     field.appendChild(send);
     composer.appendChild(field);
     var composerHost = node.composerHost || host;
-    composerHost.appendChild(turnBar);
+    composerHost.appendChild(waitLine);
     composerHost.appendChild(composer);
 
     node.refs = {
-      status: status,
-      dot: dot,
-      ring: ring,
-      verb: verb,
-      elapsed: elapsed,
+      head: head,
       field: field,
       start: start,
       startBig: startBig,
@@ -706,9 +535,12 @@
       emptyInner: emptyInner,
       sheet: sheet,
       list: list,
+      rows: rows,
       listWrap: wrap,
+      fadeTop: fadeTop,
       jump: jump,
-      jumpCount: jumpCount,
+      waitLine: waitLine,
+      waitWords: waitWords,
       composer: composer,
       input: input,
       send: send,
@@ -718,10 +550,6 @@
       connectVerb: connectVerb,
       connectStatus: connectStatus,
       clients: clients,
-      turnBar: turnBar,
-      turnDot: turnBar.children[0],
-      turnWhat: turnBar.children[1],
-      turnTime: turnBar.children[2],
       emptySeat: emptySeat,
       emptyTitle: emptyTitle,
       emptyNote: emptyNote,
@@ -737,24 +565,25 @@
     dom.on(copy, 'click', function () { copyLine(node); });
     dom.on(connectBtn, 'click', function () { setView('connect'); });
     dom.on(back, 'click', function () { setView('card'); });
-    dom.on(jump, 'click', function () { jumpToEnd(node); });
-    /* Reaching the end by hand puts the pill away. Going up ends the follow:
-       the column's own easing only ever moves down, so a scroll that moved
-       up is the person, and the hand wins. */
-    dom.on(list, 'scroll', function () {
-      if (list.scrollTop < node.lastTop) node.followUntil = 0;
-      node.lastTop = list.scrollTop;
-      if (node.unseen && atEnd(list)) {
-        node.unseen = 0;
-        paintJump(node);
-      }
-    }, { passive: true });
+    dom.on(jump, 'click', function () { toEnd(node); });
+    dom.on(waitLine, 'click', function () { toWaiting(node); });
 
-    /* Enter sends and Shift+Enter breaks the line, which is the shape every
-       chat box has. Escape lets go of the box and keeps the draft: leaving is
-       not the same as throwing away. Nothing animates on the keyboard path: a
-       person who has just typed does not need the window to confirm that they
-       pressed a key. */
+    /* The hand wins. A wheel or a key that moves up lets go of the end at once, so the
+       follow never fights a person who is reading; reaching the end again takes it back. */
+    dom.on(list, 'scroll', function () { onScroll(node); }, { passive: true });
+    dom.on(list, 'wheel', function (event) {
+      if (event && event.deltaY < 0) letGo(node);
+    }, { passive: true });
+    dom.on(list, 'keydown', function (event) {
+      var key = event && event.key;
+      if (key === 'ArrowUp' || key === 'PageUp' || key === 'Home') letGo(node);
+    });
+    if (typeof window.ResizeObserver === 'function') {
+      var sizes = new window.ResizeObserver(function () { onResize(node); });
+      sizes.observe(rows);
+      sizes.observe(list);
+    }
+
     dom.on(input, 'keydown', function (event) {
       if (event.key === 'Escape') {
         if (typeof input.blur === 'function') input.blur();
@@ -764,8 +593,6 @@
       event.preventDefault();
       submit(node);
     });
-    /* The one button does two things and the form knows which: while an
-       answer is running it is Stop, and a submit then is an interrupt. */
     dom.on(composer, 'submit', function (event) {
       event.preventDefault();
       if (phase === 'working') {
@@ -774,23 +601,16 @@
       }
       submit(node);
     });
-    /* The arrow arms on the same event the box grows on, because "there is
-       something to send" is a fact about the text and not about the phase. */
     dom.on(input, 'input', function () {
       autogrow(input);
       arm(node);
     });
   }
 
-  /* The send arrow is grey until the box holds a word. Read off the value,
-     never off the phase, so a box that was typed into before the assistant
-     came up is armed the moment it can be used. */
+  /* The send arrow is dim until the box holds a word. */
   function arm(node) {
     var text = String(node.refs.input.value || '').trim();
     dom.setAttr(node.refs.field, 'data-armed', text ? 'true' : null);
-    /* Three states and the button is only pressable in two: Stop while an
-       answer runs, Send while there are words. An empty box has nothing to
-       send, so the arrow is out rather than dim. */
     node.refs.send.disabled = !canTalk() || (phase !== 'working' && !text);
   }
 
@@ -801,14 +621,8 @@
     renderAll();
   }
 
-  /* A SUGGESTION IS A QUESTION, SO PRESSING ONE ASKS IT.
-
-     On a live column it goes straight out. On a column with nobody at the
-     wheel it starts the assistant, through the same door the Start button
-     uses, with the words waiting in the box, and sends them the moment the
-     seat reports ready. A start that fails leaves the words where they are
-     and lets the status line say what went wrong; nothing sends, and the
-     next press is the person's. */
+  /* A SUGGESTION IS A QUESTION, SO PRESSING ONE ASKS IT: at once on a live column, and on a
+     quiet one by starting the assistant first with the words waiting in the box. */
   var queued = null;
 
   function suggestClick(node, text) {
@@ -827,9 +641,6 @@
     };
   }
 
-  /* The seat came up with a question waiting. Sent only if the box still
-     holds the words that were queued: a box that says something else is a
-     person who changed their mind while it was starting. */
   function sendQueued() {
     var waiting = queued;
     queued = null;
@@ -838,13 +649,8 @@
     submit(waiting.node);
   }
 
-  /* Height from content, capped at six lines, and measured from zero so
-     deleting a line gives the space back. No transition on it: the box has to
-     be under the caret on the frame the character lands, not on the way there.
-
-     scrollHeight counts the padding and not the border, and the box is
-     border-box, so the border is added back or every growth step leaves a two
-     pixel scrollbar behind. */
+  /* Height from content, capped at six lines, and measured from zero so deleting a line
+     gives the space back. */
   function autogrow(input) {
     input.style.height = 'auto';
     var style = window.getComputedStyle(input);
@@ -853,8 +659,6 @@
     var pad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
     var border = input.offsetHeight - input.clientHeight;
     var content = input.scrollHeight;
-    /* The cap is a whole number of lines, read from the box rather than
-       guessed, so the sixth line is scrolled away rather than half drawn. */
     var cap = Math.round(COMPOSER_MAX_LINES * line + pad);
     input.style.height = Math.min(content, cap) + border + 'px';
     input.style.overflowY = content > cap ? 'auto' : 'hidden';
@@ -862,36 +666,32 @@
 
   /* ---------- actions ---------- */
 
-  /* THE ECHO AND THE EVENT ARE ONE MESSAGE, WHICH IS WHY THIS BOOKS A PLACE.
-
-     The window used to draw the message the moment it was typed AND again when
-     the server broadcast it back, so every prompt appeared twice. Waiting for
-     the server instead would fix the count and cost a round trip before a
-     person sees their own words, which is the wrong trade.
-
-     So the local row goes in straight away as `pending` and the server's own
-     `said` event adopts it rather than pushing a second one. The state is not
-     decoration: it is the difference between a message this app has taken
-     responsibility for and one still in the air. */
+  /* THE ECHO AND THE EVENT ARE ONE MESSAGE. The local row goes in at once as `pending` and
+     the server's own `said` event adopts it rather than pushing a second one. */
   function submit(node) {
     var text = node.refs.input.value.trim();
     if (!text || !canTalk()) return;
     node.refs.input.value = '';
     autogrow(node.refs.input);
     arm(node);
-    /* Their own words always land in view, however far up they were reading. */
+    prompt(text);
+  }
+
+  /* A message to the assistant, from the box or from a card's Try again. Their own words
+     always land in view, however far up they were reading. */
+  function prompt(text) {
+    if (!text || !canTalk()) return false;
     jumpAll = true;
     var mine = said(text, 'pending');
     api.driver({ action: 'prompt', text: text, chat: '' }).catch(function (err) {
       mine.state = 'failed';
-      endTurnBar();
+      turn = null;
       pushBlock({ type: 'error', text: net.readable(err) });
     });
+    return true;
   }
 
   function doStart(node, btn) {
-    /* Starting over gives the app a new chat with a new id, so the column has
-       to forget the one it was following or it filters out its own agent. */
     chatId = null;
     failure = null;
     setPhase('starting', 'starting');
@@ -905,12 +705,9 @@
       });
   }
 
-  /* Turn off quits the assistant: its process ends and its chat closes, so
-     nothing is left running or waiting (Karim, 2026-09-16: "turn off should
-     completely quit the assistant. meaning quit ... of course with
-     confirmation first"). The confirmation is an in-app card on the dock,
-     never a system dialog. Stopping an answer in progress is the composer's
-     button and asks nothing. */
+  /* Turn off quits the assistant, with a confirmation first, and the confirmation is a
+     card in the thread. Stopping an answer in progress is the composer's button and asks
+     nothing. */
   function doStop(action, node) {
     if (action === 'stop') {
       confirmOff(node);
@@ -928,12 +725,10 @@
   }
 
   function confirmOff(node) {
-    var decision = window.PhosphorDecision;
-    if (!decision || typeof decision.showCard !== 'function') return quitAssistant(node);
-    decision.showCard(function (host, done) {
+    showCard(function (host, done) {
       dom.clear(host);
       host.appendChild(dom.el('h2', 'title', 'Turn off the assistant?'));
-      host.appendChild(dom.el('p', 'body dim', 'Its transcript on this window is deleted. Your wallet, policy and open positions are untouched.'));
+      host.appendChild(dom.el('p', 'body dim', 'Its transcript on this window is deleted. Your wallet, limits and open positions are untouched.'));
       var actions = dom.el('div', 'dock-actions');
       var keep = button('btn btn-ghost', 'Keep running');
       var off = button('btn btn-danger', 'Turn off');
@@ -954,8 +749,6 @@
     window.PhosphorShell.setPending(btn, true);
     api.driver({ action: 'stop', chat: '' })
       .then(function () {
-        /* Stopped is the process gone; closed is the chat gone with it, and
-           its transcript on the server dies with the chat. */
         return api.driver({ action: 'close', chat: '' });
       })
       .then(function () {
@@ -970,45 +763,21 @@
       });
   }
 
-  /* THE COLUMN AFTER A QUIT is the column before anybody started: no rows,
-     the card with nobody at the wheel, the head reading Off. This is the
-     quit's own step and never the stopped frame's, because a crash arrives
-     as the same state with a reason, and that transcript has to stay on
-     screen under the reason (Karim, 2026-09-16: turn off "should take me
-     back to" the empty state). The receipts already seen stay seen, so a
-     card that was posted once is not posted again by the next read. */
+  /* THE COLUMN AFTER A QUIT is the column before anybody started. This is the quit's own
+     step and never the stopped frame's: a crash arrives as the same state with a reason,
+     and that transcript stays on screen under the reason. */
   function forget() {
     blocks.length = 0;
     openSteps = null;
     turn = null;
+    turnDone = false;
     failure = null;
     queued = null;
     view = 'card';
-    for (var i = 0; i < mounts.length; i += 1) {
-      mounts[i].unseen = 0;
-      mounts[i].followUntil = 0;
-    }
+    for (var i = 0; i < mounts.length; i += 1) mounts[i].pinned = true;
     setPhase('idle', 'stopped');
   }
 
-  /* Paint which edges of a scroller have more behind them, for the fade
-     the stylesheet draws there: on the frame around the scroller when there
-     is one, so the scroller's own paint is never touched. */
-  function cuts(scroller, frame) {
-    var target = frame || scroller;
-    function paint() {
-      var top = scroller.scrollTop > 2;
-      var bottom = scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 2;
-      dom.setAttr(target, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
-    }
-    dom.on(scroller, 'scroll', paint, { passive: true });
-    if (window.ResizeObserver) new window.ResizeObserver(paint).observe(scroller);
-    paint();
-    return paint;
-  }
-
-  /* A start that did not happen, in the window's own words: the reason the
-     driver gave, or the one the window found out for itself. */
   function fail(reason, detail) {
     failure = { reason: reason || COPY.failedUnsaid, detail: detail || '' };
     setPhase('error', 'failed');
@@ -1031,10 +800,7 @@
 
   /* ---------- the transcript model ---------- */
 
-  /* Blocks carry their own key, so trimming the head of a capped transcript does
-     not renumber every row under the reconciler and rebuild the column. */
-  /* Drops this turn's read cards from the thread. The steps that produced them stay: what
-     the agent did is still the honest record, only the card it drew is gone. */
+  /* Drops this turn's read cards from the thread. The steps that produced them stay. */
   function dropTurnReads() {
     if (!turnReadBlocks.length) return;
     for (var i = 0; i < turnReadBlocks.length; i += 1) {
@@ -1044,6 +810,8 @@
     turnReadBlocks = [];
   }
 
+  /* Blocks carry their own key, so trimming the head of a capped transcript does not
+     renumber every row under the reconciler. */
   function pushBlock(block) {
     seq += 1;
     block.key = 'b' + seq;
@@ -1053,8 +821,15 @@
     return block;
   }
 
-  /* A note from the child's own stderr is kept, quietly, and it does not make
-     a conversation: the card stays until somebody has actually said something. */
+  function removeBlock(block) {
+    var at = blocks.indexOf(block);
+    if (at === -1) return;
+    blocks.splice(at, 1);
+    renderAll();
+  }
+
+  /* A note from the child's own stderr is kept, quietly, and it does not make a
+     conversation: the card stays until somebody has actually said something. */
   function hasConversation() {
     for (var i = 0; i < blocks.length; i += 1) {
       if (blocks[i].type !== 'note') return true;
@@ -1065,15 +840,13 @@
   function said(text, state) {
     openSteps = null;
     turnReadBlocks = [];
+    turnAsk = String(text || '');
     var block = pushBlock({ type: 'said', text: text, state: state || 'sent' });
-    startTurnBar();
+    startTurn();
     return block;
   }
 
-  /* The pending row this event is the receipt for, newest first. Matching on
-     the text is enough and matching on more would be wrong: the server echoes
-     the string it stored, and two identical prompts sent in a row are two rows
-     that each want a receipt, so the newest unconfirmed one takes it. */
+  /* The pending row this event is the receipt for, newest first. */
   function adoptPending(text) {
     for (var i = blocks.length - 1; i >= 0; i -= 1) {
       var block = blocks[i];
@@ -1086,27 +859,10 @@
     return null;
   }
 
-  /* ---------- the turn ---------- */
-
-  function startTurnBar() {
-    turn = { startedAt: Date.now(), state: 'thinking', label: '' };
+  function startTurn() {
+    turn = { state: 'thinking' };
+    turnDone = false;
     renderAll();
-  }
-
-  function endTurnBar() {
-    turn = null;
-    renderAll();
-  }
-
-  /* WHAT THE BAR SAYS, and what it deliberately does not. The step row
-     already names the call and times it, so the bar carries what the
-     transcript cannot, which is the state of the TURN: "still going, and for
-     how long". */
-  function turnLine() {
-    if (!turn) return '';
-    if (turn.state === 'writing') return 'writing the answer';
-    if (turn.state === 'calling') return 'working';
-    return 'thinking';
   }
 
   function stepsBlock() {
@@ -1118,7 +874,7 @@
   function openStep(name, at, input) {
     var block = stepsBlock();
     seq += 1;
-    var step = {
+    block.steps.push({
       id: 's' + seq,
       name: name,
       label: toolLabel(name),
@@ -1126,39 +882,20 @@
       input: scalarArgs(input),
       leaves: leavesMachine(name),
       state: 'live',
-      startedAt: at,
-      endedAt: null
-    };
-    block.steps.push(step);
-    return step;
+      startedAt: at
+    });
   }
 
-  function closeStep(name, ok, at) {
+  function closeStep(name, ok) {
     if (!openSteps) return null;
     var steps = openSteps.steps;
     for (var i = steps.length - 1; i >= 0; i -= 1) {
       var step = steps[i];
-      if (step.state !== 'live') continue;
-      if (step.name !== name) continue;
+      if (step.state !== 'live' || step.name !== name) continue;
       step.state = ok === false ? 'error' : 'done';
-      step.endedAt = at;
       return step;
     }
     return null;
-  }
-
-  function elapsedOf(step, now) {
-    var end = step.endedAt === null ? now : step.endedAt;
-    return Math.max(0, end - step.startedAt);
-  }
-
-  /* One decimal up to a hundred seconds, whole seconds above it. A research call
-     that ran for two minutes reads as a number rather than as a stopwatch. */
-  /* A tenth of a second up to a minute, which is where a person is watching the
-     number, and whole seconds after that, where they are watching the stage. */
-  function secondsText(ms) {
-    var s = Math.max(0, ms) / 1000;
-    return (s < 60 ? s.toFixed(1) : String(Math.round(s))) + ' s';
   }
 
   function anyError(block) {
@@ -1168,20 +905,13 @@
     return false;
   }
 
-  function foldLabel(block, now) {
-    var steps = block.steps;
-    if (!steps.length) return '';
-    var first = steps[0].startedAt;
-    var last = first;
-    for (var i = 0; i < steps.length; i += 1) {
-      var end = steps[i].endedAt === null ? now : steps[i].endedAt;
-      if (end > last) last = end;
-    }
-    var count = steps.length === 1 ? '1 step' : steps.length + ' steps';
-    return count + ', ' + secondsText(last - first);
+  /* A finished turn's calls, for developer mode: how many, then their phrases. No time: it
+     measured the gap between frames arriving, which was noise and sometimes false. */
+  function foldLabel(block) {
+    var count = block.steps.length;
+    return count === 1 ? '1 step' : count + ' steps';
   }
 
-  /* What the folded turn did, by name: the phrases of its calls, once each. */
   function foldNames(block) {
     var cards = window.PhosphorCards;
     if (cards && typeof cards.foldNames === 'function') return cards.foldNames(block.steps);
@@ -1192,23 +922,58 @@
     return out.join(', ');
   }
 
+  /* ---------- streaming ---------- */
+
+  /* THE FRAME'S SHAPE LIVES HERE AND NOWHERE ELSE. The driver streams a reply as it is
+     written (contract 4, src/driver.ts): `{ kind: 'delta', block, text }` is the next piece of
+     text block `block`, sent to the window only, and the `text` event with the same block
+     number is its whole copy, the one the transcript keeps. This returns what to do with the
+     open reply, and every other line in this file reads the answer, never the frame. */
+  function deltaOf(event) {
+    if (!event || typeof event !== 'object') return null;
+    if (event.kind === 'delta' && typeof event.text === 'string') return { append: event.text };
+    return null;
+  }
+
+  function joined(done, live) {
+    if (!done) return live || '';
+    if (live === null || live === undefined || live === '') return done;
+    return done + '\n\n' + live;
+  }
+
+  /* One reply per stretch of words. `done` is the blocks the model has finished, `live` the
+     one still being written, and `text` what is drawn: both, joined on a blank line. */
+  function streamInto(delta, at) {
+    var tail = blocks[blocks.length - 1];
+    var reply = tail && tail.type === 'reply' ? tail : null;
+    if (!reply) {
+      reply = pushBlock({ type: 'reply', done: '', live: '', text: '', at: at });
+    } else if (reply.live === null) {
+      reply.live = '';
+    }
+    reply.live += delta.append;
+    reply.text = joined(reply.done, reply.live);
+  }
+
+  /* A whole text block: the canonical words for the block that was streaming, or a new
+     block of the same reply, or a reply of its own. */
+  function commitText(text, at) {
+    var tail = blocks[blocks.length - 1];
+    if (tail && tail.type === 'reply') {
+      tail.done = joined(tail.done, String(text));
+      tail.live = null;
+      tail.text = tail.done;
+      return;
+    }
+    pushBlock({ type: 'reply', done: String(text), live: null, text: String(text), at: at });
+  }
+
   /* ---------- state ---------- */
 
-  /* HOW LONG "STARTING" HAS TO BE ON SCREEN, and this is not a fake progress bar.
-
-     The driver reports ready on the child's `spawn` event rather than on its
-     init event, deliberately (see the note in src/driver.ts), so the whole
-     start is a couple of hundred milliseconds. The state is real and it is
-     over before a person can see it: pressing Start flashed one frame of
-     something and landed on the answer, which reads as nothing having
-     happened at all.
-
-     So the transition OUT of starting waits for a floor. Nothing is invented
-     and nothing is measured that is not real: the app is not pretending to work
-     for 450 ms, it is making a change that already happened legible to the eye
-     that was watching for it. A failure waits the same beat, because a Start
-     button that flickers into an error is worse than one that takes a moment
-     and then says what went wrong. */
+  /* HOW LONG "STARTING" HAS TO BE ON SCREEN. The whole start is a couple of hundred
+     milliseconds, over before a person can see it, so the transition out of starting waits
+     for a floor. Nothing is invented: a change that already happened is made legible to the
+     eye that was watching for it. */
   var STARTING_FLOOR_MS = 450;
   var startingAt = 0;
   var floorTimer = 0;
@@ -1220,9 +985,6 @@
     startTimer = 0;
   }
 
-  /* Armed whenever the column enters starting, from a click here or from a
-     frame the app sent, and disarmed by the first thing that proves the start
-     is alive: a phase change, or any event of the conversation. */
   function armStartWatch() {
     clearStartWatch();
     startTimer = window.setTimeout(function () {
@@ -1255,26 +1017,18 @@
     applyPhase(next, word);
   }
 
-  function applyPhase(next, word) {
+  function applyPhase(next) {
     var changed = phase !== next;
-    /* Coming up and then arriving is the one transition a person was watching,
-       so it is the one that hands them the caret. Keyed on `starting` rather
-       than on canTalk() so a window that loads with an agent already running
-       does not take focus off whatever they were doing. */
     var arrived = phase === 'starting' && (next === 'connected' || next === 'working');
-    var settled = phase === 'working' && next !== 'working';
     phase = next;
-    /* The sheet belongs to nobody being at the wheel. Somebody arriving, or
-       on the way, closes it. */
     if (!canStart()) view = 'card';
+    if (next === 'idle' || next === 'error') turnDone = false;
     renderAll();
     if (arrived) focusComposer();
     if (arrived) sendQueued();
     else if (next === 'error' || next === 'idle') queued = null;
-    if (settled) settleRing();
-    window.PhosphorShell.updateField();
-    /* The world reads the assistant's state to write its own hero sentence, and
-       polling a getter on every heartbeat frame is a read the event replaces. */
+    /* The world reads the assistant's state to write its own sentences, and polling a
+       getter on every heartbeat frame is a read the event replaces. */
     if (changed) announcePhase();
   }
 
@@ -1283,64 +1037,54 @@
     window.dispatchEvent(new CustomEvent('phosphor:agent-phase', { detail: { phase: phase } }));
   }
 
-  /* THE SETTLE. When the work ends the seat light stops breathing, and one
-     ring leaves it: a phosphor pixel that was lit and is decaying, half a
-     second on the spring. It runs once per turn, on the frame the verb goes
-     back to "Ready", and it is the Web Animations API rather than a class so
-     nothing has to be cleaned up: the ring is transparent again the moment
-     it is done. Under reduced motion the dot simply stops. */
-  var RING_MS = 500;
-
-  function settleRing() {
-    var motion = window.PhosphorMotion;
-    if (motion.reduced()) return;
-    var ease = motion.spring();
-    for (var i = 0; i < mounts.length; i += 1) {
-      var ring = mounts[i].refs.ring;
-      if (!ring || typeof ring.animate !== 'function') continue;
-      ring.animate([
-        { transform: 'scale(1)', opacity: 0.6 },
-        { transform: 'scale(1.6)', opacity: 0 }
-      ], { duration: RING_MS, easing: ease });
-    }
+  /* THE HEADER MARK (contract 10): the chat's own state on the root, for the top bar's mark
+     to draw. Working while a turn runs, done once one has ended, idle otherwise. */
+  function paintAgentState() {
+    var root = typeof document !== 'undefined' ? document.documentElement : null;
+    if (!root || !root.dataset) return;
+    var next = turn || phase === 'working' ? 'working' : (turnDone && canTalk() ? 'done' : 'idle');
+    if (root.dataset.agent !== next) root.dataset.agent = next;
   }
 
   /* ---------- render ---------- */
 
-  /* Set by the one render that must end at the bottom whatever the scroll
-     position was: the person's own message going in. */
+  /* Set by the one render that must end at the bottom whatever the scroll position was:
+     the person's own message going in, and a card another screen asked to show. */
   var jumpAll = false;
+  var frameAsked = false;
 
   function renderAll() {
-    for (var i = 0; i < mounts.length; i += 1) render(mounts[i], i === 0);
+    for (var i = 0; i < mounts.length; i += 1) render(mounts[i]);
     jumpAll = false;
-    tickerCheck();
+    paintAgentState();
   }
 
-  function render(node, primary) {
+  /* A reply that streams asks for a render per piece; they are drawn once a frame. */
+  function renderSoon() {
+    if (frameAsked) return;
+    var raf = window.requestAnimationFrame;
+    if (typeof raf !== 'function') {
+      renderAll();
+      return;
+    }
+    frameAsked = true;
+    raf(function () {
+      frameAsked = false;
+      renderAll();
+    });
+  }
+
+  function render(node) {
     var refs = node.refs;
-    node.live = [];
-
-    var now = Date.now();
-    dom.setAttr(refs.status, 'data-state', stateAttr());
-    dom.setText(refs.verb, statusVerb());
-    var since = statusStartedAt();
-    dom.setHidden(refs.elapsed, !since);
-    if (since) dom.setText(refs.elapsed, secondsText(now - since));
-
     var empty = !hasConversation();
     var failed = failure !== null && canStart();
 
-    /* The failure line and its Retry. While it is up it is the one way to
-       start again, so the head's Start stays out of its way. */
     dom.setHidden(refs.note, !failed);
     dom.setText(refs.noteText, failed ? failure.reason : '');
     dom.setAttr(refs.note, 'title', failed && failure.detail ? failure.detail : null);
-    dom.setAttr(refs.status, 'data-failed', failed ? 'true' : null);
 
-    /* The card already asks once, in the middle of the column, and two Start
-       buttons on one screen is the window asking twice. The head's copy takes
-       over the moment there is a transcript to keep company. */
+    /* The card already asks once, in the middle of the column; the head's Start takes over
+     the moment there is a transcript to keep company. */
     dom.setHidden(refs.start, empty || failed || !canStart());
     dom.setHidden(refs.stopAgent, !canTalk());
 
@@ -1351,10 +1095,7 @@
     if (empty && !sheet) renderEmpty(node);
     if (sheet) renderSheet(node);
 
-    /* The composer is on screen only while the built-in assistant can take a
-       message. Off, starting and failed all have the card saying what to do
-       instead, and an attached client of the person's own is talked to from
-       its own terminal, so a dead box under it was a question with no answer. */
+    /* The composer is on screen only while the built-in assistant can take a message. */
     dom.setHidden(refs.composer, !canTalk());
     refs.input.disabled = !canTalk();
     refs.send.disabled = !canTalk();
@@ -1364,44 +1105,18 @@
     refs.send.title = stopping ? 'Stop this answer' : 'Send';
     arm(node);
 
-    dom.setHidden(refs.turnBar, !turn);
-    if (turn) {
-      dom.setText(refs.turnWhat, turnLine());
-      dom.setText(refs.turnTime, secondsText(now - turn.startedAt));
-      dom.setAttr(refs.turnBar, 'data-state', turn.state);
-    }
+    if (jumpAll) node.pinned = true;
+    renderBlocks(node);
+    if (node.pinned) follow(node);
+    paintScroll(node);
 
-    /* WHERE THE SCROLL GOES. Read before the rows change: at the end (or
-       still easing there, or their own message going in) means the column
-       follows the new row down, smoothly. Anywhere else means the person is
-       reading, so nothing moves and the pill counts what they have not seen.
-       A render that changed no content (a phase word, the roster) is not an
-       arrival and scrolls nothing. */
-    var stuck = jumpAll || node.followUntil > now || atEnd(refs.list);
-    renderBlocks(node, primary);
-    var mark = contentMark();
-    var arrived = mark !== node.mark;
-    node.mark = mark;
-    if (stuck) {
-      node.unseen = 0;
-      if (arrived) scrollToEnd(node);
-    } else if (arrived) {
-      node.unseen += 1;
-    }
-    paintJump(node);
-
-    /* No line means the backend cannot name one, so the offer goes away with it.
-       A button that reveals an empty block is worse than no button. */
     dom.setText(refs.line, connection.command || '');
     dom.setHidden(refs.connect, !connection.command);
 
-    /* Somebody else's agents, while the built-in one is off: the ones at work
-       by name, and the idle ones as one line. */
     dom.reconcile(refs.clients, rosterRows(), function (client, i) {
       return (client.idle ? 'idle' : client.name) + ':' + i;
     }, function () {
       var row = dom.el('div', 'agent-client');
-      row.appendChild(dom.el('span', 'dot'));
       row.appendChild(dom.el('span', 'agent-client-name'));
       row.appendChild(dom.el('span', 'agent-client-calls mono'));
       return row;
@@ -1409,13 +1124,13 @@
       var kids = row.children;
       if (client.idle) {
         dom.setAttr(row, 'data-idle', 'true');
-        dom.setText(kids[1], client.name);
-        dom.setText(kids[2], '');
+        dom.setText(kids[0], client.name);
+        dom.setText(kids[1], '');
         return;
       }
       dom.setAttr(row, 'data-idle', null);
-      dom.setText(kids[1], client.name + ', ' + (client.role === 'analyst' ? 'read only' : 'can ask'));
-      dom.setText(kids[2], String(client.calls || 0) + ' calls');
+      dom.setText(kids[0], client.name + ', ' + (client.role === 'analyst' ? 'read only' : 'can ask'));
+      dom.setText(kids[1], String(client.calls || 0) + ' calls');
     });
   }
 
@@ -1425,63 +1140,154 @@
     return list.scrollHeight - list.scrollTop - list.clientHeight < STICK_PX;
   }
 
-  /* What the transcript holds, as one string that changes when a row lands or
-     a reply grows and stays the same across a redraw of the same rows. seq
-     moves for every block and every step, and the tail's length catches the
-     text that joins a reply already on screen. */
-  function contentMark() {
-    var tail = blocks[blocks.length - 1];
-    var grow = tail && tail.type === 'reply' ? tail.text.length : 0;
-    return blocks.length + ':' + seq + ':' + grow;
+  function reduced() {
+    var motion = window.PhosphorMotion;
+    return !!(motion && typeof motion.reduced === 'function' && motion.reduced());
   }
 
-  /* The follow: the scroller eases to the end (the browser's own smooth
-     scroll, which runs off the main thread) and the column counts as at the
-     end until it gets there. Under reduced motion it lands at once. */
-  function scrollToEnd(node) {
+  /* THE FOLLOW. While the column is pinned to its end it stays there through anything that
+     changes the height (a row, a card that opens, a reply that streams, the window) on one
+     motion toward the end that reads the end again every frame, so new growth retargets it
+     instead of restarting it. Under reduced motion it lands at once. */
+  function follow(node) {
     var list = node.refs.list;
-    var motion = window.PhosphorMotion;
-    var smooth = !(motion && motion.reduced());
-    var top = Math.max(0, list.scrollHeight - list.clientHeight);
-    node.lastTop = list.scrollTop;
-    node.followUntil = smooth ? Date.now() + FOLLOW_MS : 0;
-    if (typeof list.scrollTo === 'function') list.scrollTo({ top: top, behavior: smooth ? 'smooth' : 'auto' });
-    else list.scrollTop = top;
-  }
-
-  /* The pill's jump is authored rather than the browser's: one ease-out over
-     a third of a second, driven by motion.dev, so a long transcript reads as
-     a place the column went back to rather than a cut. */
-  function jumpToEnd(node) {
-    var list = node.refs.list;
-    var motion = window.PhosphorMotion;
-    var top = Math.max(0, list.scrollHeight - list.clientHeight);
-    node.unseen = 0;
-    paintJump(node);
-    if (!motion || motion.reduced() || typeof motion.animate !== 'function') {
-      list.scrollTop = top;
+    var raf = window.requestAnimationFrame;
+    if (reduced() || typeof raf !== 'function') {
+      list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+      node.lastTop = list.scrollTop;
       return;
     }
-    node.lastTop = list.scrollTop;
-    node.followUntil = Date.now() + FOLLOW_MS;
-    motion.animate(list.scrollTop, top, {
-      duration: JUMP_S,
-      ease: [0.23, 1, 0.32, 1],
-      onUpdate: function (value) { list.scrollTop = value; }
-    });
+    if (node.following) return;
+    node.following = true;
+    var before = 0;
+    var step = function (now) {
+      if (!node.pinned) {
+        node.following = false;
+        return;
+      }
+      var end = Math.max(0, list.scrollHeight - list.clientHeight);
+      var gap = end - list.scrollTop;
+      if (Math.abs(gap) < 1) {
+        list.scrollTop = end;
+        node.lastTop = list.scrollTop;
+        node.following = false;
+        paintScroll(node);
+        return;
+      }
+      var dt = before ? Math.min(64, now - before) : 16;
+      before = now;
+      list.scrollTop = list.scrollTop + gap * (1 - Math.exp(-dt / FOLLOW_TAU_MS));
+      node.lastTop = list.scrollTop;
+      raf(step);
+    };
+    raf(step);
   }
 
-  function paintJump(node) {
+  function letGo(node) {
+    if (!node.pinned) return;
+    node.pinned = false;
+    paintScroll(node);
+  }
+
+  function onScroll(node) {
+    var list = node.refs.list;
+    var top = list.scrollTop;
+    var moved = top - node.lastTop;
+    node.lastTop = top;
+    /* The follow only ever moves down, and a row that shrinks clamps the scroller at its end,
+       so a move up away from the end is the person. */
+    if (atEnd(list)) node.pinned = true;
+    else if (moved < -1) node.pinned = false;
+    paintScroll(node);
+  }
+
+  function onResize(node) {
+    if (node.pinned) follow(node);
+    paintScroll(node);
+  }
+
+  function toEnd(node) {
+    node.pinned = true;
+    follow(node);
+    paintScroll(node);
+  }
+
+  /* The quiet controls at the bottom edge: Latest while the person is above the end, and
+     the waiting line instead of it while a card they scrolled away from needs them. */
+  function paintScroll(node) {
     var refs = node.refs;
-    dom.setAttr(refs.jump, 'data-on', node.unseen > 0 ? 'true' : null);
-    dom.setText(refs.jumpCount, node.unseen > 1 ? String(node.unseen) : '');
+    var list = refs.list;
+    var waiting = waitingOutOfView(node);
+    dom.setHidden(refs.waitLine, !waiting);
+    dom.setAttr(refs.jump, 'data-on', !waiting && !node.pinned && !atEnd(list) ? 'true' : null);
+    dom.setAttr(refs.listWrap, 'data-cut', list.scrollTop > 2 ? 'top' : null);
   }
 
-  /* No, coming, and yes. The seat carries the state as an attribute so the
-     stylesheet draws the light, and the two buttons are present only in the one
-     state where pressing them means anything. A failed start is the off card
-     with the mark in the down tone: the reason and the Retry are in the head,
-     so the card offers only the other way in. */
+  /* The row of a block on screen, through the reconciler's own map. */
+  function rowOf(node, block) {
+    var keyed = node.refs.rows.__keyed || {};
+    return block && keyed[block.key] ? keyed[block.key] : null;
+  }
+
+  function waitingBlocks() {
+    var out = [];
+    var cards = window.PhosphorCards;
+    for (var i = 0; i < blocks.length; i += 1) {
+      var block = blocks[i];
+      if (block.type !== 'card' || block.kind !== 'move' || block.waiting === false) continue;
+      if (cards && typeof cards.plainState === 'function' && cards.plainState(block.data) === 'needs_you') out.push(block);
+    }
+    return out;
+  }
+
+  /* A waiting card with no part of it inside the scroller's box. A document without layout
+     measures nothing and says nothing. */
+  function waitingOutOfView(node) {
+    var list = node.refs.list;
+    if (typeof list.getBoundingClientRect !== 'function') return null;
+    var box = list.getBoundingClientRect();
+    var waiting = waitingBlocks();
+    for (var i = waiting.length - 1; i >= 0; i -= 1) {
+      var row = rowOf(node, waiting[i]);
+      if (!row || typeof row.getBoundingClientRect !== 'function') continue;
+      var r = row.getBoundingClientRect();
+      if (r.bottom < box.top + 24 || r.top > box.bottom - 24) return waiting[i];
+    }
+    return null;
+  }
+
+  /* The line takes the person to the card, into the middle of the column, on the same
+     motion the rest of the column uses, and puts the focus on the card itself (never on a
+     button, where Enter would answer for them). */
+  function toWaiting(node) {
+    var block = waitingOutOfView(node) || waitingBlocks()[0];
+    var row = rowOf(node, block);
+    if (!row) return;
+    var list = node.refs.list;
+    var box = list.getBoundingClientRect();
+    var r = row.getBoundingClientRect();
+    var target = list.scrollTop + (r.top - box.top) - Math.max(0, (box.height - r.height) / 2);
+    target = Math.max(0, Math.min(target, list.scrollHeight - list.clientHeight));
+    node.pinned = target >= list.scrollHeight - list.clientHeight - STICK_PX;
+    var motion = window.PhosphorMotion;
+    if (!reduced() && motion && typeof motion.animate === 'function') {
+      motion.animate(list.scrollTop, target, {
+        duration: 0.32,
+        ease: [0.23, 1, 0.32, 1],
+        onUpdate: function (value) { list.scrollTop = value; node.lastTop = value; }
+      });
+    } else {
+      list.scrollTop = target;
+    }
+    var card = row.firstChild || row;
+    if (typeof card.focus === 'function') {
+      dom.setAttr(card, 'tabindex', '-1');
+      card.focus({ preventScroll: true });
+    }
+    paintScroll(node);
+  }
+
+  /* No, coming, and yes: the three true answers to "is anybody there". */
   function renderEmpty(node) {
     var refs = node.refs;
     var seat = canTalk() ? 'live'
@@ -1506,10 +1312,6 @@
       dom.setText(refs.emptyTitle, COPY.offTitle);
       dom.setText(refs.emptyNote, COPY.offLine);
     }
-
-    /* Offering Start to somebody whose agent is already running is the window
-       asking a question it knows the answer to, and it was the whole reason
-       pressing the button looked like it did nothing. */
     dom.setHidden(refs.emptyActions, !canStart());
     dom.setHidden(refs.startBig, phase === 'error');
   }
@@ -1521,10 +1323,6 @@
     dom.setText(refs.connectVerb, attached ? COPY.connected : COPY.waiting);
   }
 
-  /* The caret lands in the box the moment the box can take a message. It is the
-     smallest possible change and it is the one a person feels: the window is
-     ready and the next move is theirs. Only on the transition, so it never
-     steals focus from somewhere else mid-session. */
   function focusComposer() {
     for (var i = 0; i < mounts.length; i += 1) {
       var input = mounts[i].refs.input;
@@ -1534,33 +1332,37 @@
     }
   }
 
-  /* The transcript renders as text only, never as markup, and never renders a
-     control that decides anything. That is the property that keeps the trust
-     boundary where it is: nothing an assistant writes can draw a button that
-     moves money. */
-  function renderBlocks(node, primary) {
-    var now = Date.now();
-    dom.reconcile(node.refs.list, blocks, function (block) {
+  /* The rows as drawn: every block, then the working line while the turn is thinking or
+     calling. While words are arriving the reply itself is the progress, and while a move is
+     being asked for its card already says what is happening. */
+  function shownBlocks() {
+    if (!turn || turn.state === 'writing') return blocks;
+    var tail = blocks[blocks.length - 1];
+    if (tail && tail.type === 'card' && tail.data && tail.data.placeholder === true && !tail.data.failed) return blocks;
+    return blocks.concat([WORKING]);
+  }
+
+  function renderBlocks(node) {
+    dom.reconcile(node.refs.rows, shownBlocks(), function (block) {
       return block.key;
     }, function (block) {
       return createBlock(block);
     }, function (row, block) {
-      updateBlock(node, row, block, now, primary);
+      updateBlock(row, block);
     });
   }
 
-  /* A card's own open state lives on the block, so a person who closed one
-     finds it closed after every re-render, and a receipt that arrives closes
-     the ones before it (ui/screens/cards.js draws the shell). */
-  function foldOptions(block) {
+  /* A move card's context: the tool it came from, whether the live state frame says it
+     still waits, and where the person left its Details. */
+  function cardOptions(block) {
     return {
       name: block.name,
       input: block.input,
       at: block.at,
       open: block.open !== false,
       onToggle: function (open) { block.open = open; },
-      /* The one fold inside a move card (checks and reference) is closed until a person
-         opens it, and where they left it survives every repaint the same way. */
+      waiting: block.waiting,
+      live: block.fromLive === true,
       detailsOpen: block.detailsOpen === true,
       onDetailsToggle: function (open) { block.detailsOpen = open; }
     };
@@ -1568,95 +1370,89 @@
 
   function createBlock(block) {
     var cards = window.PhosphorCards;
-    /* The shared receipt card, as a message from the app, in a shell it can
-       close from. Without the shell file it is the bare card it always was. */
-    if (block.type === 'receipt') {
-      var receipt = window.PhosphorReceipt.card(block.receipt);
-      return cards && typeof cards.wrapReceipt === 'function' ? cards.wrapReceipt(block.receipt, receipt, foldOptions(block)) : receipt;
-    }
-    /* A tool's answer, drawn. The data came off the driver's tool_data event
-       and never through the model's words. */
     if (block.type === 'card') {
       var host = dom.el('div', 'chat-card');
-      if (cards && typeof cards.render === 'function') host.appendChild(cards.render(block.kind, block.data, foldOptions(block)));
+      if (cards && typeof cards.render === 'function') host.appendChild(cards.render(block.kind, block.data, cardOptions(block)));
       host.__rev = block.rev;
       return host;
     }
+    if (block.type === 'sheet') {
+      /* A card another screen asked to show, at the thread's end, closed by its own
+         buttons. It lives in this window only and is never part of the stored chat. */
+      var wrap = dom.el('div', 'chat-sheet');
+      var inner = dom.el('section', 'chat-sheet-card');
+      wrap.appendChild(inner);
+      block.build(inner, function () { removeBlock(block); });
+      return wrap;
+    }
+    if (block.type === 'working') {
+      var line = dom.el('div', 'chat-working');
+      var mark = dom.mark('chat-working-mark', 'working');
+      if (mark) line.appendChild(mark);
+      line.appendChild(dom.el('span', 'chat-working-words'));
+      return line;
+    }
     if (block.type === 'steps') {
-      var wrap = dom.el('div', 'steps-block');
+      var steps = dom.el('div', 'steps-block');
+      steps.setAttribute('data-dev-only', '');
       var fold = dom.el('button', 'steps-fold');
       fold.type = 'button';
       fold.hidden = true;
       fold.appendChild(cards && typeof cards.glyph === 'function' ? cards.glyph('chevron', 'steps-chevron') : dom.el('span', 'steps-chevron'));
       fold.appendChild(dom.el('span', 'steps-fold-label'));
       fold.appendChild(dom.el('span', 'steps-fold-names'));
-      wrap.appendChild(fold);
-      wrap.appendChild(dom.el('div', 'steps'));
+      steps.appendChild(fold);
+      steps.appendChild(dom.el('div', 'steps'));
       dom.on(fold, 'click', function () {
         block.folded = !block.folded;
         renderAll();
       });
-      return wrap;
+      return steps;
     }
     var kind = block.type === 'said' ? 'chat-said'
       : (block.type === 'error' ? 'chat-error'
         : (block.type === 'note' ? 'chat-note' : 'chat-reply'));
     var chat = dom.el('div', 'chat-row ' + kind);
     chat.appendChild(dom.el('span', 'chat-who'));
-    /* A reply is rendered, the others are set as text. The renderer is the
-       one place a reply's shape is decided, and it builds elements and sets
-       strings: nothing a model writes reaches the DOM as markup. */
+    /* A reply is rendered, the others are set as text. The renderer builds elements and
+       sets strings: nothing a model writes reaches the DOM as markup. */
     chat.appendChild(dom.el('div', block.type === 'reply' ? 'chat-text md' : 'chat-text'));
-    /* A reply carries the app's mark at its top left and the clock it landed
-       at, which the stylesheet shows on hover. Both after the text, so the
-       who and the text keep their places for the update below. */
-    if (block.type === 'reply') {
-      var mark = dom.mark('chat-mark');
-      if (mark) chat.appendChild(mark);
-      chat.__time = chat.appendChild(dom.el('span', 'chat-time mono'));
-    }
     return chat;
   }
 
-  function clockOf(at) {
-    if (typeof at !== 'number' || !isFinite(at)) return '';
-    return dom.clock(new Date(at).toISOString());
-  }
-
-  function updateBlock(node, row, block, now, primary) {
-    if (block.type === 'receipt' || block.type === 'card') {
+  function updateBlock(row, block) {
+    if (block.type === 'card') {
       var cards = window.PhosphorCards;
-      /* A card whose data moved under it (onProposals) is drawn again inside
-         the same host, so it keeps its row and its key while its chip and its
-         clock change. Everything else about a card is settled when it lands. */
-      if (block.type === 'card' && row.__rev !== block.rev && cards && typeof cards.render === 'function') {
-        var stale = row.firstChild;
-        /* A move card repaints itself: the state word and the stage line fade to their new
-           words, the clock moves, the legs keep their place and both folds stay where the
-           person left them. Every other card is settled when it lands and is drawn again. */
-        if (stale && typeof stale.__paint === 'function') {
-          stale.__paint(block.data, foldOptions(block));
-        } else {
-          var fresh = cards.render(block.kind, block.data, foldOptions(block));
-          row.insertBefore(fresh, stale);
-          if (stale) row.removeChild(stale);
-        }
-        row.__rev = block.rev;
+      var shown = row.firstChild;
+      /* A move card repaints itself in place on every change of its row; any other card is
+         settled when it lands and is drawn again only when its data moved. */
+      if (shown && typeof shown.__paint === 'function') {
+        if (row.__rev !== block.rev || row.__waiting !== block.waiting || row.__live !== block.fromLive) shown.__paint(block.data, cardOptions(block));
+      } else if (row.__rev !== block.rev && cards && typeof cards.render === 'function') {
+        var fresh = cards.render(block.kind, block.data, cardOptions(block));
+        row.insertBefore(fresh, shown);
+        if (shown) row.removeChild(shown);
       }
-      /* The shell keeps its own open flag and the block keeps the truth. */
-      var fold = cards && typeof cards.foldOf === 'function' ? cards.foldOf(block.type === 'card' ? row.firstChild : row) : null;
+      row.__rev = block.rev;
+      row.__waiting = block.waiting;
+      row.__live = block.fromLive;
+      var fold = cards && typeof cards.foldOf === 'function' ? cards.foldOf(row.firstChild) : null;
       if (fold && fold.isOpen() !== (block.open !== false)) fold.setOpen(block.open !== false);
       return;
     }
+    if (block.type === 'sheet') return;
+    if (block.type === 'working') {
+      var words = row.children[row.children.length - 1];
+      dom.setText(words, workingWords());
+      return;
+    }
     if (block.type === 'steps') {
-      updateSteps(node, row, block, now, primary);
+      updateSteps(row, block);
       return;
     }
     var who = row.children[0];
     var text = row.children[1];
     if (block.type === 'said') {
-      /* The bubble sits on the right, so it needs no name. The one thing
-         worth a label is a message the app never took. */
       dom.setText(who, block.state === 'failed' ? 'Not sent' : 'You');
       dom.setText(text, block.text);
       dom.setAttr(row, 'data-state', block.state || 'sent');
@@ -1673,18 +1469,13 @@
       return;
     }
     dom.setText(who, 'Assistant');
-    if (row.__time) dom.setText(row.__time, clockOf(block.at));
+    dom.setAttr(row, 'data-streaming', block.live !== null && block.live !== undefined ? 'true' : null);
     renderReply(text, block.text);
   }
 
-  /* Rendered once per change of text, not once per pass: the reconciler calls
-     update on every render and a table rebuilt on each tick of the turn clock
-     would be the column doing work for nobody.
-
-     A reply grows by whole blocks, joined on a blank line (ingest). When the
-     new text is the old text with more under it, only the new blocks are
-     drawn, under the paragraphs already there: the row keeps what it had
-     rather than being emptied and rebuilt for every block that lands. */
+  /* Rendered once per change of text. When the new text is the old text with whole blocks
+     under it, only the new blocks are drawn; a streaming block is drawn again whole, once a
+     frame, which for a reply of a few short lines is a handful of nodes. */
   function renderReply(node, value) {
     var md = window.PhosphorMarkdown;
     if (!md) {
@@ -1701,14 +1492,14 @@
     md.renderInto(node, value);
   }
 
-  function updateSteps(node, wrap, block, now, primary) {
+  /* Developer mode's trace: one row per call, the phrase and what it was about, and the
+     calls fold to one line when the turn ends. */
+  function updateSteps(wrap, block) {
     var fold = wrap.children[0];
     var list = wrap.children[1];
     dom.setHidden(fold, !block.done);
-    /* A folded turn that hid a failed call would look like a turn that worked.
-       The one row left on screen carries the worst outcome under it. */
     dom.setAttr(fold, 'data-state', block.done && anyError(block) ? 'error' : null);
-    dom.setText(fold.children[1], block.done ? foldLabel(block, now) : '');
+    dom.setText(fold.children[1], block.done ? foldLabel(block) : '');
     dom.setText(fold.children[2], block.done ? foldNames(block) : '');
     dom.setAttr(fold, 'aria-expanded', block.folded ? 'false' : 'true');
     dom.setAttr(list, 'data-folded', block.folded ? 'true' : null);
@@ -1723,59 +1514,42 @@
       text.appendChild(dom.el('span', 'step-args'));
       text.appendChild(dom.el('span', 'step-leaves'));
       step.appendChild(text);
-      step.appendChild(dom.el('span', 'step-time'));
       return step;
     }, function (row, step) {
-      var dot = row.children[0];
       var text = row.children[1];
-      var time = row.children[2];
       dom.setAttr(row, 'data-state', step.state);
       dom.setText(text.children[0], step.label);
       dom.setText(text.children[1], step.args || '');
       dom.setHidden(text.children[1], !step.args);
       dom.setText(text.children[2], step.leaves ? 'leaves this computer' : '');
       dom.setHidden(text.children[2], !step.leaves);
-      /* The head carries the live clock; the row gets its duration once the
-         call has settled, so the same seconds do not count in two places one
-         screen apart. The row still books itself as live so the ticker runs
-         for the head, and the row's own time lands with the result. */
-      dom.setText(time, step.state === 'live' ? '' : secondsText(elapsedOf(step, now)));
-      if (step.state === 'live') node.live.push(step);
     });
   }
 
-  /* One interval, and only while something is in flight. A clock that keeps
-     running behind a finished turn is the window doing work for nobody. */
-  function tickerCheck() {
-    var live = turn !== null;
-    for (var i = 0; i < mounts.length && !live; i += 1) {
-      if (mounts[i].live.length) live = true;
-    }
-    if (live && !ticker) {
-      ticker = window.setInterval(tick, TICK_MS);
-      return;
-    }
-    if (!live && ticker) {
-      window.clearInterval(ticker);
-      ticker = 0;
-    }
+  /* ---------- a card another screen shows ---------- */
+
+  /* The backup nudge, the recovery words, Turn off the assistant: a card at the thread's
+     end, in view, and the conversation pane shown if it was hidden. */
+  function showCard(build) {
+    if (typeof build !== 'function') return;
+    openSteps = null;
+    jumpAll = true;
+    reveal();
+    pushBlock({ type: 'sheet', build: build, at: Date.now() });
   }
 
-  /* Text writes only. The rows already exist, so the tick touches no layout. */
-  function tick() {
-    var now = Date.now();
-    var since = statusStartedAt();
-    for (var i = 0; i < mounts.length; i += 1) {
-      if (turn) dom.setText(mounts[i].refs.turnTime, secondsText(now - turn.startedAt));
-      if (since) dom.setText(mounts[i].refs.elapsed, secondsText(now - since));
+  /* THE GATE STAYS REACHABLE. A pane hidden while a move waits would be a window arranged to
+     hide the one control that stops money moving, so a card that needs the person shows the
+     conversation again. */
+  function reveal() {
+    var split = window.PhosphorSplit;
+    if (split && typeof split.paneHidden === 'function' && typeof split.setPane === 'function' && split.paneHidden('conversation')) {
+      split.setPane('conversation', true);
     }
   }
 
   /* ---------- wiring ---------- */
 
-  /* Off and stopped are both nobody at the wheel. The composer used to stay
-     open after Turn off because stopped read as connected, and the first
-     message into it came back "not sent". */
   function mapState(word) {
     if (word === 'off' || word === 'stopped' || !word) return 'idle';
     if (word === 'booting' || word === 'starting') return 'starting';
@@ -1784,24 +1558,28 @@
     return 'connected';
   }
 
-  /* One driver event, one change to the model. `replay` is the boot restore
-     reading a stored transcript: the same shapes, an older clock, and no timers,
-     because a thinking row 300 ms after a message from last week is a lie. */
+  /* The newest move card still drawn from its propose call alone, for that tool. */
+  function openPlaceholder(name) {
+    var tool = name ? bareName(name) : null;
+    for (var i = blocks.length - 1; i >= 0; i -= 1) {
+      var block = blocks[i];
+      if (block.type !== 'card' || block.kind !== 'move' || !block.data || block.data.placeholder !== true || block.data.failed) continue;
+      if (tool === null || bareName(block.name) === tool) return block;
+    }
+    return null;
+  }
+
+  /* One driver event, one change to the model. `replay` is the boot restore reading a
+     stored transcript: the same shapes and an older clock. */
   function ingest(event, replay) {
     var at = typeof event.at === 'number' ? event.at : Date.now();
     if (event.kind === 'status') {
       if (replay) return;
-      /* A stopped answer, a failed session and a plain return to ready all end
-         the turn. Without this the bar kept counting for an agent that was no
-         longer working, which is the one lie it exists to prevent. */
       var next = mapState(event.state);
       if (next !== 'working' && next !== 'starting') {
         endTurn();
         turn = null;
       }
-      /* The reason travels on the frame in plain words (src/driver.ts). A
-         failed start always has one; an exit the person did not ask for has
-         one; a stop they asked for has none and clears nothing but the seat. */
       if (next === 'error') {
         failure = { reason: event.reason || COPY.failedUnsaid, detail: event.detail || '' };
       } else if (next === 'idle' && event.reason) {
@@ -1814,175 +1592,232 @@
     }
     /* Anything the conversation does is proof the start is alive. */
     clearStartWatch();
+    var delta = deltaOf(event);
+    if (delta) {
+      if (phase === 'connected') phase = 'working';
+      if (turn) turn.state = 'writing';
+      openSteps = null;
+      streamInto(delta, at);
+      if (!replay) renderSoon();
+      return;
+    }
     if (event.kind === 'said') {
       if (replay) {
         openSteps = null;
         turnReadBlocks = [];
+        turnAsk = String(event.text || '');
         pushBlock({ type: 'said', text: event.text, state: 'sent' });
       } else if (!adoptPending(event.text)) {
-        /* Nothing to adopt means the prompt came from somewhere else: a second
-           window on the same chat, or the app replaying a restored session. It
-           is still this conversation's message, so it goes in. */
+        /* Nothing to adopt means the prompt came from somewhere else: a second window on the
+           same chat, or a restored session. It is still this conversation's message. */
         said(event.text);
       } else {
-        startTurnBar();
+        startTurn();
       }
       return;
     }
     if (event.kind === 'tool') {
       if (phase === 'connected') phase = 'working';
-      if (!replay && !turn) startTurnBar();
+      if (!replay && !turn) startTurn();
       openStep(event.name, at, event.input);
       if (turn) turn.state = 'calling';
+      /* SOMETHING ON SCREEN THE MOMENT A MOVE IS ASKED FOR. The propose call already names
+         the pair and the amount, so the card is drawn from it now, working, and becomes the
+         row's own card when the row lands. */
+      var kind = PROPOSE_KINDS[bareName(event.name)];
+      if (kind) {
+        openSteps = null;
+        pushBlock({ type: 'card', kind: 'move', name: event.name, input: event.input, data: { placeholder: true, kind: kind }, at: at, open: true, replayed: replay, waiting: replay ? false : undefined });
+        return;
+      }
       if (!replay) renderAll();
       return;
     }
     if (event.kind === 'tool_result') {
-      closeStep(event.name, event.ok, at);
+      closeStep(event.name, event.ok);
       if (turn) turn.state = 'thinking';
+      if (event.ok === false) {
+        var failed = openPlaceholder(event.name);
+        if (failed) {
+          failed.data = { placeholder: true, failed: true, kind: failed.data.kind };
+          failed.rev = (failed.rev || 0) + 1;
+        }
+      }
       if (!replay) renderAll();
       return;
     }
-    /* A read's answer, as data (src/driver.ts). It goes in as a card under
-       the steps that produced it, and the steps close there, so the next
-       call opens its own fold under the card rather than above it. */
+    /* A read's answer, as data (src/driver.ts), drawn as a card under the steps that
+       produced it. */
     if (event.kind === 'tool_data') {
       var cards = window.PhosphorCards;
       if (!cards || typeof cards.kindFor !== 'function') return;
       openSteps = null;
-      var kind = cards.kindFor(event.name, event.data);
-      /* A move already on the thread is updated where it stands. The agent reads a proposal
-         back the moment it has proposed it, and the read used to draw the same card a second
-         time under "checking the approval", so every move took twice the scroll (Karim's
-         transcript, 2026-09-20). The card follows the state frame anyway; the read only
-         carries a fuller row, which the card takes. */
-      var shown = kind === 'move' ? moveBlockFor(event.data) : null;
-      if (shown) {
-        /* The fold stays where the person left it, as it does on a state frame. */
-        shown.data = event.data;
-        shown.input = shown.input || event.input;
-        shown.rev = (shown.rev || 0) + 1;
+      var cardKind = cards.kindFor(event.name, event.data);
+      if (cardKind === 'move') {
+        /* A move already on the thread is updated where it stands: its placeholder, or the
+           card an earlier read or the state frame drew. One card per move, for life. */
+        var shown = moveBlockFor(event.data) || openPlaceholder(event.name);
+        /* The state frame's row is the fuller truth (it carries the view), so it wins over the
+           reply whenever the frame already has it. */
+        var live = liveRows && event.data && typeof event.data.id === 'string' ? liveRows[event.data.id] : null;
+        if (shown) {
+          shown.data = live || event.data;
+          shown.fromLive = !!live;
+          shown.input = shown.input || event.input;
+          shown.name = shown.name || event.name;
+          shown.replayed = shown.replayed || replay;
+          shown.waiting = waitingFlag(shown.data, shown.replayed);
+          shown.rev = (shown.rev || 0) + 1;
+          if (!replay) renderAll();
+          return;
+        }
+        pushBlock({ type: 'card', kind: 'move', name: event.name, input: event.input, data: live || event.data, fromLive: !!live, at: at, open: true, replayed: replay, waiting: waitingFlag(live || event.data, replay) });
+        return;
+      }
+      /* ONE READ CARD PER TURN, AND NONE THE PERSON DID NOT ASK FOR. A wallet read draws its
+         card only in a turn that asked about the money: the balances beside the chat show it
+         already. A read card under a move in the same turn was a check on the way there, and
+         a second read in one turn replaces the first. */
+      if (cardKind === 'balance' && !ASKS_HOLDINGS.test(turnAsk)) {
         if (!replay) renderAll();
         return;
       }
-      /* ONE READ CARD PER TURN, AND NONE THE PERSON DID NOT ASK ABOUT. The agent reads the
-         wallet before every swap and the account before every trade, and each read drew its
-         card, so a move took three cards of scroll and a long chat filled with balances nobody
-         asked for (known failure 4). A read card that lands under a move in the same turn was a
-         check on the way to that move and goes; a second read card in one turn replaces the
-         first, because the later read is the one the answer is about. A move card is never
-         dropped: it is the one card its row has for life. */
+      if (turnHasMove()) {
+        if (!replay) renderAll();
+        return;
+      }
       dropTurnReads();
-      var block = pushBlock({
-        type: 'card',
-        kind: kind,
-        name: event.name,
-        input: event.input,
-        data: event.data,
-        at: at,
-        open: true
-      });
-      if (kind !== 'move') turnReadBlocks.push(block);
+      var block = pushBlock({ type: 'card', kind: cardKind, name: event.name, input: event.input, data: event.data, at: at, open: true });
+      turnReadBlocks.push(block);
       return;
     }
     if (event.kind === 'text') {
       if (phase === 'connected') phase = 'working';
       if (turn) turn.state = 'writing';
       openSteps = null;
-      /* One turn's text arrives in pieces, one per model block, and each used
-         to be its own row: a heading, then its table, then the sentence under
-         it, three rows apart. Text that follows text with nothing between them
-         is the same reply, so it joins the row that is already there. */
-      var tail = blocks[blocks.length - 1];
-      if (tail && tail.type === 'reply') {
-        tail.text += '\n\n' + String(event.text);
-        if (!replay) renderAll();
-        return;
-      }
-      pushBlock({ type: 'reply', text: event.text, at: at });
+      commitText(event.text, at);
+      if (!replay) renderAll();
       return;
     }
     if (event.kind === 'turn_end') {
       endTurn();
       turn = null;
+      turnDone = true;
+      /* The answer ended, so the box takes the next message: the ready frame that follows
+         says the same, and a person typing between the two is not interrupting anything. */
+      if (phase === 'working') phase = 'connected';
       turnReadBlocks = [];
       if (!replay) renderAll();
       return;
     }
     if (event.kind === 'error') {
       turn = null;
-      /* The technical line of a failure the status frame already named in
-         words. The head carries the reason; printing the driver's own string
-         under it as a row is the thing that used to bury the card. Everything
-         else on this channel is the child's stderr, kept as a quiet note. */
       if (failure && failure.detail && failure.detail === String(event.message)) return;
       pushBlock({ type: 'note', text: event.message });
       return;
     }
   }
 
-  /* WHICH RECEIPTS GET A CARD. The list arrives whole on every read, newest
-     first, so the column keeps the ids it has already seen and cards only an
-     executed receipt it has not. The first read seeds that set: everything in
-     it happened before this window opened and is Activity's to show, unless
-     it was decided after the window opened, which is a move made in this
-     session that landed while the list was still loading. A failed move is
-     not a receipt for something that happened, so it gets no card and is not
-     marked seen, and a card follows if it is later read back as executed. */
-  var bootAt = Date.now();
-  var receiptsSeen = null;
+  /* Whether this turn has already drawn a move card: a read under it is not drawn. */
+  function turnHasMove() {
+    for (var i = blocks.length - 1; i >= 0; i -= 1) {
+      var block = blocks[i];
+      if (block.type === 'said') return false;
+      if (block.type === 'card' && block.kind === 'move') return true;
+    }
+    return false;
+  }
 
-  function receiptAt(receipt) {
-    var at = Date.parse(String(receipt.at || ''));
+  /* A finished turn folds its calls to one line, and a call still open is closed: the
+     answer arrived, so the call did. A move card still drawn from its propose call alone
+     never became a row, and says so. */
+  function endTurn() {
+    for (var i = 0; i < blocks.length; i += 1) {
+      var block = blocks[i];
+      if (block.type === 'card' && block.kind === 'move' && block.data && block.data.placeholder === true && !block.data.failed) {
+        block.data = { placeholder: true, failed: true, kind: block.data.kind };
+        block.rev = (block.rev || 0) + 1;
+      }
+      if (block.type !== 'steps' || block.done) continue;
+      for (var j = 0; j < block.steps.length; j += 1) {
+        if (block.steps[j].state === 'live') block.steps[j].state = 'done';
+      }
+      block.done = true;
+      block.folded = true;
+    }
+    openSteps = null;
+  }
+
+  /* ---------- the moves ---------- */
+
+  function isWaitingRow(p) {
+    return !!p && (p.status === 'pending' || p.status === 'pending_unlock' || p.status === 'awaiting_touch');
+  }
+
+  /* Whether the card may ask: true while the live frame lists the row as waiting, false when
+     the frame lists it as decided, and unknown for a row this session made that no frame has
+     carried yet (the reply can beat the frame by a few milliseconds). A card read back from
+     the stored chat does not ask until a frame says its row still waits: a stored propose
+     reply says pending forever. */
+  function waitingFlag(data, replay) {
+    var id = data && typeof data.id === 'string' ? data.id : null;
+    var live = liveRows !== null && id !== null ? liveRows[id] : undefined;
+    if (live) return isWaitingRow(live);
+    return replay ? false : undefined;
+  }
+
+  /* The move card on the thread for a row, by id, or null. */
+  function moveBlockFor(data) {
+    var id = data && typeof data.id === 'string' ? data.id : null;
+    if (id === null) return null;
+    for (var i = blocks.length - 1; i >= 0; i -= 1) {
+      var block = blocks[i];
+      if (block.type === 'card' && block.kind === 'move' && block.data && block.data.id === id) return block;
+    }
+    return null;
+  }
+
+  /* Whether the row says anything the card does not. */
+  function liveMoved(shown, live) {
+    if (shown.placeholder) return true;
+    var was = shown.view || null;
+    var now = live.view || null;
+    if (!was !== !now) return true;
+    if (was && now) {
+      if (was.stage !== now.stage) return true;
+      if (was.state !== now.state) return true;
+      if (was.lastChangeAt !== now.lastChangeAt) return true;
+      if ((was.settledAt || null) !== (now.settledAt || null)) return true;
+      if ((was.providerStage || null) !== (now.providerStage || null)) return true;
+      if ((was.money && was.money.amountOut) !== (now.money && now.money.amountOut)) return true;
+    }
+    if (shown.status !== live.status) return true;
+    if ((shown.decidedAt || null) !== (live.decidedAt || null)) return true;
+    if ((shown.settledAt || null) !== (live.settledAt || null)) return true;
+    if (!shown.draft && live.draft) return true;
+    if (!shown.result && live.result) return true;
+    return false;
+  }
+
+  function createdAt(p) {
+    var at = Date.parse(String(p && p.createdAt || ''));
     return isFinite(at) ? at : 0;
   }
 
-  function onReceipts(list, state) {
-    if (state !== 'ready' || !Array.isArray(list)) return;
-    var first = receiptsSeen === null;
-    if (first) receiptsSeen = Object.create(null);
-    var fresh = [];
-    for (var i = list.length - 1; i >= 0; i -= 1) {
-      var receipt = list[i];
-      if (!receipt || typeof receipt.id !== 'string' || receiptsSeen[receipt.id]) continue;
-      if (receipt.status !== 'executed') continue;
-      receiptsSeen[receipt.id] = true;
-      if (first && receiptAt(receipt) <= bootAt) continue;
-      /* THE RECEIPT FOLDS INTO THE MOVE CARD. A move this conversation proposed already has
-         its one card, and that card follows the row to Confirmed with the hash on it; a second
-         card for the same money was the two-cards-per-swap of 2026-09-20 (known failure 4). */
-      if (moveBlockFor(receipt)) continue;
-      fresh.push(receipt);
-    }
-    for (var j = 0; j < fresh.length; j += 1) {
-      /* The card closes the open steps block, so the calls that follow it
-         start a new one under the card rather than appending above it. */
-      openSteps = null;
-      pushReceipt(fresh[j], receiptWhen(fresh[j]));
-    }
+  /* A row that needs a card of its own: one waiting on the person (its card is the only
+     place it can be answered), or one made after this window opened by anyone at all, this
+     conversation's assistant or another client. A card for it is its only card. */
+  function needsCard(p) {
+    if (!p || typeof p.id !== 'string') return false;
+    return isWaitingRow(p) || createdAt(p) > bootAt;
   }
 
-  /* The rows the last state frame carried, by id: every waiting row and the twenty most
-     recent decided ones (src/http/state.ts), each with its view. A receipt for a move made
-     outside this conversation finds its row here and draws the same card every move gets. */
-  var liveRows = Object.create(null);
-
-  /* THE MOVE CARD FOLLOWS ITS PROPOSAL.
-
-     A propose answers once, with the row as it was filed: pending. The card
-     drawn from that answer used to keep saying "Waiting for you" after the
-     person had clicked and the swap had landed (Karim, 2026-09-18: "i already
-     approved the swap and after approval it shows me this"). The window
-     already receives every waiting row and the twenty most recent decided ones
-     on each state frame (src/http/state.ts, the proposals slice), so a card
-     that names a proposal id takes its row from there: the chip moves from
-     Waiting for you through Touch ID and Settling to Confirmed or Declined, the
-     legs pick up the draft's quote, and the clock becomes the decision's.
-     The card is redrawn in place (updateBlock), never appended, and the
-     person's fold stays where they left it. A row that has left the slice is
-     already decided and its card already says so. */
+  /* THE MOVE CARD FOLLOWS ITS PROPOSAL. Every state frame carries every waiting row and the
+     twenty most recent decided ones, each with its view; a card that names a row takes it
+     and repaints in place, never appended. A row with no card yet gets one at the thread's
+     end, adopting the card its propose call drew when there is one. */
   function onProposals(list) {
-    if (!Array.isArray(list) || !list.length) return;
+    if (!Array.isArray(list)) return;
     var byId = Object.create(null);
     for (var i = 0; i < list.length; i += 1) {
       var p = list[i];
@@ -1994,114 +1829,50 @@
       var block = blocks[j];
       if (block.type !== 'card' || block.kind !== 'move' || !block.data || typeof block.data.id !== 'string') continue;
       var live = byId[block.data.id];
-      if (!live || !liveMoved(block.data, live)) continue;
+      var waiting = live ? isWaitingRow(live) : (block.replayed ? false : block.waiting);
+      if (block.waiting !== waiting) {
+        block.waiting = waiting;
+        moved = true;
+      }
+      /* The frame's row replaces whatever the card was drawn from, always once and then
+         whenever it moves: the buttons are offered on the server's own row and never on a
+         reply that came through the conversation. */
+      if (!live || (block.fromLive && !liveMoved(block.data, live))) continue;
       block.data = live;
+      block.fromLive = true;
       block.rev = (block.rev || 0) + 1;
       moved = true;
+    }
+    if (restored) {
+      var fresh = list.filter(function (row) { return needsCard(row) && !moveBlockFor(row); });
+      fresh.sort(function (a, b) { return createdAt(a) - createdAt(b); });
+      for (var k = 0; k < fresh.length; k += 1) {
+        var row = fresh[k];
+        var held = openPlaceholder(null);
+        if (held && (!row.draft || !held.data.kind || row.draft.kind === held.data.kind || held.data.kind === 'intents_send')) {
+          held.data = row;
+          held.fromLive = true;
+          held.waiting = isWaitingRow(row);
+          held.rev = (held.rev || 0) + 1;
+        } else {
+          openSteps = null;
+          blocks.push({ type: 'card', kind: 'move', name: 'proposal_status', input: { id: row.id }, data: row, fromLive: true, at: createdAt(row) || Date.now(), open: true, waiting: isWaitingRow(row), key: 'b' + (seq += 1) });
+        }
+        if (isWaitingRow(row)) reveal();
+        moved = true;
+      }
+      if (blocks.length > TRANSCRIPT_CAP) blocks.splice(0, blocks.length - TRANSCRIPT_CAP);
     }
     if (moved) renderAll();
   }
 
-  /* The move card on the thread for a row, by id, or null. The newest wins if a
-     transcript somehow carries two. */
-  function moveBlockFor(data) {
-    var id = data && typeof data.id === 'string' ? data.id : null;
-    if (id === null) return null;
-    for (var i = blocks.length - 1; i >= 0; i -= 1) {
-      var block = blocks[i];
-      if (block.type === 'card' && block.kind === 'move' && block.data && block.data.id === id) return block;
-    }
-    return null;
-  }
-
-  /* Whether the row says anything the card does not. The view is the first
-     question, because it is what the card draws: a stage that moved, or the
-     moment that stage moved, is the whole reason to redraw. The rest catches a
-     row the backend has not built a view for. */
-  function liveMoved(shown, live) {
-    var was = shown.view || null;
-    var now = live.view || null;
-    if (!was !== !now) return true;
-    if (was && now) {
-      if (was.stage !== now.stage) return true;
-      if (was.lastChangeAt !== now.lastChangeAt) return true;
-      if ((was.settledAt || null) !== (now.settledAt || null)) return true;
-      if ((was.providerStage || null) !== (now.providerStage || null)) return true;
-    }
-    if (shown.status !== live.status) return true;
-    if ((shown.decidedAt || null) !== (live.decidedAt || null)) return true;
-    if ((shown.settledAt || null) !== (live.settledAt || null)) return true;
-    if (!shown.draft && live.draft) return true;
-    if (!shown.result && live.result) return true;
-    return false;
-  }
-
-  function receiptWhen(receipt) {
-    var when = receiptAt(receipt);
-    return when > 0 ? when : Date.now();
-  }
-
-  /* The newest receipt is the one a person is looking for, so it opens; the
-     ones before it fold to their one line. A receipt whose row the state frame still carries
-     draws the move card off that row, the same skeleton every move gets; only a row the
-     frame has let go (older than the twenty it keeps) falls back to the receipt's own card. */
-  function pushReceipt(receipt, when) {
-    for (var i = 0; i < blocks.length; i += 1) {
-      if (blocks[i].type === 'receipt' || (blocks[i].type === 'card' && blocks[i].kind === 'move')) blocks[i].open = false;
-    }
-    var row = typeof receipt.id === 'string' ? liveRows[receipt.id] : undefined;
-    if (row && row.view) {
-      return pushBlock({ type: 'card', kind: 'move', name: 'receipts', input: { id: receipt.id }, data: row, at: when, open: true });
-    }
-    return pushBlock({ type: 'receipt', receipt: receipt, at: when, open: true });
-  }
-
-  /* A receipt opened anywhere in the window (an Activity row, a Done fill)
-     posts the same card into the thread, as a message from the app. A move whose card is
-     already on the thread is opened where it stands rather than drawn again. */
-  function onReceiptOpen(payload) {
-    var receipt = payload && payload.receipt;
-    if (!receipt || typeof receipt !== 'object') return;
-    openSteps = null;
-    var shown = moveBlockFor(receipt);
-    if (shown) {
-      shown.open = true;
-      shown.detailsOpen = true;
-      shown.rev = (shown.rev || 0) + 1;
-      renderAll();
-      return;
-    }
-    pushReceipt(receipt, receiptWhen(receipt));
-  }
-
-  /* A finished turn folds to one line. Any step still open when the turn ended
-     is closed rather than left ticking: the answer arrived, so the call did. */
-  function endTurn() {
-    for (var i = 0; i < blocks.length; i += 1) {
-      var block = blocks[i];
-      if (block.type !== 'steps' || block.done) continue;
-      for (var j = 0; j < block.steps.length; j += 1) {
-        var step = block.steps[j];
-        if (step.state !== 'live') continue;
-        step.state = 'done';
-        step.endedAt = Date.now();
-        }
-      block.done = true;
-      block.folded = true;
-    }
-    openSteps = null;
-  }
-
-  /* The roster, as the state frame carries it: the clients attached over
-     MCP, named by themselves. Text, never markup. */
+  /* The roster, as the state frame carries it: the clients attached over MCP, named by
+     themselves. Text, never markup. */
   function onAgents(slice) {
     var members = slice && Array.isArray(slice.members) ? slice.members : [];
     var next = [];
     for (var i = 0; i < members.length; i += 1) {
       var m = members[i] || {};
-      /* The label first: it is the name whoever started the agent gave it for
-         this window (a spawned worker's "Analyst 2"), and the server fills it
-         with the client name when nobody did. */
       next.push({
         name: String(m.label || m.client || m.session || 'an agent'),
         role: String(m.role || ''),
@@ -2112,14 +1883,20 @@
     renderAll();
   }
 
+  /* The transcript is back (or there was none): rows that need a card and have none get
+     one now, after everything the stored chat already drew. */
+  function markRestored() {
+    if (restored) return;
+    restored = true;
+    var store = window.PhosphorState;
+    var state = store && typeof store.get === 'function' ? store.get() : null;
+    if (state && Array.isArray(state.proposals)) onProposals(state.proposals);
+  }
+
   function start() {
     events.on('driver', function (frame) {
       var event = frame && frame.event;
       if (!event) return;
-      /* One column, one conversation. The stream carries every chat the app has
-         open and the tagged frames were being read untagged, so a second
-         conversation printed its tool calls here and lit this window's panels
-         for work this agent never did. */
       var from = frame.chat === undefined ? null : String(frame.chat);
       if (from !== null) {
         if (chatId === null) chatId = from;
@@ -2128,20 +1905,20 @@
       ingest(event, false);
     });
 
-    events.on('receipt:open', onReceiptOpen);
-
     api.driverState().then(function (result) {
       var data = result.data || {};
       var chat = (data.chats && data.chats[0]) || {};
-      /* The payload names an empty id when no chat is open yet, and adopting
-         that would filter out the real one the moment it starts. */
       if (chat.id) chatId = String(chat.id);
       if (Array.isArray(chat.transcript)) {
         for (var i = 0; i < chat.transcript.length; i += 1) ingest(chat.transcript[i], true);
         endTurn();
+        turn = null;
       }
       setPhase(mapState(data.state), data.state);
-    }).catch(function () { /* the column shows Off, which is true */ });
+      markRestored();
+    }).catch(function () {
+      markRestored();
+    });
 
     api.connection().then(function (data) {
       if (!data || data.missing) return;
@@ -2154,15 +1931,6 @@
       store.select('agents', onAgents);
       store.select('proposals', onProposals);
     }
-
-    /* The receipts, read once now to learn what already happened and then on
-       every transactions frame (ui/screens/receipts.js), so a move that lands
-       mid conversation shows up as a card in it. */
-    var feed = window.PhosphorReceipts;
-    if (feed && typeof feed.onChange === 'function') {
-      feed.onChange(onReceipts);
-      if (typeof feed.load === 'function') feed.load();
-    }
   }
 
   window.PhosphorAgent = {
@@ -2170,6 +1938,8 @@
     start: start,
     isWorking: isWorking,
     phase: function () { return phase; },
-    toolLabel: toolLabel
+    toolLabel: toolLabel,
+    showCard: showCard,
+    send: prompt
   };
 })();

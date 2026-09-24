@@ -1,17 +1,175 @@
-/* The move card in the conversation (ui/screens/cards.js moveCard): the parts the skeleton
-   adds to a card, over the shell cards.css already draws.
+/* The move card in the thread (ui/screens/cards.js moveCard, ui/screens/decision.js ask).
 
-   One move is one card, painted in place as its row moves. So a stage change is a fade on
-   the state word and on the stage line, never a rebuild: the card keeps its height, its
-   place and both of its folds. The fade is 240 ms on a sine ease-out, the curve that keeps
-   moving to the end; the page's strong ease-out is 60 percent done at a sixth of its length
-   and reads as a pop whatever its duration. */
+   One compact card per move that changes in place. The head says the whole move on one
+   line: the coin marks, "4 USDC -> 0.00149 ETH" with the figures in mono, and the state word
+   at the right. Working, a hairline track eases along the bottom edge. Needing the person,
+   the card opens one line of figures and Cancel and Approve, and its edge takes a trace of
+   green. Done, it is one line, "Done · 6s". Nothing in it can push text past its edge. */
 
-/* ---------- the fade ---------- */
+.mcard {
+  --card-bg: var(--bg-1);
+  /* Where the words start: past the marks, so the lines under the head sit on the move's
+     own left edge. A pair of marks is wider than one. */
+  --text-x: 48px;
+  position: relative;
+  background: var(--card-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: border-color var(--dur-enter) var(--ease-out);
+}
 
-/* Two names for one animation. A changed attribute value restarts nothing on its own; a
-   changed animation-name does, so every change alternates between the two. The first paint
-   sets neither: the card's own entrance already carries the words in. */
+.mcard:has(> .mcard-head > .mcard-marks[data-pair]) {
+  --text-x: 67px;
+}
+
+.mcard[data-state="needs_you"] {
+  border-color: color-mix(in srgb, var(--ink) 36%, var(--line));
+}
+
+/* ---------- the head ---------- */
+
+/* One row, always: when the column is narrow the move's words wrap inside their own cell and
+   the state word keeps its place at the right, so a working card and the done card it becomes
+   have the same head (criterion 5.3). */
+.mcard-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 12px;
+  min-height: 50px;
+  padding: 12px 16px 12px 12px;
+  border-radius: calc(var(--radius) - 1px);
+  outline: none;
+}
+
+.mcard-head[role="button"] {
+  cursor: pointer;
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .mcard-head[role="button"]:hover {
+    background: color-mix(in srgb, var(--bg-2) 60%, var(--card-bg));
+  }
+}
+
+.mcard-head[role="button"]:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--text-2);
+}
+
+.mcard-marks {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.mcard-marks .logo {
+  --logo: 24px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--card-bg);
+}
+
+.mcard-marks[data-pair] .logo:first-child {
+  position: relative;
+  z-index: 1;
+}
+
+.mcard-marks[data-pair] .logo + .logo {
+  margin-left: -5px;
+}
+
+/* A move no coin names (a rule change): the kind's own glyph in a disc the size of a mark. */
+.mcard-glyph {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+}
+
+.mcard-glyph .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* The move, in words and figures. It wraps between its parts rather than running past the
+   card: a long amount in a narrow column takes a second line. */
+.mcard-move {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mcard-leg,
+.mcard-title,
+.mcard-word {
+  min-width: 0;
+}
+
+.mcard-num {
+  font-size: 14.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.mcard-soft {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.mcard-arrow {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  color: var(--text-3);
+}
+
+/* The state, as one word at the right. No pill and no dot. Needing the person it wears the
+   green of Approve; everything else is the second text tone, done included. */
+.mcard-state {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-13);
+  line-height: 1.2;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.mcard-state-icon {
+  display: inline-grid;
+  place-items: center;
+}
+
+.mcard-state-icon[hidden] { display: none; }
+
+.mcard-state-glyph {
+  width: 15px;
+  height: 15px;
+}
+
+.mcard[data-state="needs_you"] .mcard-state {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* A stage change is a fade on the word, never a rebuild, over 240 ms (criterion 5.3: 200 to
+   300). Two names for one animation: a changed animation-name restarts it, so every change
+   alternates between them. */
 @keyframes chatcard-fade-a {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -22,78 +180,114 @@
   to { opacity: 1; }
 }
 
-.tcard-state[data-fade="a"],
-.tcard-stage-copy[data-fade="a"] {
-  animation: chatcard-fade-a 240ms cubic-bezier(0.61, 1, 0.88, 1) both;
+.mcard-state-word[data-fade="a"],
+.mcard-line[data-fade="a"] {
+  animation: chatcard-fade-a 240ms var(--ease-out) both;
 }
 
-.tcard-state[data-fade="b"],
-.tcard-stage-copy[data-fade="b"] {
-  animation: chatcard-fade-b 240ms cubic-bezier(0.61, 1, 0.88, 1) both;
+.mcard-state-word[data-fade="b"],
+.mcard-line[data-fade="b"] {
+  animation: chatcard-fade-b 240ms var(--ease-out) both;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tcard-state[data-fade],
-  .tcard-stage-copy[data-fade] {
-    animation: none;
-  }
+/* ---------- the body ---------- */
+
+.mcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px 16px var(--text-x);
+  min-width: 0;
 }
 
-/* ---------- the head ---------- */
+.mcard-body[hidden] { display: none; }
 
-/* The figure in the head is for the folded line, "Swap 2 USDC Confirmed". Open, the from
-   leg says the same number a row below, and a number twice on one card is noise. */
-.tcard[data-card="move"][data-open="true"] .tcard-figure {
-  display: none;
-}
-
-/* ---------- the stage line ---------- */
-
-/* The one sentence the stage table gives this stage, over the clock since it last changed.
-   Two lines of room for the sentence and one for the clock, kept whatever they say: a copy
-   that runs to a second line and an ending that stops the clock move nothing under them.
-   Every copy in the table fits two lines at the narrowest column the dock is drawn at. */
-.tcard-stage {
-  padding-top: var(--s-1);
-  font-size: var(--fs-12);
+/* The one sentence under the head: why it did not go through, what a held or late move is
+   doing. Plain words, the reader's own size. */
+.mcard-line {
+  margin: 0;
+  font-size: var(--fs-14);
   line-height: 1.5;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 
-.tcard-stage-copy {
-  display: block;
-  min-height: 3em;
+.mcard[data-state="working"] .mcard-line {
   color: var(--text-2);
 }
 
-.tcard-stage-clock {
+/* The figures a decision is made on, on one ruled line, parted by a quiet dot. */
+.mcard-facts {
   display: flex;
-  justify-content: flex-end;
-  gap: 0.3em;
-  min-height: 1.5em;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+  align-items: baseline;
+  row-gap: 2px;
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.mcard-facts[hidden] { display: none; }
+
+.mcard-fact {
   white-space: nowrap;
 }
 
-.tcard-stage-clock[data-empty="true"] {
-  visibility: hidden;
+.mcard-fact b {
+  font-size: var(--fs-13);
+  font-weight: 500;
+  color: var(--text);
 }
 
-.tcard-stage-usual {
+.mcard-dot {
+  padding: 0 8px;
   color: var(--text-3);
 }
 
-/* ---------- the legs of a send ---------- */
+/* A narrow card lists its facts one to a line: wrapped in a row, a separator hung at the end
+   of a line with nothing after it. */
+@container (max-width: 440px) {
+  .mcard-facts {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 
-/* The receiver, every character, in groups of four. It wraps and the card grows: reading
-   an address back group by group is the whole reason it is on the card. */
-.tcard-leg-address {
-  margin: 2px 0 0;
-  font-size: var(--fs-12);
+  .mcard-dot { display: none; }
+  .mcard-fact { white-space: normal; }
+}
+
+.mcard-extra[hidden] { display: none; }
+
+/* A send's receiver, whole, in groups of four, with its Copy. */
+.mcard-address {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.mcard-address-line {
+  margin: 0;
+  font-size: var(--fs-13);
   line-height: 1.5;
   color: var(--text);
   word-break: break-all;
   overflow-wrap: anywhere;
+}
+
+/* Whether the person has sent here before. A first send is the one to look at twice, so it
+   carries the warning tone; a known address is a quiet fact. */
+.mcard-address-note {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+.mcard-address-note[data-first="true"] {
+  color: var(--warn);
 }
 
 .tcard-leg-group + .tcard-leg-group {
@@ -104,14 +298,282 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--s-1);
-  margin-top: var(--s-1);
 }
 
-/* ---------- the details fold ---------- */
+/* ---------- the ask ---------- */
+
+.mcard-ask-face {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mcard-ask-line {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* A trade's risk: the label at the left, the figure at the right in mono. */
+.mcard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px var(--s-4);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+
+.mcard-grid-label {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.mcard-grid-value {
+  min-width: 0;
+  color: var(--text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* The agent's own words on a rule change, under the app's arithmetic and named as its. */
+.mcard-said {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcard-said-who {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+
+.mcard-said-text {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* What can be pressed, in one row: the quiet Details toggle at the left, the answers at the
+   right edge. */
+.mcard-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  min-width: 0;
+}
+
+.mcard-bar[hidden] { display: none; }
+
+.mcard-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-height: 30px;
+  margin-left: -2px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--fs-12);
+  cursor: pointer;
+  transition: color var(--dur-press) var(--ease-out);
+}
+
+.mcard-details-toggle[hidden] { display: none; }
+
+@media (hover: hover) and (pointer: fine) {
+  .mcard-details-toggle:hover { color: var(--text-2); }
+}
+
+.mcard-details-toggle:active {
+  color: var(--text);
+}
+
+.mcard-details-toggle:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.mcard-details-chevron {
+  width: 14px;
+  height: 14px;
+  transition: transform 200ms var(--ease-out);
+}
+
+.mcard-bar[data-open="true"] .mcard-details-chevron {
+  transform: rotate(90deg);
+}
+
+.mcard-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-left: auto;
+}
+
+.mcard-actions:empty { display: none; }
+
+.mcard-note-slot[hidden],
+.mcard-note-slot:has(> .mcard-note[hidden]) { display: none; }
+
+/* Cancel first, so the harmless answer is the one the hand reaches; the two share the row
+   rather than filling it, at the card's right edge. */
+.mcard-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+/* Compact: the buttons are as wide as their words. A click that waits shows the spinner in
+   the label's place rather than a wider verb, so nothing on the card moves. */
+.mcard-buttons .btn {
+  padding: 0 var(--s-4);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.mcard-buttons button[data-pending-label]::before { content: none; }
+.mcard-buttons .btn-pending-label { display: none; }
+
+.mcard-buttons .btn-ghost {
+  --btn-edge: var(--line-strong);
+  --btn-fg: var(--text-2);
+}
+
+.mcard-approve {
+  padding: 0 20px;
+}
+
+/* After a click that did not land: the problem and the recovery, beside the buttons. */
+.mcard-note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  color: var(--warn);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.mcard-note[hidden] { display: none; }
+
+.mcard-retry {
+  align-self: flex-start;
+}
+
+/* ---------- the rule change ---------- */
+
+.policy-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* One axis the change moves: what it is at the left, what it was and what it becomes at the
+   right, in mono, with the multiple when the jump is ten times or more. */
+.axis-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--s-3);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+}
+
+.axis-name {
+  min-width: 0;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* The figures never break: $10,000 across two lines reads as a different number. The label
+   takes its own line when the column is too narrow for both. */
+.axis-figures {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.axis-before,
+.axis-to { color: var(--text-3); }
+.axis-after { color: var(--text); }
+.axis-after[data-tone="looser"] { color: var(--warn); }
+
+.axis-factor {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+.policy-line {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.policy-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-13);
+}
+
+.policy-rule-name { margin: 0; font-weight: 500; }
+.policy-gained,
+.policy-lost { margin: 0; overflow-wrap: anywhere; }
+.policy-lost { color: var(--text-3); }
+.policy-same { margin: 0; color: var(--text-3); }
+
+/* One address in the Details and the answer to "who picked this". An address the venue
+   minted is the one a person is least expecting, so it is the one that carries a tone. */
+.destination {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+  font-size: var(--fs-12);
+}
+
+.destination .sendcard-address {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--text);
+  word-break: break-all;
+}
+
+.destination-who {
+  color: var(--text-3);
+}
+
+.destination[data-chosen="venue"] .destination-who {
+  color: var(--warn);
+}
+
+/* ---------- the details ---------- */
 
 .tcard-details {
-  margin-top: var(--s-1);
   border-top: 1px solid var(--line);
+}
+
+.tcard-details[hidden] { display: none; }
+
+.mcard-body > .tcard-details:first-child {
+  border-top: 0;
 }
 
 .tcard-details-head {
@@ -120,7 +582,7 @@
   gap: var(--s-1);
   width: 100%;
   min-height: 30px;
-  padding: 4px 0;
+  padding: 6px 0 0;
   border: 0;
   background: none;
   color: var(--text-3);
@@ -130,13 +592,15 @@
   cursor: pointer;
 }
 
-.tcard-details-head:hover {
-  color: var(--text-2);
+.tcard-details-head[hidden] { display: none; }
+
+@media (hover: hover) and (pointer: fine) {
+  .tcard-details-head:hover { color: var(--text-2); }
 }
 
 .tcard-details-head:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--ink);
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
   border-radius: 4px;
 }
 
@@ -168,34 +632,139 @@
 .tcard-details-body {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-bottom: var(--s-2);
+  gap: 4px;
+  padding: var(--s-2) 0 2px;
 }
 
-/* A reference: the shortened id, the Copy beside it, a link out when there is one. */
+/* On a move card the fold has no head of its own and no rule above it: its toggle is the
+   card's head or the quiet Details in the bar. Closed, it gives back the gap the body keeps
+   above it, so a closed fold adds no height to the card. */
+.mcard .tcard-details {
+  border-top: 0;
+  transition: margin-top 200ms var(--ease-out);
+}
+
+.mcard-body > .tcard-details[data-open="false"] {
+  margin-top: -12px;
+}
+
+.mcard .tcard-details-body {
+  padding-top: 0;
+}
+
+/* An id and its Copy are one unit that never shrinks: beside the label when they fit, on the
+   next line at the right when they do not. Squeezed, the id ran under its Copy. */
 .tcard-ref {
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 0;
 }
 
 .tcard-ref-value {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--s-1);
-  min-width: 0;
+  margin-left: auto;
 }
 
+.tcard-ref-value .tcard-line-value,
 .tcard-copy {
   flex: 0 0 auto;
 }
 
-/* The rail's own line, as evidence: it wraps like a hash and is never the headline. */
-.tcard-recorded .tcard-line-value {
-  font-family: inherit;
-  color: var(--text-3);
+/* The full record, as evidence: its label, then the line under it at the card's width,
+   wrapping between words. Beside the label it squeezed the label to two letters a line. */
+.tcard-line.tcard-recorded {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
 }
 
-/* The checks inside the fold are the shared fold (ui/screens/checks.js); it draws its own
-   rule and sits flush with the lines above it. */
+.tcard-line.tcard-recorded[data-wrap="true"] .tcard-line-value {
+  font-family: inherit;
+  color: var(--text-3);
+  text-align: left;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.mcard-summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-3);
+  font-size: var(--fs-12);
+}
+
 .tcard-details-body > .checks {
   margin-top: var(--s-1);
+}
+
+/* ---------- the track ---------- */
+
+/* While the move works: a hairline along the bottom edge, easing toward the end over the
+   move's usual time and holding short of it until the move lands. cards.js sets the pace
+   and where in it the move already is, so a repaint resumes rather than restarts it. */
+.mcard-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  overflow: hidden;
+  border-radius: 0 0 var(--radius) var(--radius);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 600ms var(--ease-out);
+}
+
+.mcard-track-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: color-mix(in srgb, var(--ink) 72%, transparent);
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+
+.mcard[data-state="working"] .mcard-track {
+  opacity: 1;
+  transition-duration: 180ms;
+}
+
+.mcard[data-state="working"] .mcard-track-fill {
+  animation: mcard-pace var(--track-dur, 45s) cubic-bezier(0.33, 1, 0.68, 1) var(--track-at, 0s) both;
+}
+
+.mcard[data-state="done"] .mcard-track-fill {
+  transform: scaleX(1);
+}
+
+@keyframes mcard-pace {
+  from { transform: scaleX(0.02); }
+  to { transform: scaleX(0.92); }
+}
+
+/* THE MOMENT IT LANDS. A card that turns done while on screen lights its edge once and lets
+   it decay, the way phosphor does: in fast, out over 2.4 seconds. */
+@keyframes mcard-lit {
+  from { border-color: color-mix(in srgb, var(--ink) 55%, var(--line)); }
+  to { border-color: var(--line); }
+}
+
+.mcard[data-lit="true"] {
+  animation: mcard-lit 2400ms var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mcard-state-word[data-fade],
+  .mcard-line[data-fade],
+  .mcard[data-lit="true"] {
+    animation: none;
+  }
+
+  .mcard[data-state="working"] .mcard-track { opacity: 0; }
+  .mcard[data-state="working"] .mcard-track-fill { animation: none; }
+  .tcard-details-fold,
+  .tcard-details-chevron { transition: none; }
 }

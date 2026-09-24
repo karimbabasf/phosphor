@@ -333,19 +333,3 @@ test('a read that fails is said in words, with a way to try again', async () => 
   assert.deepEqual(rows(rig.host), ['a']);
 });
 
-/* The dock opens the receipt for the row a Yes has just settled, and it asks this module for
-   it. When the list became a mounted component the module level load() went with it, and the
-   dock's call fell through to close(): every approval since 2026-09-15 has flashed "Approved."
-   and then shown nothing at all. One read by id, off the same route the list reads. */
-test('a receipt can be read by id, for the dock that just decided it', async () => {
-  const rig = boot();
-  rig.respond(() => ({ receipts: [receipt('a', 1), receipt('b', 2)], total: 2, hasMore: false, feesUsd: 0.02 }));
-  await rig.settle();
-
-  assert.equal((await rig.mod.find('b'))?.id, 'b');
-  assert.equal(await rig.mod.find('gone'), null, 'a row that is not there is null, never a throw');
-  assert.equal(await rig.mod.find(''), null, 'no id is no row');
-
-  rig.respond(() => new Error('the app is down'));
-  assert.equal(await rig.mod.find('a'), null, 'a read that fails is null, and the dock closes');
-});
