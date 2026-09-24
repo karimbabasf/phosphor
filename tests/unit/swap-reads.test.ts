@@ -327,7 +327,7 @@ test('swap_quote into native BTC is no price, in the words that say what works i
   const reply = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'BTC', toChain: 'btc', amountIn: '0.5' });
   assert.equal(reply.ok, false);
   assert.equal(reply.reason, 'no_price');
-  assert.match(reply.sentence ?? '', /Bitcoin itself can't be held inside NEAR Intents/);
+  assert.match(reply.sentence ?? '', /Bitcoin itself can't be held here/);
   assert.match(reply.details ?? '', /No liquidity available/);
 
   const nbtc = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'BTC', toChain: 'near', amountIn: '0.5' });
