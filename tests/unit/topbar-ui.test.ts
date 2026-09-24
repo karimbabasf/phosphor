@@ -128,3 +128,12 @@ test('what needs the person is one calm line at the foot of the world, never in 
   assert.match(rule, /position:\s*sticky;/);
   assert.doesNotMatch(rule, /var\(--(warn|down|up|ink)/, 'the notice shouts in a state colour');
 });
+
+/* Freezing closes every open trading position at the market price (src/main.ts setKill calls
+   runner.stopAll, which flattens every position, hand-opened ones too). The bar's confirm says so
+   in the Vault's own words, and never that nothing can close a position (hunt B, 2026-09-23). */
+test('the freeze confirm says it closes open positions, in the Vault\'s words', () => {
+  const shell = read('../../ui/screens/shell.js');
+  assert.ok(shell.includes("body: 'This closes your open trading positions at the market price and stops every plan. Nothing can move your money until you unfreeze.'"), 'the bar says something else about positions');
+  assert.equal(/does not close a position|nothing in this app can do that|open positions stay open|Nothing you hold is sold/.test(shell), false, 'the bar says a freeze leaves positions open');
+});

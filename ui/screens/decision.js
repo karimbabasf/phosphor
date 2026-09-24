@@ -505,15 +505,32 @@
     });
   }
 
-  /* The address in groups of four, the way the send card prints it, so it wraps as a set and
-     a lone digit never sits on its own line. */
+  /* The address in the groups Add money prints it in (ui/screens/netpick.js chunks: "0x" and
+     then fours for an EVM address, fours for a Solana key, a NEAR name whole), so it wraps as a
+     set and a lone digit never sits on its own line. The first and the last group, the ones a
+     person checks, are in the text colour and the rest a step quieter. */
   function addressLine(address) {
     var line = dom.el('p', 'addr sendcard-address');
     dom.setAttr(line, 'data-address', address);
-    var sendCard = window.PhosphorSendCard;
-    var groups = sendCard && typeof sendCard.groupsOf === 'function' ? sendCard.groupsOf(address) : [String(address)];
-    for (var i = 0; i < groups.length; i += 1) line.appendChild(dom.el('span', 'sendcard-group', groups[i]));
+    var groups = addressGroups(String(address));
+    var first = groups[0] === '0x' ? 1 : 0;
+    for (var i = 0; i < groups.length; i += 1) {
+      var end = groups.length > 1 && (i === first || i === groups.length - 1);
+      var tone = i < first ? ' addr-prefix' : (end ? ' addr-end' : ' addr-mid');
+      line.appendChild(dom.el('span', 'sendcard-group' + (groups.length > 1 ? tone : ''), groups[i]));
+    }
     return line;
+  }
+
+  function addressGroups(address) {
+    var pick = window.PhosphorNetPick;
+    if (pick && typeof pick.chunks === 'function') return pick.chunks(address);
+    var out = [];
+    var hex = /^0x[0-9a-fA-F]{40}$/.test(address);
+    if (!hex && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return [address];
+    if (hex) out.push('0x');
+    for (var i = hex ? 2 : 0; i < address.length; i += 4) out.push(address.slice(i, i + 4));
+    return out;
   }
 
   function venueWords(venue) {
@@ -522,8 +539,10 @@
     return id.replace(/[-_]+/g, ' ');
   }
 
-  function detailLine(label, value) {
-    var row = dom.el('div', 'tcard-line');
+  /* A sentence stands under its label and breaks between words; a figure or a name sits at the
+     line's end. */
+  function detailLine(label, value, sentence) {
+    var row = dom.el('div', sentence ? 'tcard-line tcard-sentence' : 'tcard-line');
     row.setAttribute('data-wrap', 'true');
     row.appendChild(dom.el('span', 'tcard-line-label', label));
     row.appendChild(dom.el('span', 'tcard-line-value', value));
@@ -534,7 +553,7 @@
      the price holds, the route, and the rail's own summary. True, and one click away. */
   function askDetails(proposal) {
     var draft = proposal.draft || {};
-    var out = [detailLine('Why it asks', whyLine(proposal))];
+    var out = [detailLine('Why it asks', whyLine(proposal), true)];
     var destinations = destinationsOf(proposal);
     for (var d = 0; d < destinations.length; d += 1) {
       var where = dom.el('div', 'destination');
@@ -707,11 +726,32 @@
     return 'Try that again.';
   }
 
-  /* What a held move waits on, in the send card's words when it has them. */
-  function heldLine(proposal) {
-    var sendCard = window.PhosphorSendCard;
-    var said = sendCard && typeof sendCard.heldLine === 'function' ? sendCard.heldLine(proposal) : '';
-    return said || 'Waiting for the checks to clear. Nothing is signed until they do.';
+  /* ---------- a move the checks are holding ---------- */
+
+  /* The newest preflight a row carries: the checks the app ran before it would sign. */
+  function preflightOf(proposal) {
+    var p = proposal && typeof proposal === 'object' ? proposal : {};
+    var list = Array.isArray(p.preflight) ? p.preflight : [];
+    for (var i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i] && typeof list[i] === 'object' && !Array.isArray(list[i])) return list[i];
+    }
+    return null;
+  }
+
+  /* What a held move waits on: an approved row the preflight is holding, nothing signed,
+     stamped with when the hold began, and the newest preflight's reason, with how long it has
+     waited in whole minutes. */
+  function heldLine(proposal, now) {
+    var p = proposal && typeof proposal === 'object' ? proposal : {};
+    var fallback = 'Waiting for the checks to clear. Nothing is signed until they do.';
+    if (p.status !== 'approved' || typeof p.heldSince !== 'string') return fallback;
+    var preflight = preflightOf(p);
+    var reason = preflight && preflight.holdReason ? String(preflight.holdReason) : 'Waiting for the checks to clear';
+    var since = Date.parse(p.heldSince);
+    if (!isFinite(since)) return reason + '. Nothing is signed until it clears.';
+    var at = typeof now === 'number' && isFinite(now) ? now : Date.now();
+    var minutes = Math.max(0, Math.floor((at - since) / 60000));
+    return reason + ' (' + (minutes < 1 ? 'under a minute' : minutes + ' min') + '). Nothing is signed until it clears.';
   }
 
   /* ---------- a card another screen shows ---------- */
@@ -743,6 +783,7 @@
     askKey: askKey,
     retryButton: retryButton,
     heldLine: heldLine,
+    preflightOf: preflightOf,
     showCard: showCard,
     diffOf: diffOf,
     refineDiff: refineDiff,

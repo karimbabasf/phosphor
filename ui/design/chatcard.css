@@ -272,6 +272,11 @@
   overflow-wrap: anywhere;
 }
 
+.mcard-fact b[data-quiet] {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
 .mcard-extra[hidden] { display: none; }
 
 /* A send's receiver, whole, in groups of four, with its Copy, on a small well so it reads as
@@ -296,11 +301,6 @@
 
 .mcard-address-row > .tcard-copy {
   flex: 0 0 auto;
-}
-
-/* The first and the last group of a hex address, the ones a person checks, a step heavier. */
-.tcard-leg-group-key {
-  font-weight: 600;
 }
 
 .mcard-address-line {
@@ -592,6 +592,20 @@
 .policy-lost { color: var(--text-3); }
 .policy-same { margin: 0; color: var(--text-3); }
 
+/* A sentence in the Details (why it asks): under its label, left to right, broken between
+   words, never mid-word the way a hash is. */
+.tcard-line.tcard-sentence {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.tcard-line.tcard-sentence .tcard-line-value {
+  text-align: left;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
 /* One address in the Details and the answer to "who picked this". An address the venue
    minted is the one a person is least expecting, so it is the one that carries a tone. */
 .destination {
@@ -602,11 +616,15 @@
   font-size: var(--fs-12);
 }
 
+/* The groups wrap as a set; the ends a person checks take deposit.css's .addr-end. */
 .destination .sendcard-address {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 0.6ch;
   margin: 0;
   font-family: var(--font-mono);
-  color: var(--text);
-  word-break: break-all;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
 }
 
 .destination-who {

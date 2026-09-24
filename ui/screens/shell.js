@@ -197,7 +197,6 @@
     }
     dom.setAttr(document.body, 'data-view', currentView);
     renderLayout();
-    renderBrake();
 
     if (changed) {
       /* The world is the one scroller and the views share it, so a screen
@@ -420,9 +419,10 @@
   var BRAKE_WORDS = {
     off: {
       title: 'Freeze everything?',
-      body: "Your agent can't move any money until you unfreeze. Nothing you hold is sold.",
-      /* Said only where trading is on screen: on Basic there are no orders to talk about. */
-      trading: ' Working orders are cancelled, and open positions stay open.',
+      /* The Vault's own words for the same switch (vault.js FREEZE.off.ask), because it is the
+         same switch: freezing runs runner.stopAll, which closes every open trading position at
+         the market price (src/runner/host.ts), so no sentence here may say otherwise. */
+      body: 'This closes your open trading positions at the market price and stops every plan. Nothing can move your money until you unfreeze.',
       keep: 'Cancel',
       go: 'Freeze everything',
       pending: 'Freezing'
@@ -493,8 +493,7 @@
     if (refs.brakeWord) dom.setHidden(refs.brakeWord, !frozen);
     if (!refs.brakeGo) return;
     dom.setText(refs.brakeTitle, words.title);
-    var trading = currentView === 'pro' || currentView === 'trade';
-    dom.setText(refs.brakeBody, words.body + (trading && words.trading ? words.trading : ''));
+    dom.setText(refs.brakeBody, words.body);
     dom.setText(refs.brakeKeep.querySelector('.btn-label'), words.keep);
     dom.setText(refs.brakeGo.querySelector('.btn-label'), words.go);
     dom.setAttr(refs.brakeGo, 'data-pending-label', words.pending);
@@ -587,7 +586,9 @@
       row.type = 'button';
       row.setAttribute('role', 'menuitemcheckbox');
       row.dataset.pane = pane.name;
-      row.appendChild(dom.el('i', 'check layers-check'));
+      var box = dom.el('i', 'check layers-check');
+      if (window.PhosphorIcons && typeof window.PhosphorIcons.svg === 'function') box.appendChild(window.PhosphorIcons.svg('check', 'layers-tick'));
+      row.appendChild(box);
       row.appendChild(dom.el('span', '', pane.label));
       dom.on(row, 'click', onPaneRow);
       return row;

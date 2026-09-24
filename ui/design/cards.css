@@ -449,17 +449,67 @@
   margin-left: calc(20px + var(--s-3));
 }
 
-.tcard-checked {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-1);
-  white-space: nowrap;
+/* The deposit address on the same column: the well Add money draws it in, a size down, then
+   Copy and the QR code, and the line that says what the last press found. */
+.tcard-deposit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+  min-width: 0;
+  margin-left: calc(20px + var(--s-3));
+  padding-top: var(--s-1);
 }
 
-.tcard-checked-glyph {
-  width: 14px;
-  height: 14px;
-  color: var(--text-2);
+.tcard-deposit:empty {
+  display: none;
+}
+
+/* The address row is the move card's (chatcard.css .mcard-address-row), so every address in
+   the thread reads the same: Add money's groups at the row's size, in the mono face. */
+.tcard-deposit > .mcard-address-row {
+  align-self: stretch;
+}
+
+.tcard-deposit-well .deposit-address {
+  font-family: var(--font-mono);
+}
+
+.tcard-deposit-well .deposit-chunks {
+  column-gap: 0.35em;
+  row-gap: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.tcard-deposit-memo-label {
+  color: var(--text-3);
+}
+
+.tcard-deposit-actions {
+  gap: var(--s-2);
+  padding-top: 0;
+}
+
+.tcard-deposit .tcard-open {
+  margin-left: 0;
+}
+
+.tcard-deposit-said {
+  margin: 0;
+}
+
+.tcard-qr {
+  line-height: 0;
+}
+
+.tcard-qr[hidden] {
+  display: none;
+}
+
+.tcard-qr canvas {
+  display: block;
+  border-radius: var(--radius-xs);
 }
 
 .tcard-tail {

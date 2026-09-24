@@ -227,6 +227,9 @@ function build() {
     bus: (type: string, payload: unknown) => { for (const handler of busHandlers[type] ?? []) handler(payload); },
     /* A state frame's proposals slice, as ui/core/state.js hands it to whoever selected it. */
     proposals: (list: unknown[]) => { state = { ...state, proposals: list }; for (const handler of sliceHandlers.proposals ?? []) handler(list, state); },
+    /* The deposit watch's frame (src/vault/watch.ts), the same way. */
+    deposit: (frame: unknown) => { state = { ...state, deposit: frame }; for (const handler of sliceHandlers.deposit ?? []) handler(frame, state); },
+    win,
     blocks: () => all(host, 'transcript-rows')[0].children as Any[],
     cardNodes: (kind?: string) => byAttr(host, 'data-card', kind),
     send: () => all(composerHost, 'composer-send')[0],
@@ -531,14 +534,27 @@ test('a move card follows its proposal through every state, in place', () => {
   assert.ok(!faceOf(failed).includes('REFUNDED') && !faceOf(failed).includes('422'), 'the venue\'s words are on the face: ' + faceOf(failed));
   const failedLines = detailsOf(failed);
   assert.ok(failedLines.some((t) => t.startsWith('The full record') && t.includes('422')), 'the rail line is not kept as evidence: ' + failedLines.join(' | '));
+  /* The service's word is for developers; a person reads who turned it down, in words. */
+  assert.ok(failedLines.includes('The swap service turned it down.'), failedLines.join(' | '));
+  const stageLine = all(failed, 'tcard-line').find((n: Any) => all(n, 'tcard-line-label')[0]?.textContent === 'The swap service said');
+  assert.ok(stageLine, 'the service\'s word left the evidence');
+  assert.equal(stageLine.getAttribute('data-dev-only'), '', 'the service\'s word shows outside developer mode');
   assert.ok(failedLines.some((t) => t.includes('0x9f8e7d...d3c2b1a0')), 'the hash in the rail line is not cut to its ends');
   assert.ok(!failed.textContent.includes('0x9f8e7d6c5b4a3928'), 'a whole hash reached the card');
   /* An address is not a hash: 40 hex characters stay whole in the same line (frozen rule 3). */
   const address = '0xDeAdBeEf00112233445566778899AaBbCcDdEeFf';
+  const refused = `The venue refused the payout to ${address} (alice.near) after intent 0x9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0 was signed.`;
+  /* The venue still holds a handle, so the app is still checking: nothing of the rail's line yet. */
   world.proposals([row('failed', {
     decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', settledAt: '2026-09-18T10:40:00Z',
-    result: { ok: false, detail: `The venue refused the payout to ${address} (alice.near) after intent 0x9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0 was signed.`, txids: ['abc'], evidence: { ...evidence, providerStage: 'FAILED' } },
+    result: { ok: false, detail: refused, txids: ['abc'], evidence: { ...evidence, providerStage: 'FAILED' } },
   })]);
+  assert.equal(detailsOf(world.cardNodes('move')[0]).some((t) => t.startsWith('The full record')), false, 'the rail line printed while the move is still being checked');
+  world.proposals([row('failed', {
+    decidedAt: '2026-09-18T10:36:00Z', decidedBy: 'human', settledAt: '2026-09-18T10:40:00Z',
+    result: { ok: false, detail: refused, evidence: { providerStage: 'FAILED' } },
+  })]);
+  assert.equal(stateWord(world.cardNodes('move')[0]), "Didn't go through");
   const recorded = detailsOf(world.cardNodes('move')[0]).find((t) => t.startsWith('The full record')) as string;
   assert.ok(recorded.includes(address), 'the receiver was cut in the evidence line: ' + recorded);
   assert.ok(recorded.includes('0x9f8e7d...d3c2b1a0') && !recorded.includes('0x9f8e7d6c5b4a3928'));
@@ -651,26 +667,124 @@ test('a move asked for and never filed says so rather than working forever', () 
   assert.equal(world.cardNodes('move')[1].getAttribute('data-state'), 'didnt_go_through', 'a card still works after its turn ended');
 });
 
-test('the deposit card names the network, the tail of the address, the watch state, and opens the real card', () => {
+/* The deposit card, answered with the address itself (hunt B, 2026-09-23). The agent is told the
+   address's ends only; the card reads the whole one through the window's own route, the way Add
+   money does, and draws it only when the wallet is open and the ends are the ones the agent was
+   given. */
+const DEPOSIT_ADDRESS = '0x12ab5c7d9e0f1a2b3c4d5e6f708192a3b4c59fe2';
+const DEPOSIT_DATA = { ok: true, shownInWindow: true, chain: 'base', network: 'Base', asset: 'USDC', minDeposit: 1, addressFingerprint: '0x12ab...9fe2', addressVerified: true, memo: null, watching: 'watching' };
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+function depositWorld(report: Any) {
   const world = build();
+  const copied: string[] = [];
+  const drawn: unknown[] = [];
+  world.win.PhosphorMoneyIn = { load: () => Promise.resolve(report) };
+  world.win.PhosphorLazy = { load: () => Promise.resolve(true) };
+  world.win.PhosphorNetPick = {
+    kindOf: (id: string) => (id === 'base' ? 'evm' : null),
+    addressBlock: (address: string, kind: string) => { const n = make('div'); n.className = 'deposit-address addr'; n.textContent = address; n.setAttribute('data-kind', kind); return n; },
+    copyChecked: (address: string, say: (text: string) => void) => { copied.push(address); say('Address copied, ends in ...' + address.slice(-4)); return Promise.resolve(true); },
+    drawChecked: (_canvas: unknown, address: string, px: number) => { drawn.push([address, px]); return { ok: true }; },
+  };
+  return { world, copied, drawn };
+}
+
+test('the deposit card answers with the whole address, Copy and a QR code, read by the window itself', async () => {
+  const { world, copied, drawn } = depositWorld({ verified: true, networks: [{ id: 'base', words: 'Base', address: DEPOSIT_ADDRESS, memo: null, accepts: [] }] });
   world.ask('deposit usdc on base');
-  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: { chain: 'base', asset: 'USDC' }, data: {
-    ok: true, shownInWindow: true, chain: 'base', network: 'Base', asset: 'USDC', minDeposit: 1, addressFingerprint: '0x12ab...9Xk2', addressVerified: true, memo: null, watching: 'watching',
-  } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: { chain: 'base', asset: 'USDC' }, data: DEPOSIT_DATA });
   const card = world.cardNodes('deposit')[0];
   assert.ok(card, 'no deposit card');
   assert.ok(card.textContent.includes('Deposit USDC on Base'), card.textContent);
-  assert.equal(all(card, 'tcard-tail')[0].textContent, '9Xk2');
-  /* The state is a word, not a pill with a dot. */
-  assert.equal(all(card, 'tcard-state')[0].textContent, 'Watching for your deposit');
-  assert.ok(card.textContent.includes('Address checked'), 'the checked address is a bare grey word');
+  assert.equal(all(card, 'tcard-tail')[0].textContent, '9fe2', 'the ends are not said while the address is read');
+  /* The state is a word, not a pill with a dot, and the check is not a tag. */
+  assert.equal(all(card, 'tcard-state')[0].textContent, 'Watching');
+  assert.equal(/verified|Address checked/.test(card.textContent), false, card.textContent);
   assert.ok(card.textContent.includes('At least 1 USDC.'), card.textContent);
   assert.equal(all(card, 'tcard-chip').length, 0, 'a status pill is back');
   assert.equal(byAttr(card, 'data-token', 'BASE').length, 1, 'no network mark');
-  const button = all(card, 'tcard-open')[0];
-  assert.equal(button.textContent, 'Show address and QR');
-  fire(button, 'click');
-  assert.equal(JSON.stringify(world.opened), JSON.stringify([{ chain: 'base', symbol: 'USDC' }]));
+
+  await settle();
+  const block = all(card, 'deposit-address')[0];
+  assert.ok(block, 'the whole address is not on the card');
+  assert.equal(block.textContent, DEPOSIT_ADDRESS);
+  assert.equal(block.getAttribute('data-kind'), 'evm');
+  assert.equal(all(card, 'tcard-place')[0].hidden, true, 'the ends are said twice once the address is there');
+
+  fire(all(card, 'tcard-copy')[0], 'click');
+  assert.deepEqual(copied, [DEPOSIT_ADDRESS]);
+  const said = all(card, 'tcard-deposit-said')[0];
+  assert.equal(said.hidden, false);
+  assert.equal(said.textContent, 'Address copied, ends in ...9fe2');
+
+  assert.equal(all(card, 'mcard-address-row')[0]?.children.at(-1)?.className.includes('tcard-copy'), true, 'Copy is not at the end of the address row');
+  const show = all(card, 'tcard-show-qr')[0];
+  assert.equal(show.textContent, 'Show QR code');
+  assert.equal(all(card, 'tcard-qr')[0].hidden, true, 'the QR code is out before it is asked for');
+  fire(show, 'click');
+  await settle();
+  assert.deepEqual(drawn, [[DEPOSIT_ADDRESS, 128]]);
+  assert.equal(all(card, 'tcard-qr')[0].hidden, false);
+  assert.equal(show.textContent, 'Hide QR code');
+  assert.deepEqual(world.opened, [], 'the card opened the deposit dialog as well');
+});
+
+test('the deposit card\'s word follows its own watch and goes quiet when another one runs', async () => {
+  const { world } = depositWorld({ verified: true, networks: [{ id: 'base', address: DEPOSIT_ADDRESS }] });
+  world.ask('deposit usdc on base');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: {}, data: DEPOSIT_DATA });
+  const card = world.cardNodes('deposit')[0];
+  const word = () => all(card, 'tcard-state')[0];
+  const frame = (over: Any) => ({ phase: 'watching', chain: 'base', symbol: 'USDC', address: DEPOSIT_ADDRESS, startedAt: new Date().toISOString(), ...over });
+  world.deposit(frame({ phase: 'seen' }));
+  assert.equal(word().textContent, 'Arriving');
+  world.deposit(frame({ phase: 'credited' }));
+  assert.equal(word().textContent, 'In your balance');
+  world.deposit(frame({ chain: 'arb' }));
+  assert.equal(word().hidden, true, 'a watch on another network speaks for this card');
+
+  // A card drawn again from a stored conversation is older than any watch running now.
+  const old = build();
+  old.ask('deposit usdc on base');
+  old.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: {}, data: DEPOSIT_DATA, at: Date.parse('2026-09-01T10:00:00Z') });
+  old.deposit(frame({}));
+  assert.equal(all(old.cardNodes('deposit')[0], 'tcard-state')[0].hidden, true, 'an old card says Watching');
+  await settle();
+});
+
+test('the deposit card draws no address it cannot vouch for, and says why', async () => {
+  // The wallet is not open: the address shows in Add money, one press away.
+  const locked = depositWorld({ verified: false, networks: [{ id: 'base', address: DEPOSIT_ADDRESS }] });
+  locked.world.ask('deposit usdc on base');
+  locked.world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: {}, data: DEPOSIT_DATA });
+  await settle();
+  let card = locked.world.cardNodes('deposit')[0];
+  assert.equal(all(card, 'deposit-address').length, 0);
+  assert.ok(card.textContent.includes('The whole address shows once the wallet is open.'), card.textContent);
+  const open = all(card, 'tcard-open')[0];
+  assert.equal(open.textContent, 'Open in Add money');
+  fire(open, 'click');
+  assert.equal(JSON.stringify(locked.world.opened), JSON.stringify([{ chain: 'base', symbol: 'USDC' }]));
+
+  // The wallet reports another address than the one the agent was told: nothing, and no way on.
+  const other = depositWorld({ verified: true, networks: [{ id: 'base', address: '0x99ab5c7d9e0f1a2b3c4d5e6f708192a3b4c59fe2' }] });
+  other.world.ask('deposit usdc on base');
+  other.world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: {}, data: DEPOSIT_DATA });
+  await settle();
+  card = other.world.cardNodes('deposit')[0];
+  assert.equal(all(card, 'deposit-address').length, 0, 'an address with other ends was drawn');
+  assert.ok(card.textContent.includes('This address is not the one your agent was given, so nothing is shown.'), card.textContent);
+  assert.equal(all(card, 'tcard-open').length + all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length, 0);
+
+  // The wallet file was edited.
+  const edited = depositWorld({ verified: true, tampered: true, networks: [{ id: 'base', address: DEPOSIT_ADDRESS }] });
+  edited.world.ask('deposit usdc on base');
+  edited.world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: {}, data: DEPOSIT_DATA });
+  await settle();
+  card = edited.world.cardNodes('deposit')[0];
+  assert.equal(all(card, 'deposit-address').length, 0);
+  assert.ok(card.textContent.includes('has been edited'), card.textContent);
 });
 
 test('a refused deposit says the reason and nothing else', () => {
@@ -764,6 +878,8 @@ test('cards.js builds nothing that decides anything and writes no markup', () =>
     "dom.el('button', 'btn btn-quiet btn-sm tcard-copy');",
     "dom.el('button', 'tcard-details-head');",
     "dom.el('button', 'mcard-details-toggle');",
+    "dom.el('button', 'btn btn-quiet btn-sm tcard-show-qr');",
+    "dom.el('button', 'btn btn-quiet btn-sm tcard-copy');",
     "dom.el('button', 'btn btn-ghost btn-sm tcard-open');",
   ], 'an unknown button site in cards.js');
   /* Every money figure the move card draws goes through the roll. */
@@ -827,8 +943,10 @@ test('a read on the way to a move leaves no card of its own, and one turn draws 
    Approve lives. A decided row from before this window opened is Activity's, not the thread's. */
 test('a move made elsewhere gets its card from the state frame, and a waiting one always has one', async () => {
   const world = build();
-  /* Rows get cards once the stored chat has been read back, after whatever it already drew. */
-  await new Promise((resolve) => setImmediate(resolve));
+  /* Rows get cards once the stored chat has been read back, after whatever it already drew; and
+     a row made "now" has to be later than the window's own start (agent.js bootAt), which one
+     immediate could leave in the same millisecond. */
+  await new Promise((resolve) => setTimeout(resolve, 2));
   const now = new Date().toISOString();
   const older = new Date(Date.now() - 3_600_000).toISOString();
   const row = (id: string, status: string, createdAt: string, extra: Record<string, unknown> = {}) => withView({
@@ -885,11 +1003,14 @@ test('a send names its receiver whole on the face while the person decides', () 
   assert.equal(address.getAttribute('data-address'), to);
   assert.equal(all(address, 'tcard-leg-group').map((g: Any) => g.textContent).join(''), to, 'the address is not whole');
   /* "0x" and then ten groups of four, so the groups start where the address does; the first
-     and the last, the ones a person checks, carry a heavier weight. */
+     and the last, the ones a person checks, are in the text colour and the rest a step quieter,
+     as Add money prints an address. */
   const groups = all(address, 'tcard-leg-group');
   assert.deepEqual(groups.slice(0, 3).map((g: Any) => g.textContent), ['0x', 'AbCd', 'Ef01']);
   assert.equal(groups.length, 11);
-  assert.deepEqual(all(address, 'tcard-leg-group-key').map((g: Any) => g.textContent), ['AbCd', 'EF01']);
+  assert.deepEqual(all(address, 'addr-end').map((g: Any) => g.textContent), ['AbCd', 'EF01']);
+  assert.deepEqual(all(address, 'addr-prefix').map((g: Any) => g.textContent), ['0x']);
+  assert.equal(all(address, 'addr-mid').length, 8);
   assert.ok(faceOf(card).includes('An Ethereum address. First send to this address.'), faceOf(card));
   assert.equal(all(card, 'tcard-copy').filter((b: Any) => all(b, 'btn-label')[0]).length >= 1, true, 'no Copy on the address');
   assert.equal(all(card, 'tcard-leg-explorer').length, 1, 'no explorer link on the address');
@@ -950,6 +1071,22 @@ test('a working move shows no elapsed time until it runs past its usual time', (
   assert.equal(card.getAttribute('data-late'), null);
   assert.doesNotMatch(faceOf(card), /\d+s\b|of about/, 'a clock on a move that is on time: ' + faceOf(card));
   assert.equal(all(card, 'mcard-track').length, 1, 'no track under a working move');
+  /* While it runs, nothing of the rail's own line is printed, even for a developer. */
+  assert.equal(detailsOf(card).some((t) => t.startsWith('The full record')), false, detailsOf(card).join(' | '));
+  assert.equal(detailsOf(card).some((t) => t.includes('turned it down')), false);
+});
+
+test('a fee of nothing says No fee, quietly, never a bold $0.00', () => {
+  const world = build();
+  const row = withView({ id: 'f0', kind: 'swap', status: 'pending', createdAt: '2026-09-20T10:00:00Z', draft: SWAP_DRAFT, verdict: { outcome: 'needs_approval', reasons: [] },
+    simulation: { ok: true, summary: 'swap', swap: { receives: '4.98', receivesAtLeast: '4.9', feeUsd: 0, etaSeconds: 5 } } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: {}, data: row });
+  const card = world.cardNodes('move')[0];
+  const fee = all(card, 'mcard-fact').find((n: Any) => all(n, 'mcard-fact-label')[0].textContent === 'Fee');
+  assert.ok(fee, 'the fee is not on the card: ' + faceOf(card));
+  assert.equal(all(fee, 'mcard-fact-value')[0].textContent, 'No fee');
+  assert.equal(all(fee, 'mcard-fact-value')[0].getAttribute('data-quiet'), 'true');
+  assert.equal(faceOf(card).includes('$0.00'), false, faceOf(card));
 });
 
 test('an over-the-line relay swap keeps how long its price holds in its Details while it waits', () => {
