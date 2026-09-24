@@ -262,11 +262,6 @@ body[data-view="basic"] .notice {
   margin-top: calc(var(--s-6) + var(--s-1));
   padding-top: var(--s-4);
   border-top: 1px solid var(--line);
-  animation: bal-flow-in var(--dur-enter) var(--ease-out);
-}
-
-@keyframes bal-flow-in {
-  from { opacity: 0; transform: translateY(6px); }
 }
 
 .bal-flow-head {
@@ -331,11 +326,9 @@ body[data-view="basic"] .notice {
   }
 }
 
-/* Reduced motion: the steps appear without rising, and a row that moved
-   changes its figure without the light (dom.js already skips the roll). */
+/* Reduced motion: a row that moved changes its figure without the light
+   (dom.js already skips the roll, motion.js the steps' fade). */
 @media (prefers-reduced-motion: reduce) {
-  .bal-flow { animation: none; }
-
   .bal-row::before { display: none; }
 
   .bal-row[data-lit="true"] > .bal-usd:not([data-unpriced]) {

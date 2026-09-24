@@ -108,6 +108,16 @@
   --dur-number: 300ms;
   --dur-glow-in: 120ms;
   --dur-glow-out: 2400ms;
+  /* Opening and closing (ui/design/motion.css, and ui/design/motion.js for the
+     parts CSS cannot do): a popover, panel, confirm, menu or dialog grows from
+     --scale-open and fades in over --dur-open, and goes the same way back a
+     little faster. --dur-morph is a card or a panel changing its height,
+     --dur-view the world changing views. */
+  --dur-open: 220ms;
+  --dur-close: 160ms;
+  --dur-morph: 240ms;
+  --dur-view: 200ms;
+  --scale-open: 0.96;
 
   /* Layout. On Basic the conversation takes the window and the balances panel
      holds a reading width on the right (--panel-w). On the other modes the

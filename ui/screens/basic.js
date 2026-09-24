@@ -85,6 +85,7 @@
     host.appendChild(panel);
 
     refs = {
+      panel: panel,
       total: total,
       totalSkel: totalSkel,
       caption: caption,
@@ -112,22 +113,38 @@
 
   /* ---------- adding money ---------- */
 
+  /* The steps take the list's place and the panel's height slides between
+     the two (ui/design/motion.js). Done fades the steps out first; they are
+     torn down only once they are off screen, and the focus goes back to Add
+     money. */
   function openSteps() {
     if (steps) return;
     if (window.PhosphorLazy) window.PhosphorLazy.load('qr');
-    dom.setHidden(refs.list, true);
-    dom.setHidden(refs.flow, false);
-    steps = window.PhosphorMoneyIn.render(refs.flowBody, { context: 'basic' }) || {};
-    if (refs.title.focus) refs.title.focus();
+    inPanel(null, function () {
+      dom.setHidden(refs.list, true);
+      dom.setHidden(refs.flow, false);
+      steps = window.PhosphorMoneyIn.render(refs.flowBody, { context: 'basic' }) || {};
+      if (refs.title.focus) refs.title.focus();
+    }, refs.flow);
   }
 
   function closeSteps() {
-    if (steps && typeof steps.destroy === 'function') steps.destroy();
+    if (!steps) return;
+    var closing = steps;
     steps = null;
-    dom.clear(refs.flowBody);
-    dom.setHidden(refs.flow, true);
-    dom.setHidden(refs.list, false);
-    if (refs.add.focus) refs.add.focus();
+    inPanel(refs.flow, function () {
+      if (typeof closing.destroy === 'function') closing.destroy();
+      dom.clear(refs.flowBody);
+      dom.setHidden(refs.flow, true);
+      dom.setHidden(refs.list, false);
+      if (refs.add.focus) refs.add.focus();
+    }, refs.list);
+  }
+
+  function inPanel(leaving, change, shown) {
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.swap === 'function') motion.swap(refs.panel, leaving, change, { fade: shown });
+    else change();
   }
 
   /* ---------- render ---------- */

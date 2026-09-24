@@ -1424,20 +1424,29 @@
     }
     dom.on(head, 'click', function () {
       if (!headToggles()) return;
-      details.toggle();
-      paint(last.row, last.meta);
+      flipDetails();
     });
     dom.on(head, 'keydown', function (event) {
       if (!headToggles()) return;
       if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
       event.preventDefault();
-      details.toggle();
-      paint(last.row, last.meta);
+      flipDetails();
     });
-    dom.on(toggle, 'click', function () {
-      details.toggle();
-      paint(last.row, last.meta);
-    });
+    dom.on(toggle, 'click', flipDetails);
+
+    /* Details open as the card grows to hold them, fading in, and close by fading out
+       before the card shrinks back over them (ui/design/motion.js). */
+    function flipDetails() {
+      var motion = window.PhosphorMotion;
+      var opening = !details.isOpen();
+      var change = function () {
+        details.toggle();
+        paint(last.row, last.meta);
+      };
+      if (!motion || typeof motion.morph !== 'function') change();
+      else if (opening) motion.morph(card, change, { fade: details.wrap });
+      else motion.swap(card, details.wrap, change);
+    }
 
     /* The line under the head: why it did not go through, what a held move waits on, what a
        late one is doing. One sentence, never the venue's raw words. */

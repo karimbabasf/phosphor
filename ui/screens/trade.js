@@ -546,10 +546,10 @@
       var first = firstRow(pop);
       if (first && first.focus) first.focus();
     }
-    function close() {
+    function close(returnFocus) {
       dom.setAttr(pop, 'data-open', null);
       dom.setAttr(button, 'aria-expanded', 'false');
-      if (button.focus) button.focus();
+      if (returnFocus !== false && button.focus) button.focus();
     }
     dom.on(button, 'click', function () {
       if (pop.dataset.open === 'true') close();
@@ -563,7 +563,7 @@
     dom.on(document, 'click', function (event) {
       if (pop.dataset.open !== 'true') return;
       if (within(event.target, wrap)) return;
-      close();
+      close(focusStayed(wrap));
     });
     return { open: open, close: close };
   }
@@ -708,7 +708,7 @@
     dom.on(document, 'click', function (event) {
       if (menu.dataset.open !== 'true') return;
       if (within(event.target, wrap)) return;
-      closeMenu();
+      closeMenu(focusStayed(wrap));
     });
 
     refs.symbolButton = button;
@@ -744,12 +744,19 @@
     if (menu.focus) menu.focus();
   }
 
-  function closeMenu() {
+  function closeMenu(returnFocus) {
     var menu = refs.symbolMenu;
     if (!menu) return;
     dom.setAttr(menu, 'data-open', null);
     dom.setAttr(refs.symbolButton, 'aria-expanded', 'false');
-    if (refs.symbolButton && refs.symbolButton.focus) refs.symbolButton.focus();
+    if (returnFocus !== false && refs.symbolButton && refs.symbolButton.focus) refs.symbolButton.focus();
+  }
+
+  /* A click outside a sheet closes it, and the focus goes back to its button
+     unless the click gave it to something else. */
+  function focusStayed(wrap) {
+    var active = document.activeElement;
+    return !active || active === document.body || within(active, wrap);
   }
 
   function onMenuKey(event) {

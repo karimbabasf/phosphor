@@ -36,6 +36,24 @@
     return node;
   }
 
+  /* ---------- dialogs ----------
+
+     Every dialog here opens and closes through ui/design/motion.js, so its card
+     and its scrim come in and go out together and nothing is taken off screen
+     before its exit is over; the unit harness has no motion and gets the plain
+     calls. */
+  function showDialog(node) {
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.openDialog === 'function') motion.openDialog(node);
+    else node.showModal();
+  }
+
+  function hideDialog(node) {
+    var motion = window.PhosphorMotion;
+    if (motion && typeof motion.closeDialog === 'function') motion.closeDialog(node);
+    else if (node.open) node.close();
+  }
+
   /* ---------- confirm ---------- */
 
   var dialog = null;
@@ -44,6 +62,7 @@
   function build() {
     dialog = document.createElement('dialog');
     dialog.className = 'confirm';
+    dialog.setAttribute('data-motion', 'dialog');
 
     var card = dom.el('div', 'confirm-card');
     var title = dom.el('h2', 'title');
@@ -80,7 +99,7 @@
   }
 
   function finish(answer) {
-    if (dialog && dialog.open) dialog.close();
+    if (dialog && dialog.open) hideDialog(dialog);
     var done = resolver;
     resolver = null;
     if (done) done(answer);
@@ -98,7 +117,7 @@
 
     return new Promise(function (resolve) {
       resolver = resolve;
-      dialog.showModal();
+      showDialog(dialog);
       /* Focus lands on Cancel, not on the destructive answer: a return press
          carried over from whatever the person was doing must not freeze the app. */
       var cancel = dialog.querySelector('.btn-ghost');
@@ -120,6 +139,7 @@
   function buildPassword() {
     pwDialog = document.createElement('dialog');
     pwDialog.className = 'confirm';
+    pwDialog.setAttribute('data-motion', 'dialog');
 
     var card = dom.el('form', 'confirm-card');
     var title = dom.el('h2', 'title');
@@ -167,7 +187,7 @@
     function finishPw(value) {
       pwExtra = extraInput.value.trim();
       input.value = '';
-      if (pwDialog.open) pwDialog.close();
+      if (pwDialog.open) hideDialog(pwDialog);
       var done = pwResolve;
       pwResolve = null;
       if (done) done(value);
@@ -207,7 +227,7 @@
 
     return new Promise(function (resolve) {
       pwResolve = resolve;
-      pwDialog.showModal();
+      showDialog(pwDialog);
       refs.input.focus();
     });
   }

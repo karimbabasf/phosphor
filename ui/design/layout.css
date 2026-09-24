@@ -250,7 +250,8 @@ body[data-view="vault"] .layout-wrap {
 
 /* The confirm step, under the glyph and nowhere else: a small panel that
    floats, so it carries the lift. It covers the top of the balances panel for
-   the moment it is open, never the conversation. */
+   the moment it is open, never the conversation. It grows out of the glyph's
+   corner and goes back into it (data-motion="pop", ui/design/motion.css). */
 .brake-panel {
   position: absolute;
   top: calc(100% + 10px);
@@ -263,11 +264,6 @@ body[data-view="vault"] .layout-wrap {
   border: 1px solid var(--line-strong);
   box-shadow: var(--lift-sm);
   transform-origin: top right;
-  animation: brake-in var(--dur-enter) var(--ease-out);
-}
-
-@keyframes brake-in {
-  from { opacity: 0; transform: translateY(-4px); }
 }
 
 .brake-title {
@@ -299,10 +295,6 @@ body[data-view="vault"] .layout-wrap {
 .brake-actions > .btn:focus-visible {
   outline: 2px solid var(--text-2);
   outline-offset: 2px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .brake-panel { animation: none; }
 }
 
 /* ---------- The stage ---------- */
@@ -402,15 +394,8 @@ body[data-view="vault"] .layout-wrap {
   display: flex;
 }
 
-/* The crossfade: 180 ms, 2 px of blur to bridge the two states. */
-.world[data-swapping="true"] .view[data-active="true"] {
-  animation: viewin var(--dur-swap) var(--ease-out) both;
-}
-
-@keyframes viewin {
-  from { opacity: 0; filter: blur(2px); }
-  to { opacity: 1; filter: blur(0); }
-}
+/* The switch between views is ui/screens/shell.js's dip: the views on screen
+   fade out, the world switches, and the new ones fade in. */
 
 /* ---------- Basic: one column, 760 px at most ---------- */
 
