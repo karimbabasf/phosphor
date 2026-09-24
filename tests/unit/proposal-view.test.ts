@@ -92,9 +92,11 @@ test('every stage in the table has a row that produces it, with its own label', 
     const view = build();
     assert.equal(view.stage, stage, `expected ${stage}, got ${view.stage}`);
     assert.equal(view.stageLabel, STAGE_LABEL[stage]);
-    // A move that did not go through says why in its reason's own sentence; every other stage
-    // carries the table's line.
-    const copy = view.state === 'didnt_go_through' ? view.reason?.sentence : STAGE_COPY[stage];
+    // A move whose state its cause chose (did not go through, still checking, money on its way
+    // back, a short fill) says why in the cause's own sentence; every other stage carries the
+    // table's line.
+    const caused = new Set(['stuck_unknown', 'venue_failed_refund_pending', 'short_fill']);
+    const copy = view.reason !== null && (view.state === 'didnt_go_through' || caused.has(view.reason.code)) ? view.reason.sentence : STAGE_COPY[stage];
     assert.equal(view.stageCopy, copy, `${stage} carries its one line of copy`);
     assert.equal(view.terminal, TERMINAL.has(stage), `${stage} terminal`);
     seen.push(stage);

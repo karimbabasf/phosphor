@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 
 import type { Proposal, RailResult, WriteDraft } from '../../src/types.ts';
 import { REASON_CODES } from '../../src/rails/reasons.ts';
+import type { ReasonCode } from '../../src/rails/reasons.ts';
 import { moveStateOf, proposalView, reasonSentence, shortIds, STAGE_LABEL } from '../../src/proposals/view.ts';
 import type { MoveState, ProposalStage } from '../../src/proposals/view.ts';
 import { landed, makeCtx, railThat } from './helpers/proposals.ts';
@@ -171,10 +172,83 @@ test('twenty-three stage words fold into four states a person reads', () => {
     done: ['confirmed'],
     didnt_go_through: ['failed', 'declined', 'refused', 'REFUNDED', 'FAILED'],
     working: ['held', 'signing', 'submitting', 'KNOWN_DEPOSIT_TX', 'PENDING_DEPOSIT', 'INCOMPLETE_DEPOSIT', 'PROCESSING', 'SUCCESS', 'PENDING', 'TX_BROADCASTED', 'SETTLED', 'NOT_FOUND_OR_NOT_VALID', 'crediting', 'stalled'],
+    // No stage: only a cause says money is on its way back (plainStateOf).
+    coming_back: [],
   };
   const all = Object.values(expected).flat().sort();
   assert.deepEqual(all, Object.keys(STAGE_LABEL).sort(), 'every stage has exactly one state');
   for (const [state, stages] of Object.entries(expected)) for (const stage of stages) assert.equal(moveStateOf(stage), state, stage);
+});
+
+/* EVERY CAUSE, THE STATE ITS SENTENCE SAYS. The card printed "Didn't go through" over "Still
+   checking whether this went through", over a refund on its way and over a swap that went through
+   short, and a person who read the state could try again and pay twice (hunt A, 2026-09-23). Each
+   code is drawn on the row that carries it, in the stage that used to decide the word. */
+test('every reason code maps to a plain state that agrees with its sentence', () => {
+  const AGREES: Record<ReasonCode, [MoveState, RegExp]> = {
+    needs_approval: ['needs_you', /waits for your OK/],
+    over_trade_cap: ['didnt_go_through', /nothing moved/],
+    over_daily_cap: ['didnt_go_through', /nothing moved/],
+    kill_switch: ['didnt_go_through', /nothing moved/],
+    policy_rule: ['didnt_go_through', /nothing moved/],
+    rules_unreadable: ['didnt_go_through', /nothing can move/],
+    unpriced: ['didnt_go_through', /Nothing moved/],
+    no_price: ['didnt_go_through', /nothing moved/],
+    price_moved: ['didnt_go_through', /nothing moved/],
+    insufficient_balance: ['didnt_go_through', /nothing moved/],
+    balance_unread: ['didnt_go_through', /nothing moved/],
+    below_minimum: ['didnt_go_through', /nothing moved/],
+    unsupported_asset: ['didnt_go_through', /nothing moved/],
+    ambiguous_asset: ['didnt_go_through', /nothing moved/],
+    simulation_failed: ['didnt_go_through', /nothing moved/],
+    invalid_request: ['didnt_go_through', /nothing moved/],
+    not_available: ['didnt_go_through', /nothing moved/],
+    plan_exists: ['didnt_go_through', /nothing new was placed/],
+    declined: ['didnt_go_through', /Nothing moved/],
+    not_sent: ['didnt_go_through', /didn't go through\. Nothing left/],
+    venue_failed_nothing_moved: ['didnt_go_through', /didn't go through\. Nothing left/],
+    venue_failed_watching: ['didnt_go_through', /didn't go through\. Your NEAR hasn't moved/],
+    venue_failed_refund_pending: ['coming_back', /until it comes back to your balance/],
+    refunded: ['didnt_go_through', /sent your NEAR back/],
+    short_fill: ['done', /went through, but/],
+    stuck_unknown: ['working', /^Still checking whether this went through/],
+  };
+  const REFUSALS = new Set<ReasonCode>(['over_trade_cap', 'over_daily_cap', 'kill_switch', 'policy_rule', 'rules_unreadable', 'unpriced', 'no_price', 'price_moved', 'insufficient_balance', 'balance_unread', 'below_minimum', 'unsupported_asset', 'ambiguous_asset', 'simulation_failed', 'invalid_request', 'not_available', 'plan_exists']);
+  const ENDED = new Set<ReasonCode>(['not_sent', 'venue_failed_nothing_moved', 'refunded']);
+  const rowFor = (code: ReasonCode): Partial<Proposal> => {
+    if (code === 'needs_approval') return { status: 'pending' };
+    if (code === 'declined') return { status: 'refused', decidedBy: 'human' };
+    if (REFUSALS.has(code)) return { status: 'policy_refused', verdict: { outcome: 'refuse', reasons: ['refused'], rule: 'invalid_draft', reasonCodes: [code] } };
+    const stage = code === 'venue_failed_refund_pending' ? 'REFUNDED' : 'FAILED';
+    return { status: ENDED.has(code) ? 'failed' : 'needs_reconciliation', result: { ok: false, detail: 'the rail said so', txids: ['h1'], reason: code, evidence: { handle: 'dep-1', providerStage: stage } } };
+  };
+  assert.deepEqual(Object.keys(AGREES).sort(), [...REASON_CODES].sort(), 'every code has a row here');
+  for (const code of REASON_CODES) {
+    const v = view({ draft: NEAR_SWAP, ...rowFor(code) });
+    const [state, says] = AGREES[code];
+    assert.equal(v.reason?.code, code, code);
+    assert.equal(v.state, state, `${code}: ${v.reason?.sentence}`);
+    assert.match(v.reason?.sentence ?? '', says, code);
+  }
+});
+
+test('a move still checking is working and late, a refund on its way is its own state, and a short fill is done with the amount that arrived', () => {
+  const checking = view({ status: 'needs_reconciliation', decidedAt: new Date(NOW - 20_000).toISOString(), result: { ok: false, detail: 'unconfirmed', txids: ['h1'], reason: 'stuck_unknown', evidence: { handle: 'dep-1', providerStage: 'FAILED' } } });
+  assert.equal(checking.state, 'working');
+  assert.deepEqual(checking.late, { elapsedSec: 20, typicalSec: 45 }, 'late from the start: the rail already gave up on its answer');
+  assert.equal(checking.stageCopy, checking.reason?.sentence);
+  assert.equal(checking.reason?.retry, false);
+
+  const refund = view({ status: 'needs_reconciliation', result: { ok: false, detail: 'refund pending', txids: ['h1'], reason: 'venue_failed_refund_pending', evidence: { handle: 'dep-1', providerStage: 'REFUNDED' } } });
+  assert.equal(refund.state, 'coming_back');
+  assert.equal(refund.late, null);
+  assert.equal(refund.reason?.retry, false);
+
+  const pocket = { venue: 'intents' as const, account: SELF, assetId: 'nep141:wbtc', symbol: 'WBTC', decimals: 8, before: '100000', after: '134000', floor: '35000' };
+  const short = view({ status: 'failed', draft: NEAR_SWAP, pocket, result: { ok: false, detail: 'short', txids: ['h1'], reason: 'short_fill', evidence: { handle: 'dep-1', providerStage: 'FAILED' } } });
+  assert.equal(short.state, 'done');
+  assert.equal(short.reason?.sentence, 'The swap went through, but only 0.00034 WBTC arrived, less than the 0.00035 you approved.');
+  assert.equal(short.note, short.reason?.sentence);
 });
 
 test('a move still working past its usual time is late, with the seconds since the click', () => {
