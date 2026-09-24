@@ -157,7 +157,7 @@ function all(node: Node, className: string, found: Node[] = []): Node[] {
   return found;
 }
 
-function build(options: { command?: string; driverData?: Record<string, unknown> } = {}) {
+function build(options: { command?: string; driverData?: Record<string, unknown>; frames?: boolean } = {}) {
   const sends: string[] = [];
   /* The shared receipt card (ui/screens/receipt.js) is somebody else's: the column hands it the
      receipt and places what comes back. The stub records what it was handed and returns one
@@ -186,6 +186,10 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
      state it exists to keep on screen. */
   const timers: Array<{ id: number; fn: () => void }> = [];
   let timerSeq = 0;
+  /* Animation frames, only for a test that asks for them: without one the column renders and
+     follows at once, which is what every other test here reads. */
+  const queued: Array<(now: number) => void> = [];
+  let clock = 0;
 
   const win: Record<string, unknown> = {
     setTimeout: (fn: () => void) => {
@@ -199,6 +203,7 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
     },
     setInterval: () => 0,
     clearInterval: () => {},
+    requestAnimationFrame: options.frames ? (fn: (now: number) => void) => queued.push(fn) : undefined,
     getComputedStyle: () => ({ lineHeight: '21px', paddingTop: '8px', paddingBottom: '8px' }),
     dispatchEvent: () => true,
     addEventListener: (type: string, handler: () => void) => { (windowHandlers[type] ??= []).push(handler); },
@@ -297,6 +302,12 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
     grew() {
       for (const fn of sizes) fn();
     },
+    /* One animation frame, ms after the last, and how many callbacks wait for the next. */
+    frame(ms = 16) {
+      clock += ms;
+      for (const fn of queued.splice(0, queued.length)) fn(clock);
+    },
+    framesAsked: () => queued.length,
     fail: (message: string) => reject?.(new Error(message)),
     type(text: string) {
       input.value = text;
@@ -1111,6 +1122,22 @@ test('a wheel tick that moves nothing lets go of nothing: the reply is followed 
   world.grew();
   assert.equal(list.scrollTop, 1207 - 544, 'the tick let go and the reply ran under the fold');
   assert.equal(world.pillOn(), false);
+});
+
+test('in a scroller that keeps whole pixels the glide lands on the end and stops asking for frames', () => {
+  /* WebKit holds a scroll offset in whole pixels and drops a smaller write. Near the end every
+     step of the glide is under a pixel, so the follow sat a few pixels short, asked for a frame
+     forever, and crept a pixel on whichever frame ran long, a key press among them. */
+  const world = build({ frames: true });
+  const list = world.list();
+  let top = 1600;
+  Object.defineProperty(list, 'scrollTop', { configurable: true, get: () => top, set: (v: number) => { top = Math.trunc(v); } });
+  list.clientHeight = 400;
+  list.scrollHeight = 2022;
+  world.grew();
+  for (let i = 0; i < 120 && world.framesAsked() > 0; i += 1) world.frame();
+  assert.equal(list.scrollTop, 1622, 'the glide stopped short of the end');
+  assert.equal(world.framesAsked(), 0, 'the follow went on asking for frames once it had nowhere to go');
 });
 
 test('a small move up by hand near the end keeps the pin, a real one lets go', async () => {

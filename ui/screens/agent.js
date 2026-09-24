@@ -1257,15 +1257,19 @@
         return;
       }
       var end = Math.max(0, list.scrollHeight - list.clientHeight);
-      var gap = end - list.scrollTop;
-      if (Math.abs(gap) < 1) {
+      var from = list.scrollTop;
+      var gap = end - from;
+      if (Math.abs(gap) >= 1) list.scrollTop = from + gap * (1 - Math.exp(-dt / FOLLOW_TAU_MS));
+      /* WebKit keeps a scroll offset in whole pixels and drops a smaller write, so near the end
+         the glide stopped moving a few pixels short, asked for a frame forever and crept a
+         pixel on any frame that ran long. A step that did not move lands the rest. */
+      if (Math.abs(gap) < 1 || list.scrollTop === from) {
         list.scrollTop = end;
         node.lastTop = list.scrollTop;
         node.following = false;
         paintScroll(node);
         return;
       }
-      list.scrollTop = list.scrollTop + gap * (1 - Math.exp(-dt / FOLLOW_TAU_MS));
       node.lastTop = list.scrollTop;
       raf(step);
     };
