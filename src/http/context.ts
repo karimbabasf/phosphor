@@ -8,15 +8,14 @@
 // Ctx is ServerDeps plus the things the server itself owns: the per-boot approval token, the
 // SSE hub, the chat registry, the chart and drawing stores, the team board, the lazy worker
 // crew, the bounded audit tail the basic screen reads, and the small mutable holders (theme,
-// prices, gas fill, the duplicate guard, the seat-refusal log) that used to be `let` bindings
-// inside the closure.
+// gas fill, the duplicate guard, the seat-refusal log) that used to be `let` bindings inside
+// the closure.
 
 import type http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AppConfig, ChainId, LogEvent, Policy, ProposalService, RiskRow, Screen, ScreenBy, ViewMode } from '../types.ts';
-import type { PriceReading } from '../view/basic.ts';
 import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { Ledger } from '../ledger/index.ts';
@@ -324,11 +323,6 @@ export type ChatRegistry = {
 // a server up without a data directory; this is the resolved pair every handler reads.
 export type ThemeSlot = { get(): Theme; set(theme: Theme): void };
 
-// The three prices the basic screen tracks. Mutable because the assistant can be asked for a
-// different coin, and both halves have to change together: a reading left under a new coin's
-// name is a price for the wrong asset.
-export type PriceCache = { coins: string[]; readings: PriceReading[] };
-
 /* ServerDeps minus the optional theme pair, because `theme` below is the resolved one and a
    handler reading ctx.getTheme() would crash on the install that did not pass it. The screen
    record is resolved the same way. */
@@ -372,7 +366,6 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   // The lazily built crew, when one exists. `crew()` above makes one; this reads what is
   // already there without resolving the claude binary on an install that never spawned one.
   crewIfAny: () => Crew | null;
-  prices: PriceCache;
   duplicates: DuplicateGuard;
   // One audit line per refused session or client, then silence. See firstRefusal in mcp.ts.
   seats: Set<string>;

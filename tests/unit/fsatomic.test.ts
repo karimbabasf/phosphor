@@ -14,7 +14,6 @@ import { fileURLToPath } from 'node:url';
 
 import { atomicWrite, atomicWriteJson } from '../../src/fsatomic.ts';
 import { createStore } from '../../src/store.ts';
-import { writeCoins, readCoins } from '../../src/view/coins.ts';
 import { writeViewMode, readViewMode } from '../../src/view/mode.ts';
 import { writeTheme, readTheme, DEFAULT_THEME } from '../../src/view/theme.ts';
 import { savePolicy, loadPolicy, defaultPolicy } from '../../src/policy/file.ts';
@@ -80,13 +79,11 @@ test('every state writer in the app goes through it, and none leave tmp files', 
 
   const store = createStore(dir);
   store.put(sample('a'));
-  writeCoins(dir, ['BTC-USD', 'ETH-USD']);
   writeViewMode(dir, 'basic');
   writeTheme(dir, { ...DEFAULT_THEME });
   savePolicy(dir, defaultPolicy());
 
   assert.deepEqual(store.list().map(p => p.id), ['a']);
-  assert.deepEqual(readCoins(dir), ['BTC-USD', 'ETH-USD']);
   assert.equal(readViewMode(dir), 'basic');
   assert.deepEqual(readTheme(dir), { ...DEFAULT_THEME });
   assert.notEqual(loadPolicy(dir), null);
