@@ -153,6 +153,11 @@
     var opts = options || {};
     if (VIEWS.indexOf(name) < 0) return;
     var changed = name !== currentView;
+    /* A click posts the view and the server answers with a state frame naming it
+       (ui/app.js), usually 20 to 40 ms later, inside the dip. That frame is the same
+       switch coming back, not a new one: taken as one, it cut the dip short and landed
+       the view at once, so the tracks never slid and the way back to Basic snapped. */
+    if (!changed && (dipping || sliding)) return;
     currentView = name;
 
     if (NEEDS[name] && window.PhosphorLazy) window.PhosphorLazy.load(NEEDS[name]);
@@ -184,8 +189,11 @@
     }
   }
 
-  /* The world as the current view draws it. */
+  /* The world as the current view draws it. A switch that lands at once (the
+     server's, or one with motion reduced) also ends a slide still running, so the
+     new view's tracks apply with it. */
   function showView(changed) {
+    if (changed && sliding) endSlide();
     if (dipping) {
       window.clearTimeout(dipping.timer);
       for (var k = 0; k < dipping.anims.length; k += 1) dipping.anims[k].cancel();

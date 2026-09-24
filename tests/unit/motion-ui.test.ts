@@ -214,6 +214,10 @@ test('the world dips between views and its track slides only while it does', () 
   // Between Basic and the others the tracks slide on a soft spring from pixels to pixels, and
   // the views hold the width they are going to have while they do.
   assert.match(SHELL, /stage\.dataset\.moving = 'true';/);
+  // The server's frame naming the view a click just chose arrives inside the dip. It is the
+  // same switch, so it must not cut the dip short and land the view at once (the snap on the
+  // way back to Basic in the app).
+  assert.match(SHELL, /var changed = name !== currentView;[\s\S]{0,600}?if \(!changed && \(dipping \|\| sliding\)\) return;\s*currentView = name;/);
   assert.match(SHELL, /stage\.style\.setProperty\('--pin-w', world\.clientWidth \+ 'px'\);/);
   assert.match(CSS, /\.stage\[data-moving="true"\]\s*\{\s*transition:\s*grid-template-columns var\(--dur-spring\) var\(--ease-spring-soft\);/);
   assert.match(CSS, /\.stage\[data-moving="true"\] \.world > \.view,\s*\.stage\[data-moving="true"\] \.world > \.notice\s*\{[^}]*width: var\(--pin-w\);/);
