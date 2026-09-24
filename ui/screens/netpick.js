@@ -184,6 +184,9 @@
 
   /* The chain's own coin first, then the two dollars an exchange sends most,
      then the rest by name: the list a wallet shows, not the bridge's order. */
+  /* How many tokens a network's list leads with before the rest fold. */
+  var TOKENS_LEAD = 2;
+
   function sortTokens(accepts, nativeSymbol) {
     var list = Array.isArray(accepts) ? accepts.filter(function (t) { return t && t.symbol; }) : [];
     var rank = function (t) {
@@ -307,8 +310,9 @@
     return dom.el('span', 'icon ' + (className || ''));
   }
 
+  /* No kind is the ghost; an empty kind is the plain neutral button. */
   function button(label, kind, pending) {
-    var node = dom.el('button', 'btn ' + (kind || 'btn-ghost'));
+    var node = dom.el('button', kind === '' ? 'btn' : 'btn ' + (kind || 'btn-ghost'));
     node.type = 'button';
     node.appendChild(dom.el('span', 'btn-label', label));
     if (pending) dom.setAttr(node, 'data-pending-label', pending);
@@ -1150,16 +1154,40 @@
       empty.hidden = true;
       body.appendChild(empty);
 
+      /* The two a person most likely holds lead (the chain's own coin, then
+         USDC: sortTokens), and the rest wait behind one line, so the step is
+         the choice it is rather than a wall of tickers. A search shows every
+         match. */
+      var fold = dom.el('div', 'netpick-netfoot netpick-tokfoot');
+      var more = dom.el('button', 'netpick-link');
+      more.type = 'button';
+      more.dataset.role = 'more-tokens';
+      var moreWords = dom.el('span', '');
+      more.appendChild(moreWords);
+      more.appendChild(icon('chevron-down', 'netpick-link-chev'));
+      fold.appendChild(more);
+      body.appendChild(fold);
+      var unfolded = false;
+      dom.on(more, 'click', function () {
+        unfolded = !unfolded;
+        fill();
+      });
+
       function fill() {
         dom.clear(list);
         var shown = filterTokens(tokens, state.query);
+        var searching = !!String(state.query || '').trim();
+        var folds = !searching && shown.length > TOKENS_LEAD + 1;
+        dom.setHidden(fold, !folds);
+        dom.setText(moreWords, unfolded ? 'Show fewer' : (shown.length - TOKENS_LEAD) + ' more tokens');
+        more.setAttribute('aria-expanded', unfolded ? 'true' : 'false');
         dom.setHidden(empty, shown.length > 0);
         dom.setHidden(list, shown.length === 0);
         if (!shown.length) {
           dom.setText(empty, 'No token called ' + state.query.trim() + ' on ' + n.name + '.');
           return;
         }
-        shown.forEach(function (token) { list.appendChild(tokenRow(token)); });
+        (folds && !unfolded ? shown.slice(0, TOKENS_LEAD) : shown).forEach(function (token) { list.appendChild(tokenRow(token)); });
         cutList();
       }
 
@@ -1218,7 +1246,9 @@
        the frame's notice with nothing saying it was there. */
     function ackBlock(n, network, tokens) {
       var wrap = dom.el('div', 'netpick-ack');
-      var go = button('Show the address', ackRemembered() ? 'btn-ghost btn-sm' : 'btn-primary');
+      /* The neutral primary: green is for the mark, the live move, success and
+         Approve, and showing an address is none of those. */
+      var go = button('Show the address', ackRemembered() ? 'btn-ghost btn-sm' : '');
       go.dataset.role = 'show-address';
       if (!ackRemembered()) {
         var row = dom.el('label', 'ack-row');
@@ -1544,7 +1574,7 @@
         : 'The address is shown only once the wallet is unlocked, so it comes from your keys and not from a file anything could edit.'));
 
       var actions = dom.el('div', 'screen-actions');
-      var go = button(enclave ? 'Touch ID to show the address' : 'Unlock to show the address', 'btn-primary', 'Waiting for Touch ID');
+      var go = button(enclave ? 'Touch ID to show the address' : 'Unlock to show the address', '', 'Waiting for Touch ID');
       actions.appendChild(go);
       body.appendChild(actions);
 

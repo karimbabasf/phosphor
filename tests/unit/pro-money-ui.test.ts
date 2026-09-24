@@ -5,7 +5,7 @@
 // second sum; the account is one of four answers and never a zero standing in for an unknown
 // (collateral.funded true, false for dust or nothing, null before the venue has answered, and
 // a venue that is not answering); an empty account offers one action, which asks the assistant
-// in the thread and says what to do when nobody is at the wheel; nothing here polls; and the
+// in the thread and says what to do when no agent is running; nothing here polls; and the
 // trading side's late bundle is asked for the first time Pro or Trade is on screen.
 //
 // Run against the REAL ui/screens/pro.js and ui/core/dom.js over a stand-in DOM, the way the
@@ -222,7 +222,7 @@ test('dust is not trading money: collateral.funded false reads "No trading money
   assert.ok(!fund.className.includes('btn-primary'), 'green is for Approve');
 });
 
-test('the one action asks the assistant in the thread, and says what to do first when nobody is at the wheel', () => {
+test('the one action asks the assistant in the thread, and says what to do first when no agent is running', () => {
   const rig = boot();
   rig.state(BASIC);
   rig.trade(trade({ collateral: { address: '0x1', perpUsd: 0, spotUsdcUsd: 0, funded: false } }));

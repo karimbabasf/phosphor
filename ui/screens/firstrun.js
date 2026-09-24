@@ -1022,7 +1022,7 @@
               if (answer && answer.ok === false) throw new Error('refused');
               started = true;
               if (draft.agent) draft.agent.started = true;
-              state.handle.say(check.name + ' is at the wheel.', 'ready');
+              state.handle.say(check.name + ' is ready.', 'ready');
               paintActions(state);
             })
             .catch(function () {
