@@ -211,13 +211,14 @@
   /* THE SWITCH. The views on screen dip out over DIP_MS, the world switches,
      and the new views come up over RISE_MS: --dur-view in all, and the parts
      two views share (Pro and Trade share the money line and the deck) never
-     jump into place in sight. Between Basic and the others the stage's track
-     slides to its new width meanwhile (data-moving, ui/design/motion.css), so
-     the conversation moves once, smoothly. A second click inside the dip
-     lands on the latest view; the tab's indicator moves at the click. */
+     jump into place in sight. Between Basic and the others the stage's tracks
+     slide to their new widths meanwhile (slide below), so the conversation
+     moves once, smoothly. A second click inside the dip lands on the latest
+     view; the tab's indicator moves at the click. */
   var DIP_MS = 70;
   var RISE_MS = 170;
   var dipping = null;
+  var sliding = 0;
 
   function canDip() {
     return !!refs.views && typeof refs.views.animate === 'function' && !window.PhosphorMotion.reduced();
@@ -239,17 +240,59 @@
       timer: window.setTimeout(function () {
         var leaving = dipping.anims;
         dipping = null;
-        if (refs.stage) refs.stage.dataset.moving = 'true';
-        showView(true);
+        slide(function () { showView(true); });
         shownViews().forEach(function (node) {
           node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: RISE_MS, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
         });
         for (var i = 0; i < leaving.length; i += 1) leaving[i].cancel();
-        window.setTimeout(function () {
-          if (refs.stage && !dipping) delete refs.stage.dataset.moving;
-        }, RISE_MS + 60);
       }, DIP_MS)
     };
+  }
+
+  /* THE SLIDE. Between Basic and the other three the stage's two tracks change
+     width: the slab opens to two thirds of the window and the conversation
+     narrows, or the other way. They slide on a soft spring over --dur-spring
+     (data-moving, ui/design/motion.css), from the widths they had to the
+     widths the new view asks for, both read back as pixels so the two ends
+     always interpolate, and from wherever a slide still running had got to.
+     While they slide, the world's views hold the width they are going to have
+     against the slab's right edge (--pin-w), so nothing in them reflows or
+     clears a canvas on the way: the slab opens over them, or closes onto
+     them. Views that share the tracks (Pro, Trade and the Vault) do not
+     slide at all. */
+  function slide(change) {
+    var stage = refs.stage;
+    var world = refs.views;
+    if (!stage || !world || typeof window.getComputedStyle !== 'function') {
+      change();
+      return;
+    }
+    var from = window.getComputedStyle(stage).gridTemplateColumns;
+    endSlide();
+    change();
+    var to = window.getComputedStyle(stage).gridTemplateColumns;
+    if (!from || !to || from === to || from === 'none' || to === 'none') return;
+    stage.style.setProperty('--pin-w', world.clientWidth + 'px');
+    stage.style.gridTemplateColumns = from;
+    void stage.offsetWidth;
+    stage.dataset.moving = 'true';
+    stage.style.gridTemplateColumns = to;
+    sliding = window.setTimeout(endSlide, slideMs() + 60);
+  }
+
+  function endSlide() {
+    var stage = refs.stage;
+    if (sliding) window.clearTimeout(sliding);
+    sliding = 0;
+    if (!stage) return;
+    delete stage.dataset.moving;
+    stage.style.gridTemplateColumns = '';
+    stage.style.removeProperty('--pin-w');
+  }
+
+  function slideMs() {
+    var ms = parseFloat(window.getComputedStyle(document.documentElement).getPropertyValue('--dur-spring'));
+    return isFinite(ms) && ms > 0 ? ms : 600;
   }
 
   function view() {

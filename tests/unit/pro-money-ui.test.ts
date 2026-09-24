@@ -272,7 +272,7 @@ test('Pro is its header over the deck alone, Trade is the market, the chart and 
   assert.match(CSS, /body\[data-view="pro"\] \.trade-wrap > \.trade-rail\s*\{\s*display:\s*flex;\s*flex:\s*1 1 auto;/, 'the deck is not the whole of Pro under the line');
   assert.match(CSS, /body\[data-view="pro"\] \.trade-rail > \.trade-tabs\s*\{\s*display:\s*none;/, 'Pro stacks the three panels, it has no tabs');
   // One width on all three, so the conversation holds still when the tab changes.
-  assert.match(CSS, /body\[data-view="pro"\] \.stage,\s*body\[data-view="trade"\] \.stage,\s*body\[data-view="vault"\] \.stage\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\) clamp\(560px, min\(var\(--trade, 62vw\), calc\(100vw - 400px\)\), 1400px\);/);
+  assert.match(CSS, /body\[data-view="pro"\] \.stage,\s*body\[data-view="trade"\] \.stage,\s*body\[data-view="vault"\] \.stage\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\) clamp\(560px, min\(var\(--trade, 66\.667vw\), calc\(100vw - 380px\)\), 1400px\);/);
   assert.equal((CSS.match(/grid-template-columns:\s*minmax\(0, 1fr\) clamp\(/g) || []).length, 1, 'a second stage width');
   const line = CSS.slice(CSS.indexOf('/* ---------- the header'));
   assert.ok(line.length > 200, 'the header section moved');

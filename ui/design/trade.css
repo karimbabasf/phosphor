@@ -165,7 +165,7 @@
 
 .strip-row > .strip-day { margin-left: auto; }
 
-@container world (max-width: 719px) {
+@container tradeview (max-width: 719px) {
   .strip-row > .strip-day { display: none; }
 }
 
@@ -2027,7 +2027,7 @@ body[data-view="pro"] .tape-head { margin: 0; }
    trading side never goes under 544 in the app (pro.css: 560 less the
    slab's inset), so this is a browser tab narrower than any window the app
    opens. */
-@container world (max-width: 519px) {
+@container tradeview (max-width: 519px) {
   /* flex: 0 0 auto, not the base row's 1 1: stacked, the wrap is taller than the
      world and must say so. The chart takes the room the world has to spare;
      the deck is as tall as its list. */

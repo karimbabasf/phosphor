@@ -4,22 +4,21 @@
    THE STAGE ON PRO, TRADE AND THE VAULT. Two tracks, the way Basic lays its
    own: the conversation takes what is left and the world is a panel on the
    right. Only the panel's width differs from Basic, because a chart in
-   Basic's reading width is a phone chart. It is ONE width on all three, 62
-   percent of the window between 560 and 1400, or whatever the divider was
-   dragged to (--trade, ui/split.js), never leaving the conversation under
-   the 400 the divider keeps for it, so the conversation holds still when
-   the tab changes. 62 is the Vault's number: at the window's default size
-   its two columns stand side by side (vault.css) with room for a sentence
-   beside each action, instead of one long column (Karim, 2026-09-15: "I
-   hate how the vault has to be so scrollable"). The divider sits over the
-   boundary rather than in a track of its own, so the grid keeps Basic's
-   shape. Under 960 wide (a browser, never the app) the stacked layout in
-   layout.css stands. */
+   Basic's reading width is a phone chart. The right side is the star
+   (Karim, 2026-09-23): it opens at two thirds of the window between 560 and
+   1400, or whatever the divider was dragged to (--trade, ui/split.js), and
+   never leaves the conversation under the 380 the divider keeps for it. It
+   is ONE width on all three, so the conversation holds still when the tab
+   changes, and the Vault's two columns stand side by side at the window's
+   default size (Karim, 2026-09-15: "I hate how the vault has to be so
+   scrollable"). The divider sits over the boundary rather than in a track
+   of its own, so the grid keeps Basic's shape. Under 960 wide (a browser,
+   never the app) the stacked layout in layout.css stands. */
 @media (min-width: 960px) {
   body[data-view="pro"] .stage,
   body[data-view="trade"] .stage,
   body[data-view="vault"] .stage {
-    grid-template-columns: minmax(0, 1fr) clamp(560px, min(var(--trade, 62vw), calc(100vw - 400px)), 1400px);
+    grid-template-columns: minmax(0, 1fr) clamp(560px, min(var(--trade, 66.667vw), calc(100vw - 380px)), 1400px);
   }
 
   body[data-view="pro"] .stage > .conversation,
@@ -96,6 +95,14 @@ body[data-view="vault"] #view-vault[data-active="true"] {
 body[data-view="pro"] #view-trade,
 body[data-view="trade"] #view-trade {
   display: flex;
+}
+
+/* The trading side asks its own width, not the world's (trade.css
+   `tradeview`): while the stage slides between Basic and here, the world is
+   on its way to its width and the view already holds it (motion.css). */
+#view-trade {
+  container-type: inline-size;
+  container-name: tradeview;
 }
 
 body[data-view="pro"] #view-pro {
