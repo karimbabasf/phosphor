@@ -57,27 +57,34 @@ function load(): Loaded {
 test('the slots land on the root and the chart reads the text colour off the stylesheet', () => {
   const ui = load();
   ui.apply(colourwayTheme('green-on-black'));
-  assert.equal(ui.props['--bg-0'], 'rgb(14, 15, 19)');
-  assert.equal(ui.props['--ink'], 'rgb(63, 255, 108)');
+  assert.equal(ui.props['--bg-0'], 'rgb(22, 18, 16)');
+  assert.equal(ui.props['--ink'], 'rgb(82, 232, 147)');
   assert.equal(ui.chartCalls.length, 1);
-  assert.equal(ui.chartCalls[0].text, '#eceef1');
+  assert.equal(ui.chartCalls[0].text, '#f8f0e8');
   assert.equal(ui.miniRethemes(), 1);
 });
 
 test('the label on the action fill is the ground when the ground reads on the accent, else white', () => {
   const ui = load();
   ui.apply(colourwayTheme('green-on-black'));
-  assert.equal(ui.props['--on-ink'], 'rgb(14, 15, 19)');
-  // A dark accent an agent set: the graphite ground would not read on it, so the label is white.
+  assert.equal(ui.props['--on-ink'], 'rgb(22, 18, 16)');
+  // A dark accent an agent set: the charcoal ground would not read on it, so the label is white.
   ui.apply({ ...colourwayTheme('green-on-black'), accent: '#7a4fd6' });
   assert.equal(ui.props['--on-ink'], '#FFFFFF');
 });
 
-test('a surface is lifted toward white on the dark ground', () => {
+/* The surfaces lift toward a light of the ground's own hue: warm layers on the warm charcoal, and
+   the same light rides along as --hi-rgb for the highlights on their top edges. A cool ground an
+   agent sets gets cool layers. */
+test('a surface is lifted toward a light of the ground\'s own hue', () => {
   const ui = load();
   ui.apply(colourwayTheme('green-on-black'));
-  assert.equal(ui.props['--bg-1'], 'rgb(22, 23, 27)');
-  assert.equal(ui.props['--bg-2'], 'rgb(31, 32, 36)');
+  assert.equal(ui.props['--bg-1'], 'rgb(30, 25, 23)');
+  assert.equal(ui.props['--bg-2'], 'rgb(41, 35, 32)');
+  assert.equal(ui.props['--bg-3'], 'rgb(52, 46, 43)');
+  assert.equal(ui.props['--hi-rgb'], '255, 232, 220');
+  ui.apply({ ...colourwayTheme('green-on-black'), background: '#0e0f13' });
+  assert.equal(ui.props['--bg-2'], 'rgb(31, 32, 38)');
 });
 
 test('the colourway is a name only: nothing is written onto the root for it, known or not', () => {
@@ -88,7 +95,7 @@ test('the colourway is a name only: nothing is written onto the root for it, kno
   assert.deepEqual(Object.keys(ui.attrs), []);
   ui.apply({ ...colourwayTheme('green-on-black'), profile: 'sepia' });
   assert.deepEqual(Object.keys(ui.attrs), []);
-  assert.equal(ui.props['--ink'], 'rgb(63, 255, 108)');
+  assert.equal(ui.props['--ink'], 'rgb(82, 232, 147)');
 });
 
 test('the same theme twice is applied once', () => {

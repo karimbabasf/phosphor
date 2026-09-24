@@ -1,65 +1,109 @@
 /* Phosphor design tokens. Painted, never inherited from the OS. Colour means
    state. Nothing is coloured for decoration.
 
-   The window is one colour on graphite, and that colour is light, not paint: it
-   is emitted where the assistant touches the window and it decays. Five of these
-   are the set_theme contract and are rewritten at runtime by ui/theme.js:
-   --ink (accent), --bg-0 (background), --up, --down, --agent. Everything else
-   derives from them or stands on its own.
+   SOFT DEPTH (Karim picked it on 2026-09-23, look 3 of 3). A warm charcoal
+   ground, never blue-black, and surfaces that sit on it as soft layers: depth
+   comes from a lift and a soft shadow, not from hairlines. Five of these are
+   the set_theme contract and are rewritten at runtime by ui/theme.js: --ink
+   (accent), --bg-0 (background), --up, --down, --agent. The surfaces derive
+   from the ground there, and everything else stands on its own.
 
    THE COLOURWAY. The window ships in one of the mark's (brand/README.md):
-   green on black, this block, dark only. src/view/theme.ts carries the same
-   values so the palette is checked against the contrast floors in a test. */
+   green on warm charcoal, this block, dark only. src/view/theme.ts carries
+   the same values so the palette is checked against the contrast floors in a
+   test. */
 
 :root {
   color-scheme: dark;
 
-  /* Ground and surfaces. The mark's own black, a cool graphite rather than a
-     tinted one, and three steps that can be told apart without a shadow between
-     them. */
-  --bg-0: #0E0F13;
-  --bg-1: #151619;
-  --bg-2: #1B1D20;
-  --line: #262729;
-  --line-strong: #363739;
+  /* Ground and surfaces. The ground is warm charcoal; each step up is the
+     ground lifted toward a light of its own hue (ui/theme.js does the same
+     arithmetic for any ground an agent sets): --bg-1 the balances slab,
+     --bg-2 a card, a bubble, the composer, --bg-3 a quiet button on them. */
+  --bg-0: #161210;
+  --bg-1: #1e1917;
+  --bg-2: #292320;
+  --bg-3: #342e2b;
+  --line: #302a26;
+  --line-strong: #3e3633;
 
-  /* Text. The third level is meta at 12 px, and it still has to read: 4.7:1 on
-     the raised surface (--bg-2), which is the lightest ground it sits on. */
-  --text: #ECEEF1;
-  --text-2: #9BA1AB;
-  --text-3: #828890;
+  /* The light the surfaces lift toward, as channels, so a highlight or a
+     wash can be any strength of it: rgba(var(--hi-rgb), 0.06). */
+  --hi-rgb: 255, 232, 220;
 
-  /* State colour. Phosphor green is the action colour, the direction up, and the
-     assistant's own light: the app is named for one colour on graphite, so the
-     three are one decision. --live is that light in the window (the flight, the
-     glow, the step dots, the glyph) and follows the accent slot. --agent stays
-     what it has always been on the chart: the levels, marks and lines the
-     assistant drew, told apart from the person's by colour. */
-  --ink: #3FFF6C;
-  --on-ink: #0E0F13;
-  --up: #3FFF6C;
-  --down: #FF5A6E;
+  /* Text. The third level is meta at 12 px, and it still has to read: 4.7:1
+     on the raised surface (--bg-2), the lightest ground a word sits on. */
+  --text: #f8f0e8;
+  --text-2: #bcaea1;
+  --text-3: #9a8c7f;
+
+  /* State colour. Phosphor green is the mark, the live move, success and
+     Approve, and nothing else. --live is that light in the window and follows
+     the accent slot. --agent stays what it has always been on the chart: the
+     levels, marks and lines the assistant drew. Red is only for a real loss
+     and the freeze confirm. */
+  --ink: #52e893;
+  --on-ink: #161210;
+  --up: #52e893;
+  --down: #ff6b5b;
   --warn: #F5B942;
   --agent: #B79CFF;
   --live: var(--ink);
 
 
   /* Tints derived from the five slots. theme.js rewrites these with the slots. */
-  --ink-wash: rgba(63, 255, 108, 0.08);
-  --ink-edge: rgba(63, 255, 108, 0.16);
-  --up-wash: rgba(63, 255, 108, 0.14);
-  --down-wash: rgba(255, 90, 110, 0.14);
+  --ink-wash: rgba(82, 232, 147, 0.08);
+  --ink-edge: rgba(82, 232, 147, 0.16);
+  --up-wash: rgba(82, 232, 147, 0.14);
+  --down-wash: rgba(255, 107, 91, 0.14);
   --warn-wash: rgba(245, 185, 66, 0.14);
   --agent-edge: rgba(183, 156, 255, 0.28);
   --live-edge: var(--ink-edge);
+
+  /* One focus ring for the whole window, in the second text tone: green is
+     the mark's, the live move's, success's and Approve's, never a ring's. */
+  --focus-ring: var(--text-2);
 
   /* The press on a pressable that is not a button: a wash of the text, one
      shade past any hover wash (components.css). */
   --press: color-mix(in srgb, var(--text) 12%, transparent);
 
-  /* Type */
+  /* ---------- the soft layers ----------
+
+     A raised surface is a gradient a shade lighter at its top, a hairline of
+     light along its top edge, and a shadow that is soft and falls below it.
+     A well is the opposite: pressed into the ground, shaded at its top. A
+     popover floats higher than a card, so its shadow is longer. */
+  --surface-raised: linear-gradient(180deg,
+    color-mix(in srgb, var(--bg-2), var(--bg-3) 15%),
+    color-mix(in srgb, var(--bg-2), var(--bg-1) 40%));
+  --surface-slab: linear-gradient(180deg,
+    color-mix(in srgb, var(--bg-1), var(--bg-2) 40%),
+    color-mix(in srgb, var(--bg-1), var(--bg-0) 25%));
+  --surface-pop: linear-gradient(180deg,
+    color-mix(in srgb, var(--bg-2), var(--bg-3) 30%),
+    color-mix(in srgb, var(--bg-2), var(--bg-1) 15%));
+  --tile: color-mix(in srgb, var(--bg-2), var(--bg-1) 15%);
+  --well-bg: color-mix(in srgb, var(--bg-0), #000 25%);
+  --hi: inset 0 1px 0 rgba(var(--hi-rgb), 0.07);
+  --raise: inset 0 1px 0 rgba(var(--hi-rgb), 0.06), 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 34px -14px rgba(0, 0, 0, 0.65);
+  --raise-sm: inset 0 1px 0 rgba(var(--hi-rgb), 0.07), 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 14px -8px rgba(0, 0, 0, 0.55);
+  --well: inset 0 1px 3px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(var(--hi-rgb), 0.04);
+  --slab-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.05), 0 30px 60px -30px rgba(0, 0, 0, 0.7);
+
+  /* The ground's own warmth: two soft pools of light, one behind the
+     balances and one low at the left, so the charcoal is never flat. */
+  --ground-glow-1: color-mix(in srgb, var(--bg-0), #845d47 20%);
+  --ground-glow-2: color-mix(in srgb, var(--bg-0), #845d47 11%);
+
+  /* Type. Words and every figure are Geist; a figure carries tabular lining
+     numerals so it sits on its sentence's baseline at its x-height and a
+     column of them reads down the decimal point. Geist Mono is for addresses
+     and ids only. */
   --font-ui: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-num: var(--font-ui);
+  --num-features: tabular-nums lining-nums;
   --fs-11: 11px;
   --fs-12: 12px;
   --fs-13: 13px;
@@ -85,41 +129,62 @@
   --s-7: 48px;
   --s-8: 64px;
 
-  /* Shape. One scale: xs for micro controls (a checkbox, inline code, a tiny
-     tag), sm for controls and chips, the base for inputs and list containers,
-     lg for cards and panels, xl for the receipt and lock cards. */
+  /* Shape. Large and soft. xs for micro controls (a checkbox, inline code),
+     sm for small controls, the base for inputs and rows of a list, the button
+     radius for every button, a tile for a coin row, the card radius for a
+     move card and a popover, xl for the composer, the slab for the balances
+     panel. */
   --radius-xs: 6px;
-  --radius: 14px;
   --radius-sm: 10px;
+  --radius: 14px;
+  --radius-btn: 14px;
+  --radius-tile: 18px;
   --radius-lg: 20px;
+  --radius-card: 22px;
   --radius-xl: 24px;
+  --radius-slab: 30px;
   --radius-pill: 999px;
 
   /* The spinner names its size here because a waiting button reserves room for
      it before either of them is drawn (components.css, the pending swap). */
   --spinner-size: 14px;
 
-  /* Motion */
+  /* Motion. Springy and physical. --ease-spring is a damped spring sampled
+     into a curve (it overshoots about twelve percent and settles): a check
+     popping, a ring segment landing, a tile lifting, the switch's thumb.
+     --ease-spring-soft barely overshoots, for things that open. Engines with
+     no linear() take the cubic stand-ins below. A pressed button squishes to
+     --scale-press and springs back. */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ease-spring-soft: cubic-bezier(0.2, 0.9, 0.25, 1);
+  /* The way out. A front-loaded ease-out at a short duration is half gone in
+     the first frames and reads as a snap; an exit moves evenly and eases at
+     both ends, so the eye sees it leave. */
+  --ease-exit: cubic-bezier(0.4, 0, 0.6, 1);
+  --scale-press: 0.97;
   --dur-press: 160ms;
+  --dur-release: 480ms;
+  --dur-spring: 600ms;
+  --dur-ring: 1000ms;
   --dur-enter: 220ms;
   --dur-swap: 180ms;
-  --dur-number: 300ms;
+  --dur-number: 400ms;
   --dur-glow-in: 120ms;
   --dur-glow-out: 2400ms;
   /* Opening and closing (ui/design/motion.css, and ui/design/motion.js for the
      parts CSS cannot do): a popover, panel, confirm, menu or dialog grows from
-     --scale-open and fades in over --dur-open, and goes the same way back a
-     little faster. --dur-morph is a card or a panel changing its height,
+     --scale-open with a spring and fades in over --dur-open, and goes back
+     on --ease-exit over --dur-close. --dur-morph is a card or a panel changing its height,
      --dur-view the world changing views. */
   --dur-open: 220ms;
-  --dur-close: 160ms;
+  --dur-close: 200ms;
   --dur-morph: 240ms;
   --dur-view: 200ms;
   --scale-open: 0.96;
 
-  /* Layout. On Basic the conversation takes the window and the balances panel
+  /* Layout. On Basic the conversation takes the window and the balances slab
      holds a reading width on the right (--panel-w). On the other modes the
      conversation column takes a share of the window between two floors and
      the world is the rest, so a 27 inch screen gets a wider transcript and a
@@ -127,7 +192,7 @@
      thing looks good on any screen, regardless of the resolution"). Nothing
      here is a fixed pixel width. */
   --topbar-h: 64px;
-  --panel-w: clamp(420px, 30vw, 480px);
+  --panel-w: clamp(400px, 30vw, 480px);
   --conv-w: 30vw;
   --conv-min: 360px;
   --conv-max: 760px;
@@ -135,19 +200,31 @@
   --basic-col: min(760px, 100%);
   --pro-max: min(1680px, 100%);
 
-  /* Depth. Two shadows in the whole app, for the few things that float. */
-  --lift: 0 12px 40px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  --lift-sm: 0 8px 24px rgba(0, 0, 0, 0.45);
+  /* Depth for the few things that float over the rest: a popover, a menu,
+     the freeze confirm, a toast. */
+  --lift: inset 0 1px 0 rgba(var(--hi-rgb), 0.08), 0 28px 64px -20px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(0, 0, 0, 0.25);
+  --lift-sm: inset 0 1px 0 rgba(var(--hi-rgb), 0.08), 0 16px 40px -16px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+
+/* The two springs as real springs where the engine can draw one: a damped
+   spring (damping 0.56, and 0.8 for the soft one) sampled at 40 and 32
+   points. WebKit and Chromium both have linear() today; the cubic stand-ins
+   above are for anything that does not. */
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --ease-spring: linear(0, 0.042, 0.148, 0.291, 0.449, 0.604, 0.746, 0.867, 0.963, 1.034, 1.081, 1.108, 1.119, 1.117, 1.106, 1.09, 1.072, 1.053, 1.035, 1.02, 1.008, 0.998, 0.992, 0.988, 0.986, 0.986, 0.987, 0.989, 0.991, 0.993, 0.995, 0.997, 0.999, 1, 1.001, 1.001, 1.002, 1.002, 1.002, 1.001, 1);
+    --ease-spring-soft: linear(0, 0.031, 0.109, 0.211, 0.324, 0.437, 0.543, 0.639, 0.723, 0.793, 0.851, 0.898, 0.934, 0.961, 0.981, 0.995, 1.005, 1.011, 1.014, 1.015, 1.015, 1.014, 1.013, 1.011, 1.009, 1.008, 1.006, 1.005, 1.004, 1.003, 1.002, 1.001, 1);
+  }
 }
 
 /* A 27 inch screen (2000 px of window and up): type steps up about 12 percent
    and space about 10 percent, through these tokens alone, so the whole window
-   steps together. 149 of the 154 font sizes in ui/design read --fs-*, and
-   four of every five paddings, margins and gaps read --s-*; the control
-   heights that are literals (26, 28, 32 px) still hold the bigger text. The
-   step is a media query on the window, never a zoom on the page: a zoom breaks
-   the chart canvas's device pixel maths and the split handles' measurements.
-   The chart draws its own labels on canvas and does not step with this. */
+   steps together. Most font sizes in ui/design read --fs-*, and four of every
+   five paddings, margins and gaps read --s-*; the control heights that are
+   literals (26, 28, 32 px) still hold the bigger text. The step is a media
+   query on the window, never a zoom on the page: a zoom breaks the chart
+   canvas's device pixel maths and the split handles' measurements. The chart
+   draws its own labels on canvas and does not step with this. */
 @media (min-width: 2000px) {
   :root {
     --fs-11: 12.5px;

@@ -5,11 +5,12 @@
    few block shapes rather than a markdown library: a library's job is to turn
    text into HTML, and HTML is the one thing a reply must never become.
 
-   What it renders: paragraphs, bold, inline and fenced code, headings as
-   labels (never larger than the body), bullet and numbered lists, and GFM
-   tables as real table elements with numbers in mono. A link prints as its
-   text. Signed percentages and dollar deltas are toned up or down, because a
-   column of them is what an analysis is made of and the sign is the fact. */
+   What it renders: paragraphs, bold, inline and fenced code, headings at the
+   body's own size, bullet and numbered lists, quoted lines as one quiet
+   block, and GFM tables as real table elements with figures right aligned
+   under a header aligned with them. A link prints as its text. Signed
+   percentages and dollar deltas are toned up or down, because a column of
+   them is what an analysis is made of and the sign is the fact. */
 (function () {
   'use strict';
 
@@ -18,6 +19,7 @@
   var BULLET = /^\s*[-*+]\s+(.*)$/;
   var NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
   var FENCE = /^\s*```/;
+  var QUOTE = /^\s*>\s?(.*)$/;
   /* A figure, with or without the ticker it is counted in: 4.98, $12.50,
      +3.2%, 0.049 SOL. A cell that is one of these sits in the number column,
      right aligned and in mono, so a column of them reads down its point. */
@@ -103,17 +105,21 @@
     var row = el('tr');
     var names = cells(lines[0]);
     var align = aligns(lines[1]);
+    var rows = [];
+    for (var b = 2; b < lines.length; b += 1) rows.push(cells(lines[b]));
     for (var i = 0; i < names.length; i += 1) {
-      var th = el('th', align[i] || '');
+      /* A header sits over its column: a column that is all figures is right aligned, so
+         its header is too. */
+      var th = el('th', align[i] || (figures(rows, i) ? 'num' : ''));
       inline(th, names[i]);
       row.appendChild(th);
     }
     head.appendChild(row);
     tbl.appendChild(head);
     var body = el('tbody');
-    for (var r = 2; r < lines.length; r += 1) {
+    for (var r = 0; r < rows.length; r += 1) {
       var tr = el('tr');
-      var vals = cells(lines[r]);
+      var vals = rows[r];
       for (var c = 0; c < names.length; c += 1) {
         var value = vals[c] === undefined ? '' : vals[c];
         var td = el('td', align[c] || (NUMERIC.test(value) ? 'num' : ''));
@@ -125,6 +131,24 @@
     tbl.appendChild(body);
     wrap.appendChild(tbl);
     host.appendChild(wrap);
+  }
+
+  function figures(rows, column) {
+    var seen = 0;
+    for (var i = 0; i < rows.length; i += 1) {
+      var value = rows[i][column] === undefined ? '' : rows[i][column];
+      if (value === '') continue;
+      if (!NUMERIC.test(value)) return false;
+      seen += 1;
+    }
+    return seen > 0;
+  }
+
+  /* Quoted lines, one quiet block: their own blocks inside it, without the marker. */
+  function quote(host, lines) {
+    var node = el('blockquote', 'chat-quote');
+    render(node, lines.join('\n'));
+    host.appendChild(node);
   }
 
   function list(host, ordered, items) {
@@ -208,6 +232,17 @@
           i += 1;
         }
         table(host, rows);
+        continue;
+      }
+
+      if (QUOTE.test(line)) {
+        flush();
+        var quoted = [];
+        while (i < lines.length && QUOTE.test(lines[i])) {
+          quoted.push(QUOTE.exec(lines[i])[1]);
+          i += 1;
+        }
+        quote(host, quoted);
         continue;
       }
 

@@ -164,13 +164,16 @@ test('the copy button is drawn once for the receipt and the send card', () => {
   assert.match(css('sendcard.css'), /\.sendcard-explorer > \.icon\s*\{[^}]*width:\s*14px;/);
 });
 
-test('hover lifts the edge in the family\'s own colour, and a pressed chip is lit', () => {
+/* Soft depth (2026-09-23): a button is a raised layer with no outline, so hover lifts its fill a
+   shade in the family's own colour rather than drawing an edge; the primary steps toward white. */
+test('hover lifts the fill in the family\'s own colour, and a pressed chip is lit', () => {
   const components = css('components.css');
-  assert.match(components, /\.btn\s*\{[^}]*--btn-edge-hover:\s*var\(--text-3\);/);
-  assert.match(components, /\.btn:hover:not\(:disabled\)\s*\{\s*border-color:\s*var\(--btn-edge-hover\);/);
+  assert.match(components, /\.btn\s*\{[^}]*--btn-bg-hover:\s*color-mix\(/);
+  assert.match(components, /\.btn:hover:not\(:disabled\)\s*\{\s*border-color:\s*var\(--btn-edge-hover\);\s*background:\s*var\(--btn-bg-hover\);/);
   assert.match(components, /\.btn-primary\s*\{[^}]*--btn-edge-hover:\s*color-mix\(in srgb, var\(--ink\) 88%, #FFFFFF\);/);
-  assert.match(components, /\.btn-danger\s*\{[^}]*--btn-edge-hover:/);
+  assert.match(components, /\.btn-danger\s*\{[^}]*--btn-bg-active:/);
   assert.match(components, /\.btn:active:not\(:disabled\)\s*\{[^}]*background:\s*var\(--btn-bg-active\);/);
+  assert.match(components, /\.btn:active:not\(:disabled\)\s*\{[^}]*transform:\s*scale\(var\(--scale-press\)\);/);
   assert.match(components, /button\.chip\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--ink-wash\);/);
 });
 

@@ -140,7 +140,7 @@
 
   /* The three first moves on the empty card. Each is a question this window
      answers from what it already holds, in the words a person would use. */
-  var SUGGESTIONS = ['What do I hold?', 'Is anything waiting on me?', 'Find a trade on BTC'];
+  var SUGGESTIONS = ['What do I hold?', 'Anything waiting on me?', 'What can you do?'];
 
   /* A question about what the person holds. A wallet read in a turn that asked one draws
      its card; any other wallet read was a check on the way to something else, and the
@@ -149,13 +149,14 @@
 
   /* The card's sentences, in one place. */
   var COPY = {
-    offTitle: 'Nobody is at the wheel.',
-    offLine: 'Start your agent, or connect one you already use.',
-    comingTitle: 'Taking the wheel.',
-    comingLine: 'Starting your assistant.',
-    liveTitle: 'Your assistant is at the wheel.',
-    liveLine: 'Tell it what to do. It picks up your wallet, your limits and the chart on your first message.',
-    ownTitle: 'Your own agent is at the wheel.',
+    offTitle: 'Your agent is off.',
+    offLine: 'Start it to ask about your money or make a move. Nothing moves without your OK.',
+    comingTitle: 'Starting your agent.',
+    comingLine: 'It will be ready in a moment.',
+    liveTitle: 'Your agent is ready.',
+    liveLine: 'Ask about your money, or tell it what to do. Anything that moves money waits for your OK.',
+    stoppedTitle: 'Your agent stopped.',
+    ownTitle: 'Your own agent is working.',
     ownLine: 'Talk to it from its own terminal. Its moves land here as cards.',
     idleTitle: 'Your own agent is connected.',
     idleLine: 'It has not made a move yet. Talk to it from its terminal; its moves land here as cards.',
@@ -264,13 +265,16 @@
   var openSteps = null;
 
   /* WHAT THE CENTRE SHOWS while there is no transcript: the card, or the connect sheet in
-     its place. The sheet can only be open while nobody is at the wheel. */
+     its place. The sheet can only be open while no agent of ours is running. */
   var view = 'card';
 
   /* THE ONE THING THAT WENT WRONG, in words: the driver's plain sentence under the head,
      with a Retry, and its technical line kept so the error frame that follows is not
      printed a second time as a row. */
   var failure = null;
+
+  /* Whether the person froze everything (state.policy.killSwitch): the head says so. */
+  var frozen = false;
 
   /* THE PICK: the agent a new chat runs (GET /api/driver `agent`). One that runs outside this
      window (Codex in a terminal) has no Start here; its sentence says where it runs instead. */
@@ -399,10 +403,20 @@
     var host = node.host;
     dom.clear(host);
 
-    /* THE HEAD. No name and no status line: the header mark says whether the assistant is
-       working, and the thread says what it is doing. What is left is what a person may need
-       to press or read: why it stopped, with a Retry, and the one control. */
+    /* THE HEAD. Which agent it is, in one quiet line (its logo, its name, and whether it is
+       ready or working), and the one control at the right. When something went wrong the line
+       gives its place to why it stopped, with a Retry. The header mark says the same state
+       without words; the thread says what it is doing. */
     var head = dom.el('div', 'agent-head');
+    var who = dom.el('p', 'agent-who');
+    var whoMark = dom.el('span', 'agent-who-mark');
+    var whoName = dom.el('span', 'agent-who-name');
+    var whoState = dom.el('span', 'agent-who-state');
+    who.appendChild(whoMark);
+    who.appendChild(whoName);
+    who.appendChild(whoState);
+    who.hidden = true;
+    head.appendChild(who);
     var note = dom.el('div', 'agent-note');
     note.setAttribute('role', 'status');
     /* The picked agent's own logo, when the note is about where it runs. */
@@ -451,8 +465,6 @@
     emptyActions.appendChild(startBig);
     emptyActions.appendChild(connectBtn);
     emptyInner.appendChild(emptyActions);
-    var rule = dom.el('hr', 'agent-rule');
-    emptyInner.appendChild(rule);
     var suggest = dom.el('div', 'agent-suggest');
     for (var s = 0; s < SUGGESTIONS.length; s += 1) {
       var suggestion = dom.el('button', 'chip suggest', SUGGESTIONS[s]);
@@ -512,6 +524,9 @@
     waitLine.appendChild(icon('waiting', 'agent-waiting-glyph'));
     var waitWords = dom.el('span', 'agent-waiting-words', 'Waiting for your OK');
     waitLine.appendChild(waitWords);
+    var waitShow = dom.el('span', 'agent-waiting-show', 'Show');
+    waitShow.appendChild(icon('chevron-down', 'agent-waiting-chevron'));
+    waitLine.appendChild(waitShow);
     waitLine.hidden = true;
 
     /* THE COMPOSER. One field, the textarea bare inside it growing to six lines, and one
@@ -539,6 +554,10 @@
 
     node.refs = {
       head: head,
+      who: who,
+      whoMark: whoMark,
+      whoName: whoName,
+      whoState: whoState,
       field: field,
       start: start,
       startBig: startBig,
@@ -571,7 +590,6 @@
       emptyTitle: emptyTitle,
       emptyNote: emptyNote,
       emptyActions: emptyActions,
-      rule: rule,
       suggest: suggest
     };
 
@@ -1105,16 +1123,40 @@
     dom.setHidden(host, !shown);
   }
 
+  /* Which agent: the pick's logo and name, and whether it is ready, working or off.
+     Only while there is a conversation to keep company (the empty card says it in the middle
+     of the column otherwise) and nothing went wrong (the note says that instead). */
+  function paintWho(refs, shown) {
+    var name = pick && typeof pick.name === 'string' ? pick.name : '';
+    var on = shown && !!name;
+    dom.setHidden(refs.who, !on);
+    dom.setAttr(refs.who, 'data-frozen', on && frozen ? 'true' : null);
+    if (!on) return;
+    paintNoteMark(refs.whoMark, pick.id);
+    /* Frozen, the line says so first: the agent can still read and talk, and nothing moves. */
+    if (frozen) {
+      dom.setText(refs.whoName, 'Everything is frozen.');
+      dom.setText(refs.whoState, ' ' + name + ' can read, but no money moves.');
+      return;
+    }
+    dom.setText(refs.whoName, name);
+    dom.setText(refs.whoState, phase === 'working' ? ' is working' : (canTalk() ? ' is ready' : ' is off'));
+  }
+
   function render(node) {
     var refs = node.refs;
     var empty = !hasConversation();
     var failed = failure !== null && canStart();
     var away = canStart() ? awayReason() : '';
-    dom.setHidden(refs.note, !failed && !away);
-    dom.setText(refs.noteText, failed ? failure.reason : away);
+    /* With no conversation yet, a failure is the centre card's to say, with Retry as its main
+       answer; the head's note carries it only once there is a thread in the centre's place. */
+    var headFailure = failed && !empty;
+    paintWho(refs, !empty && !failed && !away);
+    dom.setHidden(refs.note, !headFailure && !away);
+    dom.setText(refs.noteText, headFailure ? failure.reason : away);
     paintNoteMark(refs.noteMark, !failed && away ? pick.id : '');
-    dom.setHidden(refs.retry, !failed);
-    dom.setAttr(refs.note, 'title', failed && failure.detail ? failure.detail : null);
+    dom.setHidden(refs.retry, !headFailure);
+    dom.setAttr(refs.note, 'title', headFailure && failure.detail ? failure.detail : null);
 
     /* The card already asks once, in the middle of the column; the head's Start takes over
      the moment there is a transcript to keep company. */
@@ -1123,7 +1165,7 @@
 
     var sheet = view === 'connect' && empty && canStart();
     dom.setHidden(refs.sheet, !sheet);
-    dom.setHidden(refs.empty, !empty || sheet);
+    showEmpty(refs, empty && !sheet, sheet);
     dom.setHidden(refs.listWrap, empty);
     if (empty && !sheet) renderEmpty(node);
     if (sheet) renderSheet(node);
@@ -1151,7 +1193,7 @@
     }, function () {
       var row = dom.el('div', 'agent-client');
       row.appendChild(dom.el('span', 'agent-client-name'));
-      row.appendChild(dom.el('span', 'agent-client-calls mono'));
+      row.appendChild(dom.el('span', 'agent-client-calls num'));
       return row;
     }, function (row, client) {
       var kids = row.children;
@@ -1252,8 +1294,32 @@
     var list = refs.list;
     var waiting = waitingOutOfView(node);
     dom.setHidden(refs.waitLine, !waiting);
+    if (waiting) dom.setText(refs.waitWords, waitingWords(waiting));
     dom.setAttr(refs.jump, 'data-on', !waiting && !node.pinned && !atEnd(list) ? 'true' : null);
     dom.setAttr(refs.listWrap, 'data-cut', list.scrollTop > 2 ? 'top' : null);
+  }
+
+  /* What waits, in the words of the move: "Your swap waits for your OK", or how many do. */
+  var WAITING_NOUNS = {
+    swap: 'Your swap',
+    intents_send: 'Your send',
+    intents_pay: 'Your payout',
+    intents_withdraw: 'Your withdrawal',
+    intents_deposit: 'Your deposit',
+    hl_deposit: 'Your move to trading',
+    hl_withdraw: 'Your move out of trading',
+    trade: 'Your trade',
+    trade_change: 'Your trade change',
+    policy_change: 'Your limits change'
+  };
+
+  function waitingWords(block) {
+    var count = waitingBlocks().length;
+    if (count > 1) return count + ' moves wait for your OK';
+    var data = block && block.data ? block.data : {};
+    var kind = String(data.kind || (data.draft && data.draft.kind) || '');
+    var noun = Object.prototype.hasOwnProperty.call(WAITING_NOUNS, kind) ? WAITING_NOUNS[kind] : 'A move';
+    return noun + ' waits for your OK';
   }
 
   /* The row of a block on screen, through the reconciler's own map. */
@@ -1321,14 +1387,38 @@
   }
 
   /* No, coming, and yes: the three true answers to "is anybody there". */
+  /* The card leaves on the grammar's exit when the first message goes (ui/design/motion.js
+     leave): hiding it at once took the whole centre with it in one frame. Swapping to the
+     connect sheet, or coming back, is the cross-fade the two already share. */
+  function showEmpty(refs, shown, sheet) {
+    var motion = window.PhosphorMotion;
+    if (shown || sheet || refs.empty.hidden || !motion || typeof motion.leave !== 'function') {
+      if (shown && refs.empty.__leaving) refs.empty.__leaving = false;
+      dom.setHidden(refs.empty, !shown);
+      return;
+    }
+    if (refs.empty.__leaving) return;
+    refs.empty.__leaving = true;
+    motion.leave(refs.empty, function () {
+      if (!refs.empty.__leaving) return;
+      refs.empty.__leaving = false;
+      dom.setHidden(refs.empty, true);
+    }, { scale: false });
+  }
+
   function renderEmpty(node) {
     var refs = node.refs;
     var seat = canTalk() ? 'live'
       : (phase === 'starting' ? 'coming' : (phase === 'error' ? 'error' : 'off'));
     var own = ownAgents().length > 0;
+    var stopped = seat === 'error' && failure !== null;
     dom.setAttr(refs.emptySeat, 'data-seat', seat === 'off' && own ? 'own' : seat);
 
-    if (seat === 'live') {
+    if (stopped) {
+      dom.setText(refs.emptyTitle, COPY.stoppedTitle);
+      dom.setText(refs.emptyNote, failure.reason);
+      dom.setAttr(refs.emptyNote, 'title', failure.detail || null);
+    } else if (seat === 'live') {
       dom.setText(refs.emptyTitle, COPY.liveTitle);
       dom.setText(refs.emptyNote, COPY.liveLine);
     } else if (seat === 'coming') {
@@ -1345,8 +1435,11 @@
       dom.setText(refs.emptyTitle, COPY.offTitle);
       dom.setText(refs.emptyNote, COPY.offLine);
     }
+    if (!stopped) dom.setAttr(refs.emptyNote, 'title', null);
     dom.setHidden(refs.emptyActions, !canStart());
-    dom.setHidden(refs.startBig, phase === 'error' || !!awayReason());
+    /* Stopped, the main answer is to try again, in Start's own place. */
+    dom.setText(refs.startBig.firstChild, stopped ? 'Retry' : 'Start your agent');
+    dom.setHidden(refs.startBig, !!awayReason());
   }
 
   function renderSheet(node) {
@@ -1994,6 +2087,12 @@
     if (store && typeof store.select === 'function') {
       store.select('agents', onAgents);
       store.select('proposals', onProposals);
+      store.select('policy', function (policy) {
+        var next = !!(policy && policy.killSwitch);
+        if (next === frozen) return;
+        frozen = next;
+        renderAll();
+      });
     }
   }
 

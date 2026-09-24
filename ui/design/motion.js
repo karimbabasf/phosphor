@@ -259,13 +259,14 @@
      "750ms linear(0, 0.064, 0.1977, ...)": a real spring sampled into the
      linear() easing that stylesheets and the Web Animations API both take.
      It is sampled once, here, and split in two: the easing is what spring()
-     returns (dom.js setNumber hands it to animate()), and both halves land on
-     the root as --dur-spring and --ease-spring so plain CSS writes
-     `transition: transform var(--dur-spring) var(--ease-spring)` and gets the
-     physics with no script per element.
+     returns, and both halves land on the root as --dur-glide and --ease-glide
+     so plain CSS writes `transition: transform var(--dur-glide)
+     var(--ease-glide)` and gets the physics with no script per element.
 
-     No bounce: the window's motion is crisp rather than playful, and 0.4 s of
-     visual duration settles a 20 px move in the time the eye gives it.
+     No bounce: this is the glide, for a scroll or a slide that should arrive
+     without settling. The springy grammar soft depth moves in (a press let
+     go, a check popping, a ring segment landing) is --ease-spring, which
+     ui/design/tokens.css owns.
 
      The vendored file is loaded by index.html ahead of this one, so the
      spring is sampled the moment this file runs. Without it (the unit harness
@@ -359,10 +360,12 @@
      With motion reduced, or with no Web Animations API (the unit harness),
      each is the plain change, at once. */
   var OPEN_MS = 220;
-  var CLOSE_MS = 160;
+  var CLOSE_MS = 200;
   var MORPH_MS = 240;
   var SCALE_FROM = 0.96;
   var EASE = 'cubic-bezier(0.23, 1, 0.32, 1)';
+  /* The way out (--ease-exit): even, eased at both ends, so a close is seen to go. */
+  var EXIT_EASE = 'cubic-bezier(0.4, 0, 0.6, 1)';
 
   function moves(el) {
     return !!el && typeof el.animate === 'function' && !reduced();
@@ -395,7 +398,7 @@
     if (el.__leave) return el.__leave.finished.catch(function () {});
     var o = opts || {};
     var to = o.scale === false ? { opacity: 0 } : { opacity: 0, transform: 'scale(' + SCALE_FROM + ')' };
-    var anim = el.animate([{ opacity: 1, transform: 'none' }, to], { duration: CLOSE_MS, easing: EASE, fill: 'forwards' });
+    var anim = el.animate([{ opacity: 1, transform: 'none' }, to], { duration: CLOSE_MS, easing: EXIT_EASE, fill: 'forwards' });
     el.__leave = anim;
     el.style.pointerEvents = 'none';
     return settle(anim, function () {
@@ -452,7 +455,7 @@
     /* A confirm on its way out cannot be pressed: its Freeze is still drawn. */
     var exits = leaving.map(function (node) {
       node.style.pointerEvents = 'none';
-      return node.animate([{ opacity: 1 }, { opacity: 0 }], { duration: CLOSE_MS, easing: EASE, fill: 'forwards' });
+      return node.animate([{ opacity: 1 }, { opacity: 0 }], { duration: CLOSE_MS, easing: EXIT_EASE, fill: 'forwards' });
     });
     return Promise.all(exits.map(function (anim) { return anim.finished.catch(function () {}); })).then(function () {
       var done = morph(el, change, opts);
@@ -503,8 +506,8 @@
   function seedSpringTokens() {
     var root = typeof document !== 'undefined' && document.documentElement;
     if (!root || !root.style || typeof root.style.setProperty !== 'function') return;
-    root.style.setProperty('--ease-spring', spring());
-    root.style.setProperty('--dur-spring', springDuration());
+    root.style.setProperty('--ease-glide', spring());
+    root.style.setProperty('--dur-glide', springDuration());
   }
   seedSpringTokens();
 

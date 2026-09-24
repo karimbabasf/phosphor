@@ -177,11 +177,70 @@ test('the total is the figure and the caption under it, both from the view', () 
   panel.put(frame('$11,357.51', COINS));
   const total = panel.one('bal-total');
   assert.equal(total.textContent, '$11,357.51');
-  assert.ok(total.className.split(' ').includes('mono'), 'the total is not in the mono face');
+  assert.ok(total.className.split(' ').includes('num'), 'the total is not set as a figure (Geist, tabular lining numerals)');
   assert.equal(panel.one('bal-caption').textContent, 'in your balance');
 
   panel.put(frame('$11,357.51', COINS, { caption: 'checking your new balance' }));
   assert.equal(panel.one('bal-caption').textContent, 'checking your new balance');
+});
+
+/* Soft depth (Karim picked it on 2026-09-23): the total sits inside a ring that splits it by coin.
+   Each priced coin is one piece, in the order the list reads, sized by its share; a coin too
+   small to draw as more than a dot joins "the rest"; a coin whose brand is green wears the neutral
+   because green is the app's own light. */
+function pieceLength(piece: Any): number {
+  return Number(String(piece.style.strokeDasharray ?? '').split(' ')[0]);
+}
+
+test('the ring splits the total by coin, largest first, and a sliver joins the rest', () => {
+  const panel = build();
+  panel.put(frame('$11,407.51', [...COINS, coin('SOL', 50, '0.30')]));
+  const pieces = all(panel.host, 'bal-ring-piece');
+  assert.equal(pieces.length, 4, 'USDC, ETH, NEAR and the rest');
+  const [usdc, eth, near, rest] = pieces.map(pieceLength);
+  assert.ok(usdc! > eth! && eth! > near! && near! > rest!, 'the pieces are not in the order the list reads');
+  assert.ok(Math.abs(usdc! / eth! - (6200 - 0) / 3785.1) < 0.2, 'a piece is not sized by its share');
+  assert.equal(pieces[2].style.stroke, '#e6ddd2', 'NEAR painted the ring green, the app\'s own light');
+  assert.equal(pieces[3].style.stroke, '#e6ddd2', 'the rest is not the neutral');
+  assert.notEqual(pieces[0].style.stroke, '#e6ddd2', 'USDC lost its own colour');
+
+  panel.put(frame('$11,407.51', [coin('USDC', 5700, '5,700.00'), coin('ETH', 4285.1, '1.61'), COINS[2]!, coin('SOL', 50, '0.30')]));
+  const after = all(panel.host, 'bal-ring-piece');
+  assert.equal(after[0], pieces[0], 'a piece was rebuilt rather than moved to the new split');
+  assert.ok(pieceLength(after[0]) < usdc!, 'USDC\'s piece did not shrink with the swap');
+});
+
+test('one coin is the whole ring, and an empty wallet draws only the track', () => {
+  const panel = build();
+  panel.put(frame('$6,200.00', [COINS[0]!]));
+  const pieces = all(panel.host, 'bal-ring-piece');
+  assert.equal(pieces.length, 1);
+  assert.ok(pieceLength(pieces[0]) > 678, 'one coin does not close the ring');
+
+  const empty = build();
+  empty.put(frame('$0.00', [], { emptyLine: 'Nothing here yet. Money you add shows up here as it lands.' }));
+  assert.equal(all(empty.host, 'bal-ring-piece').length, 0);
+  assert.equal(all(empty.host, 'bal-ring-track').length, 1);
+});
+
+test('a short caption sits in the disc under the figure, a long one under the ring', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  assert.equal(panel.one('bal-caption').parentNode, panel.one('bal-centre'));
+  assert.equal(panel.one('bal-under').hidden, true);
+
+  panel.put(frame('$11,357.51', COINS, { caption: 'in your balance, not counting WIF and BONK' }));
+  assert.equal(panel.one('bal-caption').parentNode, panel.one('bal-under'));
+  assert.equal(panel.one('bal-under').hidden, false);
+});
+
+test('each tile carries its coin\'s colour, and a green brand wears the neutral at half strength', () => {
+  const panel = build();
+  panel.put(frame('$11,957.51', [...COINS, coin('BTC', 600, '0.0053')]));
+  assert.equal(panel.row('USDC').style.props['--tint'], '#3b8cff', 'USDC lost the blue it is told apart from ETH by');
+  assert.match(panel.row('BTC').style.props['--tint'] ?? '', /^hsl\(3\d, /, 'BTC is not its own orange, lifted');
+  assert.equal(panel.row('NEAR').style.props['--tint'], '#e6ddd2');
+  assert.equal(panel.row('NEAR').style.props['--tint-share'], '12%');
 });
 
 test('one row per coin: its mark, its symbol, how much of it, and the dollars at the right', () => {
@@ -297,6 +356,10 @@ test('an empty wallet is a calm sentence, and the list waits while the first rea
   assert.equal(panel.one('bal-empty').hidden, false);
   assert.equal(panel.one('bal-empty').textContent, 'Nothing here yet. Money you add shows up here as it lands.');
   assert.equal(all(panel.host, 'skel').length, 0, 'the skeleton left once the read arrived');
+  /* The empty wallet's one thing to do is the slab's main key (hunt A, 2026-09-23). */
+  assert.equal(panel.one('bal').getAttribute('data-empty'), 'true', 'Add money is a quiet key on an empty wallet');
+  panel.put(frame('$11,357.51', COINS));
+  assert.equal(panel.one('bal').getAttribute('data-empty'), null);
 });
 
 test('Add money opens the deposit steps in the panel, over nothing, and Done puts the list back', () => {

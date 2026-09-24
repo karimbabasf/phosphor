@@ -50,10 +50,10 @@ test('the thread is one measure of 720 px, and the composer sits on it', () => {
   assert.match(AGENT, /--thread-w:\s*720px;/);
   assert.match(block(AGENT, '.transcript-rows'), /width:\s*min\(100%, var\(--thread-w\)\);/);
   assert.match(block(AGENT, '.agent-composer'), /var\(--thread-w\)/);
-  /* The person's words in a quiet bubble on the right; the assistant's bare on the left. */
+  /* The person's words in a soft raised bubble on the right; the assistant's bare on the left. */
   const bubble = block(AGENT, '.chat-said .chat-text');
-  assert.match(bubble, /border-radius:\s*18px 18px 6px 18px;/);
-  assert.match(bubble, /background:\s*var\(--bg-2\);/);
+  assert.match(bubble, /border-radius:\s*22px 22px 8px 22px;/);
+  assert.match(bubble, /background:[^;]*var\(--bg-2\)/);
   assert.doesNotMatch(block(AGENT, '.chat-reply'), /background|border:/, 'the assistant has a bubble');
 });
 
@@ -61,8 +61,8 @@ test('Latest is small and quiet on the thread\'s bottom edge, never a bar across
   const jump = block(AGENT, '.jump-latest');
   assert.doesNotMatch(jump, /\bright:\s*0/, 'Latest runs the width of the column');
   assert.doesNotMatch(jump, /box-shadow/, 'Latest floats on a shadow');
-  assert.match(jump, /background:\s*var\(--bg-1\);/);
-  assert.match(jump, /color:\s*var\(--text-2\);/);
+  assert.match(jump, /background:\s*var\(--bg-3\);/);
+  assert.match(jump, /color:\s*var\(--text\);/);
   assert.match(jump, /bottom:\s*var\(--s-2\);/);
   assert.doesNotMatch(jump, /--agent|--ink/, 'Latest wears a colour');
 });
@@ -76,7 +76,7 @@ test('green is the mark\'s, the live move\'s and Approve\'s, and nothing else in
   assert.doesNotMatch(block(AGENT, '.composer-send'), /--ink/, 'the send button is green');
   const cardInks = [...CARD.matchAll(/\n([^\n{]+)\{[^}]*var\(--ink\)[^}]*\}/g)].map((m) => (m[1] as string).trim());
   for (const selector of cardInks) {
-    assert.ok(/needs_you|mcard-track-fill|@keyframes mcard-lit/.test(selector), `"${selector}" is green on the card`);
+    assert.ok(/needs_you|mcard-track-fill|@keyframes mcard-lit|data-icon="done"/.test(selector), `"${selector}" is green on the card`);
   }
   /* A done move, a failed one and a gain are words and figures in the text tones; red is a loss. */
   assert.doesNotMatch(CARDS, /var\(--up\)/, 'a card paints a gain green');
@@ -100,7 +100,7 @@ test('the one thing that breathes is Approve, slowly, and it never changes size'
   assert.match(breath, /animation:\s*ask-breathe 2600ms/);
   const keys = COMPONENTS.slice(COMPONENTS.indexOf('@keyframes ask-breathe'), COMPONENTS.indexOf('.btn-lg'));
   assert.doesNotMatch(keys, /transform|scale|width|height/, 'the breath changes the button\'s size');
-  assert.match(keys, /box-shadow:\s*0 0 0 5px/);
+  assert.match(keys, /box-shadow:[^;]*0 0 0 5px/);
   /* Nothing else in the conversation runs forever. */
   for (const [name, css] of [['agent.css', AGENT], ['chatcard.css', CARD], ['cards.css', CARDS]] as const) {
     assert.doesNotMatch(css, /infinite/, `${name} runs an animation forever`);
@@ -150,11 +150,15 @@ test('the state word changes with a fade of 200 to 300 ms', () => {
    "Done · 21s" took a second line and the card jumped 20 px on landing; a long record squeezed
    its label to two letters a line; an id ran under its Copy; "4 USDC" in a reply read as two
    spaces. */
-test('the card keeps one head row, labels keep their words, and a reply figure keeps a word gap', () => {
+test('the card keeps one head row, labels keep their words, and a reply figure sits on its sentence', () => {
   assert.match(block(CARD, '.mcard-head'), /flex-wrap:\s*nowrap/);
   assert.match(block(CARDS, '.tcard-line-label'), /min-width:\s*6em/);
   assert.match(block(CARDS, '.tcard-line[data-wrap="true"] .tcard-line-value'), /flex:\s*1 1 0/);
   assert.match(block(CARD, '.tcard-ref-value'), /flex:\s*0 0 auto/);
   assert.match(block(CARD, '.tcard-line.tcard-recorded'), /flex-direction:\s*column/);
-  assert.match(block(AGENT, '.chat-text strong,\n.chat-text b'), /word-spacing:\s*-0\.3em/);
+  /* The figure is the sentence's own face a weight up, so its word gap and baseline are the
+     sentence's; the mono face's cell-wide space needed a negative word gap, this does not. */
+  const figure = block(AGENT, '.chat-text strong,\n.chat-text b');
+  assert.match(figure, /font-family:\s*var\(--font-num\);/);
+  assert.doesNotMatch(figure, /font-mono|word-spacing|font-size/);
 });

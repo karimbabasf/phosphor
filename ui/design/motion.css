@@ -1,9 +1,10 @@
 /* Phosphor motion: how things open, close and change, in one sheet.
 
    ONE GRAMMAR. A popover, a panel, a confirm, a menu or a dialog grows out of
-   the control that opened it, from --scale-open and nothing, over --dur-open
-   on the window's ease-out, and goes back the same way over --dur-close, a
-   little faster than it came. Clicking outside, Escape and the close button
+   the control that opened it, from --scale-open and nothing: it fades in over
+   --dur-open and its size lands on a spring (--ease-spring over --dur-spring),
+   so it arrives with a little give. It goes back the same way over
+   --dur-close on --ease-exit, which moves evenly rather than snapping. Clicking outside, Escape and the close button
    all land on the same attribute, so all three take the same exit. Nothing
    leaves the screen before its exit is over: an element closed by its hidden
    attribute keeps its box while it fades (display is transitioned as a
@@ -17,7 +18,7 @@
 
 [data-motion="pop"] {
   transition: opacity var(--dur-open) var(--ease-out),
-              transform var(--dur-open) var(--ease-out),
+              transform var(--dur-spring) var(--ease-spring),
               display var(--dur-open) allow-discrete;
 }
 
@@ -26,6 +27,7 @@
   transform: scale(var(--scale-open));
   pointer-events: none;
   transition-duration: var(--dur-close);
+  transition-timing-function: var(--ease-exit);
 }
 
 @starting-style {
@@ -47,6 +49,7 @@
   opacity: 0;
   pointer-events: none;
   transition-duration: var(--dur-close);
+  transition-timing-function: var(--ease-exit);
 }
 
 @starting-style {
@@ -64,7 +67,7 @@
    the top layer at once, so a transition on the close itself is never seen. */
 dialog[data-motion] {
   transition: opacity var(--dur-open) var(--ease-out),
-              transform var(--dur-open) var(--ease-out);
+              transform var(--dur-spring) var(--ease-spring);
 }
 
 dialog[data-motion]::backdrop {
@@ -87,11 +90,13 @@ dialog[data-motion][data-closing="true"] {
   transform: scale(var(--scale-open));
   pointer-events: none;
   transition-duration: var(--dur-close);
+  transition-timing-function: var(--ease-exit);
 }
 
 dialog[data-motion][data-closing="true"]::backdrop {
   opacity: 0;
   transition-duration: var(--dur-close);
+  transition-timing-function: var(--ease-exit);
 }
 
 /* ---------- the world changing views ----------

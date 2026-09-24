@@ -1,12 +1,14 @@
-/* Basic: the balances panel beside the conversation.
+/* Basic: the balances slab beside the conversation.
 
-   One job: say where the money is, calmly, and let a person add more. The total
-   in the mono face, what that figure is in words under it, one row per coin,
-   and one way to add money. Every sentence arrives from the server
-   (src/view/basic.ts); this file places them and moves the numbers.
+   One job: say where the money is, calmly, and let a person add more. A ring
+   that splits the total by coin with the total inside it, what that figure is
+   in words, one soft tile per coin tinted by the coin's own colour, and one
+   way to add money. Every sentence arrives from the server (src/view/basic.ts);
+   this file places them and moves the numbers.
 
-   A row whose figure moved rolls to the new one and lights once, the way
-   phosphor does: the light arrives fast and decays slow. */
+   When the money moves, the ring's pieces spring to the new split, and a tile
+   whose figure moved rolls to the new one and lights once, the way phosphor
+   does: the light arrives fast and decays slow. */
 (function () {
   'use strict';
 
@@ -14,15 +16,42 @@
   var store = window.PhosphorState;
   var marks = window.PhosphorMarks;
 
-  /* How long a row's light takes to arrive (--dur-glow-in in tokens.css).
-     Taking the attribute away hands the row to the stylesheet's slow decay
+  /* How long a tile's light takes to arrive (--dur-glow-in in tokens.css).
+     Taking the attribute away hands the tile to the stylesheet's slow decay
      (--dur-glow-out). */
   var GLOW_IN_MS = 120;
+
+  /* THE RING. One circle of radius 108 in a 244 box, 14 thick, round ended,
+     with the disc the total sits on inside it. Each coin's piece is a dash of
+     that circle, clockwise from the top in the order the list reads, with a
+     gap of GAP between pieces; a coin under SLIVER of the total joins "the
+     rest" rather than drawing a dot. */
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  var R = 108;
+  var C = 2 * Math.PI * R;
+  var GAP = 24;
+  var SLIVER = 0.02;
+  /* The shortest piece drawn: a short arc, never a lone dot. */
+  var MIN_DASH = 6;
+  var STAGGER_MS = 70;
+
+  /* A caption longer than this leaves the disc and sits under the ring. */
+  var CAPTION_IN = 26;
+
+  /* A coin whose brand colour is green wears this instead: green is the
+     app's own light (the mark, a live move, success, Approve). So does a coin
+     with no colour of its own, and the rest of the ring. */
+  var NEUTRAL = '#e6ddd2';
+
+  /* The coins most wallets hold, lifted by eye so the three that are all blue to violet in
+     their brands (USDC, ETH, SOL) still tell apart on the ring. */
+  var TINTS = { USDC: '#3b8cff', 'USDC.E': '#3b8cff', USDCX: '#3b8cff', ETH: '#b0b4ff', WETH: '#b0b4ff', SOL: '#a86dff' };
 
   var refs = {};
   var mounted = false;
   var filled = false;
   var steps = null;
+  var ringDrawn = false;
 
   function boot() {
     var host = document.getElementById('view-basic');
@@ -38,15 +67,22 @@
     panel.setAttribute('aria-label', 'Your balance');
 
     var head = dom.el('div', 'bal-head');
-    var total = dom.el('p', 'bal-total mono tick');
+    var ring = ringSvg();
+    var centre = dom.el('div', 'bal-centre');
+    var total = dom.el('p', 'bal-total num tick');
     var totalSkel = dom.el('span', 'skel bal-total-skel');
     var caption = dom.el('p', 'bal-caption');
-    head.appendChild(total);
-    head.appendChild(totalSkel);
-    head.appendChild(caption);
+    centre.appendChild(total);
+    centre.appendChild(totalSkel);
+    centre.appendChild(caption);
+    if (ring) head.appendChild(ring.svg);
+    head.appendChild(centre);
+    var under = dom.el('div', 'bal-under');
     panel.appendChild(head);
+    panel.appendChild(under);
 
     var list = dom.el('div', 'bal-list');
+    var scroll = dom.el('div', 'bal-scroll');
     var rows = dom.el('ul', 'bal-rows');
     rows.setAttribute('aria-label', 'What you hold');
     for (var i = 0; i < 3; i += 1) rows.appendChild(skeletonRow());
@@ -58,13 +94,14 @@
     add.type = 'button';
     add.appendChild(window.PhosphorIcons.svg('deposit'));
     add.appendChild(dom.el('span', '', 'Add money'));
-    list.appendChild(rows);
-    list.appendChild(small);
-    list.appendChild(empty);
+    scroll.appendChild(rows);
+    scroll.appendChild(small);
+    scroll.appendChild(empty);
+    list.appendChild(scroll);
     list.appendChild(add);
     panel.appendChild(list);
 
-    /* The deposit steps (ui/screens/moneyin.js) run here, in the panel, rather
+    /* The deposit steps (ui/screens/moneyin.js) run here, in the slab, rather
        than in a dialog over the window: nothing covers the conversation, and
        the total stays in view to watch the money land. */
     var flow = dom.el('div', 'bal-flow');
@@ -74,7 +111,7 @@
     title.setAttribute('tabindex', '-1');
     var done = dom.el('button', 'btn btn-quiet btn-sm bal-done');
     done.type = 'button';
-    done.appendChild(dom.el('span', 'btn-label', 'Done'));
+    done.appendChild(dom.el('span', 'btn-label', 'Close'));
     flowHead.appendChild(title);
     flowHead.appendChild(done);
     var flowBody = dom.el('div', 'bal-flow-body');
@@ -86,10 +123,15 @@
 
     refs = {
       panel: panel,
+      head: head,
+      ring: ring,
+      centre: centre,
+      under: under,
       total: total,
       totalSkel: totalSkel,
       caption: caption,
       list: list,
+      scroll: scroll,
       rows: rows,
       small: small,
       empty: empty,
@@ -101,6 +143,7 @@
 
     dom.on(add, 'click', openSteps);
     dom.on(done, 'click', closeSteps);
+    dom.on(scroll, 'scroll', paintCut);
   }
 
   function skeletonRow() {
@@ -111,19 +154,205 @@
     return row;
   }
 
+  /* ---------- the ring ---------- */
+
+  function svgEl(tag, attrs) {
+    var node = document.createElementNS(SVG_NS, tag);
+    for (var name in attrs) {
+      if (Object.prototype.hasOwnProperty.call(attrs, name)) node.setAttribute(name, attrs[name]);
+    }
+    return node;
+  }
+
+  /* Built in the svg namespace, never from markup. Null where there is no svg
+     namespace to build in (the unit harness), and every caller treats that as
+     "no ring". */
+  function ringSvg() {
+    if (typeof document.createElementNS !== 'function') return null;
+    var svg = svgEl('svg', { class: 'bal-ring', viewBox: '0 0 244 244', 'aria-hidden': 'true', focusable: 'false' });
+    var defs = svgEl('defs', {});
+    var disc = svgEl('radialGradient', { id: 'bal-disc', cx: '50%', cy: '38%', r: '62%' });
+    disc.appendChild(svgEl('stop', { offset: '0', class: 'bal-disc-top' }));
+    disc.appendChild(svgEl('stop', { offset: '1', class: 'bal-disc-foot' }));
+    defs.appendChild(disc);
+    svg.appendChild(defs);
+    svg.appendChild(svgEl('circle', { class: 'bal-ring-disc', cx: '122', cy: '122', r: '92' }));
+    svg.appendChild(svgEl('circle', { class: 'bal-ring-track', cx: '122', cy: '122', r: String(R) }));
+    var pieces = svgEl('g', { class: 'bal-ring-pieces', transform: 'rotate(-90 122 122)' });
+    svg.appendChild(pieces);
+    return { svg: svg, pieces: pieces, byKey: {} };
+  }
+
+  /* The pieces, from the priced coins in the order the list reads (largest
+     first). Each is { key, usd, colour }. */
+  function piecesOf(holdings) {
+    var out = [];
+    var sum = 0;
+    var rest = 0;
+    for (var i = 0; i < holdings.length; i += 1) {
+      var usd = Number(holdings[i].valueUsd);
+      if (isFinite(usd) && usd > 0) sum += usd;
+    }
+    if (!(sum > 0)) return out;
+    for (var j = 0; j < holdings.length; j += 1) {
+      var h = holdings[j];
+      var value = Number(h.valueUsd);
+      if (!isFinite(value) || value <= 0) continue;
+      if (value / sum < SLIVER) {
+        rest += value;
+        continue;
+      }
+      out.push({ key: h.symbol, usd: value, colour: tintOf(h.symbol) });
+    }
+    if (rest > 0) out.push({ key: ':rest', usd: rest, colour: NEUTRAL });
+    return out;
+  }
+
+  function paintRing(holdings) {
+    var ring = refs.ring;
+    if (!ring) return;
+    var pieces = piecesOf(holdings);
+    var sum = 0;
+    for (var i = 0; i < pieces.length; i += 1) sum += pieces[i].usd;
+    var still = reduced() || !ringDrawn;
+    var intro = !ringDrawn && !reduced() && pieces.length > 0;
+    var seen = {};
+    var at = 0;
+    for (var k = 0; k < pieces.length; k += 1) {
+      var piece = pieces[k];
+      var len = pieces.length === 1 ? C : piece.usd / sum * C;
+      var dash = pieces.length === 1 ? C : Math.max(MIN_DASH, len - GAP);
+      var start = pieces.length === 1 ? 0 : at + GAP / 2;
+      var node = ring.byKey[piece.key];
+      var born = !node;
+      if (born) {
+        node = svgEl('circle', { class: 'bal-ring-piece', cx: '122', cy: '122', r: String(R) });
+        ring.byKey[piece.key] = node;
+        /* A coin that arrives after the first draw grows out of its own place. */
+        if (!intro && !still) setDash(node, 0.001, start, false);
+      }
+      node.style.stroke = piece.colour;
+      if (node.parentNode !== ring.pieces || ring.pieces.children[k] !== node) ring.pieces.insertBefore(node, ring.pieces.children[k] || null);
+      if (intro) {
+        setDash(node, 0.001, start, false);
+        growLater(node, dash, start, k * STAGGER_MS);
+      } else {
+        if (born && !still) forceStyle(node);
+        setDash(node, dash, start, !still);
+      }
+      seen[piece.key] = true;
+      at += len;
+    }
+    for (var key in ring.byKey) {
+      if (!Object.prototype.hasOwnProperty.call(ring.byKey, key) || seen[key]) continue;
+      shrinkAway(ring.byKey[key], still);
+      delete ring.byKey[key];
+    }
+    if (pieces.length) ringDrawn = true;
+  }
+
+  function setDash(node, dash, start, animate) {
+    node.style.transition = animate ? '' : 'none';
+    node.style.transitionDelay = '0ms';
+    node.style.strokeDasharray = dash.toFixed(3) + ' ' + C.toFixed(3);
+    node.style.strokeDashoffset = (-start).toFixed(3);
+  }
+
+  /* The first draw: every piece at nothing on its own place, then, a frame
+     later, each grows out to its share, a beat after the one before. */
+  function growLater(node, dash, start, delay) {
+    forceStyle(node);
+    frame(function () {
+      node.style.transition = '';
+      node.style.transitionDelay = delay + 'ms';
+      node.style.strokeDasharray = dash.toFixed(3) + ' ' + C.toFixed(3);
+      node.style.strokeDashoffset = (-start).toFixed(3);
+    });
+  }
+
+  function shrinkAway(node, still) {
+    if (still || typeof node.getBoundingClientRect !== 'function') {
+      if (node.parentNode) node.parentNode.removeChild(node);
+      return;
+    }
+    var offset = node.style.strokeDashoffset;
+    node.style.transition = '';
+    node.style.strokeDasharray = '0.001 ' + C.toFixed(3);
+    node.style.strokeDashoffset = offset;
+    window.setTimeout(function () {
+      if (node.parentNode) node.parentNode.removeChild(node);
+    }, 1100);
+  }
+
+  function forceStyle(node) {
+    if (typeof node.getBoundingClientRect === 'function') node.getBoundingClientRect();
+  }
+
+  function frame(fn) {
+    var raf = window.requestAnimationFrame;
+    if (typeof raf === 'function') raf(function () { raf(fn); });
+    else fn();
+  }
+
+  function reduced() {
+    var motion = window.PhosphorMotion;
+    return !!(motion && typeof motion.reduced === 'function' && motion.reduced());
+  }
+
+  /* ---------- a coin's own colour ---------- */
+
+  /* The coin's brand colour (marks.js), lifted so it reads on the charcoal:
+     at least 64 percent lightness, never pure white. A green brand wears the
+     neutral, and so does a coin with no colour of its own. */
+  function tintOf(symbol) {
+    var key = String(symbol || '').trim().toUpperCase();
+    if (Object.prototype.hasOwnProperty.call(TINTS, key)) return TINTS[key];
+    var hex = marks && typeof marks.colourFor === 'function' ? marks.colourFor(symbol) : '';
+    var hsl = hslOf(hex);
+    if (!hsl) return NEUTRAL;
+    if (hsl.s > 0.35 && hsl.h >= 80 && hsl.h <= 170) return NEUTRAL;
+    var l = Math.min(0.88, Math.max(0.64, hsl.l));
+    var s = Math.min(0.95, hsl.s);
+    return 'hsl(' + Math.round(hsl.h) + ', ' + Math.round(s * 100) + '%, ' + Math.round(l * 100) + '%)';
+  }
+
+  function hslOf(hex) {
+    var m = /^#([0-9a-f]{6})$/i.exec(String(hex || ''));
+    if (!m) return null;
+    var r = parseInt(m[1].slice(0, 2), 16) / 255;
+    var g = parseInt(m[1].slice(2, 4), 16) / 255;
+    var b = parseInt(m[1].slice(4, 6), 16) / 255;
+    var max = Math.max(r, g, b);
+    var min = Math.min(r, g, b);
+    var l = (max + min) / 2;
+    var d = max - min;
+    if (d === 0) return { h: 0, s: 0, l: l };
+    var s = d / (1 - Math.abs(2 * l - 1));
+    var h;
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+    return { h: h, s: s, l: l };
+  }
+
   /* ---------- adding money ---------- */
 
-  /* The steps take the list's place and the panel's height slides between
-     the two (ui/design/motion.js). Done fades the steps out first; they are
-     torn down only once they are off screen, and the focus goes back to Add
-     money. */
+  /* The steps take the list's place and the slab's height slides between the
+     two (ui/design/motion.js); the ring steps back to a small one beside the
+     total, so the steps have the room. Done fades the steps out first; they
+     are torn down only once they are off screen, and the focus goes back to
+     Add money. */
   function openSteps() {
     if (steps) return;
     if (window.PhosphorLazy) window.PhosphorLazy.load('qr');
     inPanel(null, function () {
       dom.setHidden(refs.list, true);
       dom.setHidden(refs.flow, false);
+      dom.setAttr(refs.panel, 'data-flow', 'true');
       steps = window.PhosphorMoneyIn.render(refs.flowBody, { context: 'basic' }) || {};
+      fitTotal();
       if (refs.title.focus) refs.title.focus();
     }, refs.flow);
   }
@@ -137,6 +366,9 @@
       dom.clear(refs.flowBody);
       dom.setHidden(refs.flow, true);
       dom.setHidden(refs.list, false);
+      dom.setAttr(refs.panel, 'data-flow', null);
+      fitTotal();
+      paintCut();
       if (refs.add.focus) refs.add.focus();
     }, refs.list);
   }
@@ -154,46 +386,96 @@
     var basic = (store.get() || {}).basic || {};
 
     if (refs.totalSkel.parentNode) refs.totalSkel.parentNode.removeChild(refs.totalSkel);
+    var hadTotal = refs.total.textContent;
     dom.setNumber(refs.total, basic.totalLine || '');
     dom.setHidden(refs.total, !basic.totalLine);
-    dom.setText(refs.caption, basic.caption || '');
+    if (filled && hadTotal && basic.totalLine && hadTotal !== basic.totalLine) lightHead();
+
+    /* The words under the figure sit in the disc while they are a few words;
+       a longer caption, or a whole sentence standing in for the figure, sits
+       under the ring where it has a line's width. */
+    var words = basic.caption || '';
+    var outside = words.length > CAPTION_IN;
+    var home = outside ? refs.under : refs.centre;
+    if (refs.caption.parentNode !== home) home.appendChild(refs.caption);
+    dom.setText(refs.caption, words);
     dom.setAttr(refs.caption, 'data-alone', basic.totalLine ? null : 'true');
+    dom.setHidden(refs.under, !outside);
 
     var holdings = Array.isArray(basic.holdings) ? basic.holdings : [];
     dom.reconcile(refs.rows, holdings, keyOf, createRow, fillRow);
     filled = true;
+    paintRing(holdings);
 
     dom.setText(refs.small, basic.smallLine || '');
     dom.setHidden(refs.small, !basic.smallLine);
     dom.setText(refs.empty, basic.emptyLine || '');
     dom.setHidden(refs.empty, !basic.emptyLine);
+    /* An empty wallet's one thing to do is add money, so Add money is the slab's main key. */
+    dom.setAttr(refs.panel, 'data-empty', basic.emptyLine && !holdings.length ? 'true' : null);
+
+    fitTotal();
+    paintCut();
+  }
+
+  /* The total stays inside the disc whatever its length: past what the disc
+     holds at the full size, it steps down until it fits. */
+  function fitTotal() {
+    var total = refs.total;
+    if (!total || typeof total.getBoundingClientRect !== 'function' || !refs.centre.getBoundingClientRect) return;
+    total.style.removeProperty('--fit');
+    var room = refs.centre.getBoundingClientRect().width;
+    var need = total.scrollWidth;
+    if (room > 0 && need > room) total.style.setProperty('--fit', (Math.floor(room / need * 100) / 100).toFixed(2));
+  }
+
+  /* The list scrolls inside the slab when it holds more coins than the slab
+     has room for, and says so: the edge with more behind it fades. */
+  function paintCut() {
+    var box = refs.scroll;
+    if (!box || typeof box.scrollHeight !== 'number') return;
+    var top = box.scrollTop > 2;
+    var bottom = box.scrollHeight - box.scrollTop - box.clientHeight > 2;
+    dom.setAttr(box, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
   }
 
   function keyOf(holding) {
     return holding.symbol;
   }
 
+  /* A tile: the coin's logo as its brand draws it, its symbol and how much of
+     it on the left, the dollars on the right. The dollars wrap under the
+     symbol, still at the right, when a long name and a large figure cannot
+     share one line. */
   function createRow(holding) {
     var row = dom.el('li', 'bal-row');
     var mark = marks.logo(holding.symbol);
     mark.className += ' bal-coin';
+    var body = dom.el('span', 'bal-body');
     var who = dom.el('span', 'bal-who');
     who.appendChild(dom.el('span', 'bal-sym'));
-    who.appendChild(dom.el('span', 'bal-amt mono tick'));
+    who.appendChild(dom.el('span', 'bal-amt num tick'));
+    body.appendChild(who);
+    body.appendChild(dom.el('span', 'bal-usd num tick'));
     row.appendChild(mark);
-    row.appendChild(who);
-    row.appendChild(dom.el('span', 'bal-usd mono tick'));
-    /* A coin that arrives after the panel has drawn once is a row that moved:
+    row.appendChild(body);
+    var tint = tintOf(holding.symbol);
+    row.style.setProperty('--tint', tint);
+    /* The neutral is nearly white, so it washes in at half the strength. */
+    if (tint === NEUTRAL) row.style.setProperty('--tint-share', '12%');
+    /* A coin that arrives after the panel has drawn once is a tile that moved:
        it lights like one. The first fill of all is not a change. */
     if (filled) row.__shown = '';
     return row;
   }
 
   function fillRow(row, holding) {
-    var who = row.children[1];
-    var usd = row.children[2];
+    var body = row.children[1];
+    var who = body.children[0];
+    var usd = body.children[1];
     var priced = holding.valueLine !== null && holding.valueLine !== undefined;
     dom.setText(who.children[0], holding.symbol);
+    dom.setAttr(who.children[0], 'title', holding.name && holding.name !== holding.symbol ? holding.name : null);
     dom.setNumber(who.children[1], holding.quantityLine);
     if (!priced) {
       dom.setText(usd, 'price unavailable');
@@ -213,11 +495,19 @@
     var had = row.__shown;
     row.__shown = shown;
     if (had === undefined || had === shown) return;
-    row.dataset.lit = 'true';
-    if (row.__litTimer) window.clearTimeout(row.__litTimer);
-    row.__litTimer = window.setTimeout(function () {
-      delete row.dataset.lit;
-      row.__litTimer = 0;
+    lit(row);
+  }
+
+  function lightHead() {
+    lit(refs.head);
+  }
+
+  function lit(node) {
+    node.dataset.lit = 'true';
+    if (node.__litTimer) window.clearTimeout(node.__litTimer);
+    node.__litTimer = window.setTimeout(function () {
+      delete node.dataset.lit;
+      node.__litTimer = 0;
     }, GLOW_IN_MS);
   }
 
