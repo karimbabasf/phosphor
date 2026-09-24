@@ -21,6 +21,7 @@ import { px } from '../trade/plan.ts';
 import { isReasonCode } from '../rails/reasons.ts';
 import type { ReasonCode } from '../rails/reasons.ts';
 import type { PolicyAxisChange, Proposal, WriteDraft } from '../types.ts';
+import { baseUnitsToDecimal } from '../intents.ts';
 
 // The app's own phases are lowercase. The provider's phases are the vendor's words, byte for
 // byte: 1Click's seven off GetExecutionStatusResponse, the solver relay's four off get_status,
@@ -60,9 +61,10 @@ export type TxLeg = {
   running: boolean; // the leg the operation is inside right now. At most one is true.
 };
 
-/* The four states a person reads a move in. Twenty-three stage words are the app's to keep;
-   a card shows one of these. `stalled` is working and late, never over. */
-export type MoveState = 'working' | 'needs_you' | 'done' | 'didnt_go_through';
+/* The states a person reads a move in. Twenty-three stage words are the app's to keep; a card
+   shows one of these. `stalled` is working and late, never over. `coming_back` is money that left
+   and is on its way back: not over, and never "didn't go through", which reads as nothing moved. */
+export type MoveState = 'working' | 'needs_you' | 'done' | 'didnt_go_through' | 'coming_back';
 
 /* Why a move is where it is, when that needs saying: the code from src/rails/reasons.ts, the one
    plain sentence for it (what happened, where the money is, what the person can do), and the
@@ -140,6 +142,8 @@ export type ProposalView = {
   // Set once a move that is still working has run past its usual time, counted from the click.
   late: { elapsedSec: number; typicalSec: number } | null;
   reason: ProposalReason | null;
+  // A finished move with a catch, in one sentence: less arrived than was approved. Null otherwise.
+  note: string | null;
 };
 
 /* THE ONLY WORDS A STAGE IS EVER PRINTED AS. The card, the agent's sentence, proposal_status and
@@ -177,8 +181,8 @@ export const STAGE_LABEL: Record<ProposalStage, string> = {
    The label is the headline; this is the sentence under it. A surface prints it verbatim or not
    at all, never a paraphrase, so the card and the agent cannot describe one moment two ways. */
 export const STAGE_COPY: Record<ProposalStage, string> = {
-  waiting_for_you: 'Nothing moves until you answer in the window.',
-  waiting_for_unlock: 'The wallet is locked. Unlock it in the window and the move continues.',
+  waiting_for_you: 'Nothing moves until you answer.',
+  waiting_for_unlock: 'The wallet is locked. Unlock it and the move continues.',
   waiting_for_touch: 'Touch ID is asking for your fingerprint. Nothing moves until you answer it.',
   held: 'The checks before signing have not cleared. Nothing is signed until they do; the app tries again.',
   signing: 'The wallet is signing it. Nothing for you to do.',
@@ -198,7 +202,7 @@ export const STAGE_COPY: Record<ProposalStage, string> = {
   confirmed: 'Done. The balance shows it.',
   failed: 'It did not go through. The reason is on the card. Nothing more will be signed.',
   declined: 'You said no. Nothing moved.',
-  refused: 'A rule you set stopped it. Nothing moved. Change the rule in the window if you want it to go.',
+  refused: 'A rule you set stopped it. Nothing moved. Your rules are in Vault, under Limits.',
   stalled: 'Late: nothing has changed since the last update. The app keeps checking; nothing more is signed.',
 };
 
@@ -565,6 +569,19 @@ export function moveStateOf(stage: ProposalStage): MoveState {
   return 'working';
 }
 
+/* THE STATE A CAUSE SAYS, where it says more than the stage. A FAILED or REFUNDED stage read
+   "Didn't go through" over "Still checking whether this went through" and over a refund still on
+   its way, so a person read the state, tried again, and could pay twice (hunt A, 2026-09-23). */
+const STATE_OF_REASON: Partial<Record<ReasonCode, MoveState>> = {
+  stuck_unknown: 'working',
+  venue_failed_refund_pending: 'coming_back',
+  short_fill: 'done',
+};
+
+export function plainStateOf(stage: ProposalStage, reason: ProposalReason | null): MoveState {
+  return (reason === null ? undefined : STATE_OF_REASON[reason.code]) ?? moveStateOf(stage);
+}
+
 /* The engine's rules, as the cause a person reads. The last six are the app's own walls; any
    other rule on a money move is one of the person's, and on a policy change it is the app
    refusing the change as written. */
@@ -651,9 +668,13 @@ export function watchWords(deadline: string | undefined, now: number): string {
 }
 
 /* ONE PLAIN SENTENCE PER CAUSE, and this is the only place any of them is written. Each says
-   what happened, where the money is, and what the person can do, in words a person uses. `watch`
-   is how long a row still watches its signed transfer (watchWords), for the one cause that says. */
-export function reasonSentence(code: ReasonCode, draft: WriteDraft, watch = 'for a few minutes'): string {
+   what happened, where the money is, and what the person can do, in words a person uses. What the
+   row itself knows rides in `seen`: how long it still watches its signed transfer (watchWords) and
+   what arrived against the floor on a short fill (arrivedOf). */
+export type Seen = { watch?: string; arrived?: { amount: string; floor: string } | null };
+
+export function reasonSentence(code: ReasonCode, draft: WriteDraft, seen: Seen = {}): string {
+  const watch = seen.watch ?? 'for a few minutes';
   const sym = plainSymbol(symbolOf(draft)) || 'it';
   const to = plainSymbol(toSymbolOf(draft));
   const noun = NOUN[draft.kind] ?? 'move';
@@ -662,15 +683,15 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft, watch = 'for
     case 'needs_approval':
       return 'This one waits for your OK. Nothing moves until you say yes.';
     case 'over_trade_cap':
-      return "That's over your limit for one move, so nothing moved. Ask for less, or change the rule in the window.";
+      return "That's over your limit for one move, so nothing moved. Ask for less, or ask me to raise the limit; your limits are in Vault, under Limits.";
     case 'over_daily_cap':
       return 'That would go past your daily limit, so nothing moved. Try a smaller amount, or wait for the limit to free up.';
     case 'kill_switch':
-      return "Your stop switch is on, so nothing moved. Turn it off in the window when you're ready.";
+      return "Everything is frozen, so nothing moved. Unfreeze it from the top bar when you're ready.";
     case 'policy_rule':
-      return 'One of your rules stopped this, so nothing moved. Change the rule in the window if you want it to go.';
+      return 'One of your rules stopped this, so nothing moved. Ask me to change the rule if you want it to go; your rules are in Vault, under Limits.';
     case 'rules_unreadable':
-      return "Your rules couldn't be read, so nothing can move right now. Open the window to fix them.";
+      return "Your rules couldn't be read, so nothing can move right now.";
     case 'unpriced':
       return `The app has no dollar price for ${sym} right now, so it can't check this against your limits. Nothing moved. Try again in a minute.`;
     case 'no_price':
@@ -714,7 +735,9 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft, watch = 'for
     case 'refunded':
       return `${The} didn't go through. The swap service sent your ${sym} back to your balance.`;
     case 'short_fill':
-      return `${The} went through, but less arrived than the minimum you approved. The details show how much.`;
+      return seen.arrived === undefined || seen.arrived === null
+        ? `${The} went through, but less arrived than the minimum you approved. The details show how much.`
+        : `${The} went through, but only ${seen.arrived.amount} ${to || 'of it'} arrived, less than the ${seen.arrived.floor} you approved.`;
     case 'stuck_unknown':
       return "Still checking whether this went through. I'll update it here.";
   }
@@ -750,16 +773,26 @@ const RETRYABLE: ReadonlySet<ReasonCode> = new Set<ReasonCode>([
 function reasonOfRow(p: Proposal, stage: ProposalStage, now: number): ProposalReason | null {
   const code = reasonCodeOf(p, stage);
   if (code === null) return null;
-  const sentence = reasonSentence(code, p.draft, watchWords(p.result?.evidence?.deadline, now));
+  const sentence = reasonSentence(code, p.draft, { watch: watchWords(p.result?.evidence?.deadline, now), arrived: arrivedOf(p) });
   return { code, sentence, details: code === 'declined' ? null : detailsOf(p), retry: RETRYABLE.has(code) };
 }
 
+// What the rail's own reads say arrived, against the floor it was approved with, in the coin's units.
+function arrivedOf(p: Proposal): { amount: string; floor: string } | null {
+  const pocket = p.pocket;
+  if (pocket === undefined || pocket.after === null || !/^\d+$/.test(pocket.before) || !/^\d+$/.test(pocket.after) || !/^\d+$/.test(pocket.floor)) return null;
+  const delta = BigInt(pocket.after) - BigInt(pocket.before);
+  if (delta <= 0n) return null;
+  return { amount: baseUnitsToDecimal(delta, pocket.decimals), floor: baseUnitsToDecimal(BigInt(pocket.floor), pocket.decimals) };
+}
+
 // Late once a move still working has run past its usual time, counted from the click.
-function lateOf(p: Proposal, state: MoveState, now: number): { elapsedSec: number; typicalSec: number } | null {
+// A move the app is still checking is late by definition: the rail already gave up on its answer.
+function lateOf(p: Proposal, state: MoveState, now: number, checking = false): { elapsedSec: number; typicalSec: number } | null {
   const typical = TYPICAL_SEC[p.kind] ?? 0;
   if (state !== 'working' || typical <= 0) return null;
   const elapsed = secondsBetween(p.decidedAt ?? p.createdAt, now);
-  return elapsed > typical ? { elapsedSec: elapsed, typicalSec: typical } : null;
+  return elapsed > typical || checking ? { elapsedSec: elapsed, typicalSec: typical } : null;
 }
 
 // A duration in words: seconds under a minute and a half, minutes to the hour, then hours.
@@ -817,8 +850,10 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
   const sinceChangeSec = secondsBetween(lastChangeAt, now);
   const pockets = pocketsOf(p.draft);
   const typical = TYPICAL_SEC[p.kind] ?? null;
-  const state = moveStateOf(stage);
   const reason = reasonOfRow(p, stage, now);
+  const state = plainStateOf(stage, reason);
+  // Where the cause chose the state, the cause's sentence is the copy, so the two cannot disagree.
+  const byCause = reason !== null && (state === 'didnt_go_through' || STATE_OF_REASON[reason.code] !== undefined);
   return {
     id: p.id,
     kind: p.kind,
@@ -828,7 +863,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     stageLabel: STAGE_LABEL[stage],
     // A move that did not go through says why in its own words, never the stage's stock line:
     // "A rule you set stopped it" was printed over every refusal, the app's own included.
-    stageCopy: state === 'didnt_go_through' && reason !== null ? reason.sentence : STAGE_COPY[stage],
+    stageCopy: byCause && reason !== null ? reason.sentence : STAGE_COPY[stage],
     providerStage: p.result?.evidence?.providerStage ?? null,
     waitingOn: waitingOn(p, stage),
     terminal: TERMINAL.has(stage),
@@ -865,7 +900,8 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     correlationId: p.result?.evidence?.quote?.correlationId ?? null,
     error: errorOf(p, stage, sinceChangeSec, reason),
     state,
-    late: lateOf(p, state, now),
+    late: lateOf(p, state, now, reason?.code === 'stuck_unknown'),
     reason,
+    note: state === 'done' && reason !== null ? reason.sentence : null,
   };
 }
