@@ -27,6 +27,7 @@ import { errText, nowIso, persist } from './lifecycle.ts';
 import { ONECLICK_STAGES } from './view.ts';
 import { expireHold, judgeSettlingNow, settleProposal } from './execute.ts';
 import { LEDGER_PAGE, ledgerMoves } from './swap-reads.ts';
+import { isReasonCode } from '../rails/reasons.ts';
 import type { PCtx } from './lifecycle.ts';
 
 // How a 1Click order is re-checked by the deposit address a quote minted. It is the handle the
@@ -187,7 +188,8 @@ export async function reconcileOpen(ctx: PCtx): Promise<number> {
       (p) =>
         (p.status === 'needs_reconciliation' &&
           (typeof p.result?.evidence?.handle === 'string' || p.pocket !== undefined || (isRelaySwap(p) && typeof p.result?.evidence?.nonce === 'string'))) ||
-        closedWhileLive(p, now),
+        closedWhileLive(p, now) ||
+        closedUnknown(p),
     )
     .filter((p) => now - Date.parse(p.settledAt ?? p.decidedAt ?? p.createdAt) < ONECLICK_SWEEP_MAX_AGE_MS);
   let changed = 0;
@@ -215,6 +217,15 @@ function closedWhileLive(p: Proposal, now: number): boolean {
     !isRelaySwap(p) &&
     now < Date.parse(evidence.deadline ?? '') + RELAY_DEADLINE_GRACE_MS
   );
+}
+
+/* A 1Click row closed as failed with no cause recorded, from before causes were written. The card
+   reads it as still being checked (src/proposals/view.ts, stuck_unknown), so it is: the venue's
+   answer by the handle settles it and writes the cause (hunt B, #7). A REFUNDED word is its own
+   answer and is left alone. */
+function closedUnknown(p: Proposal): boolean {
+  const evidence = p.result?.evidence;
+  return p.status === 'failed' && typeof evidence?.handle === 'string' && !isRelaySwap(p) && !isReasonCode(p.result?.reason) && evidence.providerStage !== 'REFUNDED';
 }
 
 /* A ROW WAITING OUT A SIGNED TRANSFER'S DEADLINE is asked again on the first ledger refresh after

@@ -203,7 +203,7 @@ export const STAGE_COPY: Record<ProposalStage, string> = {
   confirmed: 'Done. The balance shows it.',
   failed: 'It did not go through. The reason is on the card. Nothing more will be signed.',
   declined: 'You said no. Nothing moved.',
-  refused: 'A rule you set stopped it. Nothing moved. Your rules are in Vault, under Limits.',
+  refused: 'A rule you set stopped it. Nothing moved. Change the limit in the Vault if you want it to go.',
   stalled: 'Late: nothing has changed since the last update. The app keeps checking; nothing more is signed.',
 };
 
@@ -480,7 +480,7 @@ export function sentenceOf(draft: WriteDraft): string {
     case 'intents_send':
       return `${moved(draft)} from NEAR Intents to ${draft.to}, inside NEAR Intents`;
     case 'intents_pay':
-      return `${moved(draft)} from NEAR Intents to ${draft.to}, on ${draft.network}`;
+      return `${moved(draft)} from NEAR Intents to ${draft.to}, on ${spendNetworkOf(draft.network)?.name ?? draft.network}`;
     case 'trade': {
       if (draft.op === 'open') {
         const plan = draft.plan;
@@ -695,7 +695,7 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft, seen: Seen =
     case 'kill_switch':
       return "Everything is frozen, so nothing moved. Unfreeze it from the top bar when you're ready.";
     case 'policy_rule':
-      return 'One of your rules stopped this, so nothing moved. Ask me to change the rule if you want it to go; your rules are in Vault, under Limits.';
+      return 'One of your rules stopped this, so nothing moved. Change the limit in the Vault if you want it to go.';
     case 'rules_unreadable':
       return "Your rules couldn't be read, so nothing can move right now.";
     case 'unpriced':
@@ -858,6 +858,10 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
   const state = plainStateOf(stage, reason);
   // Where the cause chose the state, the cause's sentence is the copy, so the two cannot disagree.
   const byCause = reason !== null && (state === 'didnt_go_through' || STATE_OF_REASON[reason.code] !== undefined);
+  /* AND WHEN IT ENDED, which a move still being checked or on its way back has not, whatever the
+     venue's word: "Ended at" under "Still checking whether this went through" was two truths on one
+     card (hunt B, #7). `terminal` keeps the stage's meaning: the app has stopped expecting the venue. */
+  const ended = reason !== null && STATE_OF_REASON[reason.code] !== undefined ? state === 'done' || state === 'didnt_go_through' : TERMINAL.has(stage);
   return {
     id: p.id,
     kind: p.kind,
@@ -882,11 +886,11 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
        at 14:20" over a move the agent was still calling unfinished, which is the pair of clocks
        out of order from Karim's transcript. `stalled` carries none for the same reason: it
        settles forward, so it has not ended either. */
-    settledAt: TERMINAL.has(stage) && stage !== 'stalled' ? (p.settledAt ?? null) : null,
+    settledAt: ended && stage !== 'stalled' ? (p.settledAt ?? null) : null,
     lastChangeAt,
     elapsedSec: secondsBetween(p.createdAt, now),
     sinceChangeSec,
-    tookSec: TERMINAL.has(stage) && stage !== 'stalled' && p.settledAt !== undefined ? secondsBetween(p.createdAt, Date.parse(p.settledAt)) : null,
+    tookSec: ended && stage !== 'stalled' && p.settledAt !== undefined ? secondsBetween(p.createdAt, Date.parse(p.settledAt)) : null,
     typicalSec: typical === 0 ? null : typical,
     deadlineAt: deadlineAtOf(p),
     money: {

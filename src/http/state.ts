@@ -121,13 +121,14 @@ export function sentencesOf(policy: Policy | null): string[] {
   return lines;
 }
 
-/* The chain table the cards name a chain by. Four fields and no addresses: a card needs the word
-   and the mark, and everything else about a chain is the deposit screen's business. Both lists,
+/* The chain table the cards name a chain by. Three fields and no addresses: a card needs the word
+   and the mark (its colour is the mark's, PhosphorMarks.colourFor), and everything else about a
+   chain is the deposit screen's business. Both lists,
    because a chain can be one this app only swaps into (no deposit prefix yet) and a card still
    has to name it. */
 const CHAIN_TABLE = [...RECEIVE_NETWORKS, ...SPEND_NETWORKS]
   .filter((n, i, all) => all.findIndex((m) => m.id === n.id) === i)
-  .map((n) => ({ id: n.id, name: n.name, mark: n.mark, colour: n.colour }));
+  .map((n) => ({ id: n.id, name: n.name, mark: n.mark }));
 
 export function buildState(ctx: Ctx): unknown {
   const snapshot = ctx.ledger.snapshot();
