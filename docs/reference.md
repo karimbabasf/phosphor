@@ -4,7 +4,7 @@ The long form of what the README says in short: the tool surface, how a proposal
 
 ## The tool surface
 
-Forty-six tools, in six families. Read tools execute directly and cannot move anything. Write
+Forty-eight tools, in six families. Read tools execute directly and cannot move anything. Write
 tools never execute: they return a proposal id and a simulation result, and nothing else. Chart
 and trading tools move a view or a marker, never funds. Team tools coordinate several agents.
 Display tools move the window. The tables below are the whole surface, and
@@ -13,7 +13,10 @@ Display tools move the window. The tables below are the whole surface, and
 An agent that connects is handed all of this at once. `start` returns the greeting, the live
 state and an index of every tool grouped by what a person would actually ask for, so an agent
 never has to ask a human how to operate the app. The role rides in the MCP handshake itself, in
-the server's `instructions`, so it arrives without anyone prompting for it.
+the server's `instructions`, so it arrives without anyone prompting for it. The window's own chat
+agent is the exception: it is spawned with `PHOSPHOR_SURFACE=chat`, its persona is its system
+prompt, and `src/mcp.ts` does not register `start`, `composition`, `log_tail`, `set_theme`,
+`profile_learned` or the five team tools for it (`CHAT_WITHHELD` in `src/persona.ts`).
 
 **Which screen the window is on rides on every answer.** The human moves the window with the tabs
 and the agent with `switch`, and both are written to the server (`POST /api/view` with the window
@@ -41,12 +44,13 @@ second agent inside ninety seconds is refused with the id of the one already in 
 proposals below the click threshold would both execute and each would be individually correct,
 so only the pair is wrong and nothing else in the stack would have caught it.
 
-**The chart cleans itself up.** Levels, marks, lines and zones are anchored to one instrument, so
-switching product clears the agent-drawn ones automatically and says how many it took. Indicators
-are kept, because an EMA means the same thing on any market. A human's own drawings are never
-swept by anything an agent does. Every `chart_read` carries a `housekeeping` block counting what
-is the reading agent's, what is another agent's and what is stale, and `chart_draw clear: 'mine'`
-takes only the reading agent's own.
+**The chart keeps its markings.** Levels, marks, lines and zones are anchored to one instrument
+and kept per market: switching product leaves them where they were, and every study, marking,
+chart and layout is written to `<dataDir>/chart-markings.json` (`src/markings.ts`) and comes back
+after a quit, until a person or an agent clears it. A human's own drawings are never swept by
+anything an agent does. Every `chart_read` carries a `housekeeping` block counting what is the
+reading agent's, what is another agent's and what is stale, and `chart_draw clear: 'mine'` takes
+only the reading agent's own; `everywhere: true` reaches every market.
 
 **Custom indicators.** Drop a file in `<dataDir>/indicators/` and the chart can draw it as
 `custom:<name>`, where the name is the filename without its extension (lower-case letters,
@@ -76,15 +80,18 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `proposal_status` | Where one money move is right now, as the one object the card draws (`src/proposals/view.ts`): the stage and its label, what is being waited on, seconds elapsed and since the last change, the typical duration, the amounts and both pockets, every transaction hash with its leg, and an error code with a sentence |
 | `proposals` | Recent money moves, newest first, each the same object; `kind` filters, `limit` up to 50. Lead only |
 | `diagnose` | One money move in full: its view, its own audit lines, and what the router and the venue say about it. Lead only |
-| `research` | The first read that leaves this machine. The APP fetches from a fixed allowlist of documentation hosts and hands back text; the agent never gets a URL it can point anywhere, which is the whole reason this is a Phosphor tool and not a general web fetch |
+| `research` | Crypto news. The APP fetches headlines and summaries from four fixed crypto newsrooms and hands back text; the agent never gets a URL it can point anywhere. Anything else is the chat agent's own web search and page reading, which are not Phosphor tools and mark its session (`src/web-read.ts`: every move it proposes after one waits for a click) |
 | `chain_address` | What an address holds and has done on one network (`ethereum`, `base`, `arbitrum`, `solana`, `near`, `bitcoin`): native balance, transaction count, contract or not (an EIP-7702 delegation reads as an account), last activity where the chain exposes it, up to ten token balances, an explorer link. The address has to pass its network's shape first; a wrong EIP-55 checksum is refused, not repaired. See "Chain lookups" below |
 | `chain_transactions` | The most recent transactions of an address on one network, newest first, at most 25: hash, time, from, to, value, status, method name. Raw inputs never come back |
 | `chain_transaction` | One transaction by hash: the same fields plus fee, block and confirmations |
 | `intents_activity` | What an account has moved inside NEAR Intents, from NearBlocks: `MINT` rows are deposits in, `BURN` rows withdrawals out, `TRANSFER` rows swap legs and sends, each with token, signed amount and hash. No account means this app's own, and `own` says which. When NearBlocks is down it falls back to the verifier's own views and answers balances only, marked `partial: true` |
+| `swap_assets` | What can be swapped inside the balance, coins held first: symbol, name, network, `assetId`, decimals, price, the exact amount held, and `liquidity` (yes, no or unknown: whether anyone offers a price now). `query` narrows it. Files nothing (`src/http/read/swap.ts`) |
+| `swap_quote` | What a swap would get right now: amount in, expected amount out, the minimum, the fee in dollars and the time it takes. `chain` and `toChain` only when a network was named; otherwise the app picks each coin, the one held first. `sentence` says why when there is no quote, and `candidates` means a name fits several coins. Files nothing |
+| `swap_check` | One swap's truth read again: what the swap service says, whether the coin left the balance, whether it came back, and what is held now; `moved` is yes, no or unknown and `summary` is one plain line. Moves nothing. Lead only |
 
 | Write tool | Does |
 |---|---|
-| `propose_swap` | Swaps one token for another inside `intents.near`, over the balance the app already holds there: one signed intent, nothing moves on any chain. `chain` and `toChain` name each asset's home chain, never a place money goes |
+| `propose_swap` | Swaps one token for another inside `intents.near`, over the balance the app already holds there: one signed intent, nothing moves on any chain. `chain` and `toChain` name each asset's home chain, never a place money goes, and are passed only when a network was named. `amountIn` is `"all"` (the balance to the last base unit) or an exact decimal string; the app asks for one quote per proposal and sets `minAmountOut` one percent under it unless the agent names one |
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_trade` | Arms a plan on Hyperliquid perpetuals, whole or by the id of one drawn with `trade_plan`. Priced at the collateral it puts at stake: the click threshold is the only wall |
 | `propose_trade_change` | Changes an armed plan: a new stop or target, cancel, or close. A change that only takes risk off lands without the wall; one that widens is priced like a new plan |
@@ -131,7 +138,7 @@ holds the view, the indicators, the levels and the marks.
 | `trade_focus` | Points the trading surface at one market. The chart follows |
 | `trade_highlight` | Points at one row or chart object (position, order, fill, plan, level, line, indicator) and says why, so the agent and the human mean the same thing |
 | `trade_overlay` | Toggles entry, liquidation, stops, targets, orders, fills and the plan wall |
-| `trade_plan` | Draws a plan on the chart as an idea and lists it under Waiting. No authority. Redraw or remove it while it is an idea |
+| `trade_plan` | Draws a plan on the chart as an idea and lists it under Orders on the trade screen. No authority. Redraw or remove it while it is an idea |
 | `trade_clear` | Removes what the agent put on the surface |
 
 **A trade is one plan.** Symbol, side, size in dollars, leverage, an entry (market, limit or stop),
@@ -160,17 +167,16 @@ live on `/api/trade/action`, which the agent's door does not open onto.
 
 | Display tool | Does |
 |---|---|
-| `watch` | Points the app at a market and leaves it there, so the window keeps showing what the conversation is about after the conversation has moved on |
 | `set_theme` | Changes the window's colours: five colour slots on top of the window's one colourway (green on black; the window is dark only). Moves no money, and it is on this surface because a person asking their assistant to recolour the screen should not have to leave the conversation |
 | `show` | Draws something that already exists as a card in the window: a proposal by id, a transaction by hash on a named network, an open position by coin, or the deposit card. Answers `drawn: false` when no conversation is open. Lead only |
 | `switch` | Moves the window between the plain-English view (`basic`), the operator view (`pro`), the trading surface (`trade`) and the vault (`vault`). Moves no money, and every switch is audited. Named `switch` rather than `set_view_mode` because the whole requirement is that changing window costs one word: an agent hunting for how to "switch to trading" finds it immediately, and did not reliably find `set_view_mode`. Aliases (trading, hft, perps, simple) resolve in the app, so both doors agree. Answers with the screen record it moved to (`{ view, since, by: 'agent' }`). Not to be confused with `chart_draw view:`, which drives the chart's render state on the trade screen |
 
 A switch used to be refused outright while a proposal was pending, so an agent could not move a
-human away from a decision they were in the middle of. The approval block now renders on all three
-windows, so the decision follows the human instead of being left behind, and the refusal was
-removed. What replaces it is disclosure rather than silence: the pending ids ride back on the
-response and the tool description tells the agent to say the count out loud, because the basic
-screen shows one ask at a time and switching there with three waiting would otherwise hide two.
+human away from a decision they were in the middle of. A move that waits is now one card in the
+chat, and the chat is on every screen, so the decision follows the human instead of being left
+behind, and the refusal was removed. What replaces it is disclosure rather than silence: the
+pending ids ride back on the response and the tool description tells the agent to say the count
+out loud, because a card scrolled out of view is one quiet line above the chat's box.
 
 There is no `approve`, no `refuse`, no `kill`, no `dismiss` and no `execute` tool. `switch` changes what a human sees and nothing about what may move; `docs/security-model.md` says exactly what that does and does not buy. There is also no
 argument anywhere in the surface that names a recipient or destination, so an agent that has been
@@ -224,8 +230,8 @@ A write tool builds a draft, simulates it (a quote per leg), and hands it to the
 engine returns exactly one of three verdicts, with no fourth outcome and no override path:
 
 - **refuse**: nothing happens, and the refusal is logged with the rule that caused it.
-- **needs_approval**: the proposal appears in the approval gate in the app window with its
-  simulation result and two buttons. It executes only after a human clicks approve.
+- **needs_approval**: the proposal appears as a card in the chat with its simulation result and
+  two buttons, Cancel and Approve. It executes only after a human clicks Approve.
 - **allow**: below the click threshold and inside every cap, so the app executes it and logs it.
 
 The rule chain runs in a fixed order and stops at the first refusal: unreadable policy, kill switch,
@@ -304,8 +310,9 @@ is the second line of defence, not the first. Move the file with `PHOSPHOR_KEYS`
 config key; the app refuses to start if that path lands inside the repo.
 
 Then the lock, which is the state the app is in every time you open it after that. Locked, every
-read still works and the window still shows the balance; the password is what buys the ability to
-sign. It locks itself after fifteen minutes with nobody at the window and when the machine sleeps.
+read still works behind the frosted window; the password is what buys the ability to sign. It
+locks itself after fifteen minutes with nobody at the window (the Vault offers 5, 15 or 60
+minutes) and when the machine sleeps.
 
 `npm run keygen` still exists and mints one RAW UNENCRYPTED EVM key for development. It is not
 the setup path, and running it before the first launch is a mistake rather than a step: a file it
@@ -496,8 +503,8 @@ Touch ID and the Secure Enclave are built (`src-tauri/src/enclave.rs`, the `se-h
 `src/vault/`): on a Mac with an enclave the key file is sealed with a data key wrapped to a key
 the enclave made and cannot export, and every click ends in a Touch ID dialog the app composes.
 On an ad hoc build the enclave key is bound to this Mac rather than to Phosphor's signature, which
-the Vault tab says in one line ("Any process on this Mac can ask"); a Developer ID build binds it
-to the app.
+the Vault tab's Keys row says in one line ("This copy of Phosphor is not signed, so other apps on
+this Mac could ask for the key"); a Developer ID build binds it to the app.
 
 **What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
 the answer to that is a separate signing process or a hardware device, neither of which ships
@@ -542,6 +549,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/duplicates.ts  two agents cannot double one proposal by accident
     src/crew.ts        workers: the app spawning an analyst on an agent's behalf
     src/driver.ts      the agent the app starts for you, and the orphans it collects
+    src/providers/     the two vendors the chat can run, Claude Code and Grok, each locked down
+    src/web-read.ts    the mark a web read leaves: every later move in that chat waits for a click
     src/keystore/      the encrypted key file, the lock, the session, the derivation
     src/policy/        engine (pure) + policy file + sentence renderer + the venue gap
     src/proposals.ts   a 92-line door onto src/proposals/
@@ -578,7 +587,7 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     ui/screens/        one file per screen: basic, pro, trade, vault, lock, first run, decision
     ui/core/           the DOM helpers, the keyed reconciler, the API client, the store
     ui/design/         the tokens, the type scale and the motion the screens are built from
-    ui/fonts/          Sora and Geist Mono, self-hosted, with their OFL beside them
+    ui/fonts/          Geist and Geist Mono, self-hosted, with their OFL beside them
     ui/logos/          the token and venue logos as SVG files, with their notices in LICENSE.md
     operator/          the opt-in operator profile: an agent that drives but cannot develop
     state/             policy.json, proposals.json, audit.jsonl (append-only), terms.json,

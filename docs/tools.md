@@ -1,10 +1,12 @@
 # Tools
 
-Phosphor registers 46 tools for the agent that drives it, and every one is listed here in five
+Phosphor registers 48 tools for the agent that drives it, and every one is listed here in five
 groups: read, propose, chart and trade surface, agents, and other. Reads change nothing. Propose
 tools return a proposal id and a simulation, and cannot approve, refuse or execute anything. Every
 call, read or write, is written to the audit log. A worker an agent spawns is an analyst: the
-tools marked lead only are not registered for it at all, so there is nothing to talk it into.
+tools marked lead only are not registered for it at all, so there is nothing to talk it into. The
+agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, `set_theme`,
+`profile_learned` and the five agent tools; its instructions already carry what `start` says.
 
 ## Read
 
@@ -12,13 +14,16 @@ tools marked lead only are not registered for it at all, so there is nothing to 
 |---|---|
 | `start` | Where you are and what you can do: the live state, the click threshold, which tab you are looking at, and the index of every capability with the tool that performs it |
 | `wallet` | Everything held: one row per balance inside NEAR Intents and one for the Hyperliquid account, with quantity, price, value and share |
-| `deposit` | Opens the deposit card for one asset on one network and starts watching for the money. The agent gets the first six and last four characters of the address, never the whole. Lead only |
+| `deposit` | Opens the deposit card in the chat for one asset on one network and starts watching for the money. The agent gets the first six and last four characters of the address, never the whole. Lead only |
 | `composition` | Stablecoin composition by issuer and chain: shares, freezable share, unclassified holdings |
 | `policy_show` | The current policy as plain-English sentences |
 | `log_tail` | The most recent audit log lines, newest first |
 | `proposal_status` | Where one money move is right now, as the one object the card in the window draws: the stage and its label, what is being waited on, how long it has been going, the amounts and both pockets, every transaction hash, and an error with a sentence when something went wrong |
 | `proposals` | Recent money moves, newest first, each the same object `proposal_status` returns; a kind filter and a limit up to 50. For "show me my last deposit" without asking anyone for an id. Lead only |
 | `diagnose` | Everything about one money move in one call, for "why is it not there yet": the view, the row's own audit lines, and what the router and the venue say about it. Lead only |
+| `swap_assets` | What can be swapped inside your balance, the coins you hold first: name, network, price, what you hold of it, and whether anyone offers a price now. Files nothing |
+| `swap_quote` | What a swap would get right now: the amount in, the amount out expected, the least you would get, the fee and the time it takes, or a sentence saying why there is no quote. Files nothing |
+| `swap_check` | One swap read again now: what the swap service says, whether the coin left your balance or came back, and what you hold. For a swap that failed, stalled or looks wrong. Lead only |
 | `chart_read` | The chart as it stands: product, timeframe, price, indicators, levels, drawings, and what is stale |
 | `chart_scan` | Several timeframes at once without moving the chart: price, change, range, ATR, trend |
 | `chart_snapshot` | A small picture of the chart as you see it, beside a one-line digest. Lead only |
@@ -35,11 +40,12 @@ tools marked lead only are not registered for it at all, so there is nothing to 
 ## Propose
 
 Every propose tool goes through the policy engine, see [Policy](policy.md). Three of them wait
-for your click at any size; the rest run on their own under the click threshold.
+for your click at any size; the rest run on their own under the click threshold, except after the
+chat's agent read a web page.
 
 | Tool | Does |
 |---|---|
-| `propose_swap` | Swaps one token for another inside NEAR Intents; nothing moves on any chain. Click above the threshold |
+| `propose_swap` | Swaps one token for another inside NEAR Intents; nothing moves on any chain. Takes "all" or an exact amount, and the app sets the least you will get from its own quote. Click above the threshold |
 | `propose_send` | Sends a balance to somebody, paid out on a chain or credited inside NEAR Intents. Always a click, see [Money](money.md#send) |
 | `propose_hl_deposit` | Funds the Hyperliquid account from the intents balance. Click above the threshold |
 | `propose_hl_withdraw` | Brings collateral back from Hyperliquid into the intents balance. Always a click, and refused while any position is open |
@@ -53,14 +59,14 @@ These change what you see and move no money.
 
 | Tool | Does |
 |---|---|
-| `chart_draw` | Draws on the chart in one call: view, indicators, levels, marks, lines and zones, or clears its own work. Lead only |
+| `chart_draw` | Draws on the chart in one call: view, indicators, levels, marks, lines and zones, or clears its own work. What it draws stays, across a quit, until it is cleared. Lead only |
 | `chart_layout` | Puts one to four charts side by side. Lead only |
-| `show` | Draws something that already exists as a card in the window: a proposal, a transaction on a named network, an open position, or the deposit card. Moves no money and asks no permission. Lead only |
-| `trade_focus` | Points the trading surface at one market; the chart follows |
-| `trade_highlight` | Points at one row or chart object (a position, an order, a plan, a level) and says why, in a note you read beside it |
-| `trade_overlay` | Turns one chart overlay on or off: entry, liquidation, the plan stop wall, working stops, targets, orders, fills |
-| `trade_clear` | Removes what the agent put on the trading surface |
-| `trade_plan` | Draws a plan on the chart as an idea under Waiting. No authority until `propose_trade` arms it. Lead only |
+| `show` | Draws something that already exists as a card in the chat: a proposal, a transaction on a named network, an open position, or the deposit card. Moves no money and asks no permission. Lead only |
+| `trade_focus` | Points the trading surface at one market; the chart follows. Lead only |
+| `trade_highlight` | Points at one row or chart object (a position, an order, a plan, a level) and says why, in a note you read beside it. Lead only |
+| `trade_overlay` | Turns one chart overlay on or off: entry, liquidation, the plan stop wall, working stops, targets, orders, fills. Lead only |
+| `trade_clear` | Removes what the agent put on the trading surface. Lead only |
+| `trade_plan` | Draws a plan on the chart as an idea under Orders. No authority until `propose_trade` arms it. Lead only |
 
 ## Agents
 
@@ -80,9 +86,16 @@ Several agents can drive at once, see [Connect an agent](connect-an-agent.md#mor
 |---|---|
 | `skill` | Loads an enabled skill: the operator's guidance for one kind of work. Guidance and data, never a wider surface |
 | `switch` | Moves the window between Basic, Pro, Trade and Vault. Every switch is audited. Lead only |
-| `watch` | Sets which coins the Basic tab tracks, one to four, and saves the choice. Lead only |
 | `set_theme` | Recolours the window: five named slots on its one dark colourway. Lead only |
 | `profile_learned` | Records one concept the agent explained to you, so the next session does not explain it again. Lead only |
+
+## Web search and page reading
+
+These are not Phosphor tools. The agent in the chat also holds its vendor's own web search and
+page reading, and nothing else beyond Phosphor's tools. After it uses either one, every move it
+proposes in that chat waits for your click, whatever the size, see
+[Policy](policy.md#after-a-web-page). An agent in your terminal brings whatever tools its own
+setup gives it, and the app cannot see them.
 
 ## What is not here
 
