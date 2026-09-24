@@ -60,6 +60,7 @@ import type { VerifierPort } from '../relay/verifier.ts';
 import { MAX_SLIPPAGE_BPS, QUOTE_REUSE_MS, floorTooLow, floorUnderQuote } from './slippage.ts';
 import { noReply } from './intents-submit.ts';
 import { pickOrExplain, swapSummary } from './asset-words.ts';
+import { networkByVenue } from './intents-address.ts';
 import { ReasonError, reasonOf } from './reasons.ts';
 import { FIRST_POLL_MS, pollUntil } from './watch.ts';
 
@@ -447,8 +448,9 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
       }
       lines.push(`execution signs one token_diff with the EVM key and transfers nothing; the verifier moves both sides in one call or neither`);
       keepForClick(p, draft.from, quote);
-      const bought = p.list.find((t) => t.assetId === p.assetOut)?.symbol ?? draft.toSymbol;
-      return { ok: true, summary: swapSummary(swap, bought), developer: lines.join('\n'), swap };
+      const bought = p.list.find((t) => t.assetId === p.assetOut);
+      const network = networkByVenue(bought?.blockchain ?? '')?.name;
+      return { ok: true, summary: swapSummary(swap, bought?.symbol ?? draft.toSymbol, network), developer: lines.join('\n'), swap };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: '', developer: `intents-relay simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };

@@ -62,22 +62,31 @@ function viewResult(value: unknown): Response {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { result: [...Buffer.from(JSON.stringify(value), 'utf8')] } }), { status: 200 });
 }
 
-test('each holding carries 1Click\'s own price for it and when that list was read; a coin 1Click prices at nothing stays unknown', async () => {
+test('each holding carries 1Click\'s own price for it, aged from when 1Click priced it; a coin 1Click prices at nothing stays unknown', async () => {
   const fetchImpl = (async (_url: unknown, init: RequestInit) => {
     const method = JSON.parse(String(init.body)).params.method_name as string;
     if (method === 'mt_tokens_for_owner') return viewResult([{ token_id: WBTC }, { token_id: CBBTC }]);
     return viewResult(['1000', '2000']);
   }) as unknown as typeof fetch;
+  const listedAt = 1_758_657_600_000;
   const list: OneClickToken[] = [
-    { assetId: WBTC, decimals: 8, blockchain: 'eth', symbol: 'WBTC', price: 112_000 },
+    { assetId: WBTC, decimals: 8, blockchain: 'eth', symbol: 'WBTC', price: 112_000, priceUpdatedAt: new Date(listedAt - 30_000).toISOString() },
     { assetId: CBBTC, decimals: 8, blockchain: 'base', symbol: 'cbBTC' },
   ];
-  const read = await fetchIntentsHoldings({ rpcUrl: 'https://rpc.example', accountId: SELF_EVM, tokenList: async () => list, listedAt: () => 1_758_657_600_000, fetchImpl });
+  const read = await fetchIntentsHoldings({ rpcUrl: 'https://rpc.example', accountId: SELF_EVM, tokenList: async () => list, listedAt: () => listedAt, fetchImpl });
   assert.equal(read.ok, true);
   const by = new Map(read.holdings.map((h) => [h.assetId, h]));
   assert.equal(by.get(WBTC)?.priceUsd, 112_000);
-  assert.equal(by.get(WBTC)?.priceAsOf, 1_758_657_600_000);
+  assert.equal(by.get(WBTC)?.priceAsOf, listedAt - 30_000, 'as old as 1Click\'s own stamp, not the moment the list was read');
   assert.equal(by.get(CBBTC)?.priceUsd, null, 'no price listed is unknown, never zero');
+
+  // A list read now carrying a price 1Click last updated two days ago is two days old (audit, finding 7).
+  const stale: OneClickToken[] = [{ assetId: WBTC, decimals: 8, blockchain: 'eth', symbol: 'WBTC', price: 84, priceUpdatedAt: new Date(listedAt - 2 * 86_400_000).toISOString() }];
+  const old = await fetchIntentsHoldings({ rpcUrl: 'https://rpc.example', accountId: SELF_EVM, tokenList: async () => stale, listedAt: () => listedAt, fetchImpl });
+  assert.equal(old.holdings.find((h) => h.assetId === WBTC)?.priceAsOf, listedAt - 2 * 86_400_000);
+  // And a price with no stamp from 1Click has no age anyone can vouch for.
+  const unstamped = await fetchIntentsHoldings({ rpcUrl: 'https://rpc.example', accountId: SELF_EVM, tokenList: async () => [{ ...stale[0]!, priceUpdatedAt: undefined }], listedAt: () => listedAt, fetchImpl });
+  assert.equal(unstamped.holdings.find((h) => h.assetId === WBTC)?.priceAsOf, undefined);
 });
 
 // ---------- the panel ----------
@@ -141,4 +150,48 @@ test('a token-list price older than a governing price may be is not governed by:
   const p = await landed(h, h.svc.proposeSwap(swapOut()));
   assert.equal(p.status, 'pending');
   assert.match(p.verdict.reasons.join(' '), /cannot price/);
+});
+
+/* A WRONG-LOW LISTED PRICE IS BOUNDED BY THE QUOTE (audit, finding 7). 1 WBTC listed at $84, a
+   thousandfold slip, was governed as $84 and ran with no click while the quote in hand said 84,000
+   USDC arrives. A swap priced only by the list is governed at the larger of the two. */
+test('a wrong-low listed price does not make a big swap look small: the quote of what arrives bounds it', async () => {
+  // The audit's own shape: WBTC listed at $84 against a quote of $84,000 a coin.
+  const wbtcAt84 = (heldBase: bigint, receives: string): { rail: Rail; ran: SwapDraft[] } => {
+    const ran: SwapDraft[] = [];
+    const base = railThat('swap', async (draft) => {
+      ran.push(draft as SwapDraft);
+      return { ok: true, detail: 'swapped', txids: ['intent-h'] };
+    });
+    return {
+      ran,
+      rail: {
+        ...base,
+        spend: async () => ({ assetId: WBTC, decimals: 8, heldBase }),
+        simulate: async () => ({ ok: true, summary: `About ${receives} USDC.`, swap: { receives, receivesAtLeast: receives, feeUsd: 5, etaSeconds: 12 } }),
+      },
+    };
+  };
+
+  // 0.05 WBTC: $4.20 on the list, $4,200 by the quote. Governed at $4,200, so it waits for a click.
+  const small = wbtcAt84(5_000_000n, '4200');
+  const h = makeCtx({ intents: readOf([holding(WBTC, 'WBTC', '5000000', 8, 84)]), rails: [small.rail] });
+  const p = await landed(h, h.svc.proposeSwap({ chain: 'eth', fromSymbol: 'WBTC', toChain: 'near', toSymbol: 'USDC', amountIn: 'all', minAmountOut: 4_150 }));
+  assert.equal(p.status, 'pending', `${p.status} ${p.decidedBy ?? ''}`);
+  assert.equal((p.draft as SwapDraft).amountUsd, 4_200);
+  assert.equal(small.ran.length, 0, 'nothing ran on the list price alone');
+
+  // 1 WBTC: $84 on the list, $84,000 by the quote, which is over the limit for one move.
+  const whole = wbtcAt84(100_000_000n, '84000');
+  const h2 = makeCtx({ intents: readOf([holding(WBTC, 'WBTC', '100000000', 8, 84)]), rails: [whole.rail] });
+  const q = await landed(h2, h2.svc.proposeSwap({ chain: 'eth', fromSymbol: 'WBTC', toChain: 'near', toSymbol: 'USDC', amountIn: 'all', minAmountOut: 83_160 }));
+  assert.equal(q.status, 'policy_refused');
+  assert.equal(h2.svc.view(q).reason?.code, 'over_trade_cap');
+  assert.equal(whole.ran.length, 0);
+});
+
+test('a listed price 1Click last updated more than two minutes ago is not governed by: the swap waits for a click', async () => {
+  const h = makeCtx({ intents: readOf([holding(WBTC, 'WBTC', '1000', 8, 112_000, Date.now() - 2 * 86_400_000)]), rails: [wbtcRail([])] });
+  const p = await landed(h, h.svc.proposeSwap(swapOut()));
+  assert.equal(p.status, 'pending');
 });

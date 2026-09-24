@@ -38,7 +38,7 @@ import { amountAsk, baseUnitsToDecimal, canonicalSymbol, decimalToBaseUnits, hel
 import type { AmountAsk } from '../intents.ts';
 import { reasonOf } from '../rails/reasons.ts';
 import type { ReasonCode } from '../rails/reasons.ts';
-import { ourEvmAddress, ourIntentsAddress, presimulate, proposeRail, refuseDraft, usdOf } from './draft.ts';
+import { ourEvmAddress, ourIntentsAddress, presimulate, pricing, proposeRail, refuseDraft, usdOf } from './draft.ts';
 import { errText } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
 import { draftSymbolOf, pickSwapSides } from './swap-reads.ts';
@@ -56,11 +56,28 @@ export type PreparedSwap = {
   draft: SwapDraft;
   refusal: { problems: string[]; code: ReasonCode | undefined } | null;
   simulation: SimulationResult | null;
+  // Why this swap waits for a click whatever its size, when the builder found a reason.
+  ask?: string | null;
 };
 
 export function decideSwap(ctx: PCtx, prepared: PreparedSwap): Promise<Proposal> {
   const { params, draft, refusal } = prepared;
-  return refusal !== null ? refuseDraft(ctx, 'swap', draft, refusal.problems, params, refusal.code) : proposeRail(ctx, 'swap', draft, params, prepared.simulation);
+  if (refusal !== null) return refuseDraft(ctx, 'swap', draft, refusal.problems, params, refusal.code);
+  return proposeRail(ctx, 'swap', draft, params, prepared.simulation, prepared.ask ?? earlierSwapMayRun(ctx, draft));
+}
+
+/* AN EARLIER SWAP OF THE SAME COIN THAT MAY STILL GO THROUGH. A FAILED swap whose signed transfer
+   is unspent can still run until its deadline (venue_failed_watching), so a new swap from the same
+   coin could land beside it: that one waits for a click, whatever its size (audit, finding 9). Read
+   inside the spend queue, so two asks cannot both miss the same watching row. */
+export const EARLIER_SWAP_ASK = 'An earlier swap of this coin may still go through, so this one waits for your OK.';
+
+function earlierSwapMayRun(ctx: PCtx, draft: SwapDraft): string | null {
+  const coin = (d: SwapDraft): string => `${d.chain.toLowerCase()}|${d.fromSymbol.toUpperCase()}`;
+  const watching = ctx.store
+    .list()
+    .some((p) => p.status === 'needs_reconciliation' && p.draft.kind === 'swap' && p.result?.reason === 'venue_failed_watching' && coin(p.draft) === coin(draft));
+  return watching ? EARLIER_SWAP_ASK : null;
 }
 
 export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<PreparedSwap> {
@@ -200,7 +217,20 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
   }
 
   if (problems.length > 0) return { params, draft, refusal: { problems, code }, simulation: null };
-  return { params, draft, refusal: null, simulation: await presimulate(ctx, 'swap', draft) };
+  const simulation = await presimulate(ctx, 'swap', draft);
+
+  /* A LISTED PRICE IS BOUNDED BY THE QUOTE. A coin priced only by 1Click's list is governed at the
+     larger of the list's value and the quote's own value of what arrives: 1 WBTC listed at $84, a
+     thousandfold slip, ran with no click while the quote said 84,000 USDC arrives (audit, finding
+     7). With nothing off the quote to check the list by, the swap waits for a click. */
+  let unchecked: string | null = null;
+  if (spentAsset !== undefined && pricing(ctx, fromSymbol, snapshot, spentAsset)?.source === 'list') {
+    const receives = Number(simulation?.swap?.receives);
+    const quoted = Number.isFinite(receives) ? usdOf(ctx, toSymbol, receives, snapshot) : Infinity;
+    if (Number.isFinite(quoted)) draft.amountUsd = Math.max(draft.amountUsd, quoted);
+    else unchecked = `This swap spends ${fromSymbol} at 1Click's listed price, and nothing in its quote can check that price, so it waits for your OK.`;
+  }
+  return { params, draft, refusal: null, simulation, ask: unchecked };
 }
 
 /* The base units a swap spends, or why it cannot: "all" is the balance read a moment ago, an

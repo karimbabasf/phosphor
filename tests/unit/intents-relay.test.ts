@@ -611,7 +611,7 @@ test('the key is never read in simulate, and simulate reads no balance and no sa
   assert.equal(h.balanceReads.length, 0);
   assert.equal(h.saltReads, 0);
   assert.deepEqual(sim.swap, { receives: '1.961996', receivesAtLeast: '1.95', feeUsd: 0.0376, etaSeconds: null, priceGoodForSec: 60 });
-  assert.equal(sim.summary, 'About 1.962 USDT, at least 1.95. Fee about $0.04.');
+  assert.equal(sim.summary, 'About 1.962 USDT on NEAR, at least 1.95. Fee about $0.04.');
   assert.match(sim.developer ?? '', /one atomic swap inside intents\.near/);
   assert.match(sim.developer ?? '', /price good for 60s and re-quoted at your click/);
 });

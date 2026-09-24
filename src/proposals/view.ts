@@ -22,6 +22,7 @@ import { isReasonCode } from '../rails/reasons.ts';
 import type { ReasonCode } from '../rails/reasons.ts';
 import type { PolicyAxisChange, Proposal, WriteDraft } from '../types.ts';
 import { baseUnitsToDecimal } from '../intents.ts';
+import { spendNetworkOf } from '../rails/intents-address.ts';
 
 // The app's own phases are lowercase. The provider's phases are the vendor's words, byte for
 // byte: 1Click's seven off GetExecutionStatusResponse, the solver relay's four off get_status,
@@ -471,8 +472,11 @@ export function sentenceOf(draft: WriteDraft): string {
       return `${moved(draft)} from Hyperliquid to NEAR Intents`;
     // Both legs sit inside the verifier, so the sentence names the two assets rather than two
     // pockets: a swap changes what the balance holds and moves nothing anywhere.
-    case 'swap':
-      return `${moved(draft)} to ${draft.toSymbol} inside NEAR Intents`;
+    // The bought coin's network is named: one ticker is several coins, one per network.
+    case 'swap': {
+      const network = spendNetworkOf(draft.toChain)?.name;
+      return `${moved(draft)} to ${draft.toSymbol}${network === undefined ? '' : ` on ${network}`}, inside NEAR Intents`;
+    }
     case 'intents_send':
       return `${moved(draft)} from NEAR Intents to ${draft.to}, inside NEAR Intents`;
     case 'intents_pay':
@@ -574,6 +578,8 @@ export function moveStateOf(stage: ProposalStage): MoveState {
    its way, so a person read the state, tried again, and could pay twice (hunt A, 2026-09-23). */
 const STATE_OF_REASON: Partial<Record<ReasonCode, MoveState>> = {
   stuck_unknown: 'working',
+  // A FAILED swap whose signed transfer can still run is still being checked (audit, finding 9).
+  venue_failed_watching: 'working',
   venue_failed_refund_pending: 'coming_back',
   short_fill: 'done',
 };
@@ -729,7 +735,7 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft, seen: Seen =
     case 'venue_failed_nothing_moved':
       return `${The} didn't go through. Nothing left your balance.`;
     case 'venue_failed_watching':
-      return `${The} didn't go through. Your ${sym} hasn't moved; I'm keeping an eye on it ${watch}.`;
+      return `Still checking this ${noun}. Your ${sym} hasn't moved so far; I'm keeping an eye on it ${watch}.`;
     case 'venue_failed_refund_pending':
       return `${The} didn't go through. Your ${sym} is with the swap service until it comes back to your balance; the app keeps checking.`;
     case 'refunded':
@@ -900,7 +906,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     correlationId: p.result?.evidence?.quote?.correlationId ?? null,
     error: errorOf(p, stage, sinceChangeSec, reason),
     state,
-    late: lateOf(p, state, now, reason?.code === 'stuck_unknown'),
+    late: lateOf(p, state, now, reason?.code === 'stuck_unknown' || reason?.code === 'venue_failed_watching'),
     reason,
     note: state === 'done' && reason !== null ? reason.sentence : null,
   };

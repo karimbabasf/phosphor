@@ -39,7 +39,9 @@ export type OneClickToken = {
   blockchain: string;
   symbol: string;
   contractAddress?: string;
-  // Dollars per unit as 1Click last saw it. Guidance for a screen, never an input to a quote.
+  /* Dollars per unit as 1Click last saw it, and when. Never an input to a quote; the price of last
+     resort for a coin nothing else prices, aged from priceUpdatedAt and bounded by the quote's own
+     value of what arrives (src/proposals/draft.ts priceOf, src/proposals/rails.ts prepareSwap). */
   price?: number;
   priceUpdatedAt?: string;
 };

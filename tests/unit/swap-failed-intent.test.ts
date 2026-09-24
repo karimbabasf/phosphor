@@ -191,11 +191,13 @@ test('a payload whose deadline cannot be cut to three minutes is refused before 
 
 const WATCHING_SWAP: SwapDraft = { ...draft, chain: 'near', toChain: 'eth', fromSymbol: 'wNEAR', toSymbol: 'WBTC', from: SELF_EVM, to: SELF_EVM };
 
-test('the sentence: it did not go through, the coin has not moved, and the app keeps an eye on it', () => {
-  assert.equal(reasonSentence('venue_failed_watching', WATCHING_SWAP), "The swap didn't go through. Your NEAR hasn't moved; I'm keeping an eye on it for a few minutes.");
+test('the sentence: still being checked, nothing has moved so far, and the app keeps an eye on it', () => {
+  assert.equal(reasonSentence('venue_failed_watching', WATCHING_SWAP), "Still checking this swap. Your NEAR hasn't moved so far; I'm keeping an eye on it for a few minutes.");
 });
 
-test('the row says it did not go through, stays counted against the day, and offers no Try again', async () => {
+/* WORKING, NEVER "DIDN'T GO THROUGH" (audit, finding 9). Its transfer can still run, so a state word
+   saying it is over is the one that gets a second swap asked for beside it. */
+test('the row is still being checked: working and late, counted against the day, and no Try again', async () => {
   const evidence = { handle: 'dep-1', nonce: NONCE, deadline: new Date(Date.now() + 3 * 60_000).toISOString(), providerStage: 'FAILED' };
   const h = makeCtx({
     rails: [railThat('swap', async () => ({ ok: false, reason: 'venue_failed_watching', detail: '1click reported FAILED and the transfer has not run', txids: ['intent-h'], evidence }))],
@@ -204,10 +206,29 @@ test('the row says it did not go through, stays counted against the day, and off
   assert.equal(p.status, 'needs_reconciliation');
   assert.equal(h.svc.dailyLimit(25_000).spentUsd, 10, 'a transfer that can still run is money the day has spent');
   const v = h.svc.view(p);
-  assert.equal(v.state, 'didnt_go_through');
+  assert.equal(v.state, 'working');
+  assert.notEqual(v.late, null, 'late from the start: 1Click already answered FAILED');
   assert.equal(v.reason?.code, 'venue_failed_watching');
   assert.equal(v.reason?.retry, false);
-  assert.equal(v.stageCopy, "The swap didn't go through. Your USDT hasn't moved; I'm keeping an eye on it for a few minutes.");
+  assert.equal(v.stageCopy, "Still checking this swap. Your USDT hasn't moved so far; I'm keeping an eye on it for a few minutes.");
+});
+
+test('while a swap of a coin is being watched, a new swap of the same coin waits for a click; another coin does not', async () => {
+  const evidence = { handle: 'dep-1', nonce: NONCE, deadline: new Date(Date.now() + 3 * 60_000).toISOString(), providerStage: 'FAILED' };
+  const answers = [
+    { ok: false, reason: 'venue_failed_watching', detail: '1click reported FAILED and the transfer has not run', txids: ['intent-h'], evidence },
+    { ok: true, detail: 'swapped', txids: ['intent-2'] },
+  ];
+  const h = makeCtx({ rails: [railThat('swap', async () => answers.shift() ?? { ok: true, detail: 'swapped', txids: ['intent-3'] })] });
+  const first = await landed(h, h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 10, minAmountOut: 9.9 }));
+  assert.equal(first.result?.reason, 'venue_failed_watching');
+
+  const again = await landed(h, h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 5, minAmountOut: 4.9 }));
+  assert.equal(again.status, 'pending', 'the same coin, while the first may still go through');
+  assert.equal(again.verdict.reasons.at(-1), 'An earlier swap of this coin may still go through, so this one waits for your OK.');
+
+  const other = await landed(h, h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: 5, minAmountOut: 4.9 }));
+  assert.equal(other.status, 'executed', 'another coin is not held back');
 });
 
 // ---------- reconcile ----------

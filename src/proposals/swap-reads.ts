@@ -127,29 +127,50 @@ export function resolveSwapSides(from: SideAsk, to: SideAsk, list: OneClickToken
 }
 
 /* THE COIN BOUGHT, BY WHAT IT WOULD GET. Up to BUY_PROBE_MAX of the candidates are asked for a
-   floorless price at once, BUY_PROBE_TIMEOUT_MS for all of them, and the most arriving wins: they
-   are the same coin, so the amounts, each in its own coin's units, compare as they are. That keeps
-   a new person off the bridged ETH on near when ETH from Ethereum pays more. No answer at all is
-   the one on near; no near one either is the question. Nothing is signed or filed. The four asked
-   are the one on near, the one on the spent coin's network, then Ethereum, Base, Arbitrum and
-   Solana, then the list's own order; the same order breaks a tie. */
+   floorless price at once, BUY_PROBE_TIMEOUT_MS for all of them, and the most arriving IN DOLLARS
+   wins: what arrives times the coin's listed price, so ETH from Ethereum beats the bridged ETH on
+   near when it pays more. ONE TICKER CAN BE TWO COINS: two NEARKATs are listed 30 times apart, and
+   the most units went to the cheaper one whatever the person meant (audit, finding 8). So listed
+   prices more than SAME_COIN_BAND apart are two coins and a question, answered with the ids; an
+   unpriced candidate is compared only when none is priced, by units. No answer at all is the one
+   on near; no near one either is the question. Nothing is signed or filed. The four asked are the
+   one on near, the one on the spent coin's network, then Ethereum, Base, Arbitrum and Solana, then
+   the list's own order; the same order breaks a tie. */
 export const BUY_PROBE_MAX = 4;
 export const BUY_PROBE_TIMEOUT_MS = 2_000;
+export const SAME_COIN_BAND = 0.05;
 const BUY_PROBE_PREFERRED = ['eth', 'base', 'arb', 'sol'];
 
-export async function pickBoughtByQuote(ctx: PCtx, sold: SwapSide, amount: string | null, candidates: SwapSide[], account: string): Promise<SidePick> {
+export async function pickBoughtByQuote(
+  ctx: PCtx,
+  sold: SwapSide,
+  amount: string | null,
+  candidates: SwapSide[],
+  account: string,
+  list: OneClickToken[] = [],
+): Promise<SidePick> {
+  const unitPrice = (s: SwapSide): number | null => {
+    const price = list.find((t) => t.assetId === s.assetId)?.price;
+    return typeof price === 'number' && Number.isFinite(price) && price > 0 ? price : null;
+  };
+  const prices = candidates.map(unitPrice).filter((x): x is number => x !== null);
+  if (prices.length >= 2 && Math.max(...prices) > Math.min(...prices) * (1 + SAME_COIN_BAND)) return { kind: 'many', candidates };
+  const pool = prices.length > 0 ? candidates.filter((s) => unitPrice(s) !== null) : candidates;
+
   const rank = (s: SwapSide): number => {
     const order = ['near', sold.network, ...BUY_PROBE_PREFERRED];
     const at = order.indexOf(s.network);
     return at === -1 ? order.length : at;
   };
-  const ordered = candidates.map((s, i) => ({ s, i })).sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i).map((x) => x.s);
+  const ordered = pool.map((s, i) => ({ s, i })).sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i).map((x) => x.s);
   const near = ordered.find((s) => s.network === 'near');
   const asked = amount === null ? [] : ordered.slice(0, BUY_PROBE_MAX);
   const outs = await Promise.all(asked.map((s) => boughtOut(ctx, sold, s, amount ?? '0', account)));
-  let won: { side: SwapSide; out: number } | null = null;
+  let won: { side: SwapSide; value: number } | null = null;
   for (const [i, out] of outs.entries()) {
-    if (out !== null && (won === null || out > won.out)) won = { side: asked[i]!, out };
+    if (out === null) continue;
+    const value = out * (unitPrice(asked[i]!) ?? 1);
+    if (won === null || value > won.value) won = { side: asked[i]!, value };
   }
   if (won !== null) return { kind: 'one', side: won.side };
   return near !== undefined ? { kind: 'one', side: near } : { kind: 'many', candidates };
@@ -204,7 +225,7 @@ export async function pickSwapSides(
   const picks = resolveSwapSides(from, to, list, new Set(heldOf(ctx).keys()));
   if (picks.from.kind === 'one' && picks.to.kind === 'many' && (to.chain?.trim() ?? '') === '') {
     const account = ourIntentsAddress(ctx, []);
-    picks.to = await pickBoughtByQuote(ctx, picks.from.side, probeAmount(ctx, picks.from.side, amountIn), picks.to.candidates, account);
+    picks.to = await pickBoughtByQuote(ctx, picks.from.side, probeAmount(ctx, picks.from.side, amountIn), picks.to.candidates, account, list);
   }
   return { ...picks, list };
 }
@@ -440,7 +461,7 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
   const fromPick = sides.from;
   let toPick = sides.to;
   if (fromPick.kind === 'one' && toPick.kind === 'many' && (params.toChain?.trim() ?? '') === '') {
-    toPick = await pickBoughtByQuote(ctx, fromPick.side, probeAmount(ctx, fromPick.side, params.amountIn), toPick.candidates, ourIntentsAddress(ctx, []));
+    toPick = await pickBoughtByQuote(ctx, fromPick.side, probeAmount(ctx, fromPick.side, params.amountIn), toPick.candidates, ourIntentsAddress(ctx, []), list);
   }
   for (const [pick, which] of [
     [fromPick, 'the coin you sell'],
@@ -658,7 +679,7 @@ export async function swapCheck(ctx: PCtx, id: string): Promise<SwapCheckReply> 
   else if (p.status === 'policy_refused' || p.status === 'refused') summary = `It was never sent, so nothing left your balance.${holding}`;
   // The signed transfer can still run until its deadline, so "nothing left" is not over yet.
   else if (p.status === 'needs_reconciliation' && p.result?.reason === 'venue_failed_watching' && moved !== 'yes')
-    summary = `It didn't go through, and nothing has left your balance yet. I'm keeping an eye on it ${watchWords(p.result?.evidence?.deadline, Date.now())}.${holding}`;
+    summary = `Still checking this swap: nothing has left your balance so far. I'm keeping an eye on it ${watchWords(p.result?.evidence?.deadline, Date.now())}.${holding}`;
   else if (moved === 'no' && (status === 'FAILED' || status === 'NOT_FOUND_OR_NOT_VALID' || p.status === 'failed')) summary = `It didn't go through. Nothing left your balance.${holding}`;
   else if (moved === 'no') summary = `Nothing has left your balance yet${word === null ? '' : `; the swap service says ${word}`}.${holding}`;
   else if (moved === 'yes' && refunded === true) summary = `Your ${symbol} left and the swap service reports a refund${refundedAmount !== null && Number(refundedAmount) > 0 ? ` of ${refundedAmount}` : ''}.${holding}`;

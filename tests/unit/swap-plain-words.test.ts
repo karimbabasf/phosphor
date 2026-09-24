@@ -65,7 +65,7 @@ test('a watching row says a few minutes only when it is minutes, and how long in
     result: { ok: false, detail: '1click reported FAILED', txids: ['h'], reason: 'venue_failed_watching', evidence: { handle: 'dep-1', providerStage: 'FAILED', deadline: at(72 * 3_600_000) } },
   };
   const v = proposalView({ settle: (p) => p }, row, now);
-  assert.equal(v.reason?.sentence, "The swap didn't go through. Your NEAR hasn't moved; I'm keeping an eye on it until it can no longer run, in about 3 days.");
+  assert.equal(v.reason?.sentence, "Still checking this swap. Your NEAR hasn't moved so far; I'm keeping an eye on it until it can no longer run, in about 3 days.");
 });
 
 // ---------- the summary the agent reads ----------

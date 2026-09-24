@@ -49,8 +49,9 @@ export type IntentsHolding = {
   // only for the hand-built rows in tests; every row this module returns carries it.
   amountBase?: string;
   decimals: number;
-  /* 1Click's own USD price for this asset, off the token list it was labelled from, and when that
-     list was fetched. The price of last resort: read only where no other source prices the coin
+  /* 1Click's own USD price for this asset, off the token list it was labelled from, and when 1Click
+     priced it (priceUpdatedAt, or the list's read if older). The price of last resort: read only
+     where no other source prices the coin
      (src/proposals/draft.ts priceOf, src/wallet.ts). Null when 1Click lists no price either, which
      stays unknown and never becomes zero. */
   priceUsd?: number | null;
@@ -144,11 +145,12 @@ async function tokensForOwner(rpcUrl: string, accountId: string, fetchImpl: type
 // already match asset ids against. This is a display path: it scales a number a human
 // reads and never a number that authorises a spend, so an unlisted asset is shown by its
 // raw id at 0 decimals rather than dropped, and a wrong guess here cannot move money.
-function describe(assetId: string, list: OneClickToken[]): { symbol: string; decimals: number; originChain: string; priceUsd: number | null } {
+function describe(assetId: string, list: OneClickToken[]): { symbol: string; decimals: number; originChain: string; priceUsd: number | null; pricedAt: number | null } {
   const meta = list.find((t) => t.assetId === assetId);
-  if (meta === undefined) return { symbol: assetId, decimals: 0, originChain: 'intents', priceUsd: null };
+  if (meta === undefined) return { symbol: assetId, decimals: 0, originChain: 'intents', priceUsd: null, pricedAt: null };
   const price = typeof meta.price === 'number' && Number.isFinite(meta.price) && meta.price > 0 ? meta.price : null;
-  return { symbol: meta.symbol, decimals: meta.decimals, originChain: meta.blockchain, priceUsd: price };
+  const pricedAt = Date.parse(meta.priceUpdatedAt ?? '');
+  return { symbol: meta.symbol, decimals: meta.decimals, originChain: meta.blockchain, priceUsd: price, pricedAt: Number.isFinite(pricedAt) ? pricedAt : null };
 }
 
 export type IntentsBalanceDeps = {
@@ -228,7 +230,11 @@ export async function fetchIntentsHoldings(deps: IntentsBalanceDeps): Promise<In
     for (const [i, assetId] of assetIds.entries()) {
       const raw = BigInt(amounts[i] ?? '0');
       if (raw <= 0n) continue; // enumerated but emptied since: not a holding
-      const { symbol, decimals, originChain, priceUsd } = describe(assetId, list);
+      const { symbol, decimals, originChain, priceUsd, pricedAt } = describe(assetId, list);
+      /* AS OLD AS 1CLICK'S OWN STAMP, or the list's when that is older: a list read now can carry a
+         price 1Click stopped updating days ago (audit, finding 7). No stamp from 1Click is no age
+         anyone can vouch for, so the price is shown and never governed by. */
+      const priceAsOf = pricedAt === null ? null : listedAt === null ? pricedAt : Math.min(pricedAt, listedAt);
       holdings.push({
         accountId,
         assetId,
@@ -238,7 +244,7 @@ export async function fetchIntentsHoldings(deps: IntentsBalanceDeps): Promise<In
         amountBase: raw.toString(),
         decimals,
         priceUsd,
-        ...(listedAt === null ? {} : { priceAsOf: listedAt }),
+        ...(priceAsOf === null ? {} : { priceAsOf }),
       });
     }
     return { holdings, ok: true, fetchedAt };

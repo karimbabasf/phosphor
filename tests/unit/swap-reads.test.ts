@@ -17,6 +17,8 @@ import type { IntentsRead } from '../../src/ledger/intents.ts';
 import type { RailRegistry } from '../../src/rails/index.ts';
 import { ReasonError } from '../../src/rails/reasons.ts';
 import { swapReads } from '../../src/http/read/swap.ts';
+import { pickBoughtByQuote } from '../../src/proposals/swap-reads.ts';
+import type { PCtx } from '../../src/proposals/lifecycle.ts';
 import { walletReads } from '../../src/http/read/wallet.ts';
 import type { Ctx } from '../../src/http/context.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
@@ -231,6 +233,35 @@ test('bridged ETH on near loses to ETH from Ethereum when that quotes more, in s
   assert.equal(flipped.to?.assetId, ETH_NEAR);
 });
 
+/* ONE TICKER, TWO COINS (audit, finding 8). 1Click lists two NEARKATs at $0.00552645 and
+   $0.00017222; $10 buys about 1,809 of one and 58,065 of the other, and the most units went to the
+   cheaper token whatever the person meant. Listed prices more than five percent apart are two coins. */
+test('two coins under one ticker, listed thirty times apart, are the question and never a pick by units', async () => {
+  const usdc = { symbol: 'USDC', network: 'near', assetId: USDC, decimals: 6 };
+  const a = { symbol: 'NearKat', network: 'near', assetId: 'nep141:kat-a.near', decimals: 18 };
+  const b = { symbol: 'NEARKAT', network: 'near', assetId: 'nep141:kat-b.near', decimals: 18 };
+  const katList: OneClickToken[] = [
+    { assetId: a.assetId, decimals: 18, blockchain: 'near', symbol: 'NearKat', price: 0.00552645 },
+    { assetId: b.assetId, decimals: 18, blockchain: 'near', symbol: 'NEARKAT', price: 0.00017222 },
+  ];
+  const v = pricingRail({ [a.assetId]: 1_809, [b.assetId]: 58_065 });
+  const ctx = { cfg: {}, rails: { for: () => v.rail } } as unknown as PCtx;
+  const pick = await pickBoughtByQuote(ctx, usdc, '10', [a, b], SELF_EVM, katList);
+  assert.equal(pick.kind, 'many');
+  assert.deepEqual(v.asked, [], 'two coins are asked about by the person, not priced against each other');
+});
+
+test('the most arriving is counted in dollars: a candidate the list prices wins over one it does not, and same-priced coins still auto-pick', async () => {
+  // ETH on base unpriced in this list: only the priced ones are compared.
+  const list = WIDE.map((t) => (t.assetId === ETH_BASE ? { ...t, price: undefined } : t));
+  const v = pricingRail({ [ETH_NEAR]: 0.001, [ETH_ETH]: 0.0011, [ETH_BASE]: 0.5, [ETH_ARB]: 0.00105 });
+  const r = wide(v.rail);
+  const h = makeCtx({ intents: wnearHeld(), deps: { rails: { ...r, swap: { ...r.swap!, tokens: async () => list } } } });
+  const reply = await h.svc.swapQuote!({ fromSymbol: 'NEAR', toSymbol: 'ETH', amountIn: '0.5' });
+  assert.equal(reply.to?.assetId, ETH_ETH, 'the unpriced one quoting 0.5 is not compared against priced ones');
+  assert.ok(!v.asked.includes(ETH_BASE));
+});
+
 test('the coin bought: when no price comes back, the one on near; when there is none on near, the question', async () => {
   const silent = pricingRail({}, null);
   const h = makeCtx({ intents: wnearHeld(), deps: { rails: wide(silent.rail) } });
@@ -395,7 +426,7 @@ test('swap_check on a FAILED swap whose signed transfer can still run says nothi
   h.store.put(watching(new Date(Date.now() + 3 * 60_000).toISOString()));
   const reply = await h.svc.swapCheck!('8b589eca');
   assert.equal(reply.moved, 'no');
-  assert.equal(reply.summary, "It didn't go through, and nothing has left your balance yet. I'm keeping an eye on it for a few minutes. You hold 0.894697028778374732410224 NEAR.");
+  assert.equal(reply.summary, "Still checking this swap: nothing has left your balance so far. I'm keeping an eye on it for a few minutes. You hold 0.894697028778374732410224 NEAR.");
 
   // A transfer 1Click signed for 72 hours says how long, never "a few minutes" over days.
   h.store.put(watching(new Date(Date.now() + 72 * 3_600_000).toISOString()));
