@@ -665,7 +665,7 @@
      it moved; a trade or a bot row shows its kind icon, because no single coin
      is the point of it. The slot is one fixed width so every sentence in a list
      starts on the same line. The five children and their order are the row's
-     contract with receipts.js and the tests. */
+     contract with the tests. */
   function row(receipt) {
     var node = dom.el('button', 'tx receipt-row');
     node.type = 'button';

@@ -110,9 +110,8 @@ export function sendJson(res: http.ServerResponse, status: number, payload: unkn
 }
 
 /* The one door every refusal goes through. `extra` carries the keys a particular refusal adds
-   beside the message (the notes on a chart write, the coins on a rejected coin list, the
-   duplicate id, the seat marker), and `error` stays first so the shape on the wire is the one
-   every caller already reads.
+   beside the message (the notes on a chart write, the duplicate id, the seat marker), and
+   `error` stays first so the shape on the wire is the one every caller already reads.
 
    `message` is REQUIRED, and it took a type change elsewhere to make that possible. Eight sites
    in this directory used to pass an `Outcome.error` the type said might be undefined, and

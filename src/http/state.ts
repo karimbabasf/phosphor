@@ -260,9 +260,8 @@ export function buildState(ctx: Ctx): unknown {
    with it because the map is weak.
 
    THE CEILING IS THE SAFETY NET, and it is why this is not a list of hooks to get exactly right.
-   The lending view refreshes on a 60 s timer, the price poll on a 30 s one, and the idle countdown
-   ticks every second, and none of the three announces itself. A cache that only ever invalidated
-   on the four inputs above would show a stale price for as long as nothing else moved, which for a
+   The idle countdown ticks every second and announces nothing. A cache that only ever invalidated
+   on the four inputs above would show a stale figure for as long as nothing else moved, which for a
    number a person reads is the wrong kind of wrong. One second bounds every input nobody
    enumerated, including one added later by somebody who never read this comment. */
 export const STATE_CACHE_MAX_MS = 1_000;

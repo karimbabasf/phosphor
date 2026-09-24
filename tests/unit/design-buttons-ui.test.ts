@@ -123,7 +123,6 @@ const SMALL_FLOOR: Array<[file: string, selector: string, prop: string]> = [
   ['chatcard.css', '.mcard-details-toggle', 'min-height'],
   ['deposit.css', '.netpick-link', 'min-height'],
   ['vault.css', '.vault-seg-cell', 'min-height'],
-  ['pro.css', '.activity-link', 'min-height'],
   ['components.css', 'button.chip', 'min-height'],
   ['components.css', '.check-row', 'min-height'],
   ['checks.css', '.checks-toggle', 'min-height'],
@@ -173,7 +172,6 @@ test('hover lifts the edge in the family\'s own colour, and a pressed chip is li
   assert.match(components, /\.btn-danger\s*\{[^}]*--btn-edge-hover:/);
   assert.match(components, /\.btn:active:not\(:disabled\)\s*\{[^}]*background:\s*var\(--btn-bg-active\);/);
   assert.match(components, /button\.chip\[aria-pressed="true"\]\s*\{[^}]*background:\s*var\(--ink-wash\);/);
-  assert.doesNotMatch(css('pro.css'), /\.chip-filter\[aria-pressed="true"\]/, 'pro.css keeps its own pressed chip');
 });
 
 test('the send card\'s info disc is 16 px to read and 30 px to press', () => {
@@ -198,7 +196,7 @@ test('a quiet button keeps the floor\'s 24 px around its word', () => {
    on 2026-09-20 because the press sat in components.css at the hover's specificity. So press.css
    loads last, and every press selector is at least as specific as every hover rule whose subject
    is that family, anywhere in ui/design. */
-const PRESSED = ['dock-close', 'pane-hide', 'pane-show', 'receipt-close', 'lock-eye', 'netpick-back', 'netpick-link', 'activity-link', 'netsel', 'trade-tab', 'steps-fold', 'checks-toggle', 'brake-btn', 'notice-act', 'bal-add', 'vault-seg-cell', 'net-row', 'jump-latest', 'check-row'];
+const PRESSED = ['dock-close', 'pane-hide', 'pane-show', 'receipt-close', 'lock-eye', 'netpick-back', 'netpick-link', 'netsel', 'trade-tab', 'steps-fold', 'checks-toggle', 'brake-btn', 'notice-act', 'bal-add', 'vault-seg-cell', 'net-row', 'jump-latest', 'check-row'];
 
 // Selector specificity as (ids, classes plus attributes plus pseudo-classes, elements).
 function specificity(selector: string): [number, number, number] {

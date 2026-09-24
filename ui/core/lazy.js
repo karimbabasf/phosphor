@@ -1,7 +1,8 @@
 /* Phosphor's late loads: the scripts a window needs only once a screen that
    uses them opens. The QR libraries draw a deposit address, the chart engine
-   and the trade screen are Trade, and the first run is for a wallet that does
-   not exist yet (it also carries the agent picker the Vault tab borrows).
+   and the trade screen are Pro's trading side, and the first run is for a
+   wallet that does not exist yet (it also carries the agent picker the Vault
+   tab borrows).
    Together they were over half of the script a window fetched at boot, and a
    window that never opens any of them now never fetches them.
 
@@ -24,7 +25,7 @@
   };
 
   /* What runs once a bundle is in. The trade screen builds itself and starts
-     its chart if Trade is already on screen; the chart has missed the theme,
+     its chart if Pro is already on screen; the chart has missed the theme,
      which was applied before it existed. */
   var AFTER = {
     trade: function () {
@@ -77,7 +78,8 @@
     return !!loading[name];
   }
 
-  /* app.js boots Trade with every other screen. Trade boots when it loads. */
+  /* app.js boots the trade screen with every other screen. It boots for real
+     when it loads. */
   if (!window.PhosphorTrade) {
     window.PhosphorTrade = { boot: function () {} };
   }

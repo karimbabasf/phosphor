@@ -130,9 +130,9 @@ export function scan(): Site[] {
       }
     });
     // A screen's button() helper builds one button from its arguments, so its call sites are
-    // the families and the definition is not a site. Three shapes exist: a fixed class in the
-    // body (receipts.js), the class as the first argument (agent.js), and a kind added to 'btn '
-    // (netpick.js, vault.js). The body's first dom.el('button', ...) says which.
+    // the families and the definition is not a site. Three shapes are read: a fixed class in the
+    // body, the class as the first argument (agent.js), and a kind added to 'btn ' (netpick.js,
+    // vault.js). The body's first dom.el('button', ...) says which.
     const helper = src.findIndex((l) => /function button\(/.test(l));
     if (helper >= 0) {
       const body = src.slice(helper, helper + 3).join(' ');
