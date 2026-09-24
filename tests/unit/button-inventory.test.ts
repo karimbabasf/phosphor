@@ -57,10 +57,11 @@ test('the helpers are read at their call sites, never at their definition', () =
   assert.equal(more?.family, 'btn btn-ghost activity-more', 'receipts.js button() builds a fixed class, and the call site wears it');
 });
 
-test('the one button index.html builds is the small freeze with its verb', () => {
-  const freeze = sites.find((s) => s.file === 'ui/index.html' && /freeze/.test(s.family));
-  assert.equal(freeze?.family, 'btn btn-sm freeze');
-  assert.equal(freeze?.label, '"Freeze everything"');
+test('the bar in index.html builds the brake glyph, and its confirm step is the small variant', () => {
+  const html = sites.filter((s) => s.file === 'ui/index.html').map((s) => s.family);
+  assert.ok(html.includes('brake-btn'), 'the bar builds no brake');
+  assert.ok(html.includes('btn btn-sm'), 'the confirm step is not the small variant');
+  assert.ok(!html.some((f) => /\bfreeze\b|bar-state/.test(f)), 'the old red button or a status chip is still in the bar');
 });
 
 test('the sheet\'s pages live in a temp directory the run removes', () => {

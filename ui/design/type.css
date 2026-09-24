@@ -1,14 +1,17 @@
-/* Phosphor type. Two faces, both vendored variable woff2, never a CDN.
+/* Phosphor type. Two faces, both vendored variable woff2 (ui/fonts, preloaded
+   by index.html), never a CDN.
 
-   The grammar: a word is set in Sora, a number that can change is set in
+   The grammar: a word is set in Geist, a number that can change is set in
    Geist Mono with tabular figures, so a value never moves its neighbours when
    it ticks. Titles are short noun phrases. Weights: 400 body, 500 labels and
-   rows, 600 titles and buttons. Never 700. */
+   rows, 600 titles and buttons. Never 700. The larger the size, the tighter
+   the tracking: Geist is drawn for text, and at display sizes its default
+   spacing reads loose. */
 
 @font-face {
-  font-family: "Sora";
-  src: url("../fonts/Sora[wght].woff2") format("woff2-variations");
-  font-weight: 100 800;
+  font-family: "Geist";
+  src: url("../fonts/Geist-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
@@ -47,7 +50,7 @@ kbd {
   font-family: var(--font-mono);
   font-size: var(--fs-44);
   font-weight: 500;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   line-height: 1.05;
   font-feature-settings: "tnum" 1;
   font-variant-numeric: tabular-nums;
@@ -56,7 +59,7 @@ kbd {
 .headline {
   font-size: var(--fs-28);
   font-weight: 500;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   line-height: 1.2;
 }
 
@@ -64,14 +67,14 @@ kbd {
 .title {
   font-size: var(--fs-20);
   font-weight: 500;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   line-height: 1.3;
 }
 
 .title-sm {
   font-size: var(--fs-16);
   font-weight: 500;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
 }
 
 .body {
@@ -104,10 +107,6 @@ kbd {
   color: var(--text-2);
 }
 
-.dimmer {
-  color: var(--text-3);
-}
-
 .up {
   color: var(--up);
 }
@@ -130,11 +129,4 @@ kbd {
   font-size: var(--fs-13);
   word-break: break-all;
   line-height: 1.5;
-}
-
-.truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
 }

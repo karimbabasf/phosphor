@@ -1,7 +1,7 @@
 /* The send card (ui/screens/sendcard.js): the one card a person reads before
    money leaves for somebody else, in the decision dock and in the thread.
 
-   Quiet by design. Sora for the words, Geist Mono for every number and the
+   Quiet by design. Geist for the words, Geist Mono for every number and the
    address. One colour per meaning and no more: green for what arrives, amber
    for a first send and for a card still waiting, red only on a refusal. Every
    explainer sits behind an (i). The 4 px grid throughout: 16 px card padding,

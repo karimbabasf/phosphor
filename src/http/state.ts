@@ -230,13 +230,7 @@ export function buildState(ctx: Ctx): unknown {
       proposals: list,
       policyReadable: policy !== null,
       killSwitch: policy?.killSwitch ?? false,
-      agentsConnected: ctx.agents.connected(),
       readAt: snapshot.fetchedAt,
-      selfAddresses: ctx.cfg.addresses.evm === undefined ? [] : [ctx.cfg.addresses.evm],
-      prices: ctx.prices.readings,
-      // The assistant's half of the history: the same events the pro screen's log
-      // carries, rendered as sentences instead of as log lines. See buildActions.
-      events: ctx.recent,
     }),
   };
 }

@@ -1,13 +1,12 @@
-// The Basic column's one moment of pleasure, and what keeps it honest.
+// The balances panel, and what keeps it honest.
 //
-// Basic is a quiet number, one sentence, a rules strip and a list. This pass added three things
-// and each of them is a place to lie to someone who has never held a wallet: a delta line that
-// must never show a number the frame did not carry, an allocation bar that must add up, and a
-// change tint that must land on the row that moved and leave again.
+// The panel is a total, a caption, one row per coin and one way to add money. Each part is a
+// place to lie to someone who has never held a wallet: a dollar figure for a coin nobody can
+// price, a row that glows when nothing moved, a list that reads as empty while it is loading.
 //
 // It drives the real ui/screens/basic.js (with ui/core/dom.js, ui/core/state.js and
 // ui/design/marks.js beside it) against a DOM small enough to read: the node operations those
-// files use, nothing more, so the assertions are about the column rather than a framework.
+// files use, nothing more, so the assertions are about the panel rather than a framework.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,9 +36,6 @@ function make(tag: string): Any {
       setProperty: (name: string, value: string) => { props[name] = value; },
       removeProperty: (name: string) => { delete props[name]; },
     },
-    scrollTop: 0,
-    clientHeight: 400,
-    scrollHeight: 400,
     __on: {} as Record<string, Array<(event?: unknown) => void>>,
   };
   Object.defineProperty(node, 'textContent', {
@@ -83,12 +79,13 @@ function make(tag: string): Any {
     (node.__on[type] ??= []).push(handler);
   };
   node.removeEventListener = () => {};
+  node.focus = () => { node.focused = true; };
   node.querySelector = () => null;
   return node;
 }
 
-/* Every node carrying a class, flattened: the query language here is "which rows are in it".
-   An svg built in its namespace takes its class by attribute, so both spellings count. */
+/* Every node carrying a class, flattened. An svg built in its namespace takes its class by
+   attribute, so both spellings count. */
 function all(node: Any, className: string, found: Any[] = []): Any[] {
   const classes = `${node.className} ${node.attrs.class ?? ''}`.split(' ');
   if (classes.includes(className)) found.push(node);
@@ -96,45 +93,45 @@ function all(node: Any, className: string, found: Any[] = []): Any[] {
   return found;
 }
 
-function holding(name: string, valueUsd: number, quantityLine: string): Any {
-  return { name, valueUsd, valueLine: `$${valueUsd.toFixed(2)}`, quantityLine };
+function click(node: Any): void {
+  for (const handler of node.__on.click ?? []) handler({ preventDefault: () => {} });
 }
 
-function frame(totalUsd: number | null, holdings: Any[]): Any {
+type Holding = { symbol: string; name: string; quantityLine: string; valueLine: string | null; valueUsd: number | null };
+
+function coin(symbol: string, valueUsd: number | null, quantityLine: string, name = symbol): Holding {
+  return { symbol, name, quantityLine, valueUsd, valueLine: valueUsd === null ? null : `$${valueUsd.toFixed(2)}` };
+}
+
+function frame(totalLine: string, holdings: Holding[], over: Any = {}): Any {
   return {
-    basic: { totalUsd, totalLine: totalUsd === null ? 'still checking' : `$${totalUsd.toFixed(2)}`, holdings, warning: null },
-    policy: { outbound: { humanClickAboveUsd: 100, maxPerTransactionUsd: 10000, maxPerSessionUsd: 25000 } },
+    basic: { totalUsd: 1000, totalLine, caption: 'in your balance', warning: null, holdings, smallLine: null, emptyLine: null, ...over },
     proposals: [],
     lock: { state: 'unlocked' },
     wallet: { stale: [] },
   };
 }
 
-function build() {
+function build(options: { loaded?: boolean } = {}) {
   const host = make('section');
-  const timers: Array<{ id: number; fn: () => void }> = [];
-  const metaHandlers: Array<(meta: Any) => void> = [];
+  const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
+  const calls: Any[] = [];
   let seq = 0;
   const win: Any = {
-    setTimeout: (fn: () => void) => { seq += 1; timers.push({ id: seq, fn }); return seq; },
+    setTimeout: (fn: () => void, ms: number) => { seq += 1; timers.push({ id: seq, fn, ms }); return seq; },
     clearTimeout: (id: number) => {
       const at = timers.findIndex((t) => t.id === id);
       if (at !== -1) timers.splice(at, 1);
     },
     addEventListener: () => {},
     PhosphorMotion: { reduced: () => false },
-    // The Activity fold mounts the shared list (ui/screens/receipts.js) into its body; the
-    // column under test never opens it, so a stub that draws nothing is the whole contract,
-    // except for the meta line, which the list feeds back through onMeta and a test can push.
-    PhosphorReceipts: {
-      list: (_host: Any, opts: Any) => {
-        if (opts && typeof opts.onMeta === 'function') metaHandlers.push(opts.onMeta);
-        return { load: () => Promise.resolve([]), setWindow: () => {}, setKind: () => {}, expand: () => {}, get: () => [] };
+    PhosphorMoneyIn: {
+      render: (target: Any, opts: Any) => {
+        calls.push({ route: 'moneyin.render', opts });
+        target.appendChild(make('div'));
+        return { destroy: () => calls.push({ route: 'moneyin.destroy' }) };
       },
     },
-    PhosphorMoneyIn: { render: () => {} },
-    // The icon set (ui/design/icons.js): one stand-in svg per name, so the strip and the folds
-    // can be checked for the icon they asked for.
     PhosphorIcons: { svg: (name: string) => { const n = make('svg'); n.className = 'icon'; n.dataset.icon = name; return n; } },
   };
   const sandbox: Any = {
@@ -152,154 +149,146 @@ function build() {
   runInContext(MARKS_SOURCE, sandbox, { filename: 'ui/design/marks.js' });
   runInContext(BASIC_SOURCE, sandbox, { filename: 'ui/screens/basic.js' });
   win.PhosphorBasic.boot();
+  if (options.loaded === false) win.PhosphorState.loaded = () => false;
 
   return {
     host,
+    calls,
+    timers,
     put: (state: Any) => win.PhosphorState.put(state),
-    delta: () => all(host, 'hero-delta')[0],
-    balance: () => all(host, 'balance')[0],
-    bar: () => all(host, 'alloc')[0],
-    segments: () => all(host, 'alloc-seg'),
-    strip: () => all(host, 'strip')[0],
-    rows: () => all(host, 'row').filter((row) => row.parentNode === all(host, 'hold-list')[0]),
+    one: (className: string) => all(host, className)[0],
+    rows: () => all(host, 'bal-row'),
+    row: (symbol: string): Any => all(host, 'bal-row').find((r) => r.dataset.key === symbol)!,
     runTimers() {
       const due = timers.splice(0, timers.length);
       for (const timer of due) timer.fn();
-    },
-    /* The two folds under the list, by surface, and the Activity list's meta line. */
-    fold: (surface: string) => all(host, 'fold').find((f) => f.dataset.surface === surface)!,
-    meta: (meta: Any) => {
-      for (const handler of metaHandlers) handler(meta);
     },
   };
 }
 
 const COINS = [
-  holding('US dollars (USDC)', 750, '750.00'),
-  holding('Ether (ETH)', 250, '0.06'),
+  coin('USDC', 6200, '6,200.00', 'US dollars (USDC)'),
+  coin('ETH', 3785.1, '1.42', 'Ether (ETH)'),
+  coin('NEAR', 1372.41, '310.50'),
 ];
 
-test('the balance keeps its tick, and the delta line waits for a change that is real', () => {
-  const world = build();
-  world.put(frame(1000, COINS));
-  assert.ok(world.balance().className.split(' ').includes('tick'), 'the total lost the tick class');
-  assert.equal(world.balance().textContent, '$1000.00');
-  assert.equal(world.delta().hidden, true, 'the first total is the mark, not a change');
+test('the total is the figure and the caption under it, both from the view', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  const total = panel.one('bal-total');
+  assert.equal(total.textContent, '$11,357.51');
+  assert.ok(total.className.split(' ').includes('mono'), 'the total is not in the mono face');
+  assert.equal(panel.one('bal-caption').textContent, 'in your balance');
 
-  world.put(frame(1000.42, COINS));
-  assert.equal(world.delta().hidden, false);
-  assert.equal(world.delta().textContent, '+$0.42 since you opened');
-  assert.equal(world.delta().getAttribute('data-dir'), 'up');
-
-  world.put(frame(999.5, COINS));
-  assert.equal(world.delta().textContent, '-$0.50 since you opened');
-  assert.equal(world.delta().getAttribute('data-dir'), 'down');
-
-  /* Back to where it opened: nothing to say, so nothing is said. */
-  world.put(frame(1000, COINS));
-  assert.equal(world.delta().hidden, true);
+  panel.put(frame('$11,357.51', COINS, { caption: 'checking your new balance' }));
+  assert.equal(panel.one('bal-caption').textContent, 'checking your new balance');
 });
 
-test('a total the frame could not settle is not a number, so the delta waits and the mark holds', () => {
-  const world = build();
-  world.put(frame(1000, COINS));
-  world.put(frame(null, COINS));
-  assert.equal(world.delta().hidden, true, 'a null total was compared as if it were zero');
-  /* The mark is still the first real total, not the null that came between. */
-  world.put(frame(1001, COINS));
-  assert.equal(world.delta().textContent, '+$1.00 since you opened');
+test('one row per coin: its mark, its symbol, how much of it, and the dollars at the right', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  assert.deepEqual(panel.rows().map((r) => r.dataset.key), ['USDC', 'ETH', 'NEAR']);
+  const eth = panel.row('ETH');
+  assert.equal(all(eth, 'bal-sym')[0].textContent, 'ETH');
+  assert.equal(all(eth, 'bal-amt')[0].textContent, '1.42');
+  assert.equal(all(eth, 'bal-usd')[0].textContent, '$3785.10');
+  assert.equal(eth.getAttribute('aria-label'), 'Ether (ETH), 1.42, $3785.10', 'a screen reader hears the plain name and both figures');
+  assert.equal(all(eth, 'bal-coin')[0].style.props['--coin'], '#627EEA', 'the mark wears the coin colour');
 });
 
-test('the allocation bar is one segment per listed coin, by share, in the coin colour', () => {
-  const world = build();
-  world.put(frame(1000.75, [...COINS, holding('Dust', 0.75, '0.75')]));
-  const segments = world.segments();
-  assert.equal(world.bar().hidden, false);
-  assert.equal(segments.length, 2, 'dust under a dollar is counted, not drawn');
-  assert.equal(segments[0].style.flexGrow, '0.75');
-  assert.equal(segments[1].style.flexGrow, '0.25');
-  assert.equal(segments[0].style.props['--coin'], '#2775CA');
-  assert.equal(segments[1].style.props['--coin'], '#627EEA');
-
-  /* A coin with no brand colour leaves the property unset and the stylesheet falls back. */
-  world.put(frame(1000, [holding('XUSD', 600, '600.00'), holding('Ether (ETH)', 400, '0.1')]));
-  assert.equal(world.segments()[0].style.props['--coin'], undefined);
-
-  /* One coin makes no shape. */
-  world.put(frame(600, [holding('XUSD', 600, '600.00')]));
-  assert.equal(world.bar().hidden, true);
-  assert.equal(world.segments().length, 0);
+test('NEAR wears a neutral mark, because green belongs to the app', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  const mark = all(panel.row('NEAR'), 'bal-coin')[0];
+  assert.notEqual(mark.style.props['--coin'], '#00EC97');
+  assert.equal(mark.style.props['--coin'], '#D5D8DD');
 });
 
-test('a row whose value moved carries its delta and its tint for a beat, then settles', () => {
-  const world = build();
-  world.put(frame(1000, COINS));
-  const eth = world.rows()[1];
-  assert.equal(eth.dataset.changed, undefined, 'the first fill is not a change');
-  assert.equal(eth.style.props['--coin'], '#627EEA', 'the row does not carry its coin colour');
-
-  world.put(frame(1010.5, [COINS[0], holding('Ether (ETH)', 260.5, '0.06')]));
-  assert.equal(world.rows()[1], eth, 'the row lost its identity across a render');
-  assert.equal(eth.dataset.changed, 'true');
-  const delta = all(eth, 'row-delta')[0];
-  assert.equal(delta.textContent, '+$10.50');
-  assert.equal(delta.getAttribute('data-dir'), 'up');
-  assert.equal(world.rows()[0].dataset.changed, undefined, 'a row that did not move was marked');
-
-  world.runTimers();
-  assert.equal(eth.dataset.changed, undefined, 'the tint never left');
+test('a coin with no price says "price unavailable", never $0.00', () => {
+  const panel = build();
+  panel.put(frame('$6,200.00', [COINS[0]!, coin('WIF', null, '12.50')], { caption: 'in your balance, not counting WIF' }));
+  const usd = all(panel.row('WIF'), 'bal-usd')[0];
+  assert.equal(usd.textContent, 'price unavailable');
+  assert.equal(usd.getAttribute('data-unpriced'), 'true');
+  assert.doesNotMatch(panel.host.textContent, /\$0\.00/);
+  assert.equal(panel.one('bal-caption').textContent, 'in your balance, not counting WIF');
 });
 
-test('the rules strip keeps its surface and its sentence, with the ask icon at its left', () => {
-  const world = build();
-  world.put(frame(1000, COINS));
-  const strip = world.strip();
-  assert.equal(strip.dataset.surface, 'rules');
-  assert.equal(all(strip, 'strip-glyph').length, 1, 'no icon slot on the strip');
-  assert.equal(all(strip, 'strip-glyph')[0].children[0].dataset.icon, 'waiting', 'the strip wears the ask rule icon');
-  assert.equal(all(strip, 'strip-text')[0].textContent,
-    'Asks you above $100. Refuses above $10,000 at once and $25,000 a day.');
+test('a row that moved rolls to its new figure and lights once, then decays', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  const usdc = panel.row('USDC');
+  assert.equal(usdc.dataset.lit, undefined, 'the first fill is not a change');
+  panel.runTimers();
+
+  panel.put(frame('$10,857.51', [coin('USDC', 5700, '5,700.00', 'US dollars (USDC)'), COINS[1]!, COINS[2]!]));
+  assert.equal(panel.row('USDC'), usdc, 'the row kept its identity across a render');
+  assert.equal(all(usdc, 'bal-usd')[0].textContent, '$5700.00');
+  assert.equal(usdc.dataset.lit, 'true', 'the row that moved did not light');
+  assert.equal(panel.row('ETH').dataset.lit, undefined, 'a row that did not move lit');
+  const light = panel.timers.find((t) => t.ms === 120);
+  assert.ok(light, 'the light comes in over 120 ms before it starts to decay');
+  panel.runTimers();
+  assert.equal(usdc.dataset.lit, undefined, 'the light never left');
 });
 
-test('a fold opens on its head and shuts again, and what is behind it is inert while shut', () => {
-  const world = build();
-  world.put(frame(1000, COINS));
-  const fold = world.fold('moneyin');
-  const head = all(fold, 'fold-head')[0];
-  const reveal = all(fold, 'fold-reveal')[0];
-  assert.ok(head, 'no head on the fold');
-  assert.ok(reveal, 'no reveal track on the fold');
-  assert.equal(all(head, 'card-title')[0].textContent, 'Money in');
-  assert.equal(all(head, 'card-meta')[0].textContent, 'Where to send money');
-  assert.equal(all(head, 'fold-mark')[0].children[0].dataset.icon, 'chevron-down', 'the fold wears no chevron');
-  assert.equal(fold.dataset.open, undefined);
-  assert.equal(head.getAttribute('aria-expanded'), 'false');
-  assert.equal(reveal.hasAttribute('inert'), true, 'a shut fold is reachable from the keyboard');
-
-  for (const handler of head.__on.click ?? []) handler({ preventDefault: () => {} });
-  assert.equal(fold.dataset.open, 'true');
-  assert.equal(head.getAttribute('aria-expanded'), 'true');
-  assert.equal(reveal.hasAttribute('inert'), false, 'an open fold is still inert');
-
-  for (const handler of head.__on.click ?? []) handler({ preventDefault: () => {} });
-  assert.equal(fold.dataset.open, undefined);
-  assert.equal(head.getAttribute('aria-expanded'), 'false');
-  assert.equal(reveal.hasAttribute('inert'), true);
+test('the light arrives and decays on the two glow tokens', () => {
+  const css = read('../../ui/design/basic.css');
+  assert.match(css, /\.bal-row\[data-lit="true"\]::before\s*\{[^}]*transition-duration:\s*var\(--dur-glow-in\);/, 'the light does not arrive in 120 ms');
+  assert.match(css, /\.bal-row::before\s*\{[^}]*transition:\s*opacity var\(--dur-glow-out\)/, 'the light does not decay over 2.4 s');
+  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert.match(reduced, /\.bal-row::before \{ display: none; \}/, 'the light still runs under reduced motion');
 });
 
-test('the Activity meta is words in Sora and its fee in the mono face', () => {
-  const world = build();
-  world.put(frame(1000, COINS));
-  const meta = all(world.fold('activity'), 'card-meta')[0];
-  assert.equal(meta.textContent, 'Last 24 hours');
-  world.meta({ words: 'last 24 hours', state: 'ready', count: 3, total: 3, feesUsd: 0.0094 });
-  assert.equal(meta.textContent, 'Last 24 hours, $0.0094 in fees');
-  const mono = all(meta, 'mono');
-  assert.equal(mono.length, 1, 'the fee is not in the mono face');
-  assert.equal(mono[0].textContent, '$0.0094');
-  world.meta({ words: 'last 24 hours', state: 'ready', count: 1, total: 1, feesUsd: 0 });
-  assert.equal(meta.textContent, 'Last 24 hours, no fees');
-  assert.equal(all(meta, 'mono').length, 0);
-  world.meta({ words: 'last 24 hours', state: 'error', count: 0, total: 0, feesUsd: 0 });
-  assert.equal(meta.textContent, 'Last 24 hours, unread');
+test('balances under a cent fold into one quiet line', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  assert.equal(panel.one('bal-small').hidden, true);
+  panel.put(frame('$11,357.51', COINS, { smallLine: '2 tiny balances under a cent, not listed' }));
+  assert.equal(panel.one('bal-small').hidden, false);
+  assert.equal(panel.one('bal-small').textContent, '2 tiny balances under a cent, not listed');
+});
+
+test('an empty wallet is a calm sentence, and the list waits while the first read is out', () => {
+  const loading = build({ loaded: false });
+  loading.put(frame('', [], { emptyLine: 'Nothing here yet. Money you add shows up here as it lands.' }));
+  assert.equal(loading.one('bal-empty').hidden, true, 'an empty list before the first read would say the wallet is empty');
+  assert.ok(all(loading.host, 'skel').length > 0, 'the list shows it is loading');
+
+  const panel = build();
+  panel.put(frame('$0.00', [], { emptyLine: 'Nothing here yet. Money you add shows up here as it lands.' }));
+  assert.equal(panel.rows().length, 0);
+  assert.equal(panel.one('bal-empty').hidden, false);
+  assert.equal(panel.one('bal-empty').textContent, 'Nothing here yet. Money you add shows up here as it lands.');
+  assert.equal(all(panel.host, 'skel').length, 0, 'the skeleton left once the read arrived');
+});
+
+test('Add money opens the deposit steps in the panel, over nothing, and Done puts the list back', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  const add = panel.one('bal-add');
+  assert.equal(add.tag, 'button');
+  assert.equal(add.textContent, 'Add money');
+  assert.equal(all(add, 'icon')[0].dataset.icon, 'deposit');
+
+  click(add);
+  const flow = panel.one('bal-flow');
+  assert.equal(flow.hidden, false);
+  assert.equal(panel.one('bal-list').hidden, true, 'the rows step aside while the steps run');
+  assert.equal(panel.one('bal-total').textContent, '$11,357.51', 'the total stays in view to watch the money land');
+  const opened = panel.calls.find((c) => c.route === 'moneyin.render');
+  assert.ok(opened, 'the existing deposit steps were not opened');
+
+  click(panel.one('bal-done'));
+  assert.equal(flow.hidden, true);
+  assert.equal(panel.one('bal-list').hidden, false);
+  assert.ok(panel.calls.some((c) => c.route === 'moneyin.destroy'), 'the steps kept their watch after Done');
+  assert.equal(add.focused, true, 'focus goes back to the control that opened the steps');
+});
+
+test('the panel carries nothing but the balance: no rules strip, no folds, no brake', () => {
+  const source = BASIC_SOURCE.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  for (const gone of ['strip', 'fold(', 'PhosphorReceipts', 'alloc', 'Nothing is connected', 'Freeze everything', 'phosphor:agent-phase']) {
+    assert.ok(!source.includes(gone), `ui/screens/basic.js still draws ${gone}`);
+  }
 });

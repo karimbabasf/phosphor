@@ -109,8 +109,10 @@ test('every .btn rule holds its variant floor: 36, small 30, large 44', () => {
 const SMALL_FLOOR: Array<[file: string, selector: string, prop: string]> = [
   ['layout.css', '.tab', 'height'],
   ['layout.css', '.layout', 'height'],
-  ['layout.css', 'button.bar-state', 'min-height'],
   ['components.css', '.dock-close', 'height'],
+  ['layout.css', '.brake-btn', 'height'],
+  ['notice.css', '.notice-act', 'min-height'],
+  ['basic.css', '.bal-add', 'min-height'],
   ['trade.css', '.pane-hide', 'height'],
   ['trade.css', '.pane-show', 'height'],
   ['trade.css', '.layers', 'height'],
@@ -196,7 +198,7 @@ test('a quiet button keeps the floor\'s 24 px around its word', () => {
    on 2026-09-20 because the press sat in components.css at the hover's specificity. So press.css
    loads last, and every press selector is at least as specific as every hover rule whose subject
    is that family, anywhere in ui/design. */
-const PRESSED = ['dock-close', 'pane-hide', 'pane-show', 'receipt-close', 'lock-eye', 'netpick-back', 'netpick-link', 'activity-link', 'netsel', 'trade-tab', 'steps-fold', 'dock-next', 'dock-report-toggle', 'checks-toggle', 'fold-head', 'net-row', 'jump-latest', 'check-row'];
+const PRESSED = ['dock-close', 'pane-hide', 'pane-show', 'receipt-close', 'lock-eye', 'netpick-back', 'netpick-link', 'activity-link', 'netsel', 'trade-tab', 'steps-fold', 'dock-next', 'dock-report-toggle', 'checks-toggle', 'brake-btn', 'notice-act', 'bal-add', 'net-row', 'jump-latest', 'check-row'];
 
 // Selector specificity as (ids, classes plus attributes plus pseudo-classes, elements).
 function specificity(selector: string): [number, number, number] {
@@ -266,12 +268,14 @@ test('a pressable\'s label never sits on the third text tone', () => {
   assert.equal(declared(quiet?.[1] ?? '', '--btn-fg'), 'var(--text-2)');
 });
 
-test('the freeze button in index.html names its verb and its size', () => {
+test('the brake in index.html is one named glyph, and its confirm step is the small variant', () => {
   const html = fs.readFileSync(path.join(ROOT, 'ui', 'index.html'), 'utf8');
-  const freeze = html.match(/<button class="([^"]*)" id="btn-freeze"([^>]*)>/);
-  assert.ok(freeze, 'index.html has no #btn-freeze');
-  assert.ok(/\bbtn\b/.test(freeze?.[1] ?? '') && /\bbtn-sm\b/.test(freeze?.[1] ?? ''), 'freeze is not the small variant');
-  assert.match(freeze?.[2] ?? '', /type="button"/);
-  assert.match(freeze?.[2] ?? '', /data-pending-label="Freezing"/);
-  assert.doesNotMatch(css('layout.css'), /\.btn\.freeze\s*\{[^}]*height:/, 'layout.css sizes the freeze button by hand again');
+  const brake = html.match(/<button class="([^"]*)" id="btn-freeze"([^>]*)>/);
+  assert.ok(brake, 'index.html has no #btn-freeze');
+  assert.equal(brake?.[1], 'brake-btn');
+  assert.match(brake?.[2] ?? '', /type="button"/);
+  assert.match(brake?.[2] ?? '', /aria-label="Freeze everything"/);
+  const go = html.match(/<button class="([^"]*)" type="button" data-role="brake-go">/);
+  assert.equal(go?.[1], 'btn btn-sm', 'the confirm step is not the small variant');
+  assert.doesNotMatch(css('layout.css'), /\.brake-actions \.btn\s*\{[^}]*height:/, 'layout.css sizes the confirm step by hand');
 });

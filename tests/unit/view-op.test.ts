@@ -222,7 +222,7 @@ test('/api/state carries the view mode and a basic model, in pro as well as basi
     const s = await state(h);
     assert.equal(s.view, 'pro');
     assert.ok(s.basic, 'basic must be computed even while pro is rendering');
-    assert.ok(s.basic.headline.length > 0);
+    assert.ok(s.basic.caption.length > 0);
   } finally {
     await h.close();
   }
@@ -244,13 +244,13 @@ test('set_view_mode flips the mode and the next state read shows it', async () =
 test('the flipped view carries the live proposal amount, not just the label', async () => {
   // This is the assertion that would have caught the v0.2 gate flag. A mode that
   // changes what the app SAYS about itself, while the payload underneath is unchanged
-  // or empty, passes every other test in this file.
+  // or empty, passes every other test in this file. The ask is drawn from the proposal
+  // itself on every screen, so the proposal is what has to carry the governed amount.
   const h = await boot({ view: 'pro', proposals: [pendingProposal()] });
   try {
     const s = await state(h);
-    assert.equal(s.basic.ask.amountUsd, 250, 'the basic ask must carry the real governed amount');
-    assert.match(s.basic.ask.headline, /250/);
-    assert.equal(s.basic.tone, 'asking');
+    const waiting = (s.proposals as Proposal[]).find((p) => p.status === 'pending');
+    assert.equal(waiting?.draft.kind === 'swap' ? waiting.draft.amountUsd : null, 250, 'the ask must carry the real governed amount');
   } finally {
     await h.close();
   }

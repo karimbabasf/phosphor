@@ -660,123 +660,36 @@ export type Proposal = {
 };
 
 // ---------- Basic view ----------
-// The whole basic screen as data. Built by src/view/basic.ts from the same state the
-// pro deck renders, so the two can be asserted to agree rather than assumed to.
-//
-// The rule this type exists to enforce: basic may render fewer WORDS, never fewer
-// FACTS about where the money goes. Amount is the field least likely to be wrong.
-// Destination is the one with a track record here (see F2: the amount was correct and
-// the funds went to a solver-chosen address while the screen said "your wallet").
+// The balances panel as data. Built by src/view/basic.ts from the same wallet the rest of the
+// window reads, so every figure about money on the panel is computed in one place.
 
-// Drives the one big sentence and the colour treatment. The browser maps it to a
-// class, so a tone nobody styled cannot silently render as unstyled text.
-export type BasicTone = 'calm' | 'asking' | 'working' | 'stopped' | 'frozen' | 'broken';
-
-// Where the funds actually land. 'quoter' means the venue minted the address rather
-// than the app choosing it, which is inherent to intent bridging and is exactly what
-// F2 hid. A quoter-chosen address may never be labelled as the user's own wallet.
-export type BasicDestination = {
-  label: string; // plain words: "an address the swap service chose, not your wallet"
-  address: string; // rendered in full, never truncated
-  chosenBy: 'app' | 'quoter';
-};
-
-export type BasicAsk = {
-  proposalId: string;
-  kind: WriteDraft['kind'];
-  headline: string; // "It wants to change $105.00 of your dollars into Ether."
-  afterLine: string; // "You would have $2,236.08 in dollars afterwards."
-  amountUsd: number; // MUST equal draft.amountUsd, the number evaluateRail governed on
-  symbols: string[]; // every token symbol the draft names
-  chains: string[]; // every chain the draft names
-  destinations: BasicDestination[]; // draft.counterparty plus every simulation deposit address
-  facts: string[]; // short plain lines that may not be dropped
-};
-
-// One line of "what you own". Quantity and value are pre-formatted here for the same
-// reason every other sentence is: a number formatted in browser JavaScript is a claim
-// nothing tests. Pool positions collapse into the row for what they hold.
+// One line of what you hold. Quantity and value are pre-formatted here for the same reason
+// every other sentence is: a number formatted in browser JavaScript is a claim nothing tests.
 export type BasicHolding = {
-  name: string; // plain: "US dollars (USDC)"
+  symbol: string; // "USDC", what the row is titled
+  name: string; // plain: "US dollars (USDC)", what a screen reader says
   quantityLine: string; // "1,204.00"
-  valueLine: string; // "$1,204.00"
-  valueUsd: number; // for ordering and for tests to check the line against
-  // 0..1 of the total. The ring is drawn from this rather than from a sum the browser
-  // did for itself: every figure about money on this screen is computed in one place.
-  share: number;
-};
-
-// One coin, one price, one direction, and the shape of the last day behind it.
-// A LINE, never a candlestick. Karim, 2026-08-14: "btc, sol, and eth with a basic
-// chart, not candles, just a single line". A candlestick answers a question this
-// reader did not ask; the line answers the one they did, which is "and before now?".
-export type BasicPrice = {
-  name: string; // plain: "Ether"
-  symbol: string; // "ETH", kept because it is the verifiable half
-  // Which chain mark the browser draws beside the name. Drawn, not loaded: this page
-  // still loads no images. null means draw nothing rather than draw a guess.
-  mark: 'btc' | 'eth' | 'sol' | null;
-  priceLine: string; // "$3,184.22"
-  changeLine: string; // "up 1.4% today" | "down 0.8% today" | "level today"
-  direction: 'up' | 'down' | 'flat';
-  // Closes over the tracked window, oldest first. Empty when the history could not be
-  // read, which draws no line at all: a flat line and an unread one look identical.
-  points: number[];
-};
-
-// A headline, not a log line. The sentence is composed from the proposal's own typed
-// draft, never from the audit event's developer-facing msg: that text is written for
-// whoever is debugging this and reads as noise to the person who owns the money.
-export type BasicRecent = {
-  headline: string; // "Moved $36.54 of your dollars to your Hyperliquid trading account."
-  timeLine: string; // "2:14 pm"
-  // 'unconfirmed' is a needs_reconciliation row that carries a hash or a handle: money may have
-  // moved and the app cannot yet say. Distinct from 'blocked' (nothing moved) on purpose.
-  outcome: 'done' | 'refused' | 'blocked' | 'unconfirmed';
-};
-
-// What the ASSISTANT did, which is a different list from what happened to the money.
-// Karim, 2026-08-14: "history for transactions and agent actions separate". Reading and
-// looking are most of what an assistant does, and folding them into the money list made
-// four real movements sit under twenty balance checks.
-//
-// Composed from the typed audit event and its arguments, never from its msg field, for
-// the same reason BasicRecent is composed from the proposal: that text is written for
-// whoever is debugging this app and reads as noise to the person who owns the money.
-export type BasicAction = {
-  line: string; // "Looked at what you own."
-  timeLine: string; // "2:14 pm", of the most recent one in the run
-  // A run of the same action collapses to one line carrying its count. An assistant that
-  // read the wallet nine times produces nine identical sentences, and nine identical
-  // sentences is a log, which is the thing this screen exists not to be.
-  repeat: number; // 1 when it happened once
+  // "$1,204.00", or null when the app has no price for the coin: an unknown is never "$0.00".
+  valueLine: string | null;
+  valueUsd: number | null; // for ordering and for tests to check the line against
 };
 
 export type BasicView = {
-  tone: BasicTone;
   // null when unknown or stale. NEVER 0 as a stand-in: a zero and an unknown are
-  // indistinguishable on screen, and basic is aimed at someone who cannot tell.
+  // indistinguishable on screen, and the panel is aimed at someone who cannot tell.
   totalUsd: number | null;
-  // The hero's own slot: the last read total, or "" when a place is unread and nothing has
-  // been read at all. Never a sentence, and never a zero standing in for an unknown.
+  // The figure: the last read total, or "" when nothing has been read or nothing is priced.
+  // Never a sentence, and never a zero standing in for an unknown.
   totalLine: string; // "$2,341.08" | ""
-  // Why the number above is not yet fact, set in the state line under it; null when it is.
-  checkingLine: string | null; // "Still checking." | "Checking your new balance."
-  placesLine: string;
-  headline: string;
-  ask: BasicAsk | null;
-  warning: string | null; // gate off, policy unreadable, kill switch, in plain words
-  agentLine: string;
-  footer: string;
-  // Empty while any chain is unread, for the same reason totalUsd goes null: a holdings
-  // list missing a chain looks exactly like a holdings list of someone who owns less.
+  // The line under the figure, saying what it is: "in your balance", "still checking",
+  // "in your balance, not counting WIF", or a whole sentence when there is no figure.
+  caption: string;
+  warning: string | null; // kill switch or unreadable rules, in plain words
+  // Empty while any place is unread, for the same reason totalUsd goes null: a holdings list
+  // missing a place looks exactly like the holdings list of someone who owns less.
   holdings: BasicHolding[];
-  // The three coins this screen tracks, in the order they are read: BTC, SOL, ETH.
-  // A coin whose price could not be read is ABSENT rather than present and blank, for
-  // the same reason totalUsd goes null: an unknown and a zero look identical on screen.
-  prices: BasicPrice[];
-  recent: BasicRecent[]; // newest first, capped; empty is a designed state, not a bug
-  actions: BasicAction[]; // the other half of the history: what the assistant did
+  smallLine: string | null; // "2 tiny balances under a cent, not listed"
+  emptyLine: string | null; // what the list says when it has no rows, and why
 };
 
 // ---------- Audit ----------
