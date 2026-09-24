@@ -930,11 +930,16 @@ export function createDriver(opts: DriverOptions) {
 
   /* Calls back once a process group this driver started is gone. kill() already escalates a group
      it asked to go; one that went on its own (a turn's grok, then its MCP proxy after its bye) is
-     watched for twice that grace, and then the wait ends anyway. */
+     watched for twice that grace, and whatever is left of it then is killed before the wait ends,
+     so the next turn never starts beside it. */
   function whenGone(pid: number, then: () => void): void {
     const deadline = Date.now() + TERM_GRACE_MS * 2;
     const check = (): void => {
-      if (!groupAlive(pid) || Date.now() >= deadline) return then();
+      if (!groupAlive(pid)) return then();
+      if (Date.now() >= deadline) {
+        signalGroup(pid, 'SIGKILL');
+        return then();
+      }
       setTimeout(check, POLL_MS).unref();
     };
     check();

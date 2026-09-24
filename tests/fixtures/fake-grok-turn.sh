@@ -11,9 +11,12 @@
 # reads a page with web_fetch, SERVERWEB carries a search the API ran inside the reply, SLOW says
 # nothing for five seconds, NOISY says so on stderr when it is stopped, STUBBORN holds the session
 # half a second after it is stopped, LINGER stays up two seconds after its result line.
+# The init line lists phosphor__wallet the way grok lists a server that attached before it
+# printed (the live run of 2026-09-23).
 # Every turn holds the session in grok-session.lock under TMPDIR while it runs, and a turn that
-# starts while another still holds it writes grok-overlap.txt: two processes on one session. The init line lists phosphor__wallet the way grok lists a server
-# that attached before it printed (the live run of 2026-09-23).
+# starts while a LIVE process still holds it writes grok-overlap.txt: two processes on one
+# session. A lock whose holder is gone (killed before its trap could clear it) is not a holder.
+# STUBBORN writes grok-holding.txt once its trap is set, so a test can stop it mid-hold.
 # The read-back before every turn: the servers GROK_HOME/config.toml names, and hooks when that
 # home holds a hooks folder, as a real grok would list them.
 if [ "$1" = 'inspect' ]; then
@@ -30,7 +33,9 @@ if [ "$1" = 'inspect' ]; then
   exit 0
 fi
 lock="${TMPDIR:-/tmp}/grok-session.lock"
-if [ -e "$lock" ]; then printf '%s started while %s held the session\n' "$$" "$(cat "$lock")" >> "${TMPDIR:-/tmp}/grok-overlap.txt"; fi
+# Set before the lock exists, so a stop that lands at any point after it lets go of the session.
+trap 'rm -f "$lock"; exit 143' TERM
+if [ -e "$lock" ] && kill -0 "$(cat "$lock")" 2>/dev/null; then printf '%s started while %s held the session\n' "$$" "$(cat "$lock")" >> "${TMPDIR:-/tmp}/grok-overlap.txt"; fi
 printf '%s' "$$" > "$lock"
 printf '%s home=%s grok_home=%s seat=%s\n' "$*" "$HOME" "${GROK_HOME:-}" "${PHOSPHOR_SESSION:-}" >> "${TMPDIR:-/tmp}/grok-argv.txt"
 prompt=''
@@ -54,6 +59,7 @@ case "$prompt" in
     ;;
   *STUBBORN*)
     trap 'sleep 0.5; rm -f "$lock"; exit 143' TERM
+    : > "${TMPDIR:-/tmp}/grok-holding.txt"
     sleep 5 &
     wait
     rm -f "$lock"

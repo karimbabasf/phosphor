@@ -392,7 +392,8 @@ test('a message sent right after a stop waits for the stopped turn\'s process to
   try {
     w.driver.start();
     w.driver.send('STUBBORN');
-    await until(() => w.argv().length === 1);
+    // Stopped mid-hold, never before the stand-in has set the trap that holds the session.
+    await until(() => fs.existsSync(path.join(w.dir, 'grok-holding.txt')));
     assert.equal(w.driver.interrupt(), true);
     await new Promise((r) => setTimeout(r, 50));
     // 50 ms after the stop, while the stopped turn still holds the session for another 450.
