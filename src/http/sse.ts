@@ -27,10 +27,6 @@ export function createSseHub(deps: {
   audit: Audit;
   charts: ChartSlots;
   trade: TradeService;
-  // The bounded audit tail the basic screen reads. Seeded by the caller and appended here,
-  // because the audit subscription that feeds the pro log is the same one that feeds it.
-  recent: LogEvent[];
-  recentMax: number;
   // Whether the live rail has gone quiet. Defaults to "always", which is behaviour before the
   // rail existed. See the tick below for why the nudge timer has to ask.
   candlesQuiet?: () => boolean;
@@ -40,7 +36,7 @@ export function createSseHub(deps: {
   // cut, so no caller can stream a raw event by forgetting.
   redact?: (event: LogEvent) => LogEvent;
 }): SseHub {
-  const { store, audit, charts, trade, recent, recentMax } = deps;
+  const { store, audit, charts, trade } = deps;
   const candlesQuiet = deps.candlesQuiet ?? (() => true);
   const redact = deps.redact ?? ((event: LogEvent) => redactEvent(event, () => false));
 
@@ -163,15 +159,7 @@ export function createSseHub(deps: {
     broadcastTransactions();
     broadcastProposal(p.id);
   });
-  // The basic screen's second history list is built from the audit tail, and buildState
-  // runs on every broadcast and every heartbeat. audit.tail() re-reads the whole file from
-  // disk by design, and that file is append-only forever, so calling it per state build
-  // would make the state payload get slower every day the app runs. The newest events are
-  // kept in memory instead: seeded once by the caller, appended by the same subscription
-  // that feeds the pro log, and bounded.
   const offAudit = audit.subscribe((event) => {
-    recent.unshift(event);
-    if (recent.length > recentMax) recent.length = recentMax;
     for (const client of sseClients) sseSend(client, { type: 'log', event: redact(event) });
   });
 

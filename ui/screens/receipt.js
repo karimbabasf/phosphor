@@ -358,7 +358,7 @@
     if (unconfirmed(receipt)) {
       var warn = dom.el('p', 'receipt-note');
       warn.dataset.tone = 'warn';
-      dom.setText(warn, 'Not confirmed. The app cannot tell whether this move went through. Do not send it again.'
+      dom.setText(warn, 'Not confirmed. Still checking whether this went through. I\'ll update it here.'
         + (receipt.summary ? ' ' + String(receipt.summary) : ''));
       card.appendChild(warn);
     } else if (receipt.status === 'failed' && receipt.refunded) {
@@ -421,7 +421,7 @@
           var status = answer && answer.status;
           if (status === 'needs_reconciliation') {
             var said = answer && typeof answer.detail === 'string' && answer.detail.trim();
-            dom.setText(error, said ? 'Checked again just now: ' + said : 'Still no answer. Nothing has changed. Do not send it again.');
+            dom.setText(error, said ? 'Checked again just now: ' + said : 'Still checking whether this went through. I\'ll update it here.');
             error.hidden = false;
             return;
           }
@@ -504,105 +504,6 @@
     });
   }
 
-  /* ---------- the dock card (the unknown-outcome path, until the dock retires) ---------- */
-
-  function fill(host, receipt, onClose) {
-    dom.clear(host);
-    var unknown = receipt.status === 'needs_reconciliation';
-    var open = unconfirmed(receipt);
-
-    host.appendChild(dom.el('p', 'label', open ? 'Not confirmed' : (nothingLeft(receipt) ? 'This did not go through' : 'Receipt')));
-    host.appendChild(dom.el('h2', 'title', receipt.headline || receipt.summary || 'Something moved'));
-
-    if (open) {
-      var warn = dom.el('div', 'banner');
-      warn.dataset.tone = 'warn';
-      warn.appendChild(dom.el('span', '', 'Not confirmed. The app cannot tell whether this move went through. Do not send it again.'
-        + (receipt.summary ? ' ' + String(receipt.summary) : '')));
-      host.appendChild(warn);
-    }
-
-    var facts = dom.el('div', 'facts');
-    addFact(facts, 'What moved', amountLine(receipt));
-    if (receipt.fromChain && receipt.toChain && receipt.fromChain !== receipt.toChain) {
-      addFact(facts, 'From', chainName(receipt.fromChain));
-      addFact(facts, 'To', chainName(receipt.toChain));
-    } else if (receipt.fromChain) {
-      addFact(facts, 'On', chainName(receipt.fromChain));
-    }
-    if (typeof receipt.feesUsd === 'number') {
-      addFact(facts, 'Fees', dom.fee(receipt.feesUsd));
-    }
-    if (receipt.at) addFact(facts, 'When', dom.ago(receipt.at));
-    if (typeof receipt.balanceBefore === 'number' && typeof receipt.balanceAfter === 'number') {
-      addFact(facts, 'Your money before', dom.usd(receipt.balanceBefore));
-      addFact(facts, 'Your money after', dom.usd(receipt.balanceAfter));
-    }
-    host.appendChild(facts);
-
-    /* The rail's own sentence, kept whole and kept here. It names the intent and the quote it
-       was filed under, which is what to quote at a venue when something is disputed, so it is
-       never summarised and never truncated. It is the row title that was wrong, not this. */
-    if (receipt.summary && receipt.summary !== receipt.headline) {
-      var said = dom.el('div', 'said stack-2');
-      said.appendChild(dom.el('p', 'label', 'What the rail recorded'));
-      said.appendChild(dom.el('p', 'meta said-body', receipt.summary));
-      host.appendChild(said);
-    }
-
-    var txids = Array.isArray(receipt.txids) ? receipt.txids : [];
-    if (txids.length) {
-      var wrap = dom.el('div', 'stack-2');
-      wrap.appendChild(dom.el('p', 'label', txids.length === 1 ? 'Transaction' : 'Transactions'));
-      for (var i = 0; i < txids.length; i += 1) {
-        wrap.appendChild(txRow(txids[i]));
-      }
-      host.appendChild(wrap);
-    }
-
-    var error = dom.el('p', 'body down');
-    error.hidden = true;
-    host.appendChild(error);
-
-    var actions = dom.el('div', 'screen-actions');
-    if (unknown) {
-      var recheck = dom.el('button', 'btn btn-primary');
-      recheck.appendChild(dom.el('span', 'btn-label', 'Check it again'));
-      dom.setAttr(recheck, 'data-pending-label', 'Checking');
-      actions.appendChild(recheck);
-      dom.on(recheck, 'click', function () {
-        window.PhosphorShell.setPending(recheck, true);
-        api.reconcile(receipt.id)
-          .then(function (answer) {
-            var status = answer && answer.status;
-            /* Still unreadable is an answer, and the card stays open on it:
-               closing would look like it had been settled. */
-            if (status === 'needs_reconciliation') {
-              var said = answer && typeof answer.detail === 'string' && answer.detail.trim();
-              dom.setText(error, said ? 'Checked again just now: ' + said : 'Still no answer. Nothing has changed. Do not send it again.');
-              error.hidden = false;
-              return;
-            }
-            window.PhosphorToast.show('Checked. It is ' + readableStatus(status) + '.'
-              + (answer && answer.detail ? ' ' + answer.detail : ''));
-            if (onClose) onClose();
-          })
-          .catch(function (err) {
-            dom.setText(error, net.readable(err));
-            error.hidden = false;
-          })
-          .finally(function () {
-            window.PhosphorShell.setPending(recheck, false);
-          });
-      });
-    }
-    var done = dom.el('button', 'btn btn-ghost');
-    done.appendChild(dom.el('span', 'btn-label', 'Close'));
-    actions.appendChild(done);
-    host.appendChild(actions);
-    dom.on(done, 'click', function () { if (onClose) onClose(); });
-  }
-
   /* "nothing left your wallet" is said only over a row with no hash: a check that answers
      failed on a row that carries one is the venue saying no after the money went. */
   function readableStatus(status, receipt) {
@@ -610,41 +511,6 @@
     if (status === 'failed') return hashCount(receipt || {}) === 0 ? 'not done, and nothing left your wallet' : 'not done';
     if (status === 'needs_reconciliation') return 'still not confirmed';
     return 'no longer waiting';
-  }
-
-  function amountLine(receipt) {
-    if (typeof receipt.amount !== 'number') return '';
-    return dom.qty(receipt.amount) + ' ' + (receipt.symbol || '');
-  }
-
-  function txRow(tx) {
-    var row = dom.el('div', 'tx-row');
-    var top = dom.el('div', 'between');
-    top.appendChild(dom.el('span', 'meta', chainName(tx.chain)));
-    var copy = dom.el('button', 'btn btn-quiet');
-    copy.type = 'button';
-    copy.appendChild(dom.el('span', 'btn-label', 'Copy'));
-    top.appendChild(copy);
-    row.appendChild(top);
-    row.appendChild(dom.el('p', 'hash addr', tx.hash));
-    var link = dom.el('a', 'meta', 'Open in a block explorer');
-    if (setHref(link, tx.url)) {
-      link.target = '_blank';
-      link.rel = 'noreferrer noopener';
-      row.appendChild(link);
-    }
-    dom.on(copy, 'click', function () {
-      copyToClipboard(String(tx.hash), copy.querySelector('.btn-label'));
-    });
-    return row;
-  }
-
-  function addFact(host, label, value) {
-    if (value === '' || value === null || value === undefined) return;
-    var row = dom.el('div', 'fact');
-    row.appendChild(dom.el('span', 'label', label));
-    row.appendChild(dom.el('span', 'body mono', value));
-    host.appendChild(row);
   }
 
   /* ---------- the Activity row ---------- */
@@ -770,7 +636,6 @@
   }
 
   window.PhosphorReceipt = {
-    fill: fill,
     row: row,
     updateRow: updateRow,
     chainName: chainName,

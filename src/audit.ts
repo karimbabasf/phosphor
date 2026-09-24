@@ -112,8 +112,8 @@ export type Audit = {
      the last write. */
   flushTip(): void;
   /* How many lines this process has appended. Same contract as the store's revision(): a caller
-     holding a derivation of what the log carries (the state payload carries the agent roster, the
-     recent-events list and the last activity time, all of which move on an audit line) compares
+     holding a derivation of what the log carries (the state payload carries the agent roster and
+     the last activity time, both of which move on an audit line) compares
      this to decide whether the derivation is still current. A count rather than a subscription,
      for the same reason: nothing to leak and nothing to forget. */
   lineCount(): number;

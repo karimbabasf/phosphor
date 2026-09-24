@@ -3,7 +3,7 @@
 // The approve card timed out on a stalled SSE frame and told the person "Nothing left your
 // wallet" while the rail was still running: the same lie the MCP proxy told the agent on
 // 2026-09-15. A write that timed out is the app still working, not a failure, so a timeout now
-// says the move is still running and points at Activity, and never claims the wallet is untouched.
+// says the app is still checking, and never claims the wallet is untouched.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,12 +35,11 @@ const timeout = (): Error => {
   return e;
 };
 
-test('a timed out write says the move is still running, never that nothing left the wallet', () => {
+test('a timed out write says the app is still checking, never that nothing left the wallet', () => {
   const readable = load();
   const message = readable(timeout(), true);
   assert.doesNotMatch(message, /Nothing left/i, 'the timeout must not claim the wallet is untouched');
-  assert.match(message, /still running/i);
-  assert.match(message, /Activity/);
+  assert.equal(message, "Still checking whether this went through. I'll update it here.");
 });
 
 test('an ordinary error still carries "Nothing left your wallet" when the caller knows it', () => {
