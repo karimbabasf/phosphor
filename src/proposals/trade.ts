@@ -61,13 +61,10 @@ function twinReason(plan: PlanInput | Plan, twin: PlanRow): string {
   return `A ${plan.side} on ${plan.symbol} this size is already live as ${twin.id}${proposal}. Change or cancel it instead of arming a second one on the same coin.`;
 }
 
-/* The other live plan on this plan's coin, when the risk inputs name one. A second plan on a coin
-   would share the venue's one position there, so it is refused before anything is drawn. The
-   field arrives with pg/hl's one-plan-per-coin rule (src/trade/risk.ts sameCoinPlan); read
-   structurally so this file builds on either side of that merge. */
+/* The other live plan on this plan's coin. A second plan on a coin would share the venue's one
+   position there, so it is refused before anything is drawn. */
 function liveOnCoin(deps: TradeDeps, plan: PlanInput | Plan): string | null {
-  const inputs = riskInputsFor(deps, { id: 'pl_new', ...plan } as Plan, null) as unknown as { sameCoinPlan?: unknown };
-  return typeof inputs.sameCoinPlan === 'string' ? inputs.sameCoinPlan : null;
+  return riskInputsFor(deps, { id: 'pl_new', ...plan } as Plan, null).sameCoinPlan;
 }
 
 export async function proposeTrade(ctx: PCtx, params: TradeParams): Promise<Proposal> {
