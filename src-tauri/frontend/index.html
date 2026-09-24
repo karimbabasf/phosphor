@@ -2,18 +2,29 @@
 <meta charset="utf-8" />
 <title>Phosphor</title>
 <!--
-  The only page Tauri itself serves. It is on screen for the couple of seconds the Node
+  The only page Tauri itself serves at start. It is on screen for the couple of seconds the Node
   backend takes to bind its port, and it is replaced, not navigated: the real window is a
   separate webview pointed at http://127.0.0.1, so the page that holds the approval surface
   never shares an origin or a webview with anything Tauri controls.
 
-  It is the app's own mark, in the state the mark already has a meaning for: not yet lit, on
-  the same ground the window paints. So this screen is not a separate loading animation at
-  all. When the real window arrives, the same mark sits beside "Phosphor" in its top left
-  (.brand in ui/design/layout.css), on.
+  It is the app's own mark doing the one thing the window's mark does when it wakes: the slabs
+  light from the back to the front and the cut glints (the trace-on in ui/design/mark.css), and
+  then, while the app is still opening, the scan goes round the five pieces. Full ink, on the
+  window's warm ground, so the splash and the window show the mark one way. When the real window
+  arrives the same mark sits beside "Phosphor" in its top left.
 
-  The window is dark only, so this page paints one colourway and receives no script. The block
-  below is the same values as ui/design/tokens.css; only the tokens this page uses.
+  Two states, chosen by the shell:
+
+    window.__PHOSPHOR_SPLASH__ = { state: "starting" }                  before any script runs
+    window.__phosphorFailed({ title, message, detail })                 through WebviewWindow::eval
+    window.__phosphorStarting()                                         after Try again
+
+  A failure is drawn here, in the app's own look, never as a system alert: the mark stops, one
+  sentence says what happened in plain words, the shell's own reason sits behind Details, and
+  Try again and Quit are two IPC commands (splash_retry, splash_quit) like the update window's.
+
+  The window is dark only, so this page paints one colourway. The block below is the same values
+  as ui/design/tokens.css; only the tokens this page uses.
 -->
 <style>
   /* Copied from ui/design/tokens.css rather than imported, because this page is served by
@@ -21,10 +32,26 @@
   :root {
     color-scheme: dark;
     --bg-0: #161210;
+    --bg-2: #292320;
+    --bg-3: #342e2b;
     --text: #f8f0e8;
     --text-2: #bcaea1;
+    --text-3: #9a8c7f;
     --ink: #52e893;
+    --on-ink: #161210;
+    --hi-rgb: 255, 232, 220;
+    --well-bg: color-mix(in srgb, var(--bg-0), #000 25%);
+    --well: inset 0 1px 3px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(var(--hi-rgb), 0.04);
+    --ground-glow-1: color-mix(in srgb, var(--bg-0), #845d47 20%);
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+    --scale-press: 0.97;
+  }
+
+  @supports (transition-timing-function: linear(0, 1)) {
+    :root {
+      --ease-spring: linear(0, 0.042, 0.148, 0.291, 0.449, 0.604, 0.746, 0.867, 0.963, 1.034, 1.081, 1.108, 1.119, 1.117, 1.106, 1.09, 1.072, 1.053, 1.035, 1.02, 1.008, 0.998, 0.992, 0.988, 0.986, 0.986, 0.987, 0.989, 0.991, 0.993, 0.995, 0.997, 0.999, 1, 1.001, 1.001, 1.002, 1.002, 1.002, 1.001, 1);
+    }
   }
 
   @font-face {
@@ -46,52 +73,333 @@
     overflow: hidden;
   }
 
+  /* The ground's own warmth: one soft pool of light behind the mark. */
+  body {
+    background: radial-gradient(60% 55% at 50% 42%, var(--ground-glow-1), var(--bg-0) 72%);
+  }
+
+  /* One column in the middle of the window. The stage holds the mark and the words and scrolls
+     inside itself if the shell's reason is long; the buttons, when there are any, sit under it
+     and never leave the window. */
   main {
+    box-sizing: border-box;
     height: 100%;
+    padding: 24px 32px;
     display: grid;
-    place-content: center;
-    justify-items: center;
+    grid-template-rows: minmax(0, 1fr) auto;
     gap: 14px;
     text-align: center;
   }
 
-  /* The mark the window draws, at the size a splash can afford, at the same not-ready
-     opacity. It breathes rather than spins: a spinner would promise progress this screen
-     cannot measure, and the one thing it honestly knows is that something is still coming. */
-  .mark {
-    width: 43px;
-    height: 48px;
-    color: var(--ink);
-    opacity: 0.35;
-    animation: waking 1800ms var(--ease-out) infinite;
+  .stage {
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
 
-  .wordmark {
+  /* Centred while it fits, from the top once it does not, so nothing is ever cut off above. */
+  .stage-inner {
+    margin-block: auto;
+    display: grid;
+    justify-items: center;
+    gap: 16px;
+    width: 100%;
+  }
+
+  /* ---------- the mark ----------
+
+     brand/phosphor-mark.svg cut into its five pieces, as ui/index.html draws it: m1 to m4 the
+     slabs from the back to the front, m5 the cut inside the front slab. Each piece reads how lit
+     it is (--mN) and how hot (--hN) off the svg, and the animations write those numbers. */
+  @property --m1 { syntax: "<number>"; inherits: true; initial-value: 1; }
+  @property --m2 { syntax: "<number>"; inherits: true; initial-value: 1; }
+  @property --m3 { syntax: "<number>"; inherits: true; initial-value: 1; }
+  @property --m4 { syntax: "<number>"; inherits: true; initial-value: 1; }
+  @property --m5 { syntax: "<number>"; inherits: true; initial-value: 0; }
+  @property --h1 { syntax: "<number>"; inherits: true; initial-value: 0; }
+  @property --h2 { syntax: "<number>"; inherits: true; initial-value: 0; }
+  @property --h3 { syntax: "<number>"; inherits: true; initial-value: 0; }
+  @property --h4 { syntax: "<number>"; inherits: true; initial-value: 0; }
+  @property --h5 { syntax: "<number>"; inherits: true; initial-value: 0; }
+
+  .mark {
+    width: 47px;
+    height: 52px;
+    color: var(--ink);
+    overflow: visible;
+    transition: opacity 400ms var(--ease-out);
+  }
+
+  /* The trace-on, once, then the scan for as long as the app is opening: a beam goes round the
+     five pieces every 1.4 s, each full and hot when it is hit and fading to half before it comes
+     round again. Nothing changes size. */
+  body[data-state="starting"] .mark {
+    animation:
+      mark-in-1 440ms var(--ease-out) 60ms both,
+      mark-in-2 440ms var(--ease-out) 150ms both,
+      mark-in-3 440ms var(--ease-out) 240ms both,
+      mark-in-4 440ms var(--ease-out) 330ms both,
+      mark-glint 380ms var(--ease-out) 420ms both,
+      mark-scan-1 1400ms linear 900ms infinite,
+      mark-scan-2 1400ms linear 1180ms infinite,
+      mark-scan-3 1400ms linear 1460ms infinite,
+      mark-scan-4 1400ms linear 1740ms infinite,
+      mark-scan-5 1400ms linear 2020ms infinite;
+  }
+
+  @keyframes mark-in-1 { 0% { --m1: 0.12; --h1: 0; } 22% { --m1: 1; --h1: 0.6; } 100% { --m1: 1; --h1: 0; } }
+  @keyframes mark-in-2 { 0% { --m2: 0.12; --h2: 0; } 22% { --m2: 1; --h2: 0.6; } 100% { --m2: 1; --h2: 0; } }
+  @keyframes mark-in-3 { 0% { --m3: 0.12; --h3: 0; } 22% { --m3: 1; --h3: 0.6; } 100% { --m3: 1; --h3: 0; } }
+  @keyframes mark-in-4 { 0% { --m4: 0.12; --h4: 0; } 22% { --m4: 1; --h4: 0.6; } 100% { --m4: 1; --h4: 0; } }
+  @keyframes mark-glint { 0% { --m5: 0; --h5: 0.5; } 30% { --m5: 0.45; } 100% { --m5: 0; --h5: 0; } }
+
+  @keyframes mark-scan-1 { 0% { --m1: 1; --h1: 0.45; animation-timing-function: var(--ease-out); } 12% { --h1: 0.1; } 58% { --m1: 0.5; --h1: 0; } 100% { --m1: 0.5; --h1: 0; } }
+  @keyframes mark-scan-2 { 0% { --m2: 1; --h2: 0.45; animation-timing-function: var(--ease-out); } 12% { --h2: 0.1; } 58% { --m2: 0.5; --h2: 0; } 100% { --m2: 0.5; --h2: 0; } }
+  @keyframes mark-scan-3 { 0% { --m3: 1; --h3: 0.45; animation-timing-function: var(--ease-out); } 12% { --h3: 0.1; } 58% { --m3: 0.5; --h3: 0; } 100% { --m3: 0.5; --h3: 0; } }
+  @keyframes mark-scan-4 { 0% { --m4: 1; --h4: 0.45; animation-timing-function: var(--ease-out); } 12% { --h4: 0.1; } 58% { --m4: 0.5; --h4: 0; } 100% { --m4: 0.5; --h4: 0; } }
+  @keyframes mark-scan-5 { 0% { --m5: 0.4; --h5: 0.4; animation-timing-function: var(--ease-out); } 40% { --m5: 0; --h5: 0; } 100% { --m5: 0; --h5: 0; } }
+
+  /* A failure stops the mark where it is whole, smaller and stepped back: the app is not
+     running, and the words are what matter now. */
+  body[data-state="failed"] .mark {
+    width: 34px;
+    height: 37.5px;
+    opacity: 0.45;
+  }
+
+  body[data-state="failed"] .stage-inner {
+    gap: 12px;
+  }
+
+  .opening {
+    margin: 0;
     font-size: 15px;
+    font-weight: 550;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+
+  /* ---------- the failure ---------- */
+
+  .failed {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    max-width: 340px;
+    min-height: 0;
+  }
+
+  .failed h1 {
+    margin: 0;
+    font-size: 16px;
     font-weight: 600;
     letter-spacing: -0.01em;
+    line-height: 1.3;
   }
 
-  p {
+  .failed p {
     margin: 0;
-    font-size: 12px;
+    font-size: 13px;
+    line-height: 1.5;
     color: var(--text-2);
   }
 
-  @keyframes waking {
-    0%, 100% { opacity: 0.28; }
-    50%      { opacity: 0.72; }
+  /* The shell's own reason, for whoever is fixing it: one click away, never the headline. */
+  details {
+    width: 100%;
+    font-size: 12px;
+    color: var(--text-3);
   }
 
+  details summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 26px;
+    padding: 0 8px;
+    border-radius: 8px;
+    list-style: none;
+    cursor: default;
+  }
+
+  details summary::-webkit-details-marker { display: none; }
+  details summary::after { content: ""; width: 0; height: 0; border: 4px solid transparent; border-top-color: currentColor; margin-top: 4px; transition: transform 200ms var(--ease-out); }
+  details[open] summary::after { transform: rotate(180deg); margin-top: -4px; }
+  details summary:focus-visible { outline: 2px solid var(--text-2); outline-offset: 2px; }
+
+  details pre {
+    margin: 8px 0 0;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: var(--well-bg);
+    box-shadow: var(--well);
+    color: var(--text-2);
+    font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    text-align: left;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .actions {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 14px;
+    background: var(--bg-3);
+    box-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.07);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 550;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    cursor: default;
+    transition: transform 480ms var(--ease-spring), background-color 160ms var(--ease-out);
+  }
+
+  .btn-primary {
+    background: var(--ink);
+    color: var(--on-ink);
+    font-weight: 600;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .btn:hover { background: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 6%); }
+    .btn-primary:hover { background: color-mix(in srgb, var(--ink) 88%, #FFFFFF); }
+  }
+
+  .btn:active {
+    transform: scale(var(--scale-press));
+    transition-duration: 100ms, 160ms;
+    transition-timing-function: var(--ease-out);
+  }
+
+  .btn:focus-visible { outline: 2px solid var(--text-2); outline-offset: 2px; }
+
+  /* Each state fades in rather than snapping. */
+  .state {
+    animation: state-in 220ms var(--ease-out) both;
+  }
+
+  @keyframes state-in {
+    from { opacity: 0; transform: translateY(4px); }
+  }
+
+  [hidden] { display: none !important; }
+
   @media (prefers-reduced-motion: reduce) {
-    .mark { animation: none; opacity: 0.55; }
+    body[data-state="starting"] .mark,
+    .state {
+      animation: none;
+    }
+    .btn { transition: none; }
   }
 </style>
+<body data-state="starting">
 <main>
-  <!-- brand/phosphor-mark.svg, verbatim: this page has no origin to fetch it from. -->
+  <div class="stage">
+  <div class="stage-inner">
+  <!-- brand/phosphor-mark.svg cut into its five pieces, the path data verbatim, as ui/index.html
+       draws it: this page has no origin to fetch it from. -->
   <svg class="mark" viewBox="0 0 59.46 64.75" aria-hidden="true" focusable="false">
-    <path fill="currentColor" fill-rule="evenodd" d="M31.63 64.75 L31.63 37.78 A8.936598294969773 8.936598294969773 0 0 1 36.10 30.04 L59.46 16.55 L59.46 36.50 A8.936598294969773 8.936598294969773 0 0 1 54.99 44.24 L39.89 52.95 L39.89 59.98 Z M39.89 43.66 L50.17 37.73 A5.522616923857726 5.522616923857726 0 0 0 52.93 32.94 L52.93 29.61 L42.65 35.54 A5.522616923857726 5.522616923857726 0 0 0 39.89 40.33 Z M21.09 58.66 L21.09 31.69 A8.936598294969773 8.936598294969773 0 0 1 25.55 23.95 L48.91 10.47 L56.75 14.99 L33.39 28.47 A8.936598294969773 8.936598294969773 0 0 0 28.92 36.21 L28.92 63.18 Z M10.54 52.58 L10.54 25.60 A8.936598294969773 8.936598294969773 0 0 1 15.01 17.86 L38.37 4.38 L46.20 8.90 L22.84 22.39 A8.936598294969773 8.936598294969773 0 0 0 18.38 30.13 L18.38 57.10 Z M0.00 46.49 L0.00 19.52 A8.936598294969773 8.936598294969773 0 0 1 4.47 11.78 L22.30 1.48 A11.045233847715451 11.045233847715451 0 0 1 33.35 1.48 L35.66 2.81 L12.30 16.30 A8.936598294969773 8.936598294969773 0 0 0 7.83 24.04 L7.83 51.01 Z"/>
+    <path class="m1" style="fill-opacity: var(--m1, 1); fill: color-mix(in oklab, currentColor, #fff calc(var(--h1, 0) * 100%))" d="M0.00 46.49 L0.00 19.52 A8.936598294969773 8.936598294969773 0 0 1 4.47 11.78 L22.30 1.48 A11.045233847715451 11.045233847715451 0 0 1 33.35 1.48 L35.66 2.81 L12.30 16.30 A8.936598294969773 8.936598294969773 0 0 0 7.83 24.04 L7.83 51.01 Z"/>
+    <path class="m2" style="fill-opacity: var(--m2, 1); fill: color-mix(in oklab, currentColor, #fff calc(var(--h2, 0) * 100%))" d="M10.54 52.58 L10.54 25.60 A8.936598294969773 8.936598294969773 0 0 1 15.01 17.86 L38.37 4.38 L46.20 8.90 L22.84 22.39 A8.936598294969773 8.936598294969773 0 0 0 18.38 30.13 L18.38 57.10 Z"/>
+    <path class="m3" style="fill-opacity: var(--m3, 1); fill: color-mix(in oklab, currentColor, #fff calc(var(--h3, 0) * 100%))" d="M21.09 58.66 L21.09 31.69 A8.936598294969773 8.936598294969773 0 0 1 25.55 23.95 L48.91 10.47 L56.75 14.99 L33.39 28.47 A8.936598294969773 8.936598294969773 0 0 0 28.92 36.21 L28.92 63.18 Z"/>
+    <path class="m4" fill-rule="evenodd" style="fill-opacity: var(--m4, 1); fill: color-mix(in oklab, currentColor, #fff calc(var(--h4, 0) * 100%))" d="M31.63 64.75 L31.63 37.78 A8.936598294969773 8.936598294969773 0 0 1 36.10 30.04 L59.46 16.55 L59.46 36.50 A8.936598294969773 8.936598294969773 0 0 1 54.99 44.24 L39.89 52.95 L39.89 59.98 Z M39.89 43.66 L50.17 37.73 A5.522616923857726 5.522616923857726 0 0 0 52.93 32.94 L52.93 29.61 L42.65 35.54 A5.522616923857726 5.522616923857726 0 0 0 39.89 40.33 Z"/>
+    <path class="m5" style="fill-opacity: var(--m5, 0); fill: color-mix(in oklab, currentColor, #fff calc(var(--h5, 0) * 100%))" d="M39.89 43.66 L50.17 37.73 A5.522616923857726 5.522616923857726 0 0 0 52.93 32.94 L52.93 29.61 L42.65 35.54 A5.522616923857726 5.522616923857726 0 0 0 39.89 40.33 Z"/>
   </svg>
-  <div class="wordmark">Phosphor</div>
-  <p>Starting the control app</p>
+
+  <p class="opening state" id="opening">Opening Phosphor</p>
+
+  <section class="failed state" id="failed" hidden>
+    <h1 id="failed-title"></h1>
+    <p id="failed-line"></p>
+    <details id="failed-more" hidden>
+      <summary>Details</summary>
+      <pre id="failed-detail"></pre>
+    </details>
+  </section>
+  </div>
+  </div>
+  <div class="actions state" id="actions" hidden>
+    <button id="quit" class="btn" type="button">Quit</button>
+    <button id="retry" class="btn btn-primary" type="button">Try again</button>
+  </div>
 </main>
+<script>
+  (function () {
+    // The IPC the shell injects into the webviews it serves; only this local page and the update
+    // window reach app commands, the control window is a remote page and is refused at the ACL.
+    var internals = window.__TAURI_INTERNALS__;
+    function invoke(cmd) { if (internals && internals.invoke) internals.invoke(cmd).catch(function () {}); }
+
+    var body = document.body;
+    var opening = document.getElementById('opening');
+    var failed = document.getElementById('failed');
+    var title = document.getElementById('failed-title');
+    var line = document.getElementById('failed-line');
+    var more = document.getElementById('failed-more');
+    var detail = document.getElementById('failed-detail');
+    var retry = document.getElementById('retry');
+    var quit = document.getElementById('quit');
+    var actions = document.getElementById('actions');
+
+    function starting() {
+      body.setAttribute('data-state', 'starting');
+      failed.hidden = true;
+      actions.hidden = true;
+      opening.hidden = false;
+    }
+
+    /* What the shell hands over: a title, one plain sentence and its own reason for Details. A
+       bare string is taken as the reason, under the plain words every failure can honestly say. */
+    function fail(info) {
+      var s = info && typeof info === 'object' ? info : { detail: String(info || '') };
+      title.textContent = s.title || 'Phosphor did not open';
+      line.textContent = s.message || 'Something stopped it while it was starting. Try again, and if it happens again, restart your Mac.';
+      detail.textContent = s.detail || '';
+      more.hidden = !s.detail;
+      more.open = false;
+      opening.hidden = true;
+      failed.hidden = false;
+      actions.hidden = false;
+      body.setAttribute('data-state', 'failed');
+    }
+
+    window.__phosphorFailed = fail;
+    window.__phosphorStarting = starting;
+
+    retry.addEventListener('click', function () {
+      starting();
+      invoke('splash_retry');
+    });
+    quit.addEventListener('click', function () { invoke('splash_quit'); });
+    // Return tries again, without a focus ring sitting on the green button before anyone has
+    // pressed anything.
+    document.addEventListener('keydown', function (e) {
+      var at = document.activeElement;
+      if (e.key !== 'Enter' || body.getAttribute('data-state') !== 'failed') return;
+      if (at === quit || at === retry || (at && at.tagName === 'SUMMARY')) return;
+      retry.click();
+    });
+
+    var info = window.__PHOSPHOR_SPLASH__;
+    if (info && info.state === 'failed') fail(info);
+    else starting();
+  })();
+</script>
+</body>

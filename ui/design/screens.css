@@ -74,19 +74,6 @@
   padding: var(--s-1);
 }
 
-/* The keys sit on the wallet surface, set apart from the addresses above them
-   because one is where money arrives and the other is the wallet itself. */
-.keys-block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-4);
-  margin-top: var(--s-2);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line-strong);
-  background: var(--bg-2);
-}
-
 
 /* The mark on the first screen: 40 px of the window's own light, and nothing
    else on the card is coloured, so it is what the eye lands on. */
@@ -104,83 +91,43 @@
 }
 
 
-.choice {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-1);
-  align-items: flex-start;
-  text-align: left;
-  padding: var(--s-4);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--bg-2);
-  transition: border-color var(--dur-press) var(--ease-out),
-              transform var(--dur-press) var(--ease-out);
-}
-
-.choice:active {
-  transform: scale(0.99);
-}
-
-.choice[data-chosen="true"] {
-  border-color: var(--ink);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .choice:hover { border-color: var(--text-3); }
-}
-
+/* The recovery words, numbered, in a well pressed into the card they are
+   shown on (the first run's words step and the Vault's reveal). Each word is
+   read one character at a time, so it is set a step larger than the body,
+   and its number is a figure in the quiet tone. */
 .words {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--s-2);
+  gap: 10px var(--s-3);
+  margin: 0;
   padding: var(--s-4);
-  border-radius: var(--radius-sm);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
+  list-style: none;
+  border-radius: var(--radius);
+  background: var(--well-bg);
+  box-shadow: var(--well);
 }
 
 .word {
   display: flex;
   gap: var(--s-2);
   align-items: baseline;
+  min-width: 0;
 }
 
 .word .meta {
-  min-width: 16px;
+  flex: 0 0 auto;
+  min-width: 18px;
   text-align: right;
   color: var(--text-3);
 }
 
-.checkline {
-  display: flex;
-  gap: var(--s-3);
-  align-items: flex-start;
-  cursor: pointer;
-}
-
-.checkline input {
-  margin-top: 3px;
-  accent-color: var(--ink);
-  width: 16px;
-  height: 16px;
-}
-
-.connect-block {
-  padding: var(--s-4);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--bg-2);
-}
-
-.threshold-line {
-  font-size: var(--fs-16);
-}
-
-.threshold-input {
-  width: 96px;
-  text-align: right;
-  font-family: var(--font-mono);
+.word .word-text {
+  min-width: 0;
+  font-size: var(--fs-15);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 /* ---------- the confirm dialog ---------- */
@@ -205,11 +152,9 @@ dialog.confirm::backdrop {
   flex-direction: column;
   gap: var(--s-3);
   padding: var(--s-5);
-  border-radius: var(--radius);
-  background: var(--bg-1);
-  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-pop);
   box-shadow: var(--lift);
-  animation: cardin var(--dur-enter) var(--ease-out) both;
 }
 
 .destinations {
@@ -226,23 +171,11 @@ dialog.confirm::backdrop {
   border: 1px solid var(--line);
 }
 
-/* ---------- the vault tab ---------- */
+/* ---------- the recovery phrase, typed ---------- */
 
-/* The column, the grid and the Addresses card are ui/design/vault.css. */
-
-/* The reveal, the prove step and the restore form open inside the Recovery
-   panel, under its buttons, on the raised ground. */
-.vault-flow {
-  padding: var(--s-4);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line-strong);
-  background: var(--bg-2);
-}
-
-.words-24 {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
+/* The Vault's rows and flows are ui/design/vault.css. The phrase box is
+   shared by the first run, the lock screen and the Vault: a box that wraps,
+   in the mono face, because each word is read one character at a time. */
 .phrase-input {
   min-height: 84px;
   padding: var(--s-2) var(--s-3);
@@ -250,10 +183,6 @@ dialog.confirm::backdrop {
   font-size: var(--fs-13);
   line-height: 1.6;
   resize: vertical;
-}
-
-@container world (max-width: 560px) {
-  .words-24 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 /* The dialog's sentence under the dead Yes on the decision card. */

@@ -307,7 +307,7 @@ test('the tiles are the six quick networks, and a tile leads to the tokens it cr
   await flush();
   assert.equal(stage(world), 'tokens');
   assert.equal(view.network(), 'base');
-  assert.ok(textOf(root(world)).includes('Tokens credited on Base'));
+  assert.ok(textOf(root(world)).includes('What you can send on Base'));
   assert.deepEqual(find(world.host, '.token-row').map((r: Any) => r.dataset.symbol), ['ETH', 'USDC']);
   assert.equal(world.calls.filter((c) => c.route === '/api/intents-receive').length, 1, 'the report was read twice');
 
@@ -316,7 +316,7 @@ test('the tiles are the six quick networks, and a tile leads to the tokens it cr
   assert.equal(find(world.host, '.net-tile')[1].getAttribute('aria-current'), 'true', 'the tile picked before is not marked');
 });
 
-test('Escape steps back to the tiles from the tokens and from the address, and does nothing on the tiles', async () => {
+test('Escape steps back to the tiles from the tokens and from the address, and on the tiles asks the host to close', async () => {
   const world = build({ ack: true });
   const view = world.render();
   await flush();
@@ -327,9 +327,10 @@ test('Escape steps back to the tiles from the tokens and from the address, and d
   root(world).dispatch('keydown', { key: 'Escape', preventDefault() { stopped += 1; } });
   assert.equal(stage(world), 'network', 'Escape on the tokens did not step back');
   assert.equal(stopped, 1, 'the key was not taken');
+  // A host that passed no way to close and does not listen: the key is left alone.
   root(world).dispatch('keydown', { key: 'Escape', preventDefault() { stopped += 1; } });
   assert.equal(stage(world), 'network');
-  assert.equal(stopped, 1, 'Escape on the tiles was taken, and the picker is a fold, not a sheet');
+  assert.equal(stopped, 1, 'Escape on the tiles was taken with nobody to close the steps');
   view.go('address', 'base');
   await flush();
   assert.equal(stage(world), 'address');
@@ -337,6 +338,55 @@ test('Escape steps back to the tiles from the tokens and from the address, and d
   assert.equal(stage(world), 'network', 'Escape on the address did not step back');
   root(world).dispatch('keydown', { key: 'Enter', preventDefault() {} });
   assert.equal(stage(world), 'network', 'a key that is not Escape moved the stage');
+
+  // The Money in fold's way out from the tiles was Done alone (hunt-b 59): with a host that can
+  // close, Escape on the tiles closes and the key is taken.
+  const hosted = build({ ack: true });
+  let closed = 0;
+  hosted.render({ onDismiss: () => { closed += 1; } });
+  await flush();
+  let taken = 0;
+  root(hosted).dispatch('keydown', { key: 'Escape', preventDefault() { taken += 1; } });
+  assert.equal(closed, 1, 'Escape on the tiles did not ask the host to close');
+  assert.equal(taken, 1);
+
+  // A host that renders the picker through another module listens for the event instead, and
+  // cancels it to say it closed.
+  const heard = build({ ack: true });
+  heard.sandbox.CustomEvent = function (type: string, init: Any) { return { type, bubbles: init.bubbles, cancelable: init.cancelable, defaultPrevented: false }; };
+  heard.render();
+  await flush();
+  const pickRoot = root(heard);
+  const events: Any[] = [];
+  pickRoot.dispatchEvent = (event: Any) => { events.push(event); return false; };
+  let took = 0;
+  pickRoot.dispatch('keydown', { key: 'Escape', preventDefault() { took += 1; } });
+  assert.deepEqual(events.map((e) => [e.type, e.bubbles, e.cancelable]), [['netpick:dismiss', true, true]]);
+  assert.equal(took, 1, 'a host that closed the steps did not get the key taken');
+
+  // The Vault card has its own network menu: Escape never draws the tiles under it.
+  const vault = build({ ack: true });
+  vault.render({ context: 'vault', stage: 'tokens', network: 'eth', onAddress: () => {} });
+  await flush();
+  root(vault).dispatch('keydown', { key: 'Escape', preventDefault() {} });
+  assert.equal(stage(vault), 'tokens', 'Escape drew the tiles inside the Vault card');
+});
+
+test('a step change hands the focus to the new step: its title, or the tile of the network in hand', async () => {
+  const world = build({ ack: true });
+  world.render();
+  await flush();
+  // The pressed tile leaves with its stage; the page is where the focus would fall.
+  world.sandbox.document.activeElement = world.sandbox.document.body;
+  find(world.host, '.net-tile')[3].click();
+  await flush();
+  assert.equal(stage(world), 'tokens');
+  assert.equal(focusedNow?.className, 'netpick-title-text', 'the focus fell to the page');
+  assert.equal(focusedNow?.getAttribute('tabindex'), '-1', 'the title became a tab stop');
+  assert.equal(focusedNow?.textContent, 'What you can send on Solana');
+  buttonNamed(world.host, 'Change network').click();
+  assert.equal(stage(world), 'network');
+  assert.equal(focusedNow?.dataset.network, 'sol', 'back on the tiles the focus is not on the network in hand');
 });
 
 test('the token list is sorted the way a wallet sorts: the chain coin, USDC, USDT, then by name', async () => {
@@ -392,7 +442,7 @@ test('the acknowledgement gates the address once per install: ticked, remembered
   await flush();
   assert.equal(stage(world), 'tokens', 'with no acknowledgement the address step opened anyway');
   const ack = find(world.host, '.ack-text')[0];
-  assert.equal(ack.textContent, 'I understand only the tokens above are credited here. Anything else sent to this address is lost.');
+  assert.equal(ack.textContent, 'I understand only the tokens above can be sent here. Anything else sent to this address is lost.');
   const go = buttonNamed(world.host, 'Show the address');
   assert.equal(go.disabled, true);
   assert.ok(String(go.className).includes('btn-primary'), 'the first-time button is not the primary one');
@@ -437,8 +487,13 @@ test('the address step draws one address after its checks, starts the watch, and
   assert.equal('0x7d4e' + find(body, '.addr-mid').map((n: Any) => n.textContent).join('') + '0e1d', EVM);
   const text = textOf(root(world));
   assert.ok(text.includes('Send on Base only.'));
-  assert.ok(text.some((t) => t.startsWith('Base, Ethereum and Arbitrum use this same address.') && t.endsWith('choose Base on the sending side.')));
-  assert.ok(find(body, '.deposit-min')[0].textContent.startsWith('Minimum 0.001 USDC.'), 'the minimum line does not carry the human number');
+  // What to pick when sending, and which networks share the address; the loss is said once, in
+  // the acknowledgement, not again here (hunt-b 103).
+  assert.ok(text.includes('When you send, pick Base as the network. Ethereum and Arbitrum use this same address.'), text.join(' | '));
+  assert.equal(text.some((t) => /is lost/.test(t)), false, 'the address step says the loss a second time');
+  // The list is something to read, not a choice, so the floors of the first two tokens are named
+  // rather than the one the step guessed (hunt-b 65).
+  assert.equal(find(body, '.deposit-min')[0].textContent, 'Minimums: ETH none, USDC 0.001.');
   assert.equal(find(world.host, 'button.chip').length, 0, 'chips on the address step');
   assert.equal(find(world.host, '.token-row').length, 0, 'the token list is on the address step');
   assert.ok(buttonNamed(world.host, 'Change network'), 'no way back');
@@ -449,7 +504,8 @@ test('the address step draws one address after its checks, starts the watch, and
   const watch = find(world.host, '.deposit-watch')[0];
   assert.equal(watch.hidden, false);
   assert.equal(watch.dataset.phase, 'watching');
-  assert.ok(find(watch, '.deposit-watch-text')[0].textContent.startsWith('Watching Base for a deposit to '), find(watch, '.deposit-watch-text')[0].textContent);
+  // The fixture's watch began days ago, so the line says how long it has waited.
+  assert.match(find(watch, '.deposit-watch-text')[0].textContent, /^Still waiting for your deposit on Base, \d+ min so far$/);
   // The watch is started through the deposit card when it is loaded, so the card can absorb the echo.
   const viaCard = build({ ack: true, withDeposit: true });
   viaCard.render({ stage: 'address', network: 'sol' });
@@ -483,7 +539,7 @@ test('a network that is not EVM says so in its own words, and NEAR and Solana ge
   await flush();
   const text = textOf(root(world));
   assert.ok(text.includes('Send on Solana only.'));
-  assert.ok(text.some((t) => t.startsWith('Choose Solana (SPL) on the sending side.')));
+  assert.ok(text.includes('When you send, pick Solana (SPL) as the network.'), text.join(' | '));
   assert.equal(text.some((t) => t.includes('Ethereum, Base and Arbitrum')), false);
   assert.equal(find(world.host, '.sr-only')[0].textContent, SOL);
   // Base58, forty-four characters: eleven even groups, no prefix, no orphan.
@@ -498,6 +554,25 @@ test('a network that is not EVM says so in its own words, and NEAR and Solana ge
   await flush();
   assert.deepEqual(find(near.host, '.addr-whole').map((n: Any) => n.textContent), ['abc.near'], 'a NEAR account name was split');
   assert.equal(find(near.host, '.addr-end, .addr-mid').length, 0);
+});
+
+/* The watcher speaks plain words (hunt-b 61, 62): no stopwatch, no second copy of the address, no
+   confirmations and no bridge words, and a time only once the wait is long enough to wonder
+   about. */
+test('the watcher line says what is happening to the money, and a time only once the wait is long', () => {
+  const world = build();
+  const parts = (deposit: Any): string => Array.from(world.pick.watcherParts(deposit) as Any[]).map((p: Any) => (typeof p === 'string' ? p : p.num)).join('');
+  const now = new Date().toISOString();
+  const late = new Date(Date.now() - 14 * 60_000).toISOString();
+  assert.equal(parts({ phase: 'watching', chain: 'eth', symbol: 'USDC', address: EVM, startedAt: now }), 'Waiting for your deposit on Ethereum');
+  assert.equal(parts({ phase: 'watching', chain: 'eth', symbol: 'USDC', startedAt: late }), 'Still waiting for your deposit on Ethereum, 14 min so far');
+  assert.equal(parts({ phase: 'seen', chain: 'eth', symbol: 'USDC', amount: 25, confirmations: 3 }), 'Arriving on Ethereum: 25 USDC');
+  assert.equal(parts({ phase: 'seen', chain: 'eth', symbol: 'USDC', amount: null }), 'Your deposit is arriving on Ethereum');
+  assert.equal(parts({ phase: 'bridged', chain: 'eth', symbol: 'USDC', amount: 25 }), 'Almost there: 25 USDC');
+  assert.equal(parts({ phase: 'credited', chain: 'eth', symbol: 'USDC', amount: 25, ms: 41000 }), '25 USDC is in your balance');
+  assert.equal(parts({ phase: 'stopped', chain: 'eth', symbol: 'USDC' }), 'Stopped checking for this deposit. Money you sent still arrives in your balance.');
+  const figures = Array.from(world.pick.watcherParts({ phase: 'credited', chain: 'eth', symbol: 'USDC', amount: 25 }) as Any[]).filter((p: Any) => typeof p !== 'string');
+  assert.deepEqual(figures.map((p: Any) => p.num), ['25'], 'the amount is not set as a figure');
 });
 
 test('the groups are even for each kind of address: 0x then tens of four, base58 with the remainder last, a NEAR name whole', () => {
@@ -517,22 +592,36 @@ test('the groups are even for each kind of address: 0x then tens of four, base58
   assert.equal(world.pick.kindOf('near'), 'near');
 });
 
-test('Copy says Copied for a moment once the clipboard reads back, and the status line keeps the last four', async () => {
+/* The copy used to say it twice: the button turned green "Copied" and a sentence said it too, and
+   the sentence stayed forever (hunt-b 96). Now only the sentence answers, with the check, and the
+   sheet fades it once it has been read (deposit.css, data-said). */
+test('Copy is the width of its column, and only the sentence under it answers, once the clipboard reads back', async () => {
   const world = build({ ack: true });
   world.render({ stage: 'address', network: 'eth' });
   await flush();
-  const copy = buttonNamed(world.host, 'Copy');
+  const copy = buttonNamed(world.host, 'Copy address');
+  assert.ok(copy, 'no Copy address button');
+  assert.equal(copy.dataset.role, 'copy');
+  assert.equal(copy.className, 'btn', 'Copy is not the raised button');
   copy.click();
   await flush();
   await flush();
   assert.equal(world.calls.find((c) => c.route === 'clipboard')?.text, EVM);
-  assert.equal(copy.textContent, 'Copied');
-  assert.equal(copy.dataset.copied, 'true');
-  assert.equal(find(world.host, '.deposit-copied')[0].textContent, 'Address copied, ends in ...0e1d');
-  const back = world.timers[world.timers.length - 1];
-  back?.();
-  assert.equal(copy.textContent, 'Copy');
+  assert.equal(copy.textContent, 'Copy address', 'the button changed its word as well as the sentence');
   assert.equal(copy.dataset.copied, undefined);
+  const said = find(world.host, '.deposit-copied')[0];
+  assert.equal(said.textContent, 'Address copied, ends in ...0e1d');
+  assert.equal(said.getAttribute('data-said'), 'ok', 'the sentence does not fade once read');
+  assert.equal(find(said, '.deposit-copied-check').length, 1, 'the sentence carries no check');
+
+  // A clipboard that reads back something else is a problem that stays, with no check.
+  world.sandbox.navigator.clipboard.readText = () => Promise.resolve('something else');
+  copy.click();
+  await flush();
+  await flush();
+  assert.ok(said.textContent.includes('does not hold the address'), said.textContent);
+  assert.equal(said.getAttribute('data-said'), 'problem');
+  assert.equal(find(said, '.deposit-copied-check').length, 0);
 });
 
 test('an unverified wallet gets one button and no address; Touch ID then redraws', async () => {
@@ -561,7 +650,12 @@ test('a network the bridge refused, an edited wallet file, and a token it does n
   refused.render({ stage: 'tokens', network: 'arb' });
   await flush();
   assert.equal(find(refused.host, '.token-row').length, 0);
-  assert.ok(textOf(root(refused)).join(' ').includes('No deposit address on Arbitrum right now: the bridge refused eth:42161: down for maintenance'));
+  // Plain words for the person; the bridge's own reason names its route and rides behind the
+  // developer switch.
+  assert.ok(textOf(root(refused)).includes('Arbitrum is not taking deposits right now. Try again later, or pick another network.'));
+  const reason = find(refused.host, '.netpick-dev').find((n: Any) => n.textContent.includes('eth:42161')) as Any;
+  assert.ok(reason, 'the bridge\'s reason is gone altogether');
+  assert.ok(reason.hasAttribute('data-dev-only'), 'the bridge\'s reason is on screen without the developer switch');
   assert.equal(buttonNamed(refused.host, 'Show the address'), undefined, 'an address button on a network with no address');
 
   const tampered = build({ ack: true, report: report({ tampered: true }) });
@@ -574,7 +668,7 @@ test('a network the bridge refused, an edited wallet file, and a token it does n
   await flush();
   const body = find(wrong.host, '.deposit-body')[0];
   assert.equal(body.dataset.state, 'refused');
-  assert.ok(textOf(body).join(' ').includes('DOGE is not credited on Solana. Sending it there loses it.'));
+  assert.ok(textOf(body).join(' ').includes('DOGE is not on the list for Solana. Sending it there loses it.'));
   assert.equal(wrong.calls.some((c) => c.route === '/api/deposit/show'), false, 'a watch started for a token that is not credited');
 });
 
@@ -650,7 +744,7 @@ test('the search under the tiles lists every network the report carries, and a r
   assert.deepEqual(textOf(rows[0]), ['B', 'BNB Smart Chain', 'BNB Smart Chain (BEP-20)', 'BNB, USDT']);
   rows[0].click();
   assert.equal(stage(world), 'tokens');
-  assert.ok(textOf(root(world)).includes('Tokens credited on BNB Smart Chain'));
+  assert.ok(textOf(root(world)).includes('What you can send on BNB Smart Chain'));
 });
 
 test('All networks opens the whole list, popular first, with a refused network greyed and named', async () => {
@@ -658,13 +752,17 @@ test('All networks opens the whole list, popular first, with a refused network g
   world.render();
   await flush();
   const all = find(world.host, '.netpick-link').find((b: Any) => b.dataset.role === 'all-networks') as Any;
-  assert.equal(all.textContent, 'All 8 networks');
+  // One way into the whole list, in words the search above it does not already say (hunt-b 106).
+  assert.equal(all.textContent, 'Browse the list');
+  assert.equal(all.getAttribute('aria-expanded'), 'false');
   all.click();
   const rows = find(world.host, '.net-row');
   assert.deepEqual(rows.map((r: Any) => r.dataset.network), ['eth', 'base', 'arb', 'sol', 'near', 'btc', 'bnb', 'tron']);
   const tron = rows[7];
   assert.equal(tron.dataset.unavailable, 'true');
-  assert.ok(textOf(tron).includes('Unavailable'));
+  assert.ok(textOf(tron).includes('Not available now'));
+  assert.equal(all.textContent, 'Hide the list');
+  assert.equal(all.getAttribute('aria-expanded'), 'true');
   input(world).value = 'zzz';
   input(world).dispatch('input');
   assert.equal(find(world.host, '.net-row').length, 0);

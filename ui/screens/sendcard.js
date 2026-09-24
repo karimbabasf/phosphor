@@ -208,15 +208,22 @@
     return { word: word, tone: pair[1] };
   }
 
-  /* The address in groups of four so a person can check it against what they
-     typed, group by group. A named NEAR account stays whole: splitting
-     alice.near into syllables helps nobody. */
+  /* The address in the groups the deposit address uses (netpick.js chunks),
+     so the destination a person checks reads the way their own address does:
+     an EVM address is "0x" on its own and then ten groups of four, never a
+     prefix fused into the first group with a two-character orphan at the end;
+     base58 is fours with the remainder last; a NEAR account stays whole
+     (sendcard.css wraps it). Anything that is not an address this knows stays
+     one piece. */
   function groupsOf(address) {
     var s = text(address);
     if (s === '') return [];
-    if (!/^0x[0-9a-fA-F]{40}$/.test(s) && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s)) return [s];
-    var out = [];
-    for (var i = 0; i < s.length; i += 4) out.push(s.slice(i, i + 4));
+    var evm = /^0x[0-9a-fA-F]{40}$/.test(s);
+    if (!evm && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s)) return [s];
+    var pick = window.PhosphorNetPick;
+    if (pick && typeof pick.chunks === 'function') return Array.prototype.slice.call(pick.chunks(s, evm ? 'evm' : 'sol'));
+    var out = evm ? ['0x'] : [];
+    for (var i = evm ? 2 : 0; i < s.length; i += 4) out.push(s.slice(i, i + 4));
     return out;
   }
 

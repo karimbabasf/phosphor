@@ -9,5 +9,4 @@
             <stop stop-color="#EC796B"/>
             <stop offset="1" stop-color="#D672EF"/>
         </linearGradient>
-    </defs>
-</svg>
+    </defs><circle data-edge="light" cx="12" cy="12" r="8.5" fill="none" stroke="#FFF" stroke-opacity=".22" stroke-width="1"/></svg>

@@ -60,13 +60,24 @@ test('the window draws the new mark everywhere: the bar, the tab icon, and nothi
 
 test('the splash and the update window draw the brand mark too', () => {
   const brand = squash(BRAND.match(/ d="([^"]+)"/)?.[1] ?? '');
-  for (const page of ['index.html', 'update.html']) {
-    const html = read(`../../src-tauri/frontend/${page}`);
-    const svg = html.match(/<svg class="mark" viewBox="([^"]+)"[^>]*>\s*<path fill="currentColor" fill-rule="evenodd" d="([^"]+)"\/>/);
-    assert.ok(svg, `${page} does not draw the mark as one evenodd path`);
-    assert.equal(svg?.[1], '0 0 59.46 64.75');
-    assert.equal(squash(svg?.[2] ?? ''), brand, `${page} draws a different mark`);
+  const update = read('../../src-tauri/frontend/update.html');
+  const svg = update.match(/<svg class="mark" viewBox="([^"]+)"[^>]*>\s*<path fill="currentColor" fill-rule="evenodd" d="([^"]+)"\/>/);
+  assert.ok(svg, 'update.html does not draw the mark as one evenodd path');
+  assert.equal(svg?.[1], '0 0 59.46 64.75');
+  assert.equal(squash(svg?.[2] ?? ''), brand, 'update.html draws a different mark');
+
+  // The splash runs the window's own trace-on and scan (hunt-b 69), so it draws the mark the way
+  // the window's symbol does: the same five pieces, each reading its own light and heat.
+  const splash = read('../../src-tauri/frontend/index.html');
+  assert.match(splash, /<svg class="mark" viewBox="0 0 59\.46 64\.75"/);
+  for (let n = 1; n <= 5; n += 1) {
+    const tag = splash.match(new RegExp(`<path class="m${n}"[^>]*/>`))?.[0] ?? '';
+    assert.ok(tag, `the splash has no m${n}`);
+    assert.equal(squash(tag.match(/ d="([^"]+)"/)?.[1] ?? ''), squash(piece(n).d), `the splash's m${n} is not the window's`);
+    assert.equal(tag.match(/style="([^"]+)"/)?.[1], piece(n).style, `the splash's m${n} does not read its light and heat the window's way`);
   }
+  assert.match(splash, /@keyframes mark-in-1/, 'the splash does not trace the mark on');
+  assert.match(splash, /@keyframes mark-scan-5/, 'the splash does not scan while it waits');
 });
 
 /* Every @keyframes body, found by matching braces: some are one line, some are many. */

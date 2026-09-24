@@ -1,20 +1,25 @@
-/* Pro and Trade: the same conversation on the left, the trading side on the
-   right.
+/* Pro, Trade and the Vault: the same conversation on the left, the world on
+   the right as one soft slab.
 
    THE STAGE ON PRO, TRADE AND THE VAULT. Two tracks, the way Basic lays its
    own: the conversation takes what is left and the world is a panel on the
    right. Only the panel's width differs, because a chart in Basic's reading
-   width is a phone chart: here it is 55 percent of the window between 560
-   and 1400, or whatever the divider was dragged to (--trade, ui/split.js).
-   The three share the track, so moving between them never moves the
-   conversation. The divider sits over the boundary rather than in a track of
+   width is a phone chart: on Pro and Trade it is 55 percent of the window
+   between 560 and 1400, or whatever the divider was dragged to (--trade,
+   ui/split.js). The Vault takes a little more, 62 percent, so its two
+   columns stand side by side at the window's default size instead of one
+   long column (Karim, 2026-09-15: "I hate how the vault has to be so
+   scrollable"). The divider sits over the boundary rather than in a track of
    its own, so the grid keeps Basic's shape. Under 960 wide (a browser, never
    the app) the stacked layout in layout.css stands. */
 @media (min-width: 960px) {
   body[data-view="pro"] .stage,
-  body[data-view="trade"] .stage,
-  body[data-view="vault"] .stage {
+  body[data-view="trade"] .stage {
     grid-template-columns: minmax(0, 1fr) clamp(560px, var(--trade, 55vw), 1400px);
+  }
+
+  body[data-view="vault"] .stage {
+    grid-template-columns: minmax(0, 1fr) clamp(560px, max(var(--trade, 55vw), 62vw), 1400px);
   }
 
   body[data-view="pro"] .stage > .conversation,
@@ -43,40 +48,72 @@
     width: 7px;
     margin-left: -4px;
   }
+
+  /* THE SLAB. The world is one soft layer lifted off the warm ground, inset
+     from the window's right and bottom edges, its depth a shadow and a line
+     of light along its top rather than a hairline beside the conversation.
+     It clips what it holds to its own corners, and the notice is its foot. */
+  body[data-view="pro"] .world,
+  body[data-view="trade"] .world,
+  body[data-view="vault"] .world {
+    margin: 0 var(--s-4) var(--s-4) 0;
+    background: var(--surface-slab);
+    border-radius: var(--radius-slab);
+    box-shadow: var(--slab-shadow);
+  }
 }
 
-/* The world is one step up from the conversation's ground, as Basic's panel
-   is, with the same hairline between them. The chart's canvas paints this
-   ground too, so the trading side reads as one surface. */
 body[data-view="pro"] .world,
 body[data-view="trade"] .world,
 body[data-view="vault"] .world {
-  background: var(--bg-1);
-  border-left: 1px solid var(--line);
+  border-left: 0;
 }
 
+/* The notice at the slab's foot takes the slab's own lowest shade, so it
+   reads as the end of the slab rather than a bar laid over it. */
 body[data-view="pro"] .notice,
 body[data-view="trade"] .notice,
 body[data-view="vault"] .notice {
-  background: var(--bg-1);
-  padding-inline: var(--s-5);
+  background: color-mix(in srgb, var(--bg-1), var(--bg-0) 25%);
+  padding-inline: var(--s-6);
+}
+
+/* The Vault is taller than the slab and scrolls; its view grows to what it
+   holds, so the sticky notice's place is after the content and it pins to
+   the slab's foot, instead of riding up over rows with the first screen. */
+body[data-view="vault"] #view-vault[data-active="true"] {
+  flex: 1 0 auto;
 }
 
 /* ---------- Pro and Trade ----------
 
-   Both open on the money line (#view-pro). Trade is the market, the chart and
-   the deck under it (#view-trade, built by the trade bundle). Pro is your
-   money and your positions: the same line over the deck alone, which takes
-   the whole height, so the positions, orders and history read without the
-   chart. The deck is one element shown on both, never a copy. */
+   Pro is your money and your positions: its header (#view-pro) over the deck,
+   with the positions, the orders and the last day's trades stacked in one
+   scroll under their own heads. Trade is the market, the chart and the same
+   deck under them, one tab at a time; it has no header, and the trading
+   account sits at the deck's tab row. The deck is one element shown on both,
+   never a copy. */
 body[data-view="pro"] #view-trade,
-body[data-view="trade"] #view-pro {
+body[data-view="trade"] #view-trade {
   display: flex;
 }
 
-body[data-view="pro"] #view-pro,
-body[data-view="trade"] #view-pro {
+body[data-view="pro"] #view-pro {
   flex: 0 0 auto;
+}
+
+body[data-view="trade"] #view-pro {
+  display: none;
+}
+
+/* On Pro the header stays and the deck scrolls under it. */
+body[data-view="pro"] .world {
+  overflow: hidden;
+}
+
+body[data-view="pro"] #view-trade {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 body[data-view="pro"] .trade-wrap > .trade-strip,
@@ -86,112 +123,201 @@ body[data-view="pro"] .trade-wrap > .split-h {
 }
 
 /* On Pro the deck is the view, so Trade's Layout choice to hide it does not
-   reach here, and its row carries no eye to hide it or to bring the chart
-   back: those are Trade's. */
+   reach here, and it carries no tabs: the three panels stand one under the
+   other, each under its head. */
 body[data-view="pro"] .trade-wrap > .trade-rail {
   display: flex;
   flex: 1 1 auto;
+  min-height: 0;
 }
 
-body[data-view="pro"] .trade-wrap .trade-tabs .pane-hide[data-pane],
-body[data-view="pro"] .trade-wrap .trade-tabs .pane-show[data-pane] {
+body[data-view="pro"] .trade-rail > .trade-tabs {
   display: none;
 }
 
-/* ---------- the money line ----------
+body[data-view="pro"] .trade-panels {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--s-6) var(--s-5);
+}
 
-   What you have, then what is on the trading account, on one line with a
-   hairline under it: the balance total in the mono face with the server's
-   words for it, and at the far end the account's figures, each a small label
-   over its value. Quieter than the market's price under it: this is the
-   anchor, the price is the news. */
+body[data-view="pro"] .trade-panel,
+body[data-view="pro"] .trade-panel:not([data-shown="true"]) {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+body[data-view="pro"] .trade-panel-head {
+  display: flex;
+}
+
+body[data-view="pro"] .trade-list {
+  flex: 0 0 auto;
+  overflow: visible;
+  padding: 0;
+}
+
+/* Nothing on the deck at all: Pro is its header, standing in the middle of
+   the slab, rather than a header over three empty sections. */
+body[data-view="pro"] #view-pro[data-quiet="true"] {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+body[data-view="pro"] #view-pro[data-quiet="true"] ~ #view-trade {
+  display: none;
+}
+
+/* ---------- the header ----------
+
+   The balance is the one lead figure: 40 px, the server's words for it
+   beside it, and the coins it holds in brief under it as quiet tiles. Then
+   the trading account under its own head, each figure a tile with its label
+   over its value. */
 .pro-sum {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3) var(--s-5);
-  flex-wrap: wrap;
-  min-height: 64px;
-  padding: var(--s-3) var(--s-5);
-  border-bottom: 1px solid var(--line);
+  flex-direction: column;
+  gap: var(--s-5);
+  padding: var(--s-6) var(--s-6) var(--s-2);
+  container-type: inline-size;
+  container-name: prosum;
 }
 
 .pro-sum-money {
   display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+.pro-sum-lead {
+  display: flex;
   align-items: baseline;
-  gap: var(--s-3);
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
   min-width: 0;
 }
 
 .pro-sum-total {
   margin: 0;
-  font-size: var(--fs-20);
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: -0.03em;
+  font-size: var(--fs-40);
+  font-weight: 550;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
   color: var(--text);
   white-space: nowrap;
 }
 
 .pro-sum-skel {
-  width: 128px;
-  height: var(--fs-20);
+  width: 200px;
+  height: var(--fs-40);
+  border-radius: var(--radius-sm);
 }
 
 .pro-sum-caption {
   margin: 0;
   min-width: 0;
-  font-size: var(--fs-13);
+  font-size: var(--fs-14);
   line-height: 1.4;
   color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* No figure to caption: the words stand in its place, in the text tone. */
 .pro-sum-caption[data-alone="true"] {
-  font-size: var(--fs-14);
+  font-size: var(--fs-16);
   color: var(--text);
+}
+
+/* The coins in brief: a logo, the name and what it is worth, on a quiet
+   tile each. Words, not pills: no shadow under them, only the tile's light. */
+.pro-coins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pro-coin {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 34px;
+  padding: 0 var(--s-3) 0 var(--s-2);
+  border-radius: 12px;
+  background: var(--tile);
+  box-shadow: var(--hi);
+  font-size: var(--fs-13);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.pro-coin-name {
+  font-weight: 550;
+  color: var(--text);
+}
+
+.pro-coin-rest {
+  padding: 0 var(--s-3);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-3);
+}
+
+.pro-coin-rest .pro-coin-name {
+  font-weight: 500;
+  color: var(--text-3);
 }
 
 .pro-sum-account {
   display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  margin-left: auto;
+  flex-direction: column;
+  gap: 10px;
   min-width: 0;
 }
 
+.pro-sum-head {
+  margin: 0;
+  font-size: var(--fs-14);
+  font-weight: 550;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
 .pro-sum-figures {
-  display: flex;
-  align-items: center;
-  gap: var(--s-5);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: var(--s-2);
   margin: 0;
 }
 
 .pro-sum-figure {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
   gap: 4px;
+  min-width: 0;
+  padding: 12px 14px 13px;
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
 }
 
 .pro-sum-label {
   margin: 0;
-  font-size: var(--fs-11);
+  font-size: var(--fs-12);
   font-weight: 500;
   line-height: 16px;
-  letter-spacing: 0.02em;
   color: var(--text-2);
   white-space: nowrap;
 }
 
 .pro-sum-value {
   margin: 0;
-  font-size: var(--fs-14);
-  font-weight: 500;
-  line-height: 16px;
+  font-size: var(--fs-18);
+  font-weight: 550;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
   color: var(--text);
   white-space: nowrap;
 }
@@ -200,14 +326,76 @@ body[data-view="pro"] .trade-wrap .trade-tabs .pane-show[data-pane] {
 
 .pro-sum-note {
   margin: 0;
-  font-size: var(--fs-13);
-  line-height: 1.4;
+  max-width: 52ch;
+  font-size: var(--fs-14);
+  line-height: 1.5;
   color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.pro-sum-fund {
+  align-self: flex-start;
+  margin-top: var(--s-1);
+}
+
+/* The quiet Pro: the header alone in the middle of the slab, centred, so an
+   empty trading account reads as a calm start rather than a broken table. */
+#view-pro[data-quiet="true"] .pro-sum {
+  align-items: center;
+  text-align: center;
+  padding-bottom: var(--s-7);
+}
+
+#view-pro[data-quiet="true"] .pro-sum-money,
+#view-pro[data-quiet="true"] .pro-sum-account {
+  align-items: center;
+}
+
+#view-pro[data-quiet="true"] .pro-sum-lead,
+#view-pro[data-quiet="true"] .pro-coins {
+  justify-content: center;
+}
+
+#view-pro[data-quiet="true"] .pro-sum-figures {
+  width: min(100%, 600px);
+}
+
+#view-pro[data-quiet="true"] .pro-sum-fund {
+  align-self: center;
+}
+
+@container prosum (max-width: 439px) {
+  .pro-sum-total { font-size: var(--fs-32); }
+  .pro-sum-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* A short window: Pro scrolls as one page, header and all, so the positions
+   are not left a strip under a header that takes half the slab. */
+@media (max-height: 759px) {
+  body[data-view="pro"] .world { overflow-y: auto; }
+  body[data-view="pro"] #view-trade { flex: 0 0 auto; }
+  body[data-view="pro"] .trade-wrap { height: auto; }
+  body[data-view="pro"] .trade-wrap > .trade-rail { flex: 0 0 auto; overflow: visible; }
+  body[data-view="pro"] .trade-panels { overflow: visible; }
+  body[data-view="pro"] .pro-sum { padding-top: var(--s-5); gap: var(--s-4); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .world[data-swapping="true"] #view-pro,
   .world[data-swapping="true"] #view-trade {
     animation: none;
+  }
+}
+
+/* Stacked (a browser tab under 960 wide, never the app): the trading side
+   and the Vault need the height more than the conversation does there, so
+   the world takes 70 and 60 percent of it, and the conversation the rest. */
+@media (max-width: 959px) {
+  body[data-view="trade"] .stage {
+    grid-template-rows: minmax(0, 70vh) 6px minmax(0, 1fr);
+  }
+
+  body[data-view="vault"] .stage {
+    grid-template-rows: minmax(0, 60vh) 6px minmax(0, 1fr);
   }
 }

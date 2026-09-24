@@ -93,7 +93,7 @@ function makeNode(tagName: string): Any {
       for (const fn of listeners[type] ?? []) fn(Object.assign({ target: node, currentTarget: node, preventDefault() {} }, event));
     },
     click() { node.dispatch('click'); },
-    focus() {},
+    focus() { node.focused = true; },
     scrollIntoView() {},
     getBoundingClientRect: () => ({ width: 0, height: 0 }),
     querySelector(selector: string) { return find(node, selector)[0] ?? null; },
@@ -289,6 +289,14 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
   };
 }
 
+/* The card opens only when a screen hands over a network (the Vault's Addresses card): a watch
+   the agent starts never opens it (hunt-b 18). Every test opens it that way. */
+async function openCard(world: World, overrides: Any = {}): Promise<Any> {
+  await world.deposit.open(Object.assign({ chain: 'eth', symbol: 'USDC' }, overrides));
+  await flush();
+  return world.dialog();
+}
+
 function frame(overrides: Any = {}): Any {
   return Object.assign({ phase: 'watching', chain: 'eth', symbol: 'USDC', address: ADDRESS, startedAt: '2026-09-14T10:00:00.000Z', baseline: 0, amount: null, txHash: null, explorerUrl: null, confirmations: null, ms: null, error: null }, overrides);
 }
@@ -313,8 +321,7 @@ test('the address is fetched, never taken from the frame alone', () => {
 
 test('the QR is drawn, decoded back off the same pixels, and matches the address', async () => {
   const world = build();
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const dialog = world.dialog();
   assert.ok(dialog && dialog.open, 'the frame did not open the card');
   const bodyNode = find(dialog, '.deposit-body')[0];
@@ -323,7 +330,7 @@ test('the QR is drawn, decoded back off the same pixels, and matches the address
   assert.equal(find(dialog, '.addr-prefix')[0].textContent, '0x', 'the 0x is not its own quiet token');
   const ends = find(dialog, '.addr-end').map((n: Any) => n.textContent);
   assert.deepEqual(ends, ['7d4e', '0e1d'], 'the first and last group are not the ones in the text colour');
-  const whole = find(dialog, '.sr-only')[0];
+  const whole = find(find(dialog, '.deposit-address')[0], '.sr-only')[0];
   assert.equal(whole.textContent, ADDRESS, 'the whole address is not there for a screen reader');
   const mids = find(dialog, '.addr-mid').map((n: Any) => n.textContent);
   assert.equal(mids.length, 8, 'ten groups of four, two of them the ends');
@@ -333,8 +340,7 @@ test('the QR is drawn, decoded back off the same pixels, and matches the address
 
 test('a QR that reads back as anything else draws nothing and says so', async () => {
   const world = build({ decoder: () => ({ data: ADDRESS.slice(0, -1) + 'e' }) });
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const dialog = world.dialog();
   const bodyNode = find(dialog, '.deposit-body')[0];
   assert.equal(bodyNode.dataset.state, 'refused');
@@ -348,17 +354,15 @@ test('a QR that reads back as anything else draws nothing and says so', async ()
 
 test('a decoder that reads nothing back is a refusal, not a pass', async () => {
   const world = build({ decoder: () => null });
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const bodyNode = find(world.dialog(), '.deposit-body')[0];
   assert.equal(bodyNode.dataset.state, 'refused');
   assert.equal(find(world.dialog(), 'canvas').length, 0);
 });
 
-test('the frame address and the fetched address have to agree', async () => {
+test('the watch\'s address and the fetched address have to agree', async () => {
   const world = build();
-  world.deposit.onFrame(frame({ address: ADDRESS.slice(0, -1) + 'f' }));
-  await flush();
+  await openCard(world, { address: ADDRESS.slice(0, -1) + 'f' });
   const bodyNode = find(world.dialog(), '.deposit-body')[0];
   assert.equal(bodyNode.dataset.state, 'refused');
   assert.ok(textOf(bodyNode).join(' ').includes('not the one this wallet reports'));
@@ -368,9 +372,8 @@ test('the frame address and the fetched address have to agree', async () => {
 
 test('Copy writes the clipboard, reads it back, and says the last four', async () => {
   const world = build();
-  world.deposit.onFrame(frame());
-  await flush();
-  const copy = find(world.dialog(), '.btn-ghost').find((n: Any) => n.textContent === 'Copy') as Any;
+  await openCard(world);
+  const copy = find(world.dialog(), 'button').find((n: Any) => n.dataset.role === 'copy') as Any;
   assert.ok(copy, 'no Copy button');
   copy.click();
   await flush();
@@ -382,10 +385,9 @@ test('Copy writes the clipboard, reads it back, and says the last four', async (
 
 test('a clipboard that reads back something else is not reported as copied', async () => {
   const world = build();
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   world.sandbox.navigator.clipboard.readText = () => Promise.resolve('something else');
-  const copy = find(world.dialog(), '.btn-ghost').find((n: Any) => n.textContent === 'Copy') as Any;
+  const copy = find(world.dialog(), 'button').find((n: Any) => n.dataset.role === 'copy') as Any;
   copy.click();
   await flush();
   await flush();
@@ -396,10 +398,9 @@ test('a clipboard that reads back something else is not reported as copied', asy
 
 test('a clipboard that cannot be read back says so, with the last four to check by hand', async () => {
   const world = build();
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   world.clipboard.readable = false;
-  const copy = find(world.dialog(), '.btn-ghost').find((n: Any) => n.textContent === 'Copy') as Any;
+  const copy = find(world.dialog(), 'button').find((n: Any) => n.dataset.role === 'copy') as Any;
   copy.click();
   await flush();
   await flush();
@@ -412,8 +413,7 @@ test('a clipboard that cannot be read back says so, with the last four to check 
 
 test('an unverified report shows one button, which posts /api/vault/unlock with purpose address', async () => {
   const world = build({ report: report({ verified: false }) });
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const dialog = world.dialog();
   const bodyNode = find(dialog, '.deposit-body')[0];
   assert.equal(bodyNode.dataset.state, 'unverified');
@@ -433,15 +433,13 @@ test('an unverified report shows one button, which posts /api/vault/unlock with 
 
 test('the card says the network once, plainly, and the minimum in the unit a person types', async () => {
   const world = build();
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const dialog = world.dialog();
   const text = textOf(dialog);
   assert.ok(text.includes('Send on Ethereum only.'), 'the address step does not name the network');
-  assert.ok(text.some((t) => t.includes('Ethereum, Base and Arbitrum use this same address.')), 'the EVM line is missing');
-  assert.ok(text.some((t) => t.includes('choose Ethereum (ERC-20) on the sending side')), 'the sending-side sentence is missing');
+  assert.ok(text.includes('When you send, pick Ethereum (ERC-20) as the network. Base and Arbitrum use this same address.'), 'the sending-side sentence is missing');
   const min = find(dialog, '.deposit-min')[0];
-  assert.ok(min.textContent.startsWith('Minimum 1 USDC.'), min.textContent);
+  assert.equal(min.textContent, 'Minimums: ETH 0.001, USDC 1.');
   assert.equal(text.some((t) => t.includes('1000000')), false, 'the raw base units reached the screen');
   assert.equal(find(dialog, 'button.chip').length, 0, 'a chip on the card: the network was picked and a token does not change the address');
   assert.equal(world.deposit.networkWords('sol'), 'Solana (SPL)');
@@ -463,49 +461,52 @@ test('a row click posts /api/deposit/show with the chain, the asset and the addr
 
 /* ---------- the watcher ---------- */
 
-test('the watcher moves through watching, seen, bridged and credited, with the hash, the confirmations and the time it took', async () => {
+test('the watcher says what is happening to the money: waiting, arriving, almost there, in your balance', async () => {
   const world = build();
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const dialog = world.dialog();
   const watch = find(dialog, '.deposit-watch')[0];
   const line = (): string => find(dialog, '.deposit-watch-text')[0].textContent;
   const link = find(dialog, '.deposit-watch-link')[0];
   const note = find(dialog, '.deposit-watch-note')[0];
-  const stop = find(watch, 'button')[0];
   const base = world.store.get();
 
+  // No stopwatch, no second copy of the address, no Stop (hunt-b 61).
   world.store.put(Object.assign({}, base, { deposit: frame() }));
   assert.equal(watch.dataset.phase, 'watching');
-  assert.ok(line().startsWith('Watching Ethereum for a deposit to 0x7d4e...0e1d, '), line());
+  assert.match(line(), /^(Waiting for your deposit on Ethereum|Still waiting for your deposit on Ethereum, \d+ min so far)$/);
+  assert.equal(line().includes('0x7d4e'), false, 'the address is said a second time');
+  assert.equal(find(watch, 'button').length, 0, 'the line offers a Stop');
   assert.equal(link.hidden, true, 'nothing to link to yet');
   assert.equal(note.hidden, true);
-  assert.equal(stop.hidden, false);
+  assert.equal(find(watch, '.deposit-ring').length, 1, 'the ring is not drawn while it waits');
 
+  // No confirmations, no bridge words (hunt-b 62).
   world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'seen', amount: 5, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', confirmations: 2, ms: 12000 }) }));
   assert.equal(watch.dataset.phase, 'seen');
-  assert.equal(line(), 'Seen on Ethereum: 5 USDC, 2 confirmations');
-  assert.equal(link.hidden, false, 'the hash is a link');
+  assert.equal(line(), 'Arriving on Ethereum: 5 USDC');
+  assert.equal(link.hidden, false, 'the transfer is a link');
   assert.equal(link.href, 'https://etherscan.io/tx/0xabc');
-  assert.equal(stop.hidden, false);
-
-  world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'seen', amount: 5, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', confirmations: null, ms: 12000 }) }));
-  assert.equal(line(), 'Seen on Ethereum: 5 USDC, confirming', 'no count yet reads as confirming, never as zero');
+  assert.equal(find(watch, '.deposit-ring').length, 1, 'the ring was drawn again rather than filled');
 
   world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'bridged', amount: 5, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', ms: 30000 }) }));
   assert.equal(watch.dataset.phase, 'bridged');
-  assert.equal(line(), 'Bridged into NEAR Intents: 5 USDC, crediting');
+  assert.equal(line(), 'Almost there: 5 USDC');
 
   world.store.put(Object.assign({}, base, { deposit: frame({ phase: 'credited', amount: 5, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', ms: 41000 }) }));
   assert.equal(watch.dataset.phase, 'credited');
-  assert.equal(line(), 'Landed in 41 s: 5 USDC is in your balance');
-  assert.equal(stop.hidden, true, 'Stop is offered after the money landed');
-  assert.ok(find(watch, '.deposit-watch-check').length === 1, 'the check replaces the dot');
+  assert.equal(line(), '5 USDC is in your balance');
+  assert.ok(find(watch, '.deposit-watch-check').length === 1, 'the check replaces the ring');
+  assert.equal(find(watch, '.deposit-ring').length, 0);
 
-  // A read that keeps failing is said under the line, and clears when it works.
-  world.store.put(Object.assign({}, base, { deposit: frame({ error: 'The verifier is not answering, retrying' }) }));
+  // A read that keeps failing is said under the line in plain words, and clears when it works;
+  // the watch's own reason rides behind the developer switch.
+  world.store.put(Object.assign({}, base, { deposit: frame({ startedAt: '2026-09-14T10:00:00.000Z', error: 'The verifier is not answering, retrying' }) }));
   assert.equal(note.hidden, false);
-  assert.equal(note.textContent, 'The verifier is not answering, retrying');
+  assert.equal(note.textContent, 'Checking is slow right now. The app keeps trying.');
+  const raw = find(dialog, '.deposit-watch-raw')[0];
+  assert.ok(raw.hasAttribute('data-dev-only'));
+  assert.equal(raw.textContent, 'The verifier is not answering, retrying');
   world.store.put(Object.assign({}, base, { deposit: frame({ error: null }) }));
   assert.equal(note.hidden, true);
 
@@ -514,39 +515,51 @@ test('the watcher moves through watching, seen, bridged and credited, with the h
   assert.equal(link.hidden, true);
 });
 
-test('closing the card stops nothing; only Stop posts /api/deposit/stop', async () => {
+test('closing the card stops nothing, and nothing on the card stops the watch', async () => {
   const world = build();
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const dialog = world.dialog();
-  const stop = find(find(dialog, '.deposit-watch')[0], 'button')[0];
+  assert.equal(find(find(dialog, '.deposit-watch')[0], 'button').length, 0, 'a Stop on the watcher line');
   const closeBtn = find(dialog, '.btn-quiet').find((n: Any) => n.textContent === 'Close') as Any;
+  assert.ok(closeBtn, 'no Close on the card');
+  assert.equal(closeBtn.getAttribute('aria-label'), 'Close');
   closeBtn.click();
   assert.equal(dialog.open, false);
   assert.equal(world.calls.some((c) => c.route === '/api/deposit/stop'), false, 'closing the card stopped the watch');
-  stop.click();
-  await flush();
-  assert.ok(world.calls.some((c) => c.route === '/api/deposit/stop'));
 });
 
-test('a second frame for the same watch does not reopen a card the person closed', async () => {
+/* The agent's deposit used to open this card over the conversation with no click, while the
+   thread drew a second card for the same watch (hunt-b 18). A watch frame never opens it now. */
+test('a watch the agent starts never opens the card, and a frame never reopens one the person closed', async () => {
   const world = build();
   world.deposit.onFrame(frame());
   await flush();
+  assert.ok(!world.dialog() || !world.dialog().open, 'a watching frame opened the card over the conversation');
+  world.deposit.onFrame(frame({ startedAt: '2026-09-14T11:00:00.000Z' }));
+  assert.ok(!world.dialog() || !world.dialog().open, 'a fresh watch opened the card');
+
+  await openCard(world);
   const dialog = world.dialog();
+  assert.equal(dialog.open, true);
   world.deposit.close();
   world.deposit.onFrame(frame());
   assert.equal(dialog.open, false, 'the same watch reopened the card');
-  world.deposit.onFrame(frame({ startedAt: '2026-09-14T11:00:00.000Z' }));
-  assert.equal(world.dialog().open, true, 'a fresh watch did not open the card');
+});
+
+test('the card is titled with the step, opens on its title, and names the network once', async () => {
+  const world = build();
+  const dialog = await openCard(world);
+  const title = find(dialog, '.deposit-title')[0];
+  assert.equal(find(title, '.deposit-title-text')[0].textContent, 'Send on Ethereum only.');
+  assert.equal(title.focused, true, 'the card opened on Close, not on what it says');
+  assert.equal(dialog.getAttribute('aria-labelledby'), title.id);
 });
 
 /* ---------- the backup card ---------- */
 
 test('the first credited deposit on a wallet that is not backed up opens the backup card, once', async () => {
   const world = build({ vault: { custody: 'secure-enclave', backedUp: false } });
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const dialog = world.dialog();
   const base = world.store.get();
   const landed = frame({ phase: 'credited', amount: 5, ms: 41000 });
@@ -572,8 +585,7 @@ test('the first credited deposit on a wallet that is not backed up opens the bac
 
 test('a credited deposit on a wallet that is backed up asks for nothing', async () => {
   const world = build({ vault: { custody: 'secure-enclave', backedUp: true } });
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   world.store.put(Object.assign({}, world.store.get(), { deposit: frame({ phase: 'credited', amount: 5, ms: 41000 }) }));
   assert.equal(find(world.dialog(), '.deposit-backup')[0].hidden, true);
   assert.equal(world.card(), null);
@@ -581,12 +593,11 @@ test('a credited deposit on a wallet that is backed up asks for nothing', async 
 
 test('money that lands after the card was closed is said once, as a toast', async () => {
   const world = build();
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   world.deposit.close();
   const landed = frame({ phase: 'credited', amount: 5, ms: 41000 });
   world.store.put(Object.assign({}, world.store.get(), { deposit: landed }));
-  assert.deepEqual(world.toasts, ['Landed: 5 USDC in 41 s']);
+  assert.deepEqual(world.toasts, ['5 USDC is in your balance']);
   world.store.put(Object.assign({}, world.store.get(), { deposit: Object.assign({}, landed, { ms: 42000 }) }));
   assert.equal(world.toasts.length, 1, 'the same landing was said twice');
 });
@@ -594,8 +605,7 @@ test('money that lands after the card was closed is said once, as a toast', asyn
 test('Change network goes back to the tiles, and a different network is a fresh watch', async () => {
   const base = { id: 'base', name: 'Base', address: '0x1111111111111111111111111111111111111111', memo: null, unavailable: null, accepts: [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }], warning: WARNING };
   const world = build({ report: report({ networks: report().networks.concat([base]) }) });
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const dialog = world.dialog();
   const pick = find(dialog, '.netpick')[0];
   assert.equal(pick.dataset.stage, 'address');
@@ -614,15 +624,14 @@ test('Change network goes back to the tiles, and a different network is a fresh 
   go.click();
   await flush();
   assert.equal(pick.dataset.stage, 'address');
-  const show = world.calls.find((c) => c.route === '/api/deposit/show');
+  const show = world.calls.filter((c) => c.route === '/api/deposit/show').pop();
   assert.deepEqual(show, { route: '/api/deposit/show', chain: 'base', symbol: 'USDC', address: base.address });
-  assert.equal(find(dialog, '.sr-only')[0].textContent, base.address, 'the address drawn is not Base\'s');
+  assert.equal(find(find(dialog, '.deposit-address')[0], '.sr-only')[0].textContent, base.address, 'the address drawn is not Base\'s');
 });
 
 test('with no acknowledgement on this Mac the card opens on the token list, and the address waits for the tick', async () => {
   const world = build({ ack: false });
-  world.deposit.onFrame(frame());
-  await flush();
+  await openCard(world);
   const dialog = world.dialog();
   const pick = find(dialog, '.netpick')[0];
   assert.equal(pick.dataset.stage, 'tokens');
@@ -642,7 +651,7 @@ test('with no acknowledgement on this Mac the card opens on the token list, and 
   assert.equal(find(dialog, 'canvas').length, 1, 'no QR after the acknowledgement');
   // Remembered: the same watch again opens straight on the address.
   assert.equal(world.sandbox.localStorage.getItem('phosphor.depositAck'), '1');
-  assert.equal(world.calls.filter((c) => c.route === '/api/deposit/show').length, 0, 'the card started a second watch for the watch it was opened with');
+  assert.equal(world.calls.filter((c) => c.route === '/api/deposit/show').length, 1, 'the card started a second watch for the watch it was opened with');
 });
 
 /* ---------- the reminder at every start ---------- */

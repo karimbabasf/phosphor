@@ -1,6 +1,6 @@
 # Token and chain logos
 
-Every file here except `hype.svg` is the "branded" SVG from `@web3icons/core` 4.0.56
+Every file here except `hype.svg` and `base.svg` is the "branded" SVG from `@web3icons/core` 4.0.56
 (https://github.com/0xa3k5/web3icons), MIT licensed, extracted as a plain `.svg`, with three
 exceptions taken from `spothq/cryptocurrency-icons` 0.18.1, CC0: `xrp.svg` and `wbtc.svg` are
 that set's disc versions, because the web3icons marks for those two are white glyphs alone and
@@ -17,7 +17,18 @@ tile each is drawn on cut to its disc and the `viewBox` widened the same way.
 https://hyperliquid.gitbook.io/hyperliquid-docs/brand-kit). It is a trademark of Hyperliquid,
 used here under the brand kit's terms to identify the venue, and is not MIT.
 
-Chain marks (`arb.svg`, `base.svg`, `ton.svg`, `abs.svg`, `bera.svg`, `mon.svg`, `move.svg`,
+`base.svg` is Base's round symbol (the blue disc with its bar, #0052FF, from Base's brand kit at
+https://base.org), drawn into the middle three quarters of a 24 unit box. The package's Base
+file is the flat square block, the one mark in a list of round ones. It is a trademark of Coinbase,
+used here to identify the network, and is not MIT.
+
+`pepe.svg` is the package's file with its square photo tile cut to the disc every other mark
+sits in. The dark discs (`xlm.svg`, `xrp.svg`, `fxrp.svg`, `wbtc.svg`, `xaut.svg`, `frax.svg`,
+`xpl.svg`, `xlayer.svg`, `aleo.svg`, `strk.svg`, `usde.svg`) each carry one added element, a
+faint light ring on the disc's own edge (`data-edge="light"`), so a black or navy disc does not
+vanish on the window's warm charcoal. Nothing else in any mark is changed.
+
+Chain marks (`arb.svg`, `ton.svg`, `abs.svg`, `bera.svg`, `mon.svg`, `move.svg`,
 `robinhood.svg`, `scroll.svg`, `strk.svg`) are the network icons from the same package.
 `strk.svg` is the Starknet network icon rather than the package's STRK token file, because that
 file draws another project's mark. `xpl.svg` (Plasma, whose coin the package's own metadata draws
@@ -27,7 +38,8 @@ version because their branded marks are black glyphs alone, cut to a disc as abo
 A wrapped or bridged ticker's file is a byte copy of the file for the coin it carries, under that
 file's license: `weth.svg` of `eth.svg`; `cbbtc.svg`, `hemibtc.svg`, `xbtc.svg`, `nbtc.svg` and
 `btc(omni).svg` of `btc.svg`; `usdt0.svg` of `usdt.svg`; `usdc.e.svg` and `usdcx.svg` of
-`usdc.svg`; `xdai.svg` of `dai.svg`; and `fxrp.svg` of `xrp.svg`.
+`usdc.svg`; `xdai.svg` of `dai.svg`; and `fxrp.svg` of `xrp.svg`. What tells two of them apart in
+one list is the badge `ui/design/marks.js` draws on the copy (BADGES), not the file.
 
 ## MIT License (@web3icons/core)
 

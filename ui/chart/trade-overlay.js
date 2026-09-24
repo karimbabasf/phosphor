@@ -60,9 +60,11 @@ function tradeLine(ctx, L, spec) {
   var bottom = L.priceTop + L.priceHeight;
   var text = spec.label + '  ' + priceText(spec.price, L.decimals);
   if (y < top || y > bottom) {
-    // Pinned to the edge it went off, behind a drawn arrow (labels.js labelGlyph).
+    // Pinned to the edge it went off, behind a drawn arrow (labels.js labelGlyph). A top pin
+    // asks for a place under the legend's lines rather than over them, and a bottom pin sits
+    // clear of the pane rule, where the volume pane writes its own name.
     chartLabel({
-      y: y < top ? top + 6 : bottom - 6,
+      y: y < top ? top + LABEL_TOP + LABEL_PITCH * 2 : bottom - 18,
       parts: [
         { glyph: y < top ? 'up' : 'down', tone: spec.tone, alpha: 0.6 },
         { text: text, tone: spec.tone, alpha: 0.6 }
@@ -102,11 +104,38 @@ function tradeBand(ctx, L, fromPrice, direction, tone, alpha) {
 function tradeSpan(ctx, L, priceA, priceB, tone, alpha) {
   var top = L.priceTop;
   var bottom = L.priceTop + L.priceHeight;
-  var y0 = Math.max(top, Math.min(L.yOf(priceA), L.yOf(priceB)));
-  var y1 = Math.min(bottom, Math.max(L.yOf(priceA), L.yOf(priceB)));
+  var ya = L.yOf(priceA);
+  var yb = L.yOf(priceB);
+  var aIn = ya >= top && ya <= bottom;
+  var bIn = yb >= top && yb <= bottom;
+  /* A plan whose lines are both off the pane tints nothing: a wash over every candle on screen
+     says nothing about where the plan is. */
+  if (!aIn && !bIn) return;
+  var y0 = Math.max(top, Math.min(ya, yb));
+  var y1 = Math.min(bottom, Math.max(ya, yb));
   if (y1 <= y0) return;
-  ctx.fillStyle = chartInk(tone, alpha);
-  ctx.fillRect(0, y0, L.plotWidth, y1 - y0);
+  if (aIn && bIn) {
+    ctx.fillStyle = chartInk(tone, alpha);
+    ctx.fillRect(0, y0, L.plotWidth, y1 - y0);
+    return;
+  }
+  /* One line on the pane: the wash leaves it and fades out within 48 px, toward the line that
+     is off the pane, so it reads as the side the plan runs to and not as a colour on the chart. */
+  var from = aIn ? ya : yb;
+  var dir = (aIn ? yb : ya) > from ? 1 : -1;
+  var to = from + dir * 48;
+  var g0 = Math.max(top, Math.min(from, to));
+  var g1 = Math.min(bottom, Math.max(from, to));
+  if (g1 <= g0) return;
+  if (typeof ctx.createLinearGradient === 'function') {
+    var grad = ctx.createLinearGradient(0, from, 0, to);
+    grad.addColorStop(0, chartInk(tone, alpha));
+    grad.addColorStop(1, chartInk(tone, 0));
+    ctx.fillStyle = grad;
+  } else {
+    ctx.fillStyle = chartInk(tone, alpha);
+  }
+  ctx.fillRect(0, g0, L.plotWidth, g1 - g0);
 }
 
 /* Where this account actually traded, at the bar it traded on. A fill is the one mark on the

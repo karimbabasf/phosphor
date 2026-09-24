@@ -14,8 +14,9 @@
    mask clears an ellipse behind the card: fully clear out to 62 percent of
    each radius, then the lines fade in to full strength at the edge. field.js
    sets the four values from the card's own box, and these are the fallbacks
-   for the frame before it has. */
-#screen-firstrun .field-layer {
+   for the frame before it has. The terms card (terms.css) wears the same. */
+#screen-firstrun .field-layer,
+#screen-terms .field-layer {
   position: fixed;
   inset: 0;
   z-index: 0;
@@ -37,10 +38,29 @@
   padding: calc(var(--s-6) + var(--s-1)) calc(var(--s-6) + var(--s-2));
 }
 
+/* The window's smallest size is 960 by 700: a short window gets a card with
+   less air, so the tallest step still fits without the card touching the
+   window's edges. */
+@media (max-height: 760px) {
+  #screen-firstrun .screen-card {
+    padding: var(--s-5) var(--s-6);
+  }
+
+  #screen-firstrun .screen-body {
+    gap: var(--s-3);
+  }
+}
+
 /* The card takes the focus on the welcome so the one button does not open
    with a ring on it. The card is not a control, so it draws none. */
 #screen-firstrun .screen-card:focus {
   outline: none;
+}
+
+/* One neutral ring for every control on the card. */
+#screen-firstrun :focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
 }
 
 /* The body is what a step draws into and what a step change swaps: the card
@@ -63,24 +83,59 @@
   overflow: hidden;
 }
 
-/* The progress: one thin segment per step, the ones reached in the ink. The
-   count in words sits beside it for a screen reader (.sr-only, reset.css). */
+/* ---------- the progress ----------
+
+   The phases the flow has, each named over a thin bar that fills as its
+   steps are passed. The phase the person is in reads in the text tone, the
+   others a step quieter; a finished phase's bar is full. The count in words
+   sits beside it for a screen reader (.sr-only, reset.css). */
 .screen-progress {
   display: flex;
-  gap: 6px;
-  height: 2px;
+  gap: var(--s-3);
+  margin-bottom: var(--s-1);
 }
 
-.screen-progress-seg {
+.screen-phase {
   flex: 1 1 0;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--line-strong);
-  transition: background-color var(--dur-swap) var(--ease-out);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 
-.screen-progress-seg[data-done="true"] {
+.screen-phase-name {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-3);
+  transition: color var(--dur-swap) var(--ease-out);
+}
+
+.screen-phase[data-current="true"] .screen-phase-name {
+  color: var(--text);
+}
+
+.screen-phase[data-done="true"] .screen-phase-name {
+  color: var(--text-2);
+}
+
+.screen-phase-bar {
+  position: relative;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--well-bg);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.screen-phase-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform var(--dur-morph) var(--ease-spring-soft);
 }
 
 /* ---------- the welcome ---------- */
@@ -102,8 +157,8 @@
 .firstrun-welcome-title {
   margin: 0;
   font-size: var(--fs-32);
-  font-weight: 500;
-  letter-spacing: -0.025em;
+  font-weight: 550;
+  letter-spacing: -0.03em;
   line-height: 1.15;
   color: var(--text);
   text-wrap: balance;
@@ -128,18 +183,81 @@
   padding-right: var(--s-6);
 }
 
+/* Step titles: short noun phrases at the card's one size. */
+#screen-firstrun .screen-body > h1.title {
+  margin: 0;
+  font-size: var(--fs-24);
+  font-weight: 550;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+/* The primary holds one width from step to step, so the card's one action
+   never jumps between screens. */
+#screen-firstrun .screen-actions .btn-lg:last-child {
+  min-width: 160px;
+}
+
+/* A button that cannot be pressed yet is an outline of itself: no fill, a
+   line edge, the quiet text tone. It turns solid the moment it can be
+   pressed, never a faded green. */
+#screen-firstrun .btn:disabled:not([data-pending="true"]) {
+  opacity: 1;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--text-3);
+}
+
+/* Fields are wells pressed into the card. */
+#screen-firstrun .input {
+  background: var(--well-bg);
+  border-color: transparent;
+  box-shadow: var(--well);
+}
+
+/* ---------- a problem on a step ---------- */
+
+.firstrun-error,
+.firstrun-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.firstrun-error[hidden] {
+  display: none;
+}
+
+.firstrun-error-icon,
+.firstrun-note-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  color: var(--warn);
+}
+
 /* ---------- where the wallet lives ---------- */
 
-/* Three facts under a hairline, then the developer switch, then the same
-   facts in their technical words while the switch is on. The lead of each
-   fact is in the text colour and the rest a step down, so the three leads
-   read as a list on their own. The icon is the only ink on the card. */
+/* Three facts on the card, then the developer switch, then the same facts in
+   their technical words while the switch is on. The lead of each fact is in
+   the text colour and the rest a step down, so the three leads read as a
+   list on their own. The icon is the only ink on the card. */
 .firstrun-where {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--line);
+  padding: var(--s-4);
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
 }
 
 .firstrun-facts {
@@ -187,11 +305,15 @@
 
 /* The technical form. devmode.css shows it as a block while the switch is
    on, so the rhythm here is margins, not a flex gap. Names are set in the
-   mono face at the size the meta line uses. */
+   mono face at the size the meta line uses. It keeps to 160 px and scrolls
+   inside itself, so the card still fits the window's smallest height. */
 .firstrun-dev {
   list-style: none;
   margin: 0;
   padding: 0 0 0 calc(16px + var(--s-3));
+  max-height: 160px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   font-size: var(--fs-12);
   line-height: 1.45;
   color: var(--text-3);
@@ -207,6 +329,198 @@
   color: var(--text-2);
 }
 
+/* ---------- create or bring ---------- */
+
+/* Two paths as one choice: tiles, the picked one raised off the card with a
+   tick, the other flat. No colour: the lift and the tick say which. */
+.firstrun-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
+  text-align: left;
+  color: var(--text);
+  transition: transform var(--dur-release) var(--ease-spring),
+              background-color var(--dur-press) var(--ease-out),
+              box-shadow var(--dur-press) var(--ease-out);
+}
+
+.choice:active {
+  transform: scale(var(--scale-press));
+  transition-duration: 100ms, var(--dur-press), var(--dur-press);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .choice:hover {
+    background: color-mix(in srgb, var(--tile), var(--bg-3) 35%);
+  }
+}
+
+.choice[data-chosen="true"] {
+  background: var(--surface-raised);
+  box-shadow: var(--raise-sm), inset 0 0 0 1px var(--line-strong);
+}
+
+.choice-text {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.choice-tick {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--text);
+}
+
+.choice-tick .icon {
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity var(--dur-press) var(--ease-out),
+              transform var(--dur-release) var(--ease-spring);
+}
+
+.choice[data-chosen="true"] .choice-tick {
+  background: var(--bg-3);
+  box-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.08);
+}
+
+.choice[data-chosen="true"] .choice-tick .icon {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------- the words and prove ---------- */
+
+/* The tick under the words is the deposit step's own (deposit.css); only its
+   place on the card is here. */
+.firstrun-ack {
+  margin-top: var(--s-1);
+}
+
+.firstrun-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
+}
+
+@media (max-width: 620px) {
+  .firstrun-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------- when should it ask ---------- */
+
+.threshold-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.threshold-money {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 148px;
+  height: 44px;
+  padding: 0 var(--s-3);
+  border-radius: var(--radius);
+  background: var(--well-bg);
+  box-shadow: var(--well);
+  cursor: text;
+}
+
+.threshold-money:focus-within {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+.threshold-sign {
+  font-size: var(--fs-18);
+  color: var(--text-3);
+}
+
+#screen-firstrun .threshold-money .threshold-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  outline: none;
+  font-size: var(--fs-18);
+  font-weight: 500;
+  text-align: left;
+}
+
+.threshold-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.threshold-chip[aria-checked="true"] {
+  color: var(--text);
+  background: linear-gradient(180deg, var(--bg-3), var(--bg-2));
+  box-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.08), 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- phosphor is ready ---------- */
+
+.firstrun-done {
+  align-items: stretch;
+}
+
+.firstrun-done .firstrun-mark {
+  width: 36px;
+  height: 40px;
+  margin-bottom: 0;
+}
+
+#screen-firstrun .firstrun-done-title {
+  font-size: var(--fs-28);
+  letter-spacing: -0.025em;
+}
+
+.firstrun-done-facts {
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
+}
+
+.firstrun-done-facts .firstrun-fact-text {
+  font-size: var(--fs-14);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .screen-progress-seg { transition: none; }
+  .screen-phase-name,
+  .screen-phase-fill,
+  .choice,
+  .choice-tick .icon {
+    transition: none;
+  }
 }

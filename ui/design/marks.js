@@ -8,10 +8,14 @@
 
    So a coin is drawn the way its brand draws it: the logo file in ui/logos/
    (see LICENSE.md there), in full colour and at full opacity, with nothing
-   behind it: no disc, no ring, no wash. Every file keeps its mark inside the
-   middle 18 units of a 24 unit box, so a row of them sits at one optical size
-   whatever the box, and being vector each is sharp at 1x and 2x. A coin with
-   no file draws a neutral monogram at that same size, never a stand-in glyph. */
+   behind it: no disc, no wash. Every file keeps its mark inside the middle 18
+   units of a 24 unit box, so a row of them sits at one optical size whatever
+   the box, and being vector each is sharp at 1x and 2x. The files share one
+   round geometry: a brand drawn on a square (Base's block, PEPE's tile) is its
+   round mark, and a brand drawn as a dark disc carries a faint light edge in
+   its file so it does not vanish on the warm ground (Karim, 2026-09-23: the
+   real logos, never tinted discs). A coin with no file draws a neutral
+   monogram at that same size, never a stand-in glyph. */
 (function () {
   'use strict';
 
@@ -34,7 +38,7 @@
     HYPE: '#97FCE4',
     ARB: '#12AAFF',
     AVAX: '#E84142',
-    BASE: '#0000FF',
+    BASE: '#0052FF',
     OP: '#FE0420',
     POL: '#8247E5',
     BNB: '#F0B90B',
@@ -110,6 +114,60 @@
     return COLOURS[key] || '';
   }
 
+  /* A wrapped or bridged coin wears the file of the coin it carries, so two
+     rows in one list would read as one coin twice. Wallets tell them apart
+     with a small badge at the mark's lower right, and so does this: the
+     chain's own mark where the ticker names the chain it lives on (Base on
+     cbBTC, NEAR on nBTC, Gnosis on xDAI), and otherwise a letter, W for a
+     wrapped coin and the ticker's own first letter for a bridged one. */
+  var BADGES = {
+    WETH: { letter: 'W' },
+    WNEAR: { letter: 'W' },
+    CBBTC: { mark: 'BASE' },
+    NBTC: { mark: 'NEAR' },
+    XDAI: { mark: 'GNO' },
+    HEMIBTC: { letter: 'H' },
+    XBTC: { letter: 'X' },
+    'BTC(OMNI)': { letter: 'O' },
+    USDT0: { letter: '0' },
+    'USDC.E': { letter: 'E' },
+    USDCX: { letter: 'X' },
+    FXRP: { letter: 'F' }
+  };
+
+  function badgeFor(symbol) {
+    var key = String(symbol === null || symbol === undefined ? '' : symbol).trim().toUpperCase();
+    return hasOwn(BADGES, key) ? BADGES[key] : null;
+  }
+
+  /* Drawn with inline styles off the design tokens, so the badge goes wherever
+     a logo goes without a sheet of its own: a disc about half the mark's size,
+     sitting just off its corner, cut out of the surface by a ring of the
+     slab's colour. */
+  function addBadge(node, badge) {
+    node.style.setProperty('position', 'relative');
+    var disc = document.createElement('span');
+    disc.className = 'logo-badge';
+    disc.setAttribute('aria-hidden', 'true');
+    disc.style.cssText = 'position:absolute;right:-10%;bottom:-10%;width:48%;height:48%;display:grid;place-items:center;overflow:hidden;border-radius:50%;background:var(--bg-3);box-shadow:0 0 0 1.5px var(--bg-1);pointer-events:none';
+    if (badge.mark) {
+      var img = document.createElement('img');
+      img.alt = '';
+      img.decoding = 'async';
+      img.draggable = false;
+      img.style.cssText = 'display:block;width:134%;height:134%;max-width:none';
+      img.onerror = function () { if (disc.parentNode) disc.parentNode.removeChild(disc); };
+      img.src = './logos/' + badge.mark.toLowerCase() + '.svg';
+      disc.appendChild(img);
+    } else {
+      var letter = document.createElement('span');
+      letter.textContent = badge.letter;
+      letter.style.cssText = 'font-family:var(--font-ui);font-size:calc(var(--logo) * 0.3);font-weight:600;line-height:1;color:var(--text)';
+      disc.appendChild(letter);
+    }
+    node.appendChild(disc);
+  }
+
   /* Case and whitespace tolerant, because a symbol reaches this from a wallet
      row, from a server sentence and from a name like "Ether (ETH)". wNEAR is
      the same coin as NEAR wearing a wrapper and draws NEAR's logo; the symbol
@@ -141,6 +199,8 @@
     img.onerror = function () { fallback(node, ticker); };
     img.src = './logos/' + ticker.toLowerCase() + '.svg';
     node.appendChild(img);
+    var badge = badgeFor(symbol);
+    if (badge) addBadge(node, badge);
     return node;
   }
 
@@ -206,5 +266,5 @@
     return Object.prototype.hasOwnProperty.call(object, key);
   }
 
-  window.PhosphorMarks = { colourFor: colourFor, colour: colourFor, logo: logo, agent: agent, COLOURS: COLOURS, LOGOS: LOGOS, AGENT_LOGOS: AGENT_LOGOS };
+  window.PhosphorMarks = { colourFor: colourFor, colour: colourFor, logo: logo, agent: agent, badgeFor: badgeFor, COLOURS: COLOURS, LOGOS: LOGOS, AGENT_LOGOS: AGENT_LOGOS, BADGES: BADGES };
 })();

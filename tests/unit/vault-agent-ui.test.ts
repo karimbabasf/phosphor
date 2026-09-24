@@ -1,14 +1,15 @@
-// The Vault's assistant list: one row per agent in the catalog, each with its mark, one plain
-// state and one action, Use.
+// The Vault's assistant list: one tile per agent in the catalog, each with its mark, one plain
+// status and one action, Use.
 //
 // Run for real over a small DOM (the pattern of vault-tab-ui.test.ts) with vault.js and the
 // list from firstrun.js loaded together, the api module replaced by a recorder. What is proven:
-// opening the Vault scans this Mac; every row says one true state (Ready, Runs in your
-// terminal, Not signed in, Not installed, Connects from outside, Cannot drive Phosphor) with
-// the line that says how when there is something to do; Use is one round trip, the row in use
-// says so, and the chat hears about it; a switch the app refuses is that one sentence and the
-// pick stays; a terminal agent on the door reads Connected; an app that does not answer is
-// said in the list's own words; and nothing the network said is printed. No dots, no chips.
+// opening the Vault scans this Mac; every tile says one true status (installed, signed in, and
+// where it runs) with the way to install or sign in behind its fold; the chat app that cannot
+// drive is one line under the list, not a tile; Use is one round trip that names the agent while
+// it checks, the tile in use says so, the section names it, and the chat hears about it; a switch
+// the app refuses is that one sentence and the pick stays; a terminal agent on the door reads
+// Connected; an app that does not answer is said in the list's own words; and nothing the
+// network said is printed. No dots, no chips.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -257,6 +258,8 @@ const status = (world: World): string => {
   return node && !node.hidden ? node.textContent : '';
 };
 const useOf = (world: World, id: string): Any => find(rowOf(world, id), '.agentrow-use')[0];
+const howOf = (world: World, id: string): Any => find(rowOf(world, id), '.agentrow-how')[0];
+const lead = (world: World): string => find(section(world), '.vault-lead')[0].textContent;
 
 const CLAUDE_IN = { agent: 'claude', name: 'Claude Code', state: 'installed_and_logged_in', probed: true, sentence: 'Claude Code is signed in and ready to start.', details: ['Made by Anthropic.', 'Found at /Users/x/.local/bin/claude, 2.1.281.', 'Install: curl -fsSL https://claude.ai/install.sh | bash', 'Sign in: claude auth login'], version: '2.1.281', bin: '/Users/x/.local/bin/claude', inApp: true, registers: true, ms: 30 };
 const GROK_OUT = { agent: 'grok', name: 'Grok', state: 'installed_not_logged_in', probed: true, sentence: 'Grok is installed but not signed in. Sign in in your terminal, then press Check again.', details: ['Made by xAI.', 'Install: curl -fsSL https://x.ai/cli/install.sh | bash', 'Sign in: grok login'], version: '1.0.40', bin: '/Users/x/.grok/bin/grok', inApp: true, registers: true, ms: 50 };
@@ -288,13 +291,15 @@ test('the list prints nothing the network said and raises no toast about the age
 
 /* ---------- the rows ---------- */
 
-test('opening the Vault scans this Mac; one row per agent in the catalog\'s order, with its mark and name', async () => {
+test('opening the Vault scans this Mac; one tile per agent that can drive, in the catalog\'s order, with its mark and name', async () => {
   const world = await opened();
   assert.equal(world.calls.filter((c) => c.action === 'agent-scan').length, 1);
-  assert.deepEqual(rows(world).map((r: Any) => r.dataset.agent), ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']);
-  assert.deepEqual(rows(world).map((r: Any) => find(r, '.agentrow-mark')[0].getAttribute('data-agent')), ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']);
+  assert.deepEqual(rows(world).map((r: Any) => r.dataset.agent), ['claude', 'codex', 'hermes', 'grok', 'mcp']);
+  assert.deepEqual(rows(world).map((r: Any) => find(r, '.agentrow-mark')[0].getAttribute('data-agent')), ['claude', 'codex', 'hermes', 'grok', 'mcp']);
   assert.deepEqual(rows(world).map((r: Any) => find(r, '.agentrow-name')[0].textContent),
-    ['Claude Code', 'Codex', 'Hermes', 'Grok', 'Another agent', 'Claude Desktop or a chat app']);
+    ['Claude Code', 'Codex', 'Hermes', 'Grok', 'Another agent']);
+  // The chat app that cannot drive is one line under the list, never a tile whose only content is no.
+  assert.equal(find(section(world), '.agentpick-note')[0].textContent, 'Chat apps like Claude Desktop cannot drive Phosphor yet.');
   assert.equal(find(section(world), '.chip').length, 0);
   assert.equal(find(section(world), '.agent-tile').length, 0);
 });
@@ -314,12 +319,11 @@ test('each row draws its agent\'s own logo, never a monogram and never a tinted 
     return ink ? ink.style['mask-image'] : '';
   };
   assert.equal(file('claude'), './logos/agents/claude.svg');
-  assert.equal(file('desktop'), './logos/agents/claude.svg');
   assert.equal(file('codex'), './logos/agents/codex.svg');
   assert.equal(file('grok'), 'url("./logos/agents/grok.svg")');
   assert.equal(file('hermes'), 'url("./logos/agents/hermes.svg")');
   assert.equal(markOf('mcp').childNodes[0].dataset.icon, 'link');
-  for (const id of ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']) {
+  for (const id of ['claude', 'codex', 'hermes', 'grok', 'mcp']) {
     const mark = markOf(id);
     assert.ok(String(mark.className).split(' ').includes('logo'), `${id}: the mark is the shared logo`);
     assert.equal(mark.getAttribute('data-fallback'), null, `${id} drew a monogram`);
@@ -328,27 +332,42 @@ test('each row draws its agent\'s own logo, never a monogram and never a tinted 
   assert.doesNotMatch(CSS, /\.agentrow-mark\s*\{[^}]*(background|border)/, 'a disc is back behind the mark');
 });
 
-test('every row says one plain state, and the line that says how when there is something to do', async () => {
+test('every tile says whether its agent is installed and signed in, and the line to run waits behind a fold', async () => {
   const world = await opened();
-  assert.equal(stateOf(world, 'claude'), 'Ready');
-  assert.equal(lineOf(world, 'claude'), '', 'a ready row needs no line');
-  assert.equal(stateOf(world, 'codex'), 'Runs in your terminal');
-  assert.equal(lineOf(world, 'codex'), CODEX_IN.sentence, 'the reason is the app\'s own sentence');
+  assert.equal(stateOf(world, 'claude'), 'Signed in, runs in the chat');
+  assert.equal(lineOf(world, 'claude'), '', 'a ready tile needs no line');
+  assert.equal(stateOf(world, 'codex'), 'Signed in, runs in your terminal');
+  assert.equal(lineOf(world, 'codex'), CODEX_IN.sentence, 'the agent in use carries the app\'s own sentence');
   assert.equal(stateOf(world, 'hermes'), 'Not installed');
+  // The install line is a shell pipe: behind "How to install", wrapped when open, with Copy.
+  assert.equal(commandOf(world, 'hermes'), '', 'a shell command on the face of the tile');
+  const how = howOf(world, 'hermes');
+  assert.equal(how.hidden, false);
+  assert.equal(how.textContent, 'How to install');
+  assert.equal(how.getAttribute('aria-expanded'), 'false');
+  how.click();
+  assert.equal(how.getAttribute('aria-expanded'), 'true');
   assert.equal(commandOf(world, 'hermes'), 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash');
   assert.ok(find(rowOf(world, 'hermes'), '.agentrow-copy')[0], 'no Copy beside the install line');
-  assert.equal(stateOf(world, 'grok'), 'Not signed in');
+  assert.ok(visibleText(rowOf(world, 'hermes')).includes('Run this in Terminal, then press Check again.'));
+  how.click();
+  assert.equal(commandOf(world, 'hermes'), '', 'the fold did not close');
+  assert.equal(stateOf(world, 'grok'), 'Installed, not signed in');
+  assert.equal(howOf(world, 'grok').textContent, 'How to sign in');
+  howOf(world, 'grok').click();
   assert.equal(commandOf(world, 'grok'), 'grok login');
   assert.equal(stateOf(world, 'mcp'), 'Connects from outside');
   assert.equal(lineOf(world, 'mcp'), 'Paste one line into it and it joins this window.');
-  assert.equal(stateOf(world, 'desktop'), 'Cannot drive Phosphor');
-  assert.ok(lineOf(world, 'desktop').startsWith('A chat app cannot drive Phosphor yet.'));
-  // No path, version or maker on the face of any row.
+  // The command wraps rather than being cut, and is set in the mono face (a code element, no figure class).
+  assert.match(CSS, /\.agentrow-code \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
+  assert.equal(String(find(rowOf(world, 'grok'), '.agentrow-code')[0].className).split(' ').includes('mono'), false);
+  // No path, version or maker on the face of any tile.
   assert.ok(!visibleText(section(world)).some((t) => t.includes('/Users/') || t.startsWith('Made by')), JSON.stringify(visibleText(section(world))));
 });
 
-test('Use is offered only where a pick can do something, and the agent in use says so in its place', async () => {
+test('Use is offered only where a pick can do something, the agent in use says so in its place, and the section names it', async () => {
   const world = await opened('codex');
+  assert.ok(lead(world).startsWith('Codex is your assistant.'), lead(world));
   const offered = rows(world).filter((r: Any) => !find(r, '.agentrow-use')[0].hidden).map((r: Any) => r.dataset.agent);
   assert.deepEqual(offered, ['claude', 'grok', 'mcp'], 'Use on a row it cannot help, or missing from one it can');
   const codex = rowOf(world, 'codex');
@@ -363,10 +382,11 @@ test('Use is one round trip: the row turns current, the chat hears about it, not
   const world = await opened('codex');
   world.answers['agent-pick'] = { ok: true, check: CLAUDE_IN, registered: true, registrationFailed: false, command: 'claude mcp add phosphor -- node /x', picked: 'claude' };
   useOf(world, 'claude').click();
-  assert.equal(status(world), 'Checking on this Mac.');
+  assert.equal(status(world), 'Checking Claude Code on this Mac.', 'the check does not name the agent');
   await flush();
   await flush();
   assert.equal(world.calls.filter((c) => c.action === 'agent-pick').length, 1);
+  assert.ok(lead(world).startsWith('Claude Code is your assistant.'), lead(world));
   assert.equal(world.calls.find((c) => c.action === 'agent-pick')?.agent, 'claude');
   assert.equal(rowOf(world, 'claude').getAttribute('aria-current'), 'true');
   assert.equal(rowOf(world, 'codex').getAttribute('aria-current'), null);
@@ -395,7 +415,7 @@ test('a terminal agent on the door reads Connected, and back when it leaves', as
   world.store.put({ ...world.store.get(), agents: { members: [{ client: 'codex-cli', label: 'codex', ops: 3 }] } });
   assert.equal(stateOf(world, 'codex'), 'Connected');
   world.store.put({ ...world.store.get(), agents: { members: [] } });
-  assert.equal(stateOf(world, 'codex'), 'Runs in your terminal');
+  assert.equal(stateOf(world, 'codex'), 'Signed in, runs in your terminal');
 });
 
 test('another agent, once picked, shows the one line to paste with Copy; a registration that failed does too', async () => {
@@ -423,7 +443,7 @@ test('when the app does not answer the list says so in its own words, and Check 
   await flush();
   assert.equal(status(world), 'Phosphor could not check right now. Try again.');
   assert.ok(!visibleText(section(world)).some((t) => t.includes('RAW:') || t.includes('Failed to fetch')));
-  assert.equal(stateOf(world, 'claude'), 'Checking', 'a row claimed a state nobody checked');
+  assert.equal(stateOf(world, 'claude'), 'Checking', 'a tile claimed a state nobody checked');
   world.answers['agent-scan'] = scanWith('codex');
   const again = buttonNamed(section(world), 'Check again');
   assert.ok(again, 'no Check again by the title');
@@ -431,7 +451,7 @@ test('when the app does not answer the list says so in its own words, and Check 
   await flush();
   await flush();
   assert.equal(world.calls.filter((c) => c.action === 'agent-scan').length, 2);
-  assert.equal(stateOf(world, 'claude'), 'Ready');
+  assert.equal(stateOf(world, 'claude'), 'Signed in, runs in the chat');
   assert.equal(status(world), '');
   assert.equal(world.toasts.length, 0);
 });

@@ -201,7 +201,9 @@ test('a venue that has no more is not asked again, and the chart says where hist
   const L = s.buildLayout(872, 600, fakeCtx);
   s.VOLUME_ON = false;
   s.drawChartNotes(ctx, L);
-  assert.ok(printed.some((line) => /history begins here/.test(line)), printed.join(' | '));
+  assert.ok(printed.some((line) => /History starts here/.test(line)), printed.join(' | '));
+  // How far the view is panned is the Live control's to say, not a note on the bars.
+  assert.ok(!printed.some((line) => /panned back/.test(line)), printed.join(' | '));
 });
 
 test('a backfill that lands after the market changed is dropped, not prepended to another chart', async () => {

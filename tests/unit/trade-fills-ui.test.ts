@@ -187,6 +187,32 @@ function buttons(node: Node): Node[] {
   return allWithTag(node, 'button').filter((b) => b.className.includes('trade-act'));
 }
 
+// A button's words: the label sits in a span inside it.
+function words(node: Node): string {
+  return textOf(node).join('');
+}
+
+// The confirm under a card, with its sentence and its two answers.
+function confirmOf(row: Node) {
+  const [box] = withClass(row, 'trade-confirm');
+  if (!box) return null;
+  const actions = withClass(box, 'trade-confirm-actions')[0];
+  return {
+    box,
+    text: textOf(withClass(box, 'trade-confirm-text')[0]).join(''),
+    error: withClass(box, 'trade-confirm-error')[0],
+    keep: actions.childNodes[0],
+    go: actions.childNodes[1],
+  };
+}
+
+// A position card's labelled figure, by its class: the figure and the line under it.
+function stat(row: Node, cls: string) {
+  const [node] = withClass(row, cls);
+  const value = node.childNodes[1];
+  return { label: node.childNodes[0].textContent, figure: value.childNodes[0].textContent, sub: value.childNodes[1].hidden ? '' : value.childNodes[1].textContent, none: node.dataset.none === 'true' };
+}
+
 // A fill row on the tape, read cell by cell: the clock, the side pill, the coin, the size, the
 // value and the explorer link slot, in the order the row places them.
 function fillRows(node: Node) {
@@ -196,8 +222,10 @@ function fillRows(node: Node) {
     side: row.childNodes[1].textContent,
     coin: textOf(row.childNodes[2]).join(''),
     size: row.childNodes[3].textContent,
-    value: row.childNodes[4].textContent,
-    link: row.childNodes[5].childNodes[0] ?? null,
+    price: row.childNodes[4].textContent,
+    value: row.childNodes[5].textContent,
+    result: row.childNodes[6].textContent,
+    link: row.childNodes[7].childNodes[0] ?? null,
   }));
 }
 
@@ -346,11 +374,13 @@ function funded() {
         liqPx: 52800,
         unrealisedUsd: 1000,
         leverage: 5,
+        marginUsedUsd: 1100.25,
         liqReachable: true,
         liqDistancePct: 12,
         liqDistanceUsd: 3600,
       },
     ],
+    collateral: { address: '0x1111111111111111111111111111111111111111', perpUsd: 4200.5, spotUsdcUsd: 0, funded: true } as Record<string, unknown>,
     orders: [] as Record<string, unknown>[],
     plans: [openPlan(), waitingPlan()],
     highlights: [] as Record<string, unknown>[],
@@ -520,11 +550,11 @@ async function render(sizeCoin: number, szDecimals: number | null): Promise<Retu
 
 // ---------- Done: the fills ----------
 
-test('a fill is one line under headings: the clock, the side, the coin, the size that actually traded, the value', async () => {
+test('a fill is one line under headings: the clock, the side, the coin, the size, the price, the value and what it made', async () => {
   const world = await renderPayload(payload(0.001, 5));
   const [head] = withClass(world.host, 'tape-head');
   assert.equal(head.hidden, false, 'no headings over the tape');
-  assert.deepEqual(textOf(head), ['Time', 'Side', 'Asset', 'Size', 'Value']);
+  assert.deepEqual(textOf(head), ['Time', 'Trade', 'Price', 'Value', 'Result']);
   const [row] = fillRows(world.host);
   assert.ok(row !== undefined, 'no fill row on the tape');
   assert.equal(row.side, 'Buy');
@@ -532,12 +562,23 @@ test('a fill is one line under headings: the clock, the side, the coin, the size
   assert.equal(row.node.childNodes[1].dataset.tone, undefined, 'a buy is a word, not a green pill');
   assert.equal(row.coin, 'BTC');
   assert.equal(row.size, '0.001', 'the list never said what was bought');
+  assert.equal(row.price, '$60,000.00', 'a fill shows the price it filled at');
   assert.equal(row.value, '$60.00');
-  assert.equal(row.node.childNodes[4].dataset.dir, undefined, 'a value is plain whichever side it was');
-  assert.ok(row.node.childNodes[3].className.includes('mono'), 'a size is set in the mono face');
-  assert.ok(row.node.childNodes[4].className.includes('mono'), 'a value is set in the mono face');
+  assert.equal(row.result, '', 'an opening fill made nothing yet');
+  assert.equal(row.node.childNodes[5].dataset.dir, undefined, 'a value is plain whichever side it was');
+  for (const i of [3, 4, 5, 6]) assert.ok(row.node.childNodes[i].className.includes('num'), `cell ${i} is not set as a figure`);
 });
 
+test('a closing fill shows what it made or lost, red only for a loss', async () => {
+  const data = payload(0.001, 5);
+  data.fills = [fill({ tid: 'w', side: 'sell', closedPnlUsd: 22.41 }), fill({ tid: 'l', side: 'sell', closedPnlUsd: -4.2, atMs: NOW - 40 * MINUTE })];
+  const { host } = await renderPayload(data);
+  const [win, loss] = fillRows(host);
+  assert.equal(win.result, '+$22.41');
+  assert.equal(win.node.childNodes[6].dataset.dir, undefined, 'a profit is a signed figure, never green');
+  assert.equal(loss.result, '-$4.20');
+  assert.equal(loss.node.childNodes[6].dataset.dir, 'loss');
+});
 test('a sell is a word, not a loss: no red on the side or the value', async () => {
   const data = payload(0.001, 5);
   data.fills = [fill({ side: 'sell' })];
@@ -546,7 +587,7 @@ test('a sell is a word, not a loss: no red on the side or the value', async () =
   assert.equal(row.side, 'Sell');
   assert.equal(row.node.childNodes[1].dataset.side, 'sell');
   assert.equal(row.node.childNodes[1].dataset.tone, undefined);
-  assert.equal(row.node.childNodes[4].dataset.dir, undefined);
+  assert.equal(row.node.childNodes[5].dataset.dir, undefined);
 });
 
 test('a fill carries the time it happened', async () => {
@@ -608,7 +649,7 @@ test('a done plan whose payload carries what it closed for shows the figure, sig
   assert.equal(rows.length, 2);
   assert.equal(rows[0].childNodes[3].textContent, '+$412.50');
   assert.equal(rows[0].childNodes[3].dataset.dir, undefined, 'a profit is a signed figure, never green');
-  assert.ok(rows[0].childNodes[3].className.includes('mono'), 'a figure is set in the mono face');
+  assert.ok(rows[0].childNodes[3].className.includes('num'), 'a figure is set as a figure');
   assert.equal(rows[1].childNodes[3].textContent, '-$63.20');
   assert.equal(rows[1].childNodes[3].dataset.dir, 'loss', 'a loss is the one figure that takes red');
 });
@@ -730,26 +771,44 @@ test('pressing a fill row opens the receipt card with the fill mapped to the rec
 
 // ---------- the strip ----------
 
-test('the market line is the coin, the price and the venue; the account\'s figures are the money line\'s', async () => {
+test('the market line is the coin, where it trades and the price; the account sits at the deck, never on the line', async () => {
   const { host, lines } = await renderPayload(funded());
   assert.ok(!lines.includes('No trading money yet.'), `a funded account was told it had none: ${JSON.stringify(lines)}`);
-  // What the trading account holds is on Pro's money line (ui/screens/pro.js), once: the
-  // market line under it carries the market and nothing about the account.
-  assert.ok(!lines.includes('Free'), JSON.stringify(lines));
-  assert.ok(!lines.includes('At risk'), JSON.stringify(lines));
-  assert.ok(!lines.includes('Max loss'), JSON.stringify(lines));
+  // The strip carries the market and nothing about the account.
+  const [strip] = withClass(host, 'trade-strip');
+  const stripWords = textOf(strip);
+  for (const word of ['Free', 'Trading money', 'At risk', 'Max loss']) assert.ok(!stripWords.includes(word), JSON.stringify(stripWords));
   assert.equal(withClass(host, 'strip-stats').length, 0, 'the strip still builds an account column');
-  // The coin is a name set in the text face, on the market control, with its logo before it.
+  // The coin is a name set in the text face, on the market control, with its logo before it
+  // and where it trades under it.
   const [coin] = withClass(host, 'trade-mark-coin');
   assert.equal(coin.textContent, 'BTC');
   const [symbol] = withClass(host, 'trade-symbol');
   assert.equal(symbol.childNodes[0].className, 'trade-symbol-logo');
   assert.equal(symbol.childNodes[0].dataset.coin, 'BTC');
-  const [venue] = withClass(host, 'trade-venue');
-  assert.ok(textOf(venue).includes('Hyperliquid'), 'the venue is not named');
-  assert.equal(withClass(host, 'trade-venue-dot').length, 0, 'the venue wears a status dot');
+  assert.equal(withClass(host, 'trade-symbol-venue')[0].textContent, 'on Hyperliquid');
+  assert.equal(withClass(host, 'trade-venue').length, 0, 'the venue is a word under the market, not a chip at the end');
+  // Trade has no money line, so the account the trade comes out of sits at the deck's tab row.
+  const [account] = withClass(host, 'trade-account');
+  assert.equal(account.hidden, false);
+  assert.deepEqual(textOf(account), ['Trading money', '$4,200.50', 'Free', '$3,100.25']);
+  assert.ok(!lines.includes('At risk') && !lines.includes('Max loss'), JSON.stringify(lines));
 });
 
+test('the account at the deck is drawn only for a funded account the venue answered for', async () => {
+  const data = flat() as Record<string, any>;
+  data.collateral = { funded: false };
+  const world = await renderPayload(data);
+  assert.equal(withClass(world.host, 'trade-account')[0].hidden, true, 'an empty account is the money line\'s to say');
+  data.collateral = { funded: true };
+  world.set(data);
+  await world.refresh();
+  assert.equal(withClass(world.host, 'trade-account')[0].hidden, false);
+  data.venue = { connected: false, error: 'socket closed' };
+  world.set(data);
+  await world.refresh();
+  assert.equal(withClass(world.host, 'trade-account')[0].hidden, true, 'a venue that is not answering has stated no figure');
+});
 test('every read hands the payload to the money line, as one phosphor:trade event', async () => {
   const world = await renderPayload(funded());
   const seen = world.window.__tradeEvents as Array<{ type: string; detail: { data: { symbol: string } } }>;
@@ -798,7 +857,7 @@ test('the day reads from 25 hourly candles: the change against the close a day a
   const [change] = withClass(world.host, 'trade-change');
   const value = change.childNodes[1];
   // 60,000 against 61,700: down 1,700, which is 2.76%.
-  assert.equal(value.textContent, '-1,700.00 / -2.76%');
+  assert.equal(value.textContent, '-$1,700 (-2.76%)');
   assert.equal(value.dataset.dir, 'down');
   assert.equal(withClass(world.host, 'trade-high')[0].childNodes[1].textContent, '$63,500.00');
   assert.equal(withClass(world.host, 'trade-low')[0].childNodes[1].textContent, '$58,200.00');
@@ -807,7 +866,7 @@ test('the day reads from 25 hourly candles: the change against the close a day a
   up.markets = [{ coin: 'BTC', markPx: 62000, szDecimals: 5, maxLeverage: 20, assetId: 0 }];
   world.set(up);
   await world.refresh();
-  assert.equal(value.textContent, '+300.00 / +0.49%');
+  assert.equal(value.textContent, '+$300.00 (+0.49%)');
   assert.equal(value.dataset.dir, 'up');
 });
 
@@ -953,46 +1012,58 @@ test('an unreachable venue is never told it has no money', async () => {
 
 // ---------- Open ----------
 
-test('an open position is one line under headings: the coin and side, size, entry, mark, profit, and the distance to its exits', async () => {
+test('an open position is a card of labelled figures: the coin and side, size, profit, entry, mark, liquidation, stop and target', async () => {
   const { host } = await renderPayload(funded());
-  const [head] = withClass(host, 'pos-head');
-  assert.equal(head.hidden, false, 'the headings are hidden over a position');
-  assert.deepEqual(textOf(head), ['Asset', 'Size', 'Entry', 'Mark', 'PnL', 'Stop', 'Target']);
+  assert.equal(withClass(host, 'pos-head').length, 0, 'the positions have no column heads: each figure carries its word');
   const [row] = withClass(host, 'pos-row');
-  assert.ok(row !== undefined, 'no position row');
+  assert.ok(row !== undefined, 'no position card');
   const asset = row.childNodes[0];
-  assert.equal(textOf(asset).join(' '), 'BTC Long 5x');
-  assert.equal(asset.childNodes[2].dataset.side, 'long');
-  assert.equal(asset.childNodes[2].dataset.tone, undefined, 'a side is a word, never a colour');
-  assert.equal(row.childNodes[1].textContent, '0.5', 'no size');
-  assert.equal(row.childNodes[2].textContent, '$58,000.00', 'no entry');
-  assert.equal(row.childNodes[3].textContent, '$60,000.00', 'no mark');
-  assert.equal(row.childNodes[4].textContent, '+$1,000.00', 'no profit');
-  // Stop 57,000 against a 60,000 mark is 5% under it; target 62,000 is 3.3% over it. Signed,
-  // so the eye reads which side of the price each one sits.
-  assert.equal(row.childNodes[5].textContent, '-5.0%', 'no stop distance');
-  assert.equal(row.childNodes[6].textContent, '+3.3%', 'no target distance');
-  for (let i = 1; i <= 6; i += 1) assert.ok(row.childNodes[i].className.includes('mono'), `column ${i} is not in the mono face`);
+  assert.equal(textOf(asset).join(' '), 'BTC Long 5x 0.5 BTC');
+  const side = withClass(asset, 'pos-side')[0];
+  assert.equal(side.dataset.side, 'long');
+  assert.equal(side.dataset.tone, undefined, 'a side is a word, never a colour');
   const [pnl] = withClass(host, 'trade-pnl');
+  assert.equal(pnl.textContent, '+$1,000.00', 'no profit');
   assert.ok(!pnl.className.includes('up') && !pnl.className.includes('loss'), 'a profit is a signed figure in the text tone');
-  assert.ok(pnl.className.includes('mono'), 'a number is set in the mono face');
+  assert.ok(pnl.className.includes('num'), 'a number is set as a figure');
+  assert.deepEqual(stat(row, 'pos-entry'), { label: 'Entry', figure: '$58,000.00', sub: '', none: false });
+  assert.deepEqual(stat(row, 'pos-mark'), { label: 'Mark', figure: '$60,000.00', sub: '', none: false });
+  // The liquidation price with how far the mark is from it: on a 5x position the number that
+  // decides whether the money survives.
+  assert.deepEqual(stat(row, 'pos-liq'), { label: 'Liquidation', figure: '$52,800.00', sub: '12% away', none: false });
+  // The approved prices, with where each sits from the mark in words rather than a sign.
+  assert.deepEqual(stat(row, 'pos-stop'), { label: 'Stop', figure: '$57,000.00', sub: '5.0% below', none: false });
+  assert.deepEqual(stat(row, 'pos-target'), { label: 'Target', figure: '$62,000.00', sub: '3.3% above', none: false });
 });
 
-test('a short is a word, not a loss, and the headings go with the last position', async () => {
+test('a position the venue says cannot be liquidated reads None, and one it has not said reads unknown', async () => {
+  const data = funded();
+  data.positions[0] = { ...data.positions[0], liqReachable: false } as never;
+  const world = await renderPayload(data);
+  assert.deepEqual(stat(withClass(world.host, 'pos-row')[0], 'pos-liq'), { label: 'Liquidation', figure: 'None', sub: '', none: true });
+  const later = funded();
+  later.positions[0] = { ...later.positions[0], liqPx: null, liqReachable: null, liqDistancePct: null } as never;
+  world.set(later);
+  await world.refresh();
+  assert.equal(stat(withClass(world.host, 'pos-row')[0], 'pos-liq').figure, '--', 'an unstated price is never a zero');
+});
+
+test('a short is a word, not a loss, and the cards go with the last position', async () => {
   const data = funded();
   data.positions[0] = { ...data.positions[0], side: 'short' } as never;
   const world = await renderPayload(data);
   const [row] = withClass(world.host, 'pos-row');
-  assert.equal(textOf(row.childNodes[0].childNodes[2]).join(''), 'Short');
-  assert.equal(row.childNodes[0].childNodes[2].dataset.side, 'short');
-  assert.equal(row.childNodes[0].childNodes[2].dataset.tone, undefined);
+  const side = withClass(row, 'pos-side')[0];
+  assert.equal(textOf(side).join(''), 'Short');
+  assert.equal(side.dataset.side, 'short');
+  assert.equal(side.dataset.tone, undefined);
   const none = funded();
   none.positions = [];
   world.set(none);
   await world.refresh();
-  assert.equal(withClass(world.host, 'pos-head')[0].hidden, true, 'headings over nothing');
+  assert.equal(withClass(world.host, 'pos-row').length, 0, 'a card over nothing');
+  assert.ok(world.lines.includes('Nothing open.'));
 });
-
 test('a loss is the one figure that takes red, and it carries its sign', async () => {
   const data = funded();
   data.positions[0] = { ...data.positions[0], unrealisedUsd: -42.5 } as never;
@@ -1002,7 +1073,7 @@ test('a loss is the one figure that takes red, and it carries its sign', async (
   assert.ok(pnl.className.includes('loss'));
 });
 
-test('a position with no open plan behind it takes its exits from the working triggers', async () => {
+test('a position with no open plan behind it takes its exits from the working triggers, and says No target in words', async () => {
   const data = funded();
   data.plans = [waitingPlan()];
   data.orders = [
@@ -1010,91 +1081,181 @@ test('a position with no open plan behind it takes its exits from the working tr
   ] as never;
   const { host } = await renderPayload(data);
   const [row] = withClass(host, 'pos-row');
-  assert.equal(row.childNodes[5].textContent, '-10.0%');
-  assert.equal(row.childNodes[6].textContent, '--', 'a target it does not have');
+  assert.deepEqual(stat(row, 'pos-stop'), { label: 'Stop', figure: '$54,000.00', sub: '10.0% below', none: false });
+  assert.deepEqual(stat(row, 'pos-target'), { label: 'Target', figure: 'No target', sub: '', none: true }, 'a dash reads as missing data, not as unprotected');
 });
 
-test('Close is a ghost button that asks once, then posts to the human door with the plan id', async () => {
+test('a position with no stop says No stop, the word a person needs, never a dash', async () => {
+  const data = funded();
+  data.plans = [openPlan({ stop: undefined })];
+  const { host } = await renderPayload(data);
+  const [row] = withClass(host, 'pos-row');
+  assert.deepEqual(stat(row, 'pos-stop'), { label: 'Stop', figure: 'No stop', sub: '', none: true });
+});
+
+test('a k-market is printed the way the venue writes it, and its logo is the coin a thousand of which it is', async () => {
+  const data = funded();
+  data.markets.push({ coin: 'kPEPE', markPx: 0.0123, szDecimals: 0, maxLeverage: 10, assetId: 9 } as never);
+  data.positions.push({ ...data.positions[0], coin: 'kPEPE', sizeCoin: 1000, entryPx: 0.012, markPx: 0.0123, liqPx: null, liqReachable: null } as never);
+  const { host } = await renderPayload(data);
+  const card = withClass(host, 'pos-row').find((r) => r.dataset.spotKey === 'position:KPEPE');
+  assert.ok(card, 'no card keyed by the coin in upper case, the key the spotlight names');
+  assert.equal(withClass(card!, 'pos-coin')[0].textContent, 'kPEPE', 'upper-casing the k changes what the row says');
+  assert.equal(withClass(card!, 'pos-logo')[0].childNodes[0].dataset.token, 'PEPE');
+});
+test('Close opens a confirm under its card that says what happens, with no timer and focus on Keep', async () => {
   const world = await renderPayload(funded());
-  const [close] = buttons(world.host).filter((b) => b.textContent === 'Close');
+  const [close] = buttons(world.host).filter((b) => words(b) === 'Close');
   assert.ok(close !== undefined, 'no Close button on the open position');
   assert.ok(close.className.includes('btn-ghost'));
+  let focused = '';
+  const [row] = withClass(world.host, 'pos-row');
   close.click();
-  assert.equal(close.textContent, 'Sure?');
+  const ask = confirmOf(row);
+  assert.ok(ask, 'the press grew no confirm');
+  // 0.5 BTC at the 60,000 mark; 1,100.25 of margin plus the 1,000 profit comes back.
+  assert.equal(ask!.text, 'Close 0.5 BTC at about $60,000.00. About $2,100.25 goes back to your trading money, with $1,000.00 profit.');
+  assert.equal(words(ask!.keep), 'Keep it open');
+  assert.equal(words(ask!.go), 'Close now');
   assert.deepEqual(world.posts, [], 'one press moved money');
-  close.click();
+  // Minutes pass: a confirm has no timer to run out under the person reading it.
+  world.tick(60_000);
+  assert.ok(confirmOf(row), 'the confirm forgot itself');
+  void focused;
+  ask!.go.click();
   assert.deepEqual(plain(world.posts), [{ path: '/api/trade/action', body: { action: 'close', id: 'pl_b2' } }]);
 });
 
-test('a confirm that is not answered in four seconds forgets itself', async () => {
-  const world = await renderPayload(funded());
-  const [close] = buttons(world.host).filter((b) => b.textContent === 'Close');
-  close.click();
-  assert.equal(close.textContent, 'Sure?');
-  world.tick(4001);
-  assert.equal(close.textContent, 'Close');
-  close.click();
-  assert.deepEqual(world.posts, [], 'a press after the window posted');
+test('a margin figure the payload lacks leaves the sentence at what it knows', async () => {
+  const data = funded();
+  data.positions[0] = { ...data.positions[0], marginUsedUsd: undefined, unrealisedUsd: -42.5 } as never;
+  const world = await renderPayload(data);
+  const [row] = withClass(world.host, 'pos-row');
+  buttons(world.host).filter((b) => words(b) === 'Close')[0].click();
+  const ask = confirmOf(row)!;
+  assert.equal(ask.text, 'Close 0.5 BTC at about $60,000.00. -$42.50 on it so far.');
+  const loss = withClass(ask.box, 'loss');
+  assert.equal(loss.length, 1, 'the loss is the one figure that takes red');
+  assert.equal(loss[0].textContent, '-$42.50');
 });
-
-test('a confirm survives a payload landing between the two presses', async () => {
-  // Trade frames arrive constantly. A person who pressed once and is reaching for the second
-  // press must not find the button reset under their finger.
+test('Keep closes the confirm and nothing is sent', async () => {
   const world = await renderPayload(funded());
-  const [close] = buttons(world.host).filter((b) => b.textContent === 'Close');
-  close.click();
+  const [row] = withClass(world.host, 'pos-row');
+  buttons(world.host).filter((b) => words(b) === 'Close')[0].click();
+  confirmOf(row)!.keep.click();
+  assert.equal(confirmOf(row), null, 'Keep left the confirm open');
+  assert.deepEqual(world.posts, [], 'Keep sent something');
+});
+test('a confirm survives a payload landing between the press and the answer', async () => {
+  // Trade frames arrive constantly. A person who pressed once and is reaching for the answer
+  // must not find the confirm gone under their finger.
+  const world = await renderPayload(funded());
+  const [row] = withClass(world.host, 'pos-row');
+  buttons(world.host).filter((b) => words(b) === 'Close')[0].click();
   await world.refresh();
-  const [again] = buttons(world.host).filter((b) => b.textContent === 'Sure?');
-  assert.ok(again !== undefined, 'the confirm was lost on the refresh');
-  again.click();
+  const ask = confirmOf(withClass(world.host, 'pos-row')[0]);
+  assert.ok(ask, 'the confirm was lost on the refresh');
+  assert.equal(withClass(world.host, 'pos-row')[0], row, 'the card was rebuilt instead of kept');
+  ask!.go.click();
   assert.equal(world.posts.length, 1);
 });
 
-test('a position the app holds no open plan for has no Close, because there is no door for it', async () => {
+test('a refusal stays in the card in plain words, with the app\'s reason behind Details', async () => {
+  const world = await renderPayload(funded());
+  world.window.PhosphorApi.tradeAction = async () => {
+    const err = new Error('Hyperliquid rejected the order: reduce only would increase position') as Error & { status: number };
+    err.status = 409;
+    throw err;
+  };
+  const [row] = withClass(world.host, 'pos-row');
+  buttons(world.host).filter((b) => words(b) === 'Close')[0].click();
+  confirmOf(row)!.go.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  const ask = confirmOf(row)!;
+  assert.equal(ask.error.textContent, 'The close did not go through. Nothing changed.');
+  assert.equal(ask.error.hidden, false);
+  const [details] = withClass(ask.box, 'trade-confirm-details');
+  assert.equal(details.hidden, false);
+  assert.equal(withClass(details, 'trade-confirm-why')[0].textContent, 'Error: Hyperliquid rejected the order: reduce only would increase position');
+  assert.equal(words(ask.go), 'Try again');
+});
+
+test('a close that never answered does not claim nothing changed', async () => {
+  const world = await renderPayload(funded());
+  world.window.PhosphorApi.tradeAction = async () => {
+    const err = new Error('timed out');
+    err.name = 'TimeoutError';
+    throw err;
+  };
+  world.window.PhosphorNet.readable = (e: any) => (e && e.name === 'TimeoutError' ? 'Still checking whether this went through. Check again for the latest.' : String(e));
+  const [row] = withClass(world.host, 'pos-row');
+  buttons(world.host).filter((b) => words(b) === 'Close')[0].click();
+  confirmOf(row)!.go.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  const ask = confirmOf(row)!;
+  assert.equal(ask.error.textContent, 'Still checking whether this went through. Check again for the latest.');
+  assert.ok(!/Nothing changed/.test(ask.error.textContent));
+});
+test('a position the app holds no open plan for has no Close, and says it was opened elsewhere', async () => {
   const data = funded();
   data.plans = [waitingPlan()];
   const { host } = await renderPayload(data);
-  assert.equal(buttons(host).filter((b) => b.textContent === 'Close').length, 0);
+  assert.equal(buttons(host).filter((b) => words(b) === 'Close').length, 0);
+  const [note] = withClass(host, 'pos-elsewhere');
+  assert.equal(note.textContent, 'Opened elsewhere');
+  assert.ok(/Close it on Hyperliquid, or ask your assistant/.test(note.title), note.title);
 });
-
 // ---------- Waiting ----------
 
-test('a waiting plan is one English line, Armed with the armed icon in a word, its conditions with a check or a clock, and Cancel', async () => {
+test('a waiting plan is one English line, Watching with the armed icon in a word, its conditions in plain words, and Cancel', async () => {
   const { host, lines } = await renderPayload(funded());
-  assert.ok(lines.includes('Long ETH $200 at 3x, market, stop 3,180, target 3,420'), JSON.stringify(lines));
-  // The price in a condition is grouped like the prices on the line above it, and the
-  // watcher's answer sits beside the sentence written here from the plan's own condition.
-  assert.ok(lines.includes('a 1h bar closes above 3,300'), JSON.stringify(lines));
-  assert.ok(lines.includes('volume on the 1h is at least 1.5x its 20-bar average'), JSON.stringify(lines));
+  assert.ok(lines.includes('Long ETH $200 at 3x, market, stop $3,180, target $3,420'), JSON.stringify(lines));
+  // A bar is a candle and 1h is a 1-hour candle; the price is in dollars like the line above.
+  assert.ok(lines.includes('When a 1-hour candle closes over $3,300'), JSON.stringify(lines));
+  assert.ok(lines.includes('When 1-hour volume is at least 1.5 times its recent average'), JSON.stringify(lines));
   const conds = withClass(host, 'trade-cond');
   assert.deepEqual(conds.map((c) => c.dataset.holds), ['true', 'false']);
   assert.equal(withClass(host, 'trade-cond-dot').length, 0, 'a condition wears a dot');
   assert.ok(conds.every((c) => c.childNodes[0].className.includes('trade-cond-mark')), 'a condition has no mark before it');
   assert.ok(!lines.includes('pl_a1'), `the id is not the line a person reads: ${JSON.stringify(lines)}`);
   const [state] = withClass(host, 'trade-row-state');
-  assert.equal(textOf(state).join(''), 'Armed');
-  assert.equal(state.dataset.tone, undefined, 'armed is working, not green');
+  assert.equal(textOf(state).join(''), 'Watching', 'armed is an engineer\'s word');
+  assert.equal(state.dataset.tone, undefined, 'watching is working, not green');
   assert.ok(!state.className.includes('trade-pill'), 'the state is a word, not a pill');
   assert.ok(state.childNodes[0].className.includes('icon'), 'no armed icon before the word');
   assert.ok(!state.className.includes('warn'));
-  const [cancel] = buttons(host).filter((b) => b.textContent === 'Cancel');
+  const [cancel] = buttons(host).filter((b) => words(b) === 'Cancel');
   assert.ok(cancel !== undefined, 'no Cancel on the waiting plan');
 });
-
-test('Cancel confirms inline and posts cancel with the plan id', async () => {
+test('Cancel confirms under its card and posts cancel with the plan id', async () => {
   const world = await renderPayload(funded());
-  const [cancel] = buttons(world.host).filter((b) => b.textContent === 'Cancel');
+  const [row] = withClass(world.host, 'plan-row');
+  const [cancel] = buttons(world.host).filter((b) => words(b) === 'Cancel');
   cancel.click();
-  assert.equal(cancel.textContent, 'Sure?');
-  cancel.click();
+  const ask = confirmOf(row)!;
+  assert.equal(ask.text, 'Stop watching for this. Nothing has been placed, so nothing else changes.');
+  assert.equal(words(ask.keep), 'Keep it');
+  assert.equal(words(ask.go), 'Stop watching');
+  assert.deepEqual(world.posts, []);
+  ask.go.click();
   assert.deepEqual(plain(world.posts), [{ path: '/api/trade/action', body: { action: 'cancel', id: 'pl_a1' } }]);
 });
 
+test('Escape inside an open confirm is Keep', async () => {
+  const world = await renderPayload(funded());
+  const [row] = withClass(world.host, 'plan-row');
+  buttons(world.host).filter((b) => words(b) === 'Cancel')[0].click();
+  const ask = confirmOf(row)!;
+  const [rail] = withClass(world.host, 'trade-rail');
+  rail.fire('keydown', { key: 'Escape', target: ask.keep });
+  assert.equal(confirmOf(row), null);
+  assert.deepEqual(world.posts, []);
+});
 test('a limit entry and a plan with no target read as they are', async () => {
   const data = funded();
   data.plans = [waitingPlan({ entry: { type: 'limit', px: 3100 }, target: undefined })];
   const { lines } = await renderPayload(data);
-  assert.ok(lines.includes('Long ETH $200 at 3x, limit 3,100, stop 3,180'), JSON.stringify(lines));
+  assert.ok(lines.includes('Long ETH $200 at 3x, limit $3,100, stop $3,180'), JSON.stringify(lines));
 });
 
 test('every price on a waiting plan is one format: grouped thousands, the market\'s own places', async () => {
@@ -1111,8 +1272,8 @@ test('every price on a waiting plan is one format: grouped thousands, the market
     holds: [{ condition: 'a 15m bar closes above 77017.9', holds: false }],
   })];
   const { lines } = await renderPayload(data);
-  assert.ok(lines.includes('Long BTC $200 at 3x, limit 76,729.1, stop 76,500.1, target 78,000'), JSON.stringify(lines));
-  assert.ok(lines.includes('a 15m bar closes above 77,017.9'), JSON.stringify(lines));
+  assert.ok(lines.includes('Long BTC $200 at 3x, limit $76,729.1, stop $76,500.1, target $78,000'), JSON.stringify(lines));
+  assert.ok(lines.includes('When a 15-minute candle closes over $77,017.9'), JSON.stringify(lines));
 });
 
 test('a locked plan and a blind plan say so in the waiting tone', async () => {
@@ -1120,7 +1281,7 @@ test('a locked plan and a blind plan say so in the waiting tone', async () => {
   data.plans = [waitingPlan({ id: 'pl_l', locked: true }), waitingPlan({ id: 'pl_b', blind: true })];
   const { host, lines } = await renderPayload(data);
   assert.ok(lines.includes('Needs unlock'), JSON.stringify(lines));
-  assert.ok(lines.includes('Feed stale'), JSON.stringify(lines));
+  assert.ok(lines.includes('Waiting for prices'), JSON.stringify(lines));
   for (const state of withClass(host, 'trade-row-state')) {
     assert.ok(state.className.includes('warn'), state.className);
     assert.equal(state.dataset.tone, 'warn');
@@ -1131,7 +1292,7 @@ test('an idea is listed under waiting as an Idea with its conditions unmet and n
   const data = funded();
   data.plans = [waitingPlan({ id: 'pl_i', status: 'idea', holds: undefined })];
   const { host, lines } = await renderPayload(data);
-  assert.ok(lines.includes('Long ETH $200 at 3x, market, stop 3,180, target 3,420'), JSON.stringify(lines));
+  assert.ok(lines.includes('Long ETH $200 at 3x, market, stop $3,180, target $3,420'), JSON.stringify(lines));
   assert.ok(lines.includes('Idea'), JSON.stringify(lines));
   const [state] = withClass(host, 'trade-row-state');
   assert.equal(state.dataset.tone, undefined, 'an idea is the quiet word');
@@ -1140,7 +1301,7 @@ test('an idea is listed under waiting as an Idea with its conditions unmet and n
   const conds = withClass(host, 'trade-cond');
   assert.equal(conds.length, 2);
   assert.deepEqual(conds.map((c) => c.dataset.holds), ['false', 'false']);
-  assert.equal(buttons(host).filter((b) => b.textContent === 'Cancel').length, 0);
+  assert.equal(buttons(host).filter((b) => words(b) === 'Cancel').length, 0);
 });
 
 test('a placed plan reads Placed, says the venue holds its entry, and can still be cancelled', async () => {
@@ -1148,8 +1309,8 @@ test('a placed plan reads Placed, says the venue holds its entry, and can still 
   data.plans = [waitingPlan({ id: 'pl_p', status: 'placed', entry: { type: 'limit', px: 3100 }, holds: undefined })];
   const { host, lines } = await renderPayload(data);
   assert.ok(lines.includes('Placed'), JSON.stringify(lines));
-  assert.equal(withClass(host, 'trade-row-state')[0].getAttribute('title'), 'The venue holds the entry');
-  assert.equal(buttons(host).filter((b) => b.textContent === 'Cancel').length, 1);
+  assert.equal(withClass(host, 'trade-row-state')[0].getAttribute('title'), 'Its entry order is waiting on Hyperliquid.');
+  assert.equal(buttons(host).filter((b) => words(b) === 'Cancel').length, 1);
 });
 
 // ---------- the shape of the deck ----------
@@ -1173,25 +1334,26 @@ test('the deck is three tabs, Positions, Orders and History, in that order, each
   assert.deepEqual(list.map((t) => t.count), ['1', '1', '0']);
   for (const t of list) {
     assert.equal(t.node.getAttribute('role'), 'tab');
-    assert.ok(t.node.childNodes[1].className.includes('mono'), 'a count is set in the mono face');
+    assert.ok(t.node.childNodes[1].className.includes('num'), 'a count is set as a figure');
   }
-  // A zero is written, quietly.
+  // A zero is marked, and the stylesheet does not draw it: the panel says so when it is up.
   assert.equal(list[2].node.childNodes[1].dataset.zero, 'true');
   assert.equal(list[0].node.childNodes[1].dataset.zero, undefined);
-  // Positions is up first; the other two panels are hidden, not absent.
+  // Positions is up first; the other two panels are there, not shown.
   assert.deepEqual(list.map((t) => t.selected), [true, false, false]);
   const panels = withClass(host, 'trade-panel');
   assert.deepEqual(panels.map((p) => p.getAttribute('role')), ['tabpanel', 'tabpanel', 'tabpanel']);
-  assert.deepEqual(panels.map((p) => p.hidden), [false, true, true]);
+  assert.deepEqual(panels.map((p) => p.dataset.shown), ['true', undefined, undefined]);
+  // Each panel wears the head Pro shows when it stacks them.
+  assert.deepEqual(withClass(host, 'trade-panel-title').map((h) => h.textContent), ['Positions', 'Orders', 'Last 24 hours']);
   assert.equal(allWithTag(host, 'h2').length, 0, 'the old zone headings are gone');
 });
-
 test('pressing a tab brings its panel up, and the arrow keys move between them', async () => {
   const world = await renderPayload(funded());
   const list = tabs(world.host);
   list[2].node.click();
   assert.deepEqual(tabs(world.host).map((t) => t.selected), [false, false, true]);
-  assert.deepEqual(withClass(world.host, 'trade-panel').map((p) => p.hidden), [true, true, false]);
+  assert.deepEqual(withClass(world.host, 'trade-panel').map((p) => p.dataset.shown), [undefined, undefined, 'true']);
   assert.equal(list[2].node.getAttribute('tabindex'), '0');
   assert.equal(list[0].node.getAttribute('tabindex'), '-1');
   // Right from the last wraps to the first; Home and End jump.
@@ -1255,12 +1417,17 @@ test('the market control is a listbox this window drew, not a native select', as
   const { host } = await renderPayload(flat());
   assert.equal(allWithTag(host, 'select').length, 0, 'the native select is back');
   const options = withClass(host, 'trade-option');
-  assert.deepEqual(options.map((o) => textOf(o).join('')), ['BTC-USD']);
+  // The coin a person reads, not the chart's product id, and its price at the right.
+  assert.deepEqual(options.map((o) => o.childNodes[1].textContent), ['BTC']);
+  assert.equal(options[0].childNodes[2].textContent, '$60,000.00');
   assert.equal(options[0].getAttribute('role'), 'option');
   assert.equal(options[0].getAttribute('aria-selected'), 'true');
   // Each option leads with the coin's logo, the way the control itself does.
-  assert.equal(options[0].childNodes.length, 2);
+  assert.equal(options[0].childNodes.length, 3);
   assert.equal(options[0].childNodes[1].className, 'trade-option-name');
+  assert.equal(options[0].parentNode!.getAttribute('role'), 'listbox');
+  // One market: no search field over a list of one.
+  assert.equal(withClass(host, 'trade-menu-search')[0].hidden, true);
 });
 
 // ---------- the bar ----------
@@ -1351,29 +1518,23 @@ test('the bar reads left to right: the segment, the command, Layers, one status 
   assert.equal(bar.childNodes[3].id, 'chart-status');
 });
 
-test('ten timeframes fit the segment as ten equal cells', async () => {
-  // The engine fills #timeframes with a button per timeframe the server lists; 1w and 1M make
-  // ten. Equal widths are the stylesheet's: one grid column of one fraction per cell, which
-  // the harness cannot lay out, so the rule is read off the sheet.
+test('the segment holds the everyday timeframes as cells, and the rest behind More on a narrow chart', async () => {
+  // The engine fills #timeframes (ui/chart/chart.js fillTimeframes); the six everyday cells
+  // always show and the other four go behind a More cell under 880 px of chart, which the
+  // harness cannot lay out, so the rule is read off the sheet.
   const { host } = await renderPayload(funded());
   const cells = byId(host, 'timeframes');
   assert.ok(cells !== null);
-  for (const label of ['1m', '5m', '15m', '30m', '1h', '4h', '8h', '1d', '1w', '1M']) {
-    const b = makeNode('button');
-    b.className = 'timeframe';
-    b.textContent = label;
-    cells.appendChild(b);
-  }
-  assert.equal(cells.childNodes.length, 10);
   assert.ok(cells.className.includes('seg-cells'));
   const css = readFileSync(new URL('../../ui/design/trade.css', import.meta.url), 'utf8');
-  assert.ok(/\.seg-cells\s*\{[^}]*grid-auto-columns:\s*1fr/.test(css), 'the cells are not equal columns');
+  assert.match(css, /@container trade \(max-width: 879px\)\s*\{\s*\.seg \.seg-cells > \.timeframe\[data-tier="more"\] \{ display: none; \}\s*\.tf-more-wrap \{ display: inline-flex; \}/);
+  const chart = readFileSync(new URL('../../ui/chart/chart.js', import.meta.url), 'utf8');
+  assert.match(chart, /var EVERYDAY_TF = \{ '1m': true, '5m': true, '15m': true, '1h': true, '4h': true, '1d': true \};/);
 });
-
-test('Layers holds the seven overlays and volume as check rows, following the payload', async () => {
+test('Layers holds the overlays and volume as check rows, following the payload, with one row for the stops', async () => {
   const { host } = await renderPayload(funded());
   const rows = allWithDataset(host, 'overlay');
-  assert.equal(rows.length, 7);
+  assert.equal(rows.length, 6);
   const state: Record<string, string | null> = {};
   for (const row of rows) {
     assert.equal(row.getAttribute('role'), 'menuitemcheckbox');
@@ -1381,20 +1542,33 @@ test('Layers holds the seven overlays and volume as check rows, following the pa
   }
   assert.equal(state.position, 'true');
   assert.equal(state.liquidation, 'false');
-  assert.equal(state.planStop, 'true');
-  // An overlay the payload does not name is on, which is the server's default.
+  // The plan's stop and the venue's stop orders are one idea to a person: one row, on while
+  // either is on.
   assert.equal(state.stops, 'true');
+  assert.equal(state.planStop, undefined, 'the plan stop is a second Stops row again');
   const [volume] = allWithDataset(host, 'layer');
   assert.ok(volume !== undefined, 'no volume row');
   assert.equal(volume.dataset.layer, 'volume');
   // The labels are sentence case words, not ids.
   const labels = withClass(host, 'layers-row').map((r) => textOf(r).join(''));
-  assert.ok(labels.includes('Position'), JSON.stringify(labels));
-  assert.ok(labels.includes('Plan stop'), JSON.stringify(labels));
-  assert.ok(labels.includes('Volume'), JSON.stringify(labels));
-  assert.ok(!labels.some((l) => /[A-Z]{2,}/.test(l)), `a tracked caps label: ${JSON.stringify(labels)}`);
+  assert.deepEqual(labels, ['Position', 'Liquidation', 'Stops', 'Targets', 'Orders', 'Fills', 'Volume']);
+  // The box holds the icon family's tick, never a bare fill.
+  assert.ok(withClass(host, 'layers-check').every((box) => box.childNodes[0] && box.childNodes[0].dataset.icon === 'check'));
+  // Where the prices come from, in words.
+  assert.equal(textOf(withClass(host, 'layers-foot')[0])[0], 'Prices from ');
 });
 
+test('the Stops row flips the plan\'s stop and the stop orders together', async () => {
+  const world = await renderPayload(funded());
+  const [row] = allWithDataset(world.host, 'overlay').filter((r) => r.dataset.overlay === 'stops');
+  row.click();
+  assert.equal(row.getAttribute('aria-checked'), 'false', 'the row flips at once');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(plain(world.posts), [
+    { path: '/api/trade', body: { overlay: { name: 'planStop', on: false } } },
+    { path: '/api/trade', body: { overlay: { name: 'stops', on: false } } },
+  ]);
+});
 test('the popover opens from its button, closes on Escape and on a click outside', async () => {
   const world = await renderPayload(funded());
   const [layers] = withClass(world.host, 'layers');
@@ -1421,6 +1595,7 @@ test('a check row writes the overlay to the server and flips at once', async () 
   const [row] = allWithDataset(world.host, 'overlay').filter((r) => r.dataset.overlay === 'liquidation');
   row.click();
   assert.equal(row.getAttribute('aria-checked'), 'true');
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(plain(world.posts), [{ path: '/api/trade', body: { overlay: { name: 'liquidation', on: true } } }]);
 });
 

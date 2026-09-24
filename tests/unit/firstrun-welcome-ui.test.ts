@@ -26,6 +26,7 @@ const DEVMODE_CSS = read('../../ui/design/devmode.css');
 const FIELD = read('../../ui/design/field.js');
 const NETPICK = read('../../ui/screens/netpick.js');
 const FIRSTRUN = read('../../ui/screens/firstrun.js');
+const TERMS = read('../../ui/screens/terms.js');
 
 /* ---------- a DOM small enough to read ---------- */
 
@@ -201,13 +202,13 @@ type World = {
   animations: Any[];
 };
 
-type Options = { motion?: 'real' | 'none'; devmode?: boolean; field?: boolean; fakeMotion?: boolean; reduced?: boolean; netpick?: boolean; watcher?: boolean };
+type Options = { motion?: 'real' | 'none'; devmode?: boolean; field?: boolean; fakeMotion?: boolean; reduced?: boolean; netpick?: boolean; watcher?: boolean; terms?: boolean };
 
 const MNEMONIC = 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' ');
 
 function build(state: Any, opts: Options = {}): World {
   const nodes: Record<string, Any> = {};
-  for (const id of ['screen-firstrun', 'page']) nodes[id] = makeNode('div');
+  for (const id of ['screen-firstrun', 'screen-terms', 'page']) nodes[id] = makeNode('div');
   const body = makeNode('body');
   const root = makeNode('html');
   const calls: Any[] = [];
@@ -239,6 +240,7 @@ function build(state: Any, opts: Options = {}): World {
     removeEventListener() {},
     requestAnimationFrame: (fn: (now: number) => void) => { frames.push(fn); rafId += 1; return rafId; },
     cancelAnimationFrame() {},
+    print() { calls.push({ route: 'print', sheet: body.childNodes.find((n: Any) => n.className === 'print-sheet') ?? null }); },
   };
   sandbox.window = sandbox;
   sandbox.PhosphorNet = { readable: (e: Any) => String(e && e.message ? e.message : e) };
@@ -264,9 +266,14 @@ function build(state: Any, opts: Options = {}): World {
     vaultCreate: () => { calls.push({ route: '/api/vault/create' }); return Promise.resolve({ ok: true, addresses: { evm: '0xabc' } }); },
     vaultRestore: () => Promise.resolve({ ok: true, addresses: {} }),
     walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: MNEMONIC.slice(), addresses: {} }); },
-    walletImport: () => Promise.resolve({ ok: true, addresses: {} }),
+    vaultBackupProven: (words: Any[]) => {
+      calls.push({ route: '/api/vault/backup-proven', words });
+      return Promise.resolve(words.every((w: Any) => MNEMONIC[w.index] === w.word) ? { ok: true } : { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' });
+    },
+    walletImport: (payload: Any) => { calls.push({ route: '/api/wallet/import', ...payload }); return Promise.resolve({ ok: true, addresses: {} }); },
     connection: () => Promise.resolve({ missing: true }),
     driver: () => Promise.resolve({}),
+    termsAccept: () => { calls.push({ route: '/api/terms/accept' }); return Promise.resolve({ version: '2026-09-17', acceptedVersion: '2026-09-17', accepted: true, urls: {} }); },
   };
 
   createContext(sandbox);
@@ -287,8 +294,10 @@ function build(state: Any, opts: Options = {}): World {
     };
   }
   runInContext(FIRSTRUN, sandbox, { filename: 'ui/screens/firstrun.js' });
+  if (opts.terms) runInContext(TERMS, sandbox, { filename: 'ui/screens/terms.js' });
 
   sandbox.PhosphorState.put(state);
+  if (opts.terms) sandbox.PhosphorTerms.boot();
   sandbox.PhosphorFirstRun.boot();
   return { sandbox, nodes, calls, frames, animations };
 }
@@ -298,13 +307,13 @@ const firstRun = (vault: Any, opts: Options = {}): World =>
 
 /* ---------- the welcome ---------- */
 
-test('every flow opens on the welcome, and Get started goes to that flow\'s own first step', () => {
-  const flows: Array<[string, Any, string, number]> = [
-    ['enclave', {}, 'Create your wallet', 3],
-    ['software', SOFTWARE, 'Create or bring a wallet', 9],
-    ['foreign', { foreign: true }, 'Made on another Mac', 3],
+test('every flow opens on the welcome, and Get started goes to that flow\'s own first step, under the phases it has', () => {
+  const flows: Array<[string, Any, string, number, string[]]> = [
+    ['enclave', {}, 'Create your wallet', 3, ['Wallet', 'Money', 'Assistant']],
+    ['software', SOFTWARE, 'Create or bring a wallet', 9, ['Wallet', 'Backup', 'Money', 'Assistant']],
+    ['foreign', { foreign: true }, 'Made on another Mac', 3, ['Wallet', 'Money', 'Assistant']],
   ];
-  for (const [name, vault, firstTitle, count] of flows) {
+  for (const [name, vault, firstTitle, count, phases] of flows) {
     const world = firstRun(vault);
     world.sandbox.PhosphorFirstRun.open();
     const screen = world.nodes['screen-firstrun'];
@@ -334,9 +343,12 @@ test('every flow opens on the welcome, and Get started goes to that flow\'s own 
     const progress = find(screen, '.screen-progress');
     assert.equal(progress.length, 1, `${name}: no progress after the welcome`);
     assert.ok(textOf(progress[0]).includes(`Step 1 of ${count}`), `${name}: the count is not Step 1 of ${count}`);
-    const segments = find(progress[0], '.screen-progress-seg');
-    assert.equal(segments.length, count, `${name}: one segment per step`);
-    assert.equal(segments.filter((s: Any) => s.dataset.done === 'true').length, 1, `${name}: exactly the first segment is filled`);
+    // Named phases, not a segment per step: a nine-step setup reads as four things to do.
+    const named = find(progress[0], '.screen-phase');
+    assert.deepEqual(named.map((p: Any) => find(p, '.screen-phase-name')[0].textContent), phases, `${name}: the phases`);
+    assert.equal(named[0].getAttribute('data-current'), 'true', `${name}: the first phase is not the current one`);
+    assert.equal(named.filter((p: Any) => p.getAttribute('data-current') === 'true').length, 1);
+    assert.equal(find(progress[0], '.screen-progress-seg').length, 0, `${name}: a segment per step is back`);
   }
 });
 
@@ -579,10 +591,10 @@ async function toMoney(world: World): Promise<Any> {
   buttonNamed(screen, 'Continue').click();
   assert.ok(textOf(screen).includes('Prove it'));
   const typed = find(screen, 'input.input');
-  typed[0].value = MNEMONIC[2];
-  typed[1].value = MNEMONIC[6];
-  typed[2].value = MNEMONIC[10];
+  for (const field of typed) field.value = MNEMONIC[Number(field.dataset.index)];
   buttonNamed(screen, 'Continue').click();
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/vault/backup-proven'), 'the words were never checked by the app');
   assert.ok(textOf(screen).includes('Your addresses'));
   buttonNamed(screen, 'Continue').click();
   assert.ok(textOf(screen).includes('Add money'));
@@ -604,7 +616,7 @@ test('the money step draws the watch live: every phase renders its line off the 
   const watch = find(screen, '.deposit-watch')[0];
   const cont = buttonNamed(screen, 'Continue');
   assert.ok(buttonNamed(screen, 'Do this later'), 'the way out stays');
-  assert.equal(find(watch, 'button').length, 0, 'no Stop on the money step: the picker has it');
+  assert.equal(find(watch, 'button').length, 0, 'no Stop on the money step');
   assert.equal(watch.hidden, true, 'no watch, no line');
   const idle = find(screen, '.money-idle')[0];
   assert.equal(idle.hidden, false, 'and the step says why');
@@ -616,22 +628,24 @@ test('the money step draws the watch live: every phase renders its line off the 
   store.put(Object.assign({}, store.get(), { deposit: depositFrame() }));
   assert.equal(watch.hidden, false);
   assert.equal(watch.dataset.phase, 'watching');
-  assert.ok(line().startsWith('Watching Ethereum for a deposit to 0x7d4e...0e1d, '), line());
+  // Plain words, no stopwatch and no second copy of the address (hunt-b 61).
+  assert.match(line(), /^(Waiting for your deposit on Ethereum|Still waiting for your deposit on Ethereum, \d+ min so far)$/);
   assert.equal(idle.hidden, true);
-  assert.equal(find(find(screen, '.deposit-watch-text')[0], '.mono').length, 2, 'the address and the clock are set in the mono face');
+  assert.equal(line().includes('0x7d4e'), false, 'the address is said a second time');
   assert.equal(cont.className, 'btn btn-ghost btn-lg');
 
   store.put(Object.assign({}, store.get(), { deposit: depositFrame({ phase: 'seen', amount: 0.0011, txHash: '0xabc', explorerUrl: 'https://etherscan.io/tx/0xabc', confirmations: 2, ms: 12000 }) }));
-  assert.equal(line(), 'Seen on Ethereum: 0.0011 USDC, 2 confirmations');
+  assert.equal(line(), 'Arriving on Ethereum: 0.0011 USDC');
+  assert.deepEqual(find(find(screen, '.deposit-watch-text')[0], '.num').map((n: Any) => n.textContent), ['0.0011'], 'the amount is not set as a figure');
   assert.equal(find(screen, '.deposit-watch-link')[0].href, 'https://etherscan.io/tx/0xabc');
 
   store.put(Object.assign({}, store.get(), { deposit: depositFrame({ phase: 'bridged', amount: 0.0011, txHash: '0xabc', ms: 30000 }) }));
-  assert.equal(line(), 'Bridged into NEAR Intents: 0.0011 USDC, crediting');
+  assert.equal(line(), 'Almost there: 0.0011 USDC');
   assert.equal(cont.className, 'btn btn-ghost btn-lg', 'bridged is not landed');
 
   store.put(Object.assign({}, store.get(), { deposit: depositFrame({ phase: 'credited', amount: 0.0011, txHash: '0xabc', ms: 74000 }) }));
   assert.equal(watch.dataset.phase, 'credited');
-  assert.equal(line(), 'Landed in 74 s: 0.0011 USDC is in your balance');
+  assert.equal(line(), '0.0011 USDC is in your balance');
   assert.equal(find(watch, '.deposit-watch-check').length, 1, 'the green check');
   assert.equal(cont.className, 'btn btn-primary btn-lg', 'credited turns Continue primary');
   assert.ok(textOf(screen).includes('Your money is here.'));
@@ -655,7 +669,7 @@ test('the money step says when a read keeps failing, and is primary at once when
   store.put(Object.assign({}, store.get(), { deposit: depositFrame({ error: 'The verifier is not answering, retrying' }) }));
   const note = find(screen, '.deposit-watch-note')[0];
   assert.equal(note.hidden, false);
-  assert.equal(note.textContent, 'The verifier is not answering, retrying');
+  assert.equal(note.textContent, 'Checking is slow right now. The app keeps trying.');
   assert.equal(buttonNamed(screen, 'Continue').className, 'btn btn-ghost btn-lg');
 
   const funded = firstRun(SOFTWARE, { watcher: true });
@@ -664,4 +678,121 @@ test('the money step says when a read keeps failing, and is primary at once when
   assert.ok(textOf(fundedScreen).includes('$25.50'));
   assert.ok(textOf(fundedScreen).includes('Your money is here.'));
   assert.equal(buttonNamed(fundedScreen, 'Continue').className, 'btn btn-primary btn-lg');
+});
+
+/* ---------- the terms, the import path, the words ---------- */
+
+test('with the terms still to accept, the welcome comes first and the terms are the next step: one write, then the flow goes on', async () => {
+  const world = build({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: vaultState(SOFTWARE), terms: { version: '2026-09-17', acceptedVersion: null, accepted: false, urls: {} } }, { terms: true });
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  assert.equal(world.nodes['screen-terms'].hidden, true, 'the terms card opened ahead of the welcome');
+  assert.ok(textOf(screen).includes('Welcome to Phosphor'), 'the welcome is not the first thing');
+  buttonNamed(screen, 'Get started').click();
+  assert.ok(textOf(screen).includes('Before you start'), 'the terms are not the step after the welcome');
+  assert.equal(find(screen, '.screen-progress').length, 0, 'the terms are counted as a wallet step');
+  assert.equal(find(screen, '.terms-fact').length, 4);
+  buttonNamed(screen, 'Accept and continue').click();
+  await flush();
+  await flush();
+  assert.equal(world.calls.filter((c) => c.route === '/api/terms/accept').length, 1);
+  assert.equal(world.sandbox.PhosphorState.get().terms.accepted, true);
+  assert.ok(textOf(screen).includes('Create or bring a wallet'), 'the flow did not go on after the terms');
+  assert.ok(textOf(find(screen, '.screen-progress')[0]).includes('Step 1 of 9'));
+  // Back from the first wallet step is the welcome: the accepted terms are not asked again.
+  buttonNamed(screen, 'Back').click();
+  assert.ok(textOf(screen).includes('Welcome to Phosphor'));
+});
+
+test('the import path asks for the phrase it imports, 12 or 24 words, never straight to the addresses', async () => {
+  const world = firstRun(SOFTWARE);
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  buttonNamed(screen, 'Get started').click();
+  const choice = find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have one')) as Any;
+  choice.click();
+  assert.equal(choice.getAttribute('aria-checked'), 'true');
+  assert.ok(textOf(find(screen, '.screen-progress')[0]).includes('Step 1 of 8'), 'the import path counts the new wallet\'s backup steps');
+  buttonNamed(screen, 'Continue').click();
+  const fields = find(screen, 'input.input');
+  fields[0].value = 'longenough';
+  fields[1].value = 'longenough';
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Bring your wallet in'), 'the phrase was never asked for');
+  assert.equal(world.calls.some((c) => c.route === '/api/wallet/create'), false, 'a new wallet was made on the import path');
+  const box = find(screen, 'textarea')[0];
+  assert.ok(box, 'the phrase is not typed into a box that wraps');
+  box.value = 'one two three';
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('That is 3 words. It should be 12 or 24.'));
+  const words = Array.from({ length: 24 }, (_v, i) => 'w' + (i + 1));
+  box.value = words.join('  ').toUpperCase();
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/wallet/import');
+  assert.ok(post, 'nothing was imported');
+  assert.equal(post.mnemonic, words.join(' '));
+  assert.equal(post.password, 'longenough');
+  assert.ok(textOf(screen).includes('Your addresses'));
+});
+
+test('the words step has no Back and no Copy, prints a sheet of the numbered words, and wears the deposit step\'s drawn tick', async () => {
+  const world = firstRun(SOFTWARE);
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  buttonNamed(screen, 'Get started').click();
+  buttonNamed(screen, 'Continue').click();
+  const fields = find(screen, 'input.input');
+  fields[0].value = 'longenough';
+  fields[1].value = 'longenough';
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  assert.ok(textOf(screen).includes('Save your recovery words'));
+  const labels = find(screen, 'button').map((b: Any) => b.textContent);
+  assert.equal(labels.includes('Back'), false, 'a Back that leads to making the wallet again');
+  assert.equal(labels.some((l: string) => /copy/i.test(l)), false, 'Copy on the recovery phrase');
+  buttonNamed(screen, 'Print').click();
+  const printed = world.calls.find((c) => c.route === 'print');
+  assert.ok(printed && printed.sheet, 'Print printed a blank page');
+  assert.deepEqual(find(printed.sheet, 'li').map((li: Any) => li.textContent), MNEMONIC);
+  assert.equal(world.sandbox.document.body.childNodes.includes(printed.sheet), false, 'the sheet stayed in the document');
+  const tick = find(screen, 'label.ack-row')[0];
+  assert.ok(tick, 'the tick is the browser\'s own checkbox');
+  assert.equal(find(tick, 'span.ack-box').length, 1);
+  const cont = buttonNamed(screen, 'Continue');
+  assert.equal(cont.disabled, true);
+  const box = find(tick, 'input')[0];
+  box.checked = true;
+  box.dispatch('change');
+  assert.equal(cont.disabled, false);
+  assert.equal(tick.getAttribute('data-checked'), 'true');
+});
+
+test('two misses on Prove it show the words again with the line that says why', async () => {
+  const world = firstRun(SOFTWARE);
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  buttonNamed(screen, 'Get started').click();
+  buttonNamed(screen, 'Continue').click();
+  const fields = find(screen, 'input.input');
+  fields[0].value = 'longenough';
+  fields[1].value = 'longenough';
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  const tick = find(screen, 'input').find((n: Any) => n.type === 'checkbox') as Any;
+  tick.checked = true;
+  tick.dispatch('change');
+  buttonNamed(screen, 'Continue').click();
+  const typed = find(screen, 'input.input');
+  const picks = typed.map((f: Any) => Number(f.dataset.index));
+  assert.equal(new Set(picks).size, 3, 'a word was asked twice');
+  for (const field of typed) field.value = 'wrong';
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  assert.ok(textOf(screen).includes('Those words do not match. Look at your copy again.'));
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  assert.ok(textOf(screen).includes('Save your recovery words'), 'two misses did not show the words again');
+  assert.ok(textOf(screen).includes('Two tries did not match. Check your copy, then try again.'));
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/backup-proven').length, 2);
 });

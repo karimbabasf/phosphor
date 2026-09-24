@@ -189,16 +189,20 @@ test('the balance is the server\'s figure and words, the same two the Basic pane
   assert.ok(!words(rig.host).includes('$0.00'), JSON.stringify(words(rig.host)));
 });
 
-test('a funded account is what it holds, what is free, and what is at risk once anything is', () => {
+test('a funded account is what it holds, what is free, what its plans have in them and the most they can lose', () => {
   const rig = boot();
   rig.state(BASIC);
   rig.trade(trade());
   assert.deepEqual(words(one(rig.host, 'pro-sum-figures')), ['Trading money', '$1,046.82', 'Free', '$845.42']);
   assert.equal(one(rig.host, 'pro-sum-note').hidden, true);
   assert.equal(one(rig.host, 'pro-sum-fund').hidden, true, 'a funded account is offered money');
-  rig.trade(trade({ account: { ...trade().account, atRiskUsd: 250 } }));
-  assert.deepEqual(words(one(rig.host, 'pro-sum-figures')), ['Trading money', '$1,046.82', 'Free', '$845.42', 'At risk', '$250.00']);
-  for (const value of withClass(rig.host, 'pro-sum-value')) assert.ok(value.className.includes('mono'), 'a figure out of the mono face');
+  // The margin behind the plans is not what can be lost: the stops cap that, and the bigger,
+  // wrong number is the one that scares. Each is named for what it is.
+  rig.trade(trade({ account: { ...trade().account, atRiskUsd: 250, maxLossUsd: 31.2 } }));
+  assert.deepEqual(words(one(rig.host, 'pro-sum-figures')), ['Trading money', '$1,046.82', 'Free', '$845.42', 'In trades', '$250.00', 'Max loss', '$31.20']);
+  const loss = withClass(rig.host, 'pro-sum-figure').find((f) => words(f)[0] === 'Max loss');
+  assert.ok(/every stop fills/.test(loss!.getAttribute('title') ?? ''), 'the max loss does not say what it assumes');
+  for (const value of withClass(rig.host, 'pro-sum-value')) assert.ok(value.className.includes('num'), 'a figure not set as a figure');
 });
 
 test('dust is not trading money: collateral.funded false reads "No trading money yet", with one action', () => {
@@ -209,13 +213,12 @@ test('dust is not trading money: collateral.funded false reads "No trading money
     account: { ...trade().account, equityUsd: 0.000002, freeUsd: 0.000002 },
     collateral: { address: '0x1', perpUsd: 0.000002, spotUsdcUsd: 0, funded: false },
   }));
-  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'No trading money yet.');
+  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'No trading money yet. Once there is some, Pro shows your positions, your orders and what they made.');
   assert.equal(one(rig.host, 'pro-sum-note').hidden, false);
   assert.equal(one(rig.host, 'pro-sum-figures').hidden, true, 'dust drew figures');
   const fund = one(rig.host, 'pro-sum-fund');
   assert.equal(fund.hidden, false);
-  assert.equal(words(fund).join(''), 'Add some');
-  assert.ok(fund.className.includes('btn-ghost'), 'the one action is quiet');
+  assert.equal(words(fund).join(''), 'Add trading money', 'the action says what and where');
   assert.ok(!fund.className.includes('btn-primary'), 'green is for Approve');
 });
 
@@ -241,6 +244,7 @@ test('a venue that has not answered is a wait, and one that is not answering rea
   assert.equal(one(rig.host, 'pro-sum-note').textContent, 'Checking your trading account.');
   rig.trade(trade({ venue: { connected: false, source: 'none', ageMs: null, latencyMs: null, error: 'no route to host', degraded: true } }));
   assert.deepEqual(words(one(rig.host, 'pro-sum-figures')), ['Trading money', '--', 'Free', '--']);
+  assert.equal(one(rig.host, 'pro-sum-note').textContent, 'Hyperliquid is not answering. These come back on their own.', 'unknown figures with no sentence');
   for (const value of withClass(rig.host, 'pro-sum-value')) assert.equal(value.getAttribute('data-dim'), 'true');
   assert.ok(!words(rig.host).some((w) => w.startsWith('No trading money')), 'a silent venue was called empty');
 });
@@ -261,15 +265,17 @@ test('nothing here polls: the account follows the stream through trade.js, and t
   assert.equal(one(rig.host, 'pro-sum-note').hidden, true);
 });
 
-test('Pro is the money line over the deck alone, Trade adds the market and the chart, and both share the Vault\'s two track stage', () => {
-  assert.match(CSS, /body\[data-view="pro"\] #view-trade,\s*body\[data-view="trade"\] #view-pro\s*\{\s*display:\s*flex;/, 'Pro and Trade do not both open on the money line');
+test('Pro is its header over the deck alone, Trade is the market, the chart and the deck, and both share the Vault\'s two track stage', () => {
+  assert.match(CSS, /body\[data-view="pro"\] #view-trade,\s*body\[data-view="trade"\] #view-trade\s*\{\s*display:\s*flex;/, 'the deck is not on both');
+  assert.match(CSS, /body\[data-view="trade"\] #view-pro\s*\{\s*display:\s*none;/, 'Trade still draws Pro\'s header');
   assert.match(CSS, /body\[data-view="pro"\] \.trade-wrap > \.trade-strip,\s*body\[data-view="pro"\] \.trade-wrap > \.trade-main,\s*body\[data-view="pro"\] \.trade-wrap > \.split-h\s*\{\s*display:\s*none;/, 'Pro draws the market or the chart');
   assert.match(CSS, /body\[data-view="pro"\] \.trade-wrap > \.trade-rail\s*\{\s*display:\s*flex;\s*flex:\s*1 1 auto;/, 'the deck is not the whole of Pro under the line');
+  assert.match(CSS, /body\[data-view="pro"\] \.trade-rail > \.trade-tabs\s*\{\s*display:\s*none;/, 'Pro stacks the three panels, it has no tabs');
   assert.match(CSS, /grid-template-columns:\s*minmax\(0, 1fr\) clamp\(560px, var\(--trade, 55vw\), 1400px\);/);
   for (const view of ['pro', 'trade', 'vault']) {
     assert.ok(CSS.includes(`body[data-view="${view}"] .stage,`) || CSS.includes(`body[data-view="${view}"] .stage {`), `${view} does not take the shared stage`);
   }
-  const line = CSS.slice(CSS.indexOf('/* ---------- the money line'), CSS.indexOf('/* ---------- the receipts list'));
-  assert.ok(line.length > 200, 'the money line section moved');
-  assert.doesNotMatch(line, /--ink|--up|--down/, 'the money line wears a state colour');
+  const line = CSS.slice(CSS.indexOf('/* ---------- the header'));
+  assert.ok(line.length > 200, 'the header section moved');
+  assert.doesNotMatch(line, /--ink|--up|--down/, 'the header wears a state colour');
 });

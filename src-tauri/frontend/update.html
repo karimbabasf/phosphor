@@ -3,17 +3,23 @@
 <title>Phosphor update</title>
 <!--
   The update window. Served by Tauri like the splash, and for the same reason the splash is:
-  this page is the shell's, not the backend's, so it can have the two IPC commands it needs
-  (install, dismiss) without the control window gaining any. The control window stays a
+  this page is the shell's, not the backend's, so it can have the IPC commands it needs
+  (install, dismiss, retry) without the control window gaining any. The control window stays a
   remote page with no bridge; see src-tauri/src/main.rs.
 
   One page, four states, chosen by the shell through window.__PHOSPHOR_UPDATE__ before any
   script runs:
 
-    { state: "offer",     version, current, notes }   a newer version is on the feed
-    { state: "current",   version }                    asked, and this is the latest
-    { state: "failed",    message }                    the check or the install failed
-    { state: "installing" }                            set by the page itself after Install
+    { state: "offer",     version, current, notes }        a newer version is on the feed
+    { state: "current",   version }                         asked, and this is the latest
+    { state: "failed",    title, message, retry }           the check or the install failed
+    { state: "installing" }                                 set by the page itself after Install
+
+  A failed message is one plain sentence, then a blank line, then the updater's own error. The
+  sentence is what the window says, in the second text tone and never red; the error sits behind
+  Details, in a well that wraps it, so no line of it can run past the window's edge and push the
+  buttons out of reach. Try again shows when the shell says it can take one (retry: true, the
+  update_retry command).
 
   While the install runs the shell calls window.__phosphorProgress(0 to 1) and, if it goes
   wrong, window.__phosphorFailed(message), through WebviewWindow::eval. A finished install
@@ -26,16 +32,27 @@
   :root {
     color-scheme: dark;
     --bg-0: #161210;
+    --bg-1: #1e1917;
     --bg-2: #292320;
-    --line: #302a26;
+    --bg-3: #342e2b;
     --line-strong: #3e3633;
     --text: #f8f0e8;
     --text-2: #bcaea1;
     --text-3: #9a8c7f;
     --ink: #52e893;
     --on-ink: #161210;
-    --down: #ff6b5b;
+    --hi-rgb: 255, 232, 220;
+    --well-bg: color-mix(in srgb, var(--bg-0), #000 25%);
+    --well: inset 0 1px 3px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(var(--hi-rgb), 0.04);
+    --ground-glow-1: color-mix(in srgb, var(--bg-0), #845d47 20%);
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+    --scale-press: 0.97;
+  }
+  @supports (transition-timing-function: linear(0, 1)) {
+    :root {
+      --ease-spring: linear(0, 0.042, 0.148, 0.291, 0.449, 0.604, 0.746, 0.867, 0.963, 1.034, 1.081, 1.108, 1.119, 1.117, 1.106, 1.09, 1.072, 1.053, 1.035, 1.02, 1.008, 0.998, 0.992, 0.988, 0.986, 0.986, 0.987, 0.989, 0.991, 0.993, 0.995, 0.997, 0.999, 1, 1.001, 1.001, 1.002, 1.002, 1.002, 1.001, 1);
+    }
   }
   @font-face {
     font-family: "Geist";
@@ -55,63 +72,104 @@
     user-select: none;
     overflow: hidden;
   }
-  /* The title bar is overlaid and hidden, so the top of the page is the drag region and the
-     traffic lights sit over the ink. */
+  body {
+    background: radial-gradient(90% 80% at 20% 0%, var(--ground-glow-1), var(--bg-0) 70%);
+  }
+  /* The title bar is overlaid and hidden, so the traffic lights sit over the top of the page and
+     the header starts under them. The page's own ground is the drag region: data-tauri-drag-region
+     on the frame, the header and the title (WebKit ignores the CSS app region). */
   main {
     box-sizing: border-box;
     height: 100%;
-    padding: 44px 32px 24px;
+    padding: 40px 28px 20px;
     display: grid;
-    grid-template-rows: auto 1fr auto;
-    gap: 16px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 12px;
   }
   header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    -webkit-app-region: drag;
+    gap: 10px;
   }
   .mark {
-    width: 22px;
-    height: 24.5px;
+    width: 20px;
+    height: 22px;
     color: var(--ink);
     flex: none;
+    pointer-events: none;
   }
   h1 {
     margin: 0;
     font-size: 16px;
-    font-weight: 500;
+    font-weight: 600;
     letter-spacing: -0.01em;
+    line-height: 1.3;
   }
-  /* The middle row is whatever the header and the buttons leave, and the notes take what the
-     line above them leaves and scroll inside it. A fixed max-height on the notes let long
-     notes run out of the row and under the buttons (Karim's screenshot, 2026-09-22). */
+  /* The middle row is whatever the header and the buttons leave. It scrolls inside itself, so no
+     note and no error can ever reach the buttons. */
   .body {
     min-height: 0;
+    overflow: auto;
     display: flex;
     flex-direction: column;
+    gap: 10px;
     color: var(--text-2);
     line-height: 1.5;
   }
   .body p { margin: 0; flex: none; }
-  .notes {
+  .body[data-more="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+  }
+
+  /* The notes sit in a well and scroll inside it; a fade at its foot says there is more, because
+     macOS hides the scrollbar until a finger is on the pad. */
+  .notes-well {
     flex: 0 1 auto;
     min-height: 0;
-    margin-top: 10px;
+    display: flex;
+    border-radius: 14px;
+    background: var(--well-bg);
+    box-shadow: var(--well);
+  }
+  .notes-well:not(:has(.notes:not(:empty))) { display: none; }
+  .notes {
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: auto;
-    padding: 10px 12px;
-    border: 1px solid var(--line);
-    border-radius: 10px;
+    padding: 10px 14px;
     color: var(--text);
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
     -webkit-user-select: text;
     user-select: text;
   }
-  .notes:empty { display: none; }
+  .notes[data-more="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+  }
+
+  /* The updater's own words, for whoever is fixing it. */
+  .detail {
+    margin: 0;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: var(--well-bg);
+    box-shadow: var(--well);
+    color: var(--text-2);
+    font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
   footer {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
     gap: 8px;
+    min-height: 34px;
   }
   .btn {
     display: inline-flex;
@@ -119,44 +177,60 @@
     justify-content: center;
     min-height: 34px;
     padding: 0 16px;
-    border-radius: 10px;
-    border: 1px solid var(--line-strong);
-    background: var(--bg-2);
+    border: 0;
+    border-radius: 14px;
+    background: var(--bg-3);
+    box-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.07);
     color: var(--text);
     font: inherit;
-    font-weight: 500;
+    font-size: 13.5px;
+    font-weight: 550;
     letter-spacing: -0.01em;
     white-space: nowrap;
     cursor: default;
-    transition: transform 160ms var(--ease-out), background-color 160ms var(--ease-out), border-color 160ms var(--ease-out);
+    transition: transform 480ms var(--ease-spring), background-color 160ms var(--ease-out);
   }
   .btn-primary {
     background: var(--ink);
-    border-color: var(--ink);
     color: var(--on-ink);
+    font-weight: 600;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+  }
+  .btn-quiet {
+    background: transparent;
+    box-shadow: none;
+    color: var(--text-2);
+    padding: 0 12px;
   }
   @media (hover: hover) and (pointer: fine) {
-    .btn:hover:not(:disabled) { border-color: var(--text-3); }
-    .btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--bg-0)); border-color: transparent; }
+    .btn:hover { background: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 6%); }
+    .btn-primary:hover { background: color-mix(in srgb, var(--ink) 88%, #FFFFFF); }
+    .btn-quiet:hover { background: var(--bg-2); color: var(--text); }
   }
-  .btn:active:not(:disabled) { transform: scale(0.97); }
-  .btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  .btn:disabled { opacity: 0.5; }
+  .btn:active {
+    transform: scale(var(--scale-press));
+    transition-duration: 100ms, 160ms;
+    transition-timing-function: var(--ease-out);
+  }
+  .btn:focus-visible { outline: 2px solid var(--text-2); outline-offset: 2px; }
+  #more { margin-right: auto; margin-left: -12px; }
+  #more[aria-expanded="true"] { color: var(--text); }
 
-  /* The download, as a bar rather than a spinner: 55 MB is long enough that a person wants
-     to see it move. */
+  /* The download, as a bar rather than a spinner, with the word for what it is doing beside it
+     where the buttons were: 55 MB is long enough that a person wants to see it move. */
   .progress {
-    flex: none;
+    flex: 1 1 auto;
     height: 4px;
     border-radius: 2px;
-    background: var(--bg-2);
+    background: var(--well-bg);
+    box-shadow: var(--well);
     overflow: hidden;
-    margin-top: 14px;
   }
   .progress > i {
     display: block;
     height: 100%;
     width: 0;
+    border-radius: inherit;
     background: var(--ink);
     transition: width 200ms var(--ease-out);
   }
@@ -168,45 +242,73 @@
     from { transform: translateX(-100%); }
     to   { transform: translateX(333%); }
   }
-  .fail { color: var(--down); }
+  .installing {
+    flex: none;
+    min-width: 108px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums lining-nums;
+    text-align: right;
+  }
+  .working {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+  }
+
+  .state { animation: state-in 220ms var(--ease-out) both; }
+  @keyframes state-in { from { opacity: 0; transform: translateY(3px); } }
   [hidden] { display: none !important; }
   @media (prefers-reduced-motion: reduce) {
     .btn { transition: none; }
+    .state { animation: none; }
     .progress[data-indeterminate] > i { animation: none; width: 100%; opacity: 0.4; }
   }
 </style>
-<main>
-  <header>
+<main data-tauri-drag-region>
+  <header data-tauri-drag-region>
     <!-- brand/phosphor-mark.svg, verbatim, as on the splash. -->
     <svg class="mark" viewBox="0 0 59.46 64.75" aria-hidden="true" focusable="false">
       <path fill="currentColor" fill-rule="evenodd" d="M31.63 64.75 L31.63 37.78 A8.936598294969773 8.936598294969773 0 0 1 36.10 30.04 L59.46 16.55 L59.46 36.50 A8.936598294969773 8.936598294969773 0 0 1 54.99 44.24 L39.89 52.95 L39.89 59.98 Z M39.89 43.66 L50.17 37.73 A5.522616923857726 5.522616923857726 0 0 0 52.93 32.94 L52.93 29.61 L42.65 35.54 A5.522616923857726 5.522616923857726 0 0 0 39.89 40.33 Z M21.09 58.66 L21.09 31.69 A8.936598294969773 8.936598294969773 0 0 1 25.55 23.95 L48.91 10.47 L56.75 14.99 L33.39 28.47 A8.936598294969773 8.936598294969773 0 0 0 28.92 36.21 L28.92 63.18 Z M10.54 52.58 L10.54 25.60 A8.936598294969773 8.936598294969773 0 0 1 15.01 17.86 L38.37 4.38 L46.20 8.90 L22.84 22.39 A8.936598294969773 8.936598294969773 0 0 0 18.38 30.13 L18.38 57.10 Z M0.00 46.49 L0.00 19.52 A8.936598294969773 8.936598294969773 0 0 1 4.47 11.78 L22.30 1.48 A11.045233847715451 11.045233847715451 0 0 1 33.35 1.48 L35.66 2.81 L12.30 16.30 A8.936598294969773 8.936598294969773 0 0 0 7.83 24.04 L7.83 51.01 Z"/>
     </svg>
-    <h1 id="title"></h1>
+    <h1 id="title" data-tauri-drag-region></h1>
   </header>
-  <section class="body">
+  <section class="body state" id="body">
     <p id="line"></p>
-    <div id="notes" class="notes"></div>
-    <div id="progress" class="progress" hidden><i></i></div>
+    <div class="notes-well"><div id="notes" class="notes"></div></div>
+    <pre id="detail" class="detail" hidden></pre>
   </section>
-  <footer>
+  <footer id="footer">
+    <button id="more" class="btn btn-quiet" type="button" aria-expanded="false" aria-controls="detail" hidden>Details</button>
+    <div id="working" class="working" hidden>
+      <div id="progress" class="progress"><i></i></div>
+      <span id="installing" class="installing">Installing</span>
+    </div>
     <button id="later" class="btn" type="button"></button>
+    <button id="retry" class="btn btn-primary" type="button" hidden>Try again</button>
     <button id="install" class="btn btn-primary" type="button">Install and relaunch</button>
   </footer>
 </main>
 <script>
   (function () {
     // The IPC the shell injects into every webview it creates; the ACL decides who may call
-    // what, and only this window (a local Tauri page) can reach the two app commands below.
+    // what, and only this window (a local Tauri page) can reach the app commands below.
     // The control window is a remote page and is refused at the ACL, see webview/mod.rs in
     // tauri: remote origins never reach app commands without an explicit remote capability.
     var internals = window.__TAURI_INTERNALS__;
     function invoke(cmd) { if (internals && internals.invoke) internals.invoke(cmd).catch(function () {}); }
     var info = window.__PHOSPHOR_UPDATE__ || { state: 'failed', message: 'This window was opened without an update to show.' };
+    var body = document.getElementById('body');
     var title = document.getElementById('title');
     var line = document.getElementById('line');
     var notes = document.getElementById('notes');
+    var detail = document.getElementById('detail');
+    var more = document.getElementById('more');
+    var working = document.getElementById('working');
     var progress = document.getElementById('progress');
+    var installing = document.getElementById('installing');
     var later = document.getElementById('later');
+    var retry = document.getElementById('retry');
     var install = document.getElementById('install');
 
     function dismiss() { invoke('update_dismiss'); }
@@ -221,37 +323,88 @@
       }).join('\n\n').trim();
     }
 
+    /* The fade at the notes' foot, only while there is more under it. */
+    function edge() {
+      var more = notes.scrollTop + notes.clientHeight < notes.scrollHeight - 2;
+      if (more) notes.setAttribute('data-more', 'true');
+      else notes.removeAttribute('data-more');
+    }
+    notes.addEventListener('scroll', edge);
+
+    /* A failed message, split into what the window says and what the updater said. The check's
+       own sentence is replaced by one a person can act on; any other sentence the shell wrote is
+       already plain and is kept. */
+    function failure(s) {
+      var text = String(s.message || '');
+      var cut = text.indexOf('\n\n');
+      var said = (cut >= 0 ? text.slice(0, cut) : text).trim();
+      var raw = cut >= 0 ? text.slice(cut + 2).trim() : '';
+      if (/release feed/i.test(said)) said = 'Phosphor could not reach its update server. Check your connection and try again.';
+      else if (raw && /keeps running\.?$/.test(said)) said = said.replace(/\.?$/, '.') + ' Try again later.';
+      return { said: said, raw: raw };
+    }
+
+    /* Details takes the sentence's place while it is open: the sentence was read before the
+       press, and the window's 204 px have room for one of the two, not both. */
+    function showDetail(open) {
+      detail.hidden = !open;
+      line.hidden = open;
+      more.setAttribute('aria-expanded', open ? 'true' : 'false');
+      more.textContent = open ? 'Hide details' : 'Details';
+      requestAnimationFrame(bodyEdge);
+    }
+
+    /* The same fade at the foot of the middle row, while it has more under it. */
+    function bodyEdge() {
+      if (body.scrollTop + body.clientHeight < body.scrollHeight - 2) body.setAttribute('data-more', 'true');
+      else body.removeAttribute('data-more');
+    }
+    body.addEventListener('scroll', bodyEdge);
+
     function render(s) {
       notes.textContent = '';
-      progress.hidden = true;
+      notes.removeAttribute('data-more');
+      detail.textContent = '';
+      showDetail(false);
+      more.hidden = true;
+      working.hidden = true;
       progress.removeAttribute('data-indeterminate');
       progress.firstElementChild.style.width = '0';
-      line.classList.remove('fail');
       install.hidden = true;
+      retry.hidden = true;
       later.hidden = false;
-      later.disabled = false;
       later.textContent = 'Close';
+      later.className = 'btn';
       if (s.state === 'offer') {
         title.textContent = 'Phosphor ' + s.version + ' is available';
         line.textContent = 'You have ' + s.current + '. Installing takes a few seconds: the wallet locks, the app closes, and it opens again on the new version.';
         notes.textContent = unwrap(s.notes);
         install.hidden = false;
         later.textContent = 'Later';
+        later.className = 'btn btn-quiet';
+        requestAnimationFrame(edge);
       } else if (s.state === 'current') {
         title.textContent = 'Up to date';
         line.textContent = 'Phosphor ' + s.version + ' is the current version.';
       } else if (s.state === 'installing') {
         title.textContent = 'Installing Phosphor ' + s.version;
-        line.textContent = 'Downloading and checking the signature. The app relaunches on its own when this is done.';
-        progress.hidden = false;
+        line.textContent = 'Downloading and checking the update. The app closes and opens again on its own when this is done.';
+        later.hidden = true;
+        working.hidden = false;
         progress.setAttribute('data-indeterminate', '');
-        later.disabled = true;
-        later.textContent = 'Installing';
+        installing.textContent = 'Installing';
       } else {
+        var f = failure(s);
         title.textContent = s.title || 'Could not check for updates';
-        line.textContent = s.message || '';
-        line.classList.add('fail');
+        line.textContent = f.said;
+        detail.textContent = f.raw;
+        more.hidden = !f.raw;
+        retry.hidden = s.retry !== true;
       }
+      body.classList.remove('state');
+      void body.offsetWidth;
+      body.classList.add('state');
+      requestAnimationFrame(bodyEdge);
     }
 
     // Called by the shell through WebviewWindow::eval while the install runs.
@@ -260,21 +413,28 @@
       if (!(p >= 0)) return;
       progress.removeAttribute('data-indeterminate');
       progress.firstElementChild.style.width = Math.round(Math.min(1, p) * 100) + '%';
+      installing.textContent = p < 1 ? 'Downloading ' + Math.round(p * 100) + '%' : 'Installing';
     };
-    window.__phosphorFailed = function (message) {
-      render({ state: 'failed', title: 'The update was not installed', message: String(message || '') });
+    // The second argument is true once the shell can take a Try again (update_retry).
+    window.__phosphorFailed = function (message, canRetry) {
+      render({ state: 'failed', title: 'The update was not installed', message: String(message || ''), retry: canRetry === true });
     };
 
+    more.addEventListener('click', function () { showDetail(detail.hidden); });
     later.addEventListener('click', dismiss);
+    retry.addEventListener('click', function () { invoke('update_retry'); });
     install.addEventListener('click', function () {
       render({ state: 'installing', version: info.version });
       invoke('update_install');
     });
-    // Return installs and Escape dismisses, so the window answers the keyboard without a
-    // focus ring sitting on the green button before anyone has pressed anything.
+    // Return installs (or tries again) and Escape dismisses, so the window answers the keyboard
+    // without a focus ring sitting on the green button before anyone has pressed anything.
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && !later.disabled) dismiss();
-      if (e.key === 'Enter' && !install.hidden && document.activeElement !== later) install.click();
+      if (e.key === 'Escape' && !later.hidden) dismiss();
+      if (e.key === 'Enter' && document.activeElement !== later && document.activeElement !== more) {
+        if (!install.hidden) install.click();
+        else if (!retry.hidden) retry.click();
+      }
     });
 
     render(info);

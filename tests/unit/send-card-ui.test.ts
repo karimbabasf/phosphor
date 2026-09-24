@@ -282,8 +282,10 @@ test('the send card draws the head, the route with the full address in groups, t
   assert.equal(all(root, 'sendcard-arrow').length, 2);
 
   // The address, whole, in groups of four, and the normalised spelling on the node.
+  // Grouped the way the deposit address is (hunt-b 67): "0x" on its own, then ten groups of four,
+  // never the prefix fused into the first group with a two-character orphan at the end.
   const groups = all(root, 'sendcard-group').map((g) => g.textContent);
-  assert.deepEqual(groups, ['0xb5', '83f4', '1992', 'Cd21', 'b2F2', '345e', '194a', '36D3', '3684', 'BB5D', 'B0']);
+  assert.deepEqual(groups, ['0x', 'b583', 'f419', '92Cd', '21b2', 'F234', '5e19', '4a36', 'D336', '84BB', '5DB0']);
   assert.equal(groups.join(''), FRIEND);
   assert.equal(all(root, 'sendcard-address')[0]?.getAttribute('data-address'), FRIEND);
 

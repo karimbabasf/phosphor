@@ -231,7 +231,9 @@ test('every pressable that is not a .btn has a press, on the shared wash, and th
   assert.match(css('tokens.css'), /--press:\s*color-mix\(in srgb, var\(--text\) 12%, transparent\);/);
   const compact = press.match(/\.dock-close:active,[^{]*\{([^}]*)\}/);
   assert.ok(compact, 'no shared press for the compact pressables');
-  assert.match(compact?.[1] ?? '', /transform:\s*scale\(0\.97\);/);
+  // The 3 percent is Soft depth's press token (--scale-press: 0.97 in tokens.css).
+  assert.match(compact?.[1] ?? '', /transform:\s*scale\(var\(--scale-press\)\);/);
+  assert.match(css('tokens.css'), /--scale-press:\s*0\.97;/);
   assert.match(compact?.[1] ?? '', /background-color:\s*var\(--press\);/);
   const rows = press.match(/\.checks-toggle:active,[^{]*\{([^}]*)\}/);
   assert.ok(rows, 'no shared press for the rows');

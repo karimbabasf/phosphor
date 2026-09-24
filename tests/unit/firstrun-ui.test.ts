@@ -2,12 +2,15 @@
 //
 // Both run for real over a small DOM (the pattern of firstrun-welcome-ui.test.ts) with the api
 // module replaced by a recorder that answers what the test says the app answered. What is
-// proven: six rows in the catalog's order, each with the state the app's scan found and the line
-// that says how; Use is one round trip whose words come from the answer, and a pick the app did
-// not store is never shown as held; the action row follows the state (Start and the agent's
-// name for one the app runs, Continue otherwise, never a dead end); nothing the network said is
-// printed; a terminal agent on the door reads Connected; and the threshold step posts the figure
-// and shows the route's refusal over the same Continue. tsc never sees ui/, so this is the check.
+// proven: five tiles in the catalog's order (the chat app that cannot drive is a line under
+// them), each with the status the app's scan found and the line to run behind its fold; Use is
+// one round trip that names the agent while it checks, and a pick the app did not store is never
+// shown as held; the action row follows the state (Start and the agent's name for one the app
+// runs, Continue otherwise, never a dead end); nothing the network said is printed; a terminal
+// agent on the door reads Connected; the import path asks for the phrase it imports; the
+// threshold step posts the figure, its amounts follow what is typed, and it shows the route's
+// refusal over the same Continue; and Phosphor is ready says what the steps actually found.
+// tsc never sees ui/, so this is the check.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -229,7 +232,7 @@ function build(): World {
     vaultCreate: () => Promise.resolve({ ok: true, addresses: { evm: '0xabc' } }),
     vaultRestore: () => Promise.resolve({ ok: true, addresses: {} }),
     walletCreate: () => Promise.resolve({ ok: true, mnemonic: [], addresses: {} }),
-    walletImport: () => Promise.resolve({ ok: true, addresses: {} }),
+    walletImport: (payload: Any) => { calls.push({ route: '/api/wallet/import', ...payload }); return Promise.resolve({ ok: true, addresses: {} }); },
     connection: () => Promise.resolve({ missing: true }),
     driver: (payload: Any) => {
       calls.push({ route: '/api/driver', ...payload });
@@ -273,6 +276,7 @@ const status = (screen: Any): string => {
   return node && !node.hidden ? node.textContent : '';
 };
 const useOf = (screen: Any, id: string): Any => find(rowOf(screen, id), '.agentrow-use')[0];
+const openHow = (screen: Any, id: string): void => { find(rowOf(screen, id), '.agentrow-how')[0].click(); };
 const primary = (screen: Any): Any => find(screen, '.screen-actions')[0].childNodes[find(screen, '.screen-actions')[0].childNodes.length - 1];
 
 /* ---------- the source ---------- */
@@ -283,8 +287,9 @@ test('the list prints nothing the network said, raises no toast, and owns no sen
   assert.equal(/readable\(/.test(list), false, 'the list prints net.readable');
   assert.equal(/PhosphorToast/.test(list), false, 'the list raises a toast');
   assert.equal(/\.innerHTML\s*=|insertAdjacentHTML/.test(FIRSTRUN), false);
-  // The rows are ruled, not tiled, and no brand colour lands on them.
-  assert.match(CSS, /\.agentrow\s*\{[^}]*grid-template-columns:\s*28px minmax\(0, 1fr\) auto auto;/);
+  // The rows are tiles of the soft depth world, and no brand colour lands on them.
+  assert.match(CSS, /\.agentrow\s*\{[^}]*grid-template-columns:\s*32px minmax\(0, 1fr\) auto;[^}]*background: var\(--tile\);/);
+  assert.doesNotMatch(CSS, /\.agentrow\s*\{[^}]*border-bottom/, 'a hairline between the tiles is back');
   assert.equal(/var\(--net\)|agent-tile|agentpick-light/.test(CSS), false, 'a tile, a brand colour or a light is back');
   // The sentences for a missing agent have one source, src/agents-catalog.ts stateSentence: a
   // screen that composed its own would fork the fix that keeps a fresh pick from reading as "no longer".
@@ -298,14 +303,15 @@ test('the list prints nothing the network said, raises no toast, and owns no sen
 
 /* ---------- the rows ---------- */
 
-test('six rows in the catalog\'s order, one screen, the stylesheet linked, and a quiet way on before a pick', async () => {
+test('five tiles in the catalog\'s order, one screen, the stylesheet linked, and a quiet way on before a pick', async () => {
   const world = build();
   const screen = await atPicker(world);
-  assert.deepEqual(rows(screen).map((r: Any) => r.dataset.agent), ['claude', 'codex', 'hermes', 'grok', 'mcp', 'desktop']);
+  assert.deepEqual(rows(screen).map((r: Any) => r.dataset.agent), ['claude', 'codex', 'hermes', 'grok', 'mcp']);
   assert.deepEqual(
     rows(screen).map((r: Any) => find(r, '.agentrow-name')[0].textContent),
-    ['Claude Code', 'Codex', 'Hermes', 'Grok', 'Another agent', 'Claude Desktop or a chat app'],
+    ['Claude Code', 'Codex', 'Hermes', 'Grok', 'Another agent'],
   );
+  assert.ok(visibleText(screen).includes('Chat apps like Claude Desktop cannot drive Phosphor yet.'));
   assert.ok(visibleText(screen).includes('Step 3 of 3'), 'the list is not the same step the connect step was');
   assert.match(read('../../ui/index.html'), /<link rel="stylesheet" href="\.\/design\/agentpick\.css">/, 'index.html does not link the list stylesheet');
   assert.equal(world.calls.filter((c) => c.action === 'agent-scan').length, 1, 'the scan did not run once');
@@ -322,14 +328,16 @@ test('the scan says each agent\'s state in words, with the line that says how', 
   world.answers['agent-scan'] = { ok: true, agents: [CHECKS.claudeIn, CHECKS.codexOut, { ...CHECKS.codexMissing, agent: 'hermes', name: 'Hermes', details: ['Install: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash'] }], picked: null };
   const screen = await atPicker(world);
   await flush();
-  assert.equal(stateOf(screen, 'claude'), 'Ready');
-  assert.equal(stateOf(screen, 'codex'), 'Not signed in');
+  assert.equal(stateOf(screen, 'claude'), 'Signed in, runs in the chat');
+  assert.equal(stateOf(screen, 'codex'), 'Installed, not signed in');
+  assert.equal(commandOf(screen, 'codex'), '', 'the sign-in line is on the face of the tile');
+  openHow(screen, 'codex');
   assert.equal(commandOf(screen, 'codex'), 'codex login');
   assert.equal(stateOf(screen, 'hermes'), 'Not installed');
+  openHow(screen, 'hermes');
   assert.equal(commandOf(screen, 'hermes'), 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash');
   assert.equal(useOf(screen, 'hermes').hidden, true, 'Use on an agent that is not here');
-  assert.equal(stateOf(screen, 'desktop'), 'Cannot drive Phosphor');
-  assert.equal(useOf(screen, 'desktop').hidden, true, 'Use on a chat app that cannot drive');
+  assert.equal(rowOf(screen, 'desktop'), undefined, 'a tile for a chat app that cannot drive');
   assert.ok(!visibleText(screen).some((t) => t.includes('/Users/')), 'a path is in the open');
 });
 
@@ -343,7 +351,7 @@ test('Claude Code signed in: Use is one round trip, the step offers Start your a
   const screen = await atPicker(world);
   await flush();
   useOf(screen, 'claude').click();
-  assert.equal(status(screen), 'Checking on this Mac.');
+  assert.equal(status(screen), 'Checking Claude Code on this Mac.');
   await flush();
   await flush();
   const pick = world.calls.find((c) => c.action === 'agent-pick');
@@ -388,6 +396,7 @@ test('a pick of an agent that is not here stores nothing: the list says the app\
   await flush();
   assert.equal(rowOf(screen, 'codex').getAttribute('aria-current'), null, 'a pick the app did not store is shown as held');
   assert.equal(stateOf(screen, 'codex'), 'Not installed');
+  openHow(screen, 'codex');
   assert.equal(commandOf(screen, 'codex'), 'npm install -g @openai/codex');
   assert.equal(status(screen), CHECKS.codexMissing.sentence);
   assert.equal(primary(screen).textContent, 'Continue');
@@ -442,17 +451,20 @@ test('a terminal agent on the door reads Connected, and another vendor\'s client
   useOf(screen, 'codex').click();
   await flush();
   await flush();
-  assert.equal(stateOf(screen, 'codex'), 'Runs in your terminal');
+  assert.equal(stateOf(screen, 'codex'), 'Signed in, runs in your terminal');
   world.store.put({ ...world.store.get(), agents: { members: [{ client: 'codex-cli', label: 'codex', ops: 0 }] } });
   assert.equal(stateOf(screen, 'codex'), 'Connected');
   world.store.put({ ...world.store.get(), agents: { members: [{ client: 'claude-code', label: 'claude', ops: 2 }] } });
-  assert.equal(stateOf(screen, 'codex'), 'Runs in your terminal');
+  assert.equal(stateOf(screen, 'codex'), 'Signed in, runs in your terminal');
 });
 
 /* ---------- the threshold ---------- */
 
-/* The software flow walked to the assistant step on the import path, which skips the words and
-   the prove step (they need a phrase). `pick` clicks that tile there and waits for the answer. */
+const PHRASE = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+
+/* The software flow walked to the assistant step on the import path: the password, then the
+   phrase the wallet is brought in with (the words and the prove step are the new wallet's).
+   `pick` clicks that tile there and waits for the answer. */
 async function atAssistant(world: World, pick?: string): Promise<Any> {
   world.store.put({ ...world.store.get(), vault: { ...ENCLAVE, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } });
   world.sandbox.PhosphorFirstRun.open();
@@ -461,8 +473,12 @@ async function atAssistant(world: World, pick?: string): Promise<Any> {
   (find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have one')) as Any).click();
   buttonNamed(screen, 'Continue').click(); // choose
   find(screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
-  buttonNamed(screen, 'Continue').click(); // password, straight to the addresses
+  buttonNamed(screen, 'Continue').click(); // password
+  assert.ok(visibleText(screen).includes('Bring your wallet in'), 'the import path skipped the phrase');
+  find(screen, 'textarea')[0].value = PHRASE;
+  buttonNamed(screen, 'Continue').click(); // the phrase
   await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/wallet/import' && c.mnemonic === PHRASE), 'the phrase was not imported');
   buttonNamed(screen, 'Continue').click(); // addresses
   buttonNamed(screen, 'Do this later').click(); // money
   await flush();
@@ -480,7 +496,7 @@ async function atThreshold(world: World): Promise<Any> {
   const screen = await atAssistant(world);
   buttonNamed(screen, 'Do this later').click(); // assistant
   await flush();
-  assert.ok(visibleText(screen).includes('Set the ask threshold'), 'the threshold step did not open');
+  assert.ok(visibleText(screen).includes('When should it ask you?'), 'the threshold step did not open');
   return screen;
 }
 
@@ -499,8 +515,8 @@ async function doneSentence(world: World, pick?: string): Promise<string> {
   world.answers['/api/policy/threshold'] = { ok: true, threshold: 100, from: 100 };
   buttonNamed(screen, 'Continue').click(); // threshold
   await flush();
-  assert.ok(visibleText(screen).includes('Done'), 'the done screen did not open');
-  return find(screen, 'p.body')[0].textContent;
+  assert.ok(visibleText(screen).includes('Phosphor is ready'), 'the ready screen did not open');
+  return visibleText(find(screen, '.firstrun-done-facts')[0]).join(' ');
 }
 
 test('the done screen says what the assistant step actually found, never a connection nobody made', async () => {
@@ -509,17 +525,36 @@ test('the done screen says what the assistant step actually found, never a conne
     ['codex', { ok: true, check: CHECKS.codexOut, command: LINE, picked: 'codex' }, 'Sign in to Codex, then start it in your terminal.'],
     ['codex', { ok: true, check: CHECKS.codexMissing, command: LINE, picked: null }, 'Install Codex, then pick it in the Vault tab.'],
     ['mcp', { ok: true, check: CHECKS.other, command: 'PHOSPHOR_PORT=4177 node /x', picked: 'mcp' }, 'Paste the line from the Vault tab into your agent and it will appear.'],
-    [undefined, undefined, 'Pick your assistant in the Vault tab when you are ready.'],
+    [undefined, undefined, 'Pick one in the Vault tab when you are ready.'],
   ];
   for (const [pick, answer, expected] of cases) {
     const world = build();
     if (answer) world.answers['agent-pick'] = answer;
     const text = await doneSentence(world, pick);
     assert.ok(text.includes(expected), `${pick ?? 'no pick'}: ${text}`);
+    if (!pick) assert.ok(text.includes('No assistant yet.'), `no pick reads as a headless label: ${text}`);
     assert.ok(!text.includes('is connected'), `${pick ?? 'no pick'} claims a connection: ${text}`);
-    assert.ok(text.startsWith('Add money any time from the Basic tab.'), `the money half is not honest when nothing landed: ${text}`);
-    assert.ok(text.endsWith('Nothing moves unless you say so.'));
+    assert.ok(text.includes('Add money any time from the Basic tab.'), `the money half is not honest when nothing landed: ${text}`);
+    // The one promise it can keep: above the figure set, a click. Never "nothing moves".
+    assert.ok(text.includes('Anything above $100 waits for your click.'), text);
+    assert.doesNotMatch(text, /Nothing moves unless|every move waits/);
+    // An imported wallet is not proven backed up until its phrase is proven once.
+    assert.ok(text.includes('Your wallet is on this Mac.'), text);
   }
+
+  // An agent the chat runs itself starts from the chat's own button, never a terminal.
+  const inApp = build();
+  inApp.answers['agent-pick'] = { ok: true, check: CHECKS.claudeIn, command: 'x', registered: true, picked: 'claude' };
+  inApp.answers.start = new Error('not now');
+  const inAppScreen = await atAssistant(inApp, 'claude');
+  buttonNamed(inAppScreen, 'Do this later').click();
+  await flush();
+  inApp.answers['/api/policy/threshold'] = { ok: true, threshold: 100, from: 100 };
+  buttonNamed(inAppScreen, 'Continue').click();
+  await flush();
+  const inAppText = visibleText(find(inAppScreen, '.firstrun-done-facts')[0]).join(' ');
+  assert.ok(inAppText.includes('Press Start your agent in the chat to start Claude Code.'), inAppText);
+  assert.doesNotMatch(inAppText, /terminal/);
 
   // Claude Code started in-app is a connection, and so is a client on the door.
   const started = build();
@@ -536,20 +571,31 @@ test('the done screen says what the assistant step actually found, never a conne
   attached.answers['/api/policy/threshold'] = { ok: true, threshold: 100, from: 100 };
   buttonNamed(screen, 'Continue').click();
   await flush();
-  assert.ok(find(screen, 'p.body')[0].textContent.includes('Your assistant is connected.'));
+  assert.ok(visibleText(find(screen, '.firstrun-done-facts')[0]).join(' ').includes('Your assistant is connected.'));
 });
 
 test('Continue on the threshold step posts the figure to the policy route and moves on when it lands', async () => {
   const world = build();
   world.answers['/api/policy/threshold'] = { ok: true, threshold: 25, from: 100 };
   const screen = await atThreshold(world);
+  // The amounts are one choice that follows the field, and the field says it is dollars.
+  const chips = find(screen, 'button').filter((b: Any) => String(b.className).split(' ').includes('threshold-chip'));
+  assert.deepEqual(chips.map((c: Any) => c.textContent), ['$25', '$100', '$500', '$1,000']);
+  assert.deepEqual(chips.map((c: Any) => c.getAttribute('aria-checked')), ['false', 'true', 'false', 'false']);
+  assert.ok(visibleText(screen).includes('$'), 'the field does not say it is dollars');
+  const input = find(screen, '.threshold-input')[0];
+  input.value = '500';
+  input.dispatch('input');
+  assert.deepEqual(chips.map((c: Any) => c.getAttribute('aria-checked')), ['false', 'false', 'true', 'false'], 'the amounts do not follow what is typed');
+  assert.ok(visibleText(screen).some((t) => t.startsWith('Anything above $500 waits for your click.')));
   buttonNamed(screen, '$25').click();
+  assert.equal(input.value, '25');
   buttonNamed(screen, 'Continue').click();
   await flush();
   const post = world.calls.find((c) => c.route === '/api/policy/threshold');
   assert.ok(post, 'nothing was posted');
   assert.equal(post.usd, 25);
-  assert.ok(visibleText(screen).includes('Done'), 'the flow did not move on');
+  assert.ok(visibleText(screen).includes('Phosphor is ready'), 'the flow did not move on');
 });
 
 test('a refusal from the policy route is shown as its one sentence over the same Continue, and a dead app in the step\'s own words', async () => {
@@ -561,7 +607,7 @@ test('a refusal from the policy route is shown as its one sentence over the same
   await flush();
   await flush();
   assert.ok(visibleText(screen).some((t) => t.startsWith('Asking above $20,000 with a hard cap of $10,000')));
-  assert.ok(visibleText(screen).includes('Set the ask threshold'), 'the step moved on after a refusal');
+  assert.ok(visibleText(screen).includes('When should it ask you?'), 'the step moved on after a refusal');
   assert.equal(buttonNamed(screen, 'Continue').disabled, false);
 
   world.answers['/api/policy/threshold'] = new Error('Failed to fetch');

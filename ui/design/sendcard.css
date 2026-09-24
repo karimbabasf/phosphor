@@ -69,8 +69,8 @@
 .sendcard-usd {
   font-size: var(--fs-13);
   color: var(--text-2);
-  font-family: var(--font-mono);
-  font-feature-settings: "tnum" 1;
+  font-family: var(--font-num);
+  font-variant-numeric: var(--num-features);
 }
 
 .sendcard-status {
@@ -188,6 +188,33 @@
 
 .sendcard-group {
   display: inline-block;
+}
+
+/* The destination a person checks on a waiting send or pay (decision.js
+   addressLine draws it with these groups): the same bright ends as their own
+   deposit address. The first and last group in the text colour, the middle
+   one step quieter, and an EVM address's "0x" quiet on its own, so the eye
+   goes to the two groups worth checking. A NEAR account is one group and
+   wraps anywhere rather than running off the card. */
+.sendcard-address > .sendcard-group {
+  color: var(--text-2);
+}
+
+.sendcard-address > .sendcard-group:first-child,
+.sendcard-address > .sendcard-group:last-child,
+.sendcard-address[data-address^="0x"] > .sendcard-group:nth-child(2) {
+  color: var(--text);
+}
+
+.sendcard-address[data-address^="0x"] > .sendcard-group:first-child {
+  color: var(--text-3);
+}
+
+.sendcard-address > .sendcard-group:only-child {
+  display: inline;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .sendcard-address-actions {

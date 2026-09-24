@@ -73,8 +73,10 @@ a {
   color: inherit;
 }
 
+/* One neutral ring everywhere. Green here means the mark, Approve and a
+   price going up, so a green ring on Close or a tab read as one of those. */
 :focus-visible {
-  outline: 2px solid var(--ink);
+  outline: 2px solid var(--text-2);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }

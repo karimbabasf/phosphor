@@ -1,10 +1,12 @@
-// The terms card: up before the lock and the first run until the person accepts, gone on the
-// app's word and not on the click, and back once for a newer version of the terms.
+// The terms of use: accepted before anything else, gone on the app's word and not on the click,
+// and back once for a newer version of the terms.
 //
-// Run for real over a small DOM with the real store and the real lock screen, so the hand-off
-// between the two screens is the one the window makes: while the terms are required the lock
-// hides itself and opens no first run, and when the card goes it is the lock that decides what
-// comes next.
+// Where they are drawn depends on who is reading. A person with no wallet meets them as the
+// first run's own step after the welcome (tests/unit/firstrun-welcome-ui.test.ts walks that
+// step), so the lock opens the first run and the card stays down. Over a wallet that already
+// exists the card is up before the lock, the lock hides itself, and when the card goes it is the
+// lock that decides what comes next. Run for real over a small DOM with the real store and the
+// real lock screen, so the hand-off between the two screens is the one the window makes.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -168,11 +170,46 @@ function build(state: Any, opts: { lock?: boolean } = {}): World {
 }
 
 const noWallet = (terms: Any | undefined): Any => ({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: { custody: null, state: 'no_wallet', enclave: { ready: true }, foreign: false }, terms });
+const madeWallet = (terms: Any | undefined): Any => ({ lock: { state: 'locked', idleLocksInSec: null }, vault: { custody: 'software', state: 'locked', enclave: { ready: false }, foreign: false }, terms });
 
-/* ---------- the card ---------- */
+/* ---------- a person with no wallet ---------- */
 
-test('the terms card is up before anything else while the terms are not accepted, and the lock opens no first run under it', () => {
+test('with no wallet yet the terms are the first run\'s step: the card stays down and the lock opens the first run, whose welcome comes first', () => {
   const world = build(noWallet(termsSlice(false)));
+  assert.equal(world.nodes['screen-terms'].hidden, true, 'the card opened ahead of the welcome');
+  assert.equal(world.body.hasAttribute('data-terms'), false);
+  assert.ok(world.calls.some((c) => c.route === 'firstrun.open'), 'the lock did not open the first run');
+  assert.equal(world.sandbox.PhosphorTerms.firstRunOwns(world.sandbox.PhosphorState.get()), true);
+  assert.equal(world.sandbox.PhosphorTerms.required(world.sandbox.PhosphorState.get()), true, 'the terms stopped being required');
+});
+
+test('the first run draws the terms through content() and accepts them through accept(): the same words, one write, the answer in the store', async () => {
+  const world = build(noWallet(termsSlice(false)));
+  const body = makeNode('div');
+  const note = world.sandbox.PhosphorTerms.content(body);
+  assert.equal(find(body, '.terms-fact').length, 4, 'four facts');
+  assert.deepEqual(find(body, 'a').map((a) => [a.textContent, a.href ?? null, a.getAttribute('target')]), [
+    ['Terms of use', 'https://phosphor.money/terms/', '_blank'],
+    ['Privacy page', 'https://phosphor.money/privacy/', '_blank'],
+  ]);
+  assert.ok(note.textContent.includes('dated 2026-09-17'), 'the note does not name the version');
+  const done = world.sandbox.PhosphorTerms.accept();
+  assert.equal(world.calls.filter((c) => c.route === '/api/terms/accept').length, 1);
+  world.answer({ ok: true, ...termsSlice(true) });
+  const answer = await done;
+  assert.equal(answer.ok, true);
+  assert.equal(world.sandbox.PhosphorState.get().terms.accepted, true, 'the store did not learn the answer');
+
+  const refused = build(noWallet(termsSlice(false)));
+  const later = refused.sandbox.PhosphorTerms.accept();
+  refused.answer({ error: 'the window token is missing or wrong' });
+  assert.deepEqual({ ...(await later) }, { ok: false, reason: 'the window token is missing or wrong' });
+});
+
+/* ---------- over a wallet that already exists ---------- */
+
+test('over a wallet that exists, the card is up before anything else, with the mark over it, and the lock stands down', () => {
+  const world = build(madeWallet(termsSlice(false)));
   const screen = world.nodes['screen-terms'];
   assert.equal(screen.hidden, false, 'the card is not shown');
   assert.equal(world.nodes['screen-lock'].hidden, true, 'the lock screen is up beside the card');
@@ -188,6 +225,7 @@ test('the terms card is up before anything else while the terms are not accepted
   assert.equal(card.getAttribute('aria-modal'), 'true');
   assert.equal(card.getAttribute('aria-labelledby'), 'terms-title');
   assert.equal(card.focused, true, 'the card did not take the focus');
+  assert.equal(find(screen, '.terms-mark').length, 1, 'no mark over the card');
   assert.equal(find(screen, 'h1')[0].id, 'terms-title');
   assert.equal(find(screen, 'h1')[0].textContent, 'Before you start');
   assert.equal(find(screen, '.terms-fact').length, 4, 'four facts');
@@ -207,7 +245,7 @@ test('the terms card is up before anything else while the terms are not accepted
 });
 
 test('accepting is one write, the card waits for the app, and the lock takes over when the state says accepted', async () => {
-  const world = build(noWallet(termsSlice(false)));
+  const world = build(madeWallet(termsSlice(false)));
   const screen = world.nodes['screen-terms'];
   const button = find(screen, 'button')[0];
   button.click();
@@ -223,12 +261,12 @@ test('accepting is one write, the card waits for the app, and the lock takes ove
   assert.equal(screen.childNodes.length, 0, 'the card left its nodes behind');
   assert.equal(world.body.hasAttribute('data-terms'), false);
   assert.equal(world.sandbox.PhosphorState.get().terms.accepted, true, 'the store did not learn the answer');
-  // The lock decided what comes next: no wallet, so the first run.
-  assert.equal(world.calls.filter((c) => c.route === 'firstrun.open').length, 1, 'the lock did not hand over to the first run');
+  // The lock decided what comes next: a locked wallet, so the lock screen.
+  assert.equal(world.nodes['screen-lock'].hidden, false, 'the lock did not take over');
 });
 
 test('a write the app refuses leaves the card up with the reason, and the button live again', async () => {
-  const world = build(noWallet(termsSlice(false)));
+  const world = build(madeWallet(termsSlice(false)));
   const screen = world.nodes['screen-terms'];
   const button = find(screen, 'button')[0];
   button.click();
@@ -237,7 +275,7 @@ test('a write the app refuses leaves the card up with the reason, and the button
   assert.equal(screen.hidden, false);
   assert.equal(button.disabled, false, 'the button stayed down after a refusal');
   assert.equal(find(screen, '.terms-note')[0].textContent, 'the window token is missing or wrong');
-  assert.deepEqual(world.calls.filter((c) => c.route === 'firstrun.open'), [], 'the first run opened on a refusal');
+  assert.equal(world.nodes['screen-lock'].hidden, true, 'the lock came up on a refusal');
 });
 
 test('with the terms accepted, or on a backend that has no terms slice, nothing opens and the lock runs as before', () => {
@@ -250,18 +288,17 @@ test('with the terms accepted, or on a backend that has no terms slice, nothing 
 });
 
 test('a newer version of the terms brings the card back once, over a wallet that is already made', () => {
-  const made = noWallet(termsSlice(true));
+  const made = madeWallet(termsSlice(true));
   const world = build(made);
   assert.equal(world.nodes['screen-terms'].hidden, true);
-  assert.ok(world.calls.some((c) => c.route === 'firstrun.open'), 'the lock did not run as usual on accepted terms');
+  assert.equal(world.nodes['screen-lock'].hidden, false, 'the lock did not run as usual on accepted terms');
   const newer = { ...termsSlice(false), acceptedVersion: '2026-09-17', version: '2027-01-01' };
   world.sandbox.PhosphorState.put({ ...made, terms: newer });
   assert.equal(world.nodes['screen-terms'].hidden, false, 'the newer terms did not bring the card back');
   assert.equal(world.body.getAttribute('data-terms'), 'true');
   assert.ok(find(world.nodes['screen-terms'], '.terms-note')[0].textContent.includes('2027-01-01'), 'the note does not name the newer version');
   // The lock was asked again with the terms required, and stood down.
-  const opened = world.calls.filter((c) => c.route === 'firstrun.open').length;
   world.sandbox.PhosphorLock.render();
   assert.equal(world.nodes['screen-lock'].hidden, true);
-  assert.equal(world.calls.filter((c) => c.route === 'firstrun.open').length, opened, 'the first run opened under the card');
+  assert.deepEqual(world.calls.filter((c) => c.route === 'firstrun.open'), [], 'the first run opened under the card');
 });
