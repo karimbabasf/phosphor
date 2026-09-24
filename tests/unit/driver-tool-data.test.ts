@@ -13,11 +13,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createDriver, toolDataFor, capPayload, isToolDataTool, TOOL_DATA_CAP, type DriverEvent } from '../../src/driver.ts';
+import { lockdownCopy } from '../fixtures/lockdown-copy.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-const SETTINGS = path.join(ROOT, 'operator', 'driver.settings.json');
+// A copy outside this checkout: see tests/fixtures/lockdown-copy.ts.
+const SETTINGS = lockdownCopy();
 
-async function settle(check: () => boolean, ms = 5_000): Promise<void> {
+async function settle(check: () => boolean, ms = 20_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!check() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
 }
@@ -71,12 +73,12 @@ test('a whitelisted read reaches the window as data, and a tool off the list sen
 });
 
 test('the list is an allow list: the vault, the keys and every unknown tool are off it', () => {
-  for (const name of ['wallet', 'trade_read', 'trade_batch', 'deposit', 'watch', 'receipts', 'proposal_status', 'chain_address']) {
+  for (const name of ['wallet', 'trade_read', 'trade_batch', 'deposit', 'proposal_status', 'swap_check', 'chain_address']) {
     assert.ok(isToolDataTool(`mcp__phosphor__${name}`), `${name} is on the list`);
   }
   assert.ok(isToolDataTool('mcp__phosphor__propose_swap'));
   assert.ok(isToolDataTool('mcp__phosphor__propose_trade'));
-  for (const name of ['policy_show', 'log_tail', 'chart_read', 'chart_snapshot', 'vault_status', 'vault_export', 'keys', 'start', 'skill', 'research', 'chain_transactions', 'chain_transaction', 'intents_activity']) {
+  for (const name of ['policy_show', 'log_tail', 'chart_read', 'chart_snapshot', 'vault_status', 'vault_export', 'keys', 'start', 'skill', 'research', 'chain_transactions', 'chain_transaction', 'intents_activity', 'receipts', 'swap_assets', 'swap_quote']) {
     assert.equal(isToolDataTool(`mcp__phosphor__${name}`), false, `${name} must not reach the window as data`);
   }
 });

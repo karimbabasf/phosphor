@@ -38,7 +38,9 @@ test('the driver profile denies the whole file surface, not only the key path', 
   for (const tool of ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash']) {
     assert.ok(p.permissions.deny.includes(tool), `${tool} must be denied in the in-app driver profile`);
   }
-  assert.deepEqual(p.permissions.allow, ['mcp__phosphor__*'], 'the in-app driver holds the phosphor tools and nothing else');
+  // The web tools on Karim's decision of 2026-09-23: the agent researches anything, not only crypto.
+  assert.deepEqual(p.permissions.allow, ['mcp__phosphor__*', 'WebSearch', 'WebFetch'], 'the in-app driver holds the phosphor tools and the web, and nothing else');
+  for (const tool of ['WebSearch', 'WebFetch']) assert.ok(!p.permissions.deny.includes(tool), `${tool} is allowed and denied at once`);
 });
 
 test('neither profile can be talked into bypassing its own permissions', () => {

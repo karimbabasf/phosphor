@@ -2,39 +2,50 @@
 //
 // Everything else in this app assumes the agent arrives from outside, over the MCP handshake in
 // src/mcp.ts. That stays true and is not weakened here. This adds a second way in: the app starts
-// a headless Claude Code process itself, hands it the same MCP server, and streams the
-// conversation into the window. The car gains a driver's seat; it does not gain a second engine.
+// the agent CLI the person picked (Claude Code or Grok, src/providers/), hands it the same MCP
+// server, and streams the conversation into the window. The car gains a driver's seat; it does
+// not gain a second engine.
 //
 // THE RULE THIS FILE EXISTS TO ENFORCE. Spawning the agent means the app now chooses that agent's
-// tool surface, and a wrong choice here is worse than not shipping the feature at all. An agent
-// that reads balances and destination addresses and ALSO holds WebFetch is an exfiltration
-// channel wearing a permission layer. So the lockdown is not configurable, and it is not trusted
-// either: the child announces its own tool list in the init event, and assertSurface below kills
-// the session when that list contains anything the app did not expect.
+// tool surface, and a wrong choice here is worse than not shipping the feature at all. So the
+// lockdown is not configurable, and it is not trusted either: the child announces its own tool list
+// in the init event, the provider reads it back, and the session dies when that list holds anything
+// the app did not expect. Every tool call on the stream is read the same way, and a built-in there
+// ends the session too.
+//
+// THE WEB, SINCE 2026-09-23. The surface is Phosphor's tools plus the vendor's own web search and
+// page reading, on Karim's decision: the agent has to be able to research anything, not only
+// crypto. That was refused here for a reason that still holds, and it is stated rather than
+// forgotten: an agent that reads balances and addresses and can fetch any URL can be talked by a
+// hostile page into putting them in one. What it cannot do is move money to anyone: a send and a
+// withdrawal wait for the person's click at any size (src/proposals/execute.ts land()), and no
+// tool takes an address but propose_send. Under the auto-approve limit a swap, a deposit to the
+// person's own Hyperliquid account or a trade can still run on its own, which is the policy's
+// number to set. The persona tells the agent a page is data and never to put their figures in a
+// search or a URL; that is prose, and the two walls above are code.
 //
 // That check is the point. A deny list is a claim about a tool surface that changes with every
-// Claude Code release, so a deny list alone goes stale silently and the failure is invisible.
-// Written on 2026-08-19, operator/settings.json had gone stale exactly that way: it was correct
-// when written and by 2.1.237 it let WebFetch, WebSearch, SendMessage, RemoteTrigger and the Cron
-// tools through. Reading the surface back and refusing to drive on a surprise is what makes the
+// release, so a deny list alone goes stale silently and the failure is invisible. Written on
+// 2026-08-19, operator/settings.json had gone stale exactly that way: it was correct when written
+// and by 2.1.237 it let WebFetch, WebSearch, SendMessage, RemoteTrigger and the Cron tools
+// through. Reading the surface back and refusing to drive on a surprise is what makes the
 // guarantee survive an upgrade nobody noticed.
 //
-// WHAT IS DELIBERATELY NOT HERE. No approval path. The child proposes through MCP exactly like a
+// WHAT IS DELIBERATELY NOT HERE. No approval path. The child proposes through MCP exactly like an
 // external agent does, and a human clicks in the window. Nothing in this file can approve, and
 // nothing in this file should ever learn how.
 
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-import { agentById, findAgentBin } from './agents-catalog.ts';
+import { claude } from './providers/claude.ts';
+import { userAuthFile } from './providers/grok.ts';
+import type { Provider, SpawnSpec } from './providers/types.ts';
 
-// The only tools the driver's child is allowed to hold. Phosphor's own MCP tools are matched by
-// prefix; every built-in is a surprise. Read, Grep and Glob are absent on purpose: the CLI
-// operator profile keeps them so a developer can read the code being driven, and the person
-// using the desktop app is not that developer.
-const MCP_PREFIX = 'mcp__phosphor__';
+export { assertSurface, buildArgv, resolveClaudeBin } from './providers/claude.ts';
 
 // The largest single stdout line the parser will hold before giving up on the session. Generous
 // against a real event, which is a few KB at worst, and bounded against a child that never
@@ -52,7 +63,12 @@ export type DriverEvent =
      no path. The window never prints `detail` on its own. */
   | { kind: 'status'; state: DriverState; detail?: string; reason?: string }
   | { kind: 'said'; text: string }
-  | { kind: 'text'; text: string }
+  /* One whole block of the agent's reply. `block` names the stream it closes: the `delta` events
+     with the same number were this text arriving, and this is the final copy of it. */
+  | { kind: 'text'; text: string; block?: number }
+  /* A piece of a block as the model writes it, for the window to print before the block is done.
+     Never kept in the transcript: the `text` event with the same block number is the record. */
+  | { kind: 'delta'; block: number; text: string }
   | { kind: 'tool'; name: string; input: unknown }
   | { kind: 'tool_result'; name: string; ok: boolean }
   /* The structured answer of one read, for the window to draw as a card rather than for the
@@ -80,9 +96,8 @@ export const TOOL_DATA_TOOLS: ReadonlySet<string> = new Set([
   'trade_read',
   'trade_batch',
   'deposit',
-  'watch',
-  'receipts',
   'proposal_status',
+  'swap_check',
   // An address lookup, so the window can draw what the agent just read about a receiver. Its
   // strings are already stripped and capped by src/chainscan before they get here.
   'chain_address',
@@ -195,8 +210,19 @@ export type DriverOptions = {
   repo: string;
   port: number;
   nodeBin?: string;
+  // Claude Code's binary, from config. Read only when the provider is Claude.
   claudeBin?: string;
+  // The persona. It is the child's system prompt (see src/providers/), never a user message.
   systemPrompt?: string;
+  // Which vendor's CLI this driver runs. Claude Code when unset, which is every caller that is
+  // not the window's chat (src/crew.ts spawns Claude workers).
+  provider?: Provider;
+  // The app-owned directory the provider writes into: <dataDir>/agents/<vendor>. Unset in a test
+  // or a worker, which get a directory under the system temp.
+  home?: string;
+  // 'chat' for the window's own conversations. It reaches src/mcp.ts as PHOSPHOR_SURFACE, which
+  // leaves out the tools a money chat has no use for.
+  surface?: 'chat';
   /* WHO THIS CHILD IS, on the roster and on its own tool surface.
      `analyst` is what src/crew.ts spawns. It reaches src/mcp.ts as PHOSPHOR_ROLE, and mcp.ts
      does not REGISTER the propose tools for an analyst at all: the capability is absent from
@@ -209,44 +235,20 @@ export type DriverOptions = {
   /* The seat id this child announces to the app, chosen by whoever is starting it rather than
      minted here. A caller that has to know WHICH seat is this child's (the chat registry, so a
      card can be addressed to the conversation that asked for it) cannot read it back afterwards:
-     `status().sessionId` is overwritten by Claude Code's own id on the init event. Absent mints
+     `status().sessionId` is overwritten by the vendor's own id on the init event. Absent mints
      one, which is every caller that does not care. */
   session?: string;
-  /* Which lockdown file to run under. Left unset it is operator/driver.settings.json, and
+  /* Which lockdown file Claude runs under. Left unset it is operator/driver.settings.json, and
      nothing in this app currently sets it: workers deliberately run under the SAME file. One
      lockdown, one test that checks it against the live Claude Code release
-     (tests/lockdown.test.ts), and one string for the orphan sweep to match on. A second
-     profile would have to earn all three of those again. */
+     (tests/lockdown.test.ts), and one string for the orphan sweep to match on. */
   settingsPath?: string;
-  // Which model drives. Left unset, Claude Code picks whatever the machine's own default is,
-  // which is nobody's decision and on most installs is the slowest option available. Driving a
-  // chart is not the work a frontier model exists for, and the difference is seconds a human
-  // spends watching a window do nothing. See DEFAULT_MODEL in src/server.ts for the choice and
-  // the reason it is safe to make.
+  // Which model drives. Left unset, the vendor's own default. See the note in src/http/chats.ts.
   model?: string;
   onEvent: (event: DriverEvent) => void;
 };
 
 export type Driver = ReturnType<typeof createDriver>;
-
-// Where `claude` lives when nobody set a PATH. A GUI process launched from Finder inherits
-// /usr/bin:/bin:/usr/sbin:/sbin and nothing else, so the install location every developer takes
-// for granted is exactly the one the packaged app cannot see. The places are the catalog's
-// (src/agents-catalog.ts, the Claude Code entry), so the picker's check and this spawn find the
-// same binary: two lists of the same paths drifted once, and a check that says installed while
-// the start says not is the picker lying. Config wins, then PATH, then the catalog's places.
-export function resolveClaudeBin(override?: string): string {
-  if (override) {
-    if (!fs.existsSync(override)) throw new Error(`driver: claudeBin is set to ${override}, which does not exist`);
-    return override;
-  }
-  const entry = agentById('claude');
-  const found = entry === null ? null : findAgentBin(entry);
-  if (found !== null) return found;
-  throw new Error(
-    'driver: the claude CLI was not found. Install Claude Code, or set driver.claudeBin in config.json to its full path.',
-  );
-}
 
 /* THE CHILD'S ENVIRONMENT IS A LIST OF NAMES THIS APP CHOSE, never the parent's minus a list.
    childEnv used to copy process.env and delete the twelve names in STRIPPED. Everything else in
@@ -293,6 +295,8 @@ export const STRIPPED = [
   'CLAUDE_CODE_USE_BEDROCK',
   'CLAUDE_CODE_USE_VERTEX',
   'CLAUDE_CODE_SAFE_MODE',
+  // xAI, which is what Grok bills to when no login is stored. The child runs on the login.
+  'XAI_API_KEY',
   // Where the signing key is. The child has no reader, so this is defence in depth rather than
   // a hole being closed, and it is worth the two lines anyway: operator/settings.json denies
   // Read(~/.phosphor/**) by literal path, which says nothing about a key moved elsewhere by
@@ -302,12 +306,12 @@ export const STRIPPED = [
 ];
 
 /* AUTO-MEMORY, which is the one context source `--setting-sources=` does not cover.
-   The flag above keeps somebody's settings, hooks, plugins and CLAUDE.md out of a session that
-   drives a wallet, and measured against 2.1.263 it does exactly that for all three. It does not
-   touch auto-memory: Claude Code loads <config root>/projects/<cwd slug>/memory/ before the first
-   turn whatever the setting sources are. The child's cwd is this repo, so the path is computable
-   by anyone who can write in the user's home directory, and a file there is system-level context
-   in every future driver session. It can file proposals, and the ones at or below the policy click
+   The flag keeps somebody's settings, hooks, plugins and CLAUDE.md out of a session that drives
+   a wallet, and measured against 2.1.263 it does exactly that for all three. It does not touch
+   auto-memory: Claude Code loads <config root>/projects/<cwd slug>/memory/ before the first turn
+   whatever the setting sources are. The child's cwd is this repo, so the path is computable by
+   anyone who can write in the user's home directory, and a file there is system-level context in
+   every future driver session. It can file proposals, and the ones at or below the policy click
    threshold execute with no human click at all. Reproduced with a canary on 2.1.263: the child
    read it and named it.
    CLAUDE_CODE_DISABLE_AUTO_MEMORY is what closes it, and the init event then carries no
@@ -317,7 +321,7 @@ export const STRIPPED = [
    memory path into a directory this app owns, and it moves .credentials.json with it: a child
    spawned that way answers "Not logged in - Please run /login" and the driver is dead.
    The variable is a claim, so it is not where the guarantee rests. assertMemory below reads the
-   child's own answer back, exactly as assertSurface does for tools, which is what survives a
+   child's own answer back, exactly as the provider does for tools, which is what survives a
    release that renames it. */
 const DISABLE_AUTO_MEMORY = 'CLAUDE_CODE_DISABLE_AUTO_MEMORY';
 
@@ -356,7 +360,7 @@ export function childEnv(
   repo: string,
   port: number,
   sessionId: string,
-  identity?: { role?: string; label?: string; parent?: string },
+  identity?: { role?: string; label?: string; parent?: string; surface?: string },
   parent: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   // See INHERITED_ENV: the names a process needs, and nothing the parent's shell happened to hold.
@@ -373,71 +377,18 @@ export function childEnv(
   // The MCP proxy the child spawns has to find the same app instance the window is talking to.
   env.ACC_PORT = String(port);
   env.PHOSPHOR_REPO = repo;
-  // One seat for the whole conversation. Claude Code may start the MCP server more than once
-  // for a single session, and each copy would otherwise mint its own id, so the app would see
-  // two agents, seat one, and refuse every call the other made. See the note on SESSION in
-  // src/mcp.ts.
+  // One seat for the whole conversation. A vendor may start the MCP server more than once for a
+  // single session (Grok starts one per turn), and each copy would otherwise mint its own id, so
+  // the app would see two agents, seat one, and refuse every call the other made. See the note on
+  // SESSION in src/mcp.ts.
   env.PHOSPHOR_SESSION = sessionId;
   // The identity the child announces to the app, written by the APP and not by the child. A
   // role the agent could choose for itself would be a role it could raise.
   if (identity?.role) env.PHOSPHOR_ROLE = identity.role;
   if (identity?.label) env.PHOSPHOR_LABEL = identity.label;
   if (identity?.parent) env.PHOSPHOR_PARENT = identity.parent;
+  if (identity?.surface) env.PHOSPHOR_SURFACE = identity.surface;
   return env;
-}
-
-/* NOTHING CALLER-AUTHORED GOES IN ARGV, and the role text is the reason.
-   `ps -axo args=` prints the argv of any process this user owns, which is the same fact
-   src/http/auth.ts moved the window token off the environment for. The role text used to arrive
-   here as `--append-system-prompt`, and for a worker that text is built around the BRIEF an
-   operator agent wrote (src/crew.ts, buildWorkerRole), so every worker published its instructions
-   to every process on the machine. Information disclosure only, no money path and no privilege
-   gain, and it costs nothing to close: createDriver puts the role text down stdin instead, ahead
-   of the first turn, which is the channel `send` already uses.
-   findOrphans is unaffected. It matches on the settings path and the stream flags, never on the
-   prompt. */
-export function buildArgv(opts: {
-  repo: string;
-  nodeBin: string;
-  settings: string;
-  sessionId: string;
-  model?: string;
-}): string[] {
-  const mcp = JSON.stringify({
-    mcpServers: { phosphor: { command: opts.nodeBin, args: [path.join(opts.repo, 'src', 'mcp.ts')] } },
-  });
-  const argv = [
-    '--print',
-    '--input-format',
-    'stream-json',
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--settings',
-    opts.settings,
-    // No user, project or local settings. This is what keeps the machine's own hooks, plugins and
-    // CLAUDE.md files out of a session that drives a wallet: they are somebody's development
-    // config, and the child is not developing anything.
-    '--setting-sources=',
-    '--mcp-config',
-    mcp,
-    '--strict-mcp-config',
-    // Never `bypassPermissions`, never `acceptEdits`. dontAsk refuses anything outside the allow
-    // list instead of blocking on a prompt that has no terminal to appear in.
-    '--permission-mode',
-    'dontAsk',
-    '--session-id',
-    opts.sessionId,
-  ];
-  if (opts.model) argv.push('--model', opts.model);
-  return argv;
-}
-
-// Refuse to drive when the child holds a tool the app did not expect. Returns the offending
-// names, empty when the surface is clean.
-export function assertSurface(tools: unknown): string[] {
-  if (!Array.isArray(tools)) return ['<the init event carried no tool list>'];
-  return tools.filter((t): t is string => typeof t === 'string').filter((t) => !t.startsWith(MCP_PREFIX));
 }
 
 /* ---------- orphans from a run that is over ----------
@@ -445,14 +396,15 @@ export function assertSurface(tools: unknown): string[] {
    Everything above stops an agent this process started. Nothing above can stop one left by a
    process that was itself killed outright: the child is detached, so it is reparented to
    launchd and keeps running with no window, no seat and no way to be reached. Before the
-   escalation above existed that happened on every quit, and one is already on the machine of
+   escalation below existed that happened on every quit, and one is already on the machine of
    anyone who has been running this app.
 
    THE MATCH IS THIS INSTALLATION'S OWN LOCKDOWN FILE, and the precision is the entire safety
    argument. Anyone running Phosphor is likely to have their own Claude Code sessions open, and
    a sweep that matched on the binary name would kill their work. The absolute path of
    operator/driver.settings.json appears in the child's argv because this app put it there; no
-   other session on the machine is carrying it. */
+   other session on the machine is carrying it. A Grok child is one process per turn and leaves
+   on its own when the turn ends, so there is nothing of it to sweep. */
 
 export function findOrphans(settings: string, psOutput: string, selfPid: number): number[] {
   const found: number[] = [];
@@ -524,15 +476,53 @@ function stillThere(pid: number): boolean {
   }
 }
 
+// A provider that refuses to run says why in its own sentence (src/providers/), and that sentence
+// is the one the window shows.
+function reasonOf(error: unknown, fallback: string): string {
+  const own = (error as { reason?: unknown } | null)?.reason;
+  return typeof own === 'string' ? own : fallback;
+}
+
 export function createDriver(opts: DriverOptions) {
+  const provider = opts.provider ?? claude;
   const settings = opts.settingsPath ?? path.join(opts.repo, 'operator', 'driver.settings.json');
+  const home = opts.home ?? path.join(os.tmpdir(), 'phosphor-agents', provider.id);
   let child: ChildProcessWithoutNullStreams | null = null;
   let state: DriverState = 'off';
   let sessionId = '';
+  // The seat this child announces to the app as PHOSPHOR_SESSION: the chat's own, so a card finds
+  // the conversation that asked for it.
+  let seat = '';
+  // The session id the vendor was asked to create, which is the one a turn process resumes. The
+  // same as the seat for Claude, whose sessions are never kept; a fresh one for each Grok session,
+  // because grok refuses --session-id for an id it already holds (a restarted chat would reuse it).
+  let session = '';
+  // turn transport: whether the vendor holds the session yet, so a first turn that failed
+  // before it existed is not followed by a resume of nothing.
+  let resumable = false;
+  let interrupted = false;
+  // turn transport: the result line arrived, so the exit that follows reports no second turn_end.
+  let answered = false;
   let buffer = '';
-  /* The role text, waiting for the turn it rides in on. Armed at every start, so a driver that is
-     stopped and started again tells its child who it is again. Cleared once it has gone. */
-  let pendingPrompt = '';
+
+  /* ONE TURN AT A TIME, even across a stop (S3, S5 of the 2026-09-23 review).
+     stdin transport: `owed` counts the result lines the child still owes, one per message
+     written. Claude answers in order and a stopped answer still prints its result, measured on
+     2.1.281 to land after a message written right behind the interrupt, so the chat is ready
+     only when nothing is owed. Otherwise that late result read as the end of the next answer.
+     turn transport: `turn` is the process whose exit ends the turn, `draining` the process group
+     of the last one until it is seen gone, and `held` a message sent before then. It goes once
+     the group is gone, so one session never has two grok processes, and the old turn's MCP proxy
+     has said its bye before the next one says hello on the same seat. */
+  let owed = 0;
+  let turn: ChildProcessWithoutNullStreams | null = null;
+  let draining: number | null = null;
+  let held: string | null = null;
+
+  /* App-authored context waiting for the person's next message (src/http/ended.ts: a move that
+     ended since the last answer). It never starts a turn of its own: waking the agent for a card
+     the person can already see cost a paragraph each time (R3, five in eight minutes). */
+  let notes: string[] = [];
 
   /* Set by stop(), so the exit that follows a requested stop carries no reason: the person
      asked for it, and a sentence explaining it would read as something having gone wrong. */
@@ -540,11 +530,18 @@ export function createDriver(opts: DriverOptions) {
 
   /* The calls in flight, by the id the model gave them. A tool_result block carries
      `tool_use_id` and nothing else that names the tool, so the name is read back off the
-     tool_use that opened it. Before this the result was matched on a `name` field the stream
-     does not carry, every result came through as "tool", and a step row only closed when the
-     whole turn did. Cleared at every turn end, so an id from a turn that was interrupted cannot
-     name a later call. */
-  const calls = new Map<string, { name: string; input: unknown }>();
+     tool_use that opened it. Cleared at every turn end, so an id from a turn that was
+     interrupted cannot name a later call. `meta` is a vendor's own lookup (Grok's search_tool):
+     allowed, and never drawn. */
+  const calls = new Map<string, { name: string; input: unknown; meta: boolean }>();
+
+  /* The text blocks streaming now. A text block opens with content_block_start and gets the next
+     number; its deltas carry that number; the whole block, when the assistant event carries it,
+     closes the oldest open one. Claude sends that event per block and Grok once per message, and
+     the queue reads both the same way. */
+  let blockSeq = 0;
+  let streaming: number[] = [];
+  let current: number | null = null;
 
   function set(next: DriverState, detail?: string, reason?: string): void {
     state = next;
@@ -558,7 +555,175 @@ export function createDriver(opts: DriverOptions) {
   function fail(message: string, reason: string): void {
     set('failed', message, reason);
     opts.onEvent({ kind: 'error', message });
+    letGo();
     kill();
+    forget();
+    bury();
+  }
+
+  // A stop or a failure: the turn in flight ends nothing when its process exits, and a message
+  // waiting for it goes nowhere.
+  function letGo(): void {
+    turn = null;
+    held = null;
+  }
+
+  // The files this session wrote for its child (Claude's persona, Grok's turn), once read.
+  function forget(): void {
+    if (session !== '') provider.cleanup?.({ home, sessionId: session });
+  }
+
+  // What the vendor kept of a session that is over (Grok's history of it).
+  function bury(): void {
+    if (session === '') return;
+    try {
+      provider.endSession?.({ home, sessionId: session });
+    } catch {
+      /* a history file that will not go is not worth failing a stop over */
+    }
+  }
+
+  function onInit(event: Record<string, unknown>): void {
+    const unexpected = provider.surface(event);
+    if (unexpected.length > 0) {
+      fail(
+        `refusing to drive: the agent was given ${unexpected.length} tool(s) or server(s) outside Phosphor's own surface (${unexpected.join(', ')}). This is a lockdown failure, not a configuration preference.`,
+        'The assistant stopped: it was given tools this app does not allow.',
+      );
+      return;
+    }
+    /* The same check for context that the line above makes for tools. A memory file the app
+       never wrote is somebody else's instructions arriving as the system prompt of a session
+       that proposes with the user's money, and childEnv setting a variable is a claim about
+       somebody else's release. This is the answer the child gave. */
+    const memories = assertMemory(event.memory_paths);
+    if (memories.length > 0) {
+      fail(
+        `refusing to drive: the agent loaded ${memories.length} memory file(s) this app did not write (${memories.join(', ')}). ` +
+          `${DISABLE_AUTO_MEMORY} did not take, and auto-memory is a file anyone on this machine can write into a session that moves money.`,
+        'The assistant stopped: it loaded memory this app did not write.',
+      );
+      return;
+    }
+    /* A session whose MCP server did not attach is not a degraded session, it is a useless
+       one: the agent holds no tools at all, so it answers from memory about a wallet it
+       cannot read, and silence there looks exactly like a thoughtful agent.
+       The statuses are split rather than compared against 'connected', because both vendors
+       also report 'pending' and 'connecting', and a server that is merely still attaching is
+       not a dead one. Killing on those would refuse sessions that were about to work. Nothing
+       is being risked by waiting: the surface check above has already established that
+       whatever does attach cannot bring a built-in tool with it. */
+    const servers = Array.isArray(event.mcp_servers) ? (event.mcp_servers as Array<Record<string, unknown>>) : [];
+    const phosphor = servers.find((s) => s.name === 'phosphor');
+    const status = phosphor === undefined ? 'absent' : String(phosphor.status);
+    if (status === 'absent' || status === 'failed' || status === 'needs-auth' || status === 'disconnected') {
+      fail(
+        `driver: the agent started but cannot reach Phosphor's own tools (${status === 'absent' ? 'the server did not load' : status}). It could talk and read nothing, so the session is stopped.`,
+        "The assistant stopped: it could not reach Phosphor's tools.",
+      );
+      return;
+    }
+    // Grok's server attaches while its first model call is in flight on every turn, so only a
+    // long-lived child says it is still starting.
+    if (status !== 'connected' && provider.transport === 'stdin') set('starting', `waiting for Phosphor's tools to attach (${status})`);
+    resumable = true;
+    sessionId = typeof event.session_id === 'string' ? event.session_id : sessionId;
+    // The child printed init, so it has read its persona and its turn: neither stays on disk.
+    forget();
+  }
+
+  function onStream(event: Record<string, unknown>): void {
+    const inner = event.event as { type?: unknown; content_block?: { type?: unknown }; delta?: { type?: unknown; text?: unknown } } | undefined;
+    if (inner === undefined || inner === null) return;
+    if (inner.type === 'content_block_start') {
+      if (inner.content_block?.type === 'text') {
+        blockSeq += 1;
+        streaming.push(blockSeq);
+        current = blockSeq;
+      } else {
+        current = null;
+      }
+      return;
+    }
+    if (inner.type === 'content_block_delta' && current !== null && inner.delta?.type === 'text_delta' && typeof inner.delta.text === 'string') {
+      opts.onEvent({ kind: 'delta', block: current, text: inner.delta.text });
+      return;
+    }
+    if (inner.type === 'content_block_stop') current = null;
+  }
+
+  function onAssistant(event: Record<string, unknown>): void {
+    const message = event.message as { content?: Array<Record<string, unknown>> } | undefined;
+    for (const block of message?.content ?? []) {
+      if (block.type === 'text' && typeof block.text === 'string') {
+        const number = streaming.shift() ?? ++blockSeq;
+        opts.onEvent({ kind: 'text', text: block.text, block: number });
+      }
+      /* A tool block of any kind is read by the provider: tool_use is a call the child runs, and
+         server_tool_use (any other *_tool_use) is one the API ran for the model inside its reply.
+         The provider names Phosphor's own, the web tools allowed on 2026-09-23, and anything else,
+         which ends the session. */
+      const server = typeof block.type === 'string' && block.type !== 'tool_use' && block.type.endsWith('tool_use');
+      if ((block.type === 'tool_use' || server) && typeof block.name === 'string') {
+        const call = provider.tool(block.name, block.input, server);
+        if (call.kind === 'builtin') {
+          fail(
+            `refusing to drive: the agent called ${call.name}, a tool outside Phosphor's own surface. This is a lockdown failure, not a configuration preference.`,
+            'The assistant stopped: it reached for a tool this app does not allow.',
+          );
+          return;
+        }
+        const id = typeof block.id === 'string' ? block.id : '';
+        if (call.kind === 'meta') {
+          if (id !== '') calls.set(id, { name: block.name, input: block.input, meta: true });
+          continue;
+        }
+        const input = call.kind === 'web' ? block.input : call.input;
+        if (id !== '') calls.set(id, { name: call.name, input, meta: false });
+        opts.onEvent({ kind: 'tool', name: call.name, input });
+      }
+      // The result of a tool the API ran rides in the same reply (web_search_tool_result).
+      if (typeof block.type === 'string' && block.type !== 'tool_result' && block.type.endsWith('_tool_result')) {
+        const id = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
+        const call = calls.get(id);
+        if (call !== undefined) {
+          calls.delete(id);
+          const inner = block.content as { type?: unknown } | null;
+          const failed = inner !== null && typeof inner === 'object' && typeof inner.type === 'string' && inner.type.endsWith('_error');
+          opts.onEvent({ kind: 'tool_result', name: call.name, ok: !failed });
+        }
+      }
+      if (server && typeof block.name !== 'string') {
+        fail(
+          `refusing to drive: the agent's reply carried a ${String(block.type)} block with no name, a tool this app cannot read. This is a lockdown failure, not a configuration preference.`,
+          'The assistant stopped: it reached for a tool this app does not allow.',
+        );
+        return;
+      }
+    }
+  }
+
+  function onUser(event: Record<string, unknown>): void {
+    const message = event.message as { content?: Array<Record<string, unknown>> } | undefined;
+    for (const block of message?.content ?? []) {
+      if (block.type !== 'tool_result') continue;
+      const id = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
+      const call = calls.get(id);
+      if (call !== undefined) calls.delete(id);
+      if (call?.meta === true) continue;
+      const name = call?.name ?? (typeof block.name === 'string' ? block.name : 'tool');
+      const content = provider.result(block.content);
+      const ok = block.is_error !== true && content !== null;
+      opts.onEvent({ kind: 'tool_result', name, ok });
+      const data = toolDataFor(name, call?.input, content, ok);
+      if (data !== null) opts.onEvent(data);
+    }
+  }
+
+  function endTurn(): void {
+    calls.clear();
+    streaming = [];
+    current = null;
   }
 
   function onLine(line: string): void {
@@ -570,146 +735,88 @@ export function createDriver(opts: DriverOptions) {
       // that parsed as nothing at all is not, but it is also not worth killing a session over.
       return;
     }
-
-    if (event.type === 'system' && event.subtype === 'init') {
-      const unexpected = assertSurface(event.tools);
-      if (unexpected.length > 0) {
-        fail(
-          `refusing to drive: the agent was given ${unexpected.length} tool(s) outside Phosphor's own surface (${unexpected.join(', ')}). This is a lockdown failure, not a configuration preference.`,
-          'The assistant stopped: it was given tools this app does not allow.',
-        );
-        return;
-      }
-      /* The same check for context that the line above makes for tools. A memory file the app
-         never wrote is somebody else's instructions arriving as the system prompt of a session
-         that proposes with the user's money, and childEnv setting a variable is a claim about
-         somebody else's release. This is the answer the child gave. */
-      const memories = assertMemory(event.memory_paths);
-      if (memories.length > 0) {
-        fail(
-          `refusing to drive: the agent loaded ${memories.length} memory file(s) this app did not write (${memories.join(', ')}). ` +
-            `${DISABLE_AUTO_MEMORY} did not take, and auto-memory is a file anyone on this machine can write into a session that moves money.`,
-          'The assistant stopped: it loaded memory this app did not write.',
-        );
-        return;
-      }
-      /* A session whose MCP server did not attach is not a degraded session, it is a useless
-         one: the agent holds no tools at all, so it answers from memory about a wallet it
-         cannot read, and silence there looks exactly like a thoughtful agent.
-         The statuses are split rather than compared against 'connected', because this release
-         also reports 'pending' and 'connecting', and a server that is merely still attaching is
-         not a dead one. Killing on those would refuse sessions that were about to work. Nothing
-         is being risked by waiting: assertSurface above has already established that whatever
-         does attach cannot bring a built-in tool with it. */
-      const servers = Array.isArray(event.mcp_servers) ? (event.mcp_servers as Array<Record<string, unknown>>) : [];
-      const phosphor = servers.find((s) => s.name === 'phosphor');
-      const status = phosphor === undefined ? 'absent' : String(phosphor.status);
-      if (status === 'absent' || status === 'failed' || status === 'needs-auth' || status === 'disconnected') {
-        fail(
-          `driver: the agent started but cannot reach Phosphor's own tools (${status === 'absent' ? 'the server did not load' : status}). It could talk and read nothing, so the session is stopped.`,
-          "The assistant stopped: it could not reach Phosphor's tools.",
-        );
-        return;
-      }
-      if (status !== 'connected') set('starting', `waiting for Phosphor's tools to attach (${status})`);
-      sessionId = typeof event.session_id === 'string' ? event.session_id : sessionId;
-      return;
-    }
-
-    if (event.type === 'assistant') {
-      const message = event.message as { content?: Array<Record<string, unknown>> } | undefined;
-      for (const block of message?.content ?? []) {
-        if (block.type === 'text' && typeof block.text === 'string') {
-          opts.onEvent({ kind: 'text', text: block.text });
-        }
-        if (block.type === 'tool_use' && typeof block.name === 'string') {
-          if (typeof block.id === 'string') calls.set(block.id, { name: block.name, input: block.input });
-          opts.onEvent({ kind: 'tool', name: block.name, input: block.input });
-        }
-      }
-      return;
-    }
-
-    if (event.type === 'user') {
-      const message = event.message as { content?: Array<Record<string, unknown>> } | undefined;
-      for (const block of message?.content ?? []) {
-        if (block.type !== 'tool_result') continue;
-        const id = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
-        const call = calls.get(id);
-        if (call !== undefined) calls.delete(id);
-        const name = call?.name ?? (typeof block.name === 'string' ? block.name : 'tool');
-        const ok = block.is_error !== true;
-        opts.onEvent({ kind: 'tool_result', name, ok });
-        const data = toolDataFor(name, call?.input, block.content, ok);
-        if (data !== null) opts.onEvent(data);
-      }
-      return;
-    }
-
+    if (event.type === 'system' && event.subtype === 'init') return onInit(event);
+    if (event.type === 'stream_event') return onStream(event);
+    if (event.type === 'assistant') return onAssistant(event);
+    if (event.type === 'user') return onUser(event);
     if (event.type === 'result') {
-      calls.clear();
-      opts.onEvent({
-        kind: 'turn_end',
-        error: event.is_error === true,
-        turns: typeof event.num_turns === 'number' ? event.num_turns : 0,
-      });
-      if (state !== 'failed') set('ready');
+      endTurn();
+      const turns = typeof event.num_turns === 'number' ? event.num_turns : 0;
+      /* A turn process is still alive after its result line, and a message sent to a chat that
+         said ready then would be refused as still answering. Its exit says ready (turnExited). */
+      if (provider.transport === 'turn') {
+        opts.onEvent({ kind: 'turn_end', error: event.is_error === true, turns });
+        answered = true;
+        return;
+      }
+      // A stopped answer ends in error_during_execution, and a stop the person asked for is not
+      // an error. The next result after an interrupt is the stopped answer's: Claude answers in order.
+      const stopped = interrupted;
+      interrupted = false;
+      opts.onEvent({ kind: 'turn_end', error: event.is_error === true && !stopped, turns });
+      owed = Math.max(0, owed - 1);
+      if (owed > 0 || state === 'failed' || state === 'stopped') return;
+      set('ready', stopped ? 'the human stopped this answer' : undefined);
     }
   }
 
-  function start(): void {
-    if (child) return;
-    stopping = false;
-    set('starting');
-    let bin: string;
-    try {
-      bin = resolveClaudeBin(opts.claudeBin);
-    } catch (error) {
-      fail(
-        error instanceof Error ? error.message : String(error),
-        opts.claudeBin ? 'Claude Code is not at the path set in config.json.' : 'Claude Code is not installed on this Mac.',
-      );
-      return;
-    }
-    if (!fs.existsSync(settings)) {
-      fail(
-        `driver: ${settings} is missing, and the app will not spawn an agent without its lockdown file.`,
-        "The assistant's lockdown file is missing, so it will not start.",
-      );
-      return;
-    }
-
-    sessionId = opts.session ?? randomUUID();
-    pendingPrompt = opts.systemPrompt ?? '';
-    const argv = buildArgv({
+  function spawnSpec(extra: { prompt?: string } = {}): SpawnSpec {
+    return provider.spawn({
       repo: opts.repo,
       nodeBin: opts.nodeBin ?? process.execPath,
-      settings,
-      sessionId,
+      home,
+      bin: provider.id === 'claude' ? opts.claudeBin : undefined,
+      sessionId: session,
       model: opts.model,
+      env: childEnv(opts.repo, opts.port, seat, {
+        role: opts.role,
+        label: opts.label,
+        parent: opts.parent,
+        surface: opts.surface,
+      }),
+      systemPrompt: opts.systemPrompt ?? '',
+      settings,
+      prompt: extra.prompt,
+      resume: resumable,
     });
+  }
 
+  function spawnChild(spec: SpawnSpec): void {
     /* detached, so the child leads its own process group and kill() below can take the group
        rather than one pid. It matters because the child immediately spawns a third process of
        its own, the MCP proxy in src/mcp.ts, and killing only the agent would leave that proxy
        running against a window that has gone. Detached does NOT mean it outlives the app: the
-       exit handlers registered below are what guarantee it does not. */
-    child = spawn(bin, argv, {
-      cwd: opts.repo,
-      env: childEnv(opts.repo, opts.port, sessionId, {
-        role: opts.role,
-        label: opts.label,
-        parent: opts.parent,
-      }),
+       exit handlers registered below are what guarantee it does not.
+       Held in `proc` as well as in `child`, because kill() nulls `child` the moment a stop or an
+       interrupt is asked for, and the process is still there for up to TERM_GRACE_MS after that.
+       The handlers below belong to the process that registered them, not to whichever one is
+       current. */
+    const proc = spawn(spec.bin, spec.argv, {
+      cwd: spec.cwd,
+      env: spec.env,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     }) as ChildProcessWithoutNullStreams;
+    child = proc;
+    buffer = '';
+    if (provider.transport === 'turn') {
+      turn = proc;
+      draining = proc.pid ?? null;
+    }
     armExitGuard();
+    // A pipe that closes under a write, because the child left before reading it, is a story the
+    // child's exit code and stderr already tell; without a listener it would throw instead.
+    proc.stdin.on('error', () => {});
+    // A turn process takes its whole input at spawn (the prompt is a file), so its stdin closes.
+    if (provider.transport === 'turn') proc.stdin.end();
 
     // setEncoding('utf8') rather than decoding chunks by hand, because a multi-byte character
     // split across a chunk boundary is otherwise corrupted, and the agent writes token names.
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
+    proc.stdout.setEncoding('utf8');
+    proc.stdout.on('data', (chunk: string) => {
+      // A process that has been asked to go is no longer the conversation: its last lines would
+      // land in the next one's buffer, or flip a stopped session back to ready on a late result.
+      if (child !== proc) return;
       buffer += chunk;
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
@@ -724,10 +831,17 @@ export function createDriver(opts: DriverOptions) {
         );
         return;
       }
-      for (const line of lines) if (line.trim()) onLine(line);
+      // Per line, not per chunk: a refusal on one line nulls `child`, and the lines behind it
+      // belong to a turn that has been refused.
+      for (const line of lines) {
+        if (child !== proc) return;
+        if (line.trim()) onLine(line);
+      }
     });
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
+    proc.stderr.setEncoding('utf8');
+    proc.stderr.on('data', (chunk: string) => {
+      // A child that has been asked to go is not this chat's to speak for any more.
+      if (child !== proc) return;
       const text = chunk.trim();
       if (text) opts.onEvent({ kind: 'error', message: text.slice(0, 500) });
     });
@@ -739,13 +853,28 @@ export function createDriver(opts: DriverOptions) {
        there when the tool surface is not Phosphor's own. So the worst case is that one sentence
        of the human's text reached a session that is then killed before it can act on it. The
        thing being guarded is what the agent can DO, and nothing it can do happens first. */
-    child.on('spawn', () => {
+    proc.on('spawn', () => {
       if (state === 'starting') set('ready');
     });
-    child.on('error', (error) => fail(`driver: could not start ${bin}: ${error.message}`, 'Claude Code could not start.'));
-    child.on('exit', (code, signal) => {
+    proc.on('error', (error) => fail(`driver: could not start ${spec.bin}: ${error.message}`, `${provider.name} could not start.`));
+    proc.on('exit', (code, signal) => {
+      if (provider.transport === 'turn') {
+        if (child === proc) child = null;
+        // The turn it ran ends here, unless a stop or a failure already let go of it.
+        if (turn === proc) {
+          turn = null;
+          buffer = '';
+          turnExited(code);
+        }
+        const pid = proc.pid;
+        if (pid !== undefined) whenGone(pid, () => drained(pid));
+        return;
+      }
+      // The exit of a process that has already been replaced says nothing about the session.
+      if (child !== null && child !== proc) return;
       child = null;
       buffer = '';
+      forget();
       calls.clear();
       const asked = stopping;
       stopping = false;
@@ -762,20 +891,141 @@ export function createDriver(opts: DriverOptions) {
     });
   }
 
-  /* The role text rides in on the first turn rather than on argv. See buildArgv.
-     Merged into that turn rather than sent as one of its own, which matters: Claude Code does not
-     emit its init event until a turn arrives, so a role text sent alone would start a model turn
-     of its own and the human would watch the agent answer a question nobody asked. Merged, the
-     number of round trips is exactly what it was. What changes is that the text is read as the
-     user's rather than as an appended system prompt, and for this app that is a fair trade: the
-     text is written by the app either way, and what an agent may DO is decided by the tools
-     src/mcp.ts registers and by the lockdown above, never by prose. */
+  /* One process per turn: its exit ends the turn, never the chat. A turn that ended without its
+     result line (the person stopped it, or the vendor gave up) is reported here, so the window's
+     clock stops either way. */
+  function turnExited(code: number | null): void {
+    const live = state === 'thinking' || state === 'starting';
+    forget();
+    endTurn();
+    const said = answered;
+    answered = false;
+    if (!live) return;
+    const stopped = interrupted;
+    interrupted = false;
+    if (!said) opts.onEvent({ kind: 'turn_end', error: !stopped && code !== 0, turns: 0 });
+    // A message sent while this turn was ending goes the moment its process group is gone.
+    if (held !== null) return;
+    if (stopped) set('ready', 'the human stopped this answer');
+    else set('ready', code === 0 || code === null ? undefined : `the agent exited with code ${code}`);
+  }
+
+  /* Calls back once a process group this driver started is gone. kill() already escalates a group
+     it asked to go; one that went on its own (a turn's grok, then its MCP proxy after its bye) is
+     watched for twice that grace, and then the wait ends anyway. */
+  function whenGone(pid: number, then: () => void): void {
+    const deadline = Date.now() + TERM_GRACE_MS * 2;
+    const check = (): void => {
+      if (!groupAlive(pid) || Date.now() >= deadline) return then();
+      setTimeout(check, POLL_MS).unref();
+    };
+    check();
+  }
+
+  // turn transport: the last turn's group is gone, so the message waiting for it goes now.
+  function drained(pid: number): void {
+    if (draining !== pid) return;
+    draining = null;
+    if (held === null) return;
+    const body = held;
+    held = null;
+    dispatch(body);
+  }
+
+  // turn transport: one message, one process.
+  function dispatch(body: string): void {
+    interrupted = false;
+    // No session the vendor holds yet (a fresh start, or a turn that never reached init): a
+    // new id, never one grok may already have.
+    if (!resumable) session = randomUUID();
+    let spec: SpawnSpec;
+    try {
+      spec = spawnSpec({ prompt: body });
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error), reasonOf(error, `${provider.name} could not start.`));
+      return;
+    }
+    set('thinking');
+    spawnChild(spec);
+  }
+
+  function start(): void {
+    if (child) return;
+    if (provider.transport === 'turn' && (state === 'ready' || state === 'thinking')) return;
+    stopping = false;
+    interrupted = false;
+    notes = [];
+    set('starting');
+    try {
+      provider.resolveBin(provider.id === 'claude' ? opts.claudeBin : undefined);
+    } catch (error) {
+      const missing =
+        provider.id === 'claude'
+          ? opts.claudeBin
+            ? 'Claude Code is not at the path set in config.json.'
+            : 'Claude Code is not installed on this Mac.'
+          : `${provider.name} is not installed on this Mac.`;
+      fail(error instanceof Error ? error.message : String(error), reasonOf(error, missing));
+      return;
+    }
+    if (provider.id === 'claude' && !fs.existsSync(settings)) {
+      fail(
+        `driver: ${settings} is missing, and the app will not spawn an agent without its lockdown file.`,
+        "The assistant's lockdown file is missing, so it will not start.",
+      );
+      return;
+    }
+    if (provider.id === 'grok' && !fs.existsSync(userAuthFile())) {
+      fail('driver: no Grok login was found (auth.json is missing).', 'Grok is not signed in. Run grok login in a terminal, then start it again.');
+      return;
+    }
+
+    sessionId = opts.session ?? randomUUID();
+    seat = sessionId;
+    session = seat;
+    resumable = false;
+    answered = false;
+    owed = 0;
+    held = null;
+    if (provider.transport === 'turn') {
+      // Nothing to spawn until there is a turn. Ready means "will answer", which is true.
+      set('ready');
+      return;
+    }
+    let spec: SpawnSpec;
+    try {
+      spec = spawnSpec();
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error), reasonOf(error, `${provider.name} could not start.`));
+      return;
+    }
+    spawnChild(spec);
+  }
+
+  // App context for the next turn the person sends. See `notes`.
+  function note(text: string): void {
+    if (state === 'off' || state === 'stopped' || state === 'failed') return;
+    notes.push(text);
+  }
+
   function send(text: string): void {
-    if (!child || state === 'failed') throw new Error('driver: no agent is running');
-    const body = pendingPrompt === '' ? text : `${pendingPrompt}\n\n${text}`;
-    pendingPrompt = '';
-    const turn = { type: 'user', message: { role: 'user', content: [{ type: 'text', text: body }] } };
-    child.stdin.write(`${JSON.stringify(turn)}\n`);
+    if (state === 'failed' || state === 'off' || state === 'stopped') throw new Error('driver: no agent is running');
+    const body = notes.length === 0 ? text : `${notes.join('\n\n')}\n\n${text}`;
+    if (provider.transport === 'turn') {
+      if (child || held !== null) throw new Error('driver: the agent is still answering');
+      notes = [];
+      if (draining !== null) {
+        held = body;
+        set('thinking');
+        return;
+      }
+      dispatch(body);
+      return;
+    }
+    if (!child) throw new Error('driver: no agent is running');
+    child.stdin.write(provider.encodeTurn!(body));
+    owed += 1;
+    notes = [];
     set('thinking');
   }
 
@@ -783,24 +1033,27 @@ export function createDriver(opts: DriverOptions) {
      Before this existed there was one way out of a turn that had gone wrong, which was killing
      the session, and killing the session throws away the conversation with it. So a human who
      asked the wrong question, or watched the agent set off down a nine-call analysis they did
-     not want, paid for it with everything said so far plus a cold start. That is the difference
-     between an app you interrupt and an app you wait for.
-     The mechanism is Claude Code's control channel on the same stdin the turns go down: a
-     request with subtype `interrupt`. The child answers with a `control_response`, which this
-     parser ignores by design (onLine acts on named event types and nothing else), and then emits
-     the ordinary `result` event for the aborted turn, which is what returns the state to ready.
+     not want, paid for it with everything said so far plus a cold start.
+     Claude takes a control request with subtype `interrupt` on the same stdin the turns go
+     down, then emits the ordinary `result` event for the aborted turn, which is what says ready.
+     A Grok turn IS its process, so it is ended and the next turn resumes the session once the
+     process group is gone; the exit handler reports it.
      Guarded on `thinking` because an interrupt sent to an idle child is a request with no turn
      to cancel, and the answer to it is an error the human did not cause. */
   function interrupt(): boolean {
     if (!child || state !== 'thinking') return false;
-    const request = { type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } };
+    if (provider.transport === 'turn') {
+      interrupted = true;
+      kill();
+      return true;
+    }
     try {
-      child.stdin.write(`${JSON.stringify(request)}\n`);
+      child.stdin.write(provider.encodeInterrupt!());
     } catch {
       // The pipe closes when the child dies first, and a dead child needs no interrupting.
       return false;
     }
-    set('ready', 'the human stopped this answer');
+    interrupted = true;
     return true;
   }
 
@@ -911,15 +1164,26 @@ export function createDriver(opts: DriverOptions) {
 
   function stop(): void {
     stopping = child !== null;
+    letGo();
     kill();
+    notes = [];
+    forget();
+    bury();
     if (state !== 'failed') set('stopped');
   }
 
   return {
     start,
     send,
+    note,
     interrupt,
     stop,
-    status: () => ({ state, sessionId, running: child !== null }),
+    status: () => ({
+      state,
+      sessionId,
+      // The turn transport is running whenever it will answer, whether or not a process is alive
+      // at this instant; the stdin transport is running exactly when its process is.
+      running: child !== null || (provider.transport === 'turn' && (state === 'ready' || state === 'thinking' || state === 'starting')),
+    }),
   };
 }

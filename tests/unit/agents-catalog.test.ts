@@ -59,8 +59,8 @@ test('the catalog holds the six entries the picker offers, in the order it shows
     AGENTS.map((a) => a.name),
     ['Claude Code', 'Codex', 'Hermes', 'Grok', 'Another agent', 'Claude Desktop or a chat app'],
   );
-  // In-app start is offered for the one agent the app can lock down (src/driver.ts).
-  assert.deepEqual(AGENTS.filter((a) => a.inApp).map((a) => a.id), ['claude']);
+  // The window's chat runs the agents whose tool surface the app reads back (src/providers/).
+  assert.deepEqual(AGENTS.filter((a) => a.inApp).map((a) => a.id), ['claude', 'grok']);
   // The app writes the registration where the agent owns a config it can write through.
   assert.deepEqual(AGENTS.filter((a) => a.registers).map((a) => a.id), ['claude', 'codex', 'hermes', 'grok']);
   assert.equal(agentById('nope'), null);

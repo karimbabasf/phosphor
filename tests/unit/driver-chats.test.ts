@@ -173,7 +173,7 @@ test('Turn off is stop then close: the process is stopped, the chat and its tran
 
 // ---------- the ending notice, wired ----------
 // A row that ends after the agent's turn reaches the conversation whose seat proposed it, as
-// one app-authored turn, and no other conversation (src/http/ended.ts).
+// one app-authored note for its next turn, and no other conversation (src/http/ended.ts).
 
 test('a move that ends is told to the conversation that proposed it, and to no other', async () => {
   const b = await bootDriverServer({ state: 'ready' });
@@ -199,16 +199,16 @@ test('a move that ends is told to the conversation that proposed it, and to no o
       result: { ok: false, detail: 'spotSend refused by Hyperliquid. Nothing was sent.' },
     });
 
-    assert.equal(b.calls.sends.length, 1, 'the ending reached the driver once');
-    assert.match(b.calls.sends[0], /withdrawal from Hyperliquid you proposed/);
-    assert.match(b.calls.sends[0], /has ended: Failed/);
-    assert.match(b.calls.sends[0], /\[phosphor: the window is on the pro screen/);
+    assert.equal(b.calls.notes.length, 1, 'the ending reached the driver once');
+    assert.equal(b.calls.sends.length, 0, 'an ending never starts a turn of its own');
+    assert.match(b.calls.notes[0], /withdrawal from Hyperliquid you proposed/);
+    assert.match(b.calls.notes[0], /has ended: Failed/);
     const list = (await chats(b.url)).chats as Array<Record<string, unknown>>;
     for (const c of list) {
       const said = (c.transcript as Array<Record<string, unknown>>).filter((e) => e.kind === 'said');
       assert.equal(said.length, 0, 'an app-authored line is not drawn as the human speaking');
     }
-    assert.ok(b.auditLines().some((l) => l.includes('app to AGENT 2:')), 'the notice is not in the audit log');
+    assert.ok(b.auditLines().some((l) => l.includes('app note for AGENT 2:')), 'the notice is not in the audit log');
   } finally {
     await b.close();
   }

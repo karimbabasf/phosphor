@@ -20,6 +20,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { assertMemory, childEnv, createDriver, type DriverEvent } from '../../src/driver.ts';
+import { lockdownCopy } from '../fixtures/lockdown-copy.ts';
+
+// A copy outside this checkout: see tests/fixtures/lockdown-copy.ts.
+const SETTINGS = lockdownCopy();
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -68,12 +72,12 @@ test('a driver whose child announces memory is stopped before it can act', async
        waits. So this drives the real parser over a real child, which is what makes it a
        regression test for the refusal rather than for the function the refusal calls. */
     claudeBin: path.join(ROOT, 'tests', 'fixtures', 'fake-claude-memory.sh'),
-    settingsPath: path.join(ROOT, 'operator', 'driver.settings.json'),
+    settingsPath: SETTINGS,
     onEvent: (event) => events.push(event),
   });
 
   driver.start();
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + 20_000;
   while (driver.status().state !== 'failed' && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 25));
   }

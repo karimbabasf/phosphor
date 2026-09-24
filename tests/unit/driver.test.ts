@@ -23,19 +23,10 @@ test('assertSurface accepts phosphor tools and nothing else', () => {
 });
 
 test('assertSurface names every built-in the lockdown missed', () => {
-  // The real 2.1.237 surface that operator/settings.json was letting through on 2026-08-19.
-  const leaked = [
-    'CronCreate',
-    'DesignSync',
-    'Glob',
-    'Grep',
-    'Read',
-    'RemoteTrigger',
-    'SendMessage',
-    'WebFetch',
-    'WebSearch',
-  ];
-  assert.deepEqual(assertSurface([...leaked, 'mcp__phosphor__balance']), leaked);
+  // The real 2.1.237 surface that operator/settings.json was letting through on 2026-08-19, less
+  // the two web tools the chat holds on purpose since 2026-09-23.
+  const leaked = ['CronCreate', 'DesignSync', 'Glob', 'Grep', 'Read', 'RemoteTrigger', 'SendMessage'];
+  assert.deepEqual(assertSurface([...leaked, 'WebFetch', 'WebSearch', 'mcp__phosphor__balance']), leaked);
 });
 
 test('assertSurface refuses a session that announced no tool list at all', () => {

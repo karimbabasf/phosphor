@@ -108,17 +108,18 @@ function announcedInit(bin: string, settings: string, env?: NodeJS.ProcessEnv): 
 const bin = claudeAvailable();
 
 test(
-  'the driver profile leaves the agent no tool but Phosphor',
+  'the driver profile leaves the agent no tool but Phosphor and the web',
   { skip: bin === null ? 'the claude CLI is not installed on this machine' : false },
   async () => {
     const init = await announcedInit(bin as string, path.join(REPO, 'operator', 'driver.settings.json'));
     const tools = Array.isArray(init.tools) ? (init.tools as string[]) : [];
-    const builtins = tools.filter((t) => !t.startsWith('mcp__phosphor__'));
+    const builtins = tools.filter((t) => !t.startsWith('mcp__phosphor__')).sort();
+    // WebFetch and WebSearch on Karim's decision of 2026-09-23 (src/providers/claude.ts WEB_TOOLS).
     assert.deepEqual(
       builtins,
-      [],
-      `operator/driver.settings.json is out of date: this Claude Code release still grants ${builtins.join(', ')}. ` +
-        'Add them to the deny list. The in-app driver refuses to run until this is empty.',
+      ['WebFetch', 'WebSearch'],
+      `operator/driver.settings.json is out of date: this Claude Code release grants ${builtins.join(', ')}. ` +
+        'Deny anything but the two web tools. The in-app driver refuses to run until only they are left.',
     );
   },
 );
@@ -173,7 +174,7 @@ test(
 
 /* Deny rules that name nothing.
    Not a hole, and that is why it is a separate test rather than a failure of the two above: the
-   allow list is `mcp__phosphor__*` and assertSurface in src/driver.ts reads the announced surface
+   allow list is `mcp__phosphor__*` and the web tools, and assertSurface reads the announced surface
    back, so a tool the deny list misses is refused anyway. These three were the visible symptom of
    exactly the drift this file exists to catch. Claude Code 2.1.263 printed one line per rule on
    stderr for each of them, and a profile that names tools the release has never heard of is a

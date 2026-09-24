@@ -13,6 +13,8 @@
 // The comments matter as much as the names. This is the whole capability surface of the app,
 // and why a tool is on it is the part a reviewer needs.
 
+import { CHAT_WITHHELD } from '../src/persona.ts';
+
 export const EXPECTED_TOOLS: readonly string[] = [
   // The handshake presentation: the banner an agent prints on connect and the index of every
   // capability it has. It is the first thing an agent reads and therefore the highest-leverage
@@ -40,6 +42,14 @@ export const EXPECTED_TOOLS: readonly string[] = [
      theirs fingerprinted, and the quote's own signature and the deposit address 1Click minted
      stay on the row, so nothing here can be reused as a destination. */
   'diagnose',
+  /* The swap reads (plan contract 1, the routes are src/http/read/swap.ts). Each files nothing
+     and signs nothing: what can be swapped, what a swap would get now, and one swap's truth now
+     (the swap service, the balance, any refund). They exist because the agent guessed an asset
+     id it could not check, filed four proposals that were really probes, and repeated a card
+     that said the swap service held money that never left (R3, 2026-09-23). */
+  'swap_assets',
+  'swap_quote',
+  'swap_check',
   'propose_policy_change',
   // The rails. Each moves funds through a contract and none takes an address: the property
   // walk in tests/injection.test.ts is what holds that to be true.
@@ -109,13 +119,10 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // Moves the window between the three surfaces. Named `switch` rather than set_view_mode
   // because the requirement is that switching costs one word.
   'switch',
-  // Recolours the window. Same category as `switch` and `watch`: it changes what a human
+  // Recolours the window. Same category as `switch`: it changes what a human
   // sees, reaches no rail and no money, and it cannot touch the approval gate's red, which
   // is not one of its slots. See src/view/theme.ts.
   'set_theme',
-  // Picks the coins the basic screen tracks and saves the choice. Named for what the human
-  // says, like `switch`. It changes what a human sees and reaches no rail and no money.
-  'watch',
   // The trading surface. Reads answer "what is my situation"; writes change what is drawn and
   // what is pointed at. What is NOT here is the point: there is no close, no cancel, no flatten
   // and no disarm. Those live on /api/trade/action, which this door does not open onto, so the
@@ -147,7 +154,7 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // The one that spawns another model. It is on an operator's surface and NOT on a worker's:
   // src/mcp.ts does not register it when PHOSPHOR_ROLE is analyst, so a chain of models cannot
   // spawn a chain of models. A worker's surface is this list minus agent_spawn, minus every
-  // propose_*, and minus the three window controls (switch, watch, set_theme).
+  // propose_*, and minus the two window controls (switch, set_theme).
   'agent_spawn',
   // The only tool answered inside the shim instead of proxied to the app. It reads an enabled
   // skill file off this machine and returns its text, which is why it needs no app state and
@@ -167,7 +174,6 @@ export const EXPECTED_TOOLS: readonly string[] = [
 export const WORKER_WITHHELD: readonly string[] = [
   'agent_spawn',
   'switch',
-  'watch',
   'set_theme',
   // A worker measures. It does not put an idea on the chart the human might take for a plan,
   // and it does not draw on, arrange or photograph the chart the human is reading.
@@ -179,6 +185,7 @@ export const WORKER_WITHHELD: readonly string[] = [
   // The lead's own money timeline, and one row's whole story. A worker has no business in either.
   'proposals',
   'diagnose',
+  'swap_check',
   /* Every window control, and the rule is now the helper rather than this list: src/mcp.ts
      registerView withholds a view tool from a worker unless it goes through registerTeamView,
      which is agent_post alone. `show` and the four trading overlays are here because they were
@@ -200,3 +207,7 @@ export const EXPECTED_WORKER_TOOLS_SORTED: readonly string[] = EXPECTED_TOOLS.fi
 ).sort();
 
 export const EXPECTED_TOOLS_SORTED: readonly string[] = [...EXPECTED_TOOLS].sort();
+
+/* What the window's own agent holds: every tool but the ones src/persona.ts CHAT_WITHHELD names.
+   The window spawns it with PHOSPHOR_SURFACE=chat, and src/mcp.ts does not register those. */
+export const EXPECTED_CHAT_TOOLS_SORTED: readonly string[] = EXPECTED_TOOLS.filter((t) => !CHAT_WITHHELD.includes(t)).sort();
