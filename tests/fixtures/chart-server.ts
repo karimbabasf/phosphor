@@ -13,6 +13,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
 import { createServer } from '../../src/server.ts';
+import { createMarkingsFile } from '../../src/markings.ts';
 import { createTradeView } from '../../src/trade/view.ts';
 import { MAX_AGENTS, createAgents } from '../../src/agents.ts';
 import { createAudit } from '../../src/audit.ts';
@@ -83,6 +84,8 @@ export type ChartHarness = {
   seat: string;
   audit: ReturnType<typeof createAudit>;
   agents: ReturnType<typeof createAgents>;
+  dataDir: string;
+  tradeView: ReturnType<typeof createTradeView>;
 };
 
 function snapshot(): LedgerSnapshot {
@@ -98,13 +101,17 @@ export async function bootChartServer(
     liveSocket?: (url: string) => LiveSocket;
     // Where the venue's history begins: no bar opens before it. Absent, the venue is bottomless.
     oldestSec?: number;
+    // Keep the chart's markings in the data dir, the way the app does (src/markings.ts). A test
+    // that restarts passes the dir the first boot used.
+    keep?: boolean;
+    dataDir?: string;
   } = {},
 ): Promise<ChartHarness> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chart-'));
+  const dataDir = opts.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chart-'));
   // Files a test drops into the indicators folder before the server reads it at boot, the way
   // a human would: name to body, read by the real loader through the real resolver.
   if (opts.indicators !== undefined) {
-    fs.mkdirSync(path.join(dataDir, 'indicators'));
+    fs.mkdirSync(path.join(dataDir, 'indicators'), { recursive: true });
     for (const [name, body] of Object.entries(opts.indicators)) fs.writeFileSync(path.join(dataDir, 'indicators', name), body);
   }
   const audit = createAudit(dataDir);
@@ -186,6 +193,7 @@ export async function bootChartServer(
     setView: (mode) => {
       view = mode;
     },
+    ...(opts.keep === true ? { markings: createMarkingsFile(dataDir, (line) => audit.append('error', `chart markings: ${line}`)) } : {}),
     trade: {
       view: tradeView,
       // The view rides on the payload as it does on the real service's, so a test reads the header.
@@ -221,6 +229,8 @@ export async function bootChartServer(
     seat,
     audit,
     agents,
+    dataDir,
+    tradeView,
     close: () => {
       market.stopLive();
       return new Promise<void>((resolve) => server.close(() => resolve()));

@@ -12,8 +12,9 @@
 // server one.
 
 import { createChartStore, parseTimeframe, timeframeLabel, MIN_TIMEFRAME_SEC } from './chart.ts';
+import type { ChartSnapshot } from './chart.ts';
 import { createDrawingStore } from './drawings.ts';
-import type { DrawingStore } from './drawings.ts';
+import type { Drawing, DrawingStore } from './drawings.ts';
 import type { IndicatorSpec } from './indicators.ts';
 
 export type ChartStore = ReturnType<typeof createChartStore>;
@@ -24,11 +25,23 @@ export type ChartLayoutEntry = { product: string; timeframe: string };
 
 export const SLOTS_MAX = 4;
 
+// Every chart as src/markings.ts keeps it, and the id counters the drawing stores share.
+export type SlotsSnapshot = {
+  counters: Record<string, number>;
+  charts: (ChartSnapshot & { index: number; drawings: Drawing[] })[];
+};
+
 export type ChartSlots = {
   primary: ChartSlot;
   slot(n: number): ChartSlot | null;
   layout(charts: ChartLayoutEntry[]): { ok: true } | { ok: false; reason: string };
   list(): { index: number; product: string; timeframe: string }[];
+  snapshot(): SlotsSnapshot;
+  // For a fresh set of slots at boot. Comparison charts come back in order and stop at the first
+  // gap, because the layout is always slots 0 to n.
+  restore(saved: SlotsSnapshot, report?: (line: string) => void): void;
+  // Told after any chart or drawing changes, and after the layout does.
+  onChange(fn: () => void): () => void;
 };
 
 export function createChartSlots(
@@ -41,6 +54,16 @@ export function createChartSlots(
   // schema accepts `tl_N` only and the watcher reads the primary only (src/main.ts), so a
   // comparison chart minting its own `tl_1` was a line that resolved to a different one.
   const counters: Record<string, number> = {};
+  const listeners = new Set<() => void>();
+  const notify = (): void => {
+    for (const fn of listeners) {
+      try {
+        fn();
+      } catch {
+        // See the chart store's own listeners: a keeper's failure is never the write's.
+      }
+    }
+  };
   // A line landing in the drawing store moves the chart's revision, so the frame that announces
   // it carries a number the window has not seen. See onChange in src/drawings.ts.
   const slotFor = (index: number, product: string): ChartSlot => {
@@ -51,6 +74,7 @@ export function createChartSlots(
       prefix: index === 0 ? '' : `c${index}_`,
       onChange: (source, by) => store.touch(source, by),
     });
+    store.onChange(notify);
     return { store, drawings, index };
   };
   const primary: ChartSlot = slotFor(0, defaultProduct);
@@ -85,14 +109,13 @@ export function createChartSlots(
         held = slotFor(i, want.product);
         slots[i] = held;
       }
-      const before = held.store.state().view.product;
-      // The store's own setView does the product sweep on its levels and marks; the drawing
-      // store is swept here for the same reason chart_draw sweeps it on the primary: a zone
-      // carried onto another instrument is wrong, not stale.
+      // The store's own setView parks the levels and marks of the market being left, and the
+      // drawing store shows each market its own lines and zones, so nothing is swept here.
       held.store.setView({ product: want.product, granularitySec: want.granularitySec }, 'agent');
-      if (held.store.state().view.product !== before) held.drawings.sweepForeign(held.store.state().view.product);
     }
+    const shrank = slots.length > resolved.length;
     slots.length = resolved.length;
+    if (shrank) notify();
     return { ok: true };
   }
 
@@ -104,5 +127,42 @@ export function createChartSlots(
     }));
   }
 
-  return { primary, slot, layout, list };
+  function snapshot(): SlotsSnapshot {
+    return {
+      counters: { ...counters },
+      charts: slots.map((s) => ({ ...s.store.snapshot(), index: s.index, drawings: s.drawings.list().map((d) => ({ ...d })) })),
+    };
+  }
+
+  function restore(saved: SlotsSnapshot, report: (line: string) => void = () => {}): void {
+    for (const [k, v] of Object.entries(saved.counters)) {
+      if ((k === 'tl' || k === 'zn') && Number.isInteger(v) && v > (counters[k] ?? 0)) counters[k] = v;
+    }
+    const byIndex = new Map(saved.charts.map((c) => [c.index, c]));
+    for (let i = 0; i < SLOTS_MAX; i++) {
+      const chart = byIndex.get(i);
+      if (chart === undefined) break;
+      const held = i === 0 ? primary : slotFor(i, chart.view?.product ?? primary.store.state().view.product);
+      if (i > 0) slots[i] = held;
+      try {
+        held.store.restore(chart, report);
+        held.drawings.restore(chart.drawings);
+      } catch (err) {
+        report(`chart ${i} could not be put back: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  return {
+    primary,
+    slot,
+    layout,
+    list,
+    snapshot,
+    restore,
+    onChange(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+  };
 }

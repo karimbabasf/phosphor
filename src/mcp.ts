@@ -862,7 +862,8 @@ registerView(
     'indicators, levels, marks, lines, zones. Omit what you are not changing. Answers with a digest of',
     'the chart and `refused`, one line per entry that did not apply: read it.',
     'clear: mine (what you drew), agent (every agent\'s), all (theirs too, only when they ask in those',
-    'words); a drawn plan is never cleared here. view: product, timeframe (1m to 1M, 7m works too),',
+    'words), on the market on screen; everywhere: true reaches every market. Markings stay across',
+    'restarts and market switches until cleared; a drawn plan is never cleared here. view: product, timeframe (1m to 1M, 7m works too),',
     'bars, provider (auto, hyperliquid or coinbase). indicators: { preset } (wave, trend, momentum,',
     'volatility, ichimoku, volume, scalp, clean) replaces your studies, { set }, { add }, { remove };',
     'three sub-panes and eight overlays at most. levels: horizontal lines. marks: moments in time.',
@@ -872,6 +873,7 @@ registerView(
   {
     chart: z.number().int().min(0).max(3).optional(),
     clear: z.enum(['mine', 'agent', 'all']).optional(),
+    everywhere: z.boolean().optional().describe('with clear: every market this chart keeps, not only the one on screen'),
     view: z
       .object({
         product: z.string().optional(),

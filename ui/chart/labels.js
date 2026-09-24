@@ -1,17 +1,19 @@
-/* The chart's one label column.
+/* The chart's one label column: the legend.
 
    Three things used to write text down the left edge of the plot with three
    different ideas of where the next line goes: the legend from the top, the
    level labels beside their lines, and the trade overlays through a stacking
    pass of their own. Two of them printing at the same y is a number nobody can
-   read on the one surface where a misread number costs money.
+   read on the one surface where a misread number costs money. The levels and
+   the account's lines name themselves on the price axis now (chart.js, the
+   axis chips), so what is left on the left is the studies.
 
-   So there is one column. Everything that wants a line on the left feeds an
-   item {y, text, tone} in here, and one pass places them: from y 16, on a
-   13 px pitch, eight pixels in from the left edge, pushed down and never up
-   past a neighbour, lifted back on screen if the stack runs off the bottom,
-   and cut at eight with a line that says how many more there were. Order is
-   kept, so the label above still belongs to the line above.
+   One column. Everything that wants a line on the left feeds an item {y, text,
+   tone} in here, and one pass places them: from y 16, on a 13 px pitch, eight
+   pixels in from the left edge, pushed down and never up past a neighbour,
+   lifted back on screen if the stack runs off the bottom, and cut at eight
+   with a line that says how many more there were. Order is kept, so the label
+   above still belongs to the line above.
 
    Plain browser script like the engine beside it: no imports, no framework.
    Nothing here touches the DOM or the tokens; the engine passes the ink. */
@@ -77,10 +79,17 @@ function labelDraw(ctx, placed, inkOf, pad) {
     }
     if (pad) {
       ctx.fillStyle = pad;
-      ctx.fillRect(x - 3, item.labelY - 8, width + 6, 15);
+      if (typeof ctx.roundRect === 'function') {
+        ctx.beginPath();
+        ctx.roundRect(x - 4, item.labelY - 8, width + 8, 16, 4);
+        ctx.fill();
+      } else {
+        ctx.fillRect(x - 3, item.labelY - 8, width + 6, 15);
+      }
     }
     for (var p = 0; p < parts.length; p += 1) {
-      var ink = inkOf(parts[p].tone || 'text', parts[p].alpha === undefined ? 0.9 : parts[p].alpha);
+      /* A part may carry its own ink (a study's hue, which is no tone of the palette). */
+      var ink = parts[p].ink || inkOf(parts[p].tone || 'text', parts[p].alpha === undefined ? 0.9 : parts[p].alpha);
       if (parts[p].glyph) {
         labelGlyph(ctx, parts[p].glyph, x, item.labelY, ink);
       } else {
@@ -102,8 +111,11 @@ function labelDraw(ctx, placed, inkOf, pad) {
   return boxes;
 }
 
+/* A swatch is a short stroke of a study's line, wider than the other drawn parts. */
+var LABEL_SWATCH_W = 12;
+
 function labelPartWidth(ctx, part) {
-  var measured = part.glyph ? LABEL_GLYPH_W : labelTextWidth(ctx, part.text);
+  var measured = part.glyph ? (part.glyph === 'swatch' ? LABEL_SWATCH_W : LABEL_GLYPH_W) : labelTextWidth(ctx, part.text);
   return typeof part.width === 'number' && part.width > measured ? part.width : measured;
 }
 
@@ -117,6 +129,16 @@ function labelPartWidth(ctx, part) {
 function labelGlyph(ctx, name, x, baseline, ink) {
   var cx = x + LABEL_GLYPH_W / 2;
   var cy = baseline - 4;
+  if (name === 'swatch') {
+    /* The study's own line in miniature: 10 by 2.5, round at both ends, so the name beside it
+       is matched to its line by colour before it is read. */
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(x, cy - 1.25, LABEL_SWATCH_W - 2, 2.5, 1.25);
+    else ctx.rect(x, cy - 1.25, LABEL_SWATCH_W - 2, 2.5);
+    ctx.fill();
+    return;
+  }
   if (name === 'agent') {
     ctx.fillStyle = ink;
     ctx.beginPath();

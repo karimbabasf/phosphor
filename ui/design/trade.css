@@ -825,6 +825,11 @@
   .seg .timeframe { min-width: 30px; padding: 0 5px; }
   .chart-bar .chart-cmd-wrap { flex-basis: 84px; min-width: 84px; }
   .chart-bar .chart-bar-eyes .pane-hide { display: none; }
+  /* The person's clear has to stay whole: it is their one click out of what the agent drew. It
+     drops its noun ("Clear 13"), and a calm feed word steps aside while it is up; a feed that
+     is paused keeps its words, because that is the thing to know before trusting a price. */
+  .chartstatus .chart-extra-word { display: none; }
+  .chartstatus:has(.chart-extra) .feed:not([data-feed="offline"]) { display: none; }
 }
 
 /* Layers: a small raised button on the opening grammar, the sheet under it. */
@@ -907,6 +912,7 @@
 .chartstatus .chart-extra {
   display: inline-flex;
   align-items: center;
+  gap: 0.3em;
   height: 30px;
   padding: 0 var(--s-3);
   border-radius: 10px;

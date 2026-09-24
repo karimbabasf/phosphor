@@ -19,6 +19,11 @@ colors:
   text-primary: "#f8f0e8"
   text-secondary: "#bcaea1"
   text-tertiary: "#9a8c7f"
+  study-1: "#7EB6F6"
+  study-2: "#F2A47C"
+  study-3: "#EADCC8"
+  study-4: "#EC8DBB"
+  study-5: "#5CC8D6"
 typography:
   display:
     fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
@@ -232,6 +237,8 @@ A warm, low-saturation charcoal family carrying a few saturated state colours th
 **The One Green Rule.** Green is the mark, the live move, success and Approve. A focus ring, a link, a tab or a heading is never green.
 
 **The Brand Wash Rule.** A coin's own brand colour washes into its tile from the left (22% at the edge, gone by 62% of the width) and colours its ring slice. The figures always stand on the tile's own neutral ground.
+
+**The Chart Marking Rule.** A study on the chart is an opinion, not a state, so it takes a study hue (study-1 to study-5, in the order it was added: a cool and a warm first) and never green, red, violet or amber. A level, a line, a zone and a mark are in their owner's ink: violet when the agent drew them, the text ink when the person did. Red on the chart is a loss (a stop, the liquidation); a plan and a target are green. Every marking names itself in a soft chip docked on the price axis (a mark on the time axis), never over the candles, and a dash means one thing: not live yet.
 
 ## Typography
 

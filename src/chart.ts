@@ -13,7 +13,8 @@
 import type { Candle } from './types.ts';
 import type { Provider } from './market/catalog.ts';
 import type { Drawing } from './drawings.ts';
-import { DRAWINGS_MAX } from './drawings.ts';
+import { DRAWINGS_PER_MARKET, drawnOn } from './drawings.ts';
+import { markingLabel } from './chart-label.ts';
 import { lineAt } from './analysis/trendline.ts';
 import { indicatorSpec, normaliseParams, warmupBars, pctChange } from './indicators.ts';
 import { atr as wilderAtr } from './analysis/regime.ts';
@@ -134,9 +135,11 @@ export type Housekeeping = {
   human: number;
   // Agent objects older than STALE_MS.
   stale: number;
-  // Agent objects anchored to a product or timeframe the chart is no longer showing. Should be
-  // zero in ordinary use: setView tidies the price-anchored ones on a product switch.
+  // Agent objects on screen anchored to a timeframe the chart is no longer showing.
   foreign: number;
+  // Agent objects kept on other markets. A market switch parks a market's levels, marks, lines
+  // and zones rather than deleting them, so the count says what a clear with `everywhere` reaches.
+  elsewhere: number;
   // How full the four caps are, so an agent knows it is about to be refused before it is.
   capacity: { overlays: string; panes: string; levels: string; marks: string; drawings: string };
   hint: string;
@@ -181,8 +184,12 @@ export const LIMITS = {
   fetchMargin: 30,
   maxOverlays: 8,
   maxPanes: 3,
+  // Per market. The totals bound one chart across every market it keeps, which is what bounds
+  // the file the chart is kept in (src/markings.ts).
   maxLevels: 24,
   maxMarks: 24,
+  levelsTotal: 120,
+  marksTotal: 120,
 };
 
 export function timeframeLabel(sec: number): string {
@@ -272,6 +279,35 @@ export function displayDecimals(span: number, candles: Candle[]): number {
 // timer, because a level vanishing while a human is looking at it is worse than a stale one.
 export const STALE_MS = 20 * 60 * 1000;
 
+// One chart as it is kept on disk (src/markings.ts): the view it was on, every market's levels
+// and marks, and each study as the recipe that rebuilds it. A study is a type and its numbers,
+// never its label or its code: both are looked up again when it comes back.
+export type ChartIndicatorRecipe = Provenance & { id: string; type: string; params: Record<string, number> };
+
+export type ChartSnapshot = {
+  view: { product: string; provider: ProviderChoice; granularitySec: number; barCount: number } | null;
+  seq: number;
+  indicators: ChartIndicatorRecipe[];
+  levels: ChartLevel[];
+  marks: ChartMark[];
+};
+
+// The number at the end of an id this store minted (`level-12`, `custom:wave-3`), or null.
+function seqOf(id: string): number | null {
+  const m = /-(\d{1,9})$/.exec(id);
+  return m === null ? null : Number(m[1]);
+}
+
+// Keep at most `max`, the person's first and then the agent's newest: the order the caps hold
+// everywhere else. A person's object is never the one dropped to make room for an agent's.
+function capList<T extends Provenance>(list: T[], max: number): T[] {
+  if (list.length <= max) return list;
+  const human = list.filter((o) => o.source !== 'agent');
+  const agent = list.filter((o) => o.source === 'agent').sort((a, b) => b.createdAt - a.createdAt);
+  const kept = new Set<T>([...human, ...agent].slice(0, max));
+  return list.filter((o) => kept.has(o));
+}
+
 // `resolve` is how 'custom:<slug>' types reach this store. They live in the loader's map in
 // src/indicators-custom rather than in the catalogue, and the store takes a function rather
 // than the loader so it never imports it. Built-ins are tried first: a file cannot shadow one.
@@ -290,17 +326,28 @@ export function createChartStore(
   removeIndicator(ref: string): Outcome;
   setLevel(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   setMark(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
-  clear(what: string, by?: string | null): Outcome;
+  // The market on screen, and the studies, which are the chart's rather than a market's.
+  // `everywhere` reaches every market this chart keeps.
+  clear(what: string, by?: string | null, opts?: { everywhere?: boolean }): Outcome;
+  // One agent's studies, or every agent's when `by` is null: what a preset replaces. Levels and
+  // marks are not studies, and a preset that wiped them took an agent's work nobody asked it to.
+  clearStudies(by: string | null): number;
   // A change to what the chart shows that was made outside this store: a line or a zone landing
   // in src/drawings.ts. It moves the revision exactly as a level does, because the window watches
   // one number and a frame carrying the old one is dropped as the echo of its own last write.
   touch(source: Source, by?: string | null): void;
   setGeometry(geometry: ChartGeometry): void;
   agentObjects(): number;
-  // `drawings` is the drawing store's list, handed in because the sloped objects live there
+  // `drawings` is the drawing store's whole list, handed in because the sloped objects live there
   // and a tidy count that could not see them reported "nothing to clear" over a chart full
-  // of zones.
+  // of zones. The ones on another market count as elsewhere.
   housekeeping(by?: string | null, drawings?: readonly Drawing[]): Housekeeping;
+  // What src/markings.ts keeps, and the way back from it. restore() is for a fresh store at boot:
+  // it re-resolves every study through this store's own lookup and re-applies every cap.
+  snapshot(): ChartSnapshot;
+  restore(saved: ChartSnapshot, report?: (line: string) => void): void;
+  // Told after every change that moves the revision.
+  onChange(fn: () => void): () => void;
 } {
   let seq = 0;
   const state: ChartState = {
@@ -322,11 +369,45 @@ export function createChartStore(
     lastChangeAt: new Date().toISOString(),
   };
 
+  /* The levels and marks of every market the chart is not showing, by product. A level is
+     anchored to a price on ONE instrument, so it cannot be drawn on another; it used to be
+     deleted on a switch for that reason (the agent's) or left to draw on the wrong market (the
+     person's). Both were wrong: the first lost work nobody asked to clear, the second put 63,000
+     on a Solana chart. A switch parks the market being left and brings back the one arrived at.
+     `state.levels` and `state.marks` stay what the chart shows, so every reader of them reads
+     the market on screen. */
+  const parked = new Map<string, { levels: ChartLevel[]; marks: ChartMark[] }>();
+  const listeners = new Set<() => void>();
+
   function bump(source: Source, by?: string | null): void {
     state.rev++;
     state.lastDriver = source;
     state.lastDriverBy = source === 'agent' && typeof by === 'string' && by.length > 0 ? by.slice(0, 64) : null;
     state.lastChangeAt = new Date().toISOString();
+    for (const fn of listeners) {
+      try {
+        fn();
+      } catch {
+        // A listener is a keeper of copies. Its failure is its own, never the write's.
+      }
+    }
+  }
+
+  function parkedCount(pick: (p: { levels: ChartLevel[]; marks: ChartMark[] }) => Provenance[]): number {
+    let n = 0;
+    for (const p of parked.values()) n += pick(p).length;
+    return n;
+  }
+
+  function moveMarket(from: string, to: string): { kept: number; back: number } {
+    const kept = state.levels.length + state.marks.length;
+    if (kept > 0) parked.set(from, { levels: state.levels, marks: state.marks });
+    else parked.delete(from);
+    const back = parked.get(to);
+    parked.delete(to);
+    state.levels = back?.levels ?? [];
+    state.marks = back?.marks ?? [];
+    return { kept, back: state.levels.length + state.marks.length };
   }
 
   function nextId(prefix: string): string {
@@ -346,17 +427,10 @@ export function createChartStore(
     };
   }
 
-  function tag(label: string, source: Source): string {
-    const trimmed = label.trim().slice(0, 48);
-    if (source !== 'agent') return trimmed;
-    // Attribution the agent cannot write its way out of: the tag is added here, after the
-    // label it supplied, and the UI reads it from this string.
-    return `[agent] ${trimmed}`;
-  }
-
   function setView(patch: Record<string, unknown>, source: Source, by?: string | null): Outcome {
     const notes: string[] = [];
     const view = state.view;
+    const productBefore = view.product;
 
     // Set when THIS patch changes the instrument. The pan and the price scale carried in the
     // same patch describe the instrument being left, so they are dropped below rather than
@@ -384,6 +458,9 @@ export function createChartStore(
       }
     }
 
+    // Moved with the product itself, not at the end: a refusal further down returns early, and a
+    // chart on a new product still holding the old one's levels would draw them on the wrong market.
+    let moved: { kept: number; back: number } | null = null;
     if (typeof patch.product === 'string' && patch.product.trim().length > 0) {
       const next = patch.product.trim().toUpperCase();
       if (next !== view.product) {
@@ -393,6 +470,7 @@ export function createChartStore(
         view.panOffset = 0;
         view.priceScale = { mode: 'auto' };
         switchedProduct = true;
+        moved = moveMarket(productBefore, next);
       }
     }
 
@@ -472,37 +550,14 @@ export function createChartStore(
       else view.priceScale = { mode: 'manual', low, high };
     }
 
-    // THE TIDY. A level or a mark is anchored to a price and a time on ONE instrument.
-    // Carried onto another it is not stale, it is WRONG: 63,000 drawn on Bitcoin lands off
-    // the bottom of a Solana chart. Before this, every one of them stayed until somebody
-    // noticed, and the somebody was the human. The drawing store sweeps its own lines and
-    // zones on the same switch (see chart_draw in src/http/view.ts).
-    //
-    // Indicators are deliberately NOT swept. An EMA 21 is a recipe rather than a place: it
-    // recomputes on the new series and means exactly what it meant before. Clearing it would
-    // make an agent rebuild its own study package on every product switch.
-    //
-    // The human's own drawings are never swept either, on the same rule the drawing store
-    // already holds: an agent's action must not delete work a person did on purpose. They are
-    // counted in the note instead, so the agent can offer to clear them rather than doing it.
-    if (switchedProduct) {
-      const staleAgent = (o: Provenance): boolean => o.source === 'agent' && o.product !== view.product;
-      const swept = state.levels.filter(staleAgent).length + state.marks.filter(staleAgent).length;
-      if (swept > 0) {
-        state.levels = state.levels.filter((l) => !staleAgent(l));
-        state.marks = state.marks.filter((m) => !staleAgent(m));
-        notes.push(
-          `cleared ${swept} agent ${swept === 1 ? 'drawing' : 'drawings'} anchored to the previous instrument; indicators were kept because they recompute`,
-        );
-      }
-      const humanLeft = [...state.levels, ...state.marks].filter(
-        (o) => o.source === 'human' && o.product !== view.product,
-      ).length;
-      if (humanLeft > 0) {
-        notes.push(
-          `${humanLeft} human ${humanLeft === 1 ? 'drawing' : 'drawings'} from the previous instrument are still on the chart and were left alone; only a human clears those`,
-        );
-      }
+    // A level or a mark is anchored to a price and a time on ONE instrument, so the market being
+    // left keeps its own and the market arrived at gets back whatever it had. Nothing is deleted
+    // here: only a clear removes a marking. The drawing store's lines and zones follow the same
+    // rule by carrying their product (DrawingStore.on). Indicators stay on the chart: an EMA 21
+    // is a recipe rather than a place, and it recomputes on the new series.
+    if (moved !== null) {
+      if (moved.kept > 0) notes.push(`kept ${moved.kept} ${moved.kept === 1 ? 'marking' : 'markings'} on ${productBefore}; they come back when the chart returns to it`);
+      if (moved.back > 0) notes.push(`${moved.back} ${moved.back === 1 ? 'marking' : 'markings'} kept on ${view.product} from before are back`);
     }
 
     bump(source, by);
@@ -554,7 +609,7 @@ export function createChartStore(
     }
 
     const id = nextId(type);
-    state.indicators.push({ id, type, params, label: tag(label, source), pane: spec.pane, ...stamp(source, by) });
+    state.indicators.push({ id, type, params, label: markingLabel(label, source, type), pane: spec.pane, ...stamp(source, by) });
     bump(source, by);
     const warmup = warmupBars(spec, params);
     if (warmup > state.view.barCount) {
@@ -581,8 +636,11 @@ export function createChartStore(
     if (state.levels.length >= LIMITS.maxLevels) {
       return { ok: false, notes: [], error: `${LIMITS.maxLevels} price levels is the maximum. Clear some with chart_draw clear.` };
     }
+    if (state.levels.length + parkedCount((p) => p.levels) >= LIMITS.levelsTotal) {
+      return { ok: false, notes: [], error: `${LIMITS.levelsTotal} price levels across your markets is the maximum. chart_draw clear with everywhere: true, or clear them where they are.` };
+    }
     const id = nextId('level');
-    state.levels.push({ id, price, label: tag(String(args.label ?? '') || `level ${price}`, source), ...stamp(source, by) });
+    state.levels.push({ id, price, label: markingLabel(args.label, source, `level ${price}`), ...stamp(source, by) });
     bump(source, by);
     return { ok: true, notes: [], id };
   }
@@ -593,8 +651,11 @@ export function createChartStore(
     if (state.marks.length >= LIMITS.maxMarks) {
       return { ok: false, notes: [], error: `${LIMITS.maxMarks} marks is the maximum. Clear some with chart_draw clear.` };
     }
+    if (state.marks.length + parkedCount((p) => p.marks) >= LIMITS.marksTotal) {
+      return { ok: false, notes: [], error: `${LIMITS.marksTotal} marks across your markets is the maximum. chart_draw clear with everywhere: true, or clear them where they are.` };
+    }
     const id = nextId('mark');
-    state.marks.push({ id, t: Math.round(t), label: tag(String(args.label ?? '') || 'mark', source), ...stamp(source, by) });
+    state.marks.push({ id, t: Math.round(t), label: markingLabel(args.label, source, 'mark'), ...stamp(source, by) });
     bump(source, by);
     return { ok: true, notes: [], id };
   }
@@ -608,19 +669,31 @@ export function createChartStore(
      up must be able to reach its own work and nothing else. An agent that cleared `agent`
      when it meant `mine` would delete a colleague's levels mid-analysis and neither of them
      would ever find out why. */
-  function clear(what: string, by?: string | null): Outcome {
+  function clear(what: string, by?: string | null, opts: { everywhere?: boolean } = {}): Outcome {
     const key = String(what ?? 'all').toLowerCase().trim();
-    const before = state.indicators.length + state.levels.length + state.marks.length;
+    const everywhere = opts.everywhere === true;
+    const count = (): number =>
+      state.indicators.length + state.levels.length + state.marks.length + (everywhere ? parkedCount((p) => [...p.levels, ...p.marks]) : 0);
+    const before = count();
 
+    // Every market this clear reaches, the one on screen first. The studies are the chart's, so
+    // they are filtered once whatever the reach.
+    const markets = (): { levels: ChartLevel[]; marks: ChartMark[] }[] => (everywhere ? [state, ...parked.values()] : [state]);
+    const keepMarkings = (predicate: (o: Provenance) => boolean, which: 'levels' | 'marks' | 'both'): void => {
+      for (const m of markets()) {
+        if (which !== 'marks') m.levels = m.levels.filter(predicate);
+        if (which !== 'levels') m.marks = m.marks.filter(predicate);
+      }
+      if (everywhere) for (const [product, p] of parked) if (p.levels.length + p.marks.length === 0) parked.delete(product);
+    };
     const keep = (predicate: (o: Provenance) => boolean): void => {
       state.indicators = state.indicators.filter(predicate);
-      state.levels = state.levels.filter(predicate);
-      state.marks = state.marks.filter(predicate);
+      keepMarkings(predicate, 'both');
     };
 
     if (key === 'indicators') state.indicators = [];
-    else if (key === 'levels') state.levels = [];
-    else if (key === 'marks') state.marks = [];
+    else if (key === 'levels') keepMarkings(() => false, 'levels');
+    else if (key === 'marks') keepMarkings(() => false, 'marks');
     else if (key === 'agent') {
       // The human's one-click way out of anything ANY agent put on the surface.
       keep((o) => o.source !== 'agent');
@@ -639,20 +712,33 @@ export function createChartStore(
       keep((o) => !(o.source === 'agent' && o.by === by));
     } else if (key === 'stale') {
       const cutoff = now() - STALE_MS;
-      keep((o) => !(o.source === 'agent' && (o.createdAt < cutoff || o.product !== state.view.product)));
+      keep((o) => !(o.source === 'agent' && o.createdAt < cutoff));
     } else if (key === 'all') {
-      state.indicators = [];
-      state.levels = [];
-      state.marks = [];
+      keep(() => false);
     } else {
       return { ok: false, notes: [], error: `unknown target: ${key}. known: ${CLEAR_TARGETS.join(', ')}` };
     }
-    const removed = before - (state.indicators.length + state.levels.length + state.marks.length);
+    const removed = before - count();
     bump('human');
-    return { ok: true, notes: [`cleared ${key}: ${removed} ${removed === 1 ? 'object' : 'objects'} removed`] };
+    const notes = [`cleared ${key}: ${removed} ${removed === 1 ? 'object' : 'objects'} removed`];
+    const left = everywhere ? 0 : parkedCount((p) => [...p.levels, ...p.marks].filter((o) => o.source === 'agent'));
+    if (left > 0 && key !== 'indicators') notes.push(`${left} agent ${left === 1 ? 'marking is' : 'markings are'} kept on other markets; everywhere: true reaches them`);
+    return { ok: true, notes };
   }
 
-  function housekeeping(by?: string | null, drawings: readonly Drawing[] = []): Housekeeping {
+  function clearStudies(by: string | null): number {
+    const before = state.indicators.length;
+    state.indicators = state.indicators.filter((ind) => !(ind.source === 'agent' && (by === null || ind.by === by)));
+    const removed = before - state.indicators.length;
+    if (removed > 0) bump('agent', by);
+    return removed;
+  }
+
+  function housekeeping(by?: string | null, list: readonly Drawing[] = []): Housekeeping {
+    const drawings = list.filter((d) => drawnOn(d, state.view.product));
+    const elsewhere =
+      list.filter((d) => d.source === 'agent' && !drawnOn(d, state.view.product)).length +
+      parkedCount((p) => [...p.levels, ...p.marks].filter((o) => o.source === 'agent'));
     // A drawing with no product recorded predates that field; it was made on whatever was on
     // screen, which for the tidy's purposes is this chart.
     const drawn: Provenance[] = drawings.map((d) => ({
@@ -677,21 +763,150 @@ export function createChartStore(
     if (mine > 0) hints.push(`chart_draw clear:'mine' removes only your own ${mine}`);
     if (panes >= LIMITS.maxPanes) hints.push('the sub-panes are full; the next one is refused. indicator_read measures without drawing');
     if (overlays >= LIMITS.maxOverlays) hints.push('the price pane is full; remove an overlay before adding one');
+    if (elsewhere > 0) hints.push(`${elsewhere} agent ${elsewhere === 1 ? 'marking is' : 'markings are'} kept on other markets`);
     return {
       mine,
       others: agentObjs.length - mine,
       human: all.length - agentObjs.length,
       stale,
       foreign,
+      elsewhere,
       capacity: {
         overlays: `${overlays}/${LIMITS.maxOverlays}`,
         panes: `${panes}/${LIMITS.maxPanes}`,
         levels: `${state.levels.length}/${LIMITS.maxLevels}`,
         marks: `${state.marks.length}/${LIMITS.maxMarks}`,
-        drawings: `${drawings.length}/${DRAWINGS_MAX}`,
+        drawings: `${drawings.length}/${DRAWINGS_PER_MARKET}`,
       },
       hint: hints.length === 0 ? 'nothing needs clearing' : hints.join('; '),
     };
+  }
+
+  function snapshot(): ChartSnapshot {
+    const levels = [...state.levels];
+    const marks = [...state.marks];
+    for (const p of parked.values()) {
+      levels.push(...p.levels);
+      marks.push(...p.marks);
+    }
+    return {
+      view: {
+        product: state.view.product,
+        provider: state.view.provider,
+        granularitySec: state.view.granularitySec,
+        barCount: state.view.barCount,
+      },
+      seq,
+      indicators: state.indicators.map((ind) => ({
+        id: ind.id,
+        type: ind.type,
+        params: { ...ind.params },
+        source: ind.source,
+        by: ind.by,
+        createdAt: ind.createdAt,
+        product: ind.product,
+        granularitySec: ind.granularitySec,
+      })),
+      levels: levels.map((l) => ({ ...l })),
+      marks: marks.map((m) => ({ ...m })),
+    };
+  }
+
+  /* A fresh store takes back what src/markings.ts kept. The file has already been held to its
+     schema; this is the second wall, the one that knows what the chart itself allows. A study
+     comes back only through this store's own lookup, which is the built-in catalogue or the
+     custom loader's map by slug: nothing in the file is code, and its label and pane are the
+     library's, never the file's. Every cap applies again, the person's objects first. */
+  function restore(saved: ChartSnapshot, report: (line: string) => void = () => {}): void {
+    const v = saved.view;
+    if (v !== null) {
+      if (typeof v.product === 'string' && v.product.length > 0) state.view.product = v.product;
+      if (PROVIDER_CHOICES.includes(v.provider)) state.view.provider = v.provider;
+      if (Number.isInteger(v.granularitySec) && v.granularitySec >= MIN_TIMEFRAME_SEC && servable(v.granularitySec)) {
+        state.view.granularitySec = v.granularitySec;
+      }
+      if (Number.isFinite(v.barCount)) state.view.barCount = clamp(v.barCount, LIMITS.barCountMin, LIMITS.barCountMax);
+    }
+    state.view.panOffset = 0;
+    state.view.priceScale = { mode: 'auto' };
+
+    // Every saved id is kept when it is one this store could have minted and is not taken yet,
+    // and the counter resumes past the highest, so an id is never handed out twice across a
+    // restart either. Anything else gets a new one.
+    let top = Number.isInteger(saved.seq) && saved.seq > 0 ? saved.seq : 0;
+    for (const o of [...saved.indicators, ...saved.levels, ...saved.marks]) {
+      const n = seqOf(String(o.id));
+      if (n !== null && n > top) top = n;
+    }
+    const ids = new Set<string>();
+    const idFor = (id: string, prefix: string): string => {
+      const kept = id.startsWith(`${prefix}-`) && seqOf(id) !== null && !ids.has(id) ? id : `${prefix}-${(top += 1)}`;
+      ids.add(kept);
+      return kept;
+    };
+
+    const indicators: ChartIndicator[] = [];
+    for (const r of saved.indicators) {
+      const type = String(r.type).toLowerCase();
+      const spec = lookup(type);
+      if (spec === undefined) {
+        report(`the study ${type} is not in the library any more, so it was not put back`);
+        continue;
+      }
+      try {
+        const { params } = normaliseParams(spec, r.params);
+        if (indicators.some((ind) => ind.type === type && sameParams(ind.params, params))) continue;
+        const inPane = indicators.filter((ind) => ind.pane === spec.pane).length;
+        if (inPane >= (spec.pane === 'own' ? LIMITS.maxPanes : LIMITS.maxOverlays)) continue;
+        const provenance: Provenance = { source: r.source, by: r.source === 'agent' ? r.by : null, createdAt: r.createdAt, product: r.product, granularitySec: r.granularitySec };
+        indicators.push({ id: idFor(r.id, type), type, params, label: markingLabel(spec.label(params), r.source, type), pane: spec.pane, ...provenance });
+      } catch {
+        report(`the study ${type} could not be rebuilt, so it was not put back`);
+      }
+    }
+
+    const byMarket = new Map<string, { levels: ChartLevel[]; marks: ChartMark[] }>();
+    const market = (product: string): { levels: ChartLevel[]; marks: ChartMark[] } => {
+      let m = byMarket.get(product);
+      if (m === undefined) {
+        m = { levels: [], marks: [] };
+        byMarket.set(product, m);
+      }
+      return m;
+    };
+    for (const l of saved.levels) {
+      if (!Number.isFinite(l.price)) continue;
+      market(l.product).levels.push({ ...l, id: idFor(l.id, 'level'), by: l.source === 'agent' ? l.by : null, label: markingLabel(l.label, l.source, `level ${l.price}`) });
+    }
+    for (const m of saved.marks) {
+      if (!Number.isFinite(m.t)) continue;
+      market(m.product).marks.push({ ...m, id: idFor(m.id, 'mark'), t: Math.round(m.t), by: m.source === 'agent' ? m.by : null, label: markingLabel(m.label, m.source, 'mark') });
+    }
+
+    // Per market, then across them, newest markets first so an over-full file keeps what was
+    // drawn most recently.
+    let levelRoom = LIMITS.levelsTotal;
+    let markRoom = LIMITS.marksTotal;
+    const newest = (m: { levels: ChartLevel[]; marks: ChartMark[] }): number =>
+      Math.max(0, ...m.levels.map((l) => l.createdAt), ...m.marks.map((k) => k.createdAt));
+    const order = [...byMarket.entries()].sort((a, b) => (a[0] === state.view.product ? -1 : b[0] === state.view.product ? 1 : newest(b[1]) - newest(a[1])));
+    parked.clear();
+    state.levels = [];
+    state.marks = [];
+    for (const [product, m] of order) {
+      const levels = capList(m.levels, Math.min(LIMITS.maxLevels, levelRoom));
+      const marks = capList(m.marks, Math.min(LIMITS.maxMarks, markRoom));
+      levelRoom -= levels.length;
+      markRoom -= marks.length;
+      if (product === state.view.product) {
+        state.levels = levels;
+        state.marks = marks;
+      } else if (levels.length + marks.length > 0) {
+        parked.set(product, { levels, marks });
+      }
+    }
+    state.indicators = indicators;
+    seq = top;
   }
 
   // Bars to serve: the window, the pan, a margin, and the longest indicator warmup so an
@@ -723,10 +938,17 @@ export function createChartStore(
     setLevel,
     setMark,
     clear,
+    clearStudies,
     touch(source: Source, by?: string | null): void {
       bump(source, by);
     },
     housekeeping,
+    snapshot,
+    restore,
+    onChange(fn: () => void): () => void {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
     setGeometry(geometry: ChartGeometry): void {
       // Geometry is a report about the renderer, not a change to the chart, so it does not
       // bump the revision. Bumping it here would make the browser answer its own echo.

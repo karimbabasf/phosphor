@@ -50,6 +50,16 @@
   --agent: #B79CFF;
   --live: var(--ink);
 
+  /* The chart's studies, in the order they are put on it (ui/chart/chart.js). A study is an
+     opinion about price rather than a state, so it is none of the state colours above: a cool
+     and a warm first, so the commonest pair (a fast and a slow average) never share a family,
+     then three more a reader still tells apart on the warm ground. */
+  --study-1: #7EB6F6;
+  --study-2: #F2A47C;
+  --study-3: #EADCC8;
+  --study-4: #EC8DBB;
+  --study-5: #5CC8D6;
+
 
   /* Tints derived from the five slots. theme.js rewrites these with the slots. */
   --ink-wash: rgba(82, 232, 147, 0.08);
