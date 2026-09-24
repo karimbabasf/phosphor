@@ -3017,6 +3017,9 @@ function timeframeMenu(box) {
 function setTimeframeMenu(box, open) {
   var menu = timeframeMenu(box);
   if (!menu) return;
+  // Fitted inside the window before it shows, like every sheet on Trade (ui/screens/trade.js).
+  var trade = window.PhosphorTrade;
+  if (open && menu.dataset.open !== 'true' && trade && typeof trade.fitPop === 'function') trade.fitPop(menu);
   if (open) menu.dataset.open = 'true';
   else delete menu.dataset.open;
   var toggle = menu.parentNode.childNodes[0];

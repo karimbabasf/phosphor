@@ -410,6 +410,24 @@
 
 .pop:focus { outline: none; }
 
+/* Fitted as it opens (ui/screens/trade.js fitPop): moved in from an edge it
+   would cross (--pop-dx), opened above its button when there is more room
+   there, and never taller than the room it is given, its rows scrolling
+   inside it. */
+.pop {
+  translate: var(--pop-dx, 0px) 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.pop[data-side="up"] {
+  top: auto;
+  bottom: calc(100% + 6px);
+  transform-origin: bottom left;
+}
+
+.layers-wrap > .pop[data-side="up"] { transform-origin: bottom right; }
+
 /* The market list: a search field once the list is long, then one row per
    market with its logo, its coin and its price. */
 .trade-menu {
@@ -431,6 +449,7 @@
 }
 
 .trade-menu-list {
+  min-height: 0;
   max-height: 300px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -632,6 +651,7 @@
 }
 
 .cmd-list {
+  min-height: 0;
   max-height: 264px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1170,19 +1190,32 @@
 .trade-panel-count[data-zero="true"] { display: none; }
 
 /* What the trading account holds, at the row's right end: the label in the
-   third tone beside the figure. */
+   third tone beside the figure. The row gives way from the left: the figures
+   are laid from the right end (Free first) and a figure that does not fit
+   beside the tabs wraps to a second line that is never shown, so the total
+   steps off first and nothing ever runs under the eye at the row's end (it
+   covered Free's figure at the 960 window). */
 .trade-account {
   display: flex;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   align-items: baseline;
-  gap: var(--s-4);
+  column-gap: var(--s-4);
+  row-gap: 0;
+  height: 20px;
+  overflow: hidden;
   margin: 0 0 0 auto;
   min-width: 0;
 }
+
+.trade-account-free { order: -1; }
 
 .trade-account-stat {
   display: flex;
   align-items: baseline;
   gap: 6px;
+  line-height: 20px;
   white-space: nowrap;
 }
 
@@ -1200,11 +1233,8 @@
   color: var(--text);
 }
 
-@container deck (max-width: 559px) {
-  .trade-account-total { display: none; }
-}
-
-@container deck (max-width: 399px) {
+/* Too narrow for Free beside the tabs and the eye: the row keeps the tabs. */
+@container deck (max-width: 459px) {
   .trade-account { display: none; }
 }
 
@@ -1402,9 +1432,12 @@ body[data-view="pro"] .pos-logo {
 body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
 
 /* On Trade the name, the side, the multiple and the size read as one line,
-   so a card is two lines tall and two of them fit under the chart. */
+   so a card is two lines tall and two of them fit under the chart. Where the
+   card is narrow the size goes under the name rather than the name being
+   cut. */
 .pos-name {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 3px var(--s-3);
   min-width: 0;

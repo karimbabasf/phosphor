@@ -625,6 +625,7 @@
   function popover(wrap, button, pop, onOpen) {
     function open() {
       if (onOpen) onOpen();
+      fitPop(pop);
       dom.setAttr(pop, 'data-open', 'true');
       dom.setAttr(button, 'aria-expanded', 'true');
       var first = firstRow(pop);
@@ -777,6 +778,7 @@
     if (query && cmdState.list.length && cmdState.active < 0) cmdState.active = 0;
     if (!query) cmdState.active = -1;
     paintCmd(query);
+    if (refs.cmdMenu.dataset.open !== 'true') fitPop(refs.cmdMenu);
     dom.setAttr(refs.cmdMenu, 'data-open', 'true');
     dom.setAttr(refs.cmd, 'aria-expanded', 'true');
   }
@@ -809,6 +811,7 @@
     var word = query.split(/\s+/)[0] || '';
     dom.setText(refs.cmdNone, cmdState.list.length ? '' : 'No indicator called “' + word + '”.');
     dom.setHidden(refs.cmdNone, !!cmdState.list.length);
+    showActive(refs.cmdList, false);
   }
 
   function onCmdKey(event) {
@@ -1045,10 +1048,14 @@
     dom.setHidden(refs.symbolSearch, !searching);
     menuActive = currentProduct();
     renderSymbol();
+    /* Ready where the person is: the list opens already scrolled to the
+       market on screen, and the sheet sits inside the window. */
+    showActive(refs.symbolMenu, true);
+    fitPop(sheet);
     dom.setAttr(sheet, 'data-open', 'true');
     dom.setAttr(refs.symbolButton, 'aria-expanded', 'true');
     var target = searching ? refs.symbolSearch : refs.symbolMenu;
-    if (target.focus) target.focus();
+    if (target.focus) target.focus({ preventScroll: true });
   }
 
   function closeMenu(returnFocus) {
@@ -1102,6 +1109,61 @@
     event.preventDefault();
     menuActive = list[next] || menuActive;
     renderSymbol();
+    showActive(refs.symbolMenu, false);
+  }
+
+  /* The active row of a list inside its own scroll, at once: centred when a
+     list opens, just in view as the keyboard walks it. */
+  function showActive(list, centre) {
+    if (!list || !list.querySelector) return;
+    var row = list.querySelector('[data-active="true"]');
+    if (!row) return;
+    var top = row.offsetTop - list.offsetTop;
+    var bottom = top + row.offsetHeight;
+    if (centre) {
+      list.scrollTop = Math.max(0, top - (list.clientHeight - row.offsetHeight) / 2);
+      return;
+    }
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  }
+
+  /* A sheet opens inside the window and inside every box that clips it:
+     under its button when it fits there, above it when there is more room
+     above, and no taller than the room it is given (its rows scroll inside
+     it), moved in from an edge it would cross. Measured before it opens, at
+     its full size, so it never has to move once it is showing. */
+  function fitPop(pop) {
+    if (!pop || typeof pop.getBoundingClientRect !== 'function' || typeof window.getComputedStyle !== 'function') return;
+    pop.style.removeProperty('--pop-dx');
+    pop.style.removeProperty('max-height');
+    dom.setAttr(pop, 'data-side', null);
+    var was = pop.style.transform;
+    pop.style.transform = 'none';
+    var r = pop.getBoundingClientRect();
+    pop.style.transform = was;
+    var clip = { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
+    for (var box = pop.parentElement; box; box = box.parentElement) {
+      var cs = window.getComputedStyle(box);
+      if (cs.overflowX === 'visible' && cs.overflowY === 'visible') continue;
+      var b = box.getBoundingClientRect();
+      clip = { top: Math.max(clip.top, b.top), left: Math.max(clip.left, b.left), right: Math.min(clip.right, b.right), bottom: Math.min(clip.bottom, b.bottom) };
+    }
+    var EDGE = 8;
+    var dx = 0;
+    if (r.right > clip.right - EDGE) dx = clip.right - EDGE - r.right;
+    if (r.left + dx < clip.left + EDGE) dx = clip.left + EDGE - r.left;
+    if (dx) pop.style.setProperty('--pop-dx', Math.round(dx) + 'px');
+    if (r.bottom <= clip.bottom - EDGE) return;
+    var anchor = pop.parentElement.getBoundingClientRect();
+    var below = clip.bottom - EDGE - r.top;
+    var above = anchor.top - 6 - (clip.top + EDGE);
+    if (above > below && r.height > below) {
+      dom.setAttr(pop, 'data-side', 'up');
+      if (r.height > above) pop.style.maxHeight = Math.floor(above) + 'px';
+      return;
+    }
+    pop.style.maxHeight = Math.floor(below) + 'px';
   }
 
   function pick(product) {
@@ -2465,20 +2527,79 @@
       paintConfirm(before);
     }
     confirm = { key: key, action: button.dataset.action, id: button.dataset.id, row: row.dataset.spotKey, phase: 'ask', say: '', detail: '' };
-    morph(row, function () { paintConfirm(row); }).then(function () { reveal(row); });
+    grow(row);
     var keep = confirmButton(row, 'keep');
     if (keep && keep.focus) keep.focus({ preventScroll: true });
   }
 
-  /* The asking card has to be on screen whole: a card at the foot of the
-     deck asked under the recovery notice, its answers cut off. Once it has
-     grown, the deck and the world scroll just enough (the world's scroll
-     padding keeps it clear of the notice), and not at all when it fits. */
-  function reveal(row) {
-    if (!row || !confirm || confirm.row !== row.dataset.spotKey) return;
-    if (typeof row.scrollIntoView !== 'function') return;
-    var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    row.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' });
+  /* The card grows into its question, and the boxes that scroll it move
+     WITH the growth, so the whole question is on screen the moment it opens
+     rather than after a second step (Karim: "ready scrolled"). */
+  function grow(row) {
+    var plan = [];
+    morph(row, function () {
+      paintConfirm(row);
+      plan = revealPlan(row);
+    });
+    glide(plan);
+  }
+
+  /* How far each box that scrolls a node has to move for all of it to be on
+     screen, innermost first, measured where the node already has its final
+     size: inside a morph's change, before the old height is pinned. `from`
+     is where the part to show starts when that is not the node's own top
+     (a reason opened under a sentence). A box's scroll padding counts as
+     covered (the world keeps the notice's height there). What is taller than
+     the box shows its foot, where the answers are. */
+  function revealPlan(node, from) {
+    var plan = [];
+    if (!node || typeof node.getBoundingClientRect !== 'function' || typeof window.getComputedStyle !== 'function') return plan;
+    /* A little air past each edge, so the panel never ends flush on the cut
+       (WebKit rounds a scroll to the pixel). */
+    var top = (from || node).getBoundingClientRect().top - 4;
+    var bottom = node.getBoundingClientRect().bottom + 4;
+    for (var box = node.parentElement; box && box !== document.body; box = box.parentElement) {
+      var cs = window.getComputedStyle(box);
+      if (!/(auto|scroll)/.test(cs.overflowY) || box.scrollHeight <= box.clientHeight + 1) continue;
+      var r = box.getBoundingClientRect();
+      var viewTop = r.top + (parseFloat(cs.scrollPaddingTop) || 0);
+      var viewBottom = r.top + box.clientHeight - (parseFloat(cs.scrollPaddingBottom) || 0);
+      var delta = 0;
+      if (bottom - top > viewBottom - viewTop) delta = bottom - viewBottom;
+      else if (bottom > viewBottom) delta = bottom - viewBottom;
+      else if (top < viewTop) delta = top - viewTop;
+      delta = Math.max(-box.scrollTop, Math.min(box.scrollHeight - box.clientHeight - box.scrollTop, delta));
+      if (Math.abs(delta) >= 1) plan.push({ box: box, from: box.scrollTop, to: box.scrollTop + delta });
+      top -= delta;
+      bottom -= delta;
+    }
+    return plan;
+  }
+
+  function scrollNow(plan) {
+    plan.forEach(function (step) { step.box.scrollTop = step.to; });
+  }
+
+  /* The scroll on the morph's own clock and curve (motion.js: 240 ms, the
+     ease out), so the card and the list it sits in move as one. */
+  var GLIDE_MS = 240;
+
+  function glide(plan) {
+    if (!plan.length) return;
+    var still = !window.requestAnimationFrame || (window.PhosphorMotion && window.PhosphorMotion.reduced && window.PhosphorMotion.reduced());
+    if (still) {
+      plan.forEach(function (step) { step.box.scrollTop = step.to; });
+      return;
+    }
+    var start = null;
+    function frame(now) {
+      if (start === null) start = now;
+      var t = Math.min(1, (now - start) / GLIDE_MS);
+      var eased = 1 - Math.pow(1 - t, 5);
+      plan.forEach(function (step) { step.box.scrollTop = step.from + (step.to - step.from) * eased; });
+      if (t < 1) window.requestAnimationFrame(frame);
+    }
+    window.requestAnimationFrame(frame);
   }
 
   function rowByKey(spotKey) {
@@ -2530,9 +2651,19 @@
       error.setAttribute('role', 'alert');
       box.appendChild(error);
       var details = dom.el('details', 'trade-confirm-details');
-      details.appendChild(dom.el('summary', '', 'Details'));
+      var summary = dom.el('summary', '', 'Details');
+      details.appendChild(summary);
       details.appendChild(dom.el('p', 'trade-confirm-why'));
       box.appendChild(details);
+      /* The reason opens under the sentence already on screen with the
+         answers under it: opened here rather than by the browser, so the
+         list is where it has to be in the same frame the reason appears. */
+      dom.on(summary, 'click', function (event) {
+        if (details.open) return;
+        event.preventDefault();
+        details.open = true;
+        scrollNow(revealPlan(row, details));
+      });
       var actions = dom.el('div', 'trade-confirm-actions');
       var keep = dom.el('button', 'btn btn-quiet btn-sm trade-confirm-keep');
       keep.type = 'button';
@@ -2698,7 +2829,7 @@
       .then(function () {
         if (confirm !== open) return;
         open.phase = 'sent';
-        morph(row, function () { paintConfirm(row); });
+        grow(row);
         return refresh();
       })
       .catch(function (err) {
@@ -2716,7 +2847,7 @@
           open.say = net.readable(err);
           open.detail = '';
         }
-        morph(row, function () { paintConfirm(row); });
+        grow(row);
         var again = confirmButton(row, 'go');
         if (again && again.focus) again.focus();
       });
@@ -3003,5 +3134,5 @@
     return undefined;
   }
 
-  window.PhosphorTrade = { boot: boot, refresh: refresh, mapFill: mapFill, selectTab: selectTab };
+  window.PhosphorTrade = { boot: boot, refresh: refresh, mapFill: mapFill, selectTab: selectTab, fitPop: fitPop };
 })();
