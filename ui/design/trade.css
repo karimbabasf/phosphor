@@ -819,16 +819,17 @@
 
 /* The app's narrowest chart (its 960 window) keeps the bar on one row: the
    cells and the field tighten, and the chart's own eye steps off, since the
-   bar's Layout menu lists the chart too. */
+   bar's Layout menu lists the chart too. With it gone the eyes hold nothing
+   unless the deck is hidden, and then they take no gap either. */
 @container trade (max-width: 599px) {
   .chart-bar { padding-inline: var(--s-3) var(--s-4); }
   .seg .timeframe { min-width: 30px; padding: 0 5px; }
   .chart-bar .chart-cmd-wrap { flex-basis: 84px; min-width: 84px; }
   .chart-bar .chart-bar-eyes .pane-hide { display: none; }
-  /* The person's clear has to stay whole: it is their one click out of what the agent drew. It
-     drops its noun ("Clear 13"), and a calm feed word steps aside while it is up; a feed that
-     is paused keeps its words, because that is the thing to know before trusting a price. */
-  .chartstatus .chart-extra-word { display: none; }
+  .trade-wrap:not([data-pane-deck="hidden"]) .chart-bar .chart-bar-eyes { display: none; }
+  /* The person's clear has to stay whole (its narrow look is under .chart-extra below), and a
+     calm feed word steps aside while it is up; a feed that is paused keeps its words, because
+     that is the thing to know before trusting a price. */
   .chartstatus:has(.chart-extra) .feed:not([data-feed="offline"]) { display: none; }
 }
 
@@ -931,6 +932,25 @@
 }
 
 .chartstatus .chart-extra:active { transform: scale(var(--scale-press)); transition-duration: var(--dur-press); }
+
+/* The clear's bin, drawn only where its words step off. */
+.chartstatus .chart-extra-icon {
+  display: none;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+/* On the narrowest chart the person's clear has to stay whole: it is their one click out of
+   what the agent drew. Its words step off for the bin beside the count, the whole sentence
+   still its name, so the field beside it keeps "Add indicator" whole ("Clear 13" had no noun,
+   and the field read "Add indica"). */
+@container trade (max-width: 599px) {
+  .chartstatus .chart-extra { padding-inline: 10px; }
+  .chartstatus .chart-extra-verb,
+  .chartstatus .chart-extra-word { display: none; }
+  .chartstatus .chart-extra-icon { display: block; }
+}
 
 .chartstatus .chart-extra:focus-visible {
   outline: 2px solid var(--text-2);

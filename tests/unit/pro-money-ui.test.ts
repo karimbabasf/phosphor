@@ -439,29 +439,37 @@ test('Policies: three dials from the policy and the engine\'s own total, the day
   assert.equal(one(rig.host, 'stmt-freeze').getAttribute('data-on'), 'true');
 });
 
-/* The finish review, 2026-09-24: $100 of a $10,000 cap is 1 of the dial's 100, and at 1 the
-   round caps met in a dot on the top that read as a knob. An arc above nothing shows at least 6
-   of the 100, and what shows starts at the top: the dash starts a cap (1.7) past it and stops a
-   cap short. The track is a faint full ring, so the arc reads as how far round it has come. */
+/* The finish reviews, 2026-09-24: $100 of a $10,000 cap is 1 of the dial's 100, and at 1 the
+   round caps met in a dot on the top that read as a knob; at 6 with a round cap at both ends the
+   arc was still mostly caps, a capsule that read as a knob too. An arc above nothing shows at
+   least 8 of the 100 from the top: it leaves the top square and stops a head (1.7) short, and the
+   head, a dot the stroke's width, sits on its end. The track is a faint full ring, so the arc
+   reads as how far round it has come. */
 test('a small share still sweeps from the top over a faint full track, and a full dial is the whole ring', () => {
   const rig = boot({ svg: true });
   rig.put(state());
-  const arcs = withClass(one(rig.host, 'stmt-policies'), 'dial').map((d) => d.children[0].children[0].children[1]);
-  assert.ok(arcs.every((a) => a && a.getAttribute('class') === 'dial-arc'), 'no arc on a dial');
-  const [ask, cap, auto] = arcs;
-  assert.equal(ask.style.strokeDasharray, '2.60 100', 'the $100 dial is a dot again');
-  assert.equal(ask.style.strokeDashoffset, '-1.7');
-  assert.equal(cap.style.strokeDasharray, '100 100');
-  assert.equal(cap.style.strokeDashoffset, '0');
-  assert.equal(auto.style.strokeDasharray, '2.60 100', '$14.22 of $500 is under the floor');
+  const parts = withClass(one(rig.host, 'stmt-policies'), 'dial').map((d) => d.children[0].children[0].children);
+  assert.ok(parts.every((p) => p[1] && p[1].getAttribute('class') === 'dial-arc'), 'no arc on a dial');
+  assert.ok(parts.every((p) => p[2] && p[2].getAttribute('class') === 'dial-head'), 'no head on a dial');
+  const [ask, cap, auto] = parts.map((p) => ({ arc: p[1], head: p[2] }));
+  assert.equal(ask.arc.style.strokeDasharray, '6.30 100', 'the $100 dial is a knob again');
+  assert.equal(ask.head.style.strokeDashoffset, '-6.30');
+  assert.equal(cap.arc.style.strokeDasharray, '100 100');
+  assert.equal(cap.head.style.strokeDashoffset, '-99.99', 'a full ring\'s head is not where it closes');
+  assert.equal(auto.arc.style.strokeDasharray, '6.30 100', '$14.22 of $500 is under the floor');
+  assert.equal(auto.head.style.strokeDashoffset, '-6.30');
   // A share past the floor draws itself: $250 of $500 on its own is half the ring.
   rig.put(state({ autoLimit: { capUsd: 500, spentUsd: 250, resetsAt: null } }));
-  assert.equal(auto.style.strokeDasharray, '46.60 100');
+  assert.equal(auto.arc.style.strokeDasharray, '48.30 100');
+  assert.equal(auto.head.style.strokeDashoffset, '-48.30');
   // Nothing spent is an empty track and no arc.
   rig.put(state({ autoLimit: { capUsd: 500, spentUsd: 0, resetsAt: null } }));
-  assert.equal(auto.style.strokeDasharray, '0 100');
+  assert.equal(auto.arc.style.strokeDasharray, '0 100');
   assert.equal(withClass(rig.host, 'dial')[2].getAttribute('data-empty'), 'true');
   assert.match(CSS, /\.dial-track \{ stroke: rgba\(var\(--hi-rgb\), 0\.07\); \}/, 'the track is a dark groove again');
+  // Only the head is round: a round cap on the arc's tail puts the capsule back.
+  assert.doesNotMatch(CSS, /\.dial-arc \{[^}]*stroke-linecap: round/, 'the arc wears a round tail again');
+  assert.match(CSS, /\.dial-head \{[^}]*stroke-linecap: round;[^}]*stroke-dasharray: 0\.01 100;/);
 });
 
 test('policies that cannot be read are one sentence, and no dial draws a number it was not given', () => {

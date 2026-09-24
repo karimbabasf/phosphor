@@ -571,8 +571,9 @@ body[data-view="pro"] #view-pro[data-active="true"] {
 /* THE DIALS. Three soft dials: when it asks, the most in one move, and what
    it did on its own today against its allowance. A faint full track, so the
    arc in the agent's ink (the cap's in the second text tone) reads as how far
-   round it has come rather than as a knob on a dark ring; a raised disc with
-   the figure on it, the words under it. The arcs sweep in once. */
+   round it has come rather than as a knob on a dark ring: it leaves the top
+   square, the way the track is cut, and only its head is round. A raised disc
+   with the figure on it, the words under it. The arcs sweep in once. */
 .dials {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -618,7 +619,8 @@ body[data-view="pro"] #view-pro[data-active="true"] {
 }
 
 .dial-track,
-.dial-arc {
+.dial-arc,
+.dial-head {
   fill: none;
   stroke-width: 9;
 }
@@ -627,13 +629,23 @@ body[data-view="pro"] #view-pro[data-active="true"] {
 
 .dial-arc {
   stroke: var(--agent);
-  stroke-linecap: round;
   stroke-dasharray: 0 100;
   transition: stroke-dasharray 1.2s var(--ease-spring-soft);
 }
 
-.dial-cap .dial-arc { stroke: var(--text-2); }
-.dial[data-empty="true"] .dial-arc { opacity: 0; }
+/* The head: a dot the stroke's width on the arc's end, riding it on the
+   same spring. */
+.dial-head {
+  stroke: var(--agent);
+  stroke-linecap: round;
+  stroke-dasharray: 0.01 100;
+  transition: stroke-dashoffset 1.2s var(--ease-spring-soft);
+}
+
+.dial-cap .dial-arc,
+.dial-cap .dial-head { stroke: var(--text-2); }
+.dial[data-empty="true"] .dial-arc,
+.dial[data-empty="true"] .dial-head { opacity: 0; }
 
 .dial-num {
   position: absolute;
@@ -829,6 +841,7 @@ body[data-view="pro"] #view-pro[data-active="true"] {
   .spark path,
   .move-state[data-dir="going"] .icon { animation: none; }
   .dial-arc,
+  .dial-head,
   .stmt-ring-piece,
   .stmt-trade { transition: none; }
 }
