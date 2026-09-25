@@ -623,7 +623,7 @@ test('the rail\'s watch closes a swap the chain proves can never run about a min
 /* The first poll past the deadline lands inside NEAR's 2.6 s lag about half the time, and reads a
    block short of the deadline: the chain not there yet. Asked again only half a minute on, the
    swap closed 30 to 35 s after its deadline instead of about 5 s. */
-test('the rail\'s first question inside NEAR\'s lag is asked again on the next poll, and the swap closes seconds after its deadline', async () => {
+test('the rail\'s first question inside NEAR\'s lag is asked again on the next poll, and the swap closes once both clocks pass the half-minute floor', async () => {
   const h = railOn({ word: () => 'PROCESSING', spent: false, firstPollMs: 1_000 });
   const out = await h.run();
   assert.equal(out.reason, 'venue_failed_nothing_moved');
