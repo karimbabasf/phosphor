@@ -386,7 +386,9 @@ test('a move being sent leaves the lock to the stop, and both land in order once
   assert.ok(closedAt > 0 && closedAt - stoppedAt < CLOSE_CAP_MS, `the slowest finish, ${closedAt - stoppedAt} ms, fits the shell's ${CLOSE_CAP_MS} ms`);
 });
 
-test('a read that never answers is never ticked, and the sheet\'s own report stands in when there was one', async () => {
+const NOT_CHECKED = { state: 'unknown', name: 'Moves on their way', word: 'Not checked', note: 'Anything already sent still finishes.', glyph: 'icon:send' };
+
+test('a read that never answers is never ticked, and an older answer never stands in for it', async () => {
   const blind = world({ reduced: false });
   assert.equal(blind.win.__phosphorQuit(), 'asking');
   await blind.time.advance(600);
@@ -395,13 +397,29 @@ test('a read that never answers is never ticked, and the sheet\'s own report sta
   assert.equal(blind.win.__phosphorQuitState(), 'asking', 'the read gets its 600 ms');
   await blind.time.advance(1);
   assert.equal(blind.win.__phosphorQuitState(), 'quit', 'and the quit goes on without it');
-  assert.deepEqual(row(blind, 'moves'), { state: 'unknown', name: 'Moves on their way', word: 'Not checked', note: 'Anything already sent still finishes.', glyph: 'icon:send' });
+  assert.deepEqual(row(blind, 'moves'), NOT_CHECKED);
 
+  // The sheet's own report, however recent, is not this read: what it counted may have landed,
+  // or a move may have started since.
   const sighted = world({ reduced: false });
   await pressQuit(sighted, MOVING(2));
   await sighted.time.advance(600);
   assert.equal(sighted.win.__phosphorQuitState(), 'quit');
-  assert.deepEqual(row(sighted, 'moves'), { state: 'done', name: '2 moves on their way', word: 'Noted', note: 'They finish without Phosphor.', glyph: 'done' });
+  assert.deepEqual(row(sighted, 'moves'), NOT_CHECKED);
+
+  // Nor a cancelled sheet from earlier in the session.
+  const earlier = world({ reduced: false });
+  assert.equal(earlier.win.__phosphorQuit(), 'asking');
+  earlier.reads[0].resolve(MOVING(0));
+  await earlier.time.advance(0);
+  buttonNamed(earlier, 'Cancel').click();
+  await earlier.time.advance(3_600_000);
+  assert.equal(earlier.win.__phosphorQuitState(), 'idle');
+  assert.equal(earlier.win.__phosphorQuit(), 'asking');
+  await earlier.time.advance(600);
+  buttonNamed(earlier, 'Quit').click();
+  await earlier.time.advance(600);
+  assert.deepEqual(row(earlier, 'moves'), NOT_CHECKED);
 });
 
 test('on the fastest quit the card still finishes and says closed inside the shell\'s cap', async () => {
