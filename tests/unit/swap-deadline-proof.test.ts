@@ -312,6 +312,21 @@ test('(a) a row the proof closed stays closed when a later re-check cannot read 
   assert.equal(w.store.get('swap-1')?.result?.reason, 'venue_failed_nothing_moved');
 });
 
+test('(a) the sweep never asks the swap service about a row the proof closed', async () => {
+  /* Inside the grace a "nothing moved" row is swept again in case its transfer runs late
+     (closedWhileLive), unless the proof closed it. The FAILED guard would keep such a row closed
+     even if it were asked, and the sweep counts only status changes, so the question itself is
+     the only thing that shows the row was picked up. */
+  const w = world({ block: pastBy(1_000), spent: false }, FAILED);
+  w.seed({ deadlineMs: Date.now() - 20_000 });
+  await w.tick();
+  assert.equal(w.store.get('swap-1')?.status, 'failed');
+  assert.equal(w.store.get('swap-1')?.result?.reason, 'venue_failed_nothing_moved');
+  const asked = w.asked.length;
+  assert.equal(await w.svc.reconcileOpen(), 0);
+  assert.equal(w.asked.length, asked, 'the sweep asked 1Click about a row closed on the proof');
+});
+
 test('(b) chain time at or before the deadline: the row stays open and counted, whatever this clock says', async () => {
   const w = world({ block: (deadlineMs) => ({ hash: 'BlkBehind', atMs: deadlineMs - 2_600 }), spent: false });
   w.seed({ deadlineMs: Date.now() - 10_000 });
