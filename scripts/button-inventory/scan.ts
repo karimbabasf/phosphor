@@ -138,6 +138,8 @@ export function scan(): Site[] {
       const body = src.slice(helper, helper + 3).join(' ');
       const fixed = body.match(/el\('button', *'([^']+)'\)/);
       const classFirst = /el\('button', *className\)/.test(body);
+      // netpick.js reads an empty kind as the plain neutral 'btn', not 'btn ' plus the default.
+      const emptyIsPlain = /kind === '' \? 'btn'/.test(body);
       src.forEach((line, i) => {
         if (i === helper) return;
         const call = line.match(/\bbutton\('([^']*)'(?:, *('([^']*)'|[^,)]+))?(?:, *('([^']*)'|[^,)]+))?(?:, *('([^']*)'|[^,)]+))?\)/);
@@ -151,7 +153,7 @@ export function scan(): Site[] {
         } else if (classFirst) {
           sites.push({ file, line: i + 1, family: first, label: second !== null ? `"${second}"` : 'label (argument)', pending: fourth, disables: false });
         } else {
-          sites.push({ file, line: i + 1, family: `btn ${second ?? 'btn-ghost'}`, label: `"${first}"`, pending: third, disables: false });
+          sites.push({ file, line: i + 1, family: second === '' && emptyIsPlain ? 'btn' : `btn ${second ?? 'btn-ghost'}`, label: `"${first}"`, pending: third, disables: false });
         }
       });
     }

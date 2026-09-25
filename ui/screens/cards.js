@@ -2053,8 +2053,20 @@
 
     depositAddress(chain, print).then(function (found) {
       if (found.address) {
-        if (ends) dom.setHidden(ends, true);
-        drawDeposit(slot, found, chain);
+        /* The agent's card shows what can be sent and waits for the same tick Add money does
+           before the address (Karim, 2026-09-25), with the same list and the same words. */
+        var pick = window.PhosphorNetPick;
+        var reveal = function () {
+          if (slot.__netpick && typeof slot.__netpick.destroy === 'function') slot.__netpick.destroy();
+          dom.clear(slot);
+          if (ends) dom.setHidden(ends, true);
+          drawDeposit(slot, found, chain);
+        };
+        if (pick && typeof pick.render === 'function') {
+          pick.render(slot, { context: 'chat', stage: 'tokens', network: chain, symbol: symbol || null, onAddress: reveal });
+        } else {
+          slot.appendChild(dom.el('p', 'tcard-note', 'The address shows in Add money.'));
+        }
       } else {
         refuseDeposit(slot, found, chain, symbol);
       }

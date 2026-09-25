@@ -682,6 +682,8 @@ function depositWorld(report: Any) {
   const world = build();
   const copied: string[] = [];
   const drawn: unknown[] = [];
+  const picked: Any[] = [];
+  let destroyed = 0;
   world.win.PhosphorMoneyIn = { load: () => Promise.resolve(report) };
   world.win.PhosphorLazy = { load: () => Promise.resolve(true) };
   world.win.PhosphorNetPick = {
@@ -689,8 +691,43 @@ function depositWorld(report: Any) {
     addressBlock: (address: string, kind: string) => { const n = make('div'); n.className = 'deposit-address addr'; n.textContent = address; n.setAttribute('data-kind', kind); return n; },
     copyChecked: (address: string, say: (text: string) => void) => { copied.push(address); say('Address copied, ends in ...' + address.slice(-4)); return Promise.resolve(true); },
     drawChecked: (_canvas: unknown, address: string, px: number) => { drawn.push([address, px]); return { ok: true }; },
+    /* The token list and its acknowledgement, as netpick.js keeps them (netpick-ui.test.ts drives
+       the real one): Show the address waits for the tick, then hands the address back. */
+    render: (host: Any, opts: Any) => {
+      picked.push(opts);
+      const root = make('div');
+      root.className = 'netpick';
+      root.dataset.stage = opts.stage;
+      const box = make('input');
+      box.className = 'ack-input';
+      box.checked = false;
+      const go = make('button');
+      go.className = 'btn';
+      go.dataset.role = 'show-address';
+      go.disabled = true;
+      go.textContent = 'Show the address';
+      box.addEventListener('change', () => { go.disabled = !box.checked; });
+      go.addEventListener('click', () => { if (box.checked) opts.onAddress(opts.network, opts.symbol, {}); });
+      root.appendChild(box);
+      root.appendChild(go);
+      host.appendChild(root);
+      const view = { destroy: () => { destroyed += 1; if (root.parentNode === host) host.removeChild(root); } };
+      host.__netpick = view;
+      return view;
+    },
   };
-  return { world, copied, drawn };
+  return { world, copied, drawn, picked, destroyed: () => destroyed };
+}
+
+/* Tick the box under the token list, then press Show the address. */
+function acknowledge(card: Any): void {
+  const box = all(card, 'ack-input')[0];
+  assert.ok(box, 'no acknowledgement on the card');
+  box.checked = true;
+  fire(box, 'change');
+  const go = all(card, 'btn').find((b: Any) => b.dataset.role === 'show-address');
+  assert.ok(go, 'no Show the address on the card');
+  fire(go, 'click');
 }
 
 test('the deposit card answers with the whole address, Copy and a QR code, read by the window itself', async () => {
@@ -709,6 +746,8 @@ test('the deposit card answers with the whole address, Copy and a QR code, read 
   assert.equal(byAttr(card, 'data-token', 'BASE').length, 1, 'no network mark');
 
   await settle();
+  assert.equal(all(card, 'deposit-address').length, 0, 'the address is on the card before the tick');
+  acknowledge(card);
   const block = all(card, 'deposit-address')[0];
   assert.ok(block, 'the whole address is not on the card');
   assert.equal(block.textContent, DEPOSIT_ADDRESS);
@@ -730,6 +769,42 @@ test('the deposit card answers with the whole address, Copy and a QR code, read 
   assert.deepEqual(drawn, [[DEPOSIT_ADDRESS, 128]]);
   assert.equal(all(card, 'tcard-qr')[0].hidden, false);
   assert.equal(show.textContent, 'Hide QR code');
+  assert.deepEqual(world.opened, [], 'the card opened the deposit dialog as well');
+});
+
+/* The agent's card waits for the same tick Add money asks for, every time (Karim, 2026-09-25):
+   the token list and the acknowledgement first, the address only after Show the address. */
+test('the deposit card shows no address until the tick and Show the address, then the address well', async () => {
+  const { world, picked, destroyed } = depositWorld({ verified: true, networks: [{ id: 'base', words: 'Base', address: DEPOSIT_ADDRESS, memo: null, accepts: [] }] });
+  world.ask('deposit usdc on base');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: { chain: 'base', asset: 'USDC' }, data: DEPOSIT_DATA });
+  const card = world.cardNodes('deposit')[0];
+  await settle();
+  assert.equal(picked.length, 1, 'the card did not draw the token list');
+  assert.equal(picked[0].context, 'chat');
+  assert.equal(picked[0].stage, 'tokens', 'the card did not open on the token list');
+  assert.equal(picked[0].network, 'base');
+  assert.equal(picked[0].symbol, 'USDC');
+  assert.equal(typeof picked[0].onAddress, 'function', 'the list does not hand the address back to the card');
+  assert.equal(all(card, 'netpick').length, 1);
+  assert.equal(all(card, 'deposit-address').length, 0, 'the address is on the card before the tick');
+  assert.equal(all(card, 'tcard-copy').length, 0, 'a Copy before the tick');
+  assert.equal(all(card, 'tcard-place')[0].hidden, false, 'the ends went before the address came');
+
+  // Show the address without the tick does nothing.
+  const go = all(card, 'btn').find((b: Any) => b.dataset.role === 'show-address');
+  assert.equal(go.disabled, true);
+  fire(go, 'click');
+  assert.equal(all(card, 'deposit-address').length, 0, 'the address came without the tick');
+
+  acknowledge(card);
+  assert.equal(destroyed(), 1, 'the token list was left running under the address');
+  assert.equal(all(card, 'netpick').length, 0, 'the token list stayed on the card');
+  const well = all(card, 'deposit-address')[0];
+  assert.ok(well, 'no address well after the tick');
+  assert.equal(well.textContent, DEPOSIT_ADDRESS);
+  assert.equal(all(card, 'tcard-copy').length, 1);
+  assert.equal(all(card, 'tcard-place')[0].hidden, true);
   assert.deepEqual(world.opened, [], 'the card opened the deposit dialog as well');
 });
 

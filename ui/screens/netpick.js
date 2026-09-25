@@ -40,7 +40,6 @@
   var net = window.PhosphorNet;
   var store = window.PhosphorState;
 
-  var ACK_KEY = 'phosphor.depositAck';
   /* A watch with nothing seen after this long says how long it has waited. */
   var LATE_MS = 10 * 60 * 1000;
 
@@ -170,23 +169,10 @@
     return starts.concat(holds);
   }
 
-  /* ---------- the acknowledgement, once per install ---------- */
-
-  function ackRemembered() {
-    try { return window.localStorage.getItem(ACK_KEY) === '1'; } catch (e) { return false; }
-  }
-
-  function rememberAck() {
-    try { window.localStorage.setItem(ACK_KEY, '1'); } catch (e) { /* private window */ }
-  }
-
   /* ---------- the tokens, sorted and searched ---------- */
 
   /* The chain's own coin first, then the two dollars an exchange sends most,
      then the rest by name: the list a wallet shows, not the bridge's order. */
-  /* How many tokens a network's list leads with before the rest fold. */
-  var TOKENS_LEAD = 2;
-
   function sortTokens(accepts, nativeSymbol) {
     var list = Array.isArray(accepts) ? accepts.filter(function (t) { return t && t.symbol; }) : [];
     var rank = function (t) {
@@ -1142,53 +1128,27 @@
       search.appendChild(input);
       body.appendChild(search);
 
-      /* The list scrolls behind the search at a height that leaves the
-         acknowledgement and its button above the fold of a 900 px window. */
-      var list = dom.el('div', 'netpick-list scrolls');
+      /* Every token, always, never folded (Karim, 2026-09-25): the list is
+         what the acknowledgement under it is about. */
+      var list = dom.el('div', 'netpick-list');
       list.setAttribute('role', 'list');
       list.setAttribute('aria-label', 'What you can send on ' + n.name);
       body.appendChild(list);
-      var cutList = edges(list);
 
       var empty = dom.el('p', 'netpick-empty');
       empty.hidden = true;
       body.appendChild(empty);
 
-      /* The two a person most likely holds lead (the chain's own coin, then
-         USDC: sortTokens), and the rest wait behind one line, so the step is
-         the choice it is rather than a wall of tickers. A search shows every
-         match. */
-      var fold = dom.el('div', 'netpick-netfoot netpick-tokfoot');
-      var more = dom.el('button', 'netpick-link');
-      more.type = 'button';
-      more.dataset.role = 'more-tokens';
-      var moreWords = dom.el('span', '');
-      more.appendChild(moreWords);
-      more.appendChild(icon('chevron-down', 'netpick-link-chev'));
-      fold.appendChild(more);
-      body.appendChild(fold);
-      var unfolded = false;
-      dom.on(more, 'click', function () {
-        unfolded = !unfolded;
-        fill();
-      });
-
       function fill() {
         dom.clear(list);
         var shown = filterTokens(tokens, state.query);
-        var searching = !!String(state.query || '').trim();
-        var folds = !searching && shown.length > TOKENS_LEAD + 1;
-        dom.setHidden(fold, !folds);
-        dom.setText(moreWords, unfolded ? 'Show fewer' : (shown.length - TOKENS_LEAD) + ' more tokens');
-        more.setAttribute('aria-expanded', unfolded ? 'true' : 'false');
         dom.setHidden(empty, shown.length > 0);
         dom.setHidden(list, shown.length === 0);
         if (!shown.length) {
           dom.setText(empty, 'No token called ' + state.query.trim() + ' on ' + n.name + '.');
           return;
         }
-        (folds && !unfolded ? shown.slice(0, TOKENS_LEAD) : shown).forEach(function (token) { list.appendChild(tokenRow(token)); });
-        cutList();
+        shown.forEach(function (token) { list.appendChild(tokenRow(token)); });
       }
 
       dom.on(input, 'input', function () {
@@ -1237,49 +1197,41 @@
       return row;
     }
 
-    /* Under the list, once per install: a person says they have read what can
-       be sent here before the address is shown. This is the one place the
-       loss is said. Remembered, it is one small button.
-
-       The tick brings the button into view: the acknowledgement card reads
-       like the end of the panel, and on a short window the button sat under
-       the frame's notice with nothing saying it was there. */
+    /* Under the list, every time an address is about to show, whoever asked
+       for it (Karim, 2026-09-25: the agent's card too). This is the one place
+       the loss is said. The tick brings the button into view: on a short
+       window the button sat under the frame's notice with nothing saying it
+       was there. */
     function ackBlock(n, network, tokens) {
       var wrap = dom.el('div', 'netpick-ack');
       /* The neutral primary: green is for the mark, the live move, success and
          Approve, and showing an address is none of those. */
-      var go = button('Show the address', ackRemembered() ? 'btn-ghost btn-sm' : '');
+      var go = button('Show the address', '');
       go.dataset.role = 'show-address';
-      if (!ackRemembered()) {
-        var row = dom.el('label', 'ack-row');
-        var box = dom.el('input', 'ack-input');
-        box.type = 'checkbox';
-        box.name = 'deposit-ack';
-        row.appendChild(box);
-        var drawn = dom.el('span', 'ack-box');
-        drawn.setAttribute('aria-hidden', 'true');
-        drawn.appendChild(icon('check', 'ack-check'));
-        row.appendChild(drawn);
-        row.appendChild(dom.el('span', 'ack-text', 'I understand only the tokens above can be sent here. Anything else sent to this address is lost.'));
-        wrap.appendChild(row);
-        go.disabled = true;
-        dom.on(box, 'change', function () {
-          go.disabled = !box.checked;
-          if (box.checked) row.dataset.checked = 'true';
-          else delete row.dataset.checked;
-          if (box.checked && typeof go.scrollIntoView === 'function') {
-            go.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
-          }
-        });
-        dom.on(go, 'click', function () {
-          if (!box.checked) return;
-          rememberAck();
-          proceed(n, network, tokens);
-        });
-      } else {
-        wrap.dataset.remembered = 'true';
-        dom.on(go, 'click', function () { proceed(n, network, tokens); });
-      }
+      var row = dom.el('label', 'ack-row');
+      var box = dom.el('input', 'ack-input');
+      box.type = 'checkbox';
+      box.name = 'deposit-ack';
+      row.appendChild(box);
+      var drawn = dom.el('span', 'ack-box');
+      drawn.setAttribute('aria-hidden', 'true');
+      drawn.appendChild(icon('check', 'ack-check'));
+      row.appendChild(drawn);
+      row.appendChild(dom.el('span', 'ack-text', 'I understand only the tokens above, each at its minimum or more, arrive here. Anything else sent to this address is lost.'));
+      wrap.appendChild(row);
+      go.disabled = true;
+      dom.on(box, 'change', function () {
+        go.disabled = !box.checked;
+        if (box.checked) row.dataset.checked = 'true';
+        else delete row.dataset.checked;
+        if (box.checked && typeof go.scrollIntoView === 'function') {
+          go.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+        }
+      });
+      dom.on(go, 'click', function () {
+        if (!box.checked) return;
+        proceed(n, network, tokens);
+      });
       var actions = dom.el('div', 'netpick-actions');
       actions.appendChild(go);
       wrap.appendChild(actions);
@@ -1663,7 +1615,7 @@
     }
 
     /* Where to start. A caller that already knows the network opens on its
-       tokens, or on its address once the acknowledgement has been given. */
+       tokens, even one that asked for the address: the tick comes first. */
     function go(stage, network) {
       if (network) state.network = network;
       /* A network the window has not heard of yet (one the report names and
@@ -1678,8 +1630,7 @@
         return;
       }
       if (stage === 'address' && state.network) {
-        if (ackRemembered()) stageAddress();
-        else stageTokens();
+        stageTokens();
       } else if (stage === 'tokens' && state.network) {
         stageTokens();
       } else {
@@ -1713,8 +1664,6 @@
     defaultSymbol: defaultSymbol,
     sortTokens: sortTokens,
     filterTokens: filterTokens,
-    ackRemembered: ackRemembered,
-    rememberAck: rememberAck,
     chunks: chunks,
     kindOf: kindOf,
     addressBlock: addressBlock,
