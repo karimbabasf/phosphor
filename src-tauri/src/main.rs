@@ -45,7 +45,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use backend::{
-    configured_port, get_root, identity_matches, is_orphaned_backend, node_binary, phosphor_is_listening,
+    configured_port, get_health, get_root, identity_matches, is_orphaned_backend, node_binary, phosphor_is_listening,
     pid_file_path, post_lock, read_pid_file, request_within, spawn_backend, stop_orphan, write_pid_file, Backend,
     Handshake, PidRecord,
 };
@@ -640,9 +640,15 @@ fn splash_quit(app: tauri::AppHandle, window: tauri::Window) -> Result<(), Strin
 /// the shell asks it through eval and reads the answer it returns, and the page never calls in.
 /// A page that does not answer inside QUIT_ACK is dead or still loading, and the app quits
 /// rather than trap the person behind it. A second Cmd+Q while the sheet is up quits at once.
+///
+/// Past the yes the window stays up and says Shutting down while the shell stops the app under
+/// it (shut_down), and the page closes its card once the last step has landed.
 const QUIT_ID: &str = "quit";
 const QUIT_ACK: Duration = Duration::from_secs(1);
 const QUIT_POLL: Duration = Duration::from_millis(100);
+/// How long the page gets, once the backend has stopped, to show the last step and answer
+/// closed. It needs about a second (ui/screens/quit.js, finish); a slower page is quit anyway.
+const QUIT_PAINT: Duration = Duration::from_millis(1500);
 const QUIT_ASK_SCRIPT: &str =
     "(function(){try{return typeof window.__phosphorQuit==='function'?String(window.__phosphorQuit()):'none';}catch(e){return 'none';}})()";
 const QUIT_STATE_SCRIPT: &str =
@@ -668,12 +674,14 @@ fn quit_step(asking: bool, confirmed: bool, window_up: bool) -> QuitStep {
     }
 }
 
-/// What the page said, off eval's JSON. Anything but its two words, including no answer at all,
-/// is a page that is not holding a quit sheet.
+/// What the page said, off eval's JSON. Anything but its three words, including no answer at
+/// all, is a page that is not holding a quit sheet.
 #[derive(Debug, PartialEq)]
 enum PageAnswer {
     Asking,
     Quit,
+    /// The Shutting down card has shown its last step and gone: nothing is left to draw.
+    Closed,
     Gone,
 }
 
@@ -681,8 +689,64 @@ fn page_answer(json: &str) -> PageAnswer {
     match serde_json::from_str::<String>(json).ok().as_deref() {
         Some("asking") => PageAnswer::Asking,
         Some("quit") => PageAnswer::Quit,
+        Some("closed") => PageAnswer::Closed,
         _ => PageAnswer::Gone,
     }
+}
+
+/// What the shell tells the Shutting down card, one word as each step lands and never before.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum QuitLanded {
+    Locked,
+    /// A move is being sent, so the lock is left to the stop.
+    Sending,
+    Stopping,
+    Stopped,
+}
+
+impl QuitLanded {
+    fn word(self) -> &'static str {
+        match self {
+            QuitLanded::Locked => "locked",
+            QuitLanded::Sending => "sending",
+            QuitLanded::Stopping => "stopping",
+            QuitLanded::Stopped => "stopped",
+        }
+    }
+}
+
+/// The word as a script no page can fail on: a page without the hook, or one that throws, takes
+/// nothing, and the shell goes on either way.
+fn landed_script(step: QuitLanded) -> String {
+    format!(
+        "(function(){{try{{if(typeof window.__phosphorQuitStep==='function')window.__phosphorQuitStep('{}');}}catch(e){{}}}})()",
+        step.word()
+    )
+}
+
+/// Whether the wallet is locked before the backend stops. Only when the backend has said nothing
+/// is being sent: every signer reads the key through keystore.keys(), which throws once it is
+/// locked, and the drain in src/shutdown.ts exists so a rail mid-flight finishes. Otherwise the
+/// lock is the stop's own: the unlocked key lives only in the backend's memory and goes with it.
+#[derive(Debug, PartialEq)]
+enum LockFirst {
+    Lock,
+    Sending,
+    Leave,
+}
+
+fn lock_first(executing: Option<u64>) -> LockFirst {
+    match executing {
+        Some(0) => LockFirst::Lock,
+        Some(_) => LockFirst::Sending,
+        None => LockFirst::Leave,
+    }
+}
+
+/// While the card is still drawing its last step, the exit waits. Any other answer, or none at
+/// all, is a page with nothing left to show.
+fn still_drawing(answer: &Result<PageAnswer, RecvTimeoutError>) -> bool {
+    matches!(answer, Ok(PageAnswer::Quit) | Err(RecvTimeoutError::Timeout))
 }
 
 fn quit_now(app: &tauri::AppHandle) {
@@ -703,16 +767,16 @@ fn request_quit(app: &tauri::AppHandle) {
     }
 }
 
-/// One script and its answer. A script queued on a page that has not loaded drops its callback,
-/// which lands here as Disconnected at once, the same as a window that is gone.
-fn ask_script(control: &WebviewWindow, script: &str) -> Result<String, RecvTimeoutError> {
+/// One script and its answer, waited on for `wait`. A script queued on a page that has not loaded
+/// drops its callback, which lands here as Disconnected at once, the same as a window that is gone.
+fn ask_script(control: &WebviewWindow, script: &str, wait: Duration) -> Result<String, RecvTimeoutError> {
     let (tx, rx) = std::sync::mpsc::channel();
     control
         .eval_with_callback(script, move |answer| {
             let _ = tx.send(answer);
         })
         .map_err(|_| RecvTimeoutError::Disconnected)?;
-    rx.recv_timeout(QUIT_ACK)
+    rx.recv_timeout(wait)
 }
 
 /// Off the main thread, because it waits on the page and the page's answers arrive on the main
@@ -720,21 +784,21 @@ fn ask_script(control: &WebviewWindow, script: &str) -> Result<String, RecvTimeo
 /// the sheet is up, and a second Cmd+Q is the way out of a page that hangs behind it.
 fn ask_page(app: tauri::AppHandle, control: WebviewWindow) {
     std::thread::spawn(move || {
-        if !matches!(ask_script(&control, QUIT_ASK_SCRIPT).as_deref().map(page_answer), Ok(PageAnswer::Asking)) {
+        if !matches!(ask_script(&control, QUIT_ASK_SCRIPT, QUIT_ACK).as_deref().map(page_answer), Ok(PageAnswer::Asking)) {
             quit_now(&app);
             return;
         }
         loop {
             std::thread::sleep(QUIT_POLL);
-            let answer = match ask_script(&control, QUIT_STATE_SCRIPT) {
+            let answer = match ask_script(&control, QUIT_STATE_SCRIPT, QUIT_ACK) {
                 Ok(raw) => page_answer(&raw),
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => PageAnswer::Gone,
             };
             match answer {
                 PageAnswer::Asking => continue,
-                PageAnswer::Quit => {
-                    quit_now(&app);
+                PageAnswer::Quit | PageAnswer::Closed => {
+                    shut_down(&app, &control);
                     return;
                 }
                 PageAnswer::Gone => {
@@ -744,6 +808,51 @@ fn ask_page(app: tauri::AppHandle, control: WebviewWindow) {
             }
         }
     });
+}
+
+/// Everything between the yes and the exit, on the thread that asked the page. The main thread
+/// stays free the whole time, and that is what lets the window paint the Shutting down card
+/// while the app stops under it: Backend::kill used to run first in RunEvent::ExitRequested, on
+/// the main thread, and the window sat frozen on its last frame for as long as the drain took.
+///
+/// The same kill with the same drain, told to the page a step at a time, and only once each step
+/// has happened. The run loop's kill still covers every other exit and finds nothing left to
+/// stop after this one. A second Cmd+Q meanwhile is app.exit at once; its kill waits on this
+/// one's lock (Backend::stop_child), so the backend is never left behind either way.
+fn shut_down(app: &tauri::AppHandle, control: &WebviewWindow) {
+    app.state::<Quitting>().confirmed.store(true, Ordering::SeqCst);
+    let tell = |step: QuitLanded| {
+        let _ = control.eval(&landed_script(step));
+    };
+    let port = payload_dir(app).ok().zip(data_dir(app).ok()).map(|(payload, data)| configured_port(&payload, &data));
+    let executing = port.and_then(get_health).and_then(|health| health.get("executing").and_then(|n| n.as_u64()));
+    match (lock_first(executing), port) {
+        (LockFirst::Lock, Some(port)) => {
+            let token = app.state::<Secrets>().0.token.clone();
+            if post_lock(port, &token, "quitting") {
+                tell(QuitLanded::Locked);
+            }
+        }
+        (LockFirst::Sending, _) => tell(QuitLanded::Sending),
+        _ => {}
+    }
+    tell(QuitLanded::Stopping);
+    app.state::<Backend>().kill();
+    tell(QuitLanded::Stopped);
+
+    let deadline = Instant::now() + QUIT_PAINT;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        let answer = ask_script(control, QUIT_STATE_SCRIPT, left).map(|raw| page_answer(&raw));
+        if !still_drawing(&answer) {
+            break;
+        }
+        std::thread::sleep(QUIT_POLL.min(deadline.saturating_duration_since(Instant::now())));
+    }
+    app.exit(0);
 }
 
 /// Replaces the splash with the real window. Created rather than navigated, so the page holding
@@ -1290,6 +1399,7 @@ fn main() {
         .run(|app, event| {
             // Covers quit, the last window closing, and a force-quit that still unwinds: the
             // backend must not outlive the window that is the only way to approve anything.
+            // A quit from the sheet has already stopped it (shut_down), and this finds nothing.
             // `impl Drop for Backend` is the backstop behind this, for the exits that raise
             // neither event.
             if let RunEvent::ExitRequested { .. } | RunEvent::Exit = event {
@@ -1541,13 +1651,58 @@ mod tests {
     }
 
     #[test]
-    fn only_the_pages_two_words_hold_a_quit() {
+    fn only_the_pages_own_words_hold_a_quit() {
         use super::{page_answer, PageAnswer};
         assert_eq!(page_answer("\"asking\""), PageAnswer::Asking);
         assert_eq!(page_answer("\"quit\""), PageAnswer::Quit);
-        for other in ["\"idle\"", "\"none\"", "null", "", "asking", "{\"quit\":true}", "\"QUIT\""] {
+        assert_eq!(page_answer("\"closed\""), PageAnswer::Closed);
+        for other in ["\"idle\"", "\"none\"", "null", "", "asking", "{\"quit\":true}", "\"QUIT\"", "\"CLOSED\""] {
             assert_eq!(page_answer(other), PageAnswer::Gone, "{other} is not a sheet holding a quit");
         }
+    }
+
+    #[test]
+    fn the_wallet_is_locked_first_only_when_nothing_is_being_sent() {
+        use super::{lock_first, LockFirst};
+        assert_eq!(lock_first(Some(0)), LockFirst::Lock, "nothing in flight: lock, then stop");
+        assert_eq!(lock_first(Some(1)), LockFirst::Sending, "a rail mid-flight may still need the key");
+        assert_eq!(lock_first(Some(3)), LockFirst::Sending);
+        assert_eq!(lock_first(None), LockFirst::Leave, "no answer is not a reason to lock under a move");
+    }
+
+    #[test]
+    fn each_step_reaches_the_page_as_a_word_it_cannot_fail_on() {
+        use super::{landed_script, QuitLanded};
+        for (step, word) in [
+            (QuitLanded::Locked, "locked"),
+            (QuitLanded::Sending, "sending"),
+            (QuitLanded::Stopping, "stopping"),
+            (QuitLanded::Stopped, "stopped"),
+        ] {
+            let script = landed_script(step);
+            assert!(script.contains(&format!("window.__phosphorQuitStep('{word}')")), "{script}");
+            assert!(script.contains("typeof window.__phosphorQuitStep==='function'"), "a page without the hook takes nothing");
+            assert!(script.contains("catch(e){}"), "a hook that throws is no answer, never an error");
+        }
+    }
+
+    #[test]
+    fn only_a_card_still_drawing_holds_the_exit() {
+        use super::{still_drawing, PageAnswer};
+        use std::sync::mpsc::RecvTimeoutError;
+        assert!(still_drawing(&Ok(PageAnswer::Quit)), "the card is still landing its steps");
+        assert!(still_drawing(&Err(RecvTimeoutError::Timeout)), "a busy page gets the rest of the wait");
+        assert!(!still_drawing(&Ok(PageAnswer::Closed)), "the card is done");
+        assert!(!still_drawing(&Ok(PageAnswer::Gone)), "a page that lost its card has nothing to show");
+        assert!(!still_drawing(&Ok(PageAnswer::Asking)));
+        assert!(!still_drawing(&Err(RecvTimeoutError::Disconnected)), "a window that is gone is quit at once");
+    }
+
+    #[test]
+    fn the_last_paint_is_a_short_bounded_wait() {
+        use super::{QUIT_PAINT, QUIT_POLL};
+        assert!(QUIT_PAINT <= Duration::from_millis(1500), "past the backend stopping, never more than 1.5 s");
+        assert!(QUIT_PAINT > QUIT_POLL * 5, "long enough for the page to answer a few times");
     }
 
     #[test]
