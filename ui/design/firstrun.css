@@ -1,10 +1,16 @@
 /* The first run: the black screen, the field, the card and its steps.
    Owned by ui/screens/firstrun.js. Loads after lock.css, whose .screen rule
-   it narrows: while this screen is up the ground is the ink itself, not a
-   scrim over a frosted page, because there is no page to see yet. */
+   it narrows: while this screen is up the ground is the window's own, not a
+   scrim over a frosted page, because there is no page to see yet. It is the
+   same warm charcoal with the same two pools of light the page stands on
+   (layout.css, #page), so the app a person opens into is the room they were
+   already in. */
 
 #screen-firstrun {
-  background: var(--bg-0);
+  background:
+    radial-gradient(1000px 720px at 82% -12%, var(--ground-glow-1) 0%, transparent 62%),
+    radial-gradient(900px 700px at -12% 112%, var(--ground-glow-2) 0%, transparent 60%),
+    var(--bg-0);
   overflow: auto;
   overscroll-behavior: contain;
 }
@@ -59,7 +65,7 @@
 
 /* One neutral ring for every control on the card. */
 #screen-firstrun :focus-visible {
-  outline: 2px solid var(--text-2);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -124,7 +130,7 @@
   height: 3px;
   border-radius: var(--radius-pill);
   background: var(--well-bg);
-  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--well);
   overflow: hidden;
 }
 
@@ -365,7 +371,7 @@
 }
 
 .firstrun-dev code {
-  font-size: 11.5px;
+  font-size: var(--fs-11);
   color: var(--text-2);
 }
 
@@ -440,7 +446,7 @@
 
 .choice[data-chosen="true"] .choice-tick {
   background: var(--bg-3);
-  box-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.08);
+  box-shadow: var(--hi);
 }
 
 .choice[data-chosen="true"] .choice-tick .icon {
@@ -480,7 +486,7 @@
 .threshold-money {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--s-1);
   width: 148px;
   height: 44px;
   padding: 0 var(--s-3);
@@ -491,7 +497,7 @@
 }
 
 .threshold-money:focus-within {
-  outline: 2px solid var(--text-2);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -521,10 +527,15 @@
   gap: 6px;
 }
 
+/* The picked amount is a small raised key, the mode switch's thumb
+   (layout.css, .tabs-indicator), not a green wash: it is a choice, not a
+   state. */
 .threshold-chip[aria-checked="true"] {
   color: var(--text);
-  background: linear-gradient(180deg, var(--bg-3), var(--bg-2));
-  box-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.08), 0 1px 2px rgba(0, 0, 0, 0.35);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 5%),
+    color-mix(in srgb, var(--bg-2), var(--bg-3) 55%));
+  box-shadow: var(--raise-sm);
 }
 
 /* ---------- phosphor is ready ---------- */

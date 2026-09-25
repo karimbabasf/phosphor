@@ -9,7 +9,10 @@ body[data-terms="true"] #page {
 }
 
 #screen-terms {
-  background: var(--bg-0);
+  background:
+    radial-gradient(1000px 720px at 82% -12%, var(--ground-glow-1) 0%, transparent 62%),
+    radial-gradient(900px 700px at -12% 112%, var(--ground-glow-2) 0%, transparent 60%),
+    var(--bg-0);
   overflow: auto;
   overscroll-behavior: contain;
 }

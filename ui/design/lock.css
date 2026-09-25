@@ -34,14 +34,16 @@ body[data-firstrun="true"] #page {
   visibility: hidden;
 }
 
-/* The scrim finishes the job the blur starts: sixty percent black over the
-   frosted page, so a 44 px balance is a tint and not a shape. It covers the
-   bar as well, so the card is the only thing on screen. */
+/* The scrim finishes the job the blur starts: sixty percent of the ground
+   over the frosted page, so a 44 px balance is a tint and not a shape. The
+   ground's own warm charcoal, never pure black, so the locked window is the
+   same room. It covers the bar as well, so the card is the only thing on
+   screen. */
 .screen {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: rgba(0, 0, 0, 0.6);
+  background: color-mix(in srgb, var(--bg-0) 60%, transparent);
 }
 
 #screen-lock {
@@ -71,7 +73,7 @@ body[data-firstrun="true"] #page {
 
 /* One neutral ring for every control on the lock and the cards beside it. */
 .screen :focus-visible {
-  outline: 2px solid var(--text-2);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -109,7 +111,7 @@ body[data-firstrun="true"] #page {
 }
 
 .lock-field:focus-within {
-  outline: 2px solid var(--text-2);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -162,7 +164,7 @@ body[data-firstrun="true"] #page {
 .lock-eye[aria-pressed="true"] { color: var(--text); }
 
 .lock-eye:focus-visible {
-  outline: 2px solid var(--text-2);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
@@ -301,7 +303,7 @@ body[data-firstrun="true"] #page {
 }
 
 .lock-forgot:focus-visible {
-  outline: 2px solid var(--text-2);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
