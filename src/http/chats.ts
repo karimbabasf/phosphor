@@ -33,8 +33,11 @@ export function createChatRegistry(deps: {
   /* Told every time a chat's driver reports ready, which is the one moment an app-authored
      turn may go down without cutting into an answer. The ending notice (ended.ts) waits on it. */
   onIdle?: (chat: Chat) => void;
+  /* Told every event a chat's driver reports once the transcript has it, so the ending notice
+     knows when a turn the app started is over (ended.ts, event). */
+  onEvent?: (chat: Chat, event: DriverEvent) => void;
 }): ChatRegistry {
-  const { cfg, audit, agents, getView, sse, makeDriver, onIdle } = deps;
+  const { cfg, audit, agents, getView, sse, makeDriver, onIdle, onEvent } = deps;
 
   // THE DRIVER'S SEATS, PLURAL SINCE 2026-08-21.
   //
@@ -107,6 +110,7 @@ export function createChatRegistry(deps: {
     // Tagged with the chat, always. An untagged event was fine when there was one conversation
     // and would print into whichever one the human happened to be looking at now.
     sse.broadcast({ type: 'driver', chat: chat.id, event });
+    onEvent?.(chat, event);
     if (event.kind === 'status' && event.state === 'ready') onIdle?.(chat);
   }
 

@@ -166,7 +166,7 @@ export function ourIntentsAddress(ctx: PCtx, problems: string[]): string {
 
 /* Who is proposing: the idempotency key they chose and the seat they hold. Every propose door
    passes its params object as this, so a rail never has to know either field by name. */
-export type Origin = { clientKey?: ClientKey; by?: string | null; webRead?: boolean };
+export type Origin = { clientKey?: ClientKey; by?: string | null; webRead?: boolean; appTurn?: boolean };
 
 /* A draft the app itself will not file. The rule stays `invalid_draft`, the app's own wall and
    never the person's; `code` is the cause the card and the agent read (src/rails/reasons.ts):

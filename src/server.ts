@@ -202,7 +202,16 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   /* The ending notice needs the chats and the chats need it, so it is the one built second and
      reached through a slot: nothing calls flush before both exist. */
   let ended: EndedNotices | null = null;
-  const chats = createChatRegistry({ cfg, audit, agents, getView, sse, makeDriver: deps.makeDriver, onIdle: (chat) => ended?.flush(chat) });
+  const chats = createChatRegistry({
+    cfg,
+    audit,
+    agents,
+    getView,
+    sse,
+    makeDriver: deps.makeDriver,
+    onIdle: (chat) => ended?.flush(chat),
+    onEvent: (chat, event) => ended?.event(chat, event),
+  });
   ended = createEndedNotices({
     store,
     chats: () => chats.all(),

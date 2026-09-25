@@ -43,6 +43,7 @@ import { decideSwap, prepareSwap, proposeHlDeposit, proposeHlWithdraw, proposeSe
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
 import { swapAssets, swapCheck, swapQuote } from './proposals/swap-reads.ts';
 import { webReadBy } from './web-read.ts';
+import { appTurnBy } from './app-turn.ts';
 
 export type { ProposalDeps };
 
@@ -97,8 +98,13 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
   /* The web-read stamp, taken the moment a move is asked for and before anything is awaited or
      queued: the params travel as the proposal's origin to newProposal, which puts it on the row,
      and land() reads the row (src/web-read.ts). Whatever the mark does while the reads run or the
-     queue waits, the move is judged by what its agent had read when it asked. */
-  const stamped = <T extends { by?: string | null }>(p: T): T & { webRead: boolean } => ({ ...p, webRead: webReadBy(p.by ?? undefined) });
+     queue waits, the move is judged by what its agent had read when it asked. The app-turn stamp
+     rides the same way: whether it was asked inside a turn the app started (src/app-turn.ts). */
+  const stamped = <T extends { by?: string | null }>(p: T): T & { webRead: boolean; appTurn: boolean } => ({
+    ...p,
+    webRead: webReadBy(p.by ?? undefined),
+    appTurn: appTurnBy(p.by ?? undefined),
+  });
 
   return {
     proposePolicyChange: (p) => serialise(() => proposePolicyChange(ctx, p)),

@@ -419,7 +419,7 @@ export function newProposal(
   draft: WriteDraft,
   simulation: SimulationResult | null,
   verdict: Verdict,
-  origin?: { clientKey?: ClientKey; by?: string | null; webRead?: boolean },
+  origin?: { clientKey?: ClientKey; by?: string | null; webRead?: boolean; appTurn?: boolean },
 ): Proposal {
   const clientKey = origin?.clientKey;
   const by = typeof origin?.by === 'string' && origin.by !== '' ? origin.by : undefined;
@@ -438,6 +438,8 @@ export function newProposal(
     ...(by === undefined ? {} : { by }),
     // The web-read stamp the service took when the move was asked for (src/web-read.ts).
     ...(origin?.webRead === true ? { webRead: true as const } : {}),
+    // And the app-turn stamp, taken the same way (src/app-turn.ts).
+    ...(origin?.appTurn === true ? { appTurn: true as const } : {}),
   };
 }
 
