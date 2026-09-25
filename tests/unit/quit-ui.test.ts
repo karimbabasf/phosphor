@@ -7,7 +7,7 @@
 // report has counted the moves (or the read gave up); each step lands only on its own signal,
 // one beat apart and in order, and a step with no signal never lands; a move being sent leaves
 // the lock to the stop; the mark goes out a slab per step and the last with the close; the card
-// says closed inside the shell's QUIT_PAINT; Escape and a click outside do nothing once it is
+// says closed well inside the shell's QUIT_CLOSE_CAP; Escape and a click outside do nothing once it is
 // going; under reduced motion the same steps land with nothing animated; and the words the shell
 // sends and reads (src-tauri/src/main.rs) are the ones this page speaks. tsc never sees ui/, so
 // this is the check.
@@ -26,7 +26,7 @@ const QUIT = read('../../ui/screens/quit.js');
 const CSS = read('../../ui/design/screens.css');
 const SHELL = read('../../src-tauri/src/main.rs');
 
-const QUIT_PAINT_MS = Number(/const QUIT_PAINT: Duration = Duration::from_millis\((\d+)\);/.exec(SHELL)?.[1]);
+const CLOSE_CAP_MS = 1000 * Number(/const QUIT_CLOSE_CAP: Duration = Duration::from_secs\((\d+)\);/.exec(SHELL)?.[1]);
 
 /* ---------- a clock the test moves ---------- */
 
@@ -308,7 +308,7 @@ test('the yes keeps the card and turns it into Shutting down, and the shell hear
   assert.equal(markOf(w).getAttribute('data-dark'), '1', 'the front slab goes out with the first step');
 });
 
-test('each step lands on the shell\'s word, a beat apart and in order, and the card closes inside QUIT_PAINT', async () => {
+test('each step lands on the shell\'s word, a beat apart and in order, and the card says closed well inside the shell\'s cap', async () => {
   const w = world({ reduced: false });
   await handOver(w, MOVING(0), MOVING(0));
   assert.deepEqual(row(w, 'moves'), { state: 'done', name: 'Nothing on its way', word: 'Checked', note: '', glyph: 'done' });
@@ -343,7 +343,7 @@ test('each step lands on the shell\'s word, a beat apart and in order, and the c
     if (w.win.__phosphorQuitState() === 'closed') closedAt = w.time.now();
   }
   assert.ok(closedAt > 0, 'the card says closed');
-  assert.ok(closedAt - stoppedAt < QUIT_PAINT_MS, `closed ${closedAt - stoppedAt} ms after the stop, inside the shell's ${QUIT_PAINT_MS} ms`);
+  assert.ok(closedAt - stoppedAt < CLOSE_CAP_MS, `closed ${closedAt - stoppedAt} ms after the stop, inside the shell's ${CLOSE_CAP_MS} ms`);
   assert.equal(cardOf(w).style.visibility, 'hidden', 'the card went out before the window did');
   assert.ok(w.animated.some((a) => a.node === cardOf(w) && a.duration === 200), 'the way out is the dialog\'s own');
 });
@@ -383,7 +383,7 @@ test('a move being sent leaves the lock to the stop, and both land in order once
     await w.time.advance(50);
     if (w.win.__phosphorQuitState() === 'closed') closedAt = w.time.now();
   }
-  assert.ok(closedAt > 0 && closedAt - stoppedAt < QUIT_PAINT_MS, `the slowest finish, ${closedAt - stoppedAt} ms, fits the shell's ${QUIT_PAINT_MS} ms`);
+  assert.ok(closedAt > 0 && closedAt - stoppedAt < CLOSE_CAP_MS, `the slowest finish, ${closedAt - stoppedAt} ms, fits the shell's ${CLOSE_CAP_MS} ms`);
 });
 
 test('a read that never answers is never ticked, and the sheet\'s own report stands in when there was one', async () => {
@@ -402,6 +402,25 @@ test('a read that never answers is never ticked, and the sheet\'s own report sta
   await sighted.time.advance(600);
   assert.equal(sighted.win.__phosphorQuitState(), 'quit');
   assert.deepEqual(row(sighted, 'moves'), { state: 'done', name: '2 moves on their way', word: 'Noted', note: 'They finish without Phosphor.', glyph: 'done' });
+});
+
+test('on the fastest quit the card still finishes and says closed inside the shell\'s cap', async () => {
+  // The backend is already gone: every shell word lands at once, while the sheet is still going
+  // out and the card has not arrived.
+  const w = world({ reduced: false });
+  await pressQuit(w, MOVING(0));
+  w.reads[1].resolve(MOVING(0));
+  await w.time.advance(0);
+  const stoppedAt = w.time.now();
+  for (const word of ['locked', 'stopping', 'stopped']) w.win.__phosphorQuitStep(word);
+  let closedAt = -1;
+  for (let i = 0; i < 80 && closedAt < 0; i += 1) {
+    await w.time.advance(25);
+    if (w.win.__phosphorQuitState() === 'closed') closedAt = w.time.now();
+  }
+  assert.ok(closedAt > 0, 'the card says closed');
+  assert.equal(markOf(w).getAttribute('data-dark'), '4', 'every step was seen to land');
+  assert.ok(closedAt - stoppedAt + 100 < CLOSE_CAP_MS, `closed ${closedAt - stoppedAt} ms after the stop, plus a poll, inside the shell's ${CLOSE_CAP_MS} ms cap`);
 });
 
 test('Escape and a click outside do nothing once the card is going, and a late sheet report cannot redraw it', async () => {
@@ -470,5 +489,5 @@ test('the words the shell sends and reads are the ones this page speaks', () => 
     assert.ok(SHELL.includes(`Some("${phase}") => PageAnswer::`), `the shell reads ${phase}`);
     assert.ok(QUIT.includes(`'${phase}'`), `the page says ${phase}`);
   }
-  assert.ok(QUIT_PAINT_MS > 0 && QUIT_PAINT_MS <= 1500, 'the shell\'s last wait is found, and short');
+  assert.ok(CLOSE_CAP_MS > 0 && CLOSE_CAP_MS <= 3000, 'the shell\'s cap on the card\'s close is found, and short');
 });
