@@ -402,9 +402,10 @@ test('a day is read once and again only when a frame finds it five minutes old: 
 const VVV_ASSET = 'nep141:base-0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf.omft.near';
 const LTC_ASSET = 'nep141:ltc.omft.near';
 
-/* A day off the feed: 25 hourly prices from `first` to `last`, and CoinGecko's own change. */
-function feedDay(first: number, last: number, change24: number): Any {
-  return { change24, line: Array.from({ length: 25 }, (_, i) => first + (last - first) * (i / 24)), at: Date.parse('2026-09-23T20:00:00Z') };
+/* A day off the feed: 25 hourly prices from `first` to `last`, and their change, which the feed
+   serves off the line itself (src/ledger/day.ts parseMarkets). */
+function feedDay(first: number, last: number): Any {
+  return { change24: ((last - first) / first) * 100, line: Array.from({ length: 25 }, (_, i) => first + (last - first) * (i / 24)), at: Date.parse('2026-09-23T20:00:00Z') };
 }
 
 function vvv(quantity = 12): Any {
@@ -419,7 +420,7 @@ test('every coin the feed has a day for draws it, VVV among them, and no candles
   const rig = boot({
     svg: true,
     candles: { 'ETH-USD': day(2636.74, 2684.2) },
-    day: { [VVV_ASSET]: feedDay(31.72, 30.26, -4.58151), 'nep141:eth': feedDay(2674, 2684.2, 0.38509) },
+    day: { [VVV_ASSET]: feedDay(31.72, 30.26), 'nep141:eth': feedDay(2674, 2684.2) },
   });
   rig.put(state({ wallet: { rows: [intents('USDC', 6150), intents('ETH', 1.42), vvv()], stale: [], hyperliquid: { funded: true } }, candleProducts: ['ETH-USD'] }));
   await tick();
@@ -444,7 +445,7 @@ test('every coin the feed has a day for draws it, VVV among them, and no candles
 });
 
 test('a coin the feed has no day for falls back to its candles once the feed has answered, and one with neither shows none', async () => {
-  const rig = boot({ candles: { 'ETH-USD': day(2636.74, 2684.2) }, day: { [VVV_ASSET]: feedDay(31.72, 30.26, -4.58151) } });
+  const rig = boot({ candles: { 'ETH-USD': day(2636.74, 2684.2) }, day: { [VVV_ASSET]: feedDay(31.72, 30.26) } });
   rig.put(state({
     wallet: { rows: [intents('ETH', 1.42), vvv(), intents('WIF', 2.5, { priceUsd: 0, valueUsd: 0, priced: false })], stale: [], hyperliquid: { funded: true } },
     candleProducts: ['ETH-USD'],
@@ -461,7 +462,7 @@ test('a day that is not a number or not a line draws nothing, and a listed marke
   const rig = boot({
     candles: { 'ETH-USD': day(2636.74, 2684.2) },
     day: {
-      'nep141:eth': { change24: 'up', line: feedDay(1, 2, 0).line, at: 0 },
+      'nep141:eth': { change24: 'up', line: feedDay(1, 2).line, at: 0 },
       [VVV_ASSET]: { change24: -4.5, line: [31, -1, 30], at: 0 },
       [LTC_ASSET]: { change24: 2.1, line: [88], at: 0 },
     },
@@ -474,7 +475,7 @@ test('a day that is not a number or not a line draws nothing, and a listed marke
 });
 
 test('the feed is read with Pro up, again at five minutes or when a coin it never covered arrives, and a failed read keeps the last good day', async () => {
-  const rig = boot({ day: { [VVV_ASSET]: feedDay(31.72, 30.26, -4.58151), [LTC_ASSET]: feedDay(86, 88, 2.3) } });
+  const rig = boot({ day: { [VVV_ASSET]: feedDay(31.72, 30.26), [LTC_ASSET]: feedDay(86, 88) } });
   const holding = (rows: Any[]) => state({ wallet: { rows, stale: [], hyperliquid: { funded: true } }, candleProducts: [] });
   const reads = () => rig.asked.filter((p) => p.startsWith('/api/day'));
   rig.put(holding([vvv()]));

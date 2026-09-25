@@ -148,19 +148,28 @@ function idsAsked(url: string): string[] {
 
 /* ---------- the mapping ---------- */
 
-test('the markets answer becomes every listed asset\'s day: the last 25 hourly points and CoinGecko\'s own 24h change', async () => {
+// A day's change as the feed serves it: the line's own, first point to last, in percent.
+function lineChange(line: number[]): number {
+  return ((line[line.length - 1] - line[0]) / line[0]) * 100;
+}
+
+// The day the fixture's row for a CoinGecko id is served as: its last 25 points and their change.
+function dayIn(id: string): { change24: number; line: number[] } {
+  const line = marketRow(id).sparkline_in_7d.price.slice(-25) as number[];
+  return { change24: lineChange(line), line };
+}
+
+test('the markets answer becomes every listed asset\'s day: the last 25 hourly points and their change', async () => {
   const r = rig();
   await r.feed.refresh();
   assert.equal(DAY_POINTS, 25, 'a day is the price now and the 24 hours before it');
-  const eth = marketRow('ethereum');
-  const want = { change24: eth.price_change_percentage_24h, line: eth.sparkline_in_7d.price.slice(-25), at: r.clock.now };
+  const want = { ...dayIn('ethereum'), at: r.clock.now };
   assert.deepEqual(r.feed.entry(ETH), want);
   // Every asset 1Click lists under the same id is the same coin with the same day.
   assert.deepEqual(r.feed.entry(ETH_NEAR), want, 'the NEAR-bridged ETH did not map through its CoinGecko id');
-  const usdc = marketRow('usd-coin');
-  assert.equal(r.feed.entry(USDC)?.change24, usdc.price_change_percentage_24h);
-  assert.equal(r.feed.entry(USDC_NEAR)?.change24, usdc.price_change_percentage_24h);
-  assert.equal(r.feed.entry(WBTC)?.change24, marketRow('bitcoin').price_change_percentage_24h, 'a wrapped coin is the coin 1Click says it is');
+  assert.equal(r.feed.entry(USDC)?.change24, dayIn('usd-coin').change24);
+  assert.equal(r.feed.entry(USDC_NEAR)?.change24, dayIn('usd-coin').change24);
+  assert.equal(r.feed.entry(WBTC)?.change24, dayIn('bitcoin').change24, 'a wrapped coin is the coin 1Click says it is');
   assert.equal(r.feed.entry(USDC)?.line.length, 25);
   // No CoinGecko id, or one that is not a CoinGecko id, is no day: never a borrowed one.
   assert.equal(r.feed.entry(VAULT), null);
@@ -173,12 +182,27 @@ test('VVV, which no candle product names, gets its line and its change, and so d
   await r.feed.refresh();
   const vvv = r.feed.entry(VVV);
   assert.ok(vvv, 'VVV has no day');
-  assert.equal(vvv.change24, -4.58151);
+  assert.equal(vvv.change24, dayIn('venice-token').change24);
   assert.equal(vvv.line.length, 25);
   assert.ok(vvv.line.every((p) => Number.isFinite(p) && p > 0), 'a point on the line is not a price');
   assert.deepEqual(vvv.line, marketRow('venice-token').sparkline_in_7d.price.slice(-25));
-  assert.equal(r.feed.entry(LTC)?.change24, marketRow('litecoin').price_change_percentage_24h);
-  assert.equal(r.feed.entry(ZEC)?.change24, marketRow('zcash').price_change_percentage_24h);
+  assert.equal(r.feed.entry(LTC)?.change24, dayIn('litecoin').change24);
+  assert.equal(r.feed.entry(ZEC)?.change24, dayIn('zcash').change24);
+});
+
+/* CoinGecko's 24h figure is live and its sparkline's last point trails it by up to an hour, so the
+   two can point opposite ways, and Pro colours the line by the change: a line drawn falling in green.
+   In the capture of 2026-09-25 ZEC's figure says +0.59% over a line that fell 0.25%, and VVV's says
+   -4.58% over a line that fell 2.80%. The change served is the line's, as the candle path draws it. */
+test('the change served is the line\'s own, first point to last, never CoinGecko\'s live figure beside a line that trails it', async () => {
+  const r = rig();
+  await r.feed.refresh();
+  const zec = r.feed.entry(ZEC);
+  assert.ok(zec);
+  assert.equal(marketRow('zcash').price_change_percentage_24h > 0, true, 'the capture changed: CoinGecko\'s figure for ZEC rose');
+  assert.ok(zec.change24 < 0, `ZEC's line falls and its change is ${zec.change24}`);
+  assert.equal(Math.sign(zec.change24), Math.sign(zec.line[zec.line.length - 1] - zec.line[0]));
+  assert.equal(r.feed.entry(VVV)?.change24.toFixed(5), '-2.80092');
 });
 
 /* ---------- the request ---------- */
@@ -259,7 +283,7 @@ test('a key in COINGECKO_API_KEY rides in the demo header, and with none the cal
 test('rows that do not hold up are dropped, never repaired', () => {
   const good = marketRow('venice-token');
   const spark = good.sparkline_in_7d.price as number[];
-  const asked = new Set(['venice-token', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l']);
+  const asked = new Set(['venice-token', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm']);
   const at = 1_790_000_000_000;
   const rows: unknown[] = [
     good,
@@ -277,15 +301,17 @@ test('rows that do not hold up are dropped, never repaired', () => {
     ['venice-token', -4],
     { ...good, id: 'j', sparkline_in_7d: { price: [...spark.slice(0, -1), 1e400] } },
     { id: 'k', price_change_percentage_24h: 2 },
-    // A shorter day is still a day: a coin listed six hours ago has six hours of line.
+    // A shorter day is still a day: a coin listed six hours ago has six hours of line, and its change is that line's.
     { ...good, id: 'l', price_change_percentage_24h: 12.5, sparkline_in_7d: { price: [1.5, 1.6, 1.7] } },
+    // A line that goes up twenty-thousandfold in a day is a broken row, whatever the figure beside it says.
+    { ...good, id: 'm', sparkline_in_7d: { price: [0.0001, 2] } },
     // The same id twice: the first answer stands.
     { ...good, price_change_percentage_24h: 99 },
   ];
   const parsed = parseMarkets(rows, asked, at);
   assert.deepEqual([...parsed.keys()].sort(), ['l', 'venice-token']);
-  assert.deepEqual(parsed.get('venice-token'), { change24: good.price_change_percentage_24h, line: spark.slice(-25), at });
-  assert.deepEqual(parsed.get('l'), { change24: 12.5, line: [1.5, 1.6, 1.7], at });
+  assert.deepEqual(parsed.get('venice-token'), { change24: lineChange(spark.slice(-25)), line: spark.slice(-25), at });
+  assert.deepEqual(parsed.get('l'), { change24: lineChange([1.5, 1.6, 1.7]), line: [1.5, 1.6, 1.7], at });
   for (const junk of [null, 'rows', { rows: [good] }, 42]) assert.equal(parseMarkets(junk, asked, at).size, 0);
 });
 
@@ -437,7 +463,7 @@ test('GET /api/day answers the assets the window names, every listed one with no
   const named = await getDay(ctx, `?assets=${encodeURIComponent([VVV, LTC].join(','))}`);
   assert.equal(named.status, 200);
   assert.deepEqual(Object.keys(named.body.entries).sort(), [LTC, VVV].sort());
-  assert.equal(named.body.entries[VVV].change24, -4.58151);
+  assert.equal(named.body.entries[VVV].change24, dayIn('venice-token').change24);
   assert.equal(named.body.at, r.clock.now);
   const every = await getDay(ctx, '');
   assert.equal(Object.keys(every.body.entries).length, 9);

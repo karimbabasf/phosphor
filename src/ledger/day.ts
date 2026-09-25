@@ -77,7 +77,7 @@ export function pictureUrl(raw: unknown): string | null {
 }
 
 export type DayEntry = {
-  change24: number; // percent, CoinGecko's own 24 hour figure
+  change24: number; // percent, the line's own: its first point to its last (see parseMarkets)
   line: number[]; // the last DAY_POINTS hourly prices, oldest first, in dollars
   at: number; // when the answer carrying it landed, epoch ms
 };
@@ -201,7 +201,12 @@ function lineOf(sparkline: unknown): number[] | null {
 }
 
 /* The rows of one markets answer that hold up, by CoinGecko id. `asked` is what the call named:
-   a row for anything else is not an answer to this question. The first row for an id stands. */
+   a row for anything else is not an answer to this question. The first row for an id stands.
+
+   THE CHANGE IS THE LINE'S, first point to last, as Pro's candle path reads its closes. CoinGecko's
+   24 hour figure is live and the sparkline's last point trails it by up to an hour, so the two
+   could point opposite ways (the capture of 2026-09-25: ZEC +0.59% over a line that fell 0.25%)
+   and Pro colours the line by the change. The figure still has to hold up for the row to count. */
 export function parseMarkets(payload: unknown, asked: ReadonlySet<string>, at: number): Map<string, DayEntry> {
   const out = new Map<string, DayEntry>();
   if (!Array.isArray(payload)) return out;
@@ -210,9 +215,10 @@ export function parseMarkets(payload: unknown, asked: ReadonlySet<string>, at: n
     const r = row as Record<string, unknown>;
     const id = r['id'];
     if (typeof id !== 'string' || !asked.has(id) || out.has(id)) continue;
-    const change = r['price_change_percentage_24h'];
     const line = lineOf(r['sparkline_in_7d']);
-    if (!saneChange(change) || line === null) continue;
+    if (!saneChange(r['price_change_percentage_24h']) || line === null) continue;
+    const change = ((line[line.length - 1] - line[0]) / line[0]) * 100;
+    if (!saneChange(change)) continue;
     out.set(id, { change24: change, line, at });
   }
   return out;
