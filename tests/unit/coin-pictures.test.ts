@@ -249,6 +249,50 @@ test('listedIds names each symbol the list gives exactly one CoinGecko id, and p
   assert.equal(parseImages('nope', asked).size, 0);
 });
 
+/* Pictures review finding 1: the one-id rule ran one way. A symbol naming two ids got nothing, but
+   several symbols naming one id all drew that id's picture, so an approval card for USDC to USAD
+   drew two USDC marks. The live list of 2026-09-25 has six such rows, all here. */
+const SHARED: OneClickToken[] = [
+  { assetId: 'nep141:usdc.eth', decimals: 6, blockchain: 'eth', symbol: 'USDC', coingeckoId: 'usd-coin' },
+  { assetId: 'nep141:susdc.base', decimals: 6, blockchain: 'base', symbol: 'SUSDC', coingeckoId: 'usd-coin' },
+  { assetId: 'nep141:susdc.sol', decimals: 6, blockchain: 'sol', symbol: 'sUSDC', coingeckoId: 'usd-coin' },
+  { assetId: 'nep141:usad.aleo', decimals: 6, blockchain: 'aleo', symbol: 'USAD', coingeckoId: 'usd-coin' },
+  { assetId: 'nep141:usdt.eth', decimals: 6, blockchain: 'eth', symbol: 'USDT', coingeckoId: 'tether' },
+  { assetId: 'nep141:nrusdt.near', decimals: 6, blockchain: 'near', symbol: 'NRUSDT', coingeckoId: 'tether' },
+  { assetId: 'nep141:nrusdt.bsc', decimals: 6, blockchain: 'bsc', symbol: 'NRUSDT', coingeckoId: 'tether' },
+  { assetId: 'nep141:xpl.plasma', decimals: 18, blockchain: 'plasma', symbol: 'XPL', coingeckoId: 'plasma' },
+  { assetId: 'nep141:xpl-old.plasma', decimals: 18, blockchain: 'plasma', symbol: 'XPL_(DEPRECATED)', coingeckoId: 'plasma' },
+  { assetId: 'nep141:usdt0.plasma', decimals: 6, blockchain: 'plasma', symbol: 'USDT0', coingeckoId: 'usdt0' },
+  { assetId: 'nep141:usdt0-old.plasma', decimals: 6, blockchain: 'plasma', symbol: 'USDT0(DEPRECATED)', coingeckoId: 'usdt0' },
+  { assetId: 'nep141:nearkat.near', decimals: 18, blockchain: 'near', symbol: 'NEARKAT', coingeckoId: 'nearkat-2' },
+  { assetId: 'nep141:wnearkat.near', decimals: 18, blockchain: 'near', symbol: 'WNEARKAT', coingeckoId: 'nearkat-2' },
+  { assetId: VVV, decimals: 18, blockchain: 'base', symbol: 'VVV', coingeckoId: 'venice-token' },
+];
+
+test('a CoinGecko id two symbols share is a picture for neither: SUSDC and USAD never wear USDC\'s mark', async () => {
+  const { symbols, idOf } = listedIds(SHARED);
+  for (const symbol of ['USDC', 'SUSDC', 'USAD', 'USDT', 'NRUSDT', 'XPL', 'XPL_(DEPRECATED)', 'USDT0', 'USDT0(DEPRECATED)', 'NEARKAT', 'WNEARKAT']) {
+    assert.equal(symbols.has(symbol), false, `${symbol} was given ${symbols.get(symbol)}'s picture, which another symbol names too`);
+  }
+  assert.equal(symbols.get('VVV'), 'venice-token', 'a symbol that is the only one naming its id lost its picture');
+  // The day is the asset's own id whatever the pictures do: the market 1Click itself prices it off.
+  assert.equal(idOf.get('nep141:usad.aleo'), 'usd-coin');
+  assert.equal(idOf.get('nep141:wnearkat.near'), 'nearkat-2');
+
+  // Through the feed and the cache, as the window reads them: USAD has no picture to draw, so the
+  // card for USDC to USAD draws USDC's file beside a monogram, never two USDC marks.
+  const dayFetch = (async () => new Response(JSON.stringify(MARKETS), { status: 200 })) as typeof fetch;
+  const feed = createDayFeed({ tokens: async () => SHARED, fetchImpl: dayFetch, env: {}, log: () => {} });
+  await feed.refresh();
+  const dir = path.join(tempDir('phosphor-pictures-'), 'cache', 'coin-images');
+  const pictures = createCoinPictures({ dir, urls: () => feed.pictureUrls(), symbols: () => feed.symbols(), fetchImpl: (async () => new Response(PNG, { status: 200 })) as typeof fetch, log: () => {} });
+  await pictures.sync();
+  const manifest = pictures.manifest();
+  assert.equal(manifest.symbols.VVV, 'venice-token');
+  for (const symbol of ['USAD', 'SUSDC', 'USDC', 'NRUSDT', 'XPL_(DEPRECATED)']) assert.equal(symbol in manifest.symbols, false, `${symbol} is in the manifest`);
+  assert.equal(feed.entry('nep141:usad.aleo')?.change24, MARKETS.find((row) => row.id === 'usd-coin')?.price_change_percentage_24h, 'USAD lost the day 1Click prices it off');
+});
+
 /* ---------- on disk ---------- */
 
 test('a picture on disk is served after a restart, fetched again after a week, and a refused one waits a day', async () => {

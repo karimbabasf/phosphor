@@ -101,7 +101,8 @@ export type DayFeed = {
   // Every listed coin's picture, by CoinGecko id, as the markets answer named it: what
   // src/ledger/pictures.ts fetches. Never the held coins alone, because nothing here knows them.
   pictureUrls(): Map<string, string>;
-  // Each symbol on the list to the one CoinGecko id it names; a symbol naming two coins is left out.
+  // Each symbol on the list to the one CoinGecko id it names, for pictures; a symbol naming two
+  // coins is left out, and so is one naming an id another symbol names too.
   symbols(): Map<string, string>;
 };
 
@@ -121,7 +122,12 @@ export type DayFeedDeps = {
    (trimmed, upper case), to its id. An asset whose id is missing or malformed maps to nothing.
    A symbol the list gives two ids, or gives one id on one row and none on another, is no symbol
    here: wBTC is bitcoin on one row and WBTC is wrapped-bitcoin on another, and a picture guessed
-   between them could be the wrong coin's. */
+   between them could be the wrong coin's.
+   THE OTHER WAY ROUND TOO: an id two symbols name is a picture for neither. SUSDC and USAD both
+   name usd-coin, so each drew USDC's own logo, and a card for USDC to USAD showed two USDC marks
+   over a swap into a different coin (pictures review finding 1). `symbols` is for pictures only:
+   the day stays each asset's own id in `idOf`, the market 1Click itself prices that coin off, and
+   a wrapped coin's 24 hours are its underlying's in fact, where a borrowed logo claims to be it. */
 export function listedIds(list: readonly OneClickToken[]): { ids: string[]; idOf: Map<string, string>; symbols: Map<string, string> } {
   const idOf = new Map<string, string>();
   // Every id each symbol is listed under, '' for a row with none.
@@ -137,10 +143,15 @@ export function listedIds(list: readonly OneClickToken[]): { ids: string[]; idOf
     ids.add(good ? id : '');
     named.set(symbol, ids);
   }
+  // How many symbols name each id.
+  const namers = new Map<string, number>();
+  for (const ids of named.values()) {
+    for (const id of ids) if (id !== '') namers.set(id, (namers.get(id) ?? 0) + 1);
+  }
   const symbols = new Map<string, string>();
   for (const [symbol, ids] of named) {
     const [only] = ids;
-    if (ids.size === 1 && only !== '') symbols.set(symbol, only);
+    if (ids.size === 1 && only !== '' && namers.get(only) === 1) symbols.set(symbol, only);
   }
   return { ids: [...new Set(idOf.values())].sort(), idOf, symbols };
 }
