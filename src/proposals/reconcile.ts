@@ -22,6 +22,8 @@ import { nearChainSpec } from '../chain/near.ts';
 import { depositHandleOf } from '../transactions.ts';
 import { INTENTS_RELAY_VENUE, RELAY_TERMINAL } from '../rails/intents-relay.ts';
 import { decodeNonce } from '../relay/payload.ts';
+import { FATE_RECHECK_MS, RELAY_DEADLINE_GRACE_MS, proofWords, transferFate } from '../relay/fate.ts';
+import type { TransferFate } from '../relay/fate.ts';
 import type { RelayLookup } from '../rails/index.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
 import { ONECLICK_STAGES } from './view.ts';
@@ -207,7 +209,8 @@ export async function reconcileOpen(ctx: PCtx): Promise<number> {
 
 /* A 1Click row closed as "nothing moved" while the transfer it signed could still run: what the
    balance rule wrote before the transfer's own nonce decided (the audit of 2026-09-23). Swept
-   again until the deadline has passed, so a transfer that runs late reopens the row. */
+   again until the deadline has passed, so a transfer that runs late reopens the row. A row closed
+   on its nonce was closed on the proof that it never can (closedOnProof) and is not swept. */
 function closedWhileLive(p: Proposal, now: number): boolean {
   const evidence = p.result?.evidence;
   return (
@@ -215,8 +218,18 @@ function closedWhileLive(p: Proposal, now: number): boolean {
     p.result?.reason === 'venue_failed_nothing_moved' &&
     typeof evidence?.handle === 'string' &&
     !isRelaySwap(p) &&
+    !closedOnProof(p) &&
     now < Date.parse(evidence.deadline ?? '') + RELAY_DEADLINE_GRACE_MS
   );
+}
+
+/* A row closed as "nothing moved" that carries the verifier's nonce: every writer of that verdict
+   on such a row went through transferFate (src/relay/fate.ts), or through the ledger once the
+   grace was behind it, so the transfer can never run and no later read reopens the row. Without
+   this a re-check that could not read the chain's clock a minute later read "can still run" off
+   this Mac's clock and grace, and put a closed row back to open. */
+function closedOnProof(p: Proposal): boolean {
+  return p.result?.reason === 'venue_failed_nothing_moved' && decodeNonce(p.result?.evidence?.nonce) !== null;
 }
 
 /* A 1Click row closed as failed with no cause recorded, from before causes were written. The card
@@ -228,27 +241,61 @@ function closedUnknown(p: Proposal): boolean {
   return p.status === 'failed' && typeof evidence?.handle === 'string' && !isRelaySwap(p) && !isReasonCode(p.result?.reason) && evidence.providerStage !== 'REFUNDED';
 }
 
-/* A ROW WAITING OUT A SIGNED TRANSFER'S DEADLINE is asked again on the first ledger refresh after
-   the deadline and its grace, not on the ten-minute sweep, so the card that says "a few minutes"
-   closes near the minute it can. Once per row: a row that answer does not settle is the sweep's.
+/* A SIGNED TRANSFER'S DEADLINE PASSING IS THE MOMENT "NOTHING MOVED" CAN BECOME TRUE, so an open
+   row carrying one is asked again from that minute, not on the ten-minute sweep. On each ledger
+   refresh (every fifteen seconds in the app), a row whose deadline has passed by this clock is
+   re-checked at most every FATE_RECHECK_MS, until it closes or until its deadline, the grace and
+   DEADLINE_WATCH_TAIL_MS are behind it; after that it is the sweep's. The re-check is
+   reconcileProposal's own, so the verdict is transferFate's (src/relay/fate.ts): NEAR's final
+   block past the deadline with the nonce unspent closes the row within half a minute of the chain
+   showing it. On 2026-09-25 proposal 6bb6783b waited ten and a half minutes past its deadline for
+   the sweep, and until then only its FAILED sibling (venue_failed_watching) was asked early, once,
+   after the grace; that one still is, however late the refresh.
+   A row still inside its rail is the rail's: it is `executing` and in ctx.inflight, and the
+   intents-native rail's watch closes it on the same proof (src/rails/intents-native.ts). A row
+   with a pocket was filled and is the balance's (watchSettling). A row is asked once at a time.
    One listener per proposal service, like watchSettling (src/proposals/execute.ts). */
 const watchingDeadlines = new WeakSet<PCtx>();
+
+// How long past the deadline and its grace the watch keeps asking before the sweep has the row.
+const DEADLINE_WATCH_TAIL_MS = 2 * 60_000;
 
 export function watchDeadlines(ctx: PCtx): void {
   if (watchingDeadlines.has(ctx) || ctx.ledger.onRefresh === undefined) return;
   watchingDeadlines.add(ctx);
-  const asked = new Set<string>();
+  const askedAt = new Map<string, number>();
+  const asking = new Set<string>();
   ctx.ledger.onRefresh(() => {
     const now = Date.now();
     for (const p of ctx.store.list()) {
-      if (p.status !== 'needs_reconciliation' || p.result?.reason !== 'venue_failed_watching' || asked.has(p.id)) continue;
-      if (!(now >= Date.parse(p.result.evidence?.deadline ?? '') + RELAY_DEADLINE_GRACE_MS)) continue;
-      asked.add(p.id);
-      void reconcileProposal(ctx, p.id, true).catch((err: unknown) => {
-        ctx.audit.append('error', `${p.id}: the re-check after its deadline failed: ${errText(err)}`, { id: p.id });
-      });
+      if (p.status !== 'needs_reconciliation') {
+        askedAt.delete(p.id);
+        continue;
+      }
+      if (asking.has(p.id) || ctx.inflight.has(p.id) || !deadlineDue(ctx, p, now, askedAt.get(p.id))) continue;
+      askedAt.set(p.id, now);
+      asking.add(p.id);
+      void reconcileProposal(ctx, p.id, true)
+        .catch((err: unknown) => {
+          ctx.audit.append('error', `${p.id}: the re-check after its deadline failed: ${errText(err)}`, { id: p.id });
+        })
+        .finally(() => asking.delete(p.id));
     }
   });
+}
+
+// Whether the deadline watch asks about this open row now, `last` being when it last did.
+function deadlineDue(ctx: PCtx, p: Proposal, now: number, last: number | undefined): boolean {
+  const evidence = p.result?.evidence;
+  const deadline = Date.parse(evidence?.deadline ?? '');
+  if (!Number.isFinite(deadline) || now < deadline) return false;
+  if (last !== undefined && now - last < FATE_RECHECK_MS) return false;
+  // A transfer the verifier answers for, with somebody to ask about the row: every half minute.
+  const askable = ctx.rails.relay !== undefined && (isRelaySwap(p) || ctx.oneClickStatus !== undefined);
+  if (askable && p.pocket === undefined && decodeNonce(evidence?.nonce) !== null && now < deadline + RELAY_DEADLINE_GRACE_MS + DEADLINE_WATCH_TAIL_MS) {
+    return true;
+  }
+  return last === undefined && p.result?.reason === 'venue_failed_watching' && now >= deadline + RELAY_DEADLINE_GRACE_MS;
 }
 
 // Where the venue's word starts inside a detail, behind the rail's own sentence. Written by
@@ -323,6 +370,8 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
       ...(p.result?.reason === undefined ? {} : { reason: p.result.reason }),
     };
     if (next === p.status && stable(result) === stable(current)) return p;
+    const meanwhile = movedMeanwhile(ctx, p);
+    if (meanwhile !== null) return meanwhile;
     ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by 1Click: ${next}. ${said}`, { id: p.id, handle, status: status.status });
     // Something changed, so a row a person had filed comes back to the dock with the new word.
     const { acknowledgedAt: _filed, ...unfiled } = p;
@@ -336,8 +385,10 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
   };
 
   /* A SIGNED TRANSFER CAN RUN UNTIL ITS DEADLINE, and the verifier judges that by its own clock,
-     so "nothing moved" is only an answer once the deadline and the skew grace are behind us
-     (the audit of 2026-09-23). A row with no deadline on it never signed a transfer. */
+     so by THIS clock "nothing moved" is only an answer once the deadline and the skew grace are
+     behind us (the audit of 2026-09-23). That is the rule for the ledger's word; the verifier's
+     word on the nonce is judged on the chain's own clock, sooner (transferFate). A row with no
+     deadline on it never signed a transfer. */
   const deadline = Date.parse(p.result?.evidence?.deadline ?? '');
   const canStillRun = Number.isFinite(deadline) && Date.now() < deadline + RELAY_DEADLINE_GRACE_MS;
 
@@ -400,14 +451,27 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
     const amount = status.refundedAmount ?? '0';
     const why = status.refundReason ?? 'not given';
     // A row closed on a transfer that can no longer run stays closed: FAILED is the word it was closed on.
-    if (p.status === 'failed' && !canStillRun && (p.result?.reason === 'venue_failed_nothing_moved' || p.result?.reason === 'refunded')) return p;
+    if (p.status === 'failed' && (!canStillRun || closedOnProof(p)) && (p.result?.reason === 'venue_failed_nothing_moved' || p.result?.reason === 'refunded')) return p;
     /* THE TRANSFER ITSELF, BEFORE ANY WORDS. A transfer hash the venue reports, then the verifier's
-       word on the signed transfer's nonce, then the intents ledger, which shows a transfer to this
-       handle or does not. "Held by 1Click under handle" was written here over three swaps whose
-       transfer never ran (2026-09-23) and kept those rows open for good. */
+       word on the signed transfer's nonce (transferFate: it ran, it has not, or it never can), then
+       the intents ledger, which shows a transfer to this handle or does not. "Held by 1Click under
+       handle" was written here over three swaps whose transfer never ran (2026-09-23) and kept those
+       rows open for good. */
     const hashes = status.nearTxHashes.length + status.originTxHashes.length + status.destinationTxHashes.length;
-    const { moved: ledger, byNonce } = hashes > 0 ? { moved: 'yes' as const, byNonce: false } : await transferRan(ctx, p, handle);
-    if (ledger === 'no' && canStillRun) {
+    const fate: TransferFate | null = hashes > 0 ? null : await fateOf(ctx, p);
+    if (fate?.ran === false && fate.dead !== null) {
+      return write(
+        'failed',
+        false,
+        `1click reported FAILED (reason ${why}), and the deadline (${new Date(deadline).toISOString()}) passed with the signed transfer never run${proofWords(fate.dead)}: ` +
+          'the verifier shows its nonce unspent, so nothing left the balance.',
+        'venue_failed_nothing_moved',
+      );
+    }
+    const byNonce = fate !== null && fate.ran !== null;
+    const ledger = hashes > 0 || fate?.ran === true ? 'yes' : fate?.ran === false ? 'no' : await ledgerSaysMoved(ctx, p, handle);
+    // The nonce unspent with the deadline still ahead on the chain's clock, or no ledger transfer yet inside the grace.
+    if (ledger === 'no' && (byNonce ? Number.isFinite(deadline) : canStillRun)) {
       const notYet = byNonce ? 'the verifier shows the signed transfer has not run (its nonce is unspent)' : `the intents ledger shows no transfer to handle ${handle} yet`;
       return write(
         'needs_reconciliation',
@@ -417,13 +481,11 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
       );
     }
     // An unspent nonce with no deadline on the row says nothing about when it stops; it waits below.
-    if (ledger === 'no' && (!byNonce || Number.isFinite(deadline))) {
+    if (ledger === 'no' && !byNonce) {
       return write(
         'failed',
         false,
-        byNonce
-          ? `1click reported FAILED (reason ${why}), and the deadline (${new Date(deadline).toISOString()}) passed with the signed transfer never run: the verifier shows its nonce unspent, so nothing left the balance.`
-          : `1click reported FAILED (reason ${why}) and the intents ledger shows no transfer to handle ${handle} since this move was approved, so nothing left the balance.`,
+        `1click reported FAILED (reason ${why}) and the intents ledger shows no transfer to handle ${handle} since this move was approved, so nothing left the balance.`,
         'venue_failed_nothing_moved',
       );
     }
@@ -446,14 +508,16 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
   const said = status.found ? status.status : 'an address 1Click does not recognise yet';
   /* Unless the transfer this row signed is past its deadline and never ran: then the input never
      left and now never can, whatever 1Click is still waiting for. A submit 1Click refused, or a
-     transfer it never ran, ends here rather than reading unconfirmed for a week. */
-  if (typeof p.result?.evidence?.nonce === 'string' && Number.isFinite(deadline) && !canStillRun) {
-    const { moved, byNonce } = await transferRan(ctx, p, handle);
-    if (moved === 'no' && byNonce) {
+     transfer it never ran, ends here rather than reading unconfirmed for a week; on the chain's
+     own clock that is the first re-check after the deadline, not five minutes of grace later. */
+  if (typeof p.result?.evidence?.nonce === 'string' && Number.isFinite(deadline)) {
+    const fate = await fateOf(ctx, p);
+    if (fate.ran === false && fate.dead !== null) {
       return write(
         'failed',
         false,
-        `1click reports ${said}, and the deadline (${new Date(deadline).toISOString()}) passed with the signed transfer never run: the verifier shows its nonce unspent, so nothing left the balance.`,
+        `1click reports ${said}, and the deadline (${new Date(deadline).toISOString()}) passed with the signed transfer never run${proofWords(fate.dead)}: ` +
+          'the verifier shows its nonce unspent, so nothing left the balance.',
         'venue_failed_nothing_moved',
       );
     }
@@ -461,26 +525,24 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
   return write(p.status, p.result?.ok ?? false, `1click has not settled this: it reports ${said}. Nothing has changed; check again shortly.`);
 }
 
-/* Whether the signed transfer ran: the verifier's word on its nonce when the row carries one and
-   that word still means something, else the intents ledger below. `byNonce` says which answered,
-   because only the nonce can tell "not yet" from "never" once the deadline has passed. */
-async function transferRan(ctx: PCtx, p: Proposal, handle: string): Promise<{ moved: 'yes' | 'no' | 'unknown'; byNonce: boolean }> {
+/* The verifier's word on the transfer this row signed (src/relay/fate.ts), asked by the account
+   that signed it. A row with no nonce or no account, or an app with no verifier read wired, has
+   nobody to ask, which is no answer. */
+async function fateOf(ctx: PCtx, p: Proposal): Promise<TransferFate> {
   const nonce = p.result?.evidence?.nonce;
-  const verifier = ctx.rails.relay;
   const from = (p.draft as { from?: unknown }).from;
-  // Only an intents nonce is the verifier's to answer for; a Hyperliquid row's nonce is the venue's.
-  const parts = decodeNonce(nonce);
-  if (parts !== null && verifier !== undefined && typeof from === 'string' && from !== '') {
-    const spent = await verifier.nonceUsed(from.toLowerCase(), nonce as string);
-    if (spent === true) return { moved: 'yes', byNonce: true };
-    /* Unspent is an answer only while the verifier still keeps the nonce: inside the nonce's own
-       life and under a salt it has not retired, after which a spent nonce is pruned and reads
-       unspent too (garbage_collector.rs). Otherwise the ledger decides. */
-    if (spent === false && Date.now() <= parts.deadlineMs && (await verifier.saltValid?.(parts.salt)) === true) {
-      return { moved: 'no', byNonce: true };
-    }
-  }
-  return { moved: await ledgerSaysMoved(ctx, p, handle), byNonce: false };
+  if (ctx.rails.relay === undefined || typeof nonce !== 'string' || typeof from !== 'string' || from === '') return { ran: null, why: 'no_answer' };
+  return transferFate(ctx.rails.relay, { account: from, nonce, deadline: p.result?.evidence?.deadline });
+}
+
+/* THE ROW AS IT WAS READ, OR NOT AT ALL. A re-check writes what it heard over the row it read
+   before asking, and asking takes seconds; the deadline watch, the sweep, a click and the balance
+   settle can each move the row meanwhile. A row whose status moved keeps its new word, so a slower
+   re-check never puts a row the proof closed back to open. Returns the row as it stands, or null
+   when this re-check may write. */
+function movedMeanwhile(ctx: PCtx, p: Proposal): Proposal | null {
+  const now = ctx.store.get(p.id);
+  return now !== undefined && now.status !== p.status ? now : null;
 }
 
 /* What the account's intents ledger says about a transfer to this handle since the move was
@@ -559,12 +621,9 @@ export async function reconcileProposal(ctx: PCtx, id: string, quiet = false): P
   return persist(ctx, { ...p, result: { ok: false, detail, txids, ...(p.result?.evidence === undefined ? {} : { evidence: p.result.evidence }) } });
 }
 
-/* Clock skew between this Mac and the verifier's block time. The deadline in the payload was
-   minted from this clock, and the contract judges it by its own; a deadline is only called
-   passed once it is this far behind, so an intent the contract could still execute is never
-   called dead. Five minutes is far past any skew a Mac that syncs its clock carries, and the
-   cost of waiting it out is a failed row that reads unconfirmed for five minutes longer. */
-export const RELAY_DEADLINE_GRACE_MS = 5 * 60_000;
+// The skew grace lives with the proof it is the fallback of (src/relay/fate.ts); rails.ts and the
+// tests have always read it from here.
+export { RELAY_DEADLINE_GRACE_MS };
 
 /* Re-check one relay swap: by the intent hash at the relay, then by the nonce at the verifier.
      SETTLED at the relay        -> a row with a pocket stays until the balance shows the rise,
@@ -573,19 +632,22 @@ export const RELAY_DEADLINE_GRACE_MS = 5 * 60_000;
                                     shows the nonce spent, and stays until it does: the relay's
                                     word is checked against the chain, never taken alone.
      PENDING, TX_BROADCASTED     -> stays, with the relay's word on the row so the card moves.
-     anything else, or no hash   -> the verifier, by the nonce:
+     anything else, or no hash   -> the verifier, by the nonce (transferFate, src/relay/fate.ts):
        spent                     -> the swap executed; executed without a pocket, else stays until
                                     the balance shows it.
        unspent, deadline passed  -> failed, nothing left the balance: an intent past its deadline
                                     cannot execute, and the nonce outlives the deadline by a week
                                     (NONCE_LIFE_AFTER_DEADLINE_MS) so "unspent" is still an answer.
-                                    Past the nonce's OWN life, or once the verifier has retired the
-                                    nonce's salt (a spent nonce with a retired salt is pruned too,
-                                    garbage_collector.rs), "unspent" says nothing and no verdict is
-                                    written: the balance read decides.
+                                    Passed on NEAR's own clock when its final block can be read,
+                                    else by this clock and the grace. Past the nonce's OWN life, or
+                                    once the verifier has retired the nonce's salt (a spent nonce
+                                    with a retired salt is pruned too, garbage_collector.rs),
+                                    "unspent" says nothing and no verdict is written: the balance
+                                    read decides.
        unspent, inside deadline  -> stays; it can still execute until the deadline.
        no answer                 -> stays, and says the verifier did not answer.
-   Nothing here signs or publishes: the reads are the relay's status and two verifier views. */
+   Nothing here signs or publishes: the reads are the relay's status, NEAR's final block and two
+   verifier views. */
 async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
   const lookup: RelayLookup | undefined = ctx.rails.relay;
   const evidence0 = p.result?.evidence ?? {};
@@ -611,6 +673,8 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
       ...(p.result?.reason === undefined ? {} : { reason: p.result.reason }),
     };
     if (next === p.status && stable(result) === stable(current)) return p;
+    const meanwhile = movedMeanwhile(ctx, p);
+    if (meanwhile !== null) return meanwhile;
     ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by the relay and the verifier: ${next}. ${said}`, {
       id: p.id,
       ...(handle === null ? {} : { handle }),
@@ -679,11 +743,36 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
   if (nonce === null) {
     return write(p.status, p.result?.ok ?? false, `No nonce was recorded for this swap, so the verifier cannot be asked whether it executed.${relayNote} Compare the balances before and after on the receipt.`);
   }
-  const used = await lookup.nonceUsed(account, nonce);
-  if (used === null) {
-    return write(p.status, p.result?.ok ?? false, `The verifier did not answer whether the nonce was spent.${relayNote} Nothing has changed; check again shortly.`);
+  const fate = await transferFate(lookup, { account, nonce, deadline: evidence0.deadline });
+  if (fate.ran === null) {
+    const keep = (said: string, then: string): Proposal => write(p.status, p.result?.ok ?? false, `${said}${relayNote} ${then}`);
+    const shortly = 'Nothing has changed; check again shortly.';
+    const compare = 'Compare the balances before and after on the receipt.';
+    switch (fate.why) {
+      case 'no_answer':
+        return keep('The verifier did not answer whether the nonce was spent.', shortly);
+      // Past the nonce's own life the contract may have pruned it, and "unspent" then says nothing
+      // about whether it executed. No verdict is written on an answer that can no longer be one.
+      case 'nonce_life_over':
+        return keep(
+          `The verifier shows the nonce unspent, and the nonce's own life (${new Date(fate.nonceLifeMs ?? Number.NaN).toISOString()}) has passed, so the verifier may have forgotten it either way.`,
+          compare,
+        );
+      /* The salt the nonce carries has to still be one the verifier accepts, or "unspent" is the
+         answer a pruned nonce gives whether or not it executed: the contract clears a spent nonce
+         once its salt is rotated out. A retired salt, or no answer, is no verdict. */
+      case 'salt_no_answer':
+        return keep('The verifier shows the nonce unspent and did not answer whether that salt is still valid, so this app cannot say whether the swap executed.', shortly);
+      case 'salt_retired':
+        return keep(
+          'The verifier shows the nonce unspent, and the verifier has retired the key of that price window (the nonce\'s salt), after which a spent nonce reads as unspent too.',
+          'The balance read decides: compare the balances before and after on the receipt.',
+        );
+      case 'not_the_verifiers':
+        return keep('The nonce on this row is not one the verifier keeps, so it cannot be asked whether the swap executed.', compare);
+    }
   }
-  if (used) {
+  if (fate.ran) {
     if (p.pocket !== undefined) {
       return write('needs_reconciliation', false, `The verifier shows the nonce spent, so the swap executed.${relayNote} The balance has not shown the rise yet; it is re-read on every refresh and this settles itself when it does.`);
     }
@@ -698,36 +787,13 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
   if (!Number.isFinite(deadlineMs)) {
     return write(p.status, p.result?.ok ?? false, `The verifier shows the nonce unspent and no deadline was recorded, so this app cannot say whether it can still execute.${relayNote} Compare the balances before and after on the receipt.`);
   }
-  // Past the nonce's own life the contract may have pruned it, and "unspent" then says nothing
-  // about whether it executed. No verdict is written on an answer that can no longer be one.
-  const parts = decodeNonce(nonce);
-  if (parts !== null && Date.now() > parts.deadlineMs) {
-    return write(
-      p.status,
-      p.result?.ok ?? false,
-      `The verifier shows the nonce unspent, and the nonce's own life (${new Date(parts.deadlineMs).toISOString()}) has passed, so the verifier may have forgotten it either way.${relayNote} Compare the balances before and after on the receipt.`,
-    );
-  }
-  if (Date.now() < deadlineMs + RELAY_DEADLINE_GRACE_MS) {
+  if (fate.dead === null) {
     return write(p.status, p.result?.ok ?? false, `The verifier shows the nonce unspent and the deadline (${new Date(deadlineMs).toISOString()}) has not passed, so the swap can still execute.${relayNote} Nothing has changed; check again after the deadline.`);
-  }
-  /* The salt the nonce carries has to still be one the verifier accepts, or "unspent" is the
-     answer a pruned nonce gives whether or not it executed: the contract clears a spent nonce
-     once its salt is rotated out. A retired salt, or no answer, is no verdict. */
-  const saltValid = parts === null || lookup.saltValid === undefined ? null : await lookup.saltValid(parts.salt);
-  if (saltValid !== true) {
-    return write(
-      p.status,
-      p.result?.ok ?? false,
-      saltValid === null
-        ? `The verifier shows the nonce unspent and did not answer whether that salt is still valid, so this app cannot say whether the swap executed.${relayNote} Nothing has changed; check again shortly.`
-        : `The verifier shows the nonce unspent, and the verifier has retired the key of that price window (the nonce's salt), after which a spent nonce reads as unspent too.${relayNote} The balance read decides: compare the balances before and after on the receipt.`,
-    );
   }
   return write(
     'failed',
     false,
-    `The deadline (${new Date(deadlineMs).toISOString()}) passed with the nonce unspent, so the swap never executed and nothing left the balance.${relayNote} Ask for a fresh price to try again.`,
+    `The deadline (${new Date(deadlineMs).toISOString()}) passed with the nonce unspent${proofWords(fate.dead)}, so the swap never executed and nothing left the balance.${relayNote} Ask for a fresh price to try again.`,
     'venue_failed_nothing_moved',
   );
 }

@@ -39,6 +39,7 @@ import { createLivePreflight } from '../preflight/live.ts';
 import { relayClient } from '../relay/client.ts';
 import type { RelayStatus } from '../relay/client.ts';
 import { liveVerifier } from '../relay/verifier.ts';
+import type { FinalBlock } from '../relay/verifier.ts';
 import { HYPERLIQUID_PERPS_COUNTERPARTY, tradeRail } from '../trade/rail.ts';
 import type { TradeDeps } from '../trade/rail.ts';
 import { isRailDraft, isRailKind, RAIL_KINDS } from './kinds.ts';
@@ -77,11 +78,15 @@ export type SwapLookup = {
 
 export type RelayLookup = {
   status(intentHash: string): Promise<RelayStatus>;
-  nonceUsed(accountId: string, nonce: string): Promise<boolean | null>;
+  // `at` is a block hash to read at, for the proof that a signed transfer never ran (src/relay/fate.ts).
+  nonceUsed(accountId: string, nonce: string, at?: string): Promise<boolean | null>;
   // Whether the verifier still accepts a nonce's salt. Optional the safe way round: a lookup
   // without it reads as "no answer", and no failed verdict is ever written on an unspent nonce
   // without one (src/proposals/reconcile.ts). The live registry always carries it.
-  saltValid?(salt: Uint8Array): Promise<boolean | null>;
+  saltValid?(salt: Uint8Array, at?: string): Promise<boolean | null>;
+  // NEAR's newest final block and its time, the clock the verifier judges a deadline by. Optional
+  // the safe way too: without it a deadline is only called passed by this clock and the grace.
+  finalBlock?(): Promise<FinalBlock | null>;
 };
 
 export type RailDeps = {
@@ -174,8 +179,9 @@ export function createRails(deps: RailDeps): RailRegistry {
     kinds: () => [...RAIL_KINDS],
     relay: {
       status: (intentHash) => relayReads.status(intentHash),
-      nonceUsed: (accountId, nonce) => verifier.nonceUsed(accountId, nonce),
-      saltValid: (salt) => verifier.isValidSalt?.(salt) ?? Promise.resolve(null),
+      nonceUsed: (accountId, nonce, at) => verifier.nonceUsed(accountId, nonce, at),
+      saltValid: (salt, at) => verifier.isValidSalt?.(salt, at) ?? Promise.resolve(null),
+      finalBlock: () => verifier.finalBlock?.() ?? Promise.resolve(null),
     },
     swap: {
       tokens: () => client.tokens(),
