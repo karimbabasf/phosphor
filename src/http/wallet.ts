@@ -110,6 +110,7 @@ const REFUSALS: Record<string, string> = {
   no_mnemonic: 'This wallet has no recovery phrase, because it was imported from private keys.',
   damaged: 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.',
   locked_out: 'Too many tries. Wait a moment and try again.',
+  busy: 'A move is being sent, so the wallet stays open until it has finished.',
 };
 
 export function refusal(code: string, retryInSec?: number): JsonBody {
@@ -172,9 +173,29 @@ export async function handleUnlock(ctx: Ctx, req: http.IncomingMessage, res: htt
   }
 }
 
+/* WHEN IDLE: the lock the shell takes on its way out (a quit, an update's relaunch, the window
+   closing). Every signer reads the key through keystore.keys(), which throws once it is locked,
+   so a lock landing under a move being sent cuts it partway, which is what the drain in
+   src/shutdown.ts exists to prevent. The shell used to read /api/health and then lock, two
+   requests with room between them for a move to start. The check and the lock are one
+   synchronous step here, and a refused lock is the stop's: the unlocked key lives only in this
+   process and goes with it. A store that cannot be read cannot say nothing is being sent, so it
+   refuses too. The person's own Lock never asks this and is never refused. */
+function sending(ctx: Ctx): number {
+  try {
+    return ctx.proposals.list().filter((p) => p.status === 'executing').length;
+  } catch {
+    return -1;
+  }
+}
+
 export async function handleLock(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/lock', req, res);
   if (body === null) return;
+  if (body.whenIdle === true) {
+    const executing = sending(ctx);
+    if (executing !== 0) return sendJson(res, 200, { ...refusal('busy'), executing: executing < 0 ? null : executing });
+  }
   const was = ctx.keystore.lock();
   if (was) ctx.audit.append('app_start', `the wallet was locked (${String(body.reason ?? 'on demand')})`, { reason: body.reason ?? 'on_demand' });
   announce(ctx);

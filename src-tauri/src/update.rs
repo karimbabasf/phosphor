@@ -38,7 +38,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::backend::{configured_port, get_health, post_lock, Backend};
+use crate::backend::{configured_port, get_health, Backend};
 
 pub const CHECK_ID: &str = "check-for-updates";
 const WINDOW: &str = "update";
@@ -296,15 +296,16 @@ async fn install(app: &AppHandle, update: &Update) -> Result<(), String> {
 
     update.install(bytes).map_err(|e| format!("the app folder could not be replaced: {e}"))?;
 
-    // The new bundle is on disk. Lock the wallet with a reason the audit log keeps, then stop
-    // the backend the graceful way (Backend::kill drains a write in flight before SIGKILL).
+    // The new bundle is on disk. Lock the wallet with a reason the audit log keeps, unless a move
+    // started during the download (the check above is long past), then stop the backend the
+    // graceful way (Backend::kill drains a write in flight before SIGKILL). The same stop a quit
+    // takes: Backend::lock_and_stop.
     let token = app.state::<crate::Secrets>().0.token.clone();
-    let _ = post_lock(port, &token, "installing an update");
-    app.state::<Backend>().kill();
+    app.state::<Backend>().lock_and_stop(Some(port), &token, "installing an update", |_| {});
     Ok(())
 }
 
-fn port_for(app: &AppHandle) -> Result<u16, String> {
+pub(crate) fn port_for(app: &AppHandle) -> Result<u16, String> {
     let payload = crate::payload_dir(app)?;
     let data = crate::data_dir(app)?;
     Ok(configured_port(&payload, &data))

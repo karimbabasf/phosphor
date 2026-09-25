@@ -450,21 +450,78 @@ pub fn get_root(port: u16) -> Option<String> {
     request(port, &head, None)
 }
 
-/// Ask the backend to lock the wallet. Best effort by design: the route belongs to the custody
-/// track and may not exist yet, so a 404 here is a perfectly good outcome. What matters is that
-/// closing the window is not silently a wallet left open.
+/// What the backend said to a lock asked for when idle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LockAnswer {
+    Locked,
+    /// A move is being sent. The wallet stays open for it, and the stop takes the key.
+    Busy,
+    /// No answer, or one this shell does not read (the drain's 503, a timeout, nothing on the
+    /// port). Nothing is known to be locked.
+    Unanswered,
+}
+
+/// Ask the backend to lock the wallet, unless a move is being sent. The backend decides in one
+/// step (POST /api/lock with whenIdle, src/http/wallet.ts), because every signer reads the key
+/// through keystore.keys(), which throws once it is locked: a lock landing under a move cuts it
+/// partway. Every lock this shell sends is this one. It used to read /api/health first and then
+/// lock, and a move could start between the two requests.
 ///
-/// `reason` lands in the audit line. "the window closed" and "the machine slept" are different
+/// `reason` lands in the audit line. "the window closed" and "installing an update" are different
 /// facts about the same lock, and a log that records only that a lock happened cannot answer the
 /// question somebody asks it afterwards, which is why.
-pub fn post_lock(port: u16, token: &str, reason: &str) -> bool {
-    let body = serde_json::json!({ "token": token, "reason": reason }).to_string();
+pub fn post_lock_when_idle(port: u16, token: &str, reason: &str) -> LockAnswer {
+    let body = serde_json::json!({ "token": token, "reason": reason, "whenIdle": true }).to_string();
     let head = format!(
         "POST /api/lock HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
-    request(port, &head, Some(&body)).is_some_and(|out| out.starts_with("HTTP/1.1 2"))
+    request(port, &head, Some(&body)).map_or(LockAnswer::Unanswered, |raw| lock_answer(&raw))
+}
+
+/// A refusal is a 200 with `ok: false` (the custody routes answer rather than error), so the
+/// status line alone cannot say locked; the body does.
+fn lock_answer(raw: &str) -> LockAnswer {
+    if !raw.starts_with("HTTP/1.1 200") {
+        return LockAnswer::Unanswered;
+    }
+    let body = raw.split_once("\r\n\r\n").map(|(_, b)| b.trim()).unwrap_or("");
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else {
+        return LockAnswer::Unanswered;
+    };
+    match (parsed.get("ok").and_then(|v| v.as_bool()), parsed.get("code").and_then(|v| v.as_str())) {
+        (Some(true), _) => LockAnswer::Locked,
+        (Some(false), Some("busy")) => LockAnswer::Busy,
+        _ => LockAnswer::Unanswered,
+    }
+}
+
+/// The parts of a stop on purpose, each reported as it happens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StopStep {
+    Locked,
+    /// The lock was refused: a move is being sent, and the drain lets it finish.
+    Sending,
+    Stopping,
+    Stopped,
+}
+
+impl Backend {
+    /// The one way this shell stops its backend on purpose, for a quit from the sheet and an
+    /// update's relaunch alike: the wallet locked when nothing is being sent, then the kill and
+    /// its drain. A lock refused or unanswered is left to the stop, which takes the only unlocked
+    /// copy of the key with the process. `step` hears each part as it happens.
+    pub fn lock_and_stop(&self, port: Option<u16>, token: &str, reason: &str, mut step: impl FnMut(StopStep)) {
+        match port.map(|port| post_lock_when_idle(port, token, reason)) {
+            Some(LockAnswer::Locked) => step(StopStep::Locked),
+            Some(LockAnswer::Busy) => step(StopStep::Sending),
+            _ => {}
+        }
+        step(StopStep::Stopping);
+        self.kill();
+        step(StopStep::Stopped);
+    }
 }
 
 /// The value of one header in a raw HTTP response, lowercased by the caller.
@@ -827,5 +884,76 @@ mod tests {
         let _ = watched.wait();
         assert!(!seen, "its parent is this test and alive, so it is watched, not lost");
         assert!(left_alone, "stop_orphan proves before it signals, and this one is never proved");
+    }
+
+    /// A backend that answers one request with `reply` and hands back what it was sent.
+    fn lock_stub(reply: &'static str) -> (u16, std::sync::mpsc::Receiver<String>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+        let port = listener.local_addr().expect("read the bound port").port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Some(Ok(mut sock)) = listener.incoming().next() else { return };
+            let _ = sock.set_read_timeout(Some(Duration::from_millis(300)));
+            let mut seen = Vec::new();
+            let mut scratch = [0u8; 4096];
+            while let Ok(n) = sock.read(&mut scratch) {
+                if n == 0 {
+                    break;
+                }
+                seen.extend_from_slice(&scratch[..n]);
+                if String::from_utf8_lossy(&seen).contains("}") {
+                    break;
+                }
+            }
+            let _ = tx.send(String::from_utf8_lossy(&seen).into_owned());
+            let _ = sock.write_all(reply.as_bytes());
+            let _ = sock.shutdown(Shutdown::Both);
+        });
+        (port, rx)
+    }
+
+    const LOCKED: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}";
+    const BUSY: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":false,\"error\":\"A move is being sent.\",\"code\":\"busy\",\"executing\":1}";
+    const DRAINING: &str = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"error\":\"Phosphor is shutting down\"}";
+
+    #[test]
+    fn every_lock_asks_the_backend_to_decide_and_only_its_yes_is_locked() {
+        let (port, sent) = lock_stub(LOCKED);
+        assert_eq!(post_lock_when_idle(port, "t0k", "quitting"), LockAnswer::Locked);
+        let request = sent.recv_timeout(Duration::from_secs(2)).expect("the lock reached the backend");
+        assert!(request.starts_with("POST /api/lock HTTP/1.1\r\n"), "{request}");
+        assert!(request.contains(&format!("Origin: http://127.0.0.1:{port}")), "the custody guard checks the origin");
+        assert!(request.contains("\"whenIdle\":true"), "the backend decides, in one step: {request}");
+        assert!(request.contains("\"reason\":\"quitting\"") && request.contains("\"token\":\"t0k\""), "{request}");
+
+        let (port, _) = lock_stub(BUSY);
+        assert_eq!(post_lock_when_idle(port, "t0k", "quitting"), LockAnswer::Busy, "a 200 that refuses is not a lock");
+        let (port, _) = lock_stub(DRAINING);
+        assert_eq!(post_lock_when_idle(port, "t0k", "quitting"), LockAnswer::Unanswered, "the drain takes no writes");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+        let empty = listener.local_addr().expect("read the bound port").port();
+        drop(listener);
+        assert_eq!(post_lock_when_idle(empty, "t0k", "quitting"), LockAnswer::Unanswered);
+        assert_eq!(lock_answer("HTTP/1.1 200 OK\r\n\r\n{\"ok\":false,\"code\":\"wrong_password\"}"), LockAnswer::Unanswered);
+        assert_eq!(lock_answer("HTTP/1.1 200 OK\r\n\r\nnot json"), LockAnswer::Unanswered);
+    }
+
+    #[test]
+    fn a_stop_on_purpose_reports_each_part_as_it_happens() {
+        let heard = |port: Option<u16>| {
+            let backend = Backend::new();
+            let mut steps = Vec::new();
+            backend.lock_and_stop(port, "t0k", "quitting", |step| steps.push(step));
+            steps
+        };
+        let (locked, _) = lock_stub(LOCKED);
+        assert_eq!(heard(Some(locked)), vec![StopStep::Locked, StopStep::Stopping, StopStep::Stopped]);
+        let (busy, _) = lock_stub(BUSY);
+        assert_eq!(
+            heard(Some(busy)),
+            vec![StopStep::Sending, StopStep::Stopping, StopStep::Stopped],
+            "a move being sent keeps the key until the stop"
+        );
+        assert_eq!(heard(None), vec![StopStep::Stopping, StopStep::Stopped], "no port, no lock asked for, and still a stop");
     }
 }

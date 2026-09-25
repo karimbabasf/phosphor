@@ -45,9 +45,9 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use backend::{
-    configured_port, get_health, get_root, identity_matches, is_orphaned_backend, node_binary, phosphor_is_listening,
-    pid_file_path, post_lock, read_pid_file, request_within, spawn_backend, stop_orphan, write_pid_file, Backend,
-    Handshake, PidRecord,
+    configured_port, get_root, identity_matches, is_orphaned_backend, node_binary, phosphor_is_listening,
+    pid_file_path, post_lock_when_idle, read_pid_file, request_within, spawn_backend, stop_orphan, write_pid_file, Backend,
+    Handshake, PidRecord, StopStep,
 };
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
@@ -694,53 +694,17 @@ fn page_answer(json: &str) -> PageAnswer {
     }
 }
 
-/// What the shell tells the Shutting down card, one word as each step lands and never before.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum QuitLanded {
-    Locked,
-    /// A move is being sent, so the lock is left to the stop.
-    Sending,
-    Stopping,
-    Stopped,
-}
-
-impl QuitLanded {
-    fn word(self) -> &'static str {
-        match self {
-            QuitLanded::Locked => "locked",
-            QuitLanded::Sending => "sending",
-            QuitLanded::Stopping => "stopping",
-            QuitLanded::Stopped => "stopped",
-        }
-    }
-}
-
-/// The word as a script no page can fail on: a page without the hook, or one that throws, takes
-/// nothing, and the shell goes on either way.
-fn landed_script(step: QuitLanded) -> String {
-    format!(
-        "(function(){{try{{if(typeof window.__phosphorQuitStep==='function')window.__phosphorQuitStep('{}');}}catch(e){{}}}})()",
-        step.word()
-    )
-}
-
-/// Whether the wallet is locked before the backend stops. Only when the backend has said nothing
-/// is being sent: every signer reads the key through keystore.keys(), which throws once it is
-/// locked, and the drain in src/shutdown.ts exists so a rail mid-flight finishes. Otherwise the
-/// lock is the stop's own: the unlocked key lives only in the backend's memory and goes with it.
-#[derive(Debug, PartialEq)]
-enum LockFirst {
-    Lock,
-    Sending,
-    Leave,
-}
-
-fn lock_first(executing: Option<u64>) -> LockFirst {
-    match executing {
-        Some(0) => LockFirst::Lock,
-        Some(_) => LockFirst::Sending,
-        None => LockFirst::Leave,
-    }
+/// Each part of the stop as the Shutting down card takes it: one word, sent as the part happens
+/// and never before, in a script no page can fail on (a page without the hook, or one that
+/// throws, takes nothing, and the shell goes on either way).
+fn landed_script(step: StopStep) -> String {
+    let word = match step {
+        StopStep::Locked => "locked",
+        StopStep::Sending => "sending",
+        StopStep::Stopping => "stopping",
+        StopStep::Stopped => "stopped",
+    };
+    format!("(function(){{try{{if(typeof window.__phosphorQuitStep==='function')window.__phosphorQuitStep('{word}');}}catch(e){{}}}})()")
 }
 
 /// While the card is still drawing its last step, the exit waits. Any other answer, or none at
@@ -815,30 +779,18 @@ fn ask_page(app: tauri::AppHandle, control: WebviewWindow) {
 /// while the app stops under it: Backend::kill used to run first in RunEvent::ExitRequested, on
 /// the main thread, and the window sat frozen on its last frame for as long as the drain took.
 ///
-/// The same kill with the same drain, told to the page a step at a time, and only once each step
-/// has happened. The run loop's kill still covers every other exit and finds nothing left to
-/// stop after this one. A second Cmd+Q meanwhile is app.exit at once; its kill waits on this
-/// one's lock (Backend::stop_child), so the backend is never left behind either way.
+/// The stop is the update relaunch's too (Backend::lock_and_stop): the wallet locked only if the
+/// backend, in one step of its own, finds nothing being sent, then the same kill with the same
+/// drain, each part told to the page as it happens. The run loop's kill still covers every other
+/// exit and finds nothing left to stop after this one. A second Cmd+Q meanwhile is app.exit at
+/// once; its kill waits on this one's lock (Backend::stop_child), so the backend is never left
+/// behind either way.
 fn shut_down(app: &tauri::AppHandle, control: &WebviewWindow) {
     app.state::<Quitting>().confirmed.store(true, Ordering::SeqCst);
-    let tell = |step: QuitLanded| {
+    let token = app.state::<Secrets>().0.token.clone();
+    app.state::<Backend>().lock_and_stop(update::port_for(app).ok(), &token, "quitting", |step| {
         let _ = control.eval(&landed_script(step));
-    };
-    let port = payload_dir(app).ok().zip(data_dir(app).ok()).map(|(payload, data)| configured_port(&payload, &data));
-    let executing = port.and_then(get_health).and_then(|health| health.get("executing").and_then(|n| n.as_u64()));
-    match (lock_first(executing), port) {
-        (LockFirst::Lock, Some(port)) => {
-            let token = app.state::<Secrets>().0.token.clone();
-            if post_lock(port, &token, "quitting") {
-                tell(QuitLanded::Locked);
-            }
-        }
-        (LockFirst::Sending, _) => tell(QuitLanded::Sending),
-        _ => {}
-    }
-    tell(QuitLanded::Stopping);
-    app.state::<Backend>().kill();
-    tell(QuitLanded::Stopped);
+    });
 
     let deadline = Instant::now() + QUIT_PAINT;
     loop {
@@ -901,9 +853,10 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
 
     /* Closing the window locks the wallet. The window is the only surface that can approve
        anything, so a window that is gone and a wallet that is open is a combination with no
-       legitimate use. The route belongs to the custody track and may not exist yet; a 404 is a
-       perfectly good outcome and this stays best effort either way. Off the main thread, because
-       it is a socket round trip and this handler runs on the event loop. */
+       legitimate use. Unless a move is being sent: past a quit's yes the window can be closed
+       while the drain lets that move finish, and a lock under it would cut it partway, so this
+       is the when-idle lock too and the stop takes the key. Best effort either way. Off the main
+       thread, because it is a socket round trip and this handler runs on the event loop. */
     let lock_token = app.state::<Secrets>().0.token.clone();
     let quit_app = app.clone();
     window.on_window_event(move |event| {
@@ -919,7 +872,7 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
         if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
             let token = lock_token.clone();
             std::thread::spawn(move || {
-                let _ = post_lock(port, &token, "the control window was closed");
+                let _ = post_lock_when_idle(port, &token, "the control window was closed");
             });
         }
     });
@@ -1662,22 +1615,13 @@ mod tests {
     }
 
     #[test]
-    fn the_wallet_is_locked_first_only_when_nothing_is_being_sent() {
-        use super::{lock_first, LockFirst};
-        assert_eq!(lock_first(Some(0)), LockFirst::Lock, "nothing in flight: lock, then stop");
-        assert_eq!(lock_first(Some(1)), LockFirst::Sending, "a rail mid-flight may still need the key");
-        assert_eq!(lock_first(Some(3)), LockFirst::Sending);
-        assert_eq!(lock_first(None), LockFirst::Leave, "no answer is not a reason to lock under a move");
-    }
-
-    #[test]
     fn each_step_reaches_the_page_as_a_word_it_cannot_fail_on() {
-        use super::{landed_script, QuitLanded};
+        use super::{landed_script, StopStep};
         for (step, word) in [
-            (QuitLanded::Locked, "locked"),
-            (QuitLanded::Sending, "sending"),
-            (QuitLanded::Stopping, "stopping"),
-            (QuitLanded::Stopped, "stopped"),
+            (StopStep::Locked, "locked"),
+            (StopStep::Sending, "sending"),
+            (StopStep::Stopping, "stopping"),
+            (StopStep::Stopped, "stopped"),
         ] {
             let script = landed_script(step);
             assert!(script.contains(&format!("window.__phosphorQuitStep('{word}')")), "{script}");
