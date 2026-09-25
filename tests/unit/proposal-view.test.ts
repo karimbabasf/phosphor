@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { Proposal, RailEvidence, WriteDraft } from '../../src/types.ts';
-import { KIND_STAGES, LEGACY_SWAP_PATH, ONECLICK_STAGES, RELAY_STAGES, STAGE_COPY, STAGE_LABEL, TERMINAL, TYPICAL_SEC, proposalView, sentenceOf } from '../../src/proposals/view.ts';
+import { KIND_STAGES, LEGACY_SWAP_PATH, ONECLICK_STAGES, RAIL_STAGE_COPY, RAIL_STAGE_LABEL, RELAY_STAGES, STAGE_COPY, STAGE_LABEL, TERMINAL, TYPICAL_SEC, proposalView, sentenceOf } from '../../src/proposals/view.ts';
 import type { ProposalStage } from '../../src/proposals/view.ts';
 
 const CREATED = '2026-09-18T10:00:00.000Z';
@@ -148,13 +148,49 @@ test('waitingOn names a person, the wallet, the transfer or the venue, and nobod
 /* THE VOCABULARY IS THE APP'S, NEVER A VENDOR'S. "The router is working" was 1Click's phase
    wearing a sentence, and a person who has never heard of a router read it as a fault. Every
    label and every line of copy is checked against the words a vendor or an engineer would use. */
+const BANNED_WORDS = /router|1click|solver|nonce|intent hash|verifier|token_diff|bps|EIP|ERC|base units|RPC|[A-Z]{3,}_[A-Z]/;
+
 test('no stage label or copy carries a vendor word, a code or an engineer word', () => {
-  const banned = /router|1click|solver|nonce|intent hash|verifier|token_diff|bps|EIP|ERC|base units|RPC|[A-Z]{3,}_[A-Z]/;
   for (const stage of Object.keys(STAGE_LABEL) as ProposalStage[]) {
-    assert.doesNotMatch(STAGE_LABEL[stage], banned, `label of ${stage}`);
-    assert.doesNotMatch(STAGE_COPY[stage], banned, `copy of ${stage}`);
+    assert.doesNotMatch(STAGE_LABEL[stage], BANNED_WORDS, `label of ${stage}`);
+    assert.doesNotMatch(STAGE_COPY[stage], BANNED_WORDS, `copy of ${stage}`);
     assert.ok(/^[A-Z]/.test(STAGE_LABEL[stage]) && !STAGE_LABEL[stage].endsWith('.'), `label of ${stage} is a headline`);
     assert.ok(STAGE_COPY[stage].endsWith('.'), `copy of ${stage} is a sentence`);
+  }
+});
+
+/* A 1CLICK SWAP INSIDE NEAR INTENTS MOVES NOTHING UNTIL IT FILLS: its signed transfer and the
+   solver's fill are one transaction, so while 1Click is PROCESSING it the card says it is waiting
+   for a buyer. On 2026-09-25 (proposal 6bb6783b) it said "On its way" over a transfer that never
+   ran. Every move whose money does leave the verifier keeps the stock words. */
+const NATIVE_SWAP: Partial<Proposal> = { kind: 'swap', draft: { ...(RELAY_SWAP.draft as Extract<WriteDraft, { kind: 'swap' }>), venue: 'intents-native' } };
+
+test('a swap that stays inside NEAR Intents is finding a match while 1Click processes it, never money on its way', () => {
+  const view = withProvider('executing', 'PROCESSING', NATIVE_SWAP);
+  assert.equal(view.stage, 'PROCESSING', 'the vendor word is still the stage');
+  assert.equal(view.stageLabel, 'Finding a match');
+  assert.equal(view.stageCopy, 'Sent. Waiting for a buyer to take it. Nothing leaves your balance until it fills.');
+  assert.doesNotMatch(`${view.stageLabel} ${view.stageCopy}`, /moving|on its way|across/i);
+});
+
+test('a move whose money does leave the verifier keeps its PROCESSING words', () => {
+  // A deposit to Hyperliquid, and a retired chain-side 1Click swap that history still renders.
+  const chainSide = { kind: 'swap', draft: { ...RELAY_SWAP.draft, venue: 'oneclick' } } as unknown as Partial<Proposal>;
+  for (const view of [CASES.PROCESSING(), withProvider('executing', 'PROCESSING', chainSide)]) {
+    assert.equal(view.stageLabel, 'On its way');
+    assert.equal(view.stageCopy, 'The transfer is moving your money across. Nothing for you to do.');
+  }
+});
+
+test('a rail\'s own words for a stage keep the table\'s rules', () => {
+  for (const [rail, labels] of Object.entries(RAIL_STAGE_LABEL)) {
+    for (const [stage, label] of Object.entries(labels ?? {})) {
+      const copy = RAIL_STAGE_COPY[rail as keyof typeof RAIL_STAGE_COPY]?.[stage as ProposalStage] ?? '';
+      assert.doesNotMatch(label, BANNED_WORDS, `${rail} label of ${stage}`);
+      assert.doesNotMatch(copy, BANNED_WORDS, `${rail} copy of ${stage}`);
+      assert.ok(/^[A-Z]/.test(label) && !label.endsWith('.'), `${rail} label of ${stage} is a headline`);
+      assert.ok(copy.endsWith('.'), `${rail} copy of ${stage} is a sentence`);
+    }
   }
 });
 
