@@ -98,15 +98,16 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
     code ??= cause;
   };
   /* A COIN NAMED WITHOUT ITS NETWORK is picked by the rule swap_quote uses (pickSwapSides): the
-     coin spent is the one the balance holds; the coin bought is the one held, else the one that
-     would get the most of up to four asked, else the one on NEAR. A coin named with its network is
+     coin spent is the one the balance holds; the coin bought is its NEAR version, else the one held
+     the most of, else the one that would get the most of up to four asked. A coin named with its network is
      taken as named. With no venue list to read (a hand-built registry) the bought coin is on the
      sold coin's network, as it always was. */
+  const BOUGHT = 'the coin you buy';
   let chain = params.chain ?? '';
   let toChain = params.toChain ?? '';
   let fromAsked = params.fromSymbol;
   let toAsked = params.toSymbol;
-  if (params.chain === undefined || params.toChain === undefined) {
+  if (params.chain === undefined || params.toChain === undefined || params.toSymbol.includes(':')) {
     const sideAsk = (asked: string, named: string | undefined) => (named === undefined ? { asked } : { asked, chain: named });
     let picked: Awaited<ReturnType<typeof pickSwapSides>> = null;
     try {
@@ -118,14 +119,20 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
       if (pick.kind === 'one') return pick.side;
       if (pick.kind === 'many') {
         const named = pick.candidates.map((c) => `${c.symbol} on ${c.network} (${c.assetId})`).join(', ');
-        refuse(`Several coins go by that name for ${which}: ${named}. Name one by its id.`, 'ambiguous_asset');
+        refuse(
+          which === BOUGHT
+            ? `Several different coins go by that name for ${which}: ${named}. Ask which coin they mean, never which network, and name it by its id.`
+            : `Several coins go by that name for ${which}: ${named}. Name one by its id.`,
+          'ambiguous_asset',
+        );
       } else refuse(pick.why, pick.code ?? 'unsupported_asset');
       return null;
     };
     if (picked !== null) {
       const sold = params.chain === undefined ? settle(picked.from, 'the coin you sell') : null;
       if (sold !== null) [chain, fromAsked] = [sold.network, draftSymbolOf(sold, picked.list)];
-      const bought = params.toChain === undefined ? settle(picked.to, 'the coin you buy') : null;
+      const bought = params.toChain === undefined ? settle(picked.to, BOUGHT) : null;
+      if (params.toChain !== undefined && picked.to.kind === 'none' && picked.to.lookalike === true) refuse(picked.to.why, 'unsupported_asset');
       if (bought !== null) [toChain, toAsked] = [bought.network, draftSymbolOf(bought, picked.list)];
     } else if (problems.length === 0) {
       if (params.chain === undefined) refuse('Say which network the coin you sell is on, such as near or eth.', 'invalid_request');

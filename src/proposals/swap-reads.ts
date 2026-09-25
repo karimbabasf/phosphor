@@ -10,7 +10,7 @@ import type { OneClickToken, TokensFile } from '../intents.ts';
 import { amountAsk, baseUnitsToDecimal, decimalToBaseUnits, heldSymbol, oneLine, resolveAsset } from '../intents.ts';
 import { MAX_LIMIT } from '../chainscan/index.ts';
 import type { IntentsActivity, IntentsRow } from '../chainscan/index.ts';
-import { networkByVenue } from '../rails/intents-address.ts';
+import { networkByVenue, spendNetworkOf } from '../rails/intents-address.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, INTENTS_NATIVE_VENUE } from '../rails/intents-native.ts';
 import { INTENTS_RELAY_COUNTERPARTY, INTENTS_RELAY_VENUE } from '../rails/intents-relay.ts';
 import { reasonOf } from '../rails/reasons.ts';
@@ -55,6 +55,7 @@ export type SwapQuoteReply = {
   sentence: string | null;
   details: string | null;
   candidates?: SwapSide[]; // on ambiguous_asset: name one of these by its assetId
+  picked?: string; // the version of the bought coin the app took, when its name fits several
 };
 
 export type SwapLedgerMove = { amount: string; at: string | null; counterparty: string | null; hash: string };
@@ -96,7 +97,7 @@ function heldOf(ctx: PCtx): Map<string, string> {
 export type SidePick =
   | { kind: 'one'; side: SwapSide }
   | { kind: 'many'; candidates: SwapSide[] }
-  | { kind: 'none'; why: string; code?: ReasonCode };
+  | { kind: 'none'; why: string; code?: ReasonCode; lookalike?: true };
 export type SideAsk = { asked: string; chain?: string };
 
 /* THE TWO COINS OF A SWAP, one rule for swap_quote and propose_swap alike (2026-09-23: "swap my
@@ -104,11 +105,30 @@ export type SideAsk = { asked: string; chain?: string };
    A ticker alone that several coins carry:
      spent  -> the one the balance holds is the only answer; none held is nothing to spend, and
                several held is the question.
-     bought -> the one the balance holds; otherwise pickBoughtByQuote asks what each would get.
+     bought -> its NEAR version (nearVersion), so one coin never sits in the balance as several
+               tiles (Karim, 2026-09-25: "default to near intents always"); with none, the one
+               held the most of; otherwise pickBoughtByQuote asks what each would get.
    What is still several after this is the candidates the next step, or the person, chooses from. */
-export function resolveSwapSides(from: SideAsk, to: SideAsk, list: OneClickToken[], held: ReadonlySet<string>): { from: SidePick; to: SidePick } {
+export function resolveSwapSides(from: SideAsk, to: SideAsk, list: OneClickToken[], held: ReadonlyMap<string, string>): { from: SidePick; to: SidePick } {
   const named = (ask: SideAsk): boolean => (ask.chain?.trim() ?? '') !== '';
   const picks = { from: resolveSide(from.asked, from.chain, list), to: resolveSide(to.asked, to.chain, list) };
+  // A lookalike of a pinned coin is never bought, however it was named: by ticker, network or id.
+  const real = (s: SwapSide): boolean => {
+    const pin = NEAR_VERSION_PINNED[s.symbol.toUpperCase()];
+    return s.network !== 'near' || pin === undefined || s.assetId === pin;
+  };
+  const fake = { kind: 'none', why: `that ${oneLine(to.asked, 60)} on NEAR is not the real coin of that name`, lookalike: true } as const;
+  if (picks.to.kind === 'one' && !real(picks.to.side)) picks.to = fake;
+  if (picks.to.kind === 'many') {
+    const kept = picks.to.candidates.filter(real);
+    picks.to = kept.length === 0 ? fake : kept.length === 1 ? { kind: 'one', side: kept[0]! } : { kind: 'many', candidates: kept };
+  }
+  if (picks.to.kind === 'many' && !named(to)) {
+    const near = nearVersion(picks.to.candidates, list);
+    const owned = picks.to.candidates.filter((s) => held.has(s.assetId)).sort((a, b) => Number(held.get(b.assetId)) - Number(held.get(a.assetId)));
+    if (near !== null) picks.to = { kind: 'one', side: near };
+    else if (owned.length > 0) picks.to = { kind: 'one', side: owned[0]! };
+  }
   if (picks.from.kind === 'many' && !named(from)) {
     const owned = picks.from.candidates.filter((s) => held.has(s.assetId));
     picks.from =
@@ -118,12 +138,34 @@ export function resolveSwapSides(from: SideAsk, to: SideAsk, list: OneClickToken
           ? { kind: 'many', candidates: owned }
           : { kind: 'none', why: `the balance holds no ${oneLine(from.asked, 20)}`, code: 'insufficient_balance' };
   }
-  if (picks.to.kind === 'many' && !named(to)) {
-    const owned = picks.to.candidates.filter((s) => held.has(s.assetId));
-    if (owned.length === 1) picks.to = { kind: 'one', side: owned[0]! };
-    else if (owned.length > 1) picks.to = { kind: 'many', candidates: owned };
-  }
   return picks;
+}
+
+/* THE NEAR VERSION OF A COIN WORTH FAKING, by exact id: the near rows of data/tokens.json. The
+   venue's list is read over the network and its tickers are its own word, so for these the NEAR
+   version is this id and nothing else, and any other coin on near under the ticker is a
+   lookalike, never bought. */
+export const NEAR_VERSION_PINNED: Readonly<Record<string, string>> = {
+  USDT: 'nep141:usdt.tether-token.near',
+  USDC: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+  WNEAR: 'nep141:wrap.near',
+};
+
+/* Which of one ticker's versions is on NEAR. A pinned ticker is its pinned id. Any other ticker
+   is its one near version, and only when the listed prices say it is the same coin as the rest
+   (SAME_COIN_BAND): two near versions, or a price that disagrees, is no pick. */
+function nearVersion(candidates: SwapSide[], list: OneClickToken[]): SwapSide | null {
+  const pinned = NEAR_VERSION_PINNED[(candidates[0]?.symbol ?? '').toUpperCase()];
+  if (pinned !== undefined) return candidates.find((s) => s.assetId === pinned) ?? null;
+  const nears = candidates.filter((s) => s.network === 'near');
+  if (nears.length !== 1) return null;
+  const priceOf = (s: SwapSide): number | null => {
+    const p = list.find((t) => t.assetId === s.assetId)?.price;
+    return typeof p === 'number' && Number.isFinite(p) && p > 0 ? p : null;
+  };
+  const prices = candidates.map(priceOf).filter((x): x is number => x !== null);
+  const agree = prices.length === 0 || (priceOf(nears[0]!) !== null && Math.max(...prices) <= Math.min(...prices) * (1 + SAME_COIN_BAND));
+  return agree ? nears[0]! : null;
 }
 
 /* THE COIN BOUGHT, BY WHAT IT WOULD GET. Up to BUY_PROBE_MAX of the candidates are asked for a
@@ -133,7 +175,7 @@ export function resolveSwapSides(from: SideAsk, to: SideAsk, list: OneClickToken
    the most units went to the cheaper one whatever the person meant (audit, finding 8). So listed
    prices more than SAME_COIN_BAND apart are two coins and a question, answered with the ids; an
    unpriced candidate is compared only when none is priced, by units. No answer at all is the one
-   on near; no near one either is the question. Nothing is signed or filed. The four asked are the
+   on near; no near one either is no price. Nothing is signed or filed. The four asked are the
    one on near, the one on the spent coin's network, then Ethereum, Base, Arbitrum and Solana, then
    the list's own order; the same order breaks a tie. */
 export const BUY_PROBE_MAX = 4;
@@ -173,7 +215,8 @@ export async function pickBoughtByQuote(
     if (won === null || value > won.value) won = { side: asked[i]!, value };
   }
   if (won !== null) return { kind: 'one', side: won.side };
-  return near !== undefined ? { kind: 'one', side: near } : { kind: 'many', candidates };
+  // Versions of one coin that nobody prices are no price, never a question about networks.
+  return near !== undefined ? { kind: 'one', side: near } : { kind: 'none', why: `nobody offered a price for ${oneLine(candidates[0]?.symbol ?? 'that coin', 20)} on any network right now`, code: 'no_price' };
 }
 
 // What one candidate would get for the amount sold, in its own units, or null: no price, a refusal,
@@ -222,7 +265,7 @@ export async function pickSwapSides(
   const lookup = ctx.rails.swap;
   if (lookup === undefined) return null;
   const list = await lookup.tokens();
-  const picks = resolveSwapSides(from, to, list, new Set(heldOf(ctx).keys()));
+  const picks = resolveSwapSides(from, to, list, heldOf(ctx));
   if (picks.from.kind === 'one' && picks.to.kind === 'many' && (to.chain?.trim() ?? '') === '') {
     const account = ourIntentsAddress(ctx, []);
     picks.to = await pickBoughtByQuote(ctx, picks.from.side, probeAmount(ctx, picks.from.side, amountIn), picks.to.candidates, account, list);
@@ -235,6 +278,17 @@ export async function pickSwapSides(
 export function draftSymbolOf(side: SwapSide, list: OneClickToken[]): string {
   const twins = list.filter((t) => t.symbol.toUpperCase() === side.symbol.toUpperCase() && sideOf(t)?.network === side.network);
   return twins.length === 1 ? side.symbol : side.assetId;
+}
+
+// The version of the bought coin the app took, in words: null when the ticker is one coin.
+function pickedWords(side: SwapSide, list: OneClickToken[]): string | null {
+  const versions = list.filter((t) => t.symbol.toUpperCase() === side.symbol.toUpperCase() && sideOf(t) !== null).length;
+  if (versions < 2) return null;
+  const coin = side.symbol.toUpperCase() === 'WNEAR' ? 'NEAR' : side.symbol;
+  const on = `${coin} on ${spendNetworkOf(side.network)?.name ?? side.network}`;
+  return side.network === 'near'
+    ? `${on}, its NEAR version: the app keeps every coin bought on NEAR, so the balance holds one ${coin}.`
+    : `${on}: no NEAR version is offered, so the app took the one already held, or the one that gets the most.`;
 }
 
 /* A coin named by ticker, by ticker and chain, or by id. A ticker alone across every chain is one
@@ -432,9 +486,11 @@ export async function swapAssets(ctx: PCtx, params: SwapAssetsParams): Promise<S
       liquidity: liquidity[i] ?? 'unknown',
     };
   });
-  const note = probing
-    ? 'liquidity is a dry quote for a few dollars of USDC, asked just now. Name a coin by its assetId to be exact.'
-    : 'liquidity is what a recent quote found, or unknown. Search for one coin to have each result asked about.';
+  const note =
+    (probing
+      ? 'liquidity is a dry quote for a few dollars of USDC, asked just now.'
+      : 'liquidity is what a recent quote found, or unknown. Search for one coin to have each result asked about.') +
+    ' A coin listed on several networks is one coin: to buy it, name the symbol alone and the app takes its NEAR version. Never ask which network.';
   return { ok: true, assets, total: found.length, note };
 }
 
@@ -456,7 +512,7 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
     { asked: String(params.fromSymbol ?? ''), chain: params.chain },
     { asked: String(params.toSymbol ?? ''), chain: params.toChain },
     list,
-    new Set(heldOf(ctx).keys()),
+    heldOf(ctx),
   );
   const fromPick = sides.from;
   let toPick = sides.to;
@@ -473,7 +529,10 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
         from: fromPick.kind === 'one' ? fromPick.side : null,
         to: toPick.kind === 'one' ? toPick.side : null,
         reason: 'ambiguous_asset',
-        sentence: `Several coins go by that name, so there is no quote yet. Say which one you mean for ${which}: each is listed with its network.`,
+        sentence:
+          pick === toPick
+            ? 'Several different coins go by that name, so there is no quote yet. Ask which coin they mean, never which network.'
+            : `Several coins go by that name, so there is no quote yet. Say which one you mean for ${which}: each is listed with its network.`,
         candidates: pick.candidates,
       };
     }
@@ -495,6 +554,7 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
   if (fromPick.kind !== 'one' || toPick.kind !== 'one') return { ...none, from: null, to: null, reason: 'invalid_request', sentence: plain('invalid_request', null) };
   const from = fromPick.side;
   const to = toPick.side;
+  const picked = (params.toChain?.trim() ?? '') === '' ? pickedWords(to, list) : null;
 
   const problems: string[] = [];
   const account = ourIntentsAddress(ctx, problems);
@@ -534,6 +594,7 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
       reason: short ? 'insufficient_balance' : null,
       sentence: short ? reasonSentence('insufficient_balance', words) : null,
       details: null,
+      ...(picked === null ? {} : { picked }),
     };
   } catch (err) {
     const code = reasonOf(err) ?? 'simulation_failed';
