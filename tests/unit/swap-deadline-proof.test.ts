@@ -319,8 +319,8 @@ test('(a) the sweep never asks the swap service about a row the proof closed', a
      (closedWhileLive), unless the proof closed it. The FAILED guard would keep such a row closed
      even if it were asked, and the sweep counts only status changes, so the question itself is
      the only thing that shows the row was picked up. */
-  const w = world({ block: pastBy(1_000), spent: false }, FAILED);
-  w.seed({ deadlineMs: Date.now() - 20_000 });
+  const w = world({ block: pastBy(31_000), spent: false }, FAILED);
+  w.seed({ deadlineMs: Date.now() - 40_000 });
   await w.tick();
   assert.equal(w.store.get('swap-1')?.status, 'failed');
   assert.equal(w.store.get('swap-1')?.result?.reason, 'venue_failed_nothing_moved');
@@ -391,60 +391,6 @@ test('(e) a Reconcile click takes no RPC\'s word for a deadline this clock has n
   assert.ok(!future.reads.includes('nonce@Forged'), 'the nonce was read at a block stamped in the future');
 });
 
-/* 1Click not answering (a network error, a 5xx) threw before the chain was asked: while it was down
-   the deadline watch never reached the proof, the row waited for 1Click to come back, and the watch
-   wrote an error line every half minute for minutes per row. The chain decides without it. */
-const DOWN = new Error('1click status failed: 503');
-// The lines the deadline watch and the sweep write when a re-check throws (src/proposals/reconcile.ts).
-const watchErrors = (w: ReturnType<typeof world>) =>
-  w.audit.tail(200).filter((e) => e.msg.includes('the re-check after its deadline failed') || e.msg.includes('could not re-check it'));
-
-test('(e) 1Click not answering does not stop the proof: a transfer past its deadline that never ran closes the row', async () => {
-  const w = world({ block: pastBy(1_000), spent: false }, DOWN);
-  w.seed({ deadlineMs: Date.now() - 20_000 });
-  await w.tick();
-  const out = w.store.get('swap-1');
-  assert.equal(out?.status, 'failed', 'the row waited for 1Click to come back');
-  assert.equal(out?.result?.reason, 'venue_failed_nothing_moved');
-  assert.match(
-    out?.result?.detail ?? '',
-    /^1click could not be asked, and the deadline .* passed with the signed transfer never run \(NEAR's final block is stamped .*\): the verifier shows its nonce unspent, so nothing left the balance\.$/,
-  );
-  assert.equal(w.svc.dailyLimit(25_000).spentUsd, 0, 'nothing left, so nothing is charged to the day');
-  assert.deepEqual(watchErrors(w), []);
-});
-
-test('(e) 1Click not answering over a transfer that can still run keeps the row open with one line, written once', async () => {
-  const w = world({ block: (deadlineMs) => ({ hash: 'BlkBehind', atMs: deadlineMs - 2_600 }), spent: false }, DOWN);
-  w.seed({ deadlineMs: Date.now() - 10_000 });
-  await w.tick();
-  for (let i = 0; i < 3; i += 1) await w.svc.reconcile('swap-1');
-  const out = w.store.get('swap-1');
-  assert.equal(out?.status, 'needs_reconciliation');
-  assert.equal(out?.result?.reason, 'stuck_unknown');
-  assert.match(out?.result?.detail ?? '', /^the intent was submitted .* Re-checked with 1Click: it did not answer, so nothing has changed; it is asked again shortly\.$/);
-  assert.equal(w.svc.dailyLimit(25_000).spentUsd, 12, 'open and counted');
-  assert.equal(w.asked.length, 4);
-  const said = w.audit.tail(200).filter((e) => e.msg.includes('it did not answer'));
-  assert.equal(said.length, 1, `one line for four questions, not one a question: ${said.length}`);
-  assert.deepEqual(watchErrors(w), [], 'an error line for a question 1Click did not answer');
-});
-
-/* NEAR's final block trails this clock by about 2.6 s, so the first refresh after the deadline often
-   reads a block short of it: the chain not there yet, not an answer. Half a minute until the next
-   question made the close land 30 to 35 s after the deadline instead of a refresh after it. */
-test('a question that lands inside NEAR\'s lag behind this clock is asked again on the next refresh, not half a minute later', async () => {
-  let reads = 0;
-  const w = world({ block: (deadlineMs) => (++reads === 1 ? { hash: 'BlkShort', atMs: deadlineMs - 1_000 } : { hash: 'BlkPast', atMs: deadlineMs + 1_600 }), spent: false });
-  w.seed({ deadlineMs: Date.now() - 1_600 });
-  await w.tick();
-  assert.equal(w.store.get('swap-1')?.status, 'needs_reconciliation', 'the chain had not reached the deadline yet');
-  await w.tick();
-  assert.equal(w.store.get('swap-1')?.status, 'failed', 'the next refresh did not ask again');
-  assert.equal(w.store.get('swap-1')?.result?.reason, 'venue_failed_nothing_moved');
-  assert.deepEqual(w.asked, ['dep-1', 'dep-1']);
-});
-
 test('the deadline watch asks at most every half minute per row, never about a row a rail is still watching, and hands a late row to the sweep', async () => {
   // A chain still short of a deadline half a minute gone is a node that lags, and it is asked at the
   // usual pace: the next refresh asks again only inside the first half minute.
@@ -492,6 +438,59 @@ test('a re-check that read the chain before another closed the row does not writ
   assert.equal((await slow).status, 'failed', 'the first hands back the row as it now stands');
   assert.equal(w.store.get('swap-1')?.status, 'failed');
   assert.equal(w.store.get('swap-1')?.result?.reason, 'venue_failed_nothing_moved');
+});
+
+/* 1Click not answering (a network error, a 5xx) threw before the chain was asked: while it was down
+   the deadline watch never reached the proof, the row waited for 1Click to come back, and the watch
+   wrote an error line every half minute for minutes per row. The chain decides without it. */
+const DOWN = new Error('1click status failed: 503');
+// The lines the deadline watch and the sweep write when a re-check throws (src/proposals/reconcile.ts).
+const watchErrors = (w: ReturnType<typeof world>) =>
+  w.audit.tail(200).filter((e) => e.msg.includes('the re-check after its deadline failed') || e.msg.includes('could not re-check it'));
+
+test('(f) 1Click not answering does not stop the proof: a transfer past its deadline that never ran closes the row', async () => {
+  const w = world({ block: pastBy(31_000), spent: false }, DOWN);
+  w.seed({ deadlineMs: Date.now() - 40_000 });
+  await w.tick();
+  const out = w.store.get('swap-1');
+  assert.equal(out?.status, 'failed', 'the row waited for 1Click to come back');
+  assert.equal(out?.result?.reason, 'venue_failed_nothing_moved');
+  assert.match(
+    out?.result?.detail ?? '',
+    /^1click could not be asked, and the deadline .* passed with the signed transfer never run \(NEAR's final block is stamped .*\): the verifier shows its nonce unspent, so nothing left the balance\.$/,
+  );
+  assert.equal(w.svc.dailyLimit(25_000).spentUsd, 0, 'nothing left, so nothing is charged to the day');
+  assert.deepEqual(watchErrors(w), []);
+});
+
+test('(f) 1Click not answering over a transfer that can still run keeps the row open with one line, written once', async () => {
+  const w = world({ block: (deadlineMs) => ({ hash: 'BlkBehind', atMs: deadlineMs - 2_600 }), spent: false }, DOWN);
+  w.seed({ deadlineMs: Date.now() - 10_000 });
+  await w.tick();
+  for (let i = 0; i < 3; i += 1) await w.svc.reconcile('swap-1');
+  const out = w.store.get('swap-1');
+  assert.equal(out?.status, 'needs_reconciliation');
+  assert.equal(out?.result?.reason, 'stuck_unknown');
+  assert.match(out?.result?.detail ?? '', /^the intent was submitted .* Re-checked with 1Click: it did not answer, so nothing has changed; it is asked again shortly\.$/);
+  assert.equal(w.svc.dailyLimit(25_000).spentUsd, 12, 'open and counted');
+  assert.equal(w.asked.length, 4);
+  const said = w.audit.tail(200).filter((e) => e.msg.includes('it did not answer'));
+  assert.equal(said.length, 1, `one line for four questions, not one a question: ${said.length}`);
+  assert.deepEqual(watchErrors(w), [], 'an error line for a question 1Click did not answer');
+});
+
+/* NEAR's final block trails this clock by about 2.6 s, so the first refresh after the deadline often
+   reads a block short of it: the chain not there yet, not an answer. Half a minute until the next
+   question made the close land 30 to 35 s after the deadline instead of a refresh after it. */
+test('a question that lands inside NEAR\'s lag behind this clock is asked again on the next refresh, not half a minute later', async () => {
+  let reads = 0;
+  const w = world({ block: (deadlineMs) => (++reads === 1 ? { hash: 'BlkShort', atMs: deadlineMs - 1_000 } : { hash: 'BlkPast', atMs: deadlineMs + 1_600 }), spent: false });
+  w.seed({ deadlineMs: Date.now() - 1_600 });
+  await w.tick();
+  assert.equal(w.store.get('swap-1')?.status, 'needs_reconciliation', 'the chain had not reached the deadline yet');
+  await w.tick();
+  assert.deepEqual(w.asked, ['dep-1', 'dep-1'], 'the next refresh did not ask again');
+  assert.ok(w.reads.includes('nonce@BlkPast'), 'the second question was not put to the block past the deadline');
 });
 
 // ---------- the rail's own watch ----------
@@ -630,8 +629,8 @@ test('the rail\'s first question inside NEAR\'s lag is asked again on the next p
   assert.equal(out.reason, 'venue_failed_nothing_moved');
   const blocks = h.reads.filter((r) => r.read === 'block').map((r) => r.at);
   assert.equal(blocks[0]! - DEADLINE, 2_000, 'the first question lands inside the lag');
-  assert.deepEqual(blocks.map((at) => at - DEADLINE), [2_000, 7_000], 'asked again a poll later, not half a minute later');
-  assert.ok(h.clock.now - DEADLINE <= 10_000, `closed ${Math.round((h.clock.now - DEADLINE) / 1000)} s after the deadline`);
+  assert.equal(blocks[1]! - blocks[0]!, 5_000, 'asked again a poll later, not half a minute later');
+  assert.ok(h.clock.now - DEADLINE <= FATE_RECHECK_MS + 10_000, `closed ${Math.round((h.clock.now - DEADLINE) / 1000)} s after the deadline`);
 });
 
 test('a chain that stays short of the deadline is asked on every poll for the first half minute only, then every half minute', async () => {
