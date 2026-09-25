@@ -10,6 +10,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import type { Rail, RailResult, SwapDraft, SwapQuoteFacts, SwapSpend } from '../../src/types.ts';
 import type { OneClickToken } from '../../src/intents.ts';
@@ -17,8 +24,10 @@ import type { IntentsRead } from '../../src/ledger/intents.ts';
 import type { RailRegistry } from '../../src/rails/index.ts';
 import { ReasonError } from '../../src/rails/reasons.ts';
 import { NEAR_VERSION_PINNED } from '../../src/proposals/swap-reads.ts';
+import { MONEY } from '../../src/persona.ts';
 import { SELF_EVM, makeCtx, railThat } from './helpers/proposals.ts';
 
+const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const VVV = 'nep141:base-0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf.omft.near';
 const USDC = NEAR_VERSION_PINNED.USDC!;
 const USDC_BASE = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
@@ -200,4 +209,30 @@ test('a coin not held with no NEAR version is no preview until it is named by th
   assert.equal(byId.ok, true, JSON.stringify(byId));
   assert.equal(byId.preview, true);
   assert.equal(byId.from?.assetId, USDT_ETH);
+});
+
+test('swap_quote says a coin not held yet is a preview and every step is quoted first; propose_swap files a plan a step at a time', async () => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-leg-quotes-'));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(ROOT, 'src', 'mcp.ts')],
+    // Port 9 answers nothing: listing needs no app, and no call is made.
+    env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', PHOSPHOR_DATA_DIR: data, PHOSPHOR_PORT: '9', PHOSPHOR_SEAT: 'leg-quotes', PHOSPHOR_SESSION: 'leg-quotes', PHOSPHOR_SURFACE: 'chat' },
+    stderr: 'ignore',
+  });
+  const client = new Client({ name: 'leg-quotes', version: '0' });
+  await client.connect(transport);
+  const { tools } = await client.listTools();
+  await client.close();
+  fs.rmSync(data, { recursive: true, force: true });
+  const said = (name: string): string => tools.find((t) => t.name === name)?.description ?? '';
+  assert.match(said('swap_quote'), /A coin they do not hold yet is priced too, as its NEAR version, with `preview`/);
+  assert.match(said('swap_quote'), /A plan in steps: quote every step first, each for what the one before gets; one with no price means file nothing/);
+  assert.match(said('propose_swap'), /It spends only what their balance holds: in a plan of steps, file the first once swap_quote priced every step/);
+});
+
+test('the persona has every step of a plan quoted before any is filed, and says why a plan takes two steps', () => {
+  const swap = MONEY.find((line) => line.includes('run swap_quote before every propose_swap')) ?? '';
+  assert.match(swap, /on every step of a plan before filing any: if one has no price, say so and file nothing/);
+  assert.match(swap, /A plan in two steps: say why in one line, with the second fee/);
 });
