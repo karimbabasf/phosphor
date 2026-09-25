@@ -1,4 +1,4 @@
-/* The quit sheet.
+/* The quit sheet, and the way out after it.
 
    Cmd+Q, Quit Phosphor and closing the window do not quit at once: the shell
    asks this page first (src-tauri/src/main.rs, request_quit), by calling
@@ -10,23 +10,37 @@
    What the sheet says comes whole from GET /api/quit (src/http/quit.ts): one
    line per thing quitting would interrupt, in the app's words, printed as
    they come. Quit is never disabled. When a move is on its way, "Quit when it
-   lands" waits for it and then quits by itself, and it can be cancelled. */
+   lands" waits for it and then quits by itself, and it can be cancelled.
+
+   Past the yes the card stays up and becomes Shutting down, and stays until
+   the process ends: three steps, each landing when the thing it names has
+   happened, and the mark's light going out a slab at a time as they do. The
+   shell tells this page each step it takes, through
+   window.__phosphorQuitStep(word), and waits for closed before it exits. See
+   go(). */
 (function () {
   'use strict';
 
   var dom = window.PhosphorDom;
 
   // What the shell reads: idle (no sheet), asking (the sheet is up, or the
-  // window is on its way out), quit (the exit is drawn; go).
+  // card is still checking what is on its way), quit (the shell may stop the
+  // app), closed (the finished card is drawn; the shell may end the process).
   var phase = 'idle';
   var dialog = null;
   var card = null;
   var landTimer = 0;
   var leaving = false;
+  // The last report the backend answered, for a card whose own read never comes back.
+  var last = null;
   var SHOW_WITHOUT_ANSWER_MS = 600;
   var LAND_POLL_MS = 1500;
-  var LEAVE_MS = 320;
-  var EXIT_EASE = 'cubic-bezier(0.4, 0, 0.6, 1)';
+  /* The least time between two steps landing, so each is seen to land, and
+     the finished card's hold before it goes. With the card's own way out
+     (motion.js leave, 200 ms) the slowest finish after the backend stops is
+     about a second, inside the shell's QUIT_PAINT. */
+  var BEAT_MS = 180;
+  var HOLD_MS = 320;
   var ICON = { entry: 'warning', moving: 'send', held: 'waiting', plan: 'armed', agent: 'waiting', yours: 'waiting', venue: 'shield', incoming: 'deposit' };
 
   function read() {
@@ -43,8 +57,9 @@
     phase = 'asking';
     var drawn = false;
     var draw = function (report) {
-      if (phase !== 'asking' || (drawn && report === null)) return;
+      if (phase !== 'asking' || leaving || (drawn && report === null)) return;
       drawn = true;
+      if (report) last = report;
       open(report);
     };
     var late = window.setTimeout(function () { draw(null); }, SHOW_WITHOUT_ANSWER_MS);
@@ -153,6 +168,7 @@
       landTimer = window.setTimeout(function () {
         read().then(function (report) {
           if (!landTimer || phase !== 'asking') return;
+          if (report) last = report;
           if (report === null || report.moving.length === 0) go();
           else check();
         });
@@ -180,38 +196,263 @@
     else if (dialog.open) dialog.close();
   }
 
-  function reduced() {
-    var motion = window.PhosphorMotion;
-    return !!(motion && typeof motion.reduced === 'function' && motion.reduced());
+  /* ---------- Shutting down ----------
+
+     A step lands only on the thing it names, and nothing here lands on a
+     timer. The moves: the backend's own report of what is on its way, read
+     again at the yes (the sheet's, when that read does not come back). The
+     wallet: the shell's lock through the backend's route, or the backend
+     having stopped, since the unlocked key lived only in that process. The
+     backend (the step called Phosphor): Backend::kill returning. A step with
+     no answer stays where it is until the window goes.
+
+     The shell's words: locked, sending (a move is being sent, so the lock is
+     left to the stop), stopping, stopped. */
+  var STEPS = ['moves', 'lock', 'stop'];
+  var STEP_ICON = { moves: 'send', lock: 'lock', stop: 'stop' };
+  var facts = null;
+  var view = null;
+  var rows = null;
+  var mark = null;
+  var arrived = false;
+  var resting = 0;
+  var finishing = false;
+
+  function target(f) {
+    var moves = f.report === undefined ? 'active' : f.report === null ? 'unknown' : 'done';
+    var lock = f.locked || f.stopped ? 'done' : f.stopping || f.sending ? 'held' : f.handed ? 'active' : 'wait';
+    var stop = f.stopped ? 'done' : f.stopping || f.sending ? 'active' : 'wait';
+    return { moves: moves, lock: lock, stop: stop };
   }
 
-  /* The way out: the sheet goes the way every dialog goes, and the window's
-     content dims and settles back behind it onto the bare ground, where the
-     window stays until the app has closed. Under reduced motion it is gone at
-     once. The shell quits on the next read of the phase. */
+  function lands(state) {
+    return state === 'done' || state === 'unknown';
+  }
+
+  // What a step says in a state, in the sheet's own words.
+  function says(step, state, f) {
+    if (step === 'moves') {
+      var count = f.report ? f.report.count : 0;
+      if (state === 'unknown') return { name: 'Moves on their way', word: 'Not checked', note: 'Anything already sent still finishes.' };
+      if (state !== 'done') return { name: 'Moves on their way', word: 'Checking', note: '' };
+      if (count === 0) return { name: 'Nothing on its way', word: 'Checked', note: '' };
+      return {
+        name: count === 1 ? '1 move on its way' : count + ' moves on their way',
+        word: 'Noted',
+        note: count === 1 ? 'It finishes without Phosphor.' : 'They finish without Phosphor.'
+      };
+    }
+    if (step === 'lock') {
+      if (state === 'done') return { name: 'Wallet', word: 'Locked', note: '' };
+      if (state === 'held') return { name: 'Wallet', word: 'Waiting', note: 'It locks as Phosphor stops.' };
+      return { name: 'Wallet', word: state === 'active' ? 'Locking' : '', note: '' };
+    }
+    if (state === 'done') return { name: 'Phosphor', word: 'Stopped', note: '' };
+    if (state === 'active') return { name: 'Phosphor', word: 'Stopping', note: f.sending ? 'A move is being sent. It finishes first.' : '' };
+    return { name: 'Phosphor', word: '', note: '' };
+  }
+
+  /* THE WAY OUT. The card the person answered stays where it is and becomes
+     Shutting down: the sheet goes out and the steps come in on the card's own
+     change of height (motion.js swap), under the mark and the title. The
+     backend's report is read once more first, and only once it is in (or
+     SHOW_WITHOUT_ANSWER_MS has passed) does the phase say quit, so the shell
+     starts stopping things with the moves already counted. */
   function go() {
     if (phase !== 'asking' || leaving) return;
     leaving = true;
     stopLanding();
-    close();
-    var layers = Array.prototype.filter.call(document.querySelectorAll('body > #page, body > .screen'), function (node) {
-      return !node.hidden && typeof node.animate === 'function';
-    });
-    var done = function () { phase = 'quit'; };
-    if (reduced() || layers.length === 0) {
-      for (var i = 0; i < layers.length; i += 1) layers[i].style.opacity = '0';
-      done();
-      return;
+    facts = { report: undefined, handed: false, locked: false, sending: false, stopping: false, stopped: false };
+    view = { moves: 'active', lock: 'wait', stop: 'wait' };
+    dom.setAttr(document.body, 'data-quitting', 'true');
+    if (dialog) dom.setAttr(dialog, 'aria-busy', 'true');
+
+    var arrive = function () {
+      arrived = true;
+      advance();
+    };
+    var motion = window.PhosphorMotion;
+    if (card && motion && typeof motion.swap === 'function') {
+      var opts = {};
+      var out = Array.prototype.slice.call(card.children);
+      Promise.resolve(motion.swap(card, out, function () { opts.fade = shutdown(); }, opts)).then(arrive, arrive);
+    } else {
+      if (card) shutdown();
+      arrive();
     }
-    var runs = layers.map(function (node) {
-      return node.animate(
-        [{ opacity: 1, transform: 'none', filter: 'blur(0px)' }, { opacity: 0, transform: 'scale(0.985)', filter: 'blur(6px)' }],
-        { duration: LEAVE_MS, easing: EXIT_EASE, fill: 'forwards' }
-      ).finished;
+
+    var handed = false;
+    var hand = function (report) {
+      if (handed) return;
+      handed = true;
+      var known = report || last;
+      facts.report = known ? { count: Array.isArray(known.moving) ? known.moving.length : 0 } : null;
+      facts.handed = true;
+      phase = 'quit';
+      advance();
+    };
+    var late = window.setTimeout(function () { hand(null); }, SHOW_WITHOUT_ANSWER_MS);
+    read().then(function (report) {
+      window.clearTimeout(late);
+      hand(report);
     });
-    Promise.all(runs).then(done, done);
+  }
+
+  // The card's new face, drawn into the card the sheet was on. Returns what fades in.
+  function shutdown() {
+    dom.clear(card);
+    dom.setAttr(card, 'data-state', 'closing');
+    var head = dom.el('div', 'quit-head');
+    mark = dom.mark('quit-mark', 'working');
+    if (mark) {
+      mark.setAttribute('data-dark', '0');
+      head.appendChild(mark);
+    }
+    var title = dom.el('h2', 'title', 'Shutting down');
+    title.id = 'quit-title';
+    head.appendChild(title);
+    card.appendChild(head);
+
+    var list = dom.el('ol', 'quit-steps');
+    list.setAttribute('aria-live', 'polite');
+    rows = {};
+    for (var i = 0; i < STEPS.length; i += 1) {
+      var name = STEPS[i];
+      var row = dom.el('li', 'quit-step');
+      row.setAttribute('data-step', name);
+      var glyph = dom.el('span', 'quit-step-glyph');
+      glyph.setAttribute('aria-hidden', 'true');
+      var text = dom.el('span', 'quit-step-text');
+      var label = dom.el('span', 'quit-step-name');
+      var note = dom.el('span', 'quit-step-note');
+      text.appendChild(label);
+      text.appendChild(note);
+      var word = dom.el('span', 'quit-step-word');
+      row.appendChild(glyph);
+      row.appendChild(text);
+      row.appendChild(word);
+      list.appendChild(row);
+      rows[name] = { row: row, glyph: glyph, name: label, note: note, word: word, kind: '' };
+      paint(name, true);
+    }
+    card.appendChild(list);
+    // The buttons that held the focus are gone; the card keeps it inside the dialog.
+    card.tabIndex = -1;
+    if (typeof card.focus === 'function') card.focus();
+    return [head, list];
+  }
+
+  function glyphOf(state) {
+    if (state === 'done') return 'done';
+    if (state === 'active') return 'spin';
+    return 'icon';
+  }
+
+  // `built` is the first paint, which the card's own fade already brings in.
+  function paint(name, built) {
+    var refs = rows[name];
+    var state = view[name];
+    var text = says(name, state, facts);
+    refs.row.setAttribute('data-state', state);
+    var kind = glyphOf(state);
+    if (refs.kind !== kind) {
+      refs.kind = kind;
+      dom.clear(refs.glyph);
+      refs.glyph.appendChild(glyph(kind, STEP_ICON[name]));
+    }
+    change(refs.name, text.name, built);
+    change(refs.word, text.word, built);
+    dom.setText(refs.note, text.note);
+    dom.setHidden(refs.note, text.note === '');
+  }
+
+  function glyph(kind, icon) {
+    var icons = window.PhosphorIcons;
+    var draw = function (name) {
+      return icons && typeof icons.svg === 'function' ? icons.svg(name) : dom.el('span', 'icon');
+    };
+    if (kind === 'spin') return dom.el('span', 'spinner');
+    if (kind === 'done') {
+      var disc = dom.el('span', 'quit-step-done');
+      disc.appendChild(draw('check'));
+      return disc;
+    }
+    return draw(icon);
+  }
+
+  /* A word or a name that changes fades in, the way the move card's stage
+     word does: two names for one animation, alternated, since a changed
+     animation-name is what restarts it. */
+  function change(node, text, built) {
+    if (node.textContent === text) return;
+    dom.setText(node, text);
+    if (!built) node.setAttribute('data-fade', node.getAttribute('data-fade') === 'a' ? 'b' : 'a');
+  }
+
+  /* One pass toward what the facts say. A step that has not landed changes
+     at once (a spinner starts, a row waits); a landing waits out the beat
+     after the one before it, and the rows under it wait with it, so the steps
+     land in order, one at a time. */
+  function advance() {
+    if (!facts || !rows || !arrived || finishing) return;
+    var want = target(facts);
+    for (var i = 0; i < STEPS.length; i += 1) {
+      var name = STEPS[i];
+      if (view[name] === want[name]) continue;
+      if (lands(want[name])) {
+        if (resting) break;
+        rest();
+      }
+      view[name] = want[name];
+      paint(name);
+    }
+    var landed = STEPS.filter(function (step) { return lands(view[step]); }).length;
+    darken(landed);
+    if (landed === STEPS.length && !resting) finish();
+  }
+
+  function rest() {
+    resting = window.setTimeout(function () {
+      resting = 0;
+      advance();
+    }, BEAT_MS);
+  }
+
+  // One slab of the mark goes out per step landed, front to back, and the last with the close.
+  function darken(count) {
+    if (mark) mark.setAttribute('data-dark', String(count));
+  }
+
+  /* Everything has landed and been seen: the last light goes out, the card
+     is held for a read, and then it goes the way every dialog goes, the
+     scrim staying, and only then does the phase say closed. */
+  function finish() {
+    finishing = true;
+    darken(STEPS.length + 1);
+    if (dialog) dom.setAttr(dialog, 'aria-busy', null);
+    window.setTimeout(function () {
+      var done = function () {
+        if (card) card.style.visibility = 'hidden';
+        phase = 'closed';
+      };
+      var motion = window.PhosphorMotion;
+      if (card && motion && typeof motion.leave === 'function') motion.leave(card, done);
+      else done();
+    }, HOLD_MS);
+  }
+
+  function stepped(word) {
+    if (!facts) return phase;
+    if (word === 'locked') facts.locked = true;
+    else if (word === 'sending') facts.sending = true;
+    else if (word === 'stopping') facts.stopping = true;
+    else if (word === 'stopped') facts.stopped = true;
+    else return phase;
+    advance();
+    return phase;
   }
 
   window.__phosphorQuit = ask;
   window.__phosphorQuitState = function () { return phase; };
+  window.__phosphorQuitStep = stepped;
 })();
