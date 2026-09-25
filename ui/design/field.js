@@ -21,7 +21,15 @@
   'use strict';
 
   var cfg = { xGap: 10, yGap: 24, ampX: 32, ampY: 16, speedX: 0.0125, speedY: 0.005 };
-  var STROKE = 'rgba(236, 238, 241, 0.14)';
+  /* The lines are the warm light every surface lifts toward (--hi-rgb in
+     tokens.css), read once per mount, so the field sits on the charcoal in the
+     window's own light rather than a cool grey of its own. */
+  var STROKE_ALPHA = 0.14;
+  function strokeOf() {
+    var hi = '';
+    try { hi = getComputedStyle(document.documentElement).getPropertyValue('--hi-rgb').trim(); } catch (e) { hi = ''; }
+    return 'rgba(' + (hi || '255, 232, 220') + ', ' + STROKE_ALPHA + ')';
+  }
   var DPR_CAP = 2;
   var FPS = 30;
 
@@ -71,6 +79,7 @@
       canvas: canvas,
       ctx: ctx,
       clear: options.clear || null,
+      stroke: strokeOf(),
       W: 0,
       H: 0,
       lines: [],
@@ -122,7 +131,7 @@
        a bend is a bend and never a joint between two straight sticks. */
     function paint() {
       ctx.clearRect(0, 0, state.W, state.H);
-      ctx.strokeStyle = STROKE;
+      ctx.strokeStyle = state.stroke;
       ctx.lineWidth = 1;
       ctx.lineJoin = 'round';
       ctx.beginPath();
