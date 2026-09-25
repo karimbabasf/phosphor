@@ -201,7 +201,7 @@ test('a move that ends is told to the conversation that proposed it, and to no o
     });
 
     assert.equal(b.calls.notes.length, 1, 'the ending reached the driver once');
-    assert.equal(b.calls.sends.length, 0, 'an ending never starts a turn of its own');
+    assert.equal(b.calls.sends.length, 0, 'a failure is noted at once, and its wake waits out the five seconds');
     assert.match(b.calls.notes[0], /withdrawal from Hyperliquid you proposed/);
     assert.match(b.calls.notes[0], /has ended: Failed/);
     const list = (await chats(b.url)).chats as Array<Record<string, unknown>>;

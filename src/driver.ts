@@ -523,9 +523,11 @@ export function createDriver(opts: DriverOptions) {
   let held: string | null = null;
 
 
-  /* App-authored context waiting for the person's next message (src/http/ended.ts: a move that
-     ended since the last answer). It never starts a turn of its own: waking the agent for a card
-     the person can already see cost a paragraph each time (R3, five in eight minutes). */
+  /* App-authored context waiting for the next turn (src/http/ended.ts: a move that ended since
+     the last answer). It never starts a turn of its own: waking the agent for a card the person
+     can already see cost a paragraph each time (R3, five in eight minutes). The next turn is the
+     person's message, or since 2026-09-25 the one ended.ts sends when a move did not go through;
+     send puts these in front of either. */
   let notes: string[] = [];
 
   /* Set by stop(), so the exit that follows a requested stop carries no reason: the person
@@ -1027,7 +1029,7 @@ export function createDriver(opts: DriverOptions) {
     spawnChild(spec);
   }
 
-  // App context for the next turn the person sends. See `notes`.
+  // App context for the next turn. See `notes`.
   function note(text: string): void {
     if (state === 'off' || state === 'stopped' || state === 'failed') return;
     notes.push(text);
