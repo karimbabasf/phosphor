@@ -39,6 +39,9 @@ const SALT = Uint8Array.from([0x25, 0x28, 0x12, 0xb3]);
 const LONG = new Date(NOW + 72 * 3600_000).toISOString();
 const SHORT = new Date(NOW + 3 * 60_000).toISOString();
 const NONCE = buildNonce({ salt: SALT, deadlineMs: NOW + 72 * 3600_000, random: new Uint8Array(15).fill(9) });
+// The row and reconcile tests below run on the real clock, so their nonce's life counts from it. A
+// nonce dated from NOW expires on 2026-09-26 at 12:00Z and would turn those tests red on every branch.
+const LIVE_NONCE = buildNonce({ salt: SALT, deadlineMs: Date.now() + 72 * 3600_000, random: new Uint8Array(15).fill(9) });
 
 const tokens = {
   eth: {},
@@ -198,7 +201,7 @@ test('the sentence: still being checked, nothing has moved so far, and the app k
 /* WORKING, NEVER "DIDN'T GO THROUGH" (audit, finding 9). Its transfer can still run, so a state word
    saying it is over is the one that gets a second swap asked for beside it. */
 test('the row is still being checked: working and late, counted against the day, and no Try again', async () => {
-  const evidence = { handle: 'dep-1', nonce: NONCE, deadline: new Date(Date.now() + 3 * 60_000).toISOString(), providerStage: 'FAILED' };
+  const evidence = { handle: 'dep-1', nonce: LIVE_NONCE, deadline: new Date(Date.now() + 3 * 60_000).toISOString(), providerStage: 'FAILED' };
   const h = makeCtx({
     rails: [railThat('swap', async () => ({ ok: false, reason: 'venue_failed_watching', detail: '1click reported FAILED and the transfer has not run', txids: ['intent-h'], evidence }))],
   });
@@ -214,7 +217,7 @@ test('the row is still being checked: working and late, counted against the day,
 });
 
 test('while a swap of a coin is being watched, a new swap of the same coin waits for a click; another coin does not', async () => {
-  const evidence = { handle: 'dep-1', nonce: NONCE, deadline: new Date(Date.now() + 3 * 60_000).toISOString(), providerStage: 'FAILED' };
+  const evidence = { handle: 'dep-1', nonce: LIVE_NONCE, deadline: new Date(Date.now() + 3 * 60_000).toISOString(), providerStage: 'FAILED' };
   const answers = [
     { ok: false, reason: 'venue_failed_watching', detail: '1click reported FAILED and the transfer has not run', txids: ['intent-h'], evidence },
     { ok: true, detail: 'swapped', txids: ['intent-2'] },
@@ -236,7 +239,7 @@ test('while a swap of a coin is being watched, a new swap of the same coin waits
    duplicate guard does not catch) waits for a click beside it. Past the deadline and its grace the
    transfer can no longer run, and nothing is held. */
 test('an unconfirmed swap whose signed transfer can still run holds a changed-amount swap of the same coin until its deadline', async () => {
-  const signed = (deadline: string): RailEvidence => ({ handle: 'dep-1', nonce: NONCE, deadline });
+  const signed = (deadline: string): RailEvidence => ({ handle: 'dep-1', nonce: LIVE_NONCE, deadline });
   const answers = [{ ok: false, reason: 'stuck_unknown', detail: 'the intent was signed and its submission is unconfirmed', txids: [], evidence: signed(new Date(Date.now() + 3 * 60_000).toISOString()) }];
   const h = makeCtx({ rails: [railThat('swap', async () => answers.shift() ?? { ok: true, detail: 'swapped', txids: ['intent-2'] })] });
   const first = await landed(h, h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 20, minAmountOut: 19.8 }));
@@ -310,17 +313,17 @@ const dead = () => new Date(Date.now() - GRACE_AND_A_MINUTE).toISOString();
 
 test('reconcile keeps a row open while its signed transfer can still run, and counts it', async () => {
   const h = world({ spent: false });
-  seed(h, { evidence: { nonce: NONCE, deadline: live() } });
+  seed(h, { evidence: { nonce: LIVE_NONCE, deadline: live() } });
   const out = await h.svc.reconcile('w-1');
   assert.equal(out.status, 'needs_reconciliation');
   assert.equal(out.result?.reason, 'venue_failed_watching');
-  assert.deepEqual(h.asked, [NONCE]);
+  assert.deepEqual(h.asked, [LIVE_NONCE]);
   assert.equal(h.svc.dailyLimit(25_000).spentUsd, 12);
 });
 
 test('reconcile closes it for real once the deadline has passed with the nonce unspent', async () => {
   const h = world({ spent: false });
-  seed(h, { evidence: { nonce: NONCE, deadline: dead() } });
+  seed(h, { evidence: { nonce: LIVE_NONCE, deadline: dead() } });
   const out = await h.svc.reconcile('w-1');
   assert.equal(out.status, 'failed');
   assert.equal(out.result?.reason, 'venue_failed_nothing_moved');
@@ -331,7 +334,7 @@ test('reconcile closes it for real once the deadline has passed with the nonce u
 
 test('a nonce the verifier shows spent is the input having left, before or after the deadline', async () => {
   const h = world({ spent: true });
-  seed(h, { evidence: { nonce: NONCE, deadline: dead() } });
+  seed(h, { evidence: { nonce: LIVE_NONCE, deadline: dead() } });
   const out = await h.svc.reconcile('w-1');
   assert.equal(out.status, 'needs_reconciliation');
   assert.equal(out.result?.reason, 'venue_failed_refund_pending');
@@ -339,7 +342,7 @@ test('a nonce the verifier shows spent is the input having left, before or after
 
 test('past the deadline, an unspent nonce under a retired salt is no proof, and the ledger decides', async () => {
   const h = world({ spent: false, saltValid: false });
-  seed(h, { evidence: { nonce: NONCE, deadline: dead() } });
+  seed(h, { evidence: { nonce: LIVE_NONCE, deadline: dead() } });
   const out = await h.svc.reconcile('w-1');
   assert.equal(out.status, 'failed');
   assert.match(out.result?.detail ?? '', /intents ledger shows no transfer to handle dep-1/);
@@ -349,11 +352,11 @@ test('a transfer 1Click never ran ends once its deadline has passed, whatever 1C
   // The submit was refused or never answered: 1Click saw no deposit, and the row read unconfirmed.
   const pending: OneClickStatus = { found: true, status: 'PENDING_DEPOSIT', reported: 'PENDING_DEPOSIT', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [] };
   const waiting = world({ spent: false }, { status: pending });
-  seed(waiting, { reason: 'stuck_unknown', evidence: { nonce: NONCE, deadline: live(), providerStage: 'PENDING_DEPOSIT' } });
+  seed(waiting, { reason: 'stuck_unknown', evidence: { nonce: LIVE_NONCE, deadline: live(), providerStage: 'PENDING_DEPOSIT' } });
   assert.equal((await waiting.svc.reconcile('w-1')).status, 'needs_reconciliation', 'inside the deadline it can still run');
 
   const over = world({ spent: false }, { status: pending });
-  seed(over, { reason: 'stuck_unknown', evidence: { nonce: NONCE, deadline: dead(), providerStage: 'PENDING_DEPOSIT' } });
+  seed(over, { reason: 'stuck_unknown', evidence: { nonce: LIVE_NONCE, deadline: dead(), providerStage: 'PENDING_DEPOSIT' } });
   const out = await over.svc.reconcile('w-1');
   assert.equal(out.status, 'failed');
   assert.equal(out.result?.reason, 'venue_failed_nothing_moved');
@@ -384,7 +387,7 @@ test('the first ledger refresh after the deadline asks again, instead of waiting
     },
   };
   const h = world({ spent: false }, { ledger });
-  seed(h, { evidence: { nonce: NONCE, deadline: dead() } });
+  seed(h, { evidence: { nonce: LIVE_NONCE, deadline: dead() } });
   for (const fn of listeners) fn();
   const until = Date.now() + 2000;
   while (h.store.get('w-1')?.status !== 'failed' && Date.now() < until) await new Promise((r) => setTimeout(r, 10));
