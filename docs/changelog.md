@@ -5,6 +5,18 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.3
+
+Built 2026-09-25. Tagged v0.10.3 on 2026-09-25.
+
+- A coin bought without a network named lands as its NEAR version, so your balance keeps one tile
+  per coin. The agent no longer asks which network; USDT, USDC and wNEAR are picked by their exact
+  NEAR ids, never by name, and a coin with no NEAR version goes to the one you hold most of. A
+  network you name yourself still wins.
+- Add money lists every token a network takes, with its minimum, and asks for your tick every time
+  before it shows an address. The deposit card your agent opens in the chat asks the same way.
+- Ask your agent what is new: it reads these notes from the copy of the app you run.
+
 ## 0.10.2
 
 Built 2026-09-25. Tagged v0.10.2 on 2026-09-25. It was tagged v0.11.0 first; that tag never became a release.
