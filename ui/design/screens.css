@@ -157,6 +157,40 @@ dialog.confirm::backdrop {
   box-shadow: var(--lift);
 }
 
+/* ---------- the quit sheet (ui/screens/quit.js) ----------
+
+   The confirm card, with the terms card's list of facts inside it: one line
+   per thing a quit would interrupt. The icons are the quiet ink; only a line
+   where money can be left exposed takes the caution colour. */
+.quit-card {
+  width: min(460px, calc(100vw - var(--s-6)));
+}
+
+.quit-card .quit-facts {
+  padding: var(--s-4);
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
+}
+
+.quit-fact .firstrun-fact-icon {
+  color: var(--text-3);
+}
+
+.quit-fact[data-tone="warn"] .firstrun-fact-icon {
+  color: var(--warn);
+}
+
+.quit-wait {
+  margin: 0;
+  font-size: var(--fs-13);
+  color: var(--text-3);
+}
+
+.quit-actions {
+  justify-content: flex-end;
+}
+
 .destinations {
   padding: var(--s-3);
   border-radius: var(--radius-sm);

@@ -102,6 +102,10 @@
       return net.getJson('/api/health', { noCache: true });
     },
 
+    quit: function () {
+      return net.getJson('/api/quit', { noCache: true });
+    },
+
     unlock: function (password) {
       return net.postJson('/api/unlock', { password: password }, { busy: 'lock', label: 'Unlocking' });
     },

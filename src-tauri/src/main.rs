@@ -34,6 +34,7 @@ mod update;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -214,7 +215,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &copy,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::hide(app, None)?,
-            &PredefinedMenuItem::quit(app, None)?,
+            &MenuItem::with_id(app, QUIT_ID, "Quit Phosphor", true, Some("CmdOrCtrl+Q"))?,
         ],
     )?;
     let edit_menu = Submenu::with_items(
@@ -357,6 +358,10 @@ fn say_on_menu(app: &tauri::AppHandle, pick: impl Fn(&MenuNotes) -> (MenuItem<ta
 }
 
 fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
+    if event.id() == QUIT_ID {
+        request_quit(app);
+        return;
+    }
     if event.id() == update::CHECK_ID {
         update::check(app.clone(), true);
         return;
@@ -625,6 +630,122 @@ fn splash_quit(app: tauri::AppHandle, window: tauri::Window) -> Result<(), Strin
     Ok(())
 }
 
+/// Quit Phosphor, Cmd+Q, and closing the window ask the window first: its quit sheet
+/// (ui/screens/quit.js) says what is running and what happens to it, and the person picks. The
+/// predefined Quit item sends `terminate:` straight to AppKit, which tao turns into an exit no
+/// handler can hold, so the menu's Quit is this app's own item. The Dock's Quit, a logout and a
+/// shutdown still go straight out, through the backend's drain like every exit.
+///
+/// The window is a remote page with no IPC bridge (capabilities/default.json), and it keeps none:
+/// the shell asks it through eval and reads the answer it returns, and the page never calls in.
+/// A page that does not answer inside QUIT_ACK is dead or still loading, and the app quits
+/// rather than trap the person behind it. A second Cmd+Q while the sheet is up quits at once.
+const QUIT_ID: &str = "quit";
+const QUIT_ACK: Duration = Duration::from_secs(1);
+const QUIT_POLL: Duration = Duration::from_millis(100);
+const QUIT_ASK_SCRIPT: &str =
+    "(function(){try{return typeof window.__phosphorQuit==='function'?String(window.__phosphorQuit()):'none';}catch(e){return 'none';}})()";
+const QUIT_STATE_SCRIPT: &str =
+    "(function(){try{return typeof window.__phosphorQuitState==='function'?String(window.__phosphorQuitState()):'none';}catch(e){return 'none';}})()";
+
+#[derive(Default)]
+struct Quitting {
+    asking: AtomicBool,
+    confirmed: AtomicBool,
+}
+
+#[derive(Debug, PartialEq)]
+enum QuitStep {
+    Ask,
+    Go,
+}
+
+fn quit_step(asking: bool, confirmed: bool, window_up: bool) -> QuitStep {
+    if confirmed || asking || !window_up {
+        QuitStep::Go
+    } else {
+        QuitStep::Ask
+    }
+}
+
+/// What the page said, off eval's JSON. Anything but its two words, including no answer at all,
+/// is a page that is not holding a quit sheet.
+#[derive(Debug, PartialEq)]
+enum PageAnswer {
+    Asking,
+    Quit,
+    Gone,
+}
+
+fn page_answer(json: &str) -> PageAnswer {
+    match serde_json::from_str::<String>(json).ok().as_deref() {
+        Some("asking") => PageAnswer::Asking,
+        Some("quit") => PageAnswer::Quit,
+        _ => PageAnswer::Gone,
+    }
+}
+
+fn quit_now(app: &tauri::AppHandle) {
+    app.state::<Quitting>().confirmed.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
+fn request_quit(app: &tauri::AppHandle) {
+    let quitting = app.state::<Quitting>();
+    let control = app.get_webview_window(CONTROL);
+    let step = quit_step(quitting.asking.load(Ordering::SeqCst), quitting.confirmed.load(Ordering::SeqCst), control.is_some());
+    match (step, control) {
+        (QuitStep::Ask, Some(control)) => {
+            quitting.asking.store(true, Ordering::SeqCst);
+            ask_page(app.clone(), control);
+        }
+        _ => quit_now(app),
+    }
+}
+
+/// One script and its answer. A script queued on a page that has not loaded drops its callback,
+/// which lands here as Disconnected at once, the same as a window that is gone.
+fn ask_script(control: &WebviewWindow, script: &str) -> Result<String, RecvTimeoutError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    control
+        .eval_with_callback(script, move |answer| {
+            let _ = tx.send(answer);
+        })
+        .map_err(|_| RecvTimeoutError::Disconnected)?;
+    rx.recv_timeout(QUIT_ACK)
+}
+
+/// Off the main thread, because it waits on the page and the page's answers arrive on the main
+/// thread. Past the first answer a slow reply is only a busy page, never a reason to stop asking:
+/// the sheet is up, and a second Cmd+Q is the way out of a page that hangs behind it.
+fn ask_page(app: tauri::AppHandle, control: WebviewWindow) {
+    std::thread::spawn(move || {
+        if !matches!(ask_script(&control, QUIT_ASK_SCRIPT).as_deref().map(page_answer), Ok(PageAnswer::Asking)) {
+            quit_now(&app);
+            return;
+        }
+        loop {
+            std::thread::sleep(QUIT_POLL);
+            let answer = match ask_script(&control, QUIT_STATE_SCRIPT) {
+                Ok(raw) => page_answer(&raw),
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => PageAnswer::Gone,
+            };
+            match answer {
+                PageAnswer::Asking => continue,
+                PageAnswer::Quit => {
+                    quit_now(&app);
+                    return;
+                }
+                PageAnswer::Gone => {
+                    app.state::<Quitting>().asking.store(false, Ordering::SeqCst);
+                    return;
+                }
+            }
+        }
+    });
+}
+
 /// Replaces the splash with the real window. Created rather than navigated, so the page holding
 /// the approval surface gets a webview of its own that was never on a Tauri origin.
 ///
@@ -675,7 +796,17 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
        perfectly good outcome and this stays best effort either way. Off the main thread, because
        it is a socket round trip and this handler runs on the event loop. */
     let lock_token = app.state::<Secrets>().0.token.clone();
+    let quit_app = app.clone();
     window.on_window_event(move |event| {
+        // Closing the window quits the app, so it asks the way Quit does, and locks only once
+        // it is really going. See request_quit.
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            if !quit_app.state::<Quitting>().confirmed.load(Ordering::SeqCst) {
+                api.prevent_close();
+                request_quit(&quit_app);
+                return;
+            }
+        }
         if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
             let token = lock_token.clone();
             std::thread::spawn(move || {
@@ -1125,6 +1256,7 @@ fn main() {
         .manage(update::Updates::default())
         .manage(SplashPage::default())
         .manage(Retrying::default())
+        .manage(Quitting::default())
         // The only commands this shell has, and only the splash and the update window can call
         // them, each its own: the control window is a remote page, which the ACL keeps away from
         // app commands.
@@ -1397,5 +1529,33 @@ mod tests {
         // backend answers in 250 to 450 ms, which is inside the fast window.
         assert!(FAST_PROBE_INTERVAL < SLOW_PROBE_INTERVAL);
         assert!(FAST_PROBE_WINDOW > Duration::from_millis(450));
+    }
+
+    #[test]
+    fn a_quit_asks_the_window_once_and_never_traps_anyone_behind_it() {
+        use super::{quit_step, QuitStep};
+        assert_eq!(quit_step(false, false, true), QuitStep::Ask, "the first quit with the window up asks it");
+        assert_eq!(quit_step(true, false, true), QuitStep::Go, "a second quit while the sheet is up goes at once");
+        assert_eq!(quit_step(false, true, true), QuitStep::Go, "a confirmed quit is never asked again");
+        assert_eq!(quit_step(false, false, false), QuitStep::Go, "the splash or a failure has no sheet to ask");
+    }
+
+    #[test]
+    fn only_the_pages_two_words_hold_a_quit() {
+        use super::{page_answer, PageAnswer};
+        assert_eq!(page_answer("\"asking\""), PageAnswer::Asking);
+        assert_eq!(page_answer("\"quit\""), PageAnswer::Quit);
+        for other in ["\"idle\"", "\"none\"", "null", "", "asking", "{\"quit\":true}", "\"QUIT\""] {
+            assert_eq!(page_answer(other), PageAnswer::Gone, "{other} is not a sheet holding a quit");
+        }
+    }
+
+    #[test]
+    fn the_quit_scripts_return_a_word_whatever_the_page_is() {
+        use super::{QUIT_ASK_SCRIPT, QUIT_STATE_SCRIPT};
+        for script in [QUIT_ASK_SCRIPT, QUIT_STATE_SCRIPT] {
+            assert!(script.contains("catch(e){return 'none';}"), "a page that throws answers none, never nothing");
+            assert!(script.contains(":'none'"), "a page without the hook answers none");
+        }
     }
 }
