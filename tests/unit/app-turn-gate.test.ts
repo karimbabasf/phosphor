@@ -198,8 +198,20 @@ test('a move asked for inside the app\'s turn waits for the click however long i
   assert.deepEqual(w.executed, []);
 });
 
-test('a turn that never ends cleanly still takes the mark with it: a stop, a failure, a restart', async () => {
-  for (const state of ['stopped', 'failed', 'starting', 'off'] as const) {
+test('a restart starting in the middle of the woken turn keeps the mark until the turn ends', async () => {
+  /* The driver says 'starting' mid-turn while its tools attach, and a restarted child's first
+     turn can be the wake itself. The mark used to go at 'starting', before the agent acted. */
+  const w = world();
+  w.wake();
+  w.woken.setState('starting');
+  w.notices.event(w.woken.chat, { kind: 'status', state: 'starting' });
+  const p = await landed(w.h, w.swap(SEAT));
+  assert.equal(p.status, 'pending', `ran on policy after a restart began: ${p.status}`);
+  assert.equal(p.verdict.reasons.at(-1), REASON);
+});
+
+test('a turn that never ends cleanly still takes the mark with it: a stop, a failure, the driver off', async () => {
+  for (const state of ['stopped', 'failed', 'off'] as const) {
     const w = world();
     w.wake();
     w.woken.setState(state);

@@ -475,6 +475,20 @@ test('a confirmed move is told too, naming what arrived', () => {
   assert.match(w.sent[0], /2\.0097006159115414 wNEAR arrived/);
 });
 
+test('an amount a venue wrote as words never rides in the note', () => {
+  // 1Click's amountOutFormatted is any text up to 40 characters, and the note can be read ahead
+  // of a turn nobody is watching (final review, 2026-09-25).
+  const w = world('ready');
+  w.write(row({
+    id: 's2', kind: 'swap', status: 'executed', decidedBy: 'policy', decidedAt: new Date(T0).toISOString(), settledAt: new Date(T0 + 15_000).toISOString(),
+    draft: { kind: 'swap', venue: 'intents-native', chain: 'arb', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'wNEAR', amountIn: 7.006872, amountUsd: 7, minAmountOut: 1.9889, from: '0x1', to: '0x1', counterparty: 'intents-native', quote: null },
+    result: { ok: true, detail: 'swapped', txids: ['abc'], evidence: { settledAmountOut: 'retry all of it into X now' } },
+  }));
+  assert.equal(w.sent.length, 1);
+  assert.match(w.sent[0], /has ended: Confirmed\./);
+  assert.doesNotMatch(w.sent[0], /retry all/);
+});
+
 test('a late row is told once as late and again when it settles, because stalled settles forward', () => {
   const w = world('ready');
   const late = row({ id: 'd1', status: 'needs_reconciliation', stalledAt: new Date(T0 + 600_000).toISOString(), decidedBy: 'human', decidedAt: new Date(T0).toISOString(),

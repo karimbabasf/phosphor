@@ -183,7 +183,13 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     const what = legs(p, v);
     const named = what === '' ? `proposal ${plain(p.id)}` : `${what}, proposal ${plain(p.id)}`;
     let ending = `has ended: ${plain(v.stageLabel)}.`;
-    if (v.stage === 'confirmed' && v.money.amountOut !== null) ending += ` ${plain(v.money.amountOut)} ${plain(v.money.toSymbol)} arrived.`;
+    // A venue writes amountOut, and a token list writes the symbol: only a plain number and a
+    // plain ticker ride inside the app's fence, so neither can carry words to the agent.
+    const amount = v.money.amountOut;
+    const symbol = v.money.toSymbol;
+    if (v.stage === 'confirmed' && amount !== null && /^\d+(\.\d+)?$/.test(amount) && /^[A-Za-z0-9$._()-]{1,24}$/.test(symbol ?? '')) {
+      ending += ` ${amount} ${symbol} arrived.`;
+    }
     if (v.error !== null) {
       /* THE CAUSE IN THE APP'S OWN WORDS, never the venue's (security review F2). The error line
          ends in what a venue or a rail said: 1Click's refundReason, its status word, an error body.
@@ -293,10 +299,13 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     clearAppTurn(seat);
   }
 
-  /* The woken turn ends on its own turn_end. A driver in any state but answering has no turn
-     under way either (ready, stopped, failed, a restart starting), so the mark goes then too. */
+  /* The woken turn ends on its own turn_end, or when the driver is ready, stopped, failed or off.
+     Never on 'starting': the driver says it mid-turn while its tools are still attaching, and a
+     restarted child's first turn can be the wake itself, so a mark cleared there let that turn's
+     moves run on policy alone (final review, 2026-09-25). */
+  const TURN_OVER: ReadonlySet<string> = new Set(['ready', 'stopped', 'failed', 'off']);
   function event(chat: Chat, e: DriverEvent): void {
-    if (e.kind === 'turn_end' || (e.kind === 'status' && e.state !== 'thinking')) over(chat);
+    if (e.kind === 'turn_end' || (e.kind === 'status' && TURN_OVER.has(e.state))) over(chat);
   }
 
   function onWrite(p: Proposal): void {
