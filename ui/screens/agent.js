@@ -985,7 +985,7 @@
      one still being written, and `text` what is drawn: both, joined on a blank line. */
   function streamInto(delta, at) {
     var tail = blocks[blocks.length - 1];
-    var reply = tail && tail.type === 'reply' ? tail : null;
+    var reply = openReply(tail) ? tail : null;
     if (!reply) {
       reply = pushBlock({ type: 'reply', done: '', live: '', text: '', at: at });
     } else if (reply.live === null) {
@@ -999,13 +999,21 @@
      block of the same reply, or a reply of its own. */
   function commitText(text, at) {
     var tail = blocks[blocks.length - 1];
-    if (tail && tail.type === 'reply') {
+    if (openReply(tail)) {
       tail.done = joined(tail.done, String(text));
       tail.live = null;
       tail.text = tail.done;
       return;
     }
     pushBlock({ type: 'reply', done: String(text), live: null, text: String(text), at: at });
+  }
+
+  /* A REPLY TAKES MORE WORDS ONLY INSIDE ITS OWN TURN. A person's message puts a block between
+     two turns, but a turn the app wakes when a move did not go through (src/http/ended.ts,
+     2026-09-25) has nothing between it and the last answer, and its line was drawn as one more
+     paragraph of that old bubble. turn_end closes the reply, so the next turn starts its own. */
+  function openReply(block) {
+    return !!block && block.type === 'reply' && !block.closed;
   }
 
   /* ---------- state ---------- */
@@ -1862,6 +1870,8 @@
       endTurn();
       turn = null;
       turnDone = true;
+      var last = blocks[blocks.length - 1];
+      if (openReply(last)) last.closed = true;
       /* The answer ended, so the box takes the next message: the ready frame that follows
          says the same, and a person typing between the two is not interrupting anything. */
       if (phase === 'working') phase = 'connected';

@@ -722,6 +722,24 @@ test('text that follows text in one turn is one reply row', () => {
   assert.equal(world.replyRows().length, 2);
 });
 
+test('a turn the app wakes starts its own reply row, even with nothing between it and the last answer', () => {
+  /* A move that did not go through wakes the agent for one line (src/http/ended.ts, 2026-09-25).
+     No message of the person's sits between that turn and the last answer, and the line was
+     drawn as one more paragraph of the old reply. */
+  const world = build();
+  world.type('swap it all to dai');
+  world.emit({ kind: 'text', text: 'Step one is sent.' });
+  world.emit({ kind: 'turn_end' });
+  world.emit({ kind: 'text', text: 'That swap did not go through, so nothing moved. Want me to try again?' });
+  assert.equal(world.replyRows().length, 2, 'the woken line joined the last answer');
+  assert.ok(!world.replyRows()[0].textContent.includes('did not go through'));
+
+  // Streamed the same way, it still opens a row of its own.
+  world.emit({ kind: 'turn_end' });
+  world.emit({ kind: 'delta', block: 0, text: 'A second line, streamed.' });
+  assert.equal(world.replyRows().length, 3);
+});
+
 test('a reply renders as elements and never as markup', () => {
   const world = build();
   world.type('table please');
