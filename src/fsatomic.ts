@@ -62,7 +62,8 @@ function syncDir(dir: string): void {
    which is what every other state file wants. */
 export function atomicWrite(
   filePath: string,
-  contents: string,
+  // Bytes as well as text: the coin pictures (src/ledger/pictures.ts) are written through here too.
+  contents: string | Uint8Array,
   opts: { mode?: number; dirMode?: number } = {},
 ): void {
   const dir = path.dirname(filePath);

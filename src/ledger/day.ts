@@ -12,6 +12,9 @@
 // would tell a third party what this person owns. Nothing here reads a balance, and the assets the
 // window asks about (answer) are only ever looked up in what the last call already brought back.
 //
+// THE SAME ANSWER NAMES EACH COIN'S PICTURE, so the feed keeps those URLs too (pictureUrls), and
+// src/ledger/pictures.ts fetches every listed coin's into a cache on disk for the window's logos.
+//
 // UNTRUSTED. The answer is somebody else's JSON. A row counts only for an id that was asked for,
 // with a finite 24 hour change above -100% and inside a sane bound, and a line of finite positive
 // prices. A row that fails any of it is dropped, never repaired, and a coin with no row has no day:
@@ -42,8 +45,32 @@ const IDS_CHARS_PER_CALL = 4_000;
 // A hundredfold in a day. A figure past it is far more likely a broken row than a market.
 const SANE_CHANGE_PCT = 10_000;
 // What a CoinGecko id looks like: 'venice-token', 'usd-coin'. 1Click also writes 'custom:ssc1-pit',
-// which is none, and anything that is not this shape never reaches a URL.
+// which is none, and anything that is not this shape never reaches a URL or a file name.
 const COINGECKO_ID = /^[a-z0-9][a-z0-9._-]{0,99}$/;
+/* Where a coin's picture may come from: CoinGecko's image host, over https, and nowhere else.
+   Every one of the 92 rows answered on 2026-09-25 named it. See src/ledger/pictures.ts. */
+const PICTURE_HOST = 'coin-images.coingecko.com';
+const PICTURE_URL_MAX = 500;
+
+export function coingeckoIdOk(id: unknown): id is string {
+  return typeof id === 'string' && COINGECKO_ID.test(id);
+}
+
+/* A row's `image` when it is a picture this app will fetch, as a URL string, else null: https,
+   the image host, no credentials, no port but the default, and a length a URL has. */
+export function pictureUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length > PICTURE_URL_MAX) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.hostname !== PICTURE_HOST || url.port !== '' || url.username !== '' || url.password !== '') {
+    return null;
+  }
+  return url.toString();
+}
 
 export type DayEntry = {
   change24: number; // percent, CoinGecko's own 24 hour figure
@@ -67,6 +94,11 @@ export type DayFeed = {
   entry(assetId: string): DayEntry | null;
   // What GET /api/day hands the window: the named assets, or every listed one when none are named.
   answer(assetIds?: readonly string[]): DayAnswer;
+  // Every listed coin's picture, by CoinGecko id, as the markets answer named it: what
+  // src/ledger/pictures.ts fetches. Never the held coins alone, because nothing here knows them.
+  pictureUrls(): Map<string, string>;
+  // Each symbol on the list to the one CoinGecko id it names; a symbol naming two coins is left out.
+  symbols(): Map<string, string>;
 };
 
 export type DayFeedDeps = {
@@ -81,16 +113,32 @@ export type DayFeedDeps = {
 };
 
 /* Every CoinGecko id the list names, once each and sorted, so the call reads the same whatever
-   order 1Click answers in; and each asset to its id. An asset whose id is missing or malformed
-   maps to nothing. */
-export function listedIds(list: readonly OneClickToken[]): { ids: string[]; idOf: Map<string, string> } {
+   order 1Click answers in; each asset to its id; and each symbol, as the window keys a logo
+   (trimmed, upper case), to its id. An asset whose id is missing or malformed maps to nothing.
+   A symbol the list gives two ids, or gives one id on one row and none on another, is no symbol
+   here: wBTC is bitcoin on one row and WBTC is wrapped-bitcoin on another, and a picture guessed
+   between them could be the wrong coin's. */
+export function listedIds(list: readonly OneClickToken[]): { ids: string[]; idOf: Map<string, string>; symbols: Map<string, string> } {
   const idOf = new Map<string, string>();
+  // Every id each symbol is listed under, '' for a row with none.
+  const named = new Map<string, Set<string>>();
   for (const token of list) {
-    const id: unknown = token?.coingeckoId;
-    if (typeof token?.assetId !== 'string' || typeof id !== 'string' || !COINGECKO_ID.test(id)) continue;
-    idOf.set(token.assetId, id);
+    if (typeof token?.assetId !== 'string') continue;
+    const id: unknown = token.coingeckoId;
+    const good = coingeckoIdOk(id);
+    if (good) idOf.set(token.assetId, id);
+    const symbol = typeof token.symbol === 'string' ? token.symbol.trim().toUpperCase() : '';
+    if (symbol === '') continue;
+    const ids = named.get(symbol) ?? new Set<string>();
+    ids.add(good ? id : '');
+    named.set(symbol, ids);
   }
-  return { ids: [...new Set(idOf.values())].sort(), idOf };
+  const symbols = new Map<string, string>();
+  for (const [symbol, ids] of named) {
+    const [only] = ids;
+    if (ids.size === 1 && only !== '') symbols.set(symbol, only);
+  }
+  return { ids: [...new Set(idOf.values())].sort(), idOf, symbols };
 }
 
 /* The ids split into calls: at most IDS_PER_CALL each and at most IDS_CHARS_PER_CALL of them
@@ -155,13 +203,29 @@ export function parseMarkets(payload: unknown, asked: ReadonlySet<string>, at: n
   return out;
 }
 
+/* Each asked id's picture URL, where the row names one pictureUrl accepts. Apart from the day on
+   purpose: a coin whose line fails its checks still has a picture, and the reverse. */
+export function parseImages(payload: unknown, asked: ReadonlySet<string>): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!Array.isArray(payload)) return out;
+  for (const row of payload) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue;
+    const r = row as Record<string, unknown>;
+    const id = r['id'];
+    if (typeof id !== 'string' || !asked.has(id) || out.has(id)) continue;
+    const image = pictureUrl(r['image']);
+    if (image !== null) out.set(id, image);
+  }
+  return out;
+}
+
 // Retry-After in seconds, the only form the endpoint sends. Anything else is no advice.
 function retryAfterMs(header: string | null): number {
   const seconds = Number(header);
   return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
 }
 
-type Read = { ok: true; rows: Map<string, DayEntry> } | { ok: false; error: string; waitMs: number };
+type Read = { ok: true; rows: Map<string, DayEntry>; images: Map<string, string> } | { ok: false; error: string; waitMs: number };
 
 export function createDayFeed(deps: DayFeedDeps): DayFeed {
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -169,9 +233,12 @@ export function createDayFeed(deps: DayFeedDeps): DayFeed {
   const log = deps.log ?? ((line: string) => console.error(line));
   const env = deps.env ?? process.env;
 
-  // Asset id to CoinGecko id, off the newest list read; CoinGecko id to its last good day.
+  // Asset id to CoinGecko id and symbol to CoinGecko id, off the newest list read; CoinGecko id to
+  // its last good day and to its picture's URL.
   let idOf = new Map<string, string>();
+  let symbolIds = new Map<string, string>();
   const byId = new Map<string, DayEntry>();
+  const imageById = new Map<string, string>();
   let lastGood: number | null = null;
   let error: string | undefined;
   let failures = 0;
@@ -203,7 +270,8 @@ export function createDayFeed(deps: DayFeedDeps): DayFeed {
       return { ok: false, error: 'CoinGecko answered something that is not JSON', waitMs: 0 };
     }
     if (!Array.isArray(payload)) return { ok: false, error: 'CoinGecko answered something that is not a list of coins', waitMs: 0 };
-    return { ok: true, rows: parseMarkets(payload, new Set(ids), now()) };
+    const asked = new Set(ids);
+    return { ok: true, rows: parseMarkets(payload, asked, now()), images: parseImages(payload, asked) };
   }
 
   // Twice the wait for every failure in a row, from ten minutes up to the ceiling, and never less
@@ -233,6 +301,7 @@ export function createDayFeed(deps: DayFeedDeps): DayFeed {
     // The newest mapping at once, so a coin listed since the last read finds its day as soon as
     // CoinGecko has one.
     idOf = listed.idOf;
+    symbolIds = listed.symbols;
     for (const ids of callsFor(listed.ids)) {
       const read = await readMarkets(ids);
       if (!read.ok) {
@@ -242,6 +311,7 @@ export function createDayFeed(deps: DayFeedDeps): DayFeed {
         return;
       }
       for (const [id, entry] of read.rows) byId.set(id, entry);
+      for (const [id, image] of read.images) imageById.set(id, image);
     }
     failures = 0;
     retryAt = 0;
@@ -276,5 +346,11 @@ export function createDayFeed(deps: DayFeedDeps): DayFeed {
     return { at: lastGood, entries: Object.fromEntries(pairs), ...(error === undefined ? {} : { error }) };
   }
 
-  return { refresh, entry, answer };
+  // Only coins still on the list: one 1Click stopped listing keeps no picture to fetch.
+  function pictureUrls(): Map<string, string> {
+    const listed = new Set(idOf.values());
+    return new Map([...imageById].filter(([id]) => listed.has(id)));
+  }
+
+  return { refresh, entry, answer, pictureUrls, symbols: () => symbolIds };
 }

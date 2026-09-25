@@ -281,8 +281,9 @@ function defaultKeysPath(baseDir: string, dataDir: string, mode: Mode): string {
    The path may not exist yet, which is the normal case for a key file that has not been created.
    So the deepest ancestor that DOES exist is resolved and the remaining components are put back
    on: that is enough, because the components that decide whether this is inside the repo are the
-   ones near the root, and those exist. */
-function resolveReal(target: string): string {
+   ones near the root, and those exist. Exported for src/ledger/pictures.ts, which keeps its cache
+   away from the key file by the same comparison. */
+export function resolveReal(target: string): string {
   let head = path.resolve(target);
   const tail: string[] = [];
   for (;;) {
