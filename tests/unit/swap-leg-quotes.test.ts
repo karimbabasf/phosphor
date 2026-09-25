@@ -176,7 +176,9 @@ test('"all" of a coin the balance does not hold is refused in a plain sentence: 
     assert.equal(all.ok, false, fromSymbol);
     assert.equal(all.reason, 'insufficient_balance', fromSymbol);
     assert.equal(all.preview, undefined, fromSymbol);
-    assert.equal(all.sentence, 'The balance holds no USDC yet, so "all" of it has no amount to price. Quote a number instead, such as what the step before gets.', fromSymbol);
+    // The sentence is said to the person; what to quote instead is the agent's, in details.
+    assert.equal(all.sentence, 'The balance holds no USDC yet, so there is no amount to price for all of it.', fromSymbol);
+    assert.equal(all.details, 'Quote a number instead, such as what the step before gets.', fromSymbol);
   }
   assert.equal(h.asked.length, 0, 'nothing was priced');
 });
@@ -202,7 +204,9 @@ test('a coin not held with no NEAR version is no preview until it is named by th
   assert.equal(usdt.ok, false);
   assert.equal(usdt.reason, 'insufficient_balance');
   assert.equal(usdt.candidates, undefined, 'versions of one coin are never a question for the person');
-  assert.equal(usdt.sentence, 'The balance holds no USDT yet, and it has no NEAR version, so which one it would be depends on the step before. Quote it by the assetId that step buys.');
+  assert.equal(usdt.sentence, 'The balance holds no USDT yet, so this step waits on the one before it.');
+  assert.doesNotMatch(usdt.sentence ?? '', /assetId|quote/i, 'the sentence the agent says tells the person to quote by an id');
+  assert.equal(usdt.details, 'USDT has no NEAR version, so which one this is depends on the step before: quote it by the assetId that step buys.');
   assert.equal(h.asked.length, 0);
 
   const byId = await h.svc.swapQuote!({ fromSymbol: USDT_ETH, toSymbol: 'DAI', amountIn: '8' });
