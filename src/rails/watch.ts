@@ -44,12 +44,15 @@ export async function pollUntil(plan: PollPlan, step: () => Promise<boolean>): P
 /* A 1Click order, by its deposit handle, until a terminal status or the window ends. Never
    throws once the money is on its way: a status endpoint that goes down after the move must not
    become a thrown "nothing happened". Every read tells the executor 1Click's own word for the
-   stage, so the card moves as the order does. */
+   stage, so the card moves as the order does. `over` is asked after a read that is not terminal
+   and ends the watch when it says so: the rail's own proof that the move can no longer happen
+   (the intents-native swap's signed transfer past its deadline). One that throws says no. */
 export async function watchOneClick(
   plan: PollPlan,
   status: (handle: string) => Promise<OneClickStatus>,
   handle: string,
   hooks?: RailHooks,
+  over?: () => Promise<boolean>,
 ): Promise<OneClickStatus> {
   let last: OneClickStatus = {
     found: false,
@@ -63,11 +66,11 @@ export async function watchOneClick(
     try {
       last = await status(handle);
       tell(hooks, { providerStage: last.status });
-      return (ONECLICK_TERMINAL as readonly string[]).includes(last.status);
+      if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return true;
     } catch (err) {
       last = { ...last, reported: `status check failed: ${oneLine(err instanceof Error ? err.message : String(err), 80)}` };
-      return false;
     }
+    return over === undefined ? false : over().catch(() => false);
   });
   return last;
 }

@@ -73,6 +73,9 @@ import { pickOrExplain, swapSummary } from './asset-words.ts';
 import { networkByVenue } from './intents-address.ts';
 import { ReasonError, quoteRefusalReason, reasonOf } from './reasons.ts';
 import { watchOneClick } from './watch.ts';
+import { FATE_RECHECK_MS, proofWords, transferFate } from '../relay/fate.ts';
+import type { DeadProof } from '../relay/fate.ts';
+import type { FinalBlock } from '../relay/verifier.ts';
 
 // The verifier contract. This is the whole point of the rail: one fixed account that goes on
 // the policy allowlist once and stays there, unlike a deposit address minted per quote.
@@ -127,9 +130,13 @@ export const INTENTS_NO_API_KEY_REASON =
    audit of 2026-09-23). The deadline is cut here before signing, and nothing else in the payload is.
    Three minutes because 1Click estimates 12 s for a whole swap inside the verifier (live dry quote,
    2026-09-23) and the transfer is its first step; because the status watch below gives up at five,
-   so a watch that runs out finds the transfer already run or dead; and because the quote's own
-   deposit window is ten, so the transfer can never land on a quote 1Click has stopped honouring.
-   A transfer that misses it is dead, which costs a retry and never money. */
+   and from the deadline on it asks NEAR's own clock whether the transfer can still run, so a watch
+   that runs out has seen the transfer run, closed it on the proof that it never can
+   (src/relay/fate.ts), or could not read the chain and leaves it to the deadline watch
+   (src/proposals/reconcile.ts); and because the quote's own deposit window is ten, so the transfer
+   can never land on a quote 1Click has stopped honouring. A transfer that misses it is dead, which
+   costs a retry and never money. Until 2026-09-25 "dead" waited for the five-minute grace and the
+   ten-minute sweep after the watch, and the card said the money was moving all that time. */
 export const SIGNED_DEADLINE_MS = 3 * 60 * 1000;
 
 /* The payload with its deadline brought forward to `latestMs`, as the same bytes with that one
@@ -660,8 +667,14 @@ function amountOf(value: unknown, what: string): bigint | string {
 export type VerifierBalancePort = (accountId: string, assetId: string) => Promise<bigint | null>;
 
 // Whether the verifier has spent a nonce for this account: the signed transfer having run. Null
-// when the read failed, which is never "unspent".
-export type NonceUsedPort = (accountId: string, nonce: string) => Promise<boolean | null>;
+// when the read failed, which is never "unspent". `at` is a block hash to read at.
+export type NonceUsedPort = (accountId: string, nonce: string, at?: string) => Promise<boolean | null>;
+
+// NEAR's newest final block and its time, and whether the verifier still accepts a nonce's salt
+// (at a block hash): the other two reads the proof that a signed transfer never ran takes
+// (src/relay/fate.ts). Null when the read failed.
+export type FinalBlockPort = () => Promise<FinalBlock | null>;
+export type SaltValidPort = (salt: Uint8Array, at?: string) => Promise<boolean | null>;
 
 export type IntentsNativeRailDeps = {
   keysPath: string;
@@ -679,6 +692,8 @@ export type IntentsNativeRailDeps = {
   maxDeadlineMs?: number;
   verifierBalance?: VerifierBalancePort;
   nonceUsed?: NonceUsedPort;
+  finalBlock?: FinalBlockPort;
+  saltValid?: SaltValidPort;
   // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
   // key its own fake signs with, and nothing else ever sets it.
   quoteKey?: string;
@@ -711,10 +726,33 @@ export function liveVerifierBalance(fetchImpl?: typeof fetch): VerifierBalancePo
 
 // The same view the relay rail's reconcile asks (src/relay/verifier.ts). Never throws.
 export function liveNonceUsed(fetchImpl?: typeof fetch): NonceUsedPort {
-  return async (accountId, nonce) => {
+  return async (accountId, nonce, at) => {
     try {
       const { liveVerifier } = await import('../relay/verifier.ts');
-      return await liveVerifier(fetchImpl ?? fetch).nonceUsed(accountId, nonce);
+      return await liveVerifier(fetchImpl ?? fetch).nonceUsed(accountId, nonce, at);
+    } catch {
+      return null;
+    }
+  };
+}
+
+// The same two reads reconcile asks through the registry's relay lookup. Never throw.
+export function liveFinalBlock(fetchImpl?: typeof fetch): FinalBlockPort {
+  return async () => {
+    try {
+      const { liveVerifier } = await import('../relay/verifier.ts');
+      return (await liveVerifier(fetchImpl ?? fetch).finalBlock?.()) ?? null;
+    } catch {
+      return null;
+    }
+  };
+}
+
+export function liveSaltValid(fetchImpl?: typeof fetch): SaltValidPort {
+  return async (salt, at) => {
+    try {
+      const { liveVerifier } = await import('../relay/verifier.ts');
+      return (await liveVerifier(fetchImpl ?? fetch).isValidSalt?.(salt, at)) ?? null;
     } catch {
       return null;
     }
@@ -762,6 +800,11 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   const api = deps.api ?? intentsApi({ apiKey: apiKey ?? '', fetchImpl: deps.fetchImpl, client: deps.client });
   const verifierBalance = deps.verifierBalance ?? liveVerifierBalance(deps.fetchImpl);
   const nonceUsed = deps.nonceUsed ?? liveNonceUsed(deps.fetchImpl);
+  const fateReads = {
+    finalBlock: deps.finalBlock ?? liveFinalBlock(deps.fetchImpl),
+    nonceUsed,
+    saltValid: deps.saltValid ?? liveSaltValid(deps.fetchImpl),
+  };
 
   type Plan = {
     originAsset: string;
@@ -1171,7 +1214,32 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline, ...(nonce === undefined ? {} : { nonce }), quote: signedQuote });
     const evidence = `intent ${submitted.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
-    const watch = await watchStatus(depositAddress, hooks);
+    /* THE WATCH ALSO ENDS WHEN THE TRANSFER CAN NO LONGER RUN, not only when 1Click answers. From
+       the signed deadline on, NEAR's own clock is asked whether it has passed too (deadlineProof):
+       a final block stamped past the deadline with the nonce unspent at that block is a transfer
+       that never ran and never can, and the swap ends as nothing moved there and then. On
+       2026-09-25 (proposal 6bb6783b) this watch ran on for two minutes past a deadline the chain
+       had already passed, gave up at five as "still checking", and the sweep said nothing had
+       moved eleven minutes after the deadline. Only the proof ends it early: while the chain
+       cannot say, the watch runs as it did, and a SUCCESS inside it settles exactly as before. */
+    const proof = deadlineProof(owner, nonce, deadline);
+    const neverRan = (dead: DeadProof, last: OneClickStatus): RailResult =>
+      withQuote(
+        {
+          ok: false,
+          reason: 'venue_failed_nothing_moved',
+          detail:
+            `1click last reported ${oneLine(last.reported, 60)}, and the deadline (${deadline}) passed with the signed transfer never run${proofWords(dead)}: ` +
+            `the verifier shows its nonce unspent, so nothing left the balance and nothing can; ${evidence}.`,
+          txids: uniqueTxids(submitted.intentHash, last),
+          evidence: { handle: oneLine(depositAddress, 80) },
+        },
+        signedQuote,
+      );
+
+    const watch = await watchStatus(depositAddress, hooks, proof.ask);
+    const provedEarly = proof.held();
+    if (provedEarly !== null) return neverRan(provedEarly, watch);
 
     if (watch.status === 'SUCCESS') {
       /* SUCCESS from the venue is the venue's word. What arrived is a number this app can read,
@@ -1294,6 +1362,9 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
        Spent is the input gone; unspent is a row that stays open and counted until the deadline,
        which reconcile then closes for real (src/proposals/reconcile.ts). */
     if (watch.status === 'FAILED') {
+      // Past the deadline the proof answers first: a transfer that can never run ends here, closed.
+      const dead = (await proof.ask()) ? proof.held() : null;
+      if (dead !== null) return neverRan(dead, watch);
       const spent = nonce === undefined ? null : await nonceUsed(owner.toLowerCase(), nonce);
       return withQuote(describeRefund(watch, depositAddress, { ...refundWords, intent: { spent, until: deadline } }), signedQuote);
     }
@@ -1325,11 +1396,32 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     };
   }
 
-  // The one watch every rail shares (./watch.ts): until terminal or out of time, and never a
-  // throw once the intent is submitted.
-  function watchStatus(depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
+  // The one watch every rail shares (./watch.ts): until terminal, out of time or `over`, and never
+  // a throw once the intent is submitted.
+  function watchStatus(depositAddress: string, hooks?: RailHooks, over?: () => Promise<boolean>): Promise<OneClickStatus> {
     const plan = { firstMs: firstPollMs, everyMs: pollIntervalMs, timeoutMs: pollTimeoutMs, sleep, now };
-    return watchOneClick(plan, (handle) => (api as IntentsApiPort).status(handle), depositAddress, hooks);
+    return watchOneClick(plan, (handle) => (api as IntentsApiPort).status(handle), depositAddress, hooks, over);
+  }
+
+  /* Whether the transfer signed for `owner` under `nonce` has been proved never to run
+     (transferFate, src/relay/fate.ts). `ask` asks from the deadline on by this clock, and at most
+     every FATE_RECHECK_MS, and answers whether the proof holds; `held` is the proof once it has.
+     A payload with no nonce, or a deadline this app could not read, is never asked about. */
+  function deadlineProof(owner: string, nonce: string | undefined, deadline: string): { ask: () => Promise<boolean>; held: () => DeadProof | null } {
+    const deadlineMs = Date.parse(deadline);
+    let askedAt = Number.NEGATIVE_INFINITY;
+    let dead: DeadProof | null = null;
+    return {
+      ask: async () => {
+        if (dead !== null) return true;
+        if (nonce === undefined || !(now() >= deadlineMs) || now() - askedAt < FATE_RECHECK_MS) return false;
+        askedAt = now();
+        const fate = await transferFate(fateReads, { account: owner, nonce, deadline }, now());
+        if (fate.ran === false && fate.dead !== null) dead = fate.dead;
+        return dead !== null;
+      },
+      held: () => dead,
+    };
   }
 
   /* THE PRICE WITH NO FLOOR IN THE QUESTION: 1Click's dry quote for the draft's amountIn, read
