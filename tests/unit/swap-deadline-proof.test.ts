@@ -65,11 +65,42 @@ function chainOf(c: Chain): FateReads & { log: string[] } {
 
 const signed = { account: SELF_EVM, nonce: PROOF_NONCE, deadline: iso(T) };
 
-test('a final block stamped past the deadline, with the nonce unspent at that block, is a transfer that never ran and never can', async () => {
-  const block = { hash: 'Blk1', atMs: T + 1_000 };
+test('a final block stamped half a minute past the deadline, with the nonce unspent at that block, is a transfer that never ran and never can', async () => {
+  const block = { hash: 'Blk1', atMs: T + 30_001 };
   const chain = chainOf({ block, spent: false });
-  assert.deepEqual(await transferFate(chain, signed, T - 5_000), { ran: false, dead: { by: 'chain', block } }, 'the chain decides, even with this clock still short of the deadline');
+  assert.deepEqual(await transferFate(chain, signed, T + 30_000), { ran: false, dead: { by: 'chain', block } });
   assert.deepEqual(chain.log, ['block', 'nonce@Blk1', 'salt@Blk1'], 'the clock first, then the nonce and the salt at that same block');
+});
+
+/* Security review F3: the RPC's clock alone closed a row. A node that stamps a final block a
+   second past the deadline while this Mac is three minutes short of it wrote "nothing moved" over
+   a transfer that could still run, on every path, the sweep and a Reconcile click included. Both
+   clocks now have to be half a minute past it. */
+test('both clocks must be half a minute past the deadline: the chain\'s and this one', async () => {
+  const past = { hash: 'BlkPast', atMs: T + 31_000 };
+  assert.deepEqual(await transferFate(chainOf({ block: past, spent: false }), signed, T + 29_999), { ran: false, dead: null }, 'this clock short of the floor');
+  assert.deepEqual(await transferFate(chainOf({ block: past, spent: false }), signed, T - 5_000), { ran: false, dead: null }, 'this clock short of the deadline');
+  const early = { hash: 'BlkEarly', atMs: T + 30_000 };
+  assert.deepEqual(await transferFate(chainOf({ block: early, spent: false }), signed, T + 10 * 60_000), { ran: false, dead: null }, 'the chain short of the floor');
+  assert.deepEqual(await transferFate(chainOf({ block: past, spent: false }), signed, T + 30_000), { ran: false, dead: { by: 'chain', block: past } });
+});
+
+test('a block stamped more than two minutes ahead of this clock is no answer: the grace rule decides, and nothing is read at it', async () => {
+  // The proof of concept as it was filed: this clock 180 s short of the deadline, a final block a
+  // second past it.
+  const forged = chainOf({ block: { hash: 'FAKEHASH', atMs: T + 1_000 }, spent: false });
+  assert.deepEqual(await transferFate(forged, signed, T - 180_000), { ran: false, dead: null });
+  assert.deepEqual(forged.log, ['block', 'nonce@final', 'salt@final'], 'the nonce was read at a block stamped in the future');
+  // Past both floors by this clock, and still no answer when the block is 121 s ahead of it.
+  const ahead = chainOf({ block: { hash: 'Ahead', atMs: T + 60_000 + 121_000 }, spent: false });
+  assert.deepEqual(await transferFate(ahead, signed, T + 60_000), { ran: false, dead: null });
+  assert.deepEqual(ahead.log, ['block', 'nonce@final', 'salt@final']);
+  // Two minutes ahead exactly is a clock a little fast, and it answers.
+  const fast = { hash: 'Fast', atMs: T + 60_000 + 120_000 };
+  assert.deepEqual(await transferFate(chainOf({ block: fast, spent: false }), signed, T + 60_000), { ran: false, dead: { by: 'chain', block: fast } });
+  // A future block past the grace is the grace rule's call, the rule for a chain that cannot be read.
+  const graced = chainOf({ block: { hash: 'Later', atMs: T + RELAY_DEADLINE_GRACE_MS + 10 * 60_000 }, spent: false });
+  assert.deepEqual(await transferFate(graced, signed, T + RELAY_DEADLINE_GRACE_MS), { ran: false, dead: { by: 'clock' } });
 });
 
 test('a final block stamped at or before the deadline is a transfer that can still run, whatever this clock says', async () => {
@@ -250,8 +281,8 @@ function world(chain: ChainNow, status: OneClickStatus = PROCESSING) {
 const pastBy = (ms: number) => (deadlineMs: number): FinalBlock => ({ hash: 'BlkPast', atMs: deadlineMs + ms });
 
 test('(a) chain time past the deadline with the nonce unspent: the first refresh after the deadline closes it, nothing moved', async () => {
-  const w = world({ block: pastBy(1_000), spent: false });
-  w.seed({ deadlineMs: Date.now() - 20_000 });
+  const w = world({ block: pastBy(31_000), spent: false });
+  w.seed({ deadlineMs: Date.now() - 40_000 });
   assert.equal(w.svc.dailyLimit(25_000).spentUsd, 12, 'open and counted until the proof');
 
   await w.tick();
@@ -269,8 +300,8 @@ test('(a) chain time past the deadline with the nonce unspent: the first refresh
 
 test('(a) a row the proof closed stays closed when a later re-check cannot read the chain', async () => {
   let readable = true;
-  const w = world({ block: (deadlineMs) => (readable ? { hash: 'BlkPast', atMs: deadlineMs + 1_000 } : null), spent: false }, FAILED);
-  w.seed({ deadlineMs: Date.now() - 20_000 });
+  const w = world({ block: (deadlineMs) => (readable ? { hash: 'BlkPast', atMs: deadlineMs + 31_000 } : null), spent: false }, FAILED);
+  w.seed({ deadlineMs: Date.now() - 40_000 });
   await w.tick();
   assert.equal(w.store.get('swap-1')?.status, 'failed');
 
@@ -327,6 +358,22 @@ test('(d) chain time unreadable: only the grace rule can close it', async () => 
   assert.doesNotMatch(out?.result?.detail ?? '', /final block/);
 });
 
+test('(e) a Reconcile click takes no RPC\'s word for a deadline this clock has not reached, and no block stamped in the future', async () => {
+  // The click and the sweep ask whatever the row's deadline says. An RPC whose final block is a
+  // minute and a half ahead of this Mac, past the deadline, closed the row as nothing moved.
+  const lying = world({ block: pastBy(31_000), spent: false }, FAILED);
+  lying.seed({ deadlineMs: Date.now() + 60_000, reason: 'venue_failed_watching' });
+  const out = await lying.svc.reconcile('swap-1');
+  assert.equal(out.status, 'needs_reconciliation', `closed on the RPC's clock alone: ${out.result?.reason}`);
+  assert.equal(lying.svc.dailyLimit(25_000).spentUsd, 12, 'the day was released on the RPC\'s clock alone');
+
+  // A block stamped ten minutes ahead is no answer at all, and nothing is read at it.
+  const future = world({ block: (deadlineMs) => ({ hash: 'Forged', atMs: deadlineMs + 10 * 60_000 }), spent: false }, FAILED);
+  future.seed({ deadlineMs: Date.now() - 40_000, reason: 'venue_failed_watching' });
+  assert.equal((await future.svc.reconcile('swap-1')).status, 'needs_reconciliation');
+  assert.ok(!future.reads.includes('nonce@Forged'), 'the nonce was read at a block stamped in the future');
+});
+
 test('the deadline watch asks at most every half minute per row, never about a row a rail is still watching, and hands a late row to the sweep', async () => {
   const w = world({ block: (deadlineMs) => ({ hash: 'BlkBehind', atMs: deadlineMs - 2_600 }), spent: false });
   w.seed({ deadlineMs: Date.now() - 10_000 });
@@ -356,9 +403,9 @@ test('a re-check that read the chain before another closed the row does not writ
   });
   let salts = 0;
   const w = world({ block: () => blocks.shift() ?? null, spent: false, saltRead: () => (++salts === 1 ? held : Promise.resolve(true)) }, FAILED);
-  const deadlineMs = Date.now() - 20_000;
+  const deadlineMs = Date.now() - 40_000;
   w.seed({ deadlineMs, reason: 'venue_failed_watching' });
-  blocks.push({ hash: 'BlkBehind', atMs: deadlineMs - 2_600 }, { hash: 'BlkPast', atMs: deadlineMs + 1_000 });
+  blocks.push({ hash: 'BlkBehind', atMs: deadlineMs - 2_600 }, { hash: 'BlkPast', atMs: deadlineMs + 31_000 });
 
   const slow = w.svc.reconcile('swap-1');
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -477,14 +524,16 @@ function railOn(opts: { word: (now: number) => string; chainReadable?: boolean; 
   return { run: () => rail.execute(railDraft, 'p-1', { onEvidence: () => {} }), clock, reads };
 }
 
-test('the rail\'s watch closes a swap the chain proves can never run half a minute after its deadline, not at the five-minute timeout', async () => {
+test('the rail\'s watch closes a swap the chain proves can never run about a minute after its deadline, not at the five-minute timeout', async () => {
   const h = railOn({ word: () => 'PROCESSING', spent: false });
   const out = await h.run();
   assert.equal(out.ok, false);
   assert.equal(out.reason, 'venue_failed_nothing_moved');
   assert.match(out.detail, /1click last reported PROCESSING, and the deadline .* passed with the signed transfer never run \(NEAR's final block is stamped/);
   assert.deepEqual(out.txids, [INTENT_HASH]);
-  assert.ok(h.clock.now - DEADLINE <= FATE_RECHECK_MS + 10_000, `closed ${Math.round((h.clock.now - DEADLINE) / 1000)} s after the deadline`);
+  // The final block trails this clock by 2.6 s, so it is past the half-minute floor at the second ask.
+  assert.ok(h.clock.now - DEADLINE >= 30_000, `closed ${Math.round((h.clock.now - DEADLINE) / 1000)} s after the deadline, inside the floor`);
+  assert.ok(h.clock.now - DEADLINE <= 2 * FATE_RECHECK_MS + 10_000, `closed ${Math.round((h.clock.now - DEADLINE) / 1000)} s after the deadline`);
   assert.ok(h.clock.now < NOW + 5 * 60_000, 'before the watch would have run out');
   assert.ok(h.reads.every((r) => r.at >= DEADLINE), 'the chain is asked nothing before the deadline by this clock');
   assert.ok(h.reads.filter((r) => r.read.startsWith('nonce')).every((r) => r.read.startsWith('nonce@blk-')), 'every nonce read is at the block the clock came from');
@@ -493,10 +542,14 @@ test('the rail\'s watch closes a swap the chain proves can never run half a minu
 });
 
 test('a FAILED that lands after the deadline on a transfer that can never run ends the swap as nothing moved, not as still watching', async () => {
-  const h = railOn({ word: (now) => (now < DEADLINE ? 'PROCESSING' : 'FAILED'), spent: false });
+  // Past the half minute both clocks need, the ask the FAILED brings is the one that proves it.
+  const h = railOn({ word: (now) => (now < DEADLINE + 30_000 ? 'PROCESSING' : 'FAILED'), spent: false });
   const out = await h.run();
   assert.equal(out.reason, 'venue_failed_nothing_moved');
   assert.match(out.detail, /1click last reported FAILED/);
+  // Inside it, nothing can be proved yet: the row stays open for the deadline watch to close.
+  const soon = railOn({ word: (now) => (now < DEADLINE ? 'PROCESSING' : 'FAILED'), spent: false });
+  assert.equal((await soon.run()).reason, 'venue_failed_watching');
 });
 
 test('while the chain cannot say, the rail\'s watch runs as it did: to its timeout, still checking', async () => {
