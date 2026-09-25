@@ -28,7 +28,8 @@ import { spendNetworkOf } from '../rails/intents-address.ts';
 // byte: 1Click's seven off GetExecutionStatusResponse, the solver relay's four off get_status,
 // because "settling" is a word nobody outside this app can check. INCOMPLETE_DEPOSIT is never
 // folded into PROCESSING: partial money arrived. The vendor word is the stage's IDENTITY, never
-// its face: STAGE_LABEL is the only text a surface prints, and no label carries a vendor's word.
+// its face: STAGE_LABEL, and RAIL_STAGE_LABEL where a rail's stage reads differently, are the only
+// text a surface prints, and no label carries a vendor's word.
 export type ProposalStage =
   | 'waiting_for_you'
   | 'waiting_for_unlock'
@@ -96,6 +97,10 @@ export type ProposalView = {
      person has to do anything. On the view so the card prints it and the agent quotes it off
      the same read, rather than each phrasing the wait in its own words. */
   stageCopy: string;
+  /* True when the label and the copy are the rail's own words for this stage (RAIL_STAGE_LABEL):
+     they say what the wait is, however long it runs, so a card past its usual time prints the copy
+     rather than its stock late line, which says the money lands. */
+  railWords: boolean;
   providerStage: string | null; // 1Click's raw word, null when no provider owns this phase
   waitingOn: string | null; // 'You', 'Touch ID', '1Click', 'Hyperliquid', null when terminal
   terminal: boolean;
@@ -209,19 +214,20 @@ export const STAGE_COPY: Record<ProposalStage, string> = {
 };
 
 /* THE SAME STAGE ON A RAIL WHERE THE STOCK WORDS ARE FALSE, and only there. A 1Click swap inside
-   NEAR Intents (the intents-native rail, depositType INTENTS) settles its signed transfer and the
-   solver's fill in ONE transaction: nothing leaves the balance until a solver fills, so its
-   PROCESSING is a wait for a buyer, not money moving across. On 2026-09-25 (proposal 6bb6783b) the
-   card read "On its way" and "The transfer is moving your money across" for ten minutes over a
-   transfer that never ran. A move that does leave the verifier (a deposit, a withdrawal, a payout,
-   a retired chain-side swap) keeps the stock words: its money really is moving. These are still
-   the stage table, read through stageLabelOf and stageCopyOf and printed verbatim like the rest;
-   a stage a rail does not name reads the two tables above. */
+   NEAR Intents (the intents-native rail, depositType INTENTS) never leaves the balance for a chain:
+   its PROCESSING is 1Click waiting for a solver to fill it, a wait for a buyer, not money moving
+   across. The words claim no more than that. Whether the signed transfer runs only with the fill is
+   1Click's to say, and the rail still meets a FAILED whose transfer ran (a refund on its way). On
+   2026-09-25 (proposal 6bb6783b) the card read "On its way" and "The transfer is moving your money
+   across" for ten minutes over a transfer that never ran. A move that does leave the verifier (a
+   deposit, a withdrawal, a payout, a retired chain-side swap) keeps the stock words: its money
+   really is moving. These are still the stage table, read through stageLabelOf and stageCopyOf and
+   printed verbatim like the rest; a stage a rail does not name reads the two tables above. */
 export const RAIL_STAGE_LABEL: Partial<Record<SwapDraft['venue'], Partial<Record<ProposalStage, string>>>> = {
   'intents-native': { PROCESSING: 'Finding a match' },
 };
 export const RAIL_STAGE_COPY: Partial<Record<SwapDraft['venue'], Partial<Record<ProposalStage, string>>>> = {
-  'intents-native': { PROCESSING: 'Sent. Waiting for a buyer to take it. Nothing leaves your balance until it fills.' },
+  'intents-native': { PROCESSING: 'Sent. Waiting for a buyer to take it.' },
 };
 
 // The rail a row was written under, where a rail's words can differ: a swap's venue.
@@ -237,6 +243,12 @@ export function stageLabelOf(p: Proposal, stage: ProposalStage): string {
 export function stageCopyOf(p: Proposal, stage: ProposalStage): string {
   const rail = railOf(p);
   return (rail === null ? undefined : RAIL_STAGE_COPY[rail]?.[stage]) ?? STAGE_COPY[stage];
+}
+
+// Whether the rail names this stage in its own words.
+function railWordsOf(p: Proposal, stage: ProposalStage): boolean {
+  const rail = railOf(p);
+  return rail !== null && RAIL_STAGE_LABEL[rail]?.[stage] !== undefined;
 }
 
 /* NOT_FOUND_OR_NOT_VALID is not here on purpose. When the relay answers it for a published
@@ -405,7 +417,9 @@ function waitingOn(p: Proposal, stage: ProposalStage): string | null {
          not answered. It is named as what it is to the person, never by its vendor: "1Click"
          told nobody what they were waiting for. */
       if (p.kind === 'trade') return 'Hyperliquid';
-      if (p.kind === 'swap' && p.draft.kind === 'swap' && p.draft.venue === 'intents-relay') return 'NEAR Intents';
+      // A swap that stays inside NEAR Intents, the relay's or 1Click's, waits on NEAR Intents: no
+      // transfer between pockets is running (RAIL_STAGE_LABEL).
+      if (p.kind === 'swap' && p.draft.kind === 'swap' && (p.draft.venue === 'intents-relay' || p.draft.venue === 'intents-native')) return 'NEAR Intents';
       return 'the transfer';
   }
 }
@@ -904,6 +918,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     // A move that did not go through says why in its own words, never the stage's stock line:
     // "A rule you set stopped it" was printed over every refusal, the app's own included.
     stageCopy: byCause && reason !== null ? reason.sentence : stageCopyOf(p, stage),
+    railWords: !byCause && railWordsOf(p, stage),
     providerStage: p.result?.evidence?.providerStage ?? null,
     waitingOn: waitingOn(p, stage),
     terminal: TERMINAL.has(stage),

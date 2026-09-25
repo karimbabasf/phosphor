@@ -1564,9 +1564,11 @@
       if (plain.held) return decision && typeof decision.heldLine === 'function' ? decision.heldLine(row) : 'Waiting for the checks to clear. Nothing is signed until they do.';
       if (plain.late) {
         /* A late move the app cannot vouch for yet ("we can't confirm yet whether this went
-           through") says so in the view's words; a plain slow one says it is only slow. */
+           through") says so in the view's words; a plain slow one says it is only slow. A stage
+           in the rail's own words (view.railWords: a swap inside NEAR Intents waiting for a buyer)
+           keeps them, because "this card changes the moment it lands" says money is on its way. */
         if (view && isObject(view.reason) && view.reason.code !== 'needs_approval' && view.reason.sentence) return String(view.reason.sentence);
-        return view && view.stage === 'stalled' && view.stageCopy ? String(view.stageCopy) : 'This is taking longer than usual. Nothing needs you, and this card changes the moment it lands.';
+        return view && (view.stage === 'stalled' || view.railWords === true) && view.stageCopy ? String(view.stageCopy) : 'This is taking longer than usual. Nothing needs you, and this card changes the moment it lands.';
       }
       return '';
     }

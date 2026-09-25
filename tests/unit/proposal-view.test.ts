@@ -159,18 +159,23 @@ test('no stage label or copy carries a vendor word, a code or an engineer word',
   }
 });
 
-/* A 1CLICK SWAP INSIDE NEAR INTENTS MOVES NOTHING UNTIL IT FILLS: its signed transfer and the
-   solver's fill are one transaction, so while 1Click is PROCESSING it the card says it is waiting
-   for a buyer. On 2026-09-25 (proposal 6bb6783b) it said "On its way" over a transfer that never
-   ran. Every move whose money does leave the verifier keeps the stock words. */
+/* A 1CLICK SWAP INSIDE NEAR INTENTS STAYS INSIDE THE BALANCE: while 1Click is PROCESSING it, the
+   swap is waiting for a solver to fill it, so the card says it is waiting for a buyer and claims
+   nothing about when the balance changes (the rail still meets a FAILED whose transfer ran, which
+   is a refund on its way). On 2026-09-25 (proposal 6bb6783b) it said "On its way" over a transfer
+   that never ran. Every move whose money does leave the verifier keeps the stock words. */
 const NATIVE_SWAP: Partial<Proposal> = { kind: 'swap', draft: { ...(RELAY_SWAP.draft as Extract<WriteDraft, { kind: 'swap' }>), venue: 'intents-native' } };
 
 test('a swap that stays inside NEAR Intents is finding a match while 1Click processes it, never money on its way', () => {
   const view = withProvider('executing', 'PROCESSING', NATIVE_SWAP);
   assert.equal(view.stage, 'PROCESSING', 'the vendor word is still the stage');
   assert.equal(view.stageLabel, 'Finding a match');
-  assert.equal(view.stageCopy, 'Sent. Waiting for a buyer to take it. Nothing leaves your balance until it fills.');
-  assert.doesNotMatch(`${view.stageLabel} ${view.stageCopy}`, /moving|on its way|across/i);
+  assert.equal(view.stageCopy, 'Sent. Waiting for a buyer to take it.');
+  assert.doesNotMatch(`${view.stageLabel} ${view.stageCopy}`, /moving|on its way|across|leaves your balance|until it fills/i);
+  // What the agent reads it is waiting on: NEAR Intents, as for the relay's swap, never "the transfer".
+  assert.equal(view.waitingOn, 'NEAR Intents');
+  // And the card knows these are the rail's words, so a late card prints them (ui/screens/cards.js lineFor).
+  assert.equal(view.railWords, true);
 });
 
 test('a move whose money does leave the verifier keeps its PROCESSING words', () => {
@@ -179,7 +184,13 @@ test('a move whose money does leave the verifier keeps its PROCESSING words', ()
   for (const view of [CASES.PROCESSING(), withProvider('executing', 'PROCESSING', chainSide)]) {
     assert.equal(view.stageLabel, 'On its way');
     assert.equal(view.stageCopy, 'The transfer is moving your money across. Nothing for you to do.');
+    assert.equal(view.waitingOn, 'the transfer');
+    assert.equal(view.railWords, false);
   }
+  // A stage the rail does not name reads the stock words, and they are not the rail's.
+  const signing = withProvider('executing', 'PROCESSING', { ...NATIVE_SWAP, status: 'approved', result: undefined });
+  assert.equal(signing.stage, 'signing');
+  assert.equal(signing.railWords, false);
 });
 
 test('a rail\'s own words for a stage keep the table\'s rules', () => {
