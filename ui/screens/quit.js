@@ -31,8 +31,6 @@
   var card = null;
   var landTimer = 0;
   var leaving = false;
-  // The last report the backend answered, for a card whose own read never comes back.
-  var last = null;
   var SHOW_WITHOUT_ANSWER_MS = 600;
   var LAND_POLL_MS = 1500;
   /* The least time between two steps landing, so each is seen to land, and
@@ -61,7 +59,6 @@
     var draw = function (report) {
       if (phase !== 'asking' || leaving || (drawn && report === null)) return;
       drawn = true;
-      if (report) last = report;
       open(report);
     };
     var late = window.setTimeout(function () { draw(null); }, SHOW_WITHOUT_ANSWER_MS);
@@ -170,7 +167,6 @@
       landTimer = window.setTimeout(function () {
         read().then(function (report) {
           if (!landTimer || phase !== 'asking') return;
-          if (report) last = report;
           if (report === null || report.moving.length === 0) go();
           else check();
         });
@@ -202,11 +198,13 @@
 
      A step lands only on the thing it names, and nothing here lands on a
      timer. The moves: the backend's own report of what is on its way, read
-     again at the yes (the sheet's, when that read does not come back). The
-     wallet: the shell's lock through the backend's route, or the backend
-     having stopped, since the unlocked key lived only in that process. The
-     backend (the step called Phosphor): Backend::kill returning. A step with
-     no answer stays where it is until the window goes.
+     again at the yes; a read that does not come back is Not checked, and an
+     older answer (the sheet's, or one from a cancelled sheet hours ago) never
+     stands in for it. The wallet: the backend's own lock, which it takes only
+     when nothing is being sent, or the backend having stopped, since the
+     unlocked key lived only in that process. The backend (the step called
+     Phosphor): Backend::kill returning. A step with no answer stays where it
+     is until the window goes.
 
      The shell's words: locked, sending (a move is being sent, so the lock is
      left to the stop), stopping, stopped. */
@@ -287,8 +285,7 @@
     var hand = function (report) {
       if (handed) return;
       handed = true;
-      var known = report || last;
-      facts.report = known ? { count: Array.isArray(known.moving) ? known.moving.length : 0 } : null;
+      facts.report = report ? { count: Array.isArray(report.moving) ? report.moving.length : 0 } : null;
       facts.handed = true;
       phase = 'quit';
       advance();
