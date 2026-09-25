@@ -689,7 +689,13 @@ export function createDriver(opts: DriverOptions) {
           opts.onEvent({ kind: 'debug', message: `the agent called ${call.name}, which no tool in this session has; ${provider.name} turned it away` });
           continue;
         }
-        if (call.kind === 'web') markWebRead(seat);
+        if (call.kind === 'web') {
+          markWebRead(seat);
+          // The audit is where "why did it do that" gets answered, and a page it read is part of why.
+          const what = (block.input as { query?: unknown; url?: unknown } | null) ?? {};
+          const target = typeof what.query === 'string' ? what.query : typeof what.url === 'string' ? what.url : '';
+          opts.onEvent({ kind: 'debug', message: `agent: web ${call.name} ${JSON.stringify(target.slice(0, 200))}` });
+        }
         const input = call.kind === 'web' ? block.input : call.input;
         if (id !== '') calls.set(id, { name: call.name, input, meta: false });
         opts.onEvent({ kind: 'tool', name: call.name, input });
