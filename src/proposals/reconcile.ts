@@ -245,7 +245,8 @@ function closedUnknown(p: Proposal): boolean {
 /* A SIGNED TRANSFER'S DEADLINE PASSING IS THE MOMENT "NOTHING MOVED" CAN BECOME TRUE, so an open
    row carrying one is asked again from that minute, not on the ten-minute sweep. On each ledger
    refresh (every fifteen seconds in the app), a row whose deadline has passed by this clock is
-   re-checked at most every FATE_RECHECK_MS, until it closes or until its deadline, the grace and
+   re-checked at most every FATE_RECHECK_MS (on the next refresh while the chain has not reached
+   the deadline yet, see deadlineDue), until it closes or until its deadline, the grace and
    DEADLINE_WATCH_TAIL_MS are behind it; after that it is the sweep's. The re-check is
    reconcileProposal's own, so the verdict is transferFate's (src/relay/fate.ts): NEAR's final
    block past the deadline with the nonce unspent closes the row within half a minute of the chain
@@ -696,7 +697,8 @@ export { RELAY_DEADLINE_GRACE_MS };
                                     shows the nonce spent, and stays until it does: the relay's
                                     word is checked against the chain, never taken alone.
      PENDING, TX_BROADCASTED     -> stays, with the relay's word on the row so the card moves.
-     anything else, or no hash   -> the verifier, by the nonce (transferFate, src/relay/fate.ts):
+     anything else, no hash, or
+     no answer from the relay    -> the verifier, by the nonce (transferFate, src/relay/fate.ts):
        spent                     -> the swap executed; executed without a pocket, else stays until
                                     the balance shows it.
        unspent, deadline passed  -> failed, nothing left the balance: an intent past its deadline
