@@ -5,9 +5,9 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
-## 0.11.0
+## 0.10.2
 
-Built 2026-09-25. Tagged v0.11.0 on 2026-09-25.
+Built 2026-09-25. Tagged v0.10.2 on 2026-09-25. It was tagged v0.11.0 first; that tag never became a release.
 
 - Quitting asks first. Cmd+Q, Quit Phosphor and the window's close button open a small sheet that
   says what a quit would interrupt: a move on its way (it finishes without the app), a plan entry
