@@ -5,6 +5,23 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.11.0
+
+Built 2026-09-25. Tagged v0.11.0 on 2026-09-25.
+
+- Quitting asks first. Cmd+Q, Quit Phosphor and the window's close button open a small sheet that
+  says what a quit would interrupt: a move on its way (it finishes without the app), a plan entry
+  resting at Hyperliquid with no stop yet, a plan that only fires while the app is open, or an agent
+  mid-reply. Quit is never blocked: "Quit when it lands" waits for a move and then quits by itself,
+  a second Cmd+Q quits at once, and a window that does not answer is quit anyway. The window fades
+  out as it goes.
+- Side charts draw like the main chart: their indicators, the live price line and the price tag
+  with its number. Zones are see-through again instead of solid blocks.
+- News reaches the web. The news tool matches every word of the question as a whole word, so a
+  question about Gram no longer matches Telegram, and when its four feeds have nothing it says so
+  and the agent searches the web. Every web search and page the agent reads is in the audit.
+- Onboarding, the terms card and the lock screen sit on the same warm ground as the main window.
+
 ## 0.10.0
 
 Built 2026-09-24, the production pass. Tagged v0.10.0 on 2026-09-24.

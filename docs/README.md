@@ -2,7 +2,7 @@
 
 These pages are the user documentation for Phosphor, the local Mac app that holds your keys,
 your venue connections and your rules while an agent proposes moves and you click. They describe
-version 0.10.0, the version in `package.json`. The site at
+version 0.11.0, the version in `package.json`. The site at
 [phosphor.money/docs](https://phosphor.money/docs) is rendered from these
 files, and the three developer documents below sit beside them.
 
