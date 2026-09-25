@@ -305,6 +305,16 @@ button[data-pending-label] > :not(.btn-pending) {
   pointer-events: none;
 }
 
+/* A coin's own picture from the backend's cache (marks.js picture()): drawn
+   edge to edge, so it is set to the same three quarters as every file and
+   monogram, and cut round like the coin it shows. */
+.logo[data-picture] > img {
+  width: 75%;
+  height: 75%;
+  border-radius: var(--radius-pill);
+  object-fit: cover;
+}
+
 .logo[data-fallback] {
   position: relative;
   color: var(--text-2);

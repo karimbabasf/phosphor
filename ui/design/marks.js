@@ -14,8 +14,10 @@
    round geometry: a brand drawn on a square (Base's block, PEPE's tile) is its
    round mark, and a brand drawn as a dark disc carries a faint light edge in
    its file so it does not vanish on the warm ground (Karim, 2026-09-23: the
-   real logos, never tinted discs). A coin with no file draws a neutral
-   monogram at that same size, never a stand-in glyph. */
+   real logos, never tinted discs). A coin with no file draws its own picture
+   from this app's cache when there is one (Karim, 2026-09-25: "the pictures
+   are out there, we just have to find them and use them"), and otherwise a
+   neutral monogram at that same size, never a stand-in glyph. */
 (function () {
   'use strict';
 
@@ -180,8 +182,9 @@
   /* The real mark, as an image: <span class="logo" data-token="ETH"
      style="--logo: 24px"><img src="./logos/eth.svg" alt=""></span>. The size
      rides on the node as --logo, which the stylesheet reads. A ticker with no
-     file, or a file that fails to load, becomes its monogram: never an emoji,
-     never a broken image, never somebody else's mark. */
+     file draws its picture from the cache, and with no picture either, or a
+     file that fails to load, becomes its monogram: never an emoji, never a
+     broken image, never somebody else's mark. */
   function logo(symbol, size) {
     var ticker = tickerOf(symbol);
     var node = document.createElement('span');
@@ -191,7 +194,10 @@
     if (size) node.style.setProperty('--logo', size + 'px');
     var colour = colourFor(symbol);
     if (colour) node.style.setProperty('--coin', colour);
-    if (LOGOS.indexOf(ticker) < 0) return fallback(node, ticker);
+    if (LOGOS.indexOf(ticker) < 0) {
+      readPictures();
+      return pictureOf(ticker) ? picture(node, ticker) : fallback(node, ticker);
+    }
     var img = document.createElement('img');
     img.alt = '';
     img.decoding = 'async';
@@ -214,6 +220,94 @@
     var first = /[\p{L}\p{N}]/u.exec(ticker);
     initial.textContent = first ? first[0] : '?';
     node.appendChild(initial);
+    return node;
+  }
+
+  /* The coin pictures (2026-09-25). The backend keeps a picture for every coin
+     1Click lists, fetched once from CoinGecko and checked to be a PNG, JPEG or
+     WebP (src/ledger/pictures.ts), and serves it itself, so the page loads
+     none from anywhere else. This asks which coins have one (/api/coin-images):
+     when a coin with no file first needs a mark, then on the state frames that
+     keep arriving, soon while more are still coming and every five minutes
+     once they have all come, never on a timer. A monogram drawn before its
+     picture was known becomes the picture in place, on every surface at once.
+     A picture that will not load is the monogram again and is not tried again. */
+  var PICTURES_SOON_MS = 5 * 1000;
+  var PICTURES_LATER_MS = 5 * 60 * 1000;
+  var COINGECKO_ID = /^[a-z0-9][a-z0-9._-]{0,99}$/;
+  var pictures = { ids: Object.create(null), broken: Object.create(null), at: 0, settled: false, pending: false, watching: false };
+
+  function pictureOf(ticker) {
+    if (pictures.broken[ticker]) return '';
+    var id = pictures.ids[ticker];
+    return typeof id === 'string' ? id : '';
+  }
+
+  function readPictures() {
+    var net = window.PhosphorNet;
+    if (!net || typeof net.getJson !== 'function') return;
+    watch();
+    if (pictures.pending) return;
+    var wait = pictures.settled ? PICTURES_LATER_MS : PICTURES_SOON_MS;
+    if (pictures.at && Date.now() - pictures.at < wait) return;
+    var reading = net.getJson('/api/coin-images');
+    if (!reading || typeof reading.then !== 'function') return;
+    pictures.pending = true;
+    reading
+      .then(function (result) {
+        var data = result && result.data ? result.data : null;
+        var named = data && data.symbols && typeof data.symbols === 'object' ? data.symbols : {};
+        var ids = Object.create(null);
+        Object.keys(named).forEach(function (ticker) {
+          if (typeof named[ticker] === 'string' && COINGECKO_ID.test(named[ticker])) ids[ticker] = named[ticker];
+        });
+        pictures.ids = ids;
+        pictures.settled = !!(data && data.settled === true);
+        upgrade();
+      })
+      .catch(function () {})
+      .then(function () {
+        pictures.pending = false;
+        pictures.at = Date.now();
+      });
+  }
+
+  /* Once a coin has needed a picture, every state frame asks again when it is
+     time to. Subscribed before the read above starts, because the store calls
+     a new subscriber at once. */
+  function watch() {
+    var store = window.PhosphorState;
+    if (pictures.watching || !store || typeof store.subscribe !== 'function') return;
+    pictures.watching = true;
+    store.subscribe(function () { readPictures(); });
+  }
+
+  function upgrade() {
+    if (typeof document.querySelectorAll !== 'function') return;
+    var nodes = document.querySelectorAll('.logo[data-fallback][data-token]');
+    for (var i = 0; i < nodes.length; i += 1) {
+      var ticker = nodes[i].getAttribute('data-token');
+      if (pictureOf(ticker)) picture(nodes[i], ticker);
+    }
+  }
+
+  /* The picture, from this app's own server, drawn to the same three quarters
+     of the box as a file or a monogram (components.css). */
+  function picture(node, ticker) {
+    node.textContent = '';
+    node.removeAttribute('data-fallback');
+    node.setAttribute('data-picture', 'true');
+    var img = document.createElement('img');
+    img.alt = '';
+    img.decoding = 'async';
+    img.draggable = false;
+    img.onerror = function () {
+      pictures.broken[ticker] = true;
+      node.removeAttribute('data-picture');
+      fallback(node, ticker);
+    };
+    img.src = '/api/coin-image?id=' + encodeURIComponent(pictureOf(ticker));
+    node.appendChild(img);
     return node;
   }
 
