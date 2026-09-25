@@ -463,7 +463,7 @@ test('the mark goes out a slab per step, front to back, and the lock screen stay
 });
 
 test('the words the shell sends and reads are the ones this page speaks', () => {
-  const sent = [...SHELL.matchAll(/QuitLanded::\w+ => "(\w+)"/g)].map((m) => m[1]);
+  const sent = [...SHELL.matchAll(/StopStep::\w+ => "(\w+)"/g)].map((m) => m[1]);
   assert.deepEqual(sent, ['locked', 'sending', 'stopping', 'stopped']);
   for (const word of sent) assert.ok(QUIT.includes(`word === '${word}'`), `the page takes ${word}`);
   for (const phase of ['asking', 'quit', 'closed']) {
