@@ -56,6 +56,7 @@ export type SwapQuoteReply = {
   details: string | null;
   candidates?: SwapSide[]; // on ambiguous_asset: name one of these by its assetId
   picked?: string; // the version of the bought coin the app took, when its name fits several
+  preview?: true; // the balance holds none of the coin sold yet: its price if it did, nothing to file
 };
 
 export type SwapLedgerMove = { amount: string; at: string | null; counterparty: string | null; hash: string };
@@ -108,27 +109,11 @@ export type SideAsk = { asked: string; chain?: string };
      bought -> its NEAR version (nearVersion), so one coin never sits in the balance as several
                tiles (Karim, 2026-09-25: "default to near intents always"); with none, the one
                held the most of; otherwise pickBoughtByQuote asks what each would get.
-   What is still several after this is the candidates the next step, or the person, chooses from. */
+   What is still several after this is the candidates the next step, or the person, chooses from.
+   swap_quote alone prices a spent coin none of whose versions is held, as the bought rule lands it
+   (resolveBought): the preview of a later step of a plan. propose_swap still spends only what is held. */
 export function resolveSwapSides(from: SideAsk, to: SideAsk, list: OneClickToken[], held: ReadonlyMap<string, string>): { from: SidePick; to: SidePick } {
-  const named = (ask: SideAsk): boolean => (ask.chain?.trim() ?? '') !== '';
-  const picks = { from: resolveSide(from.asked, from.chain, list), to: resolveSide(to.asked, to.chain, list) };
-  // A lookalike of a pinned coin is never bought, however it was named: by ticker, network or id.
-  const real = (s: SwapSide): boolean => {
-    const pin = NEAR_VERSION_PINNED[s.symbol.toUpperCase()];
-    return s.network !== 'near' || pin === undefined || s.assetId === pin;
-  };
-  const fake = { kind: 'none', why: `that ${oneLine(to.asked, 60)} on NEAR is not the real coin of that name`, lookalike: true } as const;
-  if (picks.to.kind === 'one' && !real(picks.to.side)) picks.to = fake;
-  if (picks.to.kind === 'many') {
-    const kept = picks.to.candidates.filter(real);
-    picks.to = kept.length === 0 ? fake : kept.length === 1 ? { kind: 'one', side: kept[0]! } : { kind: 'many', candidates: kept };
-  }
-  if (picks.to.kind === 'many' && !named(to)) {
-    const near = nearVersion(picks.to.candidates, list);
-    const owned = picks.to.candidates.filter((s) => held.has(s.assetId)).sort((a, b) => Number(held.get(b.assetId)) - Number(held.get(a.assetId)));
-    if (near !== null) picks.to = { kind: 'one', side: near };
-    else if (owned.length > 0) picks.to = { kind: 'one', side: owned[0]! };
-  }
+  const picks = { from: resolveSide(from.asked, from.chain, list), to: resolveBought(to, list, held) };
   if (picks.from.kind === 'many' && !named(from)) {
     const owned = picks.from.candidates.filter((s) => held.has(s.assetId));
     picks.from =
@@ -139,6 +124,33 @@ export function resolveSwapSides(from: SideAsk, to: SideAsk, list: OneClickToken
           : { kind: 'none', why: `the balance holds no ${oneLine(from.asked, 20)}`, code: 'insufficient_balance' };
   }
   return picks;
+}
+
+function named(ask: SideAsk): boolean {
+  return (ask.chain?.trim() ?? '') !== '';
+}
+
+// The bought half of the rule: the coin a swap into `to` lands as.
+function resolveBought(to: SideAsk, list: OneClickToken[], held: ReadonlyMap<string, string>): SidePick {
+  let pick = resolveSide(to.asked, to.chain, list);
+  // A lookalike of a pinned coin is never bought, however it was named: by ticker, network or id.
+  const real = (s: SwapSide): boolean => {
+    const pin = NEAR_VERSION_PINNED[s.symbol.toUpperCase()];
+    return s.network !== 'near' || pin === undefined || s.assetId === pin;
+  };
+  const fake = { kind: 'none', why: `that ${oneLine(to.asked, 60)} on NEAR is not the real coin of that name`, lookalike: true } as const;
+  if (pick.kind === 'one' && !real(pick.side)) pick = fake;
+  if (pick.kind === 'many') {
+    const kept = pick.candidates.filter(real);
+    pick = kept.length === 0 ? fake : kept.length === 1 ? { kind: 'one', side: kept[0]! } : { kind: 'many', candidates: kept };
+  }
+  if (pick.kind === 'many' && !named(to)) {
+    const near = nearVersion(pick.candidates, list);
+    const owned = pick.candidates.filter((s) => held.has(s.assetId)).sort((a, b) => Number(held.get(b.assetId)) - Number(held.get(a.assetId)));
+    if (near !== null) pick = { kind: 'one', side: near };
+    else if (owned.length > 0) pick = { kind: 'one', side: owned[0]! };
+  }
+  return pick;
 }
 
 /* THE NEAR VERSION OF A COIN WORTH FAKING, by exact id: the near rows of data/tokens.json. The
@@ -496,6 +508,18 @@ export async function swapAssets(ctx: PCtx, params: SwapAssetsParams): Promise<S
 
 // ---------- swap_quote ----------
 
+// What a quote says of a coin the balance holds none of yet.
+const NOT_HELD = {
+  preview: (coin: string): string => `The balance holds no ${coin} yet, so this is the price if it did: a swap from it can run once the ${coin} is there.`,
+  all: (coin: string): string => `The balance holds no ${coin} yet, so "all" of it has no amount to price. Quote a number instead, such as what the step before gets.`,
+  which: (coin: string): string =>
+    `The balance holds no ${coin} yet, and it has no NEAR version, so which one it would be depends on the step before. Quote it by the assetId that step buys.`,
+};
+
+function coinWord(side: SwapSide): string {
+  return side.symbol.toUpperCase() === 'WNEAR' ? 'NEAR' : side.symbol;
+}
+
 export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<SwapQuoteReply> {
   const none = { ok: false, amountIn: null, expectedOut: null, minOut: null, feeUsd: null, etaSeconds: null, details: null } as const;
   const lookup = ctx.rails.swap;
@@ -508,13 +532,21 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
     return { ...none, from: null, to: null, reason: 'no_price', sentence: "The swap service didn't answer just now, so there is no quote. Try again in a minute.", details: shortIds(errText(err)) };
   }
 
-  const sides = resolveSwapSides(
-    { asked: String(params.fromSymbol ?? ''), chain: params.chain },
-    { asked: String(params.toSymbol ?? ''), chain: params.toChain },
-    list,
-    heldOf(ctx),
-  );
-  const fromPick = sides.from;
+  const held = heldOf(ctx);
+  const fromAsk: SideAsk = { asked: String(params.fromSymbol ?? ''), chain: params.chain };
+  const sides = resolveSwapSides(fromAsk, { asked: String(params.toSymbol ?? ''), chain: params.toChain }, list, held);
+  /* A COIN NOT HELD YET IS PRICED AS THE PLAN WOULD HOLD IT, so every step of a plan has a price
+     before the first is filed (2026-09-25: nobody priced VVV to DAI, VVV to USDC was filed, and
+     USDC to DAI was asked a second later and refused here). Its version is the one a swap into it
+     lands as; with no such version, the step before has to name it. "all" of none is no amount. */
+  const unheld = sides.from.kind === 'none' && sides.from.code === 'insufficient_balance' ? sides.from : null;
+  const fromPick = unheld === null ? sides.from : resolveBought(fromAsk, list, held);
+  if (unheld !== null && fromPick.kind !== 'none') {
+    const coin = coinWord(fromPick.kind === 'one' ? fromPick.side : fromPick.candidates[0]!);
+    const refused = { ...none, from: null, to: null, reason: 'insufficient_balance', details: unheld.why } as const;
+    if (amountAsk(params.amountIn)?.all === true) return { ...refused, sentence: NOT_HELD.all(coin) };
+    if (fromPick.kind === 'many') return { ...refused, sentence: NOT_HELD.which(coin) };
+  }
   let toPick = sides.to;
   if (fromPick.kind === 'one' && toPick.kind === 'many' && (params.toChain?.trim() ?? '') === '') {
     toPick = await pickBoughtByQuote(ctx, fromPick.side, probeAmount(ctx, fromPick.side, params.amountIn), toPick.candidates, ourIntentsAddress(ctx, []), list);
@@ -567,10 +599,12 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
 
   // The exact amount, the same way a propose sets it: "all" is the balance to the last unit.
   const heldBase = await lookup.balance(account.toLowerCase(), from.assetId);
+  // None of it held: by the live read, or by the ledger's when the live read fails for a coin picked as unheld.
+  const preview = heldBase === 0n || (unheld !== null && heldBase === null);
   let base: bigint;
   if (ask.all) {
     if (heldBase === null) return { ...none, from, to, reason: 'balance_unread', sentence: reasonSentence('balance_unread', words) };
-    if (heldBase === 0n) return { ...none, from, to, reason: 'insufficient_balance', sentence: reasonSentence('insufficient_balance', words) };
+    if (heldBase === 0n) return { ...none, from, to, reason: 'insufficient_balance', sentence: NOT_HELD.all(coinWord(from)) };
     base = heldBase;
   } else {
     base = decimalToBaseUnits(ask.text, from.decimals);
@@ -591,9 +625,10 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
       from,
       to,
       ...facts,
-      reason: short ? 'insufficient_balance' : null,
-      sentence: short ? reasonSentence('insufficient_balance', words) : null,
+      reason: short || preview ? 'insufficient_balance' : null,
+      sentence: preview ? NOT_HELD.preview(coinWord(from)) : short ? reasonSentence('insufficient_balance', words) : null,
       details: null,
+      ...(preview ? { preview: true as const } : {}),
       ...(picked === null ? {} : { picked }),
     };
   } catch (err) {
