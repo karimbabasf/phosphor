@@ -191,6 +191,219 @@ dialog.confirm::backdrop {
   justify-content: flex-end;
 }
 
+/* ---------- Shutting down (ui/screens/quit.js, go) ----------
+
+   The same card after the yes, changed in place: the mark at its head, the
+   title, and the three steps in the tile the sheet's lines sat in. A step
+   waiting shows its own icon in the quiet ink, a step running the button's
+   spinner, a step done the move card's check on a green disc, popping on the
+   spring. The word on the right is the step's state, the way the move card
+   says its own. It stays up until the process ends, so the lock screen the
+   wallet's lock would raise under it is kept down. */
+body[data-quitting="true"] #screen-lock {
+  visibility: hidden;
+}
+
+.quit-card[data-state="closing"] {
+  gap: var(--s-4);
+}
+
+.quit-card:focus {
+  outline: none;
+}
+
+.quit-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-4);
+}
+
+/* The mark, and the one moment this card has. It scans while anything is
+   left to stop (mark.css, working), and as each step lands one slab goes
+   out, front to back: the boot's trace-on run backwards, each slab flaring
+   hot and cooling to the faint it started from, on the long cool of the
+   done flash. The last slab and the cut go with the close. Changing the list
+   keeps every animation still in it running (animations are matched by
+   name), so the beam never jumps. Under reduced motion nothing scans and
+   the slabs are simply out. */
+.quit-mark {
+  width: 36px;
+  height: 40px;
+  color: var(--ink);
+}
+
+svg.mark.quit-mark[data-dark="1"] {
+  animation:
+    mark-scan-1 1400ms linear 0ms infinite,
+    mark-scan-2 1400ms linear 280ms infinite,
+    mark-scan-3 1400ms linear 560ms infinite,
+    quit-out-4 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    mark-scan-5 1400ms linear 1120ms infinite;
+}
+
+svg.mark.quit-mark[data-dark="2"] {
+  animation:
+    mark-scan-1 1400ms linear 0ms infinite,
+    mark-scan-2 1400ms linear 280ms infinite,
+    quit-out-3 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    quit-out-4 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    mark-scan-5 1400ms linear 1120ms infinite;
+}
+
+svg.mark.quit-mark[data-dark="3"] {
+  animation:
+    mark-scan-1 1400ms linear 0ms infinite,
+    quit-out-2 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    quit-out-3 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    quit-out-4 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    mark-scan-5 1400ms linear 1120ms infinite;
+}
+
+svg.mark.quit-mark[data-dark="4"] {
+  animation:
+    quit-out-1 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    quit-out-2 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    quit-out-3 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    quit-out-4 1200ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    quit-out-5 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes quit-out-1 { 0% { --m1: 1; --h1: 0.6; } 100% { --m1: 0.12; --h1: 0; } }
+@keyframes quit-out-2 { 0% { --m2: 1; --h2: 0.6; } 100% { --m2: 0.12; --h2: 0; } }
+@keyframes quit-out-3 { 0% { --m3: 1; --h3: 0.6; } 100% { --m3: 0.12; --h3: 0; } }
+@keyframes quit-out-4 { 0% { --m4: 1; --h4: 0.6; } 100% { --m4: 0.12; --h4: 0; } }
+@keyframes quit-out-5 { 0% { --m5: 0.45; --h5: 0.5; } 100% { --m5: 0; --h5: 0; } }
+
+/* The steps, in the sheet's tile. A row is the glyph, the step and a note
+   under it when there is one, and the state word on the right. */
+.quit-steps {
+  list-style: none;
+  margin: 0;
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
+}
+
+.quit-step {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--s-3);
+  padding: 10px 0;
+}
+
+.quit-step-glyph {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-3);
+}
+
+.quit-step-glyph > .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.quit-step-glyph > .spinner {
+  color: var(--text-2);
+}
+
+.quit-step-done {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--on-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  animation: quit-pop var(--dur-spring) var(--ease-spring) both;
+}
+
+.quit-step-done > .icon {
+  width: 14px;
+  height: 14px;
+}
+
+@keyframes quit-pop {
+  from { opacity: 0; transform: scale(0.3); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.quit-step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.quit-step-name {
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.quit-step[data-state="wait"] .quit-step-name,
+.quit-step[data-state="held"] .quit-step-name,
+.quit-step[data-state="unknown"] .quit-step-name {
+  color: var(--text-2);
+}
+
+.quit-step-note {
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+  text-wrap: pretty;
+}
+
+.quit-step-word {
+  font-size: var(--fs-13);
+  line-height: 20px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.quit-step[data-state="wait"] .quit-step-word,
+.quit-step[data-state="held"] .quit-step-word,
+.quit-step[data-state="unknown"] .quit-step-word {
+  color: var(--text-3);
+}
+
+.quit-step-name[data-fade="a"],
+.quit-step-word[data-fade="a"] {
+  animation: quit-fade-a var(--dur-morph) var(--ease-out) both;
+}
+
+.quit-step-name[data-fade="b"],
+.quit-step-word[data-fade="b"] {
+  animation: quit-fade-b var(--dur-morph) var(--ease-out) both;
+}
+
+@keyframes quit-fade-a { from { opacity: 0; } to { opacity: 1; } }
+@keyframes quit-fade-b { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  svg.mark.quit-mark[data-dark] {
+    animation: none;
+  }
+
+  svg.mark.quit-mark[data-dark="1"] { --m4: 0.12; }
+  svg.mark.quit-mark[data-dark="2"] { --m3: 0.12; --m4: 0.12; }
+  svg.mark.quit-mark[data-dark="3"] { --m2: 0.12; --m3: 0.12; --m4: 0.12; }
+  svg.mark.quit-mark[data-dark="4"] { --m1: 0.12; --m2: 0.12; --m3: 0.12; --m4: 0.12; }
+
+  .quit-step-done,
+  .quit-step-name[data-fade],
+  .quit-step-word[data-fade] {
+    animation: none;
+  }
+}
+
 .destinations {
   padding: var(--s-3);
   border-radius: var(--radius-sm);
