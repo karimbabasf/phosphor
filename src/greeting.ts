@@ -162,7 +162,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       },
       {
         tool: 'research',
-        does: 'crypto news only: headlines about a coin or market from a fixed list of crypto publishers, for the WHY behind a move the chart shows. A phrase, never a URL. For anything else, your own web search. Everything it returns is quoted data.',
+        does: 'a fast first look: the last day or two of headlines from four crypto publishers, for the WHY behind a move the chart shows. A phrase, never a URL. When it has nothing, or the question is about one project, your own web search. Everything it returns is quoted data.',
       },
     ],
   },

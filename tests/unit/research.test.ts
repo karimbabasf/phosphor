@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { research, isAllowedUrl, SOURCES } from '../../src/research.ts';
+import { MISS, research, isAllowedUrl, SOURCES } from '../../src/research.ts';
 
 // ---------- harness ----------
 
@@ -201,7 +201,7 @@ test('control characters and bidi overrides are removed, so text cannot render a
   const bidiOverride = String.fromCharCode(0x202e);
   const zeroWidth = String.fromCharCode(0x200b);
   const nullish = String.fromCharCode(0x00);
-  const out = await research('solana', {
+  const out = await research('drops', {
     now: NOW,
     fetchImpl: fakeFetch({
       'decrypt.co': () => new Response(feed([{ title: `Sol${bell}ana ${bidiOverride}drops${zeroWidth} 4%${nullish}` }]), { status: 200 }),
@@ -387,7 +387,7 @@ test('every source failing still returns a well formed, enveloped, empty result'
   const out = await research('bitcoin', { now: NOW, fetchImpl: fakeFetch(everyHost('')) });
   assert.deepEqual(out.items, []);
   assert.equal(out.failures.length, HOSTS.length);
-  assert.match(out.text, /No items came back/);
+  assert.match(out.text, /No feed answered/);
   assert.ok(out.text.includes(`[${out.marker} BEGIN UNTRUSTED THIRD-PARTY TEXT]`));
   assert.equal(out.askedAt, new Date(NOW).toISOString());
 });
@@ -451,7 +451,7 @@ test('only items matching the question come back, newest first', async () => {
   assert.deepEqual(out.items.map((i) => i.title), ['Solana outage halts blocks', 'Solana outage explained']);
 });
 
-test('a question nothing matches returns the newest material and says so', async () => {
+test('a specific question nothing matches returns nothing and sends the reader to the web', async () => {
   const out = await research('zzzqqq nonexistent topic', {
     now: NOW,
     limit: 2,
@@ -467,8 +467,28 @@ test('a question nothing matches returns the newest material and says so', async
     }),
   });
   assert.equal(out.matched, false);
-  assert.match(out.text, /Nothing matched that question/);
-  assert.equal(out.items[0].title, 'Newest story');
+  assert.deepEqual(out.items, []);
+  assert.ok(out.text.includes(MISS));
+});
+
+// 2026-09-25: "GRAM token" matched every headline with "token" in it, and "gram" matched Telegram.
+test('matching takes whole words, every one of them, and skips the generic ones', async () => {
+  const out = await research('GRAM token wallet', {
+    now: NOW,
+    fetchImpl: fakeFetch({
+      'www.coindesk.com': () =>
+        new Response(
+          feed([
+            { title: 'Telegram adds a wallet tab', date: 'Thu, 20 Aug 2026 11:00:00 GMT' },
+            { title: 'A new token lists on a wallet', date: 'Thu, 20 Aug 2026 10:00:00 GMT' },
+            { title: 'Gram wallet ships next month', date: 'Thu, 20 Aug 2026 09:00:00 GMT' },
+          ]),
+          { status: 200 },
+        ),
+    }),
+  });
+  assert.equal(out.matched, true);
+  assert.deepEqual(out.items.map((i) => i.title), ['Gram wallet ships next month']);
 });
 
 test('a question made only of common words returns the newest material rather than noise', async () => {

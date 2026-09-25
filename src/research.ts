@@ -289,8 +289,13 @@ function itemsFrom(source: Source, xml: string, now: number): ResearchItem[] {
 // ---------- the answer ----------
 
 // Keyword match, nothing cleverer. Words of three letters or more, minus the ones every question
-// contains, and an item is in if any of them appears in its title or summary.
-const SKIP = new Set(['the', 'and', 'for', 'what', 'why', 'how', 'any', 'about', 'from', 'this', 'that', 'news', 'today', 'latest', 'market']);
+// contains, and an item is in only if EVERY one of them appears in its title or summary as a whole
+// word. Any-word substring matching turned "GRAM token" into every headline with "token" in it, and
+// "gram" into Telegram and Instagram (2026-09-25), so the agent read noise as coverage and stopped.
+const SKIP = new Set([
+  'the', 'and', 'for', 'what', 'why', 'how', 'any', 'about', 'from', 'this', 'that', 'news', 'today', 'latest', 'market',
+  'token', 'tokens', 'coin', 'coins', 'crypto', 'price',
+]);
 
 function terms(query: string): string[] {
   const found = toText(query).toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
@@ -298,9 +303,14 @@ function terms(query: string): string[] {
 }
 
 function hits(item: ResearchItem, want: string[]): boolean {
-  const hay = `${item.title} ${item.summary}`.toLowerCase();
-  return want.some((t) => hay.includes(t));
+  const words = new Set(`${item.title} ${item.summary}`.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+  return want.every((t) => words.has(t));
 }
+
+// The feeds hold only the last day or two of four desks, so a miss is a gap in them, never an
+// answer. Said outright, because an agent handed nothing (or, before, handed the newest unrelated
+// headlines) reported "no news" and never reached for the web search it holds.
+export const MISS = 'None of the four feeds carries this. That is a gap in these feeds, not evidence that there is no news: search the web for it now.';
 
 // The framing is not decoration. A reader told "this is quoted data" BEFORE it reads a hostile
 // sentence behaves differently from one told afterwards, and a marker it cannot guess means
@@ -308,9 +318,9 @@ function hits(item: ResearchItem, want: string[]): boolean {
 function render(marker: string, query: string, result: { matched: boolean; items: ResearchItem[]; failures: ResearchFailure[] }): string {
   const lines: string[] = [];
   if (result.items.length === 0) {
-    lines.push('No items came back. Nothing here is evidence of anything.');
+    lines.push(result.failures.length === SOURCES.length ? 'No feed answered. Nothing here is evidence of anything: search the web for it instead.' : MISS);
   } else {
-    if (!result.matched) lines.push('Nothing matched that question, so this is the newest material from every source instead.', '');
+    if (!result.matched) lines.push('That question named nothing specific, so this is the newest material from every source.', '');
     result.items.forEach((item, i) => {
       const label = SOURCES.find((s) => s.id === item.source)?.label ?? item.source;
       lines.push(`${i + 1}. [${label}, ${item.ageHours === null ? 'undated' : `${item.ageHours}h old`}] "${item.title}"`);
@@ -368,9 +378,10 @@ export async function research(query: string, opts: ResearchOptions = {}): Promi
   const want = terms(query);
   const found = want.length === 0 ? [] : pool.filter((item) => hits(item, want));
   const matched = found.length > 0;
-  // Newest first, undated last. That is the whole ranking.
+  // Newest first, undated last. That is the whole ranking. A question with nothing specific in it
+  // ("what is the news") gets the newest of everything; a specific one that missed gets nothing.
   const at = (item: ResearchItem): number => (item.publishedAt === null ? 0 : Date.parse(item.publishedAt));
-  const items = (matched ? found : pool).sort((a, b) => at(b) - at(a)).slice(0, limit);
+  const items = (matched ? found : want.length === 0 ? pool : []).sort((a, b) => at(b) - at(a)).slice(0, limit);
 
   return {
     query: cap(toText(query), 200),
