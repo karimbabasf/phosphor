@@ -18,6 +18,10 @@ sat on one stage for eight times its usual length, and at least ten minutes. It 
 app keeps asking, and the card moves the moment the venue credits it. Wait, and do not send it
 again.
 
+A swap inside NEAR Intents that finds no buyer does not stay late for long: about half a minute
+after its three minute transfer window, the card says Didn't go through and nothing left your
+balance, and your agent tells you in one line. You can try again then.
+
 Not confirmed means the venue said success and the app could not see the money land: the balance
 had not risen inside the window, or the account could not be read. Nothing more is signed, and
 the card keeps saying the move is working, then Taking longer. The app judges the row again on

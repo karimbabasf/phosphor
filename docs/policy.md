@@ -71,6 +71,14 @@ a web read carries the same mark, and an agent that later reads that label is ma
 that would have been refused is still refused; the mark only turns a move that would have run on
 its own into one that asks. [Security](security.md#a-web-page-is-not-an-instruction) says why.
 
+### After a move that did not go through
+
+When a move your agent proposed does not go through, the app wakes the agent to tell you in one
+line, without waiting for your next message. Nobody typed that turn, so every money move the agent
+proposes in it waits for your click, whatever its size. Why it asks says: "Your agent asked for
+this on its own after a move did not go through, so it waits for your OK." The mark ends with that
+turn, and a move that would have been refused is still refused.
+
 ## Policy as sentences
 
 The policy is stored as a file but read as English. The sentences are rendered from the file by
