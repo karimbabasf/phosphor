@@ -430,12 +430,34 @@ test('(e) 1Click not answering over a transfer that can still run keeps the row 
   assert.deepEqual(watchErrors(w), [], 'an error line for a question 1Click did not answer');
 });
 
+/* NEAR's final block trails this clock by about 2.6 s, so the first refresh after the deadline often
+   reads a block short of it: the chain not there yet, not an answer. Half a minute until the next
+   question made the close land 30 to 35 s after the deadline instead of a refresh after it. */
+test('a question that lands inside NEAR\'s lag behind this clock is asked again on the next refresh, not half a minute later', async () => {
+  let reads = 0;
+  const w = world({ block: (deadlineMs) => (++reads === 1 ? { hash: 'BlkShort', atMs: deadlineMs - 1_000 } : { hash: 'BlkPast', atMs: deadlineMs + 1_600 }), spent: false });
+  w.seed({ deadlineMs: Date.now() - 1_600 });
+  await w.tick();
+  assert.equal(w.store.get('swap-1')?.status, 'needs_reconciliation', 'the chain had not reached the deadline yet');
+  await w.tick();
+  assert.equal(w.store.get('swap-1')?.status, 'failed', 'the next refresh did not ask again');
+  assert.equal(w.store.get('swap-1')?.result?.reason, 'venue_failed_nothing_moved');
+  assert.deepEqual(w.asked, ['dep-1', 'dep-1']);
+});
+
 test('the deadline watch asks at most every half minute per row, never about a row a rail is still watching, and hands a late row to the sweep', async () => {
+  // A chain still short of a deadline half a minute gone is a node that lags, and it is asked at the
+  // usual pace: the next refresh asks again only inside the first half minute.
   const w = world({ block: (deadlineMs) => ({ hash: 'BlkBehind', atMs: deadlineMs - 2_600 }), spent: false });
-  w.seed({ deadlineMs: Date.now() - 10_000 });
+  w.seed({ deadlineMs: Date.now() - FATE_RECHECK_MS - 10_000 });
   await w.tick();
   await w.tick();
   assert.deepEqual(w.asked, ['dep-1'], `twice in a row is one question; the next is ${FATE_RECHECK_MS / 1000} s on`);
+  const answered = world({ block: pastBy(60_000), spent: true });
+  answered.seed({ deadlineMs: Date.now() - 10_000 });
+  await answered.tick();
+  await answered.tick();
+  assert.deepEqual(answered.asked, ['dep-1'], 'a chain past the deadline answered, and the next question is half a minute on');
 
   const railing = world({ block: pastBy(1_000), spent: false });
   railing.seed({ deadlineMs: Date.now() - 20_000, status: 'executing' });
@@ -531,8 +553,9 @@ const railDraft: SwapDraft = {
 };
 
 // The rail on a clock its own sleeps move, over a 1Click that answers `word(now)` and a chain
-// whose final block trails that clock by 2.6 s, as it did live on 2026-09-25.
-function railOn(opts: { word: (now: number) => string; chainReadable?: boolean; spent: boolean | null }) {
+// whose final block trails that clock by 2.6 s, as it did live on 2026-09-25 (`lagMs` to change it).
+// Its polls land 2.75 s past the deadline; a `firstPollMs` of 1 s moves them to 2 s past.
+function railOn(opts: { word: (now: number) => string; chainReadable?: boolean; spent: boolean | null; firstPollMs?: number; lagMs?: number }) {
   const clock = { now: NOW };
   const reads: Array<{ at: number; read: string }> = [];
   let filled = false;
@@ -566,7 +589,7 @@ function railOn(opts: { word: (now: number) => string; chainReadable?: boolean; 
     },
     finalBlock: async () => {
       reads.push({ at: clock.now, read: 'block' });
-      return opts.chainReadable === false ? null : { hash: `blk-${clock.now}`, atMs: clock.now - 2_600 };
+      return opts.chainReadable === false ? null : { hash: `blk-${clock.now}`, atMs: clock.now - (opts.lagMs ?? 2_600) };
     },
     saltValid: async (_salt, at) => {
       reads.push({ at: clock.now, read: `salt@${at ?? 'final'}` });
@@ -576,6 +599,7 @@ function railOn(opts: { word: (now: number) => string; chainReadable?: boolean; 
     sleepImpl: async (ms: number) => {
       clock.now += ms;
     },
+    ...(opts.firstPollMs === undefined ? {} : { firstPollMs: opts.firstPollMs }),
   });
   return { run: () => rail.execute(railDraft, 'p-1', { onEvidence: () => {} }), clock, reads };
 }
@@ -595,6 +619,31 @@ test('the rail\'s watch closes a swap the chain proves can never run about a min
   assert.ok(h.reads.filter((r) => r.read.startsWith('nonce')).every((r) => r.read.startsWith('nonce@blk-')), 'every nonce read is at the block the clock came from');
   const blocks = h.reads.filter((r) => r.read === 'block').map((r) => r.at);
   assert.ok(blocks.every((at, i) => i === 0 || at - blocks[i - 1]! >= FATE_RECHECK_MS), 'at most every half minute');
+});
+
+/* The first poll past the deadline lands inside NEAR's 2.6 s lag about half the time, and reads a
+   block short of the deadline: the chain not there yet. Asked again only half a minute on, the
+   swap closed 30 to 35 s after its deadline instead of about 5 s. */
+test('the rail\'s first question inside NEAR\'s lag is asked again on the next poll, and the swap closes seconds after its deadline', async () => {
+  const h = railOn({ word: () => 'PROCESSING', spent: false, firstPollMs: 1_000 });
+  const out = await h.run();
+  assert.equal(out.reason, 'venue_failed_nothing_moved');
+  const blocks = h.reads.filter((r) => r.read === 'block').map((r) => r.at);
+  assert.equal(blocks[0]! - DEADLINE, 2_000, 'the first question lands inside the lag');
+  assert.deepEqual(blocks.map((at) => at - DEADLINE), [2_000, 7_000], 'asked again a poll later, not half a minute later');
+  assert.ok(h.clock.now - DEADLINE <= 10_000, `closed ${Math.round((h.clock.now - DEADLINE) / 1000)} s after the deadline`);
+});
+
+test('a chain that stays short of the deadline is asked on every poll for the first half minute only, then every half minute', async () => {
+  // A node a minute behind this clock: every block it gives is short of the deadline for a minute.
+  const h = railOn({ word: () => 'PROCESSING', spent: false, lagMs: 60_000 });
+  const out = await h.run();
+  assert.equal(out.reason, 'venue_failed_nothing_moved');
+  const blocks = h.reads.filter((r) => r.read === 'block').map((r) => r.at - DEADLINE);
+  assert.ok(blocks.filter((at) => at < FATE_RECHECK_MS).length <= FATE_RECHECK_MS / 5_000 + 1, `asked ${blocks.length} times in the first half minute`);
+  const later = blocks.filter((at) => at >= FATE_RECHECK_MS);
+  assert.ok(later.length > 0);
+  assert.ok(later.every((at, i) => at - (i === 0 ? blocks[blocks.length - later.length - 1]! : later[i - 1]!) >= FATE_RECHECK_MS), `asked at ${blocks.join(', ')} ms past the deadline`);
 });
 
 test('a FAILED that lands after the deadline on a transfer that can never run ends the swap as nothing moved, not as still watching', async () => {
