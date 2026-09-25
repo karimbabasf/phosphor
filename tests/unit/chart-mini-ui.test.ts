@@ -21,11 +21,11 @@ const SOURCE = readFileSync(new URL('../../ui/chart/mini.js', import.meta.url), 
 
 /* A 2d context that writes down every call, so a test can count candles and read labels. */
 function recorder(): Any {
-  const calls: Array<{ op: string; args: unknown[] }> = [];
+  const calls: Array<{ op: string; args: unknown[]; fill?: unknown }> = [];
   const ctx: Any = { calls, font: '', fillStyle: '', strokeStyle: '', lineWidth: 1, textAlign: 'left', textBaseline: 'alphabetic' };
   for (const op of ['setTransform', 'fillRect', 'clearRect', 'strokeRect', 'beginPath', 'moveTo', 'lineTo', 'stroke', 'fill', 'fillText', 'setLineDash', 'rect', 'clip', 'save', 'restore', 'closePath', 'arc']) {
     ctx[op] = (...args: unknown[]) => {
-      calls.push({ op, args });
+      calls.push({ op, args, fill: ctx.fillStyle });
     };
   }
   ctx.measureText = (text: string) => ({ width: String(text).length * 6 });
@@ -152,7 +152,7 @@ type World = {
   timer: () => void;
 };
 
-function build(answers: Record<number, Any | null>): World {
+function build(answers: Record<number, Any | null>, css: Record<string, string> = {}): World {
   const stage = makeNode('div');
   stage.id = 'panel-chart';
   const primary = makeNode('div');
@@ -197,6 +197,7 @@ function build(answers: Record<number, Any | null>): World {
       intervals.push(fn);
       return 0;
     },
+    getComputedStyle: () => ({ getPropertyValue: (name: string) => css[name] ?? '' }),
     PhosphorDom: { el: (tag: string, className?: string, text?: string) => {
       const n = makeNode(tag);
       if (className) n.className = className;
@@ -295,12 +296,33 @@ test('the canvas carries the candles, the price plot, the level, the line and th
   const level = texts.find((c) => /^3,010/.test(String(c.args[0])));
   assert.ok(level, `the level's price is on the axis: ${JSON.stringify(labels)}`);
   assert.ok(Number(level.args[1]) > 300, 'in the axis gutter, right of the plot');
-  // The plot line and the trend line are strokes; the sub-pane indicator is not drawn at all.
+  // The plot line and the trend line are strokes, and the sub-pane study has a pane of its own
+  // under the price, named in its top corner, as on the primary.
   assert.ok(calls.filter((c) => c.op === 'stroke').length >= 2);
-  assert.ok(!labels.some((l) => l.includes('rsi')), 'a sub-pane indicator was drawn on a price-only canvas');
+  const rsi = texts.find((c) => String(c.args[0]) === 'rsi 14');
+  assert.ok(rsi, `the sub-pane study is drawn: ${JSON.stringify(labels)}`);
+  assert.ok(Number(rsi.args[2]) > 120, 'in a pane under the price');
+  // The live price: a filled tag on the axis that carries the last close.
+  const payload = slotPayload(1);
+  const close = payload.candles[payload.candles.length - 1].c;
+  const tag = texts.find((c) => String(c.args[0]) === close.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) && Number(c.args[1]) > 300);
+  assert.ok(tag, `the price tag carries the last close: ${JSON.stringify(labels)}`);
   // Device pixels: a 400 x 240 body at dpr 2.
   assert.equal(canvas.width, 800);
   assert.equal(canvas.height, 480);
+});
+
+test('a themed window (tokens written as rgb) still draws zones and chips translucent', async () => {
+  // ui/theme.js writes --agent and --bg-1 as rgb(r, g, b). A wash that could not read them came
+  // back at full strength: opaque violet blocks over the candles and chips with no figure.
+  const world = build({ 1: slotPayload(1), 2: null }, { '--agent': 'rgb(183, 156, 255)', '--bg-1': 'rgb(30, 25, 23)' });
+  world.mini.boot();
+  await settle();
+  const [canvas] = withClass(world.stage, 'mini-canvas');
+  const fills = (canvas.ctx.calls as Array<{ op: string; fill: string }>).filter((c) => c.op === 'fill' || c.op === 'fillRect');
+  const solid = fills.filter((c) => c.fill === 'rgb(183, 156, 255)' || c.fill === 'rgb(30, 25, 23)');
+  assert.equal(solid.length, 0, `a themed token was filled at full strength ${solid.length} times`);
+  assert.ok(fills.some((c) => c.fill === 'rgba(183, 156, 255, 0.1)'), 'the zone is washed at a tenth');
 });
 
 test('a chart frame for a slot refetches that slot and redraws it', async () => {
