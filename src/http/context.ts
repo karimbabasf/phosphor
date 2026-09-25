@@ -19,6 +19,7 @@ import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { Ledger } from '../ledger/index.ts';
 import type { DayFeed } from '../ledger/day.ts';
+import type { CoinPictures } from '../ledger/pictures.ts';
 import type { Candle } from '../types.ts';
 import type { MarketData } from '../market/index.ts';
 import type { TradeService } from '../trade/service.ts';
@@ -195,6 +196,9 @@ export type ServerDeps = {
   /* Every listed coin's last 24 hours, for Pro (src/ledger/day.ts). Optional because demo mode
      builds none and no test server needs one; absent, GET /api/day answers no days. */
   day?: DayFeed;
+  /* The coin pictures on disk, for the window's logos (src/ledger/pictures.ts). Optional for the
+     same reason as the day feed; absent, GET /api/coin-images names none. */
+  pictures?: CoinPictures;
   audit: Audit;
   store: Store;
   ledger: Ledger;

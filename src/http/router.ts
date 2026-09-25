@@ -51,6 +51,7 @@ import {
 } from './vault.ts';
 import { sendHealth } from './health.ts';
 import { sendDay } from './day.ts';
+import { sendCoinImage, sendCoinImages } from './pictures.ts';
 import { redactedTail, scrubbedTail } from './log-tail.ts';
 import { withoutAddresses } from './read/wallet.ts';
 import { sendReceipts } from './receipts.ts';
@@ -74,6 +75,9 @@ const GET: Record<string, Route> = {
   '/api/candles': (ctx, _req, res, url) => sendCandles(ctx, url, res),
   // Each coin's last 24 hours for Pro, off the day feed. See day.ts.
   '/api/day': (ctx, _req, res, url) => sendDay(ctx, url, res),
+  // The coin pictures for the window's logos, off the cache on disk. See pictures.ts.
+  '/api/coin-images': (ctx, _req, res) => sendCoinImages(ctx, res),
+  '/api/coin-image': (ctx, _req, res, url) => sendCoinImage(ctx, url, res),
   // ?slot=n picks one of the charts a layout put up; no slot is the primary. A slot no layout
   // filled is a 404, never the primary under another chart's name.
   // ?part=markup is the payload without the candles, for the window answering a chart frame.
