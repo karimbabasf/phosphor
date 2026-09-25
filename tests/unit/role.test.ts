@@ -220,7 +220,9 @@ test('the persona is short enough to be read, and carries half the old weight', 
      rules that repeated the card and forced reads are gone, and the voice is examples rather than
      paragraphs. Measured 9,949 with a view and a vendor. On 2026-09-25 two rules came in: the
      one line a failed move wakes the agent for (src/http/ended.ts), and quoting every step of a
-     plan of swaps before any is filed. Both together measure 10,311; the ceiling is 10,400. */
+     plan of swaps before any is filed. Both together measure 10,311; the ceiling is 10,400. Asking
+     them to say go once step one lands came in at no cost: 10,310, with the wNEAR line out of MONEY,
+     which propose_swap's own text carries. */
   const text = buildRole({ root: ROOT, view: 'trade', agent: 'Claude Code' });
   assert.ok(text.length > 3000, 'the persona got gutted');
   assert.ok(text.length < 10_400, `the persona is ${text.length} characters`);

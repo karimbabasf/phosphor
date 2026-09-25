@@ -233,10 +233,18 @@ test('swap_quote says a coin not held yet is a preview and every step is quoted 
   assert.match(said('swap_quote'), /A coin they do not hold yet is priced too, as its NEAR version, with `preview`/);
   assert.match(said('swap_quote'), /A plan in steps: quote every step first, each for what the one before gets; one with no price means file nothing/);
   assert.match(said('propose_swap'), /It spends only what their balance holds: in a plan of steps, file the first once swap_quote priced every step/);
+  /* A confirmed step one reaches the agent only as a silent note in front of the person's next
+     message (src/http/ended.ts), so "the next once the coin has arrived" was a promise it could not
+     keep: "I'll get you DAI once the USDC shows up", and then nothing. */
+  assert.match(said('propose_swap'), /then ask them to say go when it lands: nothing wakes you then, so never promise the next\./);
+  assert.doesNotMatch(said('propose_swap'), /once the coin it spends has arrived/);
 });
 
-test('the persona has every step of a plan quoted before any is filed, and says why a plan takes two steps', () => {
+test('the persona has every step of a plan quoted before any is filed, says why a plan takes two steps, and has them say go for the next', () => {
   assert.ok(
-    MONEY.includes('A plan of swaps: swap_quote every step before filing any, and if one has no price, say so and file nothing. Two steps because the pair has no price? Say why in one line, with the second fee.'),
+    MONEY.includes(
+      'A plan of swaps: swap_quote every step first; if one has no price, say so and file nothing. Say why it takes two, with the second fee. ' +
+        'File step one, then ask them to say go when it lands: nothing wakes you then, so never promise the next.',
+    ),
   );
 });
