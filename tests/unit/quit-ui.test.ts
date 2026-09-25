@@ -456,6 +456,9 @@ test('Escape and a click outside do nothing once the card is going, and a late s
   dialog.dispatch('click', { target: dialog });
   await w.time.advance(0);
   assert.equal(dialog.open, true);
+  dialog.close();
+  dialog.dispatch('close');
+  assert.equal(dialog.open, true, 'a modal closed from outside the page comes straight back');
   assert.equal(w.win.__phosphorQuitState(), 'asking');
   w.reads[1].resolve(MOVING(0));
   await w.time.advance(0);

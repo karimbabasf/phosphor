@@ -84,6 +84,11 @@
     dom.on(dialog, 'click', function (event) {
       if (event.target === dialog) cancel();
     });
+    // A second Escape can close a modal whatever its cancel handler says. Past the yes nothing
+    // here closes it, so a close then is that, and the Shutting down card comes straight back.
+    dom.on(dialog, 'close', function () {
+      if (leaving && !dialog.open) dialog.showModal();
+    });
   }
 
   function open(report) {
