@@ -383,7 +383,9 @@ test('a CoinGecko id two symbols share is a picture for neither: SUSDC and USAD 
   const manifest = pictures.manifest();
   assert.equal(manifest.symbols.VVV, 'venice-token');
   for (const symbol of ['USAD', 'SUSDC', 'USDC', 'NRUSDT', 'XPL_(DEPRECATED)']) assert.equal(symbol in manifest.symbols, false, `${symbol} is in the manifest`);
-  assert.equal(feed.entry('nep141:usad.aleo')?.change24, MARKETS.find((row) => row.id === 'usd-coin')?.price_change_percentage_24h, 'USAD lost the day 1Click prices it off');
+  // The change the feed serves is the line's own, first point to last (src/ledger/day.ts parseMarkets).
+  const usdc = (MARKETS.find((row) => row.id === 'usd-coin')?.sparkline_in_7d.price as number[]).slice(-25);
+  assert.equal(feed.entry('nep141:usad.aleo')?.change24, ((usdc[usdc.length - 1] - usdc[0]) / usdc[0]) * 100, 'USAD lost the day 1Click prices it off');
 });
 
 /* ---------- on disk ---------- */

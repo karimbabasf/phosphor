@@ -394,7 +394,7 @@ test('an answer past 2 MB is a failed refresh that keeps the last good day, and 
   r.set('padded-under');
   await r.feed.refresh();
   assert.equal(r.feed.answer().error, undefined);
-  assert.equal(r.feed.entry(VVV)?.change24, -4.58151);
+  assert.equal(r.feed.entry(VVV)?.change24, dayIn('venice-token').change24);
 });
 
 test('with no token list the feed asks CoinGecko nothing, says why and waits', async () => {
