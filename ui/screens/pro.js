@@ -12,9 +12,13 @@
    Intents rows and the Hyperliquid row (state.wallet), the policy and the two
    rolling 24 hour totals (state.policy, state.dailyLimit, state.autoLimit),
    the moves still under way (state.proposals), the ones that ended
-   (/api/receipts) and 25 hourly candles per coin (/api/candles). A coin with
-   no candles shows no line and no change, never a made-up one, and a figure
-   the app does not have is left out rather than written as zero. */
+   (/api/receipts) and each coin's day. The day comes off the backend's day
+   feed (/api/day), which covers every coin the NEAR Intents token list names
+   a CoinGecko id for, read live (2026-09-25: a held VVV had no line while the
+   day came off candles alone); 25 hourly candles (/api/candles) stand in only
+   for a coin the feed has no day for whose market the app lists. A coin with
+   neither shows no line and no change, never a made-up one, and a figure the
+   app does not have is left out rather than written as zero. */
 (function () {
   'use strict';
 
@@ -75,6 +79,9 @@
   var mounted = false;
   var ringDrawn = false;
   var lines = {};
+  /* The day feed's days by asset id, when the last read landed, whether one
+     is out, and the asset ids it named. */
+  var feed = { entries: Object.create(null), at: 0, pending: false, asked: Object.create(null) };
   var receipts = [];
   var movesAt = 0;
   var flowSteps = null;
@@ -94,9 +101,10 @@
   }
 
   /* Pro is up: the ended moves are read if they are old, and the render reads
-     any coin's day that is missing or five minutes old (ensureLines). The
-     state frames that keep coming while it is up (a heartbeat every 15 s at
-     the least) are what bring an old line back to be read. */
+     any coin's day that is missing or five minutes old (ensureDay, then
+     ensureLines for a coin the feed has none for). The state frames that keep
+     coming while it is up (a heartbeat every 15 s at the least) are what bring
+     an old line back to be read. */
   function onScreen() {
     if (Date.now() - movesAt > MOVES_MS) loadMoves();
     render();
@@ -315,7 +323,10 @@
     if (!mounted || !store.loaded()) return;
     var state = store.get() || {};
     var coins = coinsOf(state.wallet);
-    if (coins && isUp()) ensureLines(coins);
+    if (coins && isUp()) {
+      ensureDay(coins);
+      ensureLines(coins);
+    }
     renderHero(state, coins);
     renderTrade(state.wallet);
     renderLedger(state, coins);
@@ -324,8 +335,9 @@
   }
 
   /* The NEAR money, one entry per coin: the intents rows of every chain
-     summed by symbol, largest first, a coin with no price last. Null while
-     the intents balance has not been read, which is a different fact from
+     summed by symbol, largest first, a coin with no price last, with the
+     asset ids behind it, largest row first, for its day. Null while the
+     intents balance has not been read, which is a different fact from
      holding nothing. */
   function coinsOf(wallet) {
     if (!wallet || !Array.isArray(wallet.rows)) return null;
@@ -338,9 +350,11 @@
       if (!key) return;
       var at = by[key];
       if (!at) {
-        at = by[key] = { symbol: String(row.symbol), key: key, quantity: 0, valueUsd: 0, priceUsd: null, priced: false };
+        at = by[key] = { symbol: String(row.symbol), key: key, assets: [], quantity: 0, valueUsd: 0, priceUsd: null, priced: false };
         order.push(key);
       }
+      var asset = assetOf(row);
+      if (asset && at.assets.indexOf(asset) < 0) at.assets.push(asset);
       var qty = Number(row.quantity);
       if (isFinite(qty)) at.quantity += qty;
       if (row.priced !== false && isFinite(Number(row.valueUsd))) {
@@ -355,6 +369,12 @@
       return b.valueUsd - a.valueUsd;
     });
     return list;
+  }
+
+  /* The verifier's id for an intents row, which the day feed is keyed by. */
+  function assetOf(row) {
+    var id = row.intents && row.intents.assetId ? row.intents.assetId : row.tokenId;
+    return id ? String(id) : '';
   }
 
   function totalOf(coins) {
@@ -490,10 +510,10 @@
     dom.setText(who.children[1], amountText);
     var price = li.children[1];
     dom.setText(price.children[0], c.priceUsd === null ? '' : priceText(c.priceUsd));
-    var line = lines[c.key];
-    paintSpark(price.children[1], line && line.ok ? line : null);
+    var line = lineFor(c);
+    paintSpark(price.children[1], line);
     var chg = li.children[2];
-    if (line && line.ok) {
+    if (line) {
       dom.setText(chg, changeText(line.change));
       dom.setAttr(chg, 'data-dir', line.change > 0.05 ? 'up' : (line.change < -0.05 ? 'down' : 'flat'));
     } else {
@@ -518,8 +538,8 @@
     return (rounded > 0 ? '+' : (rounded < 0 ? '-' : '')) + Math.abs(rounded).toFixed(1) + '%';
   }
 
-  /* The price line: the day's hourly closes as one stroke, drawn in once, in
-     the tone of the day. Nothing at all for a coin with no candles. */
+  /* The price line: the day's hourly prices as one stroke, drawn in once, in
+     the tone of the day. Nothing at all for a coin with no day. */
   function paintSpark(host, line) {
     var key = line ? line.path : '';
     if (host.dataset.path === key) return;
@@ -539,16 +559,90 @@
     host.appendChild(svg);
   }
 
-  /* 25 hourly candles per coin: the close 24 bars back is the price a day
-     ago, the same reading the Trade strip makes. Only for a coin whose market
-     the app lists (state.candleProducts): a stablecoin has none, and asking
-     anyway was a 502 and a console error on every opening. A line being read
-     again stays up until the new one lands; a read that fails keeps the last
-     good line, and a coin with none shows none. */
+  /* A coin's day off the day feed (/api/day). The backend asks for every
+     coin the token list names, on its own clock, never for the held ones; the
+     window names what it holds to its own backend alone, and reads again on
+     the first frame that finds the last read five minutes old or a coin held
+     that the read never named. A read that fails keeps the last good days and
+     waits its five minutes like any other. */
+  function ensureDay(coins) {
+    if (!net || typeof net.getJson !== 'function' || feed.pending) return;
+    var ids = [];
+    coins.forEach(function (c) {
+      c.assets.forEach(function (id) {
+        if (ids.indexOf(id) < 0) ids.push(id);
+      });
+    });
+    if (!ids.length) return;
+    var covered = ids.every(function (id) { return feed.asked[id] === true; });
+    if (covered && Date.now() - feed.at < LINES_MS) return;
+    ids.sort();
+    var asked = Object.create(null);
+    ids.forEach(function (id) { asked[id] = true; });
+    feed.pending = true;
+    net.getJson('/api/day?assets=' + encodeURIComponent(ids.join(',')))
+      .then(function (result) {
+        feed.entries = daysOf(result && result.data ? result.data.entries : null);
+      })
+      .catch(function () {})
+      .then(function () {
+        feed.pending = false;
+        feed.at = Date.now();
+        feed.asked = asked;
+        render();
+      });
+  }
+
+  /* The feed's days the window can draw, by asset id: a change that is a
+     number and a line of at least two prices, every one of them above zero.
+     Anything else is no day, and the coin falls back to its candles or shows
+     none. */
+  function daysOf(entries) {
+    var out = Object.create(null);
+    if (!entries || typeof entries !== 'object') return out;
+    Object.keys(entries).forEach(function (id) {
+      var e = entries[id];
+      var points = e && Array.isArray(e.line) ? e.line.slice(-25) : [];
+      var drawn = points.length >= 2 && points.every(function (p) { return typeof p === 'number' && isFinite(p) && p > 0; });
+      if (drawn && typeof e.change24 === 'number' && isFinite(e.change24)) {
+        out[id] = { ok: true, change: e.change24, path: pathThrough(points) };
+      }
+    });
+    return out;
+  }
+
+  /* A coin's day from the feed: the first of its assets, largest first, that
+     the feed has one for. */
+  function dayOf(c) {
+    for (var i = 0; i < c.assets.length; i += 1) {
+      var found = feed.entries[c.assets[i]];
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /* The day a coin's row draws: the feed's, else its candles', else none. */
+  function lineFor(c) {
+    var fed = dayOf(c);
+    if (fed) return fed;
+    var line = lines[c.key];
+    return line && line.ok ? line : null;
+  }
+
+  /* 25 hourly candles for a coin the feed has no day for: the close 24 bars
+     back is the price a day ago, the same reading the Trade strip makes. Not
+     before the feed has answered once, so a coin it covers is never read
+     twice over; and only for a coin whose market the app lists
+     (state.candleProducts): a stablecoin has none, and asking anyway was a
+     502 and a console error on every opening. A line being read again stays
+     up until the new one lands; a read that fails keeps the last good line,
+     and a coin with none shows none. */
   function ensureLines(coins) {
     if (!net || typeof net.getJson !== 'function') return;
+    if (feed.pending && !feed.at) return;
     var now = Date.now();
     coins.forEach(function (c) {
+      if (dayOf(c)) return;
       var product = productOf(c.key);
       if (!product) return;
       var had = lines[c.key];
@@ -595,16 +689,21 @@
     var day = closes.slice(-25);
     var first = day[0];
     var last = day[day.length - 1];
-    var lo = Math.min.apply(null, day);
-    var hi = Math.max.apply(null, day);
+    return { ok: true, change: ((last - first) / first) * 100, path: pathThrough(day) };
+  }
+
+  /* A day's prices as one stroke in the spark's 100 by 28 box. */
+  function pathThrough(points) {
+    var lo = Math.min.apply(null, points);
+    var hi = Math.max.apply(null, points);
     var span = hi - lo || 1;
     var d = '';
-    for (var k = 0; k < day.length; k += 1) {
-      var x = (k / (day.length - 1)) * 100;
-      var y = 26 - ((day[k] - lo) / span) * 24;
+    for (var k = 0; k < points.length; k += 1) {
+      var x = (k / (points.length - 1)) * 100;
+      var y = 26 - ((points[k] - lo) / span) * 24;
       d += (k ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2);
     }
-    return { ok: true, change: ((last - first) / first) * 100, path: d };
+    return d;
   }
 
   /* ---------- the policies ---------- */
