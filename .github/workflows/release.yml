@@ -22,6 +22,12 @@
 #       Open Anyway step below and the tile in src-tauri/dmg/background.html come out together:
 #       the step refuses a signed DMG rather than break its signature.
 #
+#   No secret: build provenance. Every release asset gets a Sigstore-signed statement that it
+#   came out of this workflow at the tagged commit of karimbabasf/phosphor, logged in the public
+#   Rekor transparency log. `gh attestation verify <file> --repo karimbabasf/phosphor` checks it.
+#   This ties the checksum to the source, which a checksum alone cannot: whoever controls the
+#   release page could post a new file and a new checksum together, not a new attestation.
+#
 #   BLOB_READ_WRITE_TOKEN
 #       Required. The Vercel Blob store behind https://phosphor.money/download/mac.
 #       The DMG is copied there once the release is published, so the site serves it from its
@@ -37,6 +43,10 @@ on:
 
 permissions:
   contents: write
+  # For the build provenance attestation: a short-lived OIDC token proves to Sigstore that this
+  # workflow, at this commit, is the one asking, and the signed record is stored on the repo.
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -156,6 +166,13 @@ jobs:
             --notes-file "$RUNNER_TEMP/tag-body.md"
           echo "RELEASE_DIR=$RUNNER_TEMP/release" >> "$GITHUB_ENV"
 
+      - name: Attest where the release assets came from
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ env.RELEASE_DIR }}/Phosphor-macOS-arm64.dmg
+            ${{ env.RELEASE_DIR }}/Phosphor_${{ env.VERSION }}_aarch64.app.tar.gz
+
       - name: The app inside the DMG is signed the way this run was told to sign it
         run: |
           hdiutil attach "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
@@ -192,6 +209,14 @@ jobs:
             echo '```'
             cat "$RELEASE_DIR/SHA256SUMS"
             echo '```'
+            echo
+            echo "**Check where it was built.** With the GitHub CLI (\`brew install gh\`):"
+            echo
+            echo '```'
+            echo "gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor"
+            echo '```'
+            echo
+            echo "It passes only for a file this repository's release workflow built, and it prints the commit it was built from, so you can read the exact code in the file you hold."
             echo
             echo "Installed copies are offered this version automatically; the update is signed and the app refuses one that is not. Only download Phosphor from this page or from https://phosphor.money."
           } > "$RUNNER_TEMP/notes.md"

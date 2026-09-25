@@ -50,8 +50,9 @@ notarized it. So the first open stops at a Gatekeeper warning, and you go throug
 Settings, Privacy & Security, Open Anyway. Notarization needs an Apple Developer account this
 project does not hold yet.
 
-What it means: the checksum on the release page is what proves the file is the one we built.
-Check it before you open the disk image, every time, see
+What it means: the checksum on the release page proves the file is the one on that page, and
+the build attestation proves that file was built from this repository's code. Check both before
+you open the disk image, every time, see
 [Getting started](getting-started.md#check-the-file). Two more things follow from the missing
 Developer ID. The Secure Enclave key is bound to this Mac rather than to Phosphor, so the Keys row
 in the Vault tab says that other apps on this Mac could ask for the key; a Developer ID build

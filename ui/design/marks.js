@@ -7,7 +7,7 @@
    ring: the logos are shit.
 
    So a coin is drawn the way its brand draws it: the logo file in ui/logos/
-   (see LICENSE.md there), in full colour and at full opacity, with nothing
+   (see ATTRIBUTION.md there), in full colour and at full opacity, with nothing
    behind it: no disc, no wash. Every file keeps its mark inside the middle 18
    units of a 24 unit box, so a row of them sits at one optical size whatever
    the box, and being vector each is sharp at 1x and 2x. The files share one
@@ -95,7 +95,7 @@
     FXRP: '#FFFFFF'
   };
 
-  /* The logos shipped as files in ui/logos/<ticker>.svg (see LICENSE.md there).
+  /* The logos shipped as files in ui/logos/<ticker>.svg (see ATTRIBUTION.md there).
      Listed here so a ticker with no file draws its fallback at once instead of
      asking the server for a file that is not there. WNEAR wears NEAR's. */
   var LOGOS = [
@@ -217,7 +217,7 @@
     return node;
   }
 
-  /* The agents' own marks, files in ui/logos/agents/ (see LICENSE.md there),
+  /* The agents' own marks, files in ui/logos/agents/ (see ATTRIBUTION.md there),
      keyed by the catalog's agent id. Claude Code and Claude Desktop are both
      Claude. A brand drawn in one colour (Grok, Hermes) is drawn through its
      file in the text colour, so it reads on whatever ground the theme sets
