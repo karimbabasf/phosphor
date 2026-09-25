@@ -29,9 +29,11 @@ import {
   PICTURE_MAX_BYTES,
   PICTURE_MAX_IDS,
   PICTURE_MAX_TOTAL_BYTES,
+  PICTURE_MAX_SIDE,
   PICTURE_REFRESH_MS,
   PICTURE_RETRY_MS,
   pictureDir,
+  pictureSize,
   pictureType,
   type CoinPictures,
 } from '../../src/ledger/pictures.ts';
@@ -59,10 +61,49 @@ const LIST: OneClickToken[] = [
   { assetId: 'nep141:gone.near', decimals: 18, blockchain: 'near', symbol: 'GONE', coingeckoId: 'not-on-coingecko' },
 ];
 
-// What the image host serves: the first bytes are what decide.
-const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(200, 7)]);
-const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 3)]);
-const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0x20, 0, 0, 0]), Buffer.from('WEBPVP8 '), Buffer.alloc(200, 1)]);
+// What the image host serves: the first bytes say what it is, and the header how big it draws.
+function u32le(n: number): Buffer {
+  const b = Buffer.alloc(4);
+  b.writeUInt32LE(n >>> 0, 0);
+  return b;
+}
+
+// The signature, then IHDR: width and height at bytes 16 and 20, 8-bit RGBA, and the rest filler.
+function png(width: number, height: number): Buffer {
+  const ihdr = Buffer.alloc(25);
+  ihdr.writeUInt32BE(13, 0);
+  ihdr.write('IHDR', 4, 'ascii');
+  ihdr.writeUInt32BE(width, 8);
+  ihdr.writeUInt32BE(height, 12);
+  ihdr[16] = 8;
+  ihdr[17] = 6;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), ihdr, Buffer.alloc(200, 7)]);
+}
+
+// Start of image, a JFIF segment, then a frame header (`marker`, SOF0 unless named) and filler.
+function jpeg(width: number, height: number, marker = 0xc0, before: number[] = []): Buffer {
+  const app0 = [0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00];
+  const sof = [0xff, marker, 0x00, 0x11, 0x08, height >> 8, height & 0xff, width >> 8, width & 0xff, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1];
+  return Buffer.concat([Buffer.from([0xff, 0xd8, ...app0, ...before, ...sof]), Buffer.alloc(200, 3)]);
+}
+
+// RIFF, WEBP, then one chunk: its fourcc and its first bytes as the format writes them.
+function webp(fourcc: 'VP8 ' | 'VP8L' | 'VP8X', head: number[]): Buffer {
+  const data = Buffer.concat([Buffer.from(head), Buffer.alloc(190, 1)]);
+  const chunk = Buffer.concat([Buffer.from(fourcc, 'ascii'), u32le(data.length), data]);
+  return Buffer.concat([Buffer.from('RIFF'), u32le(4 + chunk.length), Buffer.from('WEBP'), chunk]);
+}
+const vp8 = (w: number, h: number) => webp('VP8 ', [0x10, 0x02, 0x00, 0x9d, 0x01, 0x2a, w & 0xff, (w >> 8) & 0x3f, h & 0xff, (h >> 8) & 0x3f]);
+const vp8l = (w: number, h: number) => {
+  const bits = ((w - 1) & 0x3fff) | (((h - 1) & 0x3fff) << 14);
+  return webp('VP8L', [0x2f, bits & 0xff, (bits >>> 8) & 0xff, (bits >>> 16) & 0xff, (bits >>> 24) & 0xff]);
+};
+const vp8x = (w: number, h: number) =>
+  webp('VP8X', [0x10, 0, 0, 0, (w - 1) & 0xff, ((w - 1) >> 8) & 0xff, ((w - 1) >> 16) & 0xff, (h - 1) & 0xff, ((h - 1) >> 8) & 0xff, ((h - 1) >> 16) & 0xff]);
+
+const PNG = png(250, 250);
+const JPEG = jpeg(250, 250);
+const WEBP = vp8(250, 250);
 const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>fetch("/api/state")</script></svg>');
 const GIF = Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(200, 2)]);
 const HUGE_PNG = Buffer.concat([PNG, Buffer.alloc(PICTURE_MAX_BYTES, 9)]);
@@ -120,6 +161,56 @@ test('pictureType knows PNG, JPEG and WebP by their first bytes, and nothing els
   assert.equal(pictureType(Buffer.from('RIFF\0\0\0\0WAVEfmt ')), null, 'a RIFF that is not WebP');
   assert.equal(pictureType(Buffer.alloc(0)), null);
   assert.equal(pictureType(PNG.subarray(0, 4)), null, 'half a PNG signature');
+});
+
+/* Pictures review finding 3: 256 KB caps the file, not the bitmap. A PNG declaring 40000 x 40000
+   at one bit a pixel deflates to about 195 KB, and every surface drawing that coin would ask
+   WebKit to decode gigabytes for a 24 px mark. The header says the size before anything decodes. */
+test('pictureSize reads the width and height off a PNG, JPEG or WebP header, and null off anything it cannot read', () => {
+  assert.deepEqual(pictureSize(png(40_000, 40_000), 'image/png'), { width: 40_000, height: 40_000 });
+  assert.deepEqual(pictureSize(PNG, 'image/png'), { width: 250, height: 250 });
+  assert.deepEqual(pictureSize(jpeg(2000, 10), 'image/jpeg'), { width: 2000, height: 10 });
+  assert.deepEqual(pictureSize(jpeg(640, 480, 0xc2), 'image/jpeg'), { width: 640, height: 480 }, 'a progressive frame header');
+  // A segment before the frame header is stepped over by its length, fill bytes and all.
+  const exif = [0xff, 0xe1, 0x00, 0x0a, 0xff, 0xc0, 0x00, 0x11, 0x00, 0x09, 0x00, 0x09];
+  assert.deepEqual(pictureSize(jpeg(300, 200, 0xc0, [0xff, 0xff, ...exif]), 'image/jpeg'), { width: 300, height: 200 }, 'a frame header inside another segment was read');
+  assert.deepEqual(pictureSize(vp8(16_383, 10), 'image/webp'), { width: 16_383, height: 10 });
+  assert.deepEqual(pictureSize(vp8l(16_384, 16_384), 'image/webp'), { width: 16_384, height: 16_384 });
+  assert.deepEqual(pictureSize(vp8x(40_000, 40_000), 'image/webp'), { width: 40_000, height: 40_000 });
+  // What cannot be read is null: a header cut short, no frame header before the scan, a zero side.
+  assert.equal(pictureSize(PNG.subarray(0, 20), 'image/png'), null);
+  assert.equal(pictureSize(Buffer.concat([PNG.subarray(0, 12), Buffer.from('IDAT'), PNG.subarray(16)]), 'image/png'), null, 'a first chunk that is not IHDR');
+  assert.equal(pictureSize(Buffer.from([0xff, 0xd8, 0xff, 0xda, 0x00, 0x08, 1, 2, 3, 4, 5, 6]), 'image/jpeg'), null);
+  assert.equal(pictureSize(jpeg(0, 480), 'image/jpeg'), null);
+  assert.equal(pictureSize(png(250, 0), 'image/png'), null);
+  assert.equal(pictureSize(WEBP.subarray(0, 24), 'image/webp'), null);
+  assert.equal(pictureSize(webp('VP8 ', [0x10, 0x02, 0x00, 0x00, 0x00, 0x00, 250, 0, 250, 0]), 'image/webp'), null, 'a VP8 chunk with no start code');
+});
+
+test('a picture declaring more than 1024 px a side is refused at download, whatever its format', async () => {
+  const r = rig({ ids: ['a-coin', 'b-coin', 'c-coin', 'd-coin', 'e-coin', 'venice-token'] });
+  r.serve.set(url('a-coin'), { body: png(40_000, 40_000) });
+  r.serve.set(url('b-coin'), { body: jpeg(1025, 16) });
+  r.serve.set(url('c-coin'), { body: vp8x(40_000, 40_000) });
+  r.serve.set(url('d-coin'), { body: vp8l(2048, 2048) });
+  r.serve.set(url('e-coin'), { body: Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xda, 0x00, 0x08]), Buffer.alloc(200, 3)]) });
+  r.serve.set(url('venice-token'), { body: png(1024, 1024) });
+  await r.pictures.sync();
+  assert.equal(PICTURE_MAX_SIDE, 1024);
+  for (const id of ['a-coin', 'b-coin', 'c-coin', 'd-coin', 'e-coin']) assert.equal(r.pictures.read(id), null, `${id} was kept`);
+  assert.deepEqual(fs.readdirSync(r.dir), ['venice-token.png'], 'a picture over the side cap reached the disk');
+  assert.equal(r.pictures.read('venice-token')?.type, 'image/png', 'a picture of exactly 1024 px was refused');
+  const said = r.lines.join('\n');
+  assert.match(said, /a-coin \(40000 x 40000 px, over 1024 a side\)/);
+  assert.match(said, /e-coin \(its size could not be read\)/);
+});
+
+test('a picture on disk that declares more than 1024 px a side is not served', async () => {
+  const r = rig({ ids: ['venice-token'] });
+  await r.pictures.sync();
+  assert.ok(r.pictures.read('venice-token'));
+  fs.writeFileSync(path.join(r.dir, 'venice-token.png'), png(40_000, 40_000));
+  assert.equal(r.pictures.read('venice-token'), null, 'a file swapped for a huge bitmap was served');
 });
 
 test('an SVG is refused whatever the server calls it, and so is a GIF', async () => {

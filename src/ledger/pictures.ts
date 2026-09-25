@@ -16,9 +16,12 @@
 // redirect followed, the read deadline, 256 KB at most counted as the bytes arrive (a
 // content-length is a claim, not a count), and only PNG, JPEG or WebP by their first bytes,
 // whatever the server calls them. Never SVG: an SVG is a document that can carry script, and the
-// hand-picked files in ui/logos stay the only SVG the window draws. A picture that fails any of it
-// is not kept and not asked for again for a day, and the coin keeps its monogram. What is on disk
-// is checked again every time it is served.
+// hand-picked files in ui/logos stay the only SVG the window draws. And no more than
+// PICTURE_MAX_SIDE pixels a side by its own header (pictures review finding 3): 256 KB caps the
+// file and not the bitmap, and a PNG declaring 40000 x 40000 deflates to about 195 KB and would
+// have WebKit decode gigabytes for a 24 px mark. A picture that fails any of it is not kept and
+// not asked for again for a day, and the coin keeps its monogram. What is on disk is checked again,
+// size included, every time it is served.
 //
 // ON DISK, AWAY FROM THE KEYS: <dataDir>/cache/coin-images, one file per CoinGecko id, written
 // whole or not at all. A data directory that would put it beside the key file, or under the
@@ -50,6 +53,9 @@ export const PICTURE_RETRY_MS = 24 * 60 * 60_000;
 // The most coins a pass is about, and the most their files may hold together. See BOUNDED above.
 export const PICTURE_MAX_IDS = 500;
 export const PICTURE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+// The longest side a picture may declare. A mark draws at 16 to 32 px, and CoinGecko's large
+// picture is 250.
+export const PICTURE_MAX_SIDE = 1024;
 
 export type PictureType = 'image/png' | 'image/jpeg' | 'image/webp';
 export type Picture = { bytes: Buffer; type: PictureType };
@@ -99,6 +105,87 @@ export function pictureType(bytes: Uint8Array): PictureType | null {
 
 function ascii(bytes: Uint8Array, from: number, to: number): string {
   return String.fromCharCode(...bytes.subarray(from, to));
+}
+
+export type PictureSize = { width: number; height: number };
+
+/* What a picture's header says it draws at, read before anything decodes it: PNG's IHDR, the first
+   JPEG frame header, WebP's VP8, VP8L or VP8X chunk. Null when the header cannot be read or names
+   a side of zero, and a null is refused like a side too long. */
+export function pictureSize(bytes: Uint8Array, type: PictureType): PictureSize | null {
+  const size = type === 'image/png' ? pngSize(bytes) : type === 'image/jpeg' ? jpegSize(bytes) : webpSize(bytes);
+  return size !== null && size.width > 0 && size.height > 0 ? size : null;
+}
+
+// The first chunk is IHDR, and its first eight bytes are the width and the height.
+function pngSize(b: Uint8Array): PictureSize | null {
+  if (b.length < 24 || ascii(b, 12, 16) !== 'IHDR') return null;
+  const view = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+// A JPEG frame header: SOF0 to SOF15 but DHT (C4), JPG (C8) and DAC (CC), or DHP (DE), which names
+// a hierarchical image's size ahead of its frames.
+function frameHeader(marker: number): boolean {
+  return (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) || marker === 0xde;
+}
+
+// Segment by segment, each stepped over by its own length, to the first frame header.
+function jpegSize(b: Uint8Array): PictureSize | null {
+  let i = 2;
+  while (i + 3 < b.length) {
+    if (b[i] !== 0xff) return null;
+    const marker = b[i + 1];
+    // A fill byte, then the markers that carry no length.
+    if (marker === 0xff) {
+      i += 1;
+      continue;
+    }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      i += 2;
+      continue;
+    }
+    // A scan, an end or a second start before any frame header: no size to read.
+    if (marker === 0xd8 || marker === 0xd9 || marker === 0xda) return null;
+    const length = (b[i + 2] << 8) | b[i + 3];
+    if (length < 2) return null;
+    if (frameHeader(marker)) {
+      if (i + 8 >= b.length) return null;
+      return { width: (b[i + 7] << 8) | b[i + 8], height: (b[i + 5] << 8) | b[i + 6] };
+    }
+    i += 2 + length;
+  }
+  return null;
+}
+
+// The first chunk after RIFF and WEBP, as each of the three forms writes it.
+function webpSize(b: Uint8Array): PictureSize | null {
+  if (b.length < 30) return null;
+  const chunk = ascii(b, 12, 16);
+  // Lossy: a key frame's start code, then 14 bits of width and 14 of height.
+  if (chunk === 'VP8 ') {
+    if (b[23] !== 0x9d || b[24] !== 0x01 || b[25] !== 0x2a) return null;
+    return { width: (b[26] | (b[27] << 8)) & 0x3fff, height: (b[28] | (b[29] << 8)) & 0x3fff };
+  }
+  // Lossless: its signature, then 14 bits of width less one and 14 of height less one.
+  if (chunk === 'VP8L') {
+    if (b[20] !== 0x2f) return null;
+    const bits = (b[21] | (b[22] << 8) | (b[23] << 16) | (b[24] << 24)) >>> 0;
+    return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+  }
+  // Extended: the canvas, 24 bits of width less one and 24 of height less one.
+  if (chunk === 'VP8X') {
+    return { width: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)), height: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)) };
+  }
+  return null;
+}
+
+// Why a picture's header rules it out, or null when the window can draw it.
+function sizeRefusal(bytes: Uint8Array, type: PictureType): string | null {
+  const size = pictureSize(bytes, type);
+  if (size === null) return 'its size could not be read';
+  if (size.width > PICTURE_MAX_SIDE || size.height > PICTURE_MAX_SIDE) return `${size.width} x ${size.height} px, over ${PICTURE_MAX_SIDE} a side`;
+  return null;
 }
 
 function within(child: string, parent: string): boolean {
@@ -213,6 +300,8 @@ export function createCoinPictures(deps: CoinPicturesDeps): CoinPictures {
     if ('why' in body) return { ok: false, why: body.why };
     const type = pictureType(body.bytes);
     if (type === null) return { ok: false, why: 'not a PNG, JPEG or WebP' };
+    const refusal = sizeRefusal(body.bytes, type);
+    if (refusal !== null) return { ok: false, why: refusal };
     return { ok: true, picture: { bytes: body.bytes, type } };
   }
 
@@ -329,7 +418,7 @@ export function createCoinPictures(deps: CoinPicturesDeps): CoinPictures {
       if (!stat.isFile() || stat.size > PICTURE_MAX_BYTES) return null;
       const bytes = fs.readFileSync(have.file);
       const type = bytes.length > PICTURE_MAX_BYTES ? null : pictureType(bytes);
-      return type === null ? null : { bytes, type };
+      return type === null || sizeRefusal(bytes, type) !== null ? null : { bytes, type };
     } catch {
       files.delete(id);
       return null;
