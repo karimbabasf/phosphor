@@ -170,7 +170,16 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     const named = what === '' ? `proposal ${plain(p.id)}` : `${what}, proposal ${plain(p.id)}`;
     let ending = `has ended: ${plain(v.stageLabel)}.`;
     if (v.stage === 'confirmed' && v.money.amountOut !== null) ending += ` ${plain(v.money.amountOut)} ${plain(v.money.toSymbol)} arrived.`;
-    if (v.error !== null) ending += ` ${plain(v.error.message)}`;
+    if (v.error !== null) {
+      /* THE CAUSE IN THE APP'S OWN WORDS, never the venue's (security review F2). The error line
+         ends in what a venue or a rail said: 1Click's refundReason, its status word, an error body.
+         Inside this fence the agent reads that as the app, and the driver holds every note until
+         the next turn, which since the wake below can be a turn nobody is watching. So the note
+         carries a late row's line, which the app wrote whole, or else the reason's own sentence;
+         the rest is on the card, and proposal_status hands it to the agent as data. */
+      const cause = v.stage === 'stalled' ? v.error.message : v.reason !== null ? v.reason.sentence : '';
+      if (cause !== '') ending += ` ${plain(cause)}`;
+    }
     return (
       `[phosphor: since your last answer, the ${kind} you proposed (${named}) ${ending} ` +
       // A failure is to be told, not held back: the wake, or the persona under their message, says how.
