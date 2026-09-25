@@ -53,6 +53,7 @@ import { sendHealth } from './health.ts';
 import { redactedTail, scrubbedTail } from './log-tail.ts';
 import { withoutAddresses } from './read/wallet.ts';
 import { sendReceipts } from './receipts.ts';
+import { sendQuitStatus } from './quit.ts';
 import { LOG_LIMIT_MAX } from './context.ts';
 import type { Ctx } from './context.ts';
 
@@ -112,6 +113,8 @@ const GET: Record<string, Route> = {
   '/api/health': (ctx, _req, res) => sendHealth(ctx, res),
   // One card per action that actually happened.
   '/api/receipts': (ctx, _req, res, url) => sendReceipts(ctx, url, res),
+  // What quitting would interrupt, for the window's quit sheet. See quit.ts.
+  '/api/quit': (ctx, _req, res) => sendQuitStatus(ctx, res),
 };
 
 const POST: Record<string, Route> = {
