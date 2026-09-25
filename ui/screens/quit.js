@@ -253,7 +253,9 @@
       return { name: 'Wallet', word: state === 'active' ? 'Locking' : '', note: '' };
     }
     if (state === 'done') return { name: 'Phosphor', word: 'Stopped', note: '' };
-    if (state === 'active') return { name: 'Phosphor', word: 'Stopping', note: f.sending ? 'A move is being sent. It finishes first.' : '' };
+    /* The stop waits for a send in flight at most SETTLE_CAP_MS (src/shutdown.ts, 32 s), not for
+       the move: the moves line above already says it finishes without Phosphor. */
+    if (state === 'active') return { name: 'Phosphor', word: 'Stopping', note: f.sending ? 'A move is being sent. Phosphor waits up to half a minute for it.' : '' };
     return { name: 'Phosphor', word: '', note: '' };
   }
 

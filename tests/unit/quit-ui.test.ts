@@ -368,7 +368,9 @@ test('a move being sent leaves the lock to the stop, and both land in order once
   w.win.__phosphorQuitStep('stopping');
   await w.time.advance(180);
   assert.deepEqual(row(w, 'lock'), { state: 'held', name: 'Wallet', word: 'Waiting', note: 'It locks as Phosphor stops.', glyph: 'icon:lock' });
-  assert.deepEqual(row(w, 'stop'), { state: 'active', name: 'Phosphor', word: 'Stopping', note: 'A move is being sent. It finishes first.', glyph: 'spinner' });
+  // The drain waits for the send at most SETTLE_CAP_MS (32 s), so the card says that, not "It
+  // finishes first" under a moves line that says it finishes without Phosphor.
+  assert.deepEqual(row(w, 'stop'), { state: 'active', name: 'Phosphor', word: 'Stopping', note: 'A move is being sent. Phosphor waits up to half a minute for it.', glyph: 'spinner' });
 
   const stoppedAt = w.time.now();
   w.win.__phosphorQuitStep('stopped');
