@@ -598,7 +598,7 @@ const SWAP_SIDE = {
   chain: z.string().max(16).optional().describe("the coin spent's home network (eth, arb, sol, near...), only when they named it"),
   toChain: z.string().max(16).optional().describe("the coin bought's home network, only when they named it"),
   fromSymbol: z.string().max(128).describe('the coin spent: a symbol, or the assetId swap_assets gave'),
-  toSymbol: z.string().max(128).describe('the coin bought: a symbol, or the assetId swap_assets gave'),
+  toSymbol: z.string().max(128).describe('the coin bought: a symbol; an assetId only for a coin they named exactly'),
 };
 const AMOUNT_IN = z.union([z.string().max(64), z.number()]).describe('"all", or the exact amount as text, for example "0.894697028778374732". Never a rounded number');
 
@@ -612,7 +612,7 @@ registerRead(
 );
 registerRead(
   'swap_quote',
-  'What a swap would get right now, without filing anything: the amount in, the expected amount out, the minimum, the fee in dollars and the time it takes. Pass chain or toChain only when they named that network; otherwise the app picks each coin, the one in their balance first. With no quote, or an amount over the balance, `sentence` says why in plain words: say that. `candidates` means the name still fits several coins: ask which, then quote by assetId. Use it before propose_swap whenever the coin or the size is new, so a probe never becomes a card.',
+  'What a swap would get right now, without filing anything: the amount in, the expected amount out, the minimum, the fee in dollars and the time it takes. Pass chain or toChain only when they named that network; otherwise the app picks each coin itself: the one in their balance to spend, the NEAR version to buy, so one coin never ends up spread across networks. Never ask which network; `picked` says which version was taken: say it in a few words. With no quote, or an amount over the balance, `sentence` says why in plain words: say that. `candidates` means the name fits several different coins: ask which coin, then quote by assetId. Use it before propose_swap whenever the coin or the size is new, so a probe never becomes a card.',
   { ...SWAP_SIDE, amountIn: AMOUNT_IN },
 );
 registerLeadRead(
@@ -1115,12 +1115,12 @@ registerPropose('propose_policy_change', 'policy_change', `Proposes a change to 
 registerPropose(
   'propose_swap',
   'swap',
-  `Proposes a swap inside their balance: one signed step that moves nothing on any chain. Pass chain or toChain only when they named that network: left out, the app picks each coin itself, the one in their balance first, so "swap my NEAR to USDC" needs neither. A network is a coin's home (USDC on eth, not on arb), never a wallet. NEAR sits in the balance as wNEAR, the same coin. amountIn is "all" or the exact amount as text, never a rounded number. The app sets the minimum from its own live quote; pass minAmountOut only when they named one. Not sure a coin is listed, or what it gets? swap_assets and swap_quote answer without filing anything. If a name still fits several coins, the refusal lists them: ask which. ${CANNOT_APPROVE}`,
+  `Proposes a swap inside their balance: one signed step that moves nothing on any chain. Pass chain or toChain only when they named that network: left out, the app picks each coin itself, the one in their balance to spend and the NEAR version to buy, so "swap my NEAR to USDC" needs neither and the balance never holds one coin on several networks. Never ask which network. A network is a coin's home (USDC on eth, not on arb), never a wallet. NEAR sits in the balance as wNEAR, the same coin. amountIn is "all" or the exact amount as text, never a rounded number. The app sets the minimum from its own live quote; pass minAmountOut only when they named one. Not sure a coin is listed, or what it gets? swap_assets and swap_quote answer without filing anything. If a name fits several different coins, the refusal lists them: ask which coin. ${CANNOT_APPROVE}`,
   {
     chain: CHAIN.optional().describe("the coin spent's home network, only when they named it"),
     toChain: CHAIN.optional().describe("the coin bought's home network, only when they named it"),
     fromSymbol: z.string().max(128).describe('a symbol, or the assetId swap_assets gave'),
-    toSymbol: z.string().max(128).describe('a symbol, or the assetId swap_assets gave'),
+    toSymbol: z.string().max(128).describe('a symbol; an assetId only for a coin they named exactly'),
     amountIn: AMOUNT_IN,
     minAmountOut: z.number().positive().optional().describe('the least they will take, in the coin bought, only when they named it'),
   },

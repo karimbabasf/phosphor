@@ -23,6 +23,9 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import type { OneClickToken } from '../../src/intents.ts';
+import type { Rail, SwapDraft } from '../../src/types.ts';
+import { SELF_EVM, makeCtx, railThat } from './helpers/proposals.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts); a test about the door's other
 // walls (Origin, Host, the body type) leaves it out on purpose, because those walls come first.
@@ -65,7 +68,7 @@ function builtSwap(): Proposal {
 // What the door handed the swap builder last, so a test can see what a stray field did.
 let lastSwapParams: Record<string, unknown> | null = null;
 
-async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
+async function boot(over: Partial<Parameters<typeof createServer>[0]['proposals']> = {}): Promise<{ url: string; close: () => Promise<void> }> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-sec-'));
   // Play the shell: the window token arrives in the environment, never over a route.
   process.env.PHOSPHOR_WINDOW_TOKEN = crypto.randomBytes(32).toString('hex');
@@ -118,6 +121,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),
       reconcile: () => Promise.reject(new Error('not wired in this stub')),
       acknowledge: () => Promise.reject(new Error('not wired in this stub')),
+      ...over,
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},
@@ -335,6 +339,60 @@ test('a swap with no floor passes the door, so the app sets the floor off its ow
     const seen = lastSwapParams as Record<string, unknown> | null;
     assert.ok(seen !== null, 'the swap reached the proposal service');
     assert.equal(seen.minAmountOut, undefined, 'no floor is invented at the door');
+  } finally {
+    await h.close();
+  }
+});
+
+// A coin bought with no network named is its NEAR version, through the agent's own door: the
+// agent's "which one, Tron, Ethereum or Arbitrum?" is never needed (Karim, 2026-09-25).
+test('through /api/mcp, USDT with no network is USDT on NEAR, in swap_quote and in the proposed swap', async () => {
+  const USDT_NEAR = 'nep141:usdt.tether-token.near';
+  const WNEAR = 'nep141:wrap.near';
+  const list: OneClickToken[] = [
+    { assetId: WNEAR, decimals: 24, blockchain: 'near', symbol: 'wNEAR', contractAddress: 'wrap.near', price: 4.4 },
+    { assetId: 'nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near', decimals: 6, blockchain: 'tron', symbol: 'USDT', price: 1 },
+    { assetId: 'nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near', decimals: 6, blockchain: 'eth', symbol: 'USDT', price: 1 },
+    { assetId: 'nep141:arb-0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9.omft.near', decimals: 6, blockchain: 'arb', symbol: 'USDT', price: 1 },
+    { assetId: USDT_NEAR, decimals: 6, blockchain: 'near', symbol: 'USDT', contractAddress: 'usdt.tether-token.near', price: 1 },
+  ];
+  const held = 894697028778374732410224n;
+  const rail: Rail = {
+    ...railThat('swap', async () => ({ ok: true, detail: 'never run here' })),
+    quote: async () => 2.2,
+    facts: async (d) => ({ amountIn: (d as SwapDraft).amountInExact ?? '0', expectedOut: '2.2', minOut: '2.178', feeUsd: 0.01, etaSeconds: 12 }),
+  };
+  const svc = makeCtx({
+    intents: { ok: true, fetchedAt: new Date().toISOString(), holdings: [{ accountId: SELF_EVM.toLowerCase(), assetId: WNEAR, symbol: 'wNEAR', originChain: 'near', amount: 0.89, amountBase: held.toString(), decimals: 24 }] },
+    deps: { rails: { for: () => rail, kinds: () => ['swap'], swap: { tokens: async () => list, balance: async (_a, id) => (id === WNEAR ? held : 0n), activity: async () => { throw new Error('not read here'); } } } },
+  }).svc;
+  let drafted: SwapDraft | null = null;
+  const h = await boot({
+    swapQuote: svc.swapQuote,
+    proposeSwap: async (params) => {
+      const p = await svc.proposeSwap(params);
+      drafted = p.draft as SwapDraft;
+      return p;
+    },
+    view: svc.view,
+  });
+  try {
+    const post = (body: Record<string, unknown>) =>
+      raw(h.url, '/api/mcp', { method: 'POST', headers: { 'content-type': 'application/json', Origin: h.url }, body: JSON.stringify({ secret: SEAT, session: 'a', ...body }) });
+    const quoted = await post({ op: 'read', tool: 'swap_quote', args: { fromSymbol: 'NEAR', toSymbol: 'USDT', amountIn: '0.5' } });
+    assert.equal(quoted.status, 200, quoted.body);
+    const q = JSON.parse(quoted.body) as { to: { assetId: string }; picked: string; candidates?: unknown };
+    assert.equal(q.to.assetId, USDT_NEAR);
+    assert.match(q.picked, /^USDT on NEAR/);
+    assert.equal(q.candidates, undefined);
+
+    const proposed = await post({ op: 'propose', kind: 'swap', params: { fromSymbol: 'NEAR', toSymbol: 'USDT', amountIn: '0.5' } });
+    assert.equal(proposed.status, 200, proposed.body);
+    const d = drafted as SwapDraft | null;
+    assert.ok(d !== null);
+    assert.deepEqual([d.toChain, d.toSymbol, d.to], ['near', 'USDT', d.from]);
+    assert.ok(d.minAmountOut > 0);
+    assert.match(proposed.body, /USDT on NEAR, inside NEAR Intents/);
   } finally {
     await h.close();
   }
