@@ -102,6 +102,8 @@ test('the card is the receipt, and the agent never repeats it', () => {
   // card they asked to see read back field by field (S4, S5).
   assert.ok(text.includes('never a promise of when it lands or finishes'));
   assert.ok(text.includes('say only which one is up, with no figure, time or status'));
+  // 2026-09-25: a move that did not go through wakes the agent for one line (src/http/ended.ts).
+  assert.ok(text.includes('When the app tells you a move you proposed did not go through, say in one line what that means for what they asked, and offer the next step.'));
 });
 
 /* The UI sweep of 2026-09-23 (hunt-a #16): under a card saying exactly that, the agent wrote "That
@@ -214,12 +216,13 @@ test('the persona carries no dash characters the house style bans', () => {
 
 test('the persona is short enough to be read, and carries half the old weight', () => {
   /* 22,603 characters on 2026-09-22, sent in front of the person's first message under Claude
-     Code's own coding-agent prompt. It is the system prompt now and the ceiling is 10,000: the
+     Code's own coding-agent prompt. It is the system prompt now and the ceiling was 10,000: the
      rules that repeated the card and forced reads are gone, and the voice is examples rather than
-     paragraphs. Measured 9,949 with a view and a vendor. */
+     paragraphs. Measured 9,949 with a view and a vendor. 10,120 on 2026-09-25 with the rule for
+     the one line a failed move wakes the agent for (src/http/ended.ts); the ceiling is 10,200. */
   const text = buildRole({ root: ROOT, view: 'trade', agent: 'Claude Code' });
   assert.ok(text.length > 3000, 'the persona got gutted');
-  assert.ok(text.length < 10_000, `the persona is ${text.length} characters`);
+  assert.ok(text.length < 10_200, `the persona is ${text.length} characters`);
 });
 
 // ---------- the knowledge profile ----------
