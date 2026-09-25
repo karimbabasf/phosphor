@@ -1129,6 +1129,7 @@ test('a late move says it is late with the minutes, and a held one says what it 
   assert.ok(!faceOf(card).includes('PROCESSING'), 'the vendor word in capitals: ' + faceOf(card));
   assert.ok(!faceOf(card).includes('2026-09-20T'), 'an ISO stamp on the card');
 
+
   const held = withView({ id: 'h1', kind: 'hl_deposit', status: 'approved', heldSince: new Date(Date.now() - 30_000).toISOString(), createdAt: '2026-09-20T10:00:00Z', decidedAt: new Date(Date.now() - 30_000).toISOString(), decidedBy: 'human',
     draft: { kind: 'hl_deposit', symbol: 'USDC', originAsset: 'nep141:eth-usdc', amount: 7.5425, amountUsd: 7.5425, minCredited: 5, from: '0x1', hlAccount: '0x1', counterparty: 'hypercore' },
     verdict: { outcome: 'needs_approval', reasons: [] }, simulation: null });
@@ -1136,6 +1137,36 @@ test('a late move says it is late with the minutes, and a held one says what it 
   const holding = world.cardNodes('move')[1];
   assert.equal(stateWord(holding), 'Waiting to start');
   assert.ok(faceOf(holding).includes('Nothing is signed until'), faceOf(holding));
+});
+
+/* A swap inside NEAR Intents that 1Click is still PROCESSING is waiting for a buyer, and nothing is
+   on its way anywhere. Past its usual 45 s the card used to say "this card changes the moment it
+   lands" for minutes over a swap where nothing had moved (Karim, 2026-09-25: "the app ui still
+   shows taking longer"). A late card on the rail's own stage words prints those words. */
+test('a late swap still waiting for a buyer says so, never that something is on its way', () => {
+  const world = build();
+  const decidedAt = new Date(Date.now() - 150_000).toISOString();
+  const waiting = withView({ id: 'm1', kind: 'swap', status: 'executing', createdAt: decidedAt, decidedAt, decidedBy: 'policy', lastChangeAt: decidedAt,
+    draft: SWAP_DRAFT, verdict: { outcome: 'allow', reasons: [] }, simulation: null,
+    result: { ok: false, detail: 'watching', txids: ['intent-h'], evidence: { providerStage: 'PROCESSING', handle: 'h1' } } });
+  assert.equal(waiting.view.waitingOn, 'NEAR Intents');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__proposal_status', input: { id: 'm1' }, data: waiting.view });
+  const card = world.cardNodes('move')[0];
+  assert.equal(card.getAttribute('data-state'), 'working');
+  assert.equal(card.getAttribute('data-late'), 'true');
+  const face = faceOf(card);
+  assert.ok(face.includes('Sent. Waiting for a buyer to take it.'), face);
+  assert.doesNotMatch(face, /the moment it lands|on its way|moving your money/, 'money in flight over a swap waiting for a buyer');
+
+  // A late deposit's money really is moving, and its card keeps the stock late line.
+  const moving = withView({ id: 'd1', kind: 'hl_deposit', status: 'executing', createdAt: decidedAt, decidedAt: new Date(Date.now() - 400_000).toISOString(), decidedBy: 'human', lastChangeAt: decidedAt,
+    draft: { kind: 'hl_deposit', symbol: 'USDC', originAsset: 'nep141:eth-usdc', amount: 7.5425, amountUsd: 7.5425, minCredited: 5, from: '0x1', hlAccount: '0x1', counterparty: 'hypercore' },
+    verdict: { outcome: 'needs_approval', reasons: [] }, simulation: null,
+    result: { ok: false, detail: 'polling', txids: ['0xintent'], evidence: { providerStage: 'PROCESSING', handle: 'h2' } } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__proposal_status', input: { id: 'd1' }, data: moving.view });
+  const deposit = world.cardNodes('move')[1];
+  assert.equal(deposit.getAttribute('data-late'), 'true');
+  assert.ok(faceOf(deposit).includes('This is taking longer than usual. Nothing needs you, and this card changes the moment it lands.'), faceOf(deposit));
 });
 
 /* A working move shows no clock at all until it is late: its only sign of time is the track. */
