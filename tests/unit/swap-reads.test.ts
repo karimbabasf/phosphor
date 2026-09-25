@@ -307,7 +307,7 @@ test('the coin spent: the one held is the only answer; none held is nothing to s
   const none = makeCtx({ intents: wnearHeld(), deps: { rails: wide(pricingRail({}).rail) } });
   const nothing = await none.svc.swapQuote!({ fromSymbol: 'USDT', toSymbol: 'NEAR', amountIn: '1' });
   assert.equal(nothing.reason, 'insufficient_balance');
-  assert.match(nothing.sentence ?? '', /You don't have that much USDT/);
+  assert.match(nothing.sentence ?? '', /The balance holds no USDT yet/);
 
   const two = makeCtx({ intents: holding([[USDC_BASE, 'USDC', 1_000_000], [USDC_ARB, 'USDC', 1_000_000]]), deps: { rails: wide(pricingRail({}).rail) } });
   const which = await two.svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'NEAR', amountIn: '1' });
