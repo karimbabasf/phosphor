@@ -329,12 +329,23 @@ function stable(value: unknown): string {
                   FAILED order can still be refunded at the deadline), saying the input left when
                   a hash or the ledger shows it did, and that it is not confirmed when neither does.
      anything else (still pending, or an address the API does not know yet) leaves the row and
-     says which status it is waiting on. */
+     says which status it is waiting on.
+     no answer -> the chain's word alone (see the branch below the deadline). */
 async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promise<Proposal> {
-  const status = await ctx.oneClickStatus!(handle);
+  /* 1CLICK NOT ANSWERING IS NOT THE END OF THE QUESTION. status() throws on a network error or an
+     HTTP error other than 404 (src/intents.ts), and this used to throw before the chain was asked:
+     while 1Click was down the deadline watch never reached the proof, and it wrote an error line
+     every half minute for minutes per row. The silence is caught and `status` is null. */
+  let status: OneClickStatus | null = null;
+  let silence = '';
+  try {
+    status = await ctx.oneClickStatus!(handle);
+  } catch (err) {
+    silence = oneLine(errText(err), 120);
+  }
   // The settlement hashes the venue reports join the row's own, so an INTENTS-mode order that
   // settled on NEAR carries its NEAR hash beside the intent hash.
-  const txids = [...new Set([...(p.result?.txids ?? []), ...(status.nearTxHashes ?? []), ...(status.destinationTxHashes ?? [])])];
+  const txids = [...new Set([...(p.result?.txids ?? []), ...(status?.nearTxHashes ?? []), ...(status?.destinationTxHashes ?? [])])];
   // MERGED, NEVER REPLACED. The handle and the nonce are what a later question to the venue goes
   // by; what 1Click reported is added beside them, so an executed row can still be re-checked.
   const evidence: RailEvidence = {
@@ -343,10 +354,10 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
        the process died reads "Waiting for the venue to credit it" once the sweep hears SUCCESS,
        not "On its way" for ever (3.3, 8.4). A word the stage table does not know is not stamped:
        the row keeps its last known one (the rail-provider-stage rule). */
-    ...(ONECLICK_STAGES.has(status.status) ? { providerStage: status.status } : {}),
-    ...(status.settledAmountOut === undefined ? {} : { settledAmountOut: status.settledAmountOut }),
-    ...(status.refundedAmount === undefined ? {} : { refundedAmount: status.refundedAmount }),
-    ...(status.refundReason === undefined ? {} : { refundReason: status.refundReason }),
+    ...(status !== null && ONECLICK_STAGES.has(status.status) ? { providerStage: status.status } : {}),
+    ...(status?.settledAmountOut === undefined ? {} : { settledAmountOut: status.settledAmountOut }),
+    ...(status?.refundedAmount === undefined ? {} : { refundedAmount: status.refundedAmount }),
+    ...(status?.refundReason === undefined ? {} : { refundReason: status.refundReason }),
   };
   /* THE RAIL'S SENTENCE STAYS ON A ROW THAT STAYS OPEN. It is the observation ("signed and
      submitted, do not sign another"); the venue's word is the status it is waiting on, and it
@@ -372,7 +383,11 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
     if (next === p.status && stable(result) === stable(current)) return p;
     const meanwhile = movedMeanwhile(ctx, p);
     if (meanwhile !== null) return meanwhile;
-    ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by 1Click: ${next}. ${said}`, { id: p.id, handle, status: status.status });
+    ctx.audit.append(
+      next === 'executed' ? 'executed' : 'error',
+      status === null ? `${p.id} re-checked while 1Click did not answer (${silence}): ${next}. ${said}` : `${p.id} reconciled by 1Click: ${next}. ${said}`,
+      { id: p.id, handle, status: status?.status ?? null },
+    );
     // Something changed, so a row a person had filed comes back to the dock with the new word.
     const { acknowledgedAt: _filed, ...unfiled } = p;
     return persist(ctx, {
@@ -391,6 +406,28 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
      deadline on it never signed a transfer. */
   const deadline = Date.parse(p.result?.evidence?.deadline ?? '');
   const canStillRun = Number.isFinite(deadline) && Date.now() < deadline + RELAY_DEADLINE_GRACE_MS;
+
+  /* NO ANSWER FROM 1CLICK: the chain's word alone. A signed transfer past its deadline that the
+     verifier shows never ran closes the row on that proof, whatever 1Click would have said, as it
+     does below. Anything else keeps the row as it stands, an open one with one line saying 1Click
+     did not answer: the same line every time, so write() records it once, not every half minute.
+     A closed row keeps its own words. */
+  if (status === null) {
+    if (typeof p.result?.evidence?.nonce === 'string' && Number.isFinite(deadline)) {
+      const fate = await fateOf(ctx, p);
+      if (fate.ran === false && fate.dead !== null) {
+        return write(
+          'failed',
+          false,
+          `1click could not be asked, and the deadline (${new Date(deadline).toISOString()}) passed with the signed transfer never run${proofWords(fate.dead)}: ` +
+            'the verifier shows its nonce unspent, so nothing left the balance.',
+          'venue_failed_nothing_moved',
+        );
+      }
+    }
+    if (p.status !== 'needs_reconciliation') return p;
+    return write(p.status, p.result?.ok ?? false, 'it did not answer, so nothing has changed; it is asked again shortly.');
+  }
 
   if (status.status === 'SUCCESS') {
     const settled = status.settledAmountOut !== undefined ? `1click settled this: ${status.settledAmountOut} arrived.` : '1click reports this settled.';
@@ -659,6 +696,8 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
 
   let txids = [...(p.result?.txids ?? [])];
   let evidence: RailEvidence = { ...evidence0 };
+  // Why the relay did not answer, when it did not: the audit line's, never the row's.
+  let relaySilence: string | null = null;
 
   const write = (next: Proposal['status'], ok: boolean, said: string, reason?: string): Proposal => {
     const settledNow = next === 'executed' || next === 'failed';
@@ -675,7 +714,8 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
     if (next === p.status && stable(result) === stable(current)) return p;
     const meanwhile = movedMeanwhile(ctx, p);
     if (meanwhile !== null) return meanwhile;
-    ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by the relay and the verifier: ${next}. ${said}`, {
+    const by = relaySilence === null ? 'the relay and the verifier' : `the verifier, the relay not answering (${relaySilence})`;
+    ctx.audit.append(next === 'executed' ? 'executed' : 'error', `${p.id} reconciled by ${by}: ${next}. ${said}`, {
       id: p.id,
       ...(handle === null ? {} : { handle }),
       ...(nonce === null ? {} : { nonce }),
@@ -734,12 +774,16 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
         return write(p.status, p.result?.ok ?? false, `The relay reports ${oneLine(status.status, 40)}. Nothing has changed; check again shortly.`);
       }
     } catch (err) {
-      return write(p.status, p.result?.ok ?? false, `The relay could not be asked (${oneLine(errText(err), 80)}). Nothing has changed; check again shortly.`);
+      /* A relay that does not answer is no answer about the swap, and it used to end the re-check
+         here, so a row the verifier could close stayed open until the relay came back. The nonce
+         below is the chain's own answer. The row says only that the relay was not asked, the same
+         words every time, so a relay that stays down is one line, not one per re-check. */
+      relaySilence = oneLine(errText(err), 80);
     }
   }
 
   // The verifier, by the nonce: the chain-level answer.
-  const relayNote = relayWord === null ? '' : ` The relay reports ${oneLine(relayWord, 40)}.`;
+  const relayNote = relayWord !== null ? ` The relay reports ${oneLine(relayWord, 40)}.` : relaySilence !== null ? ' The relay could not be asked.' : '';
   if (nonce === null) {
     return write(p.status, p.result?.ok ?? false, `No nonce was recorded for this swap, so the verifier cannot be asked whether it executed.${relayNote} Compare the balances before and after on the receipt.`);
   }

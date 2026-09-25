@@ -194,8 +194,9 @@ const QUIET: IntentsActivity = {
 
 type ChainNow = { block: (deadlineMs: number) => FinalBlock | null; spent: boolean | null; salt?: boolean | null; saltRead?: () => Promise<boolean | null> };
 
-// A live service whose ledger refresh the test fires by hand, over a fake chain and 1Click.
-function world(chain: ChainNow, status: OneClickStatus = PROCESSING) {
+// A live service whose ledger refresh the test fires by hand, over a fake chain and 1Click. An
+// Error for `status` is 1Click not answering: status() throws on a network or a non-404 HTTP error.
+function world(chain: ChainNow, status: OneClickStatus | Error = PROCESSING) {
   const listeners: Array<() => void> = [];
   const snapshot = { ...loadDemoLedger(), mode: 'live' as const };
   const ledger: Ledger = {
@@ -240,6 +241,7 @@ function world(chain: ChainNow, status: OneClickStatus = PROCESSING) {
       ledger,
       oneClickStatus: async (handle) => {
         asked.push(handle);
+        if (status instanceof Error) throw status;
         return status;
       },
     },
@@ -387,6 +389,45 @@ test('(e) a Reconcile click takes no RPC\'s word for a deadline this clock has n
   future.seed({ deadlineMs: Date.now() - 40_000, reason: 'venue_failed_watching' });
   assert.equal((await future.svc.reconcile('swap-1')).status, 'needs_reconciliation');
   assert.ok(!future.reads.includes('nonce@Forged'), 'the nonce was read at a block stamped in the future');
+});
+
+/* 1Click not answering (a network error, a 5xx) threw before the chain was asked: while it was down
+   the deadline watch never reached the proof, the row waited for 1Click to come back, and the watch
+   wrote an error line every half minute for minutes per row. The chain decides without it. */
+const DOWN = new Error('1click status failed: 503');
+// The lines the deadline watch and the sweep write when a re-check throws (src/proposals/reconcile.ts).
+const watchErrors = (w: ReturnType<typeof world>) =>
+  w.audit.tail(200).filter((e) => e.msg.includes('the re-check after its deadline failed') || e.msg.includes('could not re-check it'));
+
+test('(e) 1Click not answering does not stop the proof: a transfer past its deadline that never ran closes the row', async () => {
+  const w = world({ block: pastBy(1_000), spent: false }, DOWN);
+  w.seed({ deadlineMs: Date.now() - 20_000 });
+  await w.tick();
+  const out = w.store.get('swap-1');
+  assert.equal(out?.status, 'failed', 'the row waited for 1Click to come back');
+  assert.equal(out?.result?.reason, 'venue_failed_nothing_moved');
+  assert.match(
+    out?.result?.detail ?? '',
+    /^1click could not be asked, and the deadline .* passed with the signed transfer never run \(NEAR's final block is stamped .*\): the verifier shows its nonce unspent, so nothing left the balance\.$/,
+  );
+  assert.equal(w.svc.dailyLimit(25_000).spentUsd, 0, 'nothing left, so nothing is charged to the day');
+  assert.deepEqual(watchErrors(w), []);
+});
+
+test('(e) 1Click not answering over a transfer that can still run keeps the row open with one line, written once', async () => {
+  const w = world({ block: (deadlineMs) => ({ hash: 'BlkBehind', atMs: deadlineMs - 2_600 }), spent: false }, DOWN);
+  w.seed({ deadlineMs: Date.now() - 10_000 });
+  await w.tick();
+  for (let i = 0; i < 3; i += 1) await w.svc.reconcile('swap-1');
+  const out = w.store.get('swap-1');
+  assert.equal(out?.status, 'needs_reconciliation');
+  assert.equal(out?.result?.reason, 'stuck_unknown');
+  assert.match(out?.result?.detail ?? '', /^the intent was submitted .* Re-checked with 1Click: it did not answer, so nothing has changed; it is asked again shortly\.$/);
+  assert.equal(w.svc.dailyLimit(25_000).spentUsd, 12, 'open and counted');
+  assert.equal(w.asked.length, 4);
+  const said = w.audit.tail(200).filter((e) => e.msg.includes('it did not answer'));
+  assert.equal(said.length, 1, `one line for four questions, not one a question: ${said.length}`);
+  assert.deepEqual(watchErrors(w), [], 'an error line for a question 1Click did not answer');
 });
 
 test('the deadline watch asks at most every half minute per row, never about a row a rail is still watching, and hands a late row to the sweep', async () => {

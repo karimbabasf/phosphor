@@ -216,13 +216,33 @@ test('killed while PENDING: the relay saying not valid hands the question to the
   assert.equal(h.asked.nonce.length, 1);
 });
 
-test('killed while PENDING: a relay that cannot be asked changes nothing and says so', async () => {
+test('killed while PENDING: a relay that cannot be asked changes nothing and says so, once', async () => {
   const h = rig({ status: new Error('relay get_status failed: 503') });
   seed(h, { txids: [INTENT_HASH], evidence: { handle: INTENT_HASH, nonce: NONCE, deadline: future() } });
   h.svc.reconcileOnBoot();
   const out = await h.svc.reconcile('relay-1');
   assert.equal(out.status, 'needs_reconciliation');
-  assert.match(out.result?.detail ?? '', /The relay could not be asked \(relay get_status failed: 503\)/);
+  assert.match(out.result?.detail ?? '', /The relay could not be asked\./);
+  // The verifier is still asked: the nonce unspent inside its deadline is a swap that can still run.
+  assert.match(out.result?.detail ?? '', /nonce unspent and the deadline .* has not passed, so the swap can still execute/);
+  // The same silence again writes nothing new.
+  const lines = () => h.audit.tail(100).filter((e) => e.msg.includes('The relay could not be asked')).length;
+  const once = lines();
+  await h.svc.reconcile('relay-1');
+  assert.equal(lines(), once);
+});
+
+/* The relay not answering used to return before the verifier was asked, so a row the chain could
+   close stayed open until the relay came back. The nonce is the chain's own answer without it. */
+test('killed while PENDING: a relay that cannot be asked does not stop the verifier, and past the deadline an unspent nonce fails the row', async () => {
+  const h = rig({ status: new Error('relay get_status failed: 503'), nonceUsed: false });
+  seed(h, { txids: [INTENT_HASH], evidence: { handle: INTENT_HASH, nonce: NONCE, deadline: past(), providerStage: 'PENDING' } });
+  h.svc.reconcileOnBoot();
+  const out = await h.svc.reconcile('relay-1');
+  assert.equal(out.status, 'failed', 'the row waited for the relay to come back');
+  assert.equal(out.result?.reason, 'venue_failed_nothing_moved');
+  assert.match(out.result?.detail ?? '', /nonce unspent, so the swap never executed and nothing left the balance\. The relay could not be asked\./);
+  assert.equal(h.asked.nonce.length, 1);
 });
 
 // ---------- stage: TX_BROADCASTED (the hook wrote the NEAR hash and the link) ----------
