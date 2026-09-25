@@ -4,10 +4,11 @@
 //
 // What is held here: the total is the NEAR Intents balance alone and never the trading account;
 // a figure the app does not have is left out rather than written as zero (a coin with no price,
-// a coin whose market the app does not list, a trading account nobody has read); the day's lines
-// are read only for listed markets and never on a timer; the dials are the policy's own fields
-// and the engine's own totals; the moves say what they are in a few words and where they stand
-// in the card's words; and nothing Hyperliquid but the one line shows on Pro.
+// a coin with no day, a trading account nobody has read); a coin's day comes off the day feed
+// (/api/day) wherever the feed has one, VVV among them (2026-09-25), and off the candles only for
+// a listed market it has none for, and neither is read on a timer; the dials are the policy's own
+// fields and the engine's own totals; the moves say what they are in a few words and where they
+// stand in the card's words; and nothing Hyperliquid but the one line shows on Pro.
 //
 // Run against the REAL ui/screens/pro.js and ui/core/dom.js over a stand-in DOM, the way the
 // other *-ui tests do.
@@ -125,9 +126,11 @@ type Rig = {
   timers: number;
   clock: { now: number };
   candles: Record<string, Any>;
+  // What GET /api/day answers: the entries by asset id, or a failed read.
+  day: { entries: Record<string, Any>; fails: boolean };
 };
 
-function boot(options: { view?: string; candles?: Record<string, Any>; receipts?: Any[]; svg?: boolean } = {}): Rig {
+function boot(options: { view?: string; candles?: Record<string, Any>; day?: Record<string, Any>; receipts?: Any[]; svg?: boolean } = {}): Rig {
   const host = makeNode('section');
   host.id = 'view-pro';
   let subscriber: ((state: Any) => void) | null = null;
@@ -140,6 +143,8 @@ function boot(options: { view?: string; candles?: Record<string, Any>; receipts?
   const clock = { now: Date.parse('2026-09-23T20:00:00Z') };
   let timers = 0;
   const candles: Record<string, Any> = options.candles ?? {};
+  // No days unless a test names some: the backend in demo mode, and every test written before the feed.
+  const day = { entries: options.day ?? {}, fails: false };
   const composer = makeNode('textarea');
   composer.className = 'input composer-input';
   composer.value = '';
@@ -184,6 +189,10 @@ function boot(options: { view?: string; candles?: Record<string, Any>; receipts?
       getJson: (path: string) => {
         asked.push(path);
         if (path.startsWith('/api/receipts')) return Promise.resolve({ data: { receipts: options.receipts ?? [] }, fresh: true });
+        if (path.startsWith('/api/day')) {
+          if (day.fails) return Promise.reject(Object.assign(new Error('no day'), { status: 502 }));
+          return Promise.resolve({ data: { at: clock.now, entries: day.entries }, fresh: true });
+        }
         const product = decodeURIComponent((/product=([^&]+)/.exec(path) || [])[1] || '');
         const bars = candles[product];
         if (!bars) return Promise.reject(Object.assign(new Error('no candles'), { status: 502 }));
@@ -209,6 +218,7 @@ function boot(options: { view?: string; candles?: Record<string, Any>; receipts?
     get timers() { return timers; },
     clock,
     candles,
+    day,
   };
 }
 
@@ -384,6 +394,126 @@ test('a day is read once and again only when a frame finds it five minutes old: 
   rig.clock.now += 10 * 60 * 1000;
   rig.put(state({ candleProducts: ['ETH-USD'] }));
   assert.equal(count(), 3, 'a day was read while Pro was not on screen');
+});
+
+/* The day feed (2026-09-25): a held VVV had no line and no change, because the candles cover only
+   the markets config.json lists. The feed covers every coin the NEAR Intents token list names a
+   CoinGecko id for, and the window reads it per asset id. */
+const VVV_ASSET = 'nep141:base-0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf.omft.near';
+const LTC_ASSET = 'nep141:ltc.omft.near';
+
+/* A day off the feed: 25 hourly prices from `first` to `last`, and CoinGecko's own change. */
+function feedDay(first: number, last: number, change24: number): Any {
+  return { change24, line: Array.from({ length: 25 }, (_, i) => first + (last - first) * (i / 24)), at: Date.parse('2026-09-23T20:00:00Z') };
+}
+
+function vvv(quantity = 12): Any {
+  return intents('VVV', quantity, { tokenId: VVV_ASSET, priceUsd: 30.26, valueUsd: quantity * 30.26 });
+}
+
+function assetsAsked(path: string): string[] {
+  return decodeURIComponent((/assets=([^&]*)/.exec(path) || [])[1] || '').split(',').filter(Boolean);
+}
+
+test('every coin the feed has a day for draws it, VVV among them, and no candles are asked for it', async () => {
+  const rig = boot({
+    svg: true,
+    candles: { 'ETH-USD': day(2636.74, 2684.2) },
+    day: { [VVV_ASSET]: feedDay(31.72, 30.26, -4.58151), 'nep141:eth': feedDay(2674, 2684.2, 0.38509) },
+  });
+  rig.put(state({ wallet: { rows: [intents('USDC', 6150), intents('ETH', 1.42), vvv()], stale: [], hyperliquid: { funded: true } }, candleProducts: ['ETH-USD'] }));
+  await tick();
+  const reads = rig.asked.filter((p) => p.startsWith('/api/day'));
+  assert.equal(reads.length, 1);
+  // The window names the coins it holds to its own backend, which answers from what the feed
+  // already has: the call that leaves this Mac names every listed coin (tests/unit/day-feed.test.ts).
+  assert.deepEqual(assetsAsked(reads[0]), ['nep141:base-0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf.omft.near', 'nep141:eth', 'nep141:usdc']);
+  const chg = one(row(rig, 'VVV'), 'l-chg');
+  assert.equal(chg.textContent, '-4.6%');
+  assert.equal(chg.getAttribute('data-dir'), 'down');
+  const spark = one(row(rig, 'VVV'), 'l-spark');
+  assert.equal(spark.children.length, 1, 'VVV has a change and no line');
+  assert.equal(spark.children[0].getAttribute('data-dir'), 'down');
+  assert.match(spark.children[0].children[0].getAttribute('d'), /^M0\.00 2\.00(L[\d.]+ [\d.]+){24}$/, 'the line is not the day\'s 25 points, highest first');
+  // ETH has a market the app lists and still draws the feed's day: no candles asked for at all.
+  assert.equal(one(row(rig, 'ETH'), 'l-chg').textContent, '+0.4%');
+  assert.deepEqual(rig.asked.filter((p) => p.startsWith('/api/candles')), [], 'candles were read for a coin the feed covers');
+  // USDC has no day here and no listed market: nothing, never a made-up flat line.
+  assert.equal(one(row(rig, 'USDC'), 'l-chg').textContent, '');
+  assert.equal(one(row(rig, 'USDC'), 'l-spark').children.length, 0);
+});
+
+test('a coin the feed has no day for falls back to its candles once the feed has answered, and one with neither shows none', async () => {
+  const rig = boot({ candles: { 'ETH-USD': day(2636.74, 2684.2) }, day: { [VVV_ASSET]: feedDay(31.72, 30.26, -4.58151) } });
+  rig.put(state({
+    wallet: { rows: [intents('ETH', 1.42), vvv(), intents('WIF', 2.5, { priceUsd: 0, valueUsd: 0, priced: false })], stale: [], hyperliquid: { funded: true } },
+    candleProducts: ['ETH-USD'],
+  }));
+  await tick();
+  assert.equal(one(row(rig, 'ETH'), 'l-chg').textContent, '+1.8%', 'ETH did not fall back to its candles');
+  assert.equal(one(row(rig, 'VVV'), 'l-chg').textContent, '-4.6%');
+  assert.equal(one(row(rig, 'WIF'), 'l-chg').textContent, '');
+  const candles = rig.asked.filter((p) => p.startsWith('/api/candles'));
+  assert.deepEqual(candles.map((p) => /product=([^&]+)/.exec(p)![1]), ['ETH-USD']);
+});
+
+test('a day that is not a number or not a line draws nothing, and a listed market still gets its candles', async () => {
+  const rig = boot({
+    candles: { 'ETH-USD': day(2636.74, 2684.2) },
+    day: {
+      'nep141:eth': { change24: 'up', line: feedDay(1, 2, 0).line, at: 0 },
+      [VVV_ASSET]: { change24: -4.5, line: [31, -1, 30], at: 0 },
+      [LTC_ASSET]: { change24: 2.1, line: [88], at: 0 },
+    },
+  });
+  rig.put(state({ wallet: { rows: [intents('ETH', 1.42), vvv(), intents('LTC', 3, { tokenId: LTC_ASSET, priceUsd: 88, valueUsd: 264 })], stale: [], hyperliquid: { funded: true } }, candleProducts: ['ETH-USD'] }));
+  await tick();
+  assert.equal(one(row(rig, 'ETH'), 'l-chg').textContent, '+1.8%');
+  assert.equal(one(row(rig, 'VVV'), 'l-chg').textContent, '', 'a line with a negative price was drawn');
+  assert.equal(one(row(rig, 'LTC'), 'l-chg').textContent, '', 'one point was drawn as a day');
+});
+
+test('the feed is read with Pro up, again at five minutes or when a coin it never covered arrives, and a failed read keeps the last good day', async () => {
+  const rig = boot({ day: { [VVV_ASSET]: feedDay(31.72, 30.26, -4.58151), [LTC_ASSET]: feedDay(86, 88, 2.3) } });
+  const holding = (rows: Any[]) => state({ wallet: { rows, stale: [], hyperliquid: { funded: true } }, candleProducts: [] });
+  const reads = () => rig.asked.filter((p) => p.startsWith('/api/day'));
+  rig.put(holding([vvv()]));
+  await tick();
+  assert.equal(reads().length, 1);
+  rig.put(holding([vvv()]));
+  rig.clock.now += 4 * 60 * 1000;
+  rig.put(holding([vvv()]));
+  await tick();
+  assert.equal(reads().length, 1, 'the day was read again before it was five minutes old');
+  // LTC lands: a coin the last read never named is read for at once, not in five minutes.
+  const ltc = intents('LTC', 3, { tokenId: LTC_ASSET, priceUsd: 88, valueUsd: 264 });
+  rig.put(holding([vvv(), ltc]));
+  await tick();
+  assert.equal(reads().length, 2);
+  assert.deepEqual(assetsAsked(reads()[1]), [VVV_ASSET, LTC_ASSET].sort());
+  assert.equal(one(row(rig, 'LTC'), 'l-chg').textContent, '+2.3%');
+  // Selling it asks nothing new: everything held was covered by the last read.
+  rig.put(holding([vvv()]));
+  await tick();
+  assert.equal(reads().length, 2);
+  // Five minutes on, again; a read that fails keeps the day it had.
+  rig.day.fails = true;
+  rig.clock.now += 6 * 60 * 1000;
+  rig.put(holding([vvv()]));
+  await tick();
+  assert.equal(reads().length, 3);
+  assert.equal(one(row(rig, 'VVV'), 'l-chg').textContent, '-4.6%', 'a failed read blanked a good day');
+  // And a failure waits its five minutes too, rather than asking on every frame.
+  rig.put(holding([vvv()]));
+  await tick();
+  assert.equal(reads().length, 3);
+  // Off Pro, nothing is read.
+  rig.view('basic');
+  rig.clock.now += 10 * 60 * 1000;
+  rig.put(holding([vvv()]));
+  await tick();
+  assert.equal(reads().length, 3, 'the day was read while Pro was not on screen');
+  assert.equal(rig.timers, 0, 'Pro started a timer');
 });
 
 /* ---------- the trading account ---------- */
