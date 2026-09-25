@@ -44,6 +44,10 @@ export type OneClickToken = {
      value of what arrives (src/proposals/draft.ts priceOf, src/proposals/rails.ts prepareSwap). */
   price?: number;
   priceUpdatedAt?: string;
+  /* CoinGecko's id for the coin, when 1Click names one: 188 of 197 rows on 2026-09-25, the nine
+     without are yield-vault wrappers. How the day feed finds a listed coin's last 24 hours
+     (src/ledger/day.ts). Somebody else's string: checked there before it goes in a URL. */
+  coingeckoId?: string;
 };
 
 /* Matches a chain + our token registry id against 1Click's token list. For near-chain

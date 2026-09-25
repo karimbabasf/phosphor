@@ -11,7 +11,7 @@ import type { AppConfig, LedgerSnapshot } from '../types.ts';
 import { loadDemoLedger, loadDemoReads } from './demo.ts';
 import { fetchIntentsHoldings, REFRESH_PERIOD_MS, type IntentsRead } from './intents.ts';
 import { fetchHyperliquidRead, type HlRead } from './hyperliquid.ts';
-import { oneClickClient } from '../intents.ts';
+import { oneClickClient, type OneClickToken } from '../intents.ts';
 import { evmAddress } from '../keystore/index.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
@@ -38,6 +38,10 @@ export type Ledger = {
   // unsubscribe. Optional because the tests build many small ledgers by hand and none of them
   // has anything to be told.
   onRefresh?(fn: () => void): () => void;
+  /* 1Click's token list, off the one client the verifier read already keeps (a minute's cache,
+     one read at a time), so the day feed (src/ledger/day.ts) names its coins without a second
+     copy of the list. Absent in demo mode, which reads no venue, and on hand-built ledgers. */
+  tokens?(): Promise<OneClickToken[]>;
 };
 
 /* The listeners, kept beside the ledger objects so demo and live share one shape. A listener
@@ -266,6 +270,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
     hyperliquid: () => liveHl,
     refresh,
     onRefresh: listeners.add,
+    tokens: () => oneClick.tokens(),
   };
 }
 

@@ -18,6 +18,7 @@ import type { AppConfig, ChainId, Policy, ProposalService, RiskRow, Screen, Scre
 import type { Audit } from '../audit.ts';
 import type { Store } from '../store.ts';
 import type { Ledger } from '../ledger/index.ts';
+import type { DayFeed } from '../ledger/day.ts';
 import type { Candle } from '../types.ts';
 import type { MarketData } from '../market/index.ts';
 import type { TradeService } from '../trade/service.ts';
@@ -191,6 +192,9 @@ export type ServerDeps = {
      worth. Optional because a test has no 1Click and demo mode builds no client; absent, every
      floor is printed in the token's own unit alone. A throw here never fails the report. */
   intentsPrices?: () => Promise<Map<string, number>>;
+  /* Every listed coin's last 24 hours, for Pro (src/ledger/day.ts). Optional because demo mode
+     builds none and no test server needs one; absent, GET /api/day answers no days. */
+  day?: DayFeed;
   audit: Audit;
   store: Store;
   ledger: Ledger;

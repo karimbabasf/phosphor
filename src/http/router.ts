@@ -50,6 +50,7 @@ import {
   handleVaultUnlock,
 } from './vault.ts';
 import { sendHealth } from './health.ts';
+import { sendDay } from './day.ts';
 import { redactedTail, scrubbedTail } from './log-tail.ts';
 import { withoutAddresses } from './read/wallet.ts';
 import { sendReceipts } from './receipts.ts';
@@ -71,6 +72,8 @@ const GET: Record<string, Route> = {
     sendJson(res, page.status, page.body);
   },
   '/api/candles': (ctx, _req, res, url) => sendCandles(ctx, url, res),
+  // Each coin's last 24 hours for Pro, off the day feed. See day.ts.
+  '/api/day': (ctx, _req, res, url) => sendDay(ctx, url, res),
   // ?slot=n picks one of the charts a layout put up; no slot is the primary. A slot no layout
   // filled is a 404, never the primary under another chart's name.
   // ?part=markup is the payload without the candles, for the window answering a chart frame.
