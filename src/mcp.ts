@@ -14,6 +14,7 @@ import path from 'node:path';
 import { VERSION } from './version.ts';
 import { seatSecretPath } from './agents.ts';
 import { listSkills, readSkill } from './skills.ts';
+import { whatsNew } from './whats-new.ts';
 import { ALWAYS_CLICK_TOOLS, CHAT_WITHHELD, SCREENS, handshakeInstructions } from './persona.ts';
 import { THEME_SLOTS, SLOT_MEANING, COLOURWAYS, COLOURWAY_LABEL } from './view/theme.ts';
 import { readTimeout, venueWriteTimeout } from './net.ts';
@@ -355,6 +356,19 @@ function registerLeadRead(name: string, description: string, shape: Record<strin
   if (ROLE === 'analyst') return;
   registerRead(name, description, shape);
 }
+
+/* What changed, from the changelog this copy of the app ships with (docs/changelog.md, staged by
+   scripts/bundle-payload.ts), so the agent can answer "what's new" with the notes and never from
+   memory. Answered here like skill below: it reads one file and touches no state. */
+server.registerTool(
+  'whats_new',
+  {
+    description:
+      'What changed in this version of Phosphor, from its own changelog. Use it when they ask what is new or what an update changed. `since` is the version they had before: every entry after it comes back. Tell them in a few plain lines, never the whole list.',
+    inputSchema: { since: z.string().optional().describe('the version they had, like 0.10.0. Omit for this version only.') },
+  },
+  async (args: { since?: string }) => textResult(whatsNew(ROOT, typeof args?.since === 'string' ? args.since : '')),
+);
 
 // The one tool that is answered here rather than proxied to the app. A skill is a file on this
 // machine, so the app has nothing to add, and routing it through /api/mcp would mean an agent
