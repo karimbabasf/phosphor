@@ -36,9 +36,11 @@
   var SHOW_WITHOUT_ANSWER_MS = 600;
   var LAND_POLL_MS = 1500;
   /* The least time between two steps landing, so each is seen to land, and
-     the finished card's hold before it goes. With the card's own way out
-     (motion.js leave, 200 ms) the slowest finish after the backend stops is
-     about a second, inside the shell's QUIT_PAINT. */
+     the finished card's hold before it goes. The shell waits for this page's
+     closed, not for a clock of its own; its QUIT_CLOSE_CAP is only for a page
+     that stops answering, and the slowest healthy card (about a second and a
+     half, when every step lands before the card has arrived) sits well
+     inside it. tests/unit/quit-ui.test.ts measures both. */
   var BEAT_MS = 180;
   var HOLD_MS = 320;
   var ICON = { entry: 'warning', moving: 'send', held: 'waiting', plan: 'armed', agent: 'waiting', yours: 'waiting', venue: 'shield', incoming: 'deposit' };

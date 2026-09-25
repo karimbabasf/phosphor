@@ -646,9 +646,11 @@ fn splash_quit(app: tauri::AppHandle, window: tauri::Window) -> Result<(), Strin
 const QUIT_ID: &str = "quit";
 const QUIT_ACK: Duration = Duration::from_secs(1);
 const QUIT_POLL: Duration = Duration::from_millis(100);
-/// How long the page gets, once the backend has stopped, to show the last step and answer
-/// closed. It needs about a second (ui/screens/quit.js, finish); a slower page is quit anyway.
-const QUIT_PAINT: Duration = Duration::from_millis(1500);
+/// Once the backend has stopped, the exit waits for the page's own closed: the card has shown its
+/// last step and gone (ui/screens/quit.js, finish). This is a cap for a page that stops
+/// answering, not a budget the page has to fit, so it sits well past the slowest healthy card
+/// (the UI test measures it). A page that is gone ends the wait at once.
+const QUIT_CLOSE_CAP: Duration = Duration::from_secs(3);
 const QUIT_ASK_SCRIPT: &str =
     "(function(){try{return typeof window.__phosphorQuit==='function'?String(window.__phosphorQuit()):'none';}catch(e){return 'none';}})()";
 const QUIT_STATE_SCRIPT: &str =
@@ -792,7 +794,7 @@ fn shut_down(app: &tauri::AppHandle, control: &WebviewWindow) {
         let _ = control.eval(&landed_script(step));
     });
 
-    let deadline = Instant::now() + QUIT_PAINT;
+    let deadline = Instant::now() + QUIT_CLOSE_CAP;
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
@@ -1643,10 +1645,10 @@ mod tests {
     }
 
     #[test]
-    fn the_last_paint_is_a_short_bounded_wait() {
-        use super::{QUIT_PAINT, QUIT_POLL};
-        assert!(QUIT_PAINT <= Duration::from_millis(1500), "past the backend stopping, never more than 1.5 s");
-        assert!(QUIT_PAINT > QUIT_POLL * 5, "long enough for the page to answer a few times");
+    fn the_wait_for_the_cards_close_is_capped() {
+        use super::{QUIT_CLOSE_CAP, QUIT_POLL};
+        assert!(QUIT_CLOSE_CAP <= Duration::from_secs(3), "a page that stops answering still quits within 3 s of the stop");
+        assert!(QUIT_CLOSE_CAP > QUIT_POLL * 10, "and a healthy card is never cut: the page's closed is the end");
     }
 
     #[test]
