@@ -13,6 +13,7 @@ import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
 import { buildWallet } from '../wallet.ts';
 import { WEB_READ_REASON } from '../web-read.ts';
+import { APP_TURN_REASON } from '../app-turn.ts';
 import type { PCtx } from './lifecycle.ts';
 import { TERMINAL, deadlineAtOf, stageOf } from './view.ts';
 import type { ProposalStage } from './view.ts';
@@ -52,6 +53,11 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
   // talk an agent into a move. The row's own stamp, taken when it was asked for (src/web-read.ts).
   if (p.verdict.outcome === 'allow' && p.webRead === true) {
     p = { ...p, verdict: { outcome: 'needs_approval', reasons: [...p.verdict.reasons, WEB_READ_REASON] } };
+  }
+  // And any move asked for inside a turn the app started, every kind: nobody asked for that turn,
+  // so nobody may be at the window to see what it files (src/app-turn.ts). The row's own stamp.
+  if (p.verdict.outcome === 'allow' && p.appTurn === true) {
+    p = { ...p, verdict: { outcome: 'needs_approval', reasons: [...p.verdict.reasons, APP_TURN_REASON] } };
   }
 
   if (p.verdict.outcome === 'refuse') {

@@ -28,7 +28,9 @@
 //
 // WHAT IT IS NOT. Not an approval path and not a retry: it carries no id the agent could act on
 // beyond reading, and the turn a failure wakes says it approves nothing and asks for no move
-// until the person answers. Not a message the window draws: the card already shows the ending,
+// until the person answers. That sentence is not the wall: the seat is marked for exactly that
+// turn, and any move filed inside it waits for the person's click whatever its size
+// (src/app-turn.ts). Not a message the window draws: the card already shows the ending,
 // and only the agent's line is drawn. Not an interruption: a turn in progress is left alone, the
 // notice waits on the chat and is noted when the driver reports ready, unless the transcript
 // shows the agent read that row's ending itself in the meantime, in which case it is dropped.
@@ -36,6 +38,8 @@
 import type { Proposal } from '../types.ts';
 import type { ProposalView } from '../proposals/view.ts';
 import type { Audit } from '../audit.ts';
+import type { DriverEvent } from '../driver.ts';
+import { clearAppTurn, markAppTurn } from '../app-turn.ts';
 import type { Chat } from './context.ts';
 
 // A wake waiting on its window, and the only thing needed to call it off.
@@ -58,6 +62,9 @@ export type EndedNotices = {
   // Sends what waits on this chat, if anything does. The chat registry calls it when the
   // driver reports ready.
   flush(chat: Chat): void;
+  // Every event the chat's driver reports; the chat registry calls it. The turn a failure woke
+  // ends on its turn_end (see wake).
+  event(chat: Chat, event: DriverEvent): void;
   pending(): number;
   stop(): void;
 };
@@ -137,6 +144,8 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
   // By chat: the wake owed (the rows its notes carry, and its timer), and when the app last woke it.
   const owed = new Map<string, { ids: string[]; timer: WakeTimer }>();
   const woke = new Map<string, number>();
+  // By chat: the seat a turn the app started is running on, marked until that turn ends.
+  const running = new Map<string, string>();
 
   function remember(id: string): void {
     told.add(id);
@@ -237,14 +246,34 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     const last = woke.get(chat.id);
     if (last !== undefined && now() - last < WAKE_GAP_MS) return;
     const tag = deps.tag?.();
+    /* THE TURN IS THE APP'S, and so is anything proposed inside it. The seat is marked before the
+       turn goes down, so a move filed in it waits for the person's click whatever its size
+       (src/app-turn.ts), and the mark goes when that turn ends (event below). */
+    markAppTurn(chat.session);
+    running.set(chat.id, chat.session);
     try {
       chat.driver.send(tag === undefined ? WAKE : `${WAKE}\n\n${tag}`);
     } catch {
       // The driver would not take a turn. The notes stay for the person's next message.
+      over(chat);
       return;
     }
     woke.set(chat.id, now());
     deps.audit.append('driver_prompt', `app to ${chat.label}: ${WAKE}`, { chat: chat.id, ids: waiting.ids });
+  }
+
+  // The app's turn in this chat is over, and its seat is the person's again.
+  function over(chat: Chat): void {
+    const seat = running.get(chat.id);
+    if (seat === undefined) return;
+    running.delete(chat.id);
+    clearAppTurn(seat);
+  }
+
+  /* The woken turn ends on its own turn_end. A driver in any state but answering has no turn
+     under way either (ready, stopped, failed, a restart starting), so the mark goes then too. */
+  function event(chat: Chat, e: DriverEvent): void {
+    if (e.kind === 'turn_end' || (e.kind === 'status' && e.state !== 'thinking')) over(chat);
   }
 
   function onWrite(p: Proposal): void {
@@ -293,12 +322,15 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
 
   return {
     flush,
+    event,
     pending: () => [...queued.values()].reduce((n, list) => n + list.length, 0),
     stop: () => {
       off();
       queued.clear();
       for (const waiting of owed.values()) waiting.timer.cancel();
       owed.clear();
+      for (const seat of running.values()) clearAppTurn(seat);
+      running.clear();
     },
   };
 }

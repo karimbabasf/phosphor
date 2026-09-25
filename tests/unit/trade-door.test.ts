@@ -29,6 +29,9 @@ import type { TradeDeps } from '../../src/trade/rail.ts';
 import { planHash, validatePlanInput } from '../../src/trade/plan.ts';
 import type { PlanInput } from '../../src/trade/plan.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
+import { createEndedNotices } from '../../src/http/ended.ts';
+import type { Chat } from '../../src/http/context.ts';
+import type { DriverState } from '../../src/driver.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(path.dirname(__dirname));
@@ -217,17 +220,19 @@ function setup(clickUsd: number) {
     now: () => NOW,
   };
   const rail = tradeRail(trade);
+  const audit = createAudit(dataDir);
+  const store = createStore(dataDir);
   const svc = createProposalService({
     cfg,
-    audit: createAudit(dataDir),
-    store: createStore(dataDir),
+    audit,
+    store,
     ledger,
     riskRows,
     rails: { for: (draft) => (draft.kind === 'trade' ? (rail as never) : null), kinds: () => ['trade'] },
     trade,
     dataDir,
   });
-  return { svc, runner, dataDir };
+  return { svc, runner, dataDir, store, audit };
 }
 
 const PLAN = { symbol: 'ETH', side: 'long', sizeUsd: 300, leverage: 5, entry: { type: 'market' }, stop: 92, target: 110 };
@@ -297,6 +302,72 @@ test('a close charges nothing to the day and lands without a click, and the kill
   assert.equal(refused.status, 'policy_refused');
   assert.equal(refused.verdict.outcome === 'refuse' ? refused.verdict.rule : '', 'kill_switch');
   assert.deepEqual(stopped.runner.calls, [], 'nothing reached the venue');
+});
+
+/* NOT INSIDE A TURN THE APP STARTED. A move that did not go through wakes its agent for one line
+   (src/http/ended.ts), and a close lands free at any size, so a woken agent that "tidied up" by
+   closing a position did it with nobody at the window (security review F1). A change filed in
+   that turn waits for the click (src/app-turn.ts); the person's own next turn closes as above. */
+test('a close filed inside a turn the app started waits for the click, and the person\'s next turn closes on the policy', async () => {
+  const h = setup(1000);
+  openRow(h.runner, 'pl_theirs', 'seat-woken');
+  let state: DriverState = 'ready';
+  const turns: string[] = [];
+  const chat = {
+    id: 'c1',
+    session: 'seat-woken',
+    label: 'AGENT 1',
+    transcript: [],
+    driver: {
+      status: () => ({ state }),
+      send: (text: string) => {
+        turns.push(text);
+        state = 'thinking';
+      },
+      note: () => {},
+    },
+  } as unknown as Chat;
+  let owed: (() => void) | null = null;
+  const notices = createEndedNotices({
+    store: h.store,
+    chats: () => [chat],
+    view: (p) => h.svc.view(p),
+    audit: h.audit,
+    schedule: (fn) => {
+      owed = fn;
+      return { cancel: () => {} };
+    },
+  });
+  const at = new Date(NOW).toISOString();
+  h.store.put({
+    id: 'failed-1',
+    kind: 'hl_withdraw',
+    createdAt: at,
+    status: 'failed',
+    decidedBy: 'human',
+    decidedAt: at,
+    settledAt: at,
+    draft: { kind: 'hl_withdraw', symbol: 'USDC', amount: 6.2, amountUsd: 6.2, minReceived: 5.9, from: '0x1', to: '0x1', counterparty: 'hypercore-withdraw' },
+    simulation: { ok: true, summary: 'ok' },
+    verdict: { outcome: 'needs_approval', reasons: [] },
+    by: 'seat-woken',
+    result: { ok: false, detail: 'spotSend refused by Hyperliquid. Nothing was sent.' },
+  });
+  assert.ok(owed !== null, 'the failure owed no wake');
+  (owed as () => void)();
+  assert.equal(turns.length, 1, 'the app did not start a turn');
+
+  const woken = await landed(h, h.svc.proposeTradeChange({ id: 'pl_theirs', close: true, by: 'seat-woken' }));
+  assert.equal(woken.status, 'pending', `the close landed ${woken.status}, decided by ${String(woken.decidedBy)}`);
+  assert.equal(woken.verdict.reasons.at(-1), 'The app started this turn, so this waits for your OK.');
+  assert.deepEqual(h.runner.calls, [], 'a position was closed with nobody at the window');
+
+  notices.event(chat, { kind: 'turn_end', error: false, turns: 1 });
+  state = 'ready';
+  const theirs = await landed(h, h.svc.proposeTradeChange({ id: 'pl_theirs', close: true, by: 'seat-woken' }));
+  assert.equal(theirs.status, 'executed', JSON.stringify(theirs.verdict));
+  assert.deepEqual(h.runner.calls, ['close pl_theirs 30']);
+  notices.stop();
 });
 
 /* ONE PLAN PER COIN, REFUSED BEFORE THE DRAW. The rule is pg/hl's (src/trade/risk.ts
