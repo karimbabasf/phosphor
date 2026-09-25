@@ -40,6 +40,10 @@ const DAY_BACKOFF_MAX_MS = 60 * 60_000;
 const MARKETS_URL = 'https://api.coingecko.com/api/v3/coins/markets';
 // The endpoint's own page ceiling: past this the ids go in more than one call.
 const IDS_PER_CALL = 250;
+/* The most of one answer that is read. Today's, 98 ids with their week of hourly points, is about
+   half a megabyte; the read deadline bounds the time and not the size, and a hostile endpoint can
+   stream hundreds of megabytes inside it. Past this the answer is a failed read. */
+export const DAY_ANSWER_MAX_BYTES = 2 * 1024 * 1024;
 // The ids joined, per call. Keeps the URL near 4 KB, well under the 8 KB most servers take.
 const IDS_CHARS_PER_CALL = 4_000;
 // A hundredfold in a day. A figure past it is far more likely a broken row than a market.
@@ -219,6 +223,27 @@ export function parseImages(payload: unknown, asked: ReadonlySet<string>): Map<s
   return out;
 }
 
+// The body as text, counted as it arrives. Past the cap the rest is never read, and null says so.
+async function readCapped(res: Response): Promise<string | null> {
+  if (res.body === null) return '';
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let text = '';
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > DAY_ANSWER_MAX_BYTES) return null;
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
 // Retry-After in seconds, the only form the endpoint sends. Anything else is no advice.
 function retryAfterMs(header: string | null): number {
   const seconds = Number(header);
@@ -265,7 +290,9 @@ export function createDayFeed(deps: DayFeedDeps): DayFeed {
     if (!res.ok) return { ok: false, error: `CoinGecko answered ${res.status}`, waitMs: 0 };
     let payload: unknown;
     try {
-      payload = await res.json();
+      const text = await readCapped(res);
+      if (text === null) return { ok: false, error: `CoinGecko answered over ${DAY_ANSWER_MAX_BYTES / (1024 * 1024)} MB`, waitMs: 0 };
+      payload = JSON.parse(text);
     } catch {
       return { ok: false, error: 'CoinGecko answered something that is not JSON', waitMs: 0 };
     }

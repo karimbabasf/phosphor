@@ -78,7 +78,7 @@ const LIST: OneClickToken[] = [
 
 const LISTED_IDS = ['bitcoin', 'ethereum', 'litecoin', 'near', 'usd-coin', 'venice-token', 'zcash'];
 
-type Answer = 'ok' | '429' | '500' | 'throw' | 'not-a-list' | 'not-json';
+type Answer = 'ok' | '429' | '500' | 'throw' | 'not-a-list' | 'not-json' | 'endless' | 'padded-over' | 'padded-under';
 
 type Rig = {
   feed: ReturnType<typeof createDayFeed>;
@@ -86,13 +86,24 @@ type Rig = {
   calls: Array<{ url: string; headers: Record<string, string> }>;
   lines: string[];
   set(answer: Answer): void;
+  // How many chunks of an endless answer were read.
+  pulled(): number;
 };
+
+const TWO_MB = 2 * 1024 * 1024;
+
+// The real answer, padded with the whitespace JSON allows to `bytes` long.
+function padded(rows: Row[], bytes: number): string {
+  const body = JSON.stringify(rows);
+  return `${body}${' '.repeat(Math.max(0, bytes - Buffer.byteLength(body)))}`;
+}
 
 function rig(options: { env?: Record<string, string>; tokens?: () => Promise<OneClickToken[]>; rows?: Row[] } = {}): Rig {
   const clock = { now: Date.parse('2026-09-25T20:30:00Z') };
   const calls: Rig['calls'] = [];
   const lines: string[] = [];
   let answer: Answer = 'ok';
+  let pulled = 0;
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const headers = { ...((init?.headers as Record<string, string> | undefined) ?? {}) };
@@ -103,6 +114,20 @@ function rig(options: { env?: Record<string, string>; tokens?: () => Promise<One
     if (answer === '500') return new Response('upstream sad', { status: 500 });
     if (answer === 'not-a-list') return new Response('{"error":"nope"}', { status: 200 });
     if (answer === 'not-json') return new Response('<html>', { status: 200 });
+    // A list that never closes, a chunk at a time, and no content-length to warn of it.
+    if (answer === 'endless') {
+      pulled = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulled += 1;
+          controller.enqueue(new TextEncoder().encode(pulled === 1 ? '[' : ' '.repeat(64 * 1024)));
+          if (pulled > 2000) controller.close();
+        },
+      });
+      return new Response(body, { status: 200 });
+    }
+    if (answer === 'padded-over') return new Response(padded(options.rows ?? MARKETS, TWO_MB + 1), { status: 200 });
+    if (answer === 'padded-under') return new Response(padded(options.rows ?? MARKETS, TWO_MB), { status: 200 });
     return new Response(JSON.stringify(options.rows ?? MARKETS), { status: 200 });
   }) as typeof fetch;
   const feed = createDayFeed({
@@ -112,7 +137,7 @@ function rig(options: { env?: Record<string, string>; tokens?: () => Promise<One
     env: options.env ?? {},
     log: (line) => lines.push(line),
   });
-  return { feed, clock, calls, lines, set: (next) => { answer = next; } };
+  return { feed, clock, calls, lines, set: (next) => { answer = next; }, pulled: () => pulled };
 }
 
 function idsAsked(url: string): string[] {
@@ -319,6 +344,31 @@ test('a fetch that throws, an answer that is not a list and one that is not JSON
     assert.deepEqual(r.feed.entry(ETH), kept, `${bad} blanked the day`);
     assert.ok(r.feed.answer().error, `${bad} was not a failure`);
   }
+});
+
+/* Security review F4: the answer was read whole with res.json(), bounded only by the ten-second
+   deadline, and hundreds of megabytes fit inside ten seconds. Today's answer is about half a
+   megabyte, so 2 MB is four times it. */
+test('an answer past 2 MB is a failed refresh that keeps the last good day, and the rest of it is never read', async () => {
+  for (const bad of ['endless', 'padded-over'] as const) {
+    const r = rig();
+    await r.feed.refresh();
+    const kept = r.feed.entry(VVV);
+    assert.ok(kept);
+    r.set(bad);
+    r.clock.now += DAY_REFRESH_MS;
+    await r.feed.refresh();
+    assert.equal(r.calls.length, 2);
+    assert.deepEqual(r.feed.entry(VVV), kept, `${bad} blanked or changed the day`);
+    assert.match(r.feed.answer().error ?? '', /over 2 MB/, `${bad} was not a failure`);
+    if (bad === 'endless') assert.ok(r.pulled() < 40, `the read took ${r.pulled()} chunks of 64 KB`);
+  }
+  // Two megabytes exactly is an answer like any other.
+  const r = rig();
+  r.set('padded-under');
+  await r.feed.refresh();
+  assert.equal(r.feed.answer().error, undefined);
+  assert.equal(r.feed.entry(VVV)?.change24, -4.58151);
 });
 
 test('with no token list the feed asks CoinGecko nothing, says why and waits', async () => {
