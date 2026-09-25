@@ -153,6 +153,20 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     while (toldOrder.length > TOLD_MAX) told.delete(toldOrder.shift() as string);
   }
 
+  /* ONE WAKE A MOVE, bounded like told. A swap whose refund is on its way and then lands is two
+     endings of one move that did not go through, and both woke the agent: R3 again. The first
+     ending that wakes decides for the row, whether that wake then runs, waits out WAKE_GAP_MS or is
+     called off by the person speaking first; every later ending of it is a note. */
+  const wokeRows = new Set<string>();
+  const wokeOrder: string[] = [];
+  function firstWake(id: string): boolean {
+    if (wokeRows.has(id)) return false;
+    wokeRows.add(id);
+    wokeOrder.push(id);
+    while (wokeOrder.length > TOLD_MAX) wokeRows.delete(wokeOrder.shift() as string);
+    return true;
+  }
+
   // What the move was, in the fewest words that still name it. A rule change is its sentence,
   // a trade change is its operation, everything else is what it spent.
   function legs(p: Proposal, v: ProposalView): string {
@@ -297,7 +311,7 @@ export function createEndedNotices(deps: EndedNoticeDeps): EndedNotices {
     if (chat === undefined) return;
     remember(key);
     const failure = wakes(v);
-    const notice: Notice = { id: p.id, stage: v.stage, seat: p.by, text: words(p, v, failure), wakes: failure, at: now() };
+    const notice: Notice = { id: p.id, stage: v.stage, seat: p.by, text: words(p, v, failure), wakes: failure && firstWake(p.id), at: now() };
     const state = chat.driver.status().state;
     if (state === 'ready') {
       send(chat, [notice]);

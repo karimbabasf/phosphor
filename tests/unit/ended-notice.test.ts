@@ -286,6 +286,23 @@ test('the same ending is told once, however many times the row is written', () =
   assert.equal(w.turns.length, 1);
 });
 
+test('one move that did not go through wakes the agent once, however many endings it has', () => {
+  // A swap whose refund is on its way (FAILED, coming back) and, three minutes on, refunded (failed):
+  // two endings of one move, and both used to wake the agent, which is R3 again.
+  const w = world('ready');
+  w.write(swap({ status: 'needs_reconciliation', result: { ok: false, detail: 'refund pending', txids: ['0xin'], reason: 'venue_failed_refund_pending', evidence: { providerStage: 'FAILED', handle: 'h1' } } }));
+  w.tick(5_000);
+  assert.equal(w.turns.length, 1);
+  w.ready();
+  w.tick(3 * 60_000);
+  w.write(swap({ status: 'failed', result: { ok: false, detail: 'refunded', txids: ['0xin'], reason: 'refunded', evidence: { providerStage: 'REFUNDED', handle: 'h1' } } }));
+  assert.equal(w.sent.length, 2, 'the refund landing is still noted');
+  assert.match(w.sent[1], /proposal s1\) has ended: Failed\..*The card already shows this; never repeat it\.\]$/);
+  w.tick(10 * 60_000);
+  assert.equal(w.turns.length, 1, 'woken a second time for the same move');
+  assert.match(w.held().join('\n\n'), /proposal s1/, 'the second ending waits for the person\'s next message');
+});
+
 test('a move the agent read back after it ended is not told again, and wakes nothing', () => {
   const w = world('thinking');
   w.write(failed());
