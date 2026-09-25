@@ -53,6 +53,12 @@ and this must print the same one:
 shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg
 ```
 
+To check it was built from this repository's code, at the commit it prints (0.10.1 and later):
+
+```sh
+gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor
+```
+
 The build is signed ad hoc and is not notarised by Apple, so the first open stops with a warning
 saying macOS cannot check it for malware. This is expected and the app is not broken. Open it
 once and let it be refused (click Done, not Move to Trash), then double-click **Open Anyway** in
@@ -121,4 +127,4 @@ Functional Source License 1.1 with an MIT future license
 ([FSL-1.1-MIT](LICENSE)). Read it, run it, change it, audit it. You may not offer Phosphor, or a
 product that does what Phosphor does, to other people as a commercial product or service. Each
 version turns MIT two years after its release. The fonts and token logos carry their own notices
-in `ui/fonts/OFL.txt` and `ui/logos/LICENSE.md`.
+in `ui/fonts/OFL.txt` and `ui/logos/ATTRIBUTION.md`.

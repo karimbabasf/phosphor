@@ -76,7 +76,7 @@ test('every network tile has its logo', () => {
   assert.deepEqual([...new Set(marks)].filter((mark) => !have.has(mark)), []);
 });
 
-// A wrapped or bridged ticker wears the file of the coin it carries (LICENSE.md), byte for byte,
+// A wrapped or bridged ticker wears the file of the coin it carries (ATTRIBUTION.md), byte for byte,
 // so a fix to the coin's file cannot leave its copies behind.
 const COPIES: Record<string, string[]> = {
   'eth.svg': ['weth.svg'],

@@ -588,7 +588,7 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     ui/core/           the DOM helpers, the keyed reconciler, the API client, the store
     ui/design/         the tokens, the type scale and the motion the screens are built from
     ui/fonts/          Geist and Geist Mono, self-hosted, with their OFL beside them
-    ui/logos/          the token and venue logos as SVG files, with their notices in LICENSE.md
+    ui/logos/          the token and venue logos as SVG files, with their notices in ATTRIBUTION.md
     operator/          the opt-in operator profile: an agent that drives but cannot develop
     state/             policy.json, proposals.json, audit.jsonl (append-only), terms.json,
                        agent.secret; the installed app keeps it under Application Support

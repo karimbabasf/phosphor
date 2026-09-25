@@ -21,6 +21,20 @@ shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg
 
 If the two differ, delete the file and download it again.
 
+The checksum proves your file is the one on the release page. This proves the release page's
+file was built from the public code. It needs the GitHub CLI (`brew install gh`):
+
+```sh
+gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor
+```
+
+It passes only for a file that this repository's release workflow built on GitHub's machines,
+and it prints the commit it came from, so you can read the exact code you are about to run. The
+record is signed through Sigstore and kept in a public log that this project cannot edit, so
+someone who took over the release page or the site could swap the file and its checksum, but
+not this. What it does not prove: that the code is free of bugs. For that, read
+[Security](security.md) and [Known limits](known-limits.md). It covers releases from 0.10.1 on.
+
 ## The Gatekeeper warning
 
 The build is not notarized by Apple yet, so the first open stops with a warning. Click Done, not
