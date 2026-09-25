@@ -21,7 +21,7 @@
 
 const marked = new Set<string>();
 
-export const APP_TURN_REASON = 'The app started this turn, so this waits for your OK.';
+export const APP_TURN_REASON = 'Your agent asked for this on its own after a move did not go through, so it waits for your OK.';
 
 export function markAppTurn(seat: string): void {
   if (seat !== '') marked.add(seat);

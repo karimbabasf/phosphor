@@ -27,7 +27,7 @@ import { landed, makeCtx } from './helpers/proposals.ts';
 
 const SEAT = 'seat-woken';
 const OTHER = 'seat-other-chat';
-const REASON = 'The app started this turn, so this waits for your OK.';
+const REASON = 'Your agent asked for this on its own after a move did not go through, so it waits for your OK.';
 
 // A chat as the registry holds it, on a stand-in driver with the real one's rules for a turn.
 function chatOn(id: string, session: string) {

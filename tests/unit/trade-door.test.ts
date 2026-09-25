@@ -359,7 +359,7 @@ test('a close filed inside a turn the app started waits for the click, and the p
 
   const woken = await landed(h, h.svc.proposeTradeChange({ id: 'pl_theirs', close: true, by: 'seat-woken' }));
   assert.equal(woken.status, 'pending', `the close landed ${woken.status}, decided by ${String(woken.decidedBy)}`);
-  assert.equal(woken.verdict.reasons.at(-1), 'The app started this turn, so this waits for your OK.');
+  assert.equal(woken.verdict.reasons.at(-1), 'Your agent asked for this on its own after a move did not go through, so it waits for your OK.');
   assert.deepEqual(h.runner.calls, [], 'a position was closed with nobody at the window');
 
   notices.event(chat, { kind: 'turn_end', error: false, turns: 1 });
