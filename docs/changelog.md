@@ -5,6 +5,28 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.4
+
+Built 2026-09-25. Tagged v0.10.4 on 2026-09-25.
+
+- A swap that cannot go through says so about half a minute after its deadline: it didn't go
+  through, and nothing left your balance. Phosphor reads NEAR's own clock and the signed transfer
+  to prove it can never run, instead of waiting up to ten minutes to look again.
+- While a swap inside NEAR Intents waits for a buyer, its card says so. It no longer says your
+  money is on its way.
+- When a move your agent proposed does not go through, the agent tells you in one line and offers
+  the next step, without waiting for you to ask. Anything it files in that turn waits for your
+  click, whatever your auto-approve limit. A move that went through stays quiet: the card says it.
+- Your agent prices every step of a plan of swaps before it files the first. A coin you do not
+  hold yet is priced as a preview, and a step with no price stops the plan before anything moves.
+- Pro shows the last 24 hours for every coin NEAR Intents lists, not only the seven it knew.
+  Prices are read for every listed coin at once, so no request says which coins you hold.
+- Coins without a logo of their own show their real picture instead of a letter. Pictures are
+  fetched for every listed coin, checked, and kept on your Mac.
+- Quitting with Cmd+Q, the menu or the window's close button shows a Shutting down card with each
+  step as it happens: moves noted, wallet locked, Phosphor stopped. The wallet never locks under a
+  move that is still being sent.
+
 ## 0.10.3
 
 Built 2026-09-25. Tagged v0.10.3 on 2026-09-25.
