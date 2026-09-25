@@ -29,6 +29,7 @@ import { createRails, venueAllowlist } from './rails/index.ts';
 import { demoStallSweep } from './rails/demo.ts';
 import { usdcCreditedSince } from './rails/hl-user-signed.ts';
 import { createLedger, intentsAccountId, REFRESH_PERIOD_MS } from './ledger/index.ts';
+import { createDayFeed, DAY_REFRESH_MS } from './ledger/day.ts';
 import { oneClickClient, type OneClickStatus, type TokensFile } from './intents.ts';
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
@@ -389,6 +390,17 @@ const market = createMarketData({
 void market.refreshCatalog().catch((err: unknown) => {
   console.error(`market catalogue unavailable, falling back to literal product ids: ${String(err)}`);
 });
+
+/* Every listed coin's last 24 hours, for Pro's line and change (src/ledger/day.ts): read at start
+   and every five minutes, unref'd so it never keeps the process alive. It names its coins off the
+   ledger's own token list, so live mode only, like every other read off that list here: the demo
+   ledger builds no 1Click client, and Pro draws the demo coins off their candles as it always has. */
+const tokenList = ledger.tokens;
+const day = tokenList === undefined ? undefined : createDayFeed({ tokens: () => tokenList() });
+if (day !== undefined) {
+  void day.refresh();
+  setInterval(() => void day.refresh(), DAY_REFRESH_MS).unref?.();
+}
 
 // Owns the plans and the child process that places them. Constructed before the rails
 // because the trade rail only arms, changes and closes through it and holds no state of its own.
@@ -779,6 +791,7 @@ const server = createServer({
   session,
   trade,
   intentsPrices,
+  day,
   /* Default OFF, and the window opens with the assistant panel waiting to be started.
      Karim, 2026-08-20: with no agent attached yet, the idle panel is what the app opens on,
      always. (It said "the turning globe" when that was written. ui/screens/agent.js now opens

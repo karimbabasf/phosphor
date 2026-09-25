@@ -1,0 +1,280 @@
+// The day feed: the last 24 hours of every coin NEAR Intents lists, for Pro's line and change.
+//
+// WHY IT EXISTS (2026-09-25). Pro drew a coin's day off 25 hourly Coinbase candles, and only for
+// the seven markets config.json names (candleProducts), so a held VVV, LTC or ZEC had no line and
+// no change beside it. Karim: "the token list shouldnt be hardcoded, we had this issue before". So
+// the coins come off 1Click's own token list, read live, which names a CoinGecko id for 188 of its
+// 197 assets, and one keyless call to CoinGecko's markets endpoint answers the day for every one of
+// them in about half a second.
+//
+// ALL OF THEM, NEVER THE HELD ONES. The call names every id on the list, whatever this wallet
+// holds, and it is made on a clock rather than when a coin arrives: a call for the held coins alone
+// would tell a third party what this person owns. Nothing here reads a balance, and the assets the
+// window asks about (answer) are only ever looked up in what the last call already brought back.
+//
+// UNTRUSTED. The answer is somebody else's JSON. A row counts only for an id that was asked for,
+// with a finite 24 hour change above -100% and inside a sane bound, and a line of finite positive
+// prices. A row that fails any of it is dropped, never repaired, and a coin with no row has no day:
+// Pro falls back to its candles or shows nothing, never a made-up number.
+//
+// A FAILED READ KEEPS THE LAST GOOD DAY, with the time it was read, and waits longer before the
+// next: the free tier answers 429 when pressed, and pressing again on every tick is how it stays
+// shut. What is served ages out after an hour, so a feed that stopped answering hands Pro back to
+// the candles rather than a day that ended hours ago.
+import type { OneClickToken } from '../intents.ts';
+import { oneLine } from '../intents.ts';
+import { readTimeout } from '../net.ts';
+
+// How often src/main.ts asks, and how long the window keeps a day before it reads again.
+export const DAY_REFRESH_MS = 5 * 60_000;
+// Hourly points: the price now and the 24 hours before it.
+export const DAY_POINTS = 25;
+// Twelve refreshes missed in a row. Past this the last good day is kept but no longer served.
+export const DAY_STALE_MS = 60 * 60_000;
+// The longest a failure waits before the next try, whatever Retry-After asked for.
+const DAY_BACKOFF_MAX_MS = 60 * 60_000;
+
+const MARKETS_URL = 'https://api.coingecko.com/api/v3/coins/markets';
+// The endpoint's own page ceiling: past this the ids go in more than one call.
+const IDS_PER_CALL = 250;
+// The ids joined, per call. Keeps the URL near 4 KB, well under the 8 KB most servers take.
+const IDS_CHARS_PER_CALL = 4_000;
+// A hundredfold in a day. A figure past it is far more likely a broken row than a market.
+const SANE_CHANGE_PCT = 10_000;
+// What a CoinGecko id looks like: 'venice-token', 'usd-coin'. 1Click also writes 'custom:ssc1-pit',
+// which is none, and anything that is not this shape never reaches a URL.
+const COINGECKO_ID = /^[a-z0-9][a-z0-9._-]{0,99}$/;
+
+export type DayEntry = {
+  change24: number; // percent, CoinGecko's own 24 hour figure
+  line: number[]; // the last DAY_POINTS hourly prices, oldest first, in dollars
+  at: number; // when the answer carrying it landed, epoch ms
+};
+
+export type DayAnswer = {
+  // When the last good refresh landed, epoch ms; null before the first.
+  at: number | null;
+  // By 1Click asset id. A plain object, so the window can index it.
+  entries: Record<string, DayEntry>;
+  // Why the last refresh failed, until one succeeds.
+  error?: string;
+};
+
+export type DayFeed = {
+  // Never throws. A tick that lands while one is running joins it; one inside a wait asks nothing.
+  refresh(): Promise<void>;
+  // One asset's day, or null: not listed, no CoinGecko id, no good row, or older than DAY_STALE_MS.
+  entry(assetId: string): DayEntry | null;
+  // What GET /api/day hands the window: the named assets, or every listed one when none are named.
+  answer(assetIds?: readonly string[]): DayAnswer;
+};
+
+export type DayFeedDeps = {
+  // The token list. src/main.ts hands in the ledger's (Ledger.tokens), so there is one copy.
+  tokens: () => Promise<OneClickToken[]>;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  // Where COINGECKO_API_KEY is read from. A parameter so a test drives both paths without
+  // touching the process, as windowToken does in src/http/auth.ts.
+  env?: NodeJS.ProcessEnv;
+  log?: (line: string) => void;
+};
+
+/* Every CoinGecko id the list names, once each and sorted, so the call reads the same whatever
+   order 1Click answers in; and each asset to its id. An asset whose id is missing or malformed
+   maps to nothing. */
+export function listedIds(list: readonly OneClickToken[]): { ids: string[]; idOf: Map<string, string> } {
+  const idOf = new Map<string, string>();
+  for (const token of list) {
+    const id: unknown = token?.coingeckoId;
+    if (typeof token?.assetId !== 'string' || typeof id !== 'string' || !COINGECKO_ID.test(id)) continue;
+    idOf.set(token.assetId, id);
+  }
+  return { ids: [...new Set(idOf.values())].sort(), idOf };
+}
+
+/* The ids split into calls: at most IDS_PER_CALL each and at most IDS_CHARS_PER_CALL of them
+   joined. Today's 98 ids are one call of about 960 characters. */
+export function callsFor(ids: readonly string[]): string[][] {
+  const calls: string[][] = [];
+  let current: string[] = [];
+  let chars = 0;
+  for (const id of ids) {
+    const joined = current.length === 0 ? id.length : chars + 1 + id.length;
+    if (current.length > 0 && (current.length >= IDS_PER_CALL || joined > IDS_CHARS_PER_CALL)) {
+      calls.push(current);
+      current = [id];
+      chars = id.length;
+      continue;
+    }
+    current.push(id);
+    chars = joined;
+  }
+  if (current.length > 0) calls.push(current);
+  return calls;
+}
+
+function marketsUrl(ids: readonly string[]): string {
+  // Commas as they are: the ids already passed COINGECKO_ID, so nothing in them needs escaping.
+  return (
+    `${MARKETS_URL}?vs_currency=usd&ids=${ids.map(encodeURIComponent).join(',')}` +
+    `&per_page=${IDS_PER_CALL}&page=1&sparkline=true&price_change_percentage=24h`
+  );
+}
+
+function saneChange(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > -100 && value <= SANE_CHANGE_PCT;
+}
+
+// The last DAY_POINTS prices, or null when any of them is not a finite positive number or there
+// are fewer than two: two points are the least a line can be.
+function lineOf(sparkline: unknown): number[] | null {
+  const prices = sparkline !== null && typeof sparkline === 'object' ? (sparkline as { price?: unknown }).price : undefined;
+  if (!Array.isArray(prices)) return null;
+  const day = prices.slice(-DAY_POINTS);
+  if (day.length < 2) return null;
+  for (const p of day) if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0) return null;
+  return day as number[];
+}
+
+/* The rows of one markets answer that hold up, by CoinGecko id. `asked` is what the call named:
+   a row for anything else is not an answer to this question. The first row for an id stands. */
+export function parseMarkets(payload: unknown, asked: ReadonlySet<string>, at: number): Map<string, DayEntry> {
+  const out = new Map<string, DayEntry>();
+  if (!Array.isArray(payload)) return out;
+  for (const row of payload) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue;
+    const r = row as Record<string, unknown>;
+    const id = r['id'];
+    if (typeof id !== 'string' || !asked.has(id) || out.has(id)) continue;
+    const change = r['price_change_percentage_24h'];
+    const line = lineOf(r['sparkline_in_7d']);
+    if (!saneChange(change) || line === null) continue;
+    out.set(id, { change24: change, line, at });
+  }
+  return out;
+}
+
+// Retry-After in seconds, the only form the endpoint sends. Anything else is no advice.
+function retryAfterMs(header: string | null): number {
+  const seconds = Number(header);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+}
+
+type Read = { ok: true; rows: Map<string, DayEntry> } | { ok: false; error: string; waitMs: number };
+
+export function createDayFeed(deps: DayFeedDeps): DayFeed {
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const now = deps.now ?? Date.now;
+  const log = deps.log ?? ((line: string) => console.error(line));
+  const env = deps.env ?? process.env;
+
+  // Asset id to CoinGecko id, off the newest list read; CoinGecko id to its last good day.
+  let idOf = new Map<string, string>();
+  const byId = new Map<string, DayEntry>();
+  let lastGood: number | null = null;
+  let error: string | undefined;
+  let failures = 0;
+  let retryAt = 0;
+  let running: Promise<void> | null = null;
+
+  function apiKey(): string {
+    return String(env['COINGECKO_API_KEY'] ?? '').trim();
+  }
+
+  async function readMarkets(ids: string[]): Promise<Read> {
+    const headers: Record<string, string> = { accept: 'application/json' };
+    const key = apiKey();
+    if (key !== '') headers['x-cg-demo-api-key'] = key;
+    let res: Response;
+    try {
+      res = await fetchImpl(marketsUrl(ids), { headers, signal: readTimeout() });
+    } catch (err) {
+      return { ok: false, error: `CoinGecko did not answer: ${oneLine(err instanceof Error ? err.message : err, 120)}`, waitMs: 0 };
+    }
+    if (res.status === 429) {
+      return { ok: false, error: 'CoinGecko said too many requests (429)', waitMs: retryAfterMs(res.headers.get('retry-after')) };
+    }
+    if (!res.ok) return { ok: false, error: `CoinGecko answered ${res.status}`, waitMs: 0 };
+    let payload: unknown;
+    try {
+      payload = await res.json();
+    } catch {
+      return { ok: false, error: 'CoinGecko answered something that is not JSON', waitMs: 0 };
+    }
+    if (!Array.isArray(payload)) return { ok: false, error: 'CoinGecko answered something that is not a list of coins', waitMs: 0 };
+    return { ok: true, rows: parseMarkets(payload, new Set(ids), now()) };
+  }
+
+  // Twice the wait for every failure in a row, from ten minutes up to the ceiling, and never less
+  // than the server asked for.
+  function failed(reason: string, waitMs: number): void {
+    failures += 1;
+    const wait = Math.min(Math.max(DAY_REFRESH_MS * 2 ** failures, waitMs), DAY_BACKOFF_MAX_MS);
+    retryAt = now() + wait;
+    error = reason;
+    log(`phosphor: the day feed did not refresh (${reason}), ${failures} in a row; next try in ${Math.round(wait / 60_000)} min`);
+  }
+
+  async function run(): Promise<void> {
+    if (now() < retryAt) return;
+    let list: OneClickToken[];
+    try {
+      list = await deps.tokens();
+    } catch (err) {
+      failed(`the 1Click token list did not answer: ${oneLine(err instanceof Error ? err.message : err, 120)}`, 0);
+      return;
+    }
+    const listed = listedIds(Array.isArray(list) ? list : []);
+    if (listed.ids.length === 0) {
+      failed('the 1Click token list names no CoinGecko ids', 0);
+      return;
+    }
+    // The newest mapping at once, so a coin listed since the last read finds its day as soon as
+    // CoinGecko has one.
+    idOf = listed.idOf;
+    for (const ids of callsFor(listed.ids)) {
+      const read = await readMarkets(ids);
+      if (!read.ok) {
+        // The calls before this one landed and keep what they brought; this one's ids keep their
+        // last good day. The rest wait with it rather than pressing a server that said no.
+        failed(read.error, read.waitMs);
+        return;
+      }
+      for (const [id, entry] of read.rows) byId.set(id, entry);
+    }
+    failures = 0;
+    retryAt = 0;
+    error = undefined;
+    lastGood = now();
+  }
+
+  function refresh(): Promise<void> {
+    running ??= run()
+      .catch((err: unknown) => failed(`the day feed broke: ${oneLine(err instanceof Error ? err.message : err, 120)}`, 0))
+      .finally(() => {
+        running = null;
+      });
+    return running;
+  }
+
+  function entry(assetId: string): DayEntry | null {
+    const id = idOf.get(assetId);
+    if (id === undefined) return null;
+    const day = byId.get(id);
+    if (day === undefined || now() - day.at > DAY_STALE_MS) return null;
+    return day;
+  }
+
+  function answer(assetIds?: readonly string[]): DayAnswer {
+    const pairs: Array<[string, DayEntry]> = [];
+    for (const assetId of assetIds ?? [...idOf.keys()]) {
+      const day = entry(assetId);
+      if (day !== null) pairs.push([assetId, day]);
+    }
+    // fromEntries defines each key as its own property, so an asset called __proto__ is a name.
+    return { at: lastGood, entries: Object.fromEntries(pairs), ...(error === undefined ? {} : { error }) };
+  }
+
+  return { refresh, entry, answer };
+}
