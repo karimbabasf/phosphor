@@ -508,12 +508,15 @@ export async function swapAssets(ctx: PCtx, params: SwapAssetsParams): Promise<S
 
 // ---------- swap_quote ----------
 
-// What a quote says of a coin the balance holds none of yet.
+/* What a quote says of a coin the balance holds none of yet. `sentence` is the agent's to say, so
+   it is the person's line; what the agent has to quote instead is in `details`, which it reads and
+   never says (an id said to a person is the persona's own ban). */
 const NOT_HELD = {
   preview: (coin: string): string => `The balance holds no ${coin} yet, so this is the price if it did: a swap from it can run once the ${coin} is there.`,
-  all: (coin: string): string => `The balance holds no ${coin} yet, so "all" of it has no amount to price. Quote a number instead, such as what the step before gets.`,
-  which: (coin: string): string =>
-    `The balance holds no ${coin} yet, and it has no NEAR version, so which one it would be depends on the step before. Quote it by the assetId that step buys.`,
+  all: (coin: string): string => `The balance holds no ${coin} yet, so there is no amount to price for all of it.`,
+  allNext: 'Quote a number instead, such as what the step before gets.',
+  which: (coin: string): string => `The balance holds no ${coin} yet, so this step waits on the one before it.`,
+  whichNext: (coin: string): string => `${coin} has no NEAR version, so which one this is depends on the step before: quote it by the assetId that step buys.`,
 };
 
 function coinWord(side: SwapSide): string {
@@ -543,9 +546,9 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
   const fromPick = unheld === null ? sides.from : resolveBought(fromAsk, list, held);
   if (unheld !== null && fromPick.kind !== 'none') {
     const coin = coinWord(fromPick.kind === 'one' ? fromPick.side : fromPick.candidates[0]!);
-    const refused = { ...none, from: null, to: null, reason: 'insufficient_balance', details: unheld.why } as const;
-    if (amountAsk(params.amountIn)?.all === true) return { ...refused, sentence: NOT_HELD.all(coin) };
-    if (fromPick.kind === 'many') return { ...refused, sentence: NOT_HELD.which(coin) };
+    const refused = { ...none, from: null, to: null, reason: 'insufficient_balance' } as const;
+    if (amountAsk(params.amountIn)?.all === true) return { ...refused, sentence: NOT_HELD.all(coin), details: NOT_HELD.allNext };
+    if (fromPick.kind === 'many') return { ...refused, sentence: NOT_HELD.which(coin), details: NOT_HELD.whichNext(coin) };
   }
   let toPick = sides.to;
   if (fromPick.kind === 'one' && toPick.kind === 'many' && (params.toChain?.trim() ?? '') === '') {
@@ -604,7 +607,7 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
   let base: bigint;
   if (ask.all) {
     if (heldBase === null) return { ...none, from, to, reason: 'balance_unread', sentence: reasonSentence('balance_unread', words) };
-    if (heldBase === 0n) return { ...none, from, to, reason: 'insufficient_balance', sentence: NOT_HELD.all(coinWord(from)) };
+    if (heldBase === 0n) return { ...none, from, to, reason: 'insufficient_balance', sentence: NOT_HELD.all(coinWord(from)), details: NOT_HELD.allNext };
     base = heldBase;
   } else {
     base = decimalToBaseUnits(ask.text, from.decimals);
