@@ -23,7 +23,8 @@ import { depositHandleOf } from '../transactions.ts';
 import { INTENTS_RELAY_VENUE, RELAY_TERMINAL } from '../rails/intents-relay.ts';
 import { decodeNonce } from '../relay/payload.ts';
 import { FATE_RECHECK_MS, RELAY_DEADLINE_GRACE_MS, proofWords, transferFate } from '../relay/fate.ts';
-import type { TransferFate } from '../relay/fate.ts';
+import type { FateReads, TransferFate } from '../relay/fate.ts';
+import type { FinalBlock } from '../relay/verifier.ts';
 import type { RelayLookup } from '../rails/index.ts';
 import { errText, nowIso, persist } from './lifecycle.ts';
 import { ONECLICK_STAGES } from './view.ts';
@@ -270,6 +271,7 @@ export function watchDeadlines(ctx: PCtx): void {
     for (const p of ctx.store.list()) {
       if (p.status !== 'needs_reconciliation') {
         askedAt.delete(p.id);
+        shortOfDeadline.get(ctx)?.delete(p.id);
         continue;
       }
       if (asking.has(p.id) || ctx.inflight.has(p.id) || !deadlineDue(ctx, p, now, askedAt.get(p.id))) continue;
@@ -284,12 +286,16 @@ export function watchDeadlines(ctx: PCtx): void {
   });
 }
 
-// Whether the deadline watch asks about this open row now, `last` being when it last did.
+/* Whether the deadline watch asks about this open row now, `last` being when it last did. A question
+   that read NEAR's final block short of the deadline is asked again on the next refresh rather than
+   half a minute on, for the first FATE_RECHECK_MS past the deadline: the first refresh after it
+   lands inside the chain's lag often enough, and the close then waited a full half minute more. */
 function deadlineDue(ctx: PCtx, p: Proposal, now: number, last: number | undefined): boolean {
   const evidence = p.result?.evidence;
   const deadline = Date.parse(evidence?.deadline ?? '');
   if (!Number.isFinite(deadline) || now < deadline) return false;
-  if (last !== undefined && now - last < FATE_RECHECK_MS) return false;
+  const soon = now < deadline + FATE_RECHECK_MS && shortOfDeadline.get(ctx)?.has(p.id) === true;
+  if (last !== undefined && now - last < FATE_RECHECK_MS && !soon) return false;
   // A transfer the verifier answers for, with somebody to ask about the row: every half minute.
   const askable = ctx.rails.relay !== undefined && (isRelaySwap(p) || ctx.oneClickStatus !== undefined);
   if (askable && p.pocket === undefined && decodeNonce(evidence?.nonce) !== null && now < deadline + RELAY_DEADLINE_GRACE_MS + DEADLINE_WATCH_TAIL_MS) {
@@ -569,7 +575,28 @@ async function fateOf(ctx: PCtx, p: Proposal): Promise<TransferFate> {
   const nonce = p.result?.evidence?.nonce;
   const from = (p.draft as { from?: unknown }).from;
   if (ctx.rails.relay === undefined || typeof nonce !== 'string' || typeof from !== 'string' || from === '') return { ran: null, why: 'no_answer' };
-  return transferFate(ctx.rails.relay, { account: from, nonce, deadline: p.result?.evidence?.deadline });
+  return proveFate(ctx, p.id, ctx.rails.relay, { account: from, nonce, deadline: p.result?.evidence?.deadline });
+}
+
+/* Rows whose last proof could not say only because NEAR's final block was still short of the
+   deadline, by service. The chain trails this clock by about 2.6 s, so a question right on the
+   deadline often lands there: the chain not there yet, not an answer (deadlineDue). */
+const shortOfDeadline = new WeakMap<PCtx, Set<string>>();
+
+// transferFate, noting against the row whether it read the chain short of the deadline.
+async function proveFate(ctx: PCtx, id: string, reads: FateReads, signed: { account: string; nonce: string; deadline: string | undefined }): Promise<TransferFate> {
+  let block = null as FinalBlock | null;
+  const kept: FateReads = {
+    nonceUsed: (account, nonce, at) => reads.nonceUsed(account, nonce, at),
+    ...(reads.saltValid === undefined ? {} : { saltValid: (salt: Uint8Array, at?: string) => reads.saltValid!(salt, at) }),
+    ...(reads.finalBlock === undefined ? {} : { finalBlock: async () => (block = await reads.finalBlock!()) }),
+  };
+  const fate = await transferFate(kept, signed);
+  const short = shortOfDeadline.get(ctx) ?? new Set<string>();
+  shortOfDeadline.set(ctx, short);
+  if (fate.ran === false && fate.dead === null && block !== null && block.atMs <= Date.parse(signed.deadline ?? '')) short.add(id);
+  else short.delete(id);
+  return fate;
 }
 
 /* THE ROW AS IT WAS READ, OR NOT AT ALL. A re-check writes what it heard over the row it read
@@ -787,7 +814,7 @@ async function reconcileRelaySwap(ctx: PCtx, p: Proposal): Promise<Proposal> {
   if (nonce === null) {
     return write(p.status, p.result?.ok ?? false, `No nonce was recorded for this swap, so the verifier cannot be asked whether it executed.${relayNote} Compare the balances before and after on the receipt.`);
   }
-  const fate = await transferFate(lookup, { account, nonce, deadline: evidence0.deadline });
+  const fate = await proveFate(ctx, p.id, lookup, { account, nonce, deadline: evidence0.deadline });
   if (fate.ran === null) {
     const keep = (said: string, then: string): Proposal => write(p.status, p.result?.ok ?? false, `${said}${relayNote} ${then}`);
     const shortly = 'Nothing has changed; check again shortly.';

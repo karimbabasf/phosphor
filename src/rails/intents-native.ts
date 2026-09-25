@@ -1406,18 +1406,29 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   /* Whether the transfer signed for `owner` under `nonce` has been proved never to run
      (transferFate, src/relay/fate.ts). `ask` asks from the deadline on by this clock, and at most
      every FATE_RECHECK_MS, and answers whether the proof holds; `held` is the proof once it has.
-     A payload with no nonce, or a deadline this app could not read, is never asked about. */
+     A payload with no nonce, or a deadline this app could not read, is never asked about.
+     NEAR's final block trails this clock by about 2.6 s, so a question on the deadline often reads
+     a block short of it and cannot be answered yet: the chain is not there, which is no answer. For
+     the first FATE_RECHECK_MS past the deadline such a question is asked again on the next poll. */
   function deadlineProof(owner: string, nonce: string | undefined, deadline: string): { ask: () => Promise<boolean>; held: () => DeadProof | null } {
     const deadlineMs = Date.parse(deadline);
     let askedAt = Number.NEGATIVE_INFINITY;
     let dead: DeadProof | null = null;
+    // Whether the last question could not be answered only because its block was short of the deadline.
+    let short = false;
     return {
       ask: async () => {
         if (dead !== null) return true;
-        if (nonce === undefined || !(now() >= deadlineMs) || now() - askedAt < FATE_RECHECK_MS) return false;
+        if (nonce === undefined || !(now() >= deadlineMs)) return false;
+        const soon = short && now() < deadlineMs + FATE_RECHECK_MS;
+        if (!soon && now() - askedAt < FATE_RECHECK_MS) return false;
         askedAt = now();
-        const fate = await transferFate(fateReads, { account: owner, nonce, deadline }, now());
+        // The final block the proof reads, kept to tell the chain lagging from an answer.
+        let block = null as FinalBlock | null;
+        const reads = { ...fateReads, finalBlock: async () => (block = await fateReads.finalBlock()) };
+        const fate = await transferFate(reads, { account: owner, nonce, deadline }, now());
         if (fate.ran === false && fate.dead !== null) dead = fate.dead;
+        short = fate.ran === false && dead === null && block !== null && block.atMs <= deadlineMs;
         return dead !== null;
       },
       held: () => dead,
