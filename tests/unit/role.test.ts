@@ -218,11 +218,12 @@ test('the persona is short enough to be read, and carries half the old weight', 
   /* 22,603 characters on 2026-09-22, sent in front of the person's first message under Claude
      Code's own coding-agent prompt. It is the system prompt now and the ceiling was 10,000: the
      rules that repeated the card and forced reads are gone, and the voice is examples rather than
-     paragraphs. Measured 9,949 with a view and a vendor. 10,120 on 2026-09-25 with the rule for
-     the one line a failed move wakes the agent for (src/http/ended.ts); the ceiling is 10,200. */
+     paragraphs. Measured 9,949 with a view and a vendor. On 2026-09-25 two rules came in: the
+     one line a failed move wakes the agent for (src/http/ended.ts), and quoting every step of a
+     plan of swaps before any is filed. Both together measure 10,311; the ceiling is 10,400. */
   const text = buildRole({ root: ROOT, view: 'trade', agent: 'Claude Code' });
   assert.ok(text.length > 3000, 'the persona got gutted');
-  assert.ok(text.length < 10_200, `the persona is ${text.length} characters`);
+  assert.ok(text.length < 10_400, `the persona is ${text.length} characters`);
 });
 
 // ---------- the knowledge profile ----------

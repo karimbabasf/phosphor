@@ -232,7 +232,7 @@ test('swap_quote says a coin not held yet is a preview and every step is quoted 
 });
 
 test('the persona has every step of a plan quoted before any is filed, and says why a plan takes two steps', () => {
-  const swap = MONEY.find((line) => line.includes('run swap_quote before every propose_swap')) ?? '';
-  assert.match(swap, /on every step of a plan before filing any: if one has no price, say so and file nothing/);
-  assert.match(swap, /A plan in two steps: say why in one line, with the second fee/);
+  assert.ok(
+    MONEY.includes('A plan of swaps: swap_quote every step before filing any, and if one has no price, say so and file nothing. Two steps because the pair has no price? Say why in one line, with the second fee.'),
+  );
 });
