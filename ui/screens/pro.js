@@ -69,6 +69,11 @@
      finds it five minutes old while Pro stays up: a line a person reads at a
      glance, not a ticker, and never on a timer of its own. */
   var LINES_MS = 5 * 60 * 1000;
+  /* An answer from a day feed that has not landed yet (its `at` is null: the
+     backend's first read is still out, or demo mode, which keeps no feed) is
+     no day read: it is asked again on the first frame this long after, never
+     from its own render. */
+  var FEED_SOON_MS = 15 * 1000;
   var MOVES_MS = 30 * 1000;
 
   /* The words a move under way wears, by kind: the card's own
@@ -80,8 +85,8 @@
   var ringDrawn = false;
   var lines = {};
   /* The day feed's days by asset id, when the last read landed, whether one
-     is out, and the asset ids it named. */
-  var feed = { entries: Object.create(null), at: 0, pending: false, asked: Object.create(null) };
+     is out, the asset ids it named, and when the last read came back at all. */
+  var feed = { entries: Object.create(null), at: 0, pending: false, asked: Object.create(null), tried: 0 };
   var receipts = [];
   var movesAt = 0;
   var flowSteps = null;
@@ -575,19 +580,25 @@
     });
     if (!ids.length) return;
     var covered = ids.every(function (id) { return feed.asked[id] === true; });
-    if (covered && Date.now() - feed.at < LINES_MS) return;
+    if (covered && (Date.now() - feed.at < LINES_MS || Date.now() - feed.tried < FEED_SOON_MS)) return;
     ids.sort();
     var asked = Object.create(null);
     ids.forEach(function (id) { asked[id] = true; });
+    var landed = true;
     feed.pending = true;
     net.getJson('/api/day?assets=' + encodeURIComponent(ids.join(',')))
       .then(function (result) {
-        feed.entries = daysOf(result && result.data ? result.data.entries : null);
+        var data = result && result.data ? result.data : null;
+        feed.entries = daysOf(data ? data.entries : null);
+        landed = !data || data.at !== null;
       })
       .catch(function () {})
       .then(function () {
         feed.pending = false;
-        feed.at = Date.now();
+        feed.tried = Date.now();
+        /* A feed that has not landed makes nothing fresh (FEED_SOON_MS). A
+           read that failed waits its five minutes like any other. */
+        if (landed) feed.at = feed.tried;
         feed.asked = asked;
         render();
       });

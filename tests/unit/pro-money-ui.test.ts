@@ -126,8 +126,9 @@ type Rig = {
   timers: number;
   clock: { now: number };
   candles: Record<string, Any>;
-  // What GET /api/day answers: the entries by asset id, or a failed read.
-  day: { entries: Record<string, Any>; fails: boolean };
+  // What GET /api/day answers: the entries by asset id, or a failed read. `landed` false is the
+  // backend's feed before its first good read: `at` null and no days.
+  day: { entries: Record<string, Any>; fails: boolean; landed: boolean };
 };
 
 function boot(options: { view?: string; candles?: Record<string, Any>; day?: Record<string, Any>; receipts?: Any[]; svg?: boolean } = {}): Rig {
@@ -144,7 +145,7 @@ function boot(options: { view?: string; candles?: Record<string, Any>; day?: Rec
   let timers = 0;
   const candles: Record<string, Any> = options.candles ?? {};
   // No days unless a test names some: the backend in demo mode, and every test written before the feed.
-  const day = { entries: options.day ?? {}, fails: false };
+  const day = { entries: options.day ?? {}, fails: false, landed: true };
   const composer = makeNode('textarea');
   composer.className = 'input composer-input';
   composer.value = '';
@@ -191,6 +192,7 @@ function boot(options: { view?: string; candles?: Record<string, Any>; day?: Rec
         if (path.startsWith('/api/receipts')) return Promise.resolve({ data: { receipts: options.receipts ?? [] }, fresh: true });
         if (path.startsWith('/api/day')) {
           if (day.fails) return Promise.reject(Object.assign(new Error('no day'), { status: 502 }));
+          if (!day.landed) return Promise.resolve({ data: { at: null, entries: {} }, fresh: true });
           return Promise.resolve({ data: { at: clock.now, entries: day.entries }, fresh: true });
         }
         const product = decodeURIComponent((/product=([^&]+)/.exec(path) || [])[1] || '');
@@ -514,6 +516,38 @@ test('the feed is read with Pro up, again at five minutes or when a coin it neve
   rig.put(holding([vvv()]));
   await tick();
   assert.equal(reads().length, 3, 'the day was read while Pro was not on screen');
+  assert.equal(rig.timers, 0, 'Pro started a timer');
+});
+
+/* At launch the backend's own feed may not have landed yet, and /api/day answers `at: null` with no
+   days. That answer made the days fresh for five minutes, so Pro open at launch showed no line for
+   VVV until then. It is asked again a heartbeat later instead, and never from its own render. */
+test('an answer from a day feed that has not landed yet is asked again a heartbeat later, not in five minutes, and never in a loop', async () => {
+  const rig = boot();
+  rig.day.landed = false;
+  const holding = state({ wallet: { rows: [vvv()], stale: [], hyperliquid: { funded: true } }, candleProducts: [] });
+  const reads = () => rig.asked.filter((p) => p.startsWith('/api/day'));
+  rig.put(holding);
+  await tick();
+  assert.equal(reads().length, 1);
+  assert.equal(one(row(rig, 'VVV'), 'l-chg').textContent, '');
+  rig.put(holding);
+  await tick();
+  assert.equal(reads().length, 1, 'asked again on the next frame: a loop while the feed has not landed');
+
+  // The backend's feed lands; the first frame a heartbeat on reads it and draws VVV's day.
+  rig.day.landed = true;
+  rig.day.entries = { [VVV_ASSET]: feedDay(31.72, 30.26) };
+  rig.clock.now += 15 * 1000;
+  rig.put(holding);
+  await tick();
+  assert.equal(reads().length, 2, 'the day that had not landed was taken as fresh');
+  assert.equal(one(row(rig, 'VVV'), 'l-chg').textContent, '-4.6%');
+  // A day that landed waits its five minutes, as before.
+  rig.clock.now += 60 * 1000;
+  rig.put(holding);
+  await tick();
+  assert.equal(reads().length, 2);
   assert.equal(rig.timers, 0, 'Pro started a timer');
 });
 
