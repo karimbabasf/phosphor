@@ -19,13 +19,18 @@
 //
 // When the chain's clock cannot be read, the deadline is judged by this Mac's clock with
 // RELAY_DEADLINE_GRACE_MS of skew, the only rule before 2026-09-25, and the nonce and salt are read
-// at whatever block is final. When the chain's clock CAN be read it decides alone: a final block
-// stamped before the deadline is a transfer that can still run, whatever this clock says.
+// at whatever block is final. When the chain's clock CAN be read, BOTH clocks have to be
+// FATE_FLOOR_MS past the deadline: the final block's stamp, and this Mac's. The stamp is the RPC's
+// word, and on its word alone a node that lied about the time closed a row minutes early on every
+// path, the sweep and a Reconcile click included (security review F3); this clock is the floor
+// under it. A final block stamped at or before that is a transfer that can still run, whatever this
+// clock says. A block stamped more than FATE_AHEAD_MAX_MS ahead of this clock is no answer at all:
+// nothing is read at it, and the grace rule decides as if the chain could not be read.
 //
 // Why it exists: on 2026-09-25 a VVV to USDC swap (proposal 6bb6783b) signed a transfer with a
-// deadline of 20:02:34Z. The chain could have shown it dead a second later; the grace rule could
-// only say so at 20:07:34Z, and the ten-minute sweep said it at 20:13:08Z, while the card read "On
-// its way" over money that never left.
+// deadline of 20:02:34Z. The chain could have shown it dead half a minute later; the grace rule
+// could only say so at 20:07:34Z, and the ten-minute sweep said it at 20:13:08Z, while the card read
+// "On its way" over money that never left.
 //
 // Nothing here writes a row or signs anything; each caller writes the verdict in its own words.
 
@@ -37,12 +42,23 @@ import { decodeNonce } from './payload.ts';
    passed once it is this far behind, so an intent the contract could still execute is never
    called dead. Five minutes is far past any skew a Mac that syncs its clock carries, and the
    cost of waiting it out is a failed row that reads unconfirmed for five minutes longer. Since
-   2026-09-25 it is the fallback: the chain's own clock, when it answers, needs no grace. */
+   2026-09-25 it is the fallback: the chain's own clock, when it answers, needs only
+   FATE_FLOOR_MS, with this clock past the same floor. */
 export const RELAY_DEADLINE_GRACE_MS = 5 * 60_000;
 
 // How often one open row's signed transfer is asked about once its deadline has passed: the
 // rail's watch and the deadline watch in src/proposals/reconcile.ts both hold to it.
 export const FATE_RECHECK_MS = 30_000;
+
+/* How far past the deadline the chain's final block AND this clock must both be before a transfer
+   is called dead. It costs an honest RPC half a minute (a final block trails real time by about
+   2.6 s), and it keeps a node answering from a little older state, or a clock a little fast, on
+   the safe side. */
+export const FATE_FLOOR_MS = 30_000;
+
+/* How far ahead of this clock a final block may be stamped and still be read as the chain's time.
+   Further than two minutes is not a clock a little fast: it is a node that cannot be believed. */
+export const FATE_AHEAD_MAX_MS = 120_000;
 
 /* The three reads the proof takes, every one of them null when it did not answer (never zero,
    never false, never "unspent"). `at` is a block hash to read at. The relay lookup
@@ -79,8 +95,9 @@ export async function transferFate(
   if (parts === null) return { ran: null, why: 'not_the_verifiers' };
   const deadlineMs = Date.parse(signed.deadline ?? '');
   // The clock first, then the nonce and the salt at the block it came from. A read that throws is
-  // a read that did not answer.
-  const block = Number.isFinite(deadlineMs) && reads.finalBlock !== undefined ? await reads.finalBlock().catch(() => null) : null;
+  // a read that did not answer, and so is a block stamped too far ahead of this clock.
+  const read = Number.isFinite(deadlineMs) && reads.finalBlock !== undefined ? await reads.finalBlock().catch(() => null) : null;
+  const block = read !== null && read.atMs > now + FATE_AHEAD_MAX_MS ? null : read;
   const spent = await reads.nonceUsed(signed.account.toLowerCase(), signed.nonce, block?.hash).catch(() => null);
   if (spent === true) return { ran: true };
   if (spent !== false) return { ran: null, why: 'no_answer' };
@@ -88,7 +105,10 @@ export async function transferFate(
   const salt = reads.saltValid === undefined ? null : await reads.saltValid(parts.salt, block?.hash).catch(() => null);
   if (salt !== true) return { ran: null, why: salt === false ? 'salt_retired' : 'salt_no_answer' };
   if (!Number.isFinite(deadlineMs)) return { ran: false, dead: null };
-  if (block !== null) return { ran: false, dead: block.atMs > deadlineMs ? { by: 'chain', block } : null };
+  if (block !== null) {
+    const past = block.atMs > deadlineMs + FATE_FLOOR_MS && now >= deadlineMs + FATE_FLOOR_MS;
+    return { ran: false, dead: past ? { by: 'chain', block } : null };
+  }
   return { ran: false, dead: now >= deadlineMs + RELAY_DEADLINE_GRACE_MS ? { by: 'clock' } : null };
 }
 
