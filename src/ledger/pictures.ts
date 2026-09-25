@@ -24,6 +24,14 @@
 // whole or not at all. A data directory that would put it beside the key file, or under the
 // wallets' own folders in the home directory, gets no pictures. A picture is fetched again after a
 // week.
+//
+// BOUNDED, AND IT FORGETS (pictures review finding 2). Nothing bounded the cache but the list, and
+// nothing ever left it: a list naming every coin CoinGecko has would fill the disk a quarter
+// megabyte at a time and keep all of it. A pass is about the first PICTURE_MAX_IDS listed coins by
+// id; the files of those coins hold at most PICTURE_MAX_TOTAL_BYTES, and a picture there is no room
+// for is not fetched and waits a day like any refused one; and a pass that runs to its end deletes
+// the file of every coin it was not about, so a coin 1Click stops listing leaves the disk. Today's
+// list names 97 coins, about a megabyte and a half.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -39,6 +47,9 @@ export const PICTURE_MAX_BYTES = 256 * 1024;
 export const PICTURE_REFRESH_MS = 7 * 24 * 60 * 60_000;
 // How long a picture that was refused, or would not come, waits before it is asked for again.
 export const PICTURE_RETRY_MS = 24 * 60 * 60_000;
+// The most coins a pass is about, and the most their files may hold together. See BOUNDED above.
+export const PICTURE_MAX_IDS = 500;
+export const PICTURE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
 export type PictureType = 'image/png' | 'image/jpeg' | 'image/webp';
 export type Picture = { bytes: Buffer; type: PictureType };
@@ -65,6 +76,9 @@ export type CoinPicturesDeps = {
   fetchImpl?: typeof fetch;
   now?: () => number;
   log?: (line: string) => void;
+  // Test seams: the two caps, at a size a test fills in a moment. The app passes neither.
+  maxIds?: number;
+  maxBytes?: number;
 };
 
 const EXT: Record<PictureType, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
@@ -109,13 +123,15 @@ export function pictureDir(dataDir: string, keysPath: string, home: string = os.
 }
 
 type Fetched = { ok: true; picture: Picture } | { ok: false; why: string; stop?: boolean };
-type OnDisk = { file: string; type: PictureType; at: number };
+type OnDisk = { file: string; type: PictureType; at: number; size: number };
 
 export function createCoinPictures(deps: CoinPicturesDeps): CoinPictures {
   const dir = deps.dir;
   const fetchImpl = deps.fetchImpl ?? fetch;
   const now = deps.now ?? Date.now;
   const log = deps.log ?? ((line: string) => console.error(line));
+  const maxIds = deps.maxIds ?? PICTURE_MAX_IDS;
+  const maxBytes = deps.maxBytes ?? PICTURE_MAX_TOTAL_BYTES;
   // What a restart finds on disk is served at once, before anything is asked of the network.
   const files = scan();
   // When each refused picture was refused, so it waits a day rather than every tick.
@@ -140,7 +156,7 @@ export function createCoinPictures(deps: CoinPicturesDeps): CoinPictures {
         const stat = fs.lstatSync(path.join(dir, name));
         const have = out.get(match[1]);
         if (stat.isFile() && (have === undefined || stat.mtimeMs > have.at)) {
-          out.set(match[1], { file: path.join(dir, name), type: TYPE_OF[match[2]], at: stat.mtimeMs });
+          out.set(match[1], { file: path.join(dir, name), type: TYPE_OF[match[2]], at: stat.mtimeMs, size: stat.size });
         }
       } catch {
         // Gone between the listing and the look.
@@ -212,19 +228,58 @@ export function createCoinPictures(deps: CoinPicturesDeps): CoinPictures {
     for (const other of Object.values(EXT)) {
       if (other !== ext) fs.rmSync(path.join(dir, `${id}.${other}`), { force: true });
     }
-    files.set(id, { file: target, type: picture.type, at: now() });
+    files.set(id, { file: target, type: picture.type, at: now(), size: picture.bytes.length });
+  }
+
+  // The coins a pass is about: the first maxIds good ids on the list, by id, so every pass and
+  // every restart picks the same ones.
+  function reach(urls: ReadonlyMap<string, string>): Array<[string, string]> {
+    return [...urls]
+      .filter(([id]) => coingeckoIdOk(id))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .slice(0, maxIds);
+  }
+
+  // What the files of these coins hold on disk together.
+  function heldBytes(about: ReadonlySet<string>): number {
+    let total = 0;
+    for (const id of about) total += files.get(id)?.size ?? 0;
+    return total;
+  }
+
+  // Every file of a coin the pass was not about goes, whatever extension it has.
+  function prune(about: ReadonlySet<string>): void {
+    if (dir === null) return;
+    for (const id of [...files.keys()]) {
+      if (about.has(id)) continue;
+      try {
+        for (const ext of Object.values(EXT)) fs.rmSync(path.join(dir, `${id}.${ext}`), { force: true });
+        files.delete(id);
+      } catch {
+        // Left for the next pass.
+      }
+    }
+    for (const id of [...refusedAt.keys()]) if (!about.has(id)) refusedAt.delete(id);
   }
 
   async function run(): Promise<void> {
     if (dir === null) return;
     const refused: string[] = [];
-    const due = [...deps.urls()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const due = reach(deps.urls());
+    const about = new Set(due.map(([id]) => id));
+    let stopped = false;
     for (const [id, raw] of due) {
-      if (!coingeckoIdOk(id)) continue;
       const have = files.get(id);
       if (have !== undefined && now() - have.at < PICTURE_REFRESH_MS) continue;
       const failedAt = refusedAt.get(id);
       if (failedAt !== undefined && now() - failedAt < PICTURE_RETRY_MS) continue;
+      // Room for this one at its largest among the files the pass keeps, asked before the
+      // download, so a picture that could not be kept is never fetched.
+      if (heldBytes(about) - (have?.size ?? 0) + PICTURE_MAX_BYTES > maxBytes) {
+        refusedAt.set(id, now());
+        refused.push(`${id} (the cache is full at ${maxBytes / (1024 * 1024)} MB)`);
+        continue;
+      }
       const url = pictureUrl(raw);
       const got: Fetched = url === null ? { ok: false, why: 'not a CoinGecko image URL' } : await fetchPicture(url);
       if (!got.ok) {
@@ -232,6 +287,7 @@ export function createCoinPictures(deps: CoinPicturesDeps): CoinPictures {
         // next tick carries on.
         if (got.stop === true) {
           refused.push(`${id} (${got.why})`);
+          stopped = true;
           break;
         }
         refusedAt.set(id, now());
@@ -246,6 +302,9 @@ export function createCoinPictures(deps: CoinPicturesDeps): CoinPictures {
         refused.push(`${id} (could not be written: ${oneLine(err instanceof Error ? err.message : err, 80)})`);
       }
     }
+    // A pass that ran to its end over a list that answered takes away every file it was not about.
+    // No list yet (the day feed has not answered since a restart) is not a list of nothing.
+    if (!stopped && due.length > 0) prune(about);
     if (refused.length > 0) {
       const more = refused.length > 5 ? `, and ${refused.length - 5} more` : '';
       log(`phosphor: ${refused.length} coin picture${refused.length === 1 ? '' : 's'} not kept: ${refused.slice(0, 5).join(', ')}${more}`);
@@ -277,12 +336,12 @@ export function createCoinPictures(deps: CoinPicturesDeps): CoinPictures {
     }
   }
 
-  // Nothing more is coming: the list is known, no pass is running, and every listed picture is on
-  // disk or was refused inside the last day.
+  // Nothing more is coming: the list is known, no pass is running, and every picture a pass is
+  // about is on disk or was refused inside the last day. A coin past the cap is coming never.
   function settled(): boolean {
     const urls = deps.urls();
     if (urls.size === 0 || running !== null) return false;
-    for (const id of urls.keys()) {
+    for (const [id] of reach(urls)) {
       if (files.has(id)) continue;
       const failedAt = refusedAt.get(id);
       if (failedAt === undefined || now() - failedAt >= PICTURE_RETRY_MS) return false;

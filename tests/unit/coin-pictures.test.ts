@@ -27,6 +27,8 @@ import { createDayFeed, listedIds, parseImages, pictureUrl } from '../../src/led
 import {
   createCoinPictures,
   PICTURE_MAX_BYTES,
+  PICTURE_MAX_IDS,
+  PICTURE_MAX_TOTAL_BYTES,
   PICTURE_REFRESH_MS,
   PICTURE_RETRY_MS,
   pictureDir,
@@ -85,7 +87,7 @@ type Rig = {
 
 const url = (id: string) => `https://coin-images.coingecko.com/coins/images/1/large/${id}.png?1696501400`;
 
-function rig(options: { dir?: string; ids?: string[] } = {}): Rig {
+function rig(options: { dir?: string; ids?: string[]; maxIds?: number; maxBytes?: number } = {}): Rig {
   const dir = options.dir ?? path.join(tempDir('phosphor-pictures-'), 'cache', 'coin-images');
   const clock = { now: Date.parse('2026-09-25T20:30:00Z') };
   const asked: Rig['asked'] = [];
@@ -103,7 +105,7 @@ function rig(options: { dir?: string; ids?: string[] } = {}): Rig {
     return new Response(answer.body ?? null, { status: answer.status ?? 200, headers: answer.headers ?? { 'content-type': 'image/png' } });
   }) as typeof fetch;
   const make = () =>
-    createCoinPictures({ dir, urls: () => urls, symbols: () => symbols, fetchImpl, now: () => clock.now, log: (line) => lines.push(line) });
+    createCoinPictures({ dir, urls: () => urls, symbols: () => symbols, fetchImpl, now: () => clock.now, log: (line) => lines.push(line), maxIds: options.maxIds, maxBytes: options.maxBytes });
   return { pictures: make(), dir, clock, asked, serve, lines, urls, symbols, fresh: make };
 }
 
@@ -314,6 +316,70 @@ test('a picture on disk is served after a restart, fetched again after a week, a
   await r.pictures.sync();
   assert.equal(r.pictures.read('venice-token')?.type, 'image/jpeg', 'a week-old picture was not fetched again');
   assert.deepEqual(fs.readdirSync(r.dir).sort(), ['venice-token.jpg'], 'the old file was left beside the new one');
+});
+
+/* Pictures review finding 2: nothing bounded the cache but the list, and nothing left it. A list
+   naming every coin CoinGecko has (about 17,000) filled the disk a quarter megabyte at a time, and
+   when the list went back to normal every file stayed. */
+test('a pass is about the first 500 listed coins by id, and one past them gets no picture', async () => {
+  assert.equal(PICTURE_MAX_IDS, 500);
+  // Fifty of sixty here, the same rule at a size a test writes in a moment.
+  const ids = Array.from({ length: 60 }, (_, i) => `coin-${String(i).padStart(3, '0')}`);
+  const r = rig({ ids, maxIds: 50 });
+  await r.pictures.sync();
+  assert.equal(r.asked.length, 50, 'a pass asked for more pictures than its cap');
+  assert.equal(fs.readdirSync(r.dir).length, 50);
+  assert.equal(r.pictures.read('coin-049')?.type, 'image/png');
+  assert.equal(r.pictures.read('coin-050'), null, 'the coin past the cap by id was kept');
+  assert.equal(r.pictures.manifest().settled, true, 'the coins past the cap keep the window asking forever');
+  await r.pictures.sync();
+  assert.equal(r.asked.length, 50, 'the next pass went after the coins past the cap');
+});
+
+test('the cache holds at most 64 MB: a picture that would take it past is not kept, and waits a day', async () => {
+  assert.equal(PICTURE_MAX_TOTAL_BYTES, 64 * 1024 * 1024);
+  const big = Buffer.concat([PNG, Buffer.alloc(200 * 1024 - PNG.length, 5)]);
+  const ids = ['a-coin', 'b-coin', 'c-coin', 'd-coin', 'e-coin'];
+  const r = rig({ ids, maxBytes: 3 * PICTURE_MAX_BYTES });
+  for (const id of ids) r.serve.set(url(id), { body: big });
+  await r.pictures.sync();
+  const kept = fs.readdirSync(r.dir);
+  const bytes = kept.reduce((sum, name) => sum + fs.statSync(path.join(r.dir, name)).size, 0);
+  assert.ok(bytes <= 3 * PICTURE_MAX_BYTES, `the cache holds ${bytes} bytes`);
+  assert.deepEqual(kept.sort(), ['a-coin.png', 'b-coin.png', 'c-coin.png']);
+  assert.equal(r.asked.length, 3, 'a picture with no room for it was downloaded anyway');
+  assert.match(r.lines.join('\n'), /d-coin \(the cache is full/);
+  assert.equal(r.pictures.manifest().settled, true);
+  await r.pictures.sync();
+  assert.equal(r.asked.length, 3, 'a picture refused for room was asked for again at once');
+});
+
+test('after a pass that ran to its end, a coin no longer listed loses its file; a pass that stopped, or no list at all, deletes nothing', async () => {
+  const r = rig({ ids: ['venice-token', 'zcash'] });
+  await r.pictures.sync();
+  assert.deepEqual(fs.readdirSync(r.dir).sort(), ['venice-token.png', 'zcash.png']);
+  // A stray copy of the coin under another extension goes with it.
+  fs.writeFileSync(path.join(r.dir, 'zcash.jpg'), JPEG);
+
+  // No list yet (the day feed has not answered since a restart): nothing is taken away.
+  const saved = new Map(r.urls);
+  r.urls.clear();
+  await r.pictures.sync();
+  assert.deepEqual(fs.readdirSync(r.dir).sort(), ['venice-token.png', 'zcash.jpg', 'zcash.png']);
+
+  // A pass the image host stopped with a 429 is not the end of one.
+  for (const [id, at] of saved) if (id !== 'zcash') r.urls.set(id, at);
+  r.urls.set('litecoin', url('litecoin'));
+  r.serve.set(url('litecoin'), { status: 429, body: null });
+  await r.pictures.sync();
+  assert.ok(fs.readdirSync(r.dir).includes('zcash.png'), 'a stopped pass deleted a file');
+
+  r.serve.set(url('litecoin'), { body: PNG });
+  await r.pictures.sync();
+  assert.deepEqual(fs.readdirSync(r.dir).sort(), ['litecoin.png', 'venice-token.png'], 'zcash left the list and kept its files');
+  assert.equal(r.pictures.read('zcash'), null);
+  assert.equal(r.fresh().read('zcash'), null, 'a restart found the file again');
+  assert.equal('ZEC' in r.pictures.manifest().symbols, false);
 });
 
 test('a picture tampered with on disk is not served', async () => {
