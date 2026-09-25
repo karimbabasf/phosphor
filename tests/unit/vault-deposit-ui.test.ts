@@ -8,7 +8,7 @@
 // answers a different string has to leave the card blank.
 //
 // Nothing here starts the app. Every route is a stub that records the call.
-// The acknowledgement is remembered on this "Mac" unless a test says not.
+// Nothing is remembered on this "Mac": every address waits for the tick.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -200,16 +200,17 @@ type World = {
   toasts: string[];
   clipboard: { held: string; readable: boolean };
   card: () => Any | null;
+  stored: Record<string, string>;
 };
 
-function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) => Any | null; ack?: boolean; notice?: boolean } = {}): World {
+function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) => Any | null; notice?: boolean } = {}): World {
   const body = makeNode('body');
   const page = makeNode('div');
   const calls: Any[] = [];
   const toasts: string[] = [];
   const clipboard = { held: '', readable: true };
   const cards: Any[] = [];
-  const stored: Record<string, string> = options.ack === false ? {} : { 'phosphor.depositAck': '1' };
+  const stored: Record<string, string> = {};
 
   const doc: Any = {
     body,
@@ -286,14 +287,29 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
     toasts,
     clipboard,
     card: () => (cards.length ? cards[cards.length - 1] : null),
+    stored,
   };
 }
 
+/* The card opens on the token list and its acknowledgement: tick the box, then Show the address. */
+async function acknowledge(within: Any): Promise<void> {
+  const box = find(within, '.ack-input')[0];
+  assert.ok(box, 'no acknowledgement box under the token list');
+  box.checked = true;
+  box.dispatch('change');
+  const go = find(within, 'button').find((b: Any) => b.dataset.role === 'show-address') as Any;
+  assert.ok(go, 'no Show the address button');
+  go.click();
+  await flush();
+}
+
 /* The card opens only when a screen hands over a network (the Vault's Addresses card): a watch
-   the agent starts never opens it (hunt-b 18). Every test opens it that way. */
-async function openCard(world: World, overrides: Any = {}): Promise<Any> {
+   the agent starts never opens it (hunt-b 18). Every test opens it that way, and past the
+   acknowledgement unless it says not. */
+async function openCard(world: World, overrides: Any = {}, options: { ack?: boolean } = {}): Promise<Any> {
   await world.deposit.open(Object.assign({ chain: 'eth', symbol: 'USDC' }, overrides));
   await flush();
+  if (options.ack !== false) await acknowledge(world.dialog());
   return world.dialog();
 }
 
@@ -618,20 +634,20 @@ test('Change network goes back to the tiles, and a different network is a fresh 
   (tiles[1] as Any).click();
   await flush();
   assert.equal(pick.dataset.stage, 'tokens');
-  // The acknowledgement is remembered on this Mac, so the list ends in one small button.
-  assert.equal(find(dialog, '.ack-input').length, 0, 'the acknowledgement was asked for again');
+  // A new network asks for the tick again: nothing was remembered from the first one.
+  assert.equal(find(dialog, '.ack-input').length, 1, 'the acknowledgement was not asked for again');
   const go = find(dialog, 'button').find((b: Any) => b.textContent === 'Show the address') as Any;
-  go.click();
-  await flush();
+  assert.equal(go.disabled, true, 'the address button is live before the box is ticked');
+  await acknowledge(dialog);
   assert.equal(pick.dataset.stage, 'address');
   const show = world.calls.filter((c) => c.route === '/api/deposit/show').pop();
   assert.deepEqual(show, { route: '/api/deposit/show', chain: 'base', symbol: 'USDC', address: base.address });
   assert.equal(find(find(dialog, '.deposit-address')[0], '.sr-only')[0].textContent, base.address, 'the address drawn is not Base\'s');
 });
 
-test('with no acknowledgement on this Mac the card opens on the token list, and the address waits for the tick', async () => {
-  const world = build({ ack: false });
-  await openCard(world);
+test('every time the card opens it lands on the token list, and the address waits for the tick', async () => {
+  const world = build();
+  await openCard(world, {}, { ack: false });
   const dialog = world.dialog();
   const pick = find(dialog, '.netpick')[0];
   assert.equal(pick.dataset.stage, 'tokens');
@@ -649,9 +665,18 @@ test('with no acknowledgement on this Mac the card opens on the token list, and 
   await flush();
   assert.equal(pick.dataset.stage, 'address');
   assert.equal(find(dialog, 'canvas').length, 1, 'no QR after the acknowledgement');
-  // Remembered: the same watch again opens straight on the address.
-  assert.equal(world.sandbox.localStorage.getItem('phosphor.depositAck'), '1');
+  assert.deepEqual(Object.keys(world.stored), [], 'the acknowledgement was written down');
   assert.equal(world.calls.filter((c) => c.route === '/api/deposit/show').length, 1, 'the card started a second watch for the watch it was opened with');
+
+  // Closed and opened again for the same watch: the list and the box again, no address.
+  world.deposit.close();
+  const reopened = await openCard(world, {}, { ack: false });
+  assert.equal(find(reopened, '.netpick')[0].dataset.stage, 'tokens', 'the second open went straight to the address');
+  assert.equal(find(reopened, '.ack-input').length, 1, 'the second open did not ask again');
+  assert.equal(find(reopened, 'canvas').length, 0, 'the address was drawn before the second tick');
+  await acknowledge(reopened);
+  assert.equal(find(reopened, '.netpick')[0].dataset.stage, 'address');
+  assert.deepEqual(Object.keys(world.stored), [], 'the second acknowledgement was written down');
 });
 
 /* ---------- the reminder at every start ---------- */

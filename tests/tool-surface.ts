@@ -161,6 +161,9 @@ export const EXPECTED_TOOLS: readonly string[] = [
   // why it still works while the roster is full. It moves nothing and, like every other read
   // here, cannot reach a rail.
   'skill',
+  // Answered inside the shim like skill: the changelog this copy ships with, read from disk, so
+  // "what's new" comes from the notes and not from memory. No state, no rail, takes a version.
+  'whats_new',
   // The knowledge profile's one write: a concept the agent just taught, appended to the file the
   // next role text is built from. It takes a noun phrase in a closed alphabet, ten per session,
   // and nothing it writes can reach the role as an instruction (tests/unit/profile.test.ts).
