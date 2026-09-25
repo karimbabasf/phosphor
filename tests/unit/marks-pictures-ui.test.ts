@@ -73,7 +73,19 @@ type Rig = {
   draw(symbol: string): Any;
 };
 
-function boot(options: { net?: boolean; data?: Any } = {}): Rig {
+/* A picture's pixels as a canvas would read them back: `size` a side, RGBA, clear everywhere but a
+   centred square of opaque art `art` of the side wide. */
+function artPixels(size: number, art: number): Uint8ClampedArray {
+  const data = new Uint8ClampedArray(size * size * 4);
+  const side = Math.round(size * art);
+  const from = Math.floor((size - side) / 2);
+  for (let y = from; y < from + side; y += 1) {
+    for (let x = from; x < from + side; x += 1) data[(y * size + x) * 4 + 3] = 255;
+  }
+  return data;
+}
+
+function boot(options: { net?: boolean; data?: Any; art?: Record<string, number>; taint?: boolean } = {}): Rig {
   const body = makeNode('body');
   const asked: string[] = [];
   const answer = { data: options.data ?? { symbols: {}, settled: true }, fails: false };
@@ -82,8 +94,21 @@ function boot(options: { net?: boolean; data?: Any } = {}): Rig {
   class FakeDate extends Date {
     static now() { return clock.now; }
   }
+  // A canvas that reads back each picture's art as `art` names it by URL; the rest are discs.
+  const canvas = (): Any => {
+    const node = makeNode('canvas');
+    let drawn = '';
+    node.getContext = () => ({
+      drawImage: (img: Any) => { drawn = img.src; },
+      getImageData: (_x: number, _y: number, w: number) => {
+        if (options.taint === true) throw Object.assign(new Error('The operation is insecure.'), { name: 'SecurityError' });
+        return { data: artPixels(w, options.art?.[drawn] ?? 1) };
+      },
+    });
+    return node;
+  };
   const document: Any = {
-    createElement: (tag: string) => makeNode(tag),
+    createElement: (tag: string) => (tag === 'canvas' ? canvas() : makeNode(tag)),
     // The one selector marks.js asks for: every monogram that names a coin.
     querySelectorAll: (selector: string) => {
       assert.equal(selector, '.logo[data-fallback][data-token]');
@@ -222,6 +247,68 @@ test('a hand-picked coin never asks for the pictures, and an id that is not a Co
   assert.equal(vvv.getAttribute('data-fallback'), 'true', 'a URL was taken for a CoinGecko id');
   assert.equal(bad.getAttribute('data-fallback'), 'true');
   assert.equal(img(pengu).src, '/api/coin-image?id=pudgy-penguins');
+});
+
+/* VVV's picture is its bare mark on a clear ground, filling about two thirds of its own image, so
+   at the three quarters every picture draws at it came out half the size of every logo beside it
+   (logo-check, pro-rows.png, 2026-09-25). A picture is measured when it loads, and art that fills
+   less than nine tenths of its image is drawn larger, up to the whole box. */
+test('pictureSide: a disc picture keeps its three quarters, a picture with small art grows to put the art there, never past the box', () => {
+  const { pictureSide } = boot().marks;
+  assert.equal(pictureSide(1), 0.75);
+  assert.equal(pictureSide(0.9), 0.75, 'art filling nine tenths is a disc');
+  assert.ok(Math.abs(pictureSide(0.8) - 0.9375) < 1e-12);
+  assert.equal(pictureSide(0.75), 1);
+  assert.equal(pictureSide(0.6), 1, 'past the box');
+  assert.equal(pictureSide(0.684), 1, 'VVV, measured');
+  for (const unknown of [0, -1, Number.NaN, undefined, null]) assert.equal(pictureSide(unknown), 0.75, `${String(unknown)} is not a fill`);
+});
+
+test('artFill: the opaque pixels\' box, its longer side as a share of the image\'s', () => {
+  const { artFill } = boot().marks;
+  assert.equal(artFill(artPixels(64, 1), 64, 64), 1);
+  assert.equal(artFill(artPixels(64, 0.5), 64, 64), 0.5);
+  assert.equal(artFill(new Uint8ClampedArray(64 * 64 * 4), 64, 64), 0, 'a clear image has no art');
+  // A wide mark: its width decides. Faint pixels (a shadow, an edge) are not art.
+  const wide = new Uint8ClampedArray(10 * 10 * 4);
+  for (let x = 1; x <= 8; x += 1) wide[(5 * 10 + x) * 4 + 3] = 200;
+  wide[(0 * 10 + 0) * 4 + 3] = 10;
+  assert.equal(artFill(wide, 10, 10), 0.8);
+});
+
+test('a picture with small art is drawn larger once it loads, a disc picture exactly as it was, and a known one at once', async () => {
+  const vvvSrc = '/api/coin-image?id=venice-token';
+  const rig = boot({ data: PICTURES, art: { [vvvSrc]: 0.6 } });
+  rig.draw('VVV');
+  await tick();
+  const vvv = rig.draw('VVV');
+  const picture = img(vvv);
+  assert.equal(picture.src, vvvSrc);
+  assert.equal(picture.style.width, undefined, 'sized before it loaded');
+  picture.onload();
+  assert.equal(picture.style.width, '100%');
+  assert.equal(picture.style.height, '100%');
+  // Drawn again, the measure is known: sized as it is made, no jump when it loads.
+  const again = img(rig.draw('vvv'));
+  assert.equal(again.style.width, '100%');
+
+  const trump = img(rig.draw('TRUMP'));
+  trump.onload();
+  assert.equal(trump.style.width, undefined, 'a disc picture was resized');
+  assert.equal(trump.style.height, undefined);
+  // The three quarters themselves stay the stylesheet's.
+  assert.match(CSS, /\.logo\[data-picture\] > img \{[^}]*width: 75%;[^}]*height: 75%;/);
+});
+
+test('a picture that cannot be measured stays at the three quarters it always had', async () => {
+  // A canvas the page may not read back throws, as a tainted one does.
+  const rig = boot({ data: PICTURES, art: { '/api/coin-image?id=venice-token': 0.6 }, taint: true });
+  rig.draw('VVV');
+  await tick();
+  const picture = img(rig.draw('VVV'));
+  picture.onload();
+  assert.equal(picture.style.width, undefined);
+  assert.equal(picture.style.height, undefined);
 });
 
 test('with no server to ask, every logo is what it was: the file or the monogram', () => {

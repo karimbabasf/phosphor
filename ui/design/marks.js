@@ -235,7 +235,76 @@
   var PICTURES_SOON_MS = 5 * 1000;
   var PICTURES_LATER_MS = 5 * 60 * 1000;
   var COINGECKO_ID = /^[a-z0-9][a-z0-9._-]{0,99}$/;
-  var pictures = { ids: Object.create(null), broken: Object.create(null), at: 0, settled: false, pending: false, watching: false };
+  var pictures = { ids: Object.create(null), broken: Object.create(null), fill: Object.create(null), at: 0, settled: false, pending: false, watching: false };
+
+  /* HOW BIG A PICTURE DRAWS. A coin's picture is as a rule a round mark
+     filling its image edge to edge, so it draws at the three quarters every
+     file and monogram fills. VVV's is its bare mark on a clear ground, about
+     two thirds of its image, and at three quarters it came out half the size
+     of every logo beside it (2026-09-25). So a picture is measured when it
+     loads: the box its opaque pixels fill, as a share of the image. Art that
+     fills less than PICTURE_FULL of it is drawn larger, up to the whole box,
+     so the mark lands where a disc's would; a disc picture is left exactly as
+     it was. The measure is kept per picture, so the next mark of that coin is
+     drawn at its size from the start. */
+  var PICTURE_SIDE = 0.75;
+  var PICTURE_FULL = 0.9;
+  // Alpha, of 255, past which a pixel is art: a shadow or an edge fainter than this is not.
+  var OPAQUE = 32;
+  // The side, in pixels, a picture is read back at: enough to find its edges, cheap on every load.
+  var MEASURE = 64;
+
+  // The side a picture's image draws at, as a share of the box, for art filling `fill` of it.
+  function pictureSide(fill) {
+    if (typeof fill !== 'number' || !(fill > 0) || fill >= PICTURE_FULL) return PICTURE_SIDE;
+    return Math.min(1, PICTURE_SIDE / fill);
+  }
+
+  /* How much of an image its art fills: the opaque pixels' box, its longer
+     side as a share of the image's. `data` is RGBA, four bytes a pixel, row by
+     row; 0 when nothing in it is opaque. */
+  function artFill(data, width, height) {
+    var left = width;
+    var right = -1;
+    var top = height;
+    var bottom = -1;
+    for (var y = 0; y < height; y += 1) {
+      for (var x = 0; x < width; x += 1) {
+        if (data[(y * width + x) * 4 + 3] < OPAQUE) continue;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+    if (right < 0) return 0;
+    return Math.max((right - left + 1) / width, (bottom - top + 1) / height);
+  }
+
+  /* A loaded picture read back off a small canvas. It comes from this app's
+     own server, so the read is allowed; anything that stops it leaves the
+     picture at the three quarters it always had. */
+  function measure(img) {
+    try {
+      var canvas = document.createElement('canvas');
+      canvas.width = MEASURE;
+      canvas.height = MEASURE;
+      var context = canvas.getContext('2d');
+      if (!context) return 1;
+      context.drawImage(img, 0, 0, MEASURE, MEASURE);
+      return artFill(context.getImageData(0, 0, MEASURE, MEASURE).data, MEASURE, MEASURE);
+    } catch (error) {
+      return 1;
+    }
+  }
+
+  // Sized from its measure, when there is one; a disc picture carries no size of its own.
+  function fit(img, id) {
+    var side = pictureSide(pictures.fill[id]);
+    if (side === PICTURE_SIDE) return;
+    img.style.width = Math.round(side * 1000) / 10 + '%';
+    img.style.height = img.style.width;
+  }
 
   function pictureOf(ticker) {
     if (pictures.broken[ticker]) return '';
@@ -292,8 +361,10 @@
   }
 
   /* The picture, from this app's own server, drawn to the same three quarters
-     of the box as a file or a monogram (components.css). */
+     of the box as a file or a monogram (components.css), or larger when its
+     art is small (HOW BIG A PICTURE DRAWS, above). */
   function picture(node, ticker) {
+    var id = pictureOf(ticker);
     node.textContent = '';
     node.removeAttribute('data-fallback');
     node.setAttribute('data-picture', 'true');
@@ -301,12 +372,17 @@
     img.alt = '';
     img.decoding = 'async';
     img.draggable = false;
+    fit(img, id);
+    img.onload = function () {
+      if (typeof pictures.fill[id] !== 'number') pictures.fill[id] = measure(img);
+      fit(img, id);
+    };
     img.onerror = function () {
       pictures.broken[ticker] = true;
       node.removeAttribute('data-picture');
       fallback(node, ticker);
     };
-    img.src = '/api/coin-image?id=' + encodeURIComponent(pictureOf(ticker));
+    img.src = '/api/coin-image?id=' + encodeURIComponent(id);
     node.appendChild(img);
     return node;
   }
@@ -360,5 +436,5 @@
     return Object.prototype.hasOwnProperty.call(object, key);
   }
 
-  window.PhosphorMarks = { colourFor: colourFor, colour: colourFor, logo: logo, agent: agent, badgeFor: badgeFor, COLOURS: COLOURS, LOGOS: LOGOS, AGENT_LOGOS: AGENT_LOGOS, BADGES: BADGES };
+  window.PhosphorMarks = { colourFor: colourFor, colour: colourFor, logo: logo, agent: agent, badgeFor: badgeFor, pictureSide: pictureSide, artFill: artFill, COLOURS: COLOURS, LOGOS: LOGOS, AGENT_LOGOS: AGENT_LOGOS, BADGES: BADGES };
 })();
