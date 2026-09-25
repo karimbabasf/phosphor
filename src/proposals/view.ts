@@ -20,7 +20,7 @@ import type { OutcomeState, PlanFate } from './lifecycle.ts';
 import { px } from '../trade/plan.ts';
 import { isReasonCode } from '../rails/reasons.ts';
 import type { ReasonCode } from '../rails/reasons.ts';
-import type { PolicyAxisChange, Proposal, WriteDraft } from '../types.ts';
+import type { PolicyAxisChange, Proposal, SwapDraft, WriteDraft } from '../types.ts';
 import { baseUnitsToDecimal } from '../intents.ts';
 import { spendNetworkOf } from '../rails/intents-address.ts';
 
@@ -148,7 +148,8 @@ export type ProposalView = {
 };
 
 /* THE ONLY WORDS A STAGE IS EVER PRINTED AS. The card, the agent's sentence, proposal_status and
-   the ending notice all read this table and none of them keeps a copy. The rule for a label: the
+   the ending notice all read this table and none of them keeps a copy; a rail whose stage the stock
+   words would misdescribe has its own line in RAIL_STAGE_LABEL below. The rule for a label: the
    app's own words, never a vendor's ("The router is working" was 1Click's phase wearing a
    sentence, and a person who has never heard of a router read it as a fault). Every wait names
    what is being waited on, every ending names what happened, and no label is a code. */
@@ -206,6 +207,37 @@ export const STAGE_COPY: Record<ProposalStage, string> = {
   refused: 'A rule you set stopped it. Nothing moved. Change it in Vault, under Policies, if you want it to go.',
   stalled: 'Late: nothing has changed since the last update. The app keeps checking; nothing more is signed.',
 };
+
+/* THE SAME STAGE ON A RAIL WHERE THE STOCK WORDS ARE FALSE, and only there. A 1Click swap inside
+   NEAR Intents (the intents-native rail, depositType INTENTS) settles its signed transfer and the
+   solver's fill in ONE transaction: nothing leaves the balance until a solver fills, so its
+   PROCESSING is a wait for a buyer, not money moving across. On 2026-09-25 (proposal 6bb6783b) the
+   card read "On its way" and "The transfer is moving your money across" for ten minutes over a
+   transfer that never ran. A move that does leave the verifier (a deposit, a withdrawal, a payout,
+   a retired chain-side swap) keeps the stock words: its money really is moving. These are still
+   the stage table, read through stageLabelOf and stageCopyOf and printed verbatim like the rest;
+   a stage a rail does not name reads the two tables above. */
+export const RAIL_STAGE_LABEL: Partial<Record<SwapDraft['venue'], Partial<Record<ProposalStage, string>>>> = {
+  'intents-native': { PROCESSING: 'Finding a match' },
+};
+export const RAIL_STAGE_COPY: Partial<Record<SwapDraft['venue'], Partial<Record<ProposalStage, string>>>> = {
+  'intents-native': { PROCESSING: 'Sent. Waiting for a buyer to take it. Nothing leaves your balance until it fills.' },
+};
+
+// The rail a row was written under, where a rail's words can differ: a swap's venue.
+function railOf(p: Proposal): SwapDraft['venue'] | null {
+  return p.draft.kind === 'swap' ? p.draft.venue : null;
+}
+
+export function stageLabelOf(p: Proposal, stage: ProposalStage): string {
+  const rail = railOf(p);
+  return (rail === null ? undefined : RAIL_STAGE_LABEL[rail]?.[stage]) ?? STAGE_LABEL[stage];
+}
+
+export function stageCopyOf(p: Proposal, stage: ProposalStage): string {
+  const rail = railOf(p);
+  return (rail === null ? undefined : RAIL_STAGE_COPY[rail]?.[stage]) ?? STAGE_COPY[stage];
+}
 
 /* NOT_FOUND_OR_NOT_VALID is not here on purpose. When the relay answers it for a published
    intent the signed bytes stay valid until the deadline, so the rail leaves the row open with
@@ -868,10 +900,10 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     sentence: sentenceOf(p.draft),
     changes: p.verdict.outcome === 'needs_approval' ? (p.verdict.changes ?? []) : [],
     stage,
-    stageLabel: STAGE_LABEL[stage],
+    stageLabel: stageLabelOf(p, stage),
     // A move that did not go through says why in its own words, never the stage's stock line:
     // "A rule you set stopped it" was printed over every refusal, the app's own included.
-    stageCopy: byCause && reason !== null ? reason.sentence : STAGE_COPY[stage],
+    stageCopy: byCause && reason !== null ? reason.sentence : stageCopyOf(p, stage),
     providerStage: p.result?.evidence?.providerStage ?? null,
     waitingOn: waitingOn(p, stage),
     terminal: TERMINAL.has(stage),
