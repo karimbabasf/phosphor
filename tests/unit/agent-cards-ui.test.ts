@@ -792,7 +792,7 @@ test('the deposit card shows no address until the tick and Show the address, the
   assert.equal(all(card, 'tcard-place')[0].hidden, false, 'the ends went before the address came');
 
   // Show the address without the tick does nothing.
-  const go = all(card, 'btn').find((b: Any) => b.dataset.role === 'show-address');
+  const go = all(card, 'btn').find((b: Any) => b.dataset.role === 'show-address') as Any;
   assert.equal(go.disabled, true);
   fire(go, 'click');
   assert.equal(all(card, 'deposit-address').length, 0, 'the address came without the tick');
