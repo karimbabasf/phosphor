@@ -5,6 +5,15 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.5
+
+Built 2026-09-25. Tagged v0.10.5 on 2026-09-25.
+
+- A new wallet makes one key, the EVM key that signs everything, and nothing else. Wallets used to
+  carry a Solana and a NEAR key too that the app never signed with, so money sent to either
+  address was stuck. Importing a Solana or NEAR private key is now refused with a sentence.
+- A wallet made before 0.10.5 opens exactly as it did, with every key it holds.
+
 ## 0.10.4
 
 Built 2026-09-25. Tagged v0.10.4 on 2026-09-25.
