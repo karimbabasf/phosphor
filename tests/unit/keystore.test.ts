@@ -18,27 +18,27 @@ import path from 'node:path';
 import { base58Decode, base58Encode } from '../../src/chain/near.ts';
 import { canonical, seal, open as openSealed } from '../../src/keystore/envelope.ts';
 import { checkParams, defaultParams } from '../../src/keystore/kdf.ts';
-import {
-  ed25519PublicKey,
-  mnemonicProblem,
-  mnemonicToSeed,
-  newWallet,
-  walletFromMnemonic,
-} from '../../src/keystore/derive.ts';
+import { addressesFromKeys, mnemonicProblem, newWallet, walletFromMnemonic } from '../../src/keystore/derive.ts';
 import { backupCopies, createKeystore, keystorePathFor, readHeader } from '../../src/keystore/store.ts';
 
-// The BIP39 test vector every wallet agrees on, and the three addresses it produces.
+// The BIP39 test vector every wallet agrees on, and the EVM address it produces.
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
-const VECTOR_SEED =
-  '5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc1' +
-  '9a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4';
 const VECTOR_EVM = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
-const VECTOR_SOLANA = 'HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk';
-// NEAR has no household vector for m/44'/397'/0', so the assertion is the property that
-// defines an implicit account: the id is the hex of the public key the derivation produced,
-// and it is recorded here so a change to the derivation shows up as a diff rather than as a
-// wallet nobody can restore.
-const VECTOR_NEAR = '5510e2b44cae6eb807e3e0e45d579dda058c274abcba15e5cb84636f5d1ee412';
+/* A Solana or NEAR key as a pre-0.10.5 wallet stored it: base58 of seed(32) || public(32).
+   Nothing makes them any more; files written before 0.10.5 still hold them and must keep
+   opening. Made fresh per run so no key-shaped literal sits in the tree. */
+function legacyEd25519(): { secret: string; publicHex: string; publicB58: string } {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
+  const seed = Buffer.from(privateKey.export({ format: 'jwk' }).d as string, 'base64url');
+  const pub = Buffer.from(publicKey.export({ format: 'jwk' }).x as string, 'base64url');
+  return { secret: base58Encode(Buffer.concat([seed, pub])), publicHex: pub.toString('hex'), publicB58: base58Encode(pub) };
+}
+const LEGACY_SOLANA = legacyEd25519();
+const LEGACY_NEAR = legacyEd25519();
+const LEGACY_SOLANA_SECRET = LEGACY_SOLANA.secret;
+const LEGACY_NEAR_SECRET = 'ed25519:' + LEGACY_NEAR.secret;
+const LEGACY_SOLANA_ADDRESS = LEGACY_SOLANA.publicB58;
+const LEGACY_NEAR_ID = LEGACY_NEAR.publicHex;
 
 /* Cheap parameters, because the shipped ones are 256 MiB and about half a second EACH and
    these run on every commit. The code path is identical: the cost is a header field, and the
@@ -58,25 +58,20 @@ function tempKeys(): string {
 
 // ---------- derivation ----------
 
-test('the BIP39 seed matches the published vector', () => {
-  assert.equal(mnemonicToSeed(VECTOR).toString('hex'), VECTOR_SEED);
-});
-
-test('the vector mnemonic derives the addresses every other wallet shows for it', () => {
+test('the vector mnemonic derives the EVM address every other wallet shows for it, and nothing else', () => {
   const wallet = walletFromMnemonic(VECTOR);
   assert.equal(wallet.addresses.evm, VECTOR_EVM, 'EVM at m/44/60/0/0/0');
-  assert.equal(wallet.addresses.solana, VECTOR_SOLANA, "Solana at m/44'/501'/0'/0'");
-  assert.equal(wallet.addresses.near, VECTOR_NEAR, "NEAR implicit id at m/44'/397'/0'");
-  // The NEAR public key is the same bytes as the implicit id, spelled in base58.
-  assert.equal(wallet.addresses.nearPublicKey, 'ed25519:' + base58Encode(Buffer.from(VECTOR_NEAR, 'hex')));
+  assert.deepEqual(Object.keys(wallet.addresses), ['evm'], 'no Solana or NEAR address');
+  assert.deepEqual(Object.keys(wallet.keys), ['evm'], 'no Solana or NEAR key');
 });
 
-test('a mnemonic round trips through its own seed to the same ed25519 public key', () => {
-  const wallet = walletFromMnemonic(VECTOR);
-  const secret = wallet.keys.nearSecret.slice('ed25519:'.length);
-  const material = Buffer.from(base58Decode(secret));
-  assert.equal(material.length, 64, 'a NEAR secret key is seed || public');
-  assert.equal(ed25519PublicKey(material.subarray(0, 32)).toString('hex'), VECTOR_NEAR);
+test('a legacy Solana and NEAR key still read to the addresses they always had', () => {
+  const legacy = addressesFromKeys({ solana: LEGACY_SOLANA_SECRET, nearSecret: LEGACY_NEAR_SECRET });
+  assert.equal(legacy.solana, LEGACY_SOLANA_ADDRESS);
+  assert.equal(legacy.near, LEGACY_NEAR_ID);
+  // The NEAR public key is the same bytes as the implicit id, spelled in base58.
+  assert.equal(legacy.nearPublicKey, 'ed25519:' + base58Encode(Buffer.from(LEGACY_NEAR_ID, 'hex')));
+  assert.equal(base58Decode(LEGACY_NEAR_SECRET.slice('ed25519:'.length)).length, 64, 'a NEAR secret key is seed || public');
 });
 
 test('a phrase that is not twelve valid words is refused with a sentence, not a stack trace', () => {
@@ -87,12 +82,12 @@ test('a phrase that is not twelve valid words is refused with a sentence, not a 
   assert.equal(mnemonicProblem(`  ${VECTOR.toUpperCase()}  `), null, 'case and spacing are normalised');
 });
 
-test('a fresh wallet is twelve words and three usable addresses', () => {
+test('a fresh wallet is twelve words and one EVM key', () => {
   const made = newWallet();
   assert.equal(made.mnemonic.split(' ').length, 12);
   assert.equal(mnemonicProblem(made.mnemonic), null);
   assert.match(made.wallet.addresses.evm, /^0x[0-9a-fA-F]{40}$/);
-  assert.equal(made.wallet.addresses.near.length, 64);
+  assert.deepEqual(Object.keys(made.wallet.keys), ['evm']);
   // And it is reproducible from the words alone, which is the whole claim of a backup.
   assert.deepEqual(walletFromMnemonic(made.mnemonic).addresses, made.wallet.addresses);
 });
@@ -317,8 +312,33 @@ test('an imported mnemonic produces the same wallet as creating one from those w
   const store = keystore(keysPath);
   const imported = await store.importWallet('a long enough password', { mnemonic: VECTOR });
   assert.equal(imported.addresses.evm, VECTOR_EVM);
-  assert.equal(imported.addresses.solana, VECTOR_SOLANA);
+  assert.equal(imported.addresses.solana, null, 'the words make no Solana key');
+  assert.equal(imported.addresses.near, null, 'the words make no NEAR key');
   assert.equal(store.reveal().mnemonic, VECTOR, 'the words are kept, so the wallet can be shown its own backup');
+  assert.deepEqual(Object.keys(store.reveal().keys).sort(), ['evm', 'mnemonic']);
+});
+
+test('a created wallet writes one key to disk, and its header names one address', async () => {
+  const keysPath = tempKeys();
+  const store = keystore(keysPath);
+  const made = await store.create('a long enough password');
+  assert.deepEqual(Object.keys(store.reveal().keys).sort(), ['evm', 'mnemonic']);
+  assert.deepEqual(made.addresses, { evm: made.addresses.evm, solana: null, near: null, nearPublicKey: null });
+  assert.deepEqual(readHeader(keysPath)?.addresses, made.addresses);
+  // And the file reopens clean: the header check agrees with a payload that has one key.
+  const reopened = keystore(keysPath);
+  assert.equal((await reopened.unlock('a long enough password')).ok, true);
+  assert.equal(reopened.addressReport().tampered, false);
+});
+
+test('a raw Solana or NEAR key is refused at import, and no file is written', async () => {
+  const evm = walletFromMnemonic(VECTOR).keys.evm;
+  for (const keys of [{ solana: LEGACY_SOLANA_SECRET }, { nearSecret: LEGACY_NEAR_SECRET }, { evm, nearSecret: LEGACY_NEAR_SECRET }]) {
+    const keysPath = tempKeys();
+    await assert.rejects(() => keystore(keysPath).importWallet('a long enough password', { keys }), /one EVM key/);
+    assert.equal(fs.existsSync(keystorePathFor(keysPath)), false);
+  }
+  await assert.rejects(() => keystore(tempKeys()).importWallet('a long enough password', { keys: {} }), /EVM private key/);
 });
 
 test('raw keys import without a mnemonic, and the header says there is none', async () => {
@@ -361,8 +381,8 @@ function plaintextWallet(keysPath: string): { evm: string } {
     JSON.stringify(
       {
         evm: { address: wallet.addresses.evm, privateKey: wallet.keys.evm },
-        solana: { address: wallet.addresses.solana, secretKey: wallet.keys.solana },
-        near: { accountId: wallet.addresses.near, publicKey: wallet.addresses.nearPublicKey, secretKey: wallet.keys.nearSecret },
+        solana: { address: LEGACY_SOLANA_ADDRESS, secretKey: LEGACY_SOLANA_SECRET },
+        near: { accountId: LEGACY_NEAR_ID, secretKey: LEGACY_NEAR_SECRET },
         hyperliquidAgent: { privateKey: `0x${'ab'.repeat(32)}`, address: '0xagent' },
       },
       null,
@@ -411,6 +431,11 @@ test('migration verifies the round trip and the address before it destroys anyth
   assert.equal(reopened.state(), 'locked');
   assert.equal((await reopened.unlock('a long enough password')).ok, true);
   assert.equal(reopened.addresses().evm, before.evm);
+  // A legacy three-key wallet keeps its Solana and NEAR keys, and the header check still holds.
+  assert.equal(reopened.addresses().near, LEGACY_NEAR_ID);
+  assert.equal(reopened.addresses().solana, LEGACY_SOLANA_ADDRESS);
+  assert.equal(reopened.reveal().keys.near?.secretKey, LEGACY_NEAR_SECRET);
+  assert.equal(reopened.addressReport().tampered, false);
 });
 
 /* A KILL INSIDE THE DESTROY LOOP used to strand the master key on disk in the clear, forever.

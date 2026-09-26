@@ -438,11 +438,13 @@ rather than a translation:
       "solana": { "address": "<base58>",    "secretKey": "<base58 of seed || public>" }
     }
 
-A new wallet derives from twelve BIP39 words: EVM at m/44'/60'/0'/0/0 through viem, Solana at
-m/44'/501'/0'/0' and NEAR at m/44'/397'/0' through SLIP-0010 ed25519 written in house with
-node:crypto. The published vector "abandon abandon ... about" derives
-`0x9858EfFD232B4033E47d90003D41EC34EcaEda94` and `HAgk14JpMQLgt6rVgv7cBQFJWFto5Dqxi472uT3DKpqk`,
-which `tests/unit/keystore.test.ts` asserts: a wallet made here opens in MetaMask and Phantom.
+A new wallet derives ONE key from twelve BIP39 words: EVM at m/44'/60'/0'/0/0 through viem. The
+published vector "abandon abandon ... about" derives `0x9858EfFD232B4033E47d90003D41EC34EcaEda94`,
+which `tests/unit/keystore.test.ts` asserts: a wallet made here opens in MetaMask. The `near` and
+`solana` entries above exist only in files written before 0.10.5, which derived a Solana and a
+NEAR key too; those files open unchanged. Since 0.10.5 a new or imported wallet holds no Solana
+or NEAR key, and an import that brings one is refused, because an address the app cannot spend
+from is a place money can be sent and stranded.
 
 The wallet locks after fifteen minutes with nobody at the window, when the machine sleeps, when
 the window closes, and on demand. Locked, every read still works, and every write proposal an
@@ -474,8 +476,8 @@ NEAR Intents rails (`src/rails/intents-native.ts`, `intents-send.ts`, `intents-s
 EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). The chain signers that used to
 live in `src/chain/evm.ts` and `src/chain/near.ts` went with the chain wallets on 2026-09-16;
 those files now hold the EVM readers and explorer prefixes, the NEAR RPC, base58 and the account
-id rules. A wallet's mnemonic still derives the Solana and NEAR keys into the sealed file, for
-recovery in another wallet, and nothing here reads them.
+id rules. Wallets made before 0.10.5 still seal a Solana and a NEAR key, and nothing here reads them; a
+wallet made since holds the EVM key alone.
 
 `keygen` checks itself before it generates anything, on every run: the canonical Ethereum test
 key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`. A mismatch

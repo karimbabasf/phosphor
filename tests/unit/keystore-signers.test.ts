@@ -56,14 +56,13 @@ test('while unlocked every signer and every reader answers', async () => {
 
 test('while locked the readers still answer, because addresses come from the header', async () => {
   const { keysPath, store } = await walletOnDisk();
-  const wallet = walletFromMnemonic(VECTOR);
   store.lock();
 
   assert.equal(store.state(), 'locked');
   assert.equal(evmAddress(keysPath), VECTOR_EVM, 'the EVM address is the intents account and the balance reader');
   assert.equal(liveIntentsSigner.address(keysPath), VECTOR_EVM);
   assert.equal(liveSignPort.address(keysPath), VECTOR_EVM);
-  assert.equal(store.addresses().solana, wallet.addresses.solana);
+  assert.equal(store.addresses().solana, null, 'a wallet made from words holds no Solana key');
 });
 
 test('while locked every signer refuses, and says the wallet is locked', async () => {

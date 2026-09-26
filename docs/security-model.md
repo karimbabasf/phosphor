@@ -514,8 +514,9 @@ Intents rails (`src/rails/intents-native.ts`, `src/rails/intents-send.ts`, `src/
 and EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). Nothing signs a chain
 transaction: the chain signers that used to live in `src/chain/evm.ts` and `src/chain/near.ts`
 went with the chain wallets (2026-09-16), and those two files now hold only the readers, the
-explorer prefixes, the NEAR RPC and the address rules. The keystore file still seals the Solana
-and NEAR keys a wallet's mnemonic derives, and nothing reads them.
+explorer prefixes, the NEAR RPC and the address rules. Since 0.10.5 a new wallet holds the EVM
+key alone, and importing a Solana or NEAR key is refused. A file made before 0.10.5 still seals
+the Solana and NEAR keys its mnemonic derived, and nothing reads them.
 
 Every amount that reaches a signature is a BigInt in base units, checked against the quote the
 human approved (`checkIntentPayload`), and the quote itself is checked against the venue's

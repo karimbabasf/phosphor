@@ -245,7 +245,7 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
     if (problem !== null) return fail(res, 400, problem);
   }
   const raw = body.keys !== null && typeof body.keys === 'object' ? (body.keys as Partial<RailKeys>) : undefined;
-  if (mnemonic === undefined && raw === undefined) return fail(res, 400, 'bring twelve words or at least one private key');
+  if (mnemonic === undefined && raw === undefined) return fail(res, 400, 'bring twelve words or an EVM private key');
 
   try {
     const out = await ctx.keystore.importWallet(password, { mnemonic, keys: raw });
