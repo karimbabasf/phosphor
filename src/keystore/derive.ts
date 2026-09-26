@@ -1,22 +1,21 @@
-// Twelve words to three chains.
+// Twelve words to one key.
 //
-// A person cannot back up three random private keys. They can write twelve words down, and
-// every wallet they have ever used works that way, so a new Phosphor wallet is a BIP39
-// mnemonic and the three rail keys are derived from it.
+// A person cannot back up a raw private key. They can write twelve words down, and every
+// wallet they have ever used works that way, so a new Phosphor wallet is a BIP39 mnemonic and
+// its one key is derived from it:
 //
 //   EVM      m/44'/60'/0'/0/0    through viem, which owns the secp256k1 and the EIP-55 casing
-//   Solana   m/44'/501'/0'/0'    SLIP-0010 ed25519, written here
-//   NEAR     m/44'/397'/0'       SLIP-0010 ed25519, written here
 //
-// SLIP-0010 for ed25519 is fifteen lines of HMAC-SHA512 and it is written here rather than
-// pulled in, because the alternative is a dependency in the process that holds the keys. It is
-// also the simple half of the standard: ed25519 has no public derivation, so every step is
-// hardened and the only operation is HMAC over the parent key.
+// ONE key, on purpose. NEAR Intents and Hyperliquid both take ERC-191 signatures from this
+// key, so it is the whole wallet. Wallets made before 0.10.5 also carried a Solana and a NEAR
+// key derived from the same words; nothing signed with them, and a second address is a second
+// place money can be sent and stranded (5 NEAR, 2026-09-18). A new wallet makes neither.
+// Old files that still hold them open unchanged: addressesFromKeys below reads them so the
+// header check stays whole, and nothing else does.
 //
-// Every step is checked against a published vector by the test beside this file. The mnemonic
-// "abandon abandon ... about" is the BIP39 vector every wallet agrees on, and the three
-// addresses it derives here are the three addresses MetaMask, Phantom and a NEAR wallet show
-// for it. That is what makes a wallet made here recoverable somewhere else.
+// The mnemonic "abandon abandon ... about" is the BIP39 vector every wallet agrees on, and the
+// address it derives here is the address MetaMask shows for it, checked by the test beside
+// this file. That is what makes a wallet made here recoverable somewhere else.
 
 import crypto from 'node:crypto';
 import { english, generateMnemonic, mnemonicToAccount, privateKeyToAccount } from 'viem/accounts';
@@ -26,36 +25,26 @@ import { base58Decode, base58Encode } from '../chain/near.ts';
 export type RailKeys = {
   // 0x-prefixed, 32 bytes. The master key: it moves funds on every EVM chain.
   evm: `0x${string}`;
+  // Legacy, read from pre-0.10.5 files only, never made or imported.
   // base58 of seed(32) || public(32), which is what every Solana tool means by a secret key.
-  solana: string;
-  // 'ed25519:' + base58 of seed(32) || public(32), NEAR's own spelling.
-  nearSecret: string;
+  solana?: string;
+  // Legacy, as above. 'ed25519:' + base58 of seed(32) || public(32), NEAR's own spelling.
+  nearSecret?: string;
 };
 
 export type Addresses = {
   evm: string;
-  solana: string;
-  // The implicit account id, which is the hex of the public key. It exists the moment it is
-  // funded, so a fresh wallet has a NEAR address without anybody registering a name.
-  near: string;
-  nearPublicKey: string; // 'ed25519:' + base58, the form the RPC and the access key list use
+  // Legacy, as above.
+  solana?: string;
+  near?: string;
+  nearPublicKey?: string;
 };
 
-export type Wallet = { keys: RailKeys; addresses: Addresses };
+export type Wallet = { keys: { evm: `0x${string}` }; addresses: { evm: string } };
 
 const EVM_PATH = "m/44'/60'/0'/0/0";
-const SOLANA_PATH = "m/44'/501'/0'/0'";
-const NEAR_PATH = "m/44'/397'/0'";
 
 // ---------- BIP39 ----------
-
-// PBKDF2-HMAC-SHA512, 2048 iterations, salt "mnemonic" + passphrase, 64 bytes out. That is the
-// whole of BIP39's seed derivation and node:crypto has all of it. No passphrase is accepted:
-// a thirteenth secret the user has to remember beside the twelve words is a way to lose money,
-// and every wallet that offers it says so.
-export function mnemonicToSeed(mnemonic: string): Buffer {
-  return crypto.pbkdf2Sync(mnemonic.normalize('NFKD'), Buffer.from('mnemonic', 'utf8'), 2048, 64, 'sha512');
-}
 
 function newMnemonic(): string {
   // 128 bits of entropy, which is twelve words. viem draws from a CSPRNG and applies the
@@ -94,7 +83,7 @@ export function mnemonicProblem(raw: string): string | null {
   const phrase = normaliseMnemonic(raw);
   const words = phrase === '' ? [] : phrase.split(' ');
   // Twelve is what this app writes. Twenty-four is what most other wallets write, and a phrase
-  // carried in from one of them derives the same three paths, so restore takes both.
+  // carried in from one of them derives the same EVM path, so restore takes both.
   if (words.length !== 12 && words.length !== 24) return `a recovery phrase is twelve words (or twenty-four from another wallet); this one has ${words.length}`;
   const unknown = words.filter((w) => !english.includes(w));
   if (unknown.length > 0) return `these are not words from the recovery list: ${unknown.slice(0, 3).join(', ')}`;
@@ -105,48 +94,6 @@ export function mnemonicProblem(raw: string): string | null {
     return `that recovery phrase does not derive a wallet: ${err instanceof Error ? err.message : String(err)}`;
   }
   return null;
-}
-
-// ---------- SLIP-0010, ed25519 ----------
-
-type Node = { key: Buffer; chain: Buffer };
-
-function master(seed: Buffer): Node {
-  const I = crypto.createHmac('sha512', Buffer.from('ed25519 seed', 'utf8')).update(seed).digest();
-  return { key: I.subarray(0, 32), chain: I.subarray(32) };
-}
-
-// Hardened only, which is not a simplification: ed25519 has no public child derivation, so
-// SLIP-0010 defines nothing else for this curve.
-function child(node: Node, index: number): Node {
-  const ser = Buffer.alloc(4);
-  ser.writeUInt32BE((index | 0x80000000) >>> 0);
-  const data = Buffer.concat([Buffer.from([0]), node.key, ser]);
-  const I = crypto.createHmac('sha512', node.chain).update(data).digest();
-  return { key: I.subarray(0, 32), chain: I.subarray(32) };
-}
-
-function derivePath(seed: Buffer, path: string): Buffer {
-  const parts = path.split('/');
-  if (parts[0] !== 'm') throw new Error(`a derivation path starts at m, got ${path}`);
-  let node = master(seed);
-  for (const part of parts.slice(1)) {
-    if (!part.endsWith("'")) throw new Error(`ed25519 derives hardened steps only, got ${part}`);
-    const index = Number.parseInt(part.slice(0, -1), 10);
-    if (!Number.isInteger(index) || index < 0) throw new Error(`not a derivation index: ${part}`);
-    node = child(node, index);
-  }
-  return node.key;
-}
-
-// The public half of an ed25519 seed. node:crypto has no "seed to public key" call, so the
-// seed is wrapped in the fixed PKCS#8 prefix for ed25519 and the key object does the rest.
-export function ed25519PublicKey(seed: Buffer): Buffer {
-  const pkcs8 = Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), seed]);
-  const key = crypto.createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' });
-  const jwk = crypto.createPublicKey(key).export({ format: 'jwk' });
-  if (typeof jwk.x !== 'string') throw new Error('ed25519 public key export produced nothing');
-  return Buffer.from(jwk.x, 'base64url');
 }
 
 // ---------- the wallet ----------
@@ -160,29 +107,10 @@ export function walletFromMnemonic(rawMnemonic: string): Wallet {
   const evmKey = account.getHdKey().privateKey;
   if (evmKey === null) throw new Error('the EVM derivation produced no private key');
 
-  const seed = mnemonicToSeed(mnemonic);
-  const solSeed = derivePath(seed, SOLANA_PATH);
-  const solPublic = ed25519PublicKey(solSeed);
-  const nearSeed = derivePath(seed, NEAR_PATH);
-  const nearPublic = ed25519PublicKey(nearSeed);
-
-  const wallet: Wallet = {
-    keys: {
-      evm: `0x${Buffer.from(evmKey).toString('hex')}`,
-      solana: base58Encode(Buffer.concat([solSeed, solPublic])),
-      nearSecret: 'ed25519:' + base58Encode(Buffer.concat([nearSeed, nearPublic])),
-    },
-    addresses: {
-      evm: account.address,
-      solana: base58Encode(solPublic),
-      near: nearPublic.toString('hex'),
-      nearPublicKey: 'ed25519:' + base58Encode(nearPublic),
-    },
+  return {
+    keys: { evm: `0x${Buffer.from(evmKey).toString('hex')}` },
+    addresses: { evm: account.address },
   };
-  seed.fill(0);
-  solSeed.fill(0);
-  nearSeed.fill(0);
-  return wallet;
 }
 
 export function newWallet(): { mnemonic: string; wallet: Wallet } {
@@ -192,8 +120,9 @@ export function newWallet(): { mnemonic: string; wallet: Wallet } {
 
 // ---------- addresses from raw keys ----------
 
-// The import path for somebody who already has three keys and no phrase, and the path a
-// migrated keys.json takes: the header needs the addresses whatever produced the keys.
+// The import path for somebody who has an EVM key and no phrase, and the path an existing
+// file takes on open: the header needs the addresses whatever produced the keys, including the
+// legacy Solana and NEAR keys a pre-0.10.5 file still carries.
 export function addressesFromKeys(keys: Partial<RailKeys>): Partial<Addresses> {
   const out: Partial<Addresses> = {};
   if (keys.evm !== undefined && (keys.evm as string) !== '') {

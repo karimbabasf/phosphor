@@ -36,7 +36,7 @@ import type { Sealed } from './envelope.ts';
 import { defaultParams, deriveKek } from './kdf.ts';
 import type { KdfParams } from './kdf.ts';
 import { addressesFromKeys, newWallet, normaliseMnemonic, walletFromMnemonic } from './derive.ts';
-import type { Addresses, RailKeys } from './derive.ts';
+import type { RailKeys, Wallet } from './derive.ts';
 import { seWrap } from './sewrap.ts';
 import type { SeWrapped } from './sewrap.ts';
 import { atomicWrite } from '../fsatomic.ts';
@@ -292,12 +292,12 @@ function sameAddresses(a: StoredAddresses, b: StoredAddresses): boolean {
   return canonical(a) === canonical(b);
 }
 
-function payloadFrom(mnemonic: string | null, keys: RailKeys, addresses: Addresses): KeysPayload {
+// One key. A new payload carries no Solana or NEAR key (see derive.ts for why); only a file
+// written before 0.10.5 still holds them, and it keeps them untouched.
+function payloadFrom(mnemonic: string | null, keys: Wallet['keys'], addresses: Wallet['addresses']): KeysPayload {
   return {
     ...(mnemonic !== null ? { mnemonic } : {}),
     evm: { address: addresses.evm, privateKey: keys.evm },
-    solana: { address: addresses.solana, secretKey: keys.solana },
-    near: { accountId: addresses.near, publicKey: addresses.nearPublicKey, secretKey: keys.nearSecret },
   };
 }
 
@@ -774,17 +774,14 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       return payloadFrom(normaliseMnemonic(from.mnemonic), wallet.keys, wallet.addresses);
     }
     const raw = from.keys ?? {};
-    if (raw.evm === undefined && raw.solana === undefined && raw.nearSecret === undefined) {
-      throw new Error('bring twelve words or at least one private key');
+    // A Solana or NEAR key is refused, not dropped: dropping it would tell the person their
+    // key was taken when the wallet will never read it.
+    if (raw.solana !== undefined || raw.nearSecret !== undefined) {
+      throw new Error('Phosphor holds one EVM key; a Solana or NEAR key cannot be imported');
     }
-    const derived = addressesFromKeys(raw);
-    return {
-      ...(raw.evm !== undefined ? { evm: { address: derived.evm, privateKey: raw.evm } } : {}),
-      ...(raw.solana !== undefined ? { solana: { address: derived.solana, secretKey: raw.solana } } : {}),
-      ...(raw.nearSecret !== undefined
-        ? { near: { accountId: derived.near, publicKey: derived.nearPublicKey, secretKey: raw.nearSecret } }
-        : {}),
-    };
+    if (raw.evm === undefined || (raw.evm as string) === '') throw new Error('bring twelve words or an EVM private key');
+    const derived = addressesFromKeys({ evm: raw.evm });
+    return { evm: { address: derived.evm, privateKey: raw.evm } };
   }
 
   async function importWallet(password: string, from: { mnemonic?: string; keys?: Partial<RailKeys> }): Promise<{ addresses: StoredAddresses }> {
