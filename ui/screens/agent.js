@@ -814,6 +814,9 @@
     failure = null;
     queued = null;
     view = 'card';
+    /* The moves made before the quit went with the transcript: the next state frame still
+       carries them, and without this they come back as a column of fresh cards. */
+    bootAt = Date.now();
     for (var i = 0; i < mounts.length; i += 1) mounts[i].pinned = true;
     setPhase('idle', 'stopped');
   }

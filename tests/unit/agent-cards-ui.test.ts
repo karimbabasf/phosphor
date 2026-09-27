@@ -1490,3 +1490,40 @@ test('a waiting card out of view is one soft key above the box that names the mo
   fire(list, 'scroll');
   assert.equal(waitLine.hidden, true);
 });
+
+/* TURN OFF AFTER A TRADE LANDS ON THE EMPTY CARD. Karim, 2026-09-27: "when trades are made and
+   you turn off your agent it looks like this, horrible ux". The quit cleared the thread, then
+   the next state frame drew every move made since the window opened back as a fresh card. */
+test('turning the agent off after a trade shows the empty card, not the old receipts', async () => {
+  const world = build();
+  await new Promise((resolve) => setImmediate(resolve));
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+  await tick();
+  world.ask('swap 2 usdc to sol');
+  const done = withView({ id: 'q1', kind: 'swap', status: 'executed', createdAt: new Date().toISOString(), decidedAt: new Date().toISOString(), decidedBy: 'human', draft: SWAP_DRAFT, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' } });
+  world.proposals([done]);
+  assert.equal(world.cardNodes('move').length, 1);
+
+  const press = (label: string) => {
+    const btn = all(world.host, 'btn').find((b) => b.textContent.includes(label) && !b.hidden);
+    if (!btn) throw new Error(`no button "${label}"`);
+    fire(btn, 'click');
+  };
+  await tick();
+  press('Turn off');
+  const sheet = all(world.host, 'chat-sheet-card')[0];
+  fire(all(sheet, 'btn')[1], 'click');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  world.emit({ kind: 'status', state: 'off' });
+
+  // The next state frame still carries the trade.
+  world.proposals([done]);
+  assert.equal(world.cardNodes('move').length, 0, 'the old trade came back as a card after the quit');
+  assert.equal(all(world.host, 'agent-empty')[0].hidden, false, 'the empty card did not come back');
+
+  // A move made after the quit by another client still gets its card.
+  const later = withView({ ...done, id: 'q2', createdAt: new Date(Date.now() + 5000).toISOString() });
+  world.proposals([done, later]);
+  assert.equal(world.cardNodes('move').length, 1);
+});
