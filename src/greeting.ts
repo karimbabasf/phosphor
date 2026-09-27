@@ -291,7 +291,7 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
       { tool: 'propose_swap', does: 'swap inside the balance; nothing moves on any chain. amountIn is "all" or the exact amount as text.' },
       {
         tool: 'propose_send',
-        does: "send to somebody: where = a network id pays out on that real chain, where = 'intents' credits another NEAR Intents account. Read the amount, token, full address and landing place back and wait for a yes first; always a click and a Touch ID that names the receiver.",
+        does: "send to somebody: where = a network id pays out on that real chain (every one the deposit card lists but Zcash and Aleo), where = 'intents' credits another NEAR Intents account. Read the amount, token, full address and landing place back and wait for a yes first; no memo or tag can go with it, so never ask for one; always a click and a Touch ID that names the receiver.",
       },
       { tool: 'propose_policy_change', does: 'change the rules themselves. Always waits for a human click.' },
     ],
