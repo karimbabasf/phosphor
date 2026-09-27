@@ -25,6 +25,9 @@ import {
   payRefusal,
   recipientSentence,
 } from '../../src/rails/intents-pay.ts';
+import { depositFloorOf, ownDepositChain, readsOwnDeposit } from '../../src/rails/pay-rules.ts';
+import type { DepositFloor } from '../../src/rails/pay-rules.ts';
+import { parsePoaTokens } from '../../src/rails/intents-address.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 import { STATUS_DATA_LABEL } from '../../src/preflight/route-health.ts';
 import type { RouteAsk, RouteHealth, RouteState } from '../../src/preflight/route-health.ts';
@@ -176,7 +179,13 @@ type Overrides = {
   receiver?: Array<AddressSummary | null>;
   // The route checker, when the test is about NEAR Intents taking payouts to the chain.
   routes?: RouteHealth;
+  // The bridge's deposit address for the account on the chain (left out: one that is not the
+  // receiver; null: a bridge that did not answer), and its minimum deposit for the paid token.
+  own?: { address: string; memo: string | null } | null;
+  floor?: DepositFloor | null;
 };
+
+const OUR_DEPOSIT = '0x248f' + '0'.repeat(32) + 'ace7';
 
 function summaryOf(balance: string): AddressSummary {
   return { ...activityOf({ balance: { amount: balance, symbol: 'ETH' } }), tokens: [], tokensSource: 'blockscout', explorer: null, note: '' };
@@ -228,6 +237,7 @@ const signer: IntentsSignerPort = {
 function railOf(over: Overrides = {}) {
   const { api, calls } = apiOf(over);
   const reads: Array<{ network: string; address: string }> = [];
+  const owns: string[] = [];
   const answers = [...(over.receiver ?? [summaryOf('0.51'), summaryOf('0.51994')])];
   const rail = intentsPayRail({
     keysPath: '/nonexistent/keys.json',
@@ -245,8 +255,13 @@ function railOf(over: Overrides = {}) {
       reads.push({ network, address });
       return answers.length > 0 ? (answers.shift() as AddressSummary | null) : null;
     },
+    ownDeposit: async (_account, network) => {
+      owns.push(network);
+      return over.own === undefined ? { address: OUR_DEPOSIT, memo: null } : over.own;
+    },
+    depositFloor: async () => (over.floor === undefined ? null : over.floor),
   });
-  return { rail, calls, reads };
+  return { rail, calls, reads, owns };
 }
 
 async function refusal(rail: ReturnType<typeof railOf>['rail'], draft: IntentsPayDraft): Promise<string> {
@@ -667,4 +682,59 @@ test('only 1Click refusing the quote reads as a closed route: a wallet, generate
     assert.match(sim.summary, new RegExp(failure.message));
     await assert.rejects(railOf({ quoteFails: failure }).rail.execute(draftOf()), new RegExp(failure.message));
   }
+});
+
+// ---------- a payout to our own deposit address ----------
+
+/* Review V5 (2026-09-27): a payout to our own deposit address is a deposit on every chain, an EVM
+   chain, Solana and NEAR included, and the minimum and the deposit route bound it there too. Our
+   EVM deposit address is one key on every EVM chain, so the person who copies it from Add money as
+   "my wallet" and pays it on Base while Base deposits are paused leaves the money at the bridge. */
+test('a payout to our own deposit address on an EVM chain is a deposit: refused under the bridge minimum and while deposits there are paused', async () => {
+  const mine = { address: FRIEND.toLowerCase(), memo: null };
+  const under = railOf({ own: mine, floor: { listed: true, min: '1000000000000000000', decimals: 18 } });
+  const small = await refusal(under.rail, draftOf());
+  assert.match(small, /your own NEAR Intents deposit address on Ethereum, and the bridge credits a ETH deposit on Ethereum only from 1 ETH/);
+  assert.deepEqual(under.owns, ['eth']);
+  assert.equal(under.calls.quotes.length, 0);
+
+  const asked: RouteAsk[] = [];
+  const routes: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const state: RouteState = ask.direction === 'in' ? 'closed' : 'open';
+      return { network: ask.network, direction: ask.direction, state, reasons: state === 'closed' ? [{ source: 'status', state, text: 'Ethereum deposits paused', said: 'Ethereum deposits paused' }] : [], checkedAt: NOW };
+    },
+  };
+  const paused = railOf({ own: mine, floor: { listed: true, min: '1000000000000', decimals: 18 }, routes });
+  const sim = await paused.rail.simulate(draftOf());
+  assert.equal(sim.ok, false, sim.summary);
+  assert.equal(sim.reason, 'route_closed');
+  assert.match(sim.summary, /your own NEAR Intents deposit address on Ethereum/);
+  assert.ok(asked.some((a) => a.network === 'eth' && a.direction === 'in'));
+
+  const open = railOf({ own: mine, floor: { listed: true, min: '1000000000000', decimals: 18 } });
+  const back = await open.rail.simulate(draftOf());
+  assert.equal(back.ok, true, back.summary);
+  assert.match(back.summary, /This is your own NEAR Intents deposit address on Ethereum: the money comes back into your balance/);
+
+  // Not knowing is a refusal here too; somebody else's address is a plain payout.
+  assert.match(await refusal(railOf({ own: null }).rail, draftOf()), /bridge did not say what your own NEAR Intents deposit address on Ethereum is/);
+  assert.equal((await railOf().rail.simulate(draftOf())).ok, true);
+});
+
+test('our own deposit address is asked on every chain a payout lands on, and on a chain the bridge takes no deposits on it is Ethereum\'s', () => {
+  for (const network of ['eth', 'base', 'arb', 'hypercore', 'sol', 'fogo', 'near', 'btc', 'xrp', 'ton', 'abs']) {
+    assert.equal(readsOwnDeposit(network), true, network);
+  }
+  assert.equal(readsOwnDeposit('zec'), false);
+  assert.equal(readsOwnDeposit('madeupchain'), false);
+  assert.equal(ownDepositChain('base'), 'base');
+  assert.equal(ownDepositChain('sol'), 'sol');
+  assert.equal(ownDepositChain('abs'), 'eth');
+  // Abstract has no row on the bridge's list, so a payout to our own address there is refused.
+  const rows = parsePoaTokens([
+    { defuse_asset_identifier: 'eth:1:native', asset_name: 'ETH', decimals: 18, min_deposit_amount: '1', intents_token_id: 'nep141:eth.omft.near' },
+  ]);
+  assert.deepEqual(depositFloorOf(rows, 'abs', { assetId: 'nep141:eth.omft.near', native: true, contract: null }), { listed: false });
 });

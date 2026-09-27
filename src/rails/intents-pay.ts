@@ -69,7 +69,7 @@ import type { AddressActivity, AddressSummary, ChainNetwork, PayTarget } from '.
 import { pickOrExplain } from './asset-words.ts';
 import { intentsDepositAddress, poaSupportedTokens, spendNetworkOf } from './intents-address.ts';
 import type { PayFamily, PoaToken } from './intents-address.ts';
-import { depositFloorOf, needsTarget, payAddress, payChecks, paysOwnDeposit, readsOwnDeposit } from './pay-rules.ts';
+import { depositFloorOf, needsTarget, ownDepositChain, payAddress, payChecks, paysOwnDeposit, readsOwnDeposit } from './pay-rules.ts';
 import type { DepositFloor, OwnDeposit, PayNote } from './pay-rules.ts';
 
 // The funds are spent inside the verifier, so the counterparty is the verifier: the same
@@ -407,7 +407,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   async function chainRules(draft: IntentsPayDraft, p: Plan, owner: string, activity: AddressActivity | null): Promise<{ problems: string[]; notes: PayNote[]; own: boolean }> {
     const [target, own, floor] = await Promise.all([
       needsTarget(draft.network) ? targetRead(draft.network, p.to) : Promise.resolve(undefined),
-      readsOwnDeposit(draft.network) ? ownDepositRead(owner, draft.network) : Promise.resolve(undefined),
+      readsOwnDeposit(draft.network) ? ownDepositRead(owner, ownDepositChain(draft.network)) : Promise.resolve(undefined),
       readsOwnDeposit(draft.network)
         ? floorRead(draft.network, { assetId: p.destinationAsset, native: p.native, contract: p.issuer }).catch(() => null)
         : Promise.resolve(undefined),

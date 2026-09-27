@@ -1,5 +1,6 @@
-// The rules a payout obeys on the chains past EVM, Solana and NEAR, each one a refusal before a
-// quote is asked for and again before the key is touched (src/rails/intents-pay.ts runs them).
+// The rules a payout obeys on the chains past EVM, Solana and NEAR, and on every chain the rule
+// for our own deposit address, each one a refusal before a quote is asked for and again before
+// the key is touched (src/rails/intents-pay.ts runs them).
 //
 // WHY A PAYOUT CARRIES NO MEMO. 1Click's quote request has no memo, destination tag or comment
 // field at all (checked against its OpenAPI on 2026-09-26), so nothing this app signs can put one
@@ -19,7 +20,7 @@ import { validateAddressForFamily } from '../chainscan/networks.ts';
 import type { AddressActivity } from '../chainscan/common.ts';
 import type { PayTarget } from '../chainscan/destination.ts';
 import { toBaseUnits } from '../intents.ts';
-import { bridgeKeyOf, humanAmount, spendNetworkOf } from './intents-address.ts';
+import { bridgeKeyOf, humanAmount, receiveNetworkOf, spendNetworkOf } from './intents-address.ts';
 import type { PoaToken } from './intents-address.ts';
 
 // The chains where a deposit to an exchange is told apart by a memo, tag or comment.
@@ -30,12 +31,23 @@ export function needsTarget(network: string): boolean {
   return network === 'xrp' || network === 'stellar';
 }
 
-/* The chains where our own bridge deposit address is asked for before a payout: every chain
-   this rule set covers. On a memo chain it may be the one address the bridge shares with
-   everybody; on the rest it is a round trip, and the card says so. */
+/* The chains where our own bridge deposit address is asked for before a payout: every chain a
+   payout lands on, EVM, Solana and NEAR included, since a payout to it is a deposit there too and
+   obeys the bridge's minimum and its deposit route (review V5, 2026-09-27). On a memo chain it may
+   be the one address the bridge shares with everybody; on the rest it is a round trip, and the
+   card says so. */
 export function readsOwnDeposit(network: string): boolean {
   const pay = spendNetworkOf(network)?.pay;
-  return pay !== undefined && pay !== null && pay !== 'evm' && pay !== 'sol' && pay !== 'near';
+  return pay !== undefined && pay !== null;
+}
+
+/* The chain the bridge is asked for our deposit address on. A chain it takes no deposits on at
+   all (Abstract, a spend-only row) has no address of its own there, but our EVM deposit address is
+   one key the bridge hands back on every EVM chain, so the payout is compared with Ethereum's: paid
+   there, it finds no row on the bridge's list and is refused as a token it does not take. */
+export function ownDepositChain(network: string): string {
+  if (receiveNetworkOf(network) !== undefined) return network;
+  return spendNetworkOf(network)?.pay === 'evm' ? 'eth' : network;
 }
 
 function labelOf(network: string): string {

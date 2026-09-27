@@ -118,10 +118,13 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    a payment cannot create it), a Stellar token with no trustline, TRX
    to a Tron contract or to an address Tron would not describe, and our own bridge deposit
    address on Stellar, which the bridge shares and tells apart by memo. A payout to our own
-   deposit address anywhere else is a deposit and is refused where a deposit would not be
-   credited: under the bridge's minimum for the token, for a token it does not list there, while
-   the deposit route into the chain is paused, and on XRP while that address does not exist. A ledger that will not
-   answer one of those questions is a refusal. A TON address is sent non-bounceable.
+   deposit address on any other chain, the EVM chains, Solana and NEAR included, is a deposit and
+   is refused where a deposit would not be credited: under the bridge's minimum for the token, for
+   a token it does not list there (every token on Abstract, where the bridge takes no deposits and
+   our EVM deposit address is compared as it is on Ethereum), while the deposit route into the
+   chain is paused, and on XRP while that address does not exist. A ledger that will not answer
+   one of those questions is a refusal, and so is a bridge that will not say what our own deposit
+   address on the chain is. A TON address is sent non-bounceable.
 3. **The click, always.** `land()` in `src/proposals/execute.ts` turns any `allow` on
    `intents_send`, `intents_pay` or `hl_withdraw` into `needs_approval`, whatever the size. The
    `$100` no-click convenience applies to swaps, Hyperliquid deposits and trades (money that
