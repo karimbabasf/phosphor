@@ -314,12 +314,16 @@ test('a chain this app can pay out names the decoder family that validates its a
   assert.equal(spendNetworkOf('near')?.pay, 'near');
 });
 
-/* A chain with no decoder is pay: null and not a missing field, so the refusal can say "this app
-   cannot check a TON address yet" rather than "unknown chain". */
-test('a chain with no address decoder is explicitly unpayable', () => {
-  assert.equal(spendNetworkOf('ton')?.pay, null);
-  assert.equal(spendNetworkOf('tron')?.pay, null);
-  assert.equal(spendNetworkOf('xrp')?.pay, null);
+/* A chain the app does not pay out on is pay: null and not a missing field, so the refusal can say
+   "this app cannot check a Zcash address yet" rather than "unknown chain". Every other chain the
+   deposit card lists pays out since 2026-09-26. */
+test('Zcash and Aleo are explicitly unpayable, and the rest name their decoder', () => {
+  assert.equal(spendNetworkOf('zec')?.pay, null);
+  assert.equal(spendNetworkOf('aleo')?.pay, null);
+  assert.equal(spendNetworkOf('ton')?.pay, 'ton');
+  assert.equal(spendNetworkOf('tron')?.pay, 'tron');
+  assert.equal(spendNetworkOf('xrp')?.pay, 'xrp');
+  assert.equal(spendNetworkOf('sui')?.pay, 'move');
 });
 
 test('the ton row names the coin by the ticker the venue uses', () => {

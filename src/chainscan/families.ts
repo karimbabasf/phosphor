@@ -272,8 +272,12 @@ const trongrid: Family = {
   async activity(network, address, deps) {
     const answer = rec(await chainFetch(api(network, `/v1/accounts/${encodeURIComponent(address)}`), {}, deps));
     const account = rec(list(answer.data)[0]);
-    // Tron creates an account on its first incoming transfer; before that the list is empty.
-    if (Object.keys(account).length === 0) return { ...never(network, address, 'trongrid'), tokens: [], tokensSource: 'trongrid' };
+    // Tron creates an account on its first incoming transfer; before that the list is empty, and
+    // an address with no account holds no contract either.
+    if (Object.keys(account).length === 0) {
+      const empty = never(network, address, 'trongrid');
+      return { activity: { ...empty.activity, isContract: false }, tokens: [], tokensSource: 'trongrid' };
+    }
     const tokens: TokenBalance[] = [];
     for (const entry of list(account.trc20).map(rec)) {
       for (const [contract, raw] of Object.entries(entry)) {
@@ -282,7 +286,12 @@ const trongrid: Family = {
         if (known !== undefined && amount !== null) tokens.push({ symbol: known.symbol, name: known.name, amount, contract, usd: null });
       }
     }
-    const read = answered(network, address, 'trongrid', units(account.balance, NETWORKS[network].decimals), { lastSeen: isoFromMillis(account.latest_opration_time) });
+    // The account's type says what it is: "Contract" for a deployed contract (Tether's USDT
+    // answered so on 2026-09-26), absent or "Normal" for a wallet.
+    const read = answered(network, address, 'trongrid', units(account.balance, NETWORKS[network].decimals), {
+      lastSeen: isoFromMillis(account.latest_opration_time),
+      isContract: account.type === 'Contract',
+    });
     return { ...read, tokens, tokensSource: 'trongrid' };
   },
   async transaction(network, hash, deps) {

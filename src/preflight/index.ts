@@ -33,6 +33,7 @@ import { formatUnits } from 'viem';
 import type { OneClickQuote } from '../intents.ts';
 import type { Preflight, PreflightCheck, WriteDraft } from '../types.ts';
 import { sweepEstimate } from './arbitrum.ts';
+import { spendNetworkOf } from '../rails/intents-address.ts';
 import type { ArbGasRead } from './arbitrum.ts';
 import type { GasHistory } from './history.ts';
 
@@ -106,7 +107,8 @@ function landingOf(kind: WriteDraft['kind'], draft: WriteDraft): Landing {
       case 'arbitrum':
         return { model: 'evm', chain: 'arb', label: 'Arbitrum', native };
       default:
-        return { model: 'unread', label: LABELS[draft.network] ?? draft.network };
+        // Every other chain a payout lands on is named from the registry, never by its id.
+        return { model: 'unread', label: LABELS[draft.network] ?? spendNetworkOf(draft.network)?.name ?? draft.network };
     }
   }
   return { model: 'none' };

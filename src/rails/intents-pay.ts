@@ -11,8 +11,9 @@
 //
 //   1. THE ADDRESS IS DECODED, NOT MATCHED. src/chainscan validateAddress: an EVM address has to
 //      be 40 hex and, when it carries capitals, pass its own EIP-55 checksum; a Solana address
-//      has to decode to exactly 32 bytes; a NEAR id has to be one. A dropped digit is a total
-//      loss on a chain, so a dropped digit is a refusal before any quote.
+//      has to decode to exactly 32 bytes; a NEAR id has to be one; a Bitcoin, XRP, Stellar, TON,
+//      Tron or Cardano address has to pass its own checksum. A dropped digit is a total loss on
+//      a chain, so a dropped digit is a refusal before any quote.
 //
 //   2. IT ALWAYS WAITS FOR A CLICK AND A TOUCH ID THAT NAMES THE RECEIVER, whatever the size
 //      (src/proposals/execute.ts land(), src/vault/reason.ts). There is no allowlist for a
@@ -39,6 +40,13 @@
 // percentage, which is why the floor is 300 bps and why the flat fee is named in every
 // refusal and summary.
 //
+// THE CHAINS WITH RULES OF THEIR OWN (2026-09-26). Past EVM, Solana and NEAR, a chain can refuse
+// a payment the quote was happy to price: an XRP or Stellar account that demands a memo this app
+// cannot send, an account that does not exist yet and a payment under the reserve that would
+// create it, a Stellar token with no trustline, TRX to a Tron contract. src/rails/pay-rules.ts
+// holds those rules; they run on fresh reads before the dry quote and again before the live one,
+// and a rule the chain would not answer is a refusal.
+//
 // THE PROOF IS THE PAYOUT HASH. 1Click reports the destination chain transaction on SUCCESS,
 // and the receipt carries it with its explorer link. The receiver's holdings are read before
 // and after as a second opinion when the chain answers; the hash is the proof either way.
@@ -55,10 +63,13 @@ import { EXECUTE_MAX_AGE_MS, closedQuoteSentence, routeGate } from '../preflight
 import type { RouteHealth } from '../preflight/route-health.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { reasonOf } from './reasons.ts';
-import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, scanNetworkOf, validateAddressForFamily } from '../chainscan/index.ts';
-import type { AddressSummary, ChainNetwork } from '../chainscan/index.ts';
+import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, payTarget, scanNetworkOf } from '../chainscan/index.ts';
+import type { AddressActivity, AddressSummary, ChainNetwork, PayTarget } from '../chainscan/index.ts';
 import { pickOrExplain } from './asset-words.ts';
-import { spendNetworkOf } from './intents-address.ts';
+import { intentsDepositAddress, spendNetworkOf } from './intents-address.ts';
+import type { PayFamily } from './intents-address.ts';
+import { needsTarget, payAddress, payChecks, readsOwnDeposit } from './pay-rules.ts';
+import type { OwnDeposit, PayNote } from './pay-rules.ts';
 
 // The funds are spent inside the verifier, so the counterparty is the verifier: the same
 // allowlist entry the swap, send and HyperCore rails use.
@@ -83,12 +94,22 @@ export function minReceivedForPay(amount: number): number {
 }
 
 /* WHICH CHAINS THIS APP WILL PAY OUT ON. Not a list of chains it knows: a list of chains whose
-   addresses it can decode itself. The bridge accepts money from thirty five and this app hands
-   money to the ones where a dropped character is caught before a quote, which is every EVM chain,
-   Solana, Fogo and NEAR. The rest are refused by name, and the sentence says what is missing
-   rather than pretending the chain is unknown: it is on the deposit card, a person can see it. */
-export function payFamilyOf(network: string): 'evm' | 'sol' | 'near' | null {
+   addresses it can decode itself and whose receiver it can ask the chain about. The bridge
+   accepts money from thirty five and this app hands money to every one but two since 2026-09-26.
+   Those two are refused by name, and the sentence says what is missing rather than pretending
+   the chain is unknown: it is on the deposit card, a person can see it. */
+export function payFamilyOf(network: string): PayFamily | null {
   return spendNetworkOf(network)?.pay ?? null;
+}
+
+// Why a chain the deposit card lists is not one a payout lands on.
+const NO_PAY_WHY: Readonly<Record<string, string>> = {
+  zec: 'no public Zcash reader answers, so the chain cannot be asked about the address before money goes to it',
+  aleo: 'Aleo is a privacy chain, and how a payout is delivered there has not been checked',
+};
+
+function article(word: string): string {
+  return /^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`;
 }
 
 export function payRefusal(network: string): string | null {
@@ -101,9 +122,9 @@ export function payRefusal(network: string): string | null {
   }
   if (net.pay === null) {
     return (
-      `this app cannot check a ${net.name} address yet, so it will not pay one. Money can still ` +
+      `this app cannot check ${article(net.name)} address yet, so it will not pay one. Money can still ` +
       `come IN on ${net.name} through the deposit card, and it can be swapped into any coin, ` +
-      'but a payout needs an address this app can decode and it has no decoder for this chain'
+      `but a payout is not sent there: ${NO_PAY_WHY[net.id] ?? 'this app has no decoder for this chain'}`
     );
   }
   return null;
@@ -133,10 +154,18 @@ export function recipientSentence(network: string, recipient: SendRecipient): st
   const own = recipient.ownAddress ? `This is your own address on ${label}. ` : '';
   const a = recipient.activity;
   if (a === null || a.network !== scan) return `${own}This address could not be checked on ${label} right now.`.trim();
+  const holds = a.balance === null ? null : `holds ${roundAmount(a.balance.amount)} ${a.balance.symbol}`;
+  /* Most readers past the first six answer the balance and no count (a TON, XRP or Stellar
+     account says what it holds, not how often it was used), so a read with a balance is an
+     answer, and an empty one still gets the check-twice sentence. */
+  if (a.ok && a.txCount === null && a.balance !== null && a.isContract !== true) {
+    return Number(a.balance.amount) === 0
+      ? `${own}This address holds no ${a.balance.symbol} on ${label} right now. Check it twice.`.trim()
+      : `${own}This address ${holds} on ${label}.`.trim();
+  }
   if (!a.ok || a.txCount === null) {
     return `${own}This address could not be checked on ${label}${a.error ? ` (${oneLine(a.error, 80)})` : ''}.`.trim();
   }
-  const holds = a.balance === null ? null : `holds ${roundAmount(a.balance.amount)} ${a.balance.symbol}`;
   if (a.isContract === true) {
     return `${own}This address is a contract on ${label} with ${a.txCount} transactions${holds === null ? '' : `; it ${holds}`}.`.trim();
   }
@@ -167,6 +196,12 @@ export type IntentsPayRailDeps = {
   // The checks run on the live quote before the intent is generated (src/preflight/). The
   // registry wires the live one; absent means none, which is the tests of the rail itself.
   preflight?: PreflightRunner;
+  // The receiver's rules on the XRP Ledger and Stellar (src/chainscan/destination.ts), read
+  // fresh before each quote. Null is a ledger that did not answer, and a payout is refused on it.
+  payTarget?: (network: string, address: string) => Promise<PayTarget | null>;
+  // Our own bridge deposit address on the chain, which on a memo chain may be the one address
+  // the bridge shares with everybody. Null is a bridge that did not answer.
+  ownDeposit?: (account: string, network: string) => Promise<OwnDeposit | null>;
   // Whether NEAR Intents is taking payouts to the chain right now (src/preflight/route-health.ts).
   // The registry wires the live one; absent, no route is called closed.
   routes?: RouteHealth;
@@ -204,6 +239,21 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       if (scan === null) return Promise.resolve(null);
       return addressSummary(scan, address, { fetchImpl, state: createChainFetchState() }).catch(() => null);
     });
+  // Eight seconds, the bound the receiver read at propose time has: these run inside a propose.
+  const targetRead =
+    deps.payTarget ??
+    ((network: string, address: string) => {
+      const scan = scanNetworkOf(network);
+      if (scan === null) return Promise.resolve(null);
+      return payTarget(scan, address, { fetchImpl, state: createChainFetchState(), deadline: Date.now() + 8_000 }).catch(() => null);
+    });
+  const ownDepositRead =
+    deps.ownDeposit ??
+    ((account: string, network: string) =>
+      intentsDepositAddress(account, network, fetchImpl).then(
+        (d): OwnDeposit => ({ address: d.address, memo: d.memo }),
+        () => null,
+      ));
 
   type Plan = {
     chain: string;
@@ -215,6 +265,9 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     amountBase: bigint;
     minReceivedBase: bigint;
     to: string; // the receiver as the chain spells it, decoded here rather than trusted
+    given: string | null; // the spelling the draft was given, when the payout sends another of the same account
+    issuer: string | null; // the destination token's contract or issuer on the chain
+    priceUsd: number | null; // the held coin's price on the venue's list, for a minimum said in dollars
     slippageBps: number | undefined;
   };
 
@@ -242,14 +295,15 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     return draft.network;
   }
 
-  // The receiver, decoded again here rather than trusted. Our own address is allowed (that is
-  // what a withdrawal to our wallet is now) and the summary says so.
-  function requireReceiver(draft: IntentsPayDraft): string {
+  // The receiver, decoded again here rather than trusted, by the chain's own rules for a payout
+  // address (src/rails/pay-rules.ts payAddress). Our own address is allowed (that is what a
+  // withdrawal to our wallet is now) and the summary says so.
+  function requireReceiver(draft: IntentsPayDraft): { to: string; given: string | null } {
     const family = payFamilyOf(draft.network);
     if (family === null) throw new Error(payRefusal(draft.network) ?? `this app cannot pay out on ${payLabel(draft.network)}`);
-    const checked = validateAddressForFamily(family, draft.to, payLabel(draft.network));
+    const checked = payAddress(draft.network, draft.to);
     if (!checked.ok) throw new Error(`the receiving address is unusable: ${checked.reason}`);
-    return checked.normalized;
+    return { to: checked.to, given: draft.toGiven ?? checked.given };
   }
 
   function findHeld(list: OneClickToken[], draft: IntentsPayDraft): OneClickToken {
@@ -279,7 +333,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   async function plan(draft: IntentsPayDraft): Promise<Plan> {
     requireVenue(draft);
     const chain = requireChain(draft);
-    const to = requireReceiver(draft);
+    const { to, given } = requireReceiver(draft);
     const list = await api.tokens();
     const held = findHeld(list, draft);
     const destination = pickOrExplain(
@@ -294,6 +348,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       );
     }
     refuseContractForNative(draft, destination.native);
+    const listed = list.find((t) => t.assetId === destination.assetId);
     return {
       chain,
       originAsset: held.assetId,
@@ -304,8 +359,35 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       amountBase: toBaseUnits(draft.amount, held.decimals),
       minReceivedBase: toBaseUnits(draft.minReceived, destination.decimals),
       to,
+      given,
+      issuer: destination.native ? null : (listed?.contractAddress ?? null) || null,
+      priceUsd: typeof held.price === 'number' && Number.isFinite(held.price) && held.price > 0 ? held.price : null,
       slippageBps: held.assetId === destination.assetId ? PAY_SAME_ASSET_SLIPPAGE_BPS : undefined,
     };
+  }
+
+  /* The chain's own rules for this receiver, on reads taken now (src/rails/pay-rules.ts). Run
+     before the dry quote and again before the live one: an account can set RequireDestTag, or
+     be created, between the card and the click. `activity` is what the chain reader said about
+     the receiver, at propose time for the dry quote and fresh for the live one. */
+  async function chainRules(draft: IntentsPayDraft, p: Plan, owner: string, activity: AddressActivity | null): Promise<{ problems: string[]; notes: PayNote[] }> {
+    const [target, own] = await Promise.all([
+      needsTarget(draft.network) ? targetRead(draft.network, p.to) : Promise.resolve(undefined),
+      readsOwnDeposit(draft.network) ? ownDepositRead(owner, draft.network) : Promise.resolve(undefined),
+    ]);
+    return payChecks({
+      network: draft.network,
+      symbol: draft.symbol.toUpperCase(),
+      native: p.native,
+      issuer: p.issuer,
+      amount: draft.amount,
+      minReceived: draft.minReceived,
+      to: p.to,
+      given: p.given,
+      activity,
+      target,
+      own,
+    });
   }
 
   function units(value: bigint, decimals: number): string {
@@ -381,7 +463,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     ];
   }
 
-  function sendFacts(draft: IntentsPayDraft, p: Plan, quote: OneClickQuote): SendSimulation {
+  function sendFacts(draft: IntentsPayDraft, p: Plan, quote: OneClickQuote, notes: PayNote[]): SendSimulation {
     return {
       destinationAsset: p.destinationAsset,
       arrives: oneLine(quote.amountOutFormatted, 40),
@@ -391,17 +473,21 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       etaSeconds: Number.isFinite(Number(quote.timeEstimate)) ? Number(quote.timeEstimate) : null,
       activity: recipientSentence(draft.network, draft.recipient),
       explorer: scanNetworkOf(draft.network) === null ? null : explorerAddressUrl(scanNetworkOf(draft.network) as ChainNetwork, p.to),
+      ...(notes.length === 0 ? {} : { notes }),
     };
   }
 
   // 1Click refuses an amount the bridge floor eats with "try at least N" in base units. Said
-  // in the asset, on the chain, so the instruction is one a person can act on.
+  // in the asset, on the chain, and in dollars where the coin has a price, so the instruction
+  // is one a person can act on.
   function floorWords(draft: IntentsPayDraft, p: Plan, message: string): string | null {
     const m = /try at least (\d+)/.exec(message);
     if (m === null) return null;
+    const least = units(BigInt(m[1]), p.decimals);
+    const usd = p.priceUsd === null ? '' : ` (about $${(Number(least) * p.priceUsd).toFixed(2)})`;
     return (
-      `1Click's bridge will not pay out less than ${units(BigInt(m[1]), p.decimals)} ${draft.symbol} on ${payLabel(draft.network)} ` +
-      '(its flat fee grossed up); send at least that, and more to keep the fee small against the amount'
+      `the bridge will not pay out less than ${least} ${draft.symbol} on ${payLabel(draft.network)}${usd}, ` +
+      'its flat fee grossed up; send at least that, and more to keep the fee small against the amount'
     );
   }
 
@@ -432,6 +518,11 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     }
     const route = await routeCheck(draft, owner);
     if (route.closed !== null) return { ok: false, summary: route.closed, error: route.closed, reason: 'route_closed' };
+    const rules = await chainRules(draft, p, owner, draft.recipient.activity);
+    if (rules.problems.length > 0) {
+      const joined = rules.problems.join('; ');
+      return { ok: false, summary: `intents pay simulation failed: ${joined}`, error: joined };
+    }
     try {
       const response = await api.quote({
         dry: true,
@@ -445,8 +536,9 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       });
       // A route NEAR Intents reports trouble on goes ahead, and says so first.
       const lines = [...(route.notice === null ? [] : [route.notice]), ...priceLines(draft, p, response.quote)];
-      const send = sendFacts(draft, p, response.quote);
+      const send = sendFacts(draft, p, response.quote, rules.notes);
       lines.push(send.activity);
+      for (const note of rules.notes) lines.push(note.text);
       const problems = [...checkQuote(draft, p, response.quote), ...quoteEchoProblems(response.raw, echoWant(draft, p))];
       if (problems.length > 0) {
         const joined = problems.join('; ');
@@ -491,6 +583,11 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     const route = await routeCheck(draft, owner, EXECUTE_MAX_AGE_MS);
     if (route.closed !== null) return { ok: false, detail: route.closed, reason: 'route_closed' };
     const before = await receiverRead(draft.network, p.to);
+    // The chain's rules again, on reads taken now, before the live quote: the card may have
+    // waited minutes for its click. A rule that fails here throws, like every refusal before the
+    // signature.
+    const rules = await chainRules(draft, p, owner, before);
+    if (rules.problems.length > 0) throw new Error(rules.problems.join('; '));
 
     // The four shared steps: live quote, echo check, generated intent checked and signed,
     // submitted and watched. Every refusal before the signature throws out of here; after it

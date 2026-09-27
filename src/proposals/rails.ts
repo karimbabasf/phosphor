@@ -30,8 +30,9 @@ import { INTENTS_RELAY_COUNTERPARTY, INTENTS_RELAY_VENUE } from '../rails/intent
 import { swapRailOf } from '../config.ts';
 import { floorUnderQuote } from '../rails/slippage.ts';
 import { INTENTS_SEND_COUNTERPARTY, intentsAccountProblem, minReceivedForSend } from '../rails/intents-send.ts';
-import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay, payFamilyOf, payLabel, payRefusal } from '../rails/intents-pay.ts';
-import { scanNetworkOf, validateAddressForFamily } from '../chainscan/index.ts';
+import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay, payRefusal } from '../rails/intents-pay.ts';
+import { payAddress } from '../rails/pay-rules.ts';
+import { scanNetworkOf } from '../chainscan/index.ts';
 import type { ChainNetwork } from '../chainscan/index.ts';
 import { recipientFor } from '../recipients.ts';
 import { amountAsk, baseUnitsToDecimal, canonicalSymbol, decimalToBaseUnits, heldSymbol, oneLine } from '../intents.ts';
@@ -478,15 +479,20 @@ export async function proposeSend(ctx: PCtx, params: SendParams): Promise<Propos
     : payRefusal(where);
   if (refused !== null) problems.push(refused.endsWith('.') ? refused : `${refused}.`);
   const network = refused === null ? where : 'eth';
-  const family = payFamilyOf(network) ?? 'evm';
-  const checked = validateAddressForFamily(family, String(params.to ?? ''), payLabel(network));
+  /* Decoded by the chain's own rules for a payout address (src/rails/pay-rules.ts): an XRP
+     X-address or a Stellar M-address carries a memo this app cannot send and is refused by name,
+     and a bounceable TON address is kept as the same account non-bounceable, with the spelling
+     the caller gave beside it so the card can name both. */
+  const checked = payAddress(network, String(params.to ?? ''));
   let to = '';
   let toChecksum: IntentsPayDraft['toChecksum'] = null;
+  let toGiven: string | null = null;
   if (!checked.ok) {
     problems.push(`The receiving address is unusable: ${checked.reason}.`);
   } else {
-    to = checked.normalized;
-    toChecksum = checked.checksum ?? null;
+    to = checked.to;
+    toChecksum = checked.checksum;
+    toGiven = checked.given;
   }
   // Our own wallet on that chain is allowed (it is what the old withdraw did) and named as
   // such. The comparison is EVM only: the key signs on no other chain.
@@ -503,6 +509,7 @@ export async function proposeSend(ctx: PCtx, params: SendParams): Promise<Propos
     from,
     to,
     toChecksum,
+    ...(toGiven === null ? {} : { toGiven }),
     counterparty: INTENTS_PAY_COUNTERPARTY,
     // The chain is asked only about a draft that can still be sent: a refused one is a sentence,
     // not a lookup.

@@ -102,12 +102,22 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    (`src/http/propose.ts`) refuses `confirmed` that is not exactly `true` too, so a raw post cannot
    skip it either. A send the agent has not confirmed cannot be expressed.
 2. **The decoding.** The builder (`src/proposals/rails.ts`) decodes `to` for the place it is going
-   through `src/chainscan/networks.ts`: an EVM address has to be 40 hex and, when it carries
-   capitals, pass its own EIP-55 checksum; a Solana address has to decode to exactly 32 bytes; a
-   NEAR id has to be one; an intents account id is an EVM address lowercased or a NEAR id. A
-   dropped digit is refused before any quote. The chain is then asked about the address (public
-   activity through `src/chainscan/index.ts`, bounded, never a refusal when it will not answer),
-   and a contract cannot be paid the chain's own coin.
+   through `src/rails/pay-rules.ts` and `src/chainscan/networks.ts`: an EVM address has to be 40
+   hex and, when it carries capitals, pass its own EIP-55 checksum; a Solana address has to decode
+   to exactly 32 bytes; a NEAR id has to be one; a Bitcoin, Litecoin, Dogecoin, Bitcoin Cash, Dash,
+   XRP, Stellar, TON, Tron or Cardano address has to pass its own checksum; an intents account id
+   is an EVM address lowercased or a NEAR id. A dropped digit is refused before any quote. The
+   chain is then asked about the address (public activity through `src/chainscan/index.ts`,
+   bounded, never a refusal when it will not answer), and a contract cannot be paid the chain's
+   own coin. Zcash and Aleo are not paid at all.
+   No memo, tag or comment can travel with a payout (1Click's quote has no field for one), so on
+   the chains that have rules of their own the rail refuses before either quote: an XRP
+   X-address or a Stellar M-address (the memo is inside the address), an XRP account with
+   RequireDestTag or a Stellar account with `config.memo_required`, an account that does not
+   exist yet paid less than the reserve that creates it, a Stellar token with no trustline, TRX
+   to a Tron contract or to an address Tron would not describe, and our own bridge deposit
+   address on Stellar, which the bridge shares and tells apart by memo. A ledger that will not
+   answer one of those questions is a refusal. A TON address is sent non-bounceable.
 3. **The click, always.** `land()` in `src/proposals/execute.ts` turns any `allow` on
    `intents_send`, `intents_pay` or `hl_withdraw` into `needs_approval`, whatever the size. The
    `$100` no-click convenience applies to swaps, Hyperliquid deposits and trades (money that
@@ -116,7 +126,8 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    shortened to its two ends (eight characters each, beyond what a vanity generator matches) and
    the chain: "Pay 0.01 ETH to 0xb583f4...84BB5DB0 on Ethereum ($24.40)".
    The sentence is composed from the draft's fields; an address field that is not shaped like an
-   address is said as "an address", never echoed.
+   address (for a payout, one that does not decode on the chain it lands on) is said as "an
+   address", never echoed.
 4. **The echo.** The signed intent hands the balance to a solver handle and says nothing about the
    far side. What ties the signature to the receiver is 1Click's `quoteRequest` echo, checked
    against the draft on the dry quote at simulate time and again on the live quote a moment before

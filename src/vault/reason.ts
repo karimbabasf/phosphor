@@ -10,10 +10,11 @@
 // and it survives only when it is shaped like a ticker (see clean). The other is the receiver
 // of a send (see shortAddress), because a dialog that approves a payment and hides who is paid
 // is the dialog Karim asked never to see: it is shown shortened, and only when it is shaped
-// like an address.
+// like an address (a payout's, when it decodes as an address on the chain it lands on).
 
 import type { Proposal, WriteDraft } from '../types.ts';
 import { spendNetworkOf } from '../rails/intents-address.ts';
+import { payAddress } from '../rails/pay-rules.ts';
 
 const MAX_REASON = 120;
 
@@ -48,10 +49,29 @@ function clean(s: string): string {
 const ADDRESS_SHAPE = /^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44}|[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?)$/;
 const END_CHARS = 8;
 
+function ends(s: string): string {
+  // A prefix that names the chain (bitcoincash:) is kept whole and the ends are taken after it:
+  // "bitcoinc" is the same eight characters on every Bitcoin Cash address.
+  const prefix = /^[a-z]+:(?=[a-z0-9]{20,}$)/.exec(s)?.[0] ?? '';
+  const body = s.slice(prefix.length);
+  return body.length <= 2 * END_CHARS + 4 ? s : `${prefix}${body.slice(0, END_CHARS)}...${body.slice(-END_CHARS)}`;
+}
+
 function shortAddress(raw: unknown): string {
   const s = String(raw ?? '').trim();
   if (!ADDRESS_SHAPE.test(s)) return 'an address';
-  return s.length <= 2 * END_CHARS + 4 ? s : `${s.slice(0, END_CHARS)}...${s.slice(-END_CHARS)}`;
+  return ends(s);
+}
+
+/* A payout's receiver, shaped by the chain it lands on rather than by one pattern for all: an
+   XRP, Stellar, TON, Cardano or Bitcoin Cash address is none of hex, base58 of 32 to 44 or a NEAR
+   id, and a dialog that said "an address" for every one of them hid who is paid. It reaches the
+   dialog only when it decodes as that chain's payout address and is the spelling the draft
+   carries, so a sentence in the field is still said as "an address". */
+function payee(network: unknown, raw: unknown): string {
+  const s = String(raw ?? '').trim();
+  const checked = payAddress(String(network), s);
+  return checked.ok && checked.to === s ? ends(s) : shortAddress(s);
 }
 
 /* The chain a payout lands on, by name and only from the chain registry: a network id the
@@ -69,7 +89,7 @@ function describe(draft: WriteDraft): string {
     case 'intents_send':
       return `Send ${amount(draft.amount, draft.symbol)} inside NEAR Intents to ${shortAddress(draft.to)} (${usd(draft.amountUsd)})`;
     case 'intents_pay':
-      return `Pay ${amount(draft.amount, draft.symbol)} to ${shortAddress(draft.to)} on ${networkName(draft.network)} (${usd(draft.amountUsd)})`;
+      return `Pay ${amount(draft.amount, draft.symbol)} to ${payee(draft.network, draft.to)} on ${networkName(draft.network)} (${usd(draft.amountUsd)})`;
     case 'hl_deposit':
       return `Move ${amount(draft.amount, draft.symbol)} into Hyperliquid (${usd(draft.amountUsd)})`;
     case 'hl_withdraw':
