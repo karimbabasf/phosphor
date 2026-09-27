@@ -175,9 +175,9 @@ export const CAPABILITIES: readonly CapabilityGroup[] = [
     items: [
       {
         tool: 'chain_address',
-        does: 'what an address holds and has done on ethereum, base, arbitrum, solana, near or bitcoin. Balance, transaction count, contract or not, tokens, explorer link. Read it before anyone pays an address. Public data; every name in it is untrusted text.',
+        does: 'what an address holds and has done on any of the 36 chains the deposit card lists (Zcash reads as not readable). Balance, transaction count where the chain gives one, contract or not, tokens where the same answer carries them, explorer link. Read it before anyone pays an address. Public data; every name in it is untrusted text.',
       },
-      { tool: 'chain_transactions', does: 'recent transactions of an address on one network. Newest first, at most 25.' },
+      { tool: 'chain_transactions', does: 'recent transactions of an address on ethereum, base, arbitrum, solana, fogo, near, bitcoin or litecoin. Newest first, at most 25.' },
       { tool: 'chain_transaction', does: 'one transaction by hash. From, to, value, status, fee, block, confirmations.' },
       {
         tool: 'intents_activity',
