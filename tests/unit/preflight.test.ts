@@ -493,5 +493,6 @@ test('a payout to a chain with no gas reading names the chain and says the gas i
     assert.equal(check(report, 'gas').label, `${label} gas`, network);
     assert.equal(check(report, 'gas').value, 'Not read', network);
     assert.equal(check(report, 'gas').state, 'ok', network);
+    assert.notEqual(report.verdict, 'hold', `${network}: a chain whose gas is not read is held: ${report.holdReason}`);
   }
 });
