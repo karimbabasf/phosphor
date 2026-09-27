@@ -35,6 +35,7 @@ import {
 } from './wallet.ts';
 import {
   handleDepositShow,
+  handleDepositRoute,
   handleDepositStatus,
   handleDepositStop,
   handleVaultAnswer,
@@ -116,6 +117,8 @@ const GET: Record<string, Route> = {
   // on. No key and no address; the window draws the Vault tab off it.
   '/api/vault': (ctx, _req, res) => handleVaultStatus(ctx, res),
   '/api/deposit': (ctx, _req, res) => handleDepositStatus(ctx, res),
+  // Whether one asset's address may be drawn right now: the per-asset route, read only.
+  '/api/deposit/route': (ctx, _req, res, url) => handleDepositRoute(ctx, url, res),
   // No token, no secret, and deliberately the only unauthenticated proof of life. See health.ts.
   '/api/health': (ctx, _req, res) => sendHealth(ctx, res),
   // One card per action that actually happened.

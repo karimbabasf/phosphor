@@ -61,6 +61,33 @@
     return !!network && network.route === 'closed' && typeof network.unavailable === 'string' && network.unavailable !== '';
   }
 
+  /* The route for the exact token about to be shown, from the backend
+     (GET /api/deposit/route): { notice, statusLink } when an address may be
+     drawn, { closed, statusLink } when NEAR Intents is not taking it,
+     { failed } when the question got no answer. No answer is not a yes. The
+     chat's deposit card asks the same before it draws. */
+  function routeFor(chain, symbol) {
+    if (!api || typeof api.depositRoute !== 'function') {
+      return Promise.resolve({ failed: 'This window cannot check whether the address is safe to use, so it is not shown.' });
+    }
+    return api.depositRoute(chain, symbol).then(function (result) {
+      var data = result && result.data ? result.data : {};
+      return { notice: typeof data.notice === 'string' && data.notice ? data.notice : null, statusLink: data.statusLink || null };
+    }, function (err) {
+      var said = err && err.body;
+      if (said && said.route === 'closed') return { closed: net.readable(err), statusLink: said.statusLink || null };
+      return { failed: net.readable(err) };
+    });
+  }
+
+  /* A watch frame saying NEAR Intents stopped taking the asset an address on
+     screen is for: the frame's network and token, whichever watch sent it,
+     because the route is a fact about the asset and not about the watch. */
+  function pausedFor(deposit, chain, symbol) {
+    return !!deposit && typeof deposit.paused === 'string' && deposit.paused !== ''
+      && deposit.chain === chain && String(deposit.symbol || '').toUpperCase() === String(symbol || '').toUpperCase();
+  }
+
   /* The way to the venue's status page, in words, or null when the report named
      none the window may open. target=_blank is what the desktop shell routes to
      the system browser; the window itself never navigates. */
@@ -739,7 +766,13 @@
       alive: true,
       stageNode: null,
       watch: null,
-      unsubscribe: null
+      unsubscribe: null,
+      /* The address on screen and what it is for ({ body, chain, symbol }),
+         so a closed route or a refused watch can take it down; and the one
+         route question in flight, so a late answer for a step already left
+         draws nothing. */
+      shown: null,
+      asking: null
     };
 
     /* The report is what step two and three draw from. Step one needs nothing
@@ -785,6 +818,8 @@
     function show(stage, node) {
       var prev = state.stageNode;
       var hadFocus = holdsFocus(prev);
+      state.shown = null;
+      state.asking = null;
       state.stage = stage;
       state.stageNode = node;
       root.dataset.stage = stage;
@@ -1328,18 +1363,34 @@
        now may not arrive, so it is read as a warning and links to the page
        that says more. */
     function unavailableRefusal(n, network) {
-      if (pausedRoute(network)) {
-        var paused = refusal(network.unavailable, 'warn');
-        paused.dataset.route = 'closed';
-        var link = statusLink(network);
-        if (link) paused.appendChild(link);
-        return paused;
-      }
+      if (pausedRoute(network)) return pausedBanner(network.unavailable, network.statusLink);
       var banner = refusal(n.name + ' is not taking deposits right now. Try again later, or pick another network.');
       var raw = dom.el('span', 'netpick-dev', String(network.unavailable));
       raw.setAttribute('data-dev-only', '');
       banner.appendChild(raw);
       return banner;
+    }
+
+    /* NEAR Intents is not taking this: the backend's sentence, as a warning,
+       and the page that says more. */
+    function pausedBanner(why, link) {
+      var paused = refusal(why, 'warn');
+      paused.dataset.route = 'closed';
+      var more = statusLink({ statusLink: link });
+      if (more) paused.appendChild(more);
+      return paused;
+    }
+
+    /* The address comes off the screen, because the route closed under it
+       (the watch's own tick said so) or the backend would not watch it. The
+       sentence takes its place, as a pause does before an address is drawn.
+       Only the address it was drawn as: a later step has its own. */
+    function takeDown(shown, why, link, paused) {
+      if (!shown || state.shown !== shown || !state.alive) return;
+      state.shown = null;
+      dom.clear(shown.body);
+      shown.body.appendChild(paused ? pausedBanner(why, link) : refusal(why, 'warn'));
+      shown.body.dataset.state = 'refused';
     }
 
     function retryRow(fn) {
@@ -1359,6 +1410,8 @@
     /* The checks, then the address. Nothing is drawn until every one passes,
        and each failure names itself in the address's place. */
     function drawAddress(body, n) {
+      state.asking = null;
+      state.shown = null;
       var report = state.report;
       var network = reportNetwork(n.id);
       if (report && report.tampered) {
@@ -1400,18 +1453,49 @@
         return refuse(body, 'The address the watcher holds is not the one this wallet reports. Nothing is shown.', 'warn');
       }
 
+      /* Check 2: the route for this exact token. The report's row was asked
+         about the network's own coin, and TON USDT is its own question, so
+         nothing is drawn until the backend has answered for the token about
+         to be shown; a pause draws Paused in the address's place. */
+      var watchSymbol = token ? token.symbol : state.symbol;
+      var asking = {};
+      state.asking = asking;
+      skeleton(body);
+      routeFor(n.id, watchSymbol).then(function (answer) {
+        if (!state.alive || state.asking !== asking) return;
+        state.asking = null;
+        if (answer.closed) {
+          dom.clear(body);
+          body.appendChild(pausedBanner(answer.closed, answer.statusLink));
+          body.dataset.state = 'refused';
+          return;
+        }
+        if (answer.failed) {
+          refuse(body, answer.failed);
+          body.appendChild(retryRow(function () { drawAddress(body, n); }));
+          return;
+        }
+        drawShown(body, n, network, token, watchSymbol, answer);
+      });
+    }
+
+    /* The address itself, once every check above has passed and the route
+       for its token has answered not closed. */
+    function drawShown(body, n, network, token, watchSymbol, route) {
       var address = network.address;
       var memoText = typeof network.memo === 'string' && network.memo ? network.memo : null;
       dom.clear(body);
 
       /* NEAR Intents reports trouble here, and the address still works: the
          notice sits above it, in the quiet banner, because nothing is lost by
-         reading it after the address. */
-      if (network.route === 'degraded' && typeof network.notice === 'string' && network.notice) {
+         reading it after the address. The token's own answer first, then the
+         network's. */
+      var notice = route.notice || (network.route === 'degraded' && typeof network.notice === 'string' && network.notice ? network.notice : null);
+      if (notice) {
         var slow = dom.el('div', 'banner netpick-refusal deposit-route');
         slow.dataset.route = 'degraded';
-        slow.appendChild(dom.el('span', '', network.notice));
-        var more = statusLink(network);
+        slow.appendChild(dom.el('span', '', notice));
+        var more = statusLink({ statusLink: route.notice ? route.statusLink : network.statusLink });
         if (more) slow.appendChild(more);
         body.appendChild(slow);
       }
@@ -1498,10 +1582,12 @@
          it, unless it already is: the deposit card opens with a watch the
          backend started, and a second start for the same network and token
          would only replace it. A different network or token is a new watch. */
-      var watchSymbol = token ? token.symbol : state.symbol;
+      var shown = { body: body, chain: n.id, symbol: watchSymbol };
+      state.shown = shown;
       var held = state.deposit;
       var same = held && held.chain === n.id && String(held.symbol || '').toUpperCase() === String(watchSymbol || '').toUpperCase();
-      if (!same) startWatch(n, watchSymbol, address);
+      if (!same) startWatch(n, watchSymbol, address, shown);
+      else followWatch();
     }
 
     /* What to pick on the sending side, and which networks this address also
@@ -1618,7 +1704,7 @@
 
     /* ---------- the watch ---------- */
 
-    function startWatch(n, symbol, address) {
+    function startWatch(n, symbol, address, shown) {
       var starter = window.PhosphorDeposit && typeof window.PhosphorDeposit.startWatch === 'function'
         ? window.PhosphorDeposit.startWatch
         : function (chain, sym, addr) {
@@ -1634,8 +1720,12 @@
           followWatch();
         })
         .catch(function (err) {
-          if (!state.alive || !state.watch) return;
-          state.watch.render({ phase: 'stopped', chain: n.id, symbol: symbol, unstarted: net.readable(err) });
+          if (!state.alive) return;
+          /* The backend would not watch this address (/api/deposit/show asks
+             the route for the exact token too): it does not stay on screen. */
+          var said = err && err.body;
+          takeDown(shown, net.readable(err), said && said.statusLink, !!(said && said.route === 'closed'));
+          if (state.watch) state.watch.render({ phase: 'stopped', chain: n.id, symbol: symbol, unstarted: net.readable(err) });
         });
     }
 
@@ -1651,6 +1741,10 @@
       if (!state.watch || !state.alive) return;
       var mine = deposit && state.watchStart && deposit.startedAt === state.watchStart;
       state.watch.render(mine ? Object.assign({}, deposit, { symbol: deposit.symbol || state.symbol || '' }) : null);
+      /* The watch's tick asks the route for this token too: a route that
+         closes while the address is up takes the address down. */
+      var shown = state.shown;
+      if (shown && pausedFor(deposit, shown.chain, shown.symbol)) takeDown(shown, deposit.paused, deposit.statusLink, true);
     }
 
     function destroy() {
@@ -1720,6 +1814,8 @@
     copyChecked: copyChecked,
     sameBytes: sameBytes,
     watcherLine: watcherLine,
-    watcherParts: watcherParts
+    watcherParts: watcherParts,
+    routeFor: routeFor,
+    pausedFor: pausedFor
   };
 })();

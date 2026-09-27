@@ -2071,11 +2071,23 @@
         /* The agent's card shows what can be sent and waits for the same tick Add money does
            before the address (Karim, 2026-09-25), with the same list and the same words. */
         var pick = window.PhosphorNetPick;
-        var reveal = function () {
+        /* The token picked on the tick, asked about by itself before its address is drawn: the
+           report's row was asked about the network's own coin, and a card restored later has
+           only that. A pause draws its sentence and the status page in the address's place. */
+        var reveal = function (_id, picked) {
+          var sym = String(picked || symbol || '').toUpperCase();
           if (slot.__netpick && typeof slot.__netpick.destroy === 'function') slot.__netpick.destroy();
           dom.clear(slot);
-          if (ends) dom.setHidden(ends, true);
-          drawDeposit(slot, found, chain);
+          var asked = pick && typeof pick.routeFor === 'function'
+            ? pick.routeFor(chain, sym)
+            : Promise.resolve({ failed: 'The address could not be checked here. Add money shows it.' });
+          asked.then(function (route) {
+            if (route.closed) return refuseDeposit(slot, { refused: route.closed, status: route.statusLink }, chain, sym);
+            if (route.failed) return refuseDeposit(slot, { refused: route.failed, open: true }, chain, sym);
+            if (ends) dom.setHidden(ends, true);
+            drawDeposit(slot, route.notice ? Object.assign({}, found, { notice: route.notice, status: route.statusLink }) : found, chain);
+            slot.__shown = { chain: chain, symbol: sym };
+          });
         };
         if (pick && typeof pick.render === 'function') {
           pick.render(slot, { context: 'chat', stage: 'tokens', network: chain, symbol: symbol || null, onAddress: reveal });
@@ -2086,7 +2098,7 @@
         refuseDeposit(slot, found, chain, symbol);
       }
     });
-    followWatch(parts, data, extra.at);
+    followWatch(parts, data, extra.at, slot);
     return parts.card;
   }
 
@@ -2267,7 +2279,7 @@
      begun around when the card was. A card drawn again from a stored conversation is older than
      any watch running now, and says nothing. Until the first frame of its watch arrives, a new
      card says what the tool answered. */
-  function followWatch(parts, data, at) {
+  function followWatch(parts, data, at, slot) {
     var word = parts.state;
     if (!word) return;
     var when = typeof at === 'number' ? at : Date.now();
@@ -2275,6 +2287,15 @@
     var symbol = String(data.asset || data.symbol || '').toUpperCase();
     var followed = false;
     function paint(watch) {
+      /* The watch's tick asks the route for its token: a route that closes while this card's
+         address is up takes the address down, whichever watch said so. */
+      var shown = slot && slot.__shown;
+      var pick = window.PhosphorNetPick;
+      if (shown && pick && typeof pick.pausedFor === 'function' && pick.pausedFor(watch, shown.chain, shown.symbol)) {
+        slot.__shown = null;
+        dom.clear(slot);
+        refuseDeposit(slot, { refused: watch.paused, status: watch.statusLink }, shown.chain, shown.symbol);
+      }
       var started = isObject(watch) ? Date.parse(watch.startedAt) : NaN;
       var mine = isObject(watch) && watch.chain === chain && String(watch.symbol || '').toUpperCase() === symbol
         && started >= when - 120000 && started <= when + 10000;

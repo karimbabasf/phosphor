@@ -196,7 +196,7 @@ type World = {
   render: (opts?: Any) => Any;
 };
 
-function build(options: { report?: Any; vault?: Any; withDeposit?: boolean } = {}): World {
+function build(options: { report?: Any; vault?: Any; withDeposit?: boolean; route?: (chain: string, symbol: string) => Any | null; show?: (chain: string, symbol: string) => Any | null } = {}): World {
   const body = makeNode('body');
   const host = makeNode('div');
   body.appendChild(host);
@@ -244,8 +244,18 @@ function build(options: { report?: Any; vault?: Any; withDeposit?: boolean } = {
   }
   sandbox.PhosphorApi = {
     intentsReceive: () => { calls.push({ route: '/api/intents-receive' }); return Promise.resolve({ data: options.report ?? report(), fresh: true }); },
+    /* The per-asset route read (GET /api/deposit/route): open unless a test says otherwise. A
+       refusal rejects the way ui/core/net.js does, with the body riding on the error. */
+    depositRoute: (chain: string, symbol: string) => {
+      calls.push({ route: '/api/deposit/route', chain, symbol });
+      const said = options.route?.(chain, symbol);
+      if (said && said.status) return Promise.reject(Object.assign(new Error(said.error), { status: said.status, body: said }));
+      return Promise.resolve({ data: Object.assign({ ok: true, chain, symbol, notice: null, statusLink: null }, said ?? {}), fresh: true });
+    },
     depositShow: (chain: string, symbol: string, address: string | null) => {
       calls.push({ route: '/api/deposit/show', chain, symbol, address });
+      const refused = options.show?.(chain, symbol);
+      if (refused) return Promise.reject(Object.assign(new Error(refused.error), { status: refused.status, body: refused }));
       return Promise.resolve({ ok: true, deposit: { phase: 'watching', chain, symbol, address, startedAt: '2026-09-15T09:00:00.000Z', baseline: 0, amount: null, txHash: null, ms: null } });
     },
     depositStop: () => { calls.push({ route: '/api/deposit/stop' }); return Promise.resolve({ ok: true }); },
@@ -956,4 +966,77 @@ test('a network NEAR Intents reports trouble on keeps its address, with the noti
   assert.ok(textOf(notice).includes(SLOW));
   assert.equal(find(notice, '.netpick-status')[0].href, STATUS);
   assert.equal(find(body, 'canvas').length, 1, 'the address and its QR code are still drawn');
+});
+
+/* ---------- the route for the exact token ---------- */
+
+const TOKEN_PAUSED = 'NEAR Intents has paused Ethereum deposits right now, so no address is shown. Money sent now may not arrive.';
+const STATUS_PAGE = 'https://status.near-intents.org/posts/dashboard';
+const closedFor = (symbol: string) => (_chain: string, asked: string): Any | null => (asked === symbol ? { status: 409, error: TOKEN_PAUSED, route: 'closed', statusLink: STATUS_PAGE } : null);
+
+// Nothing of the address anywhere under the step: no well, no QR, no Copy, not one of its characters.
+function assertNoAddress(world: World, label: string): void {
+  const body = find(world.host, '.deposit-body')[0];
+  assert.equal(find(body, '.deposit-well').length, 0, `${label}: the address well is drawn`);
+  assert.equal(find(body, 'canvas').length, 0, `${label}: a QR is drawn`);
+  assert.equal(buttonNamed(body, 'Copy address'), undefined, `${label}: Copy is offered`);
+  assert.equal(textOf(body).some((t) => t.includes('7d4e') || t.includes('0e1d')), false, `${label}: part of the address is on screen`);
+}
+
+function assertPaused(world: World, label: string): void {
+  const body = find(world.host, '.deposit-body')[0];
+  assert.equal(body.dataset.state, 'refused', label);
+  const banner = find(body, '.netpick-refusal')[0];
+  assert.equal(banner?.dataset.route, 'closed', `${label}: not the Paused state`);
+  assert.ok(textOf(banner).includes(TOKEN_PAUSED), `${label}: ${textOf(banner).join(' | ')}`);
+  assert.equal(find(banner, 'a.netpick-status')[0]?.href, STATUS_PAGE, `${label}: no View status link`);
+}
+
+test('the network coin open and the picked token closed: the address and the QR are never drawn, Paused is, and no watch starts', async () => {
+  const world = build({ route: closedFor('USDC') });
+  world.render({ stage: 'address', network: 'eth', symbol: 'USDC' });
+  await acknowledge(world);
+  await flush();
+  assert.deepEqual(world.calls.filter((c) => c.route === '/api/deposit/route').map((c) => `${c.chain}:${c.symbol}`), ['eth:USDC'], 'the exact token was not asked about');
+  assertNoAddress(world, 'USDC closed on an open Ethereum');
+  assertPaused(world, 'USDC closed on an open Ethereum');
+  assert.equal(world.calls.some((c) => c.route === '/api/deposit/show'), false, 'a watch started for an address that is not shown');
+
+  // The coin the report row was asked about is open: its address draws as before.
+  const open = build({ route: closedFor('USDC') });
+  open.render({ stage: 'address', network: 'eth', symbol: 'ETH' });
+  await acknowledge(open);
+  await flush();
+  assert.equal(find(open.host, '.deposit-body')[0].dataset.state, 'shown');
+});
+
+test('a route that closes while the address is up takes the address and the QR down on the watch\'s next frame', async () => {
+  const world = build();
+  world.render({ stage: 'address', network: 'eth', symbol: 'USDC' });
+  await acknowledge(world);
+  await flush();
+  assert.equal(find(world.host, '.deposit-body')[0].dataset.state, 'shown');
+  assert.equal(find(world.host, '.deposit-well').length, 1);
+  const frame = { phase: 'watching', chain: 'eth', symbol: 'USDC', address: EVM, startedAt: '2026-09-15T09:00:00.000Z', paused: null, statusLink: null };
+  world.store.put(Object.assign({}, world.store.get(), { deposit: frame }));
+  assert.equal(find(world.host, '.deposit-well').length, 1, 'an open frame took the address down');
+  world.store.put(Object.assign({}, world.store.get(), { deposit: Object.assign({}, frame, { paused: TOKEN_PAUSED, statusLink: STATUS_PAGE }) }));
+  assertNoAddress(world, 'after the route closed');
+  assertPaused(world, 'after the route closed');
+});
+
+test('a watch the backend refuses takes the address down: a closed route draws Paused, any other refusal its own sentence', async () => {
+  const paused = build({ show: () => ({ status: 409, error: TOKEN_PAUSED, route: 'closed', statusLink: STATUS_PAGE }) });
+  paused.render({ stage: 'address', network: 'eth', symbol: 'USDC' });
+  await acknowledge(paused);
+  await flush();
+  assertNoAddress(paused, 'the watch refused on a closed route');
+  assertPaused(paused, 'the watch refused on a closed route');
+
+  const other = build({ show: () => ({ status: 409, error: 'USDC is not credited on Ethereum; accepted: ETH' }) });
+  other.render({ stage: 'address', network: 'eth', symbol: 'USDC' });
+  await acknowledge(other);
+  await flush();
+  assertNoAddress(other, 'the watch refused');
+  assert.ok(textOf(find(other.host, '.deposit-body')[0]).includes('USDC is not credited on Ethereum; accepted: ETH'));
 });

@@ -34,6 +34,7 @@ import { intentsReceiveReport } from './http/wallet.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
 import { createTerms } from './terms.ts';
 import { createDepositWatch } from './vault/watch.ts';
+import { STATUS_LINK, routeGate } from './preflight/route-health.ts';
 import { createSseHub } from './http/sse.ts';
 import { credentialCheck, redactEvent } from './http/log-tail.ts';
 import { createCandlePush } from './market/push.ts';
@@ -246,10 +247,20 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const vault = deps.vault ?? createVaultRelay({ transportKey: null });
   const vaultPrefs = createVaultPrefs(cfg.dataDir);
   const terms = createTerms(cfg.dataDir);
+  const routeHealth = deps.routeHealth;
   const deposits = createDepositWatch({
     ledger: deps.ledger,
     sse,
     account: () => keystore.addressReport().addresses.evm?.toLowerCase() ?? null,
+    // The window reads the frame, so the sentence is the window's: the page's words plainly quoted.
+    ...(routeHealth === undefined
+      ? {}
+      : {
+          route: async (account: string, chain: string, assetId: string) => {
+            const gate = await routeGate(routeHealth, { network: chain, direction: 'in', account, asset: assetId }, 'deposit');
+            return { closed: gate.closed, link: gate.closed === null ? null : STATUS_LINK };
+          },
+        }),
     refresh:
       deps.refreshLedger ??
       (async () => {

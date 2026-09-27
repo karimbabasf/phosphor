@@ -30,6 +30,8 @@ import { receiveNetworkOf } from '../../src/rails/intents-address.ts';
 import type { IntentsReceiveNetwork } from '../../src/http/wallet.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { STATUS_LINK } from '../../src/preflight/route-health.ts';
+import type { RouteAsk, RouteHealth } from '../../src/preflight/route-health.ts';
 
 
 function snapshot(): LedgerSnapshot {
@@ -73,7 +75,7 @@ function network(id: string, address: string, accepts: Array<{ symbol: string; m
   };
 }
 
-async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
+async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth } = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-vault-'));
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
@@ -96,6 +98,7 @@ async function boot(opts: { mode?: AppConfig['mode'] } = {}) {
     cfg,
     token,
     vault,
+    ...(opts.routeHealth === undefined ? {} : { routeHealth: opts.routeHealth }),
     intentsReceive: async () => {
       const report = keystore.addressReport();
       return {
@@ -508,6 +511,46 @@ test('the vault prefs set the idle time and the deposit card is opened and watch
     const stopped = await b.post('/api/deposit/stop', {});
     assert.equal(stopped.json.ok, true);
     assert.equal((await b.get('/api/deposit')).json.deposit.phase, 'stopped');
+  } finally {
+    await b.close();
+  }
+});
+
+test('the window asks the route for the exact asset before it draws an address: a closed one is refused with route and status page, by the read and by show', async () => {
+  const usdc = 'nep141:base-usdc.omft.near';
+  const asked: RouteAsk[] = [];
+  const routeHealth: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const state = ask.asset === usdc ? 'closed' : 'open';
+      return { network: ask.network, direction: ask.direction, state, reasons: [{ source: 'oneclick', state, text: '' }], checkedAt: 0 };
+    },
+  };
+  const b = await boot({ routeHealth });
+  try {
+    await b.post('/api/vault/create', {});
+    const open = await b.get('/api/deposit/route?chain=sol&symbol=sol');
+    assert.equal(open.status, 200, JSON.stringify(open.json));
+    assert.deepEqual(open.json, { ok: true, chain: 'sol', symbol: 'SOL', notice: null, statusLink: null });
+
+    const closed = await b.get('/api/deposit/route?chain=base&symbol=usdc');
+    assert.equal(closed.status, 409);
+    assert.equal(closed.json.error, 'NEAR Intents has paused Base deposits right now, so no address is shown. Money sent now may not arrive.');
+    assert.equal(closed.json.route, 'closed');
+    assert.equal(closed.json.statusLink, STATUS_LINK);
+    assert.deepEqual(asked.at(-1), { network: 'base', direction: 'in', account: asked.at(-1)?.account, asset: usdc });
+    assert.equal((await b.get('/api/deposit')).json.deposit, null, 'the read started a watch');
+
+    // Show refuses the same way, so the window can tell a pause from any other refusal.
+    const shown = await b.post('/api/deposit/show', { chain: 'base', symbol: 'USDC' });
+    assert.equal(shown.status, 409);
+    assert.equal(shown.json.route, 'closed');
+    assert.equal(shown.json.statusLink, STATUS_LINK);
+    assert.equal((await b.get('/api/deposit')).json.deposit, null, 'a watch started on a closed route');
+
+    const unknown = await b.get('/api/deposit/route?chain=base&symbol=DOGE');
+    assert.equal(unknown.status, 409);
+    assert.equal(unknown.json.route, undefined);
   } finally {
     await b.close();
   }

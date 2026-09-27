@@ -220,6 +220,14 @@
       return net.getJson('/api/deposit', { noCache: true });
     },
 
+    /* Whether an address may be drawn for this asset on this network right
+       now: the per-asset route, read only, asked before any address is drawn.
+       A pause answers 409 with `route: 'closed'` and the status page. */
+    depositRoute: function (chain, symbol) {
+      var query = '?chain=' + encodeURIComponent(chain) + '&symbol=' + encodeURIComponent(symbol);
+      return net.getJson('/api/deposit/route' + query, { noCache: true });
+    },
+
     depositShow: function (chain, symbol, address) {
       var body = { chain: chain, symbol: symbol };
       if (address) body.address = address;
