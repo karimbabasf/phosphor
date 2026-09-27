@@ -290,6 +290,19 @@ test('the dialog names a NEAR account whole, however long, since its owner chose
   assert.ok(huge.includes(` to ${longest}`), huge);
 });
 
+/* Review V3 (2026-09-27): an eth-implicit NEAR id is 0x and 40 hex, and the 0x is the same on
+   every one, so the dialog counts eight hex after it, as the card does and as it does on EVM. */
+test('the dialog counts a NEAR eth-implicit receiver\'s ends after its 0x', () => {
+  const said = reasonFor({
+    draft: {
+      kind: 'intents_pay', symbol: 'NEAR', originAsset: 'nep141:wrap.near', network: 'near', amount: 40, amountUsd: 40,
+      minReceived: 38.8, from: SELF_EVM.toLowerCase(), to: '0xb583f4196e5e5c1e3a3a4d3e8b09a1e8c4f1d3a0', toChecksum: 'lowercase', counterparty: 'intents.near',
+      recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
+    } as IntentsPayDraft,
+  });
+  assert.equal(said, 'Approve: Pay 40 NEAR to 0xb583f419...c4f1d3a0 on NEAR ($40.00)');
+});
+
 // ---------- the same send twice ----------
 
 test('two identical sends five seconds apart from one session, the first still pending, are one row', async () => {
