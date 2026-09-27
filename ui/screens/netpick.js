@@ -412,6 +412,10 @@
     var k = kind || inferKind(text);
     if (k === 'near') return [text];
     if (k === 'evm' && /^0x/i.test(text)) return ['0x'].concat(fours(text.slice(2)));
+    /* A prefix that is not the address stands on its own: "0x" before a Sui, Aptos or Starknet
+       account of 64 hex, "bitcoincash:" before a CashAddr. */
+    var prefix = /^0x(?=[0-9a-fA-F]{40,}$)/.test(text) ? '0x' : (/^[a-z]+:(?=[a-z0-9]{20,}$)/.exec(text) || [''])[0];
+    if (prefix) return [prefix].concat(fours(text.slice(prefix.length)));
     return fours(text);
   }
 
@@ -427,7 +431,7 @@
     var parts = chunks(address, kind);
     var shown = dom.el('span', 'deposit-chunks');
     shown.setAttribute('aria-hidden', 'true');
-    if (parts.length > 1 && parts[0] === '0x') {
+    if (parts.length > 1 && /^0x$|:$/.test(parts[0])) {
       shown.appendChild(dom.el('span', 'addr-prefix', parts[0]));
       parts = parts.slice(1);
     }
