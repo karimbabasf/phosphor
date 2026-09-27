@@ -120,9 +120,14 @@ key to sign it with. See [Getting started](getting-started.md#the-15-minute-lock
 
 `propose_send` decodes the address for the place it is going before any quote is asked. An EVM
 address must be forty hex characters and, when it carries capitals, pass its own EIP-55 checksum.
-A Solana address must decode to exactly 32 bytes. A NEAR id must be a valid account id. An
-intents account is an EVM address in lower case or a NEAR id. A dropped or changed character
-fails one of those checks, and the refusal says which.
+A Solana address must decode to exactly 32 bytes. A NEAR id must be a valid account id. A
+Bitcoin, Litecoin, Dogecoin, Bitcoin Cash, Dash, XRP, Stellar, TON, Tron or Cardano address must
+pass its own checksum, and a Sui, Aptos, Movement or Starknet address must be written out to 64
+hex characters. An intents account is an EVM address in lower case or a NEAR id. A dropped or
+changed character fails one of those checks, and the refusal says which. An XRP X-address or a
+Stellar M-address is refused even when it is typed right, because the memo inside it cannot go
+with a payout: ask for the plain r... or G... address (see
+[Money](money.md#no-memo-tag-or-comment)).
 
 Do not let the agent fix the address. Paste it again from the place you got it, read it back to
 the agent character for character, and confirm. A contract address cannot be paid the chain's own
