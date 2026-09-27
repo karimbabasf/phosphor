@@ -387,6 +387,15 @@ test('1Click\'s minimum becomes a sentence with the coin and the dollar figure',
   assert.match(summary, /will not pay out less than 0\.00008397 BTC on Bitcoin \(about \$7\.10\)/);
 });
 
+/* 1Click keeps its own list of Stellar exchange addresses and refuses a payout to one (live,
+   2026-09-26: "Cant withdraw to exchange on stellar"). Said as what it means, never as its text. */
+test('1Click refusing a Stellar exchange address becomes a sentence about the memo, not its own words', async () => {
+  const r = railOf(COINS.XLM, 50, { targets: [XLM_OK], own: NOT_OWN, quoteThrows: '1click quote failed: Cant withdraw to exchange on stellar' });
+  const summary = await refused(r, draftOf(COINS.XLM, PLAIN_XLM, 50));
+  assert.match(summary, /will not pay an exchange address on Stellar/);
+  assert.doesNotMatch(summary, /Cant withdraw/);
+});
+
 // ---------- the account-shaped chains ----------
 
 test('a Cardano base address of 103 characters is paid whole, and a Starknet address is never padded', async () => {

@@ -491,6 +491,17 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     );
   }
 
+  // 1Click keeps its own list of exchange addresses on Stellar and refuses to pay one (live,
+  // 2026-09-26: "Cant withdraw to exchange on stellar"). Said as what it means: the exchange
+  // needs a memo and the payout carries none.
+  function exchangeWords(draft: IntentsPayDraft, message: string): string | null {
+    if (!/withdraw to exchange/i.test(message)) return null;
+    return (
+      `the payout service will not pay an exchange address on ${payLabel(draft.network)}: an exchange needs a memo to credit a deposit, ` +
+      'and a payout carries none; pay a personal wallet address'
+    );
+  }
+
   // 1Click refusing the pair, said as NEAR Intents not taking payouts to the chain.
   function closedWords(draft: IntentsPayDraft, err: unknown): string | null {
     return closedQuoteSentence(err, draft.network, 'payout');
@@ -554,8 +565,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       const message = errText(err);
       const closed = closedWords(draft, err);
       if (closed !== null) return { ok: false, summary: closed, error: closed, reason: 'route_closed' };
-      const floor = floorWords(draft, p, message);
-      return { ok: false, summary: `intents pay simulation failed: ${floor ?? message}`, error: floor ?? message };
+      const said = floorWords(draft, p, message) ?? exchangeWords(draft, message) ?? message;
+      return { ok: false, summary: `intents pay simulation failed: ${said}`, error: said };
     }
   }
 
