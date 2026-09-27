@@ -26,7 +26,7 @@ import path from 'node:path';
 import { sameOrigin, tokenMatches } from './auth.ts';
 import { RECEIVE_NETWORKS, intentsDepositAddress, parsePoaTokens, poaSupportedTokens, receiveNetworkByBridge } from '../rails/intents-address.ts';
 import type { PoaToken, ReceiveKind, ReceiveNetwork } from '../rails/intents-address.ts';
-import { validateAddress } from '../chainscan/index.ts';
+import { scanNetworkOf, validateAddress } from '../chainscan/index.ts';
 import type { ChainNetwork } from '../chainscan/index.ts';
 import { atomicWriteJson } from '../fsatomic.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
@@ -556,8 +556,8 @@ const RECEIVE_CACHE_MS = 60_000;
 const bridgeCache = new Map<string, BridgeHalf>();
 
 /* The chain whose address rules a bridge address on this network has to pass. The EVM chains
-   share one shape, so any of them stands for all; a network this app cannot decode (Litecoin,
-   XRP, TON, Stellar and the rest) gets the plain rule below instead of a guess. */
+   share one shape, so any of them stands for all; every other network is ruled below by its own
+   decoder in src/chainscan, after the plain rule. */
 function shapeChainOf(net: ReceiveNetwork): ChainNetwork | null {
   switch (net.kind) {
     case 'evm':
@@ -584,6 +584,14 @@ export function depositAddressProblem(net: ReceiveNetwork, address: string): str
     return check.ok ? null : check.reason;
   }
   if (!/^[!-~]{10,128}$/.test(address)) return 'expected 10 to 128 printable characters with no spaces';
+  // Litecoin, XRP, TON, Tron, Stellar and the rest decode since 2026-09-26: a printable string
+  // that fails its network's checksum is not drawn under the QR code either. A bridge key the
+  // registry does not know has no decoder and keeps the plain rule.
+  const decoded = scanNetworkOf(net.id);
+  if (decoded !== null) {
+    const check = validateAddress(decoded, address);
+    return check.ok ? null : check.reason;
+  }
   return null;
 }
 

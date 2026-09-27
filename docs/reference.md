@@ -81,8 +81,8 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `proposals` | Recent money moves, newest first, each the same object; `kind` filters, `limit` up to 50. Lead only |
 | `diagnose` | One money move in full: its view, its own audit lines, and what the router and the venue say about it. Lead only |
 | `research` | Crypto news. The APP fetches headlines and summaries from four fixed crypto newsrooms and hands back text; the agent never gets a URL it can point anywhere. Anything else is the chat agent's own web search and page reading, which are not Phosphor tools and mark its session (`src/web-read.ts`: every move it proposes after one waits for a click) |
-| `chain_address` | What an address holds and has done on one network (`ethereum`, `base`, `arbitrum`, `solana`, `near`, `bitcoin`): native balance, transaction count, contract or not (an EIP-7702 delegation reads as an account), last activity where the chain exposes it, up to ten token balances, an explorer link. The address has to pass its network's shape first; a wrong EIP-55 checksum is refused, not repaired. See "Chain lookups" below |
-| `chain_transactions` | The most recent transactions of an address on one network, newest first, at most 25: hash, time, from, to, value, status, method name. Raw inputs never come back |
+| `chain_address` | What an address holds and has done on one network (any of the 36 chains the deposit card lists, from `ethereum` to `aleo`): native balance, transaction count where the chain gives one, contract or not (an EIP-7702 delegation reads as an account), last activity where the chain exposes it, token balances where the same answer carries them, an explorer link. The address has to pass its network's decoder first; a wrong checksum is refused, not repaired. See "Chain lookups" below |
+| `chain_transactions` | The most recent transactions of an address on one network, newest first, at most 25: hash, time, from, to, value, status, method name. Raw inputs never come back. Only on the networks read through an indexer or a history call (ethereum, base, arbitrum, solana, fogo, near, bitcoin, litecoin) |
 | `chain_transaction` | One transaction by hash: the same fields plus fee, block and confirmations |
 | `intents_activity` | What an account has moved inside NEAR Intents, from NearBlocks: `MINT` rows are deposits in, `BURN` rows withdrawals out, `TRANSFER` rows swap legs and sends, each with token, signed amount and hash. No account means this app's own, and `own` says which. When NearBlocks is down it falls back to the verifier's own views and answers balances only, marked `partial: true` |
 | `swap_assets` | What can be swapped inside the balance, coins held first: symbol, name, network, `assetId`, decimals, price, the exact amount held, and `liquidity` (yes, no or unknown: whether anyone offers a price now). `query` narrows it. Files nothing (`src/http/read/swap.ts`) |
@@ -197,21 +197,37 @@ the chart into a hairline.
 chain data, and they are the reads besides `research` whose answers come from off this machine.
 The module is `src/chainscan/`, and it is the only place the backend builds a chain-explorer
 URL. The agent supplies a network from a closed enum and an address or a hash, never a URL.
-The address or hash has to pass its network's shape before a URL exists (EIP-55 checked when
-mixed case, base58 decoded to 32 bytes for Solana, NEAR named or implicit ids, Bitcoin bech32
-or base58check by format), and a value that fails is refused with the reason, never repaired.
+The address or hash has to pass its network's decoder before a URL exists, and a value that
+fails is refused with the reason, never repaired. Every checksum a format carries is checked
+with small local code and no library (`src/chainscan/codec.ts`): EIP-55 when an EVM address is
+mixed case, base58check for Tron, XRP (its own alphabet), Litecoin, Dogecoin, Dash and Zcash
+transparent addresses, bech32 or bech32m for Litecoin segwit, Cardano and Aleo, CashAddr for
+Bitcoin Cash, the CRC16 inside a TON friendly address and a Stellar account key. Solana keys
+decode to 32 bytes, NEAR ids are named or implicit, Sui, Aptos and Movement accounts are 64 hex
+written in full, a Starknet address is a felt below the field prime, and Bitcoin is still
+checked by format. Zcash is decoded and not read: no keyless public source answered.
 
 Every request goes through one fetch: https only, the host compared character for character
-against a fixed table (`eth.blockscout.com`, `base.blockscout.com`, `arbitrum.blockscout.com`,
-`api.mainnet-beta.solana.com`, `free.rpc.fastnear.com`, `api.nearblocks.io`, `mempool.space`),
-a deadline on every request and thirty seconds on the whole call, redirects followed by hand
-and re-checked, a byte cap (256 KB, 2 MB for the EVM and Bitcoin transaction lists) past which
-the body is refused rather than truncated, a per-host token bucket under each source's
-published limit (Blockscout 2 per second, NearBlocks 1 per 2 seconds, the Solana RPC 5 per
-second) and a 60 second cache by URL. When Blockscout is down an EVM address falls back to the
-viem reader on the public RPC (balance, nonce, code; `0xef0100` code is a delegated account,
-not a contract). When NearBlocks is down `intents_activity` falls back to `mt_tokens_for_owner`
-and `mt_batch_balance_of` on `intents.near` and answers balances only, marked partial.
+against a fixed table of 40 hosts in `src/chainscan/networks.ts` (Blockscout and publicnode for
+the first three EVM chains, each later EVM chain's own public RPC, the public Solana, Fogo and
+NEAR RPCs, NearBlocks, mempool.space and litecoinspace.org, Blockchain.com's Haskoin store for
+Bitcoin Cash, BlockCypher for Dogecoin, Dash's Insight, xrplcluster, toncenter, TronGrid, Sui's
+GraphQL, the Aptos and Movement nodes, Koios, Horizon, publicnode for Starknet, Provable for
+Aleo, and the Hyperliquid info and explorer APIs), each verified live with a real read on
+2026-09-26. A deadline on every request and thirty seconds on the whole call, redirects
+followed by hand and re-checked, a byte cap (256 KB, 2 MB for the EVM and Bitcoin transaction
+lists) past which the body is refused rather than truncated, a per-host token bucket under each
+source's published limit (Blockscout 2 per second, NearBlocks 1 per 2 seconds, toncenter 1 per
+second, BlockCypher 100 an hour) and a 60 second cache by URL. A whole number past 2^53 is kept
+as its digits, so no balance is rounded on the way in. When Blockscout is down an EVM address
+falls back to the viem reader on the public RPC (balance, nonce, code; `0xef0100` code is a
+delegated account, not a contract). When NearBlocks is down `intents_activity` falls back to
+`mt_tokens_for_owner` and `mt_batch_balance_of` on `intents.near` and answers balances only,
+marked partial.
+
+`chainHead(network)` in the same module answers where a chain is: its latest block (slot,
+ledger or checkpoint), that block's time and its age in seconds, from the chain's own head
+endpoint, cached 15 seconds and never a throw. Aleo gives a height and no time.
 
 Everything that comes back is text a stranger could have written: a token name, a memo, a
 method name. Every such string is stripped of control and invisible characters and angle

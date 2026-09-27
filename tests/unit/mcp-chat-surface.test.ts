@@ -139,8 +139,10 @@ test('switch describes the four screens as they are, and a coin is shown on trad
 test('what the chat is handed stays well under half of what it was', async () => {
   /* 62,641 characters of tool JSON on 2026-09-22 (46 tools, measured over stdio like this). The
      chat surface drops ten tools and every description says what the tool does and its limits,
-     without the history of why. Measured 43,541. */
+     without the history of why. Measured 43,541. 45,216 on 2026-09-26, then 46,260 once the chain
+     tools could name every network the deposit card lists: four network enums went from six
+     names to thirty-six, and that is nearly all of the difference. */
   const { tools } = await listed('chat');
   const size = JSON.stringify(tools).length;
-  assert.ok(size < 46_000, `the chat's tools are ${size} characters of JSON`);
+  assert.ok(size < 47_000, `the chat's tools are ${size} characters of JSON`);
 });

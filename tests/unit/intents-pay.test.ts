@@ -451,6 +451,23 @@ test('a chain that would not answer leaves the balance unsaid, still a success o
   assert.match(result.detail, /balance was not read back/);
 });
 
+test('a token payout read back from a chain with no token view leaves the balance unsaid rather than calling it zero', async () => {
+  /* An EVM chain read over its RPC answers the coin and no tokens (tokensSource null, since the
+     chain reader learned every network on 2026-09-26). A token it never listed is not a zero
+     balance, so "USDC balance 0 -> 0" would be a sentence the chain never said. */
+  const noTokenView = (): AddressSummary => ({ ...summaryOf('0.51'), tokensSource: null });
+  const { rail } = railOf({
+    quote: { amountIn: '10000000', amountInFormatted: '10', minAmountIn: '10000000', amountOut: '9972600', amountOutFormatted: '9.9726', minAmountOut: '9950000', withdrawFee: '2400', amountInUsd: '10.00', amountOutUsd: '9.97' },
+    echo: { originAsset: USDC_ETH_ASSET, destinationAsset: USDC_ETH_ASSET, amount: '10000000' },
+    payload: payloadOf({ intents: [{ intent: 'transfer', receiver_id: HANDLE, tokens: { [USDC_ETH_ASSET]: '10000000' } }] }),
+    receiver: [noTokenView(), noTokenView()],
+  });
+  const result = await rail.execute(draftOf({ symbol: 'USDC', originAsset: USDC_ETH_ASSET, amount: 10, amountUsd: 10, minReceived: minReceivedForPay(10) }));
+  assert.equal(result.ok, true, result.detail);
+  assert.match(result.detail, /USDC balance was not read back/);
+  assert.doesNotMatch(result.detail, /0 -> 0/);
+});
+
 test('a generated payload that hands the balance to anything but the quote handle is never signed', async () => {
   const { rail, calls } = railOf({
     payload: payloadOf({ intents: [{ intent: 'transfer', receiver_id: FRIEND.toLowerCase(), tokens: { [ETH_ASSET]: AMOUNT_BASE.toString() } }] }),
