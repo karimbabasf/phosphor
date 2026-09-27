@@ -54,6 +54,7 @@ import type { PreflightRunner } from '../preflight/live.ts';
 import { EXECUTE_MAX_AGE_MS, closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
 import type { RouteHealth } from '../preflight/route-health.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
+import { reasonOf } from './reasons.ts';
 import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, scanNetworkOf, validateAddressForFamily } from '../chainscan/index.ts';
 import type { AddressSummary, ChainNetwork } from '../chainscan/index.ts';
 import { pickOrExplain } from './asset-words.ts';
@@ -479,7 +480,9 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     const p = await plan(draft);
     const owner = requireOwner(draft);
     const label = payLabel(draft.network);
-    // Asked again here, fresh: the route may have closed while the card waited for its click.
+    // Asked again here, fresh: the route may have closed while the card waited for its click. A
+    // closed answer now saves the live quote; the answer that counts is asked right before the
+    // signature (beforeSign below), after the receiver read, which can take many seconds.
     const route = await routeCheck(draft, owner, EXECUTE_MAX_AGE_MS);
     if (route.closed !== null) return { ok: false, detail: route.closed, reason: 'route_closed' };
     const before = await receiverRead(draft.network, p.to);
@@ -502,6 +505,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
           maxDeadlineMs,
           quoteKey: deps.quoteKey,
           ...(preflight === undefined ? {} : { preflight: (quote, port) => preflight.run('intents_pay', draft, quote, port) }),
+          beforeSign: async () => (await routeCheck(draft, owner, EXECUTE_MAX_AGE_MS)).closed,
         },
         {
           owner,
@@ -519,7 +523,9 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       );
     } catch (err) {
       // Everything before the signature throws; 1Click refusing the pair on the live quote is
-      // one of those, and it gets the same sentence the dry quote would have.
+      // one of those, and it gets the same sentence the dry quote would have. The route closing
+      // before the signature is another, with its own sentence already.
+      if (reasonOf(err) === 'route_closed') return { ok: false, detail: errText(err), reason: 'route_closed' };
       const closed = closedWords(draft, err);
       if (closed !== null) return { ok: false, detail: closed, reason: 'route_closed' };
       throw err;

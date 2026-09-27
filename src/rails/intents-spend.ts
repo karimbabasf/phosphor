@@ -57,6 +57,7 @@ import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { submitSignedIntent } from './intents-submit.ts';
 import { FIRST_POLL_MS, watchOneClick } from './watch.ts';
 import { tell } from './oneclick-words.ts';
+import { ReasonError } from './reasons.ts';
 
 export type IntentsSpendDeps = {
   api: IntentsApiPort;
@@ -76,6 +77,11 @@ export type IntentsSpendDeps = {
   // draft into this closure; the spend path adds the venue probe and the balance's owner.
   // Absent means no checks, which is demo mode and the tests of the sequence itself.
   preflight?: PreflightHook;
+  /* The rail's last word, asked after every read and right before the key signs: a sentence
+     refuses, thrown as route_closed, and nothing is signed. The route check lives here because a
+     receiver read or an account read before this can take many seconds, and an answer from
+     before them is not an answer about the moment of the signature. */
+  beforeSign?: () => Promise<string | null>;
 };
 
 // What the checks are handed beyond the quote: whose balance, which asset, and the two venue
@@ -239,6 +245,8 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   // parse, so the payload string is never re-serialised.
   const payload = generated.payload as string;
   const deadline = intentDeadline(payload) ?? 'unknown';
+  const refused = deps.beforeSign === undefined ? null : await deps.beforeSign();
+  if (refused !== null) throw new ReasonError('route_closed', refused);
   const signature = await deps.signer.signErc191(deps.keysPath, payload);
   tell(hooks, { handle: depositAddress, deadline, quote: signedQuote });
 

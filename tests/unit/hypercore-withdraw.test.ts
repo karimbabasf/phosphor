@@ -1006,3 +1006,24 @@ test('a closed route in from HyperCore is refused at simulate and again at execu
   assert.equal(later.signed.length, 0);
   assert.deepEqual(opened.asked.map((a) => a.maxAgeMs), [undefined, 10_000], 'execute did not ask for an answer about now');
 });
+
+test('the route in from HyperCore is asked last, after the balance read and the live quote, right before the key signs', async () => {
+  const asked: RouteAsk[] = [];
+  const seen: { quotes: Array<{ dry: boolean }> } = { quotes: [] };
+  // Open until the live quote is in: the reads before the send are where the route closes.
+  const routes: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const state: RouteState = seen.quotes.some((q) => !q.dry) ? 'closed' : 'open';
+      return { network: ask.network, direction: ask.direction, state, reasons: [{ source: 'oneclick', state, text: '' }], checkedAt: NOW };
+    },
+  };
+  const { rail: r, quotes, signed, posts } = rail({}, undefined, undefined, undefined, { routes });
+  seen.quotes = quotes;
+  const result = await r.execute(draft());
+  assert.equal(result.reason, 'route_closed', `signed after the reads with a route answer from before them: ${result.detail}`);
+  assert.equal(result.detail, 'NEAR Intents is not taking withdrawals from Hyperliquid right now, so nothing was signed and nothing moved.');
+  assert.equal(signed.length, 0);
+  assert.equal(posts.length, 0);
+  assert.deepEqual(asked.map((a) => a.maxAgeMs), [10_000, 10_000]);
+});
