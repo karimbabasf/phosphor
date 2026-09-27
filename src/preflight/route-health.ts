@@ -189,6 +189,8 @@ const INCIDENT_RESOLVED = 'P8TG2TF';
 const MAINTENANCE_COMPLETED = 'PORYK43';
 // partial outage, outage, and a maintenance window's own "maintenance" impact.
 const OUTAGE_IMPACTS: ReadonlySet<string> = new Set(['PCIGMKW', 'PZ9VM86', 'PJSKIN7']);
+// The same without the partial outage: the service is down, or taken down on purpose.
+const FULL_OUTAGE_IMPACTS: ReadonlySet<string> = new Set(['PZ9VM86', 'PJSKIN7']);
 // operational, for an incident and for a maintenance window.
 const CALM_IMPACTS: ReadonlySet<string> = new Set(['PGV50ZJ', 'P0WBI00']);
 
@@ -248,8 +250,10 @@ export function isLive(post: StatusPost, now: number): boolean {
   return post.endsAt === null || now <= post.endsAt;
 }
 
-// What a status page service stands for here: one chain, the other chains, or everything.
-export type ServiceKind = { chain: string } | 'other' | 'global' | 'ignore';
+/* What a status page service stands for here: one chain, the other chains, the bridge behind the
+   deposit addresses this app shows ('backbone': the passive deposit service and cross-chain
+   bridging), or a service every move leans on ('global': 1Click, the solvers, the message bus). */
+export type ServiceKind = { chain: string } | 'other' | 'backbone' | 'global' | 'ignore';
 
 /* The eleven services as the page listed them on 2026-09-26, so a page whose service list did not
    answer still maps an impact. The live list (read by name) overrides these. */
@@ -258,11 +262,11 @@ const KNOWN_SERVICES: ReadonlyMap<string, ServiceKind> = new Map<string, Service
   ['PV0VCGU', { chain: 'btc' }],
   ['PRR7C44', { chain: 'eth' }],
   ['PNEJBRE', 'other'],
-  ['PXQFSY1', 'global'],
+  ['PXQFSY1', 'backbone'],
   ['PTEURIB', 'global'],
   ['P2WM8Q9', 'global'],
   ['PLT88AT', 'global'],
-  ['PYFS8RW', 'global'],
+  ['PYFS8RW', 'backbone'],
   ['PFFZY12', 'ignore'],
   ['P19MLRF', 'ignore'],
 ]);
@@ -275,6 +279,7 @@ export function serviceKindOf(name: string): ServiceKind {
   if (/^bitcoin\b/.test(n)) return { chain: 'btc' };
   if (/^ethereum\b/.test(n)) return { chain: 'eth' };
   if (/other blockchains/.test(n)) return 'other';
+  if (/passive deposit|bridging/.test(n)) return 'backbone';
   if (/explorer|near\.com/.test(n)) return 'ignore';
   return 'global';
 }
@@ -387,10 +392,11 @@ export function namedNetworks(title: string): Set<string> {
 
 /* What the live posts say about one network. A post that names chains speaks for those chains
    alone and closes them both ways. A post that names none speaks through what it impacts: a chain
-   service in partial or full outage closes that chain, "Other Blockchains" warns every chain but
-   Solana, Bitcoin and Ethereum, and a shared service (1Click, the solvers, the message bus,
-   bridging, the passive deposit service) warns every chain. An impact id this module does not
-   know warns rather than closes. */
+   service in partial or full outage closes that chain; "Other Blockchains" warns every chain but
+   Solana, Bitcoin and Ethereum; the passive deposit service or cross-chain bridging, which is what
+   stands behind every address this app shows, closes every chain both ways when it is out (or in
+   maintenance) and warns every chain in a partial outage; 1Click, the solvers and the message bus
+   warn every chain. An impact id this module does not know warns rather than closes. */
 export function statusReasons(posts: StatusPost[], services: ReadonlyMap<string, ServiceKind>, network: string, now: number): RouteReason[] {
   const out: RouteReason[] = [];
   for (const post of posts) {
@@ -408,6 +414,7 @@ export function statusReasons(posts: StatusPost[], services: ReadonlyMap<string,
       const kind = services.get(impact.serviceId) ?? 'global';
       let said: RouteState | null = null;
       if (kind === 'ignore') said = null;
+      else if (kind === 'backbone') said = FULL_OUTAGE_IMPACTS.has(impact.impactId) ? 'closed' : 'degraded';
       else if (kind === 'global') said = 'degraded';
       else if (kind === 'other') said = OWN_SERVICE.has(network) ? null : 'degraded';
       else if (kind.chain === network) said = outage ? 'closed' : 'degraded';
