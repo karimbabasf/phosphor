@@ -131,6 +131,7 @@ type Options = {
   echoRecipient?: string;
   floor?: { listed: false } | { listed: true; min: string; decimals: number } | null; // the bridge's minimum deposit for the token
   closedIn?: string[]; // networks whose deposits NEAR Intents has paused, one answer per ask in turn ('' for open)
+  bridge?: typeof fetch; // answers the bridge's deposit_address itself, in place of `own`
 };
 
 function railOf(coin: Coin, amount: number, opt: Options = {}) {
@@ -207,10 +208,14 @@ function railOf(coin: Coin, amount: number, opt: Options = {}) {
       targetCalls.push(`${network}:${address}`);
       return targets.length > 0 ? (targets.shift() as Target | null) : null;
     },
-    ownDeposit: async (account: string, network: string) => {
-      ownCalls.push(`${account}:${network}`);
-      return opt.own === undefined ? null : opt.own;
-    },
+    ...(opt.bridge !== undefined
+      ? { fetchImpl: opt.bridge }
+      : {
+          ownDeposit: async (account: string, network: string) => {
+            ownCalls.push(`${account}:${network}`);
+            return opt.own === undefined ? null : opt.own;
+          },
+        }),
     depositFloor: async () => (opt.floor === undefined ? null : opt.floor),
     ...(opt.closedIn === undefined ? {} : { routes: { check: routeAsked } }),
   } as Parameters<typeof intentsPayRail>[0]);
@@ -397,6 +402,13 @@ test('a payout to our own deposit address is refused under the bridge minimum, f
   // Somebody else's address is not a deposit, and the bridge's minimum says nothing about it.
   const other = railOf(COINS.XRP, 1.5, { targets: [XRP_OK], own: NOT_OWN, floor: XRP_FLOOR });
   assert.equal((await other.rail.simulate(draftOf(COINS.XRP, PLAIN_XRP, 1.5))).ok, true);
+});
+
+test('our own deposit address on a memo chain is refused when the bridge sends the memo as a number', async () => {
+  const bridge = (async () => new Response(JSON.stringify({ result: { address: OWN.xrp, chain: 'xrp:mainnet', memo: 177690326 } }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  const r = railOf(COINS.XRP, 20, { targets: [XRP_OK], bridge, floor: XRP_FLOOR });
+  assert.match(await refused(r, draftOf(COINS.XRP, OWN.xrp, 20)), /your own NEAR Intents deposit address on XRP Ledger, which the bridge shares and tells apart by a memo/);
+  assert.equal(r.quotes.length, 0);
 });
 
 test('the bridge minimum is read for the payout chain, since one intents token is listed on several', () => {

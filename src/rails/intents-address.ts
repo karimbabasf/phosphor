@@ -264,12 +264,15 @@ export async function intentsDepositAddress(
     throw new Error(`the bridge answered for ${network} without an address`);
   }
 
+  // A destination tag is a number, and a memo sent as one is still a memo (review L3, 2026-09-27):
+  // read as none, a shared address that routes by it would pass for our own.
   const memo = body.result?.memo;
+  const said = typeof memo === 'number' && Number.isFinite(memo) ? String(memo) : typeof memo === 'string' ? memo.trim() : '';
   return {
     chain,
     network,
     address: address.trim(),
-    memo: typeof memo === 'string' && memo.trim() !== '' ? memo.trim() : null,
+    memo: said !== '' ? said : null,
   };
 }
 
