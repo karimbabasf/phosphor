@@ -86,9 +86,9 @@ spends a coin the app cannot price at all, which is valued off what the quote sa
 
 A send is the one way money leaves for somebody else, and it leaves only from the intents
 balance. Your assistant proposes it with `propose_send` and must say where it lands: on a real
-chain (Ethereum, Base, Arbitrum, Solana or NEAR, paid out through the bridge), or inside NEAR
-Intents (credited to another intents account, nothing touches a chain). The two are different
-moves with different fees, and a wrong choice is not reversible.
+chain (every chain the deposit card lists except Zcash and Aleo, paid out through the bridge),
+or inside NEAR Intents (credited to another intents account, nothing touches a chain). The two
+are different moves with different fees, and a wrong choice is not reversible.
 
 ### The read-back
 
@@ -100,6 +100,31 @@ A send the agent has not confirmed cannot be expressed: the tool refuses it.
 The app then decodes the address for the place it is going. A mistyped address is refused before
 any quote (see [Troubleshooting](troubleshooting.md#a-send-was-refused-for-a-typo)), and a
 contract cannot be paid the chain's own coin.
+
+### No memo, tag or comment
+
+A payout cannot carry a memo, a destination tag or a comment: the bridge's quote has no field for
+one. On the XRP Ledger, Stellar and TON an exchange tells one customer's deposit from another's by
+that memo, so do not pay an exchange deposit address there. Pay a personal wallet address. The
+card says this on every payout to those three chains, the assistant never asks you for a memo,
+and a memo it tries to attach anyway is refused.
+
+The app checks the rest with the chain itself, before the price is shown and again right before
+it signs, and refuses the payout when the chain would lose it:
+
+| Chain | Refused |
+|---|---|
+| XRP Ledger | an X-address (the tag is inside it); an account that requires a destination tag; an account that does not exist yet, paid less than the ledger's reserve (1 XRP today); any coin but XRP |
+| Stellar | an M-address (the memo is inside it); an account that sets `config.memo_required`; an account that does not exist yet, paid a token or less than 1 XLM; a token the account has no trustline for; your own NEAR Intents deposit address there, which the bridge shares and tells apart by memo |
+| TON | a testnet address. A bounceable (EQ...) or raw (0:...) address is paid as the same account in its non-bounceable form (UQ...), so a new wallet cannot bounce the money back, and the card shows both |
+| Tron | TRX to a contract, or to an address Tron would not describe |
+| Bitcoin Cash | a legacy 1... or 3... address, which is also a Bitcoin address: use the `bitcoincash:q...` form |
+| Dogecoin | an address starting with 9, which the payout service refuses |
+| Starknet | a short address: write all 64 hex characters after `0x`, leading zeros included |
+
+A chain that does not answer one of those questions is a refusal too, never a guess. Paying your
+own deposit address on any other chain is allowed: the money comes back into your balance, less
+the fees both ways, and the card says so.
 
 ### The click
 
@@ -113,8 +138,9 @@ before. Its Details say why it asks and what the chain says about the address.
 
 On an enclave wallet the click puts up a Touch ID dialog whose sentence the app composes from the
 proposal's own fields, for example "Approve: Pay 0.01 ETH to 0xb583f419...84BB5DB0 on Ethereum
-($24.40)". The receiver is shortened to eight characters at each end. Check them against the
-address you gave, then confirm. While the dialog is up the card says Confirm on your Mac. The
+($24.40)". The receiver is shortened to eight characters at each end (after the `bitcoincash:`
+prefix on Bitcoin Cash), on every chain a payout lands on. Check them against the address you
+gave, then confirm. While the dialog is up the card says Confirm on your Mac. The
 agent's words never reach this dialog.
 
 ### The recipients book
@@ -197,7 +223,8 @@ route with trouble reported goes ahead, and the card says it may take longer.
 The app refuses a move that loses too much of itself to fees, and names the fee when it does.
 
 - A chain payout may lose at most 3 percent between your balance and the chain. The bridge's flat
-  fee counts, so a small payout is refused with the fee named.
+  fee counts, so a small payout is refused with the fee named. The flat fee is higher on some
+  chains: on 2026-09-26 USDT on Tron needed about $85 and Bitcoin about 0.00074 BTC to clear it.
 - A send inside NEAR Intents may lose at most 1 percent.
 - A Hyperliquid deposit is refused under 7 USDC and when the fee is above 5 percent.
 - A Hyperliquid withdrawal is refused under 5 USDC.
