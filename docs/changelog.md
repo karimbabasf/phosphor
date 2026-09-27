@@ -5,6 +5,17 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.10
+
+Built 2026-09-27. Tagged v0.10.10 on 2026-09-27.
+
+- Pro's Activity lists your whole history, not the last four moves. It scrolls inside its card
+  and reads the next 40 as you reach the end. A search field finds a move by coin, kind, chain
+  or hash, and four filters show All, Swaps, Transfers or the moves that did not go through.
+  New moves appear on their own while Pro is open.
+- Turning your assistant off after it made trades now leaves the empty card, "Your agent is
+  off.", instead of a column of old trade receipts.
+
 ## 0.10.9
 
 Built 2026-09-27. Tagged v0.10.9 on 2026-09-27.
