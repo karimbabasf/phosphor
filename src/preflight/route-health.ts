@@ -60,6 +60,10 @@ export const STATUS_DATA_LABEL = "The NEAR Intents status page's own title, quot
 // beside the bridge's own asks, so a slow check costs the screen at most this, and the answer is
 // then unknown.
 export const ROUTE_TIMEOUT_MS = 4_000;
+/* How long an ask waits when an address is about to be shown on its answer. Right after the app
+   starts, the token list and the first probe run past four seconds, and unknown shows the address:
+   the agent opened a paused TON card that way after every restart (2026-09-27). */
+export const ADDRESS_WAIT_MS = 15_000;
 export const OPEN_TTL_MS = 60_000;
 export const SHAKY_TTL_MS = 20_000;
 /* How old an answer may be right before a key signs. A card can wait minutes for its click, and a
@@ -556,8 +560,10 @@ export type RouteHealthDeps = {
 
 /* `account` is the intents account the probe credits and refunds, which a dry quote never moves.
    `maxAgeMs` is how old a kept answer may be for this ask (EXECUTE_MAX_AGE_MS right before a
-   signature); absent, the TTLs above decide. A kept closed answer is used whatever its age. */
-export type RouteAsk = { network: string; direction: RouteDirection; account: string | null; asset?: string; maxAgeMs?: number };
+   signature); absent, the TTLs above decide. A kept closed answer is used whatever its age.
+   `waitMs` is how long the probe and the page may take before they count as unknown,
+   the check's own deadline unless the ask is about to show an address (ADDRESS_WAIT_MS). */
+export type RouteAsk = { network: string; direction: RouteDirection; account: string | null; asset?: string; maxAgeMs?: number; waitMs?: number };
 
 export type RouteHealth = { check(ask: RouteAsk): Promise<RouteVerdict> };
 
@@ -895,13 +901,14 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
      kept read); the work it started finishes on its own and serves the next check. */
   async function check(q: RouteAsk): Promise<RouteVerdict> {
     const checkedAt = now();
+    const wait = Math.max(timeoutMs, q.waitMs ?? 0);
     try {
       const net = spendNetworkOf(q.network);
       const [probed, status, chain] = await Promise.all([
         q.direction === 'in' && net !== undefined && q.account !== null && q.account !== ''
-          ? within(probeReason(net, q.account, q.asset, q.maxAgeMs), timeoutMs).then((r) => r ?? { source: 'oneclick' as const, state: 'unknown' as const, text: `1Click did not answer about ${net.name} in time` })
+          ? within(probeReason(net, q.account, q.asset, q.maxAgeMs), wait).then((r) => r ?? { source: 'oneclick' as const, state: 'unknown' as const, text: `1Click did not answer about ${net.name} in time` })
           : Promise.resolve(null),
-        within(statusFor(q.network, q.maxAgeMs), timeoutMs).then((r) => r ?? keptStatus(q.network)),
+        within(statusFor(q.network, q.maxAgeMs), wait).then((r) => r ?? keptStatus(q.network)),
         chainReason(q.network),
       ]);
       const reasons = [...(probed === null ? [] : [probed]), ...status, ...(chain === null ? [] : [chain])];

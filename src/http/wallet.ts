@@ -35,7 +35,7 @@ import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
 import type { RailKeys } from '../keystore/derive.ts';
 import type { Ctx } from './context.ts';
-import { STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
+import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
 import type { RouteAudience, RouteGate, RouteState, RouteVerdict } from '../preflight/route-health.ts';
 
 // Long enough that a four-digit guess is not the whole search space, short enough that it does
@@ -882,7 +882,7 @@ function withRoute(row: IntentsReceiveNetwork, verdict: RouteVerdict | undefined
    about the network's own coin) does not answer: TON USDT is its own question. Both doors that
    open a deposit card ask it, the window's and the agent's. */
 export async function depositRoute(ctx: Ctx, chain: string, account: string, assetId: string, audience: RouteAudience = 'person'): Promise<RouteGate & { link: string | null }> {
-  const gate = await routeGate(ctx.routeHealth, { network: chain, direction: 'in', account, asset: assetId === '' ? undefined : assetId }, 'deposit', audience);
+  const gate = await routeGate(ctx.routeHealth, { network: chain, direction: 'in', account, asset: assetId === '' ? undefined : assetId, waitMs: ADDRESS_WAIT_MS }, 'deposit', audience);
   return { ...gate, link: gate.closed !== null || gate.notice !== null ? STATUS_LINK : null };
 }
 

@@ -464,6 +464,22 @@ test('one check is held to one deadline: a head read that never answers and a pr
   assert.deepEqual(verdict.reasons.filter((r) => r.source === 'chain'), []);
 });
 
+/* Karim, 2026-09-27: the agent opened a TON card with the address while TON was paused, right
+   after each app start. A cold token list ran past the deadline, the probe said unknown, and
+   unknown shows the address. An ask that is about to show one waits for the real answer. */
+test('a slow cold probe is unknown on the normal deadline, and closed for an ask that waits', async () => {
+  const timeoutMs = 50;
+  const { fetchImpl } = fakeFetch({ quote: () => NOT_AVAILABLE });
+  const slowTokens = async (): Promise<OneClickToken[]> => {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    return TOKENS;
+  };
+  const quick = await checker({ tokens: slowTokens, fetchImpl, timeoutMs }).check({ network: 'ton', direction: 'in', account: ACCOUNT });
+  assert.equal(quick.state, 'unknown');
+  const waited = await checker({ tokens: slowTokens, fetchImpl, timeoutMs }).check({ network: 'ton', direction: 'in', account: ACCOUNT, waitMs: 1_000 });
+  assert.equal(waited.state, 'closed');
+});
+
 test('the bridge closes a network it credits nothing on, but only when its list was read', () => {
   const open: RouteVerdict = { network: 'ton', direction: 'in', state: 'open', reasons: [{ source: 'oneclick', state: 'open', text: '' }], checkedAt: NOW };
   assert.equal(bridgeReason('ton', 2, true), null);
