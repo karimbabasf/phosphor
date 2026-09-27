@@ -547,6 +547,9 @@ test('a route that closes while the card waits for its click is refused at execu
   assert.equal(result.reason, 'route_closed');
   assert.match(result.detail, /^NEAR Intents is not taking payouts to Ethereum right now, so nothing was signed and nothing moved\./);
   assert.equal(asked.length, 2);
+  // Simulate keeps the checker's minute; right before the signature the answer must be under ten seconds old.
+  assert.equal(asked[0].maxAgeMs, undefined);
+  assert.equal(asked[1].maxAgeMs, 10_000);
   assert.equal(calls.quotes.length, quotesAtSimulate);
   assert.equal(calls.generated.length, 0);
   assert.equal(calls.submitted.length, 0);

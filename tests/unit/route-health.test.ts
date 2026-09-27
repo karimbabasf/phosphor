@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  EXECUTE_MAX_AGE_MS,
   FEED_TTL_MS,
   OPEN_TTL_MS,
   PROBE_USD,
@@ -457,4 +458,51 @@ test('a chain that stops wanting MEMO is asked plainly again', async () => {
   clock.t += OPEN_TTL_MS + 1;
   assert.equal((await routes.check({ network: 'stellar', direction: 'in', account: ACCOUNT })).state, 'open');
   assert.deepEqual(calls.filter((c) => c.url.endsWith('/v0/quote')).map((c) => c.body?.depositMode ?? '-'), ['-', 'MEMO', 'MEMO', '-']);
+});
+
+test('right before a signature an open answer older than ten seconds is asked again, a closed one still refuses at once, and without a cap the minute holds', async () => {
+  const clock = { t: NOW };
+  const { fetchImpl, calls } = fakeFetch({ quote: (b) => (b.originAsset === TOKENS[0].assetId ? NOT_AVAILABLE : QUOTED) });
+  const routes = checker({ fetchImpl, clock });
+  const probesOf = (asset: string): number => calls.filter((c) => c.url.endsWith('/v0/quote') && c.body?.originAsset === asset).length;
+  const eth = (maxAgeMs?: number): Promise<RouteVerdict> => routes.check({ network: 'eth', direction: 'in', account: ACCOUNT, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) });
+  const ton = (maxAgeMs?: number): Promise<RouteVerdict> => routes.check({ network: 'ton', direction: 'in', account: ACCOUNT, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) });
+
+  await eth();
+  await ton();
+  clock.t = NOW + 15_000;
+  assert.equal((await eth()).state, 'open');
+  assert.equal(probesOf('nep141:eth.omft.near'), 1, 'the report and simulate keep the minute');
+  assert.equal((await eth(EXECUTE_MAX_AGE_MS)).state, 'open');
+  assert.equal(probesOf('nep141:eth.omft.near'), 2, 'a fifteen second old open answer was trusted right before a signature');
+  clock.t = NOW + 20_000;
+  await eth(EXECUTE_MAX_AGE_MS);
+  assert.equal(probesOf('nep141:eth.omft.near'), 2, 'a five second old answer is fresh enough');
+
+  clock.t = NOW + 15_000;
+  assert.equal((await ton(EXECUTE_MAX_AGE_MS)).state, 'closed');
+  assert.equal(probesOf(TOKENS[0].assetId), 1, 'a closed answer in hand refuses without asking again');
+});
+
+test('right before a signature the status page is read again when the kept read is older than ten seconds, unless it already closes the network', async () => {
+  const clock = { t: NOW };
+  let posts: Record<string, unknown>[] = [];
+  const { fetchImpl, calls } = fakeFetch({ posts: () => ({ status: 200, body: { posts } }) });
+  const routes = checker({ fetchImpl, clock });
+  const reads = (): number => calls.filter((c) => c.url.includes('/api/posts')).length;
+  const out = (maxAgeMs?: number): Promise<RouteVerdict> => routes.check({ network: 'eth', direction: 'out', account: ACCOUNT, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) });
+
+  await out();
+  clock.t = NOW + 15_000;
+  await out();
+  assert.equal(reads(), 1);
+  posts = [post({ title: 'Ethereum withdrawals paused' })];
+  assert.equal((await out(EXECUTE_MAX_AGE_MS)).state, 'closed', 'the fresh read saw the pause');
+  assert.equal(reads(), 2);
+
+  // Now the kept read closes eth: fifteen seconds later, right before a signature, it refuses as is.
+  posts = [];
+  clock.t = NOW + 30_000;
+  assert.equal((await out(EXECUTE_MAX_AGE_MS)).state, 'closed');
+  assert.equal(reads(), 2);
 });

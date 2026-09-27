@@ -69,7 +69,7 @@ import type { PocketRead, RiseSchedule } from '../ledger/settle.ts';
 import { appFeeBpsOf } from './intents-spend.ts';
 import { FIRST_POLL_MS, watchOneClick } from './watch.ts';
 import { TYPICAL_SEC } from '../proposals/view.ts';
-import { closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
+import { EXECUTE_MAX_AGE_MS, closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
 import type { RouteHealth } from '../preflight/route-health.ts';
 
 // ---------- the two ends ----------
@@ -492,8 +492,9 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
   /* Whether NEAR Intents is taking USDC in from HyperCore right now, probed with the very asset
      this rail sends. Asked when the withdrawal is proposed and again before the key signs, because
      a card can wait minutes for its click. */
-  function routeCheck(owner: string): ReturnType<typeof routeGate> {
-    return routeGate(deps.routes, { network: 'hypercore', direction: 'in', account: owner, asset: HYPERCORE_ORIGIN_ASSET_ID }, 'hl_withdraw');
+  function routeCheck(owner: string, maxAgeMs?: number): ReturnType<typeof routeGate> {
+    const ask = { network: 'hypercore', direction: 'in' as const, account: owner, asset: HYPERCORE_ORIGIN_ASSET_ID };
+    return routeGate(deps.routes, maxAgeMs === undefined ? ask : { ...ask, maxAgeMs }, 'hl_withdraw');
   }
 
   async function simulate(draft: HlWithdrawDraft): Promise<SimulationResult> {
@@ -585,8 +586,8 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     } catch (err) {
       return { ok: false, detail: `${errText(err)}. Nothing was sent.` };
     }
-    // Asked again here: the route may have closed while the card waited for its click.
-    const route = await routeCheck(owner);
+    // Asked again here, fresh: the route may have closed while the card waited for its click.
+    const route = await routeCheck(owner, EXECUTE_MAX_AGE_MS);
     if (route.closed !== null) return { ok: false, detail: route.closed, reason: 'route_closed' };
 
     // Both sides BEFORE anything moves, so the proof afterwards is a comparison and not a guess.

@@ -62,7 +62,7 @@ import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { appFeeBpsOf, spendFromIntents } from './intents-spend.ts';
 import { TYPICAL_SEC } from '../proposals/view.ts';
 import type { PreflightRunner } from '../preflight/live.ts';
-import { closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
+import { EXECUTE_MAX_AGE_MS, closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
 import type { RouteHealth } from '../preflight/route-health.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
@@ -469,7 +469,13 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     return accountSummary(hl, address);
   }
 
-  async function simulate(draft: HlDepositDraft): Promise<SimulationResult> {
+  function simulate(draft: HlDepositDraft): Promise<SimulationResult> {
+    return simulateAt(draft);
+  }
+
+  /* The simulation, with `maxAgeMs` set when execute() runs it a moment before signing, so the
+     route answer it acts on is one about now and not the one the card was proposed on. */
+  async function simulateAt(draft: HlDepositDraft, maxAgeMs?: number): Promise<SimulationResult> {
     const planned = await plan(draft);
     if (planned.plan === undefined) return refusal(draft, planned.reasons);
     const p = planned.plan;
@@ -483,7 +489,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
 
     /* Whether NEAR Intents is taking money to HyperCore right now. execute() runs this whole
        simulation again a moment before it signs, so the route is asked at both ends of the wait. */
-    const route = await routeGate(deps.routes, { network: 'hypercore', direction: 'out', account: owner }, 'hl_deposit');
+    const ask = { network: 'hypercore', direction: 'out' as const, account: owner };
+    const route = await routeGate(deps.routes, maxAgeMs === undefined ? ask : { ...ask, maxAgeMs }, 'hl_deposit');
     if (route.closed !== null) return { ok: false, summary: route.closed, error: route.closed, reason: 'route_closed' };
 
     try {
@@ -639,7 +646,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   async function execute(draft: HlDepositDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     // Re-plan and re-price rather than trust the approval. An approval can be minutes old and
     // a quote is a live price, so the checks that refused a bad draft have to run again here.
-    const check = await simulate(draft);
+    const check = await simulateAt(draft, EXECUTE_MAX_AGE_MS);
     // A closed route's sentence already says nothing was signed.
     if (!check.ok && check.reason === 'route_closed') return { ok: false, detail: check.error ?? check.summary, reason: 'route_closed' };
     if (!check.ok) return { ok: false, detail: `${check.error ?? check.summary}. Nothing was signed.` };

@@ -878,11 +878,13 @@ test('a closed route to HyperCore is refused at simulate and again at execute, w
   assert.equal(calls.quotes.length, 0);
 
   // Open when proposed, closed by the click: execute re-runs the check before anything is signed.
-  const later = rail({}, undefined, { routes: routesSaying('open', 'closed').routes });
+  const opened = routesSaying('open', 'closed');
+  const later = rail({}, undefined, { routes: opened.routes });
   assert.equal((await later.rail.simulate(draft())).ok, true);
   const result = await later.rail.execute(draft());
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'route_closed');
   assert.equal(result.detail, 'NEAR Intents is not taking transfers to Hyperliquid right now, so nothing was signed and nothing moved.');
   assert.equal(later.calls.generated.length, 0);
+  assert.deepEqual(opened.asked.map((a) => a.maxAgeMs), [undefined, 10_000], 'execute did not ask for an answer about now');
 });

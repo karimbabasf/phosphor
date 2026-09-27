@@ -996,11 +996,13 @@ test('a closed route in from HyperCore is refused at simulate and again at execu
   assert.equal(closed.asked[0].asset, HYPERCORE_ORIGIN_ASSET_ID);
   assert.equal(quotes.length, 0);
 
-  const later = rail({}, undefined, undefined, undefined, { routes: routesSaying('open', 'closed').routes });
+  const opened = routesSaying('open', 'closed');
+  const later = rail({}, undefined, undefined, undefined, { routes: opened.routes });
   assert.equal((await later.rail.simulate(draft())).ok, true);
   const result = await later.rail.execute(draft());
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'route_closed');
   assert.equal(later.quotes.filter((q) => !q.dry).length, 0, 'no live quote, so no deposit address was minted');
   assert.equal(later.signed.length, 0);
+  assert.deepEqual(opened.asked.map((a) => a.maxAgeMs), [undefined, 10_000], 'execute did not ask for an answer about now');
 });

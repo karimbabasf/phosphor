@@ -51,7 +51,7 @@ import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-nativ
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
 import type { PreflightRunner } from '../preflight/live.ts';
-import { closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
+import { EXECUTE_MAX_AGE_MS, closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
 import type { RouteHealth } from '../preflight/route-health.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, scanNetworkOf, validateAddressForFamily } from '../chainscan/index.ts';
@@ -407,8 +407,9 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   }
 
   // Whether NEAR Intents is taking payouts to this chain right now (src/preflight/route-health.ts).
-  function routeCheck(draft: IntentsPayDraft, owner: string): ReturnType<typeof routeGate> {
-    return routeGate(deps.routes, { network: draft.network, direction: 'out', account: owner }, 'payout');
+  // `maxAgeMs` is set right before the signature, where a minute-old answer is not one about now.
+  function routeCheck(draft: IntentsPayDraft, owner: string, maxAgeMs?: number): ReturnType<typeof routeGate> {
+    return routeGate(deps.routes, { network: draft.network, direction: 'out', account: owner, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) }, 'payout');
   }
 
   function valueUsd(draft: IntentsPayDraft): number {
@@ -476,8 +477,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     const p = await plan(draft);
     const owner = requireOwner(draft);
     const label = payLabel(draft.network);
-    // Asked again here: the route may have closed while the card waited for its click.
-    const route = await routeCheck(draft, owner);
+    // Asked again here, fresh: the route may have closed while the card waited for its click.
+    const route = await routeCheck(draft, owner, EXECUTE_MAX_AGE_MS);
     if (route.closed !== null) return { ok: false, detail: route.closed, reason: 'route_closed' };
     const before = await receiverRead(draft.network, p.to);
 
