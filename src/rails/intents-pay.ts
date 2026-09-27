@@ -89,6 +89,10 @@ export const PAY_MAX_LOSS_BPS = 300;
 // A real cross-chain pair keeps the API default.
 export const PAY_SAME_ASSET_SLIPPAGE_BPS = 10;
 
+// How long each of the chain-rule reads may take (src/rails/pay-rules.ts): the ledger's rules for
+// the receiver and the bridge's deposit address for our own account.
+export const RULE_READ_MS = 6_000;
+
 export function minReceivedForPay(amount: number): number {
   return amount * (1 - PAY_MAX_LOSS_BPS / 10_000);
 }
@@ -239,21 +243,26 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       if (scan === null) return Promise.resolve(null);
       return addressSummary(scan, address, { fetchImpl, state: createChainFetchState() }).catch(() => null);
     });
-  // Eight seconds, the bound the receiver read at propose time has: these run inside a propose.
+  /* Six seconds each, side by side: they run inside a propose, after the eight second receiver
+     read and the four second route check, and the proxy gives the whole reply thirty. A read
+     that runs out is null, and on a chain where it matters null is a refusal. */
   const targetRead =
     deps.payTarget ??
     ((network: string, address: string) => {
       const scan = scanNetworkOf(network);
       if (scan === null) return Promise.resolve(null);
-      return payTarget(scan, address, { fetchImpl, state: createChainFetchState(), deadline: Date.now() + 8_000 }).catch(() => null);
+      return payTarget(scan, address, { fetchImpl, state: createChainFetchState(), deadline: Date.now() + RULE_READ_MS }).catch(() => null);
     });
   const ownDepositRead =
     deps.ownDeposit ??
     ((account: string, network: string) =>
-      intentsDepositAddress(account, network, fetchImpl).then(
-        (d): OwnDeposit => ({ address: d.address, memo: d.memo }),
-        () => null,
-      ));
+      Promise.race([
+        intentsDepositAddress(account, network, fetchImpl).then(
+          (d): OwnDeposit => ({ address: d.address, memo: d.memo }),
+          () => null,
+        ),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), RULE_READ_MS).unref()),
+      ]));
 
   type Plan = {
     chain: string;
