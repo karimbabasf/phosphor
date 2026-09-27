@@ -59,6 +59,7 @@ export const SHAKY_TTL_MS = 20_000;
 export const EXECUTE_MAX_AGE_MS = 10_000;
 // The page itself says max-age=60 on the post list.
 export const FEED_TTL_MS = 60_000;
+export const FEED_STALE_MS = 5 * 60_000;
 export const SERVICES_TTL_MS = 60 * 60_000;
 export const MAX_KEYS = 256;
 /* The most a status page or a quote answer may send. Both answer in a few kilobytes; a body past
@@ -630,6 +631,8 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
   // The coins 1Click would not take in as themselves, so a probe skips straight past them.
   const unfit = new Map<string, true>();
   let feed: Cached<StatusPost[] | null> | undefined;
+  // The last read the page answered, which a failed read falls back on.
+  let answered: { at: number; value: StatusPost[] } | undefined;
   let services: Cached<ReadonlyMap<string, ServiceKind>> | undefined;
 
   /* One answer from one of the two hosts, inside one deadline for every hop and the body. A
@@ -674,15 +677,25 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     return shared(inflight as unknown as Map<string, Promise<T>>, key, run);
   }
 
+  /* A read that fails keeps the last one that answered, for up to FEED_STALE_MS: during a real
+     incident the page is often the slow thing, and one timeout must not turn the pause it
+     reported into unknown. It is asked again on the short TTL; past the window it is unknown. */
   async function readFeed(force = false): Promise<StatusPost[] | null> {
     if (!force && fresh(feed, now())) return feed.value;
     return once('status:posts', async () => {
+      let posts: StatusPost[] | null = null;
       try {
         const { status, body } = await getJson(`${STATUS_BASE}/api/posts?is_featured=true`);
-        const posts = status >= 200 && status < 300 ? parsePosts(body) : null;
-        feed = { at: now(), ttl: posts === null ? SHAKY_TTL_MS : FEED_TTL_MS, value: posts };
+        if (status >= 200 && status < 300) posts = parsePosts(body);
       } catch {
-        feed = { at: now(), ttl: SHAKY_TTL_MS, value: null };
+        // the kept read below, or unknown
+      }
+      if (posts !== null) {
+        answered = { at: now(), value: posts };
+        feed = { at: now(), ttl: FEED_TTL_MS, value: posts };
+      } else {
+        const left = answered === undefined ? 0 : answered.at + FEED_STALE_MS - now();
+        feed = left > 0 && answered !== undefined ? { at: now(), ttl: Math.min(SHAKY_TTL_MS, left), value: answered.value } : { at: now(), ttl: SHAKY_TTL_MS, value: null };
       }
       return feed.value;
     });

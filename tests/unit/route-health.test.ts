@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import {
   CHAIN_STALE_SEC,
   EXECUTE_MAX_AGE_MS,
+  FEED_STALE_MS,
   FEED_TTL_MS,
   OPEN_TTL_MS,
   PROBE_USD,
@@ -560,6 +561,30 @@ test('the checker follows a redirect only to the host it asked, and refuses a bo
   const huge = redirectingFetch((url) => (url.includes('/api/posts') ? json(padded) : json(SERVICES)));
   const capped = await checker({ fetchImpl: huge.fetchImpl }).check(ask);
   assert.equal(capped.state, 'unknown', 'a body over the cap was read');
+});
+
+test('a closed answer from the status page outlives a failed re-read for five minutes, then turns unknown', async () => {
+  const clock = { t: NOW };
+  let answering = true;
+  const { fetchImpl } = fakeFetch({ posts: () => (answering ? { status: 200, body: { posts: [post({ title: 'TON: Service disruption reported' })] } } : 'throw') });
+  const routes = checker({ fetchImpl, clock });
+  const out = (): Promise<RouteVerdict> => routes.check({ network: 'ton', direction: 'out', account: ACCOUNT });
+
+  assert.equal((await out()).state, 'closed');
+  answering = false;
+  clock.t = NOW + FEED_TTL_MS + 1;
+  assert.equal((await out()).state, 'closed', 'one failed re-read dropped a closed route to unknown');
+  clock.t = NOW + FEED_STALE_MS - 1;
+  assert.equal((await out()).state, 'closed');
+  clock.t = NOW + FEED_STALE_MS + 1;
+  const late = await out();
+  assert.equal(late.state, 'unknown');
+  assert.ok(late.reasons.some((r) => r.source === 'status' && r.state === 'unknown'));
+
+  // The page answering again is the page's word, not the kept one.
+  answering = true;
+  clock.t += SHAKY_TTL_MS + 1;
+  assert.equal((await out()).state, 'closed');
 });
 
 test('right before a signature the status page is read again when the kept read is older than ten seconds, unless it already closes the network', async () => {
