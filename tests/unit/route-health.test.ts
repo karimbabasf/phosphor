@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CHAIN_STALE_SEC,
   EXECUTE_MAX_AGE_MS,
   FEED_TTL_MS,
   OPEN_TTL_MS,
@@ -28,6 +29,7 @@ import {
   probeAsset,
   quoteSaysClosed,
   routeSentence,
+  staleAfterSec,
   statusReasons,
   withReason,
 } from '../../src/preflight/route-health.ts';
@@ -398,6 +400,29 @@ test('a live status post closes a network the probe calls open, and the combined
   assert.equal(verdict.state, 'closed');
   assert.deepEqual(verdict.reasons.map((r) => `${r.source}:${r.state}`).sort(), ['oneclick:open', 'status:closed']);
   assert.match(routeSentence(verdict, 'deposit') ?? '', /paused Solana deposits.*status page says: "ZEC & Solana Paused"/);
+});
+
+test('a stale head is judged against its own chain: fifteen minutes by default, longer for proof-of-work chains', async () => {
+  const { fetchImpl } = fakeFetch();
+  const cases: Array<[string, number, RouteVerdict['state']]> = [
+    ['eth', 16 * 60, 'degraded'],
+    ['eth', 14 * 60, 'unknown'],
+    ['btc', 60 * 60, 'unknown'],
+    ['btc', 95 * 60, 'degraded'],
+    ['bch', 80 * 60, 'unknown'],
+    ['ltc', 25 * 60, 'unknown'],
+    ['ltc', 35 * 60, 'degraded'],
+    ['dash', 35 * 60, 'degraded'],
+    ['doge', 18 * 60, 'unknown'],
+    ['doge', 22 * 60, 'degraded'],
+    ['zec', 22 * 60, 'degraded'],
+  ];
+  for (const [network, ageSec, state] of cases) {
+    const verdict = await checker({ fetchImpl, chainHead: async () => ({ ageSec }) }).check({ network, direction: 'out', account: ACCOUNT });
+    assert.equal(verdict.state, state, `${network} at ${ageSec / 60} minutes`);
+  }
+  assert.equal(staleAfterSec('btc'), 90 * 60);
+  assert.equal(staleAfterSec('sol'), CHAIN_STALE_SEC);
 });
 
 test('the chain seam warns on a stale head and is ignored when it does not answer', async () => {
