@@ -5,6 +5,24 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.7
+
+Built 2026-09-26. Tagged v0.10.7 on 2026-09-26.
+
+- Add money no longer shows an address on a network NEAR Intents has paused. The network reads
+  Paused, the card says why in one sentence, and View status opens the NEAR Intents status page.
+  A network with trouble reported keeps its address, with a notice that money may take longer.
+- A payout to a chain, a Hyperliquid deposit and a Hyperliquid withdrawal are refused before
+  signing when NEAR Intents has paused that route, checked when proposed and again right before
+  the key signs. Your assistant's deposit tool gives the same answer.
+- Your assistant can read 35 chains instead of 6: an address's balance and activity, a
+  transaction's result, and whether the chain is still making blocks. Zcash is the one it cannot
+  read yet, because no public source answers without a key.
+- Before a payout, the app reads the receiving address on every EVM chain it pays to, not only
+  Ethereum, Base and Arbitrum, and tells you when that address has never been used.
+- Payouts to Ethereum and Arbitrum run the gas check again. It had been skipped.
+- Looking up a NEAR transaction shows its real result again instead of "unknown".
+
 ## 0.10.6
 
 Built 2026-09-26. Tagged v0.10.6 on 2026-09-26.
