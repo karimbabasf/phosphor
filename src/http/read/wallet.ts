@@ -236,7 +236,7 @@ export const walletReads: ReadTable = {
     if (network === undefined || network.address === null) {
       // A network NEAR Intents has paused carries its sentence here, and the page that says more.
       const statusLink = network?.statusLink ?? null;
-      return sendJson(res, 200, { ok: false, reason: network?.unavailable ?? `no deposit address for ${chain} right now`, ...(statusLink === null ? {} : { statusLink }), accepted });
+      return sendJson(res, 200, { ok: false, reason: network?.agentUnavailable ?? `no deposit address for ${chain} right now`, ...(statusLink === null ? {} : { statusLink }), accepted });
     }
     const want = currentSymbol(chain, symbol);
     const token = network.accepts.find((a) => a.symbol.toUpperCase() === want);
@@ -250,9 +250,10 @@ export const walletReads: ReadTable = {
     /* The route for this exact asset, before any card or watch: TON USDT is its own question, and
        the row above was asked about the network's own coin. Closed opens nothing; degraded opens
        the card and the notice rides in the answer and in the line the agent relays. */
-    const route = await depositRoute(ctx, chain, report.account, token.assetId);
+    const route = await depositRoute(ctx, chain, report.account, token.assetId, 'agent');
     if (route.closed !== null) return sendJson(res, 200, { ok: false, reason: route.closed, statusLink: route.link, accepted });
-    const notice = route.notice ?? network.notice;
+    // The agent's forms: what the status page wrote rides only inside its labeled quote.
+    const notice = route.notice ?? network.agentNotice;
     const statusLink = route.link ?? network.statusLink;
     // The token as the bridge lists it, as Add money passes it (vault.ts), so the watch matches the
     // bridge's rows by contract and not by a symbol the bridge may spell another way.

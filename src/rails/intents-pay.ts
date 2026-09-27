@@ -413,7 +413,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   // Whether NEAR Intents is taking payouts to this chain right now (src/preflight/route-health.ts).
   // `maxAgeMs` is set right before the signature, where a minute-old answer is not one about now.
   function routeCheck(draft: IntentsPayDraft, owner: string, maxAgeMs?: number): ReturnType<typeof routeGate> {
-    return routeGate(deps.routes, { network: draft.network, direction: 'out', account: owner, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) }, 'payout');
+    return routeGate(deps.routes, { network: draft.network, direction: 'out', account: owner, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) }, 'payout', 'agent');
   }
 
   function valueUsd(draft: IntentsPayDraft): number {
