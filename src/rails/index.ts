@@ -25,7 +25,7 @@
 import type { AppConfig, ChainId, Rail, WriteDraft } from '../types.ts';
 import type { OneClickToken, TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY, oneClickClient } from '../intents.ts';
-import { intentsActivity } from '../chainscan/index.ts';
+import { chainHead, intentsActivity, scanNetworkOf } from '../chainscan/index.ts';
 import type { IntentsActivity } from '../chainscan/index.ts';
 import { demoRails } from './demo.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
@@ -130,8 +130,16 @@ export function createRails(deps: RailDeps): RailRegistry {
 
   /* ONE route checker, on the same client, so its probe names coins from the token list the
      rails quote against. The rails that land money on a chain ask it at simulate time and again
-     at execute time; the receive report asks it before it shows an address. */
-  const routes = createRouteHealth({ tokens: () => client.tokens() });
+     at execute time; the receive report asks it before it shows an address. The chain's own
+     newest block rides along, so a chain that stopped making blocks warns even while 1Click
+     still quotes it; a network the reader cannot name adds nothing. */
+  const routes = createRouteHealth({
+    tokens: () => client.tokens(),
+    chainHead: (id) => {
+      const network = scanNetworkOf(id);
+      return network === null ? Promise.resolve(null) : chainHead(network);
+    },
+  });
 
   /* BOTH SWAP RAILS, whatever the switch says. The switch decides which venue proposeSwap
      stamps on a new draft; a row already on disk names the venue it was written under, and

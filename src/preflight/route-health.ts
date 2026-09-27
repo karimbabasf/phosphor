@@ -506,9 +506,9 @@ export type RouteHealthDeps = {
   fetchImpl?: typeof fetch;
   now?: () => number;
   /* How old the network's newest block is, keyed by registry id. The shape of chainscan's
-     chainHead (feat/chain-reader): null when the head could not be read, and ageSec null where
-     the chain gives a height and no block time (Aleo). Either null says nothing. Absent until the
-     multi-chain reader is wired, as (id) => scanNetworkOf(id) === null ? null : chainHead(it). */
+     chainHead: null when the head could not be read, and ageSec null where the chain gives a
+     height and no block time (Aleo). Either null says nothing. src/rails/index.ts wires it; a
+     checker built without it (the tests, the live script) simply has no chain source. */
   chainHead?: (network: string) => Promise<{ ageSec: number | null } | null>;
   // Where a probe's change of answer is written, with the service's own words. Defaults to stderr.
   log?: (line: string) => void;
