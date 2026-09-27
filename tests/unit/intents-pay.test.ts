@@ -478,6 +478,30 @@ test('a token payout read back from a chain with no token view leaves the balanc
   assert.doesNotMatch(result.detail, /0 -> 0/);
 });
 
+test('a token payout read back from a token view that lists by symbol alone (HyperCore) leaves the balance unsaid rather than calling it zero', async () => {
+  /* The Hyperliquid reader lists spot balances by coin name with no contract, so no row can be
+     matched to the paid token, and a row it did not list is not a zero: the money may sit on the
+     perp side. "USDC balance 0 -> 0" on a payout that went through is the chain contradicting the
+     delivery. */
+  const spotBook = (usdc: string | null): AddressSummary => ({
+    ...summaryOf('0.51'),
+    tokens: usdc === null ? [] : [{ symbol: 'USDC', name: '', amount: usdc, contract: null, usd: null }],
+    tokensSource: 'hyperliquid',
+  });
+  for (const reads of [[spotBook(null), spotBook(null)], [spotBook('4'), spotBook('13.97')]]) {
+    const { rail } = railOf({
+      quote: { amountIn: '10000000', amountInFormatted: '10', minAmountIn: '10000000', amountOut: '9972600', amountOutFormatted: '9.9726', minAmountOut: '9950000', withdrawFee: '2400', amountInUsd: '10.00', amountOutUsd: '9.97' },
+      echo: { originAsset: USDC_ETH_ASSET, destinationAsset: USDC_ETH_ASSET, amount: '10000000' },
+      payload: payloadOf({ intents: [{ intent: 'transfer', receiver_id: HANDLE, tokens: { [USDC_ETH_ASSET]: '10000000' } }] }),
+      receiver: reads,
+    });
+    const result = await rail.execute(draftOf({ symbol: 'USDC', originAsset: USDC_ETH_ASSET, amount: 10, amountUsd: 10, minReceived: minReceivedForPay(10) }));
+    assert.equal(result.ok, true, result.detail);
+    assert.match(result.detail, /USDC balance was not read back/, 'a holding the read could not name was said as a number');
+    assert.doesNotMatch(result.detail, /0 -> 0/);
+  }
+});
+
 test('a generated payload that hands the balance to anything but the quote handle is never signed', async () => {
   const { rail, calls } = railOf({
     payload: payloadOf({ intents: [{ intent: 'transfer', receiver_id: FRIEND.toLowerCase(), tokens: { [ETH_ASSET]: AMOUNT_BASE.toString() } }] }),

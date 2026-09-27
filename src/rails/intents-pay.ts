@@ -178,6 +178,9 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// The chain readers whose token rows carry a coin name and no contract (src/chainscan/families.ts).
+const SYMBOL_ONLY_TOKEN_VIEWS: ReadonlySet<string> = new Set(['hyperliquid']);
+
 function round4(n: number): number {
   return Math.round(n * 10_000) / 10_000;
 }
@@ -469,8 +472,10 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     if (read === null || !read.ok) return null;
     if (p.native) return read.balance?.amount ?? null;
     // A chain read with no token view (an EVM chain read over its RPC, NEAR) says nothing about
-    // a token, and a token it did not list is not a zero balance.
-    if (p.tokenId === null || read.tokensSource === null) return null;
+    // a token, and a token it did not list is not a zero balance. Nor does a view that lists by
+    // coin name with no contract (Hyperliquid's spot book): no row in it is this token for sure,
+    // and the money may sit on the perp side it never lists.
+    if (p.tokenId === null || read.tokensSource === null || SYMBOL_ONLY_TOKEN_VIEWS.has(read.tokensSource)) return null;
     const want = p.tokenId.toLowerCase();
     const row = read.tokens.find((t) => (t.contract ?? '').toLowerCase() === want);
     return row === undefined ? '0' : row.amount;
