@@ -123,8 +123,9 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    `$100` no-click convenience applies to swaps, Hyperliquid deposits and trades (money that
    stays in the app's own custody) and never to money leaving it. On an enclave wallet the click
    puts up a Touch ID dialog whose sentence (`src/vault/reason.ts`) names the amount, the receiver
-   shortened to its two ends (eight characters each, beyond what a vanity generator matches) and
-   the chain: "Pay 0.01 ETH to 0xb583f4...84BB5DB0 on Ethereum ($24.40)".
+   shortened to its two ends (eight characters each, counted after the prefix every address of its
+   kind shares, beyond what a vanity generator matches; sixteen at the front on Cardano, whose end
+   can be ground to order) and the chain: "Pay 0.01 ETH to 0xb583f419...84BB5DB0 on Ethereum ($24.40)".
    The sentence is composed from the draft's fields; an address field that is not shaped like an
    address (for a payout, one that does not decode on the chain it lands on) is said as "an
    address", never echoed.

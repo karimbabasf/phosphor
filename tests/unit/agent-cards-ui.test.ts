@@ -20,6 +20,9 @@ const CARDS_SOURCE = read('../../ui/screens/cards.js');
 const DECISION_SOURCE = read('../../ui/screens/decision.js');
 const AGENT_SOURCE = read('../../ui/screens/agent.js');
 import { fillChains } from '../fixtures/chains.ts';
+import { reasonFor } from '../../src/vault/reason.ts';
+import type { IntentsPayDraft } from '../../src/types.ts';
+import { bech32Lookalike, cashAddrLookalike, range } from './helpers/lookalike.ts';
 
 type Any = Record<string, any>;
 
@@ -1120,20 +1123,20 @@ test('a send names its receiver whole on the face while the person decides', () 
   assert.equal(stateWord(card), 'Needs your OK');
   /* A payout names the chain it lands on (hunt A, 2026-09-23): the same address on another
      chain is somebody else's money. */
-  assert.match(faceOf(card), /^25 USDC 0xAbCdEf...ABCDEF01 on Ethereum/, faceOf(card));
+  assert.match(faceOf(card), /^25 USDC 0xAbCdEf01...ABCDEF01 on Ethereum/, faceOf(card));
   const address = all(card, 'mcard-address-line')[0];
   assert.ok(address, 'no address on the face');
   assert.equal(address.getAttribute('data-address'), to);
   assert.equal(all(address, 'tcard-leg-group').map((g: Any) => g.textContent).join(''), to, 'the address is not whole');
-  /* "0x" and then ten groups of four, so the groups start where the address does; the first
-     and the last, the ones a person checks, are in the text colour and the rest a step quieter,
-     as Add money prints an address. */
+  /* "0x" and then ten groups of four, so the groups start where the address does; the groups
+     that hold the eight characters at each end the Touch ID dialog names are in the text colour
+     and the rest a step quieter, as Add money prints an address. */
   const groups = all(address, 'tcard-leg-group');
   assert.deepEqual(groups.slice(0, 3).map((g: Any) => g.textContent), ['0x', 'AbCd', 'Ef01']);
   assert.equal(groups.length, 11);
-  assert.deepEqual(all(address, 'addr-end').map((g: Any) => g.textContent), ['AbCd', 'EF01']);
+  assert.deepEqual(all(address, 'addr-end').map((g: Any) => g.textContent), ['AbCd', 'Ef01', 'ABCD', 'EF01']);
   assert.deepEqual(all(address, 'addr-prefix').map((g: Any) => g.textContent), ['0x']);
-  assert.equal(all(address, 'addr-mid').length, 8);
+  assert.equal(all(address, 'addr-mid').length, 6);
   assert.ok(faceOf(card).includes('An Ethereum address. First send to this address.'), faceOf(card));
   assert.equal(all(card, 'tcard-copy').filter((b: Any) => all(b, 'btn-label')[0]).length >= 1, true, 'no Copy on the address');
   assert.equal(all(card, 'tcard-leg-explorer').length, 1, 'no explorer link on the address');
@@ -1160,8 +1163,71 @@ test('a payout to a 103-character Cardano address shows every character, in grou
   const groups = all(address, 'tcard-leg-group').map((g: Any) => g.textContent);
   assert.equal(groups.join(''), to, 'the address is not whole');
   assert.equal(groups.length, 26);
-  assert.ok(groups.every((g: string) => g.length <= 4), groups.join(' '));
-  assert.deepEqual(all(address, 'addr-end').map((g: Any) => g.textContent), ['addr', to.slice(100)]);
+  assert.ok(groups.slice(1).every((g: string) => g.length <= 4), groups.join(' '));
+  /* addr1q is the same on every Cardano base address, and the end can be ground to order: the
+     groups a person checks are sixteen characters of the payment key hash and the last eight. */
+  assert.deepEqual(all(address, 'addr-prefix').map((g: Any) => g.textContent), ['addr1q']);
+  assert.deepEqual(all(address, 'addr-end').map((g: Any) => g.textContent), ['9a85', '7n60', 'fa85', '7n60', 's7qz', '6qg6', 'x']);
+});
+
+/* A payout card for one receiver, with the Touch ID sentence the same draft would put up. */
+function payCard(network: string, symbol: string, to: string): { card: Any; reason: string } {
+  const world = build();
+  const draft = { kind: 'intents_pay', symbol, originAsset: 'nep141:x.omft.near', network, amount: 40, amountUsd: 40, minReceived: 38.8, from: '0x1', to, toChecksum: 'valid', counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, ownAddress: false } };
+  const filed = withView({ id: 'p1', kind: 'intents_pay', status: 'pending', createdAt: '2026-09-27T10:00:00Z', draft, verdict: { outcome: 'needs_approval', reasons: [] },
+    simulation: { ok: true, summary: 'pay', send: { arrives: '39.8', arrivesAtLeast: '39.6', feeUsd: 0.05, etaSeconds: 60, explorer: null, activity: 'This address holds 1 X.' } } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_send', input: { amount: 40, symbol, to, where: network, confirmed: true }, data: { id: 'p1', status: 'pending', verdict: filed.verdict, simulation: filed.simulation, view: filed.view } });
+  world.proposals([filed]);
+  return { card: world.cardNodes('move')[0], reason: reasonFor({ draft: draft as unknown as IntentsPayDraft }) };
+}
+
+function checked(card: Any): string[] {
+  return all(all(card, 'mcard-address-line')[0], 'addr-end').map((g: Any) => g.textContent);
+}
+
+/* Review H1 (2026-09-27): a lookalike ground to share the characters the card used to put in the
+   text colour (addr and the last group on Cardano; the q and three after it, and the last group,
+   on Bitcoin Cash) is told apart by the groups it now puts there. */
+test('a ground Cardano or Bitcoin Cash lookalike shows different groups in the text colour than the address it imitates', () => {
+  const ada = 'addr1q9a857n60fa857n60fa857n60fa857n60fa857n60fa8573u8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7qz6qg6x';
+  const adaTwin = bech32Lookalike(ada, range(3, 45), range(60, 76));
+  assert.equal(adaTwin.slice(0, 8) + adaTwin.slice(-8), ada.slice(0, 8) + ada.slice(-8));
+  assert.notDeepEqual(checked(payCard('cardano', 'ADA', adaTwin).card), checked(payCard('cardano', 'ADA', ada).card));
+  const bch = 'bitcoincash:qr9976ncxz2msd97ghn726kupk20m2wdmyn0fers4g';
+  const bchTwin = cashAddrLookalike(bch, range(8, 12), range(14, 31));
+  assert.equal(bchTwin.slice(0, 20) + bchTwin.slice(-8), bch.slice(0, 20) + bch.slice(-8));
+  assert.notDeepEqual(checked(payCard('bch', 'BCH', bchTwin).card), checked(payCard('bch', 'BCH', bch).card));
+});
+
+/* The card's head and the Touch ID dialog name the receiver with the same characters, and the
+   groups in the text colour hold every one of them, on every chain a payout lands on. */
+test('the card names a receiver as the Touch ID dialog does, and the groups in the text colour hold what the dialog names', () => {
+  const cases: Array<[string, string, string]> = [
+    ['eth', 'USDC', '0xb583f4196e5e5c1e3a3a4d3e8b09a1e8c4f1d3a0'],
+    ['cardano', 'ADA', 'addr1q9a857n60fa857n60fa857n60fa857n60fa857n60fa8573u8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7qz6qg6x'],
+    ['cardano', 'ADA', 'addr1v9zt029u5eh2ggcuzv5se67qad7krlfzner9qdut0y74aegq6dv0p'],
+    ['bch', 'BCH', 'bitcoincash:qr9976ncxz2msd97ghn726kupk20m2wdmyn0fers4g'],
+    ['xrp', 'XRP', 'rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh'],
+    ['stellar', 'XLM', 'GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSW2IVM4S5DP42RBW3K6BTODB4A'],
+    ['ton', 'GRAM', 'UQAWDVU4IWpL77kr7f_OQtQ_bdJ8mwNfKXiiqC819QWkN5A_'],
+    ['tron', 'TRX', 'TAhj7UQKSnVUNF5KC5PyAB8zPi4R4CmDHH'],
+    ['btc', 'BTC', 'bc1qdmxhkfvgl45uzwre8x27rmq764uxffezkmchjz'],
+    ['doge', 'DOGE', 'DAkzZgXDiVBQdAZbTA9MccZVKpN61ZfL8o'],
+    ['sui', 'SUI', '0xb3548ec172bd95ce13945a452a4559e86ba580671dc6c06ddd039f527ac955a4'],
+    ['starknet', 'STRK', '0x057ea27e45e07ee0bcab6f045e656c782a6789d14a25e8e70309c35b2ff6082d'],
+  ];
+  for (const [network, symbol, to] of cases) {
+    const { card, reason } = payCard(network, symbol, to);
+    const named = /to (\S+) on /.exec(reason)?.[1] ?? '';
+    assert.ok(named.includes('...'), `${network}: the dialog did not shorten ${to}: ${reason}`);
+    assert.ok(faceOf(card).includes(named + ' on '), `${network}: the face does not read ${named}: ${faceOf(card)}`);
+    const [head, tail] = named.split('...');
+    const prefix = all(all(card, 'mcard-address-line')[0], 'addr-prefix').map((g: Any) => g.textContent).join('');
+    const loud = checked(card).join('');
+    assert.ok(head.startsWith(prefix), `${network}: the card's prefix ${prefix} is not the dialog's`);
+    assert.ok(loud.startsWith(head.slice(prefix.length)), `${network}: ${loud} does not start with ${head.slice(prefix.length)}`);
+    assert.ok(loud.endsWith(tail), `${network}: ${loud} does not end with ${tail}`);
+  }
 });
 
 /* On a chain where exchanges tell deposits apart by a memo, the card says on its face, in the

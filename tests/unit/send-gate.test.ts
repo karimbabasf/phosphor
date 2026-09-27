@@ -201,14 +201,14 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
       recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
     } as IntentsPayDraft,
   });
-  assert.equal(pay, 'Approve: Pay 0.01 ETH to 0xb583f4...84BB5DB0 on Ethereum ($24.40)');
+  assert.equal(pay, 'Approve: Pay 0.01 ETH to 0xb583f419...84BB5DB0 on Ethereum ($24.40)');
   const send = reasonFor({
     draft: {
       kind: 'intents_send', symbol: 'USDC', originAsset: 'nep141:usdc.near', amount: 3.7, amountUsd: 3.7, minReceived: 3.66,
       from: SELF_EVM.toLowerCase(), to: FRIEND.toLowerCase(), counterparty: 'intents.near',
     } as IntentsSendDraft,
   });
-  assert.equal(send, 'Approve: Send 3.7 USDC inside NEAR Intents to 0xb583f4...84bb5db0 ($3.70)');
+  assert.equal(send, 'Approve: Send 3.7 USDC inside NEAR Intents to 0xb583f419...84bb5db0 ($3.70)');
   const sol = reasonFor({
     draft: {
       kind: 'intents_pay', symbol: 'SOL', originAsset: 'nep141:sol.omft.near', network: 'sol', amount: 1234.5, amountUsd: 260000,
@@ -218,8 +218,8 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
   });
   assert.equal(sol, 'Approve: Pay 1,235 SOL to DRpbCBMx...8okm21hy on Solana ($260,000)');
   assert.ok(sol.length <= 120);
-  // Eight characters each end, never six and four: a vanity address matching the shorter form
-  // is minutes of work, and a NEAR name short enough is said whole.
+  // Eight characters each end after the 0x, never six and four: a vanity address matching the
+  // shorter form is minutes of work, and a NEAR name short enough is said whole.
   const vanity = reasonFor({
     draft: {
       kind: 'intents_pay', symbol: 'ETH', originAsset: 'nep141:eth.omft.near', network: 'eth', amount: 0.01, amountUsd: 24.4,
@@ -228,7 +228,7 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
     } as IntentsPayDraft,
   });
   assert.notEqual(vanity, pay, 'an address sharing the six-and-four ends reads the same as the real one');
-  assert.match(vanity, /to 0xb583ff\.\.\.ffff5db0 on Ethereum/);
+  assert.match(vanity, /to 0xb583ff00\.\.\.ffff5db0 on Ethereum/);
   const named = reasonFor({
     draft: {
       kind: 'intents_send', symbol: 'USDC', originAsset: 'nep141:usdc.near', amount: 3.7, amountUsd: 3.7, minReceived: 3.66,

@@ -138,9 +138,11 @@ before. Its Details say why it asks and what the chain says about the address.
 
 On an enclave wallet the click puts up a Touch ID dialog whose sentence the app composes from the
 proposal's own fields, for example "Approve: Pay 0.01 ETH to 0xb583f419...84BB5DB0 on Ethereum
-($24.40)". The receiver is shortened to eight characters at each end (after the `bitcoincash:`
-prefix on Bitcoin Cash), on every chain a payout lands on. Check them against the address you
-gave, then confirm. While the dialog is up the card says Confirm on your Mac. The
+($24.40)". The receiver is shortened to eight characters at each end, counted after the prefix
+every address of its kind shares (`0x`, `bc1q`, `bitcoincash:q`, `addr1q`, `UQ`, `r`, `G`, `T`),
+on every chain a payout lands on. A Cardano address shows sixteen characters at the front, from
+the part of the address that says whose money it is. The card puts the same characters in the
+text colour. Check them against the address you gave, then confirm. While the dialog is up the card says Confirm on your Mac. The
 agent's words never reach this dialog.
 
 ### The recipients book

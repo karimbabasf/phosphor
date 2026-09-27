@@ -43,18 +43,51 @@ function clean(s: string): string {
    the agent chose, and it reaches the dialog because the dialog is the last place a person can
    see where the money goes; it reaches it only when it is shaped like an address (hex, base58
    or a NEAR id), so an agent-authored sentence in that field is said as "an address".
-   Eight characters each end: six and four was forty bits of hex, which a vanity generator
-   matches in minutes, so a substituted address could read the same in the dialog as the one on
-   the card. Sixteen is beyond that reach, and the card still shows the whole address. */
+   Eight characters each end, after the prefix every address of its kind shares: six and four
+   was forty bits of hex, which a vanity generator matches in minutes, so a substituted address
+   could read the same in the dialog as the one on the card. Sixteen is beyond that reach, and
+   the card still shows the whole address. */
 const ADDRESS_SHAPE = /^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44}|[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?)$/;
 const END_CHARS = 8;
 
-function ends(s: string): string {
-  // A prefix that names the chain (bitcoincash:) is kept whole and the ends are taken after it:
-  // "bitcoinc" is the same eight characters on every Bitcoin Cash address.
-  const prefix = /^[a-z]+:(?=[a-z0-9]{20,}$)/.exec(s)?.[0] ?? '';
+/* The characters every address of its kind starts with, by payout family: they say whose chain
+   it is, never whose account, so the ends are counted after them and a vanity generator gets no
+   free characters. Each is only characters made wholly of fixed bits: the version byte of a
+   base58 address makes its first character (T, r, D, X, 1, 3), a Stellar key's makes its G, a
+   TON address's flag and workchain make UQ, a segwit address carries its witness version in the
+   character after bc1, and a CashAddr or Cardano header's top five bits are the character after
+   bitcoincash: or addr1. ui/screens/cards.js keeps the same table for the card's groups. */
+const FIXED_PREFIX: Readonly<Record<string, RegExp>> = {
+  evm: /^0x/,
+  move: /^0x/,
+  starknet: /^0x/,
+  tron: /^T/,
+  xrp: /^r/,
+  stellar: /^G/,
+  ton: /^[UE]Q/,
+  btc: /^(bc1[a-z0-9]|[13])/,
+  ltc: /^(ltc1[a-z0-9]|[LM3])/,
+  doge: /^[DA]/,
+  dash: /^[X7]/,
+  bch: /^bitcoincash:[a-z0-9]/,
+  cardano: /^addr1[a-z0-9]/,
+};
+
+// With no chain to go by (a send inside NEAR Intents): a 0x, or a prefix that names the chain.
+const ANY_PREFIX = /^0x(?=[0-9a-fA-F]{40,}$)|^[a-z]+:(?=[a-z0-9]{20,}$)/;
+
+/* A Cardano base address is addr1, a header, the 28-byte payment key hash, a 28-byte stake key
+   hash and a checksum. The money answers to the payment key alone, and the stake half can be any
+   28 bytes, so its last characters and the checksum after them are ground to order in minutes
+   (review H1, 2026-09-27). Sixteen characters from the payment half are 77 bits that are not. */
+const CARDANO_HEAD = 16;
+
+function ends(s: string, family?: string): string {
+  const rule = family === undefined ? ANY_PREFIX : FIXED_PREFIX[family];
+  const prefix = rule?.exec(s)?.[0] ?? '';
+  const head = family === 'cardano' ? CARDANO_HEAD : END_CHARS;
   const body = s.slice(prefix.length);
-  return body.length <= 2 * END_CHARS + 4 ? s : `${prefix}${body.slice(0, END_CHARS)}...${body.slice(-END_CHARS)}`;
+  return body.length <= head + END_CHARS + 4 ? s : `${prefix}${body.slice(0, head)}...${body.slice(-END_CHARS)}`;
 }
 
 function shortAddress(raw: unknown): string {
@@ -71,7 +104,7 @@ function shortAddress(raw: unknown): string {
 function payee(network: unknown, raw: unknown): string {
   const s = String(raw ?? '').trim();
   const checked = payAddress(String(network), s);
-  return checked.ok && checked.to === s ? ends(s) : shortAddress(s);
+  return checked.ok && checked.to === s ? ends(s, spendNetworkOf(String(network))?.pay ?? '') : shortAddress(s);
 }
 
 /* The chain a payout lands on, by name and only from the chain registry: a network id the

@@ -26,6 +26,7 @@ import { makeCtx, railThat } from './helpers/proposals.ts';
 import { spendNetworkOf } from '../../src/rails/intents-address.ts';
 import { reasonFor } from '../../src/vault/reason.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
+import { bech32Lookalike, cashAddrLookalike, range } from './helpers/lookalike.ts';
 
 const OWNER = getAddress('0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050');
 const ACCOUNT = OWNER.toLowerCase();
@@ -451,20 +452,53 @@ test('an XRP account that turned on RequireDestTag after the card was drawn is r
 
 test('the Touch ID sentence names each new address by its two ends, never as "an address"', () => {
   const cases: Array<[string, string, string]> = [
-    ['cardano', CARDANO_BASE, 'addr1q9a...qz6qg6x'],
-    ['xrp', BINANCE_XRP, 'rEb8TK3g...J8DuaLh'],
-    ['stellar', PLAIN_XLM, 'GAHK7EEG...K6BTODB4A'],
-    ['ton', OWN.ton, 'UQAWDVU4...QWkN5A_'],
-    ['bch', OWN.bch, 'bitcoincash:qr9976nc...n0fers4g'],
-    ['sui', OWN.sui, '0xb3548e...7ac955a4'],
-    ['btc', 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', 'bc1qw508...7kv8f3t4'],
+    ['cardano', CARDANO_BASE, 'addr1q9a857n60fa857n60...7qz6qg6x'],
+    ['xrp', BINANCE_XRP, 'rEb8TK3gB...JH8DuaLh'],
+    ['stellar', PLAIN_XLM, 'GAHK7EEG2...6BTODB4A'],
+    ['ton', OWN.ton, 'UQAWDVU4IW...9QWkN5A_'],
+    ['bch', OWN.bch, 'bitcoincash:qr9976ncx...n0fers4g'],
+    ['sui', OWN.sui, '0xb3548ec1...7ac955a4'],
+    ['btc', 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', 'bc1qw508d6qe...7kv8f3t4'],
   ];
+  // The ends are counted after the prefix every address of the kind shares (addr1q, r, G, UQ,
+  // bitcoincash:q, 0x, bc1q), and Cardano shows sixteen characters of its payment key hash.
   for (const [network, to, shown] of cases) {
     const reason = reasonFor({ draft: { ...draftOf({ ...COINS.XRP, network }, to, 10), symbol: 'USDC' } });
-    assert.ok(reason.includes(`to ${shown.slice(0, shown.indexOf('...'))}`), `${network}: ${reason}`);
+    assert.ok(reason.includes(`to ${shown} on `), `${network}: ${reason}`);
     assert.ok(!reason.includes('an address'), `${network}: ${reason}`);
     assert.ok(reason.length <= 120, reason);
   }
+});
+
+/* Review H1 (2026-09-27): the two ends were counted from the first character, so a Cardano
+   address showed addr1q (the same on every one) and two characters of the payment key hash at the
+   front, and at the back the stake half and the checksum, both of which a poisoner grinds to order.
+   A lookalike that shares those read the same in the dialog as the address it imitates. */
+test('a ground Cardano lookalike that shares the first eight characters and the last eight reads differently in the Touch ID dialog', () => {
+  // Words 3 on are the rest of another payment key hash; words 60 to 75 of the stake half are
+  // solved so the checksum, and with it the last eight characters, come out the same.
+  const twin = bech32Lookalike(CARDANO_BASE, range(3, 45), range(60, 76));
+  assert.notEqual(twin, CARDANO_BASE);
+  assert.equal(twin.slice(0, 8), CARDANO_BASE.slice(0, 8));
+  assert.equal(twin.slice(-8), CARDANO_BASE.slice(-8));
+  const say = (to: string): string => reasonFor({ draft: draftOf(COINS.ADA, to, 40) });
+  assert.doesNotMatch(say(twin), /an address/, 'the lookalike does not decode, so it proves nothing');
+  assert.notEqual(say(twin), say(CARDANO_BASE));
+  // After addr1q, sixteen characters of the payment key hash, then the last eight.
+  assert.ok(say(CARDANO_BASE).includes(`to addr1q${CARDANO_BASE.slice(6, 22)}...${CARDANO_BASE.slice(-8)} on Cardano`), say(CARDANO_BASE));
+});
+
+test('a Bitcoin Cash lookalike that shares the prefix, the q and seven characters after it, and the checksum reads differently in the Touch ID dialog', () => {
+  const body = OWN.bch.slice('bitcoincash:'.length);
+  const twin = cashAddrLookalike(OWN.bch, range(8, 12), range(14, 31));
+  const twinBody = twin.slice('bitcoincash:'.length);
+  assert.notEqual(twin, OWN.bch);
+  assert.equal(twinBody.slice(0, 8), body.slice(0, 8));
+  assert.equal(twinBody.slice(-8), body.slice(-8));
+  const say = (to: string): string => reasonFor({ draft: draftOf(COINS.BCH, to, 0.05) });
+  assert.doesNotMatch(say(twin), /an address/, 'the lookalike does not decode, so it proves nothing');
+  assert.notEqual(say(twin), say(OWN.bch));
+  assert.ok(say(OWN.bch).includes(`to bitcoincash:q${body.slice(1, 9)}...${body.slice(-8)} on Bitcoin Cash`), say(OWN.bch));
 });
 
 // ---------- what the chain reader says, and what the builder keeps ----------
