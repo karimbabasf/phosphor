@@ -61,6 +61,9 @@ export const EXECUTE_MAX_AGE_MS = 10_000;
 export const FEED_TTL_MS = 60_000;
 export const SERVICES_TTL_MS = 60 * 60_000;
 export const MAX_KEYS = 256;
+/* The most a status page or a quote answer may send. Both answer in a few kilobytes; a body past
+   this is refused whole, never cut, because a cut JSON body parses as nothing. */
+export const ROUTE_BODY_CAP = 256 * 1024;
 // The probe's size in dollars: above every bridge floor on the list, small enough to mean nothing.
 export const PROBE_USD = 20;
 // A chain whose newest block is older than this is slow enough to warn about, unless it has a bar of its own.
@@ -572,6 +575,38 @@ function fresh<T>(entry: Cached<T> | undefined, now: number): entry is Cached<T>
   return entry !== undefined && now - entry.at < entry.ttl;
 }
 
+// The only two hosts a check reads, character for character.
+const ROUTE_HOSTS: ReadonlySet<string> = new Set([new URL(ONECLICK_BASE).host, new URL(STATUS_BASE).host]);
+const MAX_REDIRECTS = 3;
+
+/* The body, refused whole past `cap`: first by what the answer declares, then by what arrives.
+   The read is cancelled either way, so a source that keeps sending stops being read. */
+async function readCapped(res: Response, cap: number): Promise<string> {
+  if (res.body === null) return '';
+  const declared = Number(res.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > cap) {
+    await res.body.cancel().catch(() => undefined);
+    throw new Error(`body of ${declared} bytes is over the ${cap} byte cap`);
+  }
+  const decoder = new TextDecoder('utf-8');
+  const reader = res.body.getReader();
+  let out = '';
+  let bytes = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > cap) throw new Error(`body is over the ${cap} byte cap`);
+      out += decoder.decode(chunk.value, { stream: true });
+    }
+    out += decoder.decode();
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return out;
+}
+
 // A promise that answers null when it has not answered in `ms`.
 function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
   return new Promise((resolve) => {
@@ -597,10 +632,42 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
   let feed: Cached<StatusPost[] | null> | undefined;
   let services: Cached<ReadonlyMap<string, ServiceKind>> | undefined;
 
+  /* One answer from one of the two hosts, inside one deadline for every hop and the body. A
+     redirect is followed by hand and only to the host it came from, so a status page that
+     answers "go over there" is a page that did not answer; the body stops at ROUTE_BODY_CAP. */
   async function getJson(url: string, init: RequestInit = {}): Promise<{ status: number; body: unknown }> {
-    const res = await fetchImpl(url, { ...init, signal: withTimeout(timeoutMs) });
-    const body = (await res.json().catch(() => null)) as unknown;
-    return { status: res.status, body };
+    const signal = withTimeout(timeoutMs);
+    let target = url;
+    let method = init.method ?? 'GET';
+    let payload = init.body;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const host = new URL(target).host;
+      if (!ROUTE_HOSTS.has(host)) throw new Error(`refused: ${host} is not a route host`);
+      const res = await fetchImpl(target, { ...init, method, body: payload, redirect: 'manual', signal });
+      if (res.status >= 300 && res.status < 400) {
+        await res.body?.cancel().catch(() => undefined);
+        const location = res.headers.get('location');
+        if (location === null) throw new Error(`http ${res.status} with no location header`);
+        const next = new URL(location, target);
+        if (next.protocol !== 'https:' || next.host !== host) throw new Error(`http ${res.status} to another host, not followed`);
+        // Only a 307 or 308 asks for the same request again; the others become a plain read.
+        if (res.status !== 307 && res.status !== 308) {
+          method = 'GET';
+          payload = undefined;
+        }
+        target = next.toString();
+        continue;
+      }
+      const text = await readCapped(res, ROUTE_BODY_CAP);
+      let body: unknown = null;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        // not JSON: the status alone speaks, which classifyProbe reads as unknown
+      }
+      return { status: res.status, body };
+    }
+    throw new Error(`more than ${MAX_REDIRECTS} redirects`);
   }
 
   function once<T>(key: string, run: () => Promise<T>): Promise<T> {

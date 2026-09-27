@@ -15,6 +15,7 @@ import {
   FEED_TTL_MS,
   OPEN_TTL_MS,
   PROBE_USD,
+  ROUTE_BODY_CAP,
   SHAKY_TTL_MS,
   STATUS_LINK,
   bridgeReason,
@@ -507,6 +508,58 @@ test('right before a signature an open answer older than ten seconds is asked ag
   clock.t = NOW + 15_000;
   assert.equal((await ton(EXECUTE_MAX_AGE_MS)).state, 'closed');
   assert.equal(probesOf(TOKENS[0].assetId), 1, 'a closed answer in hand refuses without asking again');
+});
+
+/* A fetch that behaves like the real one about redirects: it follows a 3xx itself unless told
+   `redirect: 'manual'`, which is how a check that forgot to say so would be caught. */
+function redirectingFetch(route: (url: string) => Response): { fetchImpl: typeof fetch; urls: string[] } {
+  const urls: string[] = [];
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    let url = String(input);
+    for (let hop = 0; hop < 5; hop++) {
+      urls.push(url);
+      const res = route(url);
+      const location = res.headers.get('location');
+      if (res.status < 300 || res.status >= 400 || location === null || init?.redirect === 'manual') return res;
+      url = new URL(location, url).toString();
+    }
+    throw new Error('redirect loop');
+  }) as typeof fetch;
+  return { fetchImpl, urls };
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+test('the checker follows a redirect only to the host it asked, and refuses a body over the cap', async () => {
+  const tonPaused = { posts: [post({ title: 'TON: Service disruption reported' })] };
+  const ask = { network: 'ton', direction: 'out' as const, account: ACCOUNT };
+
+  // A status page that sends the read to another host: never fetched, and the page did not answer.
+  const away = redirectingFetch((url) => {
+    if (url.includes('/api/posts')) return new Response(null, { status: 302, headers: { location: 'https://evil.example/api/posts' } });
+    if (url.startsWith('https://evil.example/')) return json(tonPaused);
+    return json(SERVICES);
+  });
+  const sent = await checker({ fetchImpl: away.fetchImpl }).check(ask);
+  assert.deepEqual(away.urls.filter((u) => !u.startsWith(STATUS_LINK.slice(0, 31))), [], 'a redirect to another host was followed');
+  assert.equal(sent.state, 'unknown');
+  assert.ok(sent.reasons.some((r) => r.source === 'status' && r.state === 'unknown'));
+
+  // The same host, by hand: followed, and its answer counts.
+  const moved = redirectingFetch((url) => {
+    if (url.endsWith('/api/posts?is_featured=true')) return new Response(null, { status: 301, headers: { location: '/api/v2/posts?is_featured=true' } });
+    if (url.endsWith('/api/v2/posts?is_featured=true')) return json(tonPaused);
+    return json(SERVICES);
+  });
+  assert.equal((await checker({ fetchImpl: moved.fetchImpl }).check(ask)).state, 'closed');
+
+  // A body past the cap is refused whole rather than parsed on the event loop.
+  const padded = { ...tonPaused, padding: 'x'.repeat(ROUTE_BODY_CAP) };
+  const huge = redirectingFetch((url) => (url.includes('/api/posts') ? json(padded) : json(SERVICES)));
+  const capped = await checker({ fetchImpl: huge.fetchImpl }).check(ask);
+  assert.equal(capped.state, 'unknown', 'a body over the cap was read');
 });
 
 test('right before a signature the status page is read again when the kept read is older than ten seconds, unless it already closes the network', async () => {
