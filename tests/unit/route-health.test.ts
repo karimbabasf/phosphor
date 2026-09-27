@@ -49,6 +49,8 @@ const TOKENS: OneClickToken[] = [
   { assetId: 'nep245:v2_1.omni.hot.tg:9745_11111111111111111111', blockchain: 'plasma', symbol: 'XPL_(DEPRECATED)', decimals: 18, price: 0.1 },
   { assetId: 'nep141:plasma.omft.near', blockchain: 'plasma', symbol: 'XPL', decimals: 18, price: 0.1 },
   { assetId: '1cs_v1:hypercore:hip1:0x6d1e7cde53ba9467b783cb7c530ce054', blockchain: 'hypercore', symbol: 'USDC', decimals: 8, contractAddress: '0x6d1e7cde53ba9467b783cb7c530ce054', price: 1 },
+  { assetId: '1cs_v1:hypercore:erc20:0xb88339CB7199b77E23DB6E890353E22632Ba630f', blockchain: 'hypercore', symbol: 'USDC', decimals: 6, contractAddress: '0xb88339CB7199b77E23DB6E890353E22632Ba630f', price: 1 },
+  { assetId: '1cs_v1:hypercore:hip1:0x20b8c9d2f022ffd2aea4f7962b7b1d8b', blockchain: 'hypercore', symbol: 'wNEAR', decimals: 8, contractAddress: '0x20b8c9d2f022ffd2aea4f7962b7b1d8b', price: 5.03 },
   { assetId: 'nep141:wrap.near', blockchain: 'near', symbol: 'wNEAR', decimals: 24, contractAddress: 'wrap.near', price: 5.03 },
 ];
 
@@ -132,6 +134,8 @@ test('a 201 is open, "not available" is closed, a deposit mode 400 asks for MEMO
   assert.equal(classifyProbe(400, { message: 'No liquidity available' }).state, 'unknown');
   assert.equal(classifyProbe(500, { message: 'Quoting for this pair is not available' }).state, 'unknown');
   assert.equal(classifyProbe(403, { message: 'API key disabled' }).state, 'unknown');
+  assert.equal(classifyProbe(400, { message: '1cs_v1:hypercore:hip1:0x6d1e supports only DESTINATION_CHAIN recipientType' }).unfit, true);
+  assert.equal(classifyProbe(400, { message: '1cs_v1:hypercore:erc20:0xb883 is not supported as origin asset' }).unfit, true);
   assert.deepEqual(classifyProbe(502, null), { state: 'unknown', memo: false, said: 'http 502' });
   assert.equal(quoteSaysClosed('Quoting for this pair is not available'), true);
   assert.equal(quoteSaysClosed('Amount is too low for bridge, try at least 1000'), false);
@@ -397,4 +401,31 @@ test('degraded reads as a warning with the page quoted, and open and unknown say
   );
   assert.equal(routeSentence({ ...verdict, state: 'open' }, 'deposit'), null);
   assert.equal(routeSentence({ ...verdict, state: 'unknown' }, 'deposit'), null);
+});
+
+test('a coin that cannot come in as itself is skipped for the next one, and remembered', async () => {
+  const clock = { t: NOW };
+  const unfit = (id: string): Reply => ({ status: 400, body: { message: `${id} supports only DESTINATION_CHAIN recipientType` } });
+  const { fetchImpl, calls } = fakeFetch({ quote: (b) => (String(b.originAsset).includes('0x20b8') ? QUOTED : unfit(String(b.originAsset))) });
+  const routes = checker({ fetchImpl, clock });
+  const first = await routes.check({ network: 'hypercore', direction: 'in', account: ACCOUNT, asset: TOKENS[9].assetId });
+  assert.equal(first.state, 'open');
+  assert.equal(first.reasons[0].text, '1Click takes wNEAR in from Hyperliquid');
+  const asked = () => calls.filter((c) => c.url.endsWith('/v0/quote')).map((c) => String(c.body?.originAsset).slice(0, 26));
+  assert.deepEqual(asked(), ['1cs_v1:hypercore:hip1:0x6d', '1cs_v1:hypercore:erc20:0xb', '1cs_v1:hypercore:hip1:0x20']);
+  clock.t += OPEN_TTL_MS + 1;
+  await routes.check({ network: 'hypercore', direction: 'in', account: ACCOUNT, asset: TOKENS[9].assetId });
+  assert.deepEqual(asked().slice(3), ['1cs_v1:hypercore:hip1:0x20']);
+});
+
+test('a chain that stops wanting MEMO is asked plainly again', async () => {
+  const clock = { t: NOW };
+  let wantsMemo = true;
+  const { fetchImpl, calls } = fakeFetch({ quote: (b) => ((b.depositMode === 'MEMO') === wantsMemo ? QUOTED : wantsMemo ? MEMO_WANTED : { status: 400, body: { message: 'Incorrect depositMode' } }) });
+  const routes = checker({ fetchImpl, clock });
+  assert.equal((await routes.check({ network: 'stellar', direction: 'in', account: ACCOUNT })).state, 'open');
+  wantsMemo = false;
+  clock.t += OPEN_TTL_MS + 1;
+  assert.equal((await routes.check({ network: 'stellar', direction: 'in', account: ACCOUNT })).state, 'open');
+  assert.deepEqual(calls.filter((c) => c.url.endsWith('/v0/quote')).map((c) => c.body?.depositMode ?? '-'), ['-', 'MEMO', 'MEMO', '-']);
 });
