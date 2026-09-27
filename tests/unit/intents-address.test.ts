@@ -160,6 +160,17 @@ test('a memo is carried when the bridge sends one and is null when it does not',
   assert.equal((await intentsDepositAddress('0xa', 'near', without.fetchImpl)).memo, null);
 });
 
+/* Review L3 (2026-09-27): an XRP destination tag is a number, and a bridge that sent the memo as
+   one was read as sending none, so a shared address that routes by it looked like our own. */
+test('a memo the bridge sends as a number is a memo, zero included', async () => {
+  const tag = replying({ result: { address: 'rShared', memo: 177237517 } });
+  assert.equal((await intentsDepositAddress('0xa', 'xrp', tag.fetchImpl)).memo, '177237517');
+  const zero = replying({ result: { address: 'rShared', memo: 0 } });
+  assert.equal((await intentsDepositAddress('0xa', 'xrp', zero.fetchImpl)).memo, '0');
+  const odd = replying({ result: { address: 'rShared', memo: Number.NaN } });
+  assert.equal((await intentsDepositAddress('0xa', 'xrp', odd.fetchImpl)).memo, null);
+});
+
 // The token list is guidance printed beside the address. Losing it costs the guidance and must
 // never cost the address, so it swallows everything and answers with an empty list.
 test('an unreadable token list is an empty list, never a throw', async () => {
