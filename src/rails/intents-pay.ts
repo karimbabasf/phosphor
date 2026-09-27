@@ -209,7 +209,8 @@ export type IntentsPayRailDeps = {
   // fresh before each quote. Null is a ledger that did not answer, and a payout is refused on it.
   payTarget?: (network: string, address: string) => Promise<PayTarget | null>;
   // Our own bridge deposit address on the chain, which on a memo chain may be the one address
-  // the bridge shares with everybody. Null is a bridge that did not answer.
+  // the bridge shares with everybody. Null is a bridge that did not answer, and a payout is
+  // refused on it.
   ownDeposit?: (account: string, network: string) => Promise<OwnDeposit | null>;
   // The least the bridge credits of the paid token on the chain (src/rails/pay-rules.ts
   // DepositFloor), which binds a payout to our own deposit address. Null is a bridge that did not

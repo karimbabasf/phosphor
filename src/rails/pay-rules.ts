@@ -288,13 +288,15 @@ function tronRules(f: PayFacts, problems: string[]): void {
 function ownDepositRules(f: PayFacts, problems: string[], notes: PayNote[]): void {
   const label = labelOf(f.network);
   if (f.own === undefined) return;
+  /* Not knowing is a refusal on every chain (review V4, 2026-09-27): a payout to our own address
+     is a deposit, and passing it unread skipped the minimum and the deposit route below. */
   if (f.own === null) {
-    if (MEMO_CHAINS.has(f.network)) {
-      problems.push(
-        `the bridge did not say what your own NEAR Intents deposit address on ${label} is, so the app cannot rule out that this is it, ` +
-          `and a payout to it would arrive with no memo; ${AGAIN}`,
-      );
-    }
+    problems.push(
+      `the bridge did not say what your own NEAR Intents deposit address on ${label} is, so the app cannot rule out that this is it, ` +
+        (MEMO_CHAINS.has(f.network)
+          ? `and a payout to it would arrive with no memo; ${AGAIN}`
+          : `and a payout to it is a deposit, which is not credited under the bridge's minimum or while deposits there are paused; ${AGAIN}`),
+    );
     return;
   }
   if (!sameAccount(f.network, f.own.address, f.to)) return;

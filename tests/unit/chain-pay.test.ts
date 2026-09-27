@@ -123,9 +123,12 @@ function draftOf(coin: Coin, to: string, amount: number, over: Partial<IntentsPa
   };
 }
 
+type OwnAnswer = { address: string; memo: string | null } | null;
+
 type Options = {
   targets?: Array<Target | null>; // what the chain says, simulate first, execute second
-  own?: { address: string; memo: string | null } | null; // the bridge's deposit address for the account
+  // The bridge's deposit address for the account, or one answer per ask in turn (the last repeats).
+  own?: OwnAnswer | Array<OwnAnswer>;
   receiver?: Array<AddressSummary | null>;
   quoteThrows?: string;
   echoRecipient?: string;
@@ -213,7 +216,9 @@ function railOf(coin: Coin, amount: number, opt: Options = {}) {
       : {
           ownDeposit: async (account: string, network: string) => {
             ownCalls.push(`${account}:${network}`);
-            return opt.own === undefined ? null : opt.own;
+            // Left out, the bridge answers with an address that is not the receiver.
+            if (!Array.isArray(opt.own)) return opt.own === undefined ? NOT_OWN : opt.own;
+            return (opt.own.length > 1 ? opt.own.shift() : opt.own[0]) ?? null;
           },
         }),
     depositFloor: async () => (opt.floor === undefined ? null : opt.floor),
@@ -419,6 +424,22 @@ test('a payout to our own deposit address is refused under the bridge minimum, f
   // Somebody else's address is not a deposit, and the bridge's minimum says nothing about it.
   const other = railOf(COINS.XRP, 1.5, { targets: [XRP_OK], own: NOT_OWN, floor: XRP_FLOOR });
   assert.equal((await other.rail.simulate(draftOf(COINS.XRP, PLAIN_XRP, 1.5))).ok, true);
+});
+
+/* Review V4 (2026-09-27): the own-deposit read races six seconds to null, and on a chain with no
+   memo a null used to pass, which skipped the minimum-deposit rule and the deposit-route gate for
+   a payout to our own address. Not knowing is a refusal, at simulate and again at execute. */
+test('a payout is refused when the bridge does not say what our own deposit address on the chain is, at simulate and at execute', async () => {
+  const blind = railOf(COINS.DOGE, 200, { own: null, floor: DOGE_FLOOR });
+  assert.match(await refused(blind, draftOf(COINS.DOGE, OWN.doge, 200)), /bridge did not say what your own NEAR Intents deposit address on Dogecoin is/);
+  assert.equal(blind.quotes.length, 0);
+  // Read when the card was drawn, slow at the click: refused before any live quote.
+  const slow = railOf(COINS.DOGE, 200, { own: [{ address: OWN.doge, memo: null }, null], floor: DOGE_FLOOR });
+  const draft = draftOf(COINS.DOGE, OWN.doge, 200);
+  assert.equal((await slow.rail.simulate(draft)).ok, true);
+  const quotesBefore = slow.quotes.length;
+  await assert.rejects(slow.rail.execute(draft), /bridge did not say what your own NEAR Intents deposit address on Dogecoin is/);
+  assert.equal(slow.quotes.length, quotesBefore, 'a live quote was asked for with our own deposit address unknown');
 });
 
 test('our own deposit address on a memo chain is refused when the bridge sends the memo as a number', async () => {
