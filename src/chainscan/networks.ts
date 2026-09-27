@@ -281,11 +281,14 @@ export function validateAddressForFamily(family: AddressFamily, address: string,
       const payload = cashAddr(value, 'bitcoincash');
       if (payload === null) return { ok: false, reason: MISMATCH };
       // Version byte: type in bits 3 to 6 (0 and 1 plain, 2 and 3 token-aware), size code in
-      // the low three (0 is a 20-byte hash, 3 a 32-byte one).
+      // the low three (0 is a 20-byte hash, 3 a 32-byte one). A key hash (types 0 and 2) is a
+      // 20-byte HASH160 and nothing else: one carrying 32 bytes can never be spent. A script hash
+      // (1 and 3) may be either.
       const type = payload[0] >> 3;
       const code = payload[0] & 7;
       const size = code === 0 ? 20 : code === 3 ? 32 : 0;
       if (type > 3 || size === 0 || payload.length !== size + 1) return { ok: false, reason: 'not a Bitcoin Cash address: the version byte names no address type' };
+      if ((type === 0 || type === 2) && size !== 20) return { ok: false, reason: 'not a Bitcoin Cash address: a key-hash address holds a 20-byte hash, and money sent to one with 32 bytes could never be spent' };
       const lower = value.toLowerCase();
       return { ok: true, normalized: lower.startsWith('bitcoincash:') ? lower : `bitcoincash:${lower}`, checksum: 'valid' };
     }
