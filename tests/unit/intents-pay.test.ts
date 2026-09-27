@@ -582,6 +582,27 @@ test('a route that closes while the card waits for its click is refused at execu
   assert.equal(calls.submitted.length, 0);
 });
 
+test('the route is asked last, after the receiver read and right before the key signs, so a route that closed during the read refuses', async () => {
+  const asked: RouteAsk[] = [];
+  const seen: { reads: unknown[] } = { reads: [] };
+  // Open until the receiver has been read: the slow read is where the route closes.
+  const routes: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const state: RouteState = seen.reads.length > 0 ? 'closed' : 'open';
+      return { network: ask.network, direction: ask.direction, state, reasons: [{ source: 'status', state, text: 'The NEAR Intents status page says: "Ethereum paused".' }], checkedAt: NOW };
+    },
+  };
+  const { rail, calls, reads } = railOf({ routes });
+  seen.reads = reads;
+  const result = await rail.execute(draftOf());
+  assert.equal(result.reason, 'route_closed', `signed after a slow read with a route answer from before it: ${result.detail}`);
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /^NEAR Intents is not taking payouts to Ethereum right now, so nothing was signed and nothing moved\./);
+  assert.equal(calls.submitted.length, 0);
+  assert.deepEqual(asked.map((a) => a.maxAgeMs), [10_000, 10_000]);
+});
+
 test('1Click saying "Quoting for this pair is not available" reads as NEAR Intents not taking payouts, at simulate and at execute', async () => {
   const sim = await railOf({ quoteThrows: 'Quoting for this pair is not available' }).rail.simulate(draftOf());
   assert.equal(sim.ok, false);

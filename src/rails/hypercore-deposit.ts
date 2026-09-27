@@ -65,6 +65,7 @@ import type { PreflightRunner } from '../preflight/live.ts';
 import { EXECUTE_MAX_AGE_MS, closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
 import type { RouteHealth } from '../preflight/route-health.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
+import { reasonOf } from './reasons.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 import { HYPERLIQUID_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
@@ -683,6 +684,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
           maxDeadlineMs,
           quoteKey: deps.quoteKey,
           ...(preflight === undefined ? {} : { preflight: (quote, port) => preflight.run('hl_deposit', draft, quote, port) }),
+          // The answer that counts, asked after the account read and right before the signature.
+          beforeSign: async () => (await routeGate(deps.routes, { network: 'hypercore', direction: 'out', account: owner, maxAgeMs: EXECUTE_MAX_AGE_MS }, 'hl_deposit')).closed,
         },
         {
           owner,
@@ -701,6 +704,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
         hooks,
       );
     } catch (err) {
+      if (reasonOf(err) === 'route_closed') return { ok: false, detail: errText(err), reason: 'route_closed' };
       const closed = closedQuoteSentence(err, 'hypercore', 'hl_deposit');
       if (closed !== null) return { ok: false, detail: closed, reason: 'route_closed' };
       return { ok: false, detail: `${errText(err)}. Nothing was signed.` };

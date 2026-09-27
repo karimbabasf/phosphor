@@ -634,6 +634,12 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     }
     const signedQuote = signedQuoteRecord(response);
 
+    /* The answer that counts, asked after every read (the verifier's balance, the live quote) and
+       right before the first signature, the move between sides included: an answer from before
+       those reads is not one about the moment the key signs. */
+    const last = await routeCheck(owner, EXECUTE_MAX_AGE_MS);
+    if (last.closed !== null) return { ok: false, detail: last.closed, reason: 'route_closed' };
+
     // A standard account pays the send out of the spot book; move what is short from perp.
     // Same account, different side: nothing leaves, but a refusal after this point has to say
     // that the collateral now sits on spot, or the human reads "nothing was sent" as "nothing

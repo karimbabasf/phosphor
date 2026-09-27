@@ -891,6 +891,27 @@ test('a closed route to HyperCore is refused at simulate and again at execute, w
   assert.deepEqual(opened.asked.map((a) => a.maxAgeMs), [undefined, 10_000], 'execute did not ask for an answer about now');
 });
 
+test('the route to HyperCore is asked last, after the account read and right before the key signs', async () => {
+  const asked: RouteAsk[] = [];
+  const seen: { hl: string[] } = { hl: [] };
+  // Open until the Hyperliquid account has been read: the slow read is where the route closes.
+  const routes: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const state: RouteState = seen.hl.length > 0 ? 'closed' : 'open';
+      return { network: ask.network, direction: ask.direction, state, reasons: [{ source: 'oneclick', state, text: '' }], checkedAt: NOW };
+    },
+  };
+  const { rail: r, calls, hlCalls } = rail({}, undefined, { routes });
+  seen.hl = hlCalls;
+  const result = await r.execute(draft());
+  assert.equal(result.reason, 'route_closed', `signed after a slow read with a route answer from before it: ${result.detail}`);
+  assert.equal(result.detail, 'NEAR Intents is not taking transfers to Hyperliquid right now, so nothing was signed and nothing moved.');
+  assert.equal(calls.signed.length, 0);
+  assert.equal(calls.submitted.length, 0);
+  assert.deepEqual(asked.map((a) => a.maxAgeMs), [10_000, 10_000]);
+});
+
 test('a generate-intent error that says "not available" keeps its own words, and is not called a closed route', async () => {
   const { rail: r, calls } = rail({ generateThrows: '1click generate-intent failed: intents are not available for this signer' });
   const result = await r.execute(draft());
