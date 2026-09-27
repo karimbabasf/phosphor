@@ -36,6 +36,8 @@ import { swapRailOf } from '../config.ts';
 import { intentsSendRail } from './intents-send.ts';
 import { intentsPayRail } from './intents-pay.ts';
 import { createLivePreflight } from '../preflight/live.ts';
+import { createRouteHealth } from '../preflight/route-health.ts';
+import type { RouteHealth } from '../preflight/route-health.ts';
 import { relayClient } from '../relay/client.ts';
 import type { RelayStatus } from '../relay/client.ts';
 import { liveVerifier } from '../relay/verifier.ts';
@@ -68,6 +70,11 @@ export type RailRegistry = {
      (./demo.ts, demoSwapLookup); absent in any registry a test builds by hand, where the swap
      reads say there is no venue to ask. */
   swap?: SwapLookup;
+  /* Whether NEAR Intents is taking money on a network right now (src/preflight/route-health.ts).
+     One checker for the rails that move money onto a chain and for the receive report, so the
+     status page is read once for all of them. Absent in demo mode, which reaches for nothing,
+     and in any registry a test builds by hand, where no route is ever called closed. */
+  routes?: RouteHealth;
 };
 
 export type SwapLookup = {
@@ -121,6 +128,11 @@ export function createRails(deps: RailDeps): RailRegistry {
      checks on the live quote before the intent is generated. */
   const preflight = createLivePreflight({ prices: deps.prices ?? (() => ({})) });
 
+  /* ONE route checker, on the same client, so its probe names coins from the token list the
+     rails quote against. The rails that land money on a chain ask it at simulate time and again
+     at execute time; the receive report asks it before it shows an address. */
+  const routes = createRouteHealth({ tokens: () => client.tokens() });
+
   /* BOTH SWAP RAILS, whatever the switch says. The switch decides which venue proposeSwap
      stamps on a new draft; a row already on disk names the venue it was written under, and
      that is the rail that must answer for it (a held retry, a reconcile), or a flip of the
@@ -150,10 +162,12 @@ export function createRails(deps: RailDeps): RailRegistry {
       keysPath: deps.cfg.keysPath,
       client,
       preflight,
+      routes,
     }) as Rail,
     hl_withdraw: hypercoreWithdrawRail({
       keysPath: deps.cfg.keysPath,
       client,
+      routes,
     }) as Rail,
     // The two rails whose destination is somebody else's: a send stays inside the verifier and
     // reads the receiver's balance back as the proof; a pay leaves it for an address on a real
@@ -167,6 +181,7 @@ export function createRails(deps: RailDeps): RailRegistry {
       tokens: deps.tokens,
       client,
       preflight,
+      routes,
     }) as Rail,
     trade: tradeRail(deps.trade) as Rail,
   };
@@ -188,6 +203,7 @@ export function createRails(deps: RailDeps): RailRegistry {
       balance: (accountId, assetId) => verifier.balance(accountId, assetId).catch(() => null),
       activity: (accountId, limit) => intentsActivity(accountId, limit, { keys: deps.cfg.chainscan }),
     },
+    routes,
   };
 }
 

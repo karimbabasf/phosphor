@@ -25,6 +25,7 @@ import {
   recipientSentence,
 } from '../../src/rails/intents-pay.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
+import type { RouteAsk, RouteHealth, RouteState } from '../../src/preflight/route-health.ts';
 
 const OWNER = getAddress('0x1111111111111111111111111111111111111111');
 const ACCOUNT = OWNER.toLowerCase();
@@ -165,6 +166,8 @@ type Overrides = {
   quoteThrows?: string;
   // The receiver's holdings as the chain answers them, before and after; null is "would not answer".
   receiver?: Array<AddressSummary | null>;
+  // The route checker, when the test is about NEAR Intents taking payouts to the chain.
+  routes?: RouteHealth;
 };
 
 function summaryOf(balance: string): AddressSummary {
@@ -226,6 +229,7 @@ function railOf(over: Overrides = {}) {
     pollIntervalMs: 1,
     pollTimeoutMs: 10,
     quoteKey: TEST_QUOTE_KEY,
+    routes: over.routes,
     receiverRead: async (network, address) => {
       reads.push({ network, address });
       return answers.length > 0 ? (answers.shift() as AddressSummary | null) : null;
@@ -493,4 +497,78 @@ test('a payout on a chain with no decoder is refused by name', async () => {
   const said = await refusal(rail, draftOf({ network: 'ton', symbol: 'GRAM', to: 'UQAAA', toChecksum: null, recipient: recipientOf({ activity: null }) }));
   assert.match(said, /TON/);
   assert.match(said, /cannot check a TON address/);
+});
+
+// ---------- NEAR Intents not taking payouts to the chain ----------
+
+/* A route checker that answers each question with the next state on the list (the last one
+   repeats), so a test can open the route at simulate time and close it before execute. */
+function routesSaying(...states: RouteState[]): { routes: RouteHealth; asked: RouteAsk[] } {
+  const asked: RouteAsk[] = [];
+  const routes: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const state = states[Math.min(asked.length - 1, states.length - 1)];
+      const reasons =
+        state === 'degraded'
+          ? [{ source: 'status' as const, state, text: 'The NEAR Intents status page says: "Ethereum withdrawals delayed".' }]
+          : [{ source: 'status' as const, state, text: 'The NEAR Intents status page says: "Ethereum paused".' }];
+      return { network: ask.network, direction: ask.direction, state, reasons, checkedAt: NOW };
+    },
+  };
+  return { routes, asked };
+}
+
+test('a payout to a chain NEAR Intents has paused is refused at simulate with the sentence, before any quote', async () => {
+  const { routes, asked } = routesSaying('closed');
+  const { rail, calls } = railOf({ routes });
+  const sim = await rail.simulate(draftOf());
+  assert.equal(sim.ok, false);
+  assert.equal(sim.reason, 'route_closed');
+  assert.equal(sim.summary, 'NEAR Intents is not taking payouts to Ethereum right now, so nothing was signed and nothing moved. The NEAR Intents status page says: "Ethereum paused".');
+  assert.equal(calls.quotes.length, 0);
+  assert.deepEqual(asked, [{ network: 'eth', direction: 'out', account: ACCOUNT }]);
+});
+
+test('a degraded route goes ahead and the summary says so first', async () => {
+  const { rail } = railOf({ routes: routesSaying('degraded').routes });
+  const sim = await rail.simulate(draftOf());
+  assert.equal(sim.ok, true, sim.summary);
+  assert.equal(sim.summary.split('\n')[0], 'NEAR Intents reports trouble that may slow payouts to Ethereum right now, so it may take longer than usual. The NEAR Intents status page says: "Ethereum withdrawals delayed".');
+});
+
+test('a route that closes while the card waits for its click is refused at execute, and nothing is quoted or signed', async () => {
+  const { routes, asked } = routesSaying('open', 'closed');
+  const { rail, calls } = railOf({ routes });
+  assert.equal((await rail.simulate(draftOf())).ok, true);
+  const quotesAtSimulate = calls.quotes.length;
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'route_closed');
+  assert.match(result.detail, /^NEAR Intents is not taking payouts to Ethereum right now, so nothing was signed and nothing moved\./);
+  assert.equal(asked.length, 2);
+  assert.equal(calls.quotes.length, quotesAtSimulate);
+  assert.equal(calls.generated.length, 0);
+  assert.equal(calls.submitted.length, 0);
+});
+
+test('1Click saying "Quoting for this pair is not available" reads as NEAR Intents not taking payouts, at simulate and at execute', async () => {
+  const sim = await railOf({ quoteThrows: 'Quoting for this pair is not available' }).rail.simulate(draftOf());
+  assert.equal(sim.ok, false);
+  assert.equal(sim.reason, 'route_closed');
+  assert.equal(sim.summary, 'NEAR Intents is not taking payouts to Ethereum right now, so nothing was signed and nothing moved.');
+  assert.doesNotMatch(sim.summary, /Quoting for this pair/);
+
+  const live = railOf({ quoteThrows: 'Quoting for this pair is not available' });
+  const result = await live.rail.execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'route_closed');
+  assert.equal(result.detail, 'NEAR Intents is not taking payouts to Ethereum right now, so nothing was signed and nothing moved.');
+  assert.equal(live.calls.generated.length, 0);
+  assert.equal(live.calls.submitted.length, 0);
+
+  // Any other refusal keeps its own words.
+  const other = await railOf({ quoteThrows: 'No liquidity available' }).rail.simulate(draftOf());
+  assert.match(other.summary, /No liquidity available/);
+  assert.notEqual(other.reason, 'route_closed');
 });

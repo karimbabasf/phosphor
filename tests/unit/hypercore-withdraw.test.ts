@@ -21,6 +21,7 @@ import {
 } from '../../src/rails/hypercore-withdraw.ts';
 import type { HypercoreWithdrawDeps } from '../../src/rails/hypercore-withdraw.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
+import type { RouteAsk, RouteHealth, RouteState } from '../../src/preflight/route-health.ts';
 
 // The only way collateral leaves Hyperliquid. One sendAsset (the transfer both account modes
 // accept; spotSend is refused on a unified account), signed with the master key, to an address
@@ -965,4 +966,41 @@ test('an unsigned quote is refused before any send, and a signed one lands its r
     early.slice(1).map((e) => e.providerStage),
     ['SUCCESS'],
   );
+});
+
+// ---------- NEAR Intents not taking money in from HyperCore ----------
+
+/* A route checker that answers each question with the next state on the list (the last one
+   repeats), so a test can open the route at simulate time and close it before execute. */
+function routesSaying(...states: RouteState[]): { routes: RouteHealth; asked: RouteAsk[] } {
+  const asked: RouteAsk[] = [];
+  const routes: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const state = states[Math.min(asked.length - 1, states.length - 1)];
+      return { network: ask.network, direction: ask.direction, state, reasons: [{ source: 'oneclick', state, text: '' }], checkedAt: NOW };
+    },
+  };
+  return { routes, asked };
+}
+
+test('a closed route in from HyperCore is refused at simulate and again at execute, probed with the asset this rail sends', async () => {
+  const closed = routesSaying('closed');
+  const { rail: r, quotes } = rail({}, undefined, undefined, undefined, { routes: closed.routes });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'route_closed');
+  assert.equal(out.summary, 'NEAR Intents is not taking withdrawals from Hyperliquid right now, so nothing was signed and nothing moved.');
+  assert.equal(closed.asked[0].network, 'hypercore');
+  assert.equal(closed.asked[0].direction, 'in');
+  assert.equal(closed.asked[0].asset, HYPERCORE_ORIGIN_ASSET_ID);
+  assert.equal(quotes.length, 0);
+
+  const later = rail({}, undefined, undefined, undefined, { routes: routesSaying('open', 'closed').routes });
+  assert.equal((await later.rail.simulate(draft())).ok, true);
+  const result = await later.rail.execute(draft());
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'route_closed');
+  assert.equal(later.quotes.filter((q) => !q.dry).length, 0, 'no live quote, so no deposit address was minted');
+  assert.equal(later.signed.length, 0);
 });

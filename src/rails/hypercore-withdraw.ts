@@ -69,6 +69,8 @@ import type { PocketRead, RiseSchedule } from '../ledger/settle.ts';
 import { appFeeBpsOf } from './intents-spend.ts';
 import { FIRST_POLL_MS, watchOneClick } from './watch.ts';
 import { TYPICAL_SEC } from '../proposals/view.ts';
+import { closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
+import type { RouteHealth } from '../preflight/route-health.ts';
 
 // ---------- the two ends ----------
 
@@ -157,6 +159,9 @@ export type HypercoreWithdrawDeps = {
   // How long, and how often, the verifier is re-read once 1Click says SUCCESS. Defaults to
   // INTENTS_SETTLE (ninety seconds); the tests shorten it.
   settleSchedule?: RiseSchedule;
+  // Whether NEAR Intents is taking money in from HyperCore right now (src/preflight/route-health.ts).
+  // The registry wires the live one; absent, no route is called closed.
+  routes?: RouteHealth;
 };
 
 export type HypercoreWithdrawRail = Rail<HlWithdrawDraft>;
@@ -484,16 +489,27 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     return Math.max(a, b);
   }
 
+  /* Whether NEAR Intents is taking USDC in from HyperCore right now, probed with the very asset
+     this rail sends. Asked when the withdrawal is proposed and again before the key signs, because
+     a card can wait minutes for its click. */
+  function routeCheck(owner: string): ReturnType<typeof routeGate> {
+    return routeGate(deps.routes, { network: 'hypercore', direction: 'in', account: owner, asset: HYPERCORE_ORIGIN_ASSET_ID }, 'hl_withdraw');
+  }
+
   async function simulate(draft: HlWithdrawDraft): Promise<SimulationResult> {
     const planned = await plan(draft);
     if (planned.plan === undefined) return refusal(draft, planned.reasons);
     const p = planned.plan;
 
+    let owner: string;
     try {
-      requireOwner(draft);
+      owner = requireOwner(draft);
     } catch (err) {
       return refusal(draft, [errText(err)]);
     }
+
+    const route = await routeCheck(owner);
+    if (route.closed !== null) return { ok: false, summary: route.closed, error: route.closed, reason: 'route_closed' };
 
     try {
       // dry:true, always. A simulation must never mint a deposit address.
@@ -502,9 +518,13 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       const problems = [...checkQuote(draft, p, response.quote), ...quoteEchoProblems(response.raw, echoWant(draft, p))];
       if (problems.length > 0) return refusal(draft, problems, priced.lines);
       priced.lines.push('execution signs one sendAsset with the master key to an address 1Click mints for this quote; nothing is sent on any chain');
+      // A route NEAR Intents reports trouble on goes ahead, and says so first.
+      if (route.notice !== null) priced.lines.unshift(route.notice);
       return { ok: true, summary: priced.lines.join('\n'), send: priced.facts };
     } catch (err) {
       const message = errText(err);
+      const closed = closedQuoteSentence(message, 'hypercore', 'hl_withdraw');
+      if (closed !== null) return { ok: false, summary: closed, error: closed, reason: 'route_closed' };
       return { ok: false, summary: `hypercore withdraw simulation failed: ${message}`, error: message };
     }
   }
@@ -565,6 +585,9 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     } catch (err) {
       return { ok: false, detail: `${errText(err)}. Nothing was sent.` };
     }
+    // Asked again here: the route may have closed while the card waited for its click.
+    const route = await routeCheck(owner);
+    if (route.closed !== null) return { ok: false, detail: route.closed, reason: 'route_closed' };
 
     // Both sides BEFORE anything moves, so the proof afterwards is a comparison and not a guess.
     // A verifier that will not answer now is a withdrawal nothing could confirm later: the row
@@ -585,7 +608,15 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     // the venue, and on every answer after it.
     const pocket = pocketOf(draft, intentsBefore, null);
 
-    const response = await client.quote(quoteParams(draft, p, false));
+    let response: Awaited<ReturnType<typeof client.quote>>;
+    try {
+      response = await client.quote(quoteParams(draft, p, false));
+    } catch (err) {
+      // Nothing is signed before the quote; 1Click refusing the pair gets the route's sentence.
+      const closed = closedQuoteSentence(errText(err), 'hypercore', 'hl_withdraw');
+      if (closed !== null) return { ok: false, detail: closed, reason: 'route_closed' };
+      throw err;
+    }
     const quote = response.quote;
     // The signature is checked beside the amounts and the echo, before the deposit address is
     // read for anything: a quote 1Click did not sign, or signed with a different address, stops here.

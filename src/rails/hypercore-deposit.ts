@@ -62,6 +62,8 @@ import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { appFeeBpsOf, spendFromIntents } from './intents-spend.ts';
 import { TYPICAL_SEC } from '../proposals/view.ts';
 import type { PreflightRunner } from '../preflight/live.ts';
+import { closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
+import type { RouteHealth } from '../preflight/route-health.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
@@ -162,6 +164,9 @@ export type HypercoreDepositDeps = {
   // The checks run on the live quote before the intent is generated (src/preflight/): the
   // Arbitrum sweep this route ends in, above all. The registry wires the live one.
   preflight?: PreflightRunner;
+  // Whether NEAR Intents is taking transfers to HyperCore right now (src/preflight/route-health.ts).
+  // The registry wires the live one; absent, no route is called closed.
+  routes?: RouteHealth;
 };
 
 export type HypercoreDepositRail = Rail<HlDepositDraft> & {
@@ -476,6 +481,11 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       return refusal(draft, [errText(err)]);
     }
 
+    /* Whether NEAR Intents is taking money to HyperCore right now. execute() runs this whole
+       simulation again a moment before it signs, so the route is asked at both ends of the wait. */
+    const route = await routeGate(deps.routes, { network: 'hypercore', direction: 'out', account: owner }, 'hl_deposit');
+    if (route.closed !== null) return { ok: false, summary: route.closed, error: route.closed, reason: 'route_closed' };
+
     try {
       // dry:true, always. A simulation must never mint a deposit handle.
       const response = await api.quote({
@@ -498,9 +508,13 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       if (problems.length > 0) return refusal(draft, problems, priced.lines);
 
       priced.lines.push('execution signs one intent with the EVM key and sends nothing on any chain; the solver credits the venue');
+      // A route NEAR Intents reports trouble on goes ahead, and says so first.
+      if (route.notice !== null) priced.lines.unshift(route.notice);
       return { ok: true, summary: priced.lines.join('\n'), send: priced.facts };
     } catch (err) {
       const message = errText(err);
+      const closed = closedQuoteSentence(message, 'hypercore', 'hl_deposit');
+      if (closed !== null) return { ok: false, summary: closed, error: closed, reason: 'route_closed' };
       return { ok: false, summary: `hypercore funding simulation failed: ${message}`, error: message };
     }
   }
@@ -626,6 +640,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     // Re-plan and re-price rather than trust the approval. An approval can be minutes old and
     // a quote is a live price, so the checks that refused a bad draft have to run again here.
     const check = await simulate(draft);
+    // A closed route's sentence already says nothing was signed.
+    if (!check.ok && check.reason === 'route_closed') return { ok: false, detail: check.error ?? check.summary, reason: 'route_closed' };
     if (!check.ok) return { ok: false, detail: `${check.error ?? check.summary}. Nothing was signed.` };
 
     const planned = await plan(draft);
@@ -678,6 +694,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
         hooks,
       );
     } catch (err) {
+      const closed = closedQuoteSentence(errText(err), 'hypercore', 'hl_deposit');
+      if (closed !== null) return { ok: false, detail: closed, reason: 'route_closed' };
       return { ok: false, detail: `${errText(err)}. Nothing was signed.` };
     }
     if (!spent.signed) return describeHeld(spent.preflight);
