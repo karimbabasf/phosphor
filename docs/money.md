@@ -116,7 +116,7 @@ it signs, and refuses the payout when the chain would lose it:
 |---|---|
 | XRP Ledger | an X-address (the tag is inside it); an account that requires a destination tag; an account that takes payments only from senders it authorized (DepositAuth, which every AMM account sets); an account that does not exist yet, paid less than the ledger's reserve (1 XRP today); any coin but XRP |
 | Stellar | an M-address (the memo is inside it); an account that sets `config.memo_required`; an account that does not exist yet, whatever is paid (a payment cannot create a Stellar account, so its owner funds it first); a token the account has no trustline for; your own NEAR Intents deposit address there, which the bridge shares and tells apart by memo |
-| TON | a testnet address. A bounceable (EQ...) or raw (0:...) address is paid as the same account in its non-bounceable form (UQ...), so a new wallet cannot bounce the money back, and the card shows both |
+| TON | a testnet address. A bounceable (EQ...) or raw (0:...) address is paid as the same account in its non-bounceable form (UQ...), so a new wallet cannot bounce the money back, and the card shows both. A raw address carries no checksum, so the card says a changed character in it would not be caught and names the UQ... form as derived from it: compare that with the receiver's wallet |
 | Tron | TRX to a contract, or to an address Tron would not describe |
 | Bitcoin Cash | a legacy 1... or 3... address, which is also a Bitcoin address: use the `bitcoincash:q...` form |
 | Dogecoin | an address starting with 9, which the payout service refuses |
