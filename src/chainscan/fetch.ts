@@ -17,7 +17,7 @@ import { HOSTS, NEARBLOCKS_HOST } from './networks.ts';
 export type ChainKeys = { blockscoutApiKey?: string; nearblocksApiKey?: string };
 
 type Bucket = { tokens: number; last: number };
-type Cached = { at: number; value: unknown };
+type Cached = { at: number; value: unknown; ttl: number };
 
 export type ChainFetchState = { buckets: Map<string, Bucket>; cache: Map<string, Cached> };
 
@@ -48,6 +48,45 @@ const RATES: Readonly<Record<string, { perSecond: number; burst: number }>> = {
   'api.mainnet-beta.solana.com': { perSecond: 5, burst: 5 },
   'free.rpc.fastnear.com': { perSecond: 5, burst: 5 },
   'mempool.space': { perSecond: 5, burst: 5 },
+  /* The hosts added on 2026-09-26, each under its own published or observed limit. publicnode
+     publishes none and answered every burst we sent; the single-operator chain RPCs get less.
+     TronGrid suspends a keyless caller for 5 s past 3 a second, toncenter allows 1 a second
+     without a key (three calls exactly a second apart drew a 429, so a third slower here), Horizon 3600 an hour, BlockCypher 3 a second and 100 an hour (so its bucket
+     refills at the hourly rate), Blockchain.com asks for one call every 10 s, and the
+     Hyperliquid info API weighs this call at 2 of 1200 a minute. */
+  'ethereum-rpc.publicnode.com': { perSecond: 5, burst: 5 },
+  'base-rpc.publicnode.com': { perSecond: 5, burst: 5 },
+  'arbitrum-one-rpc.publicnode.com': { perSecond: 5, burst: 5 },
+  'mainnet.optimism.io': { perSecond: 2, burst: 2 },
+  'gnosis-rpc.publicnode.com': { perSecond: 5, burst: 5 },
+  'polygon-bor-rpc.publicnode.com': { perSecond: 5, burst: 5 },
+  'bsc-dataseed.bnbchain.org': { perSecond: 5, burst: 5 },
+  'avalanche-c-chain-rpc.publicnode.com': { perSecond: 5, burst: 5 },
+  'scroll-rpc.publicnode.com': { perSecond: 5, burst: 5 },
+  'rpc.berachain.com': { perSecond: 2, burst: 2 },
+  'robinhood-rpc.publicnode.com': { perSecond: 5, burst: 5 },
+  'starknet-rpc.publicnode.com': { perSecond: 2, burst: 2 },
+  'rpc.monad.xyz': { perSecond: 2, burst: 2 },
+  'rpc.xlayer.tech': { perSecond: 2, burst: 2 },
+  'rpc.plasma.to': { perSecond: 2, burst: 2 },
+  'rpc.adifoundation.ai': { perSecond: 1, burst: 1 },
+  'api.mainnet.abs.xyz': { perSecond: 2, burst: 2 },
+  'mainnet.fogo.io': { perSecond: 2, burst: 2 },
+  'litecoinspace.org': { perSecond: 2, burst: 2 },
+  'api.blockchain.info': { perSecond: 0.1, burst: 2 },
+  'api.blockcypher.com': { perSecond: 100 / 3600, burst: 3 },
+  'insight.dash.org': { perSecond: 1, burst: 1 },
+  'xrplcluster.com': { perSecond: 5, burst: 5 },
+  'toncenter.com': { perSecond: 0.75, burst: 1 },
+  'api.trongrid.io': { perSecond: 2, burst: 2 },
+  'graphql.mainnet.sui.io': { perSecond: 2, burst: 2 },
+  'api.mainnet.aptoslabs.com': { perSecond: 2, burst: 2 },
+  'mainnet.movementnetwork.xyz': { perSecond: 2, burst: 2 },
+  'api.koios.rest': { perSecond: 0.5, burst: 2 },
+  'horizon.stellar.org': { perSecond: 1, burst: 2 },
+  'api.explorer.provable.com': { perSecond: 1, burst: 2 },
+  'api.hyperliquid.xyz': { perSecond: 2, burst: 2 },
+  'rpc.hyperliquid.xyz': { perSecond: 1, burst: 2 },
 };
 const DEFAULT_RATE = { perSecond: 1, burst: 1 };
 
@@ -110,19 +149,27 @@ async function take(host: string, deps: Required<Pick<ChainFetchDeps, 'now' | 's
 function cacheGet(state: ChainFetchState, key: string, now: number): { hit: true; value: unknown } | { hit: false } {
   const row = state.cache.get(key);
   if (row === undefined) return { hit: false };
-  if (now - row.at > CACHE_TTL_MS) {
+  if (now - row.at > row.ttl) {
     state.cache.delete(key);
     return { hit: false };
   }
   return { hit: true, value: row.value };
 }
 
-function cachePut(state: ChainFetchState, key: string, value: unknown, now: number): void {
+function cachePut(state: ChainFetchState, key: string, value: unknown, now: number, ttl: number): void {
   if (state.cache.size >= CACHE_MAX) {
     const oldest = state.cache.keys().next().value;
     if (oldest !== undefined) state.cache.delete(oldest);
   }
-  state.cache.set(key, { at: now, value });
+  state.cache.set(key, { at: now, value, ttl });
+}
+
+/* A whole number past 2^53 arrives as JSON text a float cannot hold: a Dogecoin whale's balance
+   in satoshis, a Solana account's lamports. The reviver hands such a number back as its own
+   digits, which every amount parser here reads exactly, so no balance is ever rounded on the
+   way in. Every other value parses as it always did. */
+function exact(_key: string, value: unknown, context?: { source?: string }): unknown {
+  return typeof value === 'number' && !Number.isSafeInteger(value) && context?.source !== undefined && /^-?\d+$/.test(context.source) ? context.source : value;
 }
 
 // ---------- the read ----------
@@ -152,7 +199,9 @@ async function readCapped(res: Response, cap: number): Promise<string> {
   return out;
 }
 
-export type ChainFetchOptions = { method?: 'GET' | 'POST'; body?: string; cap?: number };
+// `ttl` shortens how long the answer is served from the cache, for a question whose answer
+// moves faster than a minute (the chain head).
+export type ChainFetchOptions = { method?: 'GET' | 'POST'; body?: string; cap?: number; ttl?: number };
 
 // One request: the parsed JSON answer, or a thrown Error whose message names why not, with
 // nothing in it that came off the wire except an HTTP status.
@@ -218,11 +267,11 @@ export async function chainFetch(url: string, opts: ChainFetchOptions, deps: Cha
     const text = await readCapped(res, cap);
     let value: unknown;
     try {
-      value = JSON.parse(text);
+      value = JSON.parse(text, exact);
     } catch {
       throw new Error('the answer was not JSON');
     }
-    cachePut(state, key, value, now());
+    cachePut(state, key, value, now(), opts.ttl ?? CACHE_TTL_MS);
     return value;
   }
   throw new Error(`more than ${MAX_REDIRECTS} redirects`);

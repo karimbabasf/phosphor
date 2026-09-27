@@ -126,8 +126,8 @@ function roundAmount(raw: string): string {
    sentence that catches a pasted address which lost a character but still decodes. */
 export function recipientSentence(network: string, recipient: SendRecipient): string {
   const label = payLabel(network);
-  /* The activity was read by the chainscan, which knows six chains under its own names, so the
-     two are compared through that mapping rather than as strings. */
+  /* The activity was read by the chainscan, which names chains its own way (optimism, not op),
+     so the two are compared through that mapping rather than as strings. */
   const scan = scanNetworkOf(network);
   const own = recipient.ownAddress ? `This is your own address on ${label}. ` : '';
   const a = recipient.activity;
@@ -194,8 +194,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   const receiverRead =
     deps.receiverRead ??
     ((network: string, address: string) => {
-      /* Only the six chains the scan can read have an answer here; on every other chain the card
-         says the address could not be checked, which is the honest word for it. */
+      /* Every chain the scan can read has an answer here (src/chainscan/networks.ts); on a chain
+         it cannot, the card says the address could not be checked, the honest word for it. */
       const scan = scanNetworkOf(network);
       if (scan === null) return Promise.resolve(null);
       return addressSummary(scan, address, { fetchImpl, state: createChainFetchState() }).catch(() => null);
@@ -467,7 +467,9 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   function holdingOf(read: AddressSummary | null, p: Plan): string | null {
     if (read === null || !read.ok) return null;
     if (p.native) return read.balance?.amount ?? null;
-    if (p.tokenId === null) return null;
+    // A chain read with no token view (an EVM chain read over its RPC, NEAR) says nothing about
+    // a token, and a token it did not list is not a zero balance.
+    if (p.tokenId === null || read.tokensSource === null) return null;
     const want = p.tokenId.toLowerCase();
     const row = read.tokens.find((t) => (t.contract ?? '').toLowerCase() === want);
     return row === undefined ? '0' : row.amount;

@@ -20,6 +20,7 @@ import { STATUS_LINK } from '../../src/preflight/route-health.ts';
 import type { RouteHealth, RouteVerdict } from '../../src/preflight/route-health.ts';
 import { base58Encode } from '../../src/chain/near.ts';
 import type { Ctx } from '../../src/http/context.ts';
+import { POA_DEPOSIT } from '../fixtures/poa-deposit-addresses.ts';
 
 type Any = Record<string, any>;
 
@@ -62,14 +63,15 @@ function ctxFor(account: string | null, mode: 'live' | 'demo' = 'live', extra: P
 }
 
 // An address with the shape the report checks for the network: the EVM chains one hex address
-// each, Solana a 32-byte base58 key, NEAR an account id, Bitcoin a bech32 string, and the rest a
-// plain printable token, which is all the report can ask of a chain it cannot decode.
+// each, Solana a 32-byte base58 key, NEAR an account id, Bitcoin a bech32 string, a chain the app
+// decodes past those its real bridge address (every checksum there is checked now), and a chain
+// it cannot decode a plain printable token, which is all the report can ask of one.
 export function shapedAddress(chain: string): string {
   if (chain.startsWith('eth:') || receiveNetworkByBridge(chain)?.kind === 'evm') return `0x${crypto.createHash('sha256').update(chain).digest('hex').slice(0, 40)}`;
   if (receiveNetworkByBridge(chain)?.kind === 'sol') return base58Encode(new Uint8Array(crypto.createHash('sha256').update(chain).digest()));
   if (chain === 'near:mainnet') return 'deposit-for-you.near';
   if (chain === 'btc:mainnet') return 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4';
-  return `addr-for-${chain}`;
+  return POA_DEPOSIT[chain] ?? `addr-for-${chain}`;
 }
 
 /* A bridge that answers every deposit_address with one address per network and the token

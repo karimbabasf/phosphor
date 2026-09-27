@@ -18,6 +18,7 @@ import { depositAddressProblem, depositPinsPath, intentsReceiveReport } from '..
 import { RECEIVE_NETWORKS, receiveNetworkByBridge, receiveNetworkOf } from '../../src/rails/intents-address.ts';
 import { base58Encode } from '../../src/chain/near.ts';
 import type { Ctx } from '../../src/http/context.ts';
+import { POA_DEPOSIT } from '../fixtures/poa-deposit-addresses.ts';
 
 type Any = Record<string, any>;
 
@@ -30,7 +31,7 @@ function shaped(chain: string): string {
   if (kind === 'sol') return base58Encode(new Uint8Array(crypto.createHash('sha256').update(chain).digest()));
   if (chain === 'near:mainnet') return 'deposit-for-you.near';
   if (chain === 'btc:mainnet') return 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4';
-  return `addr-for-${chain}`;
+  return POA_DEPOSIT[chain] ?? `addr-for-${chain}`;
 }
 
 /* A bridge whose deposit_address answer is a function of the network AND of how many times it

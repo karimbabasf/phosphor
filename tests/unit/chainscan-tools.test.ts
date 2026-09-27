@@ -66,7 +66,7 @@ test('chain_address refuses a bad network or address with a 400 and the reason, 
   const seen: Array<{ url: string; init: RequestInit | undefined }> = [];
   const reads = chainReadsWith(deps({}, seen));
   for (const [args, why] of [
-    [{ network: 'polygon', address: VITALIK }, /network must be one of ethereum, base, arbitrum, solana, near, bitcoin/],
+    [{ network: 'hyperevm', address: VITALIK }, /network must be one of ethereum, base, arbitrum, solana, near, bitcoin/],
     [{ network: 'ethereum', address: 'https://evil.tld/x' }, /not an address on Ethereum/],
     [{ network: 'ethereum' }, /no address given/],
     [{ network: 'solana', address: VITALIK }, /not a Solana address/],

@@ -10,15 +10,19 @@ const VITALIK = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
 const SOL_USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
 test('the network enum is closed and every network names one host on the allowlist', () => {
-  assert.deepEqual([...CHAIN_NETWORKS], ['ethereum', 'base', 'arbitrum', 'solana', 'near', 'bitcoin']);
+  // The first six keep their place; every chain the deposit card lists follows (2026-09-26).
+  assert.deepEqual(CHAIN_NETWORKS.slice(0, 6), ['ethereum', 'base', 'arbitrum', 'solana', 'near', 'bitcoin']);
+  assert.equal(CHAIN_NETWORKS.length, 36);
   for (const network of CHAIN_NETWORKS) {
     assert.ok(isChainNetwork(network));
-    assert.ok(HOSTS.has(NETWORKS[network].api), `${network} host is not on the allowlist`);
+    // Zcash is decoded and not read: no keyless source answered, and the row says why.
+    if (NETWORKS[network].read === null) assert.ok(NETWORKS[network].api === '' && (NETWORKS[network].why ?? '') !== '', network);
+    else assert.ok(HOSTS.has(NETWORKS[network].api), `${network} host is not on the allowlist`);
     assert.match(NETWORKS[network].explorerAddress, /^https:\/\//);
     assert.match(NETWORKS[network].explorerTx, /^https:\/\//);
   }
-  for (const not of ['eth', 'ETHEREUM', 'polygon', '', 42, null, undefined]) assert.equal(isChainNetwork(not), false, String(not));
-  assert.equal(HOSTS.size, 7);
+  for (const not of ['eth', 'ETHEREUM', 'hyperevm', '', 42, null, undefined]) assert.equal(isChainNetwork(not), false, String(not));
+  assert.equal(HOSTS.size, 40);
 });
 
 test('an EVM address with a valid EIP-55 checksum passes as valid, lowercase passes as unchecked', () => {
