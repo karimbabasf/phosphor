@@ -51,9 +51,23 @@
   var UNDER = { WBTC: 'BTC', CBBTC: 'BTC', WETH: 'ETH', WNEAR: 'NEAR', WSOL: 'SOL' };
 
   /* How many legend entries the ring carries before it folds the rest into
-     one, and how many moves the panel lists. */
+     one. */
   var LEGEND_SHOWN = 4;
-  var MOVES_SHOWN = 4;
+
+  /* THE ACTIVITY LIST pages through the whole history, 40 ended moves at a
+     time, the next page read when the scroll comes within two rows of the end.
+     The filter and the search are the server's (/api/receipts kind, status and
+     q), so a page is always full and the count is the whole history's. */
+  var MOVES_PAGE = 40;
+  var MOVES_NEAR_END = 120;
+  var SEARCH_MS = 180;
+  var FILTERS = [
+    { id: 'all', label: 'All', kind: 'swap,move' },
+    { id: 'swaps', label: 'Swaps', kind: 'swap' },
+    { id: 'transfers', label: 'Transfers', kind: 'move' },
+    { id: 'failed', label: 'Failed', kind: 'swap,move', status: 'failed' }
+  ];
+  var SWAP_KINDS = { swap: true };
 
   /* The shortest arc a dial shows for a share above nothing: 8 of its 100,
      from the top, a sweep that reads as begun. $100 of a $10,000 cap is 1, and
@@ -89,6 +103,9 @@
   var feed = { entries: Object.create(null), at: 0, pending: false, asked: Object.create(null), tried: 0 };
   var receipts = [];
   var movesAt = 0;
+  /* The list's own state: the filter and search it was read for, how far it
+     has paged, and a number that retires an answer a newer read overtook. */
+  var list = { filter: 'all', q: '', hasMore: false, total: null, loading: false, failed: false, seq: 0, sig: null };
   var flowSteps = null;
 
   function boot() {
@@ -111,7 +128,7 @@
      coming while it is up (a heartbeat every 15 s at the least) are what bring
      an old line back to be read. */
   function onScreen() {
-    if (Date.now() - movesAt > MOVES_MS) loadMoves();
+    if (Date.now() - movesAt > MOVES_MS) loadMoves(false);
     render();
   }
 
@@ -219,13 +236,46 @@
     var duo = dom.el('div', 'stmt-duo');
     duo.appendChild(buildPolicies());
     var moves = dom.el('section', 'stmt-panel stmt-moves');
-    moves.setAttribute('aria-label', 'Recent moves');
+    moves.setAttribute('aria-label', 'Activity');
     var movesHead = dom.el('header', 'stmt-panel-head');
-    movesHead.appendChild(dom.el('h3', '', 'Recent moves'));
+    movesHead.appendChild(dom.el('h3', '', 'Activity'));
+    var movesCount = dom.el('span', 'moves-count');
+    movesHead.appendChild(movesCount);
     moves.appendChild(movesHead);
-    var movesList = dom.el('ul', 'moves');
+
+    /* Find and filter: a search well and the four words, one row. */
+    var tools = dom.el('div', 'moves-tools');
+    var find = dom.el('label', 'moves-find');
+    var findIcon = glyph('search', 'moves-find-icon');
+    if (findIcon) find.appendChild(findIcon);
+    var search = dom.el('input', 'input moves-search');
+    search.type = 'search';
+    search.placeholder = 'Search coins, sends, hashes';
+    search.autocomplete = 'off';
+    search.spellcheck = false;
+    search.setAttribute('aria-label', 'Search activity');
+    find.appendChild(search);
+    tools.appendChild(find);
+    var seg = dom.el('div', 'seg moves-seg');
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'Show');
+    var cells = dom.el('div', 'seg-cells');
+    FILTERS.forEach(function (f) {
+      var cell = dom.el('button', 'timeframe', f.label);
+      cell.type = 'button';
+      cell.dataset.filter = f.id;
+      cell.setAttribute('aria-pressed', f.id === list.filter ? 'true' : 'false');
+      cells.appendChild(cell);
+    });
+    seg.appendChild(cells);
+    tools.appendChild(seg);
+    moves.appendChild(tools);
+
+    var movesList = dom.el('ul', 'moves scrolls');
+    movesList.setAttribute('tabindex', '0');
+    movesList.setAttribute('aria-label', 'Moves, newest first');
     moves.appendChild(movesList);
-    var movesEmpty = dom.el('p', 'stmt-empty', 'Nothing has moved yet.');
+    var movesEmpty = dom.el('p', 'stmt-empty moves-empty', 'Nothing has moved yet.');
     movesEmpty.hidden = true;
     moves.appendChild(movesEmpty);
     duo.appendChild(moves);
@@ -272,6 +322,9 @@
     refs.duo = duo;
     refs.moves = movesList;
     refs.movesEmpty = movesEmpty;
+    refs.movesCount = movesCount;
+    refs.search = search;
+    refs.cells = cells;
     refs.flow = flow;
     refs.flowTitle = flowTitle;
     refs.flowBody = flowBody;
@@ -285,6 +338,18 @@
       if (shell && typeof shell.setView === 'function') shell.setView('trade', { fromClick: true });
     });
     dom.on(movesList, 'click', onMovePress);
+    dom.on(movesList, 'scroll', onMovesScroll);
+    dom.on(cells, 'click', onFilterPress);
+    var searchSoon = dom.debounce(function () { setSearch(search.value); }, SEARCH_MS);
+    dom.on(search, 'input', searchSoon);
+    dom.on(search, 'keydown', function (event) {
+      if (event.key === 'Enter') setSearch(search.value);
+      if (event.key === 'Escape' && search.value) {
+        event.preventDefault();
+        search.value = '';
+        setSearch('');
+      }
+    });
   }
 
   function button(label, icon) {
@@ -877,16 +942,99 @@
   /* The moves still under way come off the state frame, which pushes their
      every change; the ones that ended come off the receipts, read when Pro
      comes up and when a move ends. Trading on Hyperliquid is Trade's. */
-  function loadMoves() {
+  /* `more` reads the page after the last row; otherwise the list is read
+     again from the top, as deep as it had paged (at most 200), so a refresh
+     after a move ends keeps the rows and the scroll where they were. */
+  function loadMoves(more) {
     if (!net || typeof net.getJson !== 'function') return;
-    movesAt = Date.now();
-    net.getJson('/api/receipts?limit=12')
+    if (more && (list.loading || !list.hasMore || !receipts.length)) return;
+    var f = filterOf(list.filter);
+    var params = ['kind=' + encodeURIComponent(f.kind)];
+    if (f.status) params.push('status=' + f.status);
+    if (list.q) params.push('q=' + encodeURIComponent(list.q));
+    if (more) {
+      var last = Date.parse(receipts[receipts.length - 1].at);
+      if (!isFinite(last)) return;
+      params.push('before=' + last, 'limit=' + MOVES_PAGE);
+    } else {
+      params.push('limit=' + Math.min(200, Math.max(MOVES_PAGE, receipts.length)));
+      movesAt = Date.now();
+    }
+    var seq = list.seq += 1;
+    list.loading = true;
+    net.getJson('/api/receipts?' + params.join('&'))
       .then(function (result) {
+        if (seq !== list.seq) return;
         var page = result && result.data ? result.data : null;
-        receipts = page && Array.isArray(page.receipts) ? page.receipts : [];
+        var rows = page && Array.isArray(page.receipts) ? page.receipts : [];
+        receipts = more ? receipts.concat(rows) : rows;
+        list.hasMore = !!(page && page.hasMore);
+        list.total = page && typeof page.total === 'number' ? page.total : null;
+        list.failed = false;
+        list.loading = false;
         render();
+        /* A page too short to scroll can never ask for the next one: ask now. */
+        var node = refs.moves;
+        if (list.hasMore && node && node.scrollHeight <= node.clientHeight + MOVES_NEAR_END) loadMoves(true);
       })
-      .catch(function () { /* the panel keeps what it had */ });
+      .catch(function () {
+        if (seq !== list.seq) return;
+        list.loading = false;
+        /* The list keeps what it had; with nothing to keep it says so. */
+        if (!more && !receipts.length) list.failed = true;
+        render();
+      });
+  }
+
+  function filterOf(id) {
+    for (var i = 0; i < FILTERS.length; i += 1) if (FILTERS[i].id === id) return FILTERS[i];
+    return FILTERS[0];
+  }
+
+  /* A new filter or search reads from the top, back at the first row. */
+  function reread() {
+    receipts = [];
+    list.hasMore = false;
+    list.total = null;
+    list.failed = false;
+    list.sig = null;
+    if (refs.moves) refs.moves.scrollTop = 0;
+    loadMoves(false);
+    render();
+  }
+
+  function onFilterPress(event) {
+    for (var at = event.target; at && at !== refs.cells; at = at.parentNode) {
+      var id = at.dataset ? at.dataset.filter : null;
+      if (!id) continue;
+      if (id === list.filter) return;
+      list.filter = id;
+      var kids = refs.cells.children;
+      for (var i = 0; i < kids.length; i += 1) kids[i].setAttribute('aria-pressed', kids[i].dataset.filter === id ? 'true' : 'false');
+      reread();
+      return;
+    }
+  }
+
+  function setSearch(value) {
+    var q = String(value || '').trim().toLowerCase().slice(0, 100);
+    if (q === list.q) return;
+    list.q = q;
+    reread();
+  }
+
+  function onMovesScroll() {
+    var node = refs.moves;
+    cutOf(node);
+    if (list.hasMore && !list.loading && node.scrollTop + node.clientHeight >= node.scrollHeight - MOVES_NEAR_END) loadMoves(true);
+  }
+
+  /* The fade on the edge that has more behind it (components.css .scrolls). */
+  function cutOf(node) {
+    if (!node) return;
+    var top = node.scrollTop > 2;
+    var bottom = node.scrollTop + node.clientHeight < node.scrollHeight - 2;
+    dom.setAttr(node, 'data-cut', top && bottom ? 'both' : (top ? 'top' : (bottom ? 'bottom' : null)));
   }
 
   var endedSeen = {};
@@ -912,6 +1060,7 @@
         endedSeen[p.id] = true;
         return;
       }
+      if (!liveShown(p.kind)) return;
       var now = liveOf(p, view);
       var since = view.decidedAt || view.createdAt || p.createdAt;
       live.push({
@@ -925,7 +1074,11 @@
         proposal: p
       });
     });
-    if (ended && isUp() && Date.now() - movesAt > 1500) loadMoves();
+    if (list.q) live = live.filter(function (m) { return found(m.title + ' ' + m.kind + ' ' + m.state); });
+    /* Live: a move that just ended is read at once, and anything else that
+       landed (a deposit arrives with no move behind it) within 30 s while Pro
+       is up. A list paged past what one read returns is left as it is. */
+    if (isUp() && !list.loading && receipts.length <= 200 && ((ended && Date.now() - movesAt > 1500) || Date.now() - movesAt > MOVES_MS)) loadMoves(false);
     var done = receipts.filter(function (r) {
       return r && r.kind !== 'trade' && r.kind !== 'bot' && r.kind !== 'policy_change' && !live.some(function (m) { return m.key === r.id; });
     }).map(function (r) {
@@ -942,13 +1095,44 @@
         receipt: r
       };
     });
-    var items = live.concat(done).sort(function (a, b) {
-      return Date.parse(b.at || 0) - Date.parse(a.at || 0);
-    }).slice(0, MOVES_SHOWN);
-    dom.reconcile(refs.moves, items, function (m) {
-      return m.key;
-    }, makeMove, fillMove);
-    dom.setHidden(refs.movesEmpty, !!items.length);
+    /* The moves under way first, newest first; the ended ones keep the
+       server's order under them, so a page read later only ever appends. */
+    live.sort(function (a, b) { return Date.parse(b.at || 0) - Date.parse(a.at || 0); });
+    var items = live.concat(done);
+    /* A state frame lands every few seconds and most change nothing here:
+       the rows are touched only when what they say has changed. */
+    var sig = items.map(function (m) { return m.key + '|' + m.title + '|' + m.state + '|' + m.meta; }).join('\n');
+    if (sig !== list.sig) {
+      list.sig = sig;
+      dom.reconcile(refs.moves, items, function (m) {
+        return m.key;
+      }, makeMove, fillMove);
+      cutOf(refs.moves);
+    }
+    var filtered = list.filter !== 'all' || !!list.q;
+    var settled = !list.loading || receipts.length;
+    dom.setText(refs.movesEmpty, list.failed ? 'Your activity could not be read. It comes back on its own.' : (filtered ? 'Nothing matches.' : 'Nothing has moved yet.'));
+    dom.setHidden(refs.movesEmpty, !!items.length || !settled);
+    dom.setHidden(refs.moves, !items.length);
+    cutOf(refs.moves);
+    var count = list.total === null ? null : list.total + live.length;
+    dom.setText(refs.movesCount, count === null ? '' : count.toLocaleString('en-US') + (count === 1 ? ' move' : ' moves'));
+  }
+
+  /* A move under way is shown under the filter that names its kind; the
+     Failed filter shows only moves that ended. */
+  function liveShown(kind) {
+    if (list.filter === 'failed') return false;
+    if (list.filter === 'swaps') return !!SWAP_KINDS[kind];
+    if (list.filter === 'transfers') return !SWAP_KINDS[kind];
+    return true;
+  }
+
+  function found(text) {
+    var hay = String(text || '').toLowerCase();
+    var terms = list.q.split(/\s+/);
+    for (var i = 0; i < terms.length; i += 1) if (terms[i] && hay.indexOf(terms[i]) === -1) return false;
+    return true;
   }
 
   /* Where a move under way stands, in the card's own words (ui/screens/cards.js

@@ -638,3 +638,50 @@ test('an armed plan is a bot receipt in the plan\'s own figures, and a close is 
     await h.close();
   }
 });
+
+test('kind takes several words at once, so a list of swaps and moves pages on the server', async () => {
+  const h = await boot(SPREAD);
+  try {
+    const both = await page(h.url, '?kind=swap,move&limit=4');
+    assert.deepEqual(both.receipts.map((r) => r.id), ['h2', 'h5', 'h20', 'h30']);
+    assert.equal(both.total, 6);
+    assert.equal(both.hasMore, true);
+    assert.equal((await get(h.url, '/api/receipts?kind=swap,sandwich')).status, 400);
+  } finally {
+    await h.close();
+  }
+});
+
+test('status keeps one outcome, and failed holds the ones the app could not confirm', async () => {
+  const h = await boot([
+    ...SPREAD.slice(0, 2),
+    settled('bad', 'failed', { createdAt: ago(3), decidedAt: ago(3) }),
+    settled('odd', 'needs_reconciliation', { createdAt: ago(4), decidedAt: ago(4) }),
+  ]);
+  try {
+    const failed = await page(h.url, '?status=failed');
+    assert.deepEqual(failed.receipts.map((r) => r.id).sort(), ['bad', 'odd']);
+    assert.equal(failed.total, 2);
+    assert.deepEqual((await page(h.url, '?status=done')).receipts.map((r) => r.id), ['h2', 'h5']);
+    assert.equal((await get(h.url, '/api/receipts?status=maybe')).status, 400);
+  } finally {
+    await h.close();
+  }
+});
+
+test('q finds a receipt by the words a person would type, every word, any case', async () => {
+  const h = await boot(SPREAD);
+  try {
+    assert.deepEqual((await page(h.url, '?q=ETH')).receipts.map((r) => r.id), ['h2', 'h20', 'h100']);
+    assert.deepEqual((await page(h.url, '?q=trading')).receipts.map((r) => r.id), ['h30']);
+    assert.deepEqual((await page(h.url, '?q=usdc%20withdraw')).receipts.map((r) => r.id), ['h200']);
+    const none = await page(h.url, '?q=dogecoin');
+    assert.deepEqual(none, { receipts: [], total: 0, hasMore: false, feesUsd: 0 });
+    // A search inside a kind and a cursor: the three filters narrow one window.
+    const paged = await page(h.url, `?kind=swap&q=eth&limit=1&before=${Date.now() - 10 * HOUR}`);
+    assert.deepEqual(paged.receipts.map((r) => r.id), ['h20']);
+    assert.equal(paged.hasMore, true);
+  } finally {
+    await h.close();
+  }
+});

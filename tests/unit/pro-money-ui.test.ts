@@ -131,7 +131,7 @@ type Rig = {
   day: { entries: Record<string, Any>; fails: boolean; landed: boolean };
 };
 
-function boot(options: { view?: string; candles?: Record<string, Any>; day?: Record<string, Any>; receipts?: Any[]; svg?: boolean } = {}): Rig {
+function boot(options: { view?: string; candles?: Record<string, Any>; day?: Record<string, Any>; receipts?: Any[]; page?: (path: string) => Any; svg?: boolean } = {}): Rig {
   const host = makeNode('section');
   host.id = 'view-pro';
   let subscriber: ((state: Any) => void) | null = null;
@@ -189,7 +189,7 @@ function boot(options: { view?: string; candles?: Record<string, Any>; day?: Rec
     PhosphorNet: {
       getJson: (path: string) => {
         asked.push(path);
-        if (path.startsWith('/api/receipts')) return Promise.resolve({ data: { receipts: options.receipts ?? [] }, fresh: true });
+        if (path.startsWith('/api/receipts')) return Promise.resolve({ data: options.page ? options.page(path) : { receipts: options.receipts ?? [] }, fresh: true });
         if (path.startsWith('/api/day')) {
           if (day.fails) return Promise.reject(Object.assign(new Error('no day'), { status: 502 }));
           if (!day.landed) return Promise.resolve({ data: { at: null, entries: {} }, fresh: true });
@@ -702,6 +702,99 @@ test('a move under way says what it is doing, and a late one stays in the list a
   assert.equal(one(moves[0], 'move-meta').textContent, 'Started 1 minute ago');
 });
 
+/* The activity server, paged the way /api/receipts pages: newest first, `before` the cursor. */
+function history(n: number): Any[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: 'r' + i, kind: i % 3 === 0 ? 'intents_send' : 'swap', at: new Date(Date.parse('2026-09-23T19:00:00Z') - i * 60_000).toISOString(),
+    status: i % 7 === 6 ? 'failed' : 'executed', headline: '', summary: '', amount: 1 + i, symbol: i % 2 ? 'USDC' : 'NEAR', received: { symbol: 'ETH', amount: 0.001 },
+  }));
+}
+
+function pager(all: Any[]) {
+  return (path: string): Any => {
+    const q = new URLSearchParams(path.split('?')[1] ?? '');
+    const before = q.get('before') ? Number(q.get('before')) : Infinity;
+    const limit = Number(q.get('limit') ?? 25);
+    const words = (q.get('q') ?? '').split(/\s+/).filter(Boolean);
+    const kinds = (q.get('kind') ?? '').split(',');
+    const inWindow = all.filter((r) => (kinds.includes('move') || r.kind === 'swap') && (kinds.includes('swap') || r.kind !== 'swap')
+      && (q.get('status') !== 'failed' || r.status === 'failed')
+      && words.every((w) => (r.symbol + ' ' + r.kind).toLowerCase().includes(w)));
+    const older = inWindow.filter((r) => Date.parse(r.at) < before);
+    return { receipts: older.slice(0, limit), total: inWindow.length, hasMore: older.length > limit };
+  };
+}
+
+const lastRead = (rig: Rig): string => rig.asked.filter((p) => p.startsWith('/api/receipts')).at(-1) ?? '';
+
+test('activity pages through the whole history as the list scrolls, and says how many there are', async () => {
+  const rig = boot({ page: pager(history(95)) });
+  rig.put(state());
+  rig.view('pro');
+  await tick();
+  const list = one(rig.host, 'moves');
+  const first = rig.asked.filter((p) => p.startsWith('/api/receipts'));
+  assert.equal(first.at(-1), '/api/receipts?kind=swap%2Cmove&limit=40', 'Pro asked for trades, or not for a page');
+  assert.equal(withClass(list, 'move').length, 40);
+  assert.equal(one(rig.host, 'moves-count').textContent, '95 moves');
+
+  // Near the end the next page is read, after the last row, and appended.
+  list.scrollTop = 1000; list.clientHeight = 300; list.scrollHeight = 1350;
+  list.dispatchEvent({ type: 'scroll', target: list });
+  await tick();
+  assert.match(lastRead(rig), /before=\d+&limit=40$/);
+  assert.equal(withClass(list, 'move').length, 80);
+  list.dispatchEvent({ type: 'scroll', target: list });
+  await tick();
+  assert.equal(withClass(list, 'move').length, 95);
+  const asked = rig.asked.filter((p) => p.startsWith('/api/receipts')).length;
+  list.dispatchEvent({ type: 'scroll', target: list });
+  await tick();
+  assert.equal(rig.asked.filter((p) => p.startsWith('/api/receipts')).length, asked, 'the end of the history was read again');
+});
+
+test('the four words and the search read from the server, and a move under way follows the filter', async () => {
+  const rig = boot({ page: pager(history(30)) });
+  rig.put(state({ proposals: [waiting()] }));
+  rig.view('pro');
+  await tick();
+  const list = one(rig.host, 'moves');
+  const cells = withClass(one(rig.host, 'moves-seg'), 'timeframe');
+  const press = (cell: Any) => one(rig.host, 'seg-cells').dispatchEvent({ type: 'click', target: cell });
+  assert.deepEqual(cells.map((c) => c.textContent), ['All', 'Swaps', 'Transfers', 'Failed']);
+
+  press(cells[3]);
+  await tick();
+  assert.match(lastRead(rig), /kind=swap%2Cmove&status=failed&limit=40$/);
+  assert.equal(cells[3].getAttribute('aria-pressed'), 'true');
+  assert.ok(withClass(list, 'move').every((m) => words(one(m, 'move-state')).join('') === 'Didn\'t go through'), 'Failed showed a move that went through, or one under way');
+
+  press(cells[2]);
+  await tick();
+  assert.match(lastRead(rig), /kind=move&limit=40$/);
+  assert.deepEqual([...new Set(withClass(list, 'move').map((m) => m.__move.kind))], ['intents_send'], 'a swap under way showed under Transfers');
+
+  press(cells[0]);
+  const search = one(rig.host, 'moves-search');
+  search.value = 'near';
+  search.dispatchEvent({ type: 'keydown', key: 'Enter', target: search });
+  await tick();
+  assert.match(lastRead(rig), /q=near&limit=40$/);
+  assert.ok(withClass(list, 'move').every((m) => /NEAR/.test(one(m, 'move-title').textContent)), 'the search kept a row without the word');
+
+  search.value = 'dogecoin';
+  search.dispatchEvent({ type: 'keydown', key: 'Enter', target: search });
+  await tick();
+  assert.equal(withClass(list, 'move').length, 0);
+  assert.equal(one(rig.host, 'moves-empty').hidden, false);
+  assert.equal(one(rig.host, 'moves-empty').textContent, 'Nothing matches.');
+
+  search.dispatchEvent({ type: 'keydown', key: 'Escape', target: search, preventDefault() {} });
+  await tick();
+  assert.equal(search.value, '');
+  assert.equal(withClass(list, 'move')[0].__move.key, 'p_wait', 'the move asking for an OK is not first again');
+});
+
 /* ---------- the two things to do ---------- */
 
 test('Swap puts the word in the box for the person to finish, and says what to do first with no agent', () => {
@@ -762,10 +855,13 @@ test('the statement reflows the way the mockup does, and keeps the stage every w
   const narrow = CSS.slice(CSS.indexOf('@container moves (max-width: 360px)'));
   assert.match(narrow, /"icon title title"\s*"icon meta state"/);
   assert.match(narrow, /\.move-words \{ display: contents; \}/);
-  // A window up to 920 tall, the app's default 780 and a 900 tall screen among them, lists three
-  // moves and tightens the coin rows (never the head row), so at 1440 by 900 the statement stands
+  // A window up to 920 tall, the app's default 780 and a 900 tall screen among them, shows three
+  // moves before the list scrolls and tightens the coin rows (never the head row), so at 1440 by 900 the statement stands
   // whole over the notice (the finish review, 2026-09-24).
-  assert.match(CSS, /@media \(max-height: 920px\)\s*\{\s*\.stmt-moves \.move:nth-child\(n\+4\)\s*\{\s*display:\s*none;\s*\}\s*\.l-rows > \.l-row \{ min-height: 52px; \}/);
+  assert.match(CSS, /@media \(max-height: 920px\)\s*\{\s*\.moves,\s*\.moves-empty \{ min-height: calc\(54px \* 3\); \}\s*\.l-rows > \.l-row \{ min-height: 52px; \}/);
+  // The activity list scrolls inside its card and never makes the row taller.
+  assert.match(CSS, /\.moves \{[^}]*flex: 1 1 auto;[^}]*height: 0;/);
+  assert.match(CSS, /\.move \{[^}]*content-visibility: auto;/);
   // The two cards end on one line, a one line caption hangs under its dial, and the day's
   // ceiling sits centred under the dials.
   assert.match(CSS, /\.stmt-duo \{[^}]*align-items: stretch;/);

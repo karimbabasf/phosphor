@@ -40,6 +40,31 @@ export const RECEIPT_KINDS: Record<string, readonly string[]> = {
   bot: ['bot'],
 };
 
+/* The outcome filter's words. `failed` holds the one the app could not confirm too: both are
+   a move a person has to look at, and the list reads them as one. */
+export const RECEIPT_STATUSES: Record<string, readonly string[]> = {
+  done: ['executed'],
+  failed: ['failed', 'needs_reconciliation'],
+};
+
+// A search a person types is a few words. Anything longer is cut, not refused.
+export const RECEIPT_SEARCH_MAX = 100;
+
+/* The words a person uses for a kind, so "send" finds an intents_pay and "trading" finds a
+   move to Hyperliquid. The kind's own name is searched as well. */
+const KIND_WORDS: Record<string, string> = {
+  swap: 'swap swapped',
+  intents_deposit: 'deposit deposited add added arrived',
+  intents_withdraw: 'withdraw withdrew withdrawal',
+  intents_send: 'send sent',
+  intents_pay: 'send sent pay paid',
+  hl_deposit: 'trading hyperliquid moved',
+  hl_withdraw: 'trading hyperliquid moved back',
+  transfer: 'send sent transfer',
+  trade: 'trade',
+  bot: 'bot plan',
+};
+
 export type ReceiptQuery = {
   // Both are ms since the epoch. `since` keeps receipts at or after it; `before` is the paging
   // cursor and keeps receipts strictly older than it, so a page never repeats its last row.
@@ -48,6 +73,11 @@ export type ReceiptQuery = {
   limit: number;
   // null is every kind. Otherwise the draft kinds behind one word of RECEIPT_KINDS.
   kinds: readonly string[] | null;
+  // null is every outcome. Otherwise the statuses behind one word of RECEIPT_STATUSES.
+  statuses: readonly string[] | null;
+  // The words a person typed in a search field, lowercased. Every word has to be found in the
+  // receipt's text (searchText) for it to stay. Empty is no search.
+  terms: readonly string[];
 };
 
 export type ReceiptPage = {
@@ -219,17 +249,44 @@ export function parseReceiptQuery(params: URLSearchParams): ReceiptQuery | { err
   if (before === undefined) return { error: 'before must be a time in ms since the epoch' };
   const kind = params.get('kind');
   let kinds: readonly string[] | null = null;
+  // One word, or several joined by commas: Pro's list is swaps and moves, never trades.
   if (kind !== null && kind !== '' && kind !== 'all') {
-    const known = RECEIPT_KINDS[kind];
-    if (known === undefined) return { error: `kind must be one of ${Object.keys(RECEIPT_KINDS).join(', ')}, or all` };
-    kinds = known;
+    const joined: string[] = [];
+    for (const word of kind.split(',')) {
+      const known = RECEIPT_KINDS[word];
+      if (known === undefined) return { error: `kind must be one of ${Object.keys(RECEIPT_KINDS).join(', ')}, or all` };
+      joined.push(...known);
+    }
+    kinds = joined;
   }
+  const status = params.get('status');
+  let statuses: readonly string[] | null = null;
+  if (status !== null && status !== '' && status !== 'all') {
+    const known = RECEIPT_STATUSES[status];
+    if (known === undefined) return { error: `status must be one of ${Object.keys(RECEIPT_STATUSES).join(', ')}, or all` };
+    statuses = known;
+  }
+  const q = String(params.get('q') ?? '').slice(0, RECEIPT_SEARCH_MAX).toLowerCase();
   return {
     since,
     before,
     limit: intParam(params.get('limit'), RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX),
     kinds,
+    statuses,
+    terms: q.split(/\s+/).filter((t) => t !== ''),
   };
+}
+
+/* Everything a person could type to find a receipt: its headline, its coins, the words for its
+   kind, its chains, the address it touched and its hashes. Not the rail's sentence or the venue:
+   both name intents.near on nearly every row, so a search for NEAR would find everything. */
+function searchText(r: Receipt): string {
+  const parts = [
+    r.headline, r.kind, KIND_WORDS[r.kind] ?? '', r.symbol ?? '', r.received?.symbol ?? '',
+    r.fromChain, r.toChain, r.wallet ?? '', r.id, r.handle ?? '',
+  ];
+  for (const tx of r.txids) parts.push(tx.hash, tx.chain);
+  return parts.join(' ').toLowerCase();
 }
 
 function atMs(receipt: Receipt): number {
@@ -242,7 +299,12 @@ function atMs(receipt: Receipt): number {
 export function pageReceipts(all: Receipt[], query: ReceiptQuery): ReceiptPage {
   const inWindow = all.filter((r) => {
     if (query.kinds !== null && !query.kinds.includes(r.kind)) return false;
+    if (query.statuses !== null && !query.statuses.includes(r.status)) return false;
     if (query.since !== null && atMs(r) < query.since) return false;
+    if (query.terms.length) {
+      const text = searchText(r);
+      for (const term of query.terms) if (!text.includes(term)) return false;
+    }
     return true;
   });
   const older = query.before === null ? inWindow : inWindow.filter((r) => atMs(r) < (query.before as number));

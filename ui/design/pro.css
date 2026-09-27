@@ -695,12 +695,92 @@ body[data-view="pro"] #view-pro[data-active="true"] {
   .dial figcaption { font-size: var(--fs-12); }
 }
 
-/* THE RECENT MOVES: an icon on its own raised square, the move and when, the
-   state at the right; a move still asking wears the app's light. */
+/* THE ACTIVITY: an icon on its own raised square, the move and when, the
+   state at the right; a move still asking wears the app's light. The list
+   fills the card down to the policies' last line and scrolls inside it: its
+   height is 0 and it grows, so a long history never makes the row taller. */
+.stmt-moves {
+  display: flex;
+  flex-direction: column;
+}
+
+.moves-count {
+  font-family: var(--font-num);
+  font-variant-numeric: var(--num-features);
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.moves-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 4px 0 6px;
+}
+
+.moves-find {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.moves-find-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  width: 15px;
+  height: 15px;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.input.moves-search {
+  min-height: 34px;
+  height: 34px;
+  padding-left: calc(11px + 15px + 8px);
+  border-radius: 12px;
+  background: var(--well-bg);
+  box-shadow: var(--well);
+  font-size: var(--fs-13);
+}
+
+.input.moves-search::-webkit-search-cancel-button { display: none; }
+
+/* Doubled up: trade.css loads after this sheet and styles .seg at the same
+   weight. */
+.moves-tools .seg.moves-seg { flex: 0 0 auto; }
+
+.moves-tools .seg.moves-seg .timeframe {
+  font-family: var(--font-ui);
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
 .moves {
-  margin: 0;
-  padding: 0;
+  flex: 1 1 auto;
+  height: 0;
+  min-height: calc(54px * 4);
+  margin: 0 -6px;
+  padding: 0 6px;
   list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* An empty answer holds the list's place, so the card never jumps. */
+.moves-empty {
+  flex: 1 1 auto;
+  min-height: calc(54px * 4);
+  margin: 0;
+  padding-top: 14px;
+}
+
+.moves:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
 }
 
 .move {
@@ -709,6 +789,10 @@ body[data-view="pro"] #view-pro[data-active="true"] {
   align-items: center;
   gap: var(--s-3);
   min-height: 54px;
+  /* Rows scrolled far out of view skip layout and paint: a history of a few
+     hundred moves scrolls like one of four. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 54px;
 }
 
 .move + .move { box-shadow: inset 0 1px 0 var(--line); }
@@ -772,6 +856,16 @@ body[data-view="pro"] #view-pro[data-active="true"] {
   container-name: moves;
 }
 
+/* A narrow card: the search takes the line and the four words go under it,
+   sharing their row. */
+@container moves (max-width: 400px) {
+  .moves-tools { flex-wrap: wrap; }
+  .moves-find { flex-basis: 100%; }
+  .moves-tools .seg.moves-seg { flex: 1 1 100%; }
+  .moves-tools .seg.moves-seg .seg-cells { flex: 1 1 auto; }
+  .moves-tools .seg.moves-seg .timeframe { flex: 1 1 0; padding: 0 4px; }
+}
+
 @container moves (max-width: 360px) {
   .move {
     grid-template-areas:
@@ -831,7 +925,8 @@ body[data-view="pro"] #view-pro[data-active="true"] {
    by 900 the whole statement stands in the slab over the notice, nothing
    under it (the finish review, 2026-09-24: the fourth move ran into it). */
 @media (max-height: 920px) {
-  .stmt-moves .move:nth-child(n+4) { display: none; }
+  .moves,
+  .moves-empty { min-height: calc(54px * 3); }
   .l-rows > .l-row { min-height: 52px; }
   .stmt-hero { padding-bottom: 12px; }
   .dials { margin-top: 12px; }
