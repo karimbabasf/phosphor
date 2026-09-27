@@ -908,3 +908,52 @@ test('a memo network draws no QR of the bare address: the address and the memo e
   await flush();
   assert.equal(find(body, '.deposit-copied')[0].textContent, 'Address copied, ends in ...KZVN');
 });
+
+/* NEAR Intents has paused a network (src/preflight/route-health.ts): the backend takes the address
+   away and writes the sentence, and the window reads it as a warning with the way to the status
+   page. A network it only reports trouble on keeps its address, with the notice above it. */
+const STATUS = 'https://status.near-intents.org/posts/dashboard';
+const PAUSED = 'NEAR Intents has paused TON deposits right now, so no address is shown. Money sent now may not arrive.';
+const SLOW = 'NEAR Intents reports trouble that may slow Base deposits right now, so it may take longer than usual.';
+
+function routeReport(statusLink: string = STATUS): Any {
+  const base = report();
+  const networks = base.networks.map((n: Any) => (n.id === 'base' ? { ...n, route: 'degraded', notice: SLOW, statusLink } : { ...n, route: 'open', notice: null, statusLink: null }));
+  networks.push({ id: 'ton', name: 'TON', address: null, memo: null, unavailable: PAUSED, route: 'closed', notice: null, statusLink, warning: 'w', accepts: [token('GRAM', 9, '1', '0.000000001')] });
+  return { ...base, networks };
+}
+
+test('a network NEAR Intents paused reads as paused, says why in the backend\'s sentence, and links the status page out of the window', async () => {
+  const world = build({ report: routeReport() });
+  world.render({ stage: 'tokens', network: 'ton' });
+  await flush();
+  assert.equal(find(world.host, '.token-row').length, 0);
+  assert.equal(buttonNamed(world.host, 'Show the address'), undefined);
+  const banner = find(world.host, '.netpick-refusal')[0];
+  assert.equal(banner.dataset.tone, 'warn');
+  assert.equal(banner.dataset.route, 'closed');
+  assert.ok(textOf(banner).includes(PAUSED));
+  const link = find(banner, '.netpick-status')[0];
+  assert.equal(link.textContent, 'View status');
+  assert.equal(link.href, STATUS);
+  assert.equal(link.target, '_blank', 'the status page would replace the app instead of opening in the browser');
+
+  // A status url off the window's list draws no link at all.
+  const hostile = build({ report: routeReport('https://status.near-intents.org.evil.com/') });
+  hostile.render({ stage: 'tokens', network: 'ton' });
+  await flush();
+  assert.equal(find(hostile.host, '.netpick-status').length, 0);
+});
+
+test('a network NEAR Intents reports trouble on keeps its address, with the notice above it', async () => {
+  const world = build({ report: routeReport() });
+  world.render({ stage: 'address', network: 'base' });
+  await acknowledge(world);
+  const body = find(world.host, '.deposit-body')[0];
+  assert.equal(body.dataset.state, 'shown');
+  const notice = body.children[0];
+  assert.equal(notice.dataset.route, 'degraded');
+  assert.ok(textOf(notice).includes(SLOW));
+  assert.equal(find(notice, '.netpick-status')[0].href, STATUS);
+  assert.equal(find(body, 'canvas').length, 1, 'the address and its QR code are still drawn');
+});

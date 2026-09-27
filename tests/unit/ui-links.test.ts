@@ -73,8 +73,8 @@ test('ui/ writes an href in one place and the rest of the window asks for it', (
   assert.deepEqual(
     sites.map(shape),
     ALLOWED.map(shape),
-    'a link site in ui/ is not the one links.js owns. Route it through PhosphorLinks.setHref\n' +
-      'or PhosphorLinks.setSiteHref, or, if it is a fragment in this document, add it above.'
+    'a link site in ui/ is not the one links.js owns. Route it through PhosphorLinks.setHref,\n' +
+      'PhosphorLinks.setSiteHref or PhosphorLinks.setStatusHref, or, if it is a fragment in this document, add it above.'
   );
 });
 
@@ -118,6 +118,14 @@ test('the writer refuses anything off the list and leaves no href behind', () =>
   assert.equal(links.setHref(anchor, 'https://phosphor.money/terms/'), false);
   assert.equal(links.setSiteHref(anchor, 'https://sepolia.basescan.org/tx/0xabc'), false);
   assert.equal(links.setSiteHref(anchor, 'https://phosphor.money.evil.com/terms/'), false);
+
+  // The venue's status page is a third list, for a network NEAR Intents has paused.
+  assert.equal(links.setStatusHref(anchor, 'https://status.near-intents.org/posts/dashboard'), true);
+  assert.equal(anchor.href, 'https://status.near-intents.org/posts/dashboard');
+  assert.equal(links.setHref(anchor, 'https://status.near-intents.org/posts/dashboard'), false);
+  assert.equal(links.setStatusHref(anchor, 'https://explorer.near-intents.org/tx/abc'), false);
+  assert.equal(links.setStatusHref(anchor, 'https://status.near-intents.org.evil.com/'), false);
+  assert.equal(links.setStatusHref(anchor, 'http://status.near-intents.org/'), false);
 });
 
 function load(): Record<string, any> {

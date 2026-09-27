@@ -45,6 +45,13 @@
     'phosphor.money'
   ];
 
+  /* The status page of the venue the money moves through, which a network
+     NEAR Intents has paused links to (src/preflight/route-health.ts). A third
+     list: a status page is neither an explorer nor the product's own site. */
+  var STATUS = [
+    'status.near-intents.org'
+  ];
+
   function onList(url, hosts) {
     if (typeof url !== 'string' || url.slice(0, 8).toLowerCase() !== 'https://') return null;
     var host = '';
@@ -73,6 +80,10 @@
     return onList(url, SITES);
   }
 
+  function statusUrl(url) {
+    return onList(url, STATUS);
+  }
+
   /* Refusing has to clear the attribute rather than skip it: an anchor being
      repainted (the deposit watcher reuses one node for every phase) would
      otherwise keep pointing at the url it was last given. */
@@ -94,12 +105,19 @@
     return write(anchor, siteUrl(url));
   }
 
+  function setStatusHref(anchor, url) {
+    return write(anchor, statusUrl(url));
+  }
+
   window.PhosphorLinks = {
     explorerUrl: explorerUrl,
     siteUrl: siteUrl,
+    statusUrl: statusUrl,
     setHref: setHref,
     setSiteHref: setSiteHref,
+    setStatusHref: setStatusHref,
     hosts: HOSTS,
-    sites: SITES
+    sites: SITES,
+    status: STATUS
   };
 })();

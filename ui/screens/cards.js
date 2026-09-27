@@ -1864,6 +1864,19 @@
     return !!links && typeof links.setHref === 'function' && links.setHref(anchor, url);
   }
 
+  /* The venue's status page, for a deposit network NEAR Intents has paused or
+     reports trouble on, or null when the url is not the one the window opens. */
+  function statusAnchor(url) {
+    var links = window.PhosphorLinks;
+    var link = dom.el('a', 'tcard-link tcard-status');
+    if (!links || typeof links.setStatusHref !== 'function' || !links.setStatusHref(link, url)) return null;
+    link.target = '_blank';
+    link.rel = 'noreferrer noopener';
+    link.appendChild(dom.el('span', '', 'View status'));
+    link.appendChild(icon('external', 'tcard-link-glyph'));
+    return link;
+  }
+
   function linkRow(body, label, text, url) {
     var row = dom.el('div', 'tcard-line');
     row.setAttribute('data-wrap', 'true');
@@ -2107,6 +2120,10 @@
         if (isObject(networks[i]) && networks[i].id === chain) network = networks[i];
       }
       if (network && typeof network.changed === 'string' && network.changed) return { refused: network.changed };
+      // A network NEAR Intents has paused carries the backend's own sentence and where to read more.
+      if (network && network.route === 'closed' && typeof network.unavailable === 'string' && network.unavailable) {
+        return { refused: network.unavailable, status: network.statusLink };
+      }
       if (!network || network.unavailable || typeof network.address !== 'string' || !network.address) {
         return { refused: 'No deposit address on this network right now.' };
       }
@@ -2116,7 +2133,12 @@
       if (printOf(network.address) !== print || held !== network.address) {
         return { refused: 'This address is not the one your agent was given, so nothing is shown.' };
       }
-      return { address: network.address, memo: typeof network.memo === 'string' && network.memo ? network.memo : null };
+      return {
+        address: network.address,
+        memo: typeof network.memo === 'string' && network.memo ? network.memo : null,
+        notice: network.route === 'degraded' && typeof network.notice === 'string' && network.notice ? network.notice : null,
+        status: network.statusLink
+      };
     }, function () { return unread; });
   }
 
@@ -2130,6 +2152,18 @@
     function say(text) {
       dom.setText(said, text || '');
       dom.setHidden(said, !text);
+    }
+
+    /* NEAR Intents reports trouble on this network: the address still works,
+       and the notice sits above it. */
+    if (found.notice) {
+      var slow = dom.el('p', 'tcard-note tcard-deposit-route', found.notice);
+      var more = statusAnchor(found.status);
+      if (more) {
+        slow.appendChild(dom.el('span', '', ' '));
+        slow.appendChild(more);
+      }
+      slot.appendChild(slow);
     }
 
     var row = dom.el('div', 'mcard-address-row');
@@ -2211,7 +2245,13 @@
   /* Where the card cannot draw the address, the sentence takes its place; where Add money can
      still get there (the wallet to open, a read to try again), the way there is one press. */
   function refuseDeposit(slot, found, chain, symbol) {
-    slot.appendChild(dom.el('p', 'tcard-note', found.refused));
+    var note = dom.el('p', 'tcard-note', found.refused);
+    var status = found.status ? statusAnchor(found.status) : null;
+    if (status) {
+      note.appendChild(dom.el('span', '', ' '));
+      note.appendChild(status);
+    }
+    slot.appendChild(note);
     var deposit = window.PhosphorDeposit;
     if (!found.open || !deposit || typeof deposit.open !== 'function') return;
     var actions = dom.el('div', 'tcard-actions tcard-deposit-actions');
