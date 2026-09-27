@@ -1170,6 +1170,15 @@ test('a payout to a 103-character Cardano address shows every character, in grou
   assert.deepEqual(all(address, 'addr-end').map((g: Any) => g.textContent), ['9a85', '7n60', 'fa85', '7n60', 's7qz', '6qg6', 'x']);
 });
 
+/* The address line breaks anywhere so a long run cannot push past its tile, which cut a group of
+   four across two lines ("fa85 7 / n60", seen in a headless render on 2026-09-27). A group is the
+   unit a person checks, so it is drawn as one box whenever there is more than one. */
+test('a group of four is never cut across two lines of the address', () => {
+  const css = read('../../ui/design/chatcard.css');
+  assert.match(css, /\.mcard-address-line \{[^}]*word-break: break-all;/);
+  assert.match(css, /\.mcard-address-line > \.tcard-leg-group:not\(:only-child\) \{\s*display: inline-block;/);
+});
+
 /* A payout card for one receiver, with the Touch ID sentence the same draft would put up. */
 function payCard(network: string, symbol: string, to: string): { card: Any; reason: string } {
   const world = build();

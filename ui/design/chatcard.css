@@ -339,6 +339,12 @@
   margin-left: 0.35em;
 }
 
+/* A group is the unit a person checks, so a line breaks between groups and never inside one; an
+   address drawn whole as one run keeps breaking anywhere, so it cannot push past the tile. */
+.mcard-address-line > .tcard-leg-group:not(:only-child) {
+  display: inline-block;
+}
+
 .tcard-leg-actions {
   display: flex;
   flex-wrap: wrap;
