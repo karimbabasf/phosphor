@@ -12,7 +12,9 @@
 //
 // Rows: every token 1Click lists on each of the fourteen chains, paid to the account's own bridge
 // deposit address there (a personal account on Stellar, where the bridge's address is shared and
-// refused), then one case per chain rule, each expected to refuse. A token whose flat bridge fee
+// refused; on the XRP Ledger, where ours does not exist on the ledger yet; and on TON, whose
+// deposit route may be paused, which a payout to our own address there now obeys), then one case
+// per chain rule, each expected to refuse. A token whose flat bridge fee
 // breaches the 3% floor at the default size is run again at the size that clears it, and both
 // rows are printed: the refusal is the rule working, the second row is the smallest payout that
 // goes through.
@@ -59,9 +61,17 @@ const XLM_MUXED = 'MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAA
 const XRP_TAGGED = 'rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh'; // Binance, RequireDestTag
 const XRP_ABSENT = 'rrrrrrrrrrrrrrrrrrrrrhoLvTp'; // actNotFound
 const XRP_X = 'X7AcgcsBL6XDcUb289X4mJ8djcdyKaB5hJDWMArnXr61cqZ';
+// Read on 2026-09-27: a plain XRP account (exists, no flags), the XRP/USD (Bitstamp) AMM account
+// (DepositAuth, DefaultRipple and DisableMaster set), and a TON v5 wallet that is active.
+const XRP_PLAIN = 'r3ASEe1LLnhfCwrHKr4Cg6YS15t52S1MK5';
+const XRP_AMM = 'rHUpaqUPbwzKZdzQ8ZQCme18FrgW9pB4am';
+const TON_PERSONAL = 'UQBFsZgysKtEdfVAccRkcARCaBPPaAURMcz171nLZlnyNtR_';
+// A CashAddr of type 0 (key hash) carrying a 32-byte hash, checksum valid: money sent to it could
+// never be spent. Built for this row; no wallet writes one.
 const TRON_CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'; // Tether's USDT contract
 const DOGE_P2SH_9 = '9tqKQiiGuXEe6bVDPsdtwMhZgW9JMxw8ni';
 const BCH_LEGACY = '1LS5MKKH37KBpJRCMQQuuGM7DEDA22qpXZ';
+const BCH_P2PKH_32 = 'bitcoincash:qvrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswmdqrg3rk';
 
 const tokens = JSON.parse(readFileSync(path.join(ROOT, 'data', 'tokens.json'), 'utf8')) as TokensFile;
 const client = oneClickClient();
@@ -198,7 +208,7 @@ const amountOf = (t: OneClickToken, usd = USD): number => sig(usd / (t.price ?? 
 for (const network of NETWORKS) {
   const venue = spendNetworkOf(network)?.venue ?? network;
   for (const t of list.filter((o) => o.blockchain === venue)) {
-    const to = network === 'stellar' ? (t.symbol === 'XLM' ? XLM_PERSONAL : XLM_PERSONAL_USDC) : own[network];
+    const to = network === 'stellar' ? (t.symbol === 'XLM' ? XLM_PERSONAL : XLM_PERSONAL_USDC) : network === 'xrp' ? XRP_PLAIN : network === 'ton' ? TON_PERSONAL : own[network];
     const held = heldFor(t, list);
     const sim = await run(network, t, held, to, amountOf(t), 'ok');
     // The flat bridge fee breached the floor: the size where it is 2% of the payout goes through.
@@ -221,17 +231,19 @@ const rule = async (network: string, symbol: string, to: string, amount?: number
 await rule('xrp', 'XRP', XRP_X);
 await rule('xrp', 'XRP', XRP_TAGGED);
 await rule('xrp', 'XRP', XRP_ABSENT, 0.5);
-await rule('xrp', 'XRP', own.xrp ?? XRP_ABSENT, 0.5);
+// Our own XRP deposit address does not exist on the ledger: refused whatever the size.
+await rule('xrp', 'XRP', own.xrp ?? XRP_ABSENT, 5);
+await rule('xrp', 'XRP', XRP_AMM);
 await rule('stellar', 'XLM', XLM_MUXED);
 await rule('stellar', 'XLM', XLM_MEMO_REQUIRED);
 await rule('stellar', 'USDC', XLM_ABSENT);
-await rule('stellar', 'XLM', XLM_ABSENT, 0.5);
+await rule('stellar', 'XLM', XLM_ABSENT, 20);
 await rule('stellar', 'USDC', XLM_NO_TRUSTLINE);
 await rule('stellar', 'XLM', own.stellar ?? XLM_PERSONAL);
 await rule('stellar', 'XLM', XLM_EXCHANGE);
 if (NETWORKS.includes('ton')) {
-  // The account's own UQ address respelt bounceable: goes ahead, sent as the same account non-bounceable.
-  const uq = Buffer.from(own.ton.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  // A wallet's UQ address respelt bounceable: goes ahead, sent as the same account non-bounceable.
+  const uq = Buffer.from(TON_PERSONAL.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
   const eq = Buffer.from(uq);
   eq[0] = 0x11;
   const { crc16 } = await import('../src/chainscan/codec.ts');
@@ -246,10 +258,14 @@ if (NETWORKS.includes('ton')) {
   testnet[34] = d >> 8;
   testnet[35] = d & 0xff;
   await run('ton', t, heldFor(t, list), testnet.toString('base64url'), amountOf(t), 'refused');
+  // Our own TON deposit address is a deposit into TON: refused while NEAR Intents has paused TON
+  // deposits, which it had on 2026-09-27.
+  await run('ton', t, heldFor(t, list), own.ton, amountOf(t), 'refused', ' (own deposit address)');
 }
 await rule('tron', 'TRX', TRON_CONTRACT);
 await rule('doge', 'DOGE', DOGE_P2SH_9);
 await rule('bch', 'BCH', BCH_LEGACY);
+await rule('bch', 'BCH', BCH_P2PKH_32);
 await rule('btc', 'BTC', own.btc ? own.btc.slice(0, -1) + (own.btc.endsWith('q') ? 'p' : 'q') : 'bc1q');
 await rule('btc', 'BTC', own.btc ?? '', 0.000005);
 await rule('starknet', 'STRK', own.starknet ? `0x${own.starknet.slice(2).replace(/^0+/, '')}` : '0x1');
