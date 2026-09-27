@@ -13,7 +13,8 @@
 //      be 40 hex and, when it carries capitals, pass its own EIP-55 checksum; a Solana address
 //      has to decode to exactly 32 bytes; a NEAR id has to be one; a Bitcoin, XRP, Stellar, TON,
 //      Tron or Cardano address has to pass its own checksum. A dropped digit is a total loss on
-//      a chain, so a dropped digit is a refusal before any quote.
+//      a chain, so a dropped digit is a refusal before any quote. The one form with no checksum,
+//      a raw TON address (0:<hex>), is said on the card as carrying none.
 //
 //   2. IT ALWAYS WAITS FOR A CLICK AND A TOUCH ID THAT NAMES THE RECEIVER, whatever the size
 //      (src/proposals/execute.ts land(), src/vault/reason.ts). There is no allowlist for a

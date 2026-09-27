@@ -417,7 +417,7 @@ test('a bounceable or raw TON address is sent as the same account non-bounceable
     const sim = await r.rail.simulate(draftOf(COINS.GRAM, given, 5));
     assert.equal(sim.ok, true, sim.summary);
     assert.equal(r.quotes[0]?.recipient, OWN.ton, 'the quote was not asked for the non-bounceable form');
-    assert.match(sim.summary, /same account, sent as non-bounceable/);
+    assert.match(sim.summary, given === TON_RAW ? /carries no checksum/ : /same account, sent as non-bounceable/);
   }
   // An echo that comes back as the bounceable spelling is not the address that was sent.
   const bounced = railOf(COINS.GRAM, 5, { own: NOT_OWN, echoRecipient: TON_EQ });
@@ -449,6 +449,26 @@ test('a payout to our own TON deposit address is refused while NEAR Intents has 
   const other = railOf(COINS.GRAM, 5, { own: NOT_OWN, closedIn: ['ton'] });
   assert.equal((await other.rail.simulate(draftOf(COINS.GRAM, TON_EQ, 5))).ok, true);
   assert.ok(!other.routeAsks.includes('ton:in'), other.routeAsks.join(' '));
+});
+
+/* Review L1 (2026-09-27): a raw TON address (0:<hex>) carries no checksum, so a changed digit
+   still decodes, and the UQ... form made from it carries a fresh checksum that proves nothing. The
+   card says so in the warning tone and names the UQ... form as derived, never as checked. */
+test('a raw TON address is said to carry no checksum, and the UQ form is named as derived from it', async () => {
+  const r = railOf(COINS.GRAM, 5, { own: NOT_OWN });
+  const sim = await r.rail.simulate(draftOf(COINS.GRAM, TON_RAW, 5));
+  assert.equal(sim.ok, true, sim.summary);
+  const note = sim.send?.notes?.find((n) => n.text.includes(TON_RAW));
+  assert.ok(note, JSON.stringify(sim.send?.notes));
+  assert.equal(note.tone, 'warn');
+  assert.match(note.text, /raw form .* carries no checksum/);
+  assert.match(note.text, new RegExp(`${OWN.ton} was derived from it`));
+  assert.doesNotMatch(sim.summary, /same account, sent as non-bounceable/);
+  // A bounceable address carries its own checksum, and keeps the plain sentence.
+  const eq = railOf(COINS.GRAM, 5, { own: NOT_OWN });
+  const eqSim = await eq.rail.simulate(draftOf(COINS.GRAM, TON_EQ, 5));
+  assert.match(eqSim.summary, /same account, sent as non-bounceable/);
+  assert.doesNotMatch(eqSim.summary, /no checksum/);
 });
 
 test('a testnet TON address is refused', async () => {

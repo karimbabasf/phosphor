@@ -346,7 +346,14 @@ export function payChecks(f: PayFacts): { problems: string[]; notes: PayNote[] }
   if (f.network === 'tron') tronRules(f, problems);
   ownDepositRules(f, problems, notes);
   if (f.given !== null && f.network === 'ton') {
-    notes.push({ tone: 'info', text: `This is the same account, sent as non-bounceable (${f.to} rather than ${f.given}), so a wallet that is new cannot bounce the money back.` });
+    /* A raw address is the account's bytes in hex with no checksum, so a changed digit is still an
+       account, and the UQ... form made from it carries a checksum this app computed, which proves
+       nothing about what was typed (review L1, 2026-09-27). */
+    notes.push(
+      TON_RAW.test(f.given.toLowerCase())
+        ? { tone: 'warn', text: `You gave the raw form ${f.given}, which carries no checksum, so a changed character in it would not be caught. ${f.to} was derived from it here, not checked: compare it with the receiver's own wallet before you approve.` }
+        : { tone: 'info', text: `This is the same account, sent as non-bounceable (${f.to} rather than ${f.given}), so a wallet that is new cannot bounce the money back.` },
+    );
   }
   const caution = memoCaution(f.network);
   if (caution !== null) notes.push(caution);
