@@ -45,7 +45,7 @@ import { formatUnits } from 'viem';
 
 import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft, SwapQuoteFacts, SwapSimulation, SwapSpend } from '../types.ts';
 import type { OneClickClient, OneClickToken, TokensFile } from '../intents.ts';
-import { baseUnitsToDecimal, decimalToBaseUnits, oneClickClient, oneLine, resolveAsset, truncateToBaseUnits } from '../intents.ts';
+import { baseUnitsToDecimal, decimalToBaseUnits, oneClickClient, oneLine, resolveAsset, truncateToBaseUnits, venueReason } from '../intents.ts';
 import { INTENTS_VERIFIER } from '../ledger/intents.ts';
 import { INTENTS_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
 import type { RiseSchedule } from '../ledger/settle.ts';
@@ -724,7 +724,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
       return {
         ok: false,
         detail:
-          `the relay reports the intent as not found or not valid (${oneLine(watch.last.statusDetails ?? 'no detail', 120)}) after ` +
+          `the relay reports the intent as not found or not valid (${watch.last.statusDetails === null ? 'no detail' : venueReason('The solver relay', watch.last.statusDetails)}) after ` +
           `${Math.round(watch.waitedMs / 1000)}s; ${evidence}. Nothing more will be signed: the verifier is asked by the nonce once the deadline has passed.`,
         txids,
         evidence: railEvidence,

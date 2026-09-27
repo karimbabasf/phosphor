@@ -14,7 +14,7 @@
 // answers and a deadline that fires while it does leaves an intent that may be live.
 
 import { readTimeout, venueWriteTimeout, withTimeout } from '../net.ts';
-import { oneLine } from '../intents.ts';
+import { oneLine, venueSaid } from '../intents.ts';
 
 export const RELAY_URL = 'https://solver-relay-v2.chaindefuser.com/rpc';
 
@@ -138,14 +138,14 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
     });
     const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     if (!res.ok) {
-      const said = body?.['error'] !== undefined ? oneLine(body['error'], 160) : String(res.status);
+      const said = body?.['error'] !== undefined ? venueSaid('The solver relay', body['error'], 160) : String(res.status);
       throw new Error(`relay ${method} failed: ${said}`);
     }
     if (body === null || typeof body !== 'object') throw new Error(`relay ${method} returned no JSON body`);
     const error = body['error'];
     if (error !== undefined && error !== null) {
       const message = (error as Record<string, unknown>)['message'];
-      throw new Error(`relay ${method} failed: ${oneLine(message ?? error, 160)}`);
+      throw new Error(`relay ${method} failed: ${venueSaid('The solver relay', message ?? error, 160)}`);
     }
     return body['result'];
   }

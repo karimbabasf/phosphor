@@ -57,6 +57,7 @@ import { evmPrivateKey } from '../keystore/index.ts';
 import type { Address, Hex } from 'viem';
 import { evmAddress } from '../keystore/index.ts';
 import { readTimeout, venueWriteTimeout } from '../net.ts';
+import { venueSaid } from '../intents.ts';
 
 // ---------- the venue table ----------
 
@@ -507,12 +508,13 @@ async function postAction(
   try {
     body = JSON.parse(text) as ExchangeResponse;
   } catch {
-    return { ok: false, detail: `${action.type} got a non-JSON reply: ${res.status} ${text.slice(0, 200)}`, body: text };
+    return { ok: false, detail: `${action.type} got a non-JSON reply: ${res.status} ${venueSaid('Hyperliquid', text, 200)}`, body: text };
   }
-  if (!res.ok) return { ok: false, detail: `${action.type} failed: HTTP ${res.status} ${text.slice(0, 200)}`, body };
+  // The venue's words go to the agent inside the rails' sentences, so they are quoted and labeled.
+  if (!res.ok) return { ok: false, detail: `${action.type} failed: HTTP ${res.status} ${venueSaid('Hyperliquid', text, 200)}`, body };
   const status = (body as ExchangeResponse).status;
   if (status !== 'ok') {
-    return { ok: false, detail: `${action.type} refused by Hyperliquid: ${JSON.stringify((body as ExchangeResponse).response ?? body)}`, body };
+    return { ok: false, detail: `${action.type} refused by Hyperliquid: ${venueSaid('Hyperliquid', (body as ExchangeResponse).response ?? body)}`, body };
   }
   return { ok: true, detail: '', body };
 }

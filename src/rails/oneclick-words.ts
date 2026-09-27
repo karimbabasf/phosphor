@@ -8,7 +8,7 @@
 // only with the amount the API reported.
 
 import type { Preflight, RailEvidence, RailHooks, RailResult } from '../types.ts';
-import { oneLine } from '../intents.ts';
+import { oneLine, venueReason } from '../intents.ts';
 import type { OneClickStatus } from '../intents.ts';
 import type { QuoteRecord } from '../quote-signature.ts';
 
@@ -153,7 +153,7 @@ export function describeRefund(status: OneClickStatus, handle: string, words: Re
     };
   }
 
-  const why = status.refundReason ?? 'not given';
+  const why = status.refundReason === undefined ? 'not given' : venueReason('1Click', status.refundReason);
   /* Not run is not over: the transfer can still run until its deadline, so the row stays open and
      counted, and reconcile closes it once the deadline has passed with the nonce still unspent. */
   if (moved === 'no') {

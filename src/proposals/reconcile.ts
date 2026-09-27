@@ -17,7 +17,7 @@
 
 import type { Proposal, RailEvidence } from '../types.ts';
 import type { OneClickStatus } from '../intents.ts';
-import { oneLine } from '../intents.ts';
+import { oneLine, venueReason } from '../intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { depositHandleOf } from '../transactions.ts';
 import { INTENTS_RELAY_VENUE, RELAY_TERMINAL } from '../rails/intents-relay.ts';
@@ -493,7 +493,7 @@ async function reconcileByHandle(ctx: PCtx, p: Proposal, handle: string): Promis
   }
   if (status.status === 'FAILED') {
     const amount = status.refundedAmount ?? '0';
-    const why = status.refundReason ?? 'not given';
+    const why = status.refundReason === undefined ? 'not given' : venueReason('1Click', status.refundReason);
     // A row closed on a transfer that can no longer run stays closed: FAILED is the word it was closed on.
     if (p.status === 'failed' && (!canStillRun || closedOnProof(p)) && (p.result?.reason === 'venue_failed_nothing_moved' || p.result?.reason === 'refunded')) return p;
     /* THE TRANSFER ITSELF, BEFORE ANY WORDS. A transfer hash the venue reports, then the verifier's
