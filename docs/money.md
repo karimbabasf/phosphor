@@ -144,7 +144,8 @@ proposal's own fields, for example "Approve: Pay 0.01 ETH to 0xb583f419...84BB5D
 ($24.40)". The receiver is shortened to eight characters at each end, counted after the prefix
 every address of its kind shares (`0x`, `bc1q`, `bitcoincash:q`, `addr1q`, `UQ`, `r`, `G`, `T`),
 on every chain a payout lands on. A Cardano address shows sixteen characters at the front, from
-the part of the address that says whose money it is. The card puts the same characters in the
+the part of the address that says whose money it is. A NEAR name such as alice.near is shown
+whole, however long, because anyone can register a name that starts and ends the same way. The card puts the same characters in the
 text colour. Check them against the address you gave, then confirm. While the dialog is up the card says Confirm on your Mac. The
 agent's words never reach this dialog.
 

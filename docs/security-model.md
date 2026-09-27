@@ -129,7 +129,9 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    puts up a Touch ID dialog whose sentence (`src/vault/reason.ts`) names the amount, the receiver
    shortened to its two ends (eight characters each, counted after the prefix every address of its
    kind shares, beyond what a vanity generator matches; sixteen at the front on Cardano, whose end
-   can be ground to order) and the chain: "Pay 0.01 ETH to 0xb583f419...84BB5DB0 on Ethereum ($24.40)".
+   can be ground to order; a NEAR name whole, since anyone can register one with both ends they
+   want, and the 120-character cap never cuts inside the receiver) and the chain:
+   "Pay 0.01 ETH to 0xb583f419...84BB5DB0 on Ethereum ($24.40)".
    The sentence is composed from the draft's fields; an address field that is not shaped like an
    address (for a payout, one that does not decode on the chain it lands on) is said as "an
    address", never echoed.

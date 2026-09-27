@@ -62,7 +62,7 @@ On a Mac with a Secure Enclave, the wallet file is sealed with a data key, and t
 wrapped to a key the enclave made and cannot export. The wallet opens with Touch ID or your Mac
 login password, and each click on a proposal ends in a Touch ID dialog whose sentence the app
 composes from the proposal's numbers: the amount, the receiver shortened to eight characters at
-each end, the chain. No agent-written text reaches that dialog. Read it before you confirm.
+each end (a NEAR name whole), the chain. No agent-written text reaches that dialog. Read it before you confirm.
 
 Two limits belong here. While the vault is open, the unwrapped wallet key sits in the backend's
 memory as bytes, so the app can sign the moves you approved and the small ones the policy allows;

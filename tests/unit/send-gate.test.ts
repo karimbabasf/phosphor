@@ -247,6 +247,49 @@ test('the dialog names the amount, the receiver and where it lands, and stays un
   assert.equal(hostile, 'Approve: Pay 1 ETH to an address on a chain ($2,400)');
 });
 
+/* Review V1 (2026-09-27): anyone can register a .near name for a fraction of a NEAR and choose
+   both of its ends, so alice-bu...unt.near read the same for alice-business-payroll-account.near
+   and a name registered to imitate it. A NEAR name is said whole, however long; only an id that
+   is a hash (implicit, eth-implicit) is shortened. */
+test('the dialog names a NEAR account whole, however long, since its owner chose both ends', () => {
+  const pay = (to: string, amount = 40): string =>
+    reasonFor({
+      draft: {
+        kind: 'intents_pay', symbol: 'NEAR', originAsset: 'nep141:wrap.near', network: 'near', amount, amountUsd: amount,
+        minReceived: amount * 0.97, from: SELF_EVM.toLowerCase(), to, toChecksum: null, counterparty: 'intents.near',
+        recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false },
+      } as IntentsPayDraft,
+    });
+  const real = 'alice-business-payroll-account.near';
+  const twin = 'alice-bu' + 'x'.repeat(10) + 'unt.near';
+  assert.equal(pay(real), `Approve: Pay 40 NEAR to ${real} on NEAR ($40.00)`);
+  assert.notEqual(pay(twin), pay(real), 'a name sharing the first and last eight reads the same as the real one');
+  // The longest id NEAR allows is 64 characters; with an amount in the millions it is still whole.
+  const longest = 'a'.repeat(59) + '.near';
+  const big = pay(longest, 1234567);
+  assert.ok(big.includes(` to ${longest} on NEAR`), big);
+  assert.ok(big.length <= 120, big);
+  // A dotless name is a name too; a 64-hex implicit account is a key's hash and is shortened.
+  assert.ok(pay('alicebusinesspayrollaccountfortheco').includes(' to alicebusinesspayrollaccountfortheco on NEAR'));
+  assert.match(pay('917148ec47923f2e0e3d73142ac4f94ec4c73078865ba6d29f0ea172cd6f4bf3'), / to 917148ec\.\.\.cd6f4bf3 on NEAR/);
+  const send = reasonFor({
+    draft: {
+      kind: 'intents_send', symbol: 'USDC', originAsset: 'nep141:usdc.near', amount: 3.7, amountUsd: 3.7, minReceived: 3.66,
+      from: SELF_EVM.toLowerCase(), to: real, counterparty: 'intents.near',
+    } as IntentsSendDraft,
+  });
+  assert.equal(send, `Approve: Send 3.7 USDC inside NEAR Intents to ${real} ($3.70)`);
+  // The cap never cuts inside the receiver: millions of a cheap token with a long symbol would
+  // push the last characters of a 64-character name past 120.
+  const huge = reasonFor({
+    draft: {
+      kind: 'intents_send', symbol: 'ABCDEFGH', originAsset: 'nep141:abcdefgh.near', amount: 12345678, amountUsd: 12,
+      minReceived: 12000000, from: SELF_EVM.toLowerCase(), to: longest, counterparty: 'intents.near',
+    } as IntentsSendDraft,
+  });
+  assert.ok(huge.includes(` to ${longest}`), huge);
+});
+
 // ---------- the same send twice ----------
 
 test('two identical sends five seconds apart from one session, the first still pending, are one row', async () => {

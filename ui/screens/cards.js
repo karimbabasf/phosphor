@@ -935,10 +935,22 @@
   }
   var TAIL_CHARS = 8;
 
+  /* A NEAR name, said whole everywhere the receiver is named: its owner chose both of its ends
+     (src/vault/reason.ts nearName, review V1). An implicit or eth-implicit id is a key's hash
+     and is grouped like any other. With no network (a send inside NEAR Intents) the receiver is
+     an intents account, an EVM address or a NEAR id. */
+  function nearName(address, network) {
+    var s = String(address || '');
+    if (network !== 'near' && network !== '') return false;
+    return /^(?=.{2,64}$)[a-z0-9]+(?:[-_][a-z0-9]+)*(?:\.[a-z0-9]+(?:[-_][a-z0-9]+)*)*$/.test(s)
+      && !/^[0-9a-f]{64}$/.test(s) && !/^0x[0-9a-f]{40}$/.test(s);
+  }
+
   /* The receiver as the Touch ID dialog names it, the same function as src/vault/reason.ts
      ends(), so the card's head and the dialog read the same characters. */
   function shownEnds(address, network) {
     var s = String(address || '');
+    if (nearName(s, network)) return s;
     var prefix = prefixOf(s, network);
     var head = headChars(network);
     var body = s.slice(prefix.length);
@@ -956,16 +968,11 @@
     return out;
   }
 
-  /* A NEAR account or a similar name reads as itself: alice.near is its own check. */
-  function isNamedAccount(address) {
-    return /^(?!0x)[a-z0-9_-]+(\.[a-z0-9_-]+)+$/i.test(String(address || ''));
-  }
-
   /* A receiver on the face of a send: every character in groups with the first and the last
      group, the ones a person checks, a step heavier, and its Copy at the line's end; the explorer
      link when the server built one; the network it lands on; and whether this is the first send
-     to it: a first send to an address is the one a person should look at twice. A named account
-     is already whole in the card's head, so it is not printed a second time. */
+     to it: a first send to an address is the one a person should look at twice. A NEAR name is
+     printed whole, one piece in the text colour, with its Copy. */
   /* An address's groups in the tones Add money prints them in (ui/design/deposit.css): the
      prefix quiet, the groups that hold the characters the Touch ID dialog names (the head and the
      last eight after the prefix, shownEnds) in the text colour, and the rest a step quieter. On
@@ -978,23 +985,22 @@
 
   function addressBlock(address, explorer, recipient, place, notes, network) {
     var wrap = dom.el('div', 'mcard-address');
-    if (!isNamedAccount(address)) {
-      var row = dom.el('div', 'mcard-address-row');
-      var line = dom.el('p', 'mcard-address-line id');
-      var prefix = prefixOf(address, network);
-      var groups = groupsOf(address, prefix);
-      var first = groups.length > 1 && prefix ? 1 : 0;
-      var bodyLength = String(address).length - (first ? prefix.length : 0);
-      var headGroups = Math.ceil(headChars(network) / 4);
-      var tailFrom = first + Math.floor(Math.max(0, bodyLength - TAIL_CHARS) / 4);
-      for (var i = 0; i < groups.length; i += 1) {
-        line.appendChild(dom.el('span', 'tcard-leg-group ' + groupTone(i, first, groups.length, headGroups, tailFrom), groups[i]));
-      }
-      dom.setAttr(line, 'data-address', address);
-      row.appendChild(line);
-      row.appendChild(copyButton(address));
-      wrap.appendChild(row);
+    var row = dom.el('div', 'mcard-address-row');
+    var line = dom.el('p', 'mcard-address-line id');
+    var named = nearName(address, network);
+    var prefix = named ? '' : prefixOf(address, network);
+    var groups = named ? [String(address)] : groupsOf(address, prefix);
+    var first = groups.length > 1 && prefix ? 1 : 0;
+    var bodyLength = String(address).length - (first ? prefix.length : 0);
+    var headGroups = Math.ceil(headChars(network) / 4);
+    var tailFrom = first + Math.floor(Math.max(0, bodyLength - TAIL_CHARS) / 4);
+    for (var i = 0; i < groups.length; i += 1) {
+      line.appendChild(dom.el('span', 'tcard-leg-group ' + groupTone(i, first, groups.length, headGroups, tailFrom), groups[i]));
     }
+    dom.setAttr(line, 'data-address', address);
+    row.appendChild(line);
+    row.appendChild(copyButton(address));
+    wrap.appendChild(row);
     var actions = dom.el('div', 'tcard-leg-actions');
     if (explorerUrl(explorer)) {
       var link = dom.el('a', 'btn btn-quiet btn-sm tcard-leg-explorer');

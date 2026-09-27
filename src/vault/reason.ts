@@ -9,8 +9,9 @@
 // app priced; chains are enum values; a symbol is one of two agent-chosen strings that survive,
 // and it survives only when it is shaped like a ticker (see clean). The other is the receiver
 // of a send (see shortAddress), because a dialog that approves a payment and hides who is paid
-// is the dialog Karim asked never to see: it is shown shortened, and only when it is shaped
-// like an address (a payout's, when it decodes as an address on the chain it lands on).
+// is the dialog Karim asked never to see: it is shown shortened (a NEAR name whole), and only
+// when it is shaped like an address (a payout's, when it decodes as an address on the chain it
+// lands on).
 
 import type { Proposal, WriteDraft } from '../types.ts';
 import { spendNetworkOf } from '../rails/intents-address.ts';
@@ -82,7 +83,20 @@ const ANY_PREFIX = /^0x(?=[0-9a-fA-F]{40,}$)|^[a-z]+:(?=[a-z0-9]{20,}$)/;
    (review H1, 2026-09-27). Sixteen characters from the payment half are 77 bits that are not. */
 const CARDANO_HEAD = 16;
 
+/* A NEAR name is said whole, however long: anyone can register one for a fraction of a NEAR and
+   choose both of its ends, so alice-bu...unt.near named a registered imitation as well as the real
+   account (review V1, 2026-09-27). Only an id that is a key's hash, implicit (64 hex) or
+   eth-implicit (0x and 40 hex), is shortened like every other hash. NEAR caps an id at 64
+   characters, and reasonFor never cuts inside the receiver. */
+const NEAR_NAME = /^(?=.{2,64}$)[a-z0-9]+(?:[-_][a-z0-9]+)*(?:\.[a-z0-9]+(?:[-_][a-z0-9]+)*)*$/;
+
+function nearName(s: string): boolean {
+  return NEAR_NAME.test(s) && !/^[0-9a-f]{64}$/.test(s) && !/^0x[0-9a-f]{40}$/.test(s);
+}
+
 function ends(s: string, family?: string): string {
+  // With no chain to go by, the receiver is an intents account: an EVM address or a NEAR id.
+  if ((family === undefined || family === 'near') && nearName(s)) return s;
   const rule = family === undefined ? ANY_PREFIX : FIXED_PREFIX[family];
   const prefix = rule?.exec(s)?.[0] ?? '';
   const head = family === 'cardano' ? CARDANO_HEAD : END_CHARS;
@@ -140,8 +154,22 @@ function describe(draft: WriteDraft): string {
   }
 }
 
+// The receiver as describe names it, on the two drafts that name one.
+function receiver(draft: WriteDraft): string | null {
+  if (draft.kind === 'intents_pay') return payee(draft.network, draft.to);
+  if (draft.kind === 'intents_send') return shortAddress(draft.to);
+  return null;
+}
+
+/* The cap is this app's own: the enclave helper hands the sentence to LocalAuthentication as it
+   is (src-tauri/se-helper/main.swift), which sets no length. It never cuts inside the receiver:
+   a name cut short is a name an attacker can finish, and a large amount of a cheap token with a
+   long symbol would push a 64-character name past it. Nothing before the receiver holds " to ". */
 export function reasonFor(proposal: Pick<Proposal, 'draft'>): string {
-  return `Approve: ${describe(proposal.draft)}`.slice(0, MAX_REASON);
+  const said = `Approve: ${describe(proposal.draft)}`;
+  const to = receiver(proposal.draft);
+  const at = to === null ? -1 : said.indexOf(` to ${to}`);
+  return said.slice(0, Math.max(MAX_REASON, at === -1 || to === null ? 0 : at + 4 + to.length));
 }
 
 export const UNLOCK_REASON = 'Open your Phosphor vault';
