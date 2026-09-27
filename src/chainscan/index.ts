@@ -653,7 +653,9 @@ async function solanaTransaction(hash: string, deps: ChainDeps): Promise<Found> 
 async function nearTransaction(hash: string, deps: ChainDeps): Promise<Found> {
   const spec = NETWORKS.near;
   const answer = rec(await chainFetch(`https://${NEARBLOCKS_HOST}/v3/txns/${encodeURIComponent(hash)}`, {}, deps));
-  const row = rec(list(answer.txns)[0] ?? list(answer.data)[0] ?? answer.txn);
+  // NearBlocks has answered with a txns list, a data list, a txn object and, since September
+  // 2026, a data object; an unread shape was a row of nulls reported as status unknown.
+  const row = rec(list(answer.txns)[0] ?? list(answer.data)[0] ?? answer.txn ?? answer.data);
   const head = nearRow({ ...row, transaction_hash: row.transaction_hash ?? hash }, spec.decimals, spec.symbol);
   if (head === null) throw new Error('the answer carried no transaction');
   return {

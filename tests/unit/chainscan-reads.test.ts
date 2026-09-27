@@ -352,6 +352,16 @@ test('NEAR transactions and one transaction come from NearBlocks with the named 
   assert.equal(one.explorer, 'https://nearblocks.io/txns/GU64UecpKZXhvpFZQKJDg2iU7wVNsdsbDSRLfamPE1VU');
 });
 
+test('one NEAR transaction reads its status from the data object NearBlocks answers with since September 2026', async () => {
+  // The live shape on 2026-09-26: `data` is the transaction itself, not a list of one. Read as a
+  // list it was a row of nulls, and every lookup said status unknown.
+  const hash = '2b2oBzg7YrSo6jAyMkvJaijh6YNNMqPH6DfXs7DdpNnm';
+  const data = { transaction_hash: hash, signer_account_id: 'escrow.ai.near', receiver_account_id: 'intents.near', block_timestamp: '1790483814534037321', actions: [{ action: 'FUNCTION_CALL', method: 'execute_intents' }], actions_agg: { deposit: '0' }, outcomes: { status: false, status_key: 'FAILURE' }, outcomes_agg: { transaction_fee: '411968723317100000000' }, block: { block_height: '217438312' } };
+  const one = await transaction('near', hash, deps({ [`api.nearblocks.io/v3/txns/${hash}`]: () => json({ data }) }));
+  assert.equal(one.ok, true);
+  assert.deepEqual([one.tx?.status, one.tx?.from, one.tx?.method, one.tx?.block, one.tx?.fee], ['failed', 'escrow.ai.near', 'execute_intents', 217438312, '0.0004119687233171']);
+});
+
 test('intents activity lists MINT, BURN and TRANSFER rows with signed deltas, capped and stripped', async () => {
   const seen: string[] = [];
   // The live shape (2026-09-17): symbol and decimals under base_meta, token_meta without them.
