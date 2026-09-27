@@ -34,6 +34,8 @@ import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
 import type { RailKeys } from '../keystore/derive.ts';
 import type { Ctx } from './context.ts';
+import { STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
+import type { RouteGate, RouteState, RouteVerdict } from '../preflight/route-health.ts';
 
 // Long enough that a four-digit guess is not the whole search space, short enough that it does
 // not push people to a password manager they then have to unlock first. The KDF is what makes
@@ -517,6 +519,13 @@ export type IntentsReceiveNetwork = {
   accepts: IntentsReceiveToken[];
   // The sentence for an address the bridge changed under the pin (pinAddresses below), or null.
   changed: string | null;
+  /* Whether NEAR Intents is taking deposits here right now (src/preflight/route-health.ts). A
+     closed row carries no address and its sentence is `unavailable`; a degraded row keeps its
+     address and `notice` is printed above it; open and unknown change nothing. `statusLink` is
+     where a person reads more, on a closed or degraded row. */
+  route: RouteState;
+  notice: string | null;
+  statusLink: string | null;
 };
 
 export type IntentsReceiveReport = {
@@ -823,6 +832,39 @@ function warningOf(net: ReceiveNetwork, shared: string[], nets: Map<string, Rece
   return `${net.name} shares this address with ${listed}, but send only on "${net.words}", and only an asset it credits.`;
 }
 
+/* The route checks for every registry network, asked beside the bridge rather than after it, so
+   they add no wait of their own. Not kept with the bridge's minute: the checker keeps an open
+   answer a minute and a closed one twenty seconds, and a recovery should show on the next read.
+   No checker (demo mode, a test server) is no verdicts, and every row is what it was. */
+async function readRoutes(ctx: Ctx, account: string): Promise<Map<string, RouteVerdict> | null> {
+  const routes = ctx.routeHealth;
+  if (routes === undefined) return null;
+  const verdicts = await Promise.all(RECEIVE_NETWORKS.map((n) => routes.check({ network: n.id, direction: 'in', account })));
+  return new Map(verdicts.map((v) => [v.network, v]));
+}
+
+/* One row held to its route. Closed takes the address and the memo away and says why in
+   `unavailable`, which every reader of the report already refuses on: the window, the chat's
+   deposit card and the agent get one answer from one place. Degraded keeps the address and adds
+   the notice. The bridge's own list is a voice here too: a network it credits nothing on is
+   closed, but only when the list was read. */
+function withRoute(row: IntentsReceiveNetwork, verdict: RouteVerdict | undefined, tokensRead: boolean): IntentsReceiveNetwork {
+  if (verdict === undefined) return row;
+  const held = withReason(verdict, bridgeReason(row.id, row.accepts.length, tokensRead));
+  const sentence = routeSentence(held, 'deposit');
+  const statusLink = routeLink(held);
+  if (held.state === 'closed') return { ...row, address: null, memo: null, unavailable: sentence, route: 'closed', notice: null, statusLink };
+  return { ...row, route: held.state, notice: held.state === 'degraded' ? sentence : null, statusLink };
+}
+
+/* The route for the exact asset a card is about to be opened for, which the report's row (asked
+   about the network's own coin) does not answer: TON USDT is its own question. Both doors that
+   open a deposit card ask it, the window's and the agent's. */
+export async function depositRoute(ctx: Ctx, chain: string, account: string, assetId: string): Promise<RouteGate & { link: string | null }> {
+  const gate = await routeGate(ctx.routeHealth, { network: chain, direction: 'in', account, asset: assetId === '' ? undefined : assetId }, 'deposit');
+  return { ...gate, link: gate.closed !== null || gate.notice !== null ? STATUS_LINK : null };
+}
+
 /* The bridge addresses and what each network credits, as one report. The route above serves
    it to the window whole; the `deposit` read tool serves the agent one network of it with the
    address reduced to a fingerprint, because the window is where an address is read from.
@@ -847,10 +889,10 @@ export async function intentsReceiveReport(ctx: Ctx, opts: { force?: boolean } =
     };
   }
 
-  const { addresses, tokens, prices } = await readBridge(ctx, account, opts.force === true);
+  const [{ addresses, tokens, prices }, routes] = await Promise.all([readBridge(ctx, account, opts.force === true), readRoutes(ctx, account)]);
   const nets = new Map(addresses.map((row) => [row.net.id, row.net]));
 
-  const networks: IntentsReceiveNetwork[] = addresses.map((row) => {
+  const networks: IntentsReceiveNetwork[] = addresses.map((row): IntentsReceiveNetwork => {
     const shared = sharedWithOf(row, addresses);
     return {
       id: row.net.id,
@@ -871,8 +913,11 @@ export async function intentsReceiveReport(ctx: Ctx, opts: { force?: boolean } =
          the list is shown rather than left to the address to imply. */
       accepts: acceptsOn(row.net.bridge, tokens, prices),
       changed: null,
+      route: 'unknown',
+      notice: null,
+      statusLink: null,
     };
-  });
+  }).map((row) => withRoute(row, routes?.get(row.id), tokens.length > 0));
 
   // The six quick tiles first, in the registry's order, then everything else by name.
   const order = new Map(RECEIVE_NETWORKS.map((n, i) => [n.id, i]));

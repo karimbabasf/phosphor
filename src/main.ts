@@ -802,6 +802,9 @@ const server = createServer({
   session,
   trade,
   intentsPrices,
+  // The rails' route checker, so the receive report and the deposit tool refuse a closed route
+  // with the same answer the payout rails give. Absent in demo mode.
+  routeHealth: rails.routes,
   day,
   pictures,
   /* Default OFF, and the window opens with the assistant panel waiting to be started.

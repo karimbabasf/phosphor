@@ -17,7 +17,7 @@ import { fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { sameOrigin } from './auth.ts';
 import type { Ctx } from './context.ts';
-import { announce, guarded, refusal } from './wallet.ts';
+import { announce, depositRoute, guarded, refusal } from './wallet.ts';
 import { currentSymbol, receiveNetworkOf } from '../rails/intents-address.ts';
 import { mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
 import type { EnclaveRef } from '../keystore/store.ts';
@@ -385,10 +385,14 @@ export async function handleDepositShow(ctx: Ctx, req: http.IncomingMessage, res
   if (accepted === undefined) {
     return fail(res, 409, `${symbol} is not credited on ${network.name}; accepted: ${network.accepts.map((a) => a.symbol).join(', ') || 'nothing'}`);
   }
+  // The route for this exact asset, the same question the agent's deposit tool asks first.
+  const route = await depositRoute(ctx, chain, report.account, accepted.assetId);
+  if (route.closed !== null) return fail(res, 409, route.closed);
   // The token as the bridge lists it, so the watch reads that one balance and matches the
   // bridge's own rows for it, instead of guessing from the symbol.
   const token = { assetId: accepted.assetId, decimals: accepted.decimals, contract: accepted.contract };
-  sendJson(res, 200, { ok: true, deposit: ctx.deposits.show(chain, want, network.address, token) });
+  const notice = route.notice ?? network.notice;
+  sendJson(res, 200, { ok: true, deposit: ctx.deposits.show(chain, want, network.address, token), ...(notice === null ? {} : { notice, statusLink: route.link ?? network.statusLink }) });
 }
 
 export function handleDepositStatus(ctx: Ctx, res: http.ServerResponse): void {

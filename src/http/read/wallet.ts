@@ -12,6 +12,7 @@ import { credentialCheck, redactEvent, redactedTail } from '../log-tail.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
+import { depositRoute } from '../wallet.ts';
 import { RECEIVE_NETWORKS, currentSymbol, receiveNetworkOf } from '../../rails/intents-address.ts';
 import { baseUnitsToDecimal, oneLine, plainDecimal } from '../../intents.ts';
 import type { IntentsRead } from '../../ledger/intents.ts';
@@ -233,7 +234,9 @@ export const walletReads: ReadTable = {
     }
     const network = report.networks.find((n) => n.id === chain);
     if (network === undefined || network.address === null) {
-      return sendJson(res, 200, { ok: false, reason: network?.unavailable ?? `no deposit address for ${chain} right now`, accepted });
+      // A network NEAR Intents has paused carries its sentence here, and the page that says more.
+      const statusLink = network?.statusLink ?? null;
+      return sendJson(res, 200, { ok: false, reason: network?.unavailable ?? `no deposit address for ${chain} right now`, ...(statusLink === null ? {} : { statusLink }), accepted });
     }
     const want = currentSymbol(chain, symbol);
     const token = network.accepts.find((a) => a.symbol.toUpperCase() === want);
@@ -244,6 +247,13 @@ export const walletReads: ReadTable = {
         accepted,
       });
     }
+    /* The route for this exact asset, before any card or watch: TON USDT is its own question, and
+       the row above was asked about the network's own coin. Closed opens nothing; degraded opens
+       the card and the notice rides in the answer and in the line the agent relays. */
+    const route = await depositRoute(ctx, chain, report.account, token.assetId);
+    if (route.closed !== null) return sendJson(res, 200, { ok: false, reason: route.closed, statusLink: route.link, accepted });
+    const notice = route.notice ?? network.notice;
+    const statusLink = route.link ?? network.statusLink;
     // The token as the bridge lists it, as Add money passes it (vault.ts), so the watch matches the
     // bridge's rows by contract and not by a symbol the bridge may spell another way.
     const deposit = ctx.deposits.show(chain, token.symbol, network.address, { assetId: token.assetId, decimals: token.decimals, contract: token.contract });
@@ -264,7 +274,8 @@ export const walletReads: ReadTable = {
       addressVerified: report.verified,
       memo: network.memo,
       disclaimer: DISCLAIMER,
-      relay: `The address and a QR code are in the Phosphor window now. Tell the person to read it there, check that it ends in ${network.address.slice(-4)}, choose the network "${network.words}" on the sending side, and send a small test amount first.${memoLine}`,
+      relay: `The address and a QR code are in the Phosphor window now. Tell the person to read it there, check that it ends in ${network.address.slice(-4)}, choose the network "${network.words}" on the sending side, and send a small test amount first.${memoLine}${notice === null ? '' : ` ${notice}`}`,
+      ...(notice === null ? {} : { notice, statusLink }),
       watching: deposit.phase,
       backedUp: vaultStatus(ctx).backedUp,
     });

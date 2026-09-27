@@ -39,6 +39,7 @@ import type { Keystore, LockState } from '../keystore/index.ts';
 import type { Session } from '../keystore/session.ts';
 import type { VaultRelay } from '../vault/relay.ts';
 import type { IntentsReceiveReport } from './wallet.ts';
+import type { RouteHealth } from '../preflight/route-health.ts';
 import type { VaultPrefs } from '../vault/prefs.ts';
 import type { Terms } from '../terms.ts';
 import type { DepositWatch } from '../vault/watch.ts';
@@ -193,6 +194,11 @@ export type ServerDeps = {
      worth. Optional because a test has no 1Click and demo mode builds no client; absent, every
      floor is printed in the token's own unit alone. A throw here never fails the report. */
   intentsPrices?: () => Promise<Map<string, number>>;
+  /* Whether NEAR Intents is taking money on a network right now, the rails' own checker (src/
+     preflight/route-health.ts). The receive report asks it before it shows an address and the
+     deposit tool before it opens a card. Optional because demo mode and every test server build
+     none; absent, no route is ever called closed and the report is what it was. */
+  routeHealth?: RouteHealth;
   /* Every listed coin's last 24 hours, for Pro (src/ledger/day.ts). Optional because demo mode
      builds none and no test server needs one; absent, GET /api/day answers no days. */
   day?: DayFeed;
