@@ -983,19 +983,34 @@
     return i < first + headGroups || i >= tailFrom ? 'addr-end' : 'addr-mid';
   }
 
+  /* A receiver's groups, each with its tone: the one rule for every place a card draws the
+     receiver, its address block here and its Details (ui/screens/decision.js), so both put in the
+     text colour exactly the characters the Touch ID dialog names (review V2, 2026-09-27: Details
+     kept its own rule and marked "addr" and the last group of a Cardano address). */
+  function receiverGroups(address, network) {
+    var s = String(address || '');
+    var net = String(network || '');
+    var named = nearName(s, net);
+    var prefix = named ? '' : prefixOf(s, net);
+    var groups = named ? [s] : groupsOf(s, prefix);
+    var first = groups.length > 1 && prefix ? 1 : 0;
+    var bodyLength = s.length - (first ? prefix.length : 0);
+    var headGroups = Math.ceil(headChars(net) / 4);
+    var tailFrom = first + Math.floor(Math.max(0, bodyLength - TAIL_CHARS) / 4);
+    var out = [];
+    for (var i = 0; i < groups.length; i += 1) {
+      out.push({ text: groups[i], tone: groupTone(i, first, groups.length, headGroups, tailFrom) });
+    }
+    return out;
+  }
+
   function addressBlock(address, explorer, recipient, place, notes, network) {
     var wrap = dom.el('div', 'mcard-address');
     var row = dom.el('div', 'mcard-address-row');
     var line = dom.el('p', 'mcard-address-line id');
-    var named = nearName(address, network);
-    var prefix = named ? '' : prefixOf(address, network);
-    var groups = named ? [String(address)] : groupsOf(address, prefix);
-    var first = groups.length > 1 && prefix ? 1 : 0;
-    var bodyLength = String(address).length - (first ? prefix.length : 0);
-    var headGroups = Math.ceil(headChars(network) / 4);
-    var tailFrom = first + Math.floor(Math.max(0, bodyLength - TAIL_CHARS) / 4);
+    var groups = receiverGroups(address, network);
     for (var i = 0; i < groups.length; i += 1) {
-      line.appendChild(dom.el('span', 'tcard-leg-group ' + groupTone(i, first, groups.length, headGroups, tailFrom), groups[i]));
+      line.appendChild(dom.el('span', 'tcard-leg-group ' + groups[i].tone, groups[i].text));
     }
     dom.setAttr(line, 'data-address', address);
     row.appendChild(line);
@@ -2514,6 +2529,7 @@
     foldOf: foldOf,
     floorText: floorText,
     glyph: glyph,
-    foldNames: foldNames
+    foldNames: foldNames,
+    receiverGroups: receiverGroups
   };
 })();

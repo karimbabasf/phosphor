@@ -466,7 +466,8 @@
     var draft = proposal.draft || {};
     var out = [];
     var own = typeof draft.from === 'string' ? draft.from.trim().toLowerCase() : '';
-    pushDestination(out, draft.to, 'app', own);
+    // A payout's receiver is grouped by the chain it lands on, as the card's face groups it.
+    pushDestination(out, draft.to, 'app', own, draft.kind === 'intents_pay' ? draft.network : '');
     if (draft.leg) pushDestination(out, draft.leg.to, 'app', own);
     if (Array.isArray(draft.legs)) {
       for (var l = 0; l < draft.legs.length; l += 1) {
@@ -481,7 +482,7 @@
     return out;
   }
 
-  function pushDestination(out, address, chosenBy, own) {
+  function pushDestination(out, address, chosenBy, own, network) {
     if (typeof address !== 'string') return;
     var clean = address.trim();
     if (!clean.length) return;
@@ -499,38 +500,29 @@
     var isOwn = chosenBy === 'app' && !!own && clean.toLowerCase() === own;
     out.push({
       address: clean,
+      network: typeof network === 'string' ? network : '',
       chosenBy: chosenBy,
       own: isOwn,
       label: chosenBy === 'venue' ? VENUE_CHOSE : (isOwn ? 'your balance, where it already is' : 'the destination this app chose')
     });
   }
 
-  /* The address in the groups Add money prints it in (ui/screens/netpick.js chunks: "0x" and
-     then fours for an EVM address, fours for a Solana key, a NEAR name whole), so it wraps as a
-     set and a lone digit never sits on its own line. The first and the last group, the ones a
-     person checks, are in the text colour and the rest a step quieter. */
-  function addressLine(address) {
+  /* The address in the groups the card's face draws it in, by the one rule in ui/screens/cards.js
+     (receiverGroups), so it wraps as a set and a lone digit never sits on its own line, and the
+     groups in the text colour are the characters the Touch ID dialog names: the prefix quiet,
+     the head and the last eight loud, the rest a step quieter, a NEAR name whole. Without the
+     cards script it is drawn whole in one tone, never by a second rule. */
+  function addressLine(address, network) {
     var line = dom.el('p', 'addr sendcard-address');
     dom.setAttr(line, 'data-address', address);
-    var groups = addressGroups(String(address));
-    var first = groups.length > 1 && /^0x$|:$/.test(groups[0]) ? 1 : 0;
+    var cards = window.PhosphorCards;
+    var groups = cards && typeof cards.receiverGroups === 'function'
+      ? cards.receiverGroups(String(address), network || '')
+      : [{ text: String(address), tone: '' }];
     for (var i = 0; i < groups.length; i += 1) {
-      var end = groups.length > 1 && (i === first || i === groups.length - 1);
-      var tone = i < first ? ' addr-prefix' : (end ? ' addr-end' : ' addr-mid');
-      line.appendChild(dom.el('span', 'sendcard-group' + (groups.length > 1 ? tone : ''), groups[i]));
+      line.appendChild(dom.el('span', 'sendcard-group' + (groups[i].tone ? ' ' + groups[i].tone : ''), groups[i].text));
     }
     return line;
-  }
-
-  function addressGroups(address) {
-    var pick = window.PhosphorNetPick;
-    if (pick && typeof pick.chunks === 'function') return pick.chunks(address);
-    var out = [];
-    var hex = /^0x[0-9a-fA-F]{40}$/.test(address);
-    if (!hex && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return [address];
-    if (hex) out.push('0x');
-    for (var i = hex ? 2 : 0; i < address.length; i += 4) out.push(address.slice(i, i + 4));
-    return out;
   }
 
   function venueWords(venue) {
@@ -559,7 +551,7 @@
       var where = dom.el('div', 'destination');
       dom.setAttr(where, 'data-chosen', destinations[d].chosenBy);
       where.appendChild(dom.el('span', 'tcard-line-label', destinations[d].own ? 'Stays in' : 'Goes to'));
-      where.appendChild(addressLine(destinations[d].address));
+      where.appendChild(addressLine(destinations[d].address, destinations[d].network));
       where.appendChild(dom.el('span', 'destination-who', destinations[d].label));
       out.push(where);
     }

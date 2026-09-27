@@ -1208,34 +1208,79 @@ test('a ground Cardano or Bitcoin Cash lookalike shows different groups in the t
   assert.notDeepEqual(checked(payCard('bch', 'BCH', bchTwin).card), checked(payCard('bch', 'BCH', bch).card));
 });
 
-/* The card's head and the Touch ID dialog name the receiver with the same characters, and the
-   groups in the text colour hold every one of them, on every chain a payout lands on. */
-test('the card names a receiver as the Touch ID dialog does, and the groups in the text colour hold what the dialog names', () => {
+/* Every group of an address line as tone:text, the tone being what the person is told to check. */
+function tonesOf(line: Any): string[] {
+  const tone = (g: Any): string => ['addr-prefix', 'addr-end', 'addr-mid'].find((t) => String(g.className).split(' ').includes(t)) ?? 'none';
+  return line.children.map((g: Any) => `${tone(g)}:${g.textContent}`);
+}
+
+/* The card's head, its address block, its Details and the Touch ID dialog name the receiver with
+   the same characters, on every chain a payout lands on and every form of address each takes
+   (review V2 and V3, 2026-09-27: Details still put "addr" and the last group of a Cardano address
+   in the text colour, and the dialog counted a NEAR eth-implicit id's head from its 0x). */
+test('the card face, its Details and the Touch ID dialog name the same characters of a receiver on every chain a payout lands on', () => {
   const cases: Array<[string, string, string]> = [
     ['eth', 'USDC', '0xb583f4196e5e5c1e3a3a4d3e8b09a1e8c4f1d3a0'],
-    ['cardano', 'ADA', 'addr1q9a857n60fa857n60fa857n60fa857n60fa857n60fa8573u8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7qz6qg6x'],
-    ['cardano', 'ADA', 'addr1v9zt029u5eh2ggcuzv5se67qad7krlfzner9qdut0y74aegq6dv0p'],
-    ['bch', 'BCH', 'bitcoincash:qr9976ncxz2msd97ghn726kupk20m2wdmyn0fers4g'],
+    ['hypercore', 'USDC', '0xb583f4196e5e5c1e3a3a4d3e8b09a1e8c4f1d3a0'],
+    ['sol', 'SOL', 'DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy'],
+    ['fogo', 'FOGO', 'DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy'],
+    ['near', 'NEAR', '917148ec47923f2e0e3d73142ac4f94ec4c73078865ba6d29f0ea172cd6f4bf3'],
+    ['near', 'NEAR', '0xb583f4196e5e5c1e3a3a4d3e8b09a1e8c4f1d3a0'],
+    ['near', 'NEAR', 'alice-business-payroll-account.near'],
+    ['tron', 'TRX', 'TAhj7UQKSnVUNF5KC5PyAB8zPi4R4CmDHH'],
+    ['ton', 'GRAM', 'UQAWDVU4IWpL77kr7f_OQtQ_bdJ8mwNfKXiiqC819QWkN5A_'],
     ['xrp', 'XRP', 'rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh'],
     ['stellar', 'XLM', 'GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSW2IVM4S5DP42RBW3K6BTODB4A'],
-    ['ton', 'GRAM', 'UQAWDVU4IWpL77kr7f_OQtQ_bdJ8mwNfKXiiqC819QWkN5A_'],
-    ['tron', 'TRX', 'TAhj7UQKSnVUNF5KC5PyAB8zPi4R4CmDHH'],
-    ['btc', 'BTC', 'bc1qdmxhkfvgl45uzwre8x27rmq764uxffezkmchjz'],
-    ['doge', 'DOGE', 'DAkzZgXDiVBQdAZbTA9MccZVKpN61ZfL8o'],
     ['sui', 'SUI', '0xb3548ec172bd95ce13945a452a4559e86ba580671dc6c06ddd039f527ac955a4'],
+    ['aptos', 'APT', '0x1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f53'],
+    ['movement', 'MOVE', '0xc88ad1876cac0814f7295123207711a9e42e0f10aa6fc2ae3b61d0a1cce504f5'],
+    ['cardano', 'ADA', 'addr1q9a857n60fa857n60fa857n60fa857n60fa857n60fa8573u8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7qz6qg6x'],
+    ['cardano', 'ADA', 'addr1v9zt029u5eh2ggcuzv5se67qad7krlfzner9qdut0y74aegq6dv0p'],
+    ['cardano', 'ADA', 'addr1zxze6r9qkyw5rv87jw7xj29da2s6wqzvxum5prx600kdmrljuraxspupeh5wsyxxd2azfu6nceesql4pmnz49m3rp3tshetrlu'],
+    ['cardano', 'ADA', 'addr1xxcuhy4s9k2g0g9k6khsv8rmhhvc6595ccxpfcxnagunlqy79th6x0e3wkl26jcfrnym88huv67hwp0tzp0muxpsc82s7d5fna'],
+    ['cardano', 'ADA', 'addr1w99y8s5zerqazpxggqe6qkmgj29wyucfchj3d0qa62xry0cqnu204'],
+    ['cardano', 'ADA', 'addr1yytzf90edhlxgml990tl098nmujzgdz6wh0ttg30pmzdhs3ue3zt6q3pels3yfyy0v3gxe2a8ahqqmhe7peekxcrma4q0gyth6'],
     ['starknet', 'STRK', '0x057ea27e45e07ee0bcab6f045e656c782a6789d14a25e8e70309c35b2ff6082d'],
+    ['btc', 'BTC', 'bc1qdmxhkfvgl45uzwre8x27rmq764uxffezkmchjz'],
+    ['btc', 'BTC', '16c9nTmGu4YjuxYdGNg2utYEAMxGV4cJES'],
+    ['btc', 'BTC', '3LEaHP46PEhL4q2FKMbbP1acmTZ8xYm7Zx'],
+    ['btc', 'BTC', 'bc1pkqeqlg4md8gmrpzucwg0qph5ujmghfk3sqajlgr3n33wa3658t8qpljrzh'],
+    ['ltc', 'LTC', 'LhCGVdhZsr2sx8yGdF3ZxmvgVYAXz84B2r'],
+    ['ltc', 'LTC', 'MVtzYcJKJ7m13HtxENM1KzeYkJWLvWuTGZ'],
+    ['ltc', 'LTC', 'ltc1qeqer7z8cq7dnfj0r6vlu2334q6jhc07th0gzux'],
+    ['doge', 'DOGE', 'DAkzZgXDiVBQdAZbTA9MccZVKpN61ZfL8o'],
+    ['doge', 'DOGE', 'A4vbowZYb6N2HUA9kqMnUt6Qjgxd9Td559'],
+    ['bch', 'BCH', 'bitcoincash:qr9976ncxz2msd97ghn726kupk20m2wdmyn0fers4g'],
+    ['bch', 'BCH', 'bitcoincash:pzsdxwcnzzt296kwzj5ndefn57qf8cxmjc5udcwvv2'],
+    ['dash', 'DASH', 'XukL7nPEZKiJMhihKEMcGEKcAi4bAQk5Np'],
+    ['dash', 'DASH', '7Y3VbcN77njWazYAjSoqdsBhs3mnHbWHLa'],
   ];
   for (const [network, symbol, to] of cases) {
     const { card, reason } = payCard(network, symbol, to);
+    const at = `${network} ${to}`;
     const named = /to (\S+) on /.exec(reason)?.[1] ?? '';
-    assert.ok(named.includes('...'), `${network}: the dialog did not shorten ${to}: ${reason}`);
-    assert.ok(faceOf(card).includes(named + ' on '), `${network}: the face does not read ${named}: ${faceOf(card)}`);
-    const [head, tail] = named.split('...');
-    const prefix = all(all(card, 'mcard-address-line')[0], 'addr-prefix').map((g: Any) => g.textContent).join('');
+    assert.ok(named !== '' && named !== 'an', `${at}: the dialog does not name the receiver: ${reason}`);
+    assert.ok(faceOf(card).includes(named + ' on '), `${at}: the face does not read ${named}: ${faceOf(card)}`);
+    const block = all(card, 'mcard-address-line')[0];
+    const fold = all(card, 'sendcard-address')[0];
+    assert.ok(block && fold, `${at}: no address block or no receiver in Details`);
+    assert.deepEqual(tonesOf(fold), tonesOf(block), `${at}: Details marks other characters than the face`);
+    assert.equal(tonesOf(block).map((g) => g.slice(g.indexOf(':') + 1)).join(''), to, `${at}: the address is not whole`);
+    const prefix = all(block, 'addr-prefix').map((g: Any) => g.textContent).join('');
     const loud = checked(card).join('');
-    assert.ok(head.startsWith(prefix), `${network}: the card's prefix ${prefix} is not the dialog's`);
-    assert.ok(loud.startsWith(head.slice(prefix.length)), `${network}: ${loud} does not start with ${head.slice(prefix.length)}`);
-    assert.ok(loud.endsWith(tail), `${network}: ${loud} does not end with ${tail}`);
+    if (!named.includes('...')) {
+      assert.equal(named, to, `${at}: the dialog shortened nothing and still did not name it whole`);
+      assert.equal(loud, to, `${at}: a receiver named whole is not whole in the text colour`);
+      continue;
+    }
+    const [head, tail] = named.split('...');
+    const headBody = head.slice(prefix.length);
+    assert.ok(head.startsWith(prefix), `${at}: the card's prefix ${prefix} is not the dialog's`);
+    assert.equal(headBody.length, network === 'cardano' ? 16 : 8, `${at}: the dialog names ${headBody} after the prefix`);
+    assert.equal(tail.length, 8, `${at}: the dialog names ${tail} at the end`);
+    assert.ok(loud.startsWith(headBody), `${at}: ${loud} does not start with ${headBody}`);
+    assert.ok(loud.endsWith(tail), `${at}: ${loud} does not end with ${tail}`);
+    assert.ok(loud.length < headBody.length + tail.length + 4, `${at}: more than the dialog's groups are in the text colour: ${loud}`);
   }
 });
 
