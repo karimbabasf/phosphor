@@ -1,0 +1,682 @@
+// Route health: whether NEAR Intents is taking money on a network right now, asked a moment
+// before the app shows a deposit address or moves money out to a chain.
+//
+// WHY. On 2026-09-26 near.com said "TON: Service disruption reported" and would not make a TON
+// deposit address, while the POA bridge kept handing this app one in 200 ms. The bridge
+// answering is not the route working: money sent to that address may not be credited. So an
+// address that can be minted stops being the whole test, and four other voices are asked:
+//
+//   oneclick  a DRY 1Click quote of the network's own coin from its chain into intents, the same
+//             asset in and out. It needs no solver liquidity, so all it measures is whether 1Click
+//             takes that coin in at all. Measured 2026-09-26 across all 36 1Click chains: 201 in
+//             about 160 ms for every chain but TON, which answers 400 "Quoting for this pair is
+//             not available". Deposits only: a payout's own dry quote already asks the question
+//             for its exact pair, and src/rails/intents-pay.ts reads that answer.
+//   status    the official status page (PagerDuty, status.near-intents.org), one read shared by
+//             every check. A live incident or maintenance that names a chain closes it; one that
+//             only touches a shared service warns every chain.
+//   bridge    the POA bridge lists no coin it credits there. Folded in by the receive report,
+//             which already holds that list (bridgeReason below).
+//   chain     how old the chain's newest block is. A seam only: the multi-chain reader is built
+//             elsewhere and wired later.
+//
+// FOUR STATES. closed refuses, degraded warns and goes ahead, open and unknown change nothing.
+// Unknown is what every failure here turns into: a status page that did not answer, a 1Click
+// that timed out. A check never throws and a silence never blocks a move, because a false
+// "closed" is a person who cannot deposit on a chain that works, and every move still carries
+// every check it had before this.
+//
+// LIKE GAS. Nothing here polls and nothing runs on a timer. A check runs when an address is about
+// to be shown or a move is proposed or executed; askers at the same moment share one request; an
+// open answer is kept a minute and anything else twenty seconds, so a recovery shows fast; every
+// map is capped.
+
+import { ONECLICK_BASE, oneLine, toBaseUnits } from '../intents.ts';
+import type { OneClickToken } from '../intents.ts';
+import { withTimeout } from '../net.ts';
+import { SPEND_NETWORKS, currentSymbol, spendNetworkOf } from '../rails/intents-address.ts';
+import type { ReceiveNetwork } from '../rails/intents-address.ts';
+
+export type RouteDirection = 'in' | 'out';
+export type RouteState = 'open' | 'degraded' | 'closed' | 'unknown';
+export type RouteSource = 'oneclick' | 'status' | 'bridge' | 'chain';
+export type RouteReason = { source: RouteSource; state: RouteState; text: string; link?: string };
+export type RouteVerdict = { network: string; direction: RouteDirection; state: RouteState; reasons: RouteReason[]; checkedAt: number };
+
+// Which way the money goes, in the words a sentence needs: a deposit shows an address, the other
+// three are moves the app signs.
+export type RouteFlow = 'deposit' | 'payout' | 'hl_deposit' | 'hl_withdraw';
+
+export const STATUS_BASE = 'https://status.near-intents.org';
+export const STATUS_LINK = `${STATUS_BASE}/posts/dashboard`;
+// Each request gets four seconds. The report runs these beside the bridge's own asks, so a slow
+// check costs the screen at most this, and the answer is then unknown.
+export const ROUTE_TIMEOUT_MS = 4_000;
+export const OPEN_TTL_MS = 60_000;
+export const SHAKY_TTL_MS = 20_000;
+// The page itself says max-age=60 on the post list.
+export const FEED_TTL_MS = 60_000;
+export const SERVICES_TTL_MS = 60 * 60_000;
+export const MAX_KEYS = 256;
+// The probe's size in dollars: above every bridge floor on the list, small enough to mean nothing.
+export const PROBE_USD = 20;
+// A chain whose newest block is older than this is slow enough to warn about.
+export const CHAIN_STALE_SEC = 15 * 60;
+const TITLE_MAX = 120;
+
+// ---------- combining ----------
+
+// Closed if any voice says closed, degraded if any says degraded, open only when 1Click took the
+// coin in, and unknown otherwise: the status page being quiet is not a yes.
+export function combine(reasons: RouteReason[]): RouteState {
+  if (reasons.some((r) => r.state === 'closed')) return 'closed';
+  if (reasons.some((r) => r.state === 'degraded')) return 'degraded';
+  if (reasons.some((r) => r.source === 'oneclick' && r.state === 'open')) return 'open';
+  return 'unknown';
+}
+
+// A verdict with one more voice in it, for the caller that holds a fact this module does not.
+export function withReason(verdict: RouteVerdict, reason: RouteReason | null): RouteVerdict {
+  if (reason === null) return verdict;
+  const reasons = [...verdict.reasons, reason];
+  return { ...verdict, reasons, state: combine(reasons) };
+}
+
+/* The bridge's voice. A network the bridge lists no coin for credits nothing sent to it, whatever
+   address it hands out. Only a list that was read counts: an empty list is a bridge that did not
+   answer, and that is not a reason to close thirty-five networks. */
+export function bridgeReason(network: string, listed: number, listRead: boolean): RouteReason | null {
+  if (!listRead || listed > 0) return null;
+  return { source: 'bridge', state: 'closed', text: `the NEAR Intents bridge lists no coin it credits on ${networkName(network)}` };
+}
+
+// ---------- the 1Click probe ----------
+
+const CLOSED_WORDS = /not available|disabled|paused|suspend|maintenance/i;
+const MEMO_WORDS = /incorrect depositmode/i;
+
+/* Whether a 1Click refusal says the route is shut rather than that something about the ask was
+   wrong. The pay rail reads its own dry quote with the same words, so a payout and a deposit
+   are called closed by one rule. */
+export function quoteSaysClosed(message: string): boolean {
+  return CLOSED_WORDS.test(message);
+}
+
+function serviceWords(body: unknown): string {
+  if (body === null || typeof body !== 'object') return '';
+  const said = (body as Record<string, unknown>).message ?? (body as Record<string, unknown>).error;
+  return said === undefined || said === null ? '' : oneLine(said, 160);
+}
+
+export type ProbeAnswer = { state: RouteState; memo: boolean; said: string };
+
+/* One probe answer to a state. A 2xx is 1Click pricing the coin in. A 400 that says the pair is
+   not available, disabled, paused, suspended or in maintenance is the route shut. A 400 about the
+   deposit mode is a memo chain (Stellar) asking to be asked again in MEMO mode. Anything else, a
+   different 400, a 5xx, a body that is not JSON, is unknown: it says something about the ask or
+   the service, not about the route. The service's own words ride along for the log. */
+export function classifyProbe(status: number, body: unknown): ProbeAnswer {
+  const said = serviceWords(body);
+  if (status >= 200 && status < 300) return { state: 'open', memo: false, said };
+  if (status === 400 && MEMO_WORDS.test(said)) return { state: 'unknown', memo: true, said };
+  if (status === 400 && CLOSED_WORDS.test(said)) return { state: 'closed', memo: false, said };
+  return { state: 'unknown', memo: false, said: said === '' ? `http ${status}` : said };
+}
+
+function isCoin(t: OneClickToken): boolean {
+  return t.contractAddress === undefined || t.contractAddress === null || t.contractAddress === '';
+}
+
+/* The coin a probe asks about. The asset the caller named when 1Click lists it on this chain,
+   because a deposit of TON USDT is a question about TON USDT. Otherwise the chain's own coin, which
+   1Click lists with no contract. HyperCore and NEAR list none, so the chain's coin by symbol, then
+   its wrapped form, then USDC and USDT. A row marked deprecated is never the coin. */
+export function probeAsset(net: ReceiveNetwork, list: OneClickToken[], asked?: string): OneClickToken | null {
+  const venue = net.venue;
+  if (venue === null) return null;
+  const on = list.filter((t) => typeof t.blockchain === 'string' && t.blockchain.toLowerCase() === venue && typeof t.assetId === 'string');
+  if (asked !== undefined) {
+    const exact = on.find((t) => t.assetId === asked);
+    if (exact !== undefined) return exact;
+  }
+  const live = on.filter((t) => typeof t.symbol === 'string' && !/deprecated/i.test(t.symbol));
+  const native = currentSymbol(net.id, net.native).toUpperCase();
+  const coins = live.filter(isCoin);
+  if (coins.length > 0) return coins.find((t) => t.symbol.toUpperCase() === native) ?? coins[0];
+  const bySymbol = (symbol: string): OneClickToken | undefined => live.find((t) => t.symbol.toUpperCase() === symbol);
+  return bySymbol(native) ?? bySymbol(`W${native}`) ?? bySymbol('USDC') ?? bySymbol('USDT') ?? live[0] ?? null;
+}
+
+// About PROBE_USD of the coin in base units, or one whole coin when the list prices it at nothing.
+export function probeAmount(token: OneClickToken): string {
+  if (!Number.isInteger(token.decimals) || token.decimals < 0 || token.decimals > 36) return '1';
+  const whole = (10n ** BigInt(token.decimals)).toString();
+  const price = token.price;
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return whole;
+  try {
+    const base = toBaseUnits(PROBE_USD / price, token.decimals);
+    return base > 0n ? base.toString() : whole;
+  } catch {
+    return whole;
+  }
+}
+
+// ---------- the status page ----------
+
+type Impact = { serviceId: string; impactId: string };
+export type StatusPost = { id: string; type: 'incident' | 'maintenance'; title: string; statusId: string | null; startsAt: number | null; endsAt: number | null; impacts: Impact[] };
+
+// The page's own ids (GET /api/post_enums, read 2026-09-26). Stable for one status page.
+const INCIDENT_RESOLVED = 'P8TG2TF';
+const MAINTENANCE_COMPLETED = 'PORYK43';
+// partial outage, outage, and a maintenance window's own "maintenance" impact.
+const OUTAGE_IMPACTS: ReadonlySet<string> = new Set(['PCIGMKW', 'PZ9VM86', 'PJSKIN7']);
+// operational, for an incident and for a maintenance window.
+const CALM_IMPACTS: ReadonlySet<string> = new Set(['PGV50ZJ', 'P0WBI00']);
+
+/* A title is text a stranger could write: control and invisible characters and angle brackets go,
+   double quotes become single ones so it can be quoted, and it stops at 120 characters. */
+export function cleanTitle(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const flat = raw
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
+    .replace(/[<>]/g, '')
+    .replace(/"/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  return flat.length > TITLE_MAX ? `${flat.slice(0, TITLE_MAX - 3).trimEnd()}...` : flat;
+}
+
+function timeOf(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? at : null;
+}
+
+// The featured posts as this module reads them. A row it cannot read is skipped, never guessed.
+export function parsePosts(body: unknown): StatusPost[] {
+  const rows = (body as { posts?: unknown } | null)?.posts;
+  if (!Array.isArray(rows)) return [];
+  const out: StatusPost[] = [];
+  for (const row of rows) {
+    const r = (row ?? {}) as Record<string, unknown>;
+    if (r.post_type !== 'incident' && r.post_type !== 'maintenance') continue;
+    const update = (r.latest_update ?? {}) as Record<string, unknown>;
+    const impacts: Impact[] = [];
+    for (const i of Array.isArray(update.impacts) ? update.impacts : []) {
+      const x = (i ?? {}) as Record<string, unknown>;
+      if (typeof x.service_id === 'string' && typeof x.severity_id === 'string') impacts.push({ serviceId: x.service_id, impactId: x.severity_id });
+    }
+    out.push({
+      id: typeof r.id === 'string' ? r.id : '',
+      type: r.post_type,
+      title: cleanTitle(r.title),
+      statusId: typeof update.status_id === 'string' ? update.status_id : null,
+      startsAt: timeOf(r.starts_at),
+      endsAt: timeOf(r.ends_at),
+      impacts,
+    });
+  }
+  return out;
+}
+
+/* Live means an incident not yet resolved, or maintenance inside its window and not marked
+   completed. An incident with no update at all is live: it is featured, and featured is the
+   page putting it in front of people. */
+export function isLive(post: StatusPost, now: number): boolean {
+  if (post.type === 'incident') return post.statusId !== INCIDENT_RESOLVED;
+  if (post.statusId === MAINTENANCE_COMPLETED) return false;
+  if (post.startsAt === null || post.startsAt > now) return false;
+  return post.endsAt === null || now <= post.endsAt;
+}
+
+// What a status page service stands for here: one chain, the other chains, or everything.
+export type ServiceKind = { chain: string } | 'other' | 'global' | 'ignore';
+
+/* The eleven services as the page listed them on 2026-09-26, so a page whose service list did not
+   answer still maps an impact. The live list (read by name) overrides these. */
+const KNOWN_SERVICES: ReadonlyMap<string, ServiceKind> = new Map<string, ServiceKind>([
+  ['PYZGDVH', { chain: 'sol' }],
+  ['PV0VCGU', { chain: 'btc' }],
+  ['PRR7C44', { chain: 'eth' }],
+  ['PNEJBRE', 'other'],
+  ['PXQFSY1', 'global'],
+  ['PTEURIB', 'global'],
+  ['P2WM8Q9', 'global'],
+  ['PLT88AT', 'global'],
+  ['PYFS8RW', 'global'],
+  ['PFFZY12', 'ignore'],
+  ['P19MLRF', 'ignore'],
+]);
+
+/* A service name to what it stands for. The page spells Ethereum "Ethereum Blockcain", so the
+   chain services are read by their first word. The explorer and near.com move no money. */
+export function serviceKindOf(name: string): ServiceKind {
+  const n = name.trim().toLowerCase();
+  if (/^solana\b/.test(n)) return { chain: 'sol' };
+  if (/^bitcoin\b/.test(n)) return { chain: 'btc' };
+  if (/^ethereum\b/.test(n)) return { chain: 'eth' };
+  if (/other blockchains/.test(n)) return 'other';
+  if (/explorer|near\.com/.test(n)) return 'ignore';
+  return 'global';
+}
+
+export function parseServices(body: unknown): Map<string, ServiceKind> | null {
+  const rows = (body as { services?: unknown } | null)?.services;
+  if (!Array.isArray(rows)) return null;
+  const out = new Map<string, ServiceKind>(KNOWN_SERVICES);
+  for (const row of rows) {
+    const r = (row ?? {}) as Record<string, unknown>;
+    const name = typeof r.display_name === 'string' ? r.display_name : r.name;
+    if (typeof r.id === 'string' && typeof name === 'string') out.set(r.id, serviceKindOf(name));
+  }
+  return out;
+}
+
+// The three chains the page gives a service of their own; "Other Blockchains" is everyone else.
+const OWN_SERVICE: ReadonlySet<string> = new Set(['sol', 'btc', 'eth']);
+
+/* Words that name a chain but are also ordinary words, matched only in a chain's casing: "Base
+   deposits" is the chain and "the base fee" is not, "MON" is Monad and "Mon" is a Monday. */
+const UPPER_ONLY: ReadonlySet<string> = new Set(['near', 'op', 'mon', 'adi', 'apt', 'ada', 'pol', 'move', 'hype', 'gram', 'abs']);
+const CAPITALISED: ReadonlySet<string> = new Set(['base', 'ton', 'scroll', 'plasma', 'dash', 'movement', 'stellar', 'avalanche', 'optimism', 'abstract', 'ripple']);
+
+// Names a title may use that the registry does not spell. TON's coin was Toncoin until 2026-06-15.
+const ALIASES: Record<string, string[]> = {
+  eth: ['Ethereum'],
+  btc: ['Bitcoin'],
+  bch: ['Bitcoin Cash'],
+  ltc: ['Litecoin'],
+  doge: ['Dogecoin'],
+  zec: ['Zcash'],
+  xrp: ['XRPL', 'Ripple'],
+  ton: ['GRAM', 'Toncoin', 'The Open Network'],
+  tron: ['TRX', 'TRC-20'],
+  sol: ['Solana'],
+  bnb: ['BSC', 'BNB Chain', 'Binance Smart Chain', 'BEP-20'],
+  polygon: ['MATIC'],
+  avax: ['Avalanche'],
+  arb: ['Arbitrum'],
+  op: ['Optimism', 'OP Mainnet'],
+  hypercore: ['Hyperliquid', 'HyperCore'],
+  bera: ['Berachain'],
+  gnosis: ['xDAI', 'Gnosis Chain'],
+  xlayer: ['X Layer', 'XLayer'],
+  cardano: ['ADA'],
+  stellar: ['XLM'],
+  aptos: ['APT'],
+  starknet: ['STRK'],
+  movement: ['MOVE'],
+  near: ['NEAR Protocol'],
+};
+
+type Term = { text: string; network: string };
+
+/* Every word that names a chain, longest first so "Bitcoin Cash" is read before "Bitcoin". A
+   word two chains share (ETH is the coin of Base, Arbitrum and five more) names only the chain
+   whose id or mark it is, and names nothing when that is none of them. */
+const TERMS: readonly Term[] = (() => {
+  const claims = new Map<string, Set<string>>();
+  const owner = new Map<string, string>();
+  const claim = (text: string, network: string, owns: boolean): void => {
+    const key = text.toLowerCase();
+    if (key === '') return;
+    if (!claims.has(key)) claims.set(key, new Set());
+    claims.get(key)?.add(network);
+    if (owns) owner.set(key, network);
+  };
+  for (const n of SPEND_NETWORKS) {
+    claim(n.id, n.id, true);
+    claim(n.mark, n.id, true);
+    claim(n.name, n.id, false);
+    claim(n.native, n.id, false);
+    for (const alias of ALIASES[n.id] ?? []) claim(alias, n.id, false);
+  }
+  const out: Term[] = [];
+  for (const [key, networks] of claims) {
+    const network = networks.size === 1 ? [...networks][0] : owner.get(key);
+    if (network !== undefined) out.push({ text: key, network });
+  }
+  return out.sort((a, b) => b.text.length - a.text.length);
+})();
+
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function casingFits(found: string, key: string): boolean {
+  if (UPPER_ONLY.has(key)) return found === found.toUpperCase();
+  if (CAPITALISED.has(key)) return found[0] === found[0].toUpperCase();
+  return true;
+}
+
+/* The networks a title names, by whole word. "NEAR Intents" and near.com are the service itself,
+   not the NEAR chain, so they are taken out first. A matched word is blanked, so a longer name
+   is never read twice as its shorter part. */
+export function namedNetworks(title: string): Set<string> {
+  let text = ` ${title} `.replace(/near[\s-]*intents|near\.com|near ai/gi, ' ');
+  const found = new Set<string>();
+  for (const term of TERMS) {
+    const re = new RegExp(`(?<![A-Za-z0-9])${escapeRe(term.text)}(?![A-Za-z0-9])`, 'gi');
+    text = text.replace(re, (hit) => {
+      if (!casingFits(hit, term.text)) return hit;
+      found.add(term.network);
+      return ' '.repeat(hit.length);
+    });
+  }
+  return found;
+}
+
+/* What the live posts say about one network. A post that names chains speaks for those chains
+   alone and closes them both ways. A post that names none speaks through what it impacts: a chain
+   service in partial or full outage closes that chain, "Other Blockchains" warns every chain but
+   Solana, Bitcoin and Ethereum, and a shared service (1Click, the solvers, the message bus,
+   bridging, the passive deposit service) warns every chain. An impact id this module does not
+   know warns rather than closes. */
+export function statusReasons(posts: StatusPost[], services: ReadonlyMap<string, ServiceKind>, network: string, now: number): RouteReason[] {
+  const out: RouteReason[] = [];
+  for (const post of posts) {
+    if (!isLive(post, now)) continue;
+    const text = `The NEAR Intents status page says: "${post.title || 'an incident is open'}".`;
+    const named = namedNetworks(post.title);
+    if (named.size > 0) {
+      if (named.has(network)) out.push({ source: 'status', state: 'closed', text, link: STATUS_LINK });
+      continue;
+    }
+    let state: RouteState | null = null;
+    for (const impact of post.impacts) {
+      if (CALM_IMPACTS.has(impact.impactId)) continue;
+      const outage = OUTAGE_IMPACTS.has(impact.impactId);
+      const kind = services.get(impact.serviceId) ?? 'global';
+      let said: RouteState | null = null;
+      if (kind === 'ignore') said = null;
+      else if (kind === 'global') said = 'degraded';
+      else if (kind === 'other') said = OWN_SERVICE.has(network) ? null : 'degraded';
+      else if (kind.chain === network) said = outage ? 'closed' : 'degraded';
+      if (said === 'closed' || (said === 'degraded' && state === null)) state = said;
+    }
+    if (state !== null) out.push({ source: 'status', state, text, link: STATUS_LINK });
+  }
+  return out;
+}
+
+// ---------- sentences ----------
+
+export function networkName(network: string): string {
+  return spendNetworkOf(network)?.name ?? network;
+}
+
+function flowWords(flow: RouteFlow, name: string): string {
+  switch (flow) {
+    case 'deposit':
+      return `${name} deposits`;
+    case 'payout':
+      return `payouts to ${name}`;
+    case 'hl_deposit':
+      return `transfers to ${name}`;
+    case 'hl_withdraw':
+      return `withdrawals from ${name}`;
+  }
+}
+
+/* The one sentence a person reads about a closed or degraded route, or null for open and unknown.
+   What the status page said is quoted after it, as the page's words and not the app's. */
+export function routeSentence(verdict: RouteVerdict, flow: RouteFlow): string | null {
+  const name = networkName(verdict.network);
+  const page = verdict.reasons.find((r) => r.source === 'status' && (r.state === 'closed' || r.state === 'degraded'));
+  const quoted = page === undefined ? '' : ` ${page.text}`;
+  if (verdict.state === 'closed') {
+    const cause = verdict.reasons.find((r) => r.state === 'closed');
+    if (flow === 'deposit') {
+      if (cause?.source === 'bridge') return `The NEAR Intents bridge credits nothing on ${name} right now, so no address is shown.`;
+      return `NEAR Intents has paused ${name} deposits right now, so no address is shown. Money sent now may not arrive.${quoted}`;
+    }
+    return `NEAR Intents is not taking ${flowWords(flow, name)} right now, so nothing was signed and nothing moved.${quoted}`;
+  }
+  if (verdict.state === 'degraded') {
+    const slow = verdict.reasons.find((r) => r.state === 'degraded');
+    if (slow?.source === 'chain') return `${slow.text.charAt(0).toUpperCase()}${slow.text.slice(1)}, so ${flowWords(flow, name)} may take longer than usual.`;
+    return `NEAR Intents reports trouble that may slow ${flowWords(flow, name)} right now, so it may take longer than usual.${quoted}`;
+  }
+  return null;
+}
+
+// Where a person reads more, on a route that is not simply working.
+export function routeLink(verdict: RouteVerdict): string | null {
+  return verdict.state === 'closed' || verdict.state === 'degraded' ? STATUS_LINK : null;
+}
+
+// ---------- the checker ----------
+
+export type RouteHealthDeps = {
+  // The 1Click token list, the shared client's, so the probe names coins from the same list the
+  // rails quote against and never fetches its own.
+  tokens: () => Promise<OneClickToken[]>;
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  // How old the network's newest block is, in seconds, or null when unread. Absent until the
+  // multi-chain reader is wired.
+  chainHead?: (network: string) => Promise<{ ageSec: number } | null>;
+  // Where a probe's change of answer is written, with the service's own words. Defaults to stderr.
+  log?: (line: string) => void;
+  // The per-request deadline, ROUTE_TIMEOUT_MS unless a test wants a timeout without the wait.
+  timeoutMs?: number;
+};
+
+// `account` is the intents account the probe credits and refunds, which a dry quote never moves.
+export type RouteAsk = { network: string; direction: RouteDirection; account: string | null; asset?: string };
+
+export type RouteHealth = { check(ask: RouteAsk): Promise<RouteVerdict> };
+
+type Cached<T> = { at: number; ttl: number; value: T };
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// Keep a map to MAX_KEYS by dropping the oldest entry, which is the first in insertion order.
+function remember<T>(map: Map<string, T>, key: string, value: T): void {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > MAX_KEYS) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+
+/* One request per key at a time. The run starts a microtask later, so the promise is on the map
+   before anything in it can finish, and a run that ends is only taken off if it is still the one
+   on the map. */
+function shared<T>(inflight: Map<string, Promise<T>>, key: string, run: () => Promise<T>): Promise<T> {
+  const held = inflight.get(key);
+  if (held !== undefined) return held;
+  const p: Promise<T> = Promise.resolve()
+    .then(run)
+    .finally(() => {
+      if (inflight.get(key) === p) inflight.delete(key);
+    });
+  inflight.set(key, p);
+  return p;
+}
+
+function fresh<T>(entry: Cached<T> | undefined, now: number): entry is Cached<T> {
+  return entry !== undefined && now - entry.at < entry.ttl;
+}
+
+// A promise that answers null when it has not answered in `ms`.
+function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    withTimeout(ms).addEventListener('abort', () => resolve(null), { once: true });
+    p.then(resolve, () => resolve(null));
+  });
+}
+
+type ProbeResult = { state: RouteState; symbol: string; said: string };
+
+export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const now = deps.now ?? Date.now;
+  const log = deps.log ?? ((line: string) => console.error(line));
+  const timeoutMs = deps.timeoutMs ?? ROUTE_TIMEOUT_MS;
+
+  const probes = new Map<string, Cached<ProbeResult>>();
+  const inflight = new Map<string, Promise<unknown>>();
+  // The chains 1Click wants asked in MEMO mode, learned from its own refusal. Bounded by the registry.
+  const memoChains = new Set<string>();
+  let feed: Cached<StatusPost[] | null> | undefined;
+  let services: Cached<ReadonlyMap<string, ServiceKind>> | undefined;
+
+  async function getJson(url: string, init: RequestInit = {}): Promise<{ status: number; body: unknown }> {
+    const res = await fetchImpl(url, { ...init, signal: withTimeout(timeoutMs) });
+    const body = (await res.json().catch(() => null)) as unknown;
+    return { status: res.status, body };
+  }
+
+  function once<T>(key: string, run: () => Promise<T>): Promise<T> {
+    return shared(inflight as unknown as Map<string, Promise<T>>, key, run);
+  }
+
+  async function readFeed(): Promise<StatusPost[] | null> {
+    if (fresh(feed, now())) return feed.value;
+    return once('status:posts', async () => {
+      try {
+        const { status, body } = await getJson(`${STATUS_BASE}/api/posts?is_featured=true`);
+        const posts = status >= 200 && status < 300 ? parsePosts(body) : null;
+        feed = { at: now(), ttl: posts === null ? SHAKY_TTL_MS : FEED_TTL_MS, value: posts };
+      } catch {
+        feed = { at: now(), ttl: SHAKY_TTL_MS, value: null };
+      }
+      return feed.value;
+    });
+  }
+
+  async function readServices(): Promise<ReadonlyMap<string, ServiceKind>> {
+    if (fresh(services, now())) return services.value;
+    return once('status:services', async () => {
+      let map: Map<string, ServiceKind> | null = null;
+      try {
+        const { status, body } = await getJson(`${STATUS_BASE}/api/services`);
+        if (status >= 200 && status < 300) map = parseServices(body);
+      } catch {
+        // the ids from 2026-09-26 stand in, and the list is asked again soon
+      }
+      services = map === null ? { at: now(), ttl: SHAKY_TTL_MS, value: KNOWN_SERVICES } : { at: now(), ttl: SERVICES_TTL_MS, value: map };
+      return services.value;
+    });
+  }
+
+  async function statusFor(network: string): Promise<RouteReason[]> {
+    const posts = await readFeed();
+    if (posts === null) return [{ source: 'status', state: 'unknown', text: 'the NEAR Intents status page did not answer' }];
+    // The service list is only needed when something is live.
+    if (!posts.some((p) => isLive(p, now()))) return [];
+    return statusReasons(posts, await readServices(), network, now());
+  }
+
+  async function ask(token: OneClickToken, account: string, memo: boolean): Promise<ProbeAnswer> {
+    const body: Record<string, unknown> = {
+      dry: true,
+      swapType: 'EXACT_INPUT',
+      slippageTolerance: 100,
+      originAsset: token.assetId,
+      destinationAsset: token.assetId,
+      depositType: 'ORIGIN_CHAIN',
+      recipientType: 'INTENTS',
+      recipient: account,
+      refundType: 'INTENTS',
+      refundTo: account,
+      amount: probeAmount(token),
+      deadline: new Date(now() + 30 * 60_000).toISOString(),
+    };
+    if (memo) body.depositMode = 'MEMO';
+    const { status, body: answer } = await getJson(`${ONECLICK_BASE}/v0/quote`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return classifyProbe(status, answer);
+  }
+
+  async function probe(net: ReceiveNetwork, token: OneClickToken, account: string): Promise<ProbeResult> {
+    const venue = net.venue ?? net.id;
+    try {
+      let answer = await ask(token, account, memoChains.has(venue));
+      if (answer.memo && !memoChains.has(venue)) {
+        memoChains.add(venue);
+        answer = await ask(token, account, true);
+      }
+      return { state: answer.memo ? 'unknown' : answer.state, symbol: token.symbol, said: answer.said };
+    } catch (err) {
+      return { state: 'unknown', symbol: token.symbol, said: oneLine(errText(err), 160) };
+    }
+  }
+
+  function probeText(result: ProbeResult, name: string): string {
+    switch (result.state) {
+      case 'open':
+        return `1Click takes ${result.symbol} in from ${name}`;
+      case 'closed':
+        return `1Click is not taking ${result.symbol} in from ${name} right now`;
+      default:
+        return `1Click did not say whether it takes ${result.symbol} in from ${name}`;
+    }
+  }
+
+  async function probeReason(net: ReceiveNetwork, account: string, asked: string | undefined): Promise<RouteReason> {
+    let list: OneClickToken[];
+    try {
+      list = await deps.tokens();
+    } catch {
+      return { source: 'oneclick', state: 'unknown', text: "1Click's token list could not be read" };
+    }
+    const token = probeAsset(net, Array.isArray(list) ? list : [], asked);
+    if (token === null) return { source: 'oneclick', state: 'unknown', text: `1Click lists no coin on ${net.name} to ask about` };
+    const key = `${net.id}|${token.assetId}`;
+    const held = probes.get(key);
+    const result = fresh(held, now())
+      ? held.value
+      : await once(`probe:${key}`, async () => {
+          const got = await probe(net, token, account);
+          const was = probes.get(key)?.value.state;
+          remember(probes, key, { at: now(), ttl: got.state === 'open' ? OPEN_TTL_MS : SHAKY_TTL_MS, value: got });
+          if (was !== got.state && (got.state !== 'open' || was !== undefined)) {
+            log(`phosphor: route ${net.id} in: 1Click says ${got.state} for ${got.symbol}${got.said === '' ? '' : ` (${got.said})`}`);
+          }
+          return got;
+        });
+    return { source: 'oneclick', state: result.state, text: probeText(result, net.name) };
+  }
+
+  async function chainReason(network: string): Promise<RouteReason | null> {
+    if (deps.chainHead === undefined) return null;
+    try {
+      const head = await within(deps.chainHead(network), timeoutMs);
+      if (head === null || typeof head.ageSec !== 'number' || !Number.isFinite(head.ageSec)) return null;
+      const name = networkName(network);
+      if (head.ageSec <= CHAIN_STALE_SEC) return { source: 'chain', state: 'open', text: `${name} made a block ${Math.round(head.ageSec)} seconds ago` };
+      return { source: 'chain', state: 'degraded', text: `the newest ${name} block is ${Math.round(head.ageSec / 60)} minutes old` };
+    } catch {
+      return null;
+    }
+  }
+
+  async function check(q: RouteAsk): Promise<RouteVerdict> {
+    const checkedAt = now();
+    try {
+      const net = spendNetworkOf(q.network);
+      const [probed, status, chain] = await Promise.all([
+        q.direction === 'in' && net !== undefined && q.account !== null && q.account !== '' ? probeReason(net, q.account, q.asset) : Promise.resolve(null),
+        statusFor(q.network),
+        chainReason(q.network),
+      ]);
+      const reasons = [...(probed === null ? [] : [probed]), ...status, ...(chain === null ? [] : [chain])];
+      return { network: q.network, direction: q.direction, state: combine(reasons), reasons, checkedAt };
+    } catch (err) {
+      // Every source above catches its own failure; this is the one that was not foreseen.
+      return { network: q.network, direction: q.direction, state: 'unknown', reasons: [{ source: 'status', state: 'unknown', text: `the route check failed: ${oneLine(errText(err), 120)}` }], checkedAt };
+    }
+  }
+
+  return { check };
+}
