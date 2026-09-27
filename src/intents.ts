@@ -24,6 +24,11 @@ import { ReasonError } from './rails/reasons.ts';
 
 export const ONECLICK_BASE = 'https://1click.chaindefuser.com';
 
+/* Every 1Click quote names Phosphor as its channel. The Intents Explorer filters by this field, so
+   Phosphor's swap count, volume and unique wallets are read from the venue's own record, not from
+   anything the app reports about itself. A tagged swap is linkable to Phosphor on the explorer. */
+export const PHOSPHOR_REFERRAL = 'phosphor';
+
 /* 1Click answering a quote request with a refusal: its HTTP status beside its own words. Thrown
    by the quote calls and nothing else, so a caller can tell the one voice that may call a route
    closed (src/preflight/route-health.ts) from every other failure before a signature. */
@@ -747,7 +752,7 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
       depositType: params.depositType ?? 'ORIGIN_CHAIN',
       deadline,
     };
-    if (params.referral !== undefined) body.referral = params.referral;
+    body.referral = params.referral ?? PHOSPHOR_REFERRAL;
 
     /* Venue write, and it is the `dry: false` case that makes it one: that quote mints a deposit
        address and commits the solver, so a hang here is a hang after the venue has acted. */
