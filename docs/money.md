@@ -114,7 +114,7 @@ it signs, and refuses the payout when the chain would lose it:
 
 | Chain | Refused |
 |---|---|
-| XRP Ledger | an X-address (the tag is inside it); an account that requires a destination tag; an account that does not exist yet, paid less than the ledger's reserve (1 XRP today); any coin but XRP |
+| XRP Ledger | an X-address (the tag is inside it); an account that requires a destination tag; an account that takes payments only from senders it authorized (DepositAuth, which every AMM account sets); an account that does not exist yet, paid less than the ledger's reserve (1 XRP today); any coin but XRP |
 | Stellar | an M-address (the memo is inside it); an account that sets `config.memo_required`; an account that does not exist yet, paid a token or less than 1 XLM; a token the account has no trustline for; your own NEAR Intents deposit address there, which the bridge shares and tells apart by memo |
 | TON | a testnet address. A bounceable (EQ...) or raw (0:...) address is paid as the same account in its non-bounceable form (UQ...), so a new wallet cannot bounce the money back, and the card shows both |
 | Tron | TRX to a contract, or to an address Tron would not describe |

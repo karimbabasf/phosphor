@@ -21,7 +21,7 @@ import { QuoteRefusal } from '../../src/intents.ts';
 import type { OneClickQuote, OneClickToken, TokensFile } from '../../src/intents.ts';
 import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../../src/rails/intents-native.ts';
 import { INTENTS_PAY_COUNTERPARTY, intentsPayRail, minReceivedForPay, payFamilyOf, payRefusal, recipientSentence } from '../../src/rails/intents-pay.ts';
-import { addressActivity } from '../../src/chainscan/index.ts';
+import { addressActivity, createChainFetchState, payTarget } from '../../src/chainscan/index.ts';
 import { makeCtx, railThat } from './helpers/proposals.ts';
 import { parsePoaTokens, spendNetworkOf } from '../../src/rails/intents-address.ts';
 import { depositFloorOf } from '../../src/rails/pay-rules.ts';
@@ -93,7 +93,7 @@ const registry: TokensFile = { eth: {}, base: {}, arb: {}, sol: {}, near: {} };
 
 // A chain rule's facts, the shape the rail's payTarget dependency answers with.
 type Target =
-  | { network: 'xrp'; exists: boolean; requireDestTag: boolean; reserveXrp: number | null }
+  | { network: 'xrp'; exists: boolean; requireDestTag: boolean; reserveXrp: number | null; depositAuth?: boolean; disallowXrp?: boolean }
   | { network: 'stellar'; exists: boolean; memoRequired: boolean; trustlines: Array<{ code: string; issuer: string; authorized: boolean; balance: string; limit: string }> };
 
 function baseOf(amount: number, decimals: number): bigint {
@@ -288,6 +288,34 @@ test('an XRP account the ledger does not have yet is paid only at or above the r
   const sim = await big.rail.simulate(draftOf(COINS.XRP, 'rrrrrrrrrrrrrrrrrrrrrhoLvTp', 5));
   assert.equal(sim.ok, true, sim.summary);
   assert.match(sim.summary, /does not exist on the XRP Ledger yet; this payment creates it/);
+});
+
+/* Review M2 (2026-09-27): an XRPL account that sets DepositAuth (every AMM account does) takes
+   payments only from senders it has authorized, and the ledger refuses the bridge's payment with
+   tecNO_PERMISSION: the same failed payout leg a missing destination tag gives. */
+test('an XRP account that sets DepositAuth is refused, read from the ledger before the quote, and DisallowXRP is said', async () => {
+  const auth = railOf(COINS.XRP, 20, { targets: [{ ...XRP_OK, depositAuth: true }], own: NOT_OWN });
+  assert.match(await refused(auth, draftOf(COINS.XRP, PLAIN_XRP, 20)), /accepts payments on the XRP Ledger only from accounts it has authorized/);
+  assert.equal(auth.quotes.length, 0);
+  const disallow = railOf(COINS.XRP, 20, { targets: [{ ...XRP_OK, disallowXrp: true }], own: NOT_OWN });
+  const sim = await disallow.rail.simulate(draftOf(COINS.XRP, PLAIN_XRP, 20));
+  assert.equal(sim.ok, true, sim.summary);
+  assert.ok(sim.send?.notes?.some((n) => n.tone === 'warn' && /DisallowXRP/.test(n.text)), JSON.stringify(sim.send?.notes));
+});
+
+test('the XRP Ledger reader says an account sets DepositAuth or DisallowXRP from its flags', async () => {
+  const ledger = (flags: number): typeof fetch =>
+    (async (_url: unknown, init?: RequestInit) => {
+      const method = JSON.parse(String(init?.body ?? '{}')).method;
+      const result = method === 'account_info' ? { account_data: { Account: PLAIN_XRP, Flags: flags }, status: 'success' } : { info: { validated_ledger: { reserve_base_xrp: 1 } }, status: 'success' };
+      return new Response(JSON.stringify({ result }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+  const amm = await payTarget('xrp', PLAIN_XRP, { fetchImpl: ledger(0x01000000), state: createChainFetchState() });
+  assert.equal(amm?.network === 'xrp' && amm.depositAuth, true, JSON.stringify(amm));
+  const plain = await payTarget('xrp', PLAIN_XRP, { fetchImpl: ledger(0), state: createChainFetchState() });
+  assert.equal(plain?.network === 'xrp' && (plain.depositAuth || plain.disallowXrp || plain.requireDestTag), false, JSON.stringify(plain));
+  const noXrp = await payTarget('xrp', PLAIN_XRP, { fetchImpl: ledger(0x00080000), state: createChainFetchState() });
+  assert.equal(noXrp?.network === 'xrp' && noXrp.disallowXrp, true, JSON.stringify(noXrp));
 });
 
 test('an XRP account the ledger would not describe is refused: the tag rule cannot be checked', async () => {

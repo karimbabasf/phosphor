@@ -2,7 +2,8 @@
 // their own: the XRP Ledger and Stellar.
 //
 // Both ledgers let an account say "a payment to me must carry a memo" (XRPL's RequireDestTag flag,
-// Stellar's SEP-29 data entry config.memo_required), both refuse a first payment smaller than the
+// Stellar's SEP-29 data entry config.memo_required), an XRPL account can take payments only from
+// senders it authorized (DepositAuth), both refuse a first payment smaller than the
 // reserve that creates the account, and Stellar holds a token only on a trustline the receiver
 // opened. A payout from NEAR Intents can carry no memo at all (1Click's quote has no field for
 // one), so these are facts a payout is refused on, read before the quote and again before the key
@@ -18,11 +19,16 @@ import type { ChainDeps } from './common.ts';
 export type StellarLine = { code: string; issuer: string; authorized: boolean; balance: string; limit: string };
 
 export type PayTarget =
-  | { network: 'xrp'; exists: boolean; requireDestTag: boolean; reserveXrp: number | null }
+  | { network: 'xrp'; exists: boolean; requireDestTag: boolean; depositAuth: boolean; disallowXrp: boolean; reserveXrp: number | null }
   | { network: 'stellar'; exists: boolean; memoRequired: boolean; trustlines: StellarLine[] };
 
 // The account flag an XRPL account sets to refuse any payment without a destination tag.
 export const LSF_REQUIRE_DEST_TAG = 0x00020000;
+// The flag that takes payments only from senders the account authorized; every AMM account sets
+// it, and the ledger refuses anyone else's payment with tecNO_PERMISSION.
+export const LSF_DEPOSIT_AUTH = 0x01000000;
+// A request not to be sent XRP. The ledger does not enforce it, a wallet is asked to.
+export const LSF_DISALLOW_XRP = 0x00080000;
 
 function isHttp404(err: unknown): boolean {
   return err instanceof Error && err.message === 'http 404';
@@ -42,11 +48,18 @@ async function xrpTarget(address: string, deps: ChainDeps): Promise<PayTarget> {
   ]);
   const reserve = num(rec(rec(rec(server).info).validated_ledger).reserve_base_xrp);
   const reserveXrp = reserve !== null && reserve > 0 ? reserve : null;
-  if (account.error === 'actNotFound') return { network: 'xrp', exists: false, requireDestTag: false, reserveXrp };
+  if (account.error === 'actNotFound') return { network: 'xrp', exists: false, requireDestTag: false, depositAuth: false, disallowXrp: false, reserveXrp };
   if (account.error !== undefined) throw new Error(`xrpl ${dataText(account.error, 40)}`);
   const flags = num(rec(account.account_data).Flags);
   if (flags === null) throw new Error('the account answer carried no flags');
-  return { network: 'xrp', exists: true, requireDestTag: (flags & LSF_REQUIRE_DEST_TAG) !== 0, reserveXrp };
+  return {
+    network: 'xrp',
+    exists: true,
+    requireDestTag: (flags & LSF_REQUIRE_DEST_TAG) !== 0,
+    depositAuth: (flags & LSF_DEPOSIT_AUTH) !== 0,
+    disallowXrp: (flags & LSF_DISALLOW_XRP) !== 0,
+    reserveXrp,
+  };
 }
 
 async function stellarTarget(address: string, deps: ChainDeps): Promise<PayTarget> {
