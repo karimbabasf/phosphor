@@ -16,6 +16,8 @@ import { intentsReceiveReport } from '../../src/http/wallet.ts';
 import type { IntentsReceiveNetwork } from '../../src/http/wallet.ts';
 import { walletReads } from '../../src/http/read/wallet.ts';
 import { RECEIVE_NETWORKS, receiveNetworkByBridge } from '../../src/rails/intents-address.ts';
+import { STATUS_LINK } from '../../src/preflight/route-health.ts';
+import type { RouteHealth, RouteVerdict } from '../../src/preflight/route-health.ts';
 import { base58Encode } from '../../src/chain/near.ts';
 import type { Ctx } from '../../src/http/context.ts';
 
@@ -144,7 +146,9 @@ test('every row carries the registry fields the window draws by, and the six qui
     );
     assert.equal(btc.address, shapedAddress('btc:mainnet'));
     // No colour: the window has one colour table, keyed by the mark (PhosphorMarks.colourFor).
-    assert.deepEqual(Object.keys(btc), ['id', 'name', 'words', 'bridge', 'kind', 'native', 'mark', 'popular', 'address', 'memo', 'unavailable', 'sharedWith', 'warning', 'accepts', 'changed']);
+    assert.deepEqual(Object.keys(btc), ['id', 'name', 'words', 'bridge', 'kind', 'native', 'mark', 'popular', 'address', 'memo', 'unavailable', 'sharedWith', 'warning', 'accepts', 'changed', 'route', 'notice', 'statusLink']);
+    // No route checker in this ctx, so no row is judged: the report is what it was before one.
+    assert.deepEqual({ route: btc.route, notice: btc.notice, statusLink: btc.statusLink }, { route: 'unknown', notice: null, statusLink: null });
   } finally {
     b.restore();
   }
@@ -372,10 +376,11 @@ function captured(): { res: http.ServerResponse; body: () => Any } {
   return { res, body: () => JSON.parse(text) as Any };
 }
 
-function toolCtx(report: Any): { ctx: Ctx; shown: Any[]; audited: string[] } {
+function toolCtx(report: Any, extra: Partial<Ctx> = {}): { ctx: Ctx; shown: Any[]; audited: string[] } {
   const shown: Any[] = [];
   const audited: string[] = [];
   const ctx = {
+    ...extra,
     intentsReceive: async () => report,
     deposits: { show: (chain: string, symbol: string, address: string | null) => { shown.push({ chain, symbol, address }); return { phase: 'watching' }; } },
     audit: { append: (_type: string, line: string) => { audited.push(line); } },
@@ -433,4 +438,122 @@ test('the agent deposit tool takes a registry id or a plain name, answers in the
   assert.equal(unknown.body().ok, false);
   assert.match(String(unknown.body().reason), /chain must be one of eth, base, arb, sol, near, btc, .*plasma \(got ETH mainnet on binance\)/);
   assert.equal(unknown.body().accepted.find((row: Any) => row.chain === 'bnb').network, 'BNB Smart Chain (BEP-20)');
+});
+
+// ---------- the route gate: NEAR Intents not taking a network right now ----------
+
+const TON_ROW = { defuse_asset_identifier: 'ton:mainnet:native', origin_chain_address: 'native', asset_name: 'TON', decimals: 9, min_deposit_amount: '1', intents_token_id: 'nep245:v2_1.omni.hot.tg:1117_' };
+const TON_USDT_ROW = { defuse_asset_identifier: 'ton:mainnet:EQCx', origin_chain_address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs', asset_name: 'USDT', decimals: 6, min_deposit_amount: '1', intents_token_id: 'nep245:v2_1.omni.hot.tg:1117_3tsd' };
+
+/* A route checker that answers from a table, as the live one would on 2026-09-26: TON closed by
+   1Click, Base degraded by a status post, everything else open. `asked` records every question. */
+function routesFor(table: Record<string, RouteVerdict['state']>, byAsset: Record<string, RouteVerdict['state']> = {}): { routes: RouteHealth; asked: Any[] } {
+  const asked: Any[] = [];
+  const routes: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const state = (ask.asset !== undefined ? byAsset[ask.asset] : undefined) ?? table[ask.network] ?? 'open';
+      const reasons: RouteVerdict['reasons'] =
+        state === 'degraded'
+          ? [{ source: 'oneclick', state: 'open', text: '' }, { source: 'status', state: 'degraded', text: 'The NEAR Intents status page says: "Solver degradation".', link: STATUS_LINK }]
+          : [{ source: 'oneclick', state, text: '' }];
+      return { network: ask.network, direction: ask.direction, state, reasons, checkedAt: 0 };
+    },
+  };
+  return { routes, asked };
+}
+
+test('a network NEAR Intents has paused draws no address, says why in one sentence, and links the status page', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-route-'));
+  const { routes, asked } = routesFor({ ton: 'closed', base: 'degraded' });
+  const b = bridge({ tokens: [USDC_ROW, ETH_ROW, TON_ROW, TON_USDT_ROW] });
+  let report!: Awaited<ReturnType<typeof intentsReceiveReport>>;
+  try {
+    report = await intentsReceiveReport(ctxFor(account(), 'live', { routeHealth: routes, cfg: { mode: 'live', dataDir } } as Partial<Ctx>));
+  } finally {
+    b.restore();
+  }
+  // Every registry network was asked about deposits, beside the bridge.
+  assert.deepEqual(asked.map((a) => a.network).sort(), RECEIVE_NETWORKS.map((n) => n.id).sort());
+  assert.ok(asked.every((a) => a.direction === 'in' && a.asset === undefined));
+
+  const ton = net(report, 'ton');
+  assert.equal(ton.address, null);
+  assert.equal(ton.memo, null);
+  assert.equal(ton.route, 'closed');
+  assert.equal(ton.unavailable, 'NEAR Intents has paused TON deposits right now, so no address is shown. Money sent now may not arrive.');
+  assert.equal(ton.statusLink, STATUS_LINK);
+  // The token list still says what TON credits, so the row reads as paused and not as unknown.
+  assert.deepEqual(ton.accepts.map((t: Any) => t.symbol), ['GRAM', 'USDT']);
+
+  const base = net(report, 'base');
+  assert.equal(base.address, shapedAddress('eth:8453'));
+  assert.equal(base.route, 'degraded');
+  assert.equal(base.notice, 'NEAR Intents reports trouble that may slow Base deposits right now, so it may take longer than usual. The NEAR Intents status page says: "Solver degradation".');
+  assert.equal(base.unavailable, null);
+
+  const eth = net(report, 'eth');
+  assert.equal(eth.address, shapedAddress('eth:1'));
+  assert.deepEqual({ route: eth.route, notice: eth.notice, statusLink: eth.statusLink }, { route: 'open', notice: null, statusLink: null });
+
+  // A network the bridge's list credits nothing on is closed by the bridge's own voice.
+  const arb = net(report, 'arb');
+  assert.equal(arb.address, null);
+  assert.equal(arb.unavailable, 'The NEAR Intents bridge credits nothing on Arbitrum right now, so no address is shown.');
+
+  // The pin is untouched by a paused row: nothing was shown, so nothing is pinned for it.
+  const pins = JSON.parse(fs.readFileSync(path.join(dataDir, 'deposit-addresses.json'), 'utf8')) as Record<string, unknown>;
+  assert.ok(Object.keys(pins).some((k) => k.endsWith('|eth:1')));
+  assert.ok(!Object.keys(pins).some((k) => k.endsWith('|ton:mainnet')));
+});
+
+test('the deposit tool refuses a paused network with the sentence and the link, and opens no card and no watch', async () => {
+  const { routes } = routesFor({ ton: 'closed' });
+  const b = bridge({ tokens: [USDC_ROW, ETH_ROW, TON_ROW, TON_USDT_ROW] });
+  let report!: Awaited<ReturnType<typeof intentsReceiveReport>>;
+  try {
+    report = await intentsReceiveReport(ctxFor(account(), 'live', { routeHealth: routes }));
+  } finally {
+    b.restore();
+  }
+  const { ctx, shown, audited } = toolCtx(report, { routeHealth: routes });
+  const a = captured();
+  await walletReads.deposit(ctx, {}, { chain: 'ton', asset: 'USDT' }, a.res);
+  const out = a.body();
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'NEAR Intents has paused TON deposits right now, so no address is shown. Money sent now may not arrive.');
+  assert.equal(out.statusLink, STATUS_LINK);
+  assert.deepEqual(shown, []);
+  assert.deepEqual(audited, []);
+});
+
+test('the deposit tool asks about the exact asset: a closed asset on an open network is refused, a degraded one opens with the notice', async () => {
+  const usdc = 'nep141:base-0x8335.omft.near';
+  const closed = routesFor({}, { [usdc]: 'closed' });
+  const b = bridge({ tokens: [USDC_ROW, ETH_ROW] });
+  let report!: Awaited<ReturnType<typeof intentsReceiveReport>>;
+  try {
+    report = await intentsReceiveReport(ctxFor(account(), 'live', { routeHealth: routesFor({}).routes }));
+  } finally {
+    b.restore();
+  }
+  assert.equal(net(report, 'base').route, 'open');
+
+  const refused = toolCtx(report, { routeHealth: closed.routes });
+  const a = captured();
+  await walletReads.deposit(refused.ctx, {}, { chain: 'base', asset: 'USDC' }, a.res);
+  assert.equal(a.body().ok, false);
+  assert.match(String(a.body().reason), /^NEAR Intents has paused Base deposits right now/);
+  assert.deepEqual(refused.shown, []);
+  assert.deepEqual(closed.asked.at(-1), { network: 'base', direction: 'in', account: report.account, asset: usdc });
+
+  const slow = toolCtx(report, { routeHealth: routesFor({}, { [usdc]: 'degraded' }).routes });
+  const d = captured();
+  await walletReads.deposit(slow.ctx, {}, { chain: 'base', asset: 'USDC' }, d.res);
+  const out = d.body();
+  assert.equal(out.ok, true);
+  assert.match(out.notice, /^NEAR Intents reports trouble that may slow Base deposits/);
+  assert.equal(out.statusLink, STATUS_LINK);
+  assert.ok(String(out.relay).endsWith(out.notice), 'the relay line carries the notice');
+  assert.equal(slow.shown.length, 1);
 });
