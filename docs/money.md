@@ -38,6 +38,20 @@ Before the first address appears you confirm one line: only the tokens on the li
 here, and anything else sent to this address is lost. The same holds for the network: USDC sent on
 the wrong network is lost, and the bridge does not refund. Send a small test amount first.
 
+### When NEAR Intents pauses a network
+
+The bridge can still hand out an address for a network that NEAR Intents has stopped crediting.
+So before it shows an address, the app asks two things: whether the swap service will take that
+network's coin in right now (a price check that moves nothing), and what the NEAR Intents status
+page says. A network that is paused shows no address at all. Its tile and row say Paused, and the
+card says why in one sentence, for example "NEAR Intents has paused TON deposits right now, so no
+address is shown. Money sent now may not arrive.", with View status, which opens the status page
+in your browser. Your assistant's `deposit` tool gives the same answer and opens no card. A
+network with trouble reported but still working keeps its address, and the card prints a notice
+above it: the money may take longer than usual. The check runs only when an address is about to
+show, never in the background, and a paused network shows its address again within twenty
+seconds of NEAR Intents taking it back.
+
 The card then watches: Waiting for your deposit, then Arriving when the bridge sees your
 transfer, then Almost there, then "is in your balance" once your balance rises. It checks every
 few seconds for ten minutes, then more slowly, and stops after two hours. Closing the card does
@@ -172,6 +186,12 @@ now. Never send the same move again while it is working, taking longer or not co
 shaped this.
 
 ## Fees and refusals
+
+A payout to a chain, a Hyperliquid deposit and a Hyperliquid withdrawal are refused when NEAR
+Intents has paused that route, and the card says so in one sentence, for example "NEAR Intents is
+not taking payouts to TON right now, so nothing was signed and nothing moved." The app asks when
+the move is proposed and again just before it signs, because a card can wait for your click. A
+route with trouble reported goes ahead, and the card says it may take longer.
 
 The app refuses a move that loses too much of itself to fees, and names the fee when it does.
 
