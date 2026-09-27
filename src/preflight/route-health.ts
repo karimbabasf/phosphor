@@ -481,9 +481,11 @@ export type RouteHealthDeps = {
   tokens: () => Promise<OneClickToken[]>;
   fetchImpl?: typeof fetch;
   now?: () => number;
-  // How old the network's newest block is, in seconds, or null when unread. Absent until the
-  // multi-chain reader is wired.
-  chainHead?: (network: string) => Promise<{ ageSec: number } | null>;
+  /* How old the network's newest block is, keyed by registry id. The shape of chainscan's
+     chainHead (feat/chain-reader): null when the head could not be read, and ageSec null where
+     the chain gives a height and no block time (Aleo). Either null says nothing. Absent until the
+     multi-chain reader is wired, as (id) => scanNetworkOf(id) === null ? null : chainHead(it). */
+  chainHead?: (network: string) => Promise<{ ageSec: number | null } | null>;
   // Where a probe's change of answer is written, with the service's own words. Defaults to stderr.
   log?: (line: string) => void;
   // The per-request deadline, ROUTE_TIMEOUT_MS unless a test wants a timeout without the wait.

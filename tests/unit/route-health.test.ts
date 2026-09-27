@@ -382,6 +382,11 @@ test('the chain seam warns on a stale head and is ignored when it does not answe
   assert.equal(routeSentence(stale, 'payout'), 'The newest Ethereum block is 60 minutes old, so payouts to Ethereum may take longer than usual.');
   const silent = await checker({ fetchImpl, timeoutMs: 20, chainHead: () => new Promise(() => undefined) }).check({ network: 'eth', direction: 'in', account: ACCOUNT });
   assert.equal(silent.state, 'open');
+  // A head with a height and no block time (Aleo), and a head that could not be read, say nothing.
+  for (const head of [{ height: 5, time: null, ageSec: null }, null]) {
+    const quiet = await checker({ fetchImpl, chainHead: async () => head }).check({ network: 'aleo', direction: 'out', account: ACCOUNT });
+    assert.deepEqual(quiet.reasons.filter((r) => r.source === 'chain'), []);
+  }
 });
 
 test('the bridge closes a network it credits nothing on, but only when its list was read', () => {
