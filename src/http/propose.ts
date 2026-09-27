@@ -12,6 +12,7 @@ import { CLIENT_KEY_PATTERN, CLIENT_KEY_WINDOW_MS } from '../types.ts';
 import { fingerprint } from '../duplicates.ts';
 import { amountAsk } from '../intents.ts';
 import { spendNetworkOf } from '../rails/intents-address.ts';
+import { NO_MEMO, memoKeys } from '../rails/pay-rules.ts';
 import { asRecord, errText, fail, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CHAINS, PROPOSE_KINDS } from './context.ts';
@@ -422,6 +423,9 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       if (params.confirmed !== true) {
         problems.push('confirmed must be true, and only after the human confirmed the exact address and where it lands in this conversation');
       }
+      // A payout carries no memo (src/rails/pay-rules.ts), so a memo by any name is refused here
+      // rather than dropped: the MCP schema refuses it first, and this is the wall for a raw post.
+      if (memoKeys(params).length > 0) problems.push(NO_MEMO);
       if (params.note !== undefined && typeof params.note !== 'string') problems.push('note must be a string');
       const note = typeof params.note === 'string' && params.note.trim() !== '' ? params.note.trim() : undefined;
       if (note !== undefined && note.length > NOTE_MAX) problems.push(`note is ${note.length} characters, over the ${NOTE_MAX} this field takes`);
