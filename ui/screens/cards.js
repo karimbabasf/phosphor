@@ -907,23 +907,53 @@
      person compares start where the address does; a base58 key is fours from its start. */
   /* Any address a payout can name, in fours: EVM and Solana as ever, and the chains that came
      after them (a 103-character Cardano address, an XRP r..., a TON UQ..., a Sui 0x of 64 hex).
-     A prefix that is not the address, "0x" or "bitcoincash:", is a group of its own. Anything
+     A prefix that is not the address, "0x" or "bitcoincash:q", is a group of its own. Anything
      with a space in it, or too short to be an address, is drawn whole. */
-  function groupsOf(address) {
+  /* The characters every address of its kind starts with, by the chain it lands on: the same
+     table as src/vault/reason.ts FIXED_PREFIX, where the reason is written down. They say whose
+     chain it is and never whose account, so the groups a person checks start after them. */
+  var FIXED_PREFIX = {
+    tron: /^T/, xrp: /^r/, stellar: /^G/, ton: /^[UE]Q/,
+    btc: /^(bc1[a-z0-9]|[13])/, ltc: /^(ltc1[a-z0-9]|[LM3])/, doge: /^[DA]/, dash: /^[X7]/,
+    bch: /^bitcoincash:[a-z0-9]/, cardano: /^addr1[a-z0-9]/
+  };
+
+  function prefixOf(address, network) {
+    var s = String(address || '');
+    if (/^0x(?=[0-9a-fA-F]{40,}$)/.test(s)) return '0x';
+    var rule = Object.prototype.hasOwnProperty.call(FIXED_PREFIX, network) ? FIXED_PREFIX[network] : null;
+    var fixed = rule ? rule.exec(s) : null;
+    if (fixed) return fixed[0];
+    return (/^[a-z]+:(?=[a-z0-9]{20,}$)/.exec(s) || [''])[0];
+  }
+
+  /* How many characters after the prefix identify the account at each end, the ones the Touch ID
+     dialog names: sixteen at the front on Cardano, whose last characters can be ground to order
+     (src/vault/reason.ts CARDANO_HEAD), eight everywhere else. */
+  function headChars(network) {
+    return network === 'cardano' ? 16 : 8;
+  }
+  var TAIL_CHARS = 8;
+
+  /* The receiver as the Touch ID dialog names it, the same function as src/vault/reason.ts
+     ends(), so the card's head and the dialog read the same characters. */
+  function shownEnds(address, network) {
+    var s = String(address || '');
+    var prefix = prefixOf(s, network);
+    var head = headChars(network);
+    var body = s.slice(prefix.length);
+    return body.length <= head + TAIL_CHARS + 4 ? s : prefix + body.slice(0, head) + '...' + body.slice(-TAIL_CHARS);
+  }
+
+  function groupsOf(address, prefix) {
     var s = String(address || '');
     if (s === '') return [];
     if (s.length < 25) return [s];
-    var prefix = /^0x(?=[0-9a-fA-F]{40,}$)/.test(s) ? '0x' : (/^[a-z]+:(?=[a-z0-9]{20,}$)/.exec(s) || [''])[0];
     var body = s.slice(prefix.length);
     if (!/^[A-Za-z0-9_+\/=-]+$/.test(body)) return [s];
     var out = prefix ? [prefix] : [];
     for (var i = 0; i < body.length; i += 4) out.push(body.slice(i, i + 4));
     return out;
-  }
-
-  // Whether the first group is a prefix rather than part of the address.
-  function prefixed(groups) {
-    return groups.length > 1 && /^0x$|:$/.test(groups[0]);
   }
 
   /* A NEAR account or a similar name reads as itself: alice.near is its own check. */
@@ -937,22 +967,28 @@
      to it: a first send to an address is the one a person should look at twice. A named account
      is already whole in the card's head, so it is not printed a second time. */
   /* An address's groups in the tones Add money prints them in (ui/design/deposit.css): the
-     "0x" quiet, the first and the last group, the ones a person checks, in the text colour, and
-     the rest a step quieter. */
-  function groupTone(i, first, count) {
+     prefix quiet, the groups that hold the characters the Touch ID dialog names (the head and the
+     last eight after the prefix, shownEnds) in the text colour, and the rest a step quieter. On
+     Cardano that is four groups at the front, all from the payment key hash. */
+  function groupTone(i, first, count, headGroups, tailFrom) {
     if (i < first) return 'addr-prefix';
-    return count - first > 2 && i !== first && i !== count - 1 ? 'addr-mid' : 'addr-end';
+    if (count - first <= headGroups + 1) return 'addr-end';
+    return i < first + headGroups || i >= tailFrom ? 'addr-end' : 'addr-mid';
   }
 
-  function addressBlock(address, explorer, recipient, place, notes) {
+  function addressBlock(address, explorer, recipient, place, notes, network) {
     var wrap = dom.el('div', 'mcard-address');
     if (!isNamedAccount(address)) {
       var row = dom.el('div', 'mcard-address-row');
       var line = dom.el('p', 'mcard-address-line id');
-      var groups = groupsOf(address);
-      var first = prefixed(groups) ? 1 : 0;
+      var prefix = prefixOf(address, network);
+      var groups = groupsOf(address, prefix);
+      var first = groups.length > 1 && prefix ? 1 : 0;
+      var bodyLength = String(address).length - (first ? prefix.length : 0);
+      var headGroups = Math.ceil(headChars(network) / 4);
+      var tailFrom = first + Math.floor(Math.max(0, bodyLength - TAIL_CHARS) / 4);
       for (var i = 0; i < groups.length; i += 1) {
-        line.appendChild(dom.el('span', 'tcard-leg-group ' + groupTone(i, first, groups.length), groups[i]));
+        line.appendChild(dom.el('span', 'tcard-leg-group ' + groupTone(i, first, groups.length, headGroups, tailFrom), groups[i]));
       }
       dom.setAttr(line, 'data-address', address);
       row.appendChild(line);
@@ -1380,12 +1416,21 @@
     return Object.prototype.hasOwnProperty.call(CHAIN_WORDS, place.toLowerCase()) ? CHAIN_WORDS[place.toLowerCase()] : place;
   }
 
+  // A payout's network by id ("cardano"): the prefix its addresses share, and how many
+  // characters at each end identify one.
+  function payoutNetwork(move, legs) {
+    if (move.kind !== 'intents_pay') return '';
+    var to = legs.to || move.to || {};
+    return String(to.place || '').toLowerCase();
+  }
+
   function destinationWord(move, legs) {
     var kind = move.kind;
     var to = legs.to || move.to || {};
     if (kind === 'intents_send' || kind === 'intents_pay') {
       var address = String(to.address || '');
-      var short = address.length > 24 ? shortId(address) : address;
+      /* The receiver as the Touch ID dialog will name it: the same ends, after the same prefix. */
+      var short = address.length > 24 ? shownEnds(address, payoutNetwork(move, legs)) : address;
       var where = payoutPlace(move, legs);
       return where ? short + ' on ' + where : short;
     }
@@ -1687,7 +1732,7 @@
       if (memo.receiver !== receiverKey) {
         memo.receiver = receiverKey;
         dom.clear(address);
-        if (receiver) address.appendChild(addressBlock(receiver, legs.to.explorer, move.recipient, payoutPlace(move, legs), move.notes));
+        if (receiver) address.appendChild(addressBlock(receiver, legs.to.explorer, move.recipient, payoutPlace(move, legs), move.notes, payoutNetwork(move, legs)));
       }
       dom.setHidden(address, !receiver);
 
