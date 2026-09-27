@@ -12,7 +12,7 @@ import { credentialCheck, redactEvent, redactedTail } from '../log-tail.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
-import { RECEIVE_NETWORKS, receiveNetworkOf } from '../../rails/intents-address.ts';
+import { RECEIVE_NETWORKS, currentSymbol, receiveNetworkOf } from '../../rails/intents-address.ts';
 import { baseUnitsToDecimal, oneLine, plainDecimal } from '../../intents.ts';
 import type { IntentsRead } from '../../ledger/intents.ts';
 import type { WalletRow } from '../../types.ts';
@@ -40,7 +40,7 @@ const CHAIN_ALIASES: Record<string, string> = {
   dogecoin: 'doge',
   zcash: 'zec',
   ripple: 'xrp', xrpl: 'xrp', 'xrp ledger': 'xrp',
-  'the open network': 'ton', toncoin: 'ton',
+  'the open network': 'ton', toncoin: 'ton', gram: 'ton',
   trx: 'tron', trc20: 'tron',
   apt: 'aptos',
   ada: 'cardano',
@@ -235,7 +235,8 @@ export const walletReads: ReadTable = {
     if (network === undefined || network.address === null) {
       return sendJson(res, 200, { ok: false, reason: network?.unavailable ?? `no deposit address for ${chain} right now`, accepted });
     }
-    const token = network.accepts.find((a) => a.symbol.toUpperCase() === symbol);
+    const want = currentSymbol(chain, symbol);
+    const token = network.accepts.find((a) => a.symbol.toUpperCase() === want);
     if (token === undefined) {
       return sendJson(res, 200, {
         ok: false,
@@ -243,7 +244,9 @@ export const walletReads: ReadTable = {
         accepted,
       });
     }
-    const deposit = ctx.deposits.show(chain, token.symbol, network.address);
+    // The token as the bridge lists it, as Add money passes it (vault.ts), so the watch matches the
+    // bridge's rows by contract and not by a symbol the bridge may spell another way.
+    const deposit = ctx.deposits.show(chain, token.symbol, network.address, { assetId: token.assetId, decimals: token.decimals, contract: token.contract });
     ctx.audit.append('app_start', `the deposit card was opened for ${token.symbol} on ${chain}`, { chain, symbol: token.symbol, by: 'agent' });
     // A memo is half the destination on the chains that route by one: said in the relay line
     // so it cannot be left out of what the person is told.

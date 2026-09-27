@@ -465,6 +465,12 @@
   display: none;
 }
 
+/* The picker is its own size container, so it has no width of its own to shrink to: it takes
+   the column's full width, or every line of it folds to one letter. */
+.tcard-deposit > .netpick {
+  align-self: stretch;
+}
+
 /* The address row is the move card's (chatcard.css .mcard-address-row), so every address in
    the thread reads the same: Add money's groups at the row's size, in the mono face. */
 .tcard-deposit > .mcard-address-row {
