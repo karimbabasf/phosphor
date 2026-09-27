@@ -117,7 +117,10 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    exist yet paid less than the reserve that creates it (on Stellar, one that does not exist at all:
    a payment cannot create it), a Stellar token with no trustline, TRX
    to a Tron contract or to an address Tron would not describe, and our own bridge deposit
-   address on Stellar, which the bridge shares and tells apart by memo. A ledger that will not
+   address on Stellar, which the bridge shares and tells apart by memo. A payout to our own
+   deposit address anywhere else is a deposit and is refused where a deposit would not be
+   credited: under the bridge's minimum for the token, for a token it does not list there, while
+   the deposit route into the chain is paused, and on XRP while that address does not exist. A ledger that will not
    answer one of those questions is a refusal. A TON address is sent non-bounceable.
 3. **The click, always.** `land()` in `src/proposals/execute.ts` turns any `allow` on
    `intents_send`, `intents_pay` or `hl_withdraw` into `needs_approval`, whatever the size. The

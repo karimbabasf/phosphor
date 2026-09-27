@@ -124,7 +124,10 @@ it signs, and refuses the payout when the chain would lose it:
 
 A chain that does not answer one of those questions is a refusal too, never a guess. Paying your
 own deposit address on any other chain is allowed: the money comes back into your balance, less
-the fees both ways, and the card says so.
+the fees both ways, and the card says so. That payout is a deposit, so it obeys what a deposit
+obeys: it is refused under the bridge's minimum deposit for the token (2 XRP on the XRP Ledger),
+for a token the bridge does not take on that chain, while NEAR Intents has paused deposits on that
+chain, and on the XRP Ledger while your deposit address does not exist on the ledger yet.
 
 ### The click
 
