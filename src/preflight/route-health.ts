@@ -63,8 +63,22 @@ export const SERVICES_TTL_MS = 60 * 60_000;
 export const MAX_KEYS = 256;
 // The probe's size in dollars: above every bridge floor on the list, small enough to mean nothing.
 export const PROBE_USD = 20;
-// A chain whose newest block is older than this is slow enough to warn about.
+// A chain whose newest block is older than this is slow enough to warn about, unless it has a bar of its own.
 export const CHAIN_STALE_SEC = 15 * 60;
+/* Proof-of-work chains go quiet for longer by nature: Bitcoin leaves a gap over fifteen minutes
+   several times a day. Their own bar, so a normal gap never reads as trouble. */
+const CHAIN_STALE_SEC_BY_NETWORK: Record<string, number> = {
+  btc: 90 * 60,
+  bch: 90 * 60,
+  ltc: 30 * 60,
+  dash: 30 * 60,
+  doge: 20 * 60,
+  zec: 20 * 60,
+};
+
+export function staleAfterSec(network: string): number {
+  return CHAIN_STALE_SEC_BY_NETWORK[network] ?? CHAIN_STALE_SEC;
+}
 const TITLE_MAX = 120;
 
 // ---------- combining ----------
@@ -738,7 +752,7 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
       const head = await within(deps.chainHead(network), timeoutMs);
       if (head === null || typeof head.ageSec !== 'number' || !Number.isFinite(head.ageSec)) return null;
       const name = networkName(network);
-      if (head.ageSec <= CHAIN_STALE_SEC) return { source: 'chain', state: 'open', text: `${name} made a block ${Math.round(head.ageSec)} seconds ago` };
+      if (head.ageSec <= staleAfterSec(network)) return { source: 'chain', state: 'open', text: `${name} made a block ${Math.round(head.ageSec)} seconds ago` };
       return { source: 'chain', state: 'degraded', text: `the newest ${name} block is ${Math.round(head.ageSec / 60)} minutes old` };
     } catch {
       return null;
