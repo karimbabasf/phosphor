@@ -217,13 +217,16 @@ function stellarRules(f: PayFacts, problems: string[], notes: PayNote[]): void {
     return;
   }
   if (f.native) return;
-  if (f.issuer === null) {
+  // The issuer is 1Click's word for the token, so it is used, and printed, only when it is shaped
+  // like the Stellar account an issuer is.
+  const issuer = f.issuer !== null && /^G[A-Z2-7]{55}$/.test(f.issuer) ? f.issuer : null;
+  if (issuer === null) {
     problems.push(`the issuer of ${f.symbol} on Stellar is not known to the app, so the receiver's trustline for it cannot be checked`);
     return;
   }
-  const line = t.trustlines.find((l) => l.code.toUpperCase() === f.symbol.toUpperCase() && l.issuer === f.issuer);
+  const line = t.trustlines.find((l) => l.code.toUpperCase() === f.symbol.toUpperCase() && l.issuer === issuer);
   if (line === undefined) {
-    problems.push(`${f.to} has no trustline for ${f.symbol} from its issuer ${f.issuer}, so it cannot hold ${f.symbol} and the payment would fail; the receiver adds ${f.symbol} in their wallet first`);
+    problems.push(`${f.to} has no trustline for ${f.symbol} from its issuer ${issuer}, so it cannot hold ${f.symbol} and the payment would fail; the receiver adds ${f.symbol} in their wallet first`);
     return;
   }
   if (!line.authorized) {

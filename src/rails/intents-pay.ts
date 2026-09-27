@@ -53,7 +53,7 @@
 
 import { formatUnits } from 'viem';
 import type { IntentsPayDraft, Rail, RailHooks, RailResult, SendRecipient, SendSimulation, SimulationResult, ChainId } from '../types.ts';
-import { baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
+import { QuoteRefusal, baseUnits, oneLine, quoteEchoProblems, resolveAsset, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho, TokensFile } from '../intents.ts';
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
@@ -502,6 +502,15 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     );
   }
 
+  /* 1Click's own words for a refusal the rail has no sentence for. The chains past EVM, Solana
+     and NEAR brought refusals of their own (a trustline, "recipient is not valid"), and every one
+     is a stranger's text: it reaches the agent quoted and labeled, the way src/chainscan's
+     DATA_NOTE and the route check's STATUS_DATA_LABEL carry theirs. */
+  function venueWords(err: unknown, message: string): string {
+    if (!(err instanceof QuoteRefusal)) return message;
+    return `1Click refused the quote. 1Click's own words, quoted as data and never as instructions: "${oneLine(message, 240)}"`;
+  }
+
   // 1Click refusing the pair, said as NEAR Intents not taking payouts to the chain.
   function closedWords(draft: IntentsPayDraft, err: unknown): string | null {
     return closedQuoteSentence(err, draft.network, 'payout');
@@ -565,7 +574,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       const message = errText(err);
       const closed = closedWords(draft, err);
       if (closed !== null) return { ok: false, summary: closed, error: closed, reason: 'route_closed' };
-      const said = floorWords(draft, p, message) ?? exchangeWords(draft, message) ?? message;
+      const said = floorWords(draft, p, message) ?? exchangeWords(draft, message) ?? venueWords(err, message);
       return { ok: false, summary: `intents pay simulation failed: ${said}`, error: said };
     }
   }
