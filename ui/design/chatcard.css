@@ -330,7 +330,8 @@
   color: var(--text-2);
 }
 
-.mcard-address-note[data-first="true"] {
+.mcard-address-note[data-first="true"],
+.mcard-address-note[data-warn="true"] {
   color: var(--warn);
 }
 

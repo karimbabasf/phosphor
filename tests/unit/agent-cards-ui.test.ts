@@ -1144,6 +1144,47 @@ test('a send names its receiver whole on the face while the person decides', () 
   assert.ok(lines.some((t) => t.includes('never been used on Ethereum')), lines.join(' | '));
 });
 
+/* A Cardano base address is 103 characters (2026-09-26, the longest a payout can name): it is
+   drawn whole in groups of four that wrap as a set, never cut and never one unbroken run. */
+test('a payout to a 103-character Cardano address shows every character, in groups of four', () => {
+  const world = build();
+  const to = 'addr1q9a857n60fa857n60fa857n60fa857n60fa857n60fa8573u8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7rc0pu8s7qz6qg6x';
+  const draft = { kind: 'intents_pay', symbol: 'ADA', originAsset: 'nep141:cardano.omft.near', network: 'cardano', amount: 40, amountUsd: 10.2, minReceived: 38.8, from: '0x1', to, toChecksum: 'valid', counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, ownAddress: false } };
+  const filed = withView({ id: 'c1', kind: 'intents_pay', status: 'pending', createdAt: '2026-09-26T10:00:00Z', draft, verdict: { outcome: 'needs_approval', reasons: [] },
+    simulation: { ok: true, summary: 'pay', send: { arrives: '39.8', arrivesAtLeast: '39.6', feeUsd: 0.05, etaSeconds: 60, explorer: 'https://cardanoscan.io/address/' + to, activity: 'This address holds no ADA on Cardano right now. Check it twice.' } } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_send', input: { amount: 40, symbol: 'ADA', to, where: 'cardano', confirmed: true }, data: { id: 'c1', status: 'pending', verdict: filed.verdict, simulation: filed.simulation, view: filed.view } });
+  world.proposals([filed]);
+  const card = world.cardNodes('move')[0];
+  const address = all(card, 'mcard-address-line')[0];
+  assert.ok(address, 'no address on the face');
+  const groups = all(address, 'tcard-leg-group').map((g: Any) => g.textContent);
+  assert.equal(groups.join(''), to, 'the address is not whole');
+  assert.equal(groups.length, 26);
+  assert.ok(groups.every((g: string) => g.length <= 4), groups.join(' '));
+  assert.deepEqual(all(address, 'addr-end').map((g: Any) => g.textContent), ['addr', to.slice(100)]);
+});
+
+/* On a chain where exchanges tell deposits apart by a memo, the card says on its face, in the
+   warning tone, that no memo can go with the payout; the same sentence the agent reads. */
+test('a payout on the XRP Ledger says on the face that no memo or tag can go with it', () => {
+  const world = build();
+  const to = 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh';
+  const caution = 'XRP Ledger: exchanges often need a memo or tag here; Phosphor cannot attach one, so do not send to an exchange deposit address.';
+  const draft = { kind: 'intents_pay', symbol: 'XRP', originAsset: 'nep141:xrp.omft.near', network: 'xrp', amount: 10, amountUsd: 15.2, minReceived: 9.7, from: '0x1', to, toChecksum: 'valid', counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, ownAddress: false } };
+  const filed = withView({ id: 'x1', kind: 'intents_pay', status: 'pending', createdAt: '2026-09-26T10:00:00Z', draft, verdict: { outcome: 'needs_approval', reasons: [] },
+    simulation: { ok: true, summary: 'pay', send: { arrives: '9.9', arrivesAtLeast: '9.8', feeUsd: 0.1, etaSeconds: 20, explorer: null, activity: 'This address holds 12 XRP on XRP Ledger.', notes: [{ tone: 'warn', text: caution }] } } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_send', input: { amount: 10, symbol: 'XRP', to, where: 'xrp', confirmed: true }, data: { id: 'x1', status: 'pending', verdict: filed.verdict, simulation: filed.simulation, view: filed.view } });
+  world.proposals([filed]);
+  const card = world.cardNodes('move')[0];
+  assert.ok(faceOf(card).includes(caution), faceOf(card));
+  const said = all(card, 'mcard-address-note').find((n: Any) => n.textContent === caution);
+  assert.ok(said, 'the caution is not an address note');
+  assert.equal(said.getAttribute('data-warn'), 'true', 'the caution is not in the warning tone');
+  const groups = all(all(card, 'mcard-address-line')[0], 'tcard-leg-group').map((g: Any) => g.textContent);
+  assert.equal(groups.join(''), to);
+  assert.ok(groups.length > 1, 'an XRP address is drawn as one unbroken run');
+});
+
 /* A named account is its own check: alice.near is whole in the card's head, so the face does not
    print it a second time as a block of groups; the first-send line stays. */
 test('a send to a named account is not printed twice, and still says it is the first send', () => {

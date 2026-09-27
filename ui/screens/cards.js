@@ -817,6 +817,7 @@
       if (sendSim && num(sendSim.feeUsd) !== null) move.feeUsd = num(sendSim.feeUsd);
       move.recipient = isObject(d.recipient) ? d.recipient : (isObject(send.recipient) ? send.recipient : null);
       move.activity = sendSim && sendSim.activity ? String(sendSim.activity) : '';
+      move.notes = sendSim && Array.isArray(sendSim.notes) ? sendSim.notes : [];
       move.preflight = Array.isArray(data.preflight) && data.preflight.length ? data.preflight[data.preflight.length - 1] : null;
     } else if (kind === 'hl_deposit' || kind === 'hl_withdraw') {
       /* The leg says what the quote expects ("about"), the facts hold the floor the rail
@@ -904,14 +905,25 @@
      by group. A named NEAR account stays whole: splitting alice.near helps nobody. */
   /* A hex address is "0x" and then its forty characters in tens of four, so the groups a
      person compares start where the address does; a base58 key is fours from its start. */
+  /* Any address a payout can name, in fours: EVM and Solana as ever, and the chains that came
+     after them (a 103-character Cardano address, an XRP r..., a TON UQ..., a Sui 0x of 64 hex).
+     A prefix that is not the address, "0x" or "bitcoincash:", is a group of its own. Anything
+     with a space in it, or too short to be an address, is drawn whole. */
   function groupsOf(address) {
     var s = String(address || '');
     if (s === '') return [];
-    var hex = /^0x[0-9a-fA-F]{40}$/.test(s);
-    if (!hex && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s)) return [s];
-    var out = hex ? ['0x'] : [];
-    for (var i = hex ? 2 : 0; i < s.length; i += 4) out.push(s.slice(i, i + 4));
+    if (s.length < 25) return [s];
+    var prefix = /^0x(?=[0-9a-fA-F]{40,}$)/.test(s) ? '0x' : (/^[a-z]+:(?=[a-z0-9]{20,}$)/.exec(s) || [''])[0];
+    var body = s.slice(prefix.length);
+    if (!/^[A-Za-z0-9_+\/=-]+$/.test(body)) return [s];
+    var out = prefix ? [prefix] : [];
+    for (var i = 0; i < body.length; i += 4) out.push(body.slice(i, i + 4));
     return out;
+  }
+
+  // Whether the first group is a prefix rather than part of the address.
+  function prefixed(groups) {
+    return groups.length > 1 && /^0x$|:$/.test(groups[0]);
   }
 
   /* A NEAR account or a similar name reads as itself: alice.near is its own check. */
@@ -932,13 +944,13 @@
     return count - first > 2 && i !== first && i !== count - 1 ? 'addr-mid' : 'addr-end';
   }
 
-  function addressBlock(address, explorer, recipient, place) {
+  function addressBlock(address, explorer, recipient, place, notes) {
     var wrap = dom.el('div', 'mcard-address');
     if (!isNamedAccount(address)) {
       var row = dom.el('div', 'mcard-address-row');
       var line = dom.el('p', 'mcard-address-line id');
       var groups = groupsOf(address);
-      var first = groups[0] === '0x' ? 1 : 0;
+      var first = prefixed(groups) ? 1 : 0;
       for (var i = 0; i < groups.length; i += 1) {
         line.appendChild(dom.el('span', 'tcard-leg-group ' + groupTone(i, first, groups.length), groups[i]));
       }
@@ -966,6 +978,16 @@
       : 'First send to this address.'));
     dom.setAttr(note, 'data-first', known ? null : 'true');
     wrap.appendChild(note);
+    /* What the chain adds beside the address (src/rails/pay-rules.ts): that no memo can go with
+       the payout, that the payment creates the account, that it is our own deposit address, that
+       a TON address was sent non-bounceable. A warning is in the warning tone. */
+    var said = Array.isArray(notes) ? notes : [];
+    for (var n = 0; n < said.length; n += 1) {
+      if (!isObject(said[n]) || typeof said[n].text !== 'string' || !said[n].text) continue;
+      var extra = dom.el('p', 'mcard-address-note', said[n].text);
+      dom.setAttr(extra, 'data-warn', said[n].tone === 'warn' ? 'true' : null);
+      wrap.appendChild(extra);
+    }
     return wrap;
   }
 
@@ -1661,10 +1683,11 @@
 
       /* A send names its receiver on the face, whole, while the person decides. */
       var receiver = state === 'needs_you' && legs.to && legs.to.address ? String(legs.to.address) : '';
-      if (memo.receiver !== receiver) {
-        memo.receiver = receiver;
+      var receiverKey = receiver + (Array.isArray(move.notes) ? JSON.stringify(move.notes) : '');
+      if (memo.receiver !== receiverKey) {
+        memo.receiver = receiverKey;
         dom.clear(address);
-        if (receiver) address.appendChild(addressBlock(receiver, legs.to.explorer, move.recipient, payoutPlace(move, legs)));
+        if (receiver) address.appendChild(addressBlock(receiver, legs.to.explorer, move.recipient, payoutPlace(move, legs), move.notes));
       }
       dom.setHidden(address, !receiver);
 

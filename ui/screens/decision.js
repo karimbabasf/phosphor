@@ -513,7 +513,7 @@
     var line = dom.el('p', 'addr sendcard-address');
     dom.setAttr(line, 'data-address', address);
     var groups = addressGroups(String(address));
-    var first = groups[0] === '0x' ? 1 : 0;
+    var first = groups.length > 1 && /^0x$|:$/.test(groups[0]) ? 1 : 0;
     for (var i = 0; i < groups.length; i += 1) {
       var end = groups.length > 1 && (i === first || i === groups.length - 1);
       var tone = i < first ? ' addr-prefix' : (end ? ' addr-end' : ' addr-mid');
