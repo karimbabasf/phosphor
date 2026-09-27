@@ -62,6 +62,7 @@ const FIXED_PREFIX: Readonly<Record<string, RegExp>> = {
   evm: /^0x/,
   move: /^0x/,
   starknet: /^0x/,
+  near: /^0x(?=[0-9a-f]{40}$)/, // an eth-implicit id; a name is said whole (nearName)
   tron: /^T/,
   xrp: /^r/,
   stellar: /^G/,
