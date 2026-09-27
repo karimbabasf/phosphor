@@ -135,6 +135,8 @@ type Options = {
   floor?: { listed: false } | { listed: true; min: string; decimals: number } | null; // the bridge's minimum deposit for the token
   closedIn?: string[]; // networks whose deposits NEAR Intents has paused, one answer per ask in turn ('' for open)
   bridge?: typeof fetch; // answers the bridge's deposit_address itself, in place of `own`
+  liveFloor?: boolean; // the minimum read from the bridge's own list through `bridge`, in place of `floor`
+  clock?: () => number;
 };
 
 function railOf(coin: Coin, amount: number, opt: Options = {}) {
@@ -201,7 +203,7 @@ function railOf(coin: Coin, amount: number, opt: Options = {}) {
     tokens: registry,
     api,
     signer,
-    now: () => Date.parse('2026-09-26T03:00:00.000Z'),
+    now: opt.clock ?? (() => Date.parse('2026-09-26T03:00:00.000Z')),
     sleepImpl: async () => {},
     pollIntervalMs: 1,
     pollTimeoutMs: 10,
@@ -221,7 +223,7 @@ function railOf(coin: Coin, amount: number, opt: Options = {}) {
             return (opt.own.length > 1 ? opt.own.shift() : opt.own[0]) ?? null;
           },
         }),
-    depositFloor: async () => (opt.floor === undefined ? null : opt.floor),
+    ...(opt.liveFloor === true ? {} : { depositFloor: async () => (opt.floor === undefined ? null : opt.floor) }),
     ...(opt.closedIn === undefined ? {} : { routes: { check: routeAsked } }),
   } as Parameters<typeof intentsPayRail>[0]);
   return { rail, quotes, targetCalls, ownCalls, generated, routeAsks };
@@ -457,6 +459,68 @@ test('the bridge minimum is read for the payout chain, since one intents token i
   assert.deepEqual(depositFloorOf(rows, 'xrp', { assetId: 'nep141:xrp.omft.near', native: true, contract: null }), { listed: true, min: '2000000', decimals: 6 });
   assert.deepEqual(depositFloorOf(rows, 'aptos', { assetId: 'nep141:xrp.omft.near', native: false, contract: null }), { listed: true, min: '1', decimals: 6 });
   assert.deepEqual(depositFloorOf(rows, 'starknet', { assetId: 'nep141:xrp.omft.near', native: false, contract: null }), { listed: false });
+});
+
+/* 1Click can name a token by an id the bridge's row does not carry (a HOT omni id for a token the
+   bridge lists by its own nep141): the row is then found by the token's contract, in any case, or
+   as the chain's coin, the row with no contract. Nothing matching is a token the bridge does not
+   take there, never a guessed row. */
+test('the bridge row is matched by its contract, or as the chain\'s coin, when 1Click names the token by another id', () => {
+  const rows = parsePoaTokens([
+    { defuse_asset_identifier: 'tron:mainnet:native', asset_name: 'TRX', decimals: 6, min_deposit_amount: '1000000', intents_token_id: 'nep141:tron.omft.near' },
+    { defuse_asset_identifier: `tron:mainnet:${USDT_TRON_CONTRACT}`, asset_name: 'USDT', decimals: 6, min_deposit_amount: '5000000', intents_token_id: 'nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near' },
+    { defuse_asset_identifier: 'stellar:mainnet:USDC-GA5Z', asset_name: 'USDC', decimals: 7, min_deposit_amount: 'about ten', intents_token_id: 'nep245:v2_1.omni.hot.tg:1100_usdc' },
+  ]);
+  const other = 'nep245:v2_1.omni.hot.tg:728126428_other';
+  assert.deepEqual(depositFloorOf(rows, 'tron', { assetId: other, native: false, contract: USDT_TRON_CONTRACT.toUpperCase() }), { listed: true, min: '5000000', decimals: 6 });
+  assert.deepEqual(depositFloorOf(rows, 'tron', { assetId: other, native: true, contract: null }), { listed: true, min: '1000000', decimals: 6 });
+  // A token with no contract that is not the coin, a contract no row carries, the coin on a chain
+  // whose rows all carry one, and a row whose minimum is not a whole number: none is listed.
+  assert.deepEqual(depositFloorOf(rows, 'tron', { assetId: other, native: false, contract: null }), { listed: false });
+  assert.deepEqual(depositFloorOf(rows, 'tron', { assetId: other, native: false, contract: 'TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj' }), { listed: false });
+  assert.deepEqual(depositFloorOf(rows, 'stellar', { assetId: other, native: true, contract: null }), { listed: false });
+  assert.deepEqual(depositFloorOf(rows, 'stellar', { assetId: 'nep245:v2_1.omni.hot.tg:1100_usdc', native: false, contract: null }), { listed: false });
+});
+
+/* The rail's own read of the bridge's minimums, not one a test hands in: the list is parsed for
+   the payout's chain, kept five minutes, and a list that does not come (a bridge that throws, or
+   answers with no rows, since it lists dozens) is no minimum at all, which on a payout to our own
+   deposit address is a refusal. */
+test('the bridge minimum is read from its live list: parsed for the chain, kept five minutes, and refused on when the list does not come', async () => {
+  let clock = Date.parse('2026-09-26T03:00:00.000Z');
+  let list: unknown[] | Error = [
+    { defuse_asset_identifier: 'doge:mainnet:native', asset_name: 'DOGE', decimals: 8, min_deposit_amount: '30000000000', intents_token_id: 'nep141:doge.omft.near' },
+    { defuse_asset_identifier: 'aptos:mainnet:0x1::doge::DOGE', asset_name: 'DOGE', decimals: 8, min_deposit_amount: '1', intents_token_id: 'nep141:doge.omft.near' },
+  ];
+  const asked: string[] = [];
+  const answer = (body: unknown): Response => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  const bridge = (async (_url: unknown, init?: RequestInit) => {
+    const method = String(JSON.parse(String(init?.body)).method);
+    asked.push(method);
+    if (method === 'deposit_address') return answer({ result: { address: OWN.doge, chain: 'doge:mainnet' } });
+    if (list instanceof Error) throw list;
+    return answer({ result: { tokens: list } });
+  }) as typeof fetch;
+  const r = railOf(COINS.DOGE, 200, { bridge, liveFloor: true, clock: () => clock });
+  const draft = draftOf(COINS.DOGE, OWN.doge, 200);
+  // 300 DOGE on Dogecoin, not the 1 base unit the same token has on Aptos.
+  assert.match(await refused(r, draft), /credits a DOGE deposit on Dogecoin only from 300 DOGE; this payout delivers as little as 194 DOGE/);
+  assert.equal(asked.filter((m) => m === 'supported_tokens').length, 1);
+  // Kept five minutes: the list the bridge now sends is not read, then it is.
+  list = [{ defuse_asset_identifier: 'doge:mainnet:native', asset_name: 'DOGE', decimals: 8, min_deposit_amount: '100000000', intents_token_id: 'nep141:doge.omft.near' }];
+  clock += 4 * 60_000;
+  assert.match(await refused(r, draft), /only from 300 DOGE/);
+  assert.equal(asked.filter((m) => m === 'supported_tokens').length, 1);
+  clock += 2 * 60_000;
+  assert.equal((await r.rail.simulate(draft)).ok, true, 'the list read after five minutes, 1 DOGE, was not used');
+  assert.equal(asked.filter((m) => m === 'supported_tokens').length, 2);
+  // A bridge that throws, or answers with no rows, is no minimum: refused, and read again next time.
+  for (const failed of [new Error('socket hang up'), []]) {
+    list = failed;
+    clock += 6 * 60_000;
+    assert.match(await refused(r, draft), /bridge did not say the least DOGE deposit it credits on Dogecoin/);
+  }
+  assert.equal(asked.filter((m) => m === 'supported_tokens').length, 4);
 });
 
 // ---------- TON ----------

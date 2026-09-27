@@ -738,3 +738,27 @@ test('our own deposit address is asked on every chain a payout lands on, and on 
   ]);
   assert.deepEqual(depositFloorOf(rows, 'abs', { assetId: 'nep141:eth.omft.near', native: true, contract: null }), { listed: false });
 });
+
+/* The deposit route is asked a last time right before the key signs, as the payout route is: it
+   can pause in the seconds the live quote and the generated intent take (fix-verify, 2026-09-27:
+   no test had it be the check that refuses). Here it is open at the click and paused by the time
+   the intent is back, and the signer is never reached. */
+test('a payout to our own deposit address is refused right before the signature when deposits into the chain pause after the click', async () => {
+  const asked: RouteAsk[] = [];
+  const routes: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const ins = asked.filter((a) => a.direction === 'in').length;
+      const state: RouteState = ask.direction === 'in' && ins >= 2 ? 'closed' : 'open';
+      return { network: ask.network, direction: ask.direction, state, reasons: state === 'closed' ? [{ source: 'status', state, text: 'Ethereum deposits paused', said: 'Ethereum deposits paused' }] : [], checkedAt: NOW };
+    },
+  };
+  const { rail, calls } = railOf({ own: { address: FRIEND.toLowerCase(), memo: null }, floor: { listed: true, min: '1000000000000', decimals: 18 }, routes, signerThrows: 'the key was asked to sign' });
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'route_closed', result.detail);
+  assert.match(result.detail, /your own NEAR Intents deposit address on Ethereum/);
+  assert.equal(calls.generated.length, 1, 'the refusal came before the intent was generated, not right before the signature');
+  assert.equal(calls.submitted.length, 0);
+  assert.deepEqual(asked.map((a) => `${a.direction}:${a.maxAgeMs}`), ['out:10000', 'in:10000', 'out:10000', 'in:10000']);
+});
