@@ -2,14 +2,15 @@
 //
 // The same checker the app runs (src/preflight/route-health.ts): one dry 1Click quote per network,
 // the network's own coin from its chain into intents, and one read of the official status page,
-// plus the POA bridge's token list for the bridge's own voice. A dry quote mints no address and
-// moves nothing, and no key is opened: the account the probe names is only where a quote that
-// will never be taken would credit and refund.
+// plus the POA bridge's token list for the bridge's own voice and each chain's newest block from
+// src/chainscan. A dry quote mints no address and moves nothing, and no key is opened: the account
+// the probe names is only where a quote that will never be taken would credit and refund.
 //
 // Run: node scripts/route-health.ts [--account 0x...] [--network ton]
 // The account defaults to a placeholder, which 1Click prices the same as a real one.
 
 import { oneClickClient } from '../src/intents.ts';
+import { chainHead, scanNetworkOf } from '../src/chainscan/index.ts';
 import { RECEIVE_NETWORKS, poaSupportedTokens } from '../src/rails/intents-address.ts';
 import { bridgeReason, createRouteHealth, routeSentence, withReason } from '../src/preflight/route-health.ts';
 
@@ -23,7 +24,14 @@ function arg(name: string, fallback: string): string {
 const account = arg('account', PLACEHOLDER).toLowerCase();
 const only = arg('network', '');
 const client = oneClickClient();
-const routes = createRouteHealth({ tokens: () => client.tokens(), log: () => undefined });
+const routes = createRouteHealth({
+  tokens: () => client.tokens(),
+  chainHead: (id) => {
+    const network = scanNetworkOf(id);
+    return network === null ? Promise.resolve(null) : chainHead(network);
+  },
+  log: () => undefined,
+});
 const networks = RECEIVE_NETWORKS.filter((n) => only === '' || n.id === only);
 
 const started = Date.now();
