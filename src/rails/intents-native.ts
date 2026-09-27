@@ -44,6 +44,7 @@ import { ERC191_STANDARD, duplicateJsonKey, liveIntentsSigner } from '../intents
 import type { IntentsSignerPort } from '../intents-sign.ts';
 import {
   ONECLICK_BASE,
+  QuoteRefusal,
   baseUnits,
   baseUnitsToDecimal,
   decimalToBaseUnits,
@@ -297,14 +298,16 @@ export function intentsApi(deps: {
     return headers;
   }
 
-  async function readJson(res: Response, what: string): Promise<Record<string, unknown>> {
+  // `refusal` builds the error a refusal is thrown as: the quote's is a QuoteRefusal, so its
+  // status and words can be told from generate-intent's and submit's.
+  async function readJson(res: Response, what: string, refusal = (_status: number, message: string): Error => new Error(message)): Promise<Record<string, unknown>> {
     const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
     if (!res.ok) {
       const msg = payload?.['message'] ?? payload?.['error'];
       if (res.status === 401 || res.status === 403) {
-        throw new Error(`${what} was rejected as unauthorised (${res.status}). ${INTENTS_NO_API_KEY_REASON}`);
+        throw refusal(res.status, `${what} was rejected as unauthorised (${res.status}). ${INTENTS_NO_API_KEY_REASON}`);
       }
-      throw new Error(msg !== undefined ? `${what} failed: ${oneLine(msg)}` : `${what} failed: ${res.status}`);
+      throw refusal(res.status, msg !== undefined ? `${what} failed: ${oneLine(msg)}` : `${what} failed: ${res.status}`);
     }
     if (payload === null || typeof payload !== 'object') throw new Error(`${what} returned no JSON body`);
     return payload;
@@ -351,7 +354,7 @@ export function intentsApi(deps: {
       body: JSON.stringify(body),
       signal: venueWriteTimeout(),
     });
-    const payload = await readJson(res, '1click quote');
+    const payload = await readJson(res, '1click quote', (status, message) => new QuoteRefusal(status, message));
     const quoteField = payload['quote'] as OneClickQuote | undefined;
     if (!quoteField || typeof quoteField !== 'object') throw new Error('no quote in 1click response');
     return { quote: quoteField, raw: payload };

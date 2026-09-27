@@ -524,7 +524,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       return { ok: true, summary: priced.lines.join('\n'), send: priced.facts };
     } catch (err) {
       const message = errText(err);
-      const closed = closedQuoteSentence(message, 'hypercore', 'hl_withdraw');
+      const closed = closedQuoteSentence(err, 'hypercore', 'hl_withdraw');
       if (closed !== null) return { ok: false, summary: closed, error: closed, reason: 'route_closed' };
       return { ok: false, summary: `hypercore withdraw simulation failed: ${message}`, error: message };
     }
@@ -614,7 +614,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       response = await client.quote(quoteParams(draft, p, false));
     } catch (err) {
       // Nothing is signed before the quote; 1Click refusing the pair gets the route's sentence.
-      const closed = closedQuoteSentence(errText(err), 'hypercore', 'hl_withdraw');
+      const closed = closedQuoteSentence(err, 'hypercore', 'hl_withdraw');
       if (closed !== null) return { ok: false, detail: closed, reason: 'route_closed' };
       throw err;
     }

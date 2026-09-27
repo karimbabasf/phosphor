@@ -115,6 +115,7 @@ type ApiOverrides = {
   nearTxHashes?: string[];
   statusThrows?: boolean;
   submitThrows?: boolean;
+  generateThrows?: string;
   assetMissing?: boolean;
   assetDecimals?: number;
   originMissing?: boolean;
@@ -146,6 +147,7 @@ function fakeApi(over: ApiOverrides = {}): { api: IntentsApiPort; signer: Intent
     },
     async generateIntent(params) {
       calls.generated.push(params);
+      if (over.generateThrows !== undefined) throw new Error(over.generateThrows);
       return { standard: 'erc191', payload: payloadOf() };
     },
     async submitIntent(signed) {
@@ -887,4 +889,13 @@ test('a closed route to HyperCore is refused at simulate and again at execute, w
   assert.equal(result.detail, 'NEAR Intents is not taking transfers to Hyperliquid right now, so nothing was signed and nothing moved.');
   assert.equal(later.calls.generated.length, 0);
   assert.deepEqual(opened.asked.map((a) => a.maxAgeMs), [undefined, 10_000], 'execute did not ask for an answer about now');
+});
+
+test('a generate-intent error that says "not available" keeps its own words, and is not called a closed route', async () => {
+  const { rail: r, calls } = rail({ generateThrows: '1click generate-intent failed: intents are not available for this signer' });
+  const result = await r.execute(draft());
+  assert.equal(result.ok, false);
+  assert.notEqual(result.reason, 'route_closed');
+  assert.match(result.detail, /generate-intent failed: intents are not available for this signer\. Nothing was signed\./);
+  assert.equal(calls.signed.length, 0);
 });

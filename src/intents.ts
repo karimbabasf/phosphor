@@ -24,6 +24,18 @@ import { ReasonError } from './rails/reasons.ts';
 
 export const ONECLICK_BASE = 'https://1click.chaindefuser.com';
 
+/* 1Click answering a quote request with a refusal: its HTTP status beside its own words. Thrown
+   by the quote calls and nothing else, so a caller can tell the one voice that may call a route
+   closed (src/preflight/route-health.ts) from every other failure before a signature. */
+export class QuoteRefusal extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'QuoteRefusal';
+    this.status = status;
+  }
+}
+
 // The allowlist entry for anything routed through 1Click. 1Click mints a fresh deposit address
 // per quote, so no address of its own can ever sit on a static list; the venue string stands
 // in, and the Hyperliquid withdraw rail names it as its counterparty.
@@ -733,7 +745,7 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
 
     if (!res.ok) {
       const msg = payload?.['message'] ?? payload?.['error'];
-      throw new Error(msg !== undefined ? oneLine(msg) : `1click quote failed: ${res.status}`);
+      throw new QuoteRefusal(res.status, msg !== undefined ? oneLine(msg) : `1click quote failed: ${res.status}`);
     }
     const quoteField = payload?.['quote'] as OneClickQuote | undefined;
     if (!quoteField || typeof quoteField !== 'object') {

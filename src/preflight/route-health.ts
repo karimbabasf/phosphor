@@ -31,7 +31,7 @@
 // open answer is kept a minute and anything else twenty seconds, so a recovery shows fast; every
 // map is capped.
 
-import { ONECLICK_BASE, oneLine, toBaseUnits } from '../intents.ts';
+import { ONECLICK_BASE, QuoteRefusal, oneLine, toBaseUnits } from '../intents.ts';
 import type { OneClickToken } from '../intents.ts';
 import { withTimeout } from '../net.ts';
 import { SPEND_NETWORKS, currentSymbol, spendNetworkOf } from '../rails/intents-address.ts';
@@ -490,11 +490,13 @@ export function routeSentence(verdict: RouteVerdict, flow: RouteFlow): string | 
   return null;
 }
 
-/* 1Click's own refusal of a pair, as the sentence for that flow, or null when the refusal says
-   something else. "Quoting for this pair is not available" is what it said for TON on 2026-09-26,
-   and passed through raw it read as a fault in the app rather than a route NEAR Intents shut. */
-export function closedQuoteSentence(message: string, network: string, flow: RouteFlow): string | null {
-  if (!quoteSaysClosed(message)) return null;
+/* 1Click's own refusal of a pair, as the sentence for that flow, or null for anything else.
+   "Quoting for this pair is not available" is what it said for TON on 2026-09-26, and passed
+   through raw it read as a fault in the app rather than a route NEAR Intents shut. Only the quote
+   call's own answer counts, a 400 with those words, read as the probe reads one: a wallet, a
+   preflight or generate-intent error that happens to say "not available" keeps its own error. */
+export function closedQuoteSentence(err: unknown, network: string, flow: RouteFlow): string | null {
+  if (!(err instanceof QuoteRefusal) || err.status !== 400 || !quoteSaysClosed(err.message)) return null;
   const said: RouteReason = { source: 'oneclick', state: 'closed', text: '1Click would not quote the pair' };
   return routeSentence({ network, direction: flow === 'deposit' || flow === 'hl_withdraw' ? 'in' : 'out', state: 'closed', reasons: [said], checkedAt: 0 }, flow);
 }
