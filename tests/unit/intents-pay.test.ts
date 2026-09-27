@@ -13,6 +13,7 @@ import type { Address } from 'viem';
 
 import type { IntentsPayDraft, SendRecipient } from '../../src/types.ts';
 import type { AddressActivity, AddressSummary } from '../../src/chainscan/index.ts';
+import { QuoteRefusal } from '../../src/intents.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken, TokensFile } from '../../src/intents.ts';
 import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../../src/rails/intents-native.ts';
 import {
@@ -163,7 +164,13 @@ type Overrides = {
   status?: OneClickStatus['status'];
   destinationTxHashes?: string[];
   submitThrows?: boolean;
+  // 1Click refusing the quote with a 400 and these words, as the live client throws it.
   quoteThrows?: string;
+  // The quote call failing some other way (a socket, a 5xx): its own error, never 1Click's word.
+  quoteFails?: Error;
+  generateThrows?: string;
+  signerThrows?: string;
+  preflightThrows?: string;
   // The receiver's holdings as the chain answers them, before and after; null is "would not answer".
   receiver?: Array<AddressSummary | null>;
   // The route checker, when the test is about NEAR Intents taking payouts to the chain.
@@ -180,7 +187,8 @@ function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
     tokens: async () => apiTokens,
     async quote(params) {
       calls.quotes.push(params);
-      if (over.quoteThrows !== undefined) throw new Error(over.quoteThrows);
+      if (over.quoteThrows !== undefined) throw new QuoteRefusal(400, over.quoteThrows);
+      if (over.quoteFails !== undefined) throw over.quoteFails;
       const unsigned: Record<string, unknown> = { quote: quoteOf(over.quote) };
       if (over.echo !== null) unsigned['quoteRequest'] = echoOf({ dry: params.dry, ...(over.echo ?? {}) });
       const signed = signQuote(unsigned);
@@ -188,6 +196,7 @@ function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
     },
     async generateIntent(params) {
       calls.generated.push(params);
+      if (over.generateThrows !== undefined) throw new Error(over.generateThrows);
       return { standard: 'erc191', payload: over.payload ?? payloadOf() };
     },
     async submitIntent(signed) {
@@ -223,13 +232,14 @@ function railOf(over: Overrides = {}) {
     keysPath: '/nonexistent/keys.json',
     tokens: registry,
     api,
-    signer,
+    signer: over.signerThrows === undefined ? signer : { ...signer, signErc191: async () => Promise.reject(new Error(over.signerThrows)) },
     now: () => NOW,
     sleepImpl: async () => {},
     pollIntervalMs: 1,
     pollTimeoutMs: 10,
     quoteKey: TEST_QUOTE_KEY,
     routes: over.routes,
+    ...(over.preflightThrows === undefined ? {} : { preflight: { run: async () => Promise.reject(new Error(over.preflightThrows)), stop: () => undefined } }),
     receiverRead: async (network, address) => {
       reads.push({ network, address });
       return answers.length > 0 ? (answers.shift() as AddressSummary | null) : null;
@@ -591,4 +601,24 @@ test('1Click saying "Quoting for this pair is not available" reads as NEAR Inten
   const other = await railOf({ quoteThrows: 'No liquidity available' }).rail.simulate(draftOf());
   assert.match(other.summary, /No liquidity available/);
   assert.notEqual(other.reason, 'route_closed');
+});
+
+test('only 1Click refusing the quote reads as a closed route: a wallet, generate-intent or transport error that says "not available" keeps its own error', async () => {
+  // generate-intent and the key both run after the quote: their words are theirs, not the route's.
+  const generate = railOf({ generateThrows: '1click generate-intent failed: intent generation is not available for this signer' });
+  await assert.rejects(generate.rail.execute(draftOf()), /generate-intent failed: intent generation is not available/);
+  assert.equal(generate.calls.submitted.length, 0);
+  const wallet = railOf({ signerThrows: 'the Keychain item is not available' });
+  await assert.rejects(wallet.rail.execute(draftOf()), /Keychain item is not available/);
+  const preflight = railOf({ preflightThrows: 'the base fee reading is not available' });
+  await assert.rejects(preflight.rail.execute(draftOf()), /base fee reading is not available/);
+
+  // The quote call failing without 1Click answering (a socket, a 503 in maintenance) is not 1Click refusing the pair.
+  for (const failure of [new Error('connect ECONNREFUSED: network not available'), new QuoteRefusal(503, 'service under maintenance')]) {
+    const sim = await railOf({ quoteFails: failure }).rail.simulate(draftOf());
+    assert.equal(sim.ok, false);
+    assert.notEqual(sim.reason, 'route_closed', failure.message);
+    assert.match(sim.summary, new RegExp(failure.message));
+    await assert.rejects(railOf({ quoteFails: failure }).rail.execute(draftOf()), new RegExp(failure.message));
+  }
 });

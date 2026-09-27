@@ -402,8 +402,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   }
 
   // 1Click refusing the pair, said as NEAR Intents not taking payouts to the chain.
-  function closedWords(draft: IntentsPayDraft, message: string): string | null {
-    return closedQuoteSentence(message, draft.network, 'payout');
+  function closedWords(draft: IntentsPayDraft, err: unknown): string | null {
+    return closedQuoteSentence(err, draft.network, 'payout');
   }
 
   // Whether NEAR Intents is taking payouts to this chain right now (src/preflight/route-health.ts).
@@ -456,7 +456,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       return { ok: true, summary: lines.join('\n'), send };
     } catch (err) {
       const message = errText(err);
-      const closed = closedWords(draft, message);
+      const closed = closedWords(draft, err);
       if (closed !== null) return { ok: false, summary: closed, error: closed, reason: 'route_closed' };
       const floor = floorWords(draft, p, message);
       return { ok: false, summary: `intents pay simulation failed: ${floor ?? message}`, error: floor ?? message };
@@ -520,7 +520,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     } catch (err) {
       // Everything before the signature throws; 1Click refusing the pair on the live quote is
       // one of those, and it gets the same sentence the dry quote would have.
-      const closed = closedWords(draft, errText(err));
+      const closed = closedWords(draft, err);
       if (closed !== null) return { ok: false, detail: closed, reason: 'route_closed' };
       throw err;
     }
