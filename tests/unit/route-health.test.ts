@@ -287,6 +287,20 @@ test('no chain named: a chain service in outage closes that chain, Other Blockch
 
   const global = [post({ title: 'Solver degradation', latest_update: { status_id: 'PSCS3IV', impacts: [{ service_id: 'PLT88AT', severity_id: 'PCIGMKW' }] } })];
   for (const network of ['eth', 'sol', 'ton', 'hypercore']) assert.equal(statusVerdict(global, network).state, 'degraded', network);
+  // The services behind the addresses this app shows: out closes every chain, partial warns every chain.
+  for (const service of ['PYFS8RW', 'PXQFSY1']) {
+    const out = [post({ title: 'Deposits delayed', latest_update: { status_id: 'PSCS3IV', impacts: [{ service_id: service, severity_id: 'PZ9VM86' }] } })];
+    const partial = [post({ title: 'Deposits delayed', latest_update: { status_id: 'PSCS3IV', impacts: [{ service_id: service, severity_id: 'PCIGMKW' }] } })];
+    for (const network of ['eth', 'sol', 'btc', 'ton', 'hypercore', 'stellar']) {
+      assert.equal(statusVerdict(out, network).state, 'closed', `${service} out, ${network}`);
+      assert.equal(statusVerdict(partial, network).state, 'degraded', `${service} partial, ${network}`);
+    }
+  }
+  // 1Click, the solvers and the message bus stay a warning even when fully out.
+  for (const service of ['PTEURIB', 'PLT88AT', 'P2WM8Q9']) {
+    const out = [post({ title: 'Degraded', latest_update: { status_id: 'PSCS3IV', impacts: [{ service_id: service, severity_id: 'PZ9VM86' }] } })];
+    assert.equal(statusVerdict(out, 'eth').state, 'degraded', service);
+  }
 
   // The explorer and near.com move no money, and an operational impact is no impact.
   const quiet = [
@@ -294,6 +308,16 @@ test('no chain named: a chain service in outage closes that chain, Other Blockch
     post({ id: 'P2', title: 'All good', latest_update: { status_id: 'PSCS3IV', impacts: [{ service_id: 'PTEURIB', severity_id: 'PGV50ZJ' }] } }),
   ];
   assert.equal(statusVerdict(quiet, 'eth').state, 'unknown');
+});
+
+test('the service list maps the passive deposit service and bridging by name, and the rest of the shared services as global', () => {
+  const services = parseServices(SERVICES);
+  assert.ok(services);
+  assert.equal(services.get('PYFS8RW'), 'backbone');
+  assert.equal(services.get('PXQFSY1'), 'backbone');
+  for (const id of ['PTEURIB', 'PLT88AT', 'P2WM8Q9']) assert.equal(services.get(id), 'global', id);
+  // A renamed id the fallback does not know is read by its name.
+  assert.equal(parseServices({ services: [{ id: 'PNEW001', name: 'Passive Deposit/Withdrawal Service' }] })?.get('PNEW001'), 'backbone');
 });
 
 test('a resolved incident is ignored, and maintenance counts only inside its window and until completed', () => {
