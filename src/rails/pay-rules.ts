@@ -230,7 +230,7 @@ function xrpRules(f: PayFacts, problems: string[], notes: PayNote[]): void {
   notes.push({ tone: 'warn', text: `${f.to} does not exist on the XRP Ledger yet; this payment creates it, and ${amountText(t.reserveXrp ?? 1)} XRP of it stays locked as the ledger's reserve.` });
 }
 
-function stellarRules(f: PayFacts, problems: string[], notes: PayNote[]): void {
+function stellarRules(f: PayFacts, problems: string[]): void {
   const t = f.target;
   if (t === undefined || t === null || t.network !== 'stellar') {
     problems.push(`Stellar did not answer about ${f.to}, so whether it needs a memo cannot be checked; ${AGAIN}`);
@@ -240,14 +240,14 @@ function stellarRules(f: PayFacts, problems: string[], notes: PayNote[]): void {
     problems.push(`${f.to} says every payment to it needs a memo (it sets config.memo_required, as exchanges do), and Phosphor cannot send one`);
     return;
   }
+  /* On Stellar, unlike the XRP Ledger, a payment to an account that does not exist fails
+     (op_no_destination): only create_account makes one, and nothing shows the bridge sends that
+     (review M3, 2026-09-27). Unknown means no, the rule Tron's contract check keeps. */
   if (!t.exists) {
-    if (!f.native) {
-      problems.push(`${f.to} does not exist on Stellar yet, and only XLM can create an account: ${f.symbol} cannot be paid to it until it exists and trusts ${f.symbol}`);
-    } else if (f.minReceived < 1) {
-      problems.push(`${f.to} does not exist on Stellar yet, and creating an account takes at least 1 XLM; this payment delivers as little as ${amountText(f.minReceived)} XLM`);
-    } else {
-      notes.push({ tone: 'warn', text: `${f.to} does not exist on Stellar yet; this payment creates it, and 1 XLM of it stays locked as the account's reserve.` });
-    }
+    problems.push(
+      `${f.to} does not exist on Stellar yet, and a payout cannot create it: a payment to a Stellar account that does not exist fails. ` +
+        `The account has to exist first: its owner funds it with XLM from an exchange or another wallet${f.native ? '' : ` and adds ${f.symbol}`}, then it can be paid`,
+    );
     return;
   }
   if (f.native) return;
@@ -342,7 +342,7 @@ export function payChecks(f: PayFacts): { problems: string[]; notes: PayNote[] }
   const problems: string[] = [];
   const notes: PayNote[] = [];
   if (f.network === 'xrp') xrpRules(f, problems, notes);
-  if (f.network === 'stellar') stellarRules(f, problems, notes);
+  if (f.network === 'stellar') stellarRules(f, problems);
   if (f.network === 'tron') tronRules(f, problems);
   ownDepositRules(f, problems, notes);
   if (f.given !== null && f.network === 'ton') {

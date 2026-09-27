@@ -336,13 +336,18 @@ test('a Stellar account that sets config.memo_required is refused', async () => 
   assert.equal(r.quotes.length, 0);
 });
 
-test('a Stellar account that does not exist takes only XLM, and at least 1 XLM', async () => {
+/* Review M3 (2026-09-27): on Stellar a payment to an account that does not exist fails
+   (op_no_destination); only create_account makes one, and nothing shows the bridge sends that. So
+   no payout goes to a Stellar account that does not exist yet, XLM or not, whatever the size. */
+test('a Stellar account that does not exist is refused, XLM included, and the sentence says it has to exist first', async () => {
   const absent: Target = { network: 'stellar', exists: false, memoRequired: false, trustlines: [] };
   const token = railOf(COINS.USDC_XLM, 10, { targets: [absent], own: NOT_OWN });
-  assert.match(await refused(token, draftOf(COINS.USDC_XLM, PLAIN_XLM, 10)), /does not exist on Stellar yet.*only XLM/);
+  assert.match(await refused(token, draftOf(COINS.USDC_XLM, PLAIN_XLM, 10)), /does not exist on Stellar yet/);
   const small = railOf(COINS.XLM, 0.5, { targets: [absent], own: NOT_OWN });
-  assert.match(await refused(small, draftOf(COINS.XLM, PLAIN_XLM, 0.5)), /at least 1 XLM/);
-  assert.equal(token.quotes.length + small.quotes.length, 0);
+  assert.match(await refused(small, draftOf(COINS.XLM, PLAIN_XLM, 0.5)), /does not exist on Stellar yet/);
+  const big = railOf(COINS.XLM, 20, { targets: [absent], own: NOT_OWN });
+  assert.match(await refused(big, draftOf(COINS.XLM, PLAIN_XLM, 20)), /does not exist on Stellar yet.*The account has to exist first/);
+  assert.equal(token.quotes.length + small.quotes.length + big.quotes.length, 0);
 });
 
 test('USDC on Stellar to an account with no trustline for its issuer is refused', async () => {
