@@ -132,3 +132,22 @@ export function cashAddrLookalike(address: string, change: number[], free: numbe
 export function range(from: number, to: number): number[] {
   return Array.from({ length: to - from }, (_, i) => from + i);
 }
+
+/* A CashAddr of any version byte and hash, with a valid checksum: the kind of address no wallet
+   writes but a crafted one can be. */
+export function cashAddrEncode(prefix: string, payload: Uint8Array): string {
+  const data: number[] = [];
+  let acc = 0;
+  let bits = 0;
+  for (const byte of payload) {
+    acc = (acc << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      data.push((acc >> bits) & 31);
+    }
+  }
+  if (bits > 0) data.push((acc << (5 - bits)) & 31);
+  const residue = cashPolymod([...[...prefix].map((c) => c.charCodeAt(0) & 31), 0, ...data, 0, 0, 0, 0, 0, 0, 0, 0]);
+  return `${prefix}:${[...data, ...checkWords(residue, 8)].map((w) => CHARS[w]).join('')}`;
+}

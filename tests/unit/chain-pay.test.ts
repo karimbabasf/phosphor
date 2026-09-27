@@ -27,7 +27,7 @@ import { parsePoaTokens, spendNetworkOf } from '../../src/rails/intents-address.
 import { depositFloorOf } from '../../src/rails/pay-rules.ts';
 import { reasonFor } from '../../src/vault/reason.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
-import { bech32Lookalike, cashAddrLookalike, range } from './helpers/lookalike.ts';
+import { bech32Lookalike, cashAddrEncode, cashAddrLookalike, range } from './helpers/lookalike.ts';
 
 const OWNER = getAddress('0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050');
 const ACCOUNT = OWNER.toLowerCase();
@@ -509,6 +509,25 @@ test('a legacy Bitcoin Cash address is refused: the same string is a Bitcoin add
   const r = railOf(COINS.BCH, 0.05, { own: NOT_OWN });
   assert.match(await refused(r, draftOf(COINS.BCH, BCH_LEGACY, 0.05)), /bitcoincash:/);
   assert.equal(r.quotes.length, 0);
+});
+
+/* Review L2 (2026-09-27): a CashAddr's version byte names its type and its hash size, and a
+   pay-to-public-key-hash address (type 0, or 2 token-aware) holds a 20-byte HASH160, never 32:
+   money sent to one with a 32-byte hash can never be spent. Only a crafted address gets there,
+   since the checksum catches a typo; a pay-to-script-hash address may carry either size. */
+test('a Bitcoin Cash P2PKH address carrying a 32-byte hash is refused, and a 32-byte P2SH address is not', async () => {
+  const hash32 = new Uint8Array(32).fill(7);
+  const p2pkh32 = cashAddrEncode('bitcoincash', Uint8Array.from([0x03, ...hash32]));
+  const token32 = cashAddrEncode('bitcoincash', Uint8Array.from([0x13, ...hash32]));
+  const p2sh32 = cashAddrEncode('bitcoincash', Uint8Array.from([0x0b, ...hash32]));
+  for (const to of [p2pkh32, token32]) {
+    const r = railOf(COINS.BCH, 0.05, { own: NOT_OWN });
+    assert.match(await refused(r, draftOf(COINS.BCH, to, 0.05)), /not a Bitcoin Cash address/);
+    assert.equal(r.quotes.length, 0);
+  }
+  const script = railOf(COINS.BCH, 0.05, { own: NOT_OWN });
+  const sim = await script.rail.simulate(draftOf(COINS.BCH, p2sh32, 0.05));
+  assert.equal(sim.ok, true, sim.summary);
 });
 
 test('1Click\'s minimum becomes a sentence with the coin and the dollar figure', async () => {
