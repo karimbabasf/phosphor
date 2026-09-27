@@ -669,14 +669,14 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
      redirect is followed by hand and only to the host it came from, so a status page that
      answers "go over there" is a page that did not answer; the body stops at ROUTE_BODY_CAP. */
   async function getJson(url: string, init: RequestInit = {}): Promise<{ status: number; body: unknown }> {
-    const signal = withTimeout(timeoutMs);
+    const deadline = withTimeout(timeoutMs);
     let target = url;
     let method = init.method ?? 'GET';
     let payload = init.body;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const host = new URL(target).host;
       if (!ROUTE_HOSTS.has(host)) throw new Error(`refused: ${host} is not a route host`);
-      const res = await fetchImpl(target, { ...init, method, body: payload, redirect: 'manual', signal });
+      const res = await fetchImpl(target, { ...init, method, body: payload, redirect: 'manual', signal: deadline });
       if (res.status >= 300 && res.status < 400) {
         await res.body?.cancel().catch(() => undefined);
         const location = res.headers.get('location');
