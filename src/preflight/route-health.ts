@@ -49,8 +49,9 @@ export type RouteFlow = 'deposit' | 'payout' | 'hl_deposit' | 'hl_withdraw';
 
 export const STATUS_BASE = 'https://status.near-intents.org';
 export const STATUS_LINK = `${STATUS_BASE}/posts/dashboard`;
-// Each request gets four seconds. The report runs these beside the bridge's own asks, so a slow
-// check costs the screen at most this, and the answer is then unknown.
+// Each check gets four seconds, every request and every source inside it. The report runs these
+// beside the bridge's own asks, so a slow check costs the screen at most this, and the answer is
+// then unknown.
 export const ROUTE_TIMEOUT_MS = 4_000;
 export const OPEN_TTL_MS = 60_000;
 export const SHAKY_TTL_MS = 20_000;
@@ -772,7 +773,10 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
   async function probe(net: ReceiveNetwork, candidates: OneClickToken[], account: string): Promise<ProbeResult> {
     const venue = net.venue ?? net.id;
     let last: ProbeResult | null = null;
+    // The check stops waiting at its deadline (check below); the walk stops asking there too.
+    const until = Date.now() + timeoutMs;
     for (const token of candidates.filter((t) => !isUnfit(t.assetId)).slice(0, PROBE_TRIES)) {
+      if (last !== null && Date.now() >= until) break;
       try {
         const sentMemo = memoChains.has(venue);
         let answer = await ask(token, account, sentMemo);
@@ -846,13 +850,27 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     }
   }
 
+  /* What the page last answered, for a check whose own read ran out of time: the same kept read
+     a failed read falls back on, with the service list as it stands. */
+  function keptStatus(network: string): RouteReason[] {
+    if (answered === undefined || now() - answered.at > FEED_STALE_MS) return [{ source: 'status', state: 'unknown', text: 'the NEAR Intents status page did not answer in time' }];
+    if (!answered.value.some((p) => isLive(p, now()))) return [];
+    return statusReasons(answered.value, services?.value ?? KNOWN_SERVICES, network, now());
+  }
+
+  /* Every source is held to one deadline, so a check answers in about `timeoutMs` whatever is
+     slow: a probe walking several coins, a page read followed by its service list, a head read
+     stuck behind a rate limit. A source that runs out says unknown (the page falls back on its
+     kept read); the work it started finishes on its own and serves the next check. */
   async function check(q: RouteAsk): Promise<RouteVerdict> {
     const checkedAt = now();
     try {
       const net = spendNetworkOf(q.network);
       const [probed, status, chain] = await Promise.all([
-        q.direction === 'in' && net !== undefined && q.account !== null && q.account !== '' ? probeReason(net, q.account, q.asset, q.maxAgeMs) : Promise.resolve(null),
-        statusFor(q.network, q.maxAgeMs),
+        q.direction === 'in' && net !== undefined && q.account !== null && q.account !== ''
+          ? within(probeReason(net, q.account, q.asset, q.maxAgeMs), timeoutMs).then((r) => r ?? { source: 'oneclick' as const, state: 'unknown' as const, text: `1Click did not answer about ${net.name} in time` })
+          : Promise.resolve(null),
+        within(statusFor(q.network, q.maxAgeMs), timeoutMs).then((r) => r ?? keptStatus(q.network)),
         chainReason(q.network),
       ]);
       const reasons = [...(probed === null ? [] : [probed]), ...status, ...(chain === null ? [] : [chain])];
