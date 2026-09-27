@@ -442,6 +442,27 @@ test('the chain seam warns on a stale head and is ignored when it does not answe
   }
 });
 
+test('one check is held to one deadline: a head read that never answers and a probe that walks four slow coins still answer in about that time', async () => {
+  const timeoutMs = 200;
+  // Five coins on Ethereum, each refused as unfit after most of the deadline, so a probe that
+  // walks them one after another takes several deadlines end to end.
+  const tokens: OneClickToken[] = [TOKENS[3], ...['A', 'B', 'C', 'D'].map((s, i) => ({ assetId: `nep141:eth-0x${i}.omft.near`, blockchain: 'eth', symbol: s, decimals: 6, contractAddress: `0x${i}`, price: 1 }))];
+  const slowUnfit = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.endsWith('/v0/quote')) return new Response(JSON.stringify({ posts: [] }), { status: 200 });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    init?.signal?.throwIfAborted();
+    return new Response(JSON.stringify({ message: 'x is not supported as origin asset' }), { status: 400 });
+  }) as typeof fetch;
+  const routes = checker({ tokens: async () => tokens, fetchImpl: slowUnfit, timeoutMs, chainHead: () => new Promise(() => undefined) });
+  const started = Date.now();
+  const verdict = await routes.check({ network: 'eth', direction: 'in', account: ACCOUNT });
+  const took = Date.now() - started;
+  assert.ok(took < timeoutMs * 2, `the check took ${took} ms against a ${timeoutMs} ms deadline`);
+  assert.equal(verdict.state, 'unknown');
+  assert.deepEqual(verdict.reasons.filter((r) => r.source === 'chain'), []);
+});
+
 test('the bridge closes a network it credits nothing on, but only when its list was read', () => {
   const open: RouteVerdict = { network: 'ton', direction: 'in', state: 'open', reasons: [{ source: 'oneclick', state: 'open', text: '' }], checkedAt: NOW };
   assert.equal(bridgeReason('ton', 2, true), null);
