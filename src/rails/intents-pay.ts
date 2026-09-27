@@ -66,10 +66,10 @@ import { reasonOf } from './reasons.ts';
 import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, payTarget, scanNetworkOf } from '../chainscan/index.ts';
 import type { AddressActivity, AddressSummary, ChainNetwork, PayTarget } from '../chainscan/index.ts';
 import { pickOrExplain } from './asset-words.ts';
-import { intentsDepositAddress, spendNetworkOf } from './intents-address.ts';
-import type { PayFamily } from './intents-address.ts';
-import { needsTarget, payAddress, payChecks, readsOwnDeposit } from './pay-rules.ts';
-import type { OwnDeposit, PayNote } from './pay-rules.ts';
+import { intentsDepositAddress, poaSupportedTokens, spendNetworkOf } from './intents-address.ts';
+import type { PayFamily, PoaToken } from './intents-address.ts';
+import { depositFloorOf, needsTarget, payAddress, payChecks, readsOwnDeposit } from './pay-rules.ts';
+import type { DepositFloor, OwnDeposit, PayNote } from './pay-rules.ts';
 
 // The funds are spent inside the verifier, so the counterparty is the verifier: the same
 // allowlist entry the swap, send and HyperCore rails use.
@@ -92,6 +92,10 @@ export const PAY_SAME_ASSET_SLIPPAGE_BPS = 10;
 // How long each of the chain-rule reads may take (src/rails/pay-rules.ts): the ledger's rules for
 // the receiver and the bridge's deposit address for our own account.
 export const RULE_READ_MS = 6_000;
+
+// How long the bridge's list of minimum deposits is kept: it is the same for everybody and moves
+// rarely, and a payout should not wait on it twice in a minute.
+export const FLOOR_LIST_TTL_MS = 5 * 60_000;
 
 export function minReceivedForPay(amount: number): number {
   return amount * (1 - PAY_MAX_LOSS_BPS / 10_000);
@@ -206,6 +210,10 @@ export type IntentsPayRailDeps = {
   // Our own bridge deposit address on the chain, which on a memo chain may be the one address
   // the bridge shares with everybody. Null is a bridge that did not answer.
   ownDeposit?: (account: string, network: string) => Promise<OwnDeposit | null>;
+  // The least the bridge credits of the paid token on the chain (src/rails/pay-rules.ts
+  // DepositFloor), which binds a payout to our own deposit address. Null is a bridge that did not
+  // answer, and on that payout it is a refusal.
+  depositFloor?: (network: string, asset: { assetId: string; native: boolean; contract: string | null }) => Promise<DepositFloor | null>;
   // Whether NEAR Intents is taking payouts to the chain right now (src/preflight/route-health.ts).
   // The registry wires the live one; absent, no route is called closed.
   routes?: RouteHealth;
@@ -263,6 +271,21 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
         ),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), RULE_READ_MS).unref()),
       ]));
+  // The list never throws: an empty one is a bridge that did not answer, since it lists dozens.
+  let floorList: { at: number; rows: PoaToken[] } | null = null;
+  const floorRead =
+    deps.depositFloor ??
+    (async (network: string, asset: { assetId: string; native: boolean; contract: string | null }): Promise<DepositFloor | null> => {
+      if (floorList === null || now() - floorList.at > FLOOR_LIST_TTL_MS) {
+        const rows = await Promise.race([
+          poaSupportedTokens(fetchImpl),
+          new Promise<PoaToken[]>((resolve) => setTimeout(() => resolve([]), RULE_READ_MS).unref()),
+        ]);
+        if (rows.length === 0) return null;
+        floorList = { at: now(), rows };
+      }
+      return depositFloorOf(floorList.rows, network, asset);
+    });
 
   type Plan = {
     chain: string;
@@ -380,9 +403,12 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
      be created, between the card and the click. `activity` is what the chain reader said about
      the receiver, at propose time for the dry quote and fresh for the live one. */
   async function chainRules(draft: IntentsPayDraft, p: Plan, owner: string, activity: AddressActivity | null): Promise<{ problems: string[]; notes: PayNote[] }> {
-    const [target, own] = await Promise.all([
+    const [target, own, floor] = await Promise.all([
       needsTarget(draft.network) ? targetRead(draft.network, p.to) : Promise.resolve(undefined),
       readsOwnDeposit(draft.network) ? ownDepositRead(owner, draft.network) : Promise.resolve(undefined),
+      readsOwnDeposit(draft.network)
+        ? floorRead(draft.network, { assetId: p.destinationAsset, native: p.native, contract: p.issuer }).catch(() => null)
+        : Promise.resolve(undefined),
     ]);
     return payChecks({
       network: draft.network,
@@ -396,6 +422,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       activity,
       target,
       own,
+      floor,
     });
   }
 
