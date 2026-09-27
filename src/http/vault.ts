@@ -18,6 +18,7 @@ import type { JsonBody } from './respond.ts';
 import { sameOrigin } from './auth.ts';
 import type { Ctx } from './context.ts';
 import { announce, depositRoute, guarded, refusal } from './wallet.ts';
+import type { IntentsReceiveToken } from './wallet.ts';
 import { currentSymbol, receiveNetworkOf } from '../rails/intents-address.ts';
 import { mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
 import type { EnclaveRef } from '../keystore/store.ts';
@@ -367,32 +368,57 @@ export async function handleVaultPrefs(ctx: Ctx, req: http.IncomingMessage, res:
    account, never taken from the body: the window asks for a chain and an asset and gets back
    what the app resolved, so nothing that holds the window token can make the card show an
    address the app did not derive. */
-export async function handleDepositShow(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = await guarded(ctx, '/api/deposit/show', req, res);
-  if (body === null) return;
+/* One network and one asset as the report resolves them, and the route for that exact asset: the
+   question both doors below ask before an address may be on screen. A refusal is the status and
+   the sentence; a closed route's refusal carries `route` and the status page, so the window can
+   draw Paused rather than a bare error. */
+type Resolved =
+  | { ok: false; status: number; error: string; extra?: JsonBody }
+  | { ok: true; chain: string; want: string; address: string; accepted: IntentsReceiveToken; notice: string | null; statusLink: string | null };
+
+async function resolveDeposit(ctx: Ctx, chainRaw: unknown, symbolRaw: unknown): Promise<Resolved> {
   // Any network the registry knows, by its short id. The report below is what says whether the
   // bridge answered for it.
-  const chain = typeof body.chain === 'string' && receiveNetworkOf(body.chain) !== undefined ? body.chain : null;
-  const symbol = typeof body.symbol === 'string' ? body.symbol.trim().toUpperCase() : '';
-  if (chain === null || symbol === '' || symbol.length > 12) return fail(res, 400, 'chain and symbol are required');
+  const chain = typeof chainRaw === 'string' && receiveNetworkOf(chainRaw) !== undefined ? chainRaw : null;
+  const symbol = typeof symbolRaw === 'string' ? symbolRaw.trim().toUpperCase() : '';
+  if (chain === null || symbol === '' || symbol.length > 12) return { ok: false, status: 400, error: 'chain and symbol are required' };
   const report = await ctx.intentsReceive();
   const network = report.networks.find((n) => n.id === chain);
   if (report.account === null || network === undefined || network.address === null) {
-    return fail(res, 409, network?.unavailable ?? report.reason ?? `no deposit address for ${chain} right now`);
+    const closed = network?.route === 'closed' ? { route: 'closed', statusLink: network.statusLink } : undefined;
+    return { ok: false, status: 409, error: network?.unavailable ?? report.reason ?? `no deposit address for ${chain} right now`, ...(closed === undefined ? {} : { extra: closed }) };
   }
   const want = currentSymbol(chain, symbol);
   const accepted = network.accepts.find((a) => a.symbol.toUpperCase() === want);
   if (accepted === undefined) {
-    return fail(res, 409, `${symbol} is not credited on ${network.name}; accepted: ${network.accepts.map((a) => a.symbol).join(', ') || 'nothing'}`);
+    return { ok: false, status: 409, error: `${symbol} is not credited on ${network.name}; accepted: ${network.accepts.map((a) => a.symbol).join(', ') || 'nothing'}` };
   }
   // The route for this exact asset, the same question the agent's deposit tool asks first.
   const route = await depositRoute(ctx, chain, report.account, accepted.assetId);
-  if (route.closed !== null) return fail(res, 409, route.closed);
+  if (route.closed !== null) return { ok: false, status: 409, error: route.closed, extra: { route: 'closed', statusLink: route.link } };
+  const notice = route.notice ?? network.notice;
+  return { ok: true, chain, want, address: network.address, accepted, notice, statusLink: notice === null ? null : (route.link ?? network.statusLink) };
+}
+
+export async function handleDepositShow(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const body = await guarded(ctx, '/api/deposit/show', req, res);
+  if (body === null) return;
+  const got = await resolveDeposit(ctx, body.chain, body.symbol);
+  if (!got.ok) return fail(res, got.status, got.error, got.extra);
   // The token as the bridge lists it, so the watch reads that one balance and matches the
   // bridge's own rows for it, instead of guessing from the symbol.
+  const { accepted } = got;
   const token = { assetId: accepted.assetId, decimals: accepted.decimals, contract: accepted.contract };
-  const notice = route.notice ?? network.notice;
-  sendJson(res, 200, { ok: true, deposit: ctx.deposits.show(chain, want, network.address, token), ...(notice === null ? {} : { notice, statusLink: route.link ?? network.statusLink }) });
+  sendJson(res, 200, { ok: true, deposit: ctx.deposits.show(got.chain, got.want, got.address, token), ...(got.notice === null ? {} : { notice: got.notice, statusLink: got.statusLink }) });
+}
+
+/* Whether an address may be drawn for this network and this asset right now, asked by the window
+   before it draws one: the report's row was asked about the network's own coin, and TON USDT is
+   its own question. Read only, no watch started; the same refusal /api/deposit/show would give. */
+export async function handleDepositRoute(ctx: Ctx, url: URL, res: http.ServerResponse): Promise<void> {
+  const got = await resolveDeposit(ctx, url.searchParams.get('chain'), url.searchParams.get('symbol'));
+  if (!got.ok) return fail(res, got.status, got.error, got.extra);
+  sendJson(res, 200, { ok: true, chain: got.chain, symbol: got.want, notice: got.notice, statusLink: got.statusLink });
 }
 
 export function handleDepositStatus(ctx: Ctx, res: http.ServerResponse): void {

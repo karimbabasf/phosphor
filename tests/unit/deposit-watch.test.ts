@@ -99,7 +99,9 @@ type Harness = {
   watch: ReturnType<typeof createDepositWatch>;
 };
 
-function build(options: { intents?: IntentsRead; account?: string | null } = {}): Harness {
+type RouteRead = (account: string, chain: string, assetId: string) => Promise<{ closed: string | null; link: string | null }>;
+
+function build(options: { intents?: IntentsRead; account?: string | null; route?: RouteRead } = {}): Harness {
   const world = fakeWorld();
   const h: Harness = { world, frames: [], refreshes: 0, stateBroadcasts: 0, clock: { t: Date.parse('2026-09-16T10:00:00.000Z') }, watch: null as never };
   h.watch = createDepositWatch({
@@ -117,6 +119,7 @@ function build(options: { intents?: IntentsRead; account?: string | null } = {})
     fetchImpl: world.fetchImpl,
     now: () => h.clock.t,
     pollMs: 5,
+    ...(options.route === undefined ? {} : { route: options.route }),
   });
   return h;
 }
@@ -340,4 +343,33 @@ test('a card left open polls eagerly for ten minutes, then one tick in five, and
   await ticks(8);
   assert.equal(watch.current()?.phase, 'stopped');
   watch.stop();
+});
+
+test('a route that closes while the card is up is said on the watch\'s own tick: the frame carries the sentence and the status page, and no timer of its own asks', async () => {
+  let closed = false;
+  const asked: Array<[string, string, string]> = [];
+  const h = build({
+    route: async (account, chain, assetId) => {
+      asked.push([account, chain, assetId]);
+      return closed ? { closed: 'NEAR Intents has paused Ethereum deposits right now, so no address is shown. Money sent now may not arrive.', link: 'https://status.near-intents.org/posts/dashboard' } : { closed: null, link: null };
+    },
+  });
+  const shown = h.watch.show('eth', 'USDC', '0x6f0bA7BBdeadbeef', TOKEN);
+  assert.equal(shown.paused, null);
+  await ticks(3);
+  assert.equal(h.watch.current()?.paused, null);
+  const ticksSoFar = h.world.calls.filter((c) => c === 'bridge:recent_deposits').length;
+  // Asked once per poll, beside the bridge and the verifier: the same loop, not a second one.
+  assert.ok(asked.length > 0 && asked.length <= ticksSoFar + 1, `${asked.length} route asks for ${ticksSoFar} polls`);
+  assert.deepEqual(asked[0], [ACCOUNT, 'eth', TOKEN.assetId], 'the exact asset the card is for');
+
+  closed = true;
+  const deadline = Date.now() + 2_000;
+  while (h.watch.current()?.paused === null && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+  const now = h.watch.current();
+  assert.match(String(now?.paused), /^NEAR Intents has paused Ethereum deposits/, 'a route that closed under an open card never reached the window');
+  assert.equal(now?.statusLink, 'https://status.near-intents.org/posts/dashboard');
+  assert.equal(now?.phase, 'watching', 'the watch keeps listening: money already sent still gets its word');
+  assert.equal(h.frames.filter((f) => f.paused !== null).length, 1, 'said once');
+  h.watch.stop();
 });

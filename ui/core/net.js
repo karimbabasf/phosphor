@@ -153,15 +153,20 @@
     return promise;
   }
 
+  /* The refusal's sentence is the message; the rest of its body rides along
+     as `body`, for the caller that draws a refusal of one kind its own way
+     (a paused route and its status page, ui/screens/netpick.js). */
   function netError(status, text) {
     var message = text;
+    var parsed = null;
     try {
-      var parsed = JSON.parse(text);
+      parsed = JSON.parse(text);
       if (parsed && parsed.error) message = parsed.error;
     } catch (err) { /* the body was not JSON, so the text is the message */ }
     if (!message) message = 'The app answered ' + status + ' with no reason.';
     var error = new Error(message);
     error.status = status;
+    error.body = parsed && typeof parsed === 'object' ? parsed : null;
     return error;
   }
 

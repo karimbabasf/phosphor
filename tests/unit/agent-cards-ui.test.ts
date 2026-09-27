@@ -678,11 +678,12 @@ const DEPOSIT_ADDRESS = '0x12ab5c7d9e0f1a2b3c4d5e6f708192a3b4c59fe2';
 const DEPOSIT_DATA = { ok: true, shownInWindow: true, chain: 'base', network: 'Base', asset: 'USDC', minDeposit: 1, addressFingerprint: '0x12ab...9fe2', addressVerified: true, memo: null, watching: 'watching' };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function depositWorld(report: Any) {
+function depositWorld(report: Any, route: (chain: string, symbol: string) => Any = () => ({ notice: null, statusLink: null })) {
   const world = build();
   const copied: string[] = [];
   const drawn: unknown[] = [];
   const picked: Any[] = [];
+  const routed: string[] = [];
   let destroyed = 0;
   world.win.PhosphorMoneyIn = { load: () => Promise.resolve(report) };
   world.win.PhosphorLazy = { load: () => Promise.resolve(true) };
@@ -691,6 +692,10 @@ function depositWorld(report: Any) {
     addressBlock: (address: string, kind: string) => { const n = make('div'); n.className = 'deposit-address addr'; n.textContent = address; n.setAttribute('data-kind', kind); return n; },
     copyChecked: (address: string, say: (text: string) => void) => { copied.push(address); say('Address copied, ends in ...' + address.slice(-4)); return Promise.resolve(true); },
     drawChecked: (_canvas: unknown, address: string, px: number) => { drawn.push([address, px]); return { ok: true }; },
+    // The per-asset route read and the frame test, as netpick.js exports them.
+    routeFor: (chain: string, symbol: string) => { routed.push(`${chain}:${symbol}`); return Promise.resolve(route(chain, symbol)); },
+    pausedFor: (deposit: Any, chain: string, symbol: string) =>
+      !!deposit && typeof deposit.paused === 'string' && deposit.paused !== '' && deposit.chain === chain && String(deposit.symbol || '').toUpperCase() === String(symbol || '').toUpperCase(),
     /* The token list and its acknowledgement, as netpick.js keeps them (netpick-ui.test.ts drives
        the real one): Show the address waits for the tick, then hands the address back. */
     render: (host: Any, opts: Any) => {
@@ -716,7 +721,7 @@ function depositWorld(report: Any) {
       return view;
     },
   };
-  return { world, copied, drawn, picked, destroyed: () => destroyed };
+  return { world, copied, drawn, picked, routed, destroyed: () => destroyed };
 }
 
 /* Tick the box under the token list, then press Show the address. */
@@ -748,6 +753,7 @@ test('the deposit card answers with the whole address, Copy and a QR code, read 
   await settle();
   assert.equal(all(card, 'deposit-address').length, 0, 'the address is on the card before the tick');
   acknowledge(card);
+  await settle();
   const block = all(card, 'deposit-address')[0];
   assert.ok(block, 'the whole address is not on the card');
   assert.equal(block.textContent, DEPOSIT_ADDRESS);
@@ -798,6 +804,7 @@ test('the deposit card shows no address until the tick and Show the address, the
   assert.equal(all(card, 'deposit-address').length, 0, 'the address came without the tick');
 
   acknowledge(card);
+  await settle();
   assert.equal(destroyed(), 1, 'the token list was left running under the address');
   assert.equal(all(card, 'netpick').length, 0, 'the token list stayed on the card');
   const well = all(card, 'deposit-address')[0];
@@ -863,6 +870,44 @@ test('the deposit card draws no address it cannot vouch for, and says why', asyn
   card = edited.world.cardNodes('deposit')[0];
   assert.equal(all(card, 'deposit-address').length, 0);
   assert.ok(card.textContent.includes('has been edited'), card.textContent);
+});
+
+const CARD_PAUSED = 'NEAR Intents has paused Base deposits right now, so no address is shown. Money sent now may not arrive.';
+const CARD_STATUS = 'https://status.near-intents.org/posts/dashboard';
+
+test('the deposit card asks about the token picked on the tick before drawing: a closed token draws the pause and the status page, never the address', async () => {
+  const { world, routed } = depositWorld(
+    { verified: true, networks: [{ id: 'base', words: 'Base', address: DEPOSIT_ADDRESS, memo: null, accepts: [] }] },
+    (_chain, symbol) => (symbol === 'USDC' ? { closed: CARD_PAUSED, statusLink: CARD_STATUS } : { notice: null, statusLink: null }),
+  );
+  world.ask('deposit usdc on base');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: { chain: 'base', asset: 'USDC' }, data: DEPOSIT_DATA });
+  const card = world.cardNodes('deposit')[0];
+  await settle();
+  acknowledge(card);
+  await settle();
+  assert.deepEqual(routed, ['base:USDC'], 'the picked token was not asked about');
+  assert.equal(all(card, 'deposit-address').length, 0, 'the address was drawn for a token NEAR Intents is not taking');
+  assert.equal(all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length + all(card, 'tcard-qr').length, 0, 'Copy or a QR for a paused token');
+  assert.ok(card.textContent.includes(CARD_PAUSED), card.textContent);
+});
+
+test('a route that closes while the card shows its address takes it down on the watch frame', async () => {
+  const { world } = depositWorld({ verified: true, networks: [{ id: 'base', words: 'Base', address: DEPOSIT_ADDRESS, memo: null, accepts: [] }] });
+  world.ask('deposit usdc on base');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: { chain: 'base', asset: 'USDC' }, data: DEPOSIT_DATA });
+  const card = world.cardNodes('deposit')[0];
+  await settle();
+  acknowledge(card);
+  await settle();
+  assert.equal(all(card, 'deposit-address').length, 1);
+  const frame = { phase: 'watching', chain: 'base', symbol: 'USDC', address: DEPOSIT_ADDRESS, startedAt: new Date().toISOString(), paused: null, statusLink: null };
+  world.deposit(frame);
+  assert.equal(all(card, 'deposit-address').length, 1, 'an open frame took the address down');
+  world.deposit({ ...frame, paused: CARD_PAUSED, statusLink: CARD_STATUS });
+  assert.equal(all(card, 'deposit-address').length, 0, 'the address stayed up after the route closed');
+  assert.equal(all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length + all(card, 'tcard-qr').length, 0);
+  assert.ok(card.textContent.includes(CARD_PAUSED), card.textContent);
 });
 
 test('a refused deposit says the reason and nothing else', () => {

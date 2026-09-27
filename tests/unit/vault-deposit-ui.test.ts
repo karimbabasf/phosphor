@@ -203,7 +203,7 @@ type World = {
   stored: Record<string, string>;
 };
 
-function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) => Any | null; notice?: boolean } = {}): World {
+function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) => Any | null; notice?: boolean; route?: (chain: string, symbol: string) => Any } = {}): World {
   const body = makeNode('body');
   const page = makeNode('div');
   const calls: Any[] = [];
@@ -254,6 +254,14 @@ function build(options: { report?: Any; vault?: Any; decoder?: (data: unknown) =
   sandbox.PhosphorLock = { focus() { calls.push({ route: 'lockFocus' }); } };
   sandbox.PhosphorApi = {
     intentsReceive: () => { calls.push({ route: '/api/intents-receive' }); return Promise.resolve({ data: options.report ?? report(), fresh: true }); },
+    /* The per-asset route read (GET /api/deposit/route): open unless a test says otherwise. A
+       refusal rejects the way ui/core/net.js does, with the body riding on the error. */
+    depositRoute: (chain: string, symbol: string) => {
+      calls.push({ route: '/api/deposit/route', chain, symbol });
+      const said = options.route?.(chain, symbol);
+      if (said && said.status) return Promise.reject(Object.assign(new Error(said.error), { status: said.status, body: said }));
+      return Promise.resolve({ data: Object.assign({ ok: true, chain, symbol, notice: null, statusLink: null }, said ?? {}), fresh: true });
+    },
     depositShow: (chain: string, symbol: string, address: string | null) => {
       calls.push({ route: '/api/deposit/show', chain, symbol, address });
       return Promise.resolve({ ok: true, deposit: { phase: 'watching', chain, symbol, address, startedAt: '2026-09-14T10:00:00.000Z', baseline: 0, amount: null, txHash: null, ms: null } });

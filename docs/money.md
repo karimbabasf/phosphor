@@ -41,16 +41,17 @@ the wrong network is lost, and the bridge does not refund. Send a small test amo
 ### When NEAR Intents pauses a network
 
 The bridge can still hand out an address for a network that NEAR Intents has stopped crediting.
-So before it shows an address, the app asks two things: whether the swap service will take that
-network's coin in right now (a price check that moves nothing), and what the NEAR Intents status
-page says. A network that is paused shows no address at all. Its tile and row say Paused, and the
+So before it shows an address, the app asks two things: whether the swap service will take the
+token you picked in on that network right now (a price check that moves nothing), and what the NEAR
+Intents status page says. A network that is paused shows no address at all. Its tile and row say Paused, and the
 card says why in one sentence, for example "NEAR Intents has paused TON deposits right now, so no
 address is shown. Money sent now may not arrive.", with View status, which opens the status page
 in your browser. Your assistant's `deposit` tool gives the same answer and opens no card. A
 network with trouble reported but still working keeps its address, and the card prints a notice
-above it: the money may take longer than usual. The check runs only when an address is about to
-show, never in the background, and a paused network shows its address again within twenty
-seconds of NEAR Intents taking it back.
+above it: the money may take longer than usual. The check runs when an address is about to show
+and again on the card's own watch while it is open, never on a timer of its own, so an address
+already on screen comes down, with the same sentence, if NEAR Intents pauses the network while you
+look. A paused network shows its address again within twenty seconds of NEAR Intents taking it back.
 
 The card then watches: Waiting for your deposit, then Arriving when the bridge sees your
 transfer, then Almost there, then "is in your balance" once your balance rises. It checks every

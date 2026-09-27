@@ -64,6 +64,10 @@ export type DepositState = {
   ms: number | null;
   /** The last read that failed, in words, while it keeps failing; null once a read works. */
   error: string | null;
+  /** NEAR Intents stopped taking this asset on this network while the card was up, in the
+   *  sentence the window prints where the address was, and the status page; null while it takes it. */
+  paused: string | null;
+  statusLink: string | null;
 };
 
 export type DepositWatch = {
@@ -192,6 +196,12 @@ type Deps = {
   recent?: (account: string, chain: string) => Promise<PoaDeposit[]>;
   balance?: (account: string, assetId: string) => Promise<bigint | null>;
   confirmations?: (chain: string, txHash: string) => Promise<number | null>;
+  /** Whether NEAR Intents is taking this exact asset on this network right now (the route check
+   *  in src/preflight/route-health.ts), asked on the tick beside the bridge and the verifier, so an
+   *  address that stops being safe comes off the screen with no timer or loop of its own. The
+   *  checker keeps its answers a minute (twenty seconds when shaky), so most ticks ask nothing
+   *  of the network. Absent (a test, demo mode), no route is ever called closed. */
+  route?: (account: string, chain: string, assetId: string) => Promise<{ closed: string | null; link: string | null }>;
   now?: () => number;
   pollMs?: number;
 };
@@ -301,7 +311,8 @@ export function createDepositWatch(deps: Deps): DepositWatch {
     }
 
     const askBridge = current.phase !== 'credited';
-    const [bridge, held] = await Promise.all([
+    const askRoute = askBridge && token !== null && deps.route !== undefined;
+    const [bridge, held, route] = await Promise.all([
       askBridge
         ? recent(account, current.chain).then(
             (rows) => ({ rows, failed: false }),
@@ -309,10 +320,16 @@ export function createDepositWatch(deps: Deps): DepositWatch {
           )
         : Promise.resolve({ rows: [] as PoaDeposit[], failed: false }),
       token !== null ? balance(account, token.assetId) : Promise.resolve(null),
+      askRoute && token !== null && deps.route !== undefined ? deps.route(account, current.chain, token.assetId).catch(() => null) : Promise.resolve(null),
     ]);
     if (gen !== generation || state === null) return;
 
     const next: DepositState = { ...current };
+    // A route read that failed keeps what the last one said.
+    if (route !== null) {
+      next.paused = route.closed;
+      next.statusLink = route.closed === null ? null : route.link;
+    }
     // The verifier first: credited is the settled truth and wins over anything the bridge says.
     if (token === null) {
       next.error = `Cannot check the ${current.symbol} balance: the bridge gave this token no intents id`;
@@ -408,6 +425,8 @@ export function createDepositWatch(deps: Deps): DepositWatch {
         confirmations: null,
         ms: null,
         error: null,
+        paused: null,
+        statusLink: null,
       };
       announce();
       timer = setInterval(() => {

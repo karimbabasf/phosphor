@@ -9,9 +9,11 @@ without a git tag say so.
 
 Built 2026-09-26. Tagged v0.10.7 on 2026-09-26.
 
-- Add money no longer shows an address on a network NEAR Intents has paused. The network reads
-  Paused, the card says why in one sentence, and View status opens the NEAR Intents status page.
-  A network with trouble reported keeps its address, with a notice that money may take longer.
+- Add money no longer shows an address on a network NEAR Intents has paused, checked for the
+  exact token you pick, and an address already on screen comes down if the network pauses while
+  the card is open. The network reads Paused, the card says why in one sentence, and View status
+  opens the NEAR Intents status page. A network with trouble reported keeps its address, with a
+  notice that money may take longer.
 - A payout to a chain, a Hyperliquid deposit and a Hyperliquid withdrawal are refused before
   signing when NEAR Intents has paused that route, checked when proposed and again right before
   the key signs. Your assistant's deposit tool gives the same answer.
