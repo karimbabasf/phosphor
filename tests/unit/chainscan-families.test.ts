@@ -12,6 +12,7 @@ import { formatUnits, getAddress } from 'viem';
 
 import { addressActivity, addressSummary, chainFetch, chainHead, createChainFetchState, transaction, transactions } from '../../src/chainscan/index.ts';
 import type { ChainDeps } from '../../src/chainscan/index.ts';
+import { headTtl } from '../../src/chainscan/families.ts';
 import { recipientSentence } from '../../src/rails/intents-pay.ts';
 import { POA_DEPOSIT } from '../fixtures/poa-deposit-addresses.ts';
 
@@ -134,6 +135,80 @@ test('the chain head is the latest block and its age, cached fifteen seconds and
   d.advance(5_001);
   await chainHead('ethereum', d);
   assert.equal(seen.length, 2, 'past fifteen seconds it is');
+});
+
+test('two asks for one chain head at the same moment share one request', async () => {
+  const seen: string[] = [];
+  const answer = rpcHost({ eth_getBlockByNumber: { number: '0x18dc0c5', timestamp: `0x${(NOW / 1000 - 13).toString(16)}` } });
+  // The answer arrives a turn later, so the second ask comes while the first is on the wire.
+  const d = deps({ 'ethereum-rpc.publicnode.com': async (url, init) => (await new Promise((resolve) => setImmediate(resolve)), answer(url, init)) }, seen);
+  const [a, b] = await Promise.all([chainHead('ethereum', d), chainHead('ethereum', d)]);
+  assert.equal(seen.length, 1, 'one request for both');
+  assert.deepEqual(a, { height: 0x18dc0c5, time: new Date(NOW - 13_000).toISOString(), ageSec: 13 });
+  assert.deepEqual(b, a);
+});
+
+// BlockCypher's Dogecoin chain answer, the tip moving on every ask, and the tip's own answer.
+function dogeHost(): Record<string, Handler> {
+  let n = 0;
+  return {
+    'api.blockcypher.com/v1/doge/main': () => (n++, json({ height: 6391209 + n, hash: n.toString(16).padStart(64, '0') })),
+    'api.blockcypher.com': () => json({ time: new Date(NOW - 60_000).toISOString(), balance: 0 }),
+  };
+}
+
+test('Dogecoin\'s head is kept six minutes, so head reads spend at most a fifth of BlockCypher\'s 100 an hour', async () => {
+  const seen: string[] = [];
+  // Two requests a head against 100 an hour: at most 10 heads, one per six minutes. Blockchain.com's
+  // one call per 10 s gives Bitcoin Cash 50 s; every other host clears the fifteen-second floor.
+  assert.deepEqual([headTtl('dogecoin'), headTtl('bitcoincash'), headTtl('ethereum'), headTtl('solana')], [360_000, 50_000, 15_000, 15_000]);
+  const d = deps(dogeHost(), seen);
+  assert.equal((await chainHead('dogecoin', d))?.height, 6391210);
+  assert.equal(seen.length, 2, 'the chain answer, then the tip for its time');
+  d.advance(5 * 60_000);
+  assert.equal((await chainHead('dogecoin', d))?.height, 6391210, 'five minutes on, the kept head');
+  assert.equal(seen.length, 2, 'inside six minutes no request at all');
+  // The route gate rebuilds about once a minute while the screen is open: an hour of that.
+  seen.length = 0;
+  for (let minute = 0; minute < 60; minute++) {
+    d.advance(60_000);
+    assert.notEqual(await chainHead('dogecoin', d), null, `minute ${minute}`);
+  }
+  assert.ok(seen.length <= 20, `${seen.length} BlockCypher requests in an hour of heads`);
+  assert.deepEqual(d.waits, [], 'and never a wait on the bucket');
+});
+
+test('a chain head never waits on the bucket: with no request free it answers at once with the kept head or null, and an address read still waits its turn', async () => {
+  const seen: string[] = [];
+  // The bucket runs on the injected clock and the request's own deadline on the real one, so
+  // the call's deadline is ahead of both.
+  const d = deps(dogeHost(), seen, { deadline: Math.max(NOW, Date.now()) + 120_000 });
+  const drain = async (from: number) => {
+    for (const n of [from, from + 1, from + 2]) await chainFetch(`https://api.blockcypher.com/v1/doge/main/addrs/${n}/balance`, {}, d);
+  };
+  await drain(1);
+  assert.equal(seen.length, 3);
+  assert.equal(await chainHead('dogecoin', d), null, 'nothing kept and nothing free: null');
+  assert.deepEqual([seen.length, d.waits], [3, []], 'no request and no wait');
+  // The agent's own address read still waits for the next slot, 36 s at 100 an hour.
+  await chainFetch('https://api.blockcypher.com/v1/doge/main/addrs/4/balance', {}, d);
+  assert.deepEqual([seen.length, d.waits], [4, [36_000]]);
+  // A head read once the bucket refills, then the bucket drained again past its six minutes.
+  d.advance(3 * 36_000);
+  const read = await chainHead('dogecoin', d);
+  assert.equal(read?.height, 6391210);
+  assert.equal(seen.length, 6);
+  d.advance(6 * 60_000 + 1);
+  await drain(5);
+  const kept = await chainHead('dogecoin', d);
+  assert.equal(kept?.height, 6391210, 'no request free: the kept head, at once');
+  assert.equal(kept?.ageSec, (read?.ageSec ?? 0) + 6 * 60, 'its block older by the time that passed');
+  assert.deepEqual([seen.length, d.waits], [9, [36_000]], 'no request for it and no wait');
+  // Past twice the six minutes a kept head says more about this cache than about the chain.
+  d.advance(6 * 60_000);
+  await drain(8);
+  assert.equal(await chainHead('dogecoin', d), null);
+  assert.deepEqual([seen.length, d.waits], [12, [36_000]]);
 });
 
 test('every family reads its head from its own endpoint in the shape it answers', async () => {
