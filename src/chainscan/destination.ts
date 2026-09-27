@@ -16,7 +16,8 @@ import type { ChainNetwork } from './networks.ts';
 import { api, dataText, idText, list, num, rec } from './common.ts';
 import type { ChainDeps } from './common.ts';
 
-export type StellarLine = { code: string; issuer: string; authorized: boolean; balance: string; limit: string };
+// `buying` is the trustline's buying liabilities: room under the limit its own open offers hold.
+export type StellarLine = { code: string; issuer: string; authorized: boolean; balance: string; limit: string; buying: string };
 
 export type PayTarget =
   | { network: 'xrp'; exists: boolean; requireDestTag: boolean; depositAuth: boolean; disallowXrp: boolean; reserveXrp: number | null }
@@ -81,7 +82,8 @@ async function stellarTarget(address: string, deps: ChainDeps): Promise<PayTarge
     const issuer = idText(b.asset_issuer) ?? '';
     const balance = typeof b.balance === 'string' ? b.balance : '0';
     const limit = typeof b.limit === 'string' ? b.limit : '0';
-    trustlines.push({ code, issuer, authorized: b.is_authorized !== false, balance, limit });
+    const buying = typeof b.buying_liabilities === 'string' ? b.buying_liabilities : '0';
+    trustlines.push({ code, issuer, authorized: b.is_authorized !== false, balance, limit, buying });
   }
   return { network: 'stellar', exists: true, memoRequired, trustlines };
 }

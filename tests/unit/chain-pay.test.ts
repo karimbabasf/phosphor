@@ -94,7 +94,7 @@ const registry: TokensFile = { eth: {}, base: {}, arb: {}, sol: {}, near: {} };
 // A chain rule's facts, the shape the rail's payTarget dependency answers with.
 type Target =
   | { network: 'xrp'; exists: boolean; requireDestTag: boolean; reserveXrp: number | null; depositAuth?: boolean; disallowXrp?: boolean }
-  | { network: 'stellar'; exists: boolean; memoRequired: boolean; trustlines: Array<{ code: string; issuer: string; authorized: boolean; balance: string; limit: string }> };
+  | { network: 'stellar'; exists: boolean; memoRequired: boolean; trustlines: Array<{ code: string; issuer: string; authorized: boolean; balance: string; limit: string; buying?: string }> };
 
 function baseOf(amount: number, decimals: number): bigint {
   const [whole, frac = ''] = amount.toFixed(decimals).split('.');
@@ -361,6 +361,23 @@ test('USDC on Stellar to an account with no trustline for its issuer is refused'
   const ok = railOf(COINS.USDC_XLM, 10, { targets: [XLM_OK], own: NOT_OWN });
   const sim = await ok.rail.simulate(draftOf(COINS.USDC_XLM, PLAIN_XLM, 10));
   assert.equal(sim.ok, true, sim.summary);
+});
+
+/* Review L4 (2026-09-27): open buy offers on a trustline hold room under its limit (buying
+   liabilities), and a payment into that room fails LINE_FULL at the far end. */
+test('a Stellar trustline whose open offers hold its room is refused for a payment that does not fit', async () => {
+  const held = { ...XLM_OK, trustlines: [{ code: 'USDC', issuer: USDC_XLM_ISSUER, authorized: true, balance: '0', limit: '100', buying: '95' }] };
+  const r = railOf(COINS.USDC_XLM, 10, { targets: [held], own: NOT_OWN });
+  assert.match(await refused(r, draftOf(COINS.USDC_XLM, PLAIN_XLM, 10)), /has room for only 5 more USDC/);
+  assert.equal(r.quotes.length, 0);
+});
+
+test('the Stellar reader keeps a trustline\'s buying liabilities', async () => {
+  const horizon = (async () =>
+    new Response(JSON.stringify({ balances: [{ asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: USDC_XLM_ISSUER, balance: '1.0000000', limit: '100.0000000', buying_liabilities: '95.0000000', is_authorized: true }, { asset_type: 'native', balance: '5.0000000' }], data: {} }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  const read = await payTarget('stellar', PLAIN_XLM, { fetchImpl: horizon, state: createChainFetchState() });
+  assert.ok(read?.network === 'stellar', JSON.stringify(read));
+  assert.equal(read.trustlines[0]?.buying, '95.0000000', JSON.stringify(read));
 });
 
 test('the bridge deposit address on Stellar, which routes by memo, is refused as a destination', async () => {
