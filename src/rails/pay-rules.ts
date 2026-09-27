@@ -18,7 +18,9 @@ import { crc16 } from '../chainscan/codec.ts';
 import { validateAddressForFamily } from '../chainscan/networks.ts';
 import type { AddressActivity } from '../chainscan/common.ts';
 import type { PayTarget } from '../chainscan/destination.ts';
-import { spendNetworkOf } from './intents-address.ts';
+import { toBaseUnits } from '../intents.ts';
+import { bridgeKeyOf, humanAmount, spendNetworkOf } from './intents-address.ts';
+import type { PoaToken } from './intents-address.ts';
 
 // The chains where a deposit to an exchange is told apart by a memo, tag or comment.
 export const MEMO_CHAINS: ReadonlySet<string> = new Set(['xrp', 'stellar', 'ton']);
@@ -142,6 +144,25 @@ export function memoCaution(network: string): PayNote | null {
 
 export type OwnDeposit = { address: string; memo: string | null };
 
+/* The least the bridge credits of the paid token on this chain, from its supported_tokens list,
+   or that it does not list the token there at all. A payout to our own deposit address is a
+   deposit, and under that minimum, or of a token the bridge does not take, it is not credited. */
+export type DepositFloor = { listed: false } | { listed: true; min: string; decimals: number };
+
+/* The bridge's row for the paid token on the payout's chain. One intents token can be listed on
+   several chains (XRP on the XRP Ledger, on Aptos and on Starknet), so the chain is matched first,
+   then the token by its intents id, or by its contract when 1Click names it by another id. */
+export function depositFloorOf(rows: readonly PoaToken[], network: string, asset: { assetId: string; native: boolean; contract: string | null }): DepositFloor {
+  const key = bridgeKeyOf(network);
+  const onChain = rows.filter((r) => r.network === key);
+  const contract = asset.contract?.toLowerCase() ?? null;
+  const row =
+    onChain.find((r) => r.intentsAssetId === asset.assetId) ??
+    onChain.find((r) => (asset.native ? r.contract === null : contract !== null && r.contract !== null && r.contract.toLowerCase() === contract));
+  if (row === undefined || !/^\d+$/.test(row.minDeposit)) return { listed: false };
+  return { listed: true, min: row.minDeposit, decimals: row.decimals };
+}
+
 export type PayFacts = {
   network: string;
   symbol: string;
@@ -154,6 +175,7 @@ export type PayFacts = {
   activity: AddressActivity | null; // the chain reader's answer about the receiver
   target: PayTarget | null | undefined; // the ledger's rules; null unanswered, undefined not asked
   own: OwnDeposit | null | undefined; // our own bridge deposit address; null unanswered, undefined not asked
+  floor: DepositFloor | null | undefined; // the bridge's minimum deposit for the token; null unanswered, undefined not asked
 };
 
 function amountText(n: number): string {
@@ -268,6 +290,31 @@ function ownDepositRules(f: PayFacts, problems: string[], notes: PayNote[]): voi
     problems.push(
       `${f.to} is your own NEAR Intents deposit address on ${label}, which the bridge shares and tells apart by a memo; ` +
         'a payout carries no memo, so the money would not reach your balance',
+    );
+    return;
+  }
+  // The round trip is a deposit, so it obeys what a deposit obeys (review M1, 2026-09-27).
+  if (f.network === 'xrp' && f.target?.network === 'xrp' && !f.target.exists) {
+    problems.push(
+      `${f.to} is your own NEAR Intents deposit address on ${label}, and it does not exist on the ledger yet: a payout would create it, ` +
+        `${amountText(f.target.reserveXrp ?? 1)} XRP of it would stay locked as the ledger's reserve, and the bridge has not been seen to credit a payment that creates its account; ` +
+        'deposit XRP from an exchange or a wallet first, through Add money',
+    );
+    return;
+  }
+  const floor = f.floor;
+  if (floor === undefined || floor === null) {
+    problems.push(`the bridge did not say the least ${f.symbol} deposit it credits on ${label}, and ${f.to} is your own deposit address there, where less is not credited; ${AGAIN}`);
+    return;
+  }
+  if (!floor.listed) {
+    problems.push(`the bridge does not take ${f.symbol} deposits on ${label}, so ${f.symbol} paid to your own deposit address there would not come back into your balance`);
+    return;
+  }
+  if (toBaseUnits(f.minReceived, floor.decimals) < BigInt(floor.min)) {
+    problems.push(
+      `${f.to} is your own NEAR Intents deposit address on ${label}, and the bridge credits a ${f.symbol} deposit on ${label} only from ` +
+        `${humanAmount(floor.min, floor.decimals)} ${f.symbol}; this payout delivers as little as ${amountText(f.minReceived)} ${f.symbol}, so it would not come back into your balance; send more at once`,
     );
     return;
   }

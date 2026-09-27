@@ -23,7 +23,8 @@ import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../.
 import { INTENTS_PAY_COUNTERPARTY, intentsPayRail, minReceivedForPay, payFamilyOf, payRefusal, recipientSentence } from '../../src/rails/intents-pay.ts';
 import { addressActivity } from '../../src/chainscan/index.ts';
 import { makeCtx, railThat } from './helpers/proposals.ts';
-import { spendNetworkOf } from '../../src/rails/intents-address.ts';
+import { parsePoaTokens, spendNetworkOf } from '../../src/rails/intents-address.ts';
+import { depositFloorOf } from '../../src/rails/pay-rules.ts';
 import { reasonFor } from '../../src/vault/reason.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 import { bech32Lookalike, cashAddrLookalike, range } from './helpers/lookalike.ts';
@@ -128,6 +129,7 @@ type Options = {
   receiver?: Array<AddressSummary | null>;
   quoteThrows?: string;
   echoRecipient?: string;
+  floor?: { listed: false } | { listed: true; min: string; decimals: number } | null; // the bridge's minimum deposit for the token
 };
 
 function railOf(coin: Coin, amount: number, opt: Options = {}) {
@@ -198,6 +200,7 @@ function railOf(coin: Coin, amount: number, opt: Options = {}) {
       ownCalls.push(`${account}:${network}`);
       return opt.own === undefined ? null : opt.own;
     },
+    depositFloor: async () => (opt.floor === undefined ? null : opt.floor),
   } as Parameters<typeof intentsPayRail>[0]);
   return { rail, quotes, targetCalls, ownCalls, generated };
 }
@@ -319,12 +322,46 @@ test('the bridge deposit address on Stellar, which routes by memo, is refused as
   assert.match(await refused(blind, draftOf(COINS.XLM, PLAIN_XLM, 50)), /bridge did not say/);
 });
 
+// The bridge's minimum deposits, read from its supported_tokens on 2026-09-27.
+const DOGE_FLOOR = { listed: true as const, min: '1000000', decimals: 8 };
+const XRP_FLOOR = { listed: true as const, min: '2000000', decimals: 6 };
+
 test('the own deposit address on a chain with no memo is a round trip, allowed and said', async () => {
-  const r = railOf(COINS.DOGE, 200, { own: { address: OWN.doge, memo: null } });
+  const r = railOf(COINS.DOGE, 200, { own: { address: OWN.doge, memo: null }, floor: DOGE_FLOOR });
   const sim = await r.rail.simulate(draftOf(COINS.DOGE, OWN.doge, 200));
   assert.equal(sim.ok, true, sim.summary);
   assert.match(sim.summary, /your own NEAR Intents deposit address on Dogecoin: the money comes back into your balance/);
   assert.ok(sim.send?.notes?.some((n) => /comes back into your balance/.test(n.text)));
+});
+
+/* Review M1 (2026-09-27): a payout to our own deposit address is a deposit, and the bridge
+   credits nothing under its minimum deposit for the token (XRP's is 2 XRP) nor a token it does not
+   list on that chain. Our own XRP deposit address does not exist on the ledger yet: a payout would
+   create it, lock 1 XRP as its reserve, and nothing shows the bridge credits such a payment. */
+test('a payout to our own deposit address is refused under the bridge minimum, for a token it does not take, and on XRP while the address does not exist', async () => {
+  const absent: Target = { network: 'xrp', exists: false, requireDestTag: false, reserveXrp: 1 };
+  const created = railOf(COINS.XRP, 5, { targets: [absent], own: { address: OWN.xrp, memo: null }, floor: XRP_FLOOR });
+  assert.match(await refused(created, draftOf(COINS.XRP, OWN.xrp, 5)), /your own NEAR Intents deposit address on XRP Ledger, and it does not exist on the ledger yet/);
+  const small = railOf(COINS.XRP, 1.5, { targets: [XRP_OK], own: { address: OWN.xrp, memo: null }, floor: XRP_FLOOR });
+  assert.match(await refused(small, draftOf(COINS.XRP, OWN.xrp, 1.5)), /credits a XRP deposit on XRP Ledger only from 2 XRP; this payout delivers as little as 1\.455 XRP/);
+  const unlisted = railOf(COINS.DOGE, 200, { own: { address: OWN.doge, memo: null }, floor: { listed: false } });
+  assert.match(await refused(unlisted, draftOf(COINS.DOGE, OWN.doge, 200)), /bridge does not take DOGE deposits on Dogecoin/);
+  const unread = railOf(COINS.DOGE, 200, { own: { address: OWN.doge, memo: null }, floor: null });
+  assert.match(await refused(unread, draftOf(COINS.DOGE, OWN.doge, 200)), /bridge did not say the least DOGE deposit it credits on Dogecoin/);
+  assert.equal(created.quotes.length + small.quotes.length + unlisted.quotes.length + unread.quotes.length, 0);
+  // Somebody else's address is not a deposit, and the bridge's minimum says nothing about it.
+  const other = railOf(COINS.XRP, 1.5, { targets: [XRP_OK], own: NOT_OWN, floor: XRP_FLOOR });
+  assert.equal((await other.rail.simulate(draftOf(COINS.XRP, PLAIN_XRP, 1.5))).ok, true);
+});
+
+test('the bridge minimum is read for the payout chain, since one intents token is listed on several', () => {
+  const rows = parsePoaTokens([
+    { defuse_asset_identifier: 'xrp:mainnet:native', asset_name: 'XRP', decimals: 6, min_deposit_amount: '2000000', intents_token_id: 'nep141:xrp.omft.near' },
+    { defuse_asset_identifier: 'aptos:mainnet:0x692a::xrp::XRP', asset_name: 'XRP', decimals: 6, min_deposit_amount: '1', intents_token_id: 'nep141:xrp.omft.near' },
+  ]);
+  assert.deepEqual(depositFloorOf(rows, 'xrp', { assetId: 'nep141:xrp.omft.near', native: true, contract: null }), { listed: true, min: '2000000', decimals: 6 });
+  assert.deepEqual(depositFloorOf(rows, 'aptos', { assetId: 'nep141:xrp.omft.near', native: false, contract: null }), { listed: true, min: '1', decimals: 6 });
+  assert.deepEqual(depositFloorOf(rows, 'starknet', { assetId: 'nep141:xrp.omft.near', native: false, contract: null }), { listed: false });
 });
 
 // ---------- TON ----------
