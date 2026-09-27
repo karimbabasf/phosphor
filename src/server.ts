@@ -34,7 +34,7 @@ import { intentsReceiveReport } from './http/wallet.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
 import { createTerms } from './terms.ts';
 import { createDepositWatch } from './vault/watch.ts';
-import { STATUS_LINK, routeGate } from './preflight/route-health.ts';
+import { ADDRESS_WAIT_MS, STATUS_LINK, routeGate } from './preflight/route-health.ts';
 import { createSseHub } from './http/sse.ts';
 import { credentialCheck, redactEvent } from './http/log-tail.ts';
 import { createCandlePush } from './market/push.ts';
@@ -257,7 +257,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       ? {}
       : {
           route: async (account: string, chain: string, assetId: string) => {
-            const gate = await routeGate(routeHealth, { network: chain, direction: 'in', account, asset: assetId }, 'deposit');
+            const gate = await routeGate(routeHealth, { network: chain, direction: 'in', account, asset: assetId, waitMs: ADDRESS_WAIT_MS }, 'deposit');
             return { closed: gate.closed, link: gate.closed === null ? null : STATUS_LINK };
           },
         }),

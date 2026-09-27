@@ -16,7 +16,7 @@ import { intentsReceiveReport } from '../../src/http/wallet.ts';
 import type { IntentsReceiveNetwork } from '../../src/http/wallet.ts';
 import { walletReads } from '../../src/http/read/wallet.ts';
 import { RECEIVE_NETWORKS, receiveNetworkByBridge } from '../../src/rails/intents-address.ts';
-import { STATUS_DATA_LABEL, STATUS_LINK, combine, parsePosts, statusReasons } from '../../src/preflight/route-health.ts';
+import { ADDRESS_WAIT_MS, STATUS_DATA_LABEL, STATUS_LINK, combine, parsePosts, statusReasons } from '../../src/preflight/route-health.ts';
 import type { RouteHealth, RouteVerdict } from '../../src/preflight/route-health.ts';
 import { base58Encode } from '../../src/chain/near.ts';
 import type { Ctx } from '../../src/http/context.ts';
@@ -547,7 +547,7 @@ test('the deposit tool asks about the exact asset: a closed asset on an open net
   assert.equal(a.body().ok, false);
   assert.match(String(a.body().reason), /^NEAR Intents has paused Base deposits right now/);
   assert.deepEqual(refused.shown, []);
-  assert.deepEqual(closed.asked.at(-1), { network: 'base', direction: 'in', account: report.account, asset: usdc });
+  assert.deepEqual(closed.asked.at(-1), { network: 'base', direction: 'in', account: report.account, asset: usdc, waitMs: ADDRESS_WAIT_MS });
 
   const slow = toolCtx(report, { routeHealth: routesFor({}, { [usdc]: 'degraded' }).routes });
   const d = captured();
