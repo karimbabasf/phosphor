@@ -54,6 +54,9 @@ export const STATUS_LINK = `${STATUS_BASE}/posts/dashboard`;
 export const ROUTE_TIMEOUT_MS = 4_000;
 export const OPEN_TTL_MS = 60_000;
 export const SHAKY_TTL_MS = 20_000;
+/* How old an answer may be right before a key signs. A card can wait minutes for its click, and a
+   minute-old "open" is not an answer about now; a closed answer in hand still refuses at once. */
+export const EXECUTE_MAX_AGE_MS = 10_000;
 // The page itself says max-age=60 on the post list.
 export const FEED_TTL_MS = 60_000;
 export const SERVICES_TTL_MS = 60 * 60_000;
@@ -499,8 +502,10 @@ export type RouteHealthDeps = {
   timeoutMs?: number;
 };
 
-// `account` is the intents account the probe credits and refunds, which a dry quote never moves.
-export type RouteAsk = { network: string; direction: RouteDirection; account: string | null; asset?: string };
+/* `account` is the intents account the probe credits and refunds, which a dry quote never moves.
+   `maxAgeMs` is how old a kept answer may be for this ask (EXECUTE_MAX_AGE_MS right before a
+   signature); absent, the TTLs above decide. A kept closed answer is used whatever its age. */
+export type RouteAsk = { network: string; direction: RouteDirection; account: string | null; asset?: string; maxAgeMs?: number };
 
 export type RouteHealth = { check(ask: RouteAsk): Promise<RouteVerdict> };
 
@@ -588,8 +593,8 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     return shared(inflight as unknown as Map<string, Promise<T>>, key, run);
   }
 
-  async function readFeed(): Promise<StatusPost[] | null> {
-    if (fresh(feed, now())) return feed.value;
+  async function readFeed(force = false): Promise<StatusPost[] | null> {
+    if (!force && fresh(feed, now())) return feed.value;
     return once('status:posts', async () => {
       try {
         const { status, body } = await getJson(`${STATUS_BASE}/api/posts?is_featured=true`);
@@ -617,12 +622,23 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     });
   }
 
-  async function statusFor(network: string): Promise<RouteReason[]> {
-    const posts = await readFeed();
+  async function reasonsFrom(posts: StatusPost[] | null, network: string): Promise<RouteReason[]> {
     if (posts === null) return [{ source: 'status', state: 'unknown', text: 'the NEAR Intents status page did not answer' }];
     // The service list is only needed when something is live.
     if (!posts.some((p) => isLive(p, now()))) return [];
     return statusReasons(posts, await readServices(), network, now());
+  }
+
+  /* The page's word on one network. An ask with a maximum age reads the page again when the kept
+     read is older than that, unless the kept read already closes the network: that answer stands. */
+  async function statusFor(network: string, maxAgeMs: number | undefined): Promise<RouteReason[]> {
+    const held = fresh(feed, now()) ? feed : undefined;
+    if (held !== undefined && maxAgeMs !== undefined && now() - held.at >= maxAgeMs) {
+      const kept = await reasonsFrom(held.value, network);
+      if (kept.some((r) => r.state === 'closed')) return kept;
+      return reasonsFrom(await readFeed(true), network);
+    }
+    return reasonsFrom(await readFeed(), network);
   }
 
   async function ask(token: OneClickToken, account: string, memo: boolean): Promise<ProbeAnswer> {
@@ -688,7 +704,7 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     }
   }
 
-  async function probeReason(net: ReceiveNetwork, account: string, asked: string | undefined): Promise<RouteReason> {
+  async function probeReason(net: ReceiveNetwork, account: string, asked: string | undefined, maxAgeMs: number | undefined): Promise<RouteReason> {
     let list: OneClickToken[];
     try {
       list = await deps.tokens();
@@ -699,7 +715,10 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     if (candidates.length === 0) return { source: 'oneclick', state: 'unknown', text: `1Click lists no coin on ${net.name} to ask about` };
     const key = `${net.id}|${candidates[0].assetId}`;
     const held = probes.get(key);
-    const result = fresh(held, now())
+    // A kept answer serves inside its TTL, and inside `maxAgeMs` too when the ask sets one; a kept
+    // closed answer serves whatever the ask's maximum age.
+    const keep = fresh(held, now()) && (held.value.state === 'closed' || maxAgeMs === undefined || now() - held.at < maxAgeMs);
+    const result = keep && held !== undefined
       ? held.value
       : await once(`probe:${key}`, async () => {
           const got = await probe(net, candidates, account);
@@ -731,8 +750,8 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     try {
       const net = spendNetworkOf(q.network);
       const [probed, status, chain] = await Promise.all([
-        q.direction === 'in' && net !== undefined && q.account !== null && q.account !== '' ? probeReason(net, q.account, q.asset) : Promise.resolve(null),
-        statusFor(q.network),
+        q.direction === 'in' && net !== undefined && q.account !== null && q.account !== '' ? probeReason(net, q.account, q.asset, q.maxAgeMs) : Promise.resolve(null),
+        statusFor(q.network, q.maxAgeMs),
         chainReason(q.network),
       ]);
       const reasons = [...(probed === null ? [] : [probed]), ...status, ...(chain === null ? [] : [chain])];
