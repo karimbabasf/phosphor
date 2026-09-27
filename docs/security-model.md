@@ -113,7 +113,7 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    No memo, tag or comment can travel with a payout (1Click's quote has no field for one), so on
    the chains that have rules of their own the rail refuses before either quote: an XRP
    X-address or a Stellar M-address (the memo is inside the address), an XRP account with
-   RequireDestTag or a Stellar account with `config.memo_required`, an account that does not
+   RequireDestTag or DepositAuth or a Stellar account with `config.memo_required`, an account that does not
    exist yet paid less than the reserve that creates it, a Stellar token with no trustline, TRX
    to a Tron contract or to an address Tron would not describe, and our own bridge deposit
    address on Stellar, which the bridge shares and tells apart by memo. A ledger that will not

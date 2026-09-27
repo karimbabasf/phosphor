@@ -201,6 +201,16 @@ function xrpRules(f: PayFacts, problems: string[], notes: PayNote[]): void {
     );
     return;
   }
+  if (t.exists && t.depositAuth) {
+    problems.push(
+      `${f.to} accepts payments on the XRP Ledger only from accounts it has authorized (it sets DepositAuth, as every AMM account does), ` +
+        "and the bridge's account is not one of them, so the ledger would refuse the payment; use a personal wallet address",
+    );
+    return;
+  }
+  if (t.exists && t.disallowXrp) {
+    notes.push({ tone: 'warn', text: `${f.to} asks not to be sent XRP (it sets DisallowXRP); the ledger still delivers it, but whoever holds it may not be watching for XRP.` });
+  }
   if (t.exists) return;
   if (t.reserveXrp === null) {
     if (f.minReceived < 1) {
