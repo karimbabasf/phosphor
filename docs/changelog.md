@@ -5,6 +5,32 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.8
+
+Built 2026-09-27. Tagged v0.10.8 on 2026-09-27.
+
+- Send out to 14 more chains: Tron, TON, XRP Ledger, Stellar, Sui, Aptos, Movement, Cardano,
+  Starknet, Bitcoin, Litecoin, Dogecoin, Bitcoin Cash and Dash. Zcash and Aleo still take
+  deposits only.
+- A payout never carries a memo, tag or comment. On XRP, Stellar and TON the card says not to pay
+  an exchange deposit address, and your assistant never asks you for a memo.
+- The app asks the chain first and refuses a payout that would be lost: an XRP account that needs
+  a destination tag or blocks payments, a Stellar account that needs a memo or does not exist
+  yet, an X-address or M-address, a new XRP account paid less than its reserve, a Stellar token
+  the receiver has no trustline for, TRX to a Tron contract. It checks again right before it signs.
+- A TON address is always paid in its non-bounceable form (UQ...). A bounceable or raw address is
+  converted to the same account, and the card shows both.
+- Bitcoin addresses are checked by their checksum. Bitcoin Cash takes the bitcoincash: form only,
+  and Dogecoin addresses starting with 9 are refused, because the payout service refuses them.
+- Paying your own NEAR Intents deposit address sends the money back into your balance. It is
+  refused on Stellar, while your XRP deposit address does not exist yet, below the bridge's
+  minimum deposit, and while that network's deposits are paused.
+- The card and the Touch ID dialog name the receiver by the characters that identify it, past
+  fixed prefixes like addr1 and bitcoincash:, so a lookalike address cannot pass. A named NEAR
+  account is always shown in full.
+- When a payout is too small for the bridge's flat fee, the refusal names the minimum in the coin
+  and in dollars.
+
 ## 0.10.7
 
 Built 2026-09-26. Tagged v0.10.7 on 2026-09-26.
