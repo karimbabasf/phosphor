@@ -49,6 +49,32 @@
     return !!links && typeof links.setHref === 'function' && links.setHref(anchor, url);
   }
 
+  function setStatusHref(anchor, url) {
+    var links = window.PhosphorLinks;
+    return !!links && typeof links.setStatusHref === 'function' && links.setStatusHref(anchor, url);
+  }
+
+  /* NEAR Intents has paused deposits on this network (src/preflight/route-health.ts).
+     The backend took the address away and wrote the sentence; the window only
+     tells a pause from the bridge refusing. */
+  function pausedRoute(network) {
+    return !!network && network.route === 'closed' && typeof network.unavailable === 'string' && network.unavailable !== '';
+  }
+
+  /* The way to the venue's status page, in words, or null when the report named
+     none the window may open. target=_blank is what the desktop shell routes to
+     the system browser; the window itself never navigates. */
+  function statusLink(network) {
+    if (!network || typeof network.statusLink !== 'string') return null;
+    var link = dom.el('a', 'netpick-link netpick-status');
+    if (!setStatusHref(link, network.statusLink)) return null;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.appendChild(dom.el('span', '', 'View status'));
+    link.appendChild(icon('external', 'netpick-link-chev'));
+    return link;
+  }
+
   /* The six networks an exchange withdraw screen lists first, for the one row
      of tiles: the five the app has always taken money on and Bitcoin. Every
      other network comes off the report, where the backend's registry names it
@@ -953,17 +979,18 @@
       show('network', node);
     }
 
-    /* The bridge refused this network just now. The tile stays whole (a
-       faded tile reads as broken, not as busy), its name steps back to the
-       quiet tone and a second line says so; the click still leads to the
-       sentence instead of an address. */
+    /* The bridge refused this network just now, or NEAR Intents has paused it.
+       The tile stays whole (a faded tile reads as broken, not as busy), its
+       name steps back to the quiet tone and a second line says which; the
+       click still leads to the sentence instead of an address. */
     function markUnavailable(tile, id) {
       var known = reportNetwork(id);
       if (!known || !known.unavailable || tile.dataset.unavailable === 'true') return;
+      var paused = pausedRoute(known);
       tile.dataset.unavailable = 'true';
       tile.setAttribute('aria-disabled', 'true');
-      tile.title = 'Not available now';
-      tile.appendChild(dom.el('span', 'net-tile-note', 'Not available'));
+      tile.title = paused ? 'Paused by NEAR Intents' : 'Not available now';
+      tile.appendChild(dom.el('span', 'net-tile-note', paused ? 'Paused' : 'Not available'));
     }
 
     /* A list that scrolls inside itself says where it is cut
@@ -1009,7 +1036,7 @@
       var side = dom.el('span', 'net-row-side');
       if (known && known.unavailable) {
         row.dataset.unavailable = 'true';
-        dom.setText(side, 'Not available now');
+        dom.setText(side, pausedRoute(known) ? 'Paused now' : 'Not available now');
       } else if (symbols.length) {
         dom.setText(side, symbols.slice(0, 3).join(', ') + (symbols.length > 3 ? ' +' + (symbols.length - 3) : ''));
       }
@@ -1296,8 +1323,18 @@
     /* The bridge's own reason names its route ("the bridge refused
        eth:42161: ..."), which is the app's business: the person reads that
        the network is closed for now and what to do, and the reason rides
-       behind the developer switch. */
+       behind the developer switch. A pause NEAR Intents reported is the
+       other case: the backend wrote that sentence for a person, money sent
+       now may not arrive, so it is read as a warning and links to the page
+       that says more. */
     function unavailableRefusal(n, network) {
+      if (pausedRoute(network)) {
+        var paused = refusal(network.unavailable, 'warn');
+        paused.dataset.route = 'closed';
+        var link = statusLink(network);
+        if (link) paused.appendChild(link);
+        return paused;
+      }
       var banner = refusal(n.name + ' is not taking deposits right now. Try again later, or pick another network.');
       var raw = dom.el('span', 'netpick-dev', String(network.unavailable));
       raw.setAttribute('data-dev-only', '');
@@ -1366,6 +1403,18 @@
       var address = network.address;
       var memoText = typeof network.memo === 'string' && network.memo ? network.memo : null;
       dom.clear(body);
+
+      /* NEAR Intents reports trouble here, and the address still works: the
+         notice sits above it, in the quiet banner, because nothing is lost by
+         reading it after the address. */
+      if (network.route === 'degraded' && typeof network.notice === 'string' && network.notice) {
+        var slow = dom.el('div', 'banner netpick-refusal deposit-route');
+        slow.dataset.route = 'degraded';
+        slow.appendChild(dom.el('span', '', network.notice));
+        var more = statusLink(network);
+        if (more) slow.appendChild(more);
+        body.appendChild(slow);
+      }
 
       /* A memo network (Stellar today) hands everybody one address and tells
          the deposits apart by memo, so a send without the memo reaches

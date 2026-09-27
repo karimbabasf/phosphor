@@ -629,7 +629,8 @@
   align-items: start;
 }
 
-.deposit-body[data-state="shown"] > .deposit-notes {
+.deposit-body[data-state="shown"] > .deposit-notes,
+.deposit-body[data-state="shown"] > .deposit-route {
   grid-column: 1 / -1;
 }
 
@@ -845,6 +846,15 @@
 
 .netpick-refusal > .netpick-dev {
   flex-basis: 100%;
+}
+
+/* The way to the status page, which wraps under the sentence of a paused or
+   slow network; the quiet link's own inset keeps its words on the text's edge. */
+.netpick-refusal > .netpick-status {
+  min-height: 24px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-strong);
 }
 
 .netpick-error {
