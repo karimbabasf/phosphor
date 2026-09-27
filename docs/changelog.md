@@ -5,6 +5,15 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.9
+
+Built 2026-09-27. Tagged v0.10.9 on 2026-09-27.
+
+- Right after the app starts, a network NEAR Intents has paused no longer shows its address. The
+  first check after a start can take longer than four seconds, and an unanswered check used to
+  let the address through. The deposit card, Add money and your assistant now wait up to fifteen
+  seconds for the real answer before they show an address.
+
 ## 0.10.8
 
 Built 2026-09-27. Tagged v0.10.8 on 2026-09-27.
