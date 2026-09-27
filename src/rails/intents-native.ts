@@ -54,6 +54,7 @@ import {
   resolveAsset,
   toBaseUnits,
   truncateToBaseUnits,
+  venueSaid,
 } from '../intents.ts';
 import type {
   OneClickClient,
@@ -307,7 +308,7 @@ export function intentsApi(deps: {
       if (res.status === 401 || res.status === 403) {
         throw refusal(res.status, `${what} was rejected as unauthorised (${res.status}). ${INTENTS_NO_API_KEY_REASON}`);
       }
-      throw refusal(res.status, msg !== undefined ? `${what} failed: ${oneLine(msg)}` : `${what} failed: ${res.status}`);
+      throw refusal(res.status, msg !== undefined ? `${what} failed: ${venueSaid('1Click', msg)}` : `${what} failed: ${res.status}`);
     }
     if (payload === null || typeof payload !== 'object') throw new Error(`${what} returned no JSON body`);
     return payload;
