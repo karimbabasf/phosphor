@@ -19,12 +19,13 @@
 import { formatUnits } from 'viem';
 
 import { reader } from '../chain/evm.ts';
-import { chainFetch, LIST_CAP } from './fetch.ts';
+import { chainFetch, LIST_CAP, refund, reserve, stateOf } from './fetch.ts';
+import type { KeptHead } from './fetch.ts';
 import { NEARBLOCKS_HOST, NETWORKS, explorerAddressUrl, explorerTxUrl, validateAddress, validateHash } from './networks.ts';
-import type { ChainNetwork, NetworkSpec } from './networks.ts';
+import type { ChainNetwork, NetworkSpec, ReadFamily } from './networks.ts';
 import { api, big, dataText, failure, idText, isoFromNanos, isoFromSeconds, isoFromText, list, num, rec, rpc, rpcBatch, units, withDeadline } from './common.ts';
 import type { AddressActivity, ChainDeps, ChainTransaction, ChainTransactionDetail, Found, TokenBalance, TxStatus } from './common.ts';
-import { FAMILIES, HEADS } from './families.ts';
+import { FAMILIES, HEADS, headCalls, headHost, headTtl } from './families.ts';
 import type { Read } from './families.ts';
 
 export { CHAIN_NETWORKS, HOSTS, NETWORKS, explorerAddressUrl, explorerTxUrl, isChainNetwork, scanNetworkOf, validateAddress, validateAddressForFamily, validateHash } from './networks.ts';
@@ -618,20 +619,57 @@ export type ChainHead = { height: number; time: string | null; ageSec: number | 
 
 /* Where a chain says it is: its latest block (slot, ledger, checkpoint) and how old that block
    is, the number that tells a halted chain from a live one before money is routed through it.
-   One request on most chains, cached for fifteen seconds, and never a throw: a head that could
+   One request on most chains, two on Solana and Dogecoin, and never a throw: a head that could
    not be read is null, and a chain whose source gives a height but no time (Aleo) comes back
-   with time and ageSec null. */
+   with time and ageSec null.
+
+   And never a wait. The route gate asks for every network each time a deposit report is
+   rebuilt, about once a minute while the screen is open, on the same buckets the agent's own
+   lookups spend. So asks for one network at the same moment share one read, an answer is kept
+   for the network's headTtl (fifteen seconds, six minutes on BlockCypher's hourly budget), a
+   failed read counts as a try so a dead source is asked once per headTtl, and a host with no
+   slot free right now answers with the kept head, or null, at once. */
 export async function chainHead(network: ChainNetwork, deps: ChainDeps = {}): Promise<ChainHead | null> {
   const family = NETWORKS[network]?.read ?? null;
   if (family === null) return null;
-  try {
-    const head = await HEADS[family](network, withDeadline(deps));
-    const at = head.time === null ? Number.NaN : Date.parse(head.time);
-    const now = (deps.now ?? Date.now)();
-    return { height: head.height, time: head.time, ageSec: Number.isFinite(at) ? Math.max(0, Math.round((now - at) / 1000)) : null };
-  } catch {
-    return null;
+  const now = deps.now ?? Date.now;
+  const state = stateOf(deps);
+  const ttl = headTtl(network);
+  let flight = state.flights.get(network);
+  const kept = state.heads.get(network);
+  if (flight === undefined && (kept === undefined || now() - kept.tried > ttl)) {
+    const prepaid = reserve(headHost(network), headCalls(network), deps);
+    if (prepaid !== null) {
+      flight = readHead(network, family, { ...withDeadline(deps), wait: false, prepaid }).finally(() => {
+        refund(prepaid, deps);
+        state.flights.delete(network);
+      });
+      state.flights.set(network, flight);
+    }
   }
+  if (flight !== undefined) await flight;
+  return keptHead(state.heads.get(network), now(), ttl);
+}
+
+async function readHead(network: ChainNetwork, family: ReadFamily, deps: ChainDeps): Promise<void> {
+  const state = stateOf(deps);
+  const now = deps.now ?? Date.now;
+  const tried = now();
+  const kept = state.heads.get(network);
+  try {
+    state.heads.set(network, { head: await HEADS[family](network, deps), at: now(), tried });
+  } catch {
+    state.heads.set(network, { head: kept?.head ?? null, at: kept?.at ?? tried, tried });
+  }
+}
+
+// A kept head past twice its headTtl says more about this cache than about the chain: its age
+// would read as a chain gone quiet, so it is dropped rather than answered.
+function keptHead(kept: KeptHead | undefined, now: number, ttl: number): ChainHead | null {
+  if (kept === undefined || kept.head === null || now - kept.at > 2 * ttl) return null;
+  const { height, time } = kept.head;
+  const at = time === null ? Number.NaN : Date.parse(time);
+  return { height, time, ageSec: Number.isFinite(at) ? Math.max(0, Math.round((now - at) / 1000)) : null };
 }
 
 // ---------- NEAR Intents ----------

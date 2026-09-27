@@ -19,7 +19,19 @@ export type ChainKeys = { blockscoutApiKey?: string; nearblocksApiKey?: string }
 type Bucket = { tokens: number; last: number };
 type Cached = { at: number; value: unknown; ttl: number };
 
-export type ChainFetchState = { buckets: Map<string, Bucket>; cache: Map<string, Cached> };
+// A chain head kept between reads by src/chainscan/index.ts: the last one read and when, and
+// when a read was last tried, answered or not.
+export type KeptHead = { head: { height: number; time: string | null } | null; at: number; tried: number };
+
+export type ChainFetchState = {
+  buckets: Map<string, Bucket>;
+  cache: Map<string, Cached>;
+  heads: Map<string, KeptHead>; // by network
+  flights: Map<string, Promise<void>>; // the head read on the wire, by network
+};
+
+// Slots a read of several requests paid for before its first one left (see reserve()).
+export type Prepaid = { host: string; left: number };
 
 export type ChainFetchDeps = {
   fetchImpl?: typeof fetch; // injected by tests so they never touch the network
@@ -28,6 +40,8 @@ export type ChainFetchDeps = {
   now?: () => number; // the bucket and cache clock, injectable so a wait can be asserted
   sleep?: (ms: number) => Promise<void>;
   deadline?: number; // absolute ms for the whole tool call; each request gets what is left
+  wait?: boolean; // false: a request with no slot free fails at once instead of sleeping (the chain head)
+  prepaid?: Prepaid; // spent before the bucket is asked
 };
 
 export const DEFAULT_CAP = 256 * 1024;
@@ -91,10 +105,14 @@ const RATES: Readonly<Record<string, { perSecond: number; burst: number }>> = {
 const DEFAULT_RATE = { perSecond: 1, burst: 1 };
 
 export function createChainFetchState(): ChainFetchState {
-  return { buckets: new Map(), cache: new Map() };
+  return { buckets: new Map(), cache: new Map(), heads: new Map(), flights: new Map() };
 }
 
 const DEFAULT_STATE = createChainFetchState();
+
+export function stateOf(deps: ChainFetchDeps): ChainFetchState {
+  return deps.state ?? DEFAULT_STATE;
+}
 
 // ---------- the guard ----------
 
@@ -126,22 +144,58 @@ export function scrub(text: string): string {
 
 // ---------- the bucket ----------
 
-async function take(host: string, deps: Required<Pick<ChainFetchDeps, 'now' | 'sleep' | 'state'>>, deadline: number): Promise<void> {
+function refill(host: string, state: ChainFetchState, now: number): Bucket {
+  const rate = RATES[host] ?? DEFAULT_RATE;
+  const bucket = state.buckets.get(host) ?? { tokens: rate.burst, last: now };
+  bucket.tokens = Math.min(rate.burst, bucket.tokens + ((now - bucket.last) * rate.perSecond) / 1000);
+  bucket.last = now;
+  state.buckets.set(host, bucket);
+  return bucket;
+}
+
+async function take(host: string, deps: Required<Pick<ChainFetchDeps, 'now' | 'sleep' | 'state'>> & Pick<ChainFetchDeps, 'wait' | 'prepaid'>, deadline: number): Promise<void> {
+  if (deps.prepaid !== undefined && deps.prepaid.host === host && deps.prepaid.left > 0) {
+    deps.prepaid.left -= 1;
+    return;
+  }
   const rate = RATES[host] ?? DEFAULT_RATE;
   for (;;) {
     const now = deps.now();
-    const bucket = deps.state.buckets.get(host) ?? { tokens: rate.burst, last: now };
-    bucket.tokens = Math.min(rate.burst, bucket.tokens + ((now - bucket.last) * rate.perSecond) / 1000);
-    bucket.last = now;
-    deps.state.buckets.set(host, bucket);
+    const bucket = refill(host, deps.state, now);
     if (bucket.tokens >= 1) {
       bucket.tokens -= 1;
       return;
     }
     const wait = Math.ceil(((1 - bucket.tokens) / rate.perSecond) * 1000);
+    if (deps.wait === false) throw new Error(`rate limit for ${host}: the next slot is ${wait}ms away and this read does not wait`);
     if (now + wait > deadline) throw new Error(`rate limit for ${host}: the next slot is ${wait}ms away and the call would run out of time`);
     await deps.sleep(wait);
   }
+}
+
+/* A read of several requests that must never wait (the chain head) takes every slot it needs
+   at once, or none and does not start: a lookup that starts beside it can then never leave it
+   half read. Capped at the host's burst, so a read of more requests than the burst still
+   starts. Null when the host has fewer free right now. */
+export function reserve(host: string, n: number, deps: ChainFetchDeps): Prepaid | null {
+  const need = Math.min(n, (RATES[host] ?? DEFAULT_RATE).burst);
+  const bucket = refill(host, stateOf(deps), (deps.now ?? Date.now)());
+  if (bucket.tokens < need) return null;
+  bucket.tokens -= need;
+  return { host, left: need };
+}
+
+// Slots a read did not spend, because an answer came from the cache or the read failed first,
+// go back to the bucket.
+export function refund(prepaid: Prepaid, deps: ChainFetchDeps): void {
+  const bucket = refill(prepaid.host, stateOf(deps), (deps.now ?? Date.now)());
+  bucket.tokens = Math.min((RATES[prepaid.host] ?? DEFAULT_RATE).burst, bucket.tokens + prepaid.left);
+  prepaid.left = 0;
+}
+
+// The host's sustained rate in requests per second, what a budget is computed from.
+export function ratePerSecond(host: string): number {
+  return (RATES[host] ?? DEFAULT_RATE).perSecond;
 }
 
 // ---------- the cache ----------
@@ -209,7 +263,7 @@ export async function chainFetch(url: string, opts: ChainFetchOptions, deps: Cha
   const fetchImpl = deps.fetchImpl ?? fetch;
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const state = deps.state ?? DEFAULT_STATE;
+  const state = stateOf(deps);
   const deadline = deps.deadline ?? Date.now() + CALL_BUDGET_MS;
   const method = opts.method ?? 'GET';
   const cap = opts.cap ?? DEFAULT_CAP;
@@ -220,7 +274,7 @@ export async function chainFetch(url: string, opts: ChainFetchOptions, deps: Cha
   if (cached.hit) return cached.value;
 
   const host = new URL(url).host;
-  await take(host, { now, sleep, state }, deadline);
+  await take(host, { now, sleep, state, wait: deps.wait, prepaid: deps.prepaid }, deadline);
 
   let target = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {

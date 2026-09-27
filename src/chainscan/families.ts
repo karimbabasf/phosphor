@@ -11,14 +11,14 @@
 
 import { formatUnits } from 'viem';
 
-import { chainFetch, DEFAULT_CAP } from './fetch.ts';
+import { chainFetch, DEFAULT_CAP, ratePerSecond } from './fetch.ts';
 import { NETWORKS } from './networks.ts';
 import type { ChainNetwork, ReadFamily } from './networks.ts';
 import { api, big, dataText, decimalText, decimalUnits, idText, isoFromMillis, isoFromSeconds, isoFromText, list, num, rec, rpc, rpcBatch, units } from './common.ts';
 import type { AddressActivity, ChainDeps, Found, TokenBalance } from './common.ts';
 
 // A chain head moves every few seconds, so it is cached for fifteen, not the minute every
-// other answer gets.
+// other answer gets, unless the host's budget asks for longer (headTtl).
 export const HEAD_TTL_MS = 15_000;
 const BIG_CAP = 512 * 1024; // a transaction with its receipt, metadata or proof
 const ALEO_TX_CAP = 1024 * 1024; // a deployment carries its program
@@ -111,7 +111,7 @@ const evmRpc: Family = {
   },
 };
 
-async function evmHead(network: ChainNetwork, deps: ChainDeps, host = NETWORKS[network].rpc ?? NETWORKS[network].api, path = '/'): Promise<Head> {
+async function evmHead(network: ChainNetwork, deps: ChainDeps, host = headHost(network), path = '/'): Promise<Head> {
   const block = rec(await rpc(`https://${host}${path}`, 'eth_getBlockByNumber', ['latest', false], deps, DEFAULT_CAP, HEAD_TTL_MS));
   return { height: height(block.number), time: isoFromSeconds(big(block.timestamp)?.toString()) };
 }
@@ -524,6 +524,31 @@ export const FAMILIES: Readonly<Record<Exclude<ReadFamily, 'blockscout' | 'solan
 };
 
 // ---------- the chain head ----------
+
+// The share of a host's budget chain heads may spend, so the agent's own lookups keep the rest.
+export const HEAD_SHARE = 0.2;
+
+// Requests one head read makes where it is more than one: Solana's slot and then its time,
+// BlockCypher's chain and then its tip.
+const HEAD_CALLS: Partial<Record<ReadFamily, number>> = { solana: 2, blockcypher: 2 };
+
+// The one host a network's head is read from: the RPC beside an indexer where there is one.
+export function headHost(network: ChainNetwork): string {
+  return NETWORKS[network].rpc ?? NETWORKS[network].api;
+}
+
+export function headCalls(network: ChainNetwork): number {
+  const family = NETWORKS[network].read;
+  return family === null ? 0 : (HEAD_CALLS[family] ?? 1);
+}
+
+/* How long a head is kept before it is read again: fifteen seconds, or long enough that head
+   reads spend at most HEAD_SHARE of the host's budget, whichever is longer. BlockCypher's 100 an
+   hour at two requests a head is one read every six minutes, Blockchain.com's one call per 10 s
+   one every 50 s, and every other host's budget clears fifteen seconds. */
+export function headTtl(network: ChainNetwork): number {
+  return Math.max(HEAD_TTL_MS, Math.round((headCalls(network) / (HEAD_SHARE * ratePerSecond(headHost(network)))) * 1000));
+}
 
 // Where each family's chain says it is now: its latest block (or slot, ledger, checkpoint)
 // and that block's time, one request wherever the source has one endpoint for both.
