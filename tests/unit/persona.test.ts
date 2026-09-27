@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ALWAYS_CLICK_TOOLS, CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, SCREENS, TRADING, VOICE, WINDOW, WORDS, handshakeInstructions } from '../../src/persona.ts';
 import { buildRole } from '../../src/role.ts';
-import { buildGreeting } from '../../src/greeting.ts';
+import { CAPABILITIES, buildGreeting } from '../../src/greeting.ts';
 
 // One identity, two surfaces. The MCP handshake is what an agent in a terminal reads at connect
 // time; the persona is the system prompt of the agent the window runs. They drifted for a month
@@ -161,4 +161,18 @@ test('the start answer no longer repeats the rules the handshake carries', () =>
   ) as unknown as Record<string, unknown>;
   assert.equal('rules' in greeting, false);
   assert.ok(!String(greeting.banner).includes('the person with the key'));
+});
+
+/* A payout carries no memo (src/rails/pay-rules.ts, 2026-09-26): both surfaces and the tool index
+   say so and tell the agent never to ask the person for one, so it does not promise an exchange
+   deposit it cannot make; the index names the chains a payout lands on. */
+test('both surfaces and the tool index say a payout carries no memo, and never to ask for one', () => {
+  for (const [name, text] of surfaces()) {
+    assert.match(text, /no memo, tag or comment/i, name);
+    assert.match(text, /never ask (the person |them )?for one/i, name);
+  }
+  const send = CAPABILITIES.flatMap((g) => g.items).find((i) => i.tool === 'propose_send');
+  assert.ok(send !== undefined);
+  assert.match(send.does, /no memo/i);
+  assert.match(send.does, /but Zcash and Aleo/);
 });
