@@ -267,7 +267,9 @@ function stellarRules(f: PayFacts, problems: string[]): void {
     problems.push(`the issuer of ${f.symbol} has not authorized ${f.to} to hold it, so the payment would fail`);
     return;
   }
-  const room = Number(line.limit) - Number(line.balance);
+  // Open buy offers hold room under the limit too, and a payment into it fails LINE_FULL (review
+  // L4, 2026-09-27). An unread figure is no room held, the ledger's own default.
+  const room = Number(line.limit) - Number(line.balance) - Number(line.buying ?? '0');
   if (Number.isFinite(room) && room < f.amount) {
     problems.push(`${f.to} has room for only ${amountText(Math.max(0, room))} more ${f.symbol} under the limit it set on its trustline, less than this payment`);
   }
