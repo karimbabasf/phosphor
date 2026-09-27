@@ -75,17 +75,34 @@ type Landing =
   | { model: 'unread'; label: string }
   | { model: 'none' };
 
-const LABELS: Record<string, string> = { ethereum: 'Ethereum', base: 'Base', arbitrum: 'Arbitrum', solana: 'Solana', near: 'NEAR', bitcoin: 'Bitcoin' };
+/* A pay draft names its chain by the registry id (src/rails/intents-address.ts): eth, base, arb,
+   sol. The long names are the ones this file was written against and are still read, so both
+   spellings land on the same gas model; matching only the long ones sent every live Ethereum and
+   Arbitrum payout to "Not read". */
+const LABELS: Record<string, string> = {
+  eth: 'Ethereum',
+  ethereum: 'Ethereum',
+  base: 'Base',
+  arb: 'Arbitrum',
+  arbitrum: 'Arbitrum',
+  sol: 'Solana',
+  solana: 'Solana',
+  near: 'NEAR',
+  btc: 'Bitcoin',
+  bitcoin: 'Bitcoin',
+};
 
 function landingOf(kind: WriteDraft['kind'], draft: WriteDraft): Landing {
   if (kind === 'hl_deposit') return { model: 'sweep', chain: 'arb', label: 'Arbitrum' };
   if (kind === 'intents_pay' && draft.kind === 'intents_pay') {
     const native = draft.symbol.toUpperCase() === 'ETH';
     switch (draft.network) {
+      case 'eth':
       case 'ethereum':
         return { model: 'evm', chain: 'eth', label: 'Ethereum', native };
       case 'base':
         return { model: 'evm', chain: 'base', label: 'Base', native };
+      case 'arb':
       case 'arbitrum':
         return { model: 'evm', chain: 'arb', label: 'Arbitrum', native };
       default:

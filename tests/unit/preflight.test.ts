@@ -458,3 +458,29 @@ test('the live runner reads Arbitrum through the client it is handed, keeps samp
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(reads, after, 'nothing reads after stop()');
 });
+
+/* A pay draft names its chain by the registry id (src/rails/intents-address.ts): eth, base, arb.
+   The gas check matched only the long names, so a live payout to Ethereum or Arbitrum fell
+   through to "Not read" and skipped the base fee and the sweep model altogether. */
+test('a pay draft naming its chain by registry id gets the real gas check: eth reads the base fee, arb runs the sweep, sol says Not read', async () => {
+  const deps = depsOf({ baseFee: { eth: 500_000_000n } });
+  for (let i = 10; i >= 1; i -= 1) deps.history.eth.push(NOW - i * 60_000, 0.1);
+  const eth = await runPreflight('intents_pay', payDraft({ network: 'eth' }), quoteOf(), deps);
+  assert.equal(check(eth, 'gas').label, 'Ethereum gas');
+  assert.equal(check(eth, 'gas').value, '0.5 gwei');
+  assert.equal(check(eth, 'gas').state, 'fail');
+  assert.equal(eth.verdict, 'hold');
+
+  const arb = await runPreflight('intents_pay', payDraft({ network: 'arb' }), quoteOf(), depsOf({ arb: surgeArb() }));
+  assert.equal(check(arb, 'gas').label, 'Arbitrum gas');
+  assert.equal(check(arb, 'gas').state, 'fail');
+  assert.equal(arb.verdict, 'hold');
+
+  const base = await runPreflight('intents_pay', payDraft({ network: 'base' }), quoteOf(), depsOf());
+  assert.equal(check(base, 'gas').label, 'Base gas');
+  assert.notEqual(check(base, 'gas').value, 'Not read');
+
+  const sol = await runPreflight('intents_pay', payDraft({ network: 'sol' }), quoteOf(), depsOf());
+  assert.equal(check(sol, 'gas').label, 'Solana gas');
+  assert.equal(check(sol, 'gas').value, 'Not read');
+});
