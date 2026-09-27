@@ -121,6 +121,8 @@ const MEMO_WORDS = /incorrect depositmode/i;
 const UNFIT_WORDS = /supports only .*recipienttype|not supported as origin/i;
 // How many coins one probe may try before it settles for unknown.
 const PROBE_TRIES = 4;
+// How long a coin 1Click would not take in as itself is skipped before it is asked again.
+export const UNFIT_TTL_MS = 60 * 60_000;
 
 /* Whether a 1Click refusal says the route is shut rather than that something about the ask was
    wrong. The pay rail reads its own dry quote with the same words, so a payout and a deposit
@@ -628,8 +630,13 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
   const inflight = new Map<string, Promise<unknown>>();
   // The chains 1Click wants asked in MEMO mode, learned from its own refusal. Bounded by the registry.
   const memoChains = new Set<string>();
-  // The coins 1Click would not take in as themselves, so a probe skips straight past them.
-  const unfit = new Map<string, true>();
+  // The coins 1Click would not take in as themselves, and when it said so, so a probe skips
+  // straight past them for UNFIT_TTL_MS.
+  const unfit = new Map<string, number>();
+  const isUnfit = (assetId: string): boolean => {
+    const at = unfit.get(assetId);
+    return at !== undefined && now() - at < UNFIT_TTL_MS;
+  };
   let feed: Cached<StatusPost[] | null> | undefined;
   // The last read the page answered, which a failed read falls back on.
   let answered: { at: number; value: StatusPost[] } | undefined;
@@ -765,7 +772,7 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
   async function probe(net: ReceiveNetwork, candidates: OneClickToken[], account: string): Promise<ProbeResult> {
     const venue = net.venue ?? net.id;
     let last: ProbeResult | null = null;
-    for (const token of candidates.filter((t) => !unfit.has(t.assetId)).slice(0, PROBE_TRIES)) {
+    for (const token of candidates.filter((t) => !isUnfit(t.assetId)).slice(0, PROBE_TRIES)) {
       try {
         const sentMemo = memoChains.has(venue);
         let answer = await ask(token, account, sentMemo);
@@ -775,7 +782,7 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
           answer = await ask(token, account, !sentMemo);
         }
         if (answer.unfit === true) {
-          remember(unfit, token.assetId, true);
+          remember(unfit, token.assetId, now());
           last = { state: 'unknown', symbol: token.symbol, said: answer.said };
           continue;
         }

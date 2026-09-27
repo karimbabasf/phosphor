@@ -19,6 +19,7 @@ import {
   ROUTE_BODY_CAP,
   SHAKY_TTL_MS,
   STATUS_LINK,
+  UNFIT_TTL_MS,
   bridgeReason,
   classifyProbe,
   cleanTitle,
@@ -473,6 +474,10 @@ test('a coin that cannot come in as itself is skipped for the next one, and reme
   clock.t += OPEN_TTL_MS + 1;
   await routes.check({ network: 'hypercore', direction: 'in', account: ACCOUNT, asset: TOKENS[9].assetId });
   assert.deepEqual(asked().slice(3), ['1cs_v1:hypercore:hip1:0x20']);
+  // Remembered for an hour, not for the life of the process: one odd answer is asked again.
+  clock.t = NOW + UNFIT_TTL_MS + 1;
+  await routes.check({ network: 'hypercore', direction: 'in', account: ACCOUNT, asset: TOKENS[9].assetId });
+  assert.deepEqual(asked().slice(4), ['1cs_v1:hypercore:hip1:0x6d', '1cs_v1:hypercore:erc20:0xb', '1cs_v1:hypercore:hip1:0x20'], 'an unfit coin was never asked again');
 });
 
 test('a chain that stops wanting MEMO is asked plainly again', async () => {
