@@ -94,6 +94,12 @@ export function bridgeReason(network: string, listed: number, listRead: boolean)
 
 const CLOSED_WORDS = /not available|disabled|paused|suspend|maintenance/i;
 const MEMO_WORDS = /incorrect depositmode/i;
+/* A coin 1Click cannot take in as itself, which says nothing about the chain. Live on 2026-09-26:
+   HyperCore's USDC "supports only DESTINATION_CHAIN recipientType" and its HyperEVM USDC "is not
+   supported as origin asset", while its wNEAR quotes 201. */
+const UNFIT_WORDS = /supports only .*recipienttype|not supported as origin/i;
+// How many coins one probe may try before it settles for unknown.
+const PROBE_TRIES = 4;
 
 /* Whether a 1Click refusal says the route is shut rather than that something about the ask was
    wrong. The pay rail reads its own dry quote with the same words, so a payout and a deposit
@@ -108,17 +114,19 @@ function serviceWords(body: unknown): string {
   return said === undefined || said === null ? '' : oneLine(said, 160);
 }
 
-export type ProbeAnswer = { state: RouteState; memo: boolean; said: string };
+export type ProbeAnswer = { state: RouteState; memo: boolean; said: string; unfit?: boolean };
 
 /* One probe answer to a state. A 2xx is 1Click pricing the coin in. A 400 that says the pair is
    not available, disabled, paused, suspended or in maintenance is the route shut. A 400 about the
-   deposit mode is a memo chain (Stellar) asking to be asked again in MEMO mode. Anything else, a
-   different 400, a 5xx, a body that is not JSON, is unknown: it says something about the ask or
-   the service, not about the route. The service's own words ride along for the log. */
+   deposit mode is a memo chain (Stellar) asking to be asked again in MEMO mode. A 400 saying the
+   coin cannot come in as itself is a coin unfit for the probe, and the next one is asked. Anything
+   else, a different 400, a 5xx, a body that is not JSON, is unknown: it says something about the
+   ask or the service, not about the route. The service's own words ride along for the log. */
 export function classifyProbe(status: number, body: unknown): ProbeAnswer {
   const said = serviceWords(body);
   if (status >= 200 && status < 300) return { state: 'open', memo: false, said };
   if (status === 400 && MEMO_WORDS.test(said)) return { state: 'unknown', memo: true, said };
+  if (status === 400 && UNFIT_WORDS.test(said)) return { state: 'unknown', memo: false, said, unfit: true };
   if (status === 400 && CLOSED_WORDS.test(said)) return { state: 'closed', memo: false, said };
   return { state: 'unknown', memo: false, said: said === '' ? `http ${status}` : said };
 }
@@ -127,24 +135,34 @@ function isCoin(t: OneClickToken): boolean {
   return t.contractAddress === undefined || t.contractAddress === null || t.contractAddress === '';
 }
 
-/* The coin a probe asks about. The asset the caller named when 1Click lists it on this chain,
-   because a deposit of TON USDT is a question about TON USDT. Otherwise the chain's own coin, which
-   1Click lists with no contract. HyperCore and NEAR list none, so the chain's coin by symbol, then
-   its wrapped form, then USDC and USDT. A row marked deprecated is never the coin. */
-export function probeAsset(net: ReceiveNetwork, list: OneClickToken[], asked?: string): OneClickToken | null {
+/* The coins a probe asks about, best first. The asset the caller named when 1Click lists it on
+   this chain, because a deposit of TON USDT is a question about TON USDT. Then the chain's own
+   coin, which 1Click lists with no contract; HyperCore and NEAR list none, so the chain's coin by
+   symbol, its wrapped form, USDC, USDT, and the rest of the chain's rows after them, for the coin
+   that turns out unable to come in as itself. A row marked deprecated is never asked about. */
+export function probeCandidates(net: ReceiveNetwork, list: OneClickToken[], asked?: string): OneClickToken[] {
   const venue = net.venue;
-  if (venue === null) return null;
+  if (venue === null) return [];
   const on = list.filter((t) => typeof t.blockchain === 'string' && t.blockchain.toLowerCase() === venue && typeof t.assetId === 'string');
-  if (asked !== undefined) {
-    const exact = on.find((t) => t.assetId === asked);
-    if (exact !== undefined) return exact;
-  }
   const live = on.filter((t) => typeof t.symbol === 'string' && !/deprecated/i.test(t.symbol));
   const native = currentSymbol(net.id, net.native).toUpperCase();
+  const symbol = (want: string) => (t: OneClickToken) => t.symbol.toUpperCase() === want;
   const coins = live.filter(isCoin);
-  if (coins.length > 0) return coins.find((t) => t.symbol.toUpperCase() === native) ?? coins[0];
-  const bySymbol = (symbol: string): OneClickToken | undefined => live.find((t) => t.symbol.toUpperCase() === symbol);
-  return bySymbol(native) ?? bySymbol(`W${native}`) ?? bySymbol('USDC') ?? bySymbol('USDT') ?? live[0] ?? null;
+  const ordered = [
+    ...on.filter((t) => asked !== undefined && t.assetId === asked),
+    ...coins.filter(symbol(native)),
+    ...coins,
+    ...live.filter(symbol(native)),
+    ...live.filter(symbol(`W${native}`)),
+    ...live.filter(symbol('USDC')),
+    ...live.filter(symbol('USDT')),
+    ...live,
+  ];
+  return [...new Map(ordered.map((t) => [t.assetId, t])).values()];
+}
+
+export function probeAsset(net: ReceiveNetwork, list: OneClickToken[], asked?: string): OneClickToken | null {
+  return probeCandidates(net, list, asked)[0] ?? null;
 }
 
 // About PROBE_USD of the coin in base units, or one whole coin when the list prices it at nothing.
@@ -546,6 +564,8 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
   const inflight = new Map<string, Promise<unknown>>();
   // The chains 1Click wants asked in MEMO mode, learned from its own refusal. Bounded by the registry.
   const memoChains = new Set<string>();
+  // The coins 1Click would not take in as themselves, so a probe skips straight past them.
+  const unfit = new Map<string, true>();
   let feed: Cached<StatusPost[] | null> | undefined;
   let services: Cached<ReadonlyMap<string, ServiceKind>> | undefined;
 
@@ -620,18 +640,32 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     return classifyProbe(status, answer);
   }
 
-  async function probe(net: ReceiveNetwork, token: OneClickToken, account: string): Promise<ProbeResult> {
+  /* The first coin that gives a real answer. A deposit mode refusal flips the chain's memo flag
+     and asks the same coin once more; a coin that cannot come in as itself is remembered and the
+     next one is asked. */
+  async function probe(net: ReceiveNetwork, candidates: OneClickToken[], account: string): Promise<ProbeResult> {
     const venue = net.venue ?? net.id;
-    try {
-      let answer = await ask(token, account, memoChains.has(venue));
-      if (answer.memo && !memoChains.has(venue)) {
-        memoChains.add(venue);
-        answer = await ask(token, account, true);
+    let last: ProbeResult | null = null;
+    for (const token of candidates.filter((t) => !unfit.has(t.assetId)).slice(0, PROBE_TRIES)) {
+      try {
+        const sentMemo = memoChains.has(venue);
+        let answer = await ask(token, account, sentMemo);
+        if (answer.memo) {
+          if (sentMemo) memoChains.delete(venue);
+          else memoChains.add(venue);
+          answer = await ask(token, account, !sentMemo);
+        }
+        if (answer.unfit === true) {
+          remember(unfit, token.assetId, true);
+          last = { state: 'unknown', symbol: token.symbol, said: answer.said };
+          continue;
+        }
+        return { state: answer.memo ? 'unknown' : answer.state, symbol: token.symbol, said: answer.said };
+      } catch (err) {
+        return { state: 'unknown', symbol: token.symbol, said: oneLine(errText(err), 160) };
       }
-      return { state: answer.memo ? 'unknown' : answer.state, symbol: token.symbol, said: answer.said };
-    } catch (err) {
-      return { state: 'unknown', symbol: token.symbol, said: oneLine(errText(err), 160) };
     }
+    return last ?? { state: 'unknown', symbol: candidates[0]?.symbol ?? 'a coin', said: 'no coin on this chain comes in as itself' };
   }
 
   function probeText(result: ProbeResult, name: string): string {
@@ -652,14 +686,14 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     } catch {
       return { source: 'oneclick', state: 'unknown', text: "1Click's token list could not be read" };
     }
-    const token = probeAsset(net, Array.isArray(list) ? list : [], asked);
-    if (token === null) return { source: 'oneclick', state: 'unknown', text: `1Click lists no coin on ${net.name} to ask about` };
-    const key = `${net.id}|${token.assetId}`;
+    const candidates = probeCandidates(net, Array.isArray(list) ? list : [], asked);
+    if (candidates.length === 0) return { source: 'oneclick', state: 'unknown', text: `1Click lists no coin on ${net.name} to ask about` };
+    const key = `${net.id}|${candidates[0].assetId}`;
     const held = probes.get(key);
     const result = fresh(held, now())
       ? held.value
       : await once(`probe:${key}`, async () => {
-          const got = await probe(net, token, account);
+          const got = await probe(net, candidates, account);
           const was = probes.get(key)?.value.state;
           remember(probes, key, { at: now(), ttl: got.state === 'open' ? OPEN_TTL_MS : SHAKY_TTL_MS, value: got });
           if (was !== got.state && (got.state !== 'open' || was !== undefined)) {
