@@ -68,7 +68,7 @@ import type { AddressActivity, AddressSummary, ChainNetwork, PayTarget } from '.
 import { pickOrExplain } from './asset-words.ts';
 import { intentsDepositAddress, poaSupportedTokens, spendNetworkOf } from './intents-address.ts';
 import type { PayFamily, PoaToken } from './intents-address.ts';
-import { depositFloorOf, needsTarget, payAddress, payChecks, readsOwnDeposit } from './pay-rules.ts';
+import { depositFloorOf, needsTarget, payAddress, payChecks, paysOwnDeposit, readsOwnDeposit } from './pay-rules.ts';
 import type { DepositFloor, OwnDeposit, PayNote } from './pay-rules.ts';
 
 // The funds are spent inside the verifier, so the counterparty is the verifier: the same
@@ -402,7 +402,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
      before the dry quote and again before the live one: an account can set RequireDestTag, or
      be created, between the card and the click. `activity` is what the chain reader said about
      the receiver, at propose time for the dry quote and fresh for the live one. */
-  async function chainRules(draft: IntentsPayDraft, p: Plan, owner: string, activity: AddressActivity | null): Promise<{ problems: string[]; notes: PayNote[] }> {
+  async function chainRules(draft: IntentsPayDraft, p: Plan, owner: string, activity: AddressActivity | null): Promise<{ problems: string[]; notes: PayNote[]; own: boolean }> {
     const [target, own, floor] = await Promise.all([
       needsTarget(draft.network) ? targetRead(draft.network, p.to) : Promise.resolve(undefined),
       readsOwnDeposit(draft.network) ? ownDepositRead(owner, draft.network) : Promise.resolve(undefined),
@@ -410,7 +410,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
         ? floorRead(draft.network, { assetId: p.destinationAsset, native: p.native, contract: p.issuer }).catch(() => null)
         : Promise.resolve(undefined),
     ]);
-    return payChecks({
+    const checked = payChecks({
       network: draft.network,
       symbol: draft.symbol.toUpperCase(),
       native: p.native,
@@ -424,6 +424,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       own,
       floor,
     });
+    return { ...checked, own: paysOwnDeposit({ network: draft.network, to: p.to, own }) };
   }
 
   function units(value: bigint, decimals: number): string {
@@ -558,6 +559,13 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     return routeGate(deps.routes, { network: draft.network, direction: 'out', account: owner, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) }, 'payout', 'agent');
   }
 
+  /* A payout to our own deposit address lands as a deposit, so the deposit route into the chain
+     is the one that decides whether it comes back: TON deposits were paused on 2026-09-27 while
+     payouts to TON were not, and that payout would have sat at the bridge. */
+  function ownRouteCheck(draft: IntentsPayDraft, owner: string, maxAgeMs?: number): ReturnType<typeof routeGate> {
+    return routeGate(deps.routes, { network: draft.network, direction: 'in', account: owner, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) }, 'own_deposit', 'agent');
+  }
+
   function valueUsd(draft: IntentsPayDraft): number {
     return Number.isFinite(draft.amountUsd) ? draft.amountUsd : Infinity;
   }
@@ -579,6 +587,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       const joined = rules.problems.join('; ');
       return { ok: false, summary: `intents pay simulation failed: ${joined}`, error: joined };
     }
+    const inRoute = rules.own ? await ownRouteCheck(draft, owner) : { closed: null, notice: null };
+    if (inRoute.closed !== null) return { ok: false, summary: inRoute.closed, error: inRoute.closed, reason: 'route_closed' };
     try {
       const response = await api.quote({
         dry: true,
@@ -591,7 +601,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
         ...(p.slippageBps === undefined ? {} : { slippageToleranceBps: p.slippageBps }),
       });
       // A route NEAR Intents reports trouble on goes ahead, and says so first.
-      const lines = [...(route.notice === null ? [] : [route.notice]), ...priceLines(draft, p, response.quote)];
+      const lines = [...[route.notice, inRoute.notice].filter((n): n is string => n !== null), ...priceLines(draft, p, response.quote)];
       const send = sendFacts(draft, p, response.quote, rules.notes);
       lines.push(send.activity);
       for (const note of rules.notes) lines.push(note.text);
@@ -644,6 +654,10 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     // signature.
     const rules = await chainRules(draft, p, owner, before);
     if (rules.problems.length > 0) throw new Error(rules.problems.join('; '));
+    if (rules.own) {
+      const inRoute = await ownRouteCheck(draft, owner, EXECUTE_MAX_AGE_MS);
+      if (inRoute.closed !== null) return { ok: false, detail: inRoute.closed, reason: 'route_closed' };
+    }
 
     // The four shared steps: live quote, echo check, generated intent checked and signed,
     // submitted and watched. Every refusal before the signature throws out of here; after it
@@ -663,7 +677,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
           maxDeadlineMs,
           quoteKey: deps.quoteKey,
           ...(preflight === undefined ? {} : { preflight: (quote, port) => preflight.run('intents_pay', draft, quote, port) }),
-          beforeSign: async () => (await routeCheck(draft, owner, EXECUTE_MAX_AGE_MS)).closed,
+          beforeSign: async () =>
+            (await routeCheck(draft, owner, EXECUTE_MAX_AGE_MS)).closed ?? (rules.own ? (await ownRouteCheck(draft, owner, EXECUTE_MAX_AGE_MS)).closed : null),
         },
         {
           owner,

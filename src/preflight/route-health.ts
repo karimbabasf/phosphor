@@ -47,8 +47,9 @@ export type RouteAudience = 'person' | 'agent';
 export type RouteVerdict = { network: string; direction: RouteDirection; state: RouteState; reasons: RouteReason[]; checkedAt: number };
 
 // Which way the money goes, in the words a sentence needs: a deposit shows an address, the other
-// three are moves the app signs.
-export type RouteFlow = 'deposit' | 'payout' | 'hl_deposit' | 'hl_withdraw';
+// four are moves the app signs. `own_deposit` is a payout to our own deposit address, which is a
+// deposit into that chain's route and is asked about as one.
+export type RouteFlow = 'deposit' | 'payout' | 'hl_deposit' | 'hl_withdraw' | 'own_deposit';
 
 export const STATUS_BASE = 'https://status.near-intents.org';
 export const STATUS_LINK = `${STATUS_BASE}/posts/dashboard`;
@@ -469,6 +470,7 @@ export function networkName(network: string): string {
 function flowWords(flow: RouteFlow, name: string): string {
   switch (flow) {
     case 'deposit':
+    case 'own_deposit':
       return `${name} deposits`;
     case 'payout':
       return `payouts to ${name}`;
@@ -500,6 +502,13 @@ export function routeSentence(verdict: RouteVerdict, flow: RouteFlow, audience: 
       if (cause?.source === 'bridge') return `The NEAR Intents bridge credits nothing on ${name} right now, so no address is shown.`;
       return `NEAR Intents has paused ${name} deposits right now, so no address is shown. Money sent now may not arrive.${quoted}`;
     }
+    if (flow === 'own_deposit') {
+      const why = cause?.source === 'bridge' ? `the NEAR Intents bridge credits nothing on ${name} right now` : `NEAR Intents has paused ${name} deposits right now`;
+      return (
+        `This is your own NEAR Intents deposit address on ${name}, so this payout is a ${name} deposit, and ${why}: ` +
+        `the money would not come back into your balance, so nothing was signed and nothing moved.${quoted}`
+      );
+    }
     return `NEAR Intents is not taking ${flowWords(flow, name)} right now, so nothing was signed and nothing moved.${quoted}`;
   }
   if (verdict.state === 'degraded') {
@@ -518,7 +527,7 @@ export function routeSentence(verdict: RouteVerdict, flow: RouteFlow, audience: 
 export function closedQuoteSentence(err: unknown, network: string, flow: RouteFlow): string | null {
   if (!(err instanceof QuoteRefusal) || err.status !== 400 || !quoteSaysClosed(err.message)) return null;
   const said: RouteReason = { source: 'oneclick', state: 'closed', text: '1Click would not quote the pair' };
-  return routeSentence({ network, direction: flow === 'deposit' || flow === 'hl_withdraw' ? 'in' : 'out', state: 'closed', reasons: [said], checkedAt: 0 }, flow);
+  return routeSentence({ network, direction: flow === 'deposit' || flow === 'hl_withdraw' || flow === 'own_deposit' ? 'in' : 'out', state: 'closed', reasons: [said], checkedAt: 0 }, flow);
 }
 
 // Where a person reads more, on a route that is not simply working.

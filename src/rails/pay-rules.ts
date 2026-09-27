@@ -321,6 +321,11 @@ function ownDepositRules(f: PayFacts, problems: string[], notes: PayNote[]): voi
   notes.push({ tone: 'info', text: `This is your own NEAR Intents deposit address on ${label}: the money comes back into your balance, less the fees both ways.` });
 }
 
+// Whether the payout goes to our own deposit address on its chain, which makes it a deposit.
+export function paysOwnDeposit(f: Pick<PayFacts, 'network' | 'to' | 'own'>): boolean {
+  return f.own !== undefined && f.own !== null && sameAccount(f.network, f.own.address, f.to);
+}
+
 /* Every rule for the payout's chain, over what the chains said. The problems are refusals, each a
    whole sentence; the notes are what the card and the agent say beside a payout that goes ahead. */
 export function payChecks(f: PayFacts): { problems: string[]; notes: PayNote[] } {

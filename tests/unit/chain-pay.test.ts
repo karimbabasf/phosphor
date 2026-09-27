@@ -130,6 +130,7 @@ type Options = {
   quoteThrows?: string;
   echoRecipient?: string;
   floor?: { listed: false } | { listed: true; min: string; decimals: number } | null; // the bridge's minimum deposit for the token
+  closedIn?: string[]; // networks whose deposits NEAR Intents has paused, one answer per ask in turn ('' for open)
 };
 
 function railOf(coin: Coin, amount: number, opt: Options = {}) {
@@ -181,6 +182,16 @@ function railOf(coin: Coin, amount: number, opt: Options = {}) {
   const signer: IntentsSignerPort = { address: () => OWNER as Address, signErc191: async () => { throw new Error('never signs'); } };
   const targets = [...(opt.targets ?? [])];
   const receivers = [...(opt.receiver ?? [])];
+  // Payouts ('out') are always open here; a deposit route ('in') answers from `closedIn` in turn.
+  const closedIn = [...(opt.closedIn ?? [])];
+  const routeAsks: string[] = [];
+  const routeAsked = async (ask: { network: string; direction: 'in' | 'out' }) => {
+    routeAsks.push(`${ask.network}:${ask.direction}`);
+    const shut = ask.direction === 'in' ? (closedIn.length > 1 ? closedIn.shift() : closedIn[0]) : '';
+    return shut === ask.network
+      ? { network: ask.network, direction: ask.direction, state: 'closed', reasons: [{ source: 'status', state: 'closed', text: 'TON deposits paused', said: 'TON deposits paused' }], checkedAt: 0 }
+      : { network: ask.network, direction: ask.direction, state: 'open', reasons: [], checkedAt: 0 };
+  };
   const rail = intentsPayRail({
     keysPath: '/nonexistent/keys.json',
     tokens: registry,
@@ -201,8 +212,9 @@ function railOf(coin: Coin, amount: number, opt: Options = {}) {
       return opt.own === undefined ? null : opt.own;
     },
     depositFloor: async () => (opt.floor === undefined ? null : opt.floor),
+    ...(opt.closedIn === undefined ? {} : { routes: { check: routeAsked } }),
   } as Parameters<typeof intentsPayRail>[0]);
-  return { rail, quotes, targetCalls, ownCalls, generated };
+  return { rail, quotes, targetCalls, ownCalls, generated, routeAsks };
 }
 
 const XRP_OK: Target = { network: 'xrp', exists: true, requireDestTag: false, reserveXrp: 1 };
@@ -377,6 +389,33 @@ test('a bounceable or raw TON address is sent as the same account non-bounceable
   // An echo that comes back as the bounceable spelling is not the address that was sent.
   const bounced = railOf(COINS.GRAM, 5, { own: NOT_OWN, echoRecipient: TON_EQ });
   assert.match(await refused(bounced, draftOf(COINS.GRAM, TON_EQ, 5)), /recipient|pay/i);
+});
+
+/* A payout to our own deposit address is a deposit into that chain's route (the lead, 2026-09-27):
+   TON deposits were paused that day, and a payout to our own TON deposit address simulated ok and
+   would have sat stuck at the bridge. The deposit route is asked at simulate and again at execute. */
+test('a payout to our own TON deposit address is refused while NEAR Intents has paused TON deposits, at simulate and at execute', async () => {
+  const floor = { listed: true as const, min: '10000000', decimals: 9 };
+  const closed = railOf(COINS.GRAM, 5, { own: { address: OWN.ton, memo: null }, floor, closedIn: ['ton'] });
+  const sim = await closed.rail.simulate(draftOf(COINS.GRAM, OWN.ton, 5));
+  assert.equal(sim.ok, false, sim.summary);
+  assert.equal(sim.reason, 'route_closed');
+  assert.match(sim.summary, /your own NEAR Intents deposit address on TON, so this payout is a TON deposit, and NEAR Intents has paused TON deposits right now/);
+  assert.ok(closed.routeAsks.includes('ton:in'), closed.routeAsks.join(' '));
+  assert.equal(closed.quotes.length, 0);
+  // Open when the card was drawn, paused by the click: refused before any live quote.
+  const later = railOf(COINS.GRAM, 5, { own: { address: OWN.ton, memo: null }, floor, closedIn: ['', 'ton'] });
+  const draft = draftOf(COINS.GRAM, OWN.ton, 5);
+  assert.equal((await later.rail.simulate(draft)).ok, true);
+  const quotesBefore = later.quotes.length;
+  const done = await later.rail.execute(draft);
+  assert.equal(done.ok, false);
+  assert.equal(done.reason, 'route_closed');
+  assert.equal(later.quotes.length, quotesBefore, 'a live quote was asked for on a paused deposit route');
+  // Somebody else's TON address is a payout and only the payout route counts.
+  const other = railOf(COINS.GRAM, 5, { own: NOT_OWN, closedIn: ['ton'] });
+  assert.equal((await other.rail.simulate(draftOf(COINS.GRAM, TON_EQ, 5))).ok, true);
+  assert.ok(!other.routeAsks.includes('ton:in'), other.routeAsks.join(' '));
 });
 
 test('a testnet TON address is refused', async () => {
