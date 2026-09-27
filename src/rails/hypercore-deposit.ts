@@ -491,7 +491,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     /* Whether NEAR Intents is taking money to HyperCore right now. execute() runs this whole
        simulation again a moment before it signs, so the route is asked at both ends of the wait. */
     const ask = { network: 'hypercore', direction: 'out' as const, account: owner };
-    const route = await routeGate(deps.routes, maxAgeMs === undefined ? ask : { ...ask, maxAgeMs }, 'hl_deposit');
+    const route = await routeGate(deps.routes, maxAgeMs === undefined ? ask : { ...ask, maxAgeMs }, 'hl_deposit', 'agent');
     if (route.closed !== null) return { ok: false, summary: route.closed, error: route.closed, reason: 'route_closed' };
 
     try {
@@ -685,7 +685,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
           quoteKey: deps.quoteKey,
           ...(preflight === undefined ? {} : { preflight: (quote, port) => preflight.run('hl_deposit', draft, quote, port) }),
           // The answer that counts, asked after the account read and right before the signature.
-          beforeSign: async () => (await routeGate(deps.routes, { network: 'hypercore', direction: 'out', account: owner, maxAgeMs: EXECUTE_MAX_AGE_MS }, 'hl_deposit')).closed,
+          beforeSign: async () => (await routeGate(deps.routes, { network: 'hypercore', direction: 'out', account: owner, maxAgeMs: EXECUTE_MAX_AGE_MS }, 'hl_deposit', 'agent')).closed,
         },
         {
           owner,

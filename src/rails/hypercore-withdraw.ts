@@ -494,7 +494,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
      a card can wait minutes for its click. */
   function routeCheck(owner: string, maxAgeMs?: number): ReturnType<typeof routeGate> {
     const ask = { network: 'hypercore', direction: 'in' as const, account: owner, asset: HYPERCORE_ORIGIN_ASSET_ID };
-    return routeGate(deps.routes, maxAgeMs === undefined ? ask : { ...ask, maxAgeMs }, 'hl_withdraw');
+    return routeGate(deps.routes, maxAgeMs === undefined ? ask : { ...ask, maxAgeMs }, 'hl_withdraw', 'agent');
   }
 
   async function simulate(draft: HlWithdrawDraft): Promise<SimulationResult> {

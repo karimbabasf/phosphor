@@ -26,6 +26,7 @@ import {
   recipientSentence,
 } from '../../src/rails/intents-pay.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
+import { STATUS_DATA_LABEL } from '../../src/preflight/route-health.ts';
 import type { RouteAsk, RouteHealth, RouteState } from '../../src/preflight/route-health.ts';
 
 const OWNER = getAddress('0x1111111111111111111111111111111111111111');
@@ -560,10 +561,8 @@ function routesSaying(...states: RouteState[]): { routes: RouteHealth; asked: Ro
     check: async (ask) => {
       asked.push(ask);
       const state = states[Math.min(asked.length - 1, states.length - 1)];
-      const reasons =
-        state === 'degraded'
-          ? [{ source: 'status' as const, state, text: 'The NEAR Intents status page says: "Ethereum withdrawals delayed".' }]
-          : [{ source: 'status' as const, state, text: 'The NEAR Intents status page says: "Ethereum paused".' }];
+      const said = state === 'degraded' ? 'Ethereum withdrawals delayed' : 'Ethereum paused';
+      const reasons = [{ source: 'status' as const, state, text: `The NEAR Intents status page says: "${said}".`, said }];
       return { network: ask.network, direction: ask.direction, state, reasons, checkedAt: NOW };
     },
   };
@@ -576,7 +575,8 @@ test('a payout to a chain NEAR Intents has paused is refused at simulate with th
   const sim = await rail.simulate(draftOf());
   assert.equal(sim.ok, false);
   assert.equal(sim.reason, 'route_closed');
-  assert.equal(sim.summary, 'NEAR Intents is not taking payouts to Ethereum right now, so nothing was signed and nothing moved. The NEAR Intents status page says: "Ethereum paused".');
+  // The summary reaches the agent, so the page's words are quoted behind the data label.
+  assert.equal(sim.summary, `NEAR Intents is not taking payouts to Ethereum right now, so nothing was signed and nothing moved. ${STATUS_DATA_LABEL} "Ethereum paused".`);
   assert.equal(calls.quotes.length, 0);
   assert.deepEqual(asked, [{ network: 'eth', direction: 'out', account: ACCOUNT }]);
 });
@@ -585,7 +585,7 @@ test('a degraded route goes ahead and the summary says so first', async () => {
   const { rail } = railOf({ routes: routesSaying('degraded').routes });
   const sim = await rail.simulate(draftOf());
   assert.equal(sim.ok, true, sim.summary);
-  assert.equal(sim.summary.split('\n')[0], 'NEAR Intents reports trouble that may slow payouts to Ethereum right now, so it may take longer than usual. The NEAR Intents status page says: "Ethereum withdrawals delayed".');
+  assert.equal(sim.summary.split('\n')[0], `NEAR Intents reports trouble that may slow payouts to Ethereum right now, so it may take longer than usual. ${STATUS_DATA_LABEL} "Ethereum withdrawals delayed".`);
 });
 
 test('a route that closes while the card waits for its click is refused at execute, and nothing is quoted or signed', async () => {

@@ -68,6 +68,8 @@ function network(id: string, address: string, accepts: Array<{ symbol: string; m
     route: 'unknown',
     notice: null,
     statusLink: null,
+    agentUnavailable: null,
+    agentNotice: null,
   };
 }
 
