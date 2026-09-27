@@ -142,10 +142,9 @@ const SOLANA_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{86,88}$/;
 const NEAR_HASH = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/;
 // Named (a.b.near, with - and _ inside a part) or implicit (64 hex). 2 to 64 characters.
 const NEAR_ACCOUNT = /^(?=.{2,64}$)[a-z0-9]+(?:[-_][a-z0-9]+)*(?:\.[a-z0-9]+(?:[-_][a-z0-9]+)*)*$/;
-// bech32 (bc1...) or base58check (1... or 3...). Format only, as it was before the checksums in
-// src/chainscan/codec.ts existed: a stricter Bitcoin check is a separate change to a fence
-// every existing payout card was drawn under.
-const BITCOIN_ADDRESS = /^(bc1[02-9ac-hj-np-z]{11,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
+// bech32 (bc1...) or base58check (1... or 3...): the shape first, then the checksum, since
+// Bitcoin became a chain this app pays out on (2026-09-26) and a payout decodes, never matches.
+const BITCOIN_ADDRESS = /^(bc1[02-9ac-hj-np-z]{11,87}|BC1[02-9AC-HJ-NP-Z]{11,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/;
 const MOVE_ADDRESS = /^0x[0-9a-fA-F]{64}$/;
 const TON_RAW = /^(0|-1):[0-9a-fA-F]{64}$/;
 const TON_FRIENDLY = /^[A-Za-z0-9_+/-]{48}$/;
@@ -180,6 +179,13 @@ function versioned(value: string, versions: readonly (readonly number[])[], size
   if (payload === null) return { ok: false, reason: MISMATCH };
   const fits = versions.some((v) => payload.length === v.length + size && v.every((b, i) => payload[i] === b));
   return fits ? { ok: true, normalized: value, checksum: 'valid' } : { ok: false, reason: `not ${shape}: it decodes, but to another chain's address` };
+}
+
+/* A witness program a wallet can spend today: version 0 (20 or 32 bytes, which segwit already
+   holds it to) or version 1 of 32 bytes (taproot). A later version decodes, but consensus has no
+   rule for it yet, so money sent there can be taken by anyone. */
+function spendable(program: { version: number; program: Uint8Array } | null): boolean {
+  return program !== null && (program.version === 0 || (program.version === 1 && program.program.length === 32));
 }
 
 function cardanoCheck(value: string): AddressCheck {
@@ -262,9 +268,10 @@ export function validateAddressForFamily(family: AddressFamily, address: string,
     }
     case 'btc':
       if (!BITCOIN_ADDRESS.test(value)) return { ok: false, reason: 'not a Bitcoin address: expected bc1... or a 1.../3... address' };
-      return { ok: true, normalized: value };
+      if (/^bc1/i.test(value)) return spendable(segwit(value, 'bc')) ? { ok: true, normalized: value.toLowerCase(), checksum: 'valid' } : { ok: false, reason: 'not a Bitcoin address: the bc1... form does not pass its checksum' };
+      return versioned(value, [[0x00], [0x05]], 20, 'a Bitcoin address: expected bc1... or a 1.../3... address');
     case 'ltc':
-      if (/^ltc1/i.test(value)) return segwit(value, 'ltc') === null ? { ok: false, reason: 'not a Litecoin address: the ltc1... form does not pass its checksum' } : { ok: true, normalized: value.toLowerCase(), checksum: 'valid' };
+      if (/^ltc1/i.test(value)) return spendable(segwit(value, 'ltc')) ? { ok: true, normalized: value.toLowerCase(), checksum: 'valid' } : { ok: false, reason: 'not a Litecoin address: the ltc1... form does not pass its checksum' };
       return versioned(value, [[0x30], [0x32], [0x05]], 20, 'a Litecoin address: expected ltc1..., L..., M... or 3...');
     case 'bch': {
       // CashAddr, prefix optional as typed and always present once normalised, or the legacy

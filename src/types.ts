@@ -333,6 +333,10 @@ export type IntentsPayDraft = {
   from: string; // our account id inside intents.near: the EVM address, lowercased
   to: string; // the receiver's address as the chain spells it (EIP-55 on an EVM chain)
   toChecksum: 'valid' | 'lowercase' | null; // whether the caller's spelling carried a checksum (EVM only)
+  /* The address as the caller gave it, kept only when the payout sends another spelling of the
+     same account: a bounceable or raw TON address is sent non-bounceable, and the card names both
+     (src/rails/pay-rules.ts payAddress). Absent everywhere else. */
+  toGiven?: string;
   counterparty: string; // must be on the policy allowlist
   recipient: SendRecipient;
 };
@@ -573,6 +577,10 @@ export type SendSimulation = {
   etaSeconds: number | null;
   activity: string; // the receiver sentence: what the chain or the verifier says about the address
   explorer: string | null; // the receiver's page on the chain's explorer, chain payouts only
+  /* What the card says beside the address on a chain with rules of its own: no memo can go with
+     the payout, the account is created by it, it is our own deposit address, a TON address was
+     sent non-bounceable. `warn` is drawn in the warning tone. Absent when there is nothing. */
+  notes?: Array<{ text: string; tone: 'warn' | 'info' }>;
 };
 
 export type ProposalStatus =

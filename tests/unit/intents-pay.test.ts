@@ -268,9 +268,10 @@ test('every payout network names the decoder that checks its addresses, and the 
   assert.equal(payFamilyOf('arb'), 'evm');
   assert.equal(payFamilyOf('sol'), 'sol');
   assert.equal(payFamilyOf('near'), 'near');
-  assert.equal(payFamilyOf('btc'), null);
+  assert.equal(payFamilyOf('btc'), 'btc');
+  assert.equal(payFamilyOf('zec'), null);
   assert.equal(payRefusal('eth'), null);
-  assert.match(payRefusal('btc') ?? '', /cannot check a Bitcoin address/);
+  assert.match(payRefusal('zec') ?? '', /cannot check a Zcash address/);
   assert.match(payRefusal('madeupchain') ?? '', /not a place this app can send to/);
 });
 
@@ -347,9 +348,9 @@ test('our own address on the chain is allowed and said as such', async () => {
   assert.equal(sim.send?.activity.startsWith('This is your own address on Ethereum.'), true);
 });
 
-test('Bitcoin is not a network this rail pays out on', async () => {
+test('Zcash is not a network this rail pays out on', async () => {
   const { rail, calls } = railOf();
-  assert.match(await refusal(rail, draftOf({ network: 'btc', to: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', toChecksum: null })), /Bitcoin/);
+  assert.match(await refusal(rail, draftOf({ network: 'zec', to: 't1Rv4exT7bqhZqi2j7xz8bUHDMxwosrjADU', toChecksum: null })), /Zcash/);
   assert.equal(calls.quotes.length, 0);
 });
 
@@ -544,11 +545,11 @@ test('a payout on an EVM chain the rail never had a row for is quoted', async ()
 
 /* Refused by name, and the sentence says what is missing. "Unknown chain" would be a lie: the app
    knows the chain, takes deposits on it, and cannot check an address there yet. */
-test('a payout on a chain with no decoder is refused by name', async () => {
+test('a payout on a chain it does not pay out on is refused by name, with the reason', async () => {
   const { rail } = railOf();
-  const said = await refusal(rail, draftOf({ network: 'ton', symbol: 'GRAM', to: 'UQAAA', toChecksum: null, recipient: recipientOf({ activity: null }) }));
-  assert.match(said, /TON/);
-  assert.match(said, /cannot check a TON address/);
+  const said = await refusal(rail, draftOf({ network: 'aleo', symbol: 'ALEO', to: 'aleo1abc', toChecksum: null, recipient: recipientOf({ activity: null }) }));
+  assert.match(said, /cannot check an Aleo address/);
+  assert.match(said, /privacy chain/);
 });
 
 // ---------- NEAR Intents not taking payouts to the chain ----------

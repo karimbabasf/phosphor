@@ -33,6 +33,8 @@ export type { AddressCheck, AddressFamily, ChainNetwork, HashCheck } from './net
 export { chainFetch, createChainFetchState, isAllowedUrl } from './fetch.ts';
 export type { ChainFetchDeps, ChainFetchState, ChainKeys } from './fetch.ts';
 export { dataText } from './common.ts';
+export { LSF_REQUIRE_DEST_TAG, payTarget } from './destination.ts';
+export type { PayTarget, StellarLine } from './destination.ts';
 export type { AddressActivity, ChainDeps, ChainTransaction, ChainTransactionDetail, EvmReader, TokenBalance, TxStatus } from './common.ts';
 
 // ---------- results ----------

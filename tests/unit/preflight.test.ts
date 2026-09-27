@@ -484,3 +484,14 @@ test('a pay draft naming its chain by registry id gets the real gas check: eth r
   assert.equal(check(sol, 'gas').label, 'Solana gas');
   assert.equal(check(sol, 'gas').value, 'Not read');
 });
+
+/* A payout to a chain whose gas this app does not read (XRP, TON, Bitcoin and the rest since
+   2026-09-26) says so under the chain's name, never its id, and never pretends to a reading. */
+test('a payout to a chain with no gas reading names the chain and says the gas is not read', async () => {
+  for (const [network, label] of [['xrp', 'XRP Ledger'], ['ton', 'TON'], ['cardano', 'Cardano'], ['bch', 'Bitcoin Cash']] as const) {
+    const report = await runPreflight('intents_pay', payDraft({ network }), quoteOf(), depsOf({}));
+    assert.equal(check(report, 'gas').label, `${label} gas`, network);
+    assert.equal(check(report, 'gas').value, 'Not read', network);
+    assert.equal(check(report, 'gas').state, 'ok', network);
+  }
+});

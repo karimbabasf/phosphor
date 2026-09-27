@@ -105,7 +105,7 @@ test('the Sends section describes the gate the code has', () => {
   assert.match(engine, /draft\.kind === 'intents_send' \|\| draft\.kind === 'intents_pay'\) return null/, 'the engine allowlists a send receiver again');
 
   const reason = fs.readFileSync(path.join(ROOT, 'src', 'vault', 'reason.ts'), 'utf8');
-  assert.match(reason, /case 'intents_pay':[\s\S]*?shortAddress\(draft\.to\)/, 'the Touch ID sentence for a payout does not name the receiver');
+  assert.match(reason, /case 'intents_pay':[\s\S]*?payee\(draft\.network, draft\.to\)/, 'the Touch ID sentence for a payout does not name the receiver');
   assert.ok(DOC.includes('Pay 0.01 ETH to 0xb583f4...84BB5DB0 on Ethereum ($24.40)'), 'the documented dialog sentence has to be the one the code writes');
 
   const door = fs.readFileSync(path.join(ROOT, 'src', 'http', 'propose.ts'), 'utf8');
