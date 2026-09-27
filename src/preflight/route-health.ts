@@ -441,6 +441,15 @@ export function routeSentence(verdict: RouteVerdict, flow: RouteFlow): string | 
   return null;
 }
 
+/* 1Click's own refusal of a pair, as the sentence for that flow, or null when the refusal says
+   something else. "Quoting for this pair is not available" is what it said for TON on 2026-09-26,
+   and passed through raw it read as a fault in the app rather than a route NEAR Intents shut. */
+export function closedQuoteSentence(message: string, network: string, flow: RouteFlow): string | null {
+  if (!quoteSaysClosed(message)) return null;
+  const said: RouteReason = { source: 'oneclick', state: 'closed', text: '1Click would not quote the pair' };
+  return routeSentence({ network, direction: flow === 'deposit' || flow === 'hl_withdraw' ? 'in' : 'out', state: 'closed', reasons: [said], checkedAt: 0 }, flow);
+}
+
 // Where a person reads more, on a route that is not simply working.
 export function routeLink(verdict: RouteVerdict): string | null {
   return verdict.state === 'closed' || verdict.state === 'degraded' ? STATUS_LINK : null;
@@ -467,6 +476,19 @@ export type RouteHealthDeps = {
 export type RouteAsk = { network: string; direction: RouteDirection; account: string | null; asset?: string };
 
 export type RouteHealth = { check(ask: RouteAsk): Promise<RouteVerdict> };
+
+export type RouteGate = { closed: string | null; notice: string | null };
+
+/* A rail's question, asked when a move is proposed and again when it is about to be signed,
+   because a card can wait minutes for its click. `closed` is the sentence that refuses; `notice`
+   is the sentence a degraded route carries onto the card while the move goes ahead; no checker,
+   open and unknown are neither. */
+export async function routeGate(routes: RouteHealth | undefined, ask: RouteAsk, flow: RouteFlow): Promise<RouteGate> {
+  if (routes === undefined) return { closed: null, notice: null };
+  const verdict = await routes.check(ask);
+  const sentence = routeSentence(verdict, flow);
+  return verdict.state === 'closed' ? { closed: sentence, notice: null } : { closed: null, notice: sentence };
+}
 
 type Cached<T> = { at: number; ttl: number; value: T };
 

@@ -25,6 +25,7 @@ import {
 } from '../../src/rails/hypercore-deposit.ts';
 import type { HypercoreDepositDeps } from '../../src/rails/hypercore-deposit.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
+import type { RouteAsk, RouteHealth, RouteState } from '../../src/preflight/route-health.ts';
 
 // The rail that funds the trading account from the intents balance. What it signs is one
 // erc191 transfer of our balance to the deposit handle of the quote it just checked; what it
@@ -848,4 +849,40 @@ test('an unsigned quote is refused, and a signed one lands its record in the evi
   assert.ok(quote !== undefined, `the signed quote is on the result: ${out.detail}`);
   assert.equal(quote.depositAddress, HANDLE);
   assert.match(quote.signature, /^ed25519:/);
+});
+
+// ---------- NEAR Intents not taking transfers to HyperCore ----------
+
+/* A route checker that answers each question with the next state on the list (the last one
+   repeats), so a test can open the route at simulate time and close it before execute. */
+function routesSaying(...states: RouteState[]): { routes: RouteHealth; asked: RouteAsk[] } {
+  const asked: RouteAsk[] = [];
+  const routes: RouteHealth = {
+    check: async (ask) => {
+      asked.push(ask);
+      const state = states[Math.min(asked.length - 1, states.length - 1)];
+      return { network: ask.network, direction: ask.direction, state, reasons: [{ source: 'oneclick', state, text: '' }], checkedAt: NOW };
+    },
+  };
+  return { routes, asked };
+}
+
+test('a closed route to HyperCore is refused at simulate and again at execute, with nothing quoted or signed', async () => {
+  const closed = routesSaying('closed');
+  const { rail: r, calls } = rail({}, undefined, { routes: closed.routes });
+  const out = await r.simulate(draft());
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'route_closed');
+  assert.equal(out.summary, 'NEAR Intents is not taking transfers to Hyperliquid right now, so nothing was signed and nothing moved.');
+  assert.deepEqual(closed.asked, [{ network: 'hypercore', direction: 'out', account: ACCOUNT }]);
+  assert.equal(calls.quotes.length, 0);
+
+  // Open when proposed, closed by the click: execute re-runs the check before anything is signed.
+  const later = rail({}, undefined, { routes: routesSaying('open', 'closed').routes });
+  assert.equal((await later.rail.simulate(draft())).ok, true);
+  const result = await later.rail.execute(draft());
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'route_closed');
+  assert.equal(result.detail, 'NEAR Intents is not taking transfers to Hyperliquid right now, so nothing was signed and nothing moved.');
+  assert.equal(later.calls.generated.length, 0);
 });

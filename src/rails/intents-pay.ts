@@ -51,6 +51,8 @@ import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-nativ
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
 import type { PreflightRunner } from '../preflight/live.ts';
+import { closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
+import type { RouteHealth } from '../preflight/route-health.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, scanNetworkOf, validateAddressForFamily } from '../chainscan/index.ts';
 import type { AddressSummary, ChainNetwork } from '../chainscan/index.ts';
@@ -164,6 +166,9 @@ export type IntentsPayRailDeps = {
   // The checks run on the live quote before the intent is generated (src/preflight/). The
   // registry wires the live one; absent means none, which is the tests of the rail itself.
   preflight?: PreflightRunner;
+  // Whether NEAR Intents is taking payouts to the chain right now (src/preflight/route-health.ts).
+  // The registry wires the live one; absent, no route is called closed.
+  routes?: RouteHealth;
 };
 
 export type IntentsPayRail = Rail<IntentsPayDraft>;
@@ -396,6 +401,16 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     );
   }
 
+  // 1Click refusing the pair, said as NEAR Intents not taking payouts to the chain.
+  function closedWords(draft: IntentsPayDraft, message: string): string | null {
+    return closedQuoteSentence(message, draft.network, 'payout');
+  }
+
+  // Whether NEAR Intents is taking payouts to this chain right now (src/preflight/route-health.ts).
+  function routeCheck(draft: IntentsPayDraft, owner: string): ReturnType<typeof routeGate> {
+    return routeGate(deps.routes, { network: draft.network, direction: 'out', account: owner }, 'payout');
+  }
+
   function valueUsd(draft: IntentsPayDraft): number {
     return Number.isFinite(draft.amountUsd) ? draft.amountUsd : Infinity;
   }
@@ -410,6 +425,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       const message = errText(err);
       return { ok: false, summary: `intents pay simulation failed: ${message}`, error: message };
     }
+    const route = await routeCheck(draft, owner);
+    if (route.closed !== null) return { ok: false, summary: route.closed, error: route.closed, reason: 'route_closed' };
     try {
       const response = await api.quote({
         dry: true,
@@ -421,7 +438,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
         recipientType: 'DESTINATION_CHAIN',
         ...(p.slippageBps === undefined ? {} : { slippageToleranceBps: p.slippageBps }),
       });
-      const lines = priceLines(draft, p, response.quote);
+      // A route NEAR Intents reports trouble on goes ahead, and says so first.
+      const lines = [...(route.notice === null ? [] : [route.notice]), ...priceLines(draft, p, response.quote)];
       const send = sendFacts(draft, p, response.quote);
       lines.push(send.activity);
       const problems = [...checkQuote(draft, p, response.quote), ...quoteEchoProblems(response.raw, echoWant(draft, p))];
@@ -437,6 +455,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       return { ok: true, summary: lines.join('\n'), send };
     } catch (err) {
       const message = errText(err);
+      const closed = closedWords(draft, message);
+      if (closed !== null) return { ok: false, summary: closed, error: closed, reason: 'route_closed' };
       const floor = floorWords(draft, p, message);
       return { ok: false, summary: `intents pay simulation failed: ${floor ?? message}`, error: floor ?? message };
     }
@@ -456,39 +476,51 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     const p = await plan(draft);
     const owner = requireOwner(draft);
     const label = payLabel(draft.network);
+    // Asked again here: the route may have closed while the card waited for its click.
+    const route = await routeCheck(draft, owner);
+    if (route.closed !== null) return { ok: false, detail: route.closed, reason: 'route_closed' };
     const before = await receiverRead(draft.network, p.to);
 
     // The four shared steps: live quote, echo check, generated intent checked and signed,
     // submitted and watched. Every refusal before the signature throws out of here; after it
     // nothing does, and a submit that did not answer comes back as signed and unsubmitted.
     const preflight = deps.preflight;
-    const spent = await spendFromIntents(
-      {
-        api,
-        signer,
-        keysPath,
-        now,
-        sleep,
-        pollIntervalMs,
-        pollTimeoutMs,
-        maxDeadlineMs,
-        quoteKey: deps.quoteKey,
-        ...(preflight === undefined ? {} : { preflight: (quote, port) => preflight.run('intents_pay', draft, quote, port) }),
-      },
-      {
-        owner,
-        originAsset: p.originAsset,
-        destinationAsset: p.destinationAsset,
-        amountBase: p.amountBase,
-        minOutBase: p.minReceivedBase,
-        recipient: p.to,
-        recipientType: 'DESTINATION_CHAIN',
-        ...(p.slippageBps === undefined ? {} : { slippageToleranceBps: p.slippageBps }),
-        echo: echoWant(draft, p),
-        checkQuote: (quote) => checkQuote(draft, p, quote),
-      },
-      hooks,
-    );
+    let spent: Awaited<ReturnType<typeof spendFromIntents>>;
+    try {
+      spent = await spendFromIntents(
+        {
+          api,
+          signer,
+          keysPath,
+          now,
+          sleep,
+          pollIntervalMs,
+          pollTimeoutMs,
+          maxDeadlineMs,
+          quoteKey: deps.quoteKey,
+          ...(preflight === undefined ? {} : { preflight: (quote, port) => preflight.run('intents_pay', draft, quote, port) }),
+        },
+        {
+          owner,
+          originAsset: p.originAsset,
+          destinationAsset: p.destinationAsset,
+          amountBase: p.amountBase,
+          minOutBase: p.minReceivedBase,
+          recipient: p.to,
+          recipientType: 'DESTINATION_CHAIN',
+          ...(p.slippageBps === undefined ? {} : { slippageToleranceBps: p.slippageBps }),
+          echo: echoWant(draft, p),
+          checkQuote: (quote) => checkQuote(draft, p, quote),
+        },
+        hooks,
+      );
+    } catch (err) {
+      // Everything before the signature throws; 1Click refusing the pair on the live quote is
+      // one of those, and it gets the same sentence the dry quote would have.
+      const closed = closedWords(draft, errText(err));
+      if (closed !== null) return { ok: false, detail: closed, reason: 'route_closed' };
+      throw err;
+    }
     if (!spent.signed) return describeHeld(spent.preflight);
     if (!spent.submitted) {
       return withQuote(describeUnconfirmedSubmit({ error: spent.error, handle: spent.depositAddress, deadline: spent.deadline }), spent.signedQuote);

@@ -203,6 +203,7 @@ test('every reason code maps to a plain state that agrees with its sentence', ()
     simulation_failed: ['didnt_go_through', /nothing moved/],
     invalid_request: ['didnt_go_through', /nothing moved/],
     not_available: ['didnt_go_through', /nothing moved/],
+    route_closed: ['didnt_go_through', /isn't taking money on that network right now, so nothing was signed and nothing moved/],
     plan_exists: ['didnt_go_through', /nothing new was placed/],
     declined: ['didnt_go_through', /Nothing moved/],
     not_sent: ['didnt_go_through', /didn't go through\. Nothing left/],
@@ -213,7 +214,7 @@ test('every reason code maps to a plain state that agrees with its sentence', ()
     short_fill: ['done', /went through, but/],
     stuck_unknown: ['working', /^Still checking whether this went through/],
   };
-  const REFUSALS = new Set<ReasonCode>(['over_trade_cap', 'over_daily_cap', 'kill_switch', 'policy_rule', 'rules_unreadable', 'unpriced', 'no_price', 'price_moved', 'insufficient_balance', 'balance_unread', 'below_minimum', 'unsupported_asset', 'ambiguous_asset', 'simulation_failed', 'invalid_request', 'not_available', 'plan_exists']);
+  const REFUSALS = new Set<ReasonCode>(['over_trade_cap', 'over_daily_cap', 'kill_switch', 'policy_rule', 'rules_unreadable', 'unpriced', 'no_price', 'price_moved', 'insufficient_balance', 'balance_unread', 'below_minimum', 'unsupported_asset', 'ambiguous_asset', 'simulation_failed', 'invalid_request', 'not_available', 'route_closed', 'plan_exists']);
   const ENDED = new Set<ReasonCode>(['not_sent', 'venue_failed_nothing_moved', 'refunded']);
   const rowFor = (code: ReasonCode): Partial<Proposal> => {
     if (code === 'needs_approval') return { status: 'pending' };

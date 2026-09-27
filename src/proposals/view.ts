@@ -719,6 +719,14 @@ export function watchWords(deadline: string | undefined, now: number): string {
   return `until it can no longer run, in about ${Math.round(hours / 24)} days`;
 }
 
+// Where a move meets the network NEAR Intents stopped taking, in the words route_closed needs.
+function routeWords(draft: WriteDraft): string {
+  if (draft.kind === 'intents_pay') return `payouts to ${spendNetworkOf(draft.network)?.name ?? draft.network}`;
+  if (draft.kind === 'hl_deposit') return 'transfers to Hyperliquid';
+  if (draft.kind === 'hl_withdraw') return 'withdrawals from Hyperliquid';
+  return 'money on that network';
+}
+
 /* ONE PLAIN SENTENCE PER CAUSE, and this is the only place any of them is written. Each says
    what happened, where the money is, and what the person can do, in words a person uses. What the
    row itself knows rides in `seen`: how long it still watches its signed transfer (watchWords) and
@@ -768,6 +776,8 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft, seen: Seen =
       return "That couldn't be set up as asked, so nothing moved. The details say why.";
     case 'not_available':
       return "That kind of move isn't available here, so nothing moved.";
+    case 'route_closed':
+      return `NEAR Intents isn't taking ${routeWords(draft)} right now, so nothing was signed and nothing moved. Try again later; the details say what it reported.`;
     case 'plan_exists':
       return `${sym} already has a live plan, so nothing new was placed. Change or cancel that plan first.`;
     case 'declined':
@@ -813,6 +823,7 @@ const RETRYABLE: ReadonlySet<ReasonCode> = new Set<ReasonCode>([
   'simulation_failed',
   'balance_unread',
   'unpriced',
+  'route_closed',
   'not_sent',
   'venue_failed_nothing_moved',
   'refunded',

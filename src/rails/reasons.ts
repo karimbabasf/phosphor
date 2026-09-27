@@ -27,6 +27,8 @@ export const REASON_CODES = [
   'simulation_failed',
   'invalid_request',
   'not_available',
+  // NEAR Intents is not taking money on that network right now (src/preflight/route-health.ts).
+  'route_closed',
   'plan_exists',
   // A person said no.
   'declined',
