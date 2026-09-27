@@ -5,6 +5,15 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.6
+
+Built 2026-09-26. Tagged v0.10.6 on 2026-09-26.
+
+- The deposit card your agent opens in the chat shows its list of tokens at full width again. It
+  had folded to one letter per line, so what a network accepts could not be read.
+- Toncoin is called Gram (GRAM) since its 2026-06-15 rename, with Gram's logo. The network is
+  still TON, and asking for TON on TON still finds it.
+
 ## 0.10.5
 
 Built 2026-09-25. Tagged v0.10.5 on 2026-09-25.
