@@ -184,9 +184,15 @@ function versioned(value: string, versions: readonly (readonly number[])[], size
 
 function cardanoCheck(value: string): AddressCheck {
   const shape = 'not a Cardano address: expected a mainnet addr1... address';
+  // Byron's base58 addresses (Ae2..., DdzFF...) are refused, not decoded: the bridge deposits to
+  // Shelley addresses and nothing here pays out on Cardano, so none of them is ever asked for.
+  if (/^(Ae2|Ddz)/.test(value) && BASE58.test(value)) return { ok: false, reason: `${shape}: legacy Byron addresses (Ae2..., DdzFF...) are not taken` };
   if (!value.toLowerCase().startsWith('addr1')) return { ok: false, reason: shape };
   const decoded = bech32Decode(value, 120);
   if (decoded === null) return { ok: false, reason: /^addr1[02-9ac-hj-np-z]+$/i.test(value) ? MISMATCH : shape };
+  // The prefix is addr exactly. bech32 splits at the last 1, so addr1evil1... decodes under the
+  // prefix addr1evil with a checksum of its own, and addr_test is testnet.
+  if (decoded.hrp !== 'addr') return { ok: false, reason: shape };
   const bytes = fromWords(decoded.words);
   // The header byte: address type in the high nibble (0 to 7 are payment addresses), network in
   // the low (1 is mainnet). Base addresses carry two hashes, enterprise ones one.

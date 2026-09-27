@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { CHAIN_NETWORKS, NETWORKS, explorerAddressUrl, explorerTxUrl, scanNetworkOf, validateAddress, validateAddressForFamily, validateHash } from '../../src/chainscan/networks.ts';
 import type { ChainNetwork } from '../../src/chainscan/networks.ts';
-import { base58Check, base58Decode, crc16 } from '../../src/chainscan/codec.ts';
+import { base58Check, base58Decode, bech32Decode, crc16 } from '../../src/chainscan/codec.ts';
 import { depositAddressProblem } from '../../src/http/wallet.ts';
 import { RECEIVE_NETWORKS, receiveNetworkByBridge } from '../../src/rails/intents-address.ts';
 import { POA_DEPOSIT } from '../fixtures/poa-deposit-addresses.ts';
@@ -148,6 +148,47 @@ test('an address for another network of the same chain is refused: TON testnet, 
   // Mixed case is not a CashAddr spelling.
   const bch = POA_DEPOSIT['bch:mainnet'];
   assert.equal(validateAddress('bitcoincash', bch.slice(0, 20) + bch.slice(20).toUpperCase()).ok, false);
+});
+
+// Words under a prefix, with the bech32 checksum that prefix and those words make: a crafted or
+// mistyped prefix whose checksum still matches, which only a check of the prefix itself refuses.
+function bech32Encode(hrp: string, words: number[]): string {
+  const gen = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  const codes = [...hrp].map((c) => c.charCodeAt(0));
+  let chk = 1;
+  for (const v of [...codes.map((c) => c >> 5), 0, ...codes.map((c) => c & 31), ...words, 0, 0, 0, 0, 0, 0]) {
+    const top = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= gen[i];
+  }
+  const mod = (chk ^ 1) >>> 0;
+  const tail = [0, 1, 2, 3, 4, 5].map((i) => (mod >>> (5 * (5 - i))) & 31);
+  return `${hrp}1${[...words, ...tail].map((w) => BECH32[w]).join('')}`;
+}
+
+test('a Cardano address has the prefix addr and nothing else: a longer prefix, a typo or a testnet prefix is refused, and so is a legacy Byron address', () => {
+  const poa = POA_DEPOSIT['cardano:mainnet'];
+  const words = bech32Decode(poa, 120)?.words ?? [];
+  assert.equal(bech32Encode('addr', words), poa, 'the encoder rebuilds the bridge address exactly');
+  assert.deepEqual(validateAddress('cardano', poa), { ok: true, normalized: poa, checksum: 'valid' });
+  // The reviewer's string: bech32 splits at the last 1, so its prefix is addr1evil and its
+  // checksum matches that prefix.
+  assert.equal(validateAddress('cardano', 'addr1evil1vyrswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpcu8wurr').ok, false, 'addr1evil prefix');
+  // The bridge's own payload under a prefix that still starts addr1, and under typos of addr.
+  for (const hrp of ['addr1x', 'addr1', 'addrx', 'adr', 'addt', 'add']) {
+    const near = bech32Encode(hrp, words);
+    assert.equal(validateAddress('cardano', near).ok, false, `${hrp}: ${near}`);
+  }
+  // Testnet: the testnet prefix on the mainnet payload, and the mainnet prefix on a header whose
+  // network bit (the low bit of the first byte, the 4 in the second word) says testnet.
+  assert.equal(validateAddress('cardano', bech32Encode('addr_test', words)).ok, false, 'addr_test prefix');
+  const testnetHeader = [words[0], words[1] & ~4, ...words.slice(2)];
+  assert.equal(validateAddress('cardano', bech32Encode('addr', testnetHeader)).ok, false, 'testnet header under addr');
+  // Byron's base58 addresses are refused on purpose, and the refusal says so: the bridge deposits
+  // to Shelley addresses and nothing pays out on Cardano. Two real Byron addresses (CRC32 checked).
+  for (const byron of ['Ae2tdPwUPEZFRbyhz3cpfC2CumGzNkFBN2L42rcUc2yjQpEkxDbkPodpMAi', 'Ae2tdPwUPEYwFx4dmJheyNPPYXtvHbJLeCaA96o6Y2iiUL18cAt7AizN2zG']) {
+    assert.match((validateAddress('cardano', byron) as { reason: string }).reason ?? '', /Byron/, byron);
+  }
 });
 
 test('the codecs agree with the formats: a base58check tail is four bytes, and base58 counts leading ones as zero bytes', () => {
