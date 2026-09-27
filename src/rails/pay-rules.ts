@@ -53,8 +53,10 @@ type TonAccount = { flag: number | null; workchain: number; hash: Buffer };
 function tonAccount(value: string): TonAccount | null {
   const raw = TON_RAW.exec(value.toLowerCase());
   if (raw !== null) return { flag: null, workchain: Number(raw[1]), hash: Buffer.from(raw[2], 'hex') };
+  if (!/^[A-Za-z0-9_+/-]{48}$/.test(value)) return null;
   const bytes = Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-  if (bytes.length !== 36) return null;
+  // Only an address whose checksum holds says anything about its flag or its workchain.
+  if (bytes.length !== 36 || crc16(bytes.subarray(0, 34)) !== bytes.readUInt16BE(34)) return null;
   return { flag: bytes[0], workchain: bytes[1] === 0xff ? -1 : bytes[1], hash: bytes.subarray(2, 34) };
 }
 
