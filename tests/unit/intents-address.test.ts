@@ -14,6 +14,7 @@ import {
   humanAmount,
   intentsDepositAddress,
   parsePoaToken,
+  currentSymbol,
   poaRecentDeposits,
   poaSupportedTokens,
   receiveNetworkOf,
@@ -323,4 +324,14 @@ test('a chain with no address decoder is explicitly unpayable', () => {
 
 test('the ton row names the coin by the ticker the venue uses', () => {
   assert.equal(spendNetworkOf('ton')?.native, 'GRAM');
+});
+
+test('the bridge still lists Toncoin as TON; the coin reads GRAM, and TON typed on TON finds it', () => {
+  const coin = parsePoaToken({ defuse_asset_identifier: 'ton:mainnet:native', origin_chain_address: 'native', decimals: 9, asset_name: 'TON', min_deposit_amount: '10000000', intents_token_id: 'nep245:v2_1.omni.hot.tg:1117_' });
+  assert.equal(coin?.symbol, 'GRAM');
+  const usdt = parsePoaToken({ defuse_asset_identifier: 'ton:mainnet:EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs', origin_chain_address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs', decimals: 6, asset_name: 'USDT', min_deposit_amount: '1000' });
+  assert.equal(usdt?.symbol, 'USDT');
+  assert.equal(currentSymbol('ton', 'TON'), 'GRAM');
+  assert.equal(currentSymbol('ton', 'USDT'), 'USDT');
+  assert.equal(currentSymbol('eth', 'TON'), 'TON');
 });

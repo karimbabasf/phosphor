@@ -308,10 +308,22 @@ export function humanAmount(raw: string, decimals: number): string {
    spell a chain's own coin 'eth:8453:native' with origin_chain_address 'native', so the word
    'native' is never a contract: it is null. Two rows (APT, MOVE) say 'native' in the address and
    carry the coin's type in the identifier; that type is what an explorer takes, so it is kept. */
+/* Coins renamed after the bridge named them. Toncoin became Gram (GRAM) on 2026-06-15 by the TON
+   community's vote; the network is still TON, and the bridge still lists the coin as 'TON'. A
+   person reads the coin's name off an exchange's withdraw screen, so the old name is never shown. */
+const RENAMED_BY_ID: Record<string, string> = { 'ton:mainnet:native': 'GRAM' };
+const RENAMED_BY_CHAIN: Record<string, Record<string, string>> = { ton: { TON: 'GRAM' } };
+
+/* The coin's current ticker for a symbol an agent or a person typed on a network: TON on TON is
+   GRAM. Anything else comes back as it came. */
+export function currentSymbol(chain: string, symbol: string): string {
+  return RENAMED_BY_CHAIN[chain]?.[symbol] ?? symbol;
+}
+
 export function parsePoaToken(row: unknown): PoaToken | null {
   const r = (row ?? {}) as Record<string, unknown>;
   const id = r.defuse_asset_identifier;
-  const symbol = r.asset_name;
+  const symbol = typeof id === 'string' && RENAMED_BY_ID[id] !== undefined ? RENAMED_BY_ID[id] : r.asset_name;
   const decimals = r.decimals;
   const min = r.min_deposit_amount;
   const assetId = r.intents_token_id;
