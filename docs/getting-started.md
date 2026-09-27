@@ -119,7 +119,7 @@ without the enclave.
 
 On an enclave wallet, every click you make on a proposal ends in a Touch ID dialog. The dialog
 is drawn by macOS, and its sentence is composed by the app from the proposal's own numbers: the
-amount, the receiver shortened to eight characters at each end, and the chain. Read it before you
+amount, the receiver shortened to eight characters at each end (a NEAR name whole), and the chain. Read it before you
 confirm. [Security](security.md) says what this does and does not protect against.
 
 A password wallet says Password in the Keys row: "Locked with your password on this Mac." On a

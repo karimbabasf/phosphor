@@ -1239,6 +1239,24 @@ test('the card names a receiver as the Touch ID dialog does, and the groups in t
   }
 });
 
+/* Review V1 (2026-09-27): a NEAR name's owner chose both of its ends, so the card names it whole
+   wherever it names the receiver: in its head, in the address block with its Copy, and in
+   Details, as the Touch ID dialog does. */
+test('a payout to a long NEAR name shows the name whole on the face, in the address block and in Details', () => {
+  const to = 'alice-business-payroll-account.near';
+  const { card, reason } = payCard('near', 'NEAR', to);
+  assert.ok(reason.includes(` to ${to} on NEAR`), reason);
+  assert.ok(faceOf(card).includes(`${to} on NEAR`), faceOf(card));
+  const line = all(card, 'mcard-address-line')[0];
+  assert.ok(line, 'no address block for a named account');
+  assert.equal(line.getAttribute('data-address'), to);
+  assert.deepEqual(all(line, 'tcard-leg-group').map((g: Any) => g.textContent), [to]);
+  assert.deepEqual(all(line, 'addr-end').map((g: Any) => g.textContent), [to]);
+  const fold = all(card, 'sendcard-address')[0];
+  assert.ok(fold, 'no receiver in Details');
+  assert.deepEqual(all(fold, 'sendcard-group').map((g: Any) => g.textContent), [to]);
+});
+
 /* On a chain where exchanges tell deposits apart by a memo, the card says on its face, in the
    warning tone, that no memo can go with the payout; the same sentence the agent reads. */
 test('a payout on the XRP Ledger says on the face that no memo or tag can go with it', () => {
@@ -1260,9 +1278,10 @@ test('a payout on the XRP Ledger says on the face that no memo or tag can go wit
   assert.ok(groups.length > 1, 'an XRP address is drawn as one unbroken run');
 });
 
-/* A named account is its own check: alice.near is whole in the card's head, so the face does not
-   print it a second time as a block of groups; the first-send line stays. */
-test('a send to a named account is not printed twice, and still says it is the first send', () => {
+/* A named account is whole in the card's head and in the address block beside its Copy, one piece
+   and never groups (review V1, 2026-09-27: the block used to be skipped for a name); the
+   first-send line stays. */
+test('a send to a named account is printed whole in one piece, and still says it is the first send', () => {
   const world = build();
   const to = 'alice.near';
   const draft = { kind: 'intents_send', symbol: 'USDC', amount: 5, amountUsd: 5, from: 'you.near', to, counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, ownAddress: false } };
@@ -1271,7 +1290,7 @@ test('a send to a named account is not printed twice, and still says it is the f
   world.proposals([filed]);
   const card = world.cardNodes('move')[0];
   assert.match(faceOf(card), /^5 USDC alice\.near/, faceOf(card));
-  assert.equal(all(card, 'mcard-address-line').length, 0, 'the named account is printed twice');
+  assert.deepEqual(all(card, 'mcard-address-line').map((l: Any) => all(l, 'tcard-leg-group').map((g: Any) => g.textContent)), [[to]]);
   assert.ok(faceOf(card).includes('First send to this address.'), faceOf(card));
   assert.equal(faceOf(card).includes(' on '), false, 'a send inside NEAR Intents names a chain');
 });
