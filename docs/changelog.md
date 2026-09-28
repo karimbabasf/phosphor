@@ -5,6 +5,21 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.11
+
+Built 2026-09-27. Tagged v0.10.11 on 2026-09-27.
+
+- A chart of a coin Hyperliquid does not list, such as 1INCH on Coinbase, now names that coin
+  in the Trade header, says "on Coinbase" under it, and shows its price. The header used to stay
+  on the last Hyperliquid market, so a 1INCH chart sat under a Bitcoin title. The strip no longer
+  says Hyperliquid is not answering while such a coin is up.
+- Asking your assistant for another market right after the window opened or resized could land
+  and then snap back to the old one. The window's own view write no longer undoes a newer switch.
+- Every NEAR Intents swap now carries the referral "phosphor", so the NEAR Intents Explorer can
+  count the swaps made through Phosphor. The label is public on the explorer, so a swap can be
+  seen to come from Phosphor. The app still sends nothing about you anywhere.
+- The privacy page says so, and the terms screen shows once more so you can read the change.
+
 ## 0.10.10
 
 Built 2026-09-27. Tagged v0.10.10 on 2026-09-27.
