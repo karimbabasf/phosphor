@@ -15,7 +15,7 @@ import { HOST, hostIsLocal } from './auth.ts';
 import { isDraining } from '../draining.ts';
 import { capLabel, errText, fail, intParam, sendCachedJson, sendJson, serveStatic } from './respond.ts';
 import { buildStateCached, proposalPage, transactionsPayload } from './state.ts';
-import { chartPayload, handleChartWrite, handleSnapshotDelivery, partParam, sendCandles, slotParam } from './chart.ts';
+import { chartOnScreen, chartPayload, handleChartWrite, handleSnapshotDelivery, partParam, sendCandles, slotParam } from './chart.ts';
 import { handleConnectionRead, handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
 import { handleMcp } from './mcp.ts';
@@ -100,7 +100,7 @@ const GET: Record<string, Route> = {
     sendJson(res, 200, lines);
   },
   '/api/transactions': (ctx, _req, res) => sendJson(res, 200, transactionsPayload(ctx)),
-  '/api/trade': (ctx, _req, res) => sendJson(res, 200, ctx.trade.payload()),
+  '/api/trade': (ctx, _req, res) => sendJson(res, 200, { ...ctx.trade.payload(), chart: chartOnScreen(ctx) }),
   '/api/driver': (ctx, _req, res) => sendJson(res, 200, ctx.chats.payload()),
   // The connection line for one agent, for the shell's menu item: no token, nothing secret in
   // it, the Host gate above in front of it. The window reads the same builder through the

@@ -32,6 +32,14 @@ function ref(symbol: string, provider: Provider = 'hyperliquid'): MarketRef {
   return { product: `${symbol}-USD`, provider, symbol, quote: 'USD', kind: provider === 'hyperliquid' ? 'perp' : 'spot' };
 }
 
+// A coin Coinbase charts and Hyperliquid does not list, the shape of 1INCH. Left out of search
+// and all, so the fixtures that count the catalogue see the three coins they always did.
+const COINBASE_ONLY = '1INCH';
+
+function coinbaseOnly(query: string): boolean {
+  return (query.trim().toUpperCase().split('-')[0] ?? '') === COINBASE_ONLY;
+}
+
 function symbolOf(query: string): string | null {
   const key = query.trim().toUpperCase().split('-')[0] ?? '';
   return COINS.includes(key) ? key : null;
@@ -42,11 +50,13 @@ export function fakeCatalog(): Catalog {
     refresh: async () => {},
     resolve: (query) => {
       const s = symbolOf(query);
-      return s === null ? null : ref(s);
+      if (s === null) return coinbaseOnly(query) ? ref(COINBASE_ONLY, 'coinbase') : null;
+      return ref(s);
     },
     resolveOn: (query, provider) => {
       const s = symbolOf(query);
-      return s === null ? null : ref(s, provider);
+      if (s === null) return coinbaseOnly(query) && provider === 'coinbase' ? ref(COINBASE_ONLY, 'coinbase') : null;
+      return ref(s, provider);
     },
     search: (query, limit = 10) => COINS.filter((c) => c.includes(query.toUpperCase())).slice(0, limit).map((c) => ref(c)),
     all: () => COINS.map((c) => ref(c)),

@@ -615,18 +615,30 @@ export async function handleSnapshotDelivery(ctx: Ctx, req: http.IncomingMessage
    trade_focus has moved the candles with the header since 2026-09-21; the other way round was
    missing, so chart_draw with a view.product, a layout, or the window's own chart write moved
    the candles and left the header, the price strip and the position panel on the old market
-   (Karim's screenshot, 2026-09-22: GRAM-USD candles under a BTC header). Only a market
-   Hyperliquid lists moves the header, because the header names the market a trade is placed
-   on; a chart of something the venue does not list leaves it where it was. Called only when a
-   door actually moved the primary's product, so a pan that re-sends the same product never
-   touches the header. Answers whether the header moved, so the caller sends the trade frame. */
+   (Karim's screenshot, 2026-09-22: GRAM-USD candles under a BTC header). A market Hyperliquid
+   lists names the header by the venue's own symbol. A market it does not list (1INCH-USD on
+   Coinbase) names it by the product's coin, and the strip says where the candles come from
+   (chartOnScreen): it once left the header on BTC, so a 1INCH chart sat under a Bitcoin title
+   (Karim, 2026-09-27). Called only when a door actually moved the primary's product, so a pan
+   that re-sends the same product never touches the header. Answers whether the header moved,
+   so the caller sends the trade frame. */
 export function focusFollowsChart(ctx: Ctx, source: Source): boolean {
   const product = ctx.chart.state().view.product;
   const ref = ctx.market.resolveOn(product, 'hyperliquid');
-  if (ref === null || ref.product !== product) return false;
+  const symbol = ref !== null && ref.product === product ? ref.symbol : product.split('-')[0];
   const before = ctx.trade.view.rev();
-  const out = ctx.trade.view.setFocus({ symbol: ref.symbol }, source);
+  const out = ctx.trade.view.setFocus({ symbol }, source);
   return out.ok && ctx.trade.view.rev() !== before;
+}
+
+/* The primary chart's market and the venue its candles come from, for the strip. Hyperliquid
+   when the venue lists the product, otherwise the pinned provider, and Coinbase for a chart
+   left on auto, since Coinbase is the only other provider the chart has. */
+export function chartOnScreen(ctx: Ctx): { product: string; venue: string } {
+  const view = ctx.chart.state().view;
+  const ref = ctx.market.resolveOn(view.product, 'hyperliquid');
+  if (ref !== null && ref.product === view.product) return { product: view.product, venue: 'hyperliquid' };
+  return { product: view.product, venue: view.provider === 'auto' ? 'coinbase' : view.provider };
 }
 
 export function resolveViewPatch(ctx: Ctx, patch: JsonBody, requireListed: boolean, chart: ChartStore = ctx.chart): string | null {

@@ -58,3 +58,32 @@ test('a primary chart moved to another market moves the header with it, from eve
     await h.close();
   }
 });
+
+// A coin Hyperliquid does not list. The header stayed on BTC while the candles showed 1INCH-USD
+// from Coinbase (Karim, 2026-09-27): only a Hyperliquid market used to move it. Now the header
+// names the charted coin and the strip names the venue the candles come from.
+test('a chart of a coin only Coinbase lists moves the header to that coin, on Coinbase', async () => {
+  const h = await bootChartServer();
+  try {
+    const trade = async (): Promise<{ symbol: string; chart: { product: string; venue: string } }> => {
+      const json = (await h.get('/api/trade')).json;
+      return { symbol: String(json.view.symbol), chart: json.chart };
+    };
+    assert.deepEqual((await trade()).chart, { product: 'BTC-USD', venue: 'hyperliquid' });
+
+    const drawn = await h.mcp({ op: 'view', tool: 'chart_draw', args: { view: { product: '1INCH' } }, session: 'lead', client: 'phosphor-mcp' });
+    assert.equal(drawn.status, 200, JSON.stringify(drawn.json).slice(0, 200));
+    assert.equal((await h.get('/api/chart')).json.view.product, '1INCH-USD');
+    const after = await trade();
+    assert.equal(after.symbol, '1INCH', 'the header names the charted coin');
+    assert.deepEqual(after.chart, { product: '1INCH-USD', venue: 'coinbase' });
+
+    await h.mcp({ op: 'view', tool: 'trade_focus', args: { symbol: 'ETH' }, session: 'lead', client: 'phosphor-mcp' });
+    await h.mcp({ op: 'view', tool: 'trade_focus', args: { symbol: '1INCH' }, session: 'lead', client: 'phosphor-mcp' });
+    const focused = await trade();
+    assert.equal(focused.symbol, '1INCH');
+    assert.deepEqual(focused.chart, { product: '1INCH-USD', venue: 'coinbase' }, 'trade_focus lands on the same market');
+  } finally {
+    await h.close();
+  }
+});
