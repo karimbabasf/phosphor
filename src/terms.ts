@@ -14,7 +14,7 @@ import path from 'node:path';
 
 import { atomicWrite } from './fsatomic.ts';
 
-export const TERMS_VERSION = '2026-09-22';
+export const TERMS_VERSION = '2026-09-27';
 export const TERMS_URL = 'https://phosphor.money/terms/';
 export const PRIVACY_URL = 'https://phosphor.money/privacy/';
 
