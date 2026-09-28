@@ -974,7 +974,8 @@
     top.appendChild(label);
     top.appendChild(icon('chevron-down', 'chev-icon'));
     words.appendChild(top);
-    words.appendChild(dom.el('span', 'trade-symbol-venue', 'on Hyperliquid'));
+    var venueLine = dom.el('span', 'trade-symbol-venue', 'on Hyperliquid');
+    words.appendChild(venueLine);
     button.appendChild(words);
 
     var sheet = dom.el('div', 'trade-menu pop');
@@ -1025,6 +1026,7 @@
     refs.symbolButton = button;
     refs.symbolLogo = mark;
     refs.symbolLabel = label;
+    refs.symbolVenue = venueLine;
     refs.symbolSheet = sheet;
     refs.symbolSearch = search;
     refs.symbolMenu = menu;
@@ -1203,7 +1205,24 @@
     return (data && Array.isArray(data.products)) ? data.products : [];
   }
 
+  /* The primary chart's market and where its candles come from, as the
+     server reads them. A coin Hyperliquid does not list (1INCH on Coinbase)
+     is charted under its own product, which the configured list does not
+     hold, so this is how the strip names it and hears its tape. */
+  function chartShown() {
+    var chart = data && data.chart;
+    if (!chart || typeof chart.product !== 'string') return null;
+    return coinOfProduct(chart.product).toUpperCase() === symbolOf() ? chart : null;
+  }
+
+  function venueName(venue) {
+    if (venue === 'coinbase') return 'Coinbase';
+    return 'Hyperliquid';
+  }
+
   function currentProduct() {
+    var shown = chartShown();
+    if (shown) return shown.product;
     var symbol = symbolOf();
     var list = products();
     for (var i = 0; i < list.length; i += 1) {
@@ -1227,6 +1246,8 @@
     var current = currentProduct();
     var symbol = symbolOf();
     dom.setText(refs.symbolLabel, symbol ? displayCoin(symbol) : '--');
+    var shown = chartShown();
+    if (refs.symbolVenue) dom.setText(refs.symbolVenue, 'on ' + venueName(shown ? shown.venue : 'hyperliquid'));
     setLogo(refs.symbolLogo, logoCoin(symbol), 28);
     dom.setAttr(refs.symbolButton, 'disabled', products().length ? null : true);
     dom.setAttr(refs.symbolMenu, 'aria-activedescendant', null);
@@ -1455,7 +1476,8 @@
 
   function onCandle(frame) {
     if (!mounted || !frame || !frame.candle) return;
-    if (frame.provider && frame.provider !== STRIP_VENUE) return;
+    var shown = chartShown();
+    if (frame.provider && frame.provider !== (shown ? shown.venue : STRIP_VENUE)) return;
     var product = currentProduct();
     if (!product || frame.product !== product) return;
     var bar = frame.candle;
