@@ -168,9 +168,12 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
 
   // Every live plan's coin, plus whatever the human is looking at. Watching only the plan coins
   // would leave the screen blank on a market the person is deciding about, which is exactly
-  // when they want the numbers.
+  // when they want the numbers. A focused coin the venue does not list (1INCH, charted from
+  // Coinbase) is left out once the universe is known: subscribing to it only earned the venue's
+  // error, and the strip then said Hyperliquid was not answering (2026-09-27).
   function watched(): string[] {
-    const set = new Set<string>([view.state().symbol]);
+    const focus = view.state().symbol;
+    const set = new Set<string>(meta.size > 0 && !meta.has(focus.toUpperCase()) ? [] : [focus]);
     for (const coin of deps.runner.status().watching) set.add(coin.toUpperCase());
     return [...set].filter((s) => s !== '');
   }

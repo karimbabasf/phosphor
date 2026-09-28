@@ -523,7 +523,14 @@ export async function handleChartWrite(ctx: Ctx, req: http.IncomingMessage, res:
     ctx.chart.setGeometry(body.geometry as ChartGeometry);
   }
   let notes: string[] = [];
-  if (body.view !== null && typeof body.view === 'object') {
+  /* The window pushes its whole view 150 ms after any redraw, so a push queued before an agent
+     switched the market arrived after it and switched it back: "show me 1INCH" landed and the
+     window's stale BTC-USD undid it, one run in three in a headless proof (2026-09-27). The push
+     says which rev it last saw; one older than the last market, venue or timeframe change keeps
+     the server's view, and the answer carries that view back for the window to adopt. */
+  const stale = typeof body.baseRev === 'number' && body.baseRev < ctx.chart.state().identityRev;
+  if (stale) notes.push('view not applied: the chart moved to another market or timeframe since this window last read it');
+  if (!stale && body.view !== null && typeof body.view === 'object') {
     const patch = body.view as JsonBody;
     const refusal = resolveViewPatch(ctx, patch, false);
     if (refusal !== null) return fail(res, 400, refusal);
