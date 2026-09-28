@@ -87,3 +87,28 @@ test('a chart of a coin only Coinbase lists moves the header to that coin, on Co
     await h.close();
   }
 });
+
+// The window pushes its whole view 150 ms after a redraw. A push queued before the agent switched
+// the market used to land after it and switch it back (a headless proof, 2026-09-27: "show me
+// 1INCH" reverted to BTC-USD one run in three). It carries the rev it last saw now, and one that
+// predates the switch keeps the server's view.
+test("a window write queued before the agent's market switch does not switch it back", async () => {
+  const h = await bootChartServer();
+  try {
+    const seen = Number((await h.get('/api/chart')).json.rev);
+    await h.mcp({ op: 'view', tool: 'chart_draw', args: { view: { product: '1INCH' } }, session: 'lead', client: 'phosphor-mcp' });
+    const late = await h.post('/api/chart', { token: h.token, baseRev: seen, view: { product: 'BTC-USD', granularitySec: 60 } });
+    assert.equal(late.status, 200, JSON.stringify(late.json).slice(0, 200));
+    assert.equal(late.json.view.product, '1INCH-USD', 'the answer carries the view the window should adopt');
+    assert.equal((await h.get('/api/chart')).json.view.product, '1INCH-USD');
+    assert.equal(String((await h.get('/api/trade')).json.view.symbol), '1INCH');
+
+    // A write from a window that has seen the switch still moves the chart, as a click should.
+    const now = Number((await h.get('/api/chart')).json.rev);
+    const click = await h.post('/api/chart', { token: h.token, baseRev: now, view: { product: 'ETH-USD' } });
+    assert.equal(click.status, 200);
+    assert.equal((await h.get('/api/chart')).json.view.product, 'ETH-USD');
+  } finally {
+    await h.close();
+  }
+});

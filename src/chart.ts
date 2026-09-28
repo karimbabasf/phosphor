@@ -107,6 +107,10 @@ export type ChartState = {
   marks: ChartMark[];
   geometry: ChartGeometry | null;
   rev: number;
+  // The rev at which the market, the venue or the timeframe last changed. The window's view
+  // write says which rev it last saw, and one that predates this is refused its view: it was
+  // queued before the change and would put the old market back (src/http/chart.ts).
+  identityRev: number;
   lastDriver: Source;
   // Which agent last moved this chart. With a team on it, "an agent changed the view" is no
   // longer an answer: the human watching a product switch they did not ask for wants to know
@@ -366,6 +370,7 @@ export function createChartStore(
     marks: [],
     geometry: null,
     rev: 1,
+    identityRev: 1,
     lastDriver: 'human',
     lastDriverBy: null,
     lastChangeAt: new Date().toISOString(),
@@ -433,6 +438,8 @@ export function createChartStore(
     const notes: string[] = [];
     const view = state.view;
     const productBefore = view.product;
+    const identity = (): string => `${view.product}|${view.provider}|${view.granularitySec}`;
+    const identityBefore = identity();
 
     // Set when THIS patch changes the instrument. The pan and the price scale carried in the
     // same patch describe the instrument being left, so they are dropped below rather than
@@ -562,7 +569,9 @@ export function createChartStore(
       if (moved.back > 0) notes.push(`${moved.back} ${moved.back === 1 ? 'marking' : 'markings'} kept on ${view.product} from before are back`);
     }
 
+    const identityMoved = identity() !== identityBefore;
     bump(source, by);
+    if (identityMoved) state.identityRev = state.rev;
     return { ok: true, notes };
   }
 

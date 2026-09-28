@@ -3586,6 +3586,10 @@ async function pushChart(extra) {
   CHART_PUSH = null;
   var body = {
     token: typeof TOKEN === 'string' ? TOKEN : null,
+    // The newest rev this window has seen, its own writes included. The server keeps its view
+    // when the market or timeframe moved after this, rather than let a push queued before the
+    // move put the old one back.
+    baseRev: Math.max(typeof CHART.rev === 'number' ? CHART.rev : 0, CHART_MY_REV),
     view: {
       product: CHART.view.product,
       provider: CHART.view.provider || 'auto',

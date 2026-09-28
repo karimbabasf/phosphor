@@ -1391,7 +1391,7 @@
      market from /api/candles, once a minute and on every market change: the
      close 24 bars back is the price a day ago, the high and low are over the
      24 bars since, and the change is the live mark against that close. */
-  var range = { symbol: '', open: null, high: null, low: null };
+  var range = { symbol: '', open: null, high: null, low: null, last: null };
   var rangeTimer = 0;
   var rangeSeq = 0;
   var rangeAsked = '';
@@ -1439,7 +1439,7 @@
   function setRange(symbol, candles) {
     var day = candles.slice(-25);
     if (day.length < 2) {
-      range = { symbol: symbol, open: null, high: null, low: null };
+      range = { symbol: symbol, open: null, high: null, low: null, last: null };
     } else {
       var since = day[0];
       var high = null;
@@ -1448,12 +1448,14 @@
         if (typeof day[i].h === 'number' && (high === null || day[i].h > high)) high = day[i].h;
         if (typeof day[i].l === 'number' && (low === null || day[i].l < low)) low = day[i].l;
       }
-      range = { symbol: symbol, open: typeof since.c === 'number' ? since.c : null, high: high, low: low };
+      var latest = day[day.length - 1];
+      range = { symbol: symbol, open: typeof since.c === 'number' ? since.c : null, high: high, low: low, last: typeof latest.c === 'number' ? latest.c : null };
     }
     /* The bars just read cover everything up to now, so what the tape folded
        in since the last read starts over. */
     tape.high = null;
     tape.low = null;
+    renderPrice();
     renderDay();
   }
 
@@ -1507,10 +1509,14 @@
   }
 
   /* The figure on the strip: the last trade once the tape has one for this
-     market, the venue's mark until then. */
+     market, the venue's mark until then, and the newest hourly close for a
+     market the venue does not list (1INCH on Coinbase has no mark and, on a
+     polled chart, no tape). */
   function priceOf() {
     if (onTape() && typeof tape.px === 'number') return tape.px;
-    return markOf();
+    var mark = markOf();
+    if (typeof mark === 'number' && isFinite(mark)) return mark;
+    return range.symbol === symbolOf() && typeof range.last === 'number' ? range.last : mark;
   }
 
   /* ---------- the strip, filled ---------- */
