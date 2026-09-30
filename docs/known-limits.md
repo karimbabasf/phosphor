@@ -43,25 +43,11 @@ needs the window token, which no route serves and no program can fetch.
 What closes it: the agent's door moving onto a socket the operating system can identify the
 caller of. Until then the seat secret is the credential in its place.
 
-## The app is not notarized by Apple
+## The Secure Enclave key is bound to this Mac, not to Phosphor
 
-The download is signed by the build itself, not with an Apple Developer ID, and Apple has not
-notarized it. So the first open stops at a Gatekeeper warning, and you go through System
-Settings, Privacy & Security, Open Anyway. Notarization needs an Apple Developer account this
-project does not hold yet.
-
-What it means: the checksum on the release page proves the file is the one on that page, and
-the build attestation proves that file was built from this repository's code. Check both before
-you open the disk image, every time, see
-[Getting started](getting-started.md#check-the-file). Two more things follow from the missing
-Developer ID. The Secure Enclave key is bound to this Mac rather than to Phosphor, so the Keys row
-in the Vault tab says that other apps on this Mac could ask for the key; a Developer ID build
-binds it to the app. And a
-signed update still verifies: the updater checks the bundle's own signature, which does not
-depend on Apple.
-
-What closes it: an Apple Developer account and a Developer ID certificate in the release
-workflow, which is already written to use them when they are set.
+The Keys row in the Vault tab says that other apps on this Mac could ask for the Secure Enclave
+key: it is bound to the machine rather than to this app. A signed update still verifies either
+way: the updater checks the bundle's own signature, which does not depend on Apple.
 
 ## The venues are not ours
 

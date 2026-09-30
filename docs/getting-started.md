@@ -35,18 +35,6 @@ someone who took over the release page or the site could swap the file and its c
 not this. What it does not prove: that the code is free of bugs. For that, read
 [Security](security.md) and [Known limits](known-limits.md). It covers releases from 0.10.1 on.
 
-## The Gatekeeper warning
-
-The build is not notarized by Apple yet, so the first open stops with a warning. Click Done, not
-Move to Trash, then double-click Open Anyway in the disk image window: it opens System Settings,
-Privacy & Security, at the Open Anyway button next to Phosphor. Click it. The button appears only
-after a refused open, for about an hour. Without the disk image, open System Settings, then
-Privacy & Security, and scroll to Security. See
-[Troubleshooting](troubleshooting.md#macos-will-not-open-the-app) if the app still refuses.
-Notarization needs an Apple Developer account this project does not hold yet; until it does,
-the checksum above is what proves the file is the one on the release page. It is listed as a
-known gap in [Known limits](known-limits.md).
-
 ## First open
 
 The window opens on the welcome: "Your money stays on this Mac, under a key only you hold. Your

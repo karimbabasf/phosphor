@@ -236,5 +236,6 @@ Releases are built by CI from a version tag (`.github/workflows/release.yml`): t
 bundle and its signature, `latest.json` and `SHA256SUMS`. Installed copies check that manifest
 and offer a signed update in the app's own window (`src-tauri/frontend/update.html`); the updater
 verifies the bundle's signature, and the version it compares is read out of the signed bundle, not
-the manifest. The build is ad hoc signed and not notarized yet, so a first open goes through
-Gatekeeper's Open Anyway; [Known limits](known-limits.md) lists that beside the rest.
+the manifest. `scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
+notarize both and staples the tickets before anything is checksummed, so a first open needs no
+Gatekeeper step.

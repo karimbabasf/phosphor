@@ -499,7 +499,7 @@ wallet made since holds the EVM key alone.
 key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`. A mismatch
 stops the program instead of printing an address that no private key opens.
 
-### Code signing: hardened, ad hoc, not notarized
+### Code signing: hardened, Developer ID, notarized
 
 Encryption at rest with no hardened runtime moves a key from a file anyone can read to a heap
 anyone can read: any process running as you can attach to the backend with `task_for_pid` and take
@@ -508,14 +508,14 @@ the unlocked key out of memory. `fill(0)` on lock is best effort and says so in 
 So the bundle carries `src-tauri/entitlements.plist` and a `bundle.macOS` block asking for the
 hardened runtime without `get-task-allow`, which is the entitlement that would let a debugger
 attach (`tests/unit/code-signing.test.ts` holds the file to that, and to the one entitlement
-V8 needs, `allow-jit`). `signingIdentity` is `-` in the config, so every build so far is ad hoc
-signed: a local build and the release build alike. The release workflow reads
-`APPLE_SIGNING_IDENTITY` and the App Store Connect key from its secrets when they are set, signs
-with a Developer ID and submits the app to Apple for notarization; they are not set, because the
-Apple Developer Program needs an account this project does not hold yet, so Gatekeeper stops the
-first open and the person clicks Open Anyway ([Getting started](getting-started.md#the-gatekeeper-warning)).
+V8 needs, `allow-jit`). `signingIdentity` is `-` in the config, so `tauri build` on its own makes
+an ad hoc bundle, locally and on the release runner alike. The release workflow then runs
+`scripts/notarize-mac.sh`: it signs every nested binary and the Secure Enclave XPC service inside
+out with the Developer ID from its secrets (hardened runtime, secure timestamp), has Apple
+notarize the app and the disk image, and staples both. A release without those secrets fails
+before it builds. The same chain runs on a Mac, checks included, with nothing published:
 
-    APPLE_SIGNING_IDENTITY="Developer ID Application: <name> (<team id>)" npm run app:build
+    npm run notarize:local
 
 Touch ID and the Secure Enclave are built (`src-tauri/src/enclave.rs`, the `se-helper` XPC
 service in `Contents/XPCServices`, `src/vault/`): on a Mac with an enclave the key file is sealed
