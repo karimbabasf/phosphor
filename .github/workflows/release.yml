@@ -98,7 +98,35 @@ jobs:
         # of this file looks, and holds if the file is ever dropped from the checkout.
         run: npm ci --ignore-scripts
 
+      # The Secure Enclave XPC service is signed by scripts/build-se-helper.sh inside the bundle
+      # step, before `tauri build` makes its own keychain for the app, and Tauri signs neither
+      # custom files nor nested bundles. So the certificate goes into a keychain of its own here,
+      # first. Without one the service is ad-hoc signed like the app, and under ad-hoc its peer
+      # check can pin only an identifier (see WHO MAY CONNECT in src-tauri/se-helper/main.swift).
+      - name: Keychain for the Secure Enclave service's signature
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "no Apple certificate in secrets: the Secure Enclave service is ad-hoc signed"
+            exit 0
+          fi
+          kc="$RUNNER_TEMP/se-service.keychain-db"
+          pw="$(openssl rand -hex 24)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/se-service.p12"
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -t 3600 -u "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          security import "$RUNNER_TEMP/se-service.p12" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/se-service.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+
       - name: Stage the payload and prove it boots on the bundled runtime
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: npm run bundle
 
       # The full suite is the development gate and runs on the machine that develops; four of its
@@ -109,7 +137,7 @@ jobs:
       # build script wants the staged Node sidecar to exist.
       - name: Release guards
         run: |
-          node --test tests/unit/version-agrees.test.ts tests/unit/release-manifest.test.ts
+          node --test tests/unit/version-agrees.test.ts tests/unit/release-manifest.test.ts tests/unit/enclave-sidecar.test.ts
           (cd src-tauri && cargo test)
 
       - name: Build, sign and bundle
@@ -178,6 +206,13 @@ jobs:
           hdiutil attach "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
           codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/dmg/Phosphor.app"
           codesign -dv --verbose=2 "$RUNNER_TEMP/dmg/Phosphor.app" 2>&1 | grep -E '^(Authority|Identifier|TeamIdentifier|Signature)' || true
+          # The Secure Enclave service ships inside, signed by the same team as the app: its peer
+          # check pins the Team ID it carries, so a service signed apart would pin the wrong one.
+          svc="$RUNNER_TEMP/dmg/Phosphor.app/Contents/XPCServices/com.karimbabasf.phosphor.vault.xpc"
+          team() { codesign -dv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p'; }
+          test -d "$svc" || { echo "the app has no Secure Enclave service"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+          test ! -e "$RUNNER_TEMP/dmg/Phosphor.app/Contents/MacOS/se-helper" || { echo "the old se-helper sidecar still ships"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+          test "$(team "$svc")" = "$(team "$RUNNER_TEMP/dmg/Phosphor.app")" || { echo "the service and the app are signed by different teams"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
           ls -la "$RUNNER_TEMP/dmg/.background"
           # The Finder layout lives in .DS_Store; without it the image opens as a plain folder.
           test -f "$RUNNER_TEMP/dmg/.DS_Store" || { echo "DMG has no Finder layout (.DS_Store missing)"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
