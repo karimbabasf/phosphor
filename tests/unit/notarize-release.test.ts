@@ -1,8 +1,7 @@
 // The notarized release is a chain whose order is the whole point: sign inside out, notarize and
 // staple the app, rebuild the updater bundle from it, put it in the DMG, sign, notarize and staple
 // the DMG, and only then checksum. These read the workflow and the script as text and hold that
-// order, so a later edit cannot quietly checksum an unstapled file or ship the Open Anyway
-// shortcut in a notarized DMG (which would also break the DMG's signature).
+// order, so a later edit cannot quietly checksum an unstapled file or ship an ad-hoc release.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -19,37 +18,46 @@ function step(name: string): string {
 }
 
 test('Tauri itself never sees an Apple secret: it builds ad-hoc and the script signs', () => {
-  assert.doesNotMatch(step('Build, sign and bundle'), /APPLE_/);
+  assert.doesNotMatch(step('Build and bundle'), /APPLE_/);
 });
 
-test('a signed build skips the Open Anyway step and runs the notarize step, an ad-hoc one the reverse', () => {
-  assert.match(step('Put the Open Anyway shortcut in the DMG'), /if: env\.SIGNED != '1'/);
+test('every release is notarized: no ad-hoc path, no Open Anyway step, both notary routes', () => {
+  const keychain = step('The signing keychain and the notarization credentials');
+  assert.match(keychain, /every release is Developer ID signed/);
+  assert.match(keychain, /APPLE_ID/);
+  assert.match(keychain, /APPLE_API_KEY_P8/);
   const notarize = step('Sign, notarize and staple the app and the DMG');
-  assert.match(notarize, /if: env\.SIGNED == '1'/);
+  assert.doesNotMatch(notarize, /\n\s+if:/, 'the notarize step always runs');
   assert.match(notarize, /scripts\/notarize-mac\.sh/);
+  assert.doesNotMatch(workflow, /Open Anyway|open-anyway|SIGNED/);
+  assert.ok(!fs.existsSync(new URL('scripts/dmg-open-anyway.ts', root)));
+});
+
+test('the keychain exists before the bundle step signs the Secure Enclave service with it', () => {
+  assert.ok(workflow.indexOf('- name: The signing keychain and the notarization credentials') < workflow.indexOf('- name: Stage the payload and prove it boots'));
+  assert.match(step('Stage the payload and prove it boots on the bundled runtime'), /APPLE_SIGNING_IDENTITY/);
 });
 
 test('the DMG is changed, then signed and stapled, before anything is checksummed or attested', () => {
   const order = [
-    '- name: Build, sign and bundle',
-    '- name: Put the Open Anyway shortcut in the DMG',
+    '- name: Build and bundle',
     '- name: Sign, notarize and staple the app and the DMG',
     '- name: Stage the release assets and write latest.json and SHA256SUMS',
     '- name: Attest where the release assets came from',
-    '- name: The app inside the DMG is signed the way this run was told to sign it',
+    '- name: The app and the DMG pass Gatekeeper',
     '- name: Publish the release',
   ].map((name) => workflow.indexOf(name));
   assert.ok(order.every((at) => at >= 0));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
 
-test('a signed build is verified the way Gatekeeper verifies it, and the keychain always goes', () => {
-  const verify = step('The app inside the DMG is signed the way this run was told to sign it');
+test('the release is verified the way Gatekeeper verifies it, and the keychain always goes', () => {
+  const verify = step('The app and the DMG pass Gatekeeper');
   assert.match(verify, /spctl -a -vv -t exec/);
   assert.match(verify, /spctl -a -vv -t open --context context:primary-signature/);
   assert.equal(verify.match(/xcrun stapler validate/g)?.length, 2, 'the app and the DMG');
   assert.match(step('Delete the signing keychain'), /if: always\(\)/);
-  assert.match(step('Publish the release'), /if \[ "\$SIGNED" != 1 \]; then\n.*not yet notarized/);
+  assert.doesNotMatch(step('Publish the release'), /notarized|Open Anyway/);
 });
 
 test('the script signs inside out, staples the app before the updater bundle and the DMG are made', () => {

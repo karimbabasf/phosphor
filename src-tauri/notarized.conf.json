@@ -1,9 +1,0 @@
-{
-  "bundle": {
-    "macOS": {
-      "dmg": {
-        "background": "dmg/background-notarized.tiff"
-      }
-    }
-  }
-}

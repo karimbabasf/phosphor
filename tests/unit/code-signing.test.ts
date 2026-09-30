@@ -131,7 +131,7 @@ test('the comment carries no double hyphen, which codesign refuses to parse', ()
    The failure mode is worth naming where somebody will read it. A release whose workflow skips
    that script does not fail: it produces an ad-hoc bundle that LOOKS signed and that Gatekeeper
    rejects on somebody else's machine. tests/unit/notarize-release.test.ts holds the workflow to
-   running it whenever the Apple secrets are set. */
+   running it on every release. */
 test('the identity is ad-hoc in the config and comes from the environment for a real build', () => {
   assert.equal(macConfig().signingIdentity, '-');
 });

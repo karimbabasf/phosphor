@@ -59,11 +59,10 @@ venue the app cannot reach is still holding your exits.
 
 ## macOS will not open the app
 
-The build is not notarized by Apple, so the first open stops with a warning. Click Done, then
-double-click Open Anyway in the disk image window, which opens System Settings at the Open Anyway
-button, or go to Privacy & Security and scroll down to Security yourself. No button there means
-the refused open was more than about an hour ago: open the app once more and look again. Check
-the disk image's SHA-256 first, see [Getting started](getting-started.md#check-the-file).
+Every release is notarized by Apple, so macOS opens it with no warning. A warning that macOS
+cannot verify the app means the file is not one this project released: move it to the Trash and
+download it again from the release page or https://phosphor.money, then check the disk image's
+SHA-256, see [Getting started](getting-started.md#check-the-file).
 
 Opening a second copy of the app while one is running, such as the copy in the disk image and the
 copy in Applications, brings the running one forward and closes the new one, with no message. A
