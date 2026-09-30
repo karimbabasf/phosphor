@@ -8,8 +8,10 @@
 # Environment:
 #   SIGN_IDENTITY     "Developer ID Application: Name (TEAMID)", or its SHA-1 hash
 #   SIGN_KEYCHAIN     the keychain that holds it (optional; codesign searches the list without it)
-#   NOTARY_KEY_PATH, NOTARY_KEY_ID, NOTARY_ISSUER
-#                     the App Store Connect API key notarytool submits with
+#   NOTARY_APPLE_ID, NOTARY_PASSWORD, NOTARY_TEAM_ID
+#                     the Apple ID notarytool submits as, an app-specific password, the team
+#   or NOTARY_KEY_PATH, NOTARY_KEY_ID, NOTARY_ISSUER
+#                     an App Store Connect API key instead; the Apple ID wins when both are set
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 #                     the updater key; the updater bundle is rebuilt from the stapled app
 #   NOTARIZE=0        sign and rebuild everything but skip Apple's service. Only for proving the
@@ -36,10 +38,16 @@ bundle="${1:?usage: notarize-mac.sh <bundle dir> <version>}"
 version="${2:?usage: notarize-mac.sh <bundle dir> <version>}"
 : "${SIGN_IDENTITY:?SIGN_IDENTITY is not set}"
 notarize="${NOTARIZE:-1}"
+notary_auth=()
 if [ "$notarize" = 1 ]; then
-  : "${NOTARY_KEY_PATH:?NOTARY_KEY_PATH is not set}"
-  : "${NOTARY_KEY_ID:?NOTARY_KEY_ID is not set}"
-  : "${NOTARY_ISSUER:?NOTARY_ISSUER is not set}"
+  if [ -n "${NOTARY_APPLE_ID:-}" ] && [ -n "${NOTARY_PASSWORD:-}" ] && [ -n "${NOTARY_TEAM_ID:-}" ]; then
+    notary_auth=(--apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD" --team-id "$NOTARY_TEAM_ID")
+  elif [ -n "${NOTARY_KEY_PATH:-}" ] && [ -n "${NOTARY_KEY_ID:-}" ] && [ -n "${NOTARY_ISSUER:-}" ]; then
+    notary_auth=(--key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+  else
+    echo "notarize: set NOTARY_APPLE_ID, NOTARY_PASSWORD and NOTARY_TEAM_ID, or NOTARY_KEY_PATH, NOTARY_KEY_ID and NOTARY_ISSUER" >&2
+    exit 1
+  fi
 fi
 : "${TAURI_SIGNING_PRIVATE_KEY:?TAURI_SIGNING_PRIVATE_KEY is not set; the updater bundle needs a new signature}"
 
@@ -82,16 +90,15 @@ by_depth() {
 notarize_file() {
   local file="$1" label="$2" result status id
   result="$work/$label.json"
-  xcrun notarytool submit "$file" \
-    --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
-    --wait --timeout 45m --output-format json > "$result"
+  xcrun notarytool submit "$file" "${notary_auth[@]}" \
+    --wait --timeout 45m --output-format json > "$result" || true
   status="$(plutil -extract status raw -o - "$result" 2>/dev/null || true)"
   id="$(plutil -extract id raw -o - "$result" 2>/dev/null || true)"
   echo "notarize: $label submission $id: $status"
   if [ "$status" != "Accepted" ]; then
     # The log names every file Apple refused and why; without it a rejection is a guess.
     if [ -n "$id" ]; then
-      xcrun notarytool log "$id" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" >&2 || true
+      xcrun notarytool log "$id" "${notary_auth[@]}" >&2 || true
     fi
     exit 1
   fi
