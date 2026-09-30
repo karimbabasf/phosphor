@@ -1,5 +1,7 @@
-// Renders the two pictures the disk image carries: background.html into the two-scale TIFF the
-// window uses as its background, and open-anyway.html into the Open Anyway shortcut's icon.
+// Renders the pictures the disk image carries: background.html into the two-scale TIFFs the
+// window uses as its background (background.tiff for an ad-hoc build, background-notarized.tiff,
+// without the Open Anyway tile, for a notarized one), and open-anyway.html into the Open Anyway
+// shortcut's icon.
 //
 // Finder draws the background at one pixel per point on a plain display and reads the @2x
 // representation on a Retina one, so the picture is captured twice, at device scale 1 and 2,
@@ -42,19 +44,24 @@ async function capture(page: string, out: string, width: number, height: number,
   await context.close();
 }
 
-const shots = [path.join(HERE, 'background.png'), path.join(HERE, 'background@2x.png')];
 const icon = path.join(HERE, 'open-anyway.png');
+const backgrounds = [
+  { page: 'background.html', tiff: path.join(HERE, 'background.tiff') },
+  { page: 'background.html?notarized', tiff: path.join(HERE, 'background-notarized.tiff') },
+];
+const shots = [path.join(HERE, 'background.png'), path.join(HERE, 'background@2x.png')];
 try {
-  await capture('background.html', shots[0], WIDTH, HEIGHT, 1, false);
-  await capture('background.html', shots[1], WIDTH, HEIGHT, 2, false);
+  for (const { page, tiff } of backgrounds) {
+    await capture(page, shots[0], WIDTH, HEIGHT, 1, false);
+    await capture(page, shots[1], WIDTH, HEIGHT, 2, false);
+    execFileSync('tiffutil', ['-cathidpicheck', shots[0], shots[1], '-out', tiff], { stdio: 'inherit' });
+    for (const shot of shots) fs.unlinkSync(shot);
+    console.log(`dmg: ${path.relative(process.cwd(), tiff)} (${(fs.statSync(tiff).size / 1024).toFixed(0)} KB, ${WIDTH}x${HEIGHT} at 1x and 2x)`);
+  }
   await capture('open-anyway.html', icon, ICON, ICON, 1, true);
 } finally {
   // Disconnects; the browser was not ours to close.
   await browser.close();
 }
 
-const tiff = path.join(HERE, 'background.tiff');
-execFileSync('tiffutil', ['-cathidpicheck', shots[0], shots[1], '-out', tiff], { stdio: 'inherit' });
-for (const shot of shots) fs.unlinkSync(shot);
-console.log(`dmg: ${path.relative(process.cwd(), tiff)} (${(fs.statSync(tiff).size / 1024).toFixed(0)} KB, ${WIDTH}x${HEIGHT} at 1x and 2x)`);
 console.log(`dmg: ${path.relative(process.cwd(), icon)} (${(fs.statSync(icon).size / 1024).toFixed(0)} KB, ${ICON}x${ICON})`);

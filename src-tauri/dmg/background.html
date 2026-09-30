@@ -14,10 +14,12 @@
   flat green shape that reads against either: #17883B is 4.6:1 against black and 4.5:1 against
   white. Solid shapes, no gradient, no shadow. The wide slab is the install; the small tile
   under its left half is the one step macOS forces on an app that is not notarized. When a
-  notarized build ships, the tile, its note and the shortcut go together.
+  notarized build ships, the tile, its note and the shortcut go together: opened as
+  background.html?notarized the page drops the tile and the note, and a signed release uses that
+  picture (src-tauri/notarized.conf.json) while scripts/notarize-mac.sh leaves the shortcut out.
 
-  Rendered by render.ts into background.tiff, a two-scale TIFF, so the picture is sharp on a
-  Retina display. Edit this file, run the renderer, commit both.
+  Rendered by render.ts into background.tiff and background-notarized.tiff, two-scale TIFFs, so
+  the picture is sharp on a Retina display. Edit this file, run the renderer, commit all three.
 -->
 <style>
   @font-face { font-family: "Sora"; font-weight: 600; src: url("fonts/Sora-SemiBold.woff2") format("woff2"); }
@@ -110,6 +112,7 @@
     color: #9BA1AB;
     white-space: nowrap;
   }
+  .notarized .tile, .notarized .note { display: none; }
 </style>
 <div class="slab"></div>
 <div class="arrow" role="presentation"></div>
@@ -120,3 +123,6 @@
   <strong>macOS will block the first open</strong>
   <span>Click Done, not Move to Trash.<br>Then double-click Open Anyway,<br>and click Open Anyway in Settings.</span>
 </p>
+<script>
+  if (new URLSearchParams(location.search).has('notarized')) document.body.classList.add('notarized');
+</script>
