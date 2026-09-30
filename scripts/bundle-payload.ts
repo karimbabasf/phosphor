@@ -124,16 +124,17 @@ function stageRuntime(): void {
   console.log(`runtime: node ${process.versions.node} -> binaries/node-${TRIPLE} (${mb(fs.statSync(target).size)})`);
 }
 
-/* The Secure Enclave sidecar, built from src-tauri/se-helper/main.swift by the script that also
-   serves `npm run se:build`. It is a second externalBin beside node and ships under
-   Contents/MacOS/se-helper. A bundle without it still runs: the backend's relay reports the
-   enclave unreachable and the wallet stays on the password path, which is the wrong product to
-   ship by accident, so the build fails here rather than there. */
+/* The Secure Enclave helper, built from src-tauri/se-helper/main.swift by the script that also
+   serves `npm run se:build`. It ships as an XPC service, copied to
+   Contents/XPCServices/com.karimbabasf.phosphor.vault.xpc by tauri.conf.json's bundle.macOS.files,
+   and the script signs it, because Tauri signs neither. A bundle without it still runs: the
+   backend's relay reports the enclave unreachable and the wallet stays on the password path,
+   which is the wrong product to ship by accident, so the build fails here rather than there. */
 function stageEnclaveHelper(): void {
   execFileSync('sh', [path.join(ROOT, 'scripts', 'build-se-helper.sh')], { stdio: 'inherit' });
-  const built = path.join(BINARIES, `se-helper-${TRIPLE}`);
-  if (!fs.existsSync(built)) throw new Error('bundle-payload: the Secure Enclave sidecar was not built');
-  console.log(`enclave: se-helper -> binaries/se-helper-${TRIPLE} (${mb(fs.statSync(built).size)})`);
+  const service = path.join(BINARIES, 'xpc', 'com.karimbabasf.phosphor.vault.xpc', 'Contents', 'MacOS', 'se-helper');
+  if (!fs.existsSync(service)) throw new Error('bundle-payload: the Secure Enclave service was not built');
+  console.log(`enclave: se-helper -> binaries/xpc/com.karimbabasf.phosphor.vault.xpc (${mb(fs.statSync(service).size)})`);
 }
 
 // The staged tree is only correct if it boots. Installing cleanly proves nothing: pruning once
