@@ -1,9 +1,21 @@
 // se-helper: the one door between Phosphor and the Secure Enclave.
 //
-// WHAT IT IS. A sidecar the Rust shell runs for one request at a time. It reads one JSON line
-// on stdin, answers one JSON line on stdout, and exits. It has no network, no files, no state:
-// the Secure Enclave key it uses arrives as an opaque blob in the request and leaves the same
-// way. Everything it knows is in the request, so every call is auditable from the shell's side.
+// WHAT IT IS. An XPC service inside the app bundle, at
+// Contents/XPCServices/com.karimbabasf.phosphor.vault.xpc. launchd starts it on the first request
+// and only the app that carries it can look it up: the name lives in that app's private XPC
+// namespace, not in any global one. Each request is one JSON string in and one JSON string out.
+// It has no network, no files, no state: the Secure Enclave key it uses arrives as an opaque blob
+// in the request and leaves the same way. Everything it knows is in the request, so every call is
+// auditable from the shell's side.
+//
+// WHY AN XPC SERVICE AND NOT A SIDECAR. Until 0.10.11 this was a plain executable in
+// Contents/MacOS that read stdin. Any local process could run it, hand it the wallet's blob, its
+// own transport key and its own "Phosphor:" reason, and one Touch ID gave it the twelve words
+// (pen test, 2026-09-14). App-bound is not caller-bound. Here every connection is checked against
+// a code signing requirement on the peer before a single message is delivered, see
+// peerRequirement below, and running the binary by hand gets nothing: xpc_main refuses a process
+// launchd did not start. The stdin door survives only in a development build compiled with
+// PHOSPHOR_STDIO, which scripts/build-se-helper.sh writes outside the bundle and never ships.
 //
 // WHY SWIFT AND NOT RUST. The Secure Enclave key that can live OUTSIDE the keychain is a
 // CryptoKit feature (SecureEnclave.P256 with dataRepresentation), and CryptoKit has no C
@@ -21,7 +33,9 @@
 // the enclave refuses. That refusal is not policy, it is the hardware, and it is the property
 // this helper exists to import into an app that is otherwise plain code.
 //
-// THE PROTOCOL. Requests: {"op":"probe"}, {"op":"create"},
+// THE PROTOCOL. The XPC message is a dictionary with one string, "request", and the reply one
+// string, "answer"; the development build reads the same JSON as one line on stdin and writes
+// the answer as one line on stdout. Requests: {"op":"probe"}, {"op":"create"},
 // {"op":"unwrap","id":s,"keyBlob":b64,"ephemeralPublicKey":b64,"ciphertext":b64,"aad":b64,
 //  "reason":s,"transportKey":b64}, {"op":"presence","reason":s}. Every answer has ok:true plus
 // fields, or ok:false with an error code from the list at the bottom. Base64 everywhere. Nothing
@@ -42,19 +56,16 @@
 import Foundation
 import CryptoKit
 import LocalAuthentication
+#if !PHOSPHOR_STDIO
+import XPC
+#endif
 
 let wrapInfo = Data("phosphor-vault-dek-wrap-v1".utf8)
 let wrapSalt = Data("phosphor-vault".utf8)
 
 struct Fail: Error { let code: String; let message: String }
 
-func emit(_ obj: [String: Any]) -> Never {
-  let data = try! JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])
-  FileHandle.standardOutput.write(data)
-  FileHandle.standardOutput.write(Data("\n".utf8))
-  exit(0)
-}
-func fail(_ code: String, _ message: String) -> Never { emit(["ok": false, "error": code, "message": message]) }
+func failure(_ code: String, _ message: String) -> [String: Any] { ["ok": false, "error": code, "message": message] }
 
 func b64(_ req: [String: Any], _ key: String) throws -> Data {
   guard let s = req[key] as? String, let d = Data(base64Encoded: s) else {
@@ -80,17 +91,17 @@ func biometryName(_ ctx: LAContext) -> String {
   }
 }
 
-func probe() -> Never {
+func probe() -> [String: Any] {
   let ctx = LAContext()
   var err: NSError?
   let can = ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err)
-  emit([
+  return [
     "ok": true,
     "secureEnclave": SecureEnclave.isAvailable,
     "canAuthenticate": can,
     "biometry": biometryName(ctx),
     "reason": err?.localizedDescription ?? "",
-  ])
+  ]
 }
 
 /* TWO HOMES FOR THE KEY, tried in order.
@@ -135,18 +146,18 @@ func createInKeychain() -> (String, Data)? {
   return (keychainPrefix + tag, pub)
 }
 
-func create() throws -> Never {
+func create() throws -> [String: Any] {
   guard SecureEnclave.isAvailable else { throw Fail(code: "se_unavailable", message: "no Secure Enclave on this Mac") }
   if let (ref, pub) = createInKeychain() {
-    emit(["ok": true, "keyBlob": ref, "publicKey": pub.base64EncodedString(), "binding": "app"])
+    return ["ok": true, "keyBlob": ref, "publicKey": pub.base64EncodedString(), "binding": "app"]
   }
   let key = try SecureEnclave.P256.KeyAgreement.PrivateKey(accessControl: try accessControl())
-  emit([
+  return [
     "ok": true,
     "keyBlob": key.dataRepresentation.base64EncodedString(),
     "publicKey": key.publicKey.x963Representation.base64EncodedString(),
     "binding": "device",
-  ])
+  ]
 }
 
 /* The keychain half of the unwrap: the enclave key is looked up by tag under an authentication
@@ -193,7 +204,7 @@ func keychainSharedSecret(tag: String, ephRaw: Data, reason: String) throws -> (
 /* The mirror of sewrap.ts. Shared secret is the ECDH x-coordinate, the wrap key is
    HKDF-SHA256(secret, salt, info || ephemeralPub || enclavePub), and the box is AES-256-GCM with
    the caller's AAD, combined as nonce || ciphertext || tag. */
-func unwrap(_ req: [String: Any]) throws -> Never {
+func unwrap(_ req: [String: Any]) throws -> [String: Any] {
   guard SecureEnclave.isAvailable else { throw Fail(code: "se_unavailable", message: "no Secure Enclave on this Mac") }
   let blobText = req["keyBlob"] as? String ?? ""
   let blob = blobText.hasPrefix(keychainPrefix) ? Data() : try b64(req, "keyBlob")
@@ -241,11 +252,11 @@ func unwrap(_ req: [String: Any]) throws -> Never {
   let box = try AES.GCM.SealedBox(combined: combined)
   let dek = try AES.GCM.open(box, using: wrapKey, authenticating: aad)
   let sealed = try AES.GCM.seal(dek, using: SymmetricKey(data: transport), authenticating: Data(id.utf8))
-  emit(["ok": true, "id": id, "dekSealed": sealed.combined!.base64EncodedString()])
+  return ["ok": true, "id": id, "dekSealed": sealed.combined!.base64EncodedString()]
 }
 
 /* Touch ID with nothing to unwrap: the window asks for it to lift the frost. */
-func presence(_ req: [String: Any]) -> Never {
+func presence(_ req: [String: Any]) -> [String: Any] {
   let reason = (req["reason"] as? String) ?? "Unlock Phosphor"
   let ctx = LAContext()
   ctx.localizedCancelTitle = "Cancel"
@@ -255,30 +266,97 @@ func presence(_ req: [String: Any]) -> Never {
     result = (ok, err); sem.signal()
   }
   sem.wait()
-  if result.0 { emit(["ok": true]) }
-  if let e = result.1 as NSError?, LAError.Code(rawValue: e.code) == .userCancel { fail("user_cancel", "cancelled") }
-  fail("auth_failed", result.1?.localizedDescription ?? "not verified")
+  if result.0 { return ["ok": true] }
+  if let e = result.1 as NSError?, LAError.Code(rawValue: e.code) == .userCancel { return failure("user_cancel", "cancelled") }
+  return failure("auth_failed", result.1?.localizedDescription ?? "not verified")
 }
 
 // Errors: bad_input, se_unavailable, user_cancel, interaction_required, auth_failed,
 // foreign_key, crypto_failed. A wrong AAD or a foreign ciphertext surfaces as crypto_failed,
 // never as a partial plaintext: AES-GCM authenticates before it decrypts. foreign_key is a blob
 // this enclave cannot load at all, which is the other Mac's wallet file.
-guard let line = readLine(strippingNewline: true), let data = line.data(using: .utf8),
-      let req = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-      let op = req["op"] as? String
-else { fail("bad_input", "expected one JSON object with an op") }
-
-do {
-  switch op {
-  case "probe": probe()
-  case "create": try create()
-  case "unwrap": try unwrap(req)
-  case "presence": presence(req)
-  default: fail("bad_input", "unknown op \(op)")
+func answer(_ line: String) -> String {
+  let result: [String: Any]
+  if let data = line.data(using: .utf8),
+     let req = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+     let op = req["op"] as? String {
+    do {
+      switch op {
+      case "probe": result = probe()
+      case "create": result = try create()
+      case "unwrap": result = try unwrap(req)
+      case "presence": result = presence(req)
+      default: result = failure("bad_input", "unknown op \(op)")
+      }
+    } catch let f as Fail {
+      result = failure(f.code, f.message)
+    } catch {
+      result = failure("crypto_failed", "\(error)")
+    }
+  } else {
+    result = failure("bad_input", "expected one JSON object with an op")
   }
-} catch let f as Fail {
-  fail(f.code, f.message)
-} catch {
-  fail("crypto_failed", "\(error)")
+  let data = try! JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+  return String(decoding: data, as: UTF8.self)
 }
+
+#if PHOSPHOR_STDIO
+FileHandle.standardOutput.write(Data((answer(readLine(strippingNewline: true) ?? "") + "\n").utf8))
+exit(0)
+#else
+/* WHO MAY CONNECT. Only the Phosphor shell, and the requirement says so in the strongest terms
+   the signature this service carries allows. The service reads its own signature and pins the
+   peer to the same authority:
+
+   - Developer ID (a Team ID on this code): the peer must be Apple-anchored, carry the Team ID
+     this service was signed with, and be the app with identifier com.karimbabasf.phosphor.
+     Nobody without the team's private key can produce that.
+   - Ad-hoc (no Team ID): the peer must carry identifier com.karimbabasf.phosphor. An ad-hoc
+     signature is not tied to anyone, so this stops a stray process or a copy of this service
+     hosted under another name, and nothing more: a same-user process that builds its own bundle
+     named com.karimbabasf.phosphor around a copy of this service gets through. It could equally
+     load the device-bound blob with CryptoKit itself. What closes both is the Developer ID key
+     in the keychain home, see TWO HOMES above; scripts/xpc-attack.sh measures all of this.
+
+   A signature this code cannot read is a service that trusts nobody: nil, and every connection
+   is cancelled. The requirement is checked by the system on every message, before the handler
+   sees it; a peer that fails it only ever produces XPC_ERROR_PEER_CODE_SIGNING_REQUIREMENT. */
+let hostIdentifier = "com.karimbabasf.phosphor"
+
+func peerRequirement() -> String? {
+  var me: SecCode?
+  var mine: SecStaticCode?
+  var info: CFDictionary?
+  guard SecCodeCopySelf([], &me) == errSecSuccess, let me,
+        SecCodeCopyStaticCode(me, [], &mine) == errSecSuccess, let mine,
+        SecCodeCopySigningInformation(mine, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+        let signing = info as? [String: Any]
+  else { return nil }
+  if let team = signing[kSecCodeInfoTeamIdentifier as String] as? String, !team.isEmpty {
+    return "anchor apple generic and identifier \"\(hostIdentifier)\" and certificate leaf[subject.OU] = \"\(team)\""
+  }
+  return "identifier \"\(hostIdentifier)\""
+}
+
+xpc_main { peer in
+  guard let requirement = peerRequirement(),
+        xpc_connection_set_peer_code_signing_requirement(peer, requirement) == 0
+  else {
+    xpc_connection_cancel(peer)
+    return
+  }
+  xpc_connection_set_event_handler(peer) { event in
+    guard xpc_get_type(event) == XPC_TYPE_DICTIONARY else {
+      // A peer that failed the requirement, or one that went away. Either way this connection
+      // is done, and nothing it sent was read.
+      xpc_connection_cancel(peer)
+      return
+    }
+    guard let reply = xpc_dictionary_create_reply(event) else { return }
+    let request = xpc_dictionary_get_string(event, "request").map { String(cString: $0) } ?? ""
+    xpc_dictionary_set_string(reply, "answer", answer(request))
+    xpc_connection_send_message(peer, reply)
+  }
+  xpc_connection_resume(peer)
+}
+#endif

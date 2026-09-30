@@ -1,97 +1,138 @@
-// The shell's side of the Secure Enclave: it runs the sidecar and relays between the backend
-// and the enclave, and it holds nothing.
+// The shell's side of the Secure Enclave: it calls the XPC service and relays between the
+// backend and the enclave, and it holds nothing.
 //
 // WHY THE SHELL AND NOT THE BACKEND. The enclave is reached through CryptoKit, which is Swift
-// only, so the operation lives in a sidecar (src-tauri/se-helper/main.swift). Somebody has to
-// run that sidecar, and the choice is the backend or this shell. The backend is the process
-// that talks to the network, parses what venues send back and hosts the agent's MCP server; it
-// is the process most likely to be holding untrusted bytes at any moment. The shell is the
-// process that draws the window and nothing else. So the shell runs the sidecar, the backend
-// never learns where it is, and the one thing that crosses back is a 32-byte data key, encrypted
-// under a per-boot transport key on its way over loopback.
+// only, so the operation lives in its own process (src-tauri/se-helper/main.swift). Somebody has
+// to talk to that process, and the choice is the backend or this shell. The backend is the
+// process that talks to the network, parses what venues send back and hosts the agent's MCP
+// server; it is the process most likely to be holding untrusted bytes at any moment. The shell
+// is the process that draws the window and nothing else. So the shell calls the service, the
+// backend never learns where it is, and the one thing that crosses back is a 32-byte data key,
+// encrypted under a per-boot transport key on its way over loopback.
+//
+// WHY XPC. The service sits in Contents/XPCServices and answers only a peer whose signature
+// passes its requirement, which is this shell and nothing else (main.swift, WHO MAY CONNECT).
+// The sidecar it replaced was an executable any local process could run with its own request.
+// A release shell has no other way to the enclave: the spawn path below is compiled into debug
+// builds only, for `tauri dev`, which runs outside a bundle where XPC cannot find the service.
 //
 // HOW THE BACKEND ASKS. The window has no IPC bridge into this process on purpose (see main.rs),
 // so the request cannot come from the page. It comes from the backend, by long poll: a thread
 // here asks `POST /api/vault/pending` with the relay secret, the backend holds the request open
 // until it has something (an approval that needs a Touch ID, a wallet to create, a lock to
-// lift), and this thread runs the sidecar and posts the answer to `/api/vault/answer`. The page
+// lift), and this thread calls the service and posts the answer to `/api/vault/answer`. The page
 // only ever moves a proposal into the state that makes the backend ask. That keeps the boundary
 // main.rs describes: the native side is driven by the backend it started and verified by nonce,
 // never by the page.
 
-use std::io::Write;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// A sidecar call must answer inside this, and the unwrap is the one that waits on a person.
+/// A helper call must answer inside this, and the unwrap is the one that waits on a person.
 /// Touch ID gives up on its own well before two minutes; this is the backstop for a hung helper.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(120);
 
-pub fn helper_binary() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("cannot locate the running binary: {e}"))?;
-    let dir = exe
-        .parent()
-        .ok_or_else(|| "the running binary has no parent directory".to_string())?;
-    // The bundle puts externalBin beside the executable under its plain name. `tauri dev` runs
-    // the debug binary from target/, where the sidecar keeps its target-triple suffix, so both
-    // spellings are tried and the dev one is only reachable from a source checkout.
-    let candidates = [
-        dir.join("se-helper"),
-        dir.join(format!("se-helper-{}", env!("TARGET_TRIPLE"))),
-    ];
-    candidates
-        .iter()
-        .find(|p| p.is_file())
-        .cloned()
-        .ok_or_else(|| format!("the Secure Enclave helper is missing beside {exe:?}"))
-}
+/// The XPC service's name, which is its bundle identifier: Contents/XPCServices/<this>.xpc.
+pub const SERVICE: &str = "com.karimbabasf.phosphor.vault";
 
-/// One request to the sidecar: one JSON line in, one JSON line out, then the process is gone.
-/// The helper has no state between calls, which is what makes every call auditable from here.
+/// One request to the enclave helper: one JSON object in, one JSON object out. The service keeps
+/// nothing between calls and each call is its own connection, which is what makes every call
+/// auditable from here.
 pub fn call(request: &serde_json::Value) -> serde_json::Value {
-    let helper = match helper_binary() {
-        Ok(path) => path,
-        Err(e) => return failure("helper_missing", &e),
-    };
-    let mut child = match Command::new(&helper)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(e) => return failure("helper_spawn", &format!("could not start {helper:?}: {e}")),
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let line = request.to_string();
-        if writeln!(stdin, "{line}").is_err() {
-            let _ = child.kill();
-            return failure("helper_io", "could not write the request");
-        }
+    #[cfg(debug_assertions)]
+    if !in_bundle() {
+        return dev::call(request);
     }
-    let output = std::thread::scope(|scope| {
-        let handle = scope.spawn(|| child.wait_with_output());
-        // wait_with_output has no timeout; the thread scope joins it either way, and a helper
-        // that hangs past the backstop is reported rather than waited on forever.
-        let start = std::time::Instant::now();
-        loop {
-            if handle.is_finished() {
-                break handle.join().ok().and_then(Result::ok);
-            }
-            if start.elapsed() > HELPER_TIMEOUT {
-                break None;
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
-    });
-    let Some(output) = output else {
-        return failure("helper_timeout", "the Secure Enclave helper did not answer");
+    let text = match xpc::call(SERVICE, &request.to_string(), HELPER_TIMEOUT) {
+        Ok(text) => text,
+        Err(code) => return failure(code, "the Secure Enclave helper did not answer"),
     };
-    let text = String::from_utf8_lossy(&output.stdout);
     match serde_json::from_str::<serde_json::Value>(text.trim()) {
         Ok(v) if v.is_object() => v,
         _ => failure("helper_garbled", "the Secure Enclave helper answered with something that is not JSON"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod xpc {
+    use std::ffi::{c_char, CStr, CString};
+    use std::time::Duration;
+
+    extern "C" {
+        fn phosphor_xpc_call(service: *const c_char, request: *const c_char, timeout_secs: f64, error: *mut *const c_char) -> *mut c_char;
+    }
+
+    pub fn call(service: &str, request: &str, timeout: Duration) -> Result<String, &'static str> {
+        let (Ok(service), Ok(request)) = (CString::new(service), CString::new(request)) else {
+            return Err("helper_io");
+        };
+        let mut error: *const c_char = std::ptr::null();
+        // SAFETY: both strings are NUL-terminated and outlive the call; the bridge returns either
+        // a malloc'd string, freed below, or NULL with `error` pointing at a static string.
+        let answer = unsafe { phosphor_xpc_call(service.as_ptr(), request.as_ptr(), timeout.as_secs_f64(), &mut error) };
+        if answer.is_null() {
+            return Err(match unsafe { CStr::from_ptr(error) }.to_str() {
+                Ok("helper_unverified") => "helper_unverified",
+                Ok("helper_timeout") => "helper_timeout",
+                Ok("helper_garbled") => "helper_garbled",
+                _ => "helper_unreachable",
+            });
+        }
+        let text = unsafe { CStr::from_ptr(answer) }.to_string_lossy().into_owned();
+        unsafe { libc::free(answer.cast()) };
+        Ok(text)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod xpc {
+    pub fn call(_: &str, _: &str, _: std::time::Duration) -> Result<String, &'static str> {
+        Err("helper_unreachable")
+    }
+}
+
+/// True when this executable sits in an app bundle's Contents/MacOS, the only place XPC can look
+/// the service up from.
+#[cfg(debug_assertions)]
+fn in_bundle() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.ends_with("Contents/MacOS")))
+        .unwrap_or(false)
+}
+
+/// `tauri dev` only: the development build of the helper, which reads stdin, spawned from the
+/// source checkout. Compiled out of every release build.
+#[cfg(debug_assertions)]
+mod dev {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    pub fn call(request: &serde_json::Value) -> serde_json::Value {
+        let helper = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("binaries")
+            .join(format!("se-helper-dev-{}", env!("TARGET_TRIPLE")));
+        if !helper.is_file() {
+            return super::failure("helper_missing", &format!("no development helper at {helper:?}; run npm run se:build"));
+        }
+        let mut child = match Command::new(&helper).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
+            Ok(child) => child,
+            Err(e) => return super::failure("helper_spawn", &format!("could not start {helper:?}: {e}")),
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            if writeln!(stdin, "{request}").is_err() {
+                let _ = child.kill();
+                return super::failure("helper_io", "could not write the request");
+            }
+        }
+        // No timeout here, unlike the XPC hop: a development helper that hangs is a developer
+        // looking at it.
+        match child.wait_with_output() {
+            Ok(out) => match serde_json::from_str::<serde_json::Value>(String::from_utf8_lossy(&out.stdout).trim()) {
+                Ok(v) if v.is_object() => v,
+                _ => super::failure("helper_garbled", "the Secure Enclave helper answered with something that is not JSON"),
+            },
+            Err(e) => super::failure("helper_io", &format!("{e}")),
+        }
     }
 }
 
@@ -104,11 +145,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_missing_helper_is_a_failure_answer_not_a_panic() {
-        // The test binary has no sidecar beside it, so this exercises the miss path.
-        let v = call(&serde_json::json!({ "op": "probe" }));
+    fn an_unreachable_service_is_a_failure_answer_not_a_panic() {
+        // The test binary is in no bundle, so XPC has no service by that name to find.
+        let v = match xpc::call(SERVICE, r#"{"op":"probe"}"#, Duration::from_secs(5)) {
+            Ok(text) => serde_json::json!({ "ok": true, "text": text }),
+            Err(code) => failure(code, "unreachable"),
+        };
         assert_eq!(v["ok"], false);
-        assert_eq!(v["error"], "helper_missing");
+        assert_eq!(v["error"], "helper_unreachable");
     }
 }
 
@@ -154,7 +198,7 @@ fn post(relay: &Relay, path: &str, body: &serde_json::Value, read_timeout: Durat
     body_of_ours(&response, &relay.nonce)
 }
 
-/// One turn of the relay: ask, run, answer. Returns false when the hop failed and the caller
+/// One turn of the relay: ask, call, answer. Returns false when the hop failed and the caller
 /// should pause before trying again.
 fn turn(relay: &Relay) -> bool {
     let ask = serde_json::json!({ "relay": relay.relay, "waitMs": POLL_HOLD_MS });
@@ -164,8 +208,8 @@ fn turn(relay: &Relay) -> bool {
     let Some(request) = pending.get("request").filter(|r| r.is_object()) else {
         return true;
     };
-    // The request is relayed to the sidecar as the backend wrote it, plus the transport key the
-    // backend cannot know and the sidecar needs. The shell adds nothing else and reads nothing
+    // The request is relayed to the service as the backend wrote it, plus the transport key the
+    // backend cannot know and the service needs. The shell adds nothing else and reads nothing
     // out of it: the reason string, the blobs and the AAD are the backend's to compose.
     let mut forwarded = request.clone();
     if let Some(map) = forwarded.as_object_mut() {
@@ -182,7 +226,7 @@ fn turn(relay: &Relay) -> bool {
 }
 
 /// Runs until `alive` says the backend is gone. One request at a time, in order, and never the
-/// same request twice: the backend hands each out once and the sidecar is stateless, so a relay
+/// same request twice: the backend hands each out once and the service is stateless, so a relay
 /// that crashed mid-request leaves that request to time out on the backend's side rather than
 /// be re-run against a second Touch ID dialog.
 pub fn run(relay: Relay, alive: impl Fn() -> bool) {
@@ -193,7 +237,7 @@ pub fn run(relay: Relay, alive: impl Fn() -> bool) {
     }
 }
 
-/// mint_token gives hex; the sidecar and the backend both take the transport key as base64.
+/// mint_token gives hex; the service and the backend both take the transport key as base64.
 fn hex_to_base64(hex: &str) -> String {
     let bytes: Vec<u8> = (0..hex.len())
         .step_by(2)

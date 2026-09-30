@@ -1,7 +1,7 @@
 // Proves the enclave half of the vault on THIS Mac, with a real Touch ID.
 //
 // The unit tests stand a software P-256 key in for the enclave and check every byte on the Node
-// side. This is the other half: the built sidecar makes a real enclave key, Node wraps a data
+// side. This is the other half: the development build of the helper (the same Swift as the XPC service, over stdin) makes a real enclave key, Node wraps a data
 // key to it exactly as the keystore does, and the sidecar unwraps it after the person touches
 // the sensor. A wrong AAD is tried first and must fail. Two Touch ID prompts, nothing written.
 //
@@ -17,10 +17,10 @@ import { seWrap } from '../src/keystore/sewrap.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TRIPLE = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
-const helper = path.join(ROOT, 'src-tauri', 'binaries', `se-helper-${TRIPLE}`);
+const helper = path.join(ROOT, 'src-tauri', 'binaries', `se-helper-dev-${TRIPLE}`);
 
 if (!fs.existsSync(helper)) {
-  console.error(`no sidecar at ${helper}; run npm run se:build first`);
+  console.error(`no development helper at ${helper}; run npm run se:build first`);
   process.exit(2);
 }
 

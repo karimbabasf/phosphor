@@ -2,7 +2,7 @@
 //
 // This script stands in for two things at once. For the Tauri shell: it mints the four-line
 // handshake, pipes it to a fresh backend, and runs the relay loop exactly as
-// src-tauri/src/enclave.rs does, with the built sidecar and a real Touch ID. For the window: it
+// src-tauri/src/enclave.rs does, with the development build of the helper (the same Swift as the XPC service, over stdin) and a real Touch ID. For the window: it
 // posts the vault verbs with the window token, the way the page does. Everything runs against a
 // throwaway data directory on a free port; ~/.phosphor is never touched.
 //
@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TRIPLE = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
-const HELPER = path.join(ROOT, 'src-tauri', 'binaries', `se-helper-${TRIPLE}`);
+const HELPER = path.join(ROOT, 'src-tauri', 'binaries', `se-helper-dev-${TRIPLE}`);
 
 type Json = Record<string, any>;
 const checks: Array<{ label: string; ok: boolean }> = [];
@@ -48,7 +48,7 @@ function helper(req: Json): Json {
 
 async function main(): Promise<number> {
   if (!fs.existsSync(HELPER)) {
-    console.error(`no sidecar at ${HELPER}; run npm run se:build first`);
+    console.error(`no development helper at ${HELPER}; run npm run se:build first`);
     return 2;
   }
   const port = await freePort();

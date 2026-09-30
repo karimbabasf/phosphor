@@ -16,6 +16,10 @@ path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.5.1", features = [] }
+# Compiles src/xpc_bridge.c, the shell's side of the XPC hop to the Secure Enclave service. Not
+# new to the lock file: tauri-build pulls the same cc for its Windows resources. Check
+# `cargo tree -i cc --target all` if in doubt.
+cc = "1.4"
 
 # Deliberately thin. This crate launches a process, waits for a port and opens a window;
 # everything the product does is in the Node payload. HTTP is hand-rolled over std::net

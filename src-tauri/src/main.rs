@@ -1299,6 +1299,15 @@ fn start_enclave_relay(app: &tauri::AppHandle, port: u16) {
 }
 
 fn main() {
+    // `Phosphor.app/Contents/MacOS/phosphor-desktop --enclave-probe` asks the Secure Enclave
+    // service the one question that needs no key and raises no dialog, over the same XPC hop the
+    // relay uses, prints the answer and exits. It proves a built bundle can reach its service
+    // without opening a wallet. No other request can be made this way.
+    if std::env::args().nth(1).as_deref() == Some("--enclave-probe") {
+        println!("{}", enclave::call(&serde_json::json!({ "op": "probe" })));
+        return;
+    }
+
     // Minted before anything else, because the backend cannot be spawned without it and the
     // window cannot be opened without it. A shell that cannot produce one starts nothing: a
     // guessable token would be no token at all, and the same goes for the nonce that decides

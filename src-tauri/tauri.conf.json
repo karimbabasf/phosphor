@@ -30,14 +30,16 @@
       "payload/phosphor": "phosphor"
     },
     "externalBin": [
-      "binaries/node",
-      "binaries/se-helper"
+      "binaries/node"
     ],
     "macOS": {
       "minimumSystemVersion": "13.5",
       "entitlements": "entitlements.plist",
       "hardenedRuntime": true,
       "signingIdentity": "-",
+      "files": {
+        "XPCServices/com.karimbabasf.phosphor.vault.xpc": "binaries/xpc/com.karimbabasf.phosphor.vault.xpc"
+      },
       "dmg": {
         "background": "dmg/background.tiff",
         "windowSize": { "width": 660, "height": 564 },

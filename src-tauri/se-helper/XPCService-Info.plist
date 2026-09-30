@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.karimbabasf.phosphor.vault</string>
+  <key>CFBundleName</key>
+  <string>Phosphor</string>
+  <key>CFBundleDisplayName</key>
+  <string>Phosphor</string>
+  <key>CFBundleExecutable</key>
+  <string>se-helper</string>
+  <key>CFBundlePackageType</key>
+  <string>XPC!</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.5.0</string>
+  <key>CFBundleVersion</key>
+  <string>0.5.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.5</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>The Secure Enclave door of Phosphor.</string>
+  <key>XPCService</key>
+  <dict>
+    <key>ServiceType</key>
+    <string>Application</string>
+  </dict>
+</dict>
+</plist>

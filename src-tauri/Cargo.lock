@@ -2529,6 +2529,7 @@ dependencies = [
 name = "phosphor-desktop"
 version = "0.10.11"
 dependencies = [
+ "cc",
  "flate2",
  "libc",
  "objc2-app-kit",

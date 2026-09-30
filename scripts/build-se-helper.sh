@@ -1,7 +1,21 @@
 #!/bin/sh
-# Builds the Secure Enclave sidecar for the current architecture and drops it where Tauri's
-# externalBin expects it: src-tauri/binaries/se-helper-<rust triple>. Called by
+# Builds the Secure Enclave helper twice from src-tauri/se-helper/main.swift. Called by
 # scripts/bundle-payload.ts and by `npm run se:build`. Needs only the Xcode command line tools.
+#
+#   src-tauri/binaries/xpc/com.karimbabasf.phosphor.vault.xpc
+#       The XPC service the app ships, copied into Contents/XPCServices by tauri.conf.json's
+#       bundle.macOS.files. It answers only over XPC, and only to a peer that passes its code
+#       signing requirement. Signed here, because Tauri signs neither custom files nor nested
+#       bundles and the app's own signature needs its nested code signed first.
+#
+#   src-tauri/binaries/se-helper-dev-<rust triple>
+#       The development build, compiled with PHOSPHOR_STDIO: one JSON line on stdin, one out.
+#       `tauri dev` runs the shell outside a bundle, where no XPC service can be looked up, so a
+#       debug shell spawns this instead (enclave.rs). The self-test scripts use it too. It is
+#       never in a bundle: the stdin door is exactly what the XPC service exists to close.
+#
+# The signing identity is APPLE_SIGNING_IDENTITY when set (the release runner imports the
+# certificate before this runs), otherwise ad-hoc, matching tauri.conf.json.
 set -eu
 cd "$(dirname "$0")/.."
 arch="$(uname -m)"
@@ -10,14 +24,31 @@ case "$arch" in
   x86_64) triple="x86_64-apple-darwin" ;;
   *) echo "unsupported arch $arch" >&2; exit 1 ;;
 esac
+identity="${APPLE_SIGNING_IDENTITY:--}"
+src="src-tauri/se-helper"
 mkdir -p src-tauri/binaries
-out="src-tauri/binaries/se-helper-$triple"
+
 # The embedded Info.plist is what the Touch ID dialog reads the app name from: without it the
 # system would title the dialog "se-helper", which is what malware would look like.
-swiftc -O -module-name se_helper -o "$out" src-tauri/se-helper/main.swift \
-  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker src-tauri/se-helper/Info.plist 2>&1 | grep -v "warning" || true
-test -x "$out"
-# Ad-hoc signed here so `tauri dev` (which does not sign sidecars) runs the same bits as the
-# bundle. `tauri build` re-signs it with the bundle's identity and entitlements.
-codesign -s - -f --options runtime "$out" >/dev/null 2>&1
-echo "$out"
+dev="src-tauri/binaries/se-helper-dev-$triple"
+swiftc -O -D PHOSPHOR_STDIO -module-name se_helper -o "$dev" "$src/main.swift" \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$src/Info.plist" 2>&1 | grep -v "warning" || true
+test -x "$dev"
+codesign -s - -f --options runtime "$dev" >/dev/null 2>&1
+
+service="src-tauri/binaries/xpc/com.karimbabasf.phosphor.vault.xpc"
+rm -rf "$service"
+mkdir -p "$service/Contents/MacOS"
+cp "$src/XPCService-Info.plist" "$service/Contents/Info.plist"
+swiftc -O -module-name se_helper -o "$service/Contents/MacOS/se-helper" "$src/main.swift" 2>&1 | grep -v "warning" || true
+test -x "$service/Contents/MacOS/se-helper"
+# Hardened runtime and no entitlements: the service needs no JIT and no exception of any kind.
+# A timestamp only for a real identity; ad-hoc has no authority to timestamp against.
+if [ "$identity" = "-" ]; then
+  codesign -s - -f --options runtime "$service" >/dev/null 2>&1
+else
+  codesign -s "$identity" -f --options runtime --timestamp "$service" >/dev/null
+fi
+codesign --verify --strict "$service"
+echo "$service"
+echo "$dev"
