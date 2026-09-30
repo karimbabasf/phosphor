@@ -124,14 +124,14 @@ test('the comment carries no double hyphen, which codesign refuses to parse', ()
   assert.doesNotMatch(comment, /--/, 'a double hyphen inside the comment fails codesign, not plutil');
 });
 
-/* Ad-hoc, so a local build still produces something that runs. The real build reads
-   APPLE_SIGNING_IDENTITY from the environment, which Tauri honours over this value, and only the
-   owner holds that identity: signing is CONFIGURED here and PERFORMED by him (spec decision 10).
+/* Ad-hoc, so a local build still produces something that runs, and Tauri builds ad-hoc on a
+   signed release too: scripts/notarize-mac.sh then signs the result with the Developer ID
+   identity, which only the owner holds (spec decision 10), and notarizes it.
 
-   The failure mode is worth naming where somebody will read it. A release built on a machine
-   where that variable is not set does not fail: it produces an ad-hoc bundle that LOOKS signed
-   and that Gatekeeper rejects on somebody else's machine. Checking the variable is a step in the
-   release, not something this file can do. */
+   The failure mode is worth naming where somebody will read it. A release whose workflow skips
+   that script does not fail: it produces an ad-hoc bundle that LOOKS signed and that Gatekeeper
+   rejects on somebody else's machine. tests/unit/notarize-release.test.ts holds the workflow to
+   running it whenever the Apple secrets are set. */
 test('the identity is ad-hoc in the config and comes from the environment for a real build', () => {
   assert.equal(macConfig().signingIdentity, '-');
 });

@@ -10,17 +10,18 @@
 #       anyway. The key lives at ~/.tauri/phosphor.key on the release machine and nowhere in git.
 #
 #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY
-#       Optional. A Developer ID Application certificate (base64 .p12), its export password, and
-#       the identity string ("Developer ID Application: Name (TEAMID)"). Set, the app and the
-#       DMG are signed with it; unset, they are ad-hoc signed and macOS asks the person to allow
-#       the app under Privacy & Security on first open.
+#       A Developer ID Application certificate (base64 .p12), its export password, and the
+#       identity string ("Developer ID Application: Name (TEAMID)").
 #
 #   APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_P8
-#       Optional, and only useful with the certificate. An App Store Connect API key (issuer id,
-#       key id, base64 .p8) for notarization. Set, Tauri submits the signed app to Apple and
-#       staples the ticket, so Gatekeeper opens it without a dialog. The day these are set, the
-#       Open Anyway step below and the tile in src-tauri/dmg/background.html come out together:
-#       the step refuses a signed DMG rather than break its signature.
+#       An App Store Connect API key (issuer id, key id, base64 .p8) for notarytool.
+#
+#   The six go together: all set, the build is Developer ID signed and notarized, app and DMG
+#   both stapled, so Gatekeeper opens it without a dialog, and the Open Anyway shortcut and its
+#   tile in the DMG window are left out. None set, the build is ad-hoc signed and macOS asks the
+#   person to allow the app under Privacy & Security on first open. Some set is a mistake and
+#   fails the run: a signed build that is not notarized is still blocked on first open, and it
+#   would ship without the shortcut that gets a person past the block.
 #
 #   No secret: build provenance. Every release asset gets a Sigstore-signed statement that it
 #   came out of this workflow at the tagged commit of karimbabasf/phosphor, logged in the public
@@ -140,16 +141,68 @@ jobs:
           node --test tests/unit/version-agrees.test.ts tests/unit/release-manifest.test.ts tests/unit/enclave-sidecar.test.ts
           (cd src-tauri && cargo test)
 
-      - name: Build, sign and bundle
+      # The certificate goes into a keychain this job owns, not Tauri's. Tauri makes its own
+      # from APPLE_CERTIFICATE and deletes it the moment its bundle step ends (the Drop impl of
+      # Keychain in tauri-macos-sign, src/keychain.rs), so nothing after `tauri build` could sign
+      # the DMG with it. This one lives until the last step of the job deletes it.
+      - name: Signed or ad-hoc, and the signing keychain
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          # A secret that is not set arrives as an empty string.
+          count=0
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8; do
+            if [ -n "${!name}" ]; then count=$((count + 1)); fi
+          done
+          if [ "$count" = 0 ]; then
+            echo "no Apple certificate in secrets: ad-hoc signing, no notarization"
+            echo "SIGNED=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          if [ "$count" != 6 ]; then
+            echo "$count of the six APPLE_* secrets are set; set all six to notarize, or none to ship ad-hoc" >&2
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          (
+            umask 077
+            echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/identity.p12"
+            echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          )
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/identity.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
+          rm -f "$RUNNER_TEMP/identity.p12"
+          # Apple's Developer ID intermediate, so the chain resolves whatever the runner image has.
+          security import src-tauri/signing/DeveloperIDG2CA.cer -k "$keychain" >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          # shellcheck disable=SC2046 # one keychain path per word, none has a space on a runner
+          security list-keychains -d user -s $(security list-keychains -d user | tr -d '"') "$keychain"
+          if ! security find-identity -v -p codesigning "$keychain" | grep -qF "$APPLE_SIGNING_IDENTITY"; then
+            echo "APPLE_CERTIFICATE holds no valid identity named $APPLE_SIGNING_IDENTITY" >&2
+            exit 1
+          fi
+          echo "signing with $APPLE_SIGNING_IDENTITY"
+          {
+            echo "SIGNED=1"
+            echo "SIGN_KEYCHAIN=$keychain"
+            echo "NOTARY_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+          } >> "$GITHUB_ENV"
+
+      # Tauri always builds ad-hoc here: nothing Apple is in its environment. A signed build is
+      # finished by scripts/notarize-mac.sh below, which signs what Tauri would not (anything
+      # nested in Contents/XPCServices) and notarizes and staples the DMG as well as the app.
+      - name: Build, sign and bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Actions sets CI=true, and tauri-bundler then skips the Finder step that lays the
           # DMG out (background, icon positions, window size). Every CI DMG shipped plain.
           TAURI_BUNDLER_DMG_IGNORE_CI: "true"
@@ -158,28 +211,32 @@ jobs:
             echo "TAURI_SIGNING_PRIVATE_KEY is not set; refusing to build an update nobody can install" >&2
             exit 1
           fi
-          # A secret that is not set arrives as an empty string, and Tauri treats a set but empty
-          # APPLE_* variable as a broken value rather than an absent one. Unset the empty ones so
-          # the build falls back to ad-hoc signing cleanly.
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8; do
-            if [ -z "${!name}" ]; then unset "$name"; fi
-          done
-          if [ -n "${APPLE_API_KEY_P8:-}" ]; then
-            echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
-            export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
-          fi
-          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            echo "signing with $APPLE_SIGNING_IDENTITY"
+          if [ "$SIGNED" = 1 ]; then
+            # The DMG background without the Open Anyway tile and its note.
+            npx tauri build --target "$TARGET" --bundles app,dmg --config src-tauri/notarized.conf.json
           else
-            echo "no Apple certificate in secrets: ad-hoc signing, no notarization"
+            npx tauri build --target "$TARGET" --bundles app,dmg
           fi
-          npx tauri build --target "$TARGET" --bundles app,dmg
 
       # macOS 15 and later give an ad-hoc build's first-open warning no Open button, only Done and
       # Move to Trash; the way through is a button in System Settings. This puts a shortcut to
       # that exact spot in the DMG window. Before the checksums, because it changes the DMG.
       - name: Put the Open Anyway shortcut in the DMG
+        if: env.SIGNED != '1'
         run: node scripts/dmg-open-anyway.ts "src-tauri/target/$TARGET/release/bundle/dmg/Phosphor_${VERSION}_aarch64.dmg"
+
+      # Developer ID over everything inside out, the app notarized and stapled, the updater
+      # bundle rebuilt from the stapled app and signed again, the stapled app put into the DMG,
+      # the DMG signed, notarized and stapled. Before the checksums, because it changes all three.
+      - name: Sign, notarize and staple the app and the DMG
+        if: env.SIGNED == '1'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: bash scripts/notarize-mac.sh "src-tauri/target/$TARGET/release/bundle" "$VERSION"
 
       - name: Stage the release assets and write latest.json and SHA256SUMS
         run: |
@@ -216,20 +273,31 @@ jobs:
           ls -la "$RUNNER_TEMP/dmg/.background"
           # The Finder layout lives in .DS_Store; without it the image opens as a plain folder.
           test -f "$RUNNER_TEMP/dmg/.DS_Store" || { echo "DMG has no Finder layout (.DS_Store missing)"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
-          test "$(plutil -extract URL raw "$RUNNER_TEMP/dmg/Open Anyway.inetloc")" = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Security" || { echo "DMG has no working Open Anyway shortcut"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+          if [ "$SIGNED" = 1 ]; then
+            # What Gatekeeper asks on first open, answered offline from the stapled tickets.
+            spctl -a -vv -t exec "$RUNNER_TEMP/dmg/Phosphor.app" || { hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+            xcrun stapler validate "$RUNNER_TEMP/dmg/Phosphor.app" || { hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+            test ! -e "$RUNNER_TEMP/dmg/Open Anyway.inetloc" || { echo "a notarized DMG carries the Open Anyway shortcut"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+          else
+            test "$(plutil -extract URL raw "$RUNNER_TEMP/dmg/Open Anyway.inetloc")" = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Security" || { echo "DMG has no working Open Anyway shortcut"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+          fi
           hdiutil detach "$RUNNER_TEMP/dmg"
+          if [ "$SIGNED" = 1 ]; then
+            codesign --verify --strict --verbose=2 "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
+            spctl -a -vv -t open --context context:primary-signature "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
+            xcrun stapler validate "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
+          fi
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           {
             echo "## Phosphor $VERSION for Mac (Apple silicon)"
             echo
             if [ -s "$RUNNER_TEMP/tag-body.md" ]; then cat "$RUNNER_TEMP/tag-body.md"; echo; fi
             echo "**Install.** Open the DMG, drag Phosphor into Applications, open it from there."
-            if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            if [ "$SIGNED" != 1 ]; then
               echo "This build is not yet notarized by Apple, so on first open macOS says it cannot verify the app: click Done, then double-click Open Anyway in the DMG window, which opens System Settings at the Open Anyway button. Click it. Compare the checksum first."
             fi
             echo
@@ -292,3 +360,11 @@ jobs:
             });
             console.log("site download now serves", out.url);
           ' "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
+
+      # The keychain and the API key are gone whatever happened above. The certificate itself was
+      # deleted from disk the moment it was imported.
+      - name: Delete the signing keychain
+        if: always() && env.SIGNED == '1'
+        run: |
+          security delete-keychain "$SIGN_KEYCHAIN" || true
+          rm -f "$NOTARY_KEY_PATH"
