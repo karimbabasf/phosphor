@@ -7,14 +7,16 @@
 #
 # Inputs, all from ~/.config/phosphor-signing (PHOSPHOR_SIGNING_DIR overrides it):
 #   developer-id.key      the private key the certificate signing request was made from
-#   developer_id*.cer     the Developer ID Application certificate Apple issued for it
-#   AuthKey_<id>.p8       an App Store Connect API key, for notarytool
-#   notary.env            APPLE_API_KEY=<key id> and APPLE_API_ISSUER=<issuer id>
+#   developer*id*.cer     the Developer ID Application certificate Apple issued for it
+#   notary.env            APPLE_ID=, APPLE_PASSWORD= (app-specific) and APPLE_TEAM_ID=, for
+#                         notarytool; or APPLE_API_KEY= and APPLE_API_ISSUER= with the key file
+#   AuthKey_<id>.p8       the App Store Connect API key, only for that second route
 #
 # The key and the certificate become a .p12 in a private temporary directory, the .p12 goes into
-# a throwaway keychain, and both are deleted when the script exits, however it exits. The .p8 is
-# read where it lies. The login keychain is never written to; the throwaway one joins the search
-# list for the length of the run (codesign and notarytool look there) and leaves it after.
+# a throwaway keychain, and both are deleted when the script exits, however it exits. The .p8 and
+# notary.env are read where they lie, and the password is never printed. The login keychain is
+# never written to; the throwaway one joins the search list for the length of the run (codesign
+# and notarytool look there) and leaves it after.
 #
 # The updater bundle is signed with TAURI_SIGNING_PRIVATE_KEY when the environment has it, and
 # otherwise with a throwaway key made for this run, whose signature no installed app accepts.
@@ -32,17 +34,26 @@ refuse() { echo "sign-and-notarize: $1" >&2; exit 1; }
 # Refuse before anything is built, created or unlocked, naming the one thing that is missing.
 key="$dir/developer-id.key"
 test -f "$key" || refuse "missing $key (the private key behind the certificate request)"
-cer="$(find "$dir" -maxdepth 1 -name 'developer_id*.cer' | head -1)"
-test -n "$cer" || refuse "missing $dir/developer_id*.cer (download the Developer ID Application certificate from developer.apple.com)"
+cer="$(find "$dir" -maxdepth 1 -iname 'developer*id*.cer' | head -1)"
+test -n "$cer" || refuse "missing $dir/developer*id*.cer (download the Developer ID Application certificate from developer.apple.com)"
+notary_env=()
 if [ "${NOTARIZE:-1}" = 1 ]; then
-  p8="$(find "$dir" -maxdepth 1 -name 'AuthKey_*.p8' | head -1)"
-  test -n "$p8" || refuse "missing $dir/AuthKey_*.p8 (the App Store Connect API key for notarytool)"
-  test -f "$dir/notary.env" || refuse "missing $dir/notary.env (APPLE_API_KEY=<key id> and APPLE_API_ISSUER=<issuer id>)"
-  # Read the two ids by name rather than sourcing the file: it is data, not a script.
-  api_key="$(sed -n 's/^APPLE_API_KEY=//p' "$dir/notary.env" | tr -d '"'"'"' \r' | head -1)"
-  api_issuer="$(sed -n 's/^APPLE_API_ISSUER=//p' "$dir/notary.env" | tr -d '"'"'"' \r' | head -1)"
-  test -n "$api_key" || refuse "$dir/notary.env has no APPLE_API_KEY line"
-  test -n "$api_issuer" || refuse "$dir/notary.env has no APPLE_API_ISSUER line"
+  env_file="$dir/notary.env"
+  test -f "$env_file" || refuse "missing $env_file (APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID for notarytool)"
+  # Read by name rather than sourced: the file is data, not a script.
+  field() { sed -n "s/^$1=//p" "$env_file" | tr -d '"'"'"'\r' | head -1; }
+  if [ -n "$(field APPLE_ID)" ]; then
+    test -n "$(field APPLE_PASSWORD)" || refuse "$env_file has APPLE_ID but no APPLE_PASSWORD line"
+    test -n "$(field APPLE_TEAM_ID)" || refuse "$env_file has APPLE_ID but no APPLE_TEAM_ID line"
+    notary_env=(NOTARY_APPLE_ID="$(field APPLE_ID)" NOTARY_PASSWORD="$(field APPLE_PASSWORD)" NOTARY_TEAM_ID="$(field APPLE_TEAM_ID)")
+  elif [ -n "$(field APPLE_API_KEY)" ]; then
+    p8="$(find "$dir" -maxdepth 1 -name "AuthKey_$(field APPLE_API_KEY).p8" | head -1)"
+    test -n "$p8" || refuse "missing $dir/AuthKey_$(field APPLE_API_KEY).p8 (the App Store Connect API key for notarytool)"
+    test -n "$(field APPLE_API_ISSUER)" || refuse "$env_file has APPLE_API_KEY but no APPLE_API_ISSUER line"
+    notary_env=(NOTARY_KEY_PATH="$p8" NOTARY_KEY_ID="$(field APPLE_API_KEY)" NOTARY_ISSUER="$(field APPLE_API_ISSUER)")
+  else
+    refuse "$env_file has neither APPLE_ID nor APPLE_API_KEY"
+  fi
 fi
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/phosphor-signing.XXXXXX")"
@@ -120,16 +131,17 @@ else
 fi
 
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
-  npm run bundle
-  # Nothing Apple reaches Tauri: it builds ad-hoc, as an unsigned release does, and
-  # notarize-mac.sh does the rest. The notarized background drops the Open Anyway tile.
+  # The bundle step signs the Secure Enclave XPC service with this identity, as on the runner.
+  APPLE_SIGNING_IDENTITY="$identity_hash" npm run bundle
+  # Nothing Apple reaches Tauri: it builds ad-hoc, as the release workflow's does, and
+  # notarize-mac.sh does the rest.
   env -u APPLE_CERTIFICATE -u APPLE_CERTIFICATE_PASSWORD -u APPLE_SIGNING_IDENTITY \
+    -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID \
     -u APPLE_API_ISSUER -u APPLE_API_KEY -u APPLE_API_KEY_PATH \
-    npx --no-install tauri build --target "$target" --bundles app,dmg --config src-tauri/notarized.conf.json
+    npx --no-install tauri build --target "$target" --bundles app,dmg
 fi
 
-SIGN_IDENTITY="$identity_hash" SIGN_KEYCHAIN="$keychain" \
-  NOTARY_KEY_PATH="${p8:-}" NOTARY_KEY_ID="${api_key:-}" NOTARY_ISSUER="${api_issuer:-}" \
+env SIGN_IDENTITY="$identity_hash" SIGN_KEYCHAIN="$keychain" ${notary_env[@]+"${notary_env[@]}"} \
   bash "$root/scripts/notarize-mac.sh" "$bundle" "$version"
 
 # The same checks the release workflow runs, and a few more, as a table.
@@ -156,7 +168,6 @@ dmg_app_stapled() {
   hdiutil attach "$dmg" -readonly -nobrowse -noautoopen -mountpoint "$mnt" >/dev/null
   local ok=0
   xcrun stapler validate "$mnt/Phosphor.app" && codesign --verify --deep --strict "$mnt/Phosphor.app" || ok=1
-  test ! -e "$mnt/Open Anyway.inetloc" || ok=1
   hdiutil detach "$mnt" >/dev/null
   return "$ok"
 }
@@ -179,7 +190,7 @@ check "dmg: codesign --verify --strict" codesign --verify --strict --verbose=2 "
 check "dmg: signed by Developer ID Application" signed_by_developer_id "$dmg"
 check "dmg: spctl -a -vv -t open --context context:primary-signature" spctl -a -vv -t open --context context:primary-signature "$dmg"
 check "dmg: stapler validate" xcrun stapler validate "$dmg"
-check "dmg: app inside is the stapled one, no Open Anyway shortcut" dmg_app_stapled
+check "dmg: app inside is the stapled one" dmg_app_stapled
 
 echo
 printf '%s\n' "${rows[@]}"
