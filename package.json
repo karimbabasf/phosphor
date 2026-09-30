@@ -35,7 +35,8 @@
     "tauri": "tauri",
     "se:build": "sh scripts/build-se-helper.sh",
     "se:selftest": "node scripts/vault-selftest.ts",
-    "se:e2e": "node scripts/vault-e2e.ts"
+    "se:e2e": "node scripts/vault-e2e.ts",
+    "notarize:local": "bash scripts/sign-and-notarize-local.sh"
   },
   "engines": {
     "node": ">=24"
