@@ -517,12 +517,16 @@ first open and the person clicks Open Anyway ([Getting started](getting-started.
 
     APPLE_SIGNING_IDENTITY="Developer ID Application: <name> (<team id>)" npm run app:build
 
-Touch ID and the Secure Enclave are built (`src-tauri/src/enclave.rs`, the `se-helper` sidecar,
-`src/vault/`): on a Mac with an enclave the key file is sealed with a data key wrapped to a key
-the enclave made and cannot export, and every click ends in a Touch ID dialog the app composes.
-On an ad hoc build the enclave key is bound to this Mac rather than to Phosphor's signature, which
-the Vault tab's Keys row says in one line ("This copy of Phosphor is not signed, so other apps on
-this Mac could ask for the key"); a Developer ID build binds it to the app.
+Touch ID and the Secure Enclave are built (`src-tauri/src/enclave.rs`, the `se-helper` XPC
+service in `Contents/XPCServices`, `src/vault/`): on a Mac with an enclave the key file is sealed
+with a data key wrapped to a key the enclave made and cannot export, and every click ends in a
+Touch ID dialog the app composes. The service answers only a peer whose code signature passes its
+requirement: under Developer ID, Apple's anchor, the app's Team ID and `com.karimbabasf.phosphor`;
+under ad hoc, that identifier alone (`sh scripts/xpc-attack.sh` plays a foreign process against a
+built bundle). On an ad hoc build the enclave key is bound to this Mac rather than to Phosphor's
+signature, which the Vault tab's Keys row says in one line ("This copy of Phosphor is not signed,
+so other apps on this Mac could ask for the key"); a Developer ID build that keeps the key in the
+keychain binds it to the app, and the service is then the only process that can reach it.
 
 **What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
 the answer to that is a separate signing process or a hardware device, neither of which ships
