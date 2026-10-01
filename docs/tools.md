@@ -33,6 +33,7 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 | `chain_transactions` | The most recent transactions of an address on one network, at most 25 |
 | `chain_transaction` | One transaction by hash: fields, fee, block, confirmations, explorer link |
 | `intents_activity` | What an account has moved inside NEAR Intents: deposits, withdrawals, swap legs and sends |
+| `web_read` | One web page as quoted text, read by the app, only at an address a web search in this chat returned or you gave. This read leaves the machine |
 | `chart_batch` | Many chart questions and drawings in one call: candles, pivots, levels, regime, ATR and more |
 | `trade_read` | The whole trading situation: account health, positions with liquidation distance, orders, fills, plans |
 | `trade_batch` | Several trading reads in one round trip: account, positions, orders, fills, plans, market, venue health |
@@ -91,9 +92,12 @@ Several agents can drive at once, see [Connect an agent](connect-an-agent.md#mor
 
 ## Web search and page reading
 
-These are not Phosphor tools. The agent in the chat also holds its vendor's own web search and
-page reading, and nothing else beyond Phosphor's tools. After it uses either one, every move it
-proposes in that chat waits for your click, whatever the size, see
+Claude in the chat also holds its vendor's own web search, and nothing else beyond Phosphor's
+tools. Pages are read by `web_read`, and only at an address that came back in a web search in that
+chat or that you gave, word for word, never one the agent wrote: a page cannot get your figures
+sent out in an address. Grok holds no web search, so it reads a page from a link you give. After a
+search, a page, or a read that carries a stranger's words (`research`, the chain reads), every move
+the agent proposes in that chat waits for your click, whatever the size, see
 [Policy](policy.md#after-a-web-page). An agent in your terminal brings whatever tools its own
 setup gives it, and the app cannot see them.
 

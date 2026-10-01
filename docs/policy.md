@@ -63,11 +63,13 @@ tab, or ask your assistant to set it to zero: at zero every move waits for a per
 
 ### After a web page
 
-Once the agent in the chat has searched the web or read a page, every money move it proposes in
-that chat waits for your click, whatever its size, until the chat starts a new session (the agent
+Once the agent in the chat has searched the web, read a page, or read a stranger's words through
+Phosphor (news headlines, token names and memos on a chain), every money move it proposes in that
+chat waits for your click, whatever its size, until the chat starts a new session (the agent
 restarts, or you start a new chat). Why it asks, in the card's Details, says: "It read a web
-page earlier in this chat, so this one waits for your OK." A chart label the agent writes after
-a web read carries the same mark, and an agent that later reads that label is marked too. A move
+page earlier in this chat, so this one waits for your OK." A chart label, a plan note or a
+highlight the agent writes after a web read carries the same mark, and an agent that later reads
+one is marked too. A move
 that would have been refused is still refused; the mark only turns a move that would have run on
 its own into one that asks. [Security](security.md#a-web-page-is-not-an-instruction) says why.
 

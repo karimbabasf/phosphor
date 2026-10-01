@@ -74,15 +74,17 @@ Vault tab, then press Start your agent in the chat. The chat runs the agent you 
 other: if your pick runs in your terminal, the chat says so instead of starting something else.
 The session it starts is locked down, and the lockdown is not a setting you can loosen:
 
-- It sees Phosphor's own tools, plus the vendor's own web search and page reading, and nothing
-  else. No shell and no file access.
-- Once it has searched the web or read a page, every move it proposes in that chat waits for your
-  click, whatever the size, until the chat starts a new session. See
+- It sees Phosphor's own tools, plus Claude's own web search, and nothing else. No shell, no file
+  access, and no page reader of the vendor's: pages come through Phosphor's `web_read`, which
+  reads only an address a search in that chat returned or you gave.
+- Once it has searched the web, read a page, or read a stranger's words through Phosphor (news, a
+  token name on a chain), every move it proposes in that chat waits for your click, whatever the
+  size, until the chat starts a new session. See
   [Security](security.md#a-web-page-is-not-an-instruction).
 - It runs with none of your own settings, hooks, plugins or instruction files (such as
   `CLAUDE.md`), and loads no memory the app did not write.
 - It announces its tool list when it starts. If that list holds anything beyond Phosphor's tools
-  and the two web tools, the app refuses to drive and says so. Grok also reads back everything it
+  and web search, the app refuses to drive and says so. Grok also reads back everything it
   would load before each turn, and a turn that would load anything Phosphor did not put there does
   not run.
 - It has no way to approve its own proposals. Approval is your click in the window.

@@ -40,9 +40,17 @@ The mark is stamped on a move the moment the agent asks for it, so a move whose 
 later cannot slip past it. It lasts for the whole session, not only until your next message,
 because the page stays in the agent's memory until the session ends. And it travels with chart
 labels: a label the agent writes after a web read keeps the mark across a quit, and any agent
-that reads that label back is marked as if it had read the page itself. The agent is also told never to put your
-balances, your addresses or what you said into a search or a web address; that one is an
-instruction, not a wall. See [Policy](policy.md#after-a-web-page).
+that reads that label back is marked as if it had read the page itself. Plan notes and highlight
+notes carry it the same way, and so do Phosphor's own reads that hand over a stranger's words:
+news headlines, and the token names and memos in the chain reads.
+
+A page cannot get your data sent out either. The vendors' own page readers are off: the app reads
+a page itself, and only at an address that came back in a web search in that chat or that you
+gave, word for word, never one the agent wrote. An address that carries your wallet's address or
+one of its balances is refused even then, and so is any address on this machine or your own
+network. The agent is also told never to put your balances, your addresses or what you said into
+a search; that one is an instruction, and a search that does it closes page reading for the rest
+of the chat. See [Policy](policy.md#after-a-web-page).
 
 ## The window token
 
