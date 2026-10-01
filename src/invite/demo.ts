@@ -1,7 +1,8 @@
 // PHOSPHOR_DEMO_INVITE: a JSON file that stands in for NEAR Intents, the solver relay and 1Click
 // for invite codes in demo mode, so a proof can show every state an invite has through the app's
-// own routes, claim and frames (scripts/invite-proof.ts) on a machine with no funded code. Never
-// read in live mode. Demo mode without the file refuses a claim before any read, as it always did.
+// own routes, claim and frames (scripts/invite-window-proof.ts) on a machine with no funded
+// code. Never read in live mode. Demo mode without the file refuses a claim before any read, as it
+// always did.
 //
 // Shape: { "accounts": { "<code account>": { "usdc": "5.00", "locked": true, "offline": true,
 //   "slowMs": 4000, "refusal": "insufficient balance or overflow", "landMs": 1500 } } }

@@ -102,6 +102,104 @@ such a message away too, before the assistant sees it, and writes none of it to 
 conversation. Phosphor never asks for your recovery phrase to claim a code. A page or an app that
 does is not Phosphor.
 
+### Issuing invite codes
+
+This part is for whoever hands out the invites. Run it in your own Terminal, never through an
+agent: an agent session would keep every live code in its transcripts and send them to its
+model provider. The script refuses piped input, asks for its passphrase with echo off, and shows
+the links on the terminal only, never on stdout.
+
+The money sits in three places. Your wallet is never touched by any of this. The treasury, T,
+holds only the batch you are about to issue. Each code holds its $5 until someone claims it or
+you take it back.
+
+    npm run invite -- treasury
+
+makes T, writes its key to `~/.phosphor-invites/invites.enc.json`, and only then prints T's
+address. The file is mode 0600 and encrypted (AES-256-GCM, its key made by scrypt from a
+passphrase of at least 20 characters that you type on every run and that is stored nowhere).
+Run `treasury` again to see the address and what T holds; it never makes a second T. The file
+is the only copy of T's key. Lose it and whatever sits in T is gone, while people can still
+claim the codes they hold, so keep T near zero between batches. `--file <path>` or
+`PHOSPHOR_INVITES_FILE` picks another file, never one inside the repo.
+
+Fund T with the app's normal Send, so you read the receiver on the card before you click. That
+send pays 1Click about 0.25 percent, so send count x amount / 0.9975 plus a cent: $50.14 for
+ten $5 codes.
+
+    npm run invite -- issue --count 10 --amount 5 --label "SF builders"
+
+checks that T holds enough and asks you to type yes. Then it writes the codes to the file,
+marked pending, before anything is signed, so a crash from that moment loses nothing. It builds
+one payload from T with one transfer per code (ten at most) and rehearses it: the same transfers,
+signed so the signature expires one millisecond after a recent NEAR block, and simulated at that
+block. The NEAR RPC that answers the simulation is someone else's computer, and no later block
+can run a rehearsal, so it never holds bytes that could move money. Only then is the real payload
+signed, once, written to the file, and sent to the solver relay. The script waits until NEAR
+Intents shows the payload's one-time number (its nonce) spent, reads every code back, marks it
+open, and prints the links once. Give one link to one person, and never post them.
+
+If the relay does not answer, the same signed bytes go out once more; nothing is ever signed
+twice. If the run stops before the end (a quit, no network), `issue --resume` finishes that
+batch, and no new batch starts until it does. If the relay turns a batch away there is no
+fallback: the script waits until the signed payload has expired on NEAR's own clock, about two
+minutes, and then marks the codes void. T still holds the money.
+
+`--simulate-only` is the rehearsal alone: it shows what NEAR Intents would say, and nothing is
+sent or written. If this Mac's clock is behind NEAR's, or the RPC does not answer, a command
+stops before it signs anything that can run and says so (a block that looks later than this
+clock would stretch a rehearsal's life). A batch then waits for `issue --resume`.
+
+    npm run invite -- status
+
+shows what T holds and every batch: each code's address, amount and state (pending, open,
+claimed, reclaimed, or void for a batch that never ran). It never shows a code.
+
+    npm run invite -- reclaim [--label "SF builders"] [--address <code address>]
+
+pays each open code's balance back to T, signed with that code's own key, and marks it
+reclaimed. A code that already holds under a cent is marked claimed. After a reclaim its link
+says "This code was already used, or it has a typo." With no flag it takes every open code,
+after you type yes.
+
+    npm run invite -- withdraw --to <address>
+
+sends everything T holds to the address you pass. Copy it from Receive in the app, which shows
+only an address it decrypted and checked, and type its last six characters back when asked.
+The script never reads the wallet's key file: its header is plain text that any program running
+as you could edit. A withdraw waits while a batch is pending.
+
+`reclaim` and `withdraw` take `--simulate-only` too. None of these commands has a Plan B: if the
+relay refuses one, it stops and says so.
+
+### Checking the claim routes with your own money
+
+`scripts/invite-proof.ts` runs the whole money path on throwaway accounts, so anyone can check
+both claim routes before trusting them:
+
+    node scripts/invite-proof.ts init --file ~/invite-proof.json
+    node scripts/invite-proof.ts run --file ~/invite-proof.json
+    node scripts/invite-proof.ts sweep --file ~/invite-proof.json --to <your address>
+
+`init` makes a throwaway treasury and a throwaway receiver and prints both addresses. Send $1 to
+the treasury. `run` waits for it (30 minutes; `--wait-minutes` changes that), issues two $0.10
+codes in one payload, and claims both into the receiver with the app's own claim code: the first
+through the solver relay with no quote, the second through 1Click. To reach 1Click it turns the
+relay away itself, before anything is sent, the way the relay would if it began to enforce its
+key, and the claim falls back on its own. It writes down what NEAR Intents says about each step:
+the intent hashes, `is_nonce_used`, every balance before and after, and the relay's
+`get_status` answer, then prints that report (`report` prints it again). It never prints a key
+or a code. `sweep` sends every cent left on the throwaway accounts to your address, and
+`release-code` issues one $5 code and prints it once, to try a real claim in the app.
+
+If a route turns $0.10 away as too small, start a new proof file and pass `run --amount 0.50`.
+1Click gets the partner key in `PHOSPHOR_1CLICK_API_KEY` when one is set, as the app does;
+without one it runs on 1Click's public fee tier.
+
+The proof file holds its keys in the clear, because the script runs without a passphrase prompt.
+It is mode 0600 and must sit outside the repo. Put in only what you are ready to lose, sweep it,
+then delete it.
+
 ## Swap
 
 A swap changes what your intents balance holds. Your assistant proposes it with `propose_swap`:

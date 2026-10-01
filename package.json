@@ -24,6 +24,7 @@
     "hl-agent": "node scripts/hl-agent.ts",
     "venue-latency": "node scripts/venue-latency.ts",
     "usage": "node scripts/usage.ts",
+    "invite": "node scripts/invite.ts",
     "latency-proof": "node scripts/latency-proof.ts",
     "test": "node --test tests/unit/*.test.ts tests/injection.test.ts tests/lockdown.test.ts",
     "e2e": "node scripts/e2e.ts",

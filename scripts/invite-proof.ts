@@ -1,408 +1,677 @@
-// The invite code in the window, proven in a real browser against a demo backend.
+// The invite routes checked with real money, the spec's Proof step 0 as a script anyone can rerun
+// with their own funds (docs/superpowers/specs/2026-10-01-invite-codes-design.md, "Proof"):
+// fund a throwaway treasury, issue two $0.10 codes in one payload, claim the first through the
+// solver relay with no quote and the second through Plan B, 1Click, to a throwaway receiver, and
+// write down what NEAR Intents says about each: the intent hashes, is_nonce_used, every balance
+// before and after, and get_status. Then sweep every leftover cent to an address of your choice.
+// It can also issue one $5 code for the release proof and print it once.
 //
-// Boots the app in demo mode on a free port with an EMPTY data directory, so the window opens on
-// the first run, then drives headless Chromium through playwright-core at 1280 x 800 (two device
-// pixels per CSS pixel) and shoots every state an invite code has: the terms card, the first
-// run's step (empty, checking, a good code and each refusal), the claim on the addresses step
-// (running, landed, failed), the toast a claim that ends after the person moved on becomes, the
-// Add money line on Basic (closed, open, a good code, running, landed, a refusal, failed), and the
-// chat keeping a pasted code out of the conversation.
+//   node scripts/invite-proof.ts init --file <path>
+//   node scripts/invite-proof.ts run --file <path> [--amount 0.10] [--wait-minutes 30]
+//   node scripts/invite-proof.ts report --file <path>
+//   node scripts/invite-proof.ts sweep --file <path> --to <address>
+//   node scripts/invite-proof.ts release-code --file <path> [--amount 5] [--wait-minutes 30]
 //
-// Everything is the real backend: the window asks the app's own routes, the app's claim signs and
-// watches, and each claim's end reaches the window as the app's own frame. Only the network is
-// pretend: PHOSPHOR_DEMO_INVITE names a file (src/invite/demo.ts) that holds what each made-up
-// code is worth and how it behaves, keyed by the code's account, and nothing leaves this Mac. Two
-// runs, because a claim's end is said once: one lands on the addresses step, the other fails there
-// and goes on to Basic. A code is "busy" only while a claim runs, and no claim runs before a
-// wallet exists, so the first run's step never shows it; the unit tests do.
+// THE PROOF FILE HOLDS KEYS IN THE CLEAR. It is a non-interactive script, so there is no
+// passphrase: the throwaway treasury's key, the receiver's key and the codes sit in a 0600 file at
+// the path you pass, which must be outside the working copy (the repo is public). Put in it only
+// what you are ready to lose (the proof needs $1), sweep it when you are done, then delete it. It
+// never opens the operator's invite file.
 //
-// Fixture data only: temp directories, never the live wallet, and codes made of a repeated byte
-// that were never issued. Run:
-//   node scripts/invite-proof.ts
-// PROOF_OUT names another directory for the pictures (default docs/screenshots/invite/).
-// playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy. Without
-// playwright's own Chromium installed, point PROOF_BROWSER at a Chromium binary.
+// The claims are the app's own: the same claim service the window calls (src/invite/claim.ts),
+// handed a wallet that is the throwaway receiver. Plan B is reached the way an installed app
+// reaches it: the relay turns the claim away for auth. Here the script itself turns the send away,
+// before it leaves this machine, so the second claim takes the 1Click route on its own. 1Click
+// gets the partner key in PHOSPHOR_1CLICK_API_KEY when one is set, as the app does; without one it
+// runs on the public fee tier (src/rails/intents-native.ts, INTENTS_NO_API_KEY_REASON).
 
-import { spawn, type ChildProcess } from 'node:child_process';
-import { createRequire } from 'node:module';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
-import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parseArgs } from 'node:util';
 
-import { codeAddress, formatCode } from '../src/invite/code.ts';
-import { DEMO_INVITE_ENV } from '../src/invite/demo.ts';
+import { getAddress } from 'viem';
+import type { Hex } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+
+import { resolveReal } from '../src/config.ts';
+import { atomicWrite } from '../src/fsatomic.ts';
+import { decimalToBaseUnits } from '../src/intents.ts';
+import { createInviteService } from '../src/invite/claim.ts';
+import type { InviteService } from '../src/invite/claim.ts';
+import { containsInviteCode, deriveKey, parseCode } from '../src/invite/code.ts';
+import { INVITE_ASSET_DECIMALS, INVITE_ASSET_ID, formatUsdc } from '../src/invite/payload.ts';
+import { keySigner } from '../src/invite/signer.ts';
+import type { KeySigner } from '../src/invite/signer.ts';
+import type { ClaimRecord, ClaimRoute, ClaimStore } from '../src/invite/store.ts';
+import { INTENTS_API_KEY_ENV, intentsApi } from '../src/rails/intents-native.ts';
+import type { IntentsApiPort } from '../src/rails/intents-native.ts';
+import { intentsAccountProblem } from '../src/rails/intents-send.ts';
+import { RELAY_URL, relayClient } from '../src/relay/client.ts';
+import type { RelayClient } from '../src/relay/client.ts';
+import { liveVerifier } from '../src/relay/verifier.ts';
+import { newBook, pendingMoves, readBook, unfinishedBatch } from './invite/book.ts';
+import { takeLock } from './invite/file.ts';
+import type { FileLock } from './invite/file.ts';
+import type { InviteBook } from './invite/book.ts';
+import { issueBatch, liveSimulateAt, newTreasury, resumeBatch, runMove, shortAddress, sweepAccount } from './invite/money.ts';
+import type { Io, Ledger, MoneyNet } from './invite/money.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const PLAYWRIGHT_CORE =
-  process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
-const BROWSER = process.env.PROOF_BROWSER;
-const SHOTS = process.env.PROOF_OUT ?? path.join(ROOT, 'docs', 'screenshots', 'invite');
 
-/* One made-up code per part it plays, since a code pays once. Each is a repeated byte whose code
-   parses; the demo world holds what each stands for, by its account. */
-const PARTS = {
-  slow: { byte: 0x52, world: { usdc: '5.00', slowMs: 5_000 } },
-  used: { byte: 0x43, world: null },
-  offline: { byte: 0x45, world: { usdc: '5.00', offline: true } },
-  locked: { byte: 0x44, world: { usdc: '5.00', locked: true } },
-  landsA: { byte: 0x42, world: { usdc: '5.00', landMs: 3_000 } },
-  failsB: { byte: 0x47, world: { usdc: '5.00', refusal: 'insufficient balance or overflow' } },
-  toastLands: { byte: 0x49, world: { usdc: '5.00', landMs: 1_500 } },
-  toastFails: { byte: 0x48, world: { usdc: '5.00', refusal: 'insufficient balance or overflow' } },
-  addLands: { byte: 0x4a, world: { usdc: '5.00', landMs: 4_000 } },
-  addFails: { byte: 0x51, world: { usdc: '5.00', refusal: 'insufficient balance or overflow' } },
-} as const;
-type Part = keyof typeof PARTS;
+export const PROOF_KIND = 'phosphor-invite-proof';
+export const PROOF_LABEL = 'proof step 0';
+export const RELEASE_LABEL = 'release proof';
+const PROOF_CODE_DOLLARS = '0.10';
+const PROOF_CODES = 2;
+const FUNDING_POLL_MS = 10_000;
+const DEFAULT_WAIT_MINUTES = 30;
 
-const secretOf = (part: Part): Uint8Array => new Uint8Array(16).fill(PARTS[part].byte);
-const codeOf = (part: Part): string => formatCode(secretOf(part));
-const CODE = codeOf('landsA');
-// One character off the end: the check symbol catches it on this Mac.
-const TYPO = CODE.slice(0, -1) + (CODE.endsWith('0') ? '1' : '0');
+export type ProofNet = MoneyNet & {
+  oneclick?: IntentsApiPort; // a test's 1Click; live, one is built with the partner key
+  quoteKey?: string; // a test's 1Click quote key; live, the app's own
+};
 
-function worldFile(dir: string): string {
-  const accounts: Record<string, unknown> = {};
-  for (const part of Object.keys(PARTS) as Part[]) {
-    const world = PARTS[part].world;
-    if (world !== null) accounts[codeAddress(secretOf(part))!] = world;
+type Amount = string | null; // base units, or null when the read did not answer
+
+export type ClaimProof = {
+  route: ClaimRoute; // the route this step proves
+  codeAddress: string;
+  amountBase: string;
+  startedAt: string;
+  before: { code: Amount; receiver: Amount };
+  claim?: string;
+  record?: ClaimRecord; // the app's own record: every attempt's nonce, deadline and intent hash
+  after?: { code: Amount; receiver: Amount };
+  nonces?: Array<{ route: ClaimRoute; nonce: string; intentHash: string; isNonceUsed: boolean | null }>;
+  relayStatus?: Array<{ intentHash: string; answer: unknown }>; // get_status, per attempt
+  oneclickStatus?: unknown; // Plan B: 1Click's status by its deposit address
+  audit?: Array<{ type: string; msg: string; data: unknown }>;
+  frames?: unknown[];
+  pass?: boolean;
+  why?: string;
+};
+
+export type ProofResults = {
+  funding?: { treasuryBefore: string; seenAt: string };
+  issue?: {
+    treasuryBefore: Amount;
+    startedAt: string;
+    relaySaid?: string; // the relay's answer to the batch, its own words
+    move?: string;
+    intentHash?: string;
+    nonce?: string;
+    sends?: number;
+    isNonceUsed?: boolean | null;
+    treasuryAfter?: Amount;
+    codes?: Array<{ address: string; amountBase: string; after: Amount }>;
+    relayStatus?: unknown;
+    pass?: boolean;
+    why?: string;
+  };
+  relayClaim?: ClaimProof;
+  planBClaim?: ClaimProof;
+  sweep?: Array<{ from: string; to: string; amountBase: Amount; outcome: string; intentHash: string | null; at: string }>;
+  releaseCode?: { address: string; amountBase: string; issuedAt: string };
+};
+
+export type ProofFile = {
+  kind: typeof PROOF_KIND;
+  version: 1;
+  createdAt: string;
+  book: InviteBook;
+  receiver: { address: string; key: Hex };
+  claims: ClaimRecord[];
+  results: ProofResults;
+};
+
+export type ProofDeps = {
+  out: (line: string) => void;
+  err: (line: string) => void;
+  env: NodeJS.ProcessEnv;
+  repoRoot?: string;
+  net: () => ProofNet;
+};
+
+export const USAGE = [
+  'Usage:',
+  '  node scripts/invite-proof.ts init --file <path outside the repo>',
+  '  node scripts/invite-proof.ts run --file <path> [--amount 0.10] [--wait-minutes 30]',
+  '  node scripts/invite-proof.ts report --file <path>',
+  '  node scripts/invite-proof.ts sweep --file <path> --to <address>',
+  '  node scripts/invite-proof.ts release-code --file <path> [--amount 5] [--wait-minutes 30]',
+].join('\n');
+
+function proofPath(flag: unknown, repoRoot: string): string {
+  if (typeof flag !== 'string' || flag.trim() === '') throw new Error('Name the proof file with --file <path>, outside the repo.');
+  const file = path.resolve(flag);
+  const rel = path.relative(resolveReal(repoRoot), resolveReal(file));
+  if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+    throw new Error(`The proof file holds keys in the clear, so it must sit outside the repo working copy (got ${file}).`);
   }
-  const file = path.join(dir, 'invite-world.json');
-  fs.writeFileSync(file, JSON.stringify({ accounts }));
   return file;
 }
 
-type Json = any;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function saveProof(file: string, proof: ProofFile): void {
+  const dir = path.dirname(file);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  atomicWrite(file, `${JSON.stringify(proof, null, 2)}\n`, { mode: 0o600 });
 }
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.listen(0, '127.0.0.1', () => {
-      const address = probe.address();
-      const port = typeof address === 'object' && address !== null ? address.port : 0;
-      probe.close(() => (port > 0 ? resolve(port) : reject(new Error('no free port'))));
-    });
-    probe.on('error', reject);
-  });
-}
-
-// ---------- the backend ----------
-
-type Backend = { base: string; token: string; app: ChildProcess; dataDir: string; worldDir: string };
-const backends: Backend[] = [];
-const log: string[] = [];
-
-async function startApp(): Promise<Backend> {
-  const port = await freePort();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-proof-'));
-  const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-world-'));
-  const base = `http://127.0.0.1:${port}`;
-  const app = spawn(process.execPath, ['src/main.ts'], {
-    cwd: ROOT,
-    env: { ...process.env, ACC_MODE: 'demo', ACC_PORT: String(port), ACC_DATA_DIR: dataDir, [DEMO_INVITE_ENV]: worldFile(worldDir) },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const own: string[] = [];
-  app.stdout?.on('data', (d: Buffer) => own.push(d.toString()));
-  app.stderr?.on('data', (d: Buffer) => own.push(d.toString()));
-  const backend: Backend = { base, token: '', app, dataDir, worldDir };
-  backends.push(backend);
-  const until = Date.now() + 30_000;
-  while (Date.now() < until) {
-    const m = /minted one: ([0-9a-f]{16,})/.exec(own.join(''));
-    if (m && backend.token === '') backend.token = m[1] as string;
-    if (backend.token !== '') {
-      try {
-        const res = await fetch(`${base}/api/state`);
-        if (res.ok) return backend;
-      } catch {
-        // not listening yet
-      }
-    }
-    if (app.exitCode !== null) break;
-    await sleep(150);
-  }
-  throw new Error(`the demo backend did not come up:\n${own.join('')}`);
-}
-
-/* A backend writes its audit tip as it shuts down, so its data dir goes once it has exited. */
-async function stopAndWait(): Promise<void> {
-  await Promise.all(backends.map((backend) => new Promise<void>((resolve) => {
-    if (backend.app.exitCode !== null || backend.app.signalCode !== null) return resolve();
-    const timer = setTimeout(resolve, 5_000);
-    backend.app.once('exit', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    backend.app.kill('SIGTERM');
-  })));
-  stopAll();
-}
-
-function stopAll(): void {
-  for (const backend of backends) {
-    if (backend.app.exitCode === null) {
-      try {
-        backend.app.kill('SIGTERM');
-      } catch {
-        // already gone
-      }
-    }
-    for (const dir of [backend.dataDir, backend.worldDir]) {
-      try {
-        fs.rmSync(dir, { recursive: true, force: true });
-      } catch {
-        // a temp dir that would not go is not a failure of the proof
-      }
-    }
-  }
-}
-
-// ---------- the page ----------
-
-/* Waits until a line the invite screens draw says these words, from the app's own answer or
-   frame. */
-async function said(page: Json, words: string, timeout = 20_000): Promise<void> {
-  await page.waitForFunction(`Array.prototype.slice.call(document.querySelectorAll('.invite-said'))
-    .some(function (n) { return n.getClientRects().length > 0 && n.textContent.indexOf(${JSON.stringify(words)}) >= 0; })`, undefined, { timeout });
-  await sleep(450);
-}
-
-async function toasted(page: Json, words: string): Promise<void> {
-  await page.waitForFunction(`Array.prototype.slice.call(document.querySelectorAll('.toast'))
-    .some(function (n) { return n.textContent.indexOf(${JSON.stringify(words)}) >= 0; })`, undefined, { timeout: 20_000 });
-  await sleep(450);
-}
-
-const results: Record<string, unknown> = {};
-const shots: string[] = [];
-
-/* What the picture cannot show: the one line under the field and the key beside it. */
-const READ = `(function () {
-  var said = Array.prototype.slice.call(document.querySelectorAll('.invite-said, .composer-aside'))
-    .filter(function (n) { return !n.hidden && n.getClientRects().length > 0; })
-    .map(function (n) { return n.textContent; });
-  var toasts = Array.prototype.slice.call(document.querySelectorAll('.toast')).map(function (n) { return n.textContent; });
-  var title = (document.querySelector('#screen-firstrun:not([hidden]) .screen-body h1') || {}).textContent || null;
-  var codeOnPage = document.body.innerText.indexOf(${JSON.stringify(CODE)}) >= 0;
-  var body = document.querySelector('#screen-firstrun:not([hidden]) .screen-body');
-  var scroll = document.scrollingElement ? document.scrollingElement.scrollHeight - window.innerHeight : 0;
-  return { title: title, said: said, toasts: toasts, codeShownAsText: codeOnPage, pageScrolls: scroll > 0,
-    cardScrolls: body ? body.scrollHeight > body.clientHeight + 1 : null };
-})()`;
-
-async function shoot(page: Json, name: string): Promise<void> {
-  const file = path.join(SHOTS, `${name}.png`);
-  await page.screenshot({ path: file });
-  shots.push(file);
-  results[name] = await page.evaluate(READ);
-}
-
-const title = async (page: Json): Promise<string> =>
-  String(await page.evaluate('(document.querySelector("#screen-firstrun .screen-body h1") || {}).textContent'));
-
-async function waitTitle(page: Json, words: string): Promise<void> {
-  await page.waitForFunction(`(document.querySelector("#screen-firstrun .screen-body h1") || {}).textContent === ${JSON.stringify(words)}`, undefined, { timeout: 10_000 });
-  await sleep(450);
-}
-
-const primary = '#screen-firstrun .screen-body .screen-actions .btn-lg:last-child';
-
-async function open(browser: Json, backend: Backend): Promise<Json> {
-  const page: Json = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2, bypassCSP: true });
-  page.on('pageerror', (err: unknown) => log.push(`[page] ${String(err)}\n`));
-  page.on('console', (msg: Json) => {
-    if (msg.type() === 'error' || msg.type() === 'warning') log.push(`[console.${msg.type()}] ${msg.text()}\n`);
-  });
-  await page.goto(`${backend.base}/?token=${backend.token}`, { waitUntil: 'load' });
-  await page.waitForSelector('#screen-firstrun .firstrun-welcome', { timeout: 20_000 });
-  await page.evaluate('document.fonts.ready');
-  await sleep(1800);
-  await page.click('#screen-firstrun .firstrun-welcome .btn-primary');
-  await sleep(450);
-  if ((await title(page)) === 'Before you start') {
-    await sleep(600);
-    if (!shots.some((file) => file.endsWith('firstrun-terms.png'))) await shoot(page, 'firstrun-terms');
-    await page.click(primary);
-  }
-  await waitTitle(page, 'Got an invite code?');
-  return page;
-}
-
-/* A code typed into the step, and Use code: the app's own check answers it. */
-async function check(page: Json, code: string): Promise<void> {
-  await page.fill('#screen-firstrun .invite-input', code);
-  await page.click(primary);
-  await sleep(600);
-}
-
-/* From a good code on the invite step to the addresses step, through the software flow the demo
-   backend runs: Continue, a new wallet, a password, the words read off the page and three of
-   them typed back by their number. */
-async function toAddresses(page: Json): Promise<void> {
-  await page.click(primary); // Continue, with the good code
-  await waitTitle(page, 'Create or bring a wallet');
-  await page.click(primary);
-  await waitTitle(page, 'Set a password');
-  await page.fill('#screen-firstrun .screen-body .field:nth-of-type(1) input', 'proof-password-1');
-  await page.evaluate(`(function () {
-    var fields = document.querySelectorAll('#screen-firstrun .screen-body input.input');
-    fields[1].value = 'proof-password-1';
-  })()`);
-  await page.click(primary);
-  await waitTitle(page, 'Save your recovery words');
-  const words = (await page.evaluate('Array.from(document.querySelectorAll("#screen-firstrun .word-text")).map(function (n) { return n.textContent; })')) as string[];
-  if (words.length !== 12) throw new Error(`expected twelve words on the page, saw ${words.length}`);
-  await page.click('#screen-firstrun .screen-body input[type="checkbox"]');
-  await sleep(100);
-  await page.click(primary);
-  await waitTitle(page, 'Prove it');
-  await page.evaluate(`(function (w) {
-    var fields = document.querySelectorAll('#screen-firstrun .screen-body input.input');
-    for (var i = 0; i < fields.length; i += 1) fields[i].value = w[Number(fields[i].dataset.index)];
-  })(${JSON.stringify(words)})`);
-  await page.click(primary);
-  await waitTitle(page, 'Your addresses');
-}
-
-async function main(): Promise<void> {
-  const require = createRequire(import.meta.url);
-  // Untyped on purpose: playwright-core is not a dependency of this repo.
-  const { chromium } = require(PLAYWRIGHT_CORE) as { chromium: Json };
-  const browser = await chromium.launch({ headless: true, ...(BROWSER ? { executablePath: BROWSER } : {}) });
-  fs.mkdirSync(SHOTS, { recursive: true });
-
+function loadProof(file: string): ProofFile {
+  let stat: fs.Stats;
   try {
-    // ---------- run A: the terms, the step, every check, and a claim that lands in place ----------
-    const a = await startApp();
-    const page = await open(browser, a);
-    await shoot(page, 'firstrun-invite-empty');
-    await check(page, codeOf('slow'));
-    await shoot(page, 'firstrun-invite-checking');
-    await said(page, 'waiting for you');
-    const refusals: Array<[string, string, string]> = [
-      ['typo', TYPO, 'has a typo'],
-      ['used', codeOf('used'), 'already used'],
-      ['offline', codeOf('offline'), "Couldn't check"],
-      ['locked', codeOf('locked'), "can't pay out"],
-    ];
-    for (const [name, code, words] of refusals) {
-      await check(page, code);
-      await said(page, words);
-      await shoot(page, `firstrun-invite-${name}`);
-    }
-    await check(page, CODE);
-    await said(page, 'waiting for you');
-    await shoot(page, 'firstrun-invite-valid');
-    await toAddresses(page);
-    await said(page, 'Adding $5');
-    await shoot(page, 'firstrun-addresses-running');
-    await said(page, 'is in your wallet');
-    await shoot(page, 'firstrun-addresses-landed');
-    await page.close();
-
-    // ---------- run B: a claim that fails in place, then Basic: the toasts, Add money, the chat ----------
-    const b = await startApp();
-    const second = await open(browser, b);
-    await check(second, codeOf('failsB'));
-    await said(second, 'waiting for you');
-    await toAddresses(second);
-    await said(second, "didn't come through");
-    await shoot(second, 'firstrun-addresses-failed');
-
-    // On through the steps to Basic.
-    await second.click(primary); // addresses
-    await waitTitle(second, 'Add money');
-    await second.click('#screen-firstrun .screen-body .screen-actions .btn-quiet');
-    await waitTitle(second, 'Your assistant');
-    await second.click('#screen-firstrun .screen-body .screen-actions .btn-quiet');
-    await waitTitle(second, 'When should it ask you?');
-    await second.click(primary);
-    await waitTitle(second, 'Phosphor is ready');
-    await second.click(primary);
-    await second.waitForSelector('#screen-firstrun', { state: 'hidden', timeout: 10_000 });
-    await second.waitForSelector('.bal-add', { timeout: 10_000 });
-    await sleep(1200);
-
-    // A claim that ends after the person moved on: a toast on Basic, each way.
-    await second.evaluate(`window.PhosphorInvite.claim(${JSON.stringify(codeOf('toastLands'))}, { amount: '5.00', asset: 'USDC' })`);
-    await toasted(second, 'is in your wallet');
-    await shoot(second, 'basic-toast-landed');
-    await second.waitForFunction('document.querySelectorAll(".toast").length === 0', undefined, { timeout: 12_000 });
-    await second.evaluate(`window.PhosphorInvite.claim(${JSON.stringify(codeOf('toastFails'))}, { amount: '5.00', asset: 'USDC' })`);
-    await toasted(second, "didn't come through");
-    await shoot(second, 'basic-toast-failed');
-    await second.waitForFunction('document.querySelectorAll(".toast").length === 0', undefined, { timeout: 12_000 });
-
-    // Add money on Basic.
-    await second.click('.bal-add');
-    await second.waitForSelector('.invite-open', { timeout: 10_000 });
-    await sleep(700);
-    await shoot(second, 'addmoney-line');
-    await second.click('.invite-open');
-    await sleep(500);
-    await shoot(second, 'addmoney-open');
-    await second.fill('.invite-input', codeOf('addLands'));
-    await second.click('.invite-use');
-    await said(second, 'waiting for you');
-    await shoot(second, 'addmoney-valid');
-    await second.click('.invite-use');
-    await said(second, 'Adding $5');
-    await shoot(second, 'addmoney-running');
-    await said(second, 'is in your wallet');
-    await shoot(second, 'addmoney-landed');
-    await second.click('.invite-open');
-    await sleep(400);
-    await second.fill('.invite-input', codeOf('offline'));
-    await second.click('.invite-use');
-    await said(second, "Couldn't check");
-    await shoot(second, 'addmoney-offline');
-    await second.fill('.invite-input', codeOf('addFails'));
-    await second.click('.invite-use');
-    await said(second, 'waiting for you');
-    await second.click('.invite-use');
-    await said(second, "didn't come through");
-    await shoot(second, 'addmoney-failed');
-
-    // The chat: a pasted code never goes, and opens the field instead.
-    await second.click('.bal-done');
-    await sleep(700);
-    await second.evaluate(`window.PhosphorEvents.emit('driver', ${JSON.stringify({ chat: 'c1', event: { kind: 'status', state: 'ready', at: Date.now() } })})`);
-    await second.waitForSelector('.composer-input', { state: 'visible', timeout: 10_000 });
-    await second.fill('.composer-input', CODE);
-    await sleep(900);
-    await shoot(second, 'chat-code-kept-out');
-    results['chat-code-kept-out-composer'] = await second.evaluate('document.querySelector(".composer-input").value');
-    await second.close();
-
-    results.screenshots = shots;
-  } finally {
-    await browser.close();
+    stat = fs.statSync(file);
+  } catch {
+    throw new Error(`There is no proof file at ${file}. Run init first.`);
   }
-  console.log(JSON.stringify(results, null, 2));
-  const noise = log.filter((l) => l.startsWith('[page]') || l.startsWith('[console'));
-  if (noise.length) console.log(`browser noise:\n${noise.join('')}`);
+  if ((stat.mode & 0o077) !== 0) throw new Error(`${file} can be read by others (mode ${(stat.mode & 0o777).toString(8)}). It holds keys: chmod 600 it, then run this again.`);
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+  if (raw['kind'] !== PROOF_KIND || raw['version'] !== 1) throw new Error(`${file} is not a proof file this script wrote.`);
+  const receiver = raw['receiver'] as { address?: unknown; key?: unknown } | undefined;
+  if (typeof receiver?.key !== 'string' || !/^0x[0-9a-f]{64}$/.test(receiver.key) || privateKeyToAccount(receiver.key as Hex).address.toLowerCase() !== receiver.address) {
+    throw new Error("the proof file's receiver key is not its receiver's");
+  }
+  if (!Array.isArray(raw['claims']) || raw['results'] === null || typeof raw['results'] !== 'object') throw new Error('the proof file is missing its claims or results');
+  return {
+    kind: PROOF_KIND,
+    version: 1,
+    createdAt: String(raw['createdAt']),
+    book: readBook(raw['book']),
+    receiver: { address: receiver.address as string, key: receiver.key as Hex },
+    claims: raw['claims'] as ClaimRecord[],
+    results: raw['results'] as ProofResults,
+  };
 }
 
-process.on('exit', stopAll);
-process.on('SIGINT', () => {
-  stopAll();
-  process.exit(1);
-});
+function amountOf(value: bigint | null): Amount {
+  return value === null ? null : value.toString();
+}
 
-main()
-  .then(async () => {
-    await stopAndWait();
-    process.exit(0);
-  })
-  .catch(async (err) => {
-    console.error(err instanceof Error ? err.stack ?? err.message : String(err));
-    console.error(log.slice(-40).join(''));
-    await stopAndWait();
-    process.exit(1);
+async function balanceOf(net: ProofNet, account: string): Promise<Amount> {
+  return amountOf(await net.verifier.balance(account, INVITE_ASSET_ID).catch(() => null));
+}
+
+function quietIo(deps: ProofDeps, reveal: (text: string) => void = () => {}): Io {
+  return { say: deps.out, confirm: async () => true, ask: async () => null, reveal };
+}
+
+/* The report, with nothing that spends anything: no key and no code. Refused rather than printed
+   if either got in. */
+function reportOf(proof: ProofFile): string {
+  const text = JSON.stringify(
+    { network: { verifier: 'intents.near', relay: RELAY_URL, asset: INVITE_ASSET_ID }, treasury: proof.book.treasury.address, receiver: proof.receiver.address, results: proof.results },
+    null,
+    2,
+  );
+  const keys = [proof.book.treasury.key, proof.receiver.key].map((k) => k.slice(2));
+  if (containsInviteCode(text) || keys.some((k) => text.includes(k)) || proof.book.codes.some((c) => text.includes(c.code))) {
+    throw new Error('the report would carry a key or a code, so it is not printed');
+  }
+  return text;
+}
+
+async function waitForTreasury(net: ProofNet, address: string, needed: bigint, waitMs: number, deps: ProofDeps): Promise<bigint | null> {
+  const started = net.now();
+  let said = false;
+  for (;;) {
+    const held = await net.verifier.balance(address, INVITE_ASSET_ID).catch(() => null);
+    if (held !== null && held >= needed) return held;
+    if (!said) {
+      deps.out(`Waiting for T, ${address}, to hold at least $${formatUsdc(needed)}. It holds ${held === null ? 'an amount this run could not read' : `$${formatUsdc(held)}`} now.`);
+      said = true;
+    }
+    if (net.now() - started >= waitMs) return null;
+    await net.sleep(FUNDING_POLL_MS);
+  }
+}
+
+/* The relay as an installed app sees it on the day it starts enforcing its JWT: a 401 on the first
+   send. Nothing is sent; the claim service falls back to 1Click on its own (relayRefusalFallsBack). */
+export function refusingRelay(relay: RelayClient): RelayClient {
+  return {
+    ...relay,
+    async publishIntent() {
+      throw new Error('relay publish_intent failed: 401 unauthorized. The proof script turned this send away before it left this machine, so the claim takes Plan B.');
+    },
+  };
+}
+
+type Sink = { audit: Array<{ type: string; msg: string; data: unknown }>; frames: unknown[] };
+
+function claimService(proof: ProofFile, file: string, net: ProofNet, api: IntentsApiPort, sink: Sink, forcePlanB: boolean): InviteService {
+  const store: ClaimStore = {
+    all: () => proof.claims.map((r) => structuredClone(r)),
+    get: (claim) => proof.claims.find((r) => r.claim === claim),
+    put(record) {
+      proof.claims = [...proof.claims.filter((r) => r.claim !== record.claim), structuredClone(record)];
+      saveProof(file, proof);
+    },
+  };
+  const wallet = getAddress(proof.receiver.address);
+  return createInviteService({
+    dataDir: path.dirname(file),
+    movesMoney: true,
+    audit: {
+      append(type, msg, data) {
+        sink.audit.push({ type, msg, data });
+        return { ts: new Date(net.now()).toISOString(), type, msg, data };
+      },
+    },
+    keystore: {
+      state: () => 'unlocked',
+      addressReport: () => ({ addresses: { evm: wallet, solana: null, near: null, nearPublicKey: null }, verified: true, tampered: false }),
+    },
+    broadcast: (frame) => sink.frames.push(frame),
+    broadcastState: () => {},
+    refreshLedger: async () => {},
+    verifier: net.verifier,
+    relay: forcePlanB ? refusingRelay(net.relay) : net.relay,
+    oneclick: api,
+    ...(net.quoteKey === undefined ? {} : { quoteKey: net.quoteKey }),
+    now: net.now,
+    sleep: net.sleep,
+    random: net.random,
+    ...(net.firstPollMs === undefined ? {} : { firstPollMs: net.firstPollMs }),
+    ...(net.pollMs === undefined ? {} : { pollMs: net.pollMs }),
+    store,
   });
+}
+
+function judgeClaim(entry: ClaimProof, route: ClaimRoute): { pass: boolean; why: string } {
+  const record = entry.record;
+  if (record === undefined) return { pass: false, why: 'the claim left no record' };
+  if (record.status !== 'done') return { pass: false, why: `the claim ended ${record.status}${record.reason === undefined ? '' : ` (${record.reason})`}` };
+  if (record.route !== route) return { pass: false, why: `it landed through ${record.route ?? 'no route'}, not ${route}` };
+  const own = entry.nonces?.filter((n) => n.route === route).at(-1);
+  if (own?.isNonceUsed !== true) return { pass: false, why: `is_nonce_used for the ${route} attempt read ${String(own?.isNonceUsed)}` };
+  const amount = BigInt(entry.amountBase);
+  const { before, after } = entry;
+  if (after === undefined || before.code === null || after.code === null || before.receiver === null || after.receiver === null) {
+    return { pass: false, why: 'a balance before or after did not read' };
+  }
+  if (BigInt(before.code) - BigInt(after.code) !== amount) return { pass: false, why: `the code fell by ${BigInt(before.code) - BigInt(after.code)}, not ${amount}` };
+  const rose = BigInt(after.receiver) - BigInt(before.receiver);
+  if (route === 'relay' && rose !== amount) return { pass: false, why: `the receiver rose by ${rose}, not exactly ${amount}` };
+  if (route === 'oneclick') {
+    const status = (entry.oneclickStatus as { status?: unknown } | undefined)?.status;
+    if (status !== 'SUCCESS') return { pass: false, why: `1Click says ${String(status)}` };
+    if (rose <= 0n || rose > amount || String(rose) !== record.creditedBase) return { pass: false, why: `the receiver rose by ${rose}, the record says ${record.creditedBase ?? 'nothing'}` };
+  }
+  return { pass: true, why: route === 'relay' ? 'nonce spent, the code fell and the receiver rose by exactly the amount' : 'nonce spent, 1Click SUCCESS, the receiver rose by what the record credits' };
+}
+
+async function claimStep(proof: ProofFile, file: string, net: ProofNet, api: IntentsApiPort, deps: ProofDeps, step: 'relayClaim' | 'planBClaim'): Promise<boolean> {
+  const route: ClaimRoute = step === 'relayClaim' ? 'relay' : 'oneclick';
+  const done = proof.results[step];
+  if (done?.pass !== undefined) return done.pass;
+  const batch = proof.book.moves.find((m) => m.kind === 'batch' && m.label === PROOF_LABEL && m.state === 'done');
+  const code = proof.book.codes.filter((c) => c.batch === batch?.id)[step === 'relayClaim' ? 0 : 1];
+  if (code === undefined) throw new Error('the proof batch holds no code for this step');
+
+  let entry = done;
+  if (entry === undefined) {
+    entry = {
+      route,
+      codeAddress: code.address,
+      amountBase: code.amountBase,
+      startedAt: new Date(net.now()).toISOString(),
+      before: { code: await balanceOf(net, code.address), receiver: await balanceOf(net, proof.receiver.address) },
+    };
+    proof.results[step] = entry;
+    saveProof(file, proof);
+  }
+  deps.out(`Claiming ${shortAddress(code.address)} through ${route === 'relay' ? 'the solver relay, with no quote' : 'Plan B, 1Click'}.`);
+
+  const sink: Sink = { audit: [], frames: [] };
+  const service = claimService(proof, file, net, api, sink, route === 'oneclick');
+  const earlier = proof.claims.filter((r) => r.codeAddress === code.address);
+  if (earlier.some((r) => r.status === 'pending')) {
+    service.reconcile();
+  } else if (earlier.length === 0) {
+    const answer = await service.claim(code.code);
+    if (!answer.ok) {
+      entry.pass = false;
+      entry.why = `the claim service refused it before it started: ${answer.reason}`;
+      saveProof(file, proof);
+      return false;
+    }
+    entry.claim = answer.claim;
+  }
+  await service.idle();
+
+  const record = proof.claims.filter((r) => r.codeAddress === code.address).at(-1);
+  if (record !== undefined) entry.record = structuredClone(record);
+  entry.after = { code: await balanceOf(net, code.address), receiver: await balanceOf(net, proof.receiver.address) };
+  entry.nonces = [];
+  entry.relayStatus = [];
+  for (const attempt of record?.attempts ?? []) {
+    entry.nonces.push({ route: attempt.route, nonce: attempt.nonce, intentHash: attempt.intentHash, isNonceUsed: await net.verifier.nonceUsed(code.address, attempt.nonce).catch(() => null) });
+    let answer: unknown;
+    try {
+      answer = await net.relay.status(attempt.intentHash);
+    } catch (err) {
+      answer = { error: err instanceof Error ? err.message : String(err) };
+    }
+    entry.relayStatus.push({ intentHash: attempt.intentHash, answer });
+    if (attempt.depositAddress !== undefined) entry.oneclickStatus = await api.status(attempt.depositAddress).catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }));
+  }
+  entry.audit = [...(entry.audit ?? []), ...sink.audit];
+  entry.frames = [...(entry.frames ?? []), ...sink.frames];
+  const verdict = judgeClaim(entry, route);
+  entry.pass = verdict.pass;
+  entry.why = verdict.why;
+  saveProof(file, proof);
+  deps.out(`${route === 'relay' ? 'Relay' : 'Plan B'} claim: ${verdict.pass ? 'PASS' : 'FAIL'}, ${verdict.why}.`);
+  return verdict.pass;
+}
+
+// 1Click as the app reaches it: the partner key when one is set, the public fee tier when not.
+function oneclickFor(net: ProofNet, deps: ProofDeps): IntentsApiPort {
+  return net.oneclick ?? intentsApi({ apiKey: deps.env[INTENTS_API_KEY_ENV] ?? '' });
+}
+
+function dollarsBase(text: unknown, fallback: string, max: number): bigint | null {
+  const value = typeof text === 'string' ? text.trim() : fallback;
+  if (!/^\d{1,4}(\.\d{1,2})?$/.test(value) || Number(value) < 0.01 || Number(value) > max) return null;
+  return decimalToBaseUnits(value, INVITE_ASSET_DECIMALS);
+}
+
+async function run(file: string, net: ProofNet, deps: ProofDeps, waitMs: number, amountText: unknown): Promise<number> {
+  const proof = loadProof(file);
+  const ledger: Ledger = { book: proof.book, save: () => saveProof(file, proof) };
+  const t = proof.book.treasury.address;
+  const api = oneclickFor(net, deps);
+  const codeBase = dollarsBase(amountText, PROOF_CODE_DOLLARS, 50);
+  if (codeBase === null) {
+    deps.err('--amount is what each of the two codes holds, in dollars: 0.01 to 50, like 0.10.');
+    return 2;
+  }
+
+  if ((unfinishedBatch(proof.book)?.label ?? PROOF_LABEL) !== PROOF_LABEL) {
+    deps.err('The release code batch in this proof file is still pending. Run release-code again to finish it, then run this.');
+    return 1;
+  }
+  const needed = codeBase * BigInt(PROOF_CODES);
+  if (proof.results.funding === undefined) {
+    const held = await waitForTreasury(net, t, needed, waitMs, deps);
+    if (held === null) {
+      deps.err(`T still holds less than $${formatUsdc(needed)}. Send $1 (or enough for two codes) to ${t} with the app's Send, then run this again.`);
+      return 1;
+    }
+    proof.results.funding = { treasuryBefore: held.toString(), seenAt: new Date(net.now()).toISOString() };
+    saveProof(file, proof);
+    deps.out(`T holds $${formatUsdc(held)}.`);
+  }
+
+  if (proof.results.issue?.pass === undefined) {
+    const waiting = unfinishedBatch(proof.book);
+    proof.results.issue ??= { treasuryBefore: await balanceOf(net, t), startedAt: new Date(net.now()).toISOString() };
+    saveProof(file, proof);
+    const io = quietIo(deps);
+    const code = waiting !== undefined ? await resumeBatch(ledger, net, io) : await issueBatch(ledger, net, { count: PROOF_CODES, amountBase: codeBase, label: PROOF_LABEL, simulateOnly: false }, io);
+    const move = proof.book.moves.filter((m) => m.kind === 'batch' && m.label === PROOF_LABEL).at(-1);
+    const issue = proof.results.issue;
+    if (move?.relaySaid !== undefined) issue.relaySaid = move.relaySaid;
+    if (code !== 0 || move?.signed === undefined || move.state !== 'done') {
+      if (move?.state === 'failed') {
+        issue.pass = false;
+        issue.why = move.detail ?? 'the batch failed';
+        saveProof(file, proof);
+        deps.err(`The batch failed, so there are no codes to claim: ${issue.why} The relay said: ${issue.relaySaid ?? 'nothing'}. Sweep T and start a new proof file.`);
+        return 1;
+      }
+      saveProof(file, proof);
+      deps.err('The batch did not finish. Run this again to pick it up where it stopped.');
+      return 1;
+    }
+    issue.move = move.id;
+    issue.intentHash = move.signed.intentHash;
+    issue.nonce = move.signed.nonce;
+    issue.sends = move.sends ?? 0;
+    issue.isNonceUsed = await net.verifier.nonceUsed(t, move.signed.nonce).catch(() => null);
+    issue.treasuryAfter = await balanceOf(net, t);
+    issue.codes = [];
+    for (const c of proof.book.codes.filter((x) => x.batch === move.id)) issue.codes.push({ address: c.address, amountBase: c.amountBase, after: await balanceOf(net, c.address) });
+    try {
+      issue.relayStatus = await net.relay.status(move.signed.intentHash);
+    } catch (err) {
+      issue.relayStatus = { error: err instanceof Error ? err.message : String(err) };
+    }
+    issue.pass = issue.isNonceUsed === true && move.legs.length === PROOF_CODES && issue.codes.every((c) => c.after !== null && BigInt(c.after) >= BigInt(c.amountBase));
+    issue.why = issue.pass ? 'one payload, both codes funded, the nonce spent' : 'the nonce or a code balance did not read as funded';
+    saveProof(file, proof);
+    deps.out(`Batch: ${issue.pass ? 'PASS' : 'FAIL'}, ${issue.why}.`);
+    if (!issue.pass) return 1;
+  }
+
+  const relayPass = await claimStep(proof, file, net, api, deps, 'relayClaim');
+  const planBPass = await claimStep(proof, file, net, api, deps, 'planBClaim');
+  deps.out(reportOf(proof));
+  deps.out(`Relay route: ${relayPass ? 'PASS' : 'FAIL'}. Plan B: ${planBPass ? 'PASS' : 'FAIL'}. When you are done: node scripts/invite-proof.ts sweep --file ${file} --to <your address>`);
+  return relayPass && planBPass ? 0 : 1;
+}
+
+function signerFor(proof: ProofFile, account: string): KeySigner | null {
+  if (account === proof.book.treasury.address) return keySigner(proof.book.treasury.key);
+  if (account === proof.receiver.address) return keySigner(proof.receiver.key);
+  const code = proof.book.codes.find((c) => c.address === account);
+  if (code === undefined) return null;
+  const parsed = parseCode(code.code);
+  if (!parsed.ok) return null;
+  const key = deriveKey(parsed.secret);
+  parsed.secret.fill(0);
+  return key === null ? null : keySigner(key);
+}
+
+async function sweep(file: string, net: ProofNet, deps: ProofDeps, rawTo: unknown): Promise<number> {
+  const proof = loadProof(file);
+  const ledger: Ledger = { book: proof.book, save: () => saveProof(file, proof) };
+  const checked = intentsAccountProblem(typeof rawTo === 'string' ? rawTo : '');
+  if (!checked.ok) {
+    deps.err(`--to: ${checked.problem}`);
+    return 2;
+  }
+  const to = checked.id;
+  const ours = [...proof.book.codes.map((c) => c.address), proof.receiver.address, proof.book.treasury.address];
+  if (ours.includes(to)) {
+    deps.err('--to is one of the proof\'s own accounts. Name the address the money should end up at.');
+    return 2;
+  }
+  const io = quietIo(deps);
+  proof.results.sweep ??= [];
+  let failures = 0;
+  const note = (from: string, paid: string, amountBase: Amount, outcome: string, intentHash: string | null): void => {
+    proof.results.sweep!.push({ from, to: paid, amountBase, outcome, intentHash, at: new Date(net.now()).toISOString() });
+    saveProof(file, proof);
+  };
+
+  // A sweep a crash left signed goes first, as the same bytes, to where it was signed to pay. An
+  // account whose earlier sweep is still unproven is not signed out of again.
+  const unproven = new Set<string>();
+  for (const move of pendingMoves(proof.book, 'sweep')) {
+    const signer = signerFor(proof, move.signer);
+    if (signer === null) continue;
+    try {
+      const result = await runMove(ledger, move, signer, net, io.say);
+      note(move.signer, move.legs[0]?.receiverId ?? to, move.legs[0]?.amountBase ?? null, result.kind, move.signed?.intentHash ?? null);
+      if (result.kind === 'unconfirmed') unproven.add(move.signer);
+      if (result.kind !== 'landed') failures += 1;
+    } finally {
+      signer.drop();
+    }
+  }
+  // Codes first, then the receiver, then T. An account with a sweep still pending (unproven, or
+  // never signed) gets no second one: the next sweep finishes the first.
+  const waiting = new Set(pendingMoves(proof.book, 'sweep').map((m) => m.signer));
+  for (const account of ours) {
+    if (unproven.has(account) || waiting.has(account)) continue;
+    const signer = signerFor(proof, account);
+    if (signer === null) continue;
+    try {
+      const { result, amountBase, intentHash } = await sweepAccount(ledger, net, signer, to, io);
+      if (result === null) {
+        if (amountBase === null) failures += 1;
+        continue;
+      }
+      note(account, to, amountOf(amountBase), result.kind, intentHash);
+      deps.out(`${shortAddress(account)}: $${formatUsdc(amountBase ?? 0n)} ${result.kind === 'landed' ? 'sent' : `not sent (${result.kind})`}.`);
+      if (result.kind !== 'landed') failures += 1;
+    } finally {
+      signer.drop();
+    }
+  }
+  deps.out(failures === 0 ? `Swept. Every proof account is empty; ${to} holds the rest. Delete ${file} when you no longer need its report.` : 'Some accounts were not swept. Run sweep again.');
+  return failures === 0 ? 0 : 1;
+}
+
+async function releaseCode(file: string, net: ProofNet, deps: ProofDeps, amountText: unknown, waitMs: number): Promise<number> {
+  const proof = loadProof(file);
+  const ledger: Ledger = { book: proof.book, save: () => saveProof(file, proof) };
+  const amountBase = dollarsBase(amountText, '5', 1000);
+  if (amountBase === null) {
+    deps.err('--amount is dollars, 0.01 to 1000, like 5.');
+    return 2;
+  }
+  const waiting = unfinishedBatch(proof.book);
+  if (waiting !== undefined && waiting.label !== RELEASE_LABEL) {
+    deps.err('The proof batch in this file is still pending. Run `run` again to finish it first.');
+    return 1;
+  }
+  let shown = false;
+  const io = quietIo(deps, (block) => {
+    shown = true;
+    deps.out(block);
+  });
+  let code: number;
+  if (waiting !== undefined) {
+    // An earlier release code that stopped part way: finished, and its link shown, here.
+    code = await resumeBatch(ledger, net, io);
+  } else {
+    const held = await waitForTreasury(net, proof.book.treasury.address, amountBase, waitMs, deps);
+    if (held === null) {
+      deps.err(`T holds less than $${formatUsdc(amountBase)}. Send it to ${proof.book.treasury.address} with the app's Send, then run this again.`);
+      return 1;
+    }
+    code = await issueBatch(ledger, net, { count: 1, amountBase, label: RELEASE_LABEL, simulateOnly: false }, io);
+  }
+  const issued = proof.book.codes.filter((c) => c.label === RELEASE_LABEL && c.state === 'open').at(-1);
+  if (code !== 0 || issued === undefined || !shown) {
+    deps.err('The release code was not issued. Run this again: a batch left pending is finished first.');
+    return 1;
+  }
+  proof.results.releaseCode = { address: issued.address, amountBase: issued.amountBase, issuedAt: new Date(net.now()).toISOString() };
+  saveProof(file, proof);
+  deps.out(`That code is shown this once. Its account is ${issued.address}. An unclaimed code goes back with sweep.`);
+  return 0;
+}
+
+async function init(file: string, net: ProofNet, deps: ProofDeps): Promise<number> {
+  if (fs.existsSync(file)) {
+    deps.err(`${file} exists already. It may hold funded keys, so it is never replaced.`);
+    return 1;
+  }
+  const treasury = newTreasury(net);
+  const receiver = newTreasury(net);
+  const proof: ProofFile = {
+    kind: PROOF_KIND,
+    version: 1,
+    createdAt: new Date(net.now()).toISOString(),
+    book: newBook(treasury),
+    receiver: { address: receiver.address, key: receiver.key },
+    claims: [],
+    results: {},
+  };
+  saveProof(file, proof);
+  const back = loadProof(file);
+  deps.out(`Proof file: ${file}, mode 0600. It holds two throwaway keys and, later, the codes, in the clear. Keep it out of the repo; sweep it and delete it when done.`);
+  deps.out(`Treasury T: ${back.book.treasury.address}`);
+  deps.out(`Throwaway receiver: ${back.receiver.address}`);
+  deps.out(`Next: send $1 to T with the app's Send. Then: node scripts/invite-proof.ts run --file ${file}`);
+  return 0;
+}
+
+export async function proofMain(argv: string[], deps: ProofDeps): Promise<number> {
+  const [command, ...rest] = argv;
+  if (command === undefined || command === '--help' || command === 'help') {
+    deps.out(USAGE);
+    return command === undefined ? 2 : 0;
+  }
+  let values: Record<string, string | boolean | undefined>;
+  try {
+    values = parseArgs({
+      args: rest,
+      options: { file: { type: 'string' }, to: { type: 'string' }, amount: { type: 'string' }, 'wait-minutes': { type: 'string' } },
+      strict: true,
+      allowPositionals: false,
+    }).values;
+  } catch (err) {
+    deps.err(err instanceof Error ? err.message : String(err));
+    deps.out(USAGE);
+    return 2;
+  }
+  const waitText = values['wait-minutes'];
+  const waitMinutes = typeof waitText === 'string' ? Number(waitText) : DEFAULT_WAIT_MINUTES;
+  if (!Number.isFinite(waitMinutes) || waitMinutes < 0 || waitMinutes > 24 * 60) {
+    deps.err('--wait-minutes is 0 to 1440.');
+    return 2;
+  }
+  let lock: FileLock | null = null;
+  try {
+    const file = proofPath(values['file'], deps.repoRoot ?? ROOT);
+    const net = deps.net();
+    // One run at a time on one proof file: two would each sign out of the same accounts.
+    if (command !== 'report') lock = takeLock(file);
+    switch (command) {
+      case 'init':
+        return await init(file, net, deps);
+      case 'run':
+        return await run(file, net, deps, waitMinutes * 60_000, values['amount']);
+      case 'report':
+        deps.out(reportOf(loadProof(file)));
+        return 0;
+      case 'sweep':
+        return await sweep(file, net, deps, values['to']);
+      case 'release-code':
+        return await releaseCode(file, net, deps, values['amount'], waitMinutes * 60_000);
+      default:
+        deps.err(`There is no command "${command}".`);
+        deps.out(USAGE);
+        return 2;
+    }
+  } catch (err) {
+    deps.err(err instanceof Error ? err.message : String(err));
+    return 1;
+  } finally {
+    lock?.release();
+  }
+}
+
+function liveNet(): ProofNet {
+  return {
+    verifier: liveVerifier(),
+    relay: relayClient(),
+    simulateAt: liveSimulateAt(),
+    now: Date.now,
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    random: (n) => crypto.randomBytes(n),
+  };
+}
+
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  proofMain(process.argv.slice(2), {
+    out: (line) => process.stdout.write(`${line}\n`),
+    err: (line) => process.stderr.write(`${line}\n`),
+    env: process.env,
+    net: liveNet,
+  }).then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (err: unknown) => {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    },
+  );
+}

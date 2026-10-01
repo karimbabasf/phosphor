@@ -1,6 +1,7 @@
-// The demo invite world (src/invite/demo.ts): what lets scripts/invite-proof.ts photograph every
-// state an invite has through the app's own routes, claim and frames. It is read in demo mode with
-// the file named and nowhere else, and it never reaches the network: the claim runs in memory.
+// The demo invite world (src/invite/demo.ts): what lets scripts/invite-window-proof.ts photograph
+// every state an invite has through the app's own routes, claim and frames. It is read in demo
+// mode with the file named and nowhere else, and it never reaches the network: the claim runs in
+// memory.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';

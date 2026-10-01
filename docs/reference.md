@@ -409,7 +409,7 @@ live chain, and there is no setting that points them anywhere else. Nothing here
   collateral) and runs no rail, so a proposal there is drafted, priced and ruled on offline with
   nothing at stake, and refuses at the rail step. It is not a practice mode for real money: it
   moves nothing, anywhere, ever. An invite claim there is refused before any read, unless
-  `PHOSPHOR_DEMO_INVITE` names the pretend world `scripts/invite-proof.ts` writes
+  `PHOSPHOR_DEMO_INVITE` names the pretend world `scripts/invite-window-proof.ts` writes
   (`src/invite/demo.ts`): then the claim is signed as always and run in memory, and nothing leaves
   the Mac.
 
@@ -643,6 +643,10 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/view/          the basic screen as one pure function, and the mode itself
     scripts/keygen.ts  raw keypairs for developers, written outside the working copy
     scripts/sweep.ts   secret sweep over the tracked tree and the git history
+    scripts/invite.ts  invite codes for whoever hands them out: treasury, issue, reclaim, withdraw,
+                       status, over an encrypted file outside the working copy (scripts/invite/)
+    scripts/invite-proof.ts  both claim routes run with real money on throwaway accounts, the
+                       invite spec's Proof step 0
     ui/                one window, four screens, no framework, no build
     ui/chart/          the chart engine: two canvases, one pointer surface
     ui/screens/        one file per screen: basic, pro, trade, vault, lock, first run, decision
