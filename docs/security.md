@@ -76,6 +76,24 @@ click alone, with no biometric: Approve runs the move with no Touch ID after it.
 custody you chose, not a bypass of it. When your Mac has an enclave, Protect with Touch ID in the
 Keys row moves the same wallet behind it; use it when you can.
 
+## The process that holds the key
+
+While the vault is open, the key sits in one process: the backend the app starts. The app starts
+it shut against the ways in that Node leaves open by default:
+
+- Its debugger cannot be opened. Node opens one, with no password, when any program running as
+  you sends it a signal; that signal is turned off.
+- Nothing from your Mac's environment reaches it except the settings Phosphor reads, named one by
+  one. A NODE_OPTIONS set on this Mac (one `launchctl setenv` reaches every app you open) would
+  load code into Node as it starts; it never reaches the backend.
+- Native add-ons and eval are off in it, and it runs the Node 24 the app ships, never one from
+  your PATH.
+- A signature reads the one key it needs, held as 32 bytes the lock overwrites, so signing no
+  longer leaves another copy of your recovery phrase in memory.
+
+A test starts the shipped runtime and files exactly the way the app does, from an environment
+with a NODE_OPTIONS planted in it, and fails if the planted code ever runs.
+
 ## The lock
 
 The wallet locks after fifteen minutes with nobody at the window by default (the Vault tab

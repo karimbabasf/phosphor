@@ -983,6 +983,112 @@ mod tests {
         assert!(!canary_ran, "a planted NODE_OPTIONS ran code in the backend");
     }
 
+    /// The test above runs a probe on whatever Node is on PATH, from an environment it hands
+    /// backend_command as a closure. This one runs what ships, from a real one: this test binary
+    /// starts a copy of itself as the shell, with a NODE_OPTIONS canary in that copy's own
+    /// environment, and the copy starts the runtime and the payload `npm run bundle` staged
+    /// exactly as spawn_backend does, environment read with std::env::var_os. The real backend
+    /// has to boot, answer with the boot's nonce and outlive SIGUSR1, and the canary must never
+    /// run. Rerun it after any bundle: `cargo test bundled_backend`.
+    #[cfg(unix)]
+    #[test]
+    fn the_bundled_backend_never_runs_a_node_options_planted_in_the_shells_environment() {
+        const NAME: &str = "backend::tests::the_bundled_backend_never_runs_a_node_options_planted_in_the_shells_environment";
+        const SHELL_ROLE: &str = "PHOSPHOR_TEST_CANARY_SHELL";
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let node = manifest.join("binaries").join(format!("node-{}", env!("TARGET_TRIPLE")));
+        let payload = manifest.join("payload").join("phosphor");
+
+        if let Some(root) = std::env::var_os(SHELL_ROLE).map(PathBuf::from) {
+            let port: u16 = std::env::var("PHOSPHOR_PORT").unwrap().parse().unwrap();
+            let hand = Handshake::mint().unwrap();
+            let log = std::fs::File::create(root.join("stderr.log")).unwrap();
+            let mut child = backend_command(&node, &payload, &root.join("data"), |name| std::env::var_os(name))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::from(log))
+                .spawn()
+                .expect("start the bundled backend the way spawn_backend does");
+            let mut pipe = child.stdin.take().unwrap();
+            writeln!(pipe, "{}\n{}\n{}\n{}\n{}", hand.token, hand.nonce, hand.seat, hand.transport, hand.relay).unwrap();
+            drop(pipe);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut up = false;
+            while Instant::now() < deadline && matches!(child.try_wait(), Ok(None)) {
+                if phosphor_is_listening(port, Some(&hand.nonce)) {
+                    up = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let mut alive_after_usr1 = false;
+            let mut health_after_usr1 = None;
+            if up {
+                // SAFETY: kill(2) on the child this process spawned and still holds.
+                unsafe {
+                    libc::kill(child.id() as libc::pid_t, libc::SIGUSR1);
+                }
+                std::thread::sleep(Duration::from_millis(700));
+                alive_after_usr1 = matches!(child.try_wait(), Ok(None));
+                health_after_usr1 = get_health(port);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            let stderr = std::fs::read_to_string(root.join("stderr.log")).unwrap_or_default();
+            assert!(up, "the bundled backend never answered with this boot's nonce on :{port}: {stderr}");
+            assert!(alive_after_usr1 && health_after_usr1.is_some(), "SIGUSR1 took the backend down: {stderr}");
+            assert!(!stderr.contains("Debugger listening"), "SIGUSR1 opened an inspector: {stderr}");
+            return;
+        }
+
+        assert!(
+            node.is_file() && payload.join("src").join("main.ts").is_file(),
+            "npm run bundle stages the runtime and the payload this test boots"
+        );
+        let root = std::env::temp_dir().join(format!("phosphor-canary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let mark = root.join("node-options-ran");
+        let canary = root.join("canary.cjs");
+        std::fs::write(&canary, format!("require('node:fs').writeFileSync({:?}, 'ran');\n", mark.to_string_lossy())).unwrap();
+        let node_options = format!("--require {}", canary.to_string_lossy());
+
+        // The control, on the bundled runtime itself: NODE_OPTIONS reaches a Node started any
+        // other way, so the canary's silence below is the launch's doing.
+        let control = Command::new(&node).args(["-e", "0"]).env("NODE_OPTIONS", &node_options).status().unwrap();
+        assert!(control.success() && mark.exists(), "the canary is supposed to run under NODE_OPTIONS");
+        std::fs::remove_file(&mark).unwrap();
+
+        let port = {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+            listener.local_addr().expect("read the bound port").port()
+        };
+        // The shell's whole environment. HOME and the key path point into the throwaway
+        // directory, so nothing here reads a wallet.
+        let shell = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into()))
+            .env("TMPDIR", std::env::temp_dir())
+            .env("HOME", root.join("home"))
+            .env("PHOSPHOR_MODE", "demo")
+            .env("PHOSPHOR_PORT", port.to_string())
+            .env("PHOSPHOR_KEYS", root.join("keys.enc.json"))
+            .env("NODE_OPTIONS", &node_options)
+            .env(SHELL_ROLE, &root)
+            .output()
+            .expect("start this test binary as the shell");
+        let canary_ran = mark.exists();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            shell.status.success(),
+            "the shell's half failed:\n{}{}",
+            String::from_utf8_lossy(&shell.stdout),
+            String::from_utf8_lossy(&shell.stderr)
+        );
+        assert!(!canary_ran, "a NODE_OPTIONS in the shell's environment ran code in the bundled backend");
+    }
+
     #[test]
     fn a_checkout_the_mcp_proxy_or_an_extra_argument_is_never_a_backend_of_this_app() {
         for line in [
