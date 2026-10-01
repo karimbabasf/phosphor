@@ -62,6 +62,21 @@ gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/ph
 The app and the disk image are signed with an Apple Developer ID and notarised by Apple, so
 macOS opens Phosphor on first launch with no warning.
 
+Two more checks run on their own. Before the app starts its backend, it hashes its own files, and
+if any changed since the release was built it starts nothing and asks you to install a fresh copy.
+An update installs only when Apple's Security framework finds Phosphor's Developer ID, identifier
+and team on it; one that fails is refused and the app stays as it was. To check the files in your
+copy against this repository's source yourself, follow
+[Check a release yourself](docs/security.md#check-a-release-yourself).
+
+## Invite codes
+
+Someone may send you an invite code, `PHOS-` and 27 letters and digits, usually as a link to
+phosphor.money/invite. It holds USDC for a new wallet. Paste it on the first run's Got an invite
+code? step, or later under Have an invite code? in Add money, and the money moves into your wallet
+once the wallet exists. Never paste a code into the chat: the app keeps it from your agent. How a
+claim works: [docs/money.md](docs/money.md#invite-codes).
+
 ## Connect an agent
 
 The first run asks which agent you use and registers Phosphor with it. To do it by hand later,
@@ -102,6 +117,7 @@ claude mcp add phosphor -- node "$PWD/src/mcp.ts"
 npm test         # unit, injection and lockdown suites
 npm run typecheck
 npm run eval     # scores the agent against the behaviour rubric
+npm run sweep    # the secret sweep CI runs over the tree and the history a push publishes
 ```
 
 ## Docs

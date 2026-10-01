@@ -5,6 +5,56 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.13
+
+Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of writing.
+
+- Invite codes. Someone can send you a code, or a link to phosphor.money/invite, that holds USDC
+  for a new wallet, usually $5. Paste it on the new step after the terms, Got an invite code?, or
+  later under Have an invite code? in Add money. The app checks it on your Mac first and says
+  what is waiting, that it has a typo, or that it was already used. No code? Press Skip.
+- The money lands right after your wallet is made, or when you open it. A claim signs one
+  transfer with the code's own key to your wallet's address, and your wallet key signs nothing.
+  The app calls it done only when NEAR Intents shows the code's one-time number spent, and
+  Activity shows "Invite: +5 USDC". If you moved on before it lands, a note on Basic says so.
+- If the solver relay turns a claim away, the app sends it through 1Click instead, for about 0.25
+  percent less, and a 1Click refund goes back to the code. A claim cut short by a quit is finished
+  at the next start.
+- An invite code never reaches your assistant. One pasted in the chat is taken out of the box and
+  opened in Add money, the app turns away any chat message that still carries one before the
+  assistant sees it, and the log tail and the agent's log read cut every code.
+- The invite page on phosphor.money shows the code with Copy and the download, takes it out of
+  the address bar before anything else runs, sends it nowhere and loads no analytics.
+- The terms card comes back once. The terms now carry the invite code rules (one claim per code,
+  no purchase needed, not for sale, the author can end the promotion, taxes are yours), so their
+  version is 2026-10-01 and the card has a fifth fact.
+- The wallet locks when your screen locks or your Mac switches to another user. A move waiting for
+  your click stays on its card.
+- The wallet locks after 5 idle minutes by default instead of 15. A time you picked in the Vault
+  stays, and the app now waits the time you picked; before, it always waited 15 minutes.
+- Phosphor checks its own files before it starts its backend. If any changed since the release
+  was built, it starts nothing and asks you to install a fresh copy. The security docs show how to
+  check a release yourself.
+- The process that holds your key starts with no debugger signal, no NODE_OPTIONS from your Mac,
+  no add-ons and no eval, runs only on a runtime signed by Phosphor's team, and loads only 14
+  reviewed packages.
+- Starting a trading plan no longer leaves a copy of your recovery phrase in memory.
+- After an update, a backend the old version left running is found and stopped.
+- An update installs only when its code signature is Phosphor's own: Apple's Developer ID,
+  Phosphor's identifier and its team. One that fails is refused, the app stays as it was, and the
+  update window says the update did not pass its check.
+- Releases are built in a job that holds no secret. The job that signs and notarizes installs and
+  builds nothing, deletes its keychain as soon as notarizing ends, and signs the update with Node
+  alone. Release secrets live in a protected environment that waits for an approval and lets in
+  only version tags, and the Release workflow has a dry run that builds, signs and notarizes and
+  publishes nothing.
+- For people who build Phosphor: the secret sweep passes again. All 51 values it stopped on were
+  public (transactions and addresses the chain reader reads live, deposit addresses, test
+  receivers, one curve constant), each now excused by its exact value. `npm run sweep` reads the
+  history a push can publish (HEAD, the remote branches and the tags), takes `--history=all` or a
+  revision, and fails a shallow clone. CI runs it on every push and pull request, over the full
+  history and every pull request head, and checks every installed package's registry signature.
+
 ## 0.10.12
 
 Built 2026-09-30. Tagged v0.10.12 on 2026-09-30.
