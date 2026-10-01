@@ -28,6 +28,25 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
 - The terms card comes back once. The terms now carry the invite code rules (one claim per code,
   no purchase needed, not for sale, the author can end the promotion, taxes are yours), so their
   version is 2026-10-01 and the card has a fifth fact.
+- An agent started outside Phosphor, such as Claude Code in a terminal, asks once in the window:
+  "Allow this agent?". Until you allow it, every move it proposes waits for your click. Allow holds
+  for that connection, and the app's own assistant never asks.
+- A page is read only at an address a web search returned or that you typed yourself. One that
+  appeared only in the agent's own search words or the search model's notes is refused, and so is
+  a page name that answers with an IPv4 address hidden inside IPv6.
+- A worker's web search that carries your wallet's address or figures closes its page reading, as
+  the chat's does.
+- A move that waits after a chain read, the news or a page says "This chat read text from outside
+  Phosphor, so this move waits for your OK." A concept your agent records after reading such text
+  stays on your Mac and is not handed to later agents.
+- Grok asks you for a link instead of searching the web.
+- The agent profiles name the built-in tools they allow in full (web search for the chat's
+  assistant, Read for the operator), so a tool a later Claude Code adds never reaches them, and
+  they deny Claude Code's task list, which newer accounts turn on: the list is a file any program
+  on your Mac can write, and Claude Code reads it back to the agent.
+- Only the app itself, on its own data folder, adds Phosphor to your agents' settings. A test,
+  `npm run app` or a copy on a scratch folder shows the line to paste instead and leaves Claude
+  Code, Codex, Grok and Hermes untouched.
 - The wallet locks when your screen locks or your Mac switches to another user. A move waiting for
   your click stays on its card.
 - The wallet locks after 5 idle minutes by default instead of 15. A time you picked in the Vault

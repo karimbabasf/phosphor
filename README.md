@@ -81,7 +81,9 @@ claim works: [docs/money.md](docs/money.md#invite-codes).
 
 The first run asks which agent you use and registers Phosphor with it. To do it by hand later,
 **Phosphor > Copy MCP Config** in the menu bar puts the one line on your clipboard with your real
-paths filled in. Run it in the directory you want the agent to work from.
+paths filled in. Run it in the directory you want the agent to work from. An agent you start
+yourself like this asks once in the window, "Allow this agent?", and until you allow it every move
+it proposes waits for your click.
 
 Then ask it things.
 
