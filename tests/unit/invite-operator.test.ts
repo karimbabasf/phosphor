@@ -569,7 +569,7 @@ test('reclaim --address and --label pick codes; --simulate-only signs and simula
   assert.deepEqual(after.codes.map((c) => c.state), ['open', 'open', 'reclaimed']);
 });
 
-test('withdraw pays T to the typed address only after its last six are typed back, never the keystore header', async () => {
+test('withdraw pays T to the typed address only after its first six and last six are typed back, never the keystore header', async () => {
   const b = await funded(7n);
   // A keystore header in this HOME names another address: withdraw must never read it.
   const other = '0x1111111111111111111111111111111111111111';
@@ -577,15 +577,21 @@ test('withdraw pays T to the typed address only after its last six are typed bac
   fs.writeFileSync(path.join(b.home, '.phosphor', 'keys.enc.json'), JSON.stringify({ addresses: { evm: other } }));
   const to = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
 
-  const wrong = await b.run(['withdraw', '--to', to], [PASS, 'aeda95', 'yes']);
-  assert.equal(wrong.code, 1);
-  assert.ok(wrong.out.some((l) => /Those six do not match/.test(l)));
+  for (const answer of ['aeda94', '9858ef aeda95', '9858ee...aeda94']) {
+    const wrong = await b.run(['withdraw', '--to', to], [PASS, answer, 'yes']);
+    assert.equal(wrong.code, 1, answer);
+    assert.ok(wrong.out.some((l) => /Those characters do not match/.test(l)), answer);
+  }
   assert.equal(b.signed.length, 0);
   assert.equal(b.chain.simulated.length, 0);
 
-  const r = await b.run(['withdraw', '--to', to], [PASS, 'AEDA94', 'yes']);
+  const r = await b.run(['withdraw', '--to', to], [PASS, '9858EF ... AEDA94', 'yes']);
   assert.equal(r.code, 0, r.out.join('\n'));
-  assert.deepEqual(r.prompts, ['Invite file passphrase: ', "Type the last six characters of the address on Phosphor's Receive screen: ", `Send $7.00 from T to ${to.toLowerCase()}? Type yes to go on: `]);
+  assert.deepEqual(r.prompts, [
+    'Invite file passphrase: ',
+    "Type the first six and the last six characters of the address on Phosphor's Receive screen, after the 0x: ",
+    `Send $7.00 from T to ${to.toLowerCase()}? Type yes to go on: `,
+  ]);
   assert.equal(runnable(b).length, 1);
   const body = JSON.parse(runnable(b)[0]!) as { signer_id: string; intents: Array<{ receiver_id: string; tokens: Record<string, string> }> };
   assert.equal(body.signer_id, b.book().treasury.address);
@@ -593,6 +599,30 @@ test('withdraw pays T to the typed address only after its last six are typed bac
   assert.equal(b.chain.balances.get(to.toLowerCase()), 7_000_000n);
   assert.equal(b.chain.balances.get(other) ?? 0n, 0n);
   assert.equal(b.chain.balances.get(b.book().treasury.address), 0n);
+});
+
+/* Audit L8: a program running as Karim swaps the clipboard for an address it ground to end in the
+   same six characters as his wallet. He types what Receive shows; the swapped address is caught. */
+test('withdraw catches a swapped address that shares the last six: the first six are typed back too', async () => {
+  const b = await funded(1n);
+  const real = '0x9858effd232b4033e47d90003d41ec34ecaeda94';
+  const swapped = '0x' + 'ab'.repeat(17) + real.slice(-6);
+  for (const answer of [real.slice(-6), `${real.slice(2, 8)} ${real.slice(-6)}`]) {
+    const r = await b.run(['withdraw', '--to', swapped], [PASS, answer, 'yes']);
+    assert.equal(r.code, 1, `${answer}: ${r.out.join('\n')}`);
+    assert.ok(r.out.some((l) => /Those characters do not match/.test(l)));
+  }
+  assert.equal(b.signed.length, 0);
+  assert.equal(b.chain.balances.get(swapped) ?? 0n, 0n);
+  assert.equal(b.chain.balances.get(b.book().treasury.address), 1_000_000n, 'T kept every cent');
+
+  // A NEAR name is too short to split in two, so it is typed whole.
+  const named = await b.run(['withdraw', '--to', 'karim.near'], [PASS, 'karim.nea', 'yes']);
+  assert.equal(named.code, 1);
+  assert.equal(named.prompts[1], "Type the whole address shown on Phosphor's Receive screen: ");
+  const ok = await b.run(['withdraw', '--to', 'karim.near'], [PASS, ' Karim.Near ', 'yes']);
+  assert.equal(ok.code, 0, ok.out.join('\n'));
+  assert.equal(b.chain.balances.get('karim.near'), 1_000_000n);
 });
 
 test('withdraw refuses an invite account as the receiver, and waits while a batch is pending', async () => {

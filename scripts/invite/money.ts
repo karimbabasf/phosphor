@@ -819,10 +819,19 @@ export async function reclaimCodes(ledger: Ledger, net: MoneyNet, req: ReclaimRe
 
 export type WithdrawRequest = { to: string; simulateOnly: boolean };
 
+// The first six and the last six hex characters of a hex address (after any 0x), or null for a
+// NEAR name, which is typed whole.
+function addressEnds(to: string): string | null {
+  const body = to.startsWith('0x') ? to.slice(2) : to;
+  return /^[0-9a-f]{13,}$/.test(body) ? body.slice(0, 6) + body.slice(-6) : null;
+}
+
 /* T to a typed address. Never the keystore header: that header is plaintext and any process running
    as Karim can edit it (src/keystore/store.ts). The address is copied from the app's Receive
-   screen, which serves only a decrypted, untampered address, and its last six characters are typed
-   back here before anything is signed. */
+   screen, which serves only a decrypted, untampered address, and its first six and last six
+   characters are typed back here, read off that screen, before anything is signed: 48 bits where
+   the last six alone were 24, which a program swapping the clipboard can match with a look-alike
+   it grinds in seconds (audit L8). */
 export async function withdrawTreasury(ledger: Ledger, net: MoneyNet, req: WithdrawRequest, io: Io): Promise<number> {
   const book = ledger.book;
   if (!req.simulateOnly) {
@@ -859,13 +868,19 @@ export async function withdrawTreasury(ledger: Ledger, net: MoneyNet, req: Withd
     io.say('That is an invite account, not your wallet. Copy the address from Receive in the app. Nothing was signed.');
     return 2;
   }
-  const typed = await io.ask(`Type the last six characters of the address on Phosphor's Receive screen: `);
+  const ends = addressEnds(to);
+  const typed = await io.ask(
+    ends === null
+      ? "Type the whole address shown on Phosphor's Receive screen: "
+      : `Type the first six and the last six characters of the address on Phosphor's Receive screen${to.startsWith('0x') ? ', after the 0x' : ''}: `,
+  );
   if (typed === null) {
     io.say('Stopped. Nothing was signed.');
     return 1;
   }
-  if (typed.trim().toLowerCase() !== to.slice(-6).toLowerCase()) {
-    io.say(`Those six do not match the end of ${to}. Nothing was signed. Copy the address from Receive in the app again.`);
+  const said = typed.trim().toLowerCase();
+  if (ends === null ? said !== to : said.replace(/^0x/, '').replace(/[^0-9a-f]/g, '') !== ends) {
+    io.say(`Those characters do not match ${to}. Nothing was signed. Copy the address from Receive in the app again.`);
     return 1;
   }
   const held = await net.verifier.balance(book.treasury.address, INVITE_ASSET_ID).catch(() => null);

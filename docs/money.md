@@ -183,7 +183,9 @@ after you type yes.
     npm run invite -- withdraw --to <address>
 
 sends everything T holds to the address you pass. Copy it from Receive in the app, which shows
-only an address it decrypted and checked, and type its last six characters back when asked.
+only an address it decrypted and checked, and when asked, type back its first six and last six
+characters as Receive shows them (a NEAR name, the whole name). A program that swapped your
+clipboard for a look-alike would have to match both ends, not just the last six.
 The script never reads the wallet's key file: its header is plain text that any program running
 as you could edit. A withdraw waits while a batch is pending.
 
