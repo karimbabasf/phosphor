@@ -123,11 +123,14 @@ ten $5 codes.
     npm run invite -- issue --count 10 --amount 5 --label "SF builders"
 
 checks that T holds enough and asks you to type yes. Then it writes the codes to the file,
-marked pending, before anything is signed, so a crash from that moment loses nothing. It signs
-one payload from T with one transfer per code (ten at most), simulates it, sends it to the
-solver relay, and waits until NEAR Intents shows the payload's one-time number (its nonce)
-spent. It reads every code back, marks it open, and prints the links once. Give one link to one
-person, and never post them.
+marked pending, before anything is signed, so a crash from that moment loses nothing. It builds
+one payload from T with one transfer per code (ten at most) and rehearses it: the same transfers,
+signed so the signature expires one millisecond after a recent NEAR block, and simulated at that
+block. The NEAR RPC that answers the simulation is someone else's computer, and no later block
+can run a rehearsal, so it never holds bytes that could move money. Only then is the real payload
+signed, once, written to the file, and sent to the solver relay. The script waits until NEAR
+Intents shows the payload's one-time number (its nonce) spent, reads every code back, marks it
+open, and prints the links once. Give one link to one person, and never post them.
 
 If the relay does not answer, the same signed bytes go out once more; nothing is ever signed
 twice. If the run stops before the end (a quit, no network), `issue --resume` finishes that
@@ -135,9 +138,9 @@ batch, and no new batch starts until it does. If the relay turns a batch away th
 fallback: the script waits until the signed payload has expired on NEAR's own clock, about two
 minutes, and then marks the codes void. T still holds the money.
 
-`--simulate-only` builds, signs and simulates the batch, then stops: nothing is sent and nothing
-is written. The NEAR RPC sees that signature, so it is made to expire one millisecond after the
-block it is simulated at, and no later block can ever run it.
+`--simulate-only` is the rehearsal alone: it shows what NEAR Intents would say, and nothing is
+sent or written. If this Mac's clock is behind NEAR's, every command stops before it signs and
+says so: a block that looks later than this clock would stretch a rehearsal's life.
 
     npm run invite -- status
 

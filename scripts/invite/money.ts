@@ -3,11 +3,11 @@
 // Spec: docs/superpowers/specs/2026-10-01-invite-codes-design.md, "The money path". The terminal
 // side is scripts/invite.ts; the proof script (scripts/invite-proof.ts) drives the same moves.
 //
-// ONE SIGNATURE PER MOVE. A move is one transfer payload out of one account (src/invite/payload.ts),
-// signed only after everything it pays is on disk, simulated before anything is sent, and written
-// down as the exact signed bytes before the publish. From then on it is never signed again: an
-// unanswered publish is resent as the same bytes, and a move found pending at the next run is
-// checked on the chain first and resent as the same bytes only while it can still run.
+// ONE SIGNATURE THAT CAN RUN. A move is one transfer payload out of one account
+// (src/invite/payload.ts), rehearsed (below), signed only after everything it pays is on disk, and
+// written down as the exact signed bytes before they go anywhere. From then on it is never signed
+// again: an unanswered publish is resent as the same bytes, and a move found pending at the next
+// run is checked on the chain first and resent as the same bytes only while it can still run.
 //
 // NO PLAN B. The app's claim falls back to 1Click when the relay turns it away; operator moves do
 // not. A refusal stops the move and says so, and the move is watched until NEAR Intents proves it
@@ -19,11 +19,15 @@
 // the receivers are inside the signed bytes, so a spent nonce is the move done. A balance is read
 // afterwards to show a code funded, never to prove a move.
 //
-// A DRY RUN CAN NEVER RUN. --simulate-only hands a signed payload to the NEAR RPC, a third party,
-// and keeps nothing: its codes are never written. Signed with the normal two minutes, those bytes
-// could be published by whoever saw them, and a batch would pay codes nobody holds. So a dry run
-// is signed with a deadline one millisecond after a final block and simulated AT that block: the
-// verifier sees it in time there, and every block that could ever execute it is stamped later.
+// REHEARSED, NEVER SIMULATED AS ITSELF. The verifier's verdict comes from simulate_intents, a view
+// served by the NEAR RPC, a third party. Real bytes handed to it before they are on disk could be
+// published by whoever runs it while the book calls the move failed. So every move is rehearsed:
+// built, checked and signed as it will be, but with a signature that dies one millisecond after a
+// final block, and simulated AT that block. The verifier answers for that block, and every block
+// that could ever execute the rehearsal is stamped later. A final block stamped later than this
+// Mac's clock is refused, because it would stretch that life. --simulate-only is the rehearsal
+// alone; its codes are never written, so this is what keeps a dry run from paying codes nobody
+// holds.
 
 import type { Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -52,7 +56,7 @@ import { keySigner } from '../../src/invite/signer.ts';
 import type { KeySigner } from '../../src/invite/signer.ts';
 import { intentsAccountProblem } from '../../src/rails/intents-send.ts';
 import type { RelayClient, RelayStatus } from '../../src/relay/client.ts';
-import { RELAY_DEADLINE_GRACE_MS, transferFate } from '../../src/relay/fate.ts';
+import { FATE_AHEAD_MAX_MS, RELAY_DEADLINE_GRACE_MS, transferFate } from '../../src/relay/fate.ts';
 import type { FateReads } from '../../src/relay/fate.ts';
 import { simulationOf, simulationRefusal } from '../../src/relay/verifier.ts';
 import type { FinalBlock, SignedIntent, Simulation, VerifierPort } from '../../src/relay/verifier.ts';
@@ -110,8 +114,15 @@ export function liveSimulateAt(fetchImpl: typeof fetch = fetch): NonNullable<Mon
   };
 }
 
-// How long a dry run's signature lives past the block it is simulated at.
-export const DRY_RUN_LIFE_MS = 1;
+// How long a rehearsal's signature lives past the block it is simulated at.
+export const REHEARSAL_LIFE_MS = 1;
+/* How far ahead of this Mac's clock NEAR's final block may be stamped. An honest final block trails
+   real time by about 2.6 s (src/relay/verifier.ts), so it is behind this clock, never ahead. A
+   rehearsal allows nothing ahead: its signature lives until 1 ms past the block, and a block
+   stamped ahead of real time is a signature that lives that much longer. A real move allows what
+   src/relay/fate.ts allows before it stops believing a block at all. */
+export const REHEARSAL_AHEAD_MS = 0;
+const MOVE_AHEAD_MS = FATE_AHEAD_MAX_MS;
 
 // The book in hand and the one way to put it on disk. save() throws when the write fails.
 export type Ledger = { book: InviteBook; save(): void };
@@ -218,47 +229,67 @@ const REFUSALS: Record<ReturnType<typeof simulationVerdict>, string> = {
   refused: 'The verifier refused the signed move.',
 };
 
-type Built = { ok: true; signed: SignedMove } | { ok: false; detail: string };
+type Built = { ok: true; signed: SignedMove; block: FinalBlock } | { ok: false; detail: string };
 
-async function chainClock(net: MoneyNet): Promise<{ salt: Uint8Array; block: FinalBlock } | null> {
+async function chainClock(net: MoneyNet, aheadMs: number): Promise<{ salt: Uint8Array; block: FinalBlock } | string> {
   const [salt, block] = await Promise.all([
     net.verifier.currentSalt().catch(() => null),
     net.verifier.finalBlock === undefined ? Promise.resolve(null) : net.verifier.finalBlock().catch(() => null),
   ]);
-  return salt === null || block === null ? null : { salt, block };
+  if (salt === null || block === null) return 'the verifier did not answer with its salt and its clock';
+  const ahead = block.atMs - net.now();
+  if (ahead > aheadMs) {
+    return `NEAR's final block is stamped ${(ahead / 1000).toFixed(1)} s ahead of this Mac's clock (if this Mac's clock is behind, set it; if it is not, the RPC is not telling the time)`;
+  }
+  return { salt, block };
 }
 
 /* The payload, read back as a stranger would, then signed. The deadline and the nonce come off
-   the chain's final block and current salt, never this Mac's clock. */
-async function signMove(move: Move, signer: KeySigner, net: MoneyNet, lifeMs: number = CLAIM_DEADLINE_MS): Promise<Built & { block?: FinalBlock }> {
+   the chain's final block and current salt, never this Mac's clock, which only bounds them. */
+async function signMove(move: Move, signer: KeySigner, net: MoneyNet, lifeMs: number, aheadMs: number): Promise<Built> {
   if (signer.address !== move.signer) return { ok: false, detail: "the key in hand is not the paying account's" };
-  const clock = await chainClock(net);
-  if (clock === null) return { ok: false, detail: 'the verifier did not answer with its salt and its clock, so nothing was signed.' };
+  const clock = await chainClock(net, aheadMs);
+  if (typeof clock === 'string') return { ok: false, detail: clock };
   const { salt, block } = clock;
   const legs = move.legs.map((l) => ({ receiverId: l.receiverId, amountBase: BigInt(l.amountBase) }));
   const deadline = signingDeadline(block.atMs, lifeMs);
   const nonce = claimNonce(salt, deadline, net.random);
   const payload = buildTransfersPayload({ signerId: move.signer, assetId: INVITE_ASSET_ID, deadline, nonce, transfers: legs });
   const problems = checkTransfersPayload(payload, { signerId: move.signer, assetId: INVITE_ASSET_ID, transfers: legs, salt, now: block.atMs, maxDeadlineMs: CLAIM_DEADLINE_MS });
-  if (problems.length > 0) return { ok: false, detail: `refusing to sign what this script built: ${problems[0]}.` };
+  if (problems.length > 0) return { ok: false, detail: `the payload this script built failed its own check: ${problems[0]}` };
   const signature = await signer.sign(payload);
   return { ok: true, signed: { payload, signature, nonce, deadline, intentHash: intentHashOf(payload) }, block };
-}
-
-type Simulated = { ok: true; intentHash: string | null } | { ok: false; detail: string };
-
-function verdictOf(sim: Simulation | null): Simulated {
-  if (sim === null) return { ok: false, detail: 'the verifier did not answer the simulation, so nothing was sent.' };
-  if (!sim.ok) return { ok: false, detail: `${REFUSALS[simulationVerdict(sim.refusal)]} The verifier said: ${sim.refusal}.` };
-  return { ok: true, intentHash: sim.intentHashes[0] ?? null };
 }
 
 function intentOf(signed: SignedMove): SignedIntent {
   return { standard: ERC191_STANDARD, payload: signed.payload, signature: signed.signature };
 }
 
-async function simulateMove(signed: SignedMove, net: MoneyNet): Promise<Simulated> {
-  return verdictOf(net.verifier.simulate === undefined ? null : await net.verifier.simulate([intentOf(signed)]).catch(() => null));
+/* unsigned: nothing was signed. silent: the verifier never answered. refused: it said no. */
+type Rehearsal =
+  | { ok: true; signed: SignedMove; verifierHash: string | null }
+  | { ok: false; why: 'unsigned' | 'silent' | 'refused'; detail: string; signed: SignedMove | null };
+
+/* The move rehearsed (see the header). A node a block behind cannot answer for a block it has not
+   seen, so up to three blocks are tried, each rehearsal with a signature of its own; none of them
+   can run. */
+async function rehearse(move: Move, signer: KeySigner, net: MoneyNet): Promise<Rehearsal> {
+  const simulateAt = net.simulateAt;
+  if (simulateAt === undefined) return { ok: false, why: 'unsigned', detail: 'this network cannot simulate at a fixed block', signed: null };
+  let last: Rehearsal = { ok: false, why: 'unsigned', detail: 'nothing was built', signed: null };
+  for (let tries = 0; tries < 3; tries += 1) {
+    if (tries > 0) await net.sleep(1_000);
+    const built = await signMove(move, signer, net, REHEARSAL_LIFE_MS, REHEARSAL_AHEAD_MS);
+    if (!built.ok) return { ok: false, why: 'unsigned', detail: built.detail, signed: null };
+    const sim = await simulateAt([intentOf(built.signed)], built.block.hash).catch(() => null);
+    if (sim === null) {
+      last = { ok: false, why: 'silent', detail: 'the verifier did not answer the simulation', signed: built.signed };
+      continue;
+    }
+    if (!sim.ok) return { ok: false, why: 'refused', detail: `${REFUSALS[simulationVerdict(sim.refusal)]} The verifier said: ${sim.refusal}`, signed: built.signed };
+    return { ok: true, signed: built.signed, verifierHash: sim.intentHashes[0] ?? null };
+  }
+  return last;
 }
 
 async function fateOf(move: Move, net: MoneyNet): Promise<'ran' | 'dead' | 'open'> {
@@ -289,18 +320,18 @@ function trySave(ledger: Ledger): void {
   }
 }
 
-/* One move to its end. Unsigned: sign, simulate (a refusal ends it with nothing sent), write the
-   signed bytes, publish. Signed already (a run that stopped): ask the chain first, and resend the
-   same bytes only while they can still run. Then watch until the nonce is spent or the move is
-   proven dead. The move is in the book and saved at every step the next run would need. */
+/* One move to its end. Unsigned: rehearse (a refusal ends it with nothing that can run sent), sign,
+   write the signed bytes, publish. Signed already (a run that stopped): ask the chain first, and
+   resend the same bytes only while they can still run. Then watch until the nonce is spent or the
+   move is proven dead. The move is in the book and saved at every step the next run would need. */
 export async function runMove(ledger: Ledger, move: Move, signer: KeySigner, net: MoneyNet, say: (line: string) => void): Promise<MoveResult> {
   if (move.signed === undefined) {
-    const built = await signMove(move, signer, net);
-    const sim: Simulated = built.ok ? await simulateMove(built.signed, net) : { ok: false, detail: built.detail };
-    if (!built.ok || !sim.ok) {
+    const rehearsal = await rehearse(move, signer, net);
+    const built = rehearsal.ok ? await signMove(move, signer, net, CLAIM_DEADLINE_MS, MOVE_AHEAD_MS) : null;
+    if (!rehearsal.ok || built === null || !built.ok) {
       move.state = 'failed';
       move.settledAt = nowIso(net);
-      move.detail = `Nothing was sent: ${sim.ok ? '' : sim.detail}`;
+      move.detail = `Nothing that can run was sent: ${!rehearsal.ok ? rehearsal.detail : built?.ok === false ? built.detail : 'it was not signed'}.`;
       ledger.save();
       return { kind: 'refused', detail: move.detail };
     }
@@ -355,39 +386,29 @@ async function close(ledger: Ledger, move: Move, verdict: 'ran' | 'dead' | 'unco
   return { kind: 'unconfirmed', detail: 'NEAR Intents has not answered either way yet. The signed move may still run.' };
 }
 
-/* A dry run: built, checked, signed and simulated exactly as the real move would be, except that
-   its signature dies one millisecond after the block it is simulated at (see the header). A node
-   behind that block cannot answer for it, so up to three blocks are tried, each with a signature
-   of its own; none of them can run anywhere. Nothing is published and nothing is written. */
+/* A dry run: the rehearsal alone (see the header). Nothing is published and nothing is written. */
 async function simulateOnly(move: Move, signer: KeySigner, net: MoneyNet, io: Io, what: string): Promise<number> {
-  if (net.simulateAt === undefined) {
-    io.say('Simulate only: this network cannot simulate at a fixed block, so no dry run is signed.');
+  const rehearsal = await rehearse(move, signer, net);
+  if (rehearsal.signed === null) {
+    io.say(`Simulate only: ${rehearsal.ok ? '' : rehearsal.detail}, so nothing was signed.`);
     return 1;
   }
-  let sim: Simulation | null = null;
-  let built: (Built & { block?: FinalBlock }) | null = null;
-  for (let tries = 0; tries < 3 && sim === null; tries += 1) {
-    if (tries > 0) await net.sleep(1_000);
-    built = await signMove(move, signer, net, DRY_RUN_LIFE_MS);
-    if (!built.ok) break;
-    sim = await net.simulateAt([intentOf(built.signed)], built.block!.hash).catch(() => null);
-  }
-  if (built === null || !built.ok) {
-    io.say(`Simulate only: ${built?.ok === false ? built.detail : 'nothing was built.'}`);
-    return 1;
-  }
-  const verdict = verdictOf(sim);
-  const local = built.signed.intentHash;
+  const local = rehearsal.signed.intentHash;
   const legs = move.legs.length;
   const total = move.legs.reduce((sum, l) => sum + BigInt(l.amountBase), 0n);
   io.say(`Simulate only: ${what}, ${legs} transfer${legs === 1 ? '' : 's'} from ${move.signer}, $${formatUsdc(total)} in all, signed with the right key.`);
-  if (verdict.ok) {
-    io.say(`The verifier would run it. Intent ${local}${verdict.intentHash === null ? '' : verdict.intentHash === local ? ', the same hash the verifier gives' : `, but the verifier names it ${verdict.intentHash}`}.`);
+  if (rehearsal.ok) {
+    const named = rehearsal.verifierHash;
+    io.say(`The verifier would run it. Intent ${local}${named === null ? '' : named === local ? ', the same hash the verifier gives' : `, but the verifier names it ${named}`}.`);
+  } else if (rehearsal.why === 'silent') {
+    io.say('The verifier did not answer, at three blocks in a row.');
   } else {
-    io.say(`The verifier would refuse it: ${verdict.detail}`);
+    io.say(`The verifier would refuse it: ${rehearsal.detail}.`);
   }
-  io.say(`Nothing was published and nothing was written. The dry run's signature expired at ${built.signed.deadline}, one millisecond after the block it was simulated at, so it can never run.`);
-  return verdict.ok ? 0 : 1;
+  io.say(
+    `Nothing was published and nothing was written. The signature expired at ${rehearsal.signed.deadline}, one millisecond after a final block stamped no later than this Mac's clock, so no block can ever run it.`,
+  );
+  return rehearsal.ok ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -501,8 +522,53 @@ export async function resumeBatch(ledger: Ledger, net: MoneyNet, io: Io): Promis
   return finishBatch(ledger, move, net, io);
 }
 
+// Reading a funded code back: NEAR Intents is behind a load-balanced RPC, and a node a block
+// behind the one that ran the batch still shows the code empty.
+const READBACK_TRIES = 4;
+const READBACK_GAP_MS = 1_500;
+
+function voidPending(ledger: Ledger, move: Move, net: MoneyNet): number {
+  const codes = codesOf(ledger.book, move.id);
+  for (const c of codes) {
+    if (c.state === 'pending') {
+      c.state = 'void';
+      c.closedAt = nowIso(net);
+    }
+  }
+  ledger.save();
+  return codes.length;
+}
+
+/* Before a batch's one signature: its codes are new, so they hold nothing. Money on one means the
+   batch already ran, from another copy of the invite file (an older one put back), and signing
+   again would pay every code twice. */
+async function freshCodesProblem(ledger: Ledger, move: Move, net: MoneyNet): Promise<string | null> {
+  const codes = codesOf(ledger.book, move.id);
+  if (codes.some((c) => c.state !== 'pending')) return 'handled';
+  const held = await Promise.all(codes.map((c) => net.verifier.balance(c.address, INVITE_ASSET_ID).catch(() => null)));
+  if (held.some((h) => h === null)) return "Couldn't read the new codes' balances, so nothing was signed. Check the connection and run it again.";
+  const funded = held.filter((h) => h !== null && h > 0n).length;
+  if (funded === 0) return null;
+  return (
+    `${funded} code${funded === 1 ? '' : 's'} of this batch already hold${funded === 1 ? 's' : ''} money, so it may have run from another copy of the invite file. ` +
+    `Nothing was signed. \`npm run invite -- reclaim --label "${move.label ?? ''}"\` takes that money back to T; then \`issue --resume\` closes the batch.`
+  );
+}
+
 async function finishBatch(ledger: Ledger, move: Move, net: MoneyNet, io: Io): Promise<number> {
   const book = ledger.book;
+  if (move.state === 'pending' && move.signed === undefined) {
+    const problem = await freshCodesProblem(ledger, move, net);
+    if (problem === 'handled') {
+      // A reclaim already took back money that reached these codes from elsewhere; this batch is over.
+      move.state = 'failed';
+      move.settledAt = nowIso(net);
+      move.detail = 'Never signed: its codes were reclaimed after money reached them from another copy of the invite file.';
+    } else if (problem !== null) {
+      io.say(problem);
+      return 1;
+    }
+  }
   if (move.state === 'pending') {
     const signer = treasurySigner(book, net);
     let result: MoveResult;
@@ -518,43 +584,43 @@ async function finishBatch(ledger: Ledger, move: Move, net: MoneyNet, io: Io): P
     if (result.kind !== 'landed') io.say(result.detail);
   }
   if (move.state === 'failed') {
-    const codes = codesOf(book, move.id);
-    for (const c of codes) {
-      if (c.state === 'pending') {
-        c.state = 'void';
-        c.closedAt = nowIso(net);
-      }
-    }
-    ledger.save();
-    io.say(`T still holds the money. The ${codes.length} codes of this batch were never funded and are void: there is nothing to hand out.`);
+    const count = voidPending(ledger, move, net);
+    io.say(`T still holds the money. The ${count} codes of this batch were never funded and are void: there is nothing to hand out.`);
     return 1;
   }
   return openCodes(ledger, move, net, io);
 }
 
+/* The batch ran (its nonce is spent), so every code was paid in the same call. Each is read back
+   until it shows at least what it was paid, a few times, because a node a block behind still shows
+   it empty; only then are the links shown, all at once and once. A code that will not read funded
+   keeps the batch open, so `issue --resume` reads again, and its link is never held back for good. */
 async function openCodes(ledger: Ledger, move: Move, net: MoneyNet, io: Io): Promise<number> {
   const book = ledger.book;
   const codes = codesOf(book, move.id);
-  const unread: InviteCode[] = [];
-  const short: InviteCode[] = [];
-  for (const c of codes.filter((x) => x.state === 'pending')) {
-    const held = await net.verifier.balance(c.address, INVITE_ASSET_ID).catch(() => null);
-    if (held === null) {
-      unread.push(c);
-      continue;
+  let waiting = codes.filter((c) => c.state === 'pending');
+  for (let tries = 0; tries < READBACK_TRIES && waiting.length > 0; tries += 1) {
+    if (tries > 0) await net.sleep(READBACK_GAP_MS);
+    const still: InviteCode[] = [];
+    for (const c of waiting) {
+      const held = await net.verifier.balance(c.address, INVITE_ASSET_ID).catch(() => null);
+      if (held !== null && held >= BigInt(c.amountBase)) {
+        c.state = 'open';
+        c.openedAt = nowIso(net);
+      } else {
+        still.push(c);
+      }
     }
-    if (held < BigInt(c.amountBase)) short.push(c);
-    c.state = 'open';
-    c.openedAt = nowIso(net);
+    waiting = still;
   }
   ledger.save();
-  if (unread.length > 0) {
-    io.say(`NEAR Intents ran the batch, but ${unread.length} code${unread.length === 1 ? '' : 's'} could not be read back. The links wait until every code reads funded.`);
-    io.say('Run `npm run invite -- issue --resume` to read them again.');
+  if (waiting.length > 0) {
+    io.say(`NEAR Intents ran the batch, but ${waiting.length} code${waiting.length === 1 ? ' does' : 's do'} not read funded yet, so the links wait until every code does.`);
+    io.say('Run `npm run invite -- issue --resume` in a minute to read them again.');
     return 1;
   }
   if (move.printedAt === undefined) {
-    const shown = codes.filter((c) => c.state === 'open' && !short.includes(c));
+    const shown = codes.filter((c) => c.state === 'open');
     const lines = shown.map((c, i) => `${String(i + 1).padStart(3)}  ${shortAddress(c.address)}  ${inviteLink(c.code)}`);
     io.reveal(
       [
@@ -568,13 +634,8 @@ async function openCodes(ledger: Ledger, move: Move, net: MoneyNet, io: Io): Pro
     move.printedAt = nowIso(net);
     ledger.save();
   }
-  if (short.length > 0) {
-    io.say(`${short.length} code${short.length === 1 ? '' : 's'} read less than ${short.length === 1 ? 'it was' : 'they were'} paid, so ${short.length === 1 ? 'its link was' : 'their links were'} held back:`);
-    for (const c of short) io.say(`  ${c.address}`);
-    io.say('Run `npm run invite -- reclaim --address <address>` to pay what they hold back to T.');
-  }
-  io.say(`Done. ${codes.length - short.length} code${codes.length - short.length === 1 ? ' is' : 's are'} open. \`npm run invite -- status\` shows them, never the codes.`);
-  return short.length > 0 ? 1 : 0;
+  io.say(`Done. ${codes.length} code${codes.length === 1 ? ' is' : 's are'} open. \`npm run invite -- status\` shows them, never the codes.`);
+  return 0;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -596,7 +657,7 @@ async function closeCode(ledger: Ledger, code: InviteCode, result: MoveResult, n
   }
   // Nothing moved. The holder may have claimed it in the same minute.
   const held = await net.verifier.balance(code.address, INVITE_ASSET_ID).catch(() => null);
-  if (held !== null && held < MIN_CLAIM_BASE) {
+  if (code.state === 'open' && held !== null && held < MIN_CLAIM_BASE) {
     code.state = 'claimed';
     code.closedAt = nowIso(net);
     ledger.save();
@@ -625,8 +686,12 @@ export async function reclaimCodes(ledger: Ledger, net: MoneyNet, req: ReclaimRe
     }
   }
 
+  /* Open codes, and any code money reached although no signature of this book can still fund it:
+     a void code, or a pending code of a batch never signed (both hold nothing unless something
+     outside this book paid them). A code with a reclaim still waiting for proof is left to it. */
   const busy = new Set(pendingMoves(book, 'reclaim').map((m) => m.signer));
-  let chosen = book.codes.filter((c) => c.state === 'open' && !busy.has(c.address));
+  const unsigned = new Set(book.moves.filter((m) => m.kind === 'batch' && m.state === 'pending' && m.signed === undefined).map((m) => m.id));
+  let chosen = book.codes.filter((c) => !busy.has(c.address) && (c.state === 'open' || c.state === 'void' || (c.state === 'pending' && unsigned.has(c.batch))));
   if (req.label !== undefined) chosen = chosen.filter((c) => c.label === req.label);
   if (req.address !== undefined) {
     const wanted = req.address.trim().toLowerCase();
@@ -647,6 +712,7 @@ export async function reclaimCodes(ledger: Ledger, net: MoneyNet, req: ReclaimRe
       io.say(`${shortAddress(code.address)}: couldn't read its balance. Left as it is.`);
       failures += 1;
     } else if (held < MIN_CLAIM_BASE) {
+      if (code.state !== 'open') continue;
       if (!req.simulateOnly) {
         code.state = 'claimed';
         code.closedAt = nowIso(net);
@@ -660,7 +726,10 @@ export async function reclaimCodes(ledger: Ledger, net: MoneyNet, req: ReclaimRe
     }
   }
   if (!req.simulateOnly) ledger.save();
-  if (plan.length === 0) return failures > 0 ? 1 : 0;
+  if (plan.length === 0) {
+    if (failures === 0 && chosen.every((c) => c.state !== 'open' && c.state !== 'claimed')) io.say('No code holds money to reclaim.');
+    return failures > 0 ? 1 : 0;
+  }
 
   const total = plan.reduce((sum, p) => sum + p.held, 0n);
   if (!req.simulateOnly) {
@@ -832,6 +901,10 @@ export async function statusLines(book: InviteBook, net: MoneyNet): Promise<stri
       if (code.state === 'open') {
         const left = await net.verifier.balance(code.address, INVITE_ASSET_ID).catch(() => null);
         state = left === null ? 'open (balance unread)' : left < MIN_CLAIM_BASE ? 'claimed' : 'open';
+      } else if (code.state === 'void' || code.state === 'pending') {
+        // These hold nothing unless money reached them from outside this book: say so, and how.
+        const left = await net.verifier.balance(code.address, INVITE_ASSET_ID).catch(() => null);
+        if (left !== null && left >= MIN_CLAIM_BASE) state = `${state}, holds $${formatUsdc(left)}${code.state === 'void' ? ': reclaim takes it back' : ''}`;
       }
       if (pendingMoves(book, 'reclaim').some((m) => m.signer === code.address)) state = `${state}, reclaim pending`;
       out.push(`  ${code.address}  $${formatUsdc(BigInt(code.amountBase))}  ${state}`);

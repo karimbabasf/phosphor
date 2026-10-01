@@ -10,6 +10,7 @@ import path from 'node:path';
 
 import { containsInviteCode } from '../../src/invite/code.ts';
 import { INVITE_ASSET_ID } from '../../src/invite/payload.ts';
+import { takeLock } from '../../scripts/invite/file.ts';
 import { proofMain } from '../../scripts/invite-proof.ts';
 import type { ProofFile, ProofNet } from '../../scripts/invite-proof.ts';
 import { freshChain, netOn, oneclickOn } from './helpers/invite-chain.ts';
@@ -230,4 +231,78 @@ test('run stops cleanly when the deposit never comes, and picks up from there on
   b.chain.balances.set(b.proof().book.treasury.address, 1_000_000n);
   const next = await b.run(['run', '--file', b.file, '--wait-minutes', '1']);
   assert.equal(next.code, 0, [...next.out, ...next.err].join('\n'));
+});
+
+// The publish lands, then NEAR stops answering: whatever was sent is signed, sent and unproven.
+function goesQuietAfterPublish(b: Bench): ProofNet {
+  const relay = b.net.relay;
+  return {
+    ...b.net,
+    relay: {
+      ...relay,
+      async publishIntent(req) {
+        const answer = await relay.publishIntent(req);
+        b.chain.offline = true;
+        return answer;
+      },
+    },
+  };
+}
+
+test('a release code cut off part way is finished by release-code itself, its link shown once, and run waits for it', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  b.chain.balances.set(b.proof().book.treasury.address, 5_000_000n);
+  const first = await b.run(['release-code', '--file', b.file], {}, goesQuietAfterPublish(b));
+  assert.equal(first.code, 1);
+  assert.ok(!first.out.join('\n').includes('https://phosphor.money/invite#'));
+  b.chain.offline = false;
+
+  const run = await b.run(['run', '--file', b.file]);
+  assert.equal(run.code, 1);
+  assert.match(run.err.join('\n'), /release code batch .* still pending/);
+
+  const second = await b.run(['release-code', '--file', b.file]);
+  assert.equal(second.code, 0, [...second.out, ...second.err].join('\n'));
+  const code = b.proof().book.codes.find((c) => c.label === 'release proof')!;
+  assert.equal(second.out.join('\n').split(`https://phosphor.money/invite#${code.code}`).length - 1, 1);
+  assert.equal(b.chain.published.length, 1, 'the release code was signed and sent once');
+});
+
+test('one command at a time per proof file; report still reads beside one', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const lock = takeLock(b.file);
+  try {
+    for (const argv of [['run', '--file', b.file], ['sweep', '--file', b.file, '--to', SINK], ['release-code', '--file', b.file]]) {
+      const r = await b.run(argv);
+      assert.equal(r.code, 1);
+      assert.match(r.err.join('\n'), /holds the lock/);
+    }
+    assert.equal((await b.run(['report', '--file', b.file])).code, 0);
+  } finally {
+    lock.release();
+  }
+});
+
+test('a sweep left unproven is resent as the same bytes to where it was signed to pay, never signed again', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  b.chain.balances.set(t, 1_000_000n);
+  const first = await b.run(['sweep', '--file', b.file, '--to', SINK], {}, goesQuietAfterPublish(b));
+  assert.equal(first.code, 1);
+  b.chain.offline = false;
+  const other = '0x2222222222222222222222222222222222222222';
+  const second = await b.run(['sweep', '--file', b.file, '--to', other]);
+  assert.equal(second.code, 0, [...second.out, ...second.err].join('\n'));
+  assert.equal(b.chain.balances.get(SINK), 1_000_000n, 'the first sweep landed where it was signed to');
+  assert.equal(b.chain.balances.get(other) ?? 0n, 0n);
+  const sweeps = b.proof().results.sweep!;
+  assert.deepEqual(sweeps.map((s) => [s.from, s.to, s.outcome]), [
+    [t, SINK, 'unconfirmed'],
+    [t, SINK, 'landed'],
+  ]);
+  const fromT = b.chain.published.filter((p) => (JSON.parse(p.payload) as Body).signer_id === t);
+  assert.equal(new Set(fromT.map((p) => p.signature)).size, 1, 'one signature out of T');
 });

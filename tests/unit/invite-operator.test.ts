@@ -119,6 +119,13 @@ function assertNoCode(text: string, book: InviteBook): void {
   assert.ok(!text.includes(book.treasury.key.slice(2)), "T's key reached the output");
 }
 
+/* The signatures that can run: every signature but the rehearsals, which are the only payloads
+   ever handed to the simulation (scripts/invite/money.ts, "Rehearsed, never simulated as itself"). */
+function runnable(b: Bench): string[] {
+  const rehearsed = new Set(b.chain.simulated.flat().map((s) => s.payload));
+  return b.signed.filter((p) => !rehearsed.has(p));
+}
+
 test('every command refuses a stdin that is not a terminal, before it asks for anything', async () => {
   const b = bench();
   for (const argv of [['treasury'], ['issue', '--count', '1', '--amount', '5', '--label', 'x'], ['reclaim'], ['withdraw', '--to', '0x9858effd232b4033e47d90003d41ec34ecaeda94'], ['status']]) {
@@ -211,12 +218,19 @@ test('issue: one payload from T, simulated, published once with no quote, proven
   const book = b.book();
   const t = book.treasury.address;
 
-  assert.equal(b.signed.length, 1, 'one signature for the batch');
-  assert.equal(b.chain.simulated.length, 1, 'simulated before the publish');
+  assert.equal(runnable(b).length, 1, 'one signature that can run, for the whole batch');
+  assert.equal(b.chain.simulated.length, 1, 'rehearsed once before it was signed');
   assert.equal(b.chain.published.length, 1);
   const sent = b.chain.published[0]!;
   assert.deepEqual(sent.quoteHashes, []);
-  assert.equal(sent.payload, b.signed[0]);
+  assert.equal(sent.payload, runnable(b)[0]);
+  // The RPC saw only the rehearsal, whose signature died a millisecond after the block it was
+  // simulated at; the bytes that can run went to the relay alone, after they were on disk.
+  const rehearsal = b.chain.simulated[0]![0]!;
+  assert.notEqual(rehearsal.payload, sent.payload);
+  const rehearsed = JSON.parse(rehearsal.payload) as { deadline: string; intents: unknown[] };
+  assert.deepEqual(rehearsed.intents, (JSON.parse(sent.payload) as { intents: unknown[] }).intents, 'the rehearsal pays exactly what the batch pays');
+  assert.ok(Date.parse(rehearsed.deadline) < Date.parse((JSON.parse(sent.payload) as { deadline: string }).deadline) - 100_000);
   const body = JSON.parse(sent.payload) as { signer_id: string; intents: Array<{ intent: string; receiver_id: string; tokens: Record<string, string> }> };
   assert.equal(body.signer_id, t);
   assert.equal(body.intents.length, 10);
@@ -268,12 +282,12 @@ test('a second issue is refused while one is pending, and --resume finishes the 
   assert.equal(second.code, 1);
   assert.ok(second.out.some((l) => /A batch is still pending: "first", 2 codes/.test(l)));
   assert.equal(b.book().codes.length, 2, 'no code was added');
-  assert.equal(b.signed.length, 1, 'nothing was signed');
+  assert.equal(runnable(b).length, 1, 'nothing was signed');
   assert.deepEqual(second.prompts, ['Invite file passphrase: '], 'it never got as far as asking');
 
   const resumed = await b.run(['issue', '--resume'], [PASS]);
   assert.equal(resumed.code, 0, resumed.out.join('\n'));
-  assert.equal(b.signed.length, 1, 'the batch was never signed again');
+  assert.equal(runnable(b).length, 1, 'the batch was never signed again');
   assert.equal(b.chain.published.length, 1, 'it had run already, so nothing was resent');
   const book = b.book();
   assert.ok(book.codes.every((c) => c.state === 'open'));
@@ -303,7 +317,7 @@ test('a batch cut off after its publish is resent as the same bytes, never signe
   b.chain.relayMode = 'ok';
   const resumed = await b.run(['issue', '--resume'], [PASS]);
   assert.equal(resumed.code, 0, resumed.out.join('\n'));
-  assert.equal(b.signed.length, 1, 'signed once, ever');
+  assert.equal(runnable(b).length, 1, 'signed once, ever');
   assert.equal(b.chain.published.length, 1);
   assert.equal(b.chain.published[0]!.payload, pending.signed!.payload);
   assert.equal(b.chain.published[0]!.signature, pending.signed!.signature);
@@ -316,7 +330,7 @@ test('a batch whose signed bytes expire unspent is closed on proof: codes void, 
   const r = await b.run(['issue', '--count', '2', '--amount', '5', '--label', 'refused'], [PASS, 'yes']);
   assert.equal(r.code, 1);
   assert.ok(r.out.some((l) => /turned it away: unauthorized.*no Plan B/.test(l)));
-  assert.equal(b.signed.length, 1, 'never signed again');
+  assert.equal(runnable(b).length, 1, 'never signed again');
   assert.equal(b.chain.published.length, 1, 'never sent again');
   assert.equal(b.chain.oneclick.quotes, 0, 'and never anywhere else');
   const book = b.book();
@@ -339,7 +353,7 @@ test('no reply: the identical bytes go out once more, and the batch is proven by
   assert.equal(r.code, 0, r.out.join('\n'));
   assert.equal(b.chain.published.length, 2);
   assert.deepEqual(b.chain.published[1], b.chain.published[0]);
-  assert.equal(b.signed.length, 1);
+  assert.equal(runnable(b).length, 1);
   assert.ok(b.book().codes.every((c) => c.state === 'open'));
 });
 
@@ -355,7 +369,7 @@ test('--simulate-only builds and simulates the funding payload, publishes nothin
   assert.equal(b.chain.published.length, 0, 'nothing published');
   assert.deepEqual(fs.readFileSync(b.file), before, 'nothing written');
   assert.ok(r.out.some((l) => /would refuse it: .*insufficient balance or overflow/.test(l)));
-  assert.ok(r.out.some((l) => /^Nothing was published and nothing was written\. The dry run's signature expired at \S+, one millisecond after the block it was simulated at, so it can never run\.$/.test(l)));
+  assert.ok(r.out.some((l) => /^Nothing was published and nothing was written\. The signature expired at \S+, one millisecond after a final block stamped no later than this Mac's clock, so no block can ever run it\.$/.test(l)));
   assert.deepEqual(r.prompts, ['Invite file passphrase: '], 'no confirmation for a dry run');
 
   const t = b.book().treasury.address;
@@ -384,7 +398,7 @@ test('a network that cannot simulate at a fixed block gets no dry run signed at 
   const { simulateAt: _unused, ...plain } = b.net;
   const r = await b.run(['issue', '--count', '2', '--amount', '5', '--label', 'dry run', '--simulate-only'], [PASS], { net: plain });
   assert.equal(r.code, 1);
-  assert.ok(r.out.some((l) => /cannot simulate at a fixed block, so no dry run is signed/.test(l)));
+  assert.ok(r.out.some((l) => /cannot simulate at a fixed block, so nothing was signed/.test(l)));
   assert.equal(b.signed.length, 0);
   assert.equal(b.chain.simulated.length, 0);
 });
@@ -464,7 +478,7 @@ test("reclaim pays each open code's whole balance back to T with the code's own 
   const [claimed, dusty, plain] = book.codes;
   b.chain.balances.set(claimed!.address, 0n); // its holder claimed it
   b.chain.balances.set(dusty!.address, 5_000_001n); // someone sent it dust
-  const signedBefore = b.signed.length;
+  const signedBefore = runnable(b).length;
 
   const r = await b.run(['reclaim'], [PASS, 'yes']);
   assert.equal(r.code, 0, r.out.join('\n'));
@@ -472,7 +486,7 @@ test("reclaim pays each open code's whole balance back to T with the code's own 
   assert.equal(book.codes[0]!.state, 'claimed');
   assert.equal(book.codes[1]!.state, 'reclaimed');
   assert.equal(book.codes[2]!.state, 'reclaimed');
-  const reclaims = b.signed.slice(signedBefore).map((p) => JSON.parse(p) as { signer_id: string; intents: Array<{ receiver_id: string; tokens: Record<string, string> }> });
+  const reclaims = runnable(b).slice(signedBefore).map((p) => JSON.parse(p) as { signer_id: string; intents: Array<{ receiver_id: string; tokens: Record<string, string> }> });
   assert.deepEqual(
     reclaims.map((p) => [p.signer_id, p.intents.length, p.intents[0]!.receiver_id, p.intents[0]!.tokens[INVITE_ASSET_ID]]),
     [
@@ -528,7 +542,8 @@ test('withdraw pays T to the typed address only after its last six are typed bac
   const r = await b.run(['withdraw', '--to', to], [PASS, 'AEDA94', 'yes']);
   assert.equal(r.code, 0, r.out.join('\n'));
   assert.deepEqual(r.prompts, ['Invite file passphrase: ', "Type the last six characters of the address on Phosphor's Receive screen: ", `Send $7.00 from T to ${to.toLowerCase()}? Type yes to go on: `]);
-  const body = JSON.parse(b.signed[0]!) as { signer_id: string; intents: Array<{ receiver_id: string; tokens: Record<string, string> }> };
+  assert.equal(runnable(b).length, 1);
+  const body = JSON.parse(runnable(b)[0]!) as { signer_id: string; intents: Array<{ receiver_id: string; tokens: Record<string, string> }> };
   assert.equal(body.signer_id, b.book().treasury.address);
   assert.deepEqual(body.intents, [{ intent: 'transfer', receiver_id: to.toLowerCase(), tokens: { [INVITE_ASSET_ID]: '7000000' } }]);
   assert.equal(b.chain.balances.get(to.toLowerCase()), 7_000_000n);
@@ -563,7 +578,7 @@ test('withdraw refuses an invite account as the receiver, and waits while a batc
   const waiting = await b.run(['withdraw', '--to', to], [PASS, 'eda94', 'yes']);
   assert.equal(waiting.code, 1);
   assert.ok(waiting.out.some((l) => /A batch is still pending/.test(l)));
-  assert.equal(b.signed.length, 1, 'only the batch was ever signed');
+  assert.equal(runnable(b).length, 1, 'only the batch was ever signed');
 });
 
 test('no operator file reads the keystore, and the CLI never takes a secret on its command line', () => {
@@ -613,4 +628,132 @@ test('the passphrase prompt turns echo off before it shows, echoes nothing, and 
   assert.equal(await stopped, null, 'Ctrl-C cancels');
   assert.equal(cancelled.isRaw, false);
   assert.ok(!cancelled.log.some((l) => l.includes('secret')));
+});
+
+test('a rehearsal nobody answers, or one the verifier refuses, leaves nothing that can run', async () => {
+  for (const mode of ['silent', 'refused'] as const) {
+    const b = await funded(20n);
+    const t = b.book().treasury.address;
+    const simulateAt: MoneyNet['simulateAt'] = async (signed) => {
+      b.chain.simulated.push(signed);
+      return mode === 'silent' ? null : { ok: false, refusal: `account '${t}' is locked` };
+    };
+    const r = await b.run(['issue', '--count', '2', '--amount', '5', '--label', mode], [PASS, 'yes'], { net: { ...b.net, simulateAt } });
+    assert.equal(r.code, 1);
+    assert.ok(r.out.some((l) => /^Nothing that can run was sent: /.test(l)), r.out.join('\n'));
+    assert.equal(runnable(b).length, 0, 'only rehearsals were signed');
+    assert.equal(b.chain.published.length, 0);
+    const book = b.book();
+    assert.equal(book.moves[0]!.state, 'failed');
+    assert.ok(book.codes.every((c) => c.state === 'void'));
+    // Whoever saw the rehearsals publishes them: not one can run, at any later block.
+    b.chain.chain += 600;
+    for (const s of b.chain.simulated.flat()) {
+      assert.equal(await verdict(b.chain, s.payload, s.signature, false), 'deadline has expired');
+    }
+    assert.equal(await b.net.verifier.balance(t, INVITE_ASSET_ID), 20_000_000n);
+  }
+});
+
+test("a final block stamped ahead of this Mac's clock is refused before anything is signed", async () => {
+  const b = await funded(20n);
+  // The RPC says the chain is five seconds ahead of the real time.
+  b.chain.chain = b.chain.mac + 5_000;
+  const dry = await b.run(['issue', '--count', '2', '--amount', '5', '--label', 'x', '--simulate-only'], [PASS]);
+  assert.equal(dry.code, 1);
+  assert.ok(dry.out.some((l) => /stamped 5\.0 s ahead of this Mac's clock.*so nothing was signed/.test(l)), dry.out.join('\n'));
+  const real = await b.run(['issue', '--count', '2', '--amount', '5', '--label', 'x'], [PASS, 'yes']);
+  assert.equal(real.code, 1);
+  assert.equal(b.signed.length, 0, 'not a rehearsal, not a batch');
+  assert.ok(b.book().codes.every((c) => c.state === 'void'));
+});
+
+test('an older copy of the invite file put back cannot make a batch sign twice: its money is reclaimed instead', async () => {
+  const b = await funded(20n);
+  let copy: Buffer | null = null;
+  const signerOf = (key: Hex): KeySigner => {
+    const inner = keySigner(key);
+    return {
+      address: inner.address,
+      async sign(payload) {
+        copy ??= fs.readFileSync(b.file); // the file as it stood before the batch was signed
+        b.signed.push(payload);
+        return inner.sign(payload);
+      },
+      drop: () => inner.drop(),
+    };
+  };
+  const net = { ...b.net, signerOf };
+  assert.equal((await b.run(['issue', '--count', '2', '--amount', '5', '--label', 'rolled back'], [PASS, 'yes'], { net })).code, 0);
+  const t = b.book().treasury.address;
+  assert.equal(b.chain.balances.get(t), 10_000_000n);
+  fs.writeFileSync(b.file, copy!);
+  const signedBefore = runnable(b).length;
+
+  const resumed = await b.run(['issue', '--resume'], [PASS], { net });
+  assert.equal(resumed.code, 1);
+  assert.ok(resumed.out.some((l) => /2 codes of this batch already hold money.*Nothing was signed/.test(l)), resumed.out.join('\n'));
+  assert.equal(runnable(b).length, signedBefore, 'never signed a second time');
+  assert.deepEqual(resumed.tty, [], 'and no link shown again');
+  assert.equal(b.chain.balances.get(t), 10_000_000n);
+
+  assert.equal((await b.run(['reclaim', '--label', 'rolled back'], [PASS, 'yes'], { net })).code, 0);
+  assert.equal(b.chain.balances.get(t), 20_000_000n);
+  const closed = await b.run(['issue', '--resume'], [PASS], { net });
+  assert.equal(closed.code, 1);
+  assert.equal(b.book().moves[0]!.state, 'failed');
+  assert.equal((await b.run(['issue', '--count', '1', '--amount', '5', '--label', 'next'], [PASS, 'yes'], { net })).code, 0);
+});
+
+test('a code a lagging node still shows empty is read again, and its link is never held back for good', async () => {
+  const b = await funded(20n);
+  let lagging = 7; // reads of the first code that still see the old state
+  let first: string | null = null;
+  const verifier = {
+    ...b.net.verifier,
+    async balance(account: string, asset: string) {
+      const value = await b.net.verifier.balance(account, asset);
+      if (account === first && lagging > 0 && value !== null && value > 0n) {
+        lagging -= 1;
+        return 0n;
+      }
+      return value;
+    },
+  };
+  const relay = b.net.relay;
+  const net: MoneyNet = {
+    ...b.net,
+    verifier,
+    relay: {
+      ...relay,
+      async publishIntent(req) {
+        first = (JSON.parse(req.payload) as { intents: Array<{ receiver_id: string }> }).intents[0]!.receiver_id;
+        return relay.publishIntent(req);
+      },
+    },
+  };
+  const r = await b.run(['issue', '--count', '2', '--amount', '5', '--label', 'lag'], [PASS, 'yes'], { net });
+  assert.equal(r.code, 1, 'four reads in a row saw it empty: the batch waits');
+  assert.ok(r.out.some((l) => /1 code does not read funded yet/.test(l)));
+  assert.deepEqual(r.tty, [], 'no link shown while one is missing');
+  const resumed = await b.run(['issue', '--resume'], [PASS], { net });
+  assert.equal(resumed.code, 0, resumed.out.join('\n'));
+  assert.equal(resumed.tty.join('').split('https://phosphor.money/invite#').length - 1, 2, 'both links, once');
+  assert.ok(b.book().codes.every((c) => c.state === 'open'));
+});
+
+test('money that reaches a void code is shown by status and taken back by reclaim', async () => {
+  const b = await funded(20n);
+  b.chain.relayMode = 'refuse';
+  assert.equal((await b.run(['issue', '--count', '1', '--amount', '5', '--label', 'refused'], [PASS, 'yes'])).code, 1);
+  b.chain.relayMode = 'ok';
+  const code = b.book().codes[0]!;
+  assert.equal(code.state, 'void');
+  b.chain.balances.set(code.address, 3_000_000n); // from anywhere: a replay, a stranger
+  const status = await b.run(['status'], [PASS]);
+  assert.ok(status.out.some((l) => l.includes(`${code.address}  $5.00  void, holds $3.00: reclaim takes it back`)), status.out.join('\n'));
+  assert.equal((await b.run(['reclaim'], [PASS, 'yes'])).code, 0);
+  assert.equal(b.chain.balances.get(code.address), 0n);
+  assert.equal(b.chain.balances.get(b.book().treasury.address), 23_000_000n);
+  assert.equal(b.book().codes[0]!.state, 'reclaimed');
 });

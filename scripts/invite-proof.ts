@@ -52,6 +52,8 @@ import { RELAY_URL, relayClient } from '../src/relay/client.ts';
 import type { RelayClient } from '../src/relay/client.ts';
 import { liveVerifier } from '../src/relay/verifier.ts';
 import { newBook, pendingMoves, readBook, unfinishedBatch } from './invite/book.ts';
+import { takeLock } from './invite/file.ts';
+import type { FileLock } from './invite/file.ts';
 import type { InviteBook } from './invite/book.ts';
 import { issueBatch, liveSimulateAt, newTreasury, resumeBatch, runMove, shortAddress, sweepAccount } from './invite/money.ts';
 import type { Io, Ledger, MoneyNet } from './invite/money.ts';
@@ -387,6 +389,10 @@ async function run(file: string, net: ProofNet, deps: ProofDeps, waitMs: number,
     return 2;
   }
 
+  if ((unfinishedBatch(proof.book)?.label ?? PROOF_LABEL) !== PROOF_LABEL) {
+    deps.err('The release code batch in this proof file is still pending. Run release-code again to finish it, then run this.');
+    return 1;
+  }
   const needed = codeBase * BigInt(PROOF_CODES);
   if (proof.results.funding === undefined) {
     const held = await waitForTreasury(net, t, needed, waitMs, deps);
@@ -400,10 +406,11 @@ async function run(file: string, net: ProofNet, deps: ProofDeps, waitMs: number,
   }
 
   if (proof.results.issue?.pass === undefined) {
+    const waiting = unfinishedBatch(proof.book);
     proof.results.issue ??= { treasuryBefore: await balanceOf(net, t), startedAt: new Date(net.now()).toISOString() };
     saveProof(file, proof);
     const io = quietIo(deps);
-    const code = unfinishedBatch(proof.book) !== undefined ? await resumeBatch(ledger, net, io) : await issueBatch(ledger, net, { count: PROOF_CODES, amountBase: codeBase, label: PROOF_LABEL, simulateOnly: false }, io);
+    const code = waiting !== undefined ? await resumeBatch(ledger, net, io) : await issueBatch(ledger, net, { count: PROOF_CODES, amountBase: codeBase, label: PROOF_LABEL, simulateOnly: false }, io);
     const move = proof.book.moves.filter((m) => m.kind === 'batch' && m.label === PROOF_LABEL).at(-1);
     const issue = proof.results.issue;
     if (move?.relaySaid !== undefined) issue.relaySaid = move.relaySaid;
@@ -475,18 +482,21 @@ async function sweep(file: string, net: ProofNet, deps: ProofDeps, rawTo: unknow
   const io = quietIo(deps);
   proof.results.sweep ??= [];
   let failures = 0;
-  const note = (from: string, amountBase: Amount, outcome: string, intentHash: string | null): void => {
-    proof.results.sweep!.push({ from, to, amountBase, outcome, intentHash, at: new Date(net.now()).toISOString() });
+  const note = (from: string, paid: string, amountBase: Amount, outcome: string, intentHash: string | null): void => {
+    proof.results.sweep!.push({ from, to: paid, amountBase, outcome, intentHash, at: new Date(net.now()).toISOString() });
     saveProof(file, proof);
   };
 
-  // A sweep a crash left signed goes first, as the same bytes.
+  // A sweep a crash left signed goes first, as the same bytes, to where it was signed to pay. An
+  // account whose earlier sweep is still unproven is not signed out of again.
+  const unproven = new Set<string>();
   for (const move of pendingMoves(proof.book, 'sweep')) {
     const signer = signerFor(proof, move.signer);
     if (signer === null) continue;
     try {
       const result = await runMove(ledger, move, signer, net, io.say);
-      note(move.signer, move.legs[0]?.amountBase ?? null, result.kind, move.signed?.intentHash ?? null);
+      note(move.signer, move.legs[0]?.receiverId ?? to, move.legs[0]?.amountBase ?? null, result.kind, move.signed?.intentHash ?? null);
+      if (result.kind === 'unconfirmed') unproven.add(move.signer);
       if (result.kind !== 'landed') failures += 1;
     } finally {
       signer.drop();
@@ -494,6 +504,7 @@ async function sweep(file: string, net: ProofNet, deps: ProofDeps, rawTo: unknow
   }
   // Codes first, then the receiver, then T.
   for (const account of ours) {
+    if (unproven.has(account)) continue;
     const signer = signerFor(proof, account);
     if (signer === null) continue;
     try {
@@ -502,7 +513,7 @@ async function sweep(file: string, net: ProofNet, deps: ProofDeps, rawTo: unknow
         if (amountBase === null) failures += 1;
         continue;
       }
-      note(account, amountOf(amountBase), result.kind, intentHash);
+      note(account, to, amountOf(amountBase), result.kind, intentHash);
       deps.out(`${shortAddress(account)}: $${formatUsdc(amountBase ?? 0n)} ${result.kind === 'landed' ? 'sent' : `not sent (${result.kind})`}.`);
       if (result.kind !== 'landed') failures += 1;
     } finally {
@@ -521,13 +532,9 @@ async function releaseCode(file: string, net: ProofNet, deps: ProofDeps, amountT
     deps.err('--amount is dollars, 0.01 to 1000, like 5.');
     return 2;
   }
-  if (unfinishedBatch(proof.book) !== undefined) {
-    deps.err('A batch in this proof file is still pending. Run `run` (or this again after it ends) first.');
-    return 1;
-  }
-  const held = await waitForTreasury(net, proof.book.treasury.address, amountBase, waitMs, deps);
-  if (held === null) {
-    deps.err(`T holds less than $${formatUsdc(amountBase)}. Send it to ${proof.book.treasury.address} with the app's Send, then run this again.`);
+  const waiting = unfinishedBatch(proof.book);
+  if (waiting !== undefined && waiting.label !== RELEASE_LABEL) {
+    deps.err('The proof batch in this file is still pending. Run `run` again to finish it first.');
     return 1;
   }
   let shown = false;
@@ -535,7 +542,18 @@ async function releaseCode(file: string, net: ProofNet, deps: ProofDeps, amountT
     shown = true;
     deps.out(block);
   });
-  const code = await issueBatch(ledger, net, { count: 1, amountBase, label: RELEASE_LABEL, simulateOnly: false }, io);
+  let code: number;
+  if (waiting !== undefined) {
+    // An earlier release code that stopped part way: finished, and its link shown, here.
+    code = await resumeBatch(ledger, net, io);
+  } else {
+    const held = await waitForTreasury(net, proof.book.treasury.address, amountBase, waitMs, deps);
+    if (held === null) {
+      deps.err(`T holds less than $${formatUsdc(amountBase)}. Send it to ${proof.book.treasury.address} with the app's Send, then run this again.`);
+      return 1;
+    }
+    code = await issueBatch(ledger, net, { count: 1, amountBase, label: RELEASE_LABEL, simulateOnly: false }, io);
+  }
   const issued = proof.book.codes.filter((c) => c.label === RELEASE_LABEL && c.state === 'open').at(-1);
   if (code !== 0 || issued === undefined || !shown) {
     deps.err('The release code was not issued. Run this again: a batch left pending is finished first.');
@@ -597,9 +615,12 @@ export async function proofMain(argv: string[], deps: ProofDeps): Promise<number
     deps.err('--wait-minutes is 0 to 1440.');
     return 2;
   }
+  let lock: FileLock | null = null;
   try {
     const file = proofPath(values['file'], deps.repoRoot ?? ROOT);
     const net = deps.net();
+    // One run at a time on one proof file: two would each sign out of the same accounts.
+    if (command !== 'report') lock = takeLock(file);
     switch (command) {
       case 'init':
         return await init(file, net, deps);
@@ -620,6 +641,8 @@ export async function proofMain(argv: string[], deps: ProofDeps): Promise<number
   } catch (err) {
     deps.err(err instanceof Error ? err.message : String(err));
     return 1;
+  } finally {
+    lock?.release();
   }
 }
 
