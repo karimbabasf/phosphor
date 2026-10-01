@@ -476,8 +476,9 @@ pub fn mint_token() -> Result<String, String> {
 /// The four secrets this shell mints per boot and hands to the backend down one pipe.
 ///
 /// `token` is the approval token, injected into the control webview and checked on every write.
-/// `nonce` is how this shell recognises its OWN backend: the backend echoes it in the x-phosphor
-/// header and nowhere else, so a local process that grabs the port cannot answer with it.
+/// `nonce` is how this shell recognises its OWN backend: the key the backend answers this shell's
+/// challenges with (Challenge). It never leaves the backend, so a local process that grabs the port
+/// cannot answer one.
 /// `seat` is the roster handshake secret, which the backend passes to the agents it spawns so a
 /// seat claimed from outside cannot fill the roster the human's own agent needs.
 /// `transport` is the key the Secure Enclave sidecar seals the wallet's data key under on its way
@@ -489,7 +490,7 @@ pub fn mint_token() -> Result<String, String> {
 /// it. The page never sees this value; only this thread and the backend do.
 ///
 /// All five are separate values. A secret reused for a second purpose is a secret whose exposure
-/// in the weaker place costs you the stronger one, and the nonce is deliberately public.
+/// in the weaker place costs you the stronger one.
 pub struct Handshake {
     pub token: String,
     pub nonce: String,
@@ -622,46 +623,124 @@ impl Backend {
     }
 }
 
-/// The value of one header in a raw HTTP response, lowercased by the caller.
+/// The value of one header in a raw HTTP response, lowercased by the caller. Only the head is
+/// read: a body line is never taken for a header.
 fn header_value<'a>(lowered: &'a str, name: &str) -> Option<&'a str> {
-    lowered
-        .lines()
-        .find_map(|line| line.strip_prefix(name))
-        .map(str::trim)
+    let head = lowered.split("\r\n\r\n").next().unwrap_or("");
+    head.lines().find_map(|line| line.strip_prefix(name)).map(str::trim)
+}
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    // <CommonCrypto/CommonHMAC.h>, in libSystem beside the CC_SHA256 payload.rs uses: the system's
+    // own HMAC, so the identity check brings no crate into the shell either.
+    fn CCHmac(algorithm: u32, key: *const std::ffi::c_void, key_len: usize, data: *const std::ffi::c_void, data_len: usize, mac: *mut std::ffi::c_void);
+}
+
+/// kCCHmacAlgSHA256.
+#[cfg(target_os = "macos")]
+const HMAC_SHA256: u32 = 2;
+
+#[cfg(target_os = "macos")]
+fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<[u8; 32], String> {
+    let mut out = [0u8; 32];
+    // SAFETY: CCHmac reads `key.len()` bytes of `key` and `data.len()` bytes of `data`, both live
+    // slices of exactly those lengths, and writes the 32-byte SHA-256 MAC into `out`.
+    unsafe {
+        CCHmac(HMAC_SHA256, key.as_ptr().cast(), key.len(), data.as_ptr().cast(), data.len(), out.as_mut_ptr().cast());
+    }
+    Ok(out)
+}
+
+/// The shell ships for macOS only. Anywhere else no backend can prove itself, so no window opens.
+#[cfg(not(target_os = "macos"))]
+fn hmac_sha256(_key: &[u8], _data: &[u8]) -> Result<[u8; 32], String> {
+    Err("the identity check needs macOS".to_string())
+}
+
+/// What the backend answers a challenge with: HMAC-SHA256 keyed by this spawn's nonce, over a
+/// domain line and the challenge. src/http/respond.ts (identityProof) computes the same thing.
+fn identity_proof(nonce: &str, challenge: &str) -> Result<String, String> {
+    let message = format!("phosphor identity\n{challenge}");
+    hmac_sha256(nonce.as_bytes(), message.as_bytes()).map(|mac| crate::payload::hex(&mac))
+}
+
+/// A question only the backend this shell started can answer.
+///
+/// TWO QUESTIONS, AND THEY WERE THE SAME FUNCTION ONCE. "Is a Phosphor on this port" names a
+/// process to quit. "Is MY backend on this port" gates the window, which is where the approval
+/// token gets injected, and the relay, the clipboard lines and the log copy. Answering the second
+/// with the first is what made the check defeatable: the marker was the fixed word
+/// `x-phosphor: control`, then the boot nonce itself, and the backend served either to anyone who
+/// asked, so a local process that read it once could answer with it after the backend died
+/// (audit 2026-10-01, L15).
+///
+/// Now the nonce reaches the backend over its stdin and never leaves it. Each request whose answer
+/// is trusted carries 32 fresh random bytes; the backend answers with a MAC of them under the
+/// nonce, and only that answer is taken. A captured answer is worth nothing for the next
+/// challenge, and every spawn gets a new nonce (spawn_backend), so nothing learned from one
+/// backend answers for the next.
+pub struct Challenge {
+    value: String,
+    expected: String,
+}
+
+impl Challenge {
+    pub fn new(nonce: &str) -> Result<Challenge, String> {
+        let value = mint_token()?;
+        let expected = identity_proof(nonce, &value)?;
+        Ok(Challenge { value, expected })
+    }
+
+    /// The request header line that carries it, line ending included, for a hand-rolled request.
+    pub fn header(&self) -> String {
+        format!("x-phosphor-challenge: {}\r\n", self.value)
+    }
+
+    /// The answer only the backend holding the nonce can give, for a test to answer with.
+    #[cfg(test)]
+    pub fn expected(&self) -> &str {
+        &self.expected
+    }
+
+    /// Compared in constant time, though nothing waits on the answer long enough to time it.
+    fn answered_by(&self, value: &str) -> bool {
+        value.len() == self.expected.len() && value.bytes().zip(self.expected.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+    }
 }
 
 /// Does this response come from the backend this shell started?
 ///
-/// TWO QUESTIONS, AND THEY WERE THE SAME FUNCTION UNTIL NOW. "Is a Phosphor on this port" names a
-/// process to quit. "Is MY backend on this port" gates the window, which is where the approval
-/// token gets injected. Answering the second with the first is what made the check defeatable: the
-/// marker used to be the fixed string `x-phosphor: control`, which any server can send, so a local
-/// process that took the port during the boot race or the respawn backoff was handed the token and
-/// then the keystore passphrase, in a window titled PHOSPHOR.
-///
-/// So `nonce` decides which question is being asked. `None` accepts any Phosphor-shaped answer and
-/// is only used where nothing is opened onto what answered: the launch survey, which gives way to
-/// a running copy, stops a proven orphan or refuses. `Some` requires the header
-/// to carry the value this shell minted this boot and gave the backend over its stdin, which is a
-/// channel no other process can read and no other process can guess.
+/// `None` asks only whether the answer is Phosphor-shaped, and is used only where nothing is
+/// opened onto what answered: the launch survey, which gives way to a running copy, stops a proven
+/// orphan or refuses. `Some` requires the header to carry the proof for that challenge.
 ///
 /// The marker is still a header rather than the page's <title>, and that half has not changed: a
 /// retitle of ui/index.html once left this polling a healthy server it could not recognise and the
 /// app died on a 45-second timeout with nothing wrong with it. Header names are case-insensitive
 /// on the wire, so the match is too, and the value is hex.
-pub fn identity_matches(response: &str, nonce: Option<&str>) -> bool {
+pub fn identity_matches(response: &str, challenge: Option<&Challenge>) -> bool {
     let lowered = response.to_ascii_lowercase();
     let Some(value) = header_value(&lowered, "x-phosphor:") else {
         return false;
     };
-    match nonce {
+    match challenge {
         None => true,
-        Some(want) => value == want.to_ascii_lowercase(),
+        Some(challenge) => challenge.answered_by(value),
     }
 }
 
+/// `nonce` as identity_matches takes its challenge: `None` for the survey, `Some` for every probe
+/// that opens anything onto the answer, with a challenge of its own.
 pub fn phosphor_is_listening(port: u16, nonce: Option<&str>) -> bool {
-    get_root(port).is_some_and(|res| identity_matches(&res, nonce))
+    let Some(nonce) = nonce else {
+        return get_root(port).is_some_and(|res| identity_matches(&res, None));
+    };
+    let Ok(challenge) = Challenge::new(nonce) else {
+        return false;
+    };
+    let head = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Connection: close\r\n\r\n", challenge.header());
+    request(port, &head, None).is_some_and(|res| identity_matches(&res, Some(&challenge)))
 }
 
 /// Reads the port the way src/config.ts does, and only the port.
@@ -921,6 +1000,30 @@ mod tests {
         port
     }
 
+    /// The backend's half of the challenge, as src/http/respond.ts answers it: the proof for the
+    /// challenge the request carried, under `nonce`, and the fixed word when it carried none.
+    /// `upper` sends the proof upper-cased, as a header value may arrive.
+    fn prover(nonce: &'static str, upper: bool) -> u16 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+        let port = listener.local_addr().expect("read the bound port").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let Ok(mut sock) = stream else { continue };
+                let mut scratch = [0u8; 2048];
+                let n = sock.read(&mut scratch).unwrap_or(0);
+                let asked = String::from_utf8_lossy(&scratch[..n]).to_ascii_lowercase();
+                let value = header_value(&asked, "x-phosphor-challenge:")
+                    .map(|challenge| identity_proof(nonce, challenge).unwrap())
+                    .unwrap_or_else(|| "control".to_string());
+                let value = if upper { value.to_ascii_uppercase() } else { value };
+                let res = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nX-Phosphor: {value}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = sock.write_all(res.as_bytes());
+                let _ = sock.shutdown(Shutdown::Both);
+            }
+        });
+        port
+    }
+
     #[test]
     fn a_squatter_sending_the_old_fixed_marker_is_not_this_shells_backend() {
         let port = stub("control");
@@ -935,14 +1038,45 @@ mod tests {
     }
 
     #[test]
-    fn the_backend_that_echoes_this_boots_nonce_is_recognised() {
-        let port = stub("a1b2c3d4");
+    fn only_the_backend_holding_this_spawns_nonce_answers_its_challenge() {
+        let port = prover("a1b2c3d4", false);
         assert!(phosphor_is_listening(port, Some("a1b2c3d4")));
+        assert!(!phosphor_is_listening(port, Some("a1b2c3d5")), "a backend keyed by another nonce is not this spawn's");
+        assert!(phosphor_is_listening(port, None), "and to the survey it is Phosphor-shaped");
+        let loud = prover("a1b2c3d4", true);
         assert!(
-            phosphor_is_listening(port, Some("A1B2C3D4")),
+            phosphor_is_listening(loud, Some("a1b2c3d4")),
             "header values are compared case-insensitively, as the names are"
         );
-        assert!(!phosphor_is_listening(port, Some("a1b2c3d5")), "one character off is not ours");
+    }
+
+    /// Audit L15: the nonce used to ride on every answer, token-free /api/health included, so a
+    /// process that asked once could answer with it after the backend died. Neither the nonce nor
+    /// an answer to an earlier challenge passes now: every probe asks a question of its own.
+    #[test]
+    fn a_squatter_replaying_the_nonce_or_an_answer_it_saw_is_refused() {
+        let nonce: &'static str = Box::leak("a1b2c3d4".repeat(8).into_boxed_str());
+        assert!(!phosphor_is_listening(stub(nonce), Some(nonce)), "the nonce itself");
+        let seen = Challenge::new(nonce).unwrap();
+        let earlier: &'static str = Box::leak(seen.expected().to_string().into_boxed_str());
+        assert!(!phosphor_is_listening(stub(earlier), Some(nonce)), "an answer to an earlier challenge");
+    }
+
+    #[test]
+    fn the_proof_is_hmac_sha256_of_the_challenge_as_the_backend_computes_it() {
+        // RFC 4231, test case 2: the system HMAC is the HMAC.
+        assert_eq!(
+            crate::payload::hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?").unwrap()),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        // The same vector tests/unit/boot-nonce.test.ts holds src/http/respond.ts to.
+        let nonce = "a1b2c3d4".repeat(8);
+        let challenge = "0123456789abcdef".repeat(4);
+        assert_eq!(identity_proof(&nonce, &challenge).unwrap(), "a12aa33231a6d44541d89e7db2589e4bc49d9c5d92fc4faa2208ab845a607375");
+        let a = Challenge::new(&nonce).unwrap();
+        let b = Challenge::new(&nonce).unwrap();
+        assert_ne!(a.header(), b.header(), "every challenge is fresh");
+        assert!(a.header().starts_with("x-phosphor-challenge: ") && a.header().ends_with("\r\n") && a.header().len() == 22 + 64 + 2);
     }
 
     #[test]
@@ -958,7 +1092,9 @@ mod tests {
     fn a_response_with_no_marker_at_all_is_never_a_match() {
         let res = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
         assert!(!identity_matches(res, None));
-        assert!(!identity_matches(res, Some("a1b2c3d4")));
+        assert!(!identity_matches(res, Some(&Challenge::new("a1b2c3d4").unwrap())));
+        let in_the_body = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\nx-phosphor: control";
+        assert!(!identity_matches(in_the_body, None), "a body line is never taken for the header");
     }
 
     #[test]

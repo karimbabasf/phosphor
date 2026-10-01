@@ -18,6 +18,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { identityProof } from '../src/http/respond.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TRIPLE = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
@@ -87,14 +88,17 @@ async function main(): Promise<number> {
   child.stdin.end();
 
   async function post(route: string, body: Json, asShell = false): Promise<Json> {
+    // Asked the way the shell asks (src-tauri/src/backend.rs, Challenge): a fresh challenge, and
+    // only an answer that proves this boot's nonce for it is read.
+    const challenge = crypto.randomBytes(32).toString('hex');
     const res = await fetch(`${base}${route}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: base },
+      headers: { 'content-type': 'application/json', origin: base, 'x-phosphor-challenge': challenge },
       // The window sends the token; the shell's relay sends the relay secret and never the token.
       body: JSON.stringify(asShell ? { relay: relaySecret, ...body } : { token, ...body }),
     });
-    if (!res.headers.get('x-phosphor')?.toLowerCase().includes(nonce.toLowerCase())) {
-      throw new Error(`the answer on ${route} did not carry this boot's nonce`);
+    if (res.headers.get('x-phosphor')?.toLowerCase() !== identityProof(nonce, challenge)) {
+      throw new Error(`the answer on ${route} did not prove this boot's nonce`);
     }
     return (await res.json()) as Json;
   }

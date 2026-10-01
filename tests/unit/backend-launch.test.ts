@@ -21,6 +21,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { WINDOW_TOKEN_VAR } from '../../src/http/auth.ts';
+import { identityProof } from '../../src/http/respond.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const BACKEND_RS = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'backend.rs'), 'utf8');
@@ -257,9 +258,16 @@ test('the real backend boots under exactly the shell\'s launch, and SIGUSR1 open
     assert.ok(up, `the backend never came up on PHOSPHOR_PORT under the shell's launch: ${stderr}`);
 
     const origin = `http://127.0.0.1:${port}`;
-    const root = await fetch(`${origin}/`);
+    const challenge = crypto.randomBytes(32).toString('hex');
+    const root = await fetch(`${origin}/`, { headers: { 'x-phosphor-challenge': challenge } });
     await root.arrayBuffer();
-    assert.equal(root.headers.get('x-phosphor'), nonce, 'the handshake reached it down the pipe, as the shell sends it');
+    assert.equal(root.headers.get('x-phosphor'), identityProof(nonce, challenge), 'the handshake reached it down the pipe, as the shell sends it');
+    // Audit L15: a token-free read used to hand any local caller the nonce itself.
+    for (const route of ['/', '/api/health']) {
+      const plain = await fetch(`${origin}${route}`);
+      await plain.arrayBuffer();
+      assert.equal(plain.headers.get('x-phosphor'), 'control', `${route} without a challenge answers the fixed word`);
+    }
 
     child.kill('SIGUSR1');
     await new Promise((resolve) => setTimeout(resolve, 700));

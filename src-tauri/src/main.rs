@@ -49,7 +49,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use backend::{
     configured_port, get_root, identity_matches, is_orphaned_backend, node_binary, phosphor_is_listening,
     pid_file_path, post_lock_when_idle, read_pid_file, request_within, spawn_backend, stop_orphan, write_pid_file, Backend,
-    Handshake, PidRecord, SpawnError, StopStep,
+    Challenge, Handshake, PidRecord, SpawnError, StopStep,
 };
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
@@ -123,9 +123,8 @@ fn probe_interval(elapsed: Duration) -> Duration {
 }
 
 /// What this shell minted, held so the window can be given the token, the close handler can lock
-/// with it, and the readiness polls can recognise the backend by its nonce. Never written to disk.
-/// The token and the seat secret are never served; the nonce is served, on purpose, and is the one
-/// of the three that is not a secret from anyone who can already reach the port.
+/// with it, and the readiness polls can recognise the backend by its nonce. Never written to disk
+/// and never served: the backend proves the nonce without sending it (backend::Challenge).
 pub(crate) struct Secrets(pub(crate) Handshake);
 
 /// Everything `start` resolved, so the supervisor thread does not have to resolve it again.
@@ -172,22 +171,23 @@ pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 ///
 /// THE ANSWER IS TRUSTED ONLY FROM THIS BOOT'S BACKEND. The port can be held by something else
 /// during the respawn backoff (see watch), and a line copied to the clipboard is a
-/// command the person is about to paste into a terminal, so the response has to carry this
-/// boot's nonce in its identity header (identity_matches, the same check the readiness poll
+/// command the person is about to paste into a terminal, so the response has to prove this
+/// boot's nonce against a fresh challenge (identity_matches, the same check the readiness poll
 /// makes) before a byte of it is read, and the command it carries has to be one printable line.
 fn mcp_command(_payload: &Path, _data: &Path, port: u16, nonce: &str) -> Result<String, String> {
     node_binary()?;
-    let head = format!("GET /api/connection HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    let challenge = Challenge::new(nonce)?;
+    let head = format!("GET /api/connection HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Connection: close\r\n\r\n", challenge.header());
     let raw = backend::request_within(port, &head, None, Duration::from_secs(5))
         .ok_or_else(|| "Phosphor is not answering yet, so there is no line to copy.".to_string())?;
-    connection_line_from(&raw, nonce)
+    connection_line_from(&raw, &challenge)
 }
 
 /// The command in a GET /api/connection response, or why it is refused. Pure, so the two
 /// refusals a person must never paste through (a stranger on the port, a command that is not
 /// one line) are held by tests without a socket.
-fn connection_line_from(response: &str, nonce: &str) -> Result<String, String> {
-    if !backend::identity_matches(response, Some(nonce)) {
+fn connection_line_from(response: &str, challenge: &Challenge) -> Result<String, String> {
+    if !backend::identity_matches(response, Some(challenge)) {
         return Err("Something else is answering in Phosphor's place, so nothing was copied. Quit it and try again.".to_string());
     }
     let body = response.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
@@ -293,21 +293,25 @@ fn macos_version() -> String {
 /// tail is a real read. `for=report` asks for the copy with addresses fingerprinted, since this
 /// text is about to land on a public issue.
 fn fetch_log_tail(port: u16, limit: u16, nonce: &str) -> Option<String> {
-    let head = format!("GET /api/log?limit={limit}&for=report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    let challenge = Challenge::new(nonce).ok()?;
+    let head = format!(
+        "GET /api/log?limit={limit}&for=report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Connection: close\r\n\r\n",
+        challenge.header()
+    );
     let raw = request_within(port, &head, None, Duration::from_secs(5))?;
-    log_from_response(&raw, nonce)
+    log_from_response(&raw, &challenge)
 }
 
 /// The answer to that GET, judged before a byte of it reaches the clipboard: a 200, the
-/// `x-phosphor` header carrying THIS boot's nonce (the same check that gates opening the
-/// window, `identity_matches`), and a JSON array. A local process squatting the configured
-/// port can answer 200 with a list; it cannot answer with the nonce, which reached the backend
-/// over its stdin and nothing else.
-fn log_from_response(raw: &str, nonce: &str) -> Option<String> {
+/// `x-phosphor` header carrying the proof of THIS boot's nonce for this request's challenge (the
+/// same check that gates opening the window, `identity_matches`), and a JSON array. A local
+/// process squatting the configured port can answer 200 with a list; it cannot answer the
+/// challenge, because the nonce reached the backend over its stdin and is never served.
+fn log_from_response(raw: &str, challenge: &Challenge) -> Option<String> {
     if !raw.starts_with("HTTP/1.1 200") {
         return None;
     }
-    if !identity_matches(raw, Some(nonce)) {
+    if !identity_matches(raw, Some(challenge)) {
         return None;
     }
     let body = raw.split_once("\r\n\r\n").map(|(_, b)| b)?;
@@ -1460,7 +1464,7 @@ fn main() {
 mod tests {
     use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL, log_from_response, log_lines, query_value, report_url, HELP_LINKS, HELP_REPORT_ID};
     use super::{launch, running_copy, Launch, Occupant, PidRecord};
-    use super::{failure_script, notice_script, splash_init, Failure, SpawnError, DID_NOT_OPEN, STOPPED};
+    use super::{failure_script, notice_script, splash_init, Challenge, Failure, SpawnError, DID_NOT_OPEN, STOPPED};
     use super::{
         ALTERED, ALTERED_TITLE, DOWNLOAD_URL, EXITED_STARTING, MCP_COPIED, NOT_BACK, NOT_RESTARTED, NO_WINDOW, OLD_SESSION, OTHER_PHOSPHOR,
         PORT_TAKEN, RESTARTED, START_BLOCKED, STOPPED_TWICE, TAKEN_ON_RESTART, TOO_SLOW,
@@ -1469,41 +1473,48 @@ mod tests {
 
     const NONCE: &str = "abc123";
 
-    fn answer(nonce_header: Option<&str>, body: &str) -> String {
-        let header = nonce_header.map(|n| format!("x-phosphor: {n}\r\n")).unwrap_or_default();
+    fn answer(identity: Option<&str>, body: &str) -> String {
+        let header = identity.map(|n| format!("x-phosphor: {n}\r\n")).unwrap_or_default();
         format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n{header}\r\n{body}")
     }
 
     #[test]
     fn the_copied_line_comes_only_from_this_boots_backend() {
+        let challenge = Challenge::new(NONCE).unwrap();
+        let proof = challenge.expected().to_string();
         let body = r#"{"agent":"codex","command":"codex mcp add phosphor --env PHOSPHOR_PORT=4177 -- node /x/src/mcp.ts"}"#;
         assert_eq!(
-            connection_line_from(&answer(Some(NONCE), body), NONCE).unwrap(),
+            connection_line_from(&answer(Some(&proof), body), &challenge).unwrap(),
             "codex mcp add phosphor --env PHOSPHOR_PORT=4177 -- node /x/src/mcp.ts"
         );
         // The header is matched without regard to case, as on the wire.
-        assert!(connection_line_from(&answer(Some("ABC123"), body), NONCE).is_ok());
-        // Another boot's nonce, the fixed marker any server can send, and no marker at all are
-        // all a stranger on the port: refused before the body is read.
-        assert!(connection_line_from(&answer(Some("other"), body), NONCE).unwrap_err().contains("Something else is answering"));
-        assert!(connection_line_from(&answer(Some("control"), body), NONCE).is_err());
-        assert!(connection_line_from(&answer(None, body), NONCE).is_err());
+        assert!(connection_line_from(&answer(Some(&proof.to_ascii_uppercase()), body), &challenge).is_ok());
+        // The nonce itself (what an older backend served to any caller), an answer to another
+        // challenge, the fixed marker any server can send, and no marker at all are all a stranger
+        // on the port: refused before the body is read.
+        assert!(connection_line_from(&answer(Some(NONCE), body), &challenge).unwrap_err().contains("Something else is answering"));
+        let earlier = Challenge::new(NONCE).unwrap();
+        assert!(connection_line_from(&answer(Some(earlier.expected()), body), &challenge).is_err(), "a replayed answer");
+        assert!(connection_line_from(&answer(Some("control"), body), &challenge).is_err());
+        assert!(connection_line_from(&answer(None, body), &challenge).is_err());
     }
 
     #[test]
     fn a_command_that_is_not_one_printable_line_is_never_copied() {
+        let challenge = Challenge::new(NONCE).unwrap();
+        let ours = |body: &str| answer(Some(challenge.expected()), body);
         let two_lines = r#"{"command":"codex mcp add phosphor\nrm -rf ~"}"#;
-        assert!(connection_line_from(&answer(Some(NONCE), two_lines), NONCE).unwrap_err().contains("not one line"));
+        assert!(connection_line_from(&ours(two_lines), &challenge).unwrap_err().contains("not one line"));
         let carriage = r#"{"command":"codex mcp add phosphor\r"}"#;
-        assert!(connection_line_from(&answer(Some(NONCE), carriage), NONCE).is_err());
+        assert!(connection_line_from(&ours(carriage), &challenge).is_err());
         let escape = "{\"command\":\"codex \\u001b[31m mcp add\"}";
-        assert!(connection_line_from(&answer(Some(NONCE), escape), NONCE).is_err());
-        assert!(connection_line_from(&answer(Some(NONCE), r#"{"command":""}"#), NONCE).is_err());
+        assert!(connection_line_from(&ours(escape), &challenge).is_err());
+        assert!(connection_line_from(&ours(r#"{"command":""}"#), &challenge).is_err());
         let long = format!(r#"{{"command":"{}"}}"#, "a".repeat(5000));
-        assert!(connection_line_from(&answer(Some(NONCE), &long), NONCE).is_err());
+        assert!(connection_line_from(&ours(&long), &challenge).is_err());
         // No line at all (Claude Desktop) and an unreadable body are refused with their own sentence.
-        assert!(connection_line_from(&answer(Some(NONCE), r#"{"command":null}"#), NONCE).unwrap_err().contains("has no line to paste"));
-        assert!(connection_line_from(&answer(Some(NONCE), "not json"), NONCE).unwrap_err().contains("could not be read"));
+        assert!(connection_line_from(&ours(r#"{"command":null}"#), &challenge).unwrap_err().contains("has no line to paste"));
+        assert!(connection_line_from(&ours("not json"), &challenge).unwrap_err().contains("could not be read"));
     }
 
     #[test]
@@ -1523,19 +1534,21 @@ mod tests {
 
     #[test]
     fn the_log_copy_takes_only_an_answer_that_carries_this_boots_nonce() {
+        let challenge = Challenge::new("abcdef0123").unwrap();
+        let proof = challenge.expected().to_ascii_uppercase();
         let body = r#"[{"ts":"t1","type":"tool_call","msg":"a"}]"#;
-        let ours = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Phosphor: ABCDEF0123\r\n\r\n{body}");
-        let copied = log_from_response(&ours, "abcdef0123").expect("this boot's nonce, upper-cased on the wire, is this shell's backend");
+        let ours = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Phosphor: {proof}\r\n\r\n{body}");
+        let copied = log_from_response(&ours, &challenge).expect("this boot's proof, upper-cased on the wire, is this shell's backend");
         assert_eq!(copied.lines().count(), 1);
         assert!(copied.contains(r#""msg":"a""#), "the event came through: {copied}");
         let squatter = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{body}");
-        assert_eq!(log_from_response(&squatter, "abcdef0123"), None, "a 200 with a list and no nonce is a stranger's text");
-        let old_boot = format!("HTTP/1.1 200 OK\r\nX-Phosphor: 999999\r\n\r\n{body}");
-        assert_eq!(log_from_response(&old_boot, "abcdef0123"), None, "another boot's nonce is not this shell's backend");
+        assert_eq!(log_from_response(&squatter, &challenge), None, "a 200 with a list and no proof is a stranger's text");
+        let replayed = format!("HTTP/1.1 200 OK\r\nX-Phosphor: abcdef0123\r\n\r\n{body}");
+        assert_eq!(log_from_response(&replayed, &challenge), None, "the nonce itself, read off an older backend, proves nothing");
         let fixed_marker = format!("HTTP/1.1 200 OK\r\nX-Phosphor: control\r\n\r\n{body}");
-        assert_eq!(log_from_response(&fixed_marker, "abcdef0123"), None, "the old fixed marker any server can send is refused");
-        let refused = format!("HTTP/1.1 401 Unauthorized\r\nX-Phosphor: abcdef0123\r\n\r\n{body}");
-        assert_eq!(log_from_response(&refused, "abcdef0123"), None);
+        assert_eq!(log_from_response(&fixed_marker, &challenge), None, "the old fixed marker any server can send is refused");
+        let refused = format!("HTTP/1.1 401 Unauthorized\r\nX-Phosphor: {proof}\r\n\r\n{body}");
+        assert_eq!(log_from_response(&refused, &challenge), None);
     }
 
     #[test]

@@ -19,65 +19,88 @@
 //      the first boot is still open, still holds the token, and goes on posting writes and the
 //      keystore passphrase to whatever is now answering.
 //
-// So the shell mints a nonce per boot, writes it down the backend's stdin beside the window token,
-// and the backend echoes it here. A squatter cannot read that pipe and cannot guess 32 random
-// bytes. The Rust half is tested in src-tauri/src/backend.rs against a stub server that sends the
-// header with the wrong value.
+// So the shell mints a nonce per spawn and writes it down the backend's stdin beside the window
+// token. The nonce was echoed in the header at first, which only moved the hole: any local process
+// could GET /api/health once, read it, and answer with it after the backend died (audit
+// 2026-10-01, L15). Now the backend never sends it. The shell asks with a fresh challenge and the
+// backend answers HMAC-SHA256(nonce, "phosphor identity\n" + challenge). The Rust half is tested in
+// src-tauri/src/backend.rs against stub servers that replay the nonce and an earlier answer.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import type http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { IDENTITY_HEADER, IDENTITY_VALUE, identityValue, useIdentityValue } from '../../src/http/respond.ts';
+import { CHALLENGE_HEADER, IDENTITY_HEADER, IDENTITY_VALUE, identityProof, identityValue, useIdentityValue } from '../../src/http/respond.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+const NONCE = 'a1b2c3d4'.repeat(8);
+const CHALLENGE = '0123456789abcdef'.repeat(4);
 
 function shell(file: string): string {
   return fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', file), 'utf8');
 }
 
-test('the identity value answers with this boot nonce once one has arrived', () => {
-  const before = identityValue();
-  try {
-    assert.equal(before, IDENTITY_VALUE, 'with no shell above it, the fixed word is the answer');
+function asked(challenge?: string): http.IncomingMessage {
+  return { headers: challenge === undefined ? {} : { [CHALLENGE_HEADER]: challenge } } as unknown as http.IncomingMessage;
+}
 
-    useIdentityValue('a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6');
-    assert.equal(identityValue(), 'a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6');
-    assert.notEqual(identityValue(), IDENTITY_VALUE, 'a value any process can send is not an identity');
-  } finally {
-    useIdentityValue(before);
+test('the identity header proves this boot nonce for a challenge and never shows the nonce', () => {
+  assert.equal(identityValue(asked(CHALLENGE)), IDENTITY_VALUE, 'with no shell above it, the fixed word is the only answer');
+  useIdentityValue(NONCE);
+  const proof = identityValue(asked(CHALLENGE));
+  assert.equal(proof, identityProof(NONCE, CHALLENGE));
+  // The vector src-tauri/src/backend.rs holds the shell's side to, so the two halves agree.
+  assert.equal(proof, 'a12aa33231a6d44541d89e7db2589e4bc49d9c5d92fc4faa2208ab845a607375');
+  assert.notEqual(identityValue(asked('f'.repeat(64))), proof, 'every challenge has its own answer');
+
+  for (const [why, req] of [
+    ['no challenge (the survey, the page)', asked()],
+    ['no request at all', undefined],
+    ['upper-case hex', asked(CHALLENGE.toUpperCase())],
+    ['too short', asked('ab')],
+    ['two challenges joined by the parser', asked(`${CHALLENGE}, ${CHALLENGE}`)],
+    ['header text', asked(`${CHALLENGE}\r\nx-phosphor: ${NONCE}`)],
+  ] as const) {
+    const value = identityValue(req);
+    assert.equal(value, IDENTITY_VALUE, `${why}: the fixed word`);
+    assert.ok(!value.includes(NONCE), `${why}: the nonce is never served`);
   }
 });
 
-test('an empty nonce leaves the fallback rather than blanking the marker', () => {
-  const before = identityValue();
-  try {
-    useIdentityValue('');
-    assert.equal(identityValue(), before, 'a missing marker is a boot no shell can recognise at all');
-  } finally {
-    useIdentityValue(before);
-  }
+test('an empty nonce leaves the earlier key rather than proving under an empty one', () => {
+  useIdentityValue(NONCE);
+  useIdentityValue('');
+  assert.equal(identityValue(asked(CHALLENGE)), identityProof(NONCE, CHALLENGE));
 });
 
-test('the served header carries whatever the identity value currently is', () => {
+test('both served headers answer the request they are answering', () => {
   const source = fs.readFileSync(path.join(ROOT, 'src', 'http', 'respond.ts'), 'utf8');
-  assert.ok(
-    source.includes('[IDENTITY_HEADER]: identityValue(),'),
-    'serveStatic must send the live value, not the constant it falls back to',
+  assert.equal(
+    source.split('[IDENTITY_HEADER]: identityValue(res.req),').length - 1,
+    2,
+    'sendJson and serveStatic must both prove against the challenge of the request in hand',
   );
+  assert.ok(!source.includes('[IDENTITY_HEADER]: identityValue(),'), 'an answer that ignores the challenge');
   assert.equal(IDENTITY_HEADER, 'x-phosphor', 'the NAME is what shell-handshake.test.ts pins');
+  assert.equal(CHALLENGE_HEADER, 'x-phosphor-challenge');
+  assert.match(shell('backend.rs'), /x-phosphor-challenge: \{\}\\r\\n/, 'the shell sends the challenge under the same name');
 });
 
-test('the shell compares the marker value rather than merely finding the header', () => {
+test('the shell checks a proof rather than merely finding the header', () => {
   const source = shell('backend.rs');
-  assert.match(source, /fn identity_matches\(response: &str, nonce: Option<&str>\)/);
+  assert.match(source, /fn identity_matches\(response: &str, challenge: Option<&Challenge>\)/);
   assert.match(source, /fn phosphor_is_listening\(port: u16, nonce: Option<&str>\)/);
+  assert.match(source, /format!\("phosphor identity\\n\{challenge\}"\)/, 'the same domain line as identityProof');
   assert.ok(
     !/contains\("x-phosphor:"\)/.test(source),
     'a header that is merely present is a liveness probe, and any local process can pass it',
   );
+  for (const file of ['main.rs', 'enclave.rs']) {
+    assert.ok(!/identity_matches\([^)]*Some\(nonce\)/.test(shell(file)), `${file}: compares a raw nonce`);
+  }
 });
 
 test('the handshake reaches the backend on the pipe and never on the environment', () => {
