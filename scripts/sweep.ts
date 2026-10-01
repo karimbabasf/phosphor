@@ -22,7 +22,10 @@
 // once is published) and every tag (a tag push is one flag away, and refs/tags cannot tell a
 // fetched tag from a local one). Local branches that never left this clone are not in it: in a
 // shared clone they are other agents' scratch work, and a release that fails on them is failing
-// on something no push of this branch would send. Two flags change the scope:
+// on something no push of this branch would send. GitHub also keeps every pull request's head
+// under refs/pull/*, which a clone does not fetch; fetching them as remote-tracking branches
+// (git fetch origin '+refs/pull/*/head:refs/remotes/origin/pull/*') puts them in this scope too.
+// Two flags change the scope:
 //
 //   --history=all         every ref in the clone, before pushing more than the current branch
 //   --history=<revision>  one revision and everything behind it, e.g. --history=origin/main
