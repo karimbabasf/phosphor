@@ -46,8 +46,9 @@ export class QuoteRefusal extends Error {
 // in, and the Hyperliquid withdraw rail names it as its counterparty.
 export const ONECLICK_COUNTERPARTY = 'oneclick:1click.chaindefuser.com';
 
-// Token registry shape loaded from data/tokens.json: chain -> symbol -> contract/mint id + decimals.
-export type TokensFile = Record<ChainId, Record<string, { tokenId: string; decimals: number }>>;
+// Token registry shape loaded from data/tokens.json: chain -> symbol -> contract/mint id + decimals,
+// and 1Click's own id for the coin where the registry pins one (resolveAsset holds the list to it).
+export type TokensFile = Record<ChainId, Record<string, { tokenId: string; decimals: number; assetId?: string }>>;
 
 // One entry from 1Click's GET /v0/tokens list.
 export type OneClickToken = {
@@ -198,9 +199,10 @@ function priceOf(t: OneClickToken): number | null {
 
 /* WHICH TOKEN A SPEND MEANS. Four tiers, and the order is the point.
 
-   The registry first, unchanged, so every asset this repo pins keeps its local anchor and its
-   decimals agreement with the venue (assetIdFor's expectDecimals). Nothing about USDC on the
-   five pinned chains moves. The gas-asset table second, for the same reason: it is this repo's
+   The registry first, unchanged, so every asset this repo pins keeps its local anchor: the
+   contract, the decimals the venue has to agree with (assetIdFor's expectDecimals), and 1Click's
+   own id for the coin where the registry carries one. Nothing about USDC on the five pinned
+   chains moves. The gas-asset table second, for the same reason: it is this repo's
    own word for what a chain's coin is, and no caller may shadow it.
 
    An assetId named outright third, taken exactly as it is. That is how a person answers the
@@ -233,6 +235,15 @@ export function resolveAsset(
   if (registry !== undefined) {
     const assetId = assetIdFor(network, registry.tokenId, list, registry.decimals);
     if (assetId === null) throw new ReasonError('unsupported_asset', `1click does not list ${symbol} on ${network}`);
+    /* The list is signed by nobody, so a list that files this contract under another id would
+       price, and the rail sign for, some other coin under this coin's name. Where the registry
+       pins 1Click's id, the list has to agree with it or nothing is quoted. */
+    if (registry.assetId !== undefined && assetId !== registry.assetId) {
+      throw new ReasonError(
+        'simulation_failed',
+        `1click's coin list files ${symbol} on ${network} as ${oneLine(assetId, 90)}, not the ${registry.assetId} this app pins, so nothing is quoted`,
+      );
+    }
     const meta = list.find((t) => t.assetId === assetId);
     return { kind: 'one', assetId, decimals: registry.decimals, native: false, priceUsd: meta === undefined ? null : priceOf(meta) };
   }

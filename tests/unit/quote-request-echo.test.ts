@@ -123,6 +123,7 @@ function swapDraft(minAmountOut = 0): SwapDraft {
   return {
     kind: 'swap', venue: 'intents-native', chain: 'base', toChain: 'arb', fromSymbol: 'USDC', toSymbol: 'USDT',
     amountIn: 100, amountInExact: '100', amountUsd: 100, minAmountOut, from: OWNER, to: OWNER, counterparty: INTENTS_NATIVE_COUNTERPARTY, quote: null,
+    assets: { origin: { assetId: ORIGIN, decimals: 6 }, destination: { assetId: DEST, decimals: 6 } },
   };
 }
 

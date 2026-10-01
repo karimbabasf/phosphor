@@ -383,6 +383,9 @@ The app refuses a move that loses too much of itself to fees, and names the fee 
 - A swap may give up at most 3 percent of its value to fees and price, by the swap service's own
   dollar figures for both sides. A quote whose request carries a fee, a field or a value the app
   did not ask for is refused before anything is signed.
+- A move runs with the coins its card was priced with. If the swap service's coin list names a
+  different coin, or counts one in different decimals, when you click, nothing is signed and you
+  ask again for a fresh quote.
 
 Every amount the policy reads is priced by the app, never supplied by the agent. A token the app
 cannot price is never assumed to be worth a dollar: a swap that spends one is valued off its quote

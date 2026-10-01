@@ -38,8 +38,8 @@ import type { Ctx } from './context.ts';
 // a reply that carried only the status word left the agent reading `failed` as a cue to retry.
 function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): void {
   ctx.sse.broadcastState();
-  // The simulation without its engineer's lines: the agent reads this reply and says the summary.
-  const { developer: _developer, ...simulation } = proposal.simulation ?? { developer: undefined };
+  // The simulation without its engineer's lines or the coins it pinned: the agent reads this reply and says the summary.
+  const { developer: _developer, assets: _assets, ...simulation } = proposal.simulation ?? { developer: undefined, assets: undefined };
   sendJson(res, 200, {
     id: proposal.id,
     status: proposal.status,

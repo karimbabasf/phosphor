@@ -73,6 +73,7 @@ import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, s
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import { noReply, submitSignedIntent } from './intents-submit.ts';
 import { pickOrExplain, swapSummary } from './asset-words.ts';
+import { heldToPin, pinnedAssets } from './asset-pin.ts';
 import { networkByVenue } from './intents-address.ts';
 import { ReasonError, quoteRefusalReason, reasonOf } from './reasons.ts';
 import { watchOneClick } from './watch.ts';
@@ -902,7 +903,11 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     // deposit ETH and no swap could ever spend it.
     const list = await (api as IntentsApiPort).tokens();
     const origin = originIn(draft, list);
-    const dest = pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain);
+    const dest = heldToPin(
+      draft.assets?.destination,
+      pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain),
+      `${draft.toSymbol} on ${draft.toChain}`,
+    );
     if (origin.assetId === dest.assetId) {
       throw new ReasonError('invalid_request', `${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
     }
@@ -921,9 +926,10 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     };
   }
 
-  // The asset a draft spends, off the one resolver, with its decimals.
+  // The asset a draft spends, off the one resolver, with its decimals: the pinned one once the card has priced it.
   function originIn(draft: SwapDraft, list: OneClickToken[]): { assetId: string; decimals: number } {
-    return pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    const listed = pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    return heldToPin(draft.assets?.origin, listed, `${draft.fromSymbol} on ${draft.chain}`);
   }
 
   /* WHAT THE DRAFT SPENDS AND HOW MUCH OF IT IS HELD, for the builder: "all" becomes this exact
@@ -1127,7 +1133,8 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         `execution signs one intent with the EVM key and transfers nothing; the balance must already be ` +
           `inside ${INTENTS_VERIFIER}`,
       );
-      return { ok: true, summary: swapSummary(swap, p.destSymbol, p.destNetwork), developer: lines.join('\n'), swap };
+      const assets = { origin: { assetId: p.originAsset, decimals: p.originDecimals }, destination: { assetId: p.destinationAsset, decimals: p.destDecimals } };
+      return { ok: true, summary: swapSummary(swap, p.destSymbol, p.destNetwork), developer: lines.join('\n'), swap, assets };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: '', developer: `intents-native simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
@@ -1137,6 +1144,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   async function execute(draft: SwapDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     requireVenue(draft);
     requireUsable();
+    pinnedAssets(draft.assets);
     const client = api as IntentsApiPort;
 
     const p = await plan(draft);

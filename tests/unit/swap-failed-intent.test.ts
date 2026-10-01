@@ -141,6 +141,8 @@ const draft: SwapDraft = {
   to: OWNER,
   counterparty: INTENTS_NATIVE_COUNTERPARTY,
   quote: null,
+  // The coins the card priced, pinned when the proposal landed (src/proposals/draft.ts).
+  assets: { origin: { assetId: ORIGIN, decimals: 6 }, destination: { assetId: DEST, decimals: 6 } },
 };
 
 test('PoC case 1: FAILED with the balance unchanged is not "nothing moved" while the signed transfer can still run', async () => {

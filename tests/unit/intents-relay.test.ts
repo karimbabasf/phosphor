@@ -81,6 +81,8 @@ function draftOf(over: Partial<SwapDraft> = {}): SwapDraft {
     to: OWNER,
     counterparty: INTENTS_RELAY_COUNTERPARTY,
     quote: null,
+    // The coins the card priced, pinned when the proposal landed (src/proposals/draft.ts).
+    assets: { origin: { assetId: USDC, decimals: 6 }, destination: { assetId: USDT, decimals: 6 } },
     ...over,
   };
 }
@@ -836,4 +838,31 @@ test('quote gives the floor-free price in the bought coin\'s units, reads nothin
   const sim = await h.rail.simulate(draftOf({ minAmountOut: 0 }));
   assert.equal(sim.ok, false);
   assert.match(sim.error ?? '', /minAmountOut is 0/);
+});
+
+// ---------- the coin the card priced is the coin that is bought ----------
+
+test('a token list that names another coin for the bought side after the click refuses the swap before any quote or signature', async () => {
+  let swapped = false;
+  const JUNK = 'nep141:junk-listed-token.near';
+  const client = { tokens: async () => (swapped ? apiTokens.map((t) => (t.assetId === USDT ? { ...t, assetId: JUNK } : t)) : apiTokens) } as unknown as OneClickClient;
+  const h = harness({ deps: { client } });
+  const draft = draftOf();
+  const sim = await h.rail.simulate(draft);
+  assert.equal(sim.ok, true, String(sim.error));
+  assert.deepEqual(sim.assets, draft.assets, 'the card priced exactly the coins the proposal pins');
+  swapped = true;
+  const asked = h.quotes.length;
+  await assert.rejects(() => h.rail.execute(draft, 'p-1', h.hooks), /coin list now gives USDT on near as nep141:junk-listed-token\.near, not the nep141:usdt\.tether-token\.near this move was priced and approved with/);
+  assert.equal(h.quotes.length, asked, 'no quote is asked for the other coin');
+  assert.equal(h.signed.length, 0);
+  assert.equal(h.publishes.length, 0);
+});
+
+test('a relay swap approved before its coins were pinned is not run', async () => {
+  const h = harness();
+  const { assets: _pinned, ...unpinned } = draftOf();
+  await assert.rejects(() => h.rail.execute(unpinned, 'p-1', h.hooks), /approved before Phosphor pinned the coins it moves/);
+  assert.equal(h.quotes.length, 0);
+  assert.equal(h.signed.length, 0);
 });

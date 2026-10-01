@@ -549,6 +549,8 @@ const railDraft: SwapDraft = {
   to: OWNER,
   counterparty: INTENTS_NATIVE_COUNTERPARTY,
   quote: null,
+  // The coins the card priced, pinned when the proposal landed (src/proposals/draft.ts).
+  assets: { origin: { assetId: ORIGIN, decimals: 6 }, destination: { assetId: DEST, decimals: 6 } },
 };
 
 // The rail on a clock its own sleeps move, over a 1Click that answers `word(now)` and a chain

@@ -90,7 +90,7 @@ function payloadOf(over: Record<string, unknown> = {}): string {
 }
 
 function draftOf(over: Partial<IntentsSendDraft> = {}): IntentsSendDraft {
-  return {
+  const draft: IntentsSendDraft = {
     kind: 'intents_send',
     symbol: 'USDC',
     originAsset: USDC_ASSET,
@@ -102,6 +102,9 @@ function draftOf(over: Partial<IntentsSendDraft> = {}): IntentsSendDraft {
     counterparty: INTENTS_SEND_COUNTERPARTY,
     ...over,
   };
+  // The coin the card priced, pinned when the proposal landed (src/proposals/draft.ts).
+  const coin = { assetId: draft.originAsset, decimals: apiTokens.find((t) => t.assetId === draft.originAsset)?.decimals ?? 6 };
+  return { assets: { origin: coin, destination: coin }, ...draft };
 }
 
 type ApiCalls = {
@@ -118,12 +121,14 @@ type Overrides = {
   submitThrows?: boolean;
   // The receiver's balance as the verifier answers it, before and after; null is "would not answer".
   receiver?: Array<bigint | null>;
+  // The token list as 1Click answers it at each read: a list that changes between the card and the click.
+  tokens?: (list: OneClickToken[]) => OneClickToken[];
 };
 
 function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
   const calls: ApiCalls = { quotes: [], generated: [], submitted: [] };
   const api: IntentsApiPort = {
-    tokens: async () => apiTokens,
+    tokens: async () => over.tokens?.(apiTokens) ?? apiTokens,
     async quote(params) {
       calls.quotes.push(params);
       const unsigned: Record<string, unknown> = { quote: quoteOf(over.quote) };
@@ -342,4 +347,27 @@ test('the ETH flavor sends as ETH: nothing is swapped on the way', async () => {
   assert.equal(calls.quotes[0]?.originAsset, ETH_ASSET);
   assert.equal(calls.quotes[0]?.destinationAsset, ETH_ASSET);
   assert.equal(calls.quotes[0]?.amount, base.toString());
+});
+
+// ---------- the coin the card priced is the coin that moves ----------
+
+test('a token list that counts the sent coin in other decimals after the click refuses the send before any live quote', async () => {
+  // 6 decimals on the card; 8 at the click would sign a transfer of a hundred times the amount.
+  let changed = false;
+  const { rail, calls } = railOf({ tokens: (list) => (changed ? list.map((t) => (t.assetId === USDC_ASSET ? { ...t, decimals: 8 } : t)) : list) });
+  const draft = draftOf();
+  const sim = await rail.simulate(draft);
+  assert.equal(sim.ok, true, sim.summary);
+  assert.deepEqual(sim.assets, draft.assets, 'the card priced exactly the coin the proposal pins');
+  changed = true;
+  await assert.rejects(() => rail.execute(draft), /counts USDC in 8 decimals, not the 6 this move was priced and approved with, so nothing was signed/);
+  assert.equal(calls.quotes.filter((q) => q.dry === false).length, 0, 'no live quote is asked for');
+  assert.equal(calls.generated.length, 0);
+});
+
+test('a send approved before its coin was pinned is not run', async () => {
+  const { rail, calls } = railOf();
+  const { assets: _pinned, ...unpinned } = draftOf();
+  await assert.rejects(() => rail.execute(unpinned), /approved before Phosphor pinned the coins it moves, so it was not run and nothing was signed/);
+  assert.equal(calls.quotes.length, 0);
 });

@@ -554,7 +554,13 @@ the Solana and NEAR keys its mnemonic derived, and nothing reads them.
 
 Every amount that reaches a signature is a BigInt in base units, checked against the quote the
 human approved (`checkIntentPayload`), and the quote itself is checked against the venue's
-signature (`src/quote-signature.ts`) before it is trusted.
+signature (`src/quote-signature.ts`) before it is trusted. The coins it names are the coins the
+card was priced with. A coin's 1Click id and its decimals come off 1Click's token list, which
+nothing signs, so the proposal pins both into the draft when it lands (`src/proposals/draft.ts`),
+execute signs for exactly those, and a list that names another id or other decimals for them at
+the click refuses the move with nothing signed (`src/rails/asset-pin.ts`). The registry's own coins
+carry 1Click's id in `data/tokens.json`, and a list that files one under another id is refused
+before the card is priced.
 
 **One stated exception: an invite code.** A code is a key of its own:
 `keccak256("phosphor-invite-v1" || secret)` over 128 random bits, and its account inside

@@ -54,12 +54,13 @@
 // module called "deposit" can produce a user-signed venue action.
 
 import { formatUnits, isAddress } from 'viem';
-import type { HlDepositDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
+import type { AssetPin, HlDepositDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
 import { baseUnits, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '../intents.ts';
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { appFeeBpsOf, spendFromIntents } from './intents-spend.ts';
+import { heldToPin, pinnedAssets } from './asset-pin.ts';
 import { TYPICAL_SEC } from '../proposals/view.ts';
 import type { PreflightRunner } from '../preflight/live.ts';
 import { EXECUTE_MAX_AGE_MS, closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
@@ -304,17 +305,26 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       return { reasons: [`1click does not list ${oneLine(draft.originAsset, 60)}, the ${draft.symbol} flavor the draft spends`] };
     }
 
+    // The coin the card priced, once it has (src/rails/asset-pin.ts); the credited one is pinned above.
+    let coin: AssetPin;
+    try {
+      coin = heldToPin(draft.assets?.origin, { assetId: origin.assetId, decimals: origin.decimals }, draft.symbol);
+      heldToPin(draft.assets?.destination, { assetId: HYPERCORE_USDC_ASSET_ID, decimals: HYPERCORE_USDC_DECIMALS }, 'USDC on HyperCore');
+    } catch (err) {
+      return { reasons: [errText(err)] };
+    }
+
     let amountBase: bigint;
     try {
-      amountBase = toBaseUnits(draft.amount, origin.decimals);
+      amountBase = toBaseUnits(draft.amount, coin.decimals);
     } catch (err) {
-      return { reasons: [`amount ${draft.amount} ${draft.symbol} cannot be expressed at ${origin.decimals} decimals: ${errText(err)}`] };
+      return { reasons: [`amount ${draft.amount} ${draft.symbol} cannot be expressed at ${coin.decimals} decimals: ${errText(err)}`] };
     }
 
     return {
       plan: {
-        originAsset: draft.originAsset,
-        decimals: origin.decimals,
+        originAsset: coin.assetId,
+        decimals: coin.decimals,
         amountBase,
         minCreditedBase: toBaseUnits(draft.minCredited, HYPERCORE_USDC_DECIMALS),
       },
@@ -518,7 +528,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       priced.lines.push('execution signs one intent with the EVM key and sends nothing on any chain; the solver credits the venue');
       // A route NEAR Intents reports trouble on goes ahead, and says so first.
       if (route.notice !== null) priced.lines.unshift(route.notice);
-      return { ok: true, summary: priced.lines.join('\n'), send: priced.facts };
+      const assets = { origin: { assetId: p.originAsset, decimals: p.decimals }, destination: { assetId: HYPERCORE_USDC_ASSET_ID, decimals: HYPERCORE_USDC_DECIMALS } };
+      return { ok: true, summary: priced.lines.join('\n'), send: priced.facts, assets };
     } catch (err) {
       const message = errText(err);
       const closed = closedQuoteSentence(err, 'hypercore', 'hl_deposit');
@@ -645,6 +656,11 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   }
 
   async function execute(draft: HlDepositDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
+    try {
+      pinnedAssets(draft.assets);
+    } catch (err) {
+      return { ok: false, detail: errText(err), reason: 'simulation_failed' };
+    }
     // Re-plan and re-price rather than trust the approval. An approval can be minutes old and
     // a quote is a live price, so the checks that refused a bad draft have to run again here.
     const check = await simulateAt(draft, EXECUTE_MAX_AGE_MS);
