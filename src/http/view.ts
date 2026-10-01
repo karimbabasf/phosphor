@@ -31,6 +31,8 @@ import type { JsonBody } from './respond.ts';
 import { chartDigest, clearDrawn, focusFollowsChart, linesHeld, plansOn, resolveIndicator, resolveViewPatch } from './chart.ts';
 import { LEAD_ONLY_VIEW_TOOLS, VIEW_TOOLS } from './context.ts';
 import type { Ctx } from './context.ts';
+import { tradeNotes } from './read/trade.ts';
+import { markIfCarried } from '../web-read.ts';
 
 type ViewArgs = {
   ctx: Ctx;
@@ -60,6 +62,8 @@ function tradeWrite(apply: (a: ViewArgs) => Outcome): ViewHandler {
     }
     ctx.sse.broadcastTrade();
     ctx.sse.broadcastChart();
+    // The answer carries the whole trade read, so the notes in it mark the seat it is handed to.
+    markIfCarried(rest.by, tradeNotes(ctx));
     sendJson(res, 200, { ok: true, notes: out.notes, trade: ctx.trade.read() });
   };
 }
@@ -454,7 +458,7 @@ const HANDLERS: Record<string, ViewHandler> = {
     }
     return out;
   }),
-  trade_highlight: tradeWrite(({ ctx, args }) => ctx.trade.view.highlight(args, 'agent')),
+  trade_highlight: tradeWrite(({ ctx, args, by }) => ctx.trade.view.highlight(args, 'agent', by)),
   trade_overlay: tradeWrite(({ ctx, args }) => ctx.trade.view.setOverlay(args, 'agent')),
   trade_clear: tradeWrite(({ ctx, args }) => ctx.trade.view.clear(String(args.what ?? 'agent'))),
   // A plan as an idea: drawn on the chart and listed under Waiting with no authority. It answers
@@ -469,6 +473,7 @@ const HANDLERS: Record<string, ViewHandler> = {
     ctx.audit.append('tool_call', `plan: ${out.notes.join('; ')}`, { plan: out.row });
     ctx.sse.broadcastTrade();
     ctx.sse.broadcastChart();
+    markIfCarried(by, tradeNotes(ctx));
     sendJson(res, 200, { ok: true, notes: out.notes, plan: out.row, trade: ctx.trade.read() });
   },
 

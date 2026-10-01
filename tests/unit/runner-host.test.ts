@@ -22,6 +22,7 @@ import { planHash } from '../../src/trade/plan.ts';
 import type { PlanInput } from '../../src/trade/plan.ts';
 import type { Bar } from '../../src/trade/watch.ts';
 import type { InfoClient } from '../../src/hl/info.ts';
+import { clearWebRead, markWebRead } from '../../src/web-read.ts';
 
 const META = { assetId: 3, szDecimals: 4, maxLeverage: 25 };
 
@@ -834,4 +835,31 @@ test('a fire error with no ambiguous flag and no timeout wording still finishes 
   const r = h.runner.get('pl_2');
   assert.equal(r?.status, 'done');
   assert.equal(r?.endReason?.startsWith('failed'), true);
+});
+
+/* A plan's note is up to 120 characters of whatever the drawing agent read, kept in plans.json past
+   the chat. Written while the seat is marked, it is stamped like a chart label (src/web-read.ts),
+   and the trade read marks whoever it is handed to (web-read-notes.test.ts). */
+test('a plan note drawn or redrawn by a marked seat is stamped, kept on disk, and dropped with the note', () => {
+  const h = harness();
+  const marked = 'seat-plan-note-marked';
+  const clean = 'seat-plan-note-clean';
+  clearWebRead(marked);
+  clearWebRead(clean);
+  markWebRead(marked);
+  const idea = { ...planInputOf(row()), expiresAt: new Date(h.clock.now + 3_600_000).toISOString() };
+  const stamped = h.runner.draw({ ...idea, note: 'the page said buy here' }, marked);
+  const own = h.runner.draw({ ...idea, symbol: 'BTC', note: 'my own idea' }, clean);
+  const bare = h.runner.draw({ ...idea, symbol: 'SOL' }, marked);
+  assert.equal(stamped.webRead, true);
+  assert.equal(own.webRead, undefined);
+  assert.equal(bare.webRead, undefined, 'no note, nothing carried');
+  assert.equal(createPlanStore(h.dir).get(stamped.id)?.webRead, true, 'the stamp outlives the chat, as the note does');
+
+  const written = h.runner.redraw(own.id, { note: 'the page said so' }, marked);
+  assert.equal(written.ok && written.row.webRead, true, 'a note a marked seat writes over an idea is stamped');
+  const moved = h.runner.redraw(own.id, { stop: 91 }, clean);
+  assert.equal(moved.ok && moved.row.webRead, true, 'a change that leaves the note keeps the stamp');
+  const gone = h.runner.redraw(own.id, { note: null }, clean);
+  assert.equal(gone.ok && gone.row.webRead, undefined, 'no note, nothing carried');
 });

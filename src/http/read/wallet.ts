@@ -16,7 +16,9 @@ import { depositRoute } from '../wallet.ts';
 import { RECEIVE_NETWORKS, currentSymbol, receiveNetworkOf } from '../../rails/intents-address.ts';
 import { baseUnitsToDecimal, oneLine, plainDecimal } from '../../intents.ts';
 import type { IntentsRead } from '../../ledger/intents.ts';
-import type { WalletRow } from '../../types.ts';
+import type { Proposal, WalletRow, WriteDraft } from '../../types.ts';
+import { markIfCarried } from '../../web-read.ts';
+import type { Ctx } from '../context.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
    paste. The window shows the whole string, off a Touch ID open, and that is the only place
@@ -116,6 +118,31 @@ function withExactQuantities(rows: WalletRow[], intents: IntentsRead | undefined
     const hit = row.intents === undefined ? undefined : raw.get(`${row.intents.accountId.toLowerCase()}|${row.intents.assetId}`);
     return { ...row, quantityExact: hit === undefined ? null : baseUnitsToDecimal(BigInt(hit.base), hit.decimals) };
   });
+}
+
+// Whether a draft carries the asking agent's own words: a rule change's sentence, a plan's note,
+// a send's note about its receiver.
+function hasWords(d: WriteDraft): boolean {
+  if (d.kind === 'policy_change') return true;
+  if (d.kind === 'trade') return d.op === 'open' && typeof d.plan.note === 'string' && d.plan.note !== '';
+  const recipient = (d as { recipient?: { note?: unknown } }).recipient;
+  return typeof recipient?.note === 'string' && recipient.note !== '';
+}
+
+/* A move asked for by a seat that had read a stranger's text (Proposal.webRead), or arming a plan
+   whose note was written that way, hands whoever reads it back those words, so the reader is
+   marked as if it had read the page itself (src/web-read.ts). A move with no words of the agent's
+   in it carries nothing and marks nobody. */
+function carriedWords(ctx: Ctx, rows: Proposal[]): { webRead?: true }[] {
+  let stampedPlans = new Set<string>();
+  try {
+    stampedPlans = new Set(ctx.trade.payload().plans.filter((p) => p.webRead === true).map((p) => p.id));
+  } catch {
+    /* no trading surface in this install */
+  }
+  return rows
+    .filter((p) => hasWords(p.draft) && (p.webRead === true || (p.draft.kind === 'trade' && p.draft.op === 'open' && stampedPlans.has(p.draft.plan.id))))
+    .map(() => ({ webRead: true as const }));
 }
 
 const DISCLAIMER =
@@ -313,7 +340,7 @@ export const walletReads: ReadTable = {
      clocks, the money and the hashes. A row still waiting on a venue is re-judged against the
      last balance read on the way through, so this read is also what moves a settled row
      forward. See src/proposals/view.ts. */
-  proposal_status: (ctx, _body, args, res) => {
+  proposal_status: (ctx, body, args, res) => {
     const id = typeof args.id === 'string' ? args.id : '';
     const proposal = ctx.proposals.get(id);
     if (proposal === undefined) {
@@ -323,13 +350,14 @@ export const walletReads: ReadTable = {
       fail(res, 404, `unknown proposal id: ${oneLine(id, 120)}`);
       return;
     }
+    markIfCarried(body.session, carriedWords(ctx, [proposal]));
     sendJson(res, 200, ctx.proposals.view(proposal));
   },
   /* The list, because until now nothing enumerated and proposal_status needed an id. An agent
      asked "show me my last deposit" had to find one in the audit log or ask the person for it,
      and asking somebody for a uuid about their own money is the app failing to know its own
      state. Newest first, capped, and every row is the same view proposal_status hands back. */
-  proposals: (ctx, _body, args, res) => {
+  proposals: (ctx, body, args, res) => {
     const kind = typeof args.kind === 'string' ? args.kind.trim() : '';
     const limit = intParam(args.limit, PROPOSALS_DEFAULT, PROPOSALS_MAX);
     const now = Date.now();
@@ -338,6 +366,7 @@ export const walletReads: ReadTable = {
       .filter((p) => kind === '' || p.kind === kind)
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .slice(0, limit);
+    markIfCarried(body.session, carriedWords(ctx, rows));
     sendJson(res, 200, { proposals: rows.map((p) => ctx.proposals.view(p, now)) });
   },
   /* Everything about ONE move in one call, for the question "why is my deposit not there yet".
@@ -350,13 +379,14 @@ export const walletReads: ReadTable = {
      never enough to paste. The quote's own signature and the deposit address 1Click minted stay
      on the row and off this answer; the correlation id is what a dispute is filed with, and it
      is not a destination. */
-  diagnose: (ctx, _body, args, res) => {
+  diagnose: (ctx, body, args, res) => {
     const id = typeof args.id === 'string' ? args.id : '';
     const proposal = ctx.proposals.get(id);
     if (proposal === undefined) {
       fail(res, 404, `unknown proposal id: ${oneLine(id, 120)}`);
       return;
     }
+    markIfCarried(body.session, carriedWords(ctx, [proposal]));
     const evidence = proposal.result?.evidence;
     const provider =
       evidence === undefined

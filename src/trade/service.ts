@@ -280,7 +280,7 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
         }
         const changes = args.changes !== null && typeof args.changes === 'object' ? (args.changes as Record<string, unknown>) : null;
         if (changes === null) return { ok: false, error: 'planId needs changes to apply, or remove: true' };
-        const out = deps.runner.redraw(planId, changes);
+        const out = deps.runner.redraw(planId, changes, by);
         if (!out.ok) return { ok: false, error: out.reason };
         priceIdea(out.row);
         return { ok: true, notes: [`${planId} redrawn`], row: out.row };
