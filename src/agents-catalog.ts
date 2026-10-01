@@ -575,7 +575,21 @@ function removalArgs(id: AgentId): string[] | null {
   }
 }
 
-export type Registration = { ok: boolean; wrote: boolean; detail: string | null };
+// `skipped`: not written because this copy does not run on the app's own data folder (ownsAgentSettings).
+export type Registration = { ok: boolean; wrote: boolean; detail: string | null; skipped?: true };
+
+/* Whether this backend may write into an agent's own settings: only when it runs on the app's OWN
+   data folder, which is a backend the shell started (PHOSPHOR_APP_DATA, src-tauri/src/backend.rs)
+   reading the folder the shell gave it (PHOSPHOR_DATA_DIR). A test, an eval, `npm run app` or a
+   run pointed at a scratch folder never does: on 2026-10-01 a check run on a throwaway folder
+   pointed the real ~/.grok/config.toml at itself, a port and a folder that were gone an hour
+   later. Such a copy shows the line to paste instead. */
+export function ownsAgentSettings(dataDir: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.PHOSPHOR_APP_DATA !== '1') return false;
+  const given = env.PHOSPHOR_DATA_DIR;
+  if (typeof given !== 'string' || given === '') return false;
+  return path.resolve(given) === path.resolve(dataDir);
+}
 
 // A registration is a write to the vendor's config and, for one vendor, a discovery run against
 // the proxy; it gets longer than a probe and is never on the picker's critical path.
@@ -598,6 +612,10 @@ export async function registerAgent(
   const home = opts.home ?? env.HOME ?? os.homedir();
   const bin = findAgentBin(entry, { env, home, override: opts.bin });
   if (bin === null) return { ok: false, wrote: false, detail: `${entry.binary} is not installed` };
+  // The one writer of an agent's settings, so the one place the rule is held (ownsAgentSettings).
+  if (!ownsAgentSettings(spec.dataDir, env)) {
+    return { ok: true, wrote: false, skipped: true, detail: "left as it was: this copy of Phosphor does not run on the app's own data folder" };
+  }
   const run = opts.run ?? runProbe;
   const probe = probeEnv(entry, bin, env, home);
   /* Hermes asks "Enable all N tools? [Y/n/select]" after it has connected and read the tool

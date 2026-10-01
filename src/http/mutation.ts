@@ -20,6 +20,7 @@ import {
   agentById,
   checkAgent,
   connectionLine,
+  ownsAgentSettings,
   readPick,
   registerAgent,
   scanAgents,
@@ -91,6 +92,8 @@ export async function refreshRegistration(
   const pick = readPick(cfg.dataDir);
   const entry = pick === null ? null : agentById(pick.agent);
   if (pick === null || entry === null || !entry.registers) return null;
+  // Only the app on its own data folder writes into an agent's settings (ownsAgentSettings).
+  if (!ownsAgentSettings(cfg.dataDir)) return null;
   const spec = connectionSpecFor(cfg, opts.execPath);
   if (translocated(spec)) {
     audit.append('app_start', `${entry.name} registration left as it was: this copy of the app runs from an App Translocation path`, { agent: pick.agent });
@@ -429,7 +432,7 @@ export async function handleMutation(
       if (registration.ok && registration.wrote) writeRegistered(dataDirOf(ctx), spec);
       if (registration.detail !== null || !registration.ok) {
         ctx.audit.append('app_start', registration.ok
-          ? `${agent} registration ${registration.wrote ? 'written' : 'not needed'}${registration.detail === null ? '' : `: ${registration.detail}`}`
+          ? `${agent} registration ${registration.wrote ? 'written' : registration.skipped === true ? 'not written' : 'not needed'}${registration.detail === null ? '' : `: ${registration.detail}`}`
           : `${agent} registration failed: ${registration.detail ?? 'no detail'}`, { agent, ok: registration.ok, wrote: registration.wrote });
       }
       ctx.sse.broadcastState();
@@ -438,6 +441,8 @@ export async function handleMutation(
         check,
         registered: registration.ok && registration.wrote,
         registrationFailed: !registration.ok,
+        // A copy on another data folder leaves the agent's settings alone; the window shows the line to paste.
+        ...(registration.skipped === true ? { registrationSkipped: true } : {}),
         ...connectionPayload(ctx, agent),
       });
     }

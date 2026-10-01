@@ -1348,6 +1348,9 @@
     cannot: 'Chat apps like Claude Desktop cannot drive Phosphor yet.',
     inUse: 'Your assistant',
     registrationFailed: ' is on this Mac, but Phosphor could not add itself to it. Paste this line into your terminal:',
+    /* A copy of the app on a test data folder never writes an agent's settings
+       (src/agents-catalog.ts ownsAgentSettings): it says so, and gives the line. */
+    registrationSkipped: ' is on this Mac. This copy of Phosphor runs on a test folder, so it leaves its settings alone. To connect it here, paste this line into your terminal:',
     runIt: 'Run this in Terminal, then press Check again.',
     onDoor: ' is connected.'
   };
@@ -1430,6 +1433,7 @@
       command: null,
       registered: false,
       registrationFailed: false,
+      registrationSkipped: false,
       connected: false,
       busy: false,
       /* Which request is the latest. A click that lands while an earlier
@@ -1591,8 +1595,8 @@
            registration that failed changes its next step to the line to
            paste, and another agent's next step is the line itself. Both are
            the one thing left to do, so they are open. */
-        if (picked && state.registrationFailed && state.command) {
-          line = entry.name + COPY.registrationFailed;
+        if (picked && (state.registrationFailed || state.registrationSkipped) && state.command) {
+          line = entry.name + (state.registrationSkipped ? COPY.registrationSkipped : COPY.registrationFailed);
           command = state.command;
           folded = false;
         } else if (picked && entry.id === 'mcp' && state.command) {
@@ -1694,6 +1698,7 @@
       state.command = answer && typeof answer.command === 'string' ? answer.command : null;
       state.registered = !!(answer && answer.registered);
       state.registrationFailed = !!(answer && answer.registrationFailed);
+      state.registrationSkipped = !!(answer && answer.registrationSkipped);
       var whole = store && typeof store.get === 'function' ? (store.get() || {}) : {};
       state.connected = !!state.agent && onDoor(state.agent, whole);
     }

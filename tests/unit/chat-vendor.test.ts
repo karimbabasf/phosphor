@@ -153,9 +153,52 @@ test('a copy of the app running from a translocation path is recognised as one',
   }
 });
 
+/* REGRESSION, 2026-10-01: a check run on a throwaway data folder with Grok picked ran
+   `grok mcp add phosphor --scope user` at boot and pointed the real ~/.grok/config.toml at itself.
+   A boot that is not the app on its own folder writes nothing into any agent's settings. */
+test('a boot on a folder that is not the app\'s own registers nothing, whatever is picked', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-throwaway-'));
+  const saved = { PATH: process.env.PATH, HOME: process.env.HOME, PHOSPHOR_APP_DATA: process.env.PHOSPHOR_APP_DATA, PHOSPHOR_DATA_DIR: process.env.PHOSPHOR_DATA_DIR };
+  try {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    for (const name of ['grok', 'claude', 'codex', 'hermes']) fs.writeFileSync(path.join(bin, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    process.env.PATH = bin;
+    process.env.HOME = dir;
+    const calls: string[][] = [];
+    const run: Run = async (_bin, args) => {
+      calls.push(args);
+      return { code: 0, stdout: 'Added phosphor', stderr: '', timedOut: false };
+    };
+    const audit = { append: () => {} } as never;
+    const cfg = { port: 62844, dataDir: dir };
+    for (const [why, appData, given] of [
+      ['a run with no shell above it', undefined, undefined],
+      ['the shell, another folder', '1', path.join(os.tmpdir(), 'phosphor-somewhere-else')],
+    ] as const) {
+      if (appData === undefined) delete process.env.PHOSPHOR_APP_DATA;
+      else process.env.PHOSPHOR_APP_DATA = appData;
+      if (given === undefined) delete process.env.PHOSPHOR_DATA_DIR;
+      else process.env.PHOSPHOR_DATA_DIR = given;
+      for (const agent of ['grok', 'claude', 'codex', 'hermes'] as const) {
+        writePick(dir, agent);
+        assert.equal(await refreshRegistration(cfg, audit, { run, execPath: process.execPath }), null, `${why}: ${agent}`);
+      }
+    }
+    assert.deepEqual(calls, [], 'a vendor command ran');
+    assert.equal(readPick(dir)?.registered, undefined, 'a registration was recorded');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('at boot the pick is registered again when it names another connection, once, and never from a translocated copy', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-'));
-  const saved = { PATH: process.env.PATH, HOME: process.env.HOME, PHOSPHOR_APP_DATA: process.env.PHOSPHOR_APP_DATA };
+  const saved = { PATH: process.env.PATH, HOME: process.env.HOME, PHOSPHOR_APP_DATA: process.env.PHOSPHOR_APP_DATA, PHOSPHOR_DATA_DIR: process.env.PHOSPHOR_DATA_DIR };
   try {
     // A grok this test owns, found on PATH, and a run that records instead of running.
     const bin = path.join(dir, 'bin');
@@ -163,7 +206,9 @@ test('at boot the pick is registered again when it names another connection, onc
     fs.writeFileSync(path.join(bin, 'grok'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     process.env.PATH = bin;
     process.env.HOME = dir;
+    // The installed app: the shell started it on its own folder (ownsAgentSettings).
     process.env.PHOSPHOR_APP_DATA = '1';
+    process.env.PHOSPHOR_DATA_DIR = dir;
     const calls: string[][] = [];
     const run: Run = async (_bin, args) => {
       calls.push(args);

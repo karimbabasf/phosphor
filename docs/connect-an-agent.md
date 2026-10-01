@@ -55,7 +55,9 @@ Hermes or Grok session on this Mac, not just one folder, and moves under your th
 their own up to your daily auto ceiling (five times the threshold by default, $500 on a fresh
 install; see [Policy](policy.md)). An entry that already exists is removed and written again, so it
 always names the paths of the app you have now. If the registration cannot be written, the tile
-says so and shows the line to paste into your terminal, with Copy.
+says so and shows the line to paste into your terminal, with Copy. Only the app on its own data
+folder writes a registration, at a pick or at boot: a copy started on any other folder (a
+developer run, a test, a check) leaves your agent's settings alone and shows the line instead.
 
 Another agent gets the stdio command instead, with the environment in front of it:
 
