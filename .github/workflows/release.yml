@@ -13,15 +13,18 @@
 #   build     no secret. npm ci, npm run bundle (it stages the payload the shell compiles in, so
 #             it runs before the shell is built), the release guards, tauri build. Out of it
 #             comes the ad-hoc app and DMG.
-#   sign      the signing keychain, the APPLE_* secrets, then the update key. notarize-mac.sh
-#             signs, notarizes and staples; the keychain is deleted right after it;
-#             scripts/updater-sign.ts signs the updater bundle with Node alone; the release gate
-#             checks everything an installed copy and Gatekeeper will check.
+#   sign      environment `release`: the signing keychain, the APPLE_* secrets, then the update
+#             key. notarize-mac.sh signs, notarizes and staples; the keychain is deleted right
+#             after it; scripts/updater-sign.ts signs the updater bundle with Node alone; the
+#             release gate checks everything an installed copy and Gatekeeper will check.
 #   publish   no secret, contents: write. The GitHub Release, only from a v* tag, never on a dry run.
-#   site      BLOB_READ_WRITE_TOKEN alone. scripts/site-upload installs its own lockfile and puts
-#             the DMG behind https://phosphor.money/download/mac.
+#   site      environment `release`: BLOB_READ_WRITE_TOKEN alone. scripts/site-upload installs its
+#             own lockfile and puts the DMG behind https://phosphor.money/download/mac.
 #
-# The secrets:
+# The secrets live in the `release` environment, not in the repository: only a job that names it
+# can read them, it lets only v* tags in (and a branch Karim names for a dry run), and each job
+# that names it waits for Karim's approval. A release asks twice, once to sign and once to put
+# the DMG on the site; a dry run asks once.
 #
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 #       Required. The minisign key every installed copy checks an update against. Without it
@@ -54,9 +57,9 @@
 #   This ties the checksum to the source, which a checksum alone cannot: whoever controls the
 #   release page could post a new file and a new checksum together, not a new attestation.
 #
-# A dry run (Actions, Release, Run workflow, on a pushed branch) builds, signs, notarizes and
-# runs the release gate, and publishes nothing: no attestation, no GitHub Release, no site
-# upload. Its signed files stay on the run for three days.
+# A dry run (Actions, Release, Run workflow, on a branch the `release` environment lets in)
+# builds, signs, notarizes and runs the release gate, and publishes nothing: no attestation, no
+# GitHub Release, no site upload. Its signed files stay on the run for three days.
 #
 # Every third-party action is pinned to a commit, not a tag: a tag can be moved.
 
@@ -184,6 +187,7 @@ jobs:
     needs: build
     runs-on: macos-15
     timeout-minutes: 120
+    environment: release
     permissions:
       contents: read
       # For the build provenance attestation: a short-lived OIDC token proves to Sigstore that
@@ -451,6 +455,7 @@ jobs:
     if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: release
     permissions:
       contents: read
     steps:

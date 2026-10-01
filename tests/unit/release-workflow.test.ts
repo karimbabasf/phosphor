@@ -7,6 +7,7 @@
 //     no npm install, no npx, no cargo and no build, and only the actions it needs;
 //   - the jobs that publish hold no Apple secret, no update key and no keychain;
 //   - the keychain is deleted by the step right after notarize-mac.sh, whatever happened;
+//   - every job that reads a release secret declares the `release` environment, and only those;
 //   - a dry run builds, signs and notarizes, and publishes nothing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -134,6 +135,14 @@ test('the update key is read by one step, after the keychain is gone, and that s
   assert.ok(steps.indexOf(step) > steps.findIndex((s) => /security delete-keychain/.test(s.run ?? '')));
   assert.match(step.run ?? '', /^node scripts\/updater-sign\.ts "[^"]+"$/);
   assert.equal(jobs.sign.env?.TAURI_SIGNING_PRIVATE_KEY, undefined, 'never at job level');
+});
+
+test('every job that reads a release secret declares the release environment, and only those', () => {
+  for (const [name, job] of Object.entries(jobs)) {
+    assert.equal(job.environment === 'release', secretsOf(job).size > 0, name);
+  }
+  assert.deepEqual(Object.keys(jobs).filter((name) => jobs[name].environment === 'release'), ['sign', 'site']);
+  assert.equal(workflow.env, undefined, 'no workflow-level env for a secret to hide in');
 });
 
 test('a dry run builds, signs and notarizes, and publishes nothing', () => {

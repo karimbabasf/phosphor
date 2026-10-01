@@ -247,7 +247,8 @@ Gatekeeper step.
 
 The release runs as four jobs, so that no job that can sign also runs code it did not write. The
 build job installs and compiles everything (npm, cargo build scripts, the Tauri CLI) and holds no
-secret. The sign job installs nothing: it runs
+secret. The sign job, in the protected `release` environment that holds every release secret,
+installs nothing: it runs
 `notarize-mac.sh`, deletes the signing keychain right after it, signs the updater bundle with
 `scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate. The publish
 job holds no secret and only writes the GitHub Release; the site job holds the Blob token alone
