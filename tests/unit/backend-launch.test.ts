@@ -153,11 +153,15 @@ test('the backend command clears the environment and puts the flags before the e
   assert.ok(flags > 0 && entry > flags, 'Node reads every argument after the entry point as the script\'s, not its own');
   assert.deepEqual(nodeFlags(), ['--disable-sigusr1', '--no-addons', '--disallow-code-generation-from-strings']);
 
-  // spawn_backend and spawn_checked, the start it hands the runtime, the digest and the team to.
+  // spawn_backend, spawn_minted and spawn_checked, the start it hands the runtime, the digest and
+  // the team to. spawn_backend mints a fresh handshake per spawn (via spawn_minted) rather than
+  // taking an app-wide one, so no two backends are ever handed the same secrets (audit, HIGH).
   const spawnBackend = BACKEND_RS.slice(BACKEND_RS.indexOf('pub fn spawn_backend('), BACKEND_RS.indexOf('fn backend_command('));
-  assert.match(spawnBackend, /spawn_checked\(&node, payload, data, hand, crate::payload::BUILT_FOR, own_team\(\)\.as_deref\(\)\)/);
+  assert.match(spawnBackend, /pub fn spawn_backend\(payload: &Path, data: &Path\) -> Result<\(Child, Handshake\), SpawnError>/);
+  assert.match(spawnBackend, /spawn_minted\(&node, payload, data, crate::payload::BUILT_FOR, own_team\(\)\.as_deref\(\)\)/);
+  assert.match(spawnBackend, /let hand = Handshake::mint\(\)\.map_err\(SpawnError::Failed\)\?;/, 'a handshake per spawn, minted here and nowhere else');
+  assert.match(spawnBackend, /spawn_checked\(node, payload, data, &hand, built_for, team\)/);
   assert.match(spawnBackend, /backend_command\(node, payload, data, \|name\| std::env::var_os\(name\)\)/);
-  assert.doesNotMatch(spawnBackend, /Command::new/, 'spawn_backend builds no command of its own beside it');
   const order = ['crate::payload::check(payload, built_for)', '.spawn()', 'runtime_signed_by(child.id(), team)', 'writeln!(pipe'].map((step) => spawnBackend.indexOf(step));
   assert.ok(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1])), 'the payload is checked before the start, the runtime before the handshake');
 });

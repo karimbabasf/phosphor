@@ -345,7 +345,7 @@ async fn install(app: &AppHandle, update: &Update) -> Result<(), Stop> {
     // started during the download (the check above is long past), then stop the backend the
     // graceful way (Backend::kill drains a write in flight before SIGKILL). The same stop a quit
     // takes: Backend::lock_and_stop.
-    let token = app.state::<crate::Secrets>().0.token.clone();
+    let token = app.state::<Backend>().handshake().map(|h| h.token.clone()).unwrap_or_default();
     app.state::<Backend>().lock_and_stop(Some(port), &token, "installing an update", |_| {});
     Ok(())
 }

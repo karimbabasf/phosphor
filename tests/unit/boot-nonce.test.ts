@@ -89,6 +89,41 @@ test('both served headers answer the request they are answering', () => {
   assert.match(shell('backend.rs'), /x-phosphor-challenge: \{\}\\r\\n/, 'the shell sends the challenge under the same name');
 });
 
+test('a dead backend takes its window and its secrets with it, and the respawn gets its own', () => {
+  // Audit 2026-10-01, HIGH. The dead backend's window used to stay open on the port, still holding
+  // its token, while the shell slept and respawned with that same token. Now the window is torn
+  // down the moment the child is gone, before the backoff, and the respawn mints and injects its
+  // own token into a fresh window.
+  const main = shell('main.rs');
+  const from = main.indexOf('fn watch(');
+  const watch = main.slice(from, main.indexOf('\nfn ', from + 1));
+  const tearDown = watch.indexOf('show_reconnecting(&gone)');
+  const respawn = watch.indexOf('spawn_backend(&paths.payload');
+  const freshWindow = watch.indexOf('open_control_window(&back, port, &token, Some(RESTARTED))');
+  assert.ok(tearDown > 0, 'the window is torn down when the child is seen gone');
+  assert.ok(respawn > tearDown, 'and before the backoff and the respawn, so no page carries a token across the gap');
+  assert.ok(freshWindow > respawn, 'the respawn builds a fresh window with its own token');
+  assert.ok(!/notice\(&back, RESTARTED\)/.test(watch), 'the old code kept the same window and only wrote a notice onto it');
+
+  // spawn_backend mints the handshake itself, one per spawn, and hands it back with the child.
+  const backend = shell('backend.rs');
+  assert.match(backend, /pub fn spawn_backend\(payload: &Path, data: &Path\) -> Result<\(Child, Handshake\), SpawnError>/);
+  assert.ok(!/\bstruct Secrets\b/.test(main), 'there is no app-wide boot handshake to outlive a backend');
+});
+
+test('the control window is pinned to its own origin, and the enclave relay follows the respawn', () => {
+  const main = shell('main.rs');
+  // L3: the token init script runs on any page the window loads, so the window is pinned to its
+  // http loopback origin. No in-window navigation exists today; this keeps it that way.
+  assert.match(main, /\.on_navigation\(nav_guard\)/);
+  assert.match(main, /url\.scheme\(\) == "http" && url\.host_str\(\) == origin_host\.as_deref\(\) && url\.port\(\) == Some\(port\)/);
+
+  // L19: the relay is started for each spawn, keyed by that spawn's generation, so the old one
+  // ends when a respawn replaces it and the respawn starts its own. It was started once only.
+  assert.equal([...main.matchAll(/start_enclave_relay\(&\w+, port, &hand, generation\)/g)].length, 2, 'boot and respawn each start a relay');
+  assert.match(main, /enclave::run\(relay, \|\| alive\.state::<Backend>\(\)\.alive\(generation\)\)/, 'the relay stops when its own spawn is gone, not merely any child');
+});
+
 test('the shell checks a proof rather than merely finding the header', () => {
   const source = shell('backend.rs');
   assert.match(source, /fn identity_matches\(response: &str, challenge: Option<&Challenge>\)/);
@@ -110,17 +145,17 @@ test('the handshake reaches the backend on the pipe and never on the environment
   assert.ok(!/\.env\("PHOSPHOR_WINDOW_TOKEN"/.test(source), 'ps eww prints the environment of any process this user owns');
 });
 
-test('the window only opens onto a backend that answered with this boot nonce', () => {
+test('the window only opens onto a backend that answered this spawn nonce', () => {
   const source = shell('main.rs');
-  const opens = source.indexOf('open_control_window(&ready, port)');
-  assert.ok(opens > 0, 'the boot readiness loop is where the token gets injected');
+  const opens = source.indexOf('open_control_window(&ready, port, &token, None)');
+  assert.ok(opens > 0, 'the boot readiness loop is where the spawn token gets injected');
 
-  // The two readiness loops pass the nonce; only the launch survey, which gives way to a running
-  // copy, stops a proven orphan or refuses, and never opens anything, asks the loose question.
+  // The two readiness loops pass this spawn's own nonce; only the launch survey, which gives way to
+  // a running copy, stops a proven orphan or refuses, and never opens anything, asks the loose one.
   assert.equal(
-    [...source.matchAll(/phosphor_is_listening\(port, Some\(&nonce\)\)/g)].length,
+    [...source.matchAll(/phosphor_is_listening\(port, Some\(&hand\.nonce\)\)/g)].length,
     2,
-    'both the boot poll and the respawn poll must require this shell own nonce',
+    'both the boot poll and the respawn poll must require this spawn own nonce',
   );
   assert.equal(
     [...source.matchAll(/phosphor_is_listening\(port, None\)/g)].length,
@@ -147,9 +182,9 @@ test('a dead child is asked about before the port is, in both readiness loops', 
   for (const name of ['watch', 'start']) {
     const fn = body(name);
     const exitedAt = fn.indexOf('app_backend_exited(&');
-    const listeningAt = fn.indexOf('phosphor_is_listening(port, Some(&nonce))');
+    const listeningAt = fn.indexOf('phosphor_is_listening(port, Some(&hand.nonce))');
     assert.ok(exitedAt > 0, `fn ${name} must ask whether its own child has exited`);
-    assert.ok(listeningAt > 0, `fn ${name} must require this boot nonce before it trusts the port`);
+    assert.ok(listeningAt > 0, `fn ${name} must require this spawn nonce before it trusts the port`);
     assert.ok(exitedAt < listeningAt, `fn ${name} must test its own child before it trusts the port`);
   }
 

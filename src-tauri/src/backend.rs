@@ -17,8 +17,8 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_PORT: u16 = 4177;
@@ -40,11 +40,18 @@ const SETTLE_CAP_MS_IN_SHUTDOWN_TS: u64 = 32_000;
 
 const PID_FILE: &str = "backend.pid";
 
-/// The backend process and the pid file that names it.
+/// The backend process, what it was handed at its spawn, and the pid file that names it.
 ///
-/// Both are behind their own lock so a panic while reporting one cannot strand the other.
+/// Each is behind its own lock so a panic while reporting one cannot strand the others.
 pub struct Backend {
     child: Mutex<Option<Child>>,
+    /// The handshake the child was spawned with, kept beside it and dropped with it. A window
+    /// token, a nonce and a relay secret live exactly as long as the one process that holds them:
+    /// whatever a dead backend's window or port let out opens nothing on the next one.
+    hand: Mutex<Option<Arc<Handshake>>>,
+    /// Which spawn the child is from, counted up by adopt(), so a thread made for one backend (the
+    /// enclave relay, a window's close handler) can tell it from the next.
+    generation: AtomicU64,
     pid_file: Mutex<Option<PathBuf>>,
     /// Set the moment kill() begins and never cleared: this shell has decided to stop its
     /// backend, so a respawn that lands afterwards (the supervisor was mid-respawn when an
@@ -64,6 +71,8 @@ impl Backend {
     pub fn new() -> Self {
         Backend {
             child: Mutex::new(None),
+            hand: Mutex::new(None),
+            generation: AtomicU64::new(0),
             pid_file: Mutex::new(None),
             stopping: AtomicBool::new(false),
         }
@@ -103,6 +112,9 @@ impl Backend {
         let Some(mut child) = guard.take() else {
             return;
         };
+        if let Ok(mut hand) = lock(&self.hand) {
+            hand.take();
+        }
         request_stop(&child);
         let deadline = Instant::now() + SHUTDOWN_GRACE;
         while Instant::now() < deadline {
@@ -121,7 +133,9 @@ impl Backend {
         self.stopping.load(Ordering::SeqCst)
     }
 
-    pub fn adopt(&self, child: Child, pid_file: PathBuf) {
+    /// Holds `child` and the handshake it was spawned with, and answers the spawn's generation.
+    /// `None` when the shell is stopping and the child was taken down instead.
+    pub fn adopt(&self, child: Child, hand: Arc<Handshake>, pid_file: PathBuf) -> Option<u64> {
         // A child spawned after the decision to stop is taken down here, not kept: the shell is
         // about to exit (an update relaunch), and a backend adopted now would outlive it with
         // the wallet loaded and no window, the orphan this whole file exists to prevent.
@@ -130,16 +144,24 @@ impl Backend {
             request_stop(&late);
             let _ = late.kill();
             let _ = late.wait();
-            return;
+            return None;
         }
         let pid = child.id();
-        if let Ok(mut guard) = lock(&self.child) {
+        // The child, its handshake and its generation change together, under the child's lock, so
+        // nothing reads one spawn's child beside another spawn's secrets.
+        let generation = {
+            let mut guard = lock(&self.child).ok()?;
             guard.replace(child);
-        }
+            if let Ok(mut held) = lock(&self.hand) {
+                held.replace(hand);
+            }
+            self.generation.fetch_add(1, Ordering::SeqCst) + 1
+        };
         write_pid_file(&pid_file, pid as i32);
         if let Ok(mut guard) = lock(&self.pid_file) {
             guard.replace(pid_file);
         }
+        Some(generation)
     }
 
     /// Has the child exited? `None` means there is no child at all, which is a different answer
@@ -148,6 +170,19 @@ impl Backend {
         let mut guard = lock(&self.child).ok()?;
         let child = guard.as_mut()?;
         Some(matches!(child.try_wait(), Ok(Some(_))))
+    }
+
+    /// The handshake of the child held now, while there is one.
+    pub fn handshake(&self) -> Option<Arc<Handshake>> {
+        lock(&self.hand).ok()?.clone()
+    }
+
+    /// Is the child of spawn `generation` still the one held, and still running?
+    pub fn alive(&self, generation: u64) -> bool {
+        let Ok(mut guard) = lock(&self.child) else {
+            return false;
+        };
+        self.generation.load(Ordering::SeqCst) == generation && guard.as_mut().is_some_and(|child| matches!(child.try_wait(), Ok(None)))
     }
 
     fn clear_pid_file(&self) {
@@ -798,9 +833,21 @@ pub fn node_binary() -> Result<PathBuf, String> {
 /// environment of BACKEND_ENV and nothing else. Before it, the payload is checked against the
 /// digest this shell was built with (payload.rs), and a payload that is not that one is never
 /// started.
-pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Child, SpawnError> {
+///
+/// EVERY SPAWN MINTS ITS OWN HANDSHAKE, here and nowhere else, and hands it back with the child.
+/// The respawn used to hand the new backend the boot's own five values. A backend's death leaves
+/// its window open on the port for a moment, and whatever answered there in that moment saw the
+/// window token, which the respawned backend then accepted (audit 2026-10-01, HIGH). A token now
+/// opens only the backend it was minted for, and dies with it.
+pub fn spawn_backend(payload: &Path, data: &Path) -> Result<(Child, Handshake), SpawnError> {
     let node = node_binary().map_err(SpawnError::Failed)?;
-    spawn_checked(&node, payload, data, hand, crate::payload::BUILT_FOR, own_team().as_deref())
+    spawn_minted(&node, payload, data, crate::payload::BUILT_FOR, own_team().as_deref())
+}
+
+fn spawn_minted(node: &Path, payload: &Path, data: &Path, built_for: &str, team: Option<&str>) -> Result<(Child, Handshake), SpawnError> {
+    let hand = Handshake::mint().map_err(SpawnError::Failed)?;
+    let child = spawn_checked(node, payload, data, &hand, built_for, team)?;
+    Ok((child, hand))
 }
 
 #[cfg(target_os = "macos")]
@@ -974,9 +1021,41 @@ mod tests {
         assert!(backend.stopping());
         let child = Command::new("sleep").arg("30").stdin(Stdio::null()).spawn().unwrap();
         let pid = child.id();
-        backend.adopt(child, std::env::temp_dir().join(format!("phosphor-adopt-test-{pid}.pid")));
+        let hand = Arc::new(Handshake::mint().unwrap());
+        assert_eq!(backend.adopt(child, hand, std::env::temp_dir().join(format!("phosphor-adopt-test-{pid}.pid"))), None);
         assert!(matches!(backend.exited(), None), "nothing is kept after stopping");
+        assert!(backend.handshake().is_none(), "and no secrets either");
         assert!(!pid_is_alive(pid as i32), "the late child was taken down");
+    }
+
+    /// The secrets go with the child they were minted for: a dead child's generation is never
+    /// alive again, a respawn's handshake replaces the dead one's, and a stop takes it away.
+    #[test]
+    fn a_backends_secrets_and_generation_end_with_it() {
+        let backend = Backend::new();
+        let pid_file = |n: u32| std::env::temp_dir().join(format!("phosphor-generation-test-{}-{n}.pid", std::process::id()));
+        let first = Command::new("sleep").arg("30").stdin(Stdio::null()).spawn().unwrap();
+        let first_pid = first.id() as libc::pid_t;
+        let first_hand = Arc::new(Handshake::mint().unwrap());
+        let one = backend.adopt(first, first_hand.clone(), pid_file(1)).unwrap();
+        assert!(backend.alive(one));
+        assert_eq!(backend.handshake().map(|h| h.token.clone()), Some(first_hand.token.clone()));
+
+        let second = Command::new("sleep").arg("30").stdin(Stdio::null()).spawn().unwrap();
+        let second_hand = Arc::new(Handshake::mint().unwrap());
+        let two = backend.adopt(second, second_hand.clone(), pid_file(2)).unwrap();
+        // SAFETY: kill(2) on the sleep this test started and no longer holds.
+        unsafe { libc::kill(first_pid, libc::SIGKILL) };
+        assert_ne!(one, two);
+        assert!(!backend.alive(one), "a spawn that was replaced is never alive again, whatever runs now");
+        assert!(backend.alive(two));
+        assert_eq!(backend.handshake().map(|h| h.token.clone()), Some(second_hand.token.clone()));
+
+        backend.stop_for_retry();
+        assert!(!backend.alive(two), "a child that was stopped is not alive");
+        assert!(backend.handshake().is_none(), "a stopped backend leaves no token to send anywhere");
+        let _ = std::fs::remove_file(pid_file(1));
+        let _ = std::fs::remove_file(pid_file(2));
     }
 
     /// A server that answers `GET /` with one `x-phosphor` header and the value it was given.
@@ -1509,6 +1588,40 @@ mod tests {
                 assert!(bent.is_err(), "a Team ID is letters and digits, nothing that can bend the requirement");
             }
             None => eprintln!("the staged runtime has no Team ID (not an official Node build): only the refusals were checked"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Audit 2026-10-01, HIGH: the respawn handed the new backend the boot's own handshake, so a
+    /// window token that reached whatever answered on the port while the first backend was dead
+    /// opened the second. Two spawns, read off the pipe as the backend reads it: nothing repeats.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn no_two_spawns_ever_hand_a_backend_the_same_secrets() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("phosphor-fresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        let copy = payload_copy(&root);
+        // A runtime that keeps what it was handed, where the cleared environment still points.
+        let runtime = root.join("node");
+        std::fs::write(&runtime, "#!/bin/sh\n/bin/cat > \"$PHOSPHOR_CONFIG_DIR/handed-$$\"\n").unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut seen: Vec<(Vec<String>, Handshake)> = Vec::new();
+        for _ in 0..2 {
+            let (mut child, hand) = spawn_minted(&runtime, &copy, &root.join("data"), crate::payload::BUILT_FOR, None).expect("the staged payload starts");
+            let pid = child.id();
+            let _ = child.wait();
+            let piped = std::fs::read_to_string(root.join("data").join(format!("handed-{pid}"))).unwrap();
+            seen.push((piped.lines().map(str::to_string).collect(), hand));
+        }
+        for (piped, hand) in &seen {
+            assert_eq!(piped, &[&hand.token, &hand.nonce, &hand.seat, &hand.transport, &hand.relay].map(|s| s.to_string()), "the pipe carried what was returned");
+        }
+        let (first, second) = (&seen[0].0, &seen[1].0);
+        for (line, name) in ["token", "nonce", "seat", "transport", "relay"].iter().enumerate() {
+            assert_ne!(first[line], second[line], "the {name} was handed to two backends");
         }
         let _ = std::fs::remove_dir_all(&root);
     }
