@@ -511,7 +511,21 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        if std::fs::remove_dir_all(&self.0).is_err() {
+            // An archive can unpack a folder with no write permission, which keeps what is in it.
+            open_up(&self.0);
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+fn open_up(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            open_up(&entry.path());
+        }
     }
 }
 
@@ -950,6 +964,10 @@ mod tests {
         let path = scratch.path().to_path_buf();
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o700);
         std::fs::write(path.join("inside"), b"x").unwrap();
+        // A folder an archive left with no write permission still goes.
+        std::fs::create_dir_all(path.join("Phosphor.app/Contents")).unwrap();
+        std::fs::write(path.join("Phosphor.app/Contents/kept"), b"x").unwrap();
+        std::fs::set_permissions(path.join("Phosphor.app/Contents"), std::fs::Permissions::from_mode(0o555)).unwrap();
         drop(scratch);
         assert!(!path.exists());
     }
