@@ -18,14 +18,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { privateKeyToAccount } from 'viem/accounts';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
+import { signL1Action } from '../../src/hl/sign.ts';
 import { liveIntentsSigner } from '../../src/intents-sign.ts';
 import { open, seal } from '../../src/keystore/envelope.ts';
 import { createKeystore, evmPrivateKey, useKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import { seUnwrapWithSoftwareKey } from '../../src/keystore/sewrap.ts';
+import { apiWalletOf } from '../../src/keystore/store.ts';
 import type { EnclaveRef, Keystore } from '../../src/keystore/store.ts';
+import { readApiWallet, readApiWalletKey } from '../../src/runner/keys.ts';
 
 function fast(): ReturnType<typeof defaultParams> {
   return { ...defaultParams(), N: 2 ** 14 };
@@ -169,6 +172,50 @@ test('an enclave wallet signs with its own key after create, unlock and a rewrit
 
   store.updatePayload((payload) => ({ ...payload }));
   assert.equal(addressOf(evmPrivateKey(keysPath)), made.addresses.evm, 'a rewrite keeps the key beside the payload it rewrote');
+});
+
+/* The runner's key took the old road until 0.10.13: readApiWallet() went through keys(), so every
+   runner start decoded the whole payload, phrase included, to find one key. It reads its own 32
+   bytes now, the same way a signature reads the EVM key. */
+test('a runner start reads the API wallet alone, signs with it, and never decodes the recovery phrase', async () => {
+  const phrase = (await createKeystore({ keysPath: tmpKeys(), kdf: fast }).create(password())).mnemonic;
+  const keysPath = tmpKeys();
+  const store = createKeystore({ keysPath, kdf: fast });
+  const { ref, priv } = fakeEnclave();
+  store.importWithEnclave(ref, { mnemonic: phrase });
+  useKeystore(store);
+  const agent = generatePrivateKey();
+  store.updatePayload((payload) => ({ ...payload, hyperliquidAgents: { mainnet: { privateKey: agent, address: addressOf(agent) } } }));
+
+  // What src/main.ts hands the runner host for every child it starts, the address the host checks
+  // against the venue before the first fire, and a signature of the kind the child makes with it.
+  const during = await phraseDecodes(phrase, async () => {
+    for (let i = 0; i < 5; i += 1) {
+      const key = await readApiWalletKey(keysPath);
+      assert.equal(key, agent);
+      assert.equal(readApiWallet(keysPath).address, addressOf(agent));
+      await signL1Action(agent, { type: 'cancel', cancels: [] }, i);
+    }
+  });
+  assert.equal(during, 0, 'a runner start decoded the whole payload, phrase and all');
+  const control = await phraseDecodes(phrase, () => {
+    store.keys();
+  });
+  assert.ok(control > 0, 'keys() decodes the payload, and the counter has to notice');
+
+  const wiped = wipedDuring(() => store.lock());
+  assert.ok(wiped.includes(agent.slice(2)), 'the lock overwrote the 32 bytes a runner start reads');
+  assert.deepEqual(readApiWallet(keysPath), { key: null, source: 'locked', address: null });
+  assert.deepEqual(store.unlockWithDataKey(playEnclave(store, priv)), { ok: true });
+  assert.equal(await readApiWalletKey(keysPath), agent, 'the unlock brings it back');
+});
+
+test('the API wallet entry that names this venue wins over the flat one an older file carries', () => {
+  const keyed = generatePrivateKey();
+  const flat = generatePrivateKey();
+  assert.deepEqual(apiWalletOf({ hyperliquidAgents: { mainnet: { privateKey: keyed } }, hyperliquidAgent: { privateKey: flat } }), { key: keyed, address: null });
+  assert.deepEqual(apiWalletOf({ hyperliquidAgents: { mainnet: { privateKey: '0x12' } }, hyperliquidAgent: { privateKey: flat, address: '0xabc' } }), { key: flat, address: '0xabc' });
+  assert.equal(apiWalletOf({ evm: { privateKey: keyed } }), null, 'the EVM key is never the fallback');
 });
 
 /* Every buffer a decipher's update() hands back while `run` takes. envelope.ts calls

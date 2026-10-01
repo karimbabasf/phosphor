@@ -88,8 +88,8 @@ it shut against the ways in that Node leaves open by default:
   load code into Node as it starts; it never reaches the backend.
 - Native add-ons and eval are off in it, and it runs the Node 24 the app ships, never one from
   your PATH.
-- A signature reads the one key it needs, held as 32 bytes the lock overwrites, so signing no
-  longer leaves another copy of your recovery phrase in memory.
+- A signature, and each start of a trading plan's runner, reads the one key it needs, held as 32
+  bytes the lock overwrites, so neither leaves another copy of your recovery phrase in memory.
 
 A test starts the shipped runtime and files exactly the way the app does, from an environment
 with a NODE_OPTIONS planted in it, and fails if the planted code ever runs.
