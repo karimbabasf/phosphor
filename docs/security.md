@@ -90,6 +90,9 @@ it shut against the ways in that Node leaves open by default:
   your PATH.
 - A signature, and each start of a trading plan's runner, reads the one key it needs, held as 32
   bytes the lock overwrites, so neither leaves another copy of your recovery phrase in memory.
+- Only fourteen packages can load into it, each one read: viem and zod and what they depend on. A
+  test fails when another one could, and every package's registry signature is checked before the
+  tests run. The packages the agent's connection uses load in a separate process with no key.
 
 A test starts the shipped runtime and files exactly the way the app does, from an environment
 with a NODE_OPTIONS planted in it, and fails if the planted code ever runs.
