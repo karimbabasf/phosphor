@@ -114,9 +114,9 @@ A password wallet says Password in the Keys row: "Locked with your password on t
 Mac that has an enclave, the row also shows Protect with Touch ID, which moves the same wallet
 behind the enclave. Nothing moves and the addresses stay the same.
 
-## The 15 minute lock
+## The five minute lock
 
-The wallet locks after fifteen minutes with nobody at the window, when the Mac sleeps, and when
+The wallet locks after five minutes with nobody at the window, when the Mac sleeps, and when
 you close the window. Locks after, under Safety in the Vault tab, sets the time to 5 minutes,
 15 minutes or 1 hour, and Lock now locks at once. The window frosts and says Phosphor is locked.
 Unlock with Touch ID, or with your password on a software wallet.

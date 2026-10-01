@@ -327,7 +327,7 @@ config key; the app refuses to start if that path lands inside the repo.
 
 Then the lock, which is the state the app is in every time you open it after that. Locked, every
 read still works behind the frosted window; the password is what buys the ability to sign. It
-locks itself after fifteen minutes with nobody at the window (the Vault offers 5, 15 or 60
+locks itself after five minutes with nobody at the window (the Vault offers 5, 15 or 60
 minutes) and when the machine sleeps.
 
 `npm run keygen` still exists and mints one RAW UNENCRYPTED EVM key for development. It is not
@@ -462,8 +462,8 @@ NEAR key too; those files open unchanged. Since 0.10.5 a new or imported wallet 
 or NEAR key, and an import that brings one is refused, because an address the app cannot spend
 from is a place money can be sent and stranded.
 
-The wallet locks after fifteen minutes with nobody at the window, when the machine sleeps, when
-the window closes, and on demand. Locked, every read still works, and every write proposal an
+The wallet locks after five minutes with nobody at the window (or the time picked in the Vault
+tab), when the machine sleeps, when the window closes, and on demand. Locked, every read still works, and every write proposal an
 agent makes is drafted, priced and policy-checked and then waits as `pending_unlock` until
 somebody unlocks, at which point it is decided again against the policy as it stands then and
 lands as something to click. An unlock is not an approval: the click threshold says how much money

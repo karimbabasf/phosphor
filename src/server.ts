@@ -279,7 +279,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
           'app_start',
           reason === 'sleep'
             ? 'the wallet locked: this machine was asleep'
-            : 'the wallet locked after fifteen minutes with nobody at the window',
+            : `the wallet locked after ${vaultPrefs.get().idleMinutes} minutes with nobody at the window`,
           { reason },
         );
         sse.broadcastLock(keystore.state());

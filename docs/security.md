@@ -96,7 +96,7 @@ with a NODE_OPTIONS planted in it, and fails if the planted code ever runs.
 
 ## The lock
 
-The wallet locks after fifteen minutes with nobody at the window by default (the Vault tab
+The wallet locks after five minutes with nobody at the window by default (the Vault tab
 offers 5 minutes, 15 minutes or 1 hour), when the Mac sleeps, and when you close the window.
 Locked, the key is gone from memory and the window is frosted. Reads still work. A proposal made
 while locked is drafted, priced and checked, and its card says Unlock to decide; when you
