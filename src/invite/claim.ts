@@ -22,7 +22,8 @@
 //      the pending record (src/invite/store.ts) before the key signs it, so a signature the record
 //      does not name never exists, and a claim that stops early stays pending until the next start
 //      proves each of them dead or spent;
-//   7. the watch, until the deadline plus 30 s on the chain's clock (src/relay/fate.ts).
+//   7. the key dropped, since nothing more can be signed, then the watch, until the deadline plus
+//      30 s on the chain's clock (src/relay/fate.ts).
 //      PROOF IS THE CODE'S NONCE: is_nonce_used reads true at a final block. The verifier commits
 //      the nonce in the same call that runs the transfer, and the transfer names this wallet, so
 //      a spent nonce is the claim paid (the rule src/proposals/reconcile.ts already holds a relay
@@ -30,7 +31,7 @@
 //      landing at the same moment would fool, and not the code's balance either: anyone can send
 //      dust to a public code address, and a proof that needed the code at zero would call a paid
 //      claim failed;
-//   8. the audit line, the record marked done, refreshLedger, the frame, the key dropped.
+//   8. the audit line, the record marked done, refreshLedger, the frame.
 //
 // PLAN B, at run time. When the relay turns a claim away for auth or for a missing quote (its
 // docs require a JWT it does not enforce today, src/relay/client.ts), the same claim goes
@@ -42,7 +43,12 @@
 //
 // NEVER THE CODE. It is parsed into bytes, the bytes become a key inside a signer, and the bytes
 // are wiped. No answer, frame, audit line, record or error carries it, and no reason quotes the
-// input. One claim runs at a time.
+// input. One claim runs at a time. What cannot be wiped: the code as the request carried it and
+// the key's hex inside viem's account are JavaScript strings. Nothing holds the code once the
+// route has answered, or the key once the claim's last signature is made (seconds, not the
+// minutes of the watch), and the runtime reuses their memory when it needs it; until then they sit
+// in this process's heap, the same exposure the wallet's own key has while the wallet is open,
+// worth at most one code (docs/security-model.md).
 
 import crypto from 'node:crypto';
 
@@ -50,6 +56,7 @@ import type { Audit } from '../audit.ts';
 import type { LockState } from '../keystore/index.ts';
 import type { AddressReport } from '../keystore/store.ts';
 import { ERC191_STANDARD } from '../intents-sign.ts';
+import type { IntentsSignerPort } from '../intents-sign.ts';
 import { baseUnits, decimalToBaseUnits, oneLine } from '../intents.ts';
 import type { OneClickQuote, QuoteEcho } from '../intents.ts';
 import { INTENTS_API_KEY_ENV, SIGNED_DEADLINE_MS, intentDeadline, intentNonce, intentsApi } from '../rails/intents-native.ts';
@@ -122,6 +129,8 @@ export type InviteNet = {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   random?: (bytes: number) => Uint8Array;
+  // The signer a code's secret turns into: codeSigner (src/invite/signer.ts) unless a test watches it.
+  signerOf?: (secret: Uint8Array) => KeySigner | null;
   firstPollMs?: number;
   pollMs?: number;
   watchCapMs?: number;
@@ -309,8 +318,10 @@ export function createInviteService(deps: InviteDeps): InviteService {
       const receiver = verifiedReceiver();
       if (receiver === null) return no('wallet-locked');
       if (!deps.movesMoney) return no('offline');
-      // From here the key lives in the signer and the bytes are wiped (src/invite/signer.ts).
-      signer = codeSigner(secret);
+      /* From here the key lives in the signer and the bytes are wiped (src/invite/signer.ts). The
+         signer is dropped once nothing more can be signed: after the relay's answer, or after
+         Plan B's one signature, so the watch runs without it. */
+      signer = (deps.signerOf ?? codeSigner)(secret);
       if (signer === null || signer.address === receiver) return no('empty');
       const read = await readAccount(signer.address);
       if (!read.ok) return read;
@@ -465,12 +476,15 @@ export function createInviteService(deps: InviteDeps): InviteService {
       const words = sent.answered ? (sent.result.status === 'FAILED' ? sent.result.reason : '') : sent.error;
       if (sent.attempts === 1 && relayRefusalFallsBack(words)) return { kind: 'fallback', detail: `the relay refused the claim: ${oneLine(words, 160)}` };
     }
+    // Nothing more can be signed on this route, so the key goes before the watch, not after it.
+    signer.drop();
     return watch(record, relayHash);
   }
 
   /* Plan B: the same claim through 1Click, as an in-Intents send from the code's account. The
      record gains the attempt, nonce and handle included, before the key signs, or nothing is
-     signed. */
+     signed. Plan B signs once, so the key is dropped the moment that signature is made, before
+     1Click's watch and the claim's own. */
   async function oneclickRoute(record: ClaimRecord, signer: KeySigner, slot: HoldSlot, why: string): Promise<Outcome> {
     const amount = BigInt(record.amountBase);
     const floor = (amount * BigInt(10_000 - SEND_MAX_LOSS_BPS)) / 10_000n;
@@ -483,7 +497,7 @@ export function createInviteService(deps: InviteDeps): InviteService {
         return base.generateIntent(params);
       },
     };
-    const port = signerPort(signer, (payload) => {
+    const recorded = signerPort(signer, (payload) => {
       const nonce = intentNonce(payload);
       const deadline = intentDeadline(payload);
       if (nonce === undefined || deadline === undefined || handle === null) {
@@ -498,6 +512,16 @@ export function createInviteService(deps: InviteDeps): InviteService {
         throw new Error(`the claim record could not be written (${errText(err)})`);
       }
     });
+    const port: IntentsSignerPort = {
+      ...recorded,
+      async signErc191(keysPath, payload) {
+        try {
+          return await recorded.signErc191(keysPath, payload);
+        } finally {
+          signer.drop();
+        }
+      },
+    };
     const before = record.attempts.length;
     await openHold(record, slot);
     try {

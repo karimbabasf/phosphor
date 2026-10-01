@@ -15,6 +15,8 @@ import { decodeNonce } from '../../src/relay/payload.ts';
 import { createInviteService } from '../../src/invite/claim.ts';
 import type { InviteDeps } from '../../src/invite/claim.ts';
 import { inviteLink } from '../../src/invite/code.ts';
+import { codeSigner } from '../../src/invite/signer.ts';
+import type { KeySigner } from '../../src/invite/signer.ts';
 import { CLAIM_DEADLINE_MS, INVITE_ASSET_ID, intentHashOf } from '../../src/invite/payload.ts';
 import { CLAIMS_FILE, createClaimStore } from '../../src/invite/store.ts';
 import type { ClaimRecord } from '../../src/invite/store.ts';
@@ -693,4 +695,44 @@ test('a final block stamped more than two minutes ahead of this Mac is refused b
   assert.equal(world.reads > 0, true);
   assert.equal(Date.parse(JSON.parse(world.published[0]!.payload).deadline as string), chainAtRehearsal + CLAIM_DEADLINE_MS);
   assert.equal(Date.parse(JSON.parse(world.simulated[0]![0]!.payload).deadline as string), chainAtRehearsal + 1);
+});
+
+/* Audit L6: the key's hex is an immutable string inside viem's account, so it cannot be wiped; what
+   the claim can do is let go of it the moment it can sign nothing more, instead of holding it
+   through a watch that runs for minutes. */
+
+test("the code's key is dropped once it can sign nothing more: before the watch on the relay, right after Plan B's one signature", async () => {
+  for (const mode of ['ok', 'auth'] as const) {
+    const world = freshWorld();
+    world.relayMode = mode;
+    let dropped = false;
+    let signatures = 0;
+    const signerOf = (secret: Uint8Array): KeySigner | null => {
+      const inner = codeSigner(secret);
+      if (inner === null) return null;
+      return {
+        address: inner.address,
+        sign: async (payload) => {
+          signatures += 1;
+          return inner.sign(payload);
+        },
+        drop: () => {
+          dropped = true;
+          inner.drop();
+        },
+      };
+    };
+    const held: string[] = [];
+    const v = verifierOf(world);
+    const verifier = { ...v, nonceUsed: (...args: Parameters<typeof v.nonceUsed>) => (dropped || held.push('the watch read a nonce with the key held'), v.nonceUsed(...args)) };
+    const oc = oneclickOf(world);
+    const oneclick = { ...oc, status: (...args: Parameters<typeof oc.status>) => (dropped || held.push("1Click's watch ran with the key held"), oc.status(...args)) };
+    const h = harness({ world, verifier, oneclick, signerOf });
+    await h.service.claim(CODE);
+    await h.service.idle();
+    assert.deepEqual(h.frames.map((f) => f.status), ['running', 'landed'], mode);
+    assert.equal(dropped, true, `${mode}: the key was never dropped`);
+    assert.deepEqual(held, [], `${mode}: ${held[0] ?? ''}`);
+    assert.equal(signatures, mode === 'ok' ? 2 : 3, `${mode}: the rehearsal, the relay claim, and Plan B's one signature`);
+  }
 });
