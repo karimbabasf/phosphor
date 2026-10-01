@@ -8,7 +8,7 @@
 // claim that ends after the person moved on becomes (a failed one stays until it is closed), the
 // Add money line on Basic (a failure kept on the closed line, closed, open, a good code, running,
 // landed, offline, a used code, failed), and the chat keeping a pasted code out of the
-// conversation. Each state also records the key a person would
+// conversation while the words around it stay. Each state also records the key a person would
 // press next and whether the invite line is inside its scroller, and the run ends on one summary
 // line.
 //
@@ -420,6 +420,11 @@ async function main(): Promise<void> {
     await sleep(900);
     await shoot(second, 'chat-code-kept-out');
     results['chat-code-kept-out-composer'] = await second.evaluate('document.querySelector(".composer-input").value');
+    // Words around the code stay in the box; only the code goes.
+    await second.fill('.composer-input', `here is my invite ${CODE} thanks`);
+    await sleep(900);
+    await shoot(second, 'chat-words-kept');
+    results['chat-words-kept-composer'] = await second.evaluate('document.querySelector(".composer-input").value');
     await second.close();
 
     results.screenshots = shots;

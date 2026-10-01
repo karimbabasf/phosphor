@@ -102,7 +102,8 @@ A code pays once; a second claim says "This code has nothing left in it. Ask who
 a new one."
 
 Never paste a code into the chat. What you type there goes to your assistant and its model
-provider, so the chat refuses a code and opens the invite field instead. The app's backend turns
+provider, so the chat takes the code out of the box, leaves your other words, and opens the
+invite field instead. The app's backend turns
 such a message away too, before the assistant sees it, and writes none of it to the log or the
 conversation. Phosphor never asks for your recovery phrase to claim a code. A page or an app that
 does is not Phosphor.

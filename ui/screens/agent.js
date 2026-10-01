@@ -654,9 +654,9 @@
 
   /* AN INVITE CODE NEVER GOES TO THE ASSISTANT: a code in the chat would reach the agent, its
      model provider and the transcript. The box is read for the code's shape as it changes and
-     again at every send (ui/core/invite.js codeIn). A code found there leaves the box with
-     everything around it, goes to the invite field in Add money (ui/screens/invite.js open),
-     and the line over the box says why. Nothing is sent. */
+     again at every send (ui/core/invite.js codeIn). A code found there leaves the box, the
+     person's other words stay, the code goes to the invite field in Add money
+     (ui/screens/invite.js open), and the line over the box says why. Nothing is sent. */
   function keepOut(text) {
     var shape = window.PhosphorInviteApi;
     var code = shape && typeof shape.codeIn === 'function' ? shape.codeIn(text) : null;
@@ -665,8 +665,9 @@
     var words = invite && invite.COPY ? invite.COPY.chat : 'Invite codes never go to your assistant.';
     for (var i = 0; i < mounts.length; i += 1) {
       var refs = mounts[i].refs;
-      if (refs.input && refs.input.value) {
-        refs.input.value = '';
+      var left = refs.input && refs.input.value ? withoutCodes(refs.input.value, shape) : null;
+      if (left !== null && left !== refs.input.value) {
+        refs.input.value = left;
         autogrow(refs.input);
         arm(mounts[i]);
       }
@@ -677,6 +678,22 @@
     }
     if (invite && typeof invite.open === 'function') invite.open(code);
     return true;
+  }
+
+  /* The text with every code codeIn finds taken out, the rescan past prose included, one
+     space left where a code sat between words. */
+  function withoutCodes(text, shape) {
+    var rest = String(text);
+    var code = shape.codeIn(rest);
+    while (code) {
+      var at = rest.indexOf(code);
+      if (at < 0) break;
+      var before = rest.slice(0, at).replace(/\s+$/, '');
+      var after = rest.slice(at + code.length).replace(/^\s+/, '');
+      rest = before && after ? before + ' ' + after : before + after;
+      code = shape.codeIn(rest);
+    }
+    return rest;
   }
 
   /* The send arrow is dim until the box holds a word. */
