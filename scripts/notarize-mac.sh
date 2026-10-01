@@ -8,12 +8,17 @@
 # Environment:
 #   SIGN_IDENTITY     "Developer ID Application: Name (TEAMID)", or its SHA-1 hash
 #   SIGN_KEYCHAIN     the keychain that holds it (optional; codesign searches the list without it)
-#   NOTARY_APPLE_ID, NOTARY_PASSWORD, NOTARY_TEAM_ID
+#   NOTARY_PROFILE    a notarytool keychain profile (`notarytool store-credentials`). Wins over
+#                     the two below, and is the one to use on a shared machine: the others put
+#                     a secret on notarytool's command line, where any local process can read it
+#   or NOTARY_APPLE_ID, NOTARY_PASSWORD, NOTARY_TEAM_ID
 #                     the Apple ID notarytool submits as, an app-specific password, the team
 #   or NOTARY_KEY_PATH, NOTARY_KEY_ID, NOTARY_ISSUER
-#                     an App Store Connect API key instead; the Apple ID wins when both are set
+#                     an App Store Connect API key; the Apple ID wins when both are set
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 #                     the updater key; the updater bundle is rebuilt from the stapled app
+#   NOTARY_TIMEOUT    how long to wait on Apple per submission, 45m unless set. A team's first
+#                     submissions can sit In Progress for hours.
 #   NOTARIZE=0        sign and rebuild everything but skip Apple's service. Only for proving the
 #                     chain with a throwaway identity; nothing made this way can ship.
 #
@@ -40,12 +45,14 @@ version="${2:?usage: notarize-mac.sh <bundle dir> <version>}"
 notarize="${NOTARIZE:-1}"
 notary_auth=()
 if [ "$notarize" = 1 ]; then
-  if [ -n "${NOTARY_APPLE_ID:-}" ] && [ -n "${NOTARY_PASSWORD:-}" ] && [ -n "${NOTARY_TEAM_ID:-}" ]; then
+  if [ -n "${NOTARY_PROFILE:-}" ]; then
+    notary_auth=(--keychain-profile "$NOTARY_PROFILE")
+  elif [ -n "${NOTARY_APPLE_ID:-}" ] && [ -n "${NOTARY_PASSWORD:-}" ] && [ -n "${NOTARY_TEAM_ID:-}" ]; then
     notary_auth=(--apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_PASSWORD" --team-id "$NOTARY_TEAM_ID")
   elif [ -n "${NOTARY_KEY_PATH:-}" ] && [ -n "${NOTARY_KEY_ID:-}" ] && [ -n "${NOTARY_ISSUER:-}" ]; then
     notary_auth=(--key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
   else
-    echo "notarize: set NOTARY_APPLE_ID, NOTARY_PASSWORD and NOTARY_TEAM_ID, or NOTARY_KEY_PATH, NOTARY_KEY_ID and NOTARY_ISSUER" >&2
+    echo "notarize: set NOTARY_PROFILE, or NOTARY_APPLE_ID, NOTARY_PASSWORD and NOTARY_TEAM_ID, or NOTARY_KEY_PATH, NOTARY_KEY_ID and NOTARY_ISSUER" >&2
     exit 1
   fi
 fi
@@ -88,12 +95,29 @@ by_depth() {
 }
 
 notarize_file() {
-  local file="$1" label="$2" result status id
+  local file="$1" label="$2" result status="" id="" found attempt
   result="$work/$label.json"
-  xcrun notarytool submit "$file" "${notary_auth[@]}" \
-    --wait --timeout 45m --output-format json > "$result" || true
-  status="$(plutil -extract status raw -o - "$result" 2>/dev/null || true)"
-  id="$(plutil -extract id raw -o - "$result" 2>/dev/null || true)"
+  # A dropped connection fails the upload (abortedUpload, no id comes back) or the wait (an id,
+  # no verdict). Up to three tries: a failed upload is submitted again, a broken wait waits
+  # again on the same id rather than paying for a second submission.
+  for attempt in 1 2 3; do
+    if [ -z "$id" ]; then
+      xcrun notarytool submit "$file" "${notary_auth[@]}" \
+        --wait --timeout "${NOTARY_TIMEOUT:-45m}" --output-format json > "$result" || true
+    else
+      xcrun notarytool wait "$id" "${notary_auth[@]}" \
+        --timeout "${NOTARY_TIMEOUT:-45m}" --output-format json > "$result" || true
+    fi
+    found="$(plutil -extract id raw -o - "$result" 2>/dev/null || true)"
+    if [ -n "$found" ]; then id="$found"; fi
+    status="$(plutil -extract status raw -o - "$result" 2>/dev/null || true)"
+    # A verdict, or In Progress past NOTARY_TIMEOUT: either way, trying again would not help.
+    if [ -n "$status" ]; then break; fi
+    if [ "$attempt" -lt 3 ]; then
+      echo "notarize: $label attempt $attempt got no answer from Apple, trying again in $((attempt * 60))s" >&2
+      sleep $((attempt * 60))
+    fi
+  done
   echo "notarize: $label submission $id: $status"
   if [ "$status" != "Accepted" ]; then
     # The log names every file Apple refused and why; without it a rejection is a guess.

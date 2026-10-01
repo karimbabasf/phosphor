@@ -8,15 +8,21 @@
 # Inputs, all from ~/.config/phosphor-signing (PHOSPHOR_SIGNING_DIR overrides it):
 #   developer-id.key      the private key the certificate signing request was made from
 #   developer*id*.cer     the Developer ID Application certificate Apple issued for it
-#   notary.env            APPLE_ID=, APPLE_PASSWORD= (app-specific) and APPLE_TEAM_ID=, for
-#                         notarytool; or APPLE_API_KEY= and APPLE_API_ISSUER= with the key file
-#   AuthKey_<id>.p8       the App Store Connect API key, only for that second route
+#
+# and, for notarytool, the keychain profile phosphor-notary (NOTARY_PROFILE names another), made
+# once with
+#
+#   xcrun notarytool store-credentials phosphor-notary --apple-id <Apple ID> --team-id <team>
+#
+# which asks for the app-specific password and keeps it in the keychain. Without the profile,
+# notary.env with APPLE_API_KEY= and APPLE_API_ISSUER= and the key file AuthKey_<id>.p8 beside it
+# is the other route. An Apple ID and password are never passed on notarytool's command line
+# here: `ps` shows a process's arguments to every other process on the Mac.
 #
 # The key and the certificate become a .p12 in a private temporary directory, the .p12 goes into
-# a throwaway keychain, and both are deleted when the script exits, however it exits. The .p8 and
-# notary.env are read where they lie, and the password is never printed. The login keychain is
-# never written to; the throwaway one joins the search list for the length of the run (codesign
-# and notarytool look there) and leaves it after.
+# a throwaway keychain, and both are deleted when the script exits, however it exits. The .p8 is
+# read where it lies. The login keychain is never written to; the throwaway one joins the search
+# list for the length of the run (codesign looks there) and leaves it after.
 #
 # The updater bundle is signed with TAURI_SIGNING_PRIVATE_KEY when the environment has it, and
 # otherwise with a throwaway key made for this run, whose signature no installed app accepts.
@@ -39,20 +45,20 @@ test -n "$cer" || refuse "missing $dir/developer*id*.cer (download the Developer
 notary_env=()
 if [ "${NOTARIZE:-1}" = 1 ]; then
   env_file="$dir/notary.env"
-  test -f "$env_file" || refuse "missing $env_file (APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID for notarytool)"
+  profile="${NOTARY_PROFILE:-phosphor-notary}"
   # Read by name rather than sourced: the file is data, not a script.
-  field() { sed -n "s/^$1=//p" "$env_file" | tr -d '"'"'"'\r' | head -1; }
-  if [ -n "$(field APPLE_ID)" ]; then
-    test -n "$(field APPLE_PASSWORD)" || refuse "$env_file has APPLE_ID but no APPLE_PASSWORD line"
-    test -n "$(field APPLE_TEAM_ID)" || refuse "$env_file has APPLE_ID but no APPLE_TEAM_ID line"
-    notary_env=(NOTARY_APPLE_ID="$(field APPLE_ID)" NOTARY_PASSWORD="$(field APPLE_PASSWORD)" NOTARY_TEAM_ID="$(field APPLE_TEAM_ID)")
+  field() { test -f "$env_file" && sed -n "s/^$1=//p" "$env_file" | tr -d '"'"'"'\r' | head -1; }
+  # The profile sits in the data protection keychain, which `security` cannot list, so asking
+  # Apple for the history is the check that it exists and still signs in.
+  if xcrun notarytool history --keychain-profile "$profile" >/dev/null 2>&1; then
+    notary_env=(NOTARY_PROFILE="$profile")
   elif [ -n "$(field APPLE_API_KEY)" ]; then
     p8="$(find "$dir" -maxdepth 1 -name "AuthKey_$(field APPLE_API_KEY).p8" | head -1)"
     test -n "$p8" || refuse "missing $dir/AuthKey_$(field APPLE_API_KEY).p8 (the App Store Connect API key for notarytool)"
     test -n "$(field APPLE_API_ISSUER)" || refuse "$env_file has APPLE_API_KEY but no APPLE_API_ISSUER line"
     notary_env=(NOTARY_KEY_PATH="$p8" NOTARY_KEY_ID="$(field APPLE_API_KEY)" NOTARY_ISSUER="$(field APPLE_API_ISSUER)")
   else
-    refuse "$env_file has neither APPLE_ID nor APPLE_API_KEY"
+    refuse "no notarytool keychain profile $profile; make it with: xcrun notarytool store-credentials $profile --apple-id <Apple ID> --team-id <team>"
   fi
 fi
 
