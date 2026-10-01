@@ -35,6 +35,7 @@ import { createVaultPrefs } from './vault/prefs.ts';
 import { createTerms } from './terms.ts';
 import { createDepositWatch } from './vault/watch.ts';
 import { createInviteService } from './invite/claim.ts';
+import { demoInviteNet } from './invite/demo.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, routeGate } from './preflight/route-health.ts';
 import { createSseHub } from './http/sse.ts';
 import { credentialCheck, redactEvent } from './http/log-tail.ts';
@@ -271,10 +272,12 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   });
   /* Invite codes. The deposit watch's hold keeps a claim from reading as a deposit, and the
      refresh is the same seam the watch uses, so the ring shows the money the moment it is proven.
-     Demo mode moves nothing, so a claim there is refused before any read. */
+     Demo mode moves nothing, so a claim there is refused before any read, unless the proof's
+     pretend world is named (src/invite/demo.ts), which reaches no network. */
+  const demoInvite = deps.invite === undefined ? demoInviteNet(cfg.mode) : null;
   const invites = createInviteService({
     dataDir: cfg.dataDir,
-    movesMoney: cfg.mode === 'live',
+    movesMoney: cfg.mode === 'live' || demoInvite !== null,
     audit,
     keystore,
     broadcast: (frame) => sse.broadcast(frame),
@@ -286,7 +289,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         sse.broadcastState();
       }),
     hold: (assetId) => deposits.holdForClaim(assetId),
-    ...(deps.invite ?? {}),
+    ...(deps.invite ?? demoInvite ?? {}),
   });
   const session =
     deps.session ??

@@ -106,12 +106,13 @@ function namesTheBackendReads(): Map<string, Set<string>> {
 }
 
 /* Read by the backend and deliberately not handed to it by the shell. The reasons for the first
-   three are written beside BACKEND_ENV in backend.rs too, where the next person to edit the list
-   will read them. */
+   three, and for the invite proof's knob, are written beside BACKEND_ENV in backend.rs too, where
+   the next person to edit the list will read them. */
 const WITHHELD: Record<string, string> = {
   ACC_PORT: 'the shell probes PHOSPHOR_PORT only, so a backend on ACC_PORT is one the shell never finds',
   ACC_DATA_DIR: 'PHOSPHOR_DATA_DIR is always set by the shell and wins',
   PHOSPHOR_NO_PARENT_WATCH: 'the shell is the parent the watch exists for',
+  PHOSPHOR_DEMO_INVITE: 'a proof knob: scripts/invite-proof.ts runs the backend from a checkout, never through the shell',
   [WINDOW_TOKEN_VAR]: 'the token goes down stdin, never the environment (tests/unit/token-stdin.test.ts)',
 };
 

@@ -295,7 +295,9 @@ const SHIPPED_FLAG_LISTS: [&[&str]; 2] = [
 /// PHOSPHOR_PORT and a backend listening where this shell never probes is a 45-second boot
 /// failure; ACC_DATA_DIR, because PHOSPHOR_DATA_DIR below is always set and wins; and
 /// PHOSPHOR_NO_PARENT_WATCH, because this shell is the parent the watch exists for, and a backend
-/// that outlives it holds the key with no window left to lock it.
+/// that outlives it holds the key with no window left to lock it; and PHOSPHOR_DEMO_INVITE, the
+/// invite proof's pretend network (src/invite/demo.ts), because that proof runs the backend from a
+/// checkout and an installed app has no use for it.
 const BACKEND_ENV: &[&str] = &[
     // What a process needs to run at all, and what src/driver.ts (INHERITED_ENV) and
     // src/agents-catalog.ts (PROBE_ENV) pass on to the agents and the runner it starts.

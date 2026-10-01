@@ -2,20 +2,22 @@
 //
 // Boots the app in demo mode on a free port with an EMPTY data directory, so the window opens on
 // the first run, then drives headless Chromium through playwright-core at 1280 x 800 (two device
-// pixels per CSS pixel) and shoots every state an invite code has: the first run's step (empty,
-// checking, a good code and each refusal), the claim on the addresses step (running, landed,
-// failed), the toast a claim that ends after the person moved on becomes, the Add money line on
-// Basic (closed, open, a good code, running, landed, a refusal, failed), and the chat keeping a
-// pasted code out of the conversation.
+// pixels per CSS pixel) and shoots every state an invite code has: the terms card, the first
+// run's step (empty, checking, a good code and each refusal), the claim on the addresses step
+// (running, landed, failed), the toast a claim that ends after the person moved on becomes, the
+// Add money line on Basic (closed, open, a good code, running, landed, a refusal, failed), and the
+// chat keeping a pasted code out of the conversation.
 //
-// The two invite routes are the backend's, on its own branch until it merges. The window calls
-// them through one file, ui/core/invite.js, so this proof answers them there, in the page, and
-// says each claim's end on the window's own bus (PhosphorEvents.emit) the way the SSE frame
-// would. Everything else is the real demo backend. Two runs, because a claim's end is said once:
-// one lands on the addresses step, the other fails there and goes on to Basic.
+// Everything is the real backend: the window asks the app's own routes, the app's claim signs and
+// watches, and each claim's end reaches the window as the app's own frame. Only the network is
+// pretend: PHOSPHOR_DEMO_INVITE names a file (src/invite/demo.ts) that holds what each made-up
+// code is worth and how it behaves, keyed by the code's account, and nothing leaves this Mac. Two
+// runs, because a claim's end is said once: one lands on the addresses step, the other fails there
+// and goes on to Basic. A code is "busy" only while a claim runs, and no claim runs before a
+// wallet exists, so the first run's step never shows it; the unit tests do.
 //
-// Fixture data only: temp directories, never the live wallet, and a code the shape of a real one
-// that was never issued. Run:
+// Fixture data only: temp directories, never the live wallet, and codes made of a repeated byte
+// that were never issued. Run:
 //   node scripts/invite-proof.ts
 // PROOF_OUT names another directory for the pictures (default docs/screenshots/invite/).
 // playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy. Without
@@ -29,14 +31,47 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { codeAddress, formatCode } from '../src/invite/code.ts';
+import { DEMO_INVITE_ENV } from '../src/invite/demo.ts';
+
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
 const SHOTS = process.env.PROOF_OUT ?? path.join(ROOT, 'docs', 'screenshots', 'invite');
 
-const CODE = 'PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ';
-const GOOD = { ok: true, amount: '5.00', asset: 'USDC', route: 'relay', net: '5.00' };
+/* One made-up code per part it plays, since a code pays once. Each is a repeated byte whose code
+   parses; the demo world holds what each stands for, by its account. */
+const PARTS = {
+  slow: { byte: 0x52, world: { usdc: '5.00', slowMs: 5_000 } },
+  used: { byte: 0x43, world: null },
+  offline: { byte: 0x45, world: { usdc: '5.00', offline: true } },
+  locked: { byte: 0x44, world: { usdc: '5.00', locked: true } },
+  landsA: { byte: 0x42, world: { usdc: '5.00', landMs: 3_000 } },
+  failsB: { byte: 0x47, world: { usdc: '5.00', refusal: 'insufficient balance or overflow' } },
+  toastLands: { byte: 0x49, world: { usdc: '5.00', landMs: 1_500 } },
+  toastFails: { byte: 0x48, world: { usdc: '5.00', refusal: 'insufficient balance or overflow' } },
+  addLands: { byte: 0x4a, world: { usdc: '5.00', landMs: 4_000 } },
+  addFails: { byte: 0x51, world: { usdc: '5.00', refusal: 'insufficient balance or overflow' } },
+} as const;
+type Part = keyof typeof PARTS;
+
+const secretOf = (part: Part): Uint8Array => new Uint8Array(16).fill(PARTS[part].byte);
+const codeOf = (part: Part): string => formatCode(secretOf(part));
+const CODE = codeOf('landsA');
+// One character off the end: the check symbol catches it on this Mac.
+const TYPO = CODE.slice(0, -1) + (CODE.endsWith('0') ? '1' : '0');
+
+function worldFile(dir: string): string {
+  const accounts: Record<string, unknown> = {};
+  for (const part of Object.keys(PARTS) as Part[]) {
+    const world = PARTS[part].world;
+    if (world !== null) accounts[codeAddress(secretOf(part))!] = world;
+  }
+  const file = path.join(dir, 'invite-world.json');
+  fs.writeFileSync(file, JSON.stringify({ accounts }));
+  return file;
+}
 
 type Json = any;
 
@@ -58,23 +93,24 @@ function freePort(): Promise<number> {
 
 // ---------- the backend ----------
 
-type Backend = { base: string; token: string; app: ChildProcess; dataDir: string };
+type Backend = { base: string; token: string; app: ChildProcess; dataDir: string; worldDir: string };
 const backends: Backend[] = [];
 const log: string[] = [];
 
 async function startApp(): Promise<Backend> {
   const port = await freePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-proof-'));
+  const worldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-world-'));
   const base = `http://127.0.0.1:${port}`;
   const app = spawn(process.execPath, ['src/main.ts'], {
     cwd: ROOT,
-    env: { ...process.env, ACC_MODE: 'demo', ACC_PORT: String(port), ACC_DATA_DIR: dataDir },
+    env: { ...process.env, ACC_MODE: 'demo', ACC_PORT: String(port), ACC_DATA_DIR: dataDir, [DEMO_INVITE_ENV]: worldFile(worldDir) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const own: string[] = [];
   app.stdout?.on('data', (d: Buffer) => own.push(d.toString()));
   app.stderr?.on('data', (d: Buffer) => own.push(d.toString()));
-  const backend: Backend = { base, token: '', app, dataDir };
+  const backend: Backend = { base, token: '', app, dataDir, worldDir };
   backends.push(backend);
   const until = Date.now() + 30_000;
   while (Date.now() < until) {
@@ -117,36 +153,30 @@ function stopAll(): void {
         // already gone
       }
     }
-    try {
-      fs.rmSync(backend.dataDir, { recursive: true, force: true });
-    } catch {
-      // a temp dir that would not go is not a failure of the proof
+    for (const dir of [backend.dataDir, backend.worldDir]) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // a temp dir that would not go is not a failure of the proof
+      }
     }
   }
 }
 
 // ---------- the page ----------
 
-/* The invite routes, answered in the page through the one file that calls them. `hang` is a
-   check that never answers, to shoot the wait. */
-const STUB = `(function () {
-  var door = window.PhosphorInviteApi;
-  window.__invite = window.__invite || { check: null, claim: null };
-  door.check = function () {
-    var a = window.__invite.check;
-    return a === 'hang' ? new Promise(function () {}) : Promise.resolve(a);
-  };
-  door.claim = function () { return Promise.resolve(window.__invite.claim); };
-})()`;
-
-async function answer(page: Json, route: 'check' | 'claim', value: Json): Promise<void> {
-  await page.evaluate(`window.__invite.${route} = ${JSON.stringify(value)}`);
+/* Waits until a line the invite screens draw says these words, from the app's own answer or
+   frame. */
+async function said(page: Json, words: string, timeout = 20_000): Promise<void> {
+  await page.waitForFunction(`Array.prototype.slice.call(document.querySelectorAll('.invite-said'))
+    .some(function (n) { return n.getClientRects().length > 0 && n.textContent.indexOf(${JSON.stringify(words)}) >= 0; })`, undefined, { timeout });
+  await sleep(450);
 }
 
-/* A claim's end, on the bus the stream's frames come through. */
-async function end(page: Json, claim: string, status: 'landed' | 'failed'): Promise<void> {
-  await page.evaluate(`window.PhosphorEvents.emit('invite', ${JSON.stringify({ type: 'invite', claim, status, amount: '5.00', asset: 'USDC' })})`);
-  await sleep(700);
+async function toasted(page: Json, words: string): Promise<void> {
+  await page.waitForFunction(`Array.prototype.slice.call(document.querySelectorAll('.toast'))
+    .some(function (n) { return n.textContent.indexOf(${JSON.stringify(words)}) >= 0; })`, undefined, { timeout: 20_000 });
+  await sleep(450);
 }
 
 const results: Record<string, unknown> = {};
@@ -160,7 +190,10 @@ const READ = `(function () {
   var toasts = Array.prototype.slice.call(document.querySelectorAll('.toast')).map(function (n) { return n.textContent; });
   var title = (document.querySelector('#screen-firstrun:not([hidden]) .screen-body h1') || {}).textContent || null;
   var codeOnPage = document.body.innerText.indexOf(${JSON.stringify(CODE)}) >= 0;
-  return { title: title, said: said, toasts: toasts, codeShownAsText: codeOnPage };
+  var body = document.querySelector('#screen-firstrun:not([hidden]) .screen-body');
+  var scroll = document.scrollingElement ? document.scrollingElement.scrollHeight - window.innerHeight : 0;
+  return { title: title, said: said, toasts: toasts, codeShownAsText: codeOnPage, pageScrolls: scroll > 0,
+    cardScrolls: body ? body.scrollHeight > body.clientHeight + 1 : null };
 })()`;
 
 async function shoot(page: Json, name: string): Promise<void> {
@@ -189,23 +222,23 @@ async function open(browser: Json, backend: Backend): Promise<Json> {
   await page.goto(`${backend.base}/?token=${backend.token}`, { waitUntil: 'load' });
   await page.waitForSelector('#screen-firstrun .firstrun-welcome', { timeout: 20_000 });
   await page.evaluate('document.fonts.ready');
-  await page.evaluate(STUB);
   await sleep(1800);
   await page.click('#screen-firstrun .firstrun-welcome .btn-primary');
   await sleep(450);
   if ((await title(page)) === 'Before you start') {
+    await sleep(600);
+    if (!shots.some((file) => file.endsWith('firstrun-terms.png'))) await shoot(page, 'firstrun-terms');
     await page.click(primary);
   }
   await waitTitle(page, 'Got an invite code?');
   return page;
 }
 
-/* A code typed into the step, and Use code. */
-async function check(page: Json, value: Json): Promise<void> {
-  await answer(page, 'check', value);
-  await page.fill('#screen-firstrun .invite-input', CODE);
+/* A code typed into the step, and Use code: the app's own check answers it. */
+async function check(page: Json, code: string): Promise<void> {
+  await page.fill('#screen-firstrun .invite-input', code);
   await page.click(primary);
-  await sleep(500);
+  await sleep(600);
 }
 
 /* From a good code on the invite step to the addresses step, through the software flow the demo
@@ -245,39 +278,41 @@ async function main(): Promise<void> {
   fs.mkdirSync(SHOTS, { recursive: true });
 
   try {
-    // ---------- run A: the step, every check, and a claim that lands in place ----------
+    // ---------- run A: the terms, the step, every check, and a claim that lands in place ----------
     const a = await startApp();
     const page = await open(browser, a);
     await shoot(page, 'firstrun-invite-empty');
-    await check(page, 'hang');
+    await check(page, codeOf('slow'));
     await shoot(page, 'firstrun-invite-checking');
-    const refusals: Array<[string, Json]> = [
-      ['typo', { ok: false, reason: 'typo' }],
-      ['used', { ok: false, reason: 'empty' }],
-      ['offline', { ok: false, reason: 'offline' }],
-      ['locked', { ok: false, reason: 'locked' }],
-      ['busy', { ok: false, reason: 'busy' }],
+    await said(page, 'waiting for you');
+    const refusals: Array<[string, string, string]> = [
+      ['typo', TYPO, 'has a typo'],
+      ['used', codeOf('used'), 'already used'],
+      ['offline', codeOf('offline'), "Couldn't check"],
+      ['locked', codeOf('locked'), "can't pay out"],
     ];
-    for (const [name, value] of refusals) {
-      await check(page, value);
+    for (const [name, code, words] of refusals) {
+      await check(page, code);
+      await said(page, words);
       await shoot(page, `firstrun-invite-${name}`);
     }
-    await check(page, GOOD);
+    await check(page, CODE);
+    await said(page, 'waiting for you');
     await shoot(page, 'firstrun-invite-valid');
-    await answer(page, 'claim', { ok: true, claim: 'proof-1' });
     await toAddresses(page);
+    await said(page, 'Adding $5');
     await shoot(page, 'firstrun-addresses-running');
-    await end(page, 'proof-1', 'landed');
+    await said(page, 'is in your wallet');
     await shoot(page, 'firstrun-addresses-landed');
     await page.close();
 
     // ---------- run B: a claim that fails in place, then Basic: the toasts, Add money, the chat ----------
     const b = await startApp();
     const second = await open(browser, b);
-    await check(second, GOOD);
-    await answer(second, 'claim', { ok: true, claim: 'proof-2' });
+    await check(second, codeOf('failsB'));
+    await said(second, 'waiting for you');
     await toAddresses(second);
-    await end(second, 'proof-2', 'failed');
+    await said(second, "didn't come through");
     await shoot(second, 'firstrun-addresses-failed');
 
     // On through the steps to Basic.
@@ -295,16 +330,12 @@ async function main(): Promise<void> {
     await sleep(1200);
 
     // A claim that ends after the person moved on: a toast on Basic, each way.
-    await answer(second, 'claim', { ok: true, claim: 'proof-3' });
-    await second.evaluate(`window.PhosphorInvite.claim(${JSON.stringify(CODE)}, { amount: '5.00', asset: 'USDC' })`);
-    await sleep(200);
-    await end(second, 'proof-3', 'landed');
+    await second.evaluate(`window.PhosphorInvite.claim(${JSON.stringify(codeOf('toastLands'))}, { amount: '5.00', asset: 'USDC' })`);
+    await toasted(second, 'is in your wallet');
     await shoot(second, 'basic-toast-landed');
-    await second.waitForFunction('document.querySelectorAll(".toast").length === 0', undefined, { timeout: 10_000 });
-    await answer(second, 'claim', { ok: true, claim: 'proof-4' });
-    await second.evaluate(`window.PhosphorInvite.claim(${JSON.stringify(CODE)}, { amount: '5.00', asset: 'USDC' })`);
-    await sleep(200);
-    await end(second, 'proof-4', 'failed');
+    await second.waitForFunction('document.querySelectorAll(".toast").length === 0', undefined, { timeout: 12_000 });
+    await second.evaluate(`window.PhosphorInvite.claim(${JSON.stringify(codeOf('toastFails'))}, { amount: '5.00', asset: 'USDC' })`);
+    await toasted(second, "didn't come through");
     await shoot(second, 'basic-toast-failed');
     await second.waitForFunction('document.querySelectorAll(".toast").length === 0', undefined, { timeout: 12_000 });
 
@@ -316,31 +347,26 @@ async function main(): Promise<void> {
     await second.click('.invite-open');
     await sleep(500);
     await shoot(second, 'addmoney-open');
-    await answer(second, 'check', GOOD);
-    await second.fill('.invite-input', CODE);
+    await second.fill('.invite-input', codeOf('addLands'));
     await second.click('.invite-use');
-    await sleep(500);
+    await said(second, 'waiting for you');
     await shoot(second, 'addmoney-valid');
-    await answer(second, 'claim', { ok: true, claim: 'proof-5' });
     await second.click('.invite-use');
-    await sleep(500);
+    await said(second, 'Adding $5');
     await shoot(second, 'addmoney-running');
-    await end(second, 'proof-5', 'landed');
+    await said(second, 'is in your wallet');
     await shoot(second, 'addmoney-landed');
     await second.click('.invite-open');
     await sleep(400);
-    await answer(second, 'check', { ok: false, reason: 'offline' });
-    await second.fill('.invite-input', CODE);
+    await second.fill('.invite-input', codeOf('offline'));
     await second.click('.invite-use');
-    await sleep(500);
+    await said(second, "Couldn't check");
     await shoot(second, 'addmoney-offline');
-    await answer(second, 'check', GOOD);
+    await second.fill('.invite-input', codeOf('addFails'));
     await second.click('.invite-use');
-    await sleep(400);
-    await answer(second, 'claim', { ok: true, claim: 'proof-6' });
+    await said(second, 'waiting for you');
     await second.click('.invite-use');
-    await sleep(300);
-    await end(second, 'proof-6', 'failed');
+    await said(second, "didn't come through");
     await shoot(second, 'addmoney-failed');
 
     // The chat: a pasted code never goes, and opens the field instead.
@@ -348,7 +374,6 @@ async function main(): Promise<void> {
     await sleep(700);
     await second.evaluate(`window.PhosphorEvents.emit('driver', ${JSON.stringify({ chat: 'c1', event: { kind: 'status', state: 'ready', at: Date.now() } })})`);
     await second.waitForSelector('.composer-input', { state: 'visible', timeout: 10_000 });
-    await answer(second, 'check', GOOD);
     await second.fill('.composer-input', CODE);
     await sleep(900);
     await shoot(second, 'chat-code-kept-out');

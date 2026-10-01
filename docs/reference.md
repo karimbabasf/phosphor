@@ -407,7 +407,10 @@ live chain, and there is no setting that points them anywhere else. Nothing here
 - `demo` serves a fixture (ETH, USDC and SOL inside NEAR Intents, 50 USDC of Hyperliquid
   collateral) and runs no rail, so a proposal there is drafted, priced and ruled on offline with
   nothing at stake, and refuses at the rail step. It is not a practice mode for real money: it
-  moves nothing, anywhere, ever.
+  moves nothing, anywhere, ever. An invite claim there is refused before any read, unless
+  `PHOSPHOR_DEMO_INVITE` names the pretend world `scripts/invite-proof.ts` writes
+  (`src/invite/demo.ts`): then the claim is signed as always and run in memory, and nothing leaves
+  the Mac.
 
 Shipped `config.json` is `mode: "live"`. Demo is no longer the default anywhere. It stays in the
 codebase because the test suite and the e2e proof run against it offline.
