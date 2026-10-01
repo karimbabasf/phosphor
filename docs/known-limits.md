@@ -19,8 +19,9 @@ gets called an audit until a third party signs it.
 Your wallet file is sealed on disk, and on a Mac with a Secure Enclave the seal opens only with
 Touch ID. But while the vault is open the unsealed key sits in the app's memory, because that is
 what signs the moves you approved and the small ones your rules allow. The lock wipes it, and the
-lock comes after fifteen minutes with nobody at the window (or the time you set in the Vault
-tab), when the Mac sleeps, when you close the window, and when you press Lock now.
+lock comes after five minutes with nobody at the window (or the time you set in the Vault
+tab), when the Mac sleeps, when the screen locks or the Mac switches to another user, when you
+close the window, and when you press Lock now.
 
 What it means: a program that can read the app's memory while the vault is open has the key.
 On macOS that takes a process running as you with the right to attach to another process, which

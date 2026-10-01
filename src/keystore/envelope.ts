@@ -71,7 +71,15 @@ export function open(sealed: Sealed, key: Buffer, aad: Buffer): Buffer {
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
   decipher.setAAD(aad);
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(Buffer.from(sealed.data, 'base64')), decipher.final()]);
+  // The plaintext the cipher hands back before it is joined into the buffer the caller holds and
+  // wipes. Dropped as it was, it sat in freed memory until something happened to reuse it; when
+  // the tag fails it is plaintext nobody authenticated, which is no reason to keep it either.
+  const head = decipher.update(Buffer.from(sealed.data, 'base64'));
+  try {
+    return Buffer.concat([head, decipher.final()]);
+  } finally {
+    wipe(head);
+  }
 }
 
 // Overwrite a buffer that held key material. Best effort and stated as such: it cannot reach a

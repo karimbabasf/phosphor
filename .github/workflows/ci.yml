@@ -37,6 +37,13 @@ jobs:
       - name: Install
         run: npm ci --ignore-scripts
 
+      # Every installed package carries the registry's signature for the exact tarball the lockfile
+      # names, so a package swapped between the registry and this runner fails here, before a test
+      # or a bundle runs its code. The packages that load beside the key are pinned by name in
+      # tests/unit/key-process-packages.test.ts.
+      - name: Registry signatures
+        run: npm audit signatures
+
       - name: Typecheck
         run: npm run typecheck
 

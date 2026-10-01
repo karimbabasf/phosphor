@@ -50,6 +50,8 @@ export const KEYSTORE_FILENAME = 'keys.enc.json';
 const MAX_FAILURES = 5;
 const BACKOFF_MS = 30_000;
 
+const EVM_KEY = /^0x[0-9a-fA-F]{64}$/;
+
 /* DEMO MODE NEVER DESTROYS A KEY FILE, and this is the second lock on a door the config file
    already shut. The first lock is that a demo boot resolves its own key file and never the real
    one: inside the data directory it was given, or in ~/.phosphor-demo when that directory is
@@ -87,6 +89,23 @@ export type KeysPayload = {
 };
 
 export type StoredAddresses = { evm: string | null; solana: string | null; near: string | null; nearPublicKey: string | null };
+
+/* The Hyperliquid API wallet the runner signs orders with: a key that can trade and, by the
+   venue's own signing split, cannot withdraw, transfer or approve another agent. */
+export type ApiWallet = { key: `0x${string}`; address: string | null };
+
+/* Which entry in a payload is the API wallet. A keys.json written before 2026-09-01 keyed the
+   agent by a venue axis this app no longer has, so the entry that names this venue wins and the
+   flat field an older file carries is the fallback: no install loses its agent to a shape
+   change. Nothing here writes the payload back or removes anything from it; it is key material,
+   and a human removes what a human put there. */
+export function apiWalletOf(payload: KeysPayload): ApiWallet | null {
+  for (const entry of [payload.hyperliquidAgents?.mainnet, payload.hyperliquidAgent]) {
+    const key = entry?.privateKey;
+    if (typeof key === 'string' && EVM_KEY.test(key)) return { key: key as `0x${string}`, address: entry?.address ?? null };
+  }
+  return null;
+}
 
 /* The Secure Enclave key a version 2 file is wrapped to. `keyBlob` is the enclave's own opaque
    representation of the private key (CryptoKit dataRepresentation): useless off this Mac, and
@@ -184,6 +203,11 @@ export type Keystore = {
   reveal(): { mnemonic: string | null; keys: KeysPayload };
   // Throws when locked. Every signer goes through this or through the helpers below it.
   keys(): KeysPayload;
+  // The EVM private key and nothing else, which is all an EVM signature needs. Throws when locked,
+  // as keys() does, and never decodes the rest of the payload: see `evmKey` in createKeystore.
+  evmPrivateKey(): `0x${string}`;
+  // The same for the runner: the API wallet alone, or null when the wallet has none. See `apiKey`.
+  apiWallet(): ApiWallet | null;
   path(): string;
   onChange(fn: (state: LockState) => void): () => void;
 
@@ -321,6 +345,17 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
      rewritten (an API wallet added) without a second Touch ID. It is no more than the payload
      already is, it is wiped by the same lock, and a version 1 wallet never sets it. */
   let dataKey: Buffer | null = null;
+  /* THE ONE KEY A SIGNATURE NEEDS, as its 32 bytes, set and wiped with the payload by hold() and
+     lock(). keys() decodes the WHOLE payload into a string and parses it, the recovery phrase and
+     every other key included, and every EVM signature used to go through it: each one left
+     another copy of the phrase in heap that nothing can overwrite, still there after a lock until
+     the allocator happens to reuse the memory. A signer reads this instead. The key still becomes
+     a hex string for viem and a bigint inside noble, and JavaScript can wipe neither, so a
+     signature still leaves the EVM key behind. It no longer leaves the phrase. */
+  let evmKey: Buffer | null = null;
+  // The runner's key, kept the same way for the same reason: every runner it starts reads it.
+  let apiKey: Buffer | null = null;
+  let apiAddress: string | null = null;
   let failures = 0;
   let backoffUntil = 0;
   /* The addresses this process has DECRYPTED, which is the only version of them worth serving.
@@ -398,6 +433,35 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     if (hasKeystore()) throw new Error('the wallet is locked: unlock it in the app window to sign anything');
     if (fs.existsSync(keysPath)) return JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysPayload;
     throw new Error(`no wallet yet. Create one in the app window, or point PHOSPHOR_KEYS at an existing ${path.basename(keysPath)}`);
+  }
+
+  function evmPrivateKey(): `0x${string}` {
+    if (plain !== null) {
+      if (evmKey === null) throw new Error('this wallet has no valid EVM private key');
+      return `0x${evmKey.toString('hex')}`;
+    }
+    // Locked, or not migrated yet: keys() throws for the first and reads keys.json for the second.
+    const key = keys().evm?.privateKey;
+    if (typeof key !== 'string' || !EVM_KEY.test(key)) throw new Error('this wallet has no valid EVM private key');
+    return key as `0x${string}`;
+  }
+
+  function apiWallet(): ApiWallet | null {
+    if (plain !== null) return apiKey === null ? null : { key: `0x${apiKey.toString('hex')}`, address: apiAddress };
+    return apiWalletOf(keys());
+  }
+
+  // Every way the payload comes open lands here, so the keys beside it are never stale and never
+  // outlive it.
+  function hold(body: Buffer, payload: KeysPayload): void {
+    if (plain !== null && plain !== body) wipe(plain);
+    wipe(evmKey, apiKey);
+    plain = body;
+    const key = payload.evm?.privateKey;
+    evmKey = typeof key === 'string' && EVM_KEY.test(key) ? Buffer.from(key.slice(2), 'hex') : null;
+    const api = apiWalletOf(payload);
+    apiKey = api === null ? null : Buffer.from(api.key.slice(2), 'hex');
+    apiAddress = api?.address ?? null;
   }
 
   async function write(password: string, payload: KeysPayload, kdf: KdfParams): Promise<StoredAddresses> {
@@ -541,13 +605,14 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     if (!opened.ok) return opened;
     // Wiped, not dropped. Unlocking a wallet that was already open used to leave the previous
     // plaintext payload sitting in heap nothing would ever overwrite, which is the one thing
-    // holding the payload as bytes rather than as an object exists to make possible.
-    if (plain !== null) wipe(plain);
-    plain = opened.body;
+    // holding the payload as bytes rather than as an object exists to make possible. hold() does
+    // the wiping, for the signing key beside it too.
+    const payload = JSON.parse(opened.body.toString('utf8')) as KeysPayload;
+    hold(opened.body, payload);
     /* The addresses this wallet actually holds, derived from the keys that just came out of the
        envelope. Everything that shows somebody an address reads these from here on, so an edited
        header cannot reach the Money-in screen of an open wallet. */
-    openAddresses = addressesOf(JSON.parse(plain.toString('utf8')) as KeysPayload);
+    openAddresses = addressesOf(payload);
     tampered = false;
     announce();
     return { ok: true };
@@ -564,9 +629,12 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
 
   function lock(): boolean {
     if (plain === null) return false;
-    wipe(plain, dataKey);
+    wipe(plain, dataKey, evmKey, apiKey);
     plain = null;
     dataKey = null;
+    evmKey = null;
+    apiKey = null;
+    apiAddress = null;
     announce();
     return true;
   }
@@ -632,9 +700,8 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function holdOpen(payload: KeysPayload, dek: Buffer, addrs: StoredAddresses): void {
-    if (plain !== null) wipe(plain);
+    hold(Buffer.from(JSON.stringify(payload), 'utf8'), payload);
     if (dataKey !== null && dataKey !== dek) wipe(dataKey);
-    plain = Buffer.from(JSON.stringify(payload), 'utf8');
     dataKey = dek;
     openAddresses = addrs;
     announce();
@@ -670,9 +737,8 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
        mismatch is recorded, the derived addresses are served, and the window is told. */
     const derived = addressesOf(payload);
     tampered = !sameAddresses(derived, stored.header.addresses);
-    if (plain !== null) wipe(plain);
+    hold(body, payload);
     if (dataKey !== null) wipe(dataKey);
-    plain = body;
     dataKey = dek;
     openAddresses = derived;
     failures = 0;
@@ -731,8 +797,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     } finally {
       wipe(body);
     }
-    if (plain !== null) wipe(plain);
-    plain = Buffer.from(JSON.stringify(next), 'utf8');
+    hold(Buffer.from(JSON.stringify(next), 'utf8'), next);
     openAddresses = addressesOf(next);
     announce();
     return openAddresses;
@@ -762,7 +827,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     const addrs = await write(password, payload, params());
     // Unlocked immediately: the person is standing there having just typed the password, and
     // making them type it twice teaches nothing.
-    plain = Buffer.from(JSON.stringify(payload), 'utf8');
+    hold(Buffer.from(JSON.stringify(payload), 'utf8'), payload);
     openAddresses = addrs;
     announce();
     return { mnemonic: made.mnemonic, addresses: addrs };
@@ -788,7 +853,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     if (hasKeystore()) throw new Error('this app already holds a wallet. Move keys.enc.json aside first, or import into a fresh data directory.');
     const payload = payloadFromImport(from);
     const addrs = await write(password, payload, params());
-    plain = Buffer.from(JSON.stringify(payload), 'utf8');
+    hold(Buffer.from(JSON.stringify(payload), 'utf8'), payload);
     openAddresses = addrs;
     announce();
     return { addresses: addrs };
@@ -855,11 +920,19 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     importWallet,
     migrate: async (password) => {
       if (demo) throw new Error(DEMO_REFUSAL);
-      return migrateInto({ keysPath, file, write, kdf: params, setPlain: (b) => { plain = b; openAddresses = addressesOf(JSON.parse(b.toString('utf8')) as KeysPayload); announce(); } }, password);
+      const setPlain = (b: Buffer): void => {
+        const payload = JSON.parse(b.toString('utf8')) as KeysPayload;
+        hold(b, payload);
+        openAddresses = addressesOf(payload);
+        announce();
+      };
+      return migrateInto({ keysPath, file, write, kdf: params, setPlain }, password);
     },
     exportTo,
     reveal,
     keys,
+    evmPrivateKey,
+    apiWallet,
     path: () => file,
     custody,
     enclave,

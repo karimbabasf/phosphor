@@ -113,7 +113,7 @@ priced and checked against your rules, and is waiting for the key. Press Unlock 
 unlock the window, with Touch ID or your password. Every waiting move is then decided again
 against the policy as it stands, and lands as something to click, small ones included: an unlock
 is not an approval. If the policy now refuses the move, it is refused whether or not there is a
-key to sign it with. See [Getting started](getting-started.md#the-15-minute-lock).
+key to sign it with. See [Getting started](getting-started.md#the-five-minute-lock).
 
 ## A send was refused for a typo
 

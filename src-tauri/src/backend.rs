@@ -12,6 +12,7 @@
 // is one) instead of adopting something it cannot stop. And Drop, so the only way to leak a
 // backend now is SIGKILL of the shell itself, and the next launch cleans that one up.
 
+use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -236,10 +237,100 @@ pub fn read_pid_file(path: &Path) -> Option<PidRecord> {
 }
 
 /// The command line spawn_backend gives the control app is these two paths, each behind the path
-/// of the app bundle it runs from: the bundled runtime, then the payload's entry point. Nothing
-/// else on this Mac has a reason to run exactly that.
+/// of the app bundle it runs from, with NODE_FLAGS between them: the bundled runtime, then the
+/// payload's entry point. Nothing else on this Mac has a reason to run exactly that.
 const RUNTIME_IN_BUNDLE: &str = "/Contents/MacOS/node ";
 const PAYLOAD_IN_BUNDLE: &str = "/Contents/Resources/phosphor/src/main.ts";
+
+/// What the control app's Node is started with, before the payload's entry point. That process
+/// holds the unwrapped wallet keys while the vault is open, so each flag shuts a way into it that
+/// Node leaves open by default.
+///
+/// `--disable-sigusr1`. Node opens its inspector when it receives SIGUSR1: no password, on
+/// 127.0.0.1:9229, and the inspector evaluates code inside the process. Any process this user runs
+/// can send that signal, so without this flag every one of them could read the key while the
+/// wallet is open. Measured on the bundled runtime (2026-09-23): the signal opened the inspector,
+/// and with this flag it opens nothing and the process carries on.
+///
+/// `--no-addons`. No native addon loads into this process. The dependencies are pure JavaScript
+/// (see the library validation note in entitlements.plist), so this costs nothing today, and a
+/// native dependency added later fails the boot check in scripts/bundle-payload.ts rather than
+/// quietly widening what runs beside the key.
+///
+/// `--disallow-code-generation-from-strings`. eval and new Function throw. Nothing in src/ uses
+/// them; zod tries new Function for speed and falls back when it throws.
+///
+/// The runner child gets the same three without asking: src/runner/host.ts forks it with Node's
+/// default execArgv, which is this list, and it holds the Hyperliquid API wallet key.
+///
+/// Node has known all three since 22.14. scripts/bundle-payload.ts ships nothing but Node 24 and
+/// boots the staged runtime with this exact list before a build can finish, because a runtime that
+/// refused one would ship a window with a dead backend.
+pub const NODE_FLAGS: [&str; 3] = ["--disable-sigusr1", "--no-addons", "--disallow-code-generation-from-strings"];
+
+/// Every flag list a shipped build started its backend with, each in its own order. The orphan
+/// survey reads these and nothing else: the launch right after an update is exactly when a
+/// backend the previous version started turns up lost, and it was started with that version's
+/// list. Read off every tag's spawn_backend: v0.4.0 to v0.11.0 passed none, and 0.10.13 is the
+/// first with NODE_FLAGS. A change to NODE_FLAGS adds its new list here and keeps every old one,
+/// and a test fails until it does.
+const SHIPPED_FLAG_LISTS: [&[&str]; 2] = [
+    &[],
+    &["--disable-sigusr1", "--no-addons", "--disallow-code-generation-from-strings"],
+];
+
+/// The environment names the control app reads, and the only ones it is handed, each passed on
+/// from this shell's environment when it is set there.
+///
+/// THE ENVIRONMENT IS BUILT FROM NOTHING. It used to be this shell's whole environment, and one
+/// name in it is enough to run foreign code in the process that holds the key: NODE_OPTIONS
+/// (`--require`, `--import`, `--inspect`), and `launchctl setenv` puts it into every app this user
+/// opens from the Dock. NODE_PATH, NODE_EXTRA_CA_CERTS, OPENSSL_CONF (an OpenSSL config can load a
+/// provider library) and the DYLD_ family are the same class. A denylist is a list of the names
+/// somebody thought of, so this is the other kind: what src/ reads, by name.
+/// tests/unit/backend-launch.test.ts derives that set from the code and fails when it and this
+/// list disagree.
+///
+/// Read by the backend and deliberately NOT passed: ACC_PORT, because configured_port reads only
+/// PHOSPHOR_PORT and a backend listening where this shell never probes is a 45-second boot
+/// failure; ACC_DATA_DIR, because PHOSPHOR_DATA_DIR below is always set and wins; and
+/// PHOSPHOR_NO_PARENT_WATCH, because this shell is the parent the watch exists for, and a backend
+/// that outlives it holds the key with no window left to lock it.
+const BACKEND_ENV: &[&str] = &[
+    // What a process needs to run at all, and what src/driver.ts (INHERITED_ENV) and
+    // src/agents-catalog.ts (PROBE_ENV) pass on to the agents and the runner it starts.
+    "PATH",
+    "HOME",
+    "USER",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
+    "TERM",
+    // Where each agent CLI keeps its login (src/agents-catalog.ts, src/driver.ts).
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
+    "HERMES_HOME",
+    "GROK_HOME",
+    // src/config.ts and src/keystore/store.ts.
+    "PHOSPHOR_PORT",
+    "PHOSPHOR_MODE",
+    "ACC_MODE",
+    "PHOSPHOR_KEYS",
+    // Provider keys the rails read (src/rails/intents-native.ts, src/relay/client.ts,
+    // src/ledger/day.ts).
+    "PHOSPHOR_1CLICK_API_KEY",
+    "COINGECKO_API_KEY",
+    // Demo mode only (src/rails/demo.ts, src/http/wallet.ts). Live mode reads none of them.
+    "PHOSPHOR_DEMO_STAGE_SCALE",
+    "PHOSPHOR_DEMO_STALL",
+    "PHOSPHOR_DEMO_DEADLINE_SEC",
+    "PHOSPHOR_DEMO_PROVIDER_END",
+    "PHOSPHOR_DEMO_HOLD",
+    "PHOSPHOR_DEMO_HELD_RETRY_SEC",
+    "PHOSPHOR_DEMO_HELD_MAX_SEC",
+    "PHOSPHOR_DEMO_RECEIVE",
+];
 
 /// Is `pid` a control app that some copy of this app started and then lost, still running with
 /// no shell above it?
@@ -327,16 +418,21 @@ fn parent_and_command_from(out: &str) -> Option<(i32, String)> {
     Some((parent.parse().ok()?, command.trim_start().to_string()))
 }
 
-/// The two bundle paths in a backend's command line, when it has exactly the shape spawn_backend
-/// gives it and nothing after: `<bundle>/Contents/MacOS/node <bundle>/Contents/Resources/phosphor/src/main.ts`.
-/// The caller proves the two are one bundle, and this app's. The line is cut at the runtime's own
-/// path rather than at a space, because a bundle path may hold one ("/Volumes/Phosphor 0.9.2").
+/// The two bundle paths in a backend's command line, when it has exactly the shape a shipped
+/// spawn_backend gives it and nothing after: `<bundle>/Contents/MacOS/node <flags>
+/// <bundle>/Contents/Resources/phosphor/src/main.ts`, where the flags are one of
+/// SHIPPED_FLAG_LISTS. The caller proves the two are one bundle, and this app's. The line is cut
+/// at the runtime's own path rather than at a space, because a bundle path may hold one
+/// ("/Volumes/Phosphor 0.9.2"). Any other flag, or a list in another order, is not spawn_backend's.
 fn backend_bundles(command: &str) -> Option<(PathBuf, PathBuf)> {
     let (runtime, rest) = command.split_once(RUNTIME_IN_BUNDLE)?;
-    let payload = rest.strip_suffix(PAYLOAD_IN_BUNDLE)?;
-    if !runtime.starts_with('/') || !payload.starts_with('/') {
+    if !runtime.starts_with('/') {
         return None;
     }
+    let payload = SHIPPED_FLAG_LISTS.iter().find_map(|flags| {
+        let after = if flags.is_empty() { rest } else { rest.strip_prefix(format!("{} ", flags.join(" ")).as_str())? };
+        after.strip_suffix(PAYLOAD_IN_BUNDLE).filter(|payload| payload.starts_with('/'))
+    })?;
     Some((PathBuf::from(runtime), PathBuf::from(payload)))
 }
 
@@ -616,11 +712,158 @@ pub fn node_binary() -> Result<PathBuf, String> {
 /// enclave transport key, line 5 the relay secret. Order is the contract; src/main.ts reads them
 /// in it. A backend started with no pipe at all is a developer
 /// running `npm run app`, and it mints what it needs and says so.
-pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Child, String> {
-    let node = node_binary()?;
-    let mut child = Command::new(&node)
+///
+/// The process itself is built by backend_command: NODE_FLAGS before the entry point, and an
+/// environment of BACKEND_ENV and nothing else. Before it, the payload is checked against the
+/// digest this shell was built with (payload.rs), and a payload that is not that one is never
+/// started.
+pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Child, SpawnError> {
+    let node = node_binary().map_err(SpawnError::Failed)?;
+    spawn_checked(&node, payload, data, hand, crate::payload::BUILT_FOR, own_team().as_deref())
+}
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn phosphor_own_team(out: *mut std::ffi::c_char, len: usize) -> std::ffi::c_int;
+    fn phosphor_pid_signed_by(pid: libc::pid_t, team: *const std::ffi::c_char, status: *mut std::ffi::c_int) -> std::ffi::c_int;
+}
+
+/// The Team ID this shell is signed with. None for an ad-hoc build (local or development), which
+/// has no team to hold the runtime to; the Secure Enclave service does not answer such a shell
+/// either (xpc_bridge.c, main.swift).
+#[cfg(target_os = "macos")]
+fn own_team() -> Option<String> {
+    let mut out = [0 as std::ffi::c_char; 64];
+    // SAFETY: the buffer is 64 bytes and its length is passed with it; the function writes a
+    // NUL-terminated string into it or returns 0.
+    let found = unsafe { phosphor_own_team(out.as_mut_ptr(), out.len()) };
+    if found == 0 {
+        return None;
+    }
+    // SAFETY: found means a NUL-terminated string inside the buffer.
+    let team = unsafe { std::ffi::CStr::from_ptr(out.as_ptr()) }.to_str().ok()?.to_string();
+    team.chars().all(|c| c.is_ascii_alphanumeric()).then_some(team)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn own_team() -> Option<String> {
+    None
+}
+
+/// Is the process `pid` signed by a Developer ID Application certificate of `team`, as the
+/// kernel runs it? Only ever asked about a child this shell holds and has not reaped, so the
+/// number cannot have passed to another process.
+#[cfg(target_os = "macos")]
+fn runtime_signed_by(pid: u32, team: &str) -> Result<(), String> {
+    if team.is_empty() || !team.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(format!("{team:?} is not a Team ID"));
+    }
+    let team_c = std::ffi::CString::new(team).map_err(|_| "a Team ID with a NUL in it".to_string())?;
+    let mut status: std::ffi::c_int = 0;
+    // SAFETY: the Team ID is NUL-terminated and outlives the call, and `status` is a live int.
+    let signed = unsafe { phosphor_pid_signed_by(pid as libc::pid_t, team_c.as_ptr(), &mut status) };
+    if signed == 1 {
+        return Ok(());
+    }
+    Err(format!(
+        "The bundled runtime is not signed by this app's team ({team}): Security answered {status}. It was stopped before it was given anything."
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn runtime_signed_by(_pid: u32, _team: &str) -> Result<(), String> {
+    Err("the runtime check needs macOS".to_string())
+}
+
+/// Why spawn_backend started nothing.
+#[derive(Debug)]
+pub enum SpawnError {
+    /// The payload on disk is not the one this shell was built for. Try again would find the same
+    /// files, so the person is asked to install a fresh copy instead.
+    Altered(String),
+    /// Anything else: a missing runtime, a start the system refused, a pipe that would not take
+    /// the handshake.
+    Failed(String),
+}
+
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SpawnError::Altered(why) | SpawnError::Failed(why) => f.write_str(why),
+        }
+    }
+}
+
+/// spawn_backend with the runtime, the expected digest and the team handed in, so a test runs
+/// the real start against a staged bundle, altered copies of it and runtimes signed otherwise.
+fn spawn_checked(
+    node: &Path,
+    payload: &Path,
+    data: &Path,
+    hand: &Handshake,
+    built_for: &str,
+    team: Option<&str>,
+) -> Result<Child, SpawnError> {
+    let checked = crate::payload::check(payload, built_for).map_err(SpawnError::Altered)?;
+    eprintln!(
+        "phosphor: payload checked, {} files in {} ms, the start waited {} ms for it",
+        checked.files,
+        checked.took.as_millis(),
+        checked.waited.as_millis()
+    );
+    let mut child = backend_command(node, payload, data, |name| std::env::var_os(name))
+        // Inherited so a crash on boot is readable in Console.app rather than swallowed.
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| SpawnError::Failed(format!("could not start the control app with {node:?}: {e}")))?;
+
+    /* THE RUNTIME IS HELD TO THE SHELL'S TEAM. It sits beside the payload, outside its digest, and
+       macOS checks its signature when the app is first opened and not again: a runtime swapped in
+       after that would be handed the secrets below and run the checked payload however it liked.
+       So the process the kernel started is checked, not the file, before anything reaches it. The
+       backend is still loading its modules at this point, so the check costs it nothing. */
+    if let Some(team) = team {
+        if let Err(why) = runtime_signed_by(child.id(), team) {
+            let gone = matches!(child.try_wait(), Ok(Some(_)));
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(if gone {
+                SpawnError::Failed(format!("the control app exited before its signature could be read: {why}"))
+            } else {
+                SpawnError::Altered(why)
+            });
+        }
+    }
+
+    // Taken and dropped, so the pipe closes as soon as the lines are written: the backend reads the
+    // handshake and wants nothing else from stdin ever again.
+    match child.stdin.take() {
+        Some(mut pipe) => writeln!(pipe, "{}\n{}\n{}\n{}\n{}", hand.token, hand.nonce, hand.seat, hand.transport, hand.relay)
+            .map_err(|e| SpawnError::Failed(format!("could not hand the handshake to the control app: {e}")))?,
+        None => return Err(SpawnError::Failed("the control app was started with no stdin to hand the handshake to".into())),
+    }
+    Ok(child)
+}
+
+/// The control app's process before it starts: the runtime, NODE_FLAGS, the payload's entry
+/// point, and an environment cleared and then filled by name. `parent` reads one name from the
+/// environment this shell was started with; it is a parameter so a test can hand it a hostile
+/// environment without touching its own.
+pub(crate) fn backend_command(node: &Path, payload: &Path, data: &Path, parent: impl Fn(&str) -> Option<OsString>) -> Command {
+    let mut command = Command::new(node);
+    command
+        .args(NODE_FLAGS)
         .arg(payload.join("src").join("main.ts"))
         .current_dir(payload)
+        .env_clear();
+    for name in BACKEND_ENV {
+        if let Some(value) = parent(name) {
+            command.env(name, value);
+        }
+    }
+    command
         .env("PHOSPHOR_DATA_DIR", data.join("state"))
         .env("PHOSPHOR_CONFIG_DIR", data)
         // This data directory is the app's OWN, not a scratch one somebody pointed at. The
@@ -629,22 +872,8 @@ pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Ch
         // keeps the installed app reading the key file in ~/.phosphor that it always has.
         // It is also how the backend knows a missing token is a failure rather than a developer
         // running it by hand. See defaultKeysPath and readWindowToken.
-        .env("PHOSPHOR_APP_DATA", "1")
-        // Inherited so a crash on boot is readable in Console.app rather than swallowed.
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not start the control app with {node:?}: {e}"))?;
-
-    // Taken and dropped, so the pipe closes as soon as the lines are written: the backend reads the
-    // handshake and wants nothing else from stdin ever again.
-    match child.stdin.take() {
-        Some(mut pipe) => writeln!(pipe, "{}\n{}\n{}\n{}\n{}", hand.token, hand.nonce, hand.seat, hand.transport, hand.relay)
-            .map_err(|e| format!("could not hand the handshake to the control app: {e}"))?,
-        None => return Err("the control app was started with no stdin to hand the handshake to".into()),
-    }
-    Ok(child)
+        .env("PHOSPHOR_APP_DATA", "1");
+    command
 }
 
 #[cfg(test)]
@@ -746,6 +975,404 @@ mod tests {
         // Two bundles come back as two, for one_bundle to refuse.
         let crossed = "/A.app/Contents/MacOS/node /B.app/Contents/Resources/phosphor/src/main.ts";
         assert_eq!(backend_bundles(crossed), Some((PathBuf::from("/A.app"), PathBuf::from("/B.app"))));
+        // What this build starts, with NODE_FLAGS between the two paths.
+        let flagged = format!(
+            "/Applications/Phosphor.app/Contents/MacOS/node {} /Applications/Phosphor.app/Contents/Resources/phosphor/src/main.ts",
+            NODE_FLAGS.join(" ")
+        );
+        let app = PathBuf::from("/Applications/Phosphor.app");
+        assert_eq!(backend_bundles(&flagged), Some((app.clone(), app)));
+    }
+
+    #[test]
+    fn every_flag_list_a_shipped_build_used_is_recognised_after_an_update() {
+        let app = PathBuf::from("/Applications/Phosphor.app");
+        for flags in SHIPPED_FLAG_LISTS {
+            let between = if flags.is_empty() { String::new() } else { format!("{} ", flags.join(" ")) };
+            let line = format!(
+                "/Applications/Phosphor.app/Contents/MacOS/node {between}/Applications/Phosphor.app/Contents/Resources/phosphor/src/main.ts"
+            );
+            assert_eq!(backend_bundles(&line), Some((app.clone(), app.clone())), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_flags_this_build_starts_with_are_on_the_shipped_list_beside_every_older_one() {
+        assert!(
+            SHIPPED_FLAG_LISTS.contains(&NODE_FLAGS.as_slice()),
+            "a change to NODE_FLAGS adds the new list to SHIPPED_FLAG_LISTS and keeps the old ones"
+        );
+        let none: &[&str] = &[];
+        assert!(SHIPPED_FLAG_LISTS.contains(&none), "v0.4.0 to v0.11.0 started the backend with no flags");
+        let first: &[&str] = &["--disable-sigusr1", "--no-addons", "--disallow-code-generation-from-strings"];
+        assert!(SHIPPED_FLAG_LISTS.contains(&first), "0.10.13 started it with these, and a later build may find one lost");
+    }
+
+    #[test]
+    fn only_a_shipped_flag_list_in_its_own_order_is_spawn_backends() {
+        let line = |flags: &str| {
+            format!("/A.app/Contents/MacOS/node {flags} /A.app/Contents/Resources/phosphor/src/main.ts")
+        };
+        for flags in [
+            "--disable-sigusr1".to_string(),
+            "--no-addons --disable-sigusr1 --disallow-code-generation-from-strings".to_string(),
+            format!("{} --inspect", NODE_FLAGS.join(" ")),
+            format!("--inspect {}", NODE_FLAGS.join(" ")),
+        ] {
+            assert_eq!(backend_bundles(&line(&flags)), None, "{flags}");
+        }
+    }
+
+    #[test]
+    fn the_backend_starts_with_the_hardening_flags_before_its_entry_point() {
+        let command = backend_command(Path::new("/B.app/Contents/MacOS/node"), Path::new("/B.app/p"), Path::new("/d"), |_| None);
+        let args: Vec<String> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        let mut expected: Vec<String> = NODE_FLAGS.iter().map(|f| f.to_string()).collect();
+        expected.push("/B.app/p/src/main.ts".to_string());
+        assert_eq!(args, expected, "the flags come first: Node reads nothing after the entry point as its own");
+    }
+
+    /// A Node to run the probe with, off PATH: whatever built the bundle's runtime is there.
+    fn some_node() -> Option<PathBuf> {
+        let paths = std::env::var_os("PATH")?;
+        std::env::split_paths(&paths).map(|dir| dir.join("node")).find(|p| p.is_file())
+    }
+
+    /// The real command, a real Node and a payload whose entry point reports what it was given:
+    /// its flags, the names in its environment, whether SIGUSR1 opened an inspector, and whether
+    /// eval runs. The parent environment it is built from carries everything a hostile shell or a
+    /// `launchctl setenv` could plant, and a NODE_OPTIONS that would leave a mark if it ever ran.
+    #[cfg(unix)]
+    #[test]
+    fn the_backend_is_handed_the_allowlist_and_nothing_else() {
+        let Some(node) = some_node() else {
+            eprintln!("no node on PATH, so the launch probe cannot run here");
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("phosphor-launch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let payload = root.join("payload");
+        std::fs::create_dir_all(payload.join("src")).unwrap();
+        std::fs::write(payload.join("package.json"), "{\"type\":\"module\"}\n").unwrap();
+        std::fs::write(
+            payload.join("src").join("main.ts"),
+            "import inspector from 'node:inspector';\n\
+             process.kill(process.pid, 'SIGUSR1');\n\
+             setTimeout(() => {\n\
+               let evalBlocked = false;\n\
+               try { new Function(''); } catch { evalBlocked = true; }\n\
+               process.stdout.write(JSON.stringify({ flags: process.execArgv, env: Object.keys(process.env).sort(), inspector: inspector.url() ?? null, evalBlocked }));\n\
+             }, 500);\n",
+        )
+        .unwrap();
+        let mark = root.join("node-options-ran");
+        let canary = root.join("canary.cjs");
+        std::fs::write(&canary, format!("require('node:fs').writeFileSync({:?}, 'ran');\n", mark.to_string_lossy())).unwrap();
+        // The control: the canary does leave its mark when NODE_OPTIONS reaches a Node, so its
+        // absence below means something.
+        let control = Command::new(&node)
+            .args(["-e", "0"])
+            .env("NODE_OPTIONS", format!("--require {}", canary.to_string_lossy()))
+            .status()
+            .unwrap();
+        assert!(control.success() && mark.exists(), "the canary is supposed to run under NODE_OPTIONS");
+        std::fs::remove_file(&mark).unwrap();
+
+        let planted: Vec<(&str, OsString)> = vec![
+            ("PATH", std::env::var_os("PATH").unwrap()),
+            ("HOME", root.join("home").into_os_string()),
+            ("PHOSPHOR_MODE", "demo".into()),
+            ("CODEX_HOME", root.join("codex").into_os_string()),
+            ("NODE_OPTIONS", format!("--require {}", canary.to_string_lossy()).into()),
+            ("NODE_PATH", root.clone().into_os_string()),
+            ("NODE_EXTRA_CA_CERTS", root.join("ca.pem").into_os_string()),
+            ("OPENSSL_CONF", root.join("openssl.cnf").into_os_string()),
+            ("DYLD_INSERT_LIBRARIES", root.join("lib.dylib").into_os_string()),
+            ("ACC_PORT", "1".into()),
+            ("ACC_DATA_DIR", root.join("elsewhere").into_os_string()),
+            ("PHOSPHOR_NO_PARENT_WATCH", "1".into()),
+            ("SOME_OTHER_SHELL_VARIABLE", "planted".into()),
+        ];
+        let parent = |name: &str| planted.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
+        let data = root.join("data");
+        let out = backend_command(&node, &payload, &data, parent)
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("start the probe through backend_command");
+        let canary_ran = mark.exists();
+        let _ = std::fs::remove_dir_all(&root);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "the probe exited badly: {stderr}");
+        assert!(!stderr.contains("Debugger listening"), "SIGUSR1 opened an inspector: {stderr}");
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("the probe printed its report");
+
+        let flags: Vec<&str> = report["flags"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(flags, NODE_FLAGS.to_vec());
+        // CoreFoundation writes __CF_USER_TEXT_ENCODING into a macOS process's own environment as it
+        // starts when the name is absent, and Node links it. Nothing in `planted` carries it, so it
+        // comes from the OS inside the child and not from this shell.
+        let env: Vec<&str> = report["env"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|name| *name != "__CF_USER_TEXT_ENCODING")
+            .collect();
+        assert_eq!(
+            env,
+            vec!["CODEX_HOME", "HOME", "PATH", "PHOSPHOR_APP_DATA", "PHOSPHOR_CONFIG_DIR", "PHOSPHOR_DATA_DIR", "PHOSPHOR_MODE"],
+            "the allowlisted names the parent had, the three this shell sets, and nothing it was planted with"
+        );
+        assert!(report["inspector"].is_null(), "SIGUSR1 must not open an inspector, and the process outlived it");
+        assert_eq!(report["evalBlocked"], serde_json::Value::Bool(true));
+        assert!(!canary_ran, "a planted NODE_OPTIONS ran code in the backend");
+    }
+
+    /// The test above runs a probe on whatever Node is on PATH, from an environment it hands
+    /// backend_command as a closure. This one runs what ships, from a real one: this test binary
+    /// starts a copy of itself as the shell, with a NODE_OPTIONS canary in that copy's own
+    /// environment, and the copy starts the runtime and the payload `npm run bundle` staged
+    /// through spawn_backend's own path: the payload checked against the digest this shell was
+    /// built with, the environment read with std::env::var_os, the handshake down the pipe. The
+    /// real backend has to boot, answer with the boot's nonce and outlive SIGUSR1, and the canary
+    /// must never run. Rerun it after any bundle: `cargo test bundled_backend`.
+    #[cfg(unix)]
+    #[test]
+    fn the_bundled_backend_never_runs_a_node_options_planted_in_the_shells_environment() {
+        const NAME: &str = "backend::tests::the_bundled_backend_never_runs_a_node_options_planted_in_the_shells_environment";
+        const SHELL_ROLE: &str = "PHOSPHOR_TEST_CANARY_SHELL";
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let node = manifest.join("binaries").join(format!("node-{}", env!("TARGET_TRIPLE")));
+        let payload = manifest.join("payload").join("phosphor");
+
+        if let Some(root) = std::env::var_os(SHELL_ROLE).map(PathBuf::from) {
+            let port: u16 = std::env::var("PHOSPHOR_PORT").unwrap().parse().unwrap();
+            let hand = Handshake::mint().unwrap();
+            let mut child = spawn_checked(&node, &payload, &root.join("data"), &hand, crate::payload::BUILT_FOR, own_team().as_deref())
+                .expect("the staged payload is the one this shell was built for, and it starts");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let mut up = false;
+            while Instant::now() < deadline && matches!(child.try_wait(), Ok(None)) {
+                if phosphor_is_listening(port, Some(&hand.nonce)) {
+                    up = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let mut alive_after_usr1 = false;
+            let mut health_after_usr1 = None;
+            if up {
+                // SAFETY: kill(2) on the child this process spawned and still holds.
+                unsafe {
+                    libc::kill(child.id() as libc::pid_t, libc::SIGUSR1);
+                }
+                std::thread::sleep(Duration::from_millis(700));
+                alive_after_usr1 = matches!(child.try_wait(), Ok(None));
+                health_after_usr1 = get_health(port);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            assert!(up, "the bundled backend never answered with this boot's nonce on :{port}");
+            assert!(alive_after_usr1 && health_after_usr1.is_some(), "SIGUSR1 took the backend down");
+            return;
+        }
+
+        assert!(
+            node.is_file() && payload.join("src").join("main.ts").is_file(),
+            "npm run bundle stages the runtime and the payload this test boots"
+        );
+        let root = std::env::temp_dir().join(format!("phosphor-canary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let mark = root.join("node-options-ran");
+        let canary = root.join("canary.cjs");
+        std::fs::write(&canary, format!("require('node:fs').writeFileSync({:?}, 'ran');\n", mark.to_string_lossy())).unwrap();
+        let node_options = format!("--require {}", canary.to_string_lossy());
+
+        // The control, on the bundled runtime itself: NODE_OPTIONS reaches a Node started any
+        // other way, so the canary's silence below is the launch's doing.
+        let control = Command::new(&node).args(["-e", "0"]).env("NODE_OPTIONS", &node_options).status().unwrap();
+        assert!(control.success() && mark.exists(), "the canary is supposed to run under NODE_OPTIONS");
+        std::fs::remove_file(&mark).unwrap();
+
+        let port = {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+            listener.local_addr().expect("read the bound port").port()
+        };
+        // The shell's whole environment. HOME and the key path point into the throwaway
+        // directory, so nothing here reads a wallet.
+        let shell = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into()))
+            .env("TMPDIR", std::env::temp_dir())
+            .env("HOME", root.join("home"))
+            .env("PHOSPHOR_MODE", "demo")
+            .env("PHOSPHOR_PORT", port.to_string())
+            .env("PHOSPHOR_KEYS", root.join("keys.enc.json"))
+            .env("NODE_OPTIONS", &node_options)
+            .env(SHELL_ROLE, &root)
+            .output()
+            .expect("start this test binary as the shell");
+        let canary_ran = mark.exists();
+        let _ = std::fs::remove_dir_all(&root);
+        // The backend's own output came through the shell's, as it does in the app.
+        let said = format!("{}{}", String::from_utf8_lossy(&shell.stdout), String::from_utf8_lossy(&shell.stderr));
+        assert!(shell.status.success(), "the shell's half failed:\n{said}");
+        assert!(said.contains("phosphor: payload checked"), "the start went through the payload check:\n{said}");
+        assert!(!said.contains("Debugger listening"), "SIGUSR1 opened an inspector:\n{said}");
+        assert!(!canary_ran, "a NODE_OPTIONS in the shell's environment ran code in the bundled backend");
+    }
+
+    /// A copy of the staged payload a test may change. Cloned, so it costs no disk on APFS.
+    #[cfg(target_os = "macos")]
+    fn payload_copy(root: &Path) -> PathBuf {
+        let staged = Path::new(env!("CARGO_MANIFEST_DIR")).join("payload").join("phosphor");
+        let copy = root.join("phosphor");
+        let cloned = Command::new("/bin/cp").arg("-c").arg("-R").arg(&staged).arg(&copy).status().unwrap();
+        if !cloned.success() {
+            // A volume that cannot clone gets a plain copy.
+            let _ = std::fs::remove_dir_all(&copy);
+            let copied = Command::new("/bin/cp").arg("-R").arg(&staged).arg(&copy).status().unwrap();
+            assert!(copied.success(), "copy the staged payload into {}", copy.display());
+        }
+        copy
+    }
+
+    /// The refusals P1a.5 is for, on a copy of what ships: one file changed, one added, one
+    /// removed, one swapped for a link. The runtime here is a script that leaves a mark when it
+    /// is started, so "never started" is something the test sees, and the untouched copy (and a
+    /// Finder .DS_Store, which the digest leaves out) starts it: the control.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_changed_an_added_a_removed_or_a_linked_payload_file_is_never_started() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("phosphor-altered-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let copy = payload_copy(&root);
+        let mark = root.join("started");
+        let runtime = root.join("node");
+        std::fs::write(&runtime, format!("#!/bin/sh\n/bin/cat >/dev/null\n/usr/bin/touch '{}'\n", mark.display())).unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let hand = Handshake::mint().unwrap();
+        let start = |what: &str| -> Option<String> {
+            match spawn_checked(&runtime, &copy, &root.join("data"), &hand, crate::payload::BUILT_FOR, None) {
+                Ok(mut child) => {
+                    let _ = child.wait();
+                    let started = mark.exists();
+                    let _ = std::fs::remove_file(&mark);
+                    assert!(started, "{what}: spawn_checked said it started the runtime");
+                    None
+                }
+                Err(SpawnError::Altered(why)) => {
+                    assert!(!mark.exists(), "{what}: refused, and yet the runtime ran");
+                    Some(why)
+                }
+                Err(SpawnError::Failed(why)) => panic!("{what}: failed for another reason: {why}"),
+            }
+        };
+
+        assert_eq!(start("the copy as built"), None);
+        let main = copy.join("src").join("main.ts");
+        let original = std::fs::read(&main).unwrap();
+        let mut changed = original.clone();
+        changed.extend_from_slice(b"\n");
+        std::fs::write(&main, &changed).unwrap();
+        let why = start("one byte added to src/main.ts").expect("a changed file is refused");
+        assert!(why.contains(crate::payload::BUILT_FOR), "the reason names the payload it was built for: {why}");
+        std::fs::write(&main, &original).unwrap();
+
+        let added = copy.join("ui").join("added.js");
+        std::fs::write(&added, "window.extra = 1;\n").unwrap();
+        assert!(start("a file added under ui/").is_some(), "an added file is refused");
+        std::fs::remove_file(&added).unwrap();
+
+        let removed = copy.join("node_modules").join("viem").join("package.json");
+        let held = root.join("held.json");
+        std::fs::rename(&removed, &held).unwrap();
+        assert!(start("node_modules/viem/package.json removed").is_some(), "a removed file is refused");
+        std::fs::rename(&held, &removed).unwrap();
+
+        let index = copy.join("ui").join("index.html");
+        std::fs::rename(&index, &held).unwrap();
+        std::os::unix::fs::symlink(&held, &index).unwrap();
+        let why = start("ui/index.html swapped for a link to the same bytes").expect("a link is refused");
+        assert!(why.contains("neither a file nor a folder"), "{why}");
+        std::fs::remove_file(&index).unwrap();
+        std::fs::rename(&held, &index).unwrap();
+
+        std::fs::write(copy.join("src").join(".DS_Store"), b"Bud1").unwrap();
+        assert_eq!(start("a .DS_Store Finder wrote"), None, "Finder's file is not a change to the payload");
+
+        // The payload as built, under a shell with a team: this runtime is not signed by it, so it
+        // is stopped while it still waits on its stdin, before the handshake, and never leaves its
+        // mark.
+        match spawn_checked(&runtime, &copy, &root.join("data"), &hand, crate::payload::BUILT_FOR, Some("ABCDE12345")) {
+            Err(SpawnError::Altered(why)) => assert!(why.contains("not signed by this app's team"), "{why}"),
+            Err(SpawnError::Failed(why)) => panic!("refused for another reason: {why}"),
+            Ok(_) => panic!("a runtime of no team started under a shell of one"),
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!mark.exists(), "the runtime was given the handshake and ran on");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file's Team ID, off its signature; None when it has none.
+    #[cfg(target_os = "macos")]
+    fn team_of(file: &Path) -> Option<String> {
+        let out = Command::new("/usr/bin/codesign").arg("-dv").arg(file).output().ok()?;
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        said.lines().find_map(|line| line.strip_prefix("TeamIdentifier=")).map(str::to_string).filter(|team| team != "not set")
+    }
+
+    /// The runtime check against real signatures. `npm run bundle` stages the Node that ran it,
+    /// and an official build (nvm's, CI's setup-node) carries the Node.js Foundation's Developer
+    /// ID: a real certificate of a real team to hold the check to. An ad-hoc copy of the same
+    /// bytes, which is what a swapped runtime would be, passes for no team.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_runtime_is_held_to_the_shells_team_as_the_kernel_runs_it() {
+        let staged = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries").join(format!("node-{}", env!("TARGET_TRIPLE")));
+        let root = std::env::temp_dir().join(format!("phosphor-runtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let adhoc = root.join("node");
+        std::fs::copy(&staged, &adhoc).unwrap();
+        let resigned = Command::new("/usr/bin/codesign").args(["--force", "--sign", "-"]).arg(&adhoc).output().unwrap();
+        assert!(resigned.status.success(), "{}", String::from_utf8_lossy(&resigned.stderr));
+        let run = |file: &Path| {
+            Command::new(file)
+                .args(["-e", "setTimeout(() => {}, 5000)"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap()
+        };
+
+        let mut swapped = run(&adhoc);
+        let refusals: Vec<bool> = ["HX7739G8FX", "35Z6P26CBD"].iter().map(|team| runtime_signed_by(swapped.id(), team).is_err()).collect();
+        let _ = swapped.kill();
+        let _ = swapped.wait();
+        assert_eq!(refusals, vec![true, true], "an ad-hoc runtime passes for no team");
+
+        match team_of(&staged) {
+            Some(team) => {
+                let mut real = run(&staged);
+                let own = runtime_signed_by(real.id(), &team);
+                let other = runtime_signed_by(real.id(), "ABCDE12345");
+                let bent = runtime_signed_by(real.id(), &format!("{team}\" or anchor apple"));
+                let _ = real.kill();
+                let _ = real.wait();
+                assert_eq!(own, Ok(()), "a runtime signed by the team passes");
+                assert!(other.is_err(), "another team's Developer ID is not this app's");
+                assert!(bent.is_err(), "a Team ID is letters and digits, nothing that can bend the requirement");
+            }
+            None => eprintln!("the staged runtime has no Team ID (not an official Node build): only the refusals were checked"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

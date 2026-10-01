@@ -9,6 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { IDLE_LOCK_MS, SIGNING_SESSION_MAX_MS, createSession } from '../../src/keystore/session.ts';
+import { DEFAULT_IDLE_MINUTES } from '../../src/vault/prefs.ts';
 
 function harness(startUnlocked = true) {
   let clock = 1_700_000_000_000;
@@ -43,7 +44,9 @@ function harness(startUnlocked = true) {
   };
 }
 
-test('an idle wallet locks after fifteen minutes', () => {
+test('an idle wallet locks after the default five minutes', () => {
+  assert.equal(IDLE_LOCK_MS, DEFAULT_IDLE_MINUTES * 60_000, 'a session built without the choice uses the vault default');
+  assert.equal(IDLE_LOCK_MS, 5 * 60_000);
   const h = harness();
   h.run(IDLE_LOCK_MS - 15_000);
   assert.deepEqual(h.locks, [], 'not yet');
@@ -54,10 +57,10 @@ test('an idle wallet locks after fifteen minutes', () => {
 
 test('a human touching the window pushes the lock out', () => {
   const h = harness();
-  h.run(14 * 60_000);
+  h.run(IDLE_LOCK_MS - 60_000);
   h.session.touch();
-  h.run(14 * 60_000);
-  assert.deepEqual(h.locks, [], 'the touch reset the fifteen minutes');
+  h.run(IDLE_LOCK_MS - 60_000);
+  assert.deepEqual(h.locks, [], 'the touch restarted the idle time');
   h.run(2 * 60_000);
   assert.deepEqual(h.locks, ['idle']);
 });

@@ -14,10 +14,11 @@
 import fs from 'node:fs';
 import { privateKeyToAccount } from 'viem/accounts';
 
-import type { Keystore, KeysPayload, StoredAddresses } from './store.ts';
+import { apiWalletOf } from './store.ts';
+import type { ApiWallet, Keystore, KeysPayload, StoredAddresses } from './store.ts';
 
 export { createKeystore, keystorePathFor, readHeader, backupCopies, KEYSTORE_FILENAME } from './store.ts';
-export type { Keystore, KeysPayload, KeystoreHeader, LockState, StoredAddresses, UnlockResult } from './store.ts';
+export type { ApiWallet, Keystore, KeysPayload, KeystoreHeader, LockState, StoredAddresses, UnlockResult } from './store.ts';
 
 let active: Keystore | null = null;
 
@@ -44,12 +45,25 @@ export function walletAddresses(): StoredAddresses {
   return { evm: null, solana: null, near: null, nearPublicKey: null };
 }
 
+/* The EVM key alone, for a signature. Through the keystore it never decodes the rest of the
+   payload, so a signature does not leave the recovery phrase in heap (see `evmKey` in store.ts).
+   The plaintext fallback below reads the whole file, as it always did, until that install
+   migrates. */
 export function evmPrivateKey(keysPath: string): `0x${string}` {
+  if (active !== null) return active.evmPrivateKey();
   const key = keyMaterial(keysPath).evm?.privateKey;
   if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
     throw new Error('this wallet has no valid EVM private key');
   }
   return key as `0x${string}`;
+}
+
+/* The Hyperliquid API wallet alone, for the runner, the way evmPrivateKey() serves a signature:
+   through the keystore it never decodes the rest of the payload. The plaintext fallback reads
+   the whole file, as it always did, until that install migrates. */
+export function apiWallet(keysPath: string): ApiWallet | null {
+  if (active !== null) return active.apiWallet();
+  return apiWalletOf(keyMaterial(keysPath));
 }
 
 /* The EVM ADDRESS, which is not signing material and must not behave like it. It is the

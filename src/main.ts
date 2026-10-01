@@ -48,6 +48,7 @@ import type { TradeDeps } from './trade/rail.ts';
 import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
+import { createVaultPrefs } from './vault/prefs.ts';
 import { mintToken, readWindowToken } from './http/auth.ts';
 import { refreshRegistration } from './http/mutation.ts';
 import { useIdentityValue } from './http/respond.ts';
@@ -220,17 +221,22 @@ const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, se
    two halves of one question: how long may this process keep a key. It is built here rather
    than inside createServer because the runner needs it too, and there must be exactly one.
    `announceLock` is filled once the server exists, since the frame it sends needs SSE clients
-   to send it to. Until then a lock is still a lock, it is simply not narrated. */
+   to send it to. Until then a lock is still a lock, it is simply not narrated.
+   The idle time is the one the Vault tab shows, read on every tick. This session used to be
+   built without it, and the server takes this session over its own, so the app locked at a
+   fixed fifteen minutes whatever the tab said. */
 let announceLock: (() => void) | null = null;
+const vaultPrefs = createVaultPrefs(cfg.dataDir);
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
+  idleMs: () => vaultPrefs.get().idleMinutes * 60_000,
   lock: (reason) => {
     keystore.lock();
     audit.append(
       'app_start',
       reason === 'sleep'
         ? 'the wallet locked: this machine was asleep'
-        : 'the wallet locked after fifteen minutes with nobody at the window',
+        : `the wallet locked after ${vaultPrefs.get().idleMinutes} minutes with nobody at the window`,
       { reason },
     );
     announceLock?.();

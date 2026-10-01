@@ -76,11 +76,82 @@ click alone, with no biometric: Approve runs the move with no Touch ID after it.
 custody you chose, not a bypass of it. When your Mac has an enclave, Protect with Touch ID in the
 Keys row moves the same wallet behind it; use it when you can.
 
+## The process that holds the key
+
+While the vault is open, the key sits in one process: the backend the app starts. The app starts
+it shut against the ways in that Node leaves open by default:
+
+- Its debugger cannot be opened. Node opens one, with no password, when any program running as
+  you sends it a signal; that signal is turned off.
+- Nothing from your Mac's environment reaches it except the settings Phosphor reads, named one by
+  one. A NODE_OPTIONS set on this Mac (one `launchctl setenv` reaches every app you open) would
+  load code into Node as it starts; it never reaches the backend.
+- Native add-ons and eval are off in it, and it runs the Node 24 the app ships, never one from
+  your PATH.
+- A signature, and each start of a trading plan's runner, reads the one key it needs, held as 32
+  bytes the lock overwrites, so neither leaves another copy of your recovery phrase in memory.
+- Only fourteen packages can load into it, each one read: viem and zod and what they depend on. A
+  test fails when another one could, and every package's registry signature is checked before the
+  tests run. The packages the agent's connection uses load in a separate process with no key.
+
+A test starts the shipped runtime and files exactly the way the app does, from an environment
+with a NODE_OPTIONS planted in it, and fails if the planted code ever runs.
+
+## The files it runs
+
+The backend runs from the files inside the app, in `Phosphor.app/Contents/Resources/phosphor`:
+its code, its packages and the screens it serves you. Each release is built to accept one exact
+set of them, named by a digest compiled into the signed app. Every time Phosphor starts the
+backend, it works the digest out again from the files on disk. If one was changed, added or
+removed since the release was built, it starts nothing and its window says "Phosphor needs a
+fresh copy". Nothing has opened your wallet at that point; install a fresh copy from
+phosphor.money. The check runs while the window opens, so it adds no wait.
+
+The Node runtime beside those files is checked as well. On a signed release, the running process
+has to carry a Developer ID signature of the same team as the app, or it is stopped before it is
+given anything.
+
+The limit: the files are checked when the backend starts. A file changed while Phosphor is
+running is caught at the next start, not before.
+
+## Check a release yourself
+
+You can check that the files in your copy are the ones its release's source builds, with no
+Phosphor code involved in the check.
+
+1. The digest your copy was built for, and the digest of its files on disk:
+
+   ```
+   /Applications/Phosphor.app/Contents/MacOS/phosphor-desktop --payload-digest
+   ```
+
+2. The same digest, worked out with the tools macOS ships:
+
+   ```
+   cd /Applications/Phosphor.app/Contents/Resources/phosphor
+   find . -type f ! -name .DS_Store | sed 's|^\./||' | LC_ALL=C sort | tr '\n' '\0' | xargs -0 shasum -a 256 | shasum -a 256
+   ```
+
+3. The digest the release's source builds, on a Mac with Node 24 and Xcode's command line tools.
+   Use the tag of the version you have, such as v0.10.13:
+
+   ```
+   git clone --depth 1 --branch v0.10.13 https://github.com/karimbabasf/phosphor.git
+   cd phosphor && npm run bundle
+   ```
+
+   It prints `payload: digest` and the value.
+
+The three agree when your copy is the one that tag builds. Only the files' contents and names go
+into the digest, never dates or owners, so the same tag gives the same digest on any Mac. Finder's
+`.DS_Store` files are left out because Finder writes one into any folder it shows.
+
 ## The lock
 
-The wallet locks after fifteen minutes with nobody at the window by default (the Vault tab
-offers 5 minutes, 15 minutes or 1 hour), when the Mac sleeps, and when you close the window.
-Locked, the key is gone from memory and the window is frosted. Reads still work. A proposal made
+The wallet locks after five minutes with nobody at the window by default (the Vault tab
+offers 5 minutes, 15 minutes or 1 hour), when the Mac sleeps, when the screen locks or the Mac
+switches to another user, and when you close the window. A move being sent finishes first, and a
+move waiting for your click stays on its card. Locked, the key is gone from memory and the window is frosted. Reads still work. A proposal made
 while locked is drafted, priced and checked, and its card says Unlock to decide; when you
 unlock, it is decided again and lands as something to click. An unlock is never an approval,
 even for a move small enough to have run on its own with the app open.
