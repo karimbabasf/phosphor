@@ -56,7 +56,9 @@ until you do, every move it proposes waits for your click. See
 
 A page cannot get your data sent out either. The vendors' own page readers are off: the app reads
 a page itself, and only at an address that came back in a web search in that chat or that you
-gave, word for word, never one the agent wrote. A search's answer also repeats the agent's own
+gave, word for word, never one the agent wrote. The Try again button on a failed swap sends a
+line that names the coins only when they are plain tickers, so a coin the agent named with an
+address never becomes one you gave. A search's answer also repeats the agent's own
 query and the search model's notes, so only the addresses the search engine itself returned
 count, never an address in that text. An address that carries your wallet's address or
 one of its balances is refused even then, and so is any address on this machine or your own

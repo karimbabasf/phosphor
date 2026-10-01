@@ -140,20 +140,25 @@ export function agentWallet<R extends WalletRow, V extends { rows: R[]; unpriced
   return { ...view, rows, unpriced: view.unpriced.map((s) => tags.get(s) ?? s) };
 }
 
+// Every coin this app knows looks like this; anything else in a symbol is the agent's own string.
+const TICKER = /^[A-Za-z0-9]{2,8}$/;
+
 // Whether a draft carries the asking agent's own words: a rule change's sentence, a plan's note,
-// a send's note about its receiver.
+// a send's note about its receiver, or a coin named by anything but a ticker (audit 2026-10-01: a
+// swap refused on a symbol that was a sentence kept the sentence on its row).
 function hasWords(d: WriteDraft): boolean {
   if (d.kind === 'policy_change') return true;
   if (d.kind === 'trade') return d.op === 'open' && typeof d.plan.note === 'string' && d.plan.note !== '';
-  const recipient = (d as { recipient?: { note?: unknown } }).recipient;
-  return typeof recipient?.note === 'string' && recipient.note !== '';
+  const named = d as { symbol?: unknown; fromSymbol?: unknown; toSymbol?: unknown; recipient?: { note?: unknown } };
+  if ([named.symbol, named.fromSymbol, named.toSymbol].some((s) => typeof s === 'string' && !TICKER.test(s))) return true;
+  return typeof named.recipient?.note === 'string' && named.recipient.note !== '';
 }
 
 /* A move asked for by a seat that had read a stranger's text (Proposal.webRead), or arming a plan
    whose note was written that way, hands whoever reads it back those words, so the reader is
    marked as if it had read the page itself (src/web-read.ts). A move with no words of the agent's
    in it carries nothing and marks nobody. */
-function carriedWords(ctx: Ctx, rows: Proposal[]): { webRead?: true }[] {
+export function carriedWords(ctx: Ctx, rows: Proposal[]): { webRead?: true }[] {
   let stampedPlans = new Set<string>();
   try {
     stampedPlans = new Set(ctx.trade.payload().plans.filter((p) => p.webRead === true).map((p) => p.id));

@@ -709,11 +709,24 @@
     return again;
   }
 
+  /* The line goes to the assistant as the person's own message, so it holds only words this card
+     can vouch for. A symbol is the agent's string until a rail takes it: it is repeated only when
+     it is ticker-shaped (the rule src/vault/reason.ts holds the Touch ID sentence to), and an
+     amount only as a plain number. Anything else is "Try that again.", because an address in the
+     agent's symbol was recorded as one the person gave (src/web-gate.ts, audit 2026-10-01). */
+  var TICKER = /^[A-Za-z0-9]{2,8}$/;
+  var PLAIN_AMOUNT = /^(\d+(\.\d+)?|all)$/;
+
+  function ticker(s) {
+    return typeof s === 'string' && TICKER.test(s);
+  }
+
   function retryWords(proposal) {
     var draft = (proposal && proposal.draft) || {};
-    if (draft.kind === 'swap' && draft.fromSymbol && draft.toSymbol) {
-      var amount = draft.amountInExact !== undefined ? draft.amountInExact : draft.amountIn;
-      return 'Try that again: swap ' + (amount !== undefined ? amount + ' ' : '') + draft.fromSymbol + ' into ' + draft.toSymbol + '.';
+    if (draft.kind === 'swap' && ticker(draft.fromSymbol) && ticker(draft.toSymbol)) {
+      var raw = draft.amountInExact !== undefined ? draft.amountInExact : draft.amountIn;
+      var amount = (typeof raw === 'string' || typeof raw === 'number') && PLAIN_AMOUNT.test(String(raw)) ? String(raw) + ' ' : '';
+      return 'Try that again: swap ' + amount + draft.fromSymbol + ' into ' + draft.toSymbol + '.';
     }
     return 'Try that again.';
   }

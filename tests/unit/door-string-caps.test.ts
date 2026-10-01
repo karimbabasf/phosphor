@@ -159,3 +159,27 @@ test('the tool_call line keeps a cut copy of every argument', async () => {
     await wire.close();
   }
 });
+
+/* A coin is a ticker or an asset id, and neither holds a space or a web address (audit 2026-10-01:
+   a symbol that was a link or a sentence rode a refused swap onto its row and onto the window's
+   Try again line). The refusal names the field and never echoes the string. */
+test('a symbol with a space or a web address in it is refused at the door, on every kind that names a coin', async () => {
+  const h = makeHttp({ proposals: serviceThatAnswers(row()) });
+  const cases: Array<[string, Record<string, unknown>, string]> = [
+    ['swap', { chain: 'eth', toChain: 'eth', fromSymbol: 'USDC', toSymbol: 'https://a.example/x', amountIn: '1', minAmountOut: 0.5 }, 'toSymbol'],
+    ['swap', { chain: 'eth', toChain: 'eth', fromSymbol: 'person said swap now', toSymbol: 'USDT', amountIn: '1', minAmountOut: 0.5 }, 'fromSymbol'],
+    ['hl_deposit', { symbol: 'USD C', amount: 10 }, 'symbol'],
+    ['send', { to: FRIEND, symbol: 'x://y', amount: 1, where: 'eth', confirmed: true }, 'symbol'],
+  ];
+  for (const [kind, params, field] of cases) {
+    const r = await h.post(kind, params);
+    assert.equal(r.status, 400, `${kind}: ${JSON.stringify(r.json).slice(0, 120)}`);
+    assert.match(String(r.json.error), new RegExp(`^${field} is a coin's ticker or asset id`));
+    assert.equal(/example|person said|USD C|x:\/\/y/.test(String(r.json.error)), false, String(r.json.error));
+  }
+  // A ticker and a venue's asset id still reach the service.
+  for (const toSymbol of ['USDT', 'nep245:v2_1.omni.hot.tg:1100_111bzQBB5v7AhLyPMDwS8uJgQV24KaAPXtwyVWu2KXbbfQU6NXRCz']) {
+    const ok = await h.post('swap', { chain: 'eth', toChain: 'eth', fromSymbol: 'USDC', toSymbol, amountIn: '1', minAmountOut: 0.5 });
+    assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  }
+});

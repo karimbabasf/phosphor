@@ -222,8 +222,10 @@ function remember(seat: string, raw: string, from: Source): boolean {
 }
 
 /* The person's own message. A full address counts, and so does a site named bare ("read near.ai",
-   "docs.near.org/concepts"), as https. Only ever called with what the person typed: never an app
-   note, never a brief another agent wrote. Returns how many addresses it kept. */
+   "docs.near.org/concepts"), as https. Only ever called with what the person sent from the
+   window: what they typed, or the line the Try again button builds from a ticker and a plain
+   amount (ui/screens/decision.js retryWords), never an agent's string. Never an app note, never a
+   brief another agent wrote. Returns how many addresses it kept. */
 export function recordPersonText(seat: string, text: string): number {
   if (seat === '' || typeof text !== 'string') return 0;
   let kept = 0;
