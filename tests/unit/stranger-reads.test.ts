@@ -156,8 +156,9 @@ test('every stranger-text read is wrapped by name, research included, and the ap
   }
   // A name on the list that the door does not serve would be a mark that never fires.
   for (const tool of STRANGER_TEXT_READS) assert.ok(readToolNames().includes(tool), `${tool} is not a read this door serves`);
-  // The four the audit named, and chain_address, whose token names are its deployer's words.
-  assert.deepEqual([...STRANGER_TEXT_READS].sort(), ['chain_address', 'chain_transaction', 'chain_transactions', 'intents_activity', 'research']);
+  // The four the audit named, chain_address, whose token names are its deployer's words, and
+  // log_tail, which carries every seat's logged arguments (tests/unit/stranger-relay.test.ts).
+  assert.deepEqual([...STRANGER_TEXT_READS].sort(), ['chain_address', 'chain_transaction', 'chain_transactions', 'intents_activity', 'log_tail', 'research']);
 });
 
 test('a read with no seat marks nobody', async () => {

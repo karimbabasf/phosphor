@@ -539,16 +539,22 @@ const HANDLERS: Record<string, ViewHandler> = {
     // A board post is not a chart write, but it belongs on this route: it is a write an agent
     // makes to a shared surface a human reads, and it is audited like every other one.
     const member = ctx.agents.member(body.session);
+    const session = String(body.session ?? '');
     const post = ctx.board.post({
-      session: String(body.session ?? ''),
+      session,
       label: member?.label ?? String(body.client ?? 'agent'),
       role: member?.role ?? 'operator',
       kind: args.kind,
       text: args.text,
+      // A marked seat's post carries its mark to whoever reads it (src/web-read.ts).
+      webRead: webReadBy(session),
     });
     ctx.audit.append('tool_call', `board: ${post.label} ${post.kind}`, { text: post.text });
     ctx.sse.broadcastState();
-    sendJson(res, 200, { ok: true, post, board: ctx.board.list(10) });
+    // The answer hands back the board, other seats' posts included, so it marks like agent_board.
+    const board = ctx.board.list(10);
+    markIfCarried(session, board);
+    sendJson(res, 200, { ok: true, post, board });
   },
 
   agent_spawn: ({ ctx, args, body, res }): void => {

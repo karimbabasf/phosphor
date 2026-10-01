@@ -37,10 +37,13 @@ export type BoardPost = {
   // the 4h structure"); `finding` is a conclusion; `note` is anything else.
   kind: 'claim' | 'finding' | 'note' | 'system';
   text: string;
+  /* Written by a seat that had read a stranger's text (src/web-read.ts): every read that hands
+     this post to an agent marks that agent, as a stamped chart label does. */
+  webRead?: true;
 };
 
 export type Board = {
-  post(entry: { session: string; label: string; role: BoardPost['role']; kind?: unknown; text: unknown }): BoardPost;
+  post(entry: { session: string; label: string; role: BoardPost['role']; kind?: unknown; text: unknown; webRead?: boolean }): BoardPost;
   list(limit?: number): BoardPost[];
   // Everything since a given id, which is how an agent picks up what happened while it was
   // thinking without re-reading the whole board.
@@ -83,6 +86,7 @@ export function createBoard(now: () => number = Date.now): Board {
         role: entry.role,
         kind: kindOf(entry.kind),
         text: clean(entry.text) || '(empty)',
+        ...(entry.webRead === true ? { webRead: true as const } : {}),
       };
       posts.push(full);
       while (posts.length > MAX_POSTS) posts.shift();

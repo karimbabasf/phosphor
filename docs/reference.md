@@ -166,6 +166,13 @@ live on `/api/trade/action`, which the agent's door does not open onto.
 | `agent_spawn` | Starts a worker of its own. Every worker is an ANALYST: the propose tools are not registered for its process at all, so there is nothing on its surface to talk it into |
 | `skill` | The app's own playbooks, by name. Text the app wrote about how to operate the app, which is why it is a tool and not a prompt |
 
+What one seat writes for another carries the writer's web-read mark (`src/web-read.ts`): a post
+(`src/board.ts`) and a worker's job (`src/crew.ts`) are stamped when their writer is marked, and
+`agent_board`, `agent_post`'s answer and `agent_jobs` mark the reader of a stamped one. A worker
+spawned by a marked seat starts marked, because its brief is that seat's words. `log_tail` marks
+its reader outright (`STRANGER_TEXT_READS`), since it carries every seat's logged arguments, and
+`diagnose` returns a row's own lines, never one the door wrote from a caller's body.
+
 | Display tool | Does |
 |---|---|
 | `set_theme` | Changes the window's colours: five colour slots on top of the window's one colourway (green on black; the window is dark only). Moves no money, and it is on this surface because a person asking their assistant to recolour the screen should not have to leave the conversation |

@@ -432,10 +432,12 @@ export const walletReads: ReadTable = {
       /* THIS ROW'S LINES, by the id the app wrote into the event, never by the id appearing
          somewhere in the sentence. A substring match handed back another row's history whenever
          one line happened to mention this one, which is the opposite of what a tool called
-         diagnose is for. */
+         diagnose is for. And never a line the agent door wrote out of a caller's own body (a tool
+         call, a seat arriving): a caller that put this row's id at the top of its body made one
+         of those carry it, and the line's words are that caller's (audit 2026-10-01). */
       log: ctx.audit
         .tail(LOG_LIMIT_MAX)
-        .filter((e) => (e.data as { id?: unknown } | undefined)?.id === id)
+        .filter((e) => e.type !== 'tool_call' && e.type !== 'agent_connected' && (e.data as { id?: unknown } | undefined)?.id === id)
         .slice(0, DIAGNOSE_LOG_LINES)
         // The same wall the tail routes have (src/http/log-tail.ts): a credential never leaves
         // through a row's own lines either.
