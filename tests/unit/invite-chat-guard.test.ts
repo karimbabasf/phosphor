@@ -37,7 +37,7 @@ test('a chat message that carries an invite code is turned away calmly, and noth
     assert.equal(kept.length, codes.length, 'each refusal is one audit line');
     for (const line of lines) assert.deepEqual(holdsPartOfTheCode(line), [], `the audit log holds part of the code: ${line}`);
 
-    const list = (await (await fetch(`${b.url}/api/driver`)).json()) as { chats: Array<{ transcript: Array<{ kind: string }> }> };
+    const list = (await (await fetch(`${b.url}/api/driver`, { headers: { 'x-phosphor-token': await b.token() } })).json()) as { chats: Array<{ transcript: Array<{ kind: string }> }> };
     const said = list.chats.flatMap((chat) => chat.transcript).filter((event) => event.kind === 'said');
     assert.deepEqual(said, [], 'a refused message was written into the transcript');
   } finally {

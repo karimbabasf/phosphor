@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import type http from 'node:http';
 
 import { bootChartServer } from '../fixtures/chart-server.ts';
+import { readKeyFor } from '../../src/http/auth.ts';
 import { REDACTED, redactEvent } from '../../src/http/log-tail.ts';
 import { walletReads } from '../../src/http/read/wallet.ts';
 import type { Ctx } from '../../src/http/context.ts';
@@ -116,13 +117,30 @@ test('the planted line: every credential shape is cut on both tail routes, and t
   }
 });
 
-/* THE STREAM. /api/events hands every audit event to any local GET with no token, live, and
+test('the read key is cut from both tail routes like the token it is made from', async () => {
+  const h = await bootChartServer();
+  try {
+    const key = readKeyFor(h.token);
+    h.audit.append('tool_call', `a label that quotes the read key ${key}`, { note: key });
+    const route = await h.get('/api/log?limit=3');
+    const tool = await h.mcp({ op: 'read', tool: 'log_tail', args: { limit: 3 }, session: 'reader', client: 'phosphor-mcp' });
+    for (const [name, lines] of [['GET /api/log', route.json], ['log_tail', tool.json]] as const) {
+      const text = JSON.stringify(lines);
+      assert.ok(text.includes('a label that quotes the read key'), `${name} dropped the line`);
+      assert.equal(text.includes(key), false, `${name}: the read key came through`);
+    }
+  } finally {
+    await h.close();
+  }
+});
+
+/* THE STREAM. /api/events hands every audit event to the window, live, and
    the reviewer's line arrived on it verbatim: the same wall now stands on the way out there. */
 test('the planted line never reaches /api/events, and the hash does', async () => {
   const h = await bootChartServer();
   const stop = new AbortController();
   try {
-    const stream = await fetch(`${h.url}/api/events`, { headers: { origin: h.url }, signal: stop.signal });
+    const stream = await fetch(`${h.url}/api/events`, { headers: { origin: h.url, 'x-phosphor-token': h.token }, signal: stop.signal });
     assert.equal(stream.status, 200);
     const reader = stream.body!.getReader();
     const decoder = new TextDecoder();

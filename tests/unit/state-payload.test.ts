@@ -34,6 +34,8 @@ import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../
 import { stubView } from '../fixtures/view.ts';
 
 const SELF = '0x1111111111111111111111111111111111111111';
+// The window token this server is booted with. Every read carries it (src/http/read-gate.ts).
+const TOKEN = 'f'.repeat(64);
 
 /* One snapshot object, handed back by reference, because that is what the real ledger does:
    src/ledger/index.ts holds `current` and replaces it on refresh. The state cache keys off that
@@ -103,6 +105,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
   };
   const settled = row('stub', 'executed', 0);
   const server = createServer({
+    token: TOKEN,
     cfg,
     audit: createAudit(dataDir),
     store,
@@ -171,7 +174,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; store: Return
 function get(urlBase: string, route: string): Promise<{ status: number; body: string }> {
   const u = new URL(urlBase + route);
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search }, (res) => {
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers: { 'x-phosphor-token': TOKEN } }, (res) => {
       let d = '';
       res.on('data', (c) => (d += c));
       res.on('end', () => resolve({ status: res.statusCode ?? 0, body: d }));
@@ -319,7 +322,7 @@ test('the paged route refuses a forged Host like every other read', async () => 
     const u = new URL(h.url);
     const out = await new Promise<{ status: number }>((resolve, reject) => {
       const req = http.request(
-        { hostname: u.hostname, port: u.port, path: '/api/proposals', headers: { host: 'evil.example' } },
+        { hostname: u.hostname, port: u.port, path: '/api/proposals', headers: { host: 'evil.example', 'x-phosphor-token': TOKEN } },
         (res) => {
           res.resume();
           res.on('end', () => resolve({ status: res.statusCode ?? 0 }));
@@ -350,7 +353,7 @@ function getWithEtag(urlBase: string, etag: string): Promise<{ status: number; b
   const u = new URL(urlBase + '/api/state');
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: u.hostname, port: u.port, path: u.pathname, headers: { 'if-none-match': etag } },
+      { hostname: u.hostname, port: u.port, path: u.pathname, headers: { 'if-none-match': etag, 'x-phosphor-token': TOKEN } },
       (res) => {
         let d = '';
         res.on('data', (c) => (d += c));

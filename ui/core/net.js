@@ -20,9 +20,8 @@
   var busyCounts = {};
   var busyListeners = [];
 
-  /* The window token. The Tauri shell mints it, hands it to the backend in
-     PHOSPHOR_WINDOW_TOKEN, and injects it into this webview before any script
-     runs. It is never served over HTTP: GET /api/session is deleted, which is
+  /* The window token. The Tauri shell mints it, hands it to the backend on
+     its stdin, and injects it into this webview before any script runs. It is never served over HTTP: GET /api/session is deleted, which is
      what stops any other process on this machine from reading it and approving.
 
      ?token= is a development hook and nothing else. A browser pointed at a bare
@@ -57,6 +56,47 @@
 
   function setToken(value) {
     if (typeof value === 'string' && value.length) token = value;
+  }
+
+  /* The read key. Every read under /api/ needs a credential (src/http/read-gate.ts), and the
+     window's reads carry this key rather than the token: it opens reads and nothing else, so a
+     stream reconnect or a picture URL never carries the power to approve. Traded for the token
+     once (POST /api/read-key) and again only if the token changes. */
+  var readKey = '';
+  var readKeyToken = '';
+  var readKeyTrade = null;
+
+  function ensureReadKey() {
+    if (readKey && readKeyToken === token) return Promise.resolve(readKey);
+    if (readKeyTrade) return readKeyTrade;
+    var traded = token;
+    readKeyTrade = fetch('/api/read-key', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ token: traded }),
+      signal: signal(READ_TIMEOUT_MS)
+    })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          if (!res.ok) throw netError(res.status, text);
+          var body = JSON.parse(text);
+          if (!body || typeof body.read !== 'string' || !body.read) throw netError(res.status, '');
+          if (traded === token) {
+            readKey = body.read;
+            readKeyToken = traded;
+          }
+          return body.read;
+        });
+      })
+      .finally(function () { readKeyTrade = null; });
+    return readKeyTrade;
+  }
+
+  /* For the reads that cannot set a header: an EventSource, an <img>. Empty until the first
+     read has traded for the key, and every caller of this reads after one has. */
+  function withRead(path) {
+    if (!readKey) return path;
+    return path + (path.indexOf('?') === -1 ? '?' : '&') + 'read=' + encodeURIComponent(readKey);
   }
 
   /* ---------- busy ---------- */
@@ -127,7 +167,15 @@
 
     var release = opts.busy ? busy(opts.busy, opts.label || '') : null;
 
-    var promise = fetch(path, { headers: headers, signal: signal(READ_TIMEOUT_MS) })
+    /* `open` is health's: it answers without a key, so asking whether the app is there never
+       waits on a trade with an app that may not be. The key still rides along when the window
+       has one, for the wallet's half of the answer. */
+    var keyed = opts.open ? Promise.resolve(readKey) : ensureReadKey();
+    var promise = keyed
+      .then(function (read) {
+        if (read) headers['x-phosphor-read'] = read;
+        return fetch(path, { headers: headers, signal: signal(READ_TIMEOUT_MS) });
+      })
       .then(function (res) {
         if (res.status === 304) {
           return { data: cache[key], fresh: false, status: 304 };
@@ -235,6 +283,8 @@
     getToken: getToken,
     ensureToken: ensureToken,
     setToken: setToken,
+    ensureReadKey: ensureReadKey,
+    withRead: withRead,
     readable: readable,
     forget: forget
   };

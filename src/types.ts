@@ -756,6 +756,9 @@ export type LogEvent = {
     // so the record exists while the venue is still working.
     | 'submitted'
     | 'approve_attempt_rejected'
+    // A GET under /api/ with no window token and no read key (src/http/read-gate.ts): one line,
+    // then at most one a minute with a count, so a loop of them cannot fill the disk.
+    | 'read_refused'
     | 'kill_switch'
     | 'policy_changed'
     // The person accepted the terms of use in the window; data names the version.

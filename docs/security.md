@@ -70,8 +70,15 @@ of every agent it starts. A click is the only thing that carries it, so a click 
 recorded as a human decision in the audit log.
 
 The agent's own door is behind a second secret, written under the app's data directory at every
-boot. Nothing that has not read that file can read the app or file a proposal into it, which
-keeps the door shut to any web page and to any process that has not been given the file.
+boot. Nothing that has not read that file can file a proposal into the app, which keeps the door
+shut to any web page and to any process that has not been given the file.
+
+Reading the app takes a credential as well. The window's reads carry a read key it gets for its
+token, which opens reads and nothing else; the shell sends the token; and a program you run can
+use `read.key`, which the app writes into the same data directory at every boot, readable by you
+alone. Another account on this Mac, or a sandboxed app, has none of these and learns nothing:
+`/api/health` is the one route that answers it, and it says only that the app is running and which
+version.
 
 ## The Secure Enclave and Touch ID
 

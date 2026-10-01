@@ -3328,6 +3328,15 @@ function timeframeOf(sec) {
 
 /* ---------- talking to the server ---------- */
 
+/* The headers of a read this file makes itself rather than through PhosphorNet.getJson, because
+   it needs the response's own headers. Every read under /api/ carries the read key
+   (src/http/read-gate.ts); a page with no PhosphorNet sends none and is refused. */
+async function readHeaders() {
+  var net = window.PhosphorNet;
+  var key = net && typeof net.ensureReadKey === 'function' ? await net.ensureReadKey() : '';
+  return key ? { accept: 'application/json', 'x-phosphor-read': key } : { accept: 'application/json' };
+}
+
 /* `opts.part` is which part of the payload to ask for. The markup part is the answer to a chart
    frame: the view, the studies, the levels, the marks and the drawings, without the candles the
    window already holds. Everything else (a nudge, a gesture, the floor poll) asks for the whole
@@ -3343,7 +3352,7 @@ async function refreshChart(opts) {
   if (part === 'full') CHART_FETCH.at = Date.now();
   chartBusy(true);
   try {
-    var res = await fetch(part === 'markup' ? '/api/chart?part=markup' : '/api/chart', { headers: { accept: 'application/json' } });
+    var res = await fetch(part === 'markup' ? '/api/chart?part=markup' : '/api/chart', { headers: await readHeaders() });
     if (!res.ok) throw new Error('chart returned ' + res.status);
     if (part === 'full' && res.headers && typeof res.headers.get === 'function') {
       CHART_FETCH.bytes = Number(res.headers.get('content-length')) || 0;
@@ -4243,7 +4252,7 @@ async function fetchOlder() {
       '&before=' + first.t +
       '&limit=' + BACKFILL_BARS +
       '&provider=' + encodeURIComponent(CHART.view.provider || 'auto');
-    var res = await fetch(url, { headers: { accept: 'application/json' } });
+    var res = await fetch(url, { headers: await readHeaders() });
     if (!res.ok) throw new Error('candles returned ' + res.status);
     var older = await res.json();
     var exhausted = res.headers.get('x-candle-exhausted-back') === 'true';

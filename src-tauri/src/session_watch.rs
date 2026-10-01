@@ -92,7 +92,7 @@ fn lock_when_idle(port: u16, token: &str, reason: &str, grace: Duration) -> Lock
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::{backend_command, get_health, phosphor_is_listening, request_within, Handshake};
+    use crate::backend::{backend_command, get_health, phosphor_is_listening, read_head, request_within, Handshake};
     use std::io::{Read, Write};
     use std::net::{Shutdown, TcpListener};
     use std::path::Path;
@@ -154,14 +154,13 @@ mod tests {
         serde_json::from_str(raw.split_once("\r\n\r\n").map(|(_, b)| b.trim()).unwrap_or("")).expect("a JSON answer")
     }
 
-    fn get(port: u16, path: &str) -> serde_json::Value {
-        let head = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
-        let raw = request_within(port, &head, None, Duration::from_secs(10)).expect("the backend answered");
+    fn get(port: u16, path: &str, token: &str) -> serde_json::Value {
+        let raw = request_within(port, &read_head(port, path, token), None, Duration::from_secs(10)).expect("the backend answered");
         serde_json::from_str(raw.split_once("\r\n\r\n").map(|(_, b)| b.trim()).unwrap_or("")).expect("a JSON answer")
     }
 
-    fn locked(port: u16) -> bool {
-        get_health(port).and_then(|h| h["locked"].as_bool()).unwrap_or(false)
+    fn locked(port: u16, token: &str) -> bool {
+        get_health(port, token).and_then(|h| h["locked"].as_bool()).unwrap_or(false)
     }
 
     fn wait_for(what: impl Fn() -> bool) -> bool {
@@ -226,12 +225,12 @@ mod tests {
             );
             let id = filed["id"].as_str().expect("a proposal id").to_string();
             let waiting = || {
-                get(port, "/api/proposals")["proposals"]
+                get(port, "/api/proposals", &hand.token)["proposals"]
                     .as_array()
                     .and_then(|rows| rows.iter().find(|p| p["id"] == id.as_str()).map(|p| p["status"].as_str().unwrap_or("").to_string()))
             };
             assert_eq!(waiting().as_deref(), Some("pending"));
-            assert!(!locked(port), "the wallet is open before anyone steps away");
+            assert!(!locked(port, &hand.token), "the wallet is open before anyone steps away");
 
             backend_up(port, &hand.token);
             let name = format!("com.karimbabasf.phosphor.test.screenIsLocked.{}", std::process::id());
@@ -244,17 +243,17 @@ mod tests {
                 .output()
                 .unwrap();
             assert!(posted.status.success(), "{}", String::from_utf8_lossy(&posted.stderr));
-            assert!(wait_for(|| locked(port)), "a screen lock posted from another process locked the wallet");
+            assert!(wait_for(|| locked(port, &hand.token)), "a screen lock posted from another process locked the wallet");
             assert_eq!(waiting().as_deref(), Some("pending"), "the change waiting for a click is still waiting");
 
             assert_eq!(post(port, "/api/unlock", serde_json::json!({ "token": hand.token, "password": password }))["ok"], true);
-            assert!(!locked(port));
+            assert!(!locked(port, &hand.token));
             extern "C" {
                 fn phosphor_post_session_resigned();
             }
             // SAFETY: posts one notification in this process and returns.
             unsafe { phosphor_post_session_resigned() };
-            assert!(wait_for(|| locked(port)), "a switch to another user locked the wallet");
+            assert!(wait_for(|| locked(port, &hand.token)), "a switch to another user locked the wallet");
             assert_eq!(waiting().as_deref(), Some("pending"), "and the change is still waiting after a second lock");
         });
         let _ = child.kill();

@@ -437,13 +437,16 @@ test('the answer carries the assets asked for and nothing else, and a hostile na
   assert.equal(Object.getPrototypeOf(hostile.entries), Object.prototype);
 });
 
+// The window token the read gate wants on every read (src/http/read-gate.ts).
+const READ_TOKEN = 't'.repeat(64);
+
 async function getDay(ctx: Partial<Ctx>, query: string): Promise<{ status: number; body: DayAnswer }> {
-  const server = http.createServer((req, res) => void handle(ctx as Ctx, req, res));
+  const server = http.createServer((req, res) => void handle({ token: READ_TOKEN, ...ctx } as Ctx, req, res));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   try {
     return await new Promise((resolve, reject) => {
-      const req = http.request({ host: '127.0.0.1', port, path: `/api/day${query}`, headers: { host: `127.0.0.1:${port}` } }, (res) => {
+      const req = http.request({ host: '127.0.0.1', port, path: `/api/day${query}`, headers: { host: `127.0.0.1:${port}`, 'x-phosphor-token': READ_TOKEN } }, (res) => {
         let raw = '';
         res.on('data', (chunk) => (raw += chunk));
         res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) as DayAnswer }));

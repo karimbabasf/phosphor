@@ -14,9 +14,9 @@ import { bootChartServer } from '../fixtures/chart-server.ts';
 const T0 = 1_760_000_000;
 
 // Opens the window's own stream and hands back the next chart frame the server sends.
-async function nextChartFrame(url: string): Promise<{ frame: Promise<{ rev: number; slot: number }>; close: () => void }> {
+async function nextChartFrame(url: string, token: string): Promise<{ frame: Promise<{ rev: number; slot: number }>; close: () => void }> {
   const controller = new AbortController();
-  const res = await fetch(`${url}/api/events`, { signal: controller.signal });
+  const res = await fetch(`${url}/api/events`, { signal: controller.signal, headers: { 'x-phosphor-token': token } });
   const reader = (res.body as ReadableStream<Uint8Array>).getReader();
   const frame = (async () => {
     let buffered = '';
@@ -40,7 +40,7 @@ test('a lines-only draw moves the revision, the chart frame carries it, and the 
   // frame went out with the OLD rev, the window read it as its own echo and dropped it, and the
   // trend line waited for the next unrelated refetch. That wait is what "slow" meant.
   const h = await bootChartServer();
-  const stream = await nextChartFrame(h.url);
+  const stream = await nextChartFrame(h.url, h.token);
   try {
     const before = (await h.get('/api/chart')).json.rev as number;
     const out = await h.mcp({ op: 'view', tool: 'chart_draw', session: 'a', args: { lines: [{ t1: T0, p1: 1, t2: T0 + 60, p2: 2 }] } });

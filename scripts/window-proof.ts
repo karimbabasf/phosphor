@@ -81,7 +81,7 @@ async function startApp(port: number): Promise<void> {
     if (m && token === '') token = m[1] as string;
     if (token !== '') {
       try {
-        const res = await fetch(`${base}/api/state`);
+        const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
         if (res.ok) return;
       } catch {
         // not listening yet
@@ -109,7 +109,7 @@ async function post(route: string, body: unknown): Promise<{ status: number; jso
 }
 
 async function getJson(route: string): Promise<Json> {
-  const res = await fetch(`${base}${route}`);
+  const res = await fetch(`${base}${route}`, { headers: { 'x-phosphor-token': token } });
   return await res.json();
 }
 

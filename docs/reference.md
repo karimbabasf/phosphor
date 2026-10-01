@@ -437,7 +437,7 @@ stayed true. It lives beside `keysPath`, and THE DATA DIRECTORY DECIDES where th
 
 The installed app keeps everything else it writes under
 `~/Library/Application Support/com.karimbabasf.phosphor/`: `state/` (policy.json, proposals.json,
-audit.jsonl, terms.json, invites.json, agent.secret) and `config.local.json` beside it. The shell creates that
+audit.jsonl, terms.json, invites.json, agent.secret, read.key) and `config.local.json` beside it. The shell creates that
 folder before the backend starts, and `loadConfig` creates the data directory it is given, so a
 first run on an empty Mac makes both without a step from the person; the key folder is made at
 mode 0700 the moment the wallet is created. `tests/unit/keys-path.test.ts` holds all three rows.
@@ -656,7 +656,7 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     ui/logos/          the token and venue logos as SVG files, with their notices in ATTRIBUTION.md
     operator/          the opt-in operator profile: an agent that drives but cannot develop
     state/             policy.json, proposals.json, audit.jsonl (append-only), terms.json,
-                       invites.json, agent.secret; the installed app keeps it under Application
+                       invites.json, agent.secret, read.key; the installed app keeps it under Application
                        Support
 
 ## The operator profile

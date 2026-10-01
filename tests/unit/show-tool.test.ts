@@ -30,10 +30,10 @@ type Frame = { type?: string; chat?: string; event?: { kind?: string; name?: str
 
 // One SSE stream, collecting frames until the test stops caring. The window's own EventSource
 // reads exactly this.
-function listen(url: string): { frames: Frame[]; stop: () => void } {
+function listen(url: string, token: string): { frames: Frame[]; stop: () => void } {
   const frames: Frame[] = [];
   const controller = new AbortController();
-  void fetch(`${url}/api/events`, { signal: controller.signal })
+  void fetch(`${url}/api/events`, { headers: { 'x-phosphor-token': token }, signal: controller.signal })
     .then(async (res) => {
       const reader = res.body?.getReader();
       if (reader === undefined) return;
@@ -82,7 +82,7 @@ async function cardWithin(frames: Frame[], ms: number): Promise<Frame | undefine
 
 test('show draws one card event for a proposal within a second', async () => {
   const app = await boot({ autostart: true, seat: SEAT });
-  const stream = listen(app.url);
+  const stream = listen(app.url, await app.token());
   try {
     // The pending proposal the fixture seeded, and the conversation the autostart opened.
     const id = PENDING.id;
@@ -104,7 +104,7 @@ test('show draws one card event for a proposal within a second', async () => {
 
 test('an unknown proposal is a 404 that names it, and draws nothing', async () => {
   const app = await boot({ autostart: true, seat: SEAT });
-  const stream = listen(app.url);
+  const stream = listen(app.url, await app.token());
   try {
     const out = await view(app, { kind: 'proposal', id: 'nope' });
     assert.equal(out.status, 404);
@@ -148,7 +148,7 @@ test('an unknown kind and an empty id are both 400s that say what is wanted', as
 
 test('the card lands in the calling seat’s own conversation and nowhere else', async () => {
   const app = await boot({ autostart: true, seat: SEAT });
-  const stream = listen(app.url);
+  const stream = listen(app.url, await app.token());
   try {
     // A second conversation beside the one autostart opened.
     const opened = await app.driver({ action: 'open' });
@@ -173,7 +173,7 @@ test('the card lands in the calling seat’s own conversation and nowhere else',
 
 test('an outside client with no conversation draws into the window’s own, and is told so', async () => {
   const app = await boot({ autostart: true, seat: SEAT });
-  const stream = listen(app.url);
+  const stream = listen(app.url, await app.token());
   try {
     const out = await view(app, { kind: 'proposal', id: PENDING.id }, 'a-terminal-agent-with-no-chat');
     assert.equal(out.body.drawn, true);

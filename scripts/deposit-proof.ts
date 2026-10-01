@@ -122,7 +122,7 @@ async function startApp(port: number): Promise<void> {
     if (m && token === '') token = m[1] as string;
     if (token !== '') {
       try {
-        const res = await fetch(`${base}/api/state`);
+        const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
         if (res.ok) return;
       } catch {
         // not listening yet
@@ -167,7 +167,7 @@ async function main(): Promise<void> {
   const port = await freePort();
   await startApp(port);
   await createWallet();
-  const report = (await (await fetch(`${base}/api/intents-receive`)).json()) as Json;
+  const report = (await (await fetch(`${base}/api/intents-receive`, { headers: { 'x-phosphor-token': token } })).json()) as Json;
   const five = ['eth', 'base', 'arb', 'sol', 'near'];
   const drawn = Array.isArray(report.networks) ? report.networks : [];
   if (drawn.length < 5 || five.some((id) => !drawn.some((n: Json) => n.id === id && n.address !== null))) {

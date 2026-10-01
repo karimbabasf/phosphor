@@ -354,8 +354,8 @@ The approval routes are POST-only and defended in layers:
   of the token the caller supplied. Neither the supplied token nor anything derived from the token
   this app holds enters the audit log. The second half of that sentence is newer than the first:
   the record used to carry a fingerprint of the app's own token beside the caller's, and `GET
-  /api/log` has no credential, so two unauthenticated requests handed any local process an offline
-  oracle for confirming a candidate token.
+  /api/log` had no credential then, so two unauthenticated requests handed any local process an
+  offline oracle for confirming a candidate token.
 
 The e2e proof includes the negative case: `POST /api/approve` with a wrong token returns 403.
 
@@ -413,13 +413,42 @@ extension's native host with no shell, a process under another account, and any 
 did not go looking in the app's own data directory. Loopback TCP has no peer identity, and this is
 the credential in its place until the door moves to a socket that has one.
 
+**Every read takes a credential too.** Every `GET` under `/api/` (`src/http/read-gate.ts`, deny by
+default, so a route added later is covered) answers 401 unless it carries the window token in the
+`x-phosphor-token` header or the read key in the `x-phosphor-read` header or `?read=`. Until
+0.10.13 the Host check was the only thing in front of these routes, and any process that could
+open 127.0.0.1, under any account on this Mac, read the ledger, the policy with the size of a move
+that needs no click, the pending moves, the wallet's address and the Hyperliquid account. Who holds
+what:
+
+| Caller | Credential |
+|---|---|
+| the window | the read key, which it trades its token for once (`POST /api/read-key`, window token and a matching Origin) |
+| the shell | the window token, in the header |
+| an agent | none here: it reads through `/api/mcp` with the seat secret, where its reads are seated, audited and marked |
+| a program you run (a proof script, curl) | the read key in `read.key` in the data directory, written owner-readable at every boot |
+
+The read key is an HMAC of the window token. It opens reads and nothing else: it is not the token,
+it says nothing about the token, and every decision route refuses it. It exists because the window
+reads on its own all the time (every state frame, every reconnect of the event stream), those
+requests go to whatever answers on the port, and an `EventSource` or an `<img>` cannot set a
+header, so the window's credential has to be able to sit in a URL. The token never does: a token in
+a URL is refused. `/api/health` is the one read that answers without a credential, and then only
+`ok`, `version` and `uptimeSec`; the lock state, the pending and executing counts, the kill switch,
+the audit chain and the last error need a credential, because the last error can name an amount or
+a coin. A refused read is one `read_refused` line in the audit log, then at most one a minute with
+a count. Mode 0600 on `read.key` keeps out another account and a sandboxed app; a process running
+as you can read it, and could read the data directory it sits in anyway.
+
 ## The honest v1 boundary
 
-**`/api/mcp` takes the seat secret on every op, so a local process has to read the app's data
-directory before it can read this app or file proposals into it.** That is the boundary, and it is
-narrower than it was: the decision routes are closed to a local shell, and the agent's door, which
-was open to any process that could set an `Origin` header, is closed to anything that has not read
-`agent.secret`. A process running as this user can read that file. Nothing else can.
+**`/api/mcp` takes the seat secret on every op and every read takes the window token or the read
+key, so a local process has to read the app's data directory before it can read this app or file
+proposals into it.** That is the boundary, and it is narrower than it was: the decision routes are
+closed to a local shell, the agent's door, which was open to any process that could set an
+`Origin` header, is closed to anything that has not read `agent.secret`, and the reads are closed
+to anything that has not read `read.key`. A process running as this user can read those files.
+Nothing else can.
 
 Verified against a running build rather than reasoned about. Every call below carries an `Origin`
 header, which any local process can set and no web page can forge, and no secret:
@@ -433,11 +462,14 @@ header, which any local process can set and no web page can forge, and no secret
     post '{"op":"propose","kind":"swap","params":{"chain":"arb","fromSymbol":"USDC",
            "toSymbol":"WETH","amountIn":25,"minAmountOut":0.005}}'   # 401: nothing proposed
 
-    curl -s "http://127.0.0.1:$P/api/log?limit=30"  # 200: the audit tail, no credential, and
-                                                     # never a credential in it: this boot's seat
-                                                     # secret and window token are redacted on the
-                                                     # way out (src/http/log-tail.ts), as is any
-                                                     # value filed under a secret's name
+    curl -s "http://127.0.0.1:$P/api/log?limit=30"  # 401: every read takes a credential
+    curl -s -H "x-phosphor-read: $(cat read.key)" "http://127.0.0.1:$P/api/log?limit=30"
+                                                     # 200: the audit tail, run from the data
+                                                     # directory, and never a credential in it:
+                                                     # this boot's seat secrets, window token and
+                                                     # read key are redacted on the way out
+                                                     # (src/http/log-tail.ts), as is any value
+                                                     # filed under a secret's name
 
 With the secret read off the file, the same three calls are the agent's own and answer as they
 always did: 200 with the balances, 200 with the policy, and 200 with a verdict from the policy

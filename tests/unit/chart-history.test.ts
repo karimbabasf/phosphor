@@ -39,7 +39,7 @@ test('panning three thousand bars back receives the older windows in pages, with
     let oldest = (held[0] as Bar).t;
     let all: Bar[] = held.slice();
     while (all.length < held.length + 3000) {
-      const res = await fetch(`${h.url}/api/candles?product=BTC-USD&granularity=60&before=${oldest}&limit=2000`);
+      const res = await fetch(`${h.url}/api/candles?product=BTC-USD&granularity=60&before=${oldest}&limit=2000`, { headers: { 'x-phosphor-token': h.token } });
       assert.equal(res.status, 200);
       assert.equal(res.headers.get('x-candle-exhausted-back'), 'false', 'the synthetic venue is bottomless');
       const page = (await res.json()) as Bar[];
@@ -95,7 +95,7 @@ test('a venue with a floor says so: the backfill answers short and marks the his
     await h.mcp({ op: 'read', tool: 'chart_read', session: 'a', args: {} });
     const first = await h.get('/api/chart');
     const held: Bar[] = first.json.candles;
-    const res = await fetch(`${h.url}/api/candles?product=BTC-USD&granularity=60&before=${(held[0] as Bar).t}&limit=2000`);
+    const res = await fetch(`${h.url}/api/candles?product=BTC-USD&granularity=60&before=${(held[0] as Bar).t}&limit=2000`, { headers: { 'x-phosphor-token': h.token } });
     assert.equal(res.status, 200);
     const page = (await res.json()) as Bar[];
     assert.ok(page.length < 2000 && page.length > 0, `the venue ran out: ${page.length} bars`);
@@ -105,7 +105,7 @@ test('a venue with a floor says so: the backfill answers short and marks the his
 
     // Asked again, the store knows and the venue is not.
     const calls = h.fetches().length;
-    const again = await fetch(`${h.url}/api/candles?product=BTC-USD&granularity=60&before=${oldestSec}&limit=2000`);
+    const again = await fetch(`${h.url}/api/candles?product=BTC-USD&granularity=60&before=${oldestSec}&limit=2000`, { headers: { 'x-phosphor-token': h.token } });
     assert.deepEqual(await again.json(), []);
     assert.equal(again.headers.get('x-candle-exhausted-back'), 'true');
     assert.equal(h.fetches().length, calls, 'a venue that said it has no more is not asked again');
@@ -123,12 +123,12 @@ test('before must be a time, and the route still serves the newest window withou
   try {
     const bad = await h.get('/api/candles?before=soon');
     assert.equal(bad.status, 400);
-    const plain = await fetch(`${h.url}/api/candles?product=ETH-USD&granularity=300&limit=50`);
+    const plain = await fetch(`${h.url}/api/candles?product=ETH-USD&granularity=300&limit=50`, { headers: { 'x-phosphor-token': h.token } });
     assert.equal(plain.status, 200);
     const bars = (await plain.json()) as Bar[];
     assert.equal(bars.length, 50);
     assert.equal(plain.headers.get('x-candle-exhausted-back'), 'false');
-    const week = await fetch(`${h.url}/api/candles?product=ETH-USD&granularity=604800&limit=5`);
+    const week = await fetch(`${h.url}/api/candles?product=ETH-USD&granularity=604800&limit=5`, { headers: { 'x-phosphor-token': h.token } });
     assert.equal(week.status, 200, 'the granularity clamp reaches the top of the timeframe range');
   } finally {
     await h.close();

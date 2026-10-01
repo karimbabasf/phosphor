@@ -382,7 +382,12 @@
       node.removeAttribute('data-picture');
       fallback(node, ticker);
     };
-    img.src = '/api/coin-image?id=' + encodeURIComponent(id);
+    /* An <img> cannot set a header, so the read key rides in the URL. A coin
+       has a picture id only once /api/coin-images answered, and that read
+       traded for the key. */
+    var net = window.PhosphorNet;
+    var src = '/api/coin-image?id=' + encodeURIComponent(id);
+    img.src = net && typeof net.withRead === 'function' ? net.withRead(src) : src;
     node.appendChild(img);
     return node;
   }

@@ -154,7 +154,7 @@ async function boot(): Promise<Booted> {
           body: typeof body === 'string' ? body : JSON.stringify(body),
         }),
       ),
-    get: async (route) => read(await fetch(`${url}${route}`)),
+    get: async (route) => read(await fetch(`${url}${route}`, { headers: { 'x-phosphor-token': token } })),
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

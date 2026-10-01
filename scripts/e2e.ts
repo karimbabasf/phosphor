@@ -71,7 +71,7 @@ function cleanEnv(): Record<string, string> {
 // ---------- HTTP helpers (the browser half of the app) ----------
 
 async function getJson(route: string): Promise<Json> {
-  const res = await fetch(`${BASE}${route}`);
+  const res = await fetch(`${BASE}${route}`, { headers: { 'x-phosphor-token': WINDOW_TOKEN } });
   return await res.json();
 }
 
@@ -181,7 +181,7 @@ async function waitForApp(timeoutMs: number): Promise<boolean> {
   while (Date.now() < until) {
     if (app !== null && app.exitCode !== null) return false; // died on boot, stop waiting
     try {
-      const res = await fetch(`${BASE}/api/state`);
+      const res = await fetch(`${BASE}/api/state`, { headers: { 'x-phosphor-token': WINDOW_TOKEN } });
       if (res.ok) {
         await res.json();
         return true;
@@ -334,8 +334,10 @@ async function run(): Promise<void> {
   );
 
   const token: string = WINDOW_TOKEN;
+  // A caller with no credential is stopped by the read gate; one with a credential finds no route.
   const served = await fetch(`${BASE}/api/session`);
-  check('GET /api/session is gone, so no local process can read the token', served.status === 404, `http ${served.status}`);
+  const gone = await fetch(`${BASE}/api/session`, { headers: { 'x-phosphor-token': token } });
+  check('GET /api/session is gone, so no local process can read the token', served.status === 401 && gone.status === 404, `http ${served.status}, ${gone.status} with a credential`);
 
   const approved = await postJson('/api/approve', { id: proposalId, token });
   check(

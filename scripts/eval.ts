@@ -245,7 +245,7 @@ async function bootApp(stage: string, scenario: Scenario): Promise<App> {
   while (Date.now() < until) {
     if (child.exitCode !== null) break;
     try {
-      const res = await fetch(`${base}/api/state`);
+      const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
       if (res.ok) {
         await res.json();
         up = true;
@@ -282,7 +282,7 @@ async function bootApp(stage: string, scenario: Scenario): Promise<App> {
 async function watchWindow(app: App, frames: Frame[], cards: Card[], stop: AbortSignal): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${app.base}/api/events`, { signal: stop });
+    res = await fetch(`${app.base}/api/events`, { signal: stop, headers: { 'x-phosphor-token': app.token } });
   } catch {
     return;
   }
@@ -318,7 +318,7 @@ async function watchWindow(app: App, frames: Frame[], cards: Card[], stop: Abort
         }
         let proposals: Json[] = [];
         try {
-          const state = (await (await fetch(`${app.base}/api/state`)).json()) as Json;
+          const state = (await (await fetch(`${app.base}/api/state`, { headers: { 'x-phosphor-token': app.token } })).json()) as Json;
           proposals = (state.proposals as Json[]) ?? [];
         } catch {
           // The app is going down, which is not a window failure.
@@ -552,7 +552,7 @@ async function runScenario(stage: string, scenario: Scenario, surfaces: Record<'
   const poll = setInterval(() => {
     void (async () => {
       try {
-        const state = (await (await fetch(`${app.base}/api/state`)).json()) as Json;
+        const state = (await (await fetch(`${app.base}/api/state`, { headers: { 'x-phosphor-token': app.token } })).json()) as Json;
         // Stamped on the answer, for the reason watchWindow gives above.
         frames.push({ at: Date.now(), type: 'poll', payload: null, proposals: (state.proposals as Json[]) ?? [] });
       } catch {
@@ -658,7 +658,7 @@ async function runScenario(stage: string, scenario: Scenario, surfaces: Record<'
        the wrong order and never appears in any frame at all. The window has it; the record did
        not, and the sentence rule was failing agents for naming a stage the record had missed. */
     try {
-      const state = (await (await fetch(`${app.base}/api/state`)).json()) as Json;
+      const state = (await (await fetch(`${app.base}/api/state`, { headers: { 'x-phosphor-token': app.token } })).json()) as Json;
       frames.push({ at: Date.now(), type: 'final', payload: null, proposals: (state.proposals as Json[]) ?? [] });
     } catch {
       // The app is going down, which is not a window failure.

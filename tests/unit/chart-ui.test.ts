@@ -215,6 +215,23 @@ test('a chart frame fetches the markup part, and a nudge the whole thing', async
   assert.deepEqual(asked, ['/api/chart?part=markup', '/api/chart']);
 });
 
+test('the chart reads its own payload with the read key, never the token', async () => {
+  const s = loadChartUi();
+  const key = 'k'.repeat(64);
+  s.window.PhosphorNet = { ensureReadKey: async () => key };
+  const sent: Record<string, string>[] = [];
+  s.fetch = async (_url: string, init: { headers?: Record<string, string> } = {}) => {
+    sent.push({ ...(init.headers ?? {}) });
+    return { ok: true, json: async () => payload({ series: series(T0, 1) }) };
+  };
+  s.CHART_MY_REV = 1;
+  s.chartPushed(2);
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]['x-phosphor-read'], key, 'the chart read went without the read key');
+  assert.equal(sent[0]['x-phosphor-token'], undefined);
+});
+
 test('an agent switching product still owns the view', () => {
   const s = loadChartUi();
   s.applyChart(payload({ view: viewOf('BTC-USD') }));

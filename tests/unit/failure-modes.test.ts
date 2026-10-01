@@ -41,12 +41,16 @@ function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-failure-'));
 }
 
+// The window token these boots are piped, as the shell pipes one. Every read carries it.
+const TOKEN = 'd'.repeat(64);
+
 // A real backend on a throwaway data dir. Demo mode: no keys, no chain, no real money anywhere.
 async function boot(dir: string, port: number): Promise<{ pid: number; stop: () => Promise<number> }> {
   const child = spawn(process.execPath, [path.join(ROOT, 'src/main.ts')], {
     env: { ...process.env, PHOSPHOR_MODE: 'demo', PHOSPHOR_PORT: String(port), PHOSPHOR_DATA_DIR: dir },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
+  child.stdin.end(`${TOKEN}\n`);
   const up = await new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => resolve(false), 25_000);
     child.stdout.setEncoding('utf8');
@@ -100,7 +104,7 @@ function request(port: number, route: string, rawBody?: string): Promise<{ statu
            one, so these tests read the same before and after that lands. */
         headers:
           body === undefined
-            ? {}
+            ? { 'x-phosphor-token': TOKEN }
             : { 'content-type': 'application/json', origin: `http://127.0.0.1:${String(port)}` },
       },
       (res) => {

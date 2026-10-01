@@ -118,7 +118,7 @@ async function startApp(): Promise<Backend> {
     if (m && backend.token === '') backend.token = m[1] as string;
     if (backend.token !== '') {
       try {
-        const res = await fetch(`${base}/api/state`);
+        const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': backend.token } });
         if (res.ok) return backend;
       } catch {
         // not listening yet

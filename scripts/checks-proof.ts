@@ -124,7 +124,7 @@ async function startApp(port: number): Promise<void> {
     if (m && token === '') token = m[1] as string;
     if (token !== '') {
       try {
-        if ((await fetch(`${base}/api/state`)).ok) return;
+        if ((await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } })).ok) return;
       } catch {
         // not listening yet
       }
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
   const created = await post('/api/wallet/create', { token, password: 'proof-password-1' });
   if (created.status !== 200) throw new Error(`wallet create refused: ${created.status} ${JSON.stringify(created.json)}`);
   // The receipt as the window will read it, before the browser is involved.
-  const receipts = (await (await fetch(`${base}/api/receipts`)).json()) as { receipts?: Array<{ id: string; kind: string; preflight: unknown }>; total?: number };
+  const receipts = (await (await fetch(`${base}/api/receipts`, { headers: { 'x-phosphor-token': token } })).json()) as { receipts?: Array<{ id: string; kind: string; preflight: unknown }>; total?: number };
   const mine = receipts.receipts?.find((r) => r.id === 'proof-deposit');
   if (mine === undefined) throw new Error(`the seeded deposit is not a receipt: ${JSON.stringify(receipts).slice(0, 400)}`);
   console.log(`receipt ${mine.id} (${mine.kind}) carries ${mine.preflight === null ? 'no' : 'the'} preflight`);

@@ -1,5 +1,5 @@
-// The whole authorisation surface: the window token, and the three request predicates every
-// mutating route checks before it does anything.
+// The whole authorisation surface: the window token, the read key derived from it, and the
+// request predicates every route checks before it does anything.
 //
 // THE TOKEN IS NEVER SERVED, AND IT NEVER TRAVELS BY ENVIRONMENT. It is minted outside this
 // process by the Tauri shell, written as the first line of this process's stdin, and injected
@@ -151,6 +151,42 @@ export function tokenMatches(supplied: unknown, expected: string): boolean {
   const a = crypto.createHash('sha256').update(supplied).digest();
   const b = crypto.createHash('sha256').update(expected).digest();
   return crypto.timingSafeEqual(a, b);
+}
+
+/* THE READ KEY. Every GET under /api/ needs a credential (src/http/router.ts): a process that
+   holds nothing used to read the ledger, the policy, pending moves and the wallet's address, from
+   any account on this Mac. Two credentials open a read.
+
+   The window token itself, in the x-phosphor-token header: the shell, and a test or a script that
+   started its own backend and so wrote the token itself.
+
+   The read key, in the x-phosphor-read header or in ?read=: the window. An EventSource and an
+   <img> cannot set a header, so the window's key has to be able to sit in a URL, and the token
+   must never sit there. The window also reads on its own, all the time (every state frame, every
+   reconnect of the stream), and those requests go to whatever answers on the port. So the window's
+   reads carry a key that opens reads and nothing else: an HMAC of the token, which says nothing
+   about the token and cannot approve, unlock or move anything. The window trades its token for
+   it once (POST /api/read-key). */
+export const TOKEN_HEADER = 'x-phosphor-token';
+export const READ_KEY_HEADER = 'x-phosphor-read';
+export const READ_KEY_PARAM = 'read';
+
+let readKeyMemo: { token: string; key: string } | null = null;
+
+export function readKeyFor(token: string): string {
+  if (readKeyMemo?.token !== token) {
+    readKeyMemo = { token, key: crypto.createHmac('sha256', token).update('phosphor read key').digest('hex') };
+  }
+  return readKeyMemo.key;
+}
+
+export function readAllowed(req: http.IncomingMessage, url: URL, token: string): boolean {
+  const supplied = req.headers[TOKEN_HEADER];
+  if (typeof supplied === 'string' && tokenMatches(supplied, token)) return true;
+  const key = readKeyFor(token);
+  const header = req.headers[READ_KEY_HEADER];
+  if (typeof header === 'string' && tokenMatches(header, key)) return true;
+  return tokenMatches(url.searchParams.get(READ_KEY_PARAM), key);
 }
 
 // The SHA-256 prefix of a token, for the audit log. The supplied token itself never enters the
