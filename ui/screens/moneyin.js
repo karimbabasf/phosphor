@@ -35,17 +35,62 @@
   }
 
   var steps = null;
+  var invite = null;
 
   /* The fold renders again every time it opens. The steps that were there go
-     with their watch subscription and their clock, not just their nodes. */
+     with their watch subscription and their clock, not just their nodes.
+
+     Under the network tiles, "Have an invite code?" (ui/screens/invite.js):
+     on the first step only, where a person is still choosing how money comes
+     in, never under an address they are reading. `opts.invite` is a code the
+     chat handed over, which opens the field with it. The first run has its
+     own invite step and draws none here. */
   function render(host, options) {
     var opts = options || {};
     if (steps) steps.destroy();
+    if (invite) invite.destroy();
+    invite = null;
     dom.clear(host);
     var mount = dom.el('div', 'moneyin-steps');
     host.appendChild(mount);
-    steps = window.PhosphorNetPick.render(mount, { context: opts.context || 'basic' });
+    var stage = 'network';
+    var picker = window.PhosphorNetPick.render(mount, {
+      context: opts.context || 'basic',
+      onStage: function (next) {
+        stage = next;
+        if (invite) invite.show(next === 'network');
+      }
+    });
+    var line = null;
+    var Invite = window.PhosphorInvite;
+    if (Invite && typeof Invite.line === 'function' && opts.context !== 'firstrun') {
+      var foot = dom.el('div', 'moneyin-invite');
+      host.appendChild(foot);
+      line = Invite.line(foot, {});
+      line.show(stage === 'network');
+      invite = line;
+    }
+    steps = Object.assign({}, picker, {
+      destroy: function () {
+        picker.destroy();
+        if (line) line.destroy();
+        if (invite === line) invite = null;
+        if (steps && steps.picker === picker) steps = null;
+      },
+      picker: picker
+    });
+    if (opts.invite) handOver(opts.invite);
     return steps;
+  }
+
+  /* A code from the chat, into the fold that is open: back to the network
+     step, where the line lives, and into the field. */
+  function handOver(code) {
+    if (!invite || !code) return false;
+    if (steps && steps.picker && typeof steps.picker.stage === 'function' && steps.picker.stage() !== 'network') steps.picker.go('network');
+    invite.show(true);
+    invite.fill(code);
+    return true;
   }
 
   /* ---------- a password wallet's words and its encrypted copy ----------
@@ -64,6 +109,7 @@
 
   window.PhosphorMoneyIn = {
     render: render,
+    invite: handOver,
     load: load,
     revealWithPassword: function () { toVault('startReveal'); },
     exportWithPassword: function () { toVault('startExport'); }

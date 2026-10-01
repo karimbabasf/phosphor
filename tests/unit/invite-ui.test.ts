@@ -25,6 +25,8 @@ const STATE = read('../../ui/core/state.js');
 const ADAPTER = read('../../ui/core/invite.js');
 const INVITE = read('../../ui/screens/invite.js');
 const FIRSTRUN = read('../../ui/screens/firstrun.js');
+const MONEYIN = read('../../ui/screens/moneyin.js');
+const DEPOSIT = read('../../ui/screens/deposit.js');
 const INDEX = read('../../ui/index.html');
 
 /* A code the shape of a real one. Never funded, never issued: the shape is all that matters here. */
@@ -95,10 +97,41 @@ function makeNode(tagName: string): Any {
     },
     click() { node.dispatch('click'); },
     focus() { node.focused = true; },
+    /* The deposit card is a <dialog>. */
+    showModal() { node.open = true; },
+    close() { node.open = false; },
     querySelector(selector: string) { return find(node, selector)[0] ?? null; },
     querySelectorAll(selector: string) { return find(node, selector); },
   };
   return node;
+}
+
+/* The network picker (ui/screens/netpick.js) as its hosts see it: a stage, a way to move it, and
+   the onStage call a host keys its own parts on. */
+function netpickStub(): Any {
+  const stub: Any = {
+    render(host: Any, opts: Any) {
+      const root = makeNode('div');
+      root.className = 'netpick';
+      host.appendChild(root);
+      let stage = opts.stage === 'address' ? 'address' : 'network';
+      const view = {
+        stage: () => stage,
+        go: (next: string) => {
+          stage = next;
+          if (typeof opts.onStage === 'function') opts.onStage(next, opts.network ?? null);
+        },
+        destroy: () => { root.remove(); },
+        root,
+      };
+      if (typeof opts.onStage === 'function') opts.onStage(stage, opts.network ?? null);
+      stub.last = view;
+      return view;
+    },
+    name: (id: string) => id,
+    networkOf: () => null,
+  };
+  return stub;
 }
 
 function matches(node: Any, selector: string): boolean {
@@ -193,7 +226,7 @@ const FOREIGN = { ...ENCLAVE, foreign: true };
 
 const GOOD = { ok: true, amount: '5.00', asset: 'USDC', route: 'relay', net: '5.00' };
 
-function build(options: { terms?: boolean; vault?: Any } = {}): World {
+function build(options: { terms?: boolean; vault?: Any; money?: boolean; deposit?: boolean } = {}): World {
   const nodes: Record<string, Any> = {};
   for (const id of ['screen-firstrun', 'page']) nodes[id] = makeNode('div');
   const body = makeNode('body');
@@ -277,6 +310,12 @@ function build(options: { terms?: boolean; vault?: Any } = {}): World {
     };
   }
 
+  if (options.money || options.deposit) {
+    sandbox.PhosphorNetPick = netpickStub();
+    sandbox.PhosphorApi.intentsReceive = () => Promise.resolve({ data: null });
+    sandbox.PhosphorApi.depositShow = (chain: string, symbol: string) => Promise.resolve({ ok: true, deposit: { chain, symbol, phase: 'watching', startedAt: '2026-10-01T12:00:00Z' } });
+  }
+
   createContext(sandbox);
   runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
@@ -284,6 +323,8 @@ function build(options: { terms?: boolean; vault?: Any } = {}): World {
   runInContext(ADAPTER, sandbox, { filename: 'ui/core/invite.js' });
   runInContext(INVITE, sandbox, { filename: 'ui/screens/invite.js' });
   runInContext(FIRSTRUN, sandbox, { filename: 'ui/screens/firstrun.js' });
+  if (options.money || options.deposit) runInContext(MONEYIN, sandbox, { filename: 'ui/screens/moneyin.js' });
+  if (options.deposit) runInContext(DEPOSIT, sandbox, { filename: 'ui/screens/deposit.js' });
 
   const store = sandbox.PhosphorState;
   store.put({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: options.vault ?? ENCLAVE, agents: { members: [] } });
@@ -681,4 +722,178 @@ test('the adapter: one door for both routes, every failure is offline, and the f
   assert.ok(at('./core/invite.js') > at('./core/api.js') && at('./core/invite.js') < at('./screens/agent.js'));
   assert.ok(at('./screens/invite.js') > 0 && at('./screens/invite.js') < at('./screens/agent.js'));
   assert.match(INDEX, /<link rel="stylesheet" href="\.\/design\/invite\.css">/);
+});
+
+/* ---------- Add money ---------- */
+
+const lineOf = (host: Any): Any => find(host, '.invite-line')[0];
+const lineSaid = (host: Any): string => {
+  const node = find(host, '.invite-said').find((n: Any) => !n.hidden);
+  return node ? node.textContent : '';
+};
+const lineField = (host: Any): Any => find(host, 'input.invite-input')[0];
+const lineKey = (host: Any): Any => find(host, 'button.invite-use')[0];
+
+/* The Add money fold, as Basic and Pro open it. */
+function fold(world: World, options: Any = {}): { host: Any; steps: Any } {
+  const host = makeNode('div');
+  const steps = world.sandbox.PhosphorMoneyIn.render(host, { context: 'basic', ...options });
+  return { host, steps };
+}
+
+test('Add money: Have an invite code? opens the field, a good code turns the key into Add $5, and that click claims', async () => {
+  const world = build({ money: true });
+  const { host } = fold(world);
+  const toggle = buttonNamed(host, 'Have an invite code?');
+  assert.ok(toggle, 'no invite line under the network step');
+  assert.equal(toggle.className, 'btn btn-quiet btn-sm invite-open');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(find(host, '.invite-box')[0].hidden, true, 'the field is open before anyone asked');
+  toggle.click();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(find(host, '.invite-box')[0].hidden, false);
+  assert.equal(lineField(host).focused, true);
+  assert.equal(lineKey(host).textContent, 'Use code');
+  assert.equal(lineKey(host).disabled, true, 'Use code can be pressed on an empty field');
+  lineField(host).value = CODE;
+  lineField(host).dispatch('input');
+  assert.equal(lineKey(host).disabled, false);
+  lineKey(host).click();
+  await flush();
+  assert.equal(checks(world).length, 1);
+  assert.equal(lineSaid(host), 'Nice. $5 is waiting for you.');
+  assert.equal(lineKey(host).textContent, 'Add $5');
+  assert.equal(claims(world).length, 0, 'the check claimed the money before the click');
+  lineKey(host).click();
+  assert.equal(claims(world).length, 1, 'Add $5 did not claim');
+  assert.equal(claims(world)[0].code, CODE);
+  assert.equal(lineField(host).value, '', 'the code stayed in the field once it was used');
+  assert.equal(lineSaid(host), 'Adding $5 to your wallet. This can take up to two minutes.');
+  assert.equal(find(host, '.invite-open')[0].hidden, true, 'a second code can be started over a running claim');
+  await flush();
+  world.emit('invite', { claim: 'c-1', status: 'landed', amount: '5.00', asset: 'USDC' });
+  assert.equal(lineSaid(host), '$5 USDC is in your wallet.');
+  assert.equal(find(host, '.invite-said')[0].getAttribute('data-tone'), 'good');
+  assert.equal(find(host, '.invite-open')[0].hidden, false);
+  assert.equal(find(host, '.invite-box')[0].hidden, true);
+  assert.equal(world.toasts.length, 0, 'an end said on the line was said again as a toast');
+  assert.ok(!everything(host).includes(CODE));
+  // Open again for another code: the old claim's line is let go of.
+  buttonNamed(host, 'Have an invite code?').click();
+  assert.equal(lineSaid(host), '');
+  assert.equal(lineKey(host).textContent, 'Use code');
+});
+
+test('Add money: a paste is checked at once, and each refusal says what to do in the field\'s own words', async () => {
+  const cases: Array<[string, Answer, string]> = [
+    ['check', { ok: false, reason: 'typo' }, 'That code has a typo. Check it and try again.'],
+    ['check', { ok: false, reason: 'empty' }, 'This code was already used, or it has a typo.'],
+    ['check', { ok: false, reason: 'offline' }, 'Couldn\'t check the code right now. Try again in a moment.'],
+    ['check', new Error('Failed to fetch'), 'Couldn\'t check the code right now. Try again in a moment.'],
+    ['check', { ok: false, reason: 'locked' }, 'This code can\'t pay out right now. Ask whoever sent it for a new one.'],
+    ['check', { ok: false, reason: 'busy' }, 'A code is already on its way to your wallet. Give it a minute.'],
+    ['claim', { ok: false, reason: 'wallet-locked' }, 'Your $5 didn\'t come through. Paste the code again to try once more.'],
+    ['claim', { ok: false, reason: 'empty' }, 'This code was already used, or it has a typo.'],
+    ['claim', new Error('Failed to fetch'), 'Your $5 didn\'t come through. Paste the code again to try once more.'],
+  ];
+  for (const [route, answer, words] of cases) {
+    const world = build({ money: true });
+    world.answers[`/api/invite/${route}`] = answer;
+    const { host } = fold(world);
+    buttonNamed(host, 'Have an invite code?').click();
+    lineField(host).value = CODE;
+    lineField(host).dispatch('input');
+    lineField(host).dispatch('paste');
+    await flush();
+    await flush();
+    assert.equal(checks(world).length, 1, `${words}: the paste was not checked`);
+    if (route === 'claim') {
+      lineKey(host).click();
+      await flush();
+    }
+    assert.equal(lineSaid(host), words);
+    assert.equal(find(host, '.invite-said')[0].getAttribute('data-tone'), 'warn');
+    assert.equal(find(host, '.invite-box')[0].hidden, false, `${words}: the field closed on a problem`);
+    assert.equal(lineKey(host).textContent, 'Use code');
+    assert.equal(world.toasts.length, 0);
+    assert.ok(!visibleText(host).some((t) => /RAW:|Failed to fetch/.test(t)));
+  }
+});
+
+test('Add money: the line is on the network step only, a code from the chat opens it there, and the first run draws none', async () => {
+  const world = build({ money: true });
+  const { host, steps } = fold(world);
+  assert.equal(lineOf(host).hidden, false);
+  steps.go('tokens');
+  assert.equal(lineOf(host).hidden, true, 'the line stayed under the token list');
+  steps.go('address');
+  assert.equal(lineOf(host).hidden, true, 'the line sits under an address');
+  // Handed over from the chat while an address is up: back to the tiles, the field open with it, checked.
+  assert.equal(world.sandbox.PhosphorMoneyIn.invite(CODE), true);
+  assert.equal(steps.stage(), 'network');
+  assert.equal(lineOf(host).hidden, false);
+  assert.equal(lineField(host).value, CODE);
+  await flush();
+  assert.equal(checks(world).length, 1);
+  assert.equal(lineSaid(host), 'Nice. $5 is waiting for you.');
+  assert.equal(claims(world).length, 0, 'a code from the chat was claimed without a click');
+  // Rendered with the code, as Basic does when the fold was closed.
+  const second = fold(world, { invite: CODE });
+  assert.equal(lineField(second.host).value, CODE);
+  // The first run has its own step.
+  const first = fold(world, { context: 'firstrun' });
+  assert.equal(lineOf(first.host), undefined);
+  // Closing the fold takes the line, and the code, with it.
+  second.steps.destroy();
+  assert.equal(lineOf(second.host), undefined);
+});
+
+test('Add money: a claim already running shows on the line, and a line off screen does not swallow its end', async () => {
+  // Started by the first run, shown by the fold opened after it.
+  const world = build({ money: true });
+  world.sandbox.PhosphorInvite.claim(CODE, { amount: '5.00', asset: 'USDC' });
+  await flush();
+  const { host } = fold(world);
+  assert.equal(lineSaid(host), 'Adding $5 to your wallet. This can take up to two minutes.');
+  assert.equal(find(host, '.invite-open')[0].hidden, true);
+  world.emit('invite', { claim: 'c-1', status: 'landed', amount: '5.00', asset: 'USDC' });
+  assert.equal(lineSaid(host), '$5 USDC is in your wallet.');
+  assert.equal(world.toasts.length, 0);
+
+  // Started here, then the picker moved on: the end is a toast.
+  const away = build({ money: true });
+  const fresh = fold(away);
+  buttonNamed(fresh.host, 'Have an invite code?').click();
+  lineField(fresh.host).value = CODE;
+  lineField(fresh.host).dispatch('input');
+  lineKey(fresh.host).click();
+  await flush();
+  lineKey(fresh.host).click();
+  await flush();
+  fresh.steps.go('tokens');
+  away.emit('invite', { claim: 'c-1', status: 'failed', amount: '5.00', asset: 'USDC' });
+  assert.deepEqual(away.toasts, [{ words: 'Your $5 didn\'t come through. Add the code again from Add money.', tone: 'down' }]);
+});
+
+test('the deposit card keeps the line to the step titled Add money, and closing the card wipes the code', async () => {
+  const world = build({ deposit: true });
+  await world.sandbox.PhosphorDeposit.open({ chain: 'eth', symbol: 'ETH' });
+  const dialog = find(world.body, 'dialog')[0];
+  assert.ok(dialog && dialog.open, 'the deposit card did not open');
+  const line = lineOf(dialog);
+  assert.ok(line, 'the deposit card has no invite line');
+  assert.equal(line.hidden, true, 'the line sits under the address the card opened on');
+  // Change network: the tiles, under the title Add money, with the line.
+  world.sandbox.PhosphorNetPick.last.go('network');
+  assert.equal(find(dialog, '.deposit-title-text')[0].textContent, 'Add money');
+  assert.equal(line.hidden, false);
+  buttonNamed(dialog, 'Have an invite code?').click();
+  lineField(dialog).value = CODE;
+  lineField(dialog).dispatch('input');
+  world.sandbox.PhosphorDeposit.close();
+  assert.equal(dialog.open, false);
+  assert.ok(!everything(dialog).includes(CODE), 'the code stayed in the closed card');
+  // Opened again, the card draws a fresh line.
+  await world.sandbox.PhosphorDeposit.open({ chain: 'eth', symbol: 'ETH' });
+  assert.equal(find(dialog, '.invite-line').length, 1);
 });

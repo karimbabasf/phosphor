@@ -143,6 +143,18 @@
   font-size: var(--fs-13);
 }
 
+/* A host keeps no room for a line that is not on its step. The deposit card
+   spaces its parts with a gap, so the line brings none of its own there. */
+.moneyin-invite:has(> .invite-line[hidden]),
+.deposit-invite:has(> .invite-line[hidden]),
+.deposit-invite:empty {
+  display: none;
+}
+
+.deposit-invite > .invite-line {
+  margin-top: 0;
+}
+
 /* ---------- the chat ---------- */
 
 /* Over the box, where the code was: why it is not in the chat, and where it

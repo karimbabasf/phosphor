@@ -1296,15 +1296,21 @@
 
   /* Add money runs its steps in place of the ledger and the panels under it,
      and Close puts them back, both on the morph, the focus following. */
-  function openFlow() {
-    if (flowSteps) return;
+  function openFlow(options) {
+    /* A code the chat kept out of the conversation goes into the invite
+       field, as on Basic. */
+    var code = options && typeof options.invite === 'string' ? options.invite : '';
+    if (flowSteps) {
+      if (code && window.PhosphorMoneyIn && typeof window.PhosphorMoneyIn.invite === 'function') window.PhosphorMoneyIn.invite(code);
+      return;
+    }
     if (window.PhosphorLazy) window.PhosphorLazy.load('qr');
     swapIn(function () {
       dom.setHidden(refs.ledger, true);
       dom.setHidden(refs.duo, true);
       dom.setHidden(refs.flow, false);
-      flowSteps = window.PhosphorMoneyIn ? (window.PhosphorMoneyIn.render(refs.flowBody, { context: 'basic' }) || {}) : {};
-      if (refs.flowTitle.focus) refs.flowTitle.focus({ preventScroll: true });
+      flowSteps = window.PhosphorMoneyIn ? (window.PhosphorMoneyIn.render(refs.flowBody, { context: 'basic', invite: code }) || {}) : {};
+      if (!code && refs.flowTitle.focus) refs.flowTitle.focus({ preventScroll: true });
     });
   }
 
@@ -1485,5 +1491,10 @@
     return { h: h, s: s, l: l };
   }
 
-  window.PhosphorPro = { boot: boot };
+  window.PhosphorPro = {
+    boot: boot,
+    addMoney: function (options) {
+      if (mounted) openFlow(options || {});
+    }
+  };
 })();

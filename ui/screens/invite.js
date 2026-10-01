@@ -17,7 +17,6 @@
   'use strict';
 
   var dom = window.PhosphorDom;
-  var store = window.PhosphorState;
 
   function api() {
     return window.PhosphorInviteApi;
@@ -510,6 +509,11 @@
         }
       },
       follow: function () { follow(null); },
+      /* The code out of the field, nothing redrawn: for a host on its way off screen. */
+      wipe: function () {
+        state.asked += 1;
+        input.value = '';
+      },
       destroy: function () {
         state.alive = false;
         state.asked += 1;
