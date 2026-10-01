@@ -82,7 +82,7 @@ test('a name no tool has passes to the CLI; a real tool outside the allowlist en
     assert.equal(claude.tool(name, {}).kind, 'unknown', `claude ${name}`);
     assert.equal(grok.tool(name, {}).kind, 'unknown', `grok ${name}`);
   }
-  for (const name of ['Bash', 'Write', 'Read', 'TodoWrite', 'Agent', 'mcp__other__peek', 'mcp__phosphor_evil__x']) {
+  for (const name of ['Bash', 'Write', 'Read', 'TodoWrite', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'Agent', 'mcp__other__peek', 'mcp__phosphor_evil__x']) {
     assert.equal(claude.tool(name, {}).kind, 'builtin', `claude ${name}`);
   }
   for (const name of ['run_terminal_command', 'run_terminal_cmd', 'write', 'read_file', 'search_replace', 'image_gen', 'Agent', 'other__peek']) {

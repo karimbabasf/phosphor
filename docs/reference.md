@@ -620,7 +620,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
 
 A second agent role, shipped opt-in under [operator/](operator/). The session that drives phosphor
 does not also develop it: `operator/settings.json` denies every built-in file writer and command
-runner, and the key file, while allowing `Read` and every `mcp__phosphor__*` tool, so the whole
+runner, the task list tools (an on-disk list any program can write, read back into the model's
+context), and the key file, while allowing `Read` and every `mcp__phosphor__*` tool, so the whole
 tool surface still works.
 
     ./operator/phosphor-operator

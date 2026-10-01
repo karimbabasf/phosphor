@@ -32,6 +32,15 @@ those two tools took no path at all, so one `Grep(pattern: "0x[0-9a-f]{64}", pat
 put the key in the transcript, and the transcript leaves the machine on the next turn. A search
 tool is a read tool that answers about files it never has to name.
 
+`TaskCreate`, `TaskGet`, `TaskList` and `TaskUpdate`, the task list Claude Code turns on per
+account: 2.1.284 to 2.1.287 grant them on this Mac's login and not on a fresh one, so a test run
+under another `HOME` never sees them. They spawn nothing and run nothing. The list lives on disk under
+the Claude config directory, keyed by the session, and Claude Code pastes its entries into the
+model's context on its own ("Here are the existing tasks"). Any program running as you can write
+that list, so it puts words in front of the agent that no Phosphor read ever marked, and the agent
+can write anything there for another program to pick up. `TodoWrite`, their older form, goes with
+them.
+
 `Read` stays, so the operator can read the code it drives, and it stays scoped: the key file is
 denied by path. Every `mcp__phosphor__*` tool is allowed outright and runs without a prompt, so
 the surface still works.

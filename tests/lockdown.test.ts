@@ -13,6 +13,11 @@
 // either and a skipped test is honest where a passing one would be a lie. It costs no model
 // tokens: the init event is emitted before the first turn, so the child is killed as soon as the
 // first line of stdout has been read.
+//
+// RUN IT UNDER YOUR OWN HOME. Claude Code turns some tools on per account: on 2026-10-01 releases
+// 2.1.284 to 2.1.287 granted TaskCreate, TaskGet, TaskList and TaskUpdate under this Mac's login
+// and not under a fresh HOME, so a run with HOME pointed elsewhere passes on a profile that leaks.
+// The last test below holds the deny lists to them whatever HOME says.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -189,6 +194,23 @@ test(
 
    A general check would need the release's full tool list, which nothing announces, so this names
    the three. The live tests above are the general check. */
+/* THE TASK LIST, denied by name in both profiles (2026-10-01). The tools spawn nothing and run
+   nothing, but the list is a file under the Claude config directory, keyed by the session, that
+   any program running as this user can write, and Claude Code pastes its entries into the model's
+   context by itself ("Here are the existing tasks"): words in front of an agent that moves money
+   that no Phosphor read ever marked. The two live tests above see these only under an account
+   that has them, so this one holds the lists to them on any machine. TodoWrite is their older
+   form. */
+test('both profiles deny the task list tools by name, whatever this account grants', () => {
+  const taskList = ['TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TodoWrite'];
+  for (const name of ['driver.settings.json', 'settings.json']) {
+    const profile = JSON.parse(fs.readFileSync(path.join(REPO, 'operator', name), 'utf8')) as {
+      permissions: { deny: string[] };
+    };
+    for (const tool of taskList) assert.ok(profile.permissions.deny.includes(tool), `operator/${name} does not deny ${tool}`);
+  }
+});
+
 test('neither profile names a tool this Claude Code release has never heard of', () => {
   const dead = ['SlashCommand', 'NotebookRead', 'MultiEdit'];
   for (const name of ['driver.settings.json', 'settings.json']) {
