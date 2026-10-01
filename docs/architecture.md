@@ -240,6 +240,22 @@ Releases are built by CI from a version tag (`.github/workflows/release.yml`): t
 bundle and its signature, `latest.json` and `SHA256SUMS`. Installed copies check that manifest
 and offer a signed update in the app's own window (`src-tauri/frontend/update.html`); the updater
 verifies the bundle's signature, and the version it compares is read out of the signed bundle, not
-the manifest. `scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
+the manifest. Before anything is replaced, the shell also unpacks the bundle into a private folder
+and has Apple's Security framework check its code signature against a requirement compiled into
+the app (`src-tauri/src/update.rs`): Apple's anchor, a Developer ID Application certificate,
+`com.karimbabasf.phosphor` and a Team ID from a short list. A bundle the update key signed but
+another team, or nobody, code-signed is refused, and the window says the update did not pass its
+check and nothing changed. `scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
 notarize both and staples the tickets before anything is checksummed, so a first open needs no
 Gatekeeper step.
+
+The release runs as four jobs, so that no job that can sign also runs code it did not write. The
+build job installs and compiles everything (npm, cargo build scripts, the Tauri CLI) and holds no
+secret. The sign job, in the protected `release` environment that holds every release secret,
+installs nothing: it runs
+`notarize-mac.sh`, deletes the signing keychain right after it, signs the updater bundle with
+`scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate. The publish
+job holds no secret and only writes the GitHub Release; the site job holds the Blob token alone
+and installs its uploader from `scripts/site-upload`'s own lockfile.
+`tests/unit/release-workflow.test.ts` holds the workflow to that. A dispatched run with `dry_run`
+builds, signs, notarizes and checks, and publishes nothing.

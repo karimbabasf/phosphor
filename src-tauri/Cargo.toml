@@ -58,6 +58,17 @@ libc = "0.2"
 # see `launch` in main.rs. The `libc` feature is what exposes the lookup by pid.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "NSRunningApplication"] }
+# And the same again: update.rs installs a bundle only when Apple's Security framework says its
+# code signature is Phosphor's (SecStaticCode against a SecRequirement). These are the Rust names
+# for that framework, and the updater plugin already pulls both in through reqwest's platform
+# verifier: check `cargo tree -i security-framework@3.7.0` if in doubt.
+security-framework = "3.7"
+core-foundation = "0.10"
+
+# The plugin's own minisign verifier, for the update tests to prove a bundle they build passes
+# the check the plugin runs. Already in the tree under tauri-plugin-updater.
+[dev-dependencies]
+minisign-verify = "0.2"
 
 [profile.release]
 codegen-units = 1

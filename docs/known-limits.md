@@ -48,7 +48,8 @@ caller of. Until then the seat secret is the credential in its place.
 
 The Keys row in the Vault tab says that other apps on this Mac could ask for the Secure Enclave
 key: it is bound to the machine rather than to this app. A signed update still verifies either
-way: the updater checks the bundle's own signature, which does not depend on Apple.
+way: the updater checks the bundle's own update signature, and then its Developer ID code
+signature against Phosphor's Team ID, before it replaces anything.
 
 ## The venues are not ours
 

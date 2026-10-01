@@ -516,13 +516,25 @@ So the bundle carries `src-tauri/entitlements.plist` and a `bundle.macOS` block 
 hardened runtime without `get-task-allow`, which is the entitlement that would let a debugger
 attach (`tests/unit/code-signing.test.ts` holds the file to that, and to the one entitlement
 V8 needs, `allow-jit`). `signingIdentity` is `-` in the config, so `tauri build` on its own makes
-an ad hoc bundle, locally and on the release runner alike. The release workflow then runs
-`scripts/notarize-mac.sh`: it signs every nested binary and the Secure Enclave XPC service inside
-out with the Developer ID from its secrets (hardened runtime, secure timestamp), has Apple
+an ad hoc bundle, locally and on the release runner alike. The release workflow's sign job then
+runs `scripts/notarize-mac.sh`: it signs every nested binary and the Secure Enclave XPC service
+inside out with the Developer ID from its secrets (hardened runtime, secure timestamp), has Apple
 notarize the app and the disk image, and staples both. A release without those secrets fails
-before it builds. The same chain runs on a Mac, checks included, with nothing published:
+before it signs anything. That job installs and builds nothing (the build job, which holds no
+secret, does), deletes the signing keychain right after the script, and only then signs the
+updater bundle with `scripts/updater-sign.ts`, which uses Node's own crypto. The same chain runs on
+a Mac, checks included, with nothing published:
 
     npm run notarize:local
+
+An update is held to the same signature. The updater plugin checks the bundle's minisign
+signature, and then `src-tauri/src/update.rs` unpacks it into a private folder and checks its code
+signature with Apple's Security framework, strictly and with nested code, against
+`identifier "com.karimbabasf.phosphor" and anchor apple generic`, the Developer ID intermediate and
+leaf markers, and a Team ID from `TEAMS` (today `35Z6P26CBD`). Only then is the app replaced. Once
+an installed copy has this check, the minisign key alone cannot put code on that Mac (the hop onto
+the first release that carries it still rests on minisign alone). A team change adds the new
+Team ID to `TEAMS` in a release the old team signs, before anything signed by the new team ships.
 
 Touch ID and the Secure Enclave are built (`src-tauri/src/enclave.rs`, the `se-helper` XPC
 service in `Contents/XPCServices`, `src/vault/`): on a Mac with an enclave the key file is sealed

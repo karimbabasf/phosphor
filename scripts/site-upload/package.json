@@ -1,0 +1,9 @@
+{
+  "name": "phosphor-site-upload",
+  "private": true,
+  "description": "The release workflow's site job: puts the DMG behind https://phosphor.money/download/mac. Its own lockfile, so that job installs this and nothing else.",
+  "type": "module",
+  "dependencies": {
+    "@vercel/blob": "2.8.0"
+  }
+}
