@@ -97,8 +97,10 @@ money. If the app quits in the middle of a claim, it finishes the check the next
 A code pays once; a second claim says "This code was already used, or it has a typo."
 
 Never paste a code into the chat. What you type there goes to your assistant and its model
-provider, so the chat refuses a code and opens the invite field instead. Phosphor never asks for
-your recovery phrase to claim a code. A page or an app that does is not Phosphor.
+provider, so the chat refuses a code and opens the invite field instead. The app's backend turns
+such a message away too, before the assistant sees it, and writes none of it to the log or the
+conversation. Phosphor never asks for your recovery phrase to claim a code. A page or an app that
+does is not Phosphor.
 
 ## Swap
 

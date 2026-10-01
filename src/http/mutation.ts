@@ -31,6 +31,7 @@ import { savePolicyChecked } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import { AXIS_CEILING_USD } from '../policy/engine.ts';
 import { mergePatch, money } from '../proposals/lifecycle.ts';
+import { looksLikeInviteCode } from '../invite/code.ts';
 
 /* ---------- the agent connection ---------- */
 
@@ -68,6 +69,10 @@ export function translocated(spec: ConnectionSpec): boolean {
 
 export const TRANSLOCATED =
   'Phosphor is running from a temporary copy macOS made. Move it to your Applications folder, open it from there, then pick your agent again.';
+
+// The composer's own words (ui/screens/agent.js keepOut) for a chat message the backend turns
+// away because it carries an invite code.
+export const INVITE_KEPT_OUT = 'Invite codes never go to your assistant.';
 
 function sameSpec(a: ConnectionSpec | undefined, b: ConnectionSpec): boolean {
   return a !== undefined && a.nodeBin === b.nodeBin && a.serverPath === b.serverPath && a.port === b.port && a.dataDir === b.dataDir;
@@ -490,6 +495,15 @@ export async function handleMutation(
       const text = typeof body.text === 'string' ? body.text.trim() : '';
       if (text === '') return fail(res, 400, 'text is required');
       if (text.length > 8000) return fail(res, 400, 'text is too long: 8000 characters maximum');
+      /* AN INVITE CODE NEVER REACHES THE AGENT. The window keeps a code out of the box
+         (ui/core/invite.js codeIn); this is the wall behind it, for a window whose guard did not
+         load and for any other caller. The same test (looksLikeInviteCode) and the composer's own
+         sentence. The text is not sent, not put in the transcript, and not in the audit line:
+         the code is the key to money. */
+      if (looksLikeInviteCode(text)) {
+        ctx.audit.append('driver_prompt', `human to ${chat.label}: a message with an invite code in it was kept from the agent`, { chat: chat.id, refused: 'invite-code' });
+        return fail(res, 400, INVITE_KEPT_OUT, { reason: 'invite-code' });
+      }
       /* THE SCREEN RIDES WITH THE MESSAGE.
          The agent's system prompt names the screen the window was on when the child was
          spawned and can never be corrected after that, so an agent whose human clicked a tab
