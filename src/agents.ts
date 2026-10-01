@@ -295,22 +295,28 @@ export function createAgents(
      native host with no shell, a process under another account, and any local process that
      did not go looking. Loopback TCP has no peer identity, and this is the credential in its
      place until the door moves to a socket that has one. */
-  function matches(supplied: unknown, expected: string): boolean {
-    if (expected.length === 0) return false;
-    if (typeof supplied !== 'string' || supplied.length === 0) return false;
+  // The two secrets hashed once, here: every op on the door compares against both.
+  const digest = (value: string): Buffer | null => (value.length === 0 ? null : crypto.createHash('sha256').update(value).digest());
+  const ownDigest = digest(secret);
+  const handDigest = digest(handSecret);
+
+  // Which of the two `supplied` is: 'app', 'outside', or null for neither.
+  function presented(supplied: unknown): AgentOrigin | null {
+    if (typeof supplied !== 'string' || supplied.length === 0) return null;
     const a = crypto.createHash('sha256').update(supplied).digest();
-    const b = crypto.createHash('sha256').update(expected).digest();
-    return crypto.timingSafeEqual(a, b);
+    if (ownDigest !== null && crypto.timingSafeEqual(a, ownDigest)) return 'app';
+    if (handDigest !== null && crypto.timingSafeEqual(a, handDigest)) return 'outside';
+    return null;
   }
 
   function presentedSecret(supplied: unknown): boolean {
-    return matches(supplied, secret) || matches(supplied, handSecret);
+    return presented(supplied) !== null;
   }
 
   /* The origin a call proves by its secret. Only the hand secret makes a seat outside: a roster
      with no hand secret (every presence test) seats everything as the app's, as it always did. */
   function originOf(supplied: unknown): AgentOrigin {
-    return matches(supplied, handSecret) && !matches(supplied, secret) ? 'outside' : 'app';
+    return presented(supplied) === 'outside' ? 'outside' : 'app';
   }
 
   // A proxy's own key, hashed, or '' when it sent none worth binding to.
