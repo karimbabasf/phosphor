@@ -31,14 +31,40 @@ import { webReads } from './read/web.ts';
 import { handlePropose } from './propose.ts';
 import { handleView } from './view.ts';
 import { handleSetViewMode } from './mutation.ts';
-import { LEAD_ONLY_READ_TOOLS, READ_TOOLS } from './context.ts';
+import { LEAD_ONLY_READ_TOOLS, READ_TOOLS, STRANGER_TEXT_READS } from './context.ts';
 import type { Ctx, ReadTable } from './context.ts';
+import { markWebRead } from '../web-read.ts';
 
-/* Every read tool, in one table assembled from the seven domain files under http/read. A table
+/* A stranger's text marks the seat it is handed to (STRANGER_TEXT_READS, audit finding 5). The
+   mark is set inside writeHead, so it is in place before the first byte of the answer leaves: a
+   swap the agent asks for the instant it has read a token name is already judged marked. Only a
+   200 marks. A 400 is a lookup refused at its shape, before any host was asked, and carries no
+   stranger's word. */
+export function markStrangerReads(table: ReadTable): ReadTable {
+  const out: ReadTable = { ...table };
+  for (const tool of STRANGER_TEXT_READS) {
+    const handler = table[tool];
+    if (handler === undefined) continue;
+    out[tool] = (ctx, body, args, res) => {
+      const seat = typeof body.session === 'string' ? body.session : '';
+      if (seat !== '') {
+        const writeHead = res.writeHead.bind(res);
+        res.writeHead = ((...head: Parameters<typeof writeHead>) => {
+          if (head[0] === 200) markWebRead(seat);
+          return writeHead(...head);
+        }) as typeof res.writeHead;
+      }
+      return handler(ctx, body, args, res);
+    };
+  }
+  return out;
+}
+
+/* Every read tool, in one table assembled from the eight domain files under http/read. A table
    rather than the if-chain it replaces: a chain answers "unknown read tool" for a tool it then
    lists as known the moment a branch above it falls through, which is exactly the break the
    view chain carried for a while (see the note in view.ts). */
-const READS: ReadTable = {
+const READS: ReadTable = markStrangerReads({
   ...walletReads,
   ...marketReads,
   ...chartReads,
@@ -47,7 +73,7 @@ const READS: ReadTable = {
   ...chainReads,
   ...swapReads,
   ...webReads,
-};
+});
 
 // The table's own keys, for the test that holds READ_TOOLS and this in step. A tool listed in
 // the refusal message and missing from the table is a tool an agent is told it has and cannot
