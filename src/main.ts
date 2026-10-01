@@ -3,6 +3,10 @@
 // This is the authoritative state owner. The MCP process (src/mcp.ts) is a thin
 // client of the HTTP surface this file boots.
 
+// FIRST, before any other module of this app: the payload resolve guard, so nothing can be loaded
+// from outside the digested payload (src/boot-guard.ts, audit 2026-10-01, L14).
+import './boot-guard.ts';
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
