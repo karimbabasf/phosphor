@@ -102,14 +102,14 @@
      or five data characters in a row, then 27 data characters with any spaces or hyphens
      between them and none after the 27th, alone or inside an invite link.
 
-     Then two rules on the 27 data characters (the match less its prefix, spaces and
-     hyphens dropped), because prose can fill the shape. The first is 0 to 7, or O, I or L
-     in any case: the two spare bits sit at the top, so every code starts there. And two of
-     them or more are digits as typed, an O, I or L counting as a letter: every issued code
-     carries two. "phosphorus is used in fertilizer and in matches" fails the second, and
-     "phosphates cost 25 dollars per ton in 2026 so" the first. */
+     Then one rule, because prose can fill the shape: two digits or more in the match, as
+     typed, an O, I or L counting as a letter and the zero of a PH0S prefix as a digit.
+     Every issued code carries two in its secret characters alone. "phosphorus is used in
+     fertilizer and in matches" has the shape and no digit, so it goes; "phosphates cost
+     25 dollars per ton in 2026 so" has two and stays out, a sentence given up so that a
+     code typed with a slip in it still never reaches the assistant.
+     tests/fixtures/invite-code-texts.ts holds this and the backend's copy to one corpus. */
   var SHAPE = /PH[O0]S(?:[\s-]+|(?=[0-9A-Z]{5}))[0-9A-Z](?:[\s-]*[0-9A-Z]){26}(?![0-9A-Z])/gi;
-  var FIRST = /^[0-7OIL]/i;
   var DIGITS = /[0-9]/g;
 
   function codeIn(text) {
@@ -117,8 +117,7 @@
     SHAPE.lastIndex = 0;
     var found = SHAPE.exec(value);
     while (found !== null) {
-      var data = found[0].slice(4).replace(/[\s-]/g, '');
-      if (FIRST.test(data) && (data.match(DIGITS) || []).length >= 2) {
+      if ((found[0].match(DIGITS) || []).length >= 2) {
         SHAPE.lastIndex = 0;
         return found[0];
       }

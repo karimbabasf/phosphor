@@ -18,8 +18,8 @@
 // prefix a separator or five data characters in a row, so the word "Phosphor" and a sentence are
 // not one, and over-redacting is fine there. The composer guard (looksLikeInviteCode) adds one rule
 // every issued code meets and prose almost never does: at least two literal digits in the match.
-// "phosphorus is used in fertilizer and in matches" has the shape and no digit. CONTRACTS.md,
-// "Code shape", pins both.
+// "phosphorus is used in fertilizer and in matches" has the shape and no digit. Both read every
+// match, overlapping ones included. CONTRACTS.md, "Code shape", pins both.
 
 import crypto from 'node:crypto';
 
@@ -176,14 +176,47 @@ export function containsInviteCode(text: string): boolean {
   return inviteCodePattern().test(text);
 }
 
+/* Every match of the shape, overlapping ones included. A plain global search goes on from the end
+   of each match, so prose that fills the shape can swallow the prefix of a code right behind it
+   ("phosphorus is used in my codes ok PHOS-..."): starting again one character after each
+   match's start finds that code too. */
+function* shapeMatches(text: string): Generator<RegExpExecArray> {
+  const pattern = inviteCodePattern();
+  let found = pattern.exec(text);
+  while (found !== null) {
+    yield found;
+    pattern.lastIndex = found.index + 1;
+    found = pattern.exec(text);
+  }
+}
+
 /* The composer's question: does this text carry something that is an invite code and not a
-   sentence. The shape above AND at least two literal digits in the match, counted as typed with
-   no O, I or L mapping, the zero of a PH0S prefix included. Every code the generator issues has
-   two in its secret characters alone. Mirrored by the window (CONTRACTS.md); change both or
-   neither. */
+   sentence. A match of the shape above, at any start, with at least two literal digits in it,
+   counted as typed with no O, I or L mapping, the zero of a PH0S prefix included. Every code the
+   generator issues has two in its secret characters alone. The window's codeIn
+   (ui/core/invite.js) is the same test, and tests/fixtures/invite-code-texts.ts holds both to one
+   corpus (CONTRACTS.md); change both or neither. */
 export function looksLikeInviteCode(text: string): boolean {
-  for (const match of text.matchAll(inviteCodePattern())) {
+  for (const match of shapeMatches(text)) {
     if (digitCount(match[0]) >= MIN_CODE_DIGITS) return true;
   }
   return false;
+}
+
+/* The log tail's cut: every stretch the shape covers, overlaps joined, replaced whole. */
+export function redactInviteCodes(text: string, replacement: string): string {
+  const spans: Array<[number, number]> = [];
+  for (const match of shapeMatches(text)) {
+    const end = match.index + match[0].length;
+    const last = spans[spans.length - 1];
+    if (last !== undefined && match.index <= last[1]) last[1] = Math.max(last[1], end);
+    else spans.push([match.index, end]);
+  }
+  let out = '';
+  let at = 0;
+  for (const [start, end] of spans) {
+    out += text.slice(at, start) + replacement;
+    at = end;
+  }
+  return out + text.slice(at);
 }

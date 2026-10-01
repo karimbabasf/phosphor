@@ -28,7 +28,7 @@
 
 import type { Ctx } from './context.ts';
 import { tokenMatches } from './auth.ts';
-import { inviteCodePattern } from '../invite/code.ts';
+import { redactInviteCodes } from '../invite/code.ts';
 import type { LogEvent } from '../types.ts';
 
 export const REDACTED = '[redacted]';
@@ -81,10 +81,6 @@ const CREDENTIAL_SHAPES: RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
   // A bearer credential inside a header or a sentence.
   /\bBearer [A-Za-z0-9_.~+/=-]{16,}/gi,
-  // An invite code in every form the parser accepts: any case, PH0S, spaces or no hyphens, alone
-  // or inside an invite link. The code is the key to money, and no writer is meant to have one;
-  // this is the wall behind that (src/invite/code.ts owns the shape).
-  inviteCodePattern(),
 ];
 
 export type IsCredential = (candidate: string) => boolean;
@@ -99,6 +95,11 @@ export function credentialCheck(ctx: Partial<Pick<Ctx, 'agents' | 'token'>>): Is
 function redactString(text: string, isCredential: IsCredential): string {
   let swept = text.replace(PEM_BLOCK, REDACTED);
   for (const shape of CREDENTIAL_SHAPES) swept = swept.replace(shape, REDACTED);
+  // An invite code in every form the parser accepts: any case, PH0S, spaces or no hyphens, alone
+  // or inside an invite link, and right behind prose that fills the same shape. The code is the
+  // key to money, and no writer is meant to have one; this is the wall behind that
+  // (src/invite/code.ts owns the shape).
+  swept = redactInviteCodes(swept, REDACTED);
   return swept.replace(CREDENTIAL_RUN, (run) => (isCredential(run) ? REDACTED : run));
 }
 

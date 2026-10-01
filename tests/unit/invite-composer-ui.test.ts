@@ -27,7 +27,8 @@ type Any = Record<string, any>;
 /* A code the shape of a real one. Never funded, never issued. */
 const CODE = 'PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ';
 const BARE = '2X9QKM7RTB0HVFDK3WPZA8GN4CJ';
-/* The sentences the contract's shape and its two rules exist for (CONTRACTS.md, Code shape). */
+/* The sentences the contract's shape and its digit rule are tried on (CONTRACTS.md, Code shape).
+   The third fills the shape with two digits, so it stays out: a sentence given up for a slip. */
 const PHOSPHOR = 'how does phosphor handle swaps between eth and near';
 const PHOSPHORUS = 'phosphorus is used in fertilizer and in matches';
 const PHOSPHATES = 'phosphates cost 25 dollars per ton in 2026 so';
@@ -262,7 +263,6 @@ test('the plain messages that look most like a code still go, and the line goes 
     'Phosphor-powered wallets are my favourite thing to talk about today',
     PHOSPHOR,
     PHOSPHORUS,
-    PHOSPHATES,
   ];
   const world = build();
   for (const text of plain) world.send(text);
@@ -298,7 +298,7 @@ test('the field opens on the tab the person is on when it has Add money, and on 
   }
 });
 
-test('the matcher is the contract\'s composer guard: the canonical shape, a first character of 0 to 7, and two digits', () => {
+test('the matcher is the contract\'s composer guard: the canonical shape at any start, and two digits in the match', () => {
   const world = build();
   const codeIn = world.win.PhosphorInviteApi.codeIn;
   // Exactly the shape CONTRACTS.md and src/invite/code.ts write, with its flags.
@@ -312,11 +312,12 @@ test('the matcher is the contract\'s composer guard: the canonical shape, a firs
   // The word Phosphor is PHOS and letters: the shape alone keeps it out.
   assert.equal(shape.test(PHOSPHOR), false);
   assert.equal(codeIn(PHOSPHOR), null);
-  // Prose that fills the shape: each sentence fails one rule, and the shape is shown to hold it.
+  // Prose that fills the shape goes only without two digits in the match, and the shape is
+  // shown to hold each sentence. With two, it stays out: a sentence given up for a code with a slip.
   assert.ok(shape.test(PHOSPHORUS), 'the sentence no longer fills the shape, so this case proves nothing');
-  assert.equal(codeIn(PHOSPHORUS), null, 'rule 2: no digits');
+  assert.equal(codeIn(PHOSPHORUS), null, 'no digits');
   assert.ok(shape.test(PHOSPHATES), 'the sentence no longer fills the shape, so this case proves nothing');
-  assert.equal(codeIn(PHOSPHATES), null, 'rule 1: it starts with a P');
+  assert.ok(codeIn(PHOSPHATES), 'two digits in the match');
 
   /* 27 data characters, built to break one rule at a time. */
   const data = (text: string): string => {
@@ -324,19 +325,16 @@ test('the matcher is the contract\'s composer guard: the canonical shape, a firs
     return 'PHOS-' + text;
   };
   const letters = 'ABCDEFGHJKMNPQRSTVWXYZABCDE';
-  // Rule 1: the first data character is 0 to 7, or O, I or L in any case.
-  for (const first of ['0', '7', 'O', 'I', 'L', 'o', 'i', 'l']) {
+  // Any first character: a code typed with a slip in its first character is still a code.
+  for (const first of ['0', '7', '8', '9', 'O', 'P', 'Z', 'a']) {
     assert.ok(codeIn(data(first + BARE.slice(1))), `a code starting ${first} was not found`);
   }
-  for (const first of ['8', '9', 'P', 'Z', 'a']) {
-    assert.equal(codeIn(data(first + BARE.slice(1))), null, `a code cannot start ${first}`);
-  }
-  // Rule 2: two digits as typed; one is not enough, and an O, I or L is a letter here.
+  // Two digits as typed; one is not enough, and an O, I or L is a letter here.
   assert.equal(codeIn(data('2' + letters.slice(0, 26))), null, 'one digit was taken for a code');
   assert.ok(codeIn(data('2' + letters.slice(0, 25) + '7')), 'two digits were let through');
   assert.equal(codeIn(data('OIL' + letters.slice(0, 23) + '7')), null, 'an O, I or L was counted as a digit');
-  // The digits are counted in the 27 data characters, never in the prefix: PH0S brings no digit.
-  assert.equal(codeIn('PH0S-2' + letters.slice(0, 26)), null, 'the zero of PH0S was counted');
+  // The digits are counted in the whole match: the zero of PH0S is one of them.
+  assert.ok(codeIn('PH0S-2' + letters.slice(0, 26)), 'the zero of PH0S was not counted');
   assert.ok(codeIn('PH0S-2' + letters.slice(0, 25) + '7'));
   // Too short, the wrong prefix, a data character after the 27th, or nothing at all.
   assert.equal(codeIn('PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4C'), null);
