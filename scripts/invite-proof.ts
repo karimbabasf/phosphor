@@ -94,6 +94,20 @@ async function startApp(): Promise<Backend> {
   throw new Error(`the demo backend did not come up:\n${own.join('')}`);
 }
 
+/* A backend writes its audit tip as it shuts down, so its data dir goes once it has exited. */
+async function stopAndWait(): Promise<void> {
+  await Promise.all(backends.map((backend) => new Promise<void>((resolve) => {
+    if (backend.app.exitCode !== null || backend.app.signalCode !== null) return resolve();
+    const timer = setTimeout(resolve, 5_000);
+    backend.app.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    backend.app.kill('SIGTERM');
+  })));
+  stopAll();
+}
+
 function stopAll(): void {
   for (const backend of backends) {
     if (backend.app.exitCode === null) {
@@ -357,13 +371,13 @@ process.on('SIGINT', () => {
 });
 
 main()
-  .then(() => {
-    stopAll();
+  .then(async () => {
+    await stopAndWait();
     process.exit(0);
   })
-  .catch((err) => {
+  .catch(async (err) => {
     console.error(err instanceof Error ? err.stack ?? err.message : String(err));
     console.error(log.slice(-40).join(''));
-    stopAll();
+    await stopAndWait();
     process.exit(1);
   });
