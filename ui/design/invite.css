@@ -113,29 +113,38 @@
   transform: rotate(180deg);
 }
 
-/* The field in a soft tile on the slab, its input a well pressed into it. */
+/* The field straight on the slab, a well pressed into it like the network
+   search above, with its key under it at the full width: the slab is narrow,
+   and a code beside a key would show a third of itself. No tile around them,
+   so it is never a card inside the slab's card. */
 .invite-box {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
   align-self: stretch;
-  padding: var(--s-3) var(--s-4) var(--s-4);
-  border-radius: var(--radius-tile);
-  background: var(--tile);
-  box-shadow: var(--hi);
+}
+
+.invite-row {
+  flex-direction: column;
 }
 
 .invite-row .input {
-  min-height: 40px;
+  min-height: 42px;
   background: var(--well-bg);
   border-color: transparent;
   box-shadow: var(--well);
-  font-size: var(--fs-14);
+  font-size: var(--fs-13);
+  letter-spacing: 0;
 }
 
 .invite-row .invite-use {
-  flex: 0 0 auto;
   min-height: 40px;
+}
+
+/* An outline of itself until the field holds something, as on the first run's
+   card: the primary's green edge never stays on a key that cannot be pressed. */
+.invite-use:disabled:not([data-pending="true"]) {
+  border-color: transparent;
 }
 
 .invite-line > .invite-said {
@@ -158,13 +167,16 @@
 /* ---------- the chat ---------- */
 
 /* Over the box, where the code was: why it is not in the chat, and where it
-   went. Quiet, in the words' second tone; it goes with the next key. */
+   went. Quiet, in the words' second tone, on the box's own measure with its
+   words starting where the box's do (agent.css .composer-field, 36 px in); it
+   goes with the next key. */
 .composer-aside {
   display: flex;
   align-items: flex-start;
   gap: var(--s-2);
-  margin: 0 0 var(--s-2);
-  padding: 0 var(--s-2);
+  width: min(calc(100% - 2 * var(--s-5)), var(--thread-w));
+  margin: 0 auto;
+  padding: 0 var(--s-4) 0 14px;
   font-size: var(--fs-13);
   line-height: 1.45;
   color: var(--text-2);
