@@ -318,9 +318,15 @@ acceptance is `state/terms.json` (the version accepted and when, mode 0600) and 
 change on the site asks once more. The route is `POST /api/terms/accept` with the window token.
 Nothing here is a control: the file gates a screen, not a key.
 
-After the terms comes the invite step, skippable. A code is checked with `POST /api/invite/check`
-and claimed with `POST /api/invite/claim`, both with the window token and neither an agent op;
-the claim fires once the wallet exists and is open. Each claim is a record in
+After the terms, Got an invite code? takes an invite code; Skip goes on without one, and the
+progress does not count the step. A paste, or Use code, asks `POST /api/invite/check` and moves
+nothing: a good code is kept in the first run's draft beside the password and the phrase, and
+wiped with them when the card closes. The claim is `POST /api/invite/claim`, fired once on the
+addresses step, the first moment there is a wallet that exists and is open. Its end arrives as an
+`invite` frame on the event stream: the addresses step shows it in place, and a person who has
+moved on gets a toast on Basic. Both calls live in `ui/core/invite.js`.
+
+Both routes take the window token and neither is an agent op. Each claim is a record in
 `state/invites.json` (mode 0600: the code's account, the nonce, the intent hash and the amount,
 never the code), written before the signed claim is sent, so a claim cut short by a quit is
 finished at the next start. A claim that lands writes `invite_claimed` to the audit log, one that

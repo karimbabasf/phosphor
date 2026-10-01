@@ -48,9 +48,13 @@ else opens until you click Accept and continue. The app records the click (the d
 version of the terms) in its own state folder and in the audit log, and asks again only when the
 terms change. Nothing is uploaded and there is no account to make.
 
-Then Got an invite code? If someone sent you one, paste it, or the whole invite link, and the app
-says what is waiting. The money moves into your wallet the moment the wallet exists. Skip is fine:
-you can add a code later from Add money. Never paste a code into the chat. See
+Then Got an invite code? If someone sent you a Phosphor invite, paste the code, or the whole
+invite link, there. The app checks it on the spot and says what is waiting: "Nice. $5 is waiting
+for you." Nothing moves yet. The money comes into your wallet right after the wallet is made, on
+the addresses step, and that can take up to two minutes; if you have moved on by then, a note on
+Basic says when it lands. No code? Press Skip. A code that comes later goes in Add money, under
+Have an invite code?. A code never goes in the chat: pasted there, it is taken out of the box
+before anything is sent and put in Add money instead, so your assistant never sees it. See
 [Invite codes](money.md#invite-codes).
 
 Every address the app makes is a real address that can hold real money. There is no practice

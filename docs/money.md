@@ -38,6 +38,11 @@ Before the first address appears you confirm one line: only the tokens on the li
 here, and anything else sent to this address is lost. The same holds for the network: USDC sent on
 the wrong network is lost, and the bridge does not refund. Send a small test amount first.
 
+Under the network tiles, Have an invite code? opens a field for a Phosphor invite code. A pasted
+code is checked at once, and Use code checks a typed one. A good code says what is waiting
+("Nice. $5 is waiting for you."), and Add $5 moves it into your wallet; that can take up to two
+minutes, and the line says when it lands. The deposit card has the same line on its first step.
+
 ### When NEAR Intents pauses a network
 
 The bridge can still hand out an address for a network that NEAR Intents has stopped crediting.
