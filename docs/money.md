@@ -161,6 +161,34 @@ as you could edit. A withdraw waits while a batch is pending.
 `reclaim` and `withdraw` take `--simulate-only` too. None of these commands has a Plan B: if the
 relay refuses one, it stops and says so.
 
+### Checking the claim routes with your own money
+
+`scripts/invite-proof.ts` runs the whole money path on throwaway accounts, so anyone can check
+both claim routes before trusting them:
+
+    node scripts/invite-proof.ts init --file ~/invite-proof.json
+    node scripts/invite-proof.ts run --file ~/invite-proof.json
+    node scripts/invite-proof.ts sweep --file ~/invite-proof.json --to <your address>
+
+`init` makes a throwaway treasury and a throwaway receiver and prints both addresses. Send $1 to
+the treasury. `run` waits for it (30 minutes; `--wait-minutes` changes that), issues two $0.10
+codes in one payload, and claims both into the receiver with the app's own claim code: the first
+through the solver relay with no quote, the second through 1Click. To reach 1Click it turns the
+relay away itself, before anything is sent, the way the relay would if it began to enforce its
+key, and the claim falls back on its own. It writes down what NEAR Intents says about each step:
+the intent hashes, `is_nonce_used`, every balance before and after, and the relay's
+`get_status` answer, then prints that report (`report` prints it again). It never prints a key
+or a code. `sweep` sends every cent left on the throwaway accounts to your address, and
+`release-code` issues one $5 code and prints it once, to try a real claim in the app.
+
+If a route turns $0.10 away as too small, start a new proof file and pass `run --amount 0.50`.
+1Click gets the partner key in `PHOSPHOR_1CLICK_API_KEY` when one is set, as the app does;
+without one it runs on 1Click's public fee tier.
+
+The proof file holds its keys in the clear, because the script runs without a passphrase prompt.
+It is mode 0600 and must sit outside the repo. Put in only what you are ready to lose, sweep it,
+then delete it.
+
 ## Swap
 
 A swap changes what your intents balance holds. Your assistant proposes it with `propose_swap`:

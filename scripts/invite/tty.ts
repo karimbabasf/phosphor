@@ -30,9 +30,10 @@ export function readTerminalLine(
     const buf = Buffer.alloc(MAX_LINE);
     let len = 0;
     let escape = 0; // 0 outside an escape sequence, 1 after ESC, 2 inside CSI
-    output(prompt);
+    // Echo goes off before the prompt shows, so nothing typed the moment it appears is echoed.
     const wasRaw = input.isRaw === true;
     input.setRawMode(true);
+    output(prompt);
     input.resume();
 
     function finish(value: Buffer | null): void {

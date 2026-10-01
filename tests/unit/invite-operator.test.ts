@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,6 +20,7 @@ import type { KeySigner } from '../../src/invite/signer.ts';
 import type { InviteBook } from '../../scripts/invite/book.ts';
 import { openInviteFile, takeLock } from '../../scripts/invite/file.ts';
 import type { MoneyNet } from '../../scripts/invite/money.ts';
+import { readTerminalLine } from '../../scripts/invite/tty.ts';
 import { NOT_A_TERMINAL, main } from '../../scripts/invite.ts';
 import { freshChain, netOn, relayOn, verdict } from './helpers/invite-chain.ts';
 import type { Chain } from './helpers/invite-chain.ts';
@@ -565,7 +567,7 @@ test('withdraw refuses an invite account as the receiver, and waits while a batc
 });
 
 test('no operator file reads the keystore, and the CLI never takes a secret on its command line', () => {
-  const files = [path.join(REPO, 'scripts', 'invite.ts'), ...fs.readdirSync(path.join(REPO, 'scripts', 'invite')).map((f) => path.join(REPO, 'scripts', 'invite', f))];
+  const files = [path.join(REPO, 'scripts', 'invite.ts'), path.join(REPO, 'scripts', 'invite-proof.ts'), ...fs.readdirSync(path.join(REPO, 'scripts', 'invite')).map((f) => path.join(REPO, 'scripts', 'invite', f))];
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8');
     assert.ok(!/from '[^']*keystore[^']*'/.test(text), `${path.basename(f)} imports the keystore`);
@@ -573,4 +575,42 @@ test('no operator file reads the keystore, and the CLI never takes a secret on i
   }
   const cli = fs.readFileSync(path.join(REPO, 'scripts', 'invite.ts'), 'utf8');
   assert.ok(!/passphrase: \{ type/.test(cli) && !/'--passphrase'/.test(cli), 'no passphrase flag');
+});
+
+// A terminal for readTerminalLine: raw mode switches and output, in the order they happen.
+class FakeTty extends EventEmitter {
+  isRaw = false;
+  log: string[] = [];
+  setRawMode(on: boolean): this {
+    this.isRaw = on;
+    this.log.push(`raw:${on}`);
+    return this;
+  }
+  resume(): this {
+    return this;
+  }
+  pause(): this {
+    return this;
+  }
+}
+
+test('the passphrase prompt turns echo off before it shows, echoes nothing, and puts the terminal back', async () => {
+  const tty = new FakeTty();
+  const line = readTerminalLine(tty as unknown as NodeJS.ReadStream, (text) => tty.log.push(`out:${text}`), 'Invite file passphrase: ', true);
+  tty.emit('data', Buffer.from('h\u00e9llo w\u00f6rld', 'utf8'));
+  tty.emit('data', Buffer.from([0x7f])); // Backspace takes the d
+  tty.emit('data', Buffer.from('\u001b[D')); // an arrow key is skipped
+  tty.emit('data', Buffer.from('\u00f6', 'utf8'));
+  tty.emit('data', Buffer.from([0x7f])); // and a two-byte letter goes whole
+  tty.emit('data', Buffer.from('D\r'));
+  const got = await line;
+  assert.equal(got?.toString('utf8'), 'h\u00e9llo w\u00f6rlD');
+  assert.deepEqual(tty.log, ['raw:true', 'out:Invite file passphrase: ', 'raw:false', 'out:\n']);
+
+  const cancelled = new FakeTty();
+  const stopped = readTerminalLine(cancelled as unknown as NodeJS.ReadStream, (text) => cancelled.log.push(`out:${text}`), 'P: ', true);
+  cancelled.emit('data', Buffer.from('secret\u0003', 'utf8'));
+  assert.equal(await stopped, null, 'Ctrl-C cancels');
+  assert.equal(cancelled.isRaw, false);
+  assert.ok(!cancelled.log.some((l) => l.includes('secret')));
 });
