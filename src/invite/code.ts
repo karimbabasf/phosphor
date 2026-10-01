@@ -7,16 +7,19 @@
 // OS CSPRNG is what makes that search hopeless; nothing here ever reads Math.random.
 //
 // THE FORMAT. `PHOS` plus 27 Crockford base32 characters: 26 carry the secret (130 bits, the top
-// two zero) and the last is Crockford's mod 37 check symbol. Mod 37 catches every single wrong
-// character and every swap of two neighbours before anything leaves this machine, which is the
-// difference between "That code has a typo" and a network read of an empty account. The
-// generator redraws until the check symbol is one of the 32 letters and digits, so a code never
-// carries `* ~ $ = U`.
+// two zero, so the first is always 0 to 7) and the last is Crockford's mod 37 check symbol. Mod 37
+// catches every single wrong character and every swap of two neighbours before anything leaves
+// this machine, which is the difference between "That code has a typo" and a network read of an
+// empty account. The generator redraws until the check symbol is one of the 32 letters and digits,
+// so a code never carries `* ~ $ = U`, and until the 26 secret characters hold at least two
+// digits, which is what lets the composer tell a code from a sentence (below).
 //
-// THE MATCHER. The same shape, found inside any text, is what the log tail redacts and what the
-// window's composer refuses to send (CONTRACTS.md, "Code shape"). It is deliberately narrower
-// than the parser in one place: right after the prefix there must be a separator or five data
-// characters in a row, so the word "Phosphor" followed by a sentence is never taken for a code.
+// TWO MATCHERS. The shape found inside any text is what the log tail redacts: right after the
+// prefix a separator or five data characters in a row, so the word "Phosphor" and a sentence are
+// not one, and over-redacting is fine there. The composer guard (looksLikeInviteCode) adds two
+// rules every issued code meets and prose almost never does: the first data character is 0 to 7
+// (O, I and L read as 0 and 1), and at least two of the 27 are literal digits. "phosphorus is used
+// in fertilizer and in matches" has the shape and neither. CONTRACTS.md, "Code shape", pins both.
 
 import crypto from 'node:crypto';
 
@@ -54,6 +57,21 @@ function checkIndex(secret: Uint8Array): number {
   return Number(secretValue(secret) % 37n);
 }
 
+// The 26 characters that carry the secret, most significant first.
+function secretChars(secret: Uint8Array): string {
+  const value = secretValue(secret);
+  let data = '';
+  for (let i = DATA_CHARS - 1; i >= 0; i -= 1) data += CROCKFORD[Number((value >> BigInt(5 * i)) & 31n)];
+  return data;
+}
+
+// The fewest literal digits an issued code carries in its 26 secret characters.
+export const MIN_CODE_DIGITS = 2;
+
+function digitCount(text: string): number {
+  return (text.match(/[0-9]/g) ?? []).length;
+}
+
 export function keyInRange(k: bigint): boolean {
   return k > 0n && k < SECP256K1_N;
 }
@@ -77,14 +95,15 @@ export function codeAddress(secret: Uint8Array): string | null {
   return key === null ? null : privateKeyToAccount(key).address.toLowerCase();
 }
 
-/* 16 bytes from the OS CSPRNG, redrawn until the key is a valid scalar and the check symbol is
-   a letter or a digit. `random` is crypto.randomBytes in the app and the operator script; a test
-   hands in its own to pin a vector or to force a redraw. */
+/* 16 bytes from the OS CSPRNG, redrawn until the key is a valid scalar, the check symbol is a
+   letter or a digit, and the secret characters hold two digits (about one draw in ten thousand
+   is thrown away for that, a cost of about 0.0001 bits). `random` is crypto.randomBytes in the
+   app and the operator script; a test hands in its own to pin a vector or to force a redraw. */
 export function generateSecret(random: (bytes: number) => Uint8Array = (n) => crypto.randomBytes(n)): Uint8Array {
   for (;;) {
     const secret = Uint8Array.from(random(SECRET_BYTES));
     if (secret.length !== SECRET_BYTES) throw new Error(`the random source gave ${secret.length} bytes, not ${SECRET_BYTES}`);
-    if (checkIndex(secret) < CROCKFORD.length && deriveKey(secret) !== null) return secret;
+    if (checkIndex(secret) < CROCKFORD.length && digitCount(secretChars(secret)) >= MIN_CODE_DIGITS && deriveKey(secret) !== null) return secret;
     secret.fill(0);
   }
 }
@@ -92,10 +111,7 @@ export function generateSecret(random: (bytes: number) => Uint8Array = (n) => cr
 // PHOS-XXXXX-XXXXX-XXXXX-XXXXX-XXXXXXX: four groups of five and a last group of seven.
 export function formatCode(secret: Uint8Array): string {
   if (secret.length !== SECRET_BYTES) throw new Error(`an invite secret is ${SECRET_BYTES} bytes, got ${secret.length}`);
-  const value = secretValue(secret);
-  let data = '';
-  for (let i = DATA_CHARS - 1; i >= 0; i -= 1) data += CROCKFORD[Number((value >> BigInt(5 * i)) & 31n)];
-  data += CHECK_ALPHABET[checkIndex(secret)];
+  const data = secretChars(secret) + CHECK_ALPHABET[checkIndex(secret)];
   return [INVITE_PREFIX, data.slice(0, 5), data.slice(5, 10), data.slice(10, 15), data.slice(15, 20), data.slice(20)].join('-');
 }
 
@@ -146,10 +162,10 @@ export function parseCode(input: unknown): ParsedCode {
   return { ok: true, secret };
 }
 
-/* The canonical matcher: a code in any form the parser accepts, inside any text. A separator or
+/* The canonical shape: a code in any form the parser accepts, inside any text. A separator or
    five data characters in a row after the prefix, 27 data characters with any spaces or hyphens
-   between them, and no data character straight after the last one. Case-insensitive. Mirrored
-   by the window's composer guard (CONTRACTS.md); change both or neither. */
+   between them, and no data character straight after the last one. Case-insensitive. The log
+   tail redacts by this alone; the composer asks looksLikeInviteCode. CONTRACTS.md pins both. */
 export const INVITE_CODE_SOURCE = String.raw`PH[O0]S(?:[\s-]+|(?=[0-9A-Z]{5}))[0-9A-Z](?:[\s-]*[0-9A-Z]){26}(?![0-9A-Z])`;
 
 export function inviteCodePattern(): RegExp {
@@ -158,4 +174,17 @@ export function inviteCodePattern(): RegExp {
 
 export function containsInviteCode(text: string): boolean {
   return inviteCodePattern().test(text);
+}
+
+/* The composer's question: does this text carry something that is an invite code and not a
+   sentence. The shape above, AND its first data character 0 to 7 (O, I and L included, as the
+   parser reads them; the two spare bits sit at the top), AND at least two literal digits among
+   its 27 data characters, counted as typed with no O, I or L mapping. Every code the generator
+   issues meets all three. Mirrored by the window (CONTRACTS.md); change both or neither. */
+export function looksLikeInviteCode(text: string): boolean {
+  for (const match of text.matchAll(inviteCodePattern())) {
+    const data = match[0].slice(INVITE_PREFIX.length).replace(/[\s-]+/g, '');
+    if (/^[0-7OoIiLl]/.test(data) && digitCount(data) >= MIN_CODE_DIGITS) return true;
+  }
+  return false;
 }

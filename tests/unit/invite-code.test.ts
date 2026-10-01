@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CROCKFORD,
   INVITE_CODE_SOURCE,
+  MIN_CODE_DIGITS,
   SECP256K1_N,
   codeAddress,
   containsInviteCode,
@@ -22,6 +23,7 @@ import {
   inviteCodePattern,
   inviteLink,
   keyInRange,
+  looksLikeInviteCode,
   parseCode,
 } from '../../src/invite/code.ts';
 
@@ -44,6 +46,29 @@ function dataOf(code: string): string {
 
 function withData(data: string): string {
   return `PHOS-${data.slice(0, 5)}-${data.slice(5, 10)}-${data.slice(10, 15)}-${data.slice(15, 20)}-${data.slice(20)}`;
+}
+
+// The 16 secret bytes behind 26 data characters, read here without the module.
+function secretFrom(data26: string): Uint8Array {
+  let value = 0n;
+  for (const ch of data26) value = (value << 5n) | BigInt(CROCKFORD.indexOf(ch));
+  const out = new Uint8Array(16);
+  for (let i = 15; i >= 0; i -= 1) {
+    out[i] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  return out;
+}
+
+// 26 data characters with exactly `digits` literal digits, the first one 1, and a check symbol
+// that is a letter, so the whole code carries exactly that many digits.
+function dataWithDigits(digits: number): string {
+  for (const tail of 'ABCDEFGHJKMNPQRSTVWXYZ') {
+    const data26 = '1' + '2'.repeat(digits - 1) + 'K'.repeat(25 - digits) + tail;
+    const symbol = CROCKFORD[Number(BigInt('0x' + Buffer.from(secretFrom(data26)).toString('hex')) % 37n)];
+    if (symbol !== undefined && /[A-Z]/.test(symbol)) return data26;
+  }
+  throw new Error('no data with a letter check symbol');
 }
 
 test('known vectors: the code, the check symbol and the address of fixed secrets', () => {
@@ -69,6 +94,20 @@ test('generate, format and parse round-trip, and the code is PHOS plus five grou
     sameSecret(code, secret);
     assert.notEqual(deriveKey(secret), null);
   }
+});
+
+test('the spare bits sit at the top: every code starts 0 to 7, and its secret carries two digits', () => {
+  for (let i = 0; i < 3000; i += 1) {
+    const data = dataOf(formatCode(generateSecret()));
+    assert.match(data[0]!, /[0-7]/, `${data} starts above 7`);
+    assert.ok((data.slice(0, 26).match(/[0-9]/g) ?? []).length >= MIN_CODE_DIGITS, `${data} has fewer than two digits`);
+  }
+  // A draw whose secret characters hold one digit is thrown away, like a symbol check character.
+  const lonely = secretFrom(dataWithDigits(1));
+  assert.equal((dataOf(formatCode(lonely)).match(/[0-9]/g) ?? []).length, 1);
+  const draws = [lonely, filled(0x42)];
+  const secret = generateSecret(() => Uint8Array.from(draws.shift()!));
+  assert.deepEqual([...secret], [...filled(0x42)]);
 });
 
 test('the parser accepts every form a person pastes, and strips the prefix before mapping', () => {
@@ -255,6 +294,37 @@ test('the matcher finds a code in every form the parser accepts, inside any text
       for (const group of dataOf(code).match(/.{5}/g)!) assert.ok(!redacted.toUpperCase().includes(group), `${group} survived in ${redacted}`);
     }
   }
+});
+
+test('the composer guard: every real form is a code, prose with the shape is not', () => {
+  const code = formatCode(filled(0x42));
+  const forms = [code, code.toLowerCase(), `PHOS${dataOf(code)}`, code.replace(/-/g, ' '), code.replace('PHOS', 'PH0S'), inviteLink(code)];
+  for (const form of forms) {
+    assert.equal(looksLikeInviteCode(form), true, form);
+    assert.equal(looksLikeInviteCode(`use this: ${form} thanks`), true, form);
+  }
+  // A code with the fewest digits the generator issues still counts.
+  const twoCode = formatCode(secretFrom(dataWithDigits(2)));
+  assert.equal((dataOf(twoCode).match(/[0-9]/g) ?? []).length, 2);
+  assert.equal(parseCode(twoCode).ok, true);
+  assert.equal(looksLikeInviteCode(twoCode), true);
+  assert.equal(looksLikeInviteCode(twoCode.toLowerCase().replace(/-/g, '')), true);
+  // One digit is a code the generator never issues; a first character above 7 is no code at all.
+  assert.equal(looksLikeInviteCode(formatCode(secretFrom(dataWithDigits(1)))), false);
+  assert.equal(looksLikeInviteCode(`PHOS-8${dataOf(code).slice(1)}`), false);
+
+  // Sentences that have the shape: the log tail still cuts them, the composer lets them through.
+  for (const prose of [
+    'phosphorus is used in fertilizer and in matches',
+    'phosphates cost 25 dollars per ton in 2026 so',
+    'Phosphor send 50 usdc to my wallet please',
+    'phos 1 is short for phosphor and the app holds',
+  ]) {
+    assert.equal(looksLikeInviteCode(prose), false, `took prose for a code: ${prose}`);
+  }
+  assert.equal(containsInviteCode('phosphorus is used in fertilizer and in matches'), true, 'the shape alone over-redacts, which the log tail allows');
+  // Two digits and the shape: only the first-character rule tells this one from a code.
+  assert.equal(containsInviteCode('phosphates cost 25 dollars per ton in 2026 so'), true);
 });
 
 test('the matcher leaves prose alone, the app name included', () => {
