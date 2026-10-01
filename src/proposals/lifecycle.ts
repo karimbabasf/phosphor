@@ -725,8 +725,26 @@ function countsAgainstCap(p: Proposal): boolean {
   // or an ambiguous venue send, a nonce for an ambiguous Hyperliquid action. Each is money that
   // may be live at the venue, and a budget that forgot it is the under-count that let a retry
   // spend twice. A row with none of them is the app not knowing, and holds nothing.
+  return leftEvidence(p);
+}
+
+// What a rail hands the row the moment it has signed: a hash, a handle, or a nonce.
+function leftEvidence(p: Proposal): boolean {
   const evidence = p.result?.evidence;
   return (p.result?.txids?.length ?? 0) > 0 || evidence?.handle !== undefined || evidence?.nonce !== undefined;
+}
+
+/* WHETHER A ROW MAY STILL NEED THE KEY, which is what a lock asked for while somebody steps away
+   waits on (src/http/wallet.ts handleLock, Keystore.lockWhen). Approved and on its way to the
+   rail, or executing with nothing at the venue yet: every rail writes its handle, hash or nonce
+   onto the row right after its signature, so a row that carries one is in its delivery watch,
+   which is minutes of polling that need no key. A rail that signs once more after that (a
+   Hyperliquid deposit moving what landed on spot over to perp, a withdrawal resending the same
+   nonce) finds the key gone and says so on the row, as it does after the person's own Lock. A
+   held row is waiting on the chain, not signing, and a lock closes its hold at the next retry. */
+export function mayStillSign(p: Proposal): boolean {
+  if (p.status === 'approved') return p.heldSince === undefined;
+  return p.status === 'executing' && !leftEvidence(p);
 }
 
 export function dailyLimit(ctx: PCtx, capUsd: number): DailyLimit {

@@ -47,6 +47,7 @@ import { outsideBy, webReadBy } from './web-read.ts';
 import { appTurnBy } from './app-turn.ts';
 
 export type { ProposalDeps };
+export { mayStillSign } from './proposals/lifecycle.ts';
 
 export function createProposalService(deps: ProposalDeps): ProposalService {
   /* The context every handler reads, assembled once. `execute` is the indirection that lets

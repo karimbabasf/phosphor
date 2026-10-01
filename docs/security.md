@@ -167,7 +167,9 @@ into the digest, never dates or owners, so the same tag gives the same digest on
 
 The wallet locks after five minutes with nobody at the window by default (the Vault tab
 offers 5 minutes, 15 minutes or 1 hour), when the Mac sleeps, when the screen locks or the Mac
-switches to another user, and when you close the window. A move being sent finishes first, and a
+switches to another user, and when you close the window. When the screen locks, nothing new can
+start from that moment; a move that has not been signed yet gets its signature first (two minutes
+at most), and then the key goes. A move the venue is still delivering does not hold the lock, and a
 move waiting for your click stays on its card. Locked, the key is gone from memory and the window is frosted. Reads still work. A proposal made
 while locked is drafted, priced and checked, and its card says Unlock to decide; when you
 unlock, it is decided again and lands as something to click. An unlock is never an approval,

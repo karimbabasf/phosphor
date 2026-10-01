@@ -18,7 +18,7 @@
 // never decodes the payload, which carries the recovery phrase: a decoded copy is a string, and
 // nothing can wipe a string.
 
-import { apiWallet, isLocked } from '../keystore/index.ts';
+import { apiWallet, isLocked, keyHeld } from '../keystore/index.ts';
 
 export type ApiWalletRead = {
   key: `0x${string}` | null;
@@ -31,7 +31,11 @@ export type ApiWalletRead = {
 
 export function readApiWallet(keysPath: string): ApiWalletRead {
   const absent: ApiWalletRead = { key: null, source: 'absent', address: null };
-  if (isLocked()) return { key: null, source: 'locked', address: null };
+  /* A wallet closing behind moves already under way (Keystore.lockWhen) still serves them: a
+     trade whose plan was arming when the lock was asked for gets its key. Nothing new reaches this
+     read while it closes, because a new move cannot start and plans re-arm only on an announced
+     unlock. */
+  if (isLocked() && !keyHeld()) return { key: null, source: 'locked', address: null };
   try {
     const held = apiWallet(keysPath);
     return held === null ? absent : { key: held.key, source: 'present', address: held.address };

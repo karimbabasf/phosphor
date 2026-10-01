@@ -49,6 +49,12 @@ export const KEYSTORE_FILENAME = 'keys.enc.json';
 // through the HTTP route at the speed of the event loop.
 const MAX_FAILURES = 5;
 const BACKOFF_MS = 30_000;
+/* How long a move already on its way may keep the key, after the wallet was told to lock, to
+   reach its signature: the quote, the checks and the reads a rail makes before it signs, each on
+   its own network timeout. Past it the key goes anyway, and a rail that had not signed yet fails
+   with the wallet locked and nothing signed. */
+export const CLOSE_GRACE_MS = 2 * 60_000;
+const CLOSE_SWEEP_MS = 250;
 
 const EVM_KEY = /^0x[0-9a-fA-F]{64}$/;
 
@@ -183,7 +189,15 @@ export type AddressReport = { addresses: StoredAddresses; verified: boolean; tam
 
 export type Keystore = {
   state(): LockState;
+  // Open, and not closing: what a route that serves the person an open wallet asks.
   isUnlocked(): boolean;
+  // Whether a signer can read its key right now: open, or closing behind signatures still under
+  // way (lockWhen). Never the test for starting something new; isUnlocked() and state() are.
+  keyHeld(): boolean;
+  /* Lock once `done` says the signatures it waits for are made, and no later than `capMs` from
+     now; the state reads locked from this call on. Keyed so a repeated ask is one closer. False
+     when nothing is open. */
+  lockWhen(key: string, done: () => boolean, capMs: number): boolean;
   addresses(): StoredAddresses;
   // The same addresses with the two facts a display needs beside them. Every route that puts an
   // address in front of a person reads this one; addresses() stays for the signers and readers
@@ -367,6 +381,15 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   // Set when a correct password proved the header's addresses are not the ones this file was
   // written with. From then on this store serves no address at all.
   let tampered = false;
+  /* SHUT TO EVERYTHING NEW, OPEN TO WHAT IS ALREADY SIGNING. A closer keeps the payload held
+     after the wallet has been told to lock, until its `done` says the signatures it waits for are
+     made, or its cap runs out. state() says locked from the first closer on, so nothing new starts
+     (land, approve and a held retry all ask isLocked(), and no plan re-arms: that only follows an
+     announced unlock), while a signer already under way still reads its key. lock() is the end of
+     it, whoever calls it. See lockWhen. */
+  type Closer = { done: () => boolean; until: number };
+  const closers = new Map<string, Closer>();
+  let closeTimer: NodeJS.Timeout | null = null;
 
   function announce(): void {
     const s = state();
@@ -378,7 +401,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function state(): LockState {
-    if (plain !== null) return 'unlocked';
+    if (plain !== null) return closers.size === 0 ? 'unlocked' : 'locked';
     if (hasKeystore()) return 'locked';
     if (fs.existsSync(keysPath)) return 'needs_migration';
     return 'no_wallet';
@@ -452,8 +475,9 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   // Every way the payload comes open lands here, so the keys beside it are never stale and never
-  // outlive it.
+  // outlive it. An open is an open: a lock still waiting on its closers is called off.
   function hold(body: Buffer, payload: KeysPayload): void {
+    stopClosing();
     if (plain !== null && plain !== body) wipe(plain);
     wipe(evmKey, apiKey);
     plain = body;
@@ -628,6 +652,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function lock(): boolean {
+    stopClosing();
     if (plain === null) return false;
     wipe(plain, dataKey, evmKey, apiKey);
     plain = null;
@@ -636,6 +661,49 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     apiKey = null;
     apiAddress = null;
     announce();
+    return true;
+  }
+
+  function stopClosing(): void {
+    closers.clear();
+    if (closeTimer !== null) clearInterval(closeTimer);
+    closeTimer = null;
+  }
+
+  // A closer is finished when it says so or when its cap has passed; a `done` that throws cannot
+  // hold the key either. The last one finished locks.
+  function sweepClosers(): void {
+    const at = now();
+    for (const [key, closer] of closers) {
+      let finished = at >= closer.until;
+      if (!finished) {
+        try {
+          finished = closer.done();
+        } catch {
+          finished = true;
+        }
+      }
+      if (finished) closers.delete(key);
+    }
+    if (closers.size === 0) lock();
+  }
+
+  /* Lock once `done` says the signatures it waits for are made, and no later than `capMs` from
+     now. False when nothing is open to close. One closer per key, so a caller that asks again
+     (the shell's screen-lock loop asks once a second) neither stacks closers nor moves the cap.
+     The first closer is announced, because the state turns to locked there and the window has to
+     draw it. Never decided on the spot: `done` is read on the next sweep, after whatever the
+     caller is doing in this turn has written its rows. */
+  function lockWhen(key: string, done: () => boolean, capMs: number): boolean {
+    if (plain === null) return false;
+    if (closers.has(key)) return true;
+    const first = closers.size === 0;
+    closers.set(key, { done, until: now() + capMs });
+    if (closeTimer === null) {
+      closeTimer = setInterval(sweepClosers, CLOSE_SWEEP_MS);
+      closeTimer.unref?.();
+    }
+    if (first) announce();
     return true;
   }
 
@@ -785,7 +853,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function updatePayload(mutate: (payload: KeysPayload) => KeysPayload): StoredAddresses {
-    if (plain === null || dataKey === null) throw new Error('the wallet is locked');
+    if (plain === null || dataKey === null || closers.size > 0) throw new Error('the wallet is locked');
     const stored = readKeystoreFile(file);
     if (stored === null || !isEnclaveFile(stored)) throw new Error('only an enclave wallet can be rewritten in place');
     const next = mutate(keys());
@@ -902,14 +970,16 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function reveal(): { mnemonic: string | null; keys: KeysPayload } {
+    if (plain === null || closers.size > 0) throw new Error('the wallet is locked');
     const payload = keys();
-    if (plain === null) throw new Error('the wallet is locked');
     return { mnemonic: typeof payload.mnemonic === 'string' ? payload.mnemonic : null, keys: payload };
   }
 
   return {
     state,
-    isUnlocked: () => plain !== null,
+    isUnlocked: () => plain !== null && closers.size === 0,
+    keyHeld: () => plain !== null,
+    lockWhen,
     addresses,
     addressReport,
     header: () => readHeader(keysPath),
