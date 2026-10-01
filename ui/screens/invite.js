@@ -34,6 +34,7 @@
     lead: 'Paste it here. The money in it goes to your new wallet as soon as the wallet is made.',
     label: 'Invite code',
     use: 'Use code',
+    retry: 'Try again',
     skip: 'Skip',
     question: 'Have an invite code?',
     chat: 'Invite codes never go to your assistant. Yours is waiting in Add money.'
@@ -119,6 +120,41 @@
     return 'warn';
   }
 
+  /* A refusal that the same code would get again: it holds nothing, it cannot pay, or a
+     claim is running (until that claim ends). Use code stays off after one until the
+     field changes. Offline is not one of them: its key is lit, as Try again. */
+  function holds(reason) {
+    return reason === 'empty' || reason === 'locked' || reason === 'busy';
+  }
+
+  /* ---------- on screen ---------- */
+
+  /* The box that clips a node: the window, cut down by every scrolling or clipping
+     ancestor (Basic's slab is one). */
+  function clipOf(node) {
+    var box = { top: -Infinity, bottom: Infinity };
+    var height = Number(window.innerHeight);
+    if (isFinite(height) && height > 0) box = { top: 0, bottom: height };
+    var style = typeof window.getComputedStyle === 'function' ? window.getComputedStyle : null;
+    for (var n = node.parentNode; n && n !== document.body && n !== document.documentElement; n = n.parentNode) {
+      if (!style || typeof n.getBoundingClientRect !== 'function') continue;
+      var flow = style(n);
+      if (!flow || !/auto|scroll|hidden|clip/.test(String(flow.overflowY))) continue;
+      var r = n.getBoundingClientRect();
+      box = { top: Math.max(box.top, r.top), bottom: Math.min(box.bottom, r.bottom) };
+    }
+    return box;
+  }
+
+  /* Whether a person can read the node now: drawn, and not under a fold. */
+  function onScreen(node) {
+    if (typeof node.getClientRects === 'function' && node.getClientRects().length === 0) return false;
+    if (typeof node.getBoundingClientRect !== 'function') return true;
+    var r = node.getBoundingClientRect();
+    var box = clipOf(node);
+    return r.bottom > r.top && r.top >= box.top - 1 && r.bottom <= box.bottom + 1;
+  }
+
   /* The field a code is typed into: read one character at a time, so in the mono face
      (ui/design/invite.css), with every helper that would remember, correct or capitalise
      it switched off. */
@@ -157,6 +193,13 @@
      waits for that answer and is said once, in place when the answer says it was ours. */
   var deferred = [];
   var lines = [];
+  /* The last claim that ended without its money, until the person opens the invite field:
+     Add money keeps saying it, so a failure that went by unseen is still there to read. */
+  var kept = null;
+  /* Every claim id whose end this window heard, and who wants to know when one ends: a
+     busy refusal holds Use code until then. */
+  var ended = {};
+  var enders = [];
 
   function firstRunUp() {
     return !!(document.body && typeof document.body.getAttribute === 'function'
@@ -237,6 +280,8 @@
   function tell(entry) {
     if (entry.told) return;
     entry.told = true;
+    if (entry.status === 'landed') kept = null;
+    else if (!(entry.status === 'refused' && entry.reason === 'busy')) kept = entry;
     var shown = false;
     var shows = entry.shows.slice();
     for (var i = 0; i < shows.length; i += 1) {
@@ -252,7 +297,9 @@
     }
     var toaster = window.PhosphorToast;
     if (!toaster || typeof toaster.show !== 'function') return;
-    toaster.show(claimSentence(entry, 'toast'), entry.status === 'landed' ? 'up' : 'down');
+    /* Money that did not come stays on screen until it is put away. */
+    if (entry.status === 'landed') toaster.show(claimSentence(entry, 'toast'), 'up');
+    else toaster.show(claimSentence(entry, 'toast'), 'down', { stay: true });
   }
 
   /* The answers are in: an end no answer claimed is someone else's claim, said now. */
@@ -274,6 +321,11 @@
 
   /* The app reported a claim, on the stream or in the state. */
   function heard(outcome) {
+    if (outcome.status !== 'running' && !ended[outcome.claim]) {
+      ended[outcome.claim] = true;
+      var list = enders.slice();
+      for (var i = 0; i < list.length; i += 1) list[i]();
+    }
     var entry = claims[outcome.claim];
     if (!entry) {
       if (outcome.status === 'running') {
@@ -307,6 +359,15 @@
     return null;
   }
 
+  /* `fn` runs each time a claim's end is heard, once per claim. Returns the way to stop. */
+  function onEnd(fn) {
+    enders.push(fn);
+    return function () {
+      var at = enders.indexOf(fn);
+      if (at >= 0) enders.splice(at, 1);
+    };
+  }
+
   function paintLines() {
     var list = lines.slice();
     for (var i = 0; i < list.length; i += 1) list[i].follow();
@@ -316,9 +377,12 @@
 
   /* "Have an invite code?" opens the field in place, on the morph the agent list's folds
      use. A pasted code is checked at once and a typed one by Use code; a good one turns the
-     key into "Add $5", and that click is what moves the money. While a claim runs the line
-     is its status, so a second code cannot be started over it. `show(on)` is for a host that
-     keeps the line to one step of its own (the network tiles). */
+     key into "Add $5", and that click is what moves the money. What is said about the code
+     sits between the field and the key, as on the first run, and is scrolled into view each
+     time it changes: the slab is short at the window's smallest size. While a claim runs the
+     line is its status, so a second code cannot be started over it; a claim that ended
+     without its money stays said here until the person opens the field. `show(on)` is for a
+     host that keeps the line to one step of its own (the network tiles). */
   function line(host, options) {
     var opts = options || {};
     var root = dom.el('div', 'invite-line');
@@ -336,15 +400,8 @@
     var input = codeInput();
     var label = dom.el('label', 'label', COPY.label);
     label.htmlFor = input.id;
-    var row = dom.el('div', 'field-row invite-row');
-    var use = dom.el('button', 'btn btn-primary invite-use');
-    use.type = 'button';
-    use.appendChild(dom.el('span', 'btn-label', COPY.use));
-    dom.setAttr(use, 'data-pending-label', 'Checking');
-    row.appendChild(input);
-    row.appendChild(use);
     box.appendChild(label);
-    box.appendChild(row);
+    box.appendChild(input);
     root.appendChild(box);
 
     var said = dom.el('p', 'invite-said');
@@ -352,7 +409,18 @@
     said.setAttribute('aria-live', 'polite');
     said.hidden = true;
     root.appendChild(said);
+
+    var row = dom.el('div', 'invite-row');
+    row.hidden = true;
+    var use = dom.el('button', 'btn btn-primary invite-use');
+    use.type = 'button';
+    use.appendChild(dom.el('span', 'btn-label', COPY.use));
+    dom.setAttr(use, 'data-pending-label', 'Checking');
+    row.appendChild(use);
+    root.appendChild(row);
     host.appendChild(root);
+    /* The words last said, so the line is brought into view only when they change. */
+    var lastSaid = '';
 
     var state = {
       alive: true,
@@ -368,10 +436,19 @@
       detach: null
     };
 
+    /* Whether the person can read the line now, inside the slab's scroll box too. */
     function visible() {
       if (!state.alive || !state.shown) return false;
-      if (typeof root.getClientRects !== 'function') return true;
-      return root.getClientRects().length > 0;
+      return onScreen(said);
+    }
+
+    /* The key under the line first, then the line itself, so the line wins when both do
+       not fit. */
+    function bringIntoView() {
+      var nodes = row.hidden ? [said] : [use, said];
+      for (var i = 0; i < nodes.length; i += 1) {
+        if (typeof nodes[i].scrollIntoView === 'function') nodes[i].scrollIntoView({ block: 'nearest' });
+      }
     }
 
     function setLabel(words, pending) {
@@ -393,7 +470,9 @@
       var ended = !!entry && !moving;
       dom.setHidden(toggle, moving);
       dom.setAttr(toggle, 'aria-expanded', state.open && !moving ? 'true' : 'false');
-      dom.setHidden(box, !state.open || moving || (ended && entry.status === 'landed'));
+      var closed = !state.open || moving || (ended && entry.status === 'landed');
+      dom.setHidden(box, closed);
+      dom.setHidden(row, closed);
       if (entry) {
         say(said, claimTone(entry), claimSentence(entry, 'addmoney'));
       } else if (state.checked) {
@@ -401,9 +480,12 @@
       } else {
         say(said, null, '');
       }
+      var words = said.hidden ? '' : said.textContent;
+      if (words && words !== lastSaid) bringIntoView();
+      lastSaid = words;
       var good = state.checked === 'valid';
-      setLabel(good ? 'Add ' + (dollars(state.amount) || 'it') : COPY.use, good ? 'Adding' : 'Checking');
-      if (use.dataset.pending !== 'true') use.disabled = !String(input.value).trim();
+      setLabel(good ? 'Add ' + (dollars(state.amount) || 'it') : (state.checked === 'offline' ? COPY.retry : COPY.use), good ? 'Adding' : 'Checking');
+      if (use.dataset.pending !== 'true') use.disabled = holds(state.checked) || !String(input.value).trim();
     }
 
     function setOpen(on) {
@@ -416,8 +498,14 @@
         paint();
       };
       var motion = window.PhosphorMotion;
-      if (motion && typeof motion.morph === 'function') motion.morph(root, change, { fade: on ? box : null });
-      else change();
+      var grown = motion && typeof motion.morph === 'function' ? motion.morph(root, change, { fade: on ? box : null }) : change();
+      /* The line said while the field was still growing open (a code handed over from the
+         chat is checked at once) is brought into view again once it has its full height. */
+      if (on && grown && typeof grown.then === 'function') {
+        grown.then(function () {
+          if (state.alive && state.open && lastSaid) bringIntoView();
+        });
+      }
       if (on && typeof input.focus === 'function') input.focus();
     }
 
@@ -439,10 +527,16 @@
       state.entry = null;
     }
 
+    /* The person turned to the field: a failure kept for them has been read. */
+    function letGo() {
+      if (kept && state.entry === kept) kept = null;
+    }
+
     function check() {
       var code = String(input.value).trim();
       var door = api();
       if (!code || !door) return;
+      letGo();
       state.asked += 1;
       var mine = state.asked;
       if (state.entry) stopShowing();
@@ -464,19 +558,25 @@
     function add() {
       var code = String(input.value).trim();
       if (!code) return;
+      letGo();
       var handle = claim(code, { amount: state.amount, asset: state.asset });
       input.value = '';
       state.checked = null;
       follow(handle);
     }
 
-    /* Show a claim in place: one this line asked for (`handle`), or one already running
-       that something else asked for. */
+    /* Show a claim in place: one this line asked for (`handle`), one already running that
+       something else asked for, or the failure kept for the person, said on the closed line. */
     function follow(handle) {
       if (!state.alive) return;
+      var quiet = false;
       if (!handle) {
         if (state.entry) return;
         var other = running();
+        if (!other && kept) {
+          other = kept;
+          quiet = true;
+        }
         if (!other) return;
         handle = { watch: function (show) { return attach(other, show); } };
       }
@@ -484,19 +584,31 @@
       state.detach = handle.watch(function (status, entry) {
         if (!state.alive) return false;
         state.entry = entry;
-        if (status === 'landed' || status === 'failed' || status === 'refused') state.open = status !== 'landed';
+        if (!quiet && (status === 'landed' || status === 'failed' || status === 'refused')) state.open = status !== 'landed';
         paint();
         return visible();
       });
     }
 
-    dom.on(toggle, 'click', function () { setOpen(!state.open); });
+    /* A busy refusal is over when the claim it named ends: the key is lit again for the
+       same code, and the sentence about that claim goes. */
+    var stopEnds = onEnd(function () {
+      if (!state.alive || state.checked !== 'busy') return;
+      state.checked = null;
+      paint();
+    });
+
+    dom.on(toggle, 'click', function () {
+      letGo();
+      setOpen(!state.open);
+    });
     dom.on(use, 'click', function () {
       if (state.checked === 'valid') add();
       else check();
     });
     dom.on(input, 'input', function () {
       /* An edit takes back what was said about the code before it. */
+      letGo();
       state.asked += 1;
       if (use.dataset.pending === 'true') pending(false);
       state.checked = null;
@@ -529,6 +641,7 @@
           forget();
           paint();
         }
+        if (on) follow(null);
       },
       follow: function () { follow(null); },
       /* The code out of the field, nothing redrawn: for a host on its way off screen. */
@@ -538,6 +651,7 @@
       },
       destroy: function () {
         state.alive = false;
+        stopEnds();
         state.asked += 1;
         input.value = '';
         if (state.detach) state.detach();
@@ -592,6 +706,8 @@
     dollars: dollars,
     say: say,
     toneOf: toneOf,
+    holds: holds,
+    onEnd: onEnd,
     codeInput: codeInput,
     check: function (code) {
       var door = api();

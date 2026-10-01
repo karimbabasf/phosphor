@@ -203,7 +203,7 @@ type World = {
   screen: Any;
   body: Any;
   calls: Any[];
-  toasts: Array<{ words: string; tone: string }>;
+  toasts: Array<{ words: string; tone: string; stay?: boolean }>;
   answers: Record<string, Answer>;
   store: Any;
   logs: string[];
@@ -231,7 +231,7 @@ function build(options: { terms?: boolean; vault?: Any; money?: boolean; deposit
   for (const id of ['screen-firstrun', 'page']) nodes[id] = makeNode('div');
   const body = makeNode('body');
   const calls: Any[] = [];
-  const toasts: Array<{ words: string; tone: string }> = [];
+  const toasts: Array<{ words: string; tone: string; stay?: boolean }> = [];
   const logs: string[] = [];
   const answers: Record<string, Answer> = {
     'agent-scan': { ok: true, agents: [], picked: null },
@@ -290,7 +290,12 @@ function build(options: { terms?: boolean; vault?: Any; money?: boolean; deposit
     setView: (name: string) => { calls.push({ route: 'setView', view: name }); },
     view: () => 'basic',
   };
-  sandbox.PhosphorToast = { show: (words: string, tone: string) => { toasts.push({ words, tone }); } };
+  /* A toast that stays until it is put away is recorded as such: a failed claim's must. */
+  sandbox.PhosphorToast = {
+    show: (words: string, tone: string, opts?: Any) => { toasts.push(opts && opts.stay ? { words, tone, stay: true } : { words, tone }); },
+  };
+  /* What scrolls: a node the test marks with style.overflowY. */
+  sandbox.getComputedStyle = (n: Any) => ({ overflowY: (n && n.style && n.style.overflowY) || 'visible' });
   sandbox.PhosphorMoneyIn = { render: (host: Any) => { host.appendChild(makeNode('div')); return { destroy() {} }; } };
   sandbox.PhosphorApi = {
     vaultCreate: () => Promise.resolve({ ok: true, addresses: { evm: '0xabc' } }),
@@ -467,37 +472,64 @@ test('a typed code is checked by Use code, or by Enter in the field', async () =
   assert.equal(said(screen), 'Nice. $5 is waiting for you.');
 });
 
-test('each refusal is its own calm sentence over the same Use code, and nothing the network said is printed', async () => {
-  const cases: Array<[Answer, string]> = [
-    [{ ok: false, reason: 'typo' }, 'That code has a typo. Check it and try again.'],
-    [{ ok: false, reason: 'empty' }, 'This code has nothing left in it. Ask whoever sent it for a new one.'],
-    [{ ok: false, reason: 'offline' }, 'Couldn\'t check the code right now. You can add it later from Add money.'],
-    [{ ok: false, reason: 'locked' }, 'This code can\'t pay out. Ask whoever sent it for a new one.'],
-    [{ ok: false, reason: 'busy' }, 'A code is already on its way to your wallet. Give it a minute.'],
-    [Object.assign(new Error('Failed to fetch'), { status: 0 }), 'Couldn\'t check the code right now. You can add it later from Add money.'],
-    [Object.assign(new Error('missing or wrong token'), { status: 403 }), 'Couldn\'t check the code right now. You can add it later from Add money.'],
-    [Object.assign(new Error('not found'), { status: 404 }), 'Couldn\'t check the code right now. You can add it later from Add money.'],
-    [{ ok: false, reason: 'something the app never said before' }, 'Couldn\'t check the code right now. You can add it later from Add money.'],
+test('each refusal is its own calm sentence, and the key says what pressing it again would do', async () => {
+  const OFFLINE = 'Couldn\'t check the code right now. You can add it later from Add money.';
+  // [answer, sentence, tone, key label, key off]: a code that holds nothing or cannot pay keeps
+  // Use code off until the field changes, busy waits with the spinner, offline is Try again.
+  const cases: Array<[Answer, string, string, string, boolean]> = [
+    [{ ok: false, reason: 'typo' }, 'That code has a typo. Check it and try again.', 'warn', 'Use code', false],
+    [{ ok: false, reason: 'empty' }, 'This code has nothing left in it. Ask whoever sent it for a new one.', 'warn', 'Use code', true],
+    [{ ok: false, reason: 'offline' }, OFFLINE, 'warn', 'Try again', false],
+    [{ ok: false, reason: 'locked' }, 'This code can\'t pay out. Ask whoever sent it for a new one.', 'warn', 'Use code', true],
+    [{ ok: false, reason: 'busy' }, 'A code is already on its way to your wallet. Give it a minute.', 'wait', 'Use code', true],
+    [Object.assign(new Error('Failed to fetch'), { status: 0 }), OFFLINE, 'warn', 'Try again', false],
+    [Object.assign(new Error('missing or wrong token'), { status: 403 }), OFFLINE, 'warn', 'Try again', false],
+    [Object.assign(new Error('not found'), { status: 404 }), OFFLINE, 'warn', 'Try again', false],
+    [{ ok: false, reason: 'something the app never said before' }, OFFLINE, 'warn', 'Try again', false],
   ];
-  for (const [answer, words] of cases) {
+  for (const [answer, words, tone, key, off] of cases) {
     const world = build();
     world.answers['/api/invite/check'] = answer;
     const screen = toInvite(world);
     await paste(world);
     assert.equal(said(screen), words);
-    // Busy is a wait, with the spinner: a claim is running and nothing is wrong.
-    const busy = words.startsWith('A code is already');
-    assert.equal(find(screen, '.firstrun-invite-said')[0].getAttribute('data-tone'), busy ? 'wait' : 'warn');
-    assert.equal(find(screen, '.invite-said-spin').length, busy ? 1 : 0, `${words}: the wrong glyph`);
-    assert.equal(primary(screen).textContent, 'Use code', 'a refused code turned the key into Continue');
-    assert.equal(primary(screen).disabled, false, 'Use code cannot be pressed again');
+    const line = find(screen, '.firstrun-invite-said')[0];
+    assert.equal(line.getAttribute('data-tone'), tone, `${words}: the wrong tone`);
+    assert.equal(find(line, '.invite-said-spin').length, tone === 'wait' ? 1 : 0, `${words}: the spinner is ${tone === 'wait' ? 'missing' : 'on a problem'}`);
+    assert.equal(primary(screen).textContent, key, `${words}: the key says the wrong thing`);
+    assert.equal(primary(screen).disabled, off, `${words}: the key is ${off ? 'lit for the same answer again' : 'off'}`);
+    assert.equal(checks(world).length, 1);
+    if (!off) {
+      primary(screen).click();
+      await flush();
+      assert.equal(checks(world).length, 2, `${words}: ${key} did not check again`);
+    }
     assert.ok(buttonNamed(screen, 'Skip'), 'Skip went away with a refusal');
     assert.ok(!visibleText(screen).some((t) => /RAW:|Failed to fetch|token|not found/.test(t)), 'a network word reached the screen');
-    // An edit takes the sentence back.
+    // An edit takes the sentence back, and the key is Use code again.
     field(screen).value = 'PHOS';
     field(screen).dispatch('input');
     assert.equal(said(screen), '');
+    assert.equal(primary(screen).textContent, 'Use code');
+    assert.equal(primary(screen).disabled, false, `${words}: an edit did not light the key`);
   }
+});
+
+test('busy keeps Use code off until the running claim ends, and a claim still running does not light it', async () => {
+  const world = build();
+  world.answers['/api/invite/check'] = { ok: false, reason: 'busy' };
+  const screen = toInvite(world);
+  await paste(world);
+  assert.equal(primary(screen).disabled, true);
+  world.emit('invite', { claim: 'c-elsewhere', status: 'running', amount: '5.00', asset: 'USDC' });
+  assert.equal(primary(screen).disabled, true, 'a claim that is still running lit the key');
+  world.emit('invite', { claim: 'c-elsewhere', status: 'landed', amount: '5.00', asset: 'USDC' });
+  assert.equal(primary(screen).disabled, false, 'the claim ended and the key stayed off');
+  assert.equal(said(screen), '', 'the busy sentence stayed after the claim it named ended');
+  assert.equal(field(screen).value, CODE, 'the code left the field');
+  primary(screen).click();
+  await flush();
+  assert.equal(checks(world).length, 2, 'Use code did not check again once the claim ended');
 });
 
 test('an answer for a code that was edited, skipped or left behind is dropped', async () => {
@@ -619,7 +651,7 @@ test('an end that comes after the person moved on is a toast on Basic, and close
   assert.equal(lateScreen.hidden, true);
   assert.equal(late.toasts.length, 0);
   late.emit('invite', { claim: 'c-1', status: 'failed', amount: '5.00', asset: 'USDC' });
-  assert.deepEqual(late.toasts, [{ words: 'Your $5 didn\'t come through. Add the code again from Add money.', tone: 'down' }]);
+  assert.deepEqual(late.toasts, [{ words: 'Your $5 didn\'t come through. Add the code again from Add money.', tone: 'down', stay: true }]);
   // Said once: the same end again (the stream and the state both carry it) is not a second toast.
   late.emit('invite', { claim: 'c-1', status: 'failed' });
   late.store.put({ ...late.store.get(), invite: { claim: 'c-1', status: 'failed', amount: '5.00' } });
@@ -839,18 +871,20 @@ test('Add money: Have an invite code? opens the field, a good code turns the key
 });
 
 test('Add money: a paste is checked at once, and each refusal says what to do in the field\'s own words', async () => {
-  const cases: Array<[string, Answer, string]> = [
-    ['check', { ok: false, reason: 'typo' }, 'That code has a typo. Check it and try again.'],
-    ['check', { ok: false, reason: 'empty' }, 'This code has nothing left in it. Ask whoever sent it for a new one.'],
-    ['check', { ok: false, reason: 'offline' }, 'Couldn\'t check the code right now. Try again in a moment.'],
-    ['check', new Error('Failed to fetch'), 'Couldn\'t check the code right now. Try again in a moment.'],
-    ['check', { ok: false, reason: 'locked' }, 'This code can\'t pay out. Ask whoever sent it for a new one.'],
-    ['check', { ok: false, reason: 'busy' }, 'A code is already on its way to your wallet. Give it a minute.'],
-    ['claim', { ok: false, reason: 'wallet-locked' }, 'Your $5 didn\'t come through. Paste the code again to try once more.'],
-    ['claim', { ok: false, reason: 'empty' }, 'This code has nothing left in it. Ask whoever sent it for a new one.'],
-    ['claim', new Error('Failed to fetch'), 'Your $5 didn\'t come through. Paste the code again to try once more.'],
+  const EMPTY = 'This code has nothing left in it. Ask whoever sent it for a new one.';
+  const OFFLINE = 'Couldn\'t check the code right now. Try again in a moment.';
+  const cases: Array<[string, Answer, string, string, string, boolean]> = [
+    ['check', { ok: false, reason: 'typo' }, 'That code has a typo. Check it and try again.', 'warn', 'Use code', false],
+    ['check', { ok: false, reason: 'empty' }, EMPTY, 'warn', 'Use code', true],
+    ['check', { ok: false, reason: 'offline' }, OFFLINE, 'warn', 'Try again', false],
+    ['check', new Error('Failed to fetch'), OFFLINE, 'warn', 'Try again', false],
+    ['check', { ok: false, reason: 'locked' }, 'This code can\'t pay out. Ask whoever sent it for a new one.', 'warn', 'Use code', true],
+    ['check', { ok: false, reason: 'busy' }, 'A code is already on its way to your wallet. Give it a minute.', 'wait', 'Use code', true],
+    ['claim', { ok: false, reason: 'wallet-locked' }, 'Your $5 didn\'t come through. Paste the code again to try once more.', 'warn', 'Use code', true],
+    ['claim', { ok: false, reason: 'empty' }, EMPTY, 'warn', 'Use code', true],
+    ['claim', new Error('Failed to fetch'), 'Your $5 didn\'t come through. Paste the code again to try once more.', 'warn', 'Use code', true],
   ];
-  for (const [route, answer, words] of cases) {
+  for (const [route, answer, words, tone, key, off] of cases) {
     const world = build({ money: true });
     world.answers[`/api/invite/${route}`] = answer;
     const { host } = fold(world);
@@ -866,12 +900,150 @@ test('Add money: a paste is checked at once, and each refusal says what to do in
       await flush();
     }
     assert.equal(lineSaid(host), words);
-    assert.equal(find(host, '.invite-said')[0].getAttribute('data-tone'), words.startsWith('A code is already') ? 'wait' : 'warn');
+    assert.equal(find(host, '.invite-said')[0].getAttribute('data-tone'), tone);
     assert.equal(find(host, '.invite-box')[0].hidden, false, `${words}: the field closed on a problem`);
-    assert.equal(lineKey(host).textContent, 'Use code');
+    assert.equal(lineKey(host).textContent, key);
+    // A claim takes the code out of the field, so its key is off for that reason alone.
+    assert.equal(lineKey(host).disabled, off, `${words}: the key is ${off ? 'lit for the same answer again' : 'off'}`);
     assert.equal(world.toasts.length, 0);
     assert.ok(!visibleText(host).some((t) => /RAW:|Failed to fetch/.test(t)));
+    lineField(host).value = CODE + ' ';
+    lineField(host).dispatch('input');
+    assert.equal(lineKey(host).textContent, 'Use code');
+    assert.equal(lineKey(host).disabled, false, `${words}: an edit did not light the key`);
   }
+});
+
+test('Add money: busy keeps Use code off until the running claim ends', async () => {
+  const world = build({ money: true });
+  world.answers['/api/invite/check'] = { ok: false, reason: 'busy' };
+  const { host } = fold(world);
+  buttonNamed(host, 'Have an invite code?').click();
+  lineField(host).value = CODE;
+  lineField(host).dispatch('input');
+  lineKey(host).click();
+  await flush();
+  assert.equal(lineKey(host).disabled, true);
+  world.emit('invite', { claim: 'c-elsewhere', status: 'failed', amount: '5.00', asset: 'USDC' });
+  assert.equal(lineKey(host).disabled, false, 'the claim ended and the key stayed off');
+  assert.equal(lineField(host).value, CODE);
+});
+
+/* Where things sit on the line, in the order a person reads them. */
+function order(host: Any): string[] {
+  const out: string[] = [];
+  const walk = (n: Any): void => {
+    for (const child of n.childNodes) {
+      const cls = String(child.className);
+      if (/\binvite-open\b/.test(cls)) out.push('toggle');
+      else if (/\binvite-input\b/.test(cls)) out.push('field');
+      else if (/\binvite-said\b/.test(cls)) out.push('said');
+      else if (/\binvite-use\b/.test(cls)) out.push('key');
+      walk(child);
+    }
+  };
+  walk(host);
+  return out;
+}
+
+/* A box on screen, in the window's pixels. */
+const at = (top: number, bottom: number): (() => Any) => () => ({ top, bottom, left: 0, right: 400, width: 400, height: bottom - top });
+
+test('Add money: the line sits between the field and the key, and is scrolled into view each time it changes', async () => {
+  const world = build({ money: true });
+  const { host } = fold(world);
+  assert.deepEqual(order(host), ['toggle', 'field', 'said', 'key']);
+  const line = find(host, '.invite-said')[0];
+  const scrolled: Any[] = [];
+  line.scrollIntoView = (opts: Any) => { scrolled.push({ ...opts }); };
+  buttonNamed(host, 'Have an invite code?').click();
+  lineField(host).value = CODE;
+  lineField(host).dispatch('input');
+  lineKey(host).click();
+  await flush();
+  assert.deepEqual(scrolled, [{ block: 'nearest' }], 'the good news was not brought into view');
+  lineKey(host).click();
+  await flush();
+  assert.equal(scrolled.length, 2, 'the running line was not brought into view');
+  world.emit('invite', { claim: 'c-1', status: 'failed', amount: '5.00', asset: 'USDC' });
+  assert.equal(scrolled.length, 3, 'the failure was not brought into view');
+  assert.ok(scrolled.every((o) => o.block === 'nearest'));
+});
+
+test('Add money: a line below its scroller\'s fold is not seen, so its end is a toast that stays until it is put away', async () => {
+  for (const scrolls of [false, true]) {
+    const world = build({ money: true });
+    const slab = makeNode('div');
+    slab.style.overflowY = 'auto';
+    slab.getBoundingClientRect = at(0, 500);
+    const { host } = fold(world);
+    slab.appendChild(host);
+    const line = find(host, '.invite-said')[0];
+    // In the DOM and drawn (getClientRects has a box), but under the slab's fold.
+    line.getClientRects = () => [{}];
+    line.getBoundingClientRect = at(560, 580);
+    line.scrollIntoView = () => { if (scrolls) line.getBoundingClientRect = at(470, 490); };
+    buttonNamed(host, 'Have an invite code?').click();
+    lineField(host).value = CODE;
+    lineField(host).dispatch('input');
+    lineKey(host).click();
+    await flush();
+    lineKey(host).click();
+    await flush();
+    world.emit('invite', { claim: 'c-1', status: 'failed', amount: '5.00', asset: 'USDC' });
+    assert.equal(lineSaid(host), 'Your $5 didn\'t come through. Paste the code again to try once more.');
+    if (scrolls) {
+      assert.deepEqual(world.toasts, [], 'a line scrolled into view was said again as a toast');
+    } else {
+      assert.deepEqual(world.toasts, [{ words: 'Your $5 didn\'t come through. Add the code again from Add money.', tone: 'down', stay: true }],
+        'a failure under the fold went unseen');
+    }
+  }
+  // A landed claim's toast still goes on its own.
+  const world = build({ money: true });
+  const { host } = fold(world);
+  buttonNamed(host, 'Have an invite code?').click();
+  lineField(host).value = CODE;
+  lineField(host).dispatch('input');
+  lineKey(host).click();
+  await flush();
+  lineKey(host).click();
+  await flush();
+  find(host, '.invite-said')[0].getClientRects = () => [];
+  world.emit('invite', { claim: 'c-1', status: 'landed', amount: '5.00', asset: 'USDC' });
+  assert.deepEqual(world.toasts, [{ words: '$5 USDC is in your wallet.', tone: 'up' }]);
+});
+
+test('Add money: a failed claim stays on the closed line until the person opens it', async () => {
+  const world = build({ money: true });
+  world.sandbox.PhosphorInvite.claim(CODE, { amount: '5.00', asset: 'USDC' });
+  await flush();
+  world.emit('invite', { claim: 'c-1', status: 'failed', amount: '5.00', asset: 'USDC' });
+  assert.equal(world.toasts.length, 1);
+  const FAILED = 'Your $5 didn\'t come through. Paste the code again to try once more.';
+  // Add money opened after it: the closed line says it, the field stays shut.
+  const first = fold(world);
+  assert.equal(lineSaid(first.host), FAILED);
+  assert.equal(find(first.host, '.invite-said')[0].getAttribute('data-tone'), 'warn');
+  assert.equal(find(first.host, '.invite-box')[0].hidden, true, 'the field opened without a click');
+  assert.equal(find(first.host, '.invite-open')[0].hidden, false);
+  // Off the network step and back: still said.
+  first.steps.go('tokens');
+  first.steps.go('network');
+  assert.equal(lineSaid(first.host), FAILED, 'leaving the step dropped the failure');
+  first.steps.destroy();
+  // Closed and opened again: still said.
+  const second = fold(world);
+  assert.equal(lineSaid(second.host), FAILED, 'closing Add money dropped the failure');
+  // Opened: the field is ready for the code, and the failure has been read.
+  buttonNamed(second.host, 'Have an invite code?').click();
+  assert.equal(lineSaid(second.host), '');
+  assert.equal(find(second.host, '.invite-box')[0].hidden, false);
+  second.steps.destroy();
+  const third = fold(world);
+  assert.equal(lineSaid(third.host), '', 'a failure the person opened came back');
+  assert.equal(world.toasts.length, 1, 'the failure was toasted again');
+  assert.equal(claims(world).length, 1, 'showing a failure claimed again');
 });
 
 test('Add money: the line is on the network step only, a code from the chat opens it there, and the first run draws none', async () => {
@@ -926,7 +1098,7 @@ test('Add money: a claim already running shows on the line, and a line off scree
   await flush();
   fresh.steps.go('tokens');
   away.emit('invite', { claim: 'c-1', status: 'failed', amount: '5.00', asset: 'USDC' });
-  assert.deepEqual(away.toasts, [{ words: 'Your $5 didn\'t come through. Add the code again from Add money.', tone: 'down' }]);
+  assert.deepEqual(away.toasts, [{ words: 'Your $5 didn\'t come through. Add the code again from Add money.', tone: 'down', stay: true }]);
 });
 
 test('the deposit card keeps the line to the step titled Add money, and closing the card wipes the code', async () => {
@@ -950,4 +1122,41 @@ test('the deposit card keeps the line to the step titled Add money, and closing 
   // Opened again, the card draws a fresh line.
   await world.sandbox.PhosphorDeposit.open({ chain: 'eth', symbol: 'ETH' });
   assert.equal(find(dialog, '.invite-line').length, 1);
+});
+
+test('the toast: one asked to stay has a quiet close key and goes only when it is pressed', () => {
+  const body = makeNode('body');
+  const timers: Array<() => void> = [];
+  const sandbox: Any = {
+    document: { body, createElement: makeNode, getElementById: () => null, querySelectorAll: () => [], addEventListener() {} },
+    setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; },
+    clearTimeout() {},
+    PhosphorIcons: { svg: (name: string) => { const n = makeNode('svg'); n.className = 'icon'; n.setAttribute('data-icon', name); return n; } },
+    console,
+  };
+  sandbox.window = sandbox;
+  createContext(sandbox);
+  runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
+  runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
+  runInContext(read('../../ui/screens/feedback.js'), sandbox, { filename: 'ui/screens/feedback.js' });
+  const run = (): void => { while (timers.length) (timers.shift() as () => void)(); };
+
+  // The usual toast leaves on its own and has no key.
+  const plain = sandbox.PhosphorToast.show('Saved.', 'up');
+  assert.equal(find(plain, 'button').length, 0);
+  run();
+  assert.equal(plain.parentNode, null, 'a plain toast stayed');
+
+  const stays = sandbox.PhosphorToast.show('Your $5 didn\'t come through.', 'down', { stay: true });
+  run();
+  assert.ok(stays.parentNode, 'a toast asked to stay left on its own');
+  assert.equal(stays.textContent, 'Your $5 didn\'t come through.');
+  const close = find(stays, 'button.dock-close')[0];
+  assert.ok(close, 'no close key');
+  assert.equal(close.getAttribute('aria-label'), 'Close');
+  assert.equal(find(close, 'svg')[0].getAttribute('data-icon'), 'close', 'the key is not the app\'s own close glyph');
+  close.click();
+  assert.equal(stays.dataset.leaving, 'true', 'the close key did not start the exit');
+  run();
+  assert.equal(stays.parentNode, null, 'the close key did not put the toast away');
 });

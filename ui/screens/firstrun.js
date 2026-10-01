@@ -677,9 +677,10 @@
   /* HAVE AN INVITE CODE? After the welcome and the terms, before the wallet, in
      every flow, and not counted by the progress. Skip is the quiet default: a
      person with no code presses it and the wallet steps start where they always
-     did, and Use code stays an outline until the field holds something. A
-     pasted code is checked the moment it lands, a typed one when Use code is
-     pressed. The check moves nothing. A good code is kept in the draft beside
+     did, and Use code stays an outline until the field holds something, or
+     after a refusal the same code would get again until the field changes
+     (invite.js holds). A pasted code is checked the moment it lands, a typed
+     one when Use code is pressed. The check moves nothing. A good code is kept in the draft beside
      the password and the phrase, the key turns into Continue, and the claim
      fires on the addresses step, the first moment there is a wallet to pay
      (claimInvite). close() wipes it with the rest. */
@@ -727,10 +728,17 @@
     function paint() {
       var good = checked === 'valid';
       invite.say(said, checked ? invite.toneOf(checked) : null, checked ? invite.sentence(checked, 'firstrun', draft.inviteAmount, draft.inviteAsset) : '');
-      dom.setText(primary.querySelector('.btn-label'), good ? 'Continue' : words.use);
+      dom.setText(primary.querySelector('.btn-label'), good ? 'Continue' : (checked === 'offline' ? words.retry : words.use));
       dom.setHidden(skip, good);
-      if (primary.dataset.pending !== 'true') primary.disabled = !good && !String(input.value).trim();
+      if (primary.dataset.pending !== 'true') primary.disabled = invite.holds(checked) || (!good && !String(input.value).trim());
     }
+
+    /* Busy is over when the claim it named ends: the same code can be checked again. */
+    var stopEnds = invite.onEnd(function () {
+      if (!live || checked !== 'busy') return;
+      checked = null;
+      paint();
+    });
 
     function check() {
       var code = String(input.value).trim();
@@ -779,6 +787,7 @@
     stepHandle = {
       destroy: function () {
         live = false;
+        stopEnds();
         asked += 1;
       }
     };

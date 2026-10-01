@@ -41,7 +41,11 @@ the wrong network is lost, and the bridge does not refund. Send a small test amo
 Under the network tiles, Have an invite code? opens a field for a Phosphor invite code. A pasted
 code is checked at once, and Use code checks a typed one. A good code says what is waiting
 ("Nice. $5 is waiting for you."), and Add $5 moves it into your wallet; that can take up to two
-minutes, and the line says when it lands. The deposit card has the same line on its first step.
+minutes, and the line says when it lands. What the app says about the code sits between the field
+and the key, and scrolls into view when it changes. A code that holds nothing, or cannot pay, keeps
+Use code off until you change the field; if the app could not check it, the key says Try again. A
+claim that did not come through stays said on the closed line until you open it. The deposit card
+has the same line on its first step.
 
 ### When NEAR Intents pauses a network
 
@@ -93,7 +97,7 @@ figure before you claim. If 1Click refunds it, the refund goes back to the code,
 ends only once the refund shows there.
 
 A claim that fails moves nothing: the money stays on the code, and you can add it again from Add
-money. If the app quits in the middle of a claim, it finishes the check the next time it opens.
+money. If you had moved on, the note on Basic stays until you close it. If the app quits in the middle of a claim, it finishes the check the next time it opens.
 A code pays once; a second claim says "This code has nothing left in it. Ask whoever sent it for
 a new one."
 
