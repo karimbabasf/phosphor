@@ -114,21 +114,18 @@
 }
 
 /* The field straight on the slab, a well pressed into it like the network
-   search above, with its key under it at the full width: the slab is narrow,
-   and a code beside a key would show a third of itself. No tile around them,
-   so it is never a card inside the slab's card. */
-.invite-box {
+   search above, then the line about the code, then its key at the full width:
+   the slab is narrow, and a code beside a key would show a third of itself. No
+   tile around them, so it is never a card inside the slab's card. */
+.invite-box,
+.invite-row {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
   align-self: stretch;
 }
 
-.invite-row {
-  flex-direction: column;
-}
-
-.invite-row .input {
+.invite-box .input {
   min-height: 42px;
   background: var(--well-bg);
   border-color: transparent;

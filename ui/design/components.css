@@ -971,6 +971,24 @@ textarea.input {
   transform: translateY(8px);
 }
 
+/* One that stays until it is put away: its words, then the card's own quiet X,
+   pulled into the toast's padding so the toast keeps its height. */
+.toast-stay {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+
+.toast-words {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.toast-stay .dock-close {
+  margin: -6px -10px -6px 0;
+}
+
 /* ---------- Empty state ---------- */
 
 .empty {
