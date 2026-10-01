@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { whatsNew } from '../../src/whats-new.ts';
+import { PAYLOAD } from '../../scripts/payload-digest.ts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -37,5 +38,5 @@ test('a copy with no changelog says so instead of failing', () => {
 test('the real changelog opens on the version in package.json, and the bundle ships it', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { version: string };
   assert.ok(whatsNew(ROOT, '').startsWith(`## ${pkg.version}`));
-  assert.match(fs.readFileSync(path.join(ROOT, 'scripts', 'bundle-payload.ts'), 'utf8'), /'docs\/changelog\.md'/);
+  assert.ok(PAYLOAD.includes('docs/changelog.md'), 'the bundle does not ship the changelog');
 });

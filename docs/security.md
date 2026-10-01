@@ -171,6 +171,13 @@ The three agree when your copy is the one that tag builds. Only the files' conte
 into the digest, never dates or owners, so the same tag gives the same digest on any Mac. Finder's
 `.DS_Store` files are left out because Finder writes one into any folder it shows.
 
+In that clone, the check the release itself passed before and after signing compares your copy
+with the tag file by file and reads the entitlements of every binary in it:
+
+```
+node scripts/release-check.ts --app /Applications/Phosphor.app --checkout . --stage signed
+```
+
 ## The lock
 
 The wallet locks after five minutes with nobody at the window by default (the Vault tab

@@ -21,7 +21,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { payloadDigest } from './payload-digest.ts';
+import { PAYLOAD, payloadDigest } from './payload-digest.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TAURI = path.join(ROOT, 'src-tauri');
@@ -35,14 +35,6 @@ const MANIFEST_FILE = path.join(TAURI, 'payload', 'phosphor.manifest');
 // Rust's target triple, which is what Tauri appends to every externalBin filename.
 const TRIPLE = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
 
-// What the app reads at runtime. config.local.json is deliberately absent: it is the writable
-// half and lives in Application Support, not in a read-only bundle. So is state/, and so are
-// the keys, which have never been in the working copy at all.
-// `operator` carries the two lockdown files. Without it an installed app can still run, and the
-// driver would refuse to start rather than spawn an agent whose tool surface it cannot vouch for,
-// which is the correct failure and a useless one. It ships.
-// docs/changelog.md alone, not docs/ (37 MB of pictures): the agent's whats_new reads it.
-const PAYLOAD = ['src', 'ui', 'data', 'skills', 'operator', 'config.json', 'package.json', 'package-lock.json', 'docs/changelog.md'];
 
 // Removed after `npm ci`. The rule is deliberately narrow: only files Node can never load at
 // runtime. Sourcemaps and .d.ts declarations qualify, and nothing else does.

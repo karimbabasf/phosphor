@@ -540,8 +540,12 @@ runs `scripts/notarize-mac.sh`: it signs every nested binary and the Secure Encl
 inside out with the Developer ID from its secrets (hardened runtime, secure timestamp), has Apple
 notarize the app and the disk image, and staples both. A release without those secrets fails
 before it signs anything. That job installs and builds nothing (the build job, which holds no
-secret, does), deletes the signing keychain right after the script, and only then signs the
-updater bundle with `scripts/updater-sign.ts`, which uses Node's own crypto. The same chain runs on
+secret, does). Before it signs, it holds the unsigned app to its own checkout with
+`scripts/release-check.ts` (first-party payload files byte for byte, the digest the shell carries,
+the committed entitlements on the app's executables and none on any other binary), and it runs the
+same check on the signed app in the DMG and in the update. It deletes the signing keychain right
+after the script, and only then signs the updater bundle with `scripts/updater-sign.ts`, which uses
+Node's own crypto. The same chain runs on
 a Mac, checks included, with nothing published:
 
     npm run notarize:local

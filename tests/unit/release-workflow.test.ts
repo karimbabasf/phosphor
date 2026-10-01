@@ -67,15 +67,24 @@ test('no job that holds a signing secret installs, builds or runs code it did no
         if (step.uses.startsWith('actions/setup-node@')) assert.equal(step.with?.cache, undefined, `${label}: no package cache`);
       }
     }
-    // The scripts it runs import nothing but Node's own modules.
+    // The scripts it runs import nothing but Node's own modules, directly or through a script
+    // beside them that does the same.
     const scripts = new Set([...runs(job).matchAll(/(?:^|[\s;&|(])node (scripts\/[\w./-]+)/gm)].map((m) => m[1]));
-    assert.ok(scripts.has('scripts/updater-sign.ts') && scripts.has('scripts/release-manifest.ts'));
-    for (const script of scripts) {
+    assert.ok(scripts.has('scripts/updater-sign.ts') && scripts.has('scripts/release-manifest.ts') && scripts.has('scripts/release-check.ts'));
+    const read = new Set<string>();
+    const walk = (script: string): void => {
+      if (read.has(script)) return;
+      read.add(script);
       const source = fs.readFileSync(new URL(script, root), 'utf8');
       const imports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
       assert.ok(imports.length > 0, script);
-      for (const name of imports) assert.match(name, /^node:/, `${script} imports ${name}`);
-    }
+      for (const name of imports) {
+        if (/^\.\/[\w-]+\.ts$/.test(name)) walk(script.replace(/[^/]+$/, '') + name.slice(2));
+        else assert.match(name, /^node:/, `${script} imports ${name}`);
+      }
+    };
+    for (const script of scripts) walk(script);
+    assert.ok(read.has('scripts/payload-digest.ts'), 'the release check reads the digest rule the bundler wrote');
     assert.match(all(job), /bash scripts\/notarize-mac\.sh/);
     assert.doesNotMatch(fs.readFileSync(new URL('scripts/notarize-mac.sh', root), 'utf8'), /\bnpx\b|\bnpm\b|tauri signer|TAURI_SIGNING/);
   }
@@ -174,6 +183,27 @@ test('what the later jobs download is checked against the digests the sign job w
     assert.equal(steps[check].env?.SUMS, '${{ needs.sign.outputs.sums }}');
     assert.ok([jobs[name].needs].flat().includes('sign'));
   }
+});
+
+test('the unsigned build is held to the checkout before any key is in the sign job, and both shipped apps again after', () => {
+  const steps = jobs.sign.steps;
+  const at = (name: string) => steps.findIndex((step) => step.name === name);
+  const unpack = at('Unpack the unsigned build');
+  const before = steps.findIndex((step) => /^node scripts\/release-check\.ts --app "src-tauri\/target\/\$TARGET\/release\/bundle\/macos\/Phosphor\.app" --checkout \. --stage built$/m.test(step.run ?? ''));
+  const keychain = at('The signing keychain and the notarization credentials');
+  const notarize = at('Sign, notarize and staple the app and the DMG');
+  assert.ok(unpack >= 0 && before === unpack + 1, 'the check runs on the build as soon as it is unpacked');
+  assert.ok(before < keychain && keychain < notarize, 'and before the keychain exists');
+  assert.equal(secretsOf(steps[before]).size, 0, 'the check holds no secret');
+  assert.equal(steps[before].if, undefined, 'the check always runs');
+
+  const verify = steps.find((step) => step.name === "The app and the DMG pass Gatekeeper, and the update passes the installed app's check")?.run ?? '';
+  const inDmg = verify.indexOf('node scripts/release-check.ts --app "$RUNNER_TEMP/dmg/Phosphor.app" --checkout . --stage signed || { hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }');
+  const detach = verify.indexOf('hdiutil detach "$RUNNER_TEMP/dmg"\n');
+  const unpacked = verify.indexOf('tar -xzf "$tarball" -C "$RUNNER_TEMP/update"');
+  const inUpdate = verify.indexOf('node scripts/release-check.ts --app "$RUNNER_TEMP/update/Phosphor.app" --checkout . --stage signed');
+  assert.ok(inDmg >= 0 && inDmg < detach, 'the app in the DMG is checked while the DMG is mounted');
+  assert.ok(unpacked >= 0 && inUpdate > unpacked, 'the app in the update is checked once it is unpacked');
 });
 
 test('npm run bundle runs before the shell compiles, so a digest it writes is compiled in', () => {

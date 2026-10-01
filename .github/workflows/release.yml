@@ -227,6 +227,15 @@ jobs:
           mkdir -p "src-tauri/target/$TARGET/release/bundle"
           tar -xzf "$RUNNER_TEMP/unsigned/unsigned.tar.gz" -C "src-tauri/target/$TARGET/release/bundle"
 
+      # Before any key is in this job: the build job's app against this checkout. The build job
+      # holds no secret, and this is what keeps it from choosing what gets signed: its first-party
+      # payload files must be this checkout's byte for byte, its shell must carry the digest of
+      # the payload beside it, and no binary may carry an entitlement the committed plist does not
+      # grant, because notarize-mac.sh keeps a nested binary's entitlements as it found them.
+      # Node's own modules and codesign, nothing installed (scripts/release-check.ts).
+      - name: The unsigned build is this checkout, with the committed entitlements
+        run: node scripts/release-check.ts --app "src-tauri/target/$TARGET/release/bundle/macos/Phosphor.app" --checkout . --stage built
+
       # The certificate goes into a keychain this job owns. Not Tauri's keychain: Tauri never sees
       # an Apple secret, and notarize-mac.sh signs everything, the Secure Enclave service and the
       # DMG included. The keychain is deleted by the step right after notarize-mac.sh.
@@ -322,7 +331,9 @@ jobs:
       # What Gatekeeper asks on first open, answered offline from the stapled tickets; and what an
       # installed copy asks before it installs the update: the minisign signature against the key
       # it holds, then the code signature against the requirement in src-tauri/src/update.rs
-      # (`requirement`, held equal to the line below by a test there).
+      # (`requirement`, held equal to the line below by a test there). Both apps that ship, the one
+      # in the DMG and the one in the update, are held to the checkout again once signed: the
+      # payload, the entitlements, the hardened runtime and one team on every binary.
       - name: The app and the DMG pass Gatekeeper, and the update passes the installed app's check
         run: |
           hdiutil attach "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
@@ -340,6 +351,7 @@ jobs:
           test -f "$RUNNER_TEMP/dmg/.DS_Store" || { echo "DMG has no Finder layout (.DS_Store missing)"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
           spctl -a -vv -t exec "$RUNNER_TEMP/dmg/Phosphor.app" || { hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
           xcrun stapler validate "$RUNNER_TEMP/dmg/Phosphor.app" || { hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+          node scripts/release-check.ts --app "$RUNNER_TEMP/dmg/Phosphor.app" --checkout . --stage signed || { hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
           hdiutil detach "$RUNNER_TEMP/dmg"
           codesign --verify --strict --verbose=2 "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
           spctl -a -vv -t open --context context:primary-signature "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
@@ -348,6 +360,7 @@ jobs:
           node scripts/updater-sign.ts "$tarball" --check --manifest "$RELEASE_DIR/latest.json"
           mkdir "$RUNNER_TEMP/update"
           tar -xzf "$tarball" -C "$RUNNER_TEMP/update"
+          node scripts/release-check.ts --app "$RUNNER_TEMP/update/Phosphor.app" --checkout . --stage signed
           codesign --verify --deep --strict --verbose=2 --test-requirement='=identifier "com.karimbabasf.phosphor" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and (certificate leaf[subject.OU] = "35Z6P26CBD")' "$RUNNER_TEMP/update/Phosphor.app"
 
       - name: Attest where the release assets came from
