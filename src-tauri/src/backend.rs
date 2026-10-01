@@ -268,6 +268,17 @@ const PAYLOAD_IN_BUNDLE: &str = "/Contents/Resources/phosphor/src/main.ts";
 /// refused one would ship a window with a dead backend.
 pub const NODE_FLAGS: [&str; 3] = ["--disable-sigusr1", "--no-addons", "--disallow-code-generation-from-strings"];
 
+/// Every flag list a shipped build started its backend with, each in its own order. The orphan
+/// survey reads these and nothing else: the launch right after an update is exactly when a
+/// backend the previous version started turns up lost, and it was started with that version's
+/// list. Read off every tag's spawn_backend: v0.4.0 to v0.11.0 passed none, and 0.10.13 is the
+/// first with NODE_FLAGS. A change to NODE_FLAGS adds its new list here and keeps every old one,
+/// and a test fails until it does.
+const SHIPPED_FLAG_LISTS: [&[&str]; 2] = [
+    &[],
+    &["--disable-sigusr1", "--no-addons", "--disallow-code-generation-from-strings"],
+];
+
 /// The environment names the control app reads, and the only ones it is handed, each passed on
 /// from this shell's environment when it is set there.
 ///
@@ -407,22 +418,21 @@ fn parent_and_command_from(out: &str) -> Option<(i32, String)> {
     Some((parent.parse().ok()?, command.trim_start().to_string()))
 }
 
-/// The two bundle paths in a backend's command line, when it has exactly the shape spawn_backend
-/// gives it and nothing after: `<bundle>/Contents/MacOS/node <NODE_FLAGS> <bundle>/Contents/Resources/phosphor/src/main.ts`.
-/// The caller proves the two are one bundle, and this app's. The line is cut at the runtime's own
-/// path rather than at a space, because a bundle path may hold one ("/Volumes/Phosphor 0.9.2").
-///
-/// The shape without the flags is accepted too. 0.10.12 and every build before it started the
-/// backend with none, and the launch after an update is exactly when one of those turns up lost.
-/// Any other flag, or the list in another order, is not spawn_backend's.
+/// The two bundle paths in a backend's command line, when it has exactly the shape a shipped
+/// spawn_backend gives it and nothing after: `<bundle>/Contents/MacOS/node <flags>
+/// <bundle>/Contents/Resources/phosphor/src/main.ts`, where the flags are one of
+/// SHIPPED_FLAG_LISTS. The caller proves the two are one bundle, and this app's. The line is cut
+/// at the runtime's own path rather than at a space, because a bundle path may hold one
+/// ("/Volumes/Phosphor 0.9.2"). Any other flag, or a list in another order, is not spawn_backend's.
 fn backend_bundles(command: &str) -> Option<(PathBuf, PathBuf)> {
     let (runtime, rest) = command.split_once(RUNTIME_IN_BUNDLE)?;
-    let flags = format!("{} ", NODE_FLAGS.join(" "));
-    let rest = rest.strip_prefix(flags.as_str()).unwrap_or(rest);
-    let payload = rest.strip_suffix(PAYLOAD_IN_BUNDLE)?;
-    if !runtime.starts_with('/') || !payload.starts_with('/') {
+    if !runtime.starts_with('/') {
         return None;
     }
+    let payload = SHIPPED_FLAG_LISTS.iter().find_map(|flags| {
+        let after = if flags.is_empty() { rest } else { rest.strip_prefix(format!("{} ", flags.join(" ")).as_str())? };
+        after.strip_suffix(PAYLOAD_IN_BUNDLE).filter(|payload| payload.starts_with('/'))
+    })?;
     Some((PathBuf::from(runtime), PathBuf::from(payload)))
 }
 
@@ -863,7 +873,31 @@ mod tests {
     }
 
     #[test]
-    fn only_this_builds_flag_list_in_this_order_is_spawn_backends() {
+    fn every_flag_list_a_shipped_build_used_is_recognised_after_an_update() {
+        let app = PathBuf::from("/Applications/Phosphor.app");
+        for flags in SHIPPED_FLAG_LISTS {
+            let between = if flags.is_empty() { String::new() } else { format!("{} ", flags.join(" ")) };
+            let line = format!(
+                "/Applications/Phosphor.app/Contents/MacOS/node {between}/Applications/Phosphor.app/Contents/Resources/phosphor/src/main.ts"
+            );
+            assert_eq!(backend_bundles(&line), Some((app.clone(), app.clone())), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_flags_this_build_starts_with_are_on_the_shipped_list_beside_every_older_one() {
+        assert!(
+            SHIPPED_FLAG_LISTS.contains(&NODE_FLAGS.as_slice()),
+            "a change to NODE_FLAGS adds the new list to SHIPPED_FLAG_LISTS and keeps the old ones"
+        );
+        let none: &[&str] = &[];
+        assert!(SHIPPED_FLAG_LISTS.contains(&none), "v0.4.0 to v0.11.0 started the backend with no flags");
+        let first: &[&str] = &["--disable-sigusr1", "--no-addons", "--disallow-code-generation-from-strings"];
+        assert!(SHIPPED_FLAG_LISTS.contains(&first), "0.10.13 started it with these, and a later build may find one lost");
+    }
+
+    #[test]
+    fn only_a_shipped_flag_list_in_its_own_order_is_spawn_backends() {
         let line = |flags: &str| {
             format!("/A.app/Contents/MacOS/node {flags} /A.app/Contents/Resources/phosphor/src/main.ts")
         };
