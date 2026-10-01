@@ -543,8 +543,17 @@
     field.appendChild(input);
     field.appendChild(send);
     composer.appendChild(field);
+    /* WHEN A CODE WAS KEPT OUT. One quiet line over the box: why the invite code that was in
+       it is not in the chat, and where it went (keepOut). It goes with the next key. */
+    var aside = dom.el('p', 'composer-aside');
+    aside.setAttribute('role', 'status');
+    aside.setAttribute('aria-live', 'polite');
+    aside.appendChild(icon('hide', 'composer-aside-icon'));
+    aside.appendChild(dom.el('span', 'composer-aside-words', ''));
+    aside.hidden = true;
     var composerHost = node.composerHost || host;
     composerHost.appendChild(waitLine);
+    composerHost.appendChild(aside);
     composerHost.appendChild(composer);
 
     node.refs = {
@@ -572,6 +581,7 @@
       jump: jump,
       waitLine: waitLine,
       waitWords: waitWords,
+      aside: aside,
       composer: composer,
       input: input,
       send: send,
@@ -635,9 +645,38 @@
       submit(node);
     });
     dom.on(input, 'input', function () {
+      if (keepOut(input.value)) return;
+      dom.setHidden(node.refs.aside, true);
       autogrow(input);
       arm(node);
     });
+  }
+
+  /* AN INVITE CODE NEVER GOES TO THE ASSISTANT: a code in the chat would reach the agent, its
+     model provider and the transcript. The box is read for the code's shape as it changes and
+     again at every send (ui/core/invite.js codeIn). A code found there leaves the box with
+     everything around it, goes to the invite field in Add money (ui/screens/invite.js open),
+     and the line over the box says why. Nothing is sent. */
+  function keepOut(text) {
+    var shape = window.PhosphorInviteApi;
+    var code = shape && typeof shape.codeIn === 'function' ? shape.codeIn(text) : null;
+    if (!code) return false;
+    var invite = window.PhosphorInvite;
+    var words = invite && invite.COPY ? invite.COPY.chat : 'Invite codes never go to your assistant.';
+    for (var i = 0; i < mounts.length; i += 1) {
+      var refs = mounts[i].refs;
+      if (refs.input && refs.input.value) {
+        refs.input.value = '';
+        autogrow(refs.input);
+        arm(mounts[i]);
+      }
+      if (refs.aside) {
+        dom.setText(refs.aside.querySelector('.composer-aside-words'), words);
+        dom.setHidden(refs.aside, false);
+      }
+    }
+    if (invite && typeof invite.open === 'function') invite.open(code);
+    return true;
   }
 
   /* The send arrow is dim until the box holds a word. */
@@ -711,6 +750,7 @@
   function submit(node) {
     var text = node.refs.input.value.trim();
     if (!text || !canTalk()) return;
+    if (keepOut(text)) return;
     node.refs.input.value = '';
     autogrow(node.refs.input);
     arm(node);
@@ -721,6 +761,7 @@
      always land in view, however far up they were reading. */
   function prompt(text) {
     if (!text || !canTalk()) return false;
+    if (keepOut(text)) return false;
     jumpAll = true;
     var mine = said(text, 'pending');
     api.driver({ action: 'prompt', text: text, chat: '' }).catch(function (err) {
