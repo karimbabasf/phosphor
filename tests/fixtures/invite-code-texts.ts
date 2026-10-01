@@ -110,10 +110,12 @@ export const GUARD_TEXTS: ReadonlyArray<{ name: string; text: string; code: bool
   { name: 'Phosphor and a dash', text: `Phosphor ${EM_DASH} 2 swaps today, 15 USDC each, 30 in all`, code: false },
   // Known gaps, pinned so a change to them is a choice: a code with no prefix and a slip in it
   // (only its check symbol tells a bare code from prose), a code with no prefix split by anything
-  // but spaces or dashes, a code a character short, and a code with a letter glued to its end.
-  // Each needs the person to change the code by hand first.
+  // but spaces or dashes or into groups under three long (the rules that keep words and numbers
+  // from passing the check by chance), a code a character short, and a code with a letter glued to
+  // its end. Each needs the person to change the code by hand first.
   { name: 'no prefix and a slip', text: grouped(BARE), code: false },
   { name: 'no prefix, with underscores', text: VALID_DATA.replace(/-/g, '_'), code: false },
+  { name: 'no prefix, two characters at a time', text: VALID_BARE.replace(/(.{2})(?=.)/g, '$1 '), code: false },
   { name: 'one data character short', text: CODE.slice(0, -1), code: false },
   { name: 'another prefix', text: 'PHAS-' + BARE, code: false },
   { name: 'a data character after the 27th', text: CODE + 'X', code: false },

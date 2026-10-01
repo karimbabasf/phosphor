@@ -582,9 +582,10 @@ here it is worth one code. The chat's guard, the backend's wall
 in front of the agent and the log tail read text through the parser's own fold (Unicode NFKD, one
 character at a time, marks and invisible characters dropped), so a hyphen an editor turned into a
 dash, a zero-width space or a full-width letter is the same code to all four. All three catch a
-code with its prefix in any spelling the parser reads, and one without its prefix when its groups
-are split by spaces or dashes and it reads as a valid code; the chat's two also want two digits
-as typed, which every issued code has (`src/invite/code.ts`, CONTRACTS.md "Code shape"). They
-miss a code someone changed by hand: no prefix and a slip or another separator, a character short
-or one stuck to its end, its digits typed as O, I or L, or a code split over two messages. Each
-costs that one code.
+code with its prefix in any spelling the parser reads, and one without its prefix when spaces or
+dashes split it into groups of three or more (the last may be shorter) and it reads as a valid
+code; the chat's two also want two digits as typed, which every issued code has
+(`src/invite/code.ts`, CONTRACTS.md "Code shape"). They miss a code someone changed by hand: no
+prefix and a slip, another separator or groups of one or two; a character short or one stuck to
+its end; its digits typed as O, I or L; or a code split over two messages. Each costs that one
+code.

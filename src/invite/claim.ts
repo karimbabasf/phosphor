@@ -14,8 +14,8 @@
 //      a deadline one millisecond past the final block and simulated AT that block. The verifier
 //      answers for the block, and every block that could run the rehearsal is stamped later, so
 //      the NEAR RPC, which is someone else's computer, never holds claim bytes that can still run.
-//      An RPC that lies about the time can stretch that millisecond to at most FATE_AHEAD_MAX_MS,
-//      and even then the bytes pay only this wallet. Any refusal stops here;
+//      An RPC that lies about the time can stretch that millisecond to at most FATE_AHEAD_MAX_MS
+//      past this Mac's clock, and even then the bytes pay only this wallet. Any refusal stops here;
 //   6. the real claim, two minutes past the chain's clock, signed and sent to the solver relay
 //      alone with an empty quote_hashes, never to a simulation: the identical bytes once more on
 //      no reply, never a second signature. Every attempt, the rehearsals included, is on disk in
@@ -524,6 +524,7 @@ export function createInviteService(deps: InviteDeps): InviteService {
     };
     const before = record.attempts.length;
     await openHold(record, slot);
+    let early: { detail: string; reason: FailReason } | null = null;
     try {
       const spent = await spendFromIntents(
         {
@@ -552,12 +553,14 @@ export function createInviteService(deps: InviteDeps): InviteService {
           checkQuote: (quote) => quoteProblems(quote, amount, floor),
         },
       );
-      if (!spent.signed) return beforeSigning(record, `${why}; 1Click held the claim before anything was signed`, 'refused');
+      if (!spent.signed) early = { detail: `${why}; 1Click held the claim before anything was signed`, reason: 'refused' };
     } catch (err) {
       if (record.attempts.length > before) record.attempts.length = before;
-      return beforeSigning(record, `${why}; 1Click stopped the claim before signing: ${errText(err)}`, noReply(err) ? 'offline' : 'refused');
+      early = { detail: `${why}; 1Click stopped the claim before signing: ${errText(err)}`, reason: noReply(err) ? 'offline' : 'refused' };
     }
-    return watch(record, null);
+    // Signed or not, Plan B is over: nothing more can be signed, so no watch below holds the key.
+    signer.drop();
+    return early === null ? watch(record, null) : beforeSigning(record, early.detail, early.reason);
   }
 
   /* Plan B stopped before its signature. A relay attempt the relay refused is still watched to

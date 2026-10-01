@@ -107,10 +107,10 @@ A code pays once; a second claim says "This code was already used, or it has a t
 Never paste a code into the chat. What you type there goes to your assistant and its model
 provider, so the chat refuses a code and opens the invite field instead. The app's backend turns
 such a message away too, before the assistant sees it, and writes none of it to the log or the
-conversation. Both know a code in every spelling the invite field reads, and a code with PHOS
-left off when its groups are split by spaces or dashes. A code you changed by hand, with a
-character missing or a wrong one and no PHOS in front, can still get through, so paste codes into
-the invite field only. Phosphor never asks for your recovery phrase to claim a code. A page or an
+conversation. Both know a code with PHOS in front in every spelling the invite field reads, and a
+code with PHOS left off when spaces or dashes split it into its groups. A code you changed by
+hand can still get through, say one with a character missing, or one with no PHOS in front and a
+wrong character or odd spacing, so paste codes into the invite field only. Phosphor never asks for your recovery phrase to claim a code. A page or an
 app that does is not Phosphor.
 
 ### Issuing invite codes

@@ -701,10 +701,11 @@ test('a final block stamped more than two minutes ahead of this Mac is refused b
    the claim can do is let go of it the moment it can sign nothing more, instead of holding it
    through a watch that runs for minutes. */
 
-test("the code's key is dropped once it can sign nothing more: before the watch on the relay, right after Plan B's one signature", async () => {
-  for (const mode of ['ok', 'auth'] as const) {
+test("the code's key is dropped once it can sign nothing more: before the watch on the relay, right after Plan B's one signature, or when Plan B stops unsigned", async () => {
+  for (const mode of ['ok', 'auth', 'auth, 1Click down'] as const) {
     const world = freshWorld();
-    world.relayMode = mode;
+    world.relayMode = mode === 'ok' ? 'ok' : 'auth';
+    world.oneclick.quoteFails = mode === 'auth, 1Click down';
     let dropped = false;
     let signatures = 0;
     const signerOf = (secret: Uint8Array): KeySigner | null => {
@@ -730,9 +731,9 @@ test("the code's key is dropped once it can sign nothing more: before the watch 
     const h = harness({ world, verifier, oneclick, signerOf });
     await h.service.claim(CODE);
     await h.service.idle();
-    assert.deepEqual(h.frames.map((f) => f.status), ['running', 'landed'], mode);
+    assert.deepEqual(h.frames.map((f) => f.status), ['running', mode === 'auth, 1Click down' ? 'failed' : 'landed'], mode);
     assert.equal(dropped, true, `${mode}: the key was never dropped`);
     assert.deepEqual(held, [], `${mode}: ${held[0] ?? ''}`);
-    assert.equal(signatures, mode === 'ok' ? 2 : 3, `${mode}: the rehearsal, the relay claim, and Plan B's one signature`);
+    assert.equal(signatures, mode === 'auth' ? 3 : 2, `${mode}: the rehearsal, the relay claim, and Plan B's one signature when it signs`);
   }
 });
