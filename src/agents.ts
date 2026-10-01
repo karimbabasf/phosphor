@@ -205,11 +205,13 @@ const REVOKE_MS = 300_000;
 // Agent-controlled strings reach a status bar and an audit line. They are rendered as text
 // everywhere, so this is about keeping a 4KB "client name" out of the log rather than about
 // escaping: length and control characters, nothing else.
+// Trimmed again after the cut, so a cleaned id cleans to itself: the door hands a seat's id on as
+// its one name (src/http/mcp.ts), and every lookup here cleans what it is given.
 function clean(value: unknown, fallback: string, max: number): string {
   if (typeof value !== 'string') return fallback;
   const stripped = value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
   if (stripped.length === 0) return fallback;
-  return stripped.slice(0, max);
+  return stripped.slice(0, max).trimEnd();
 }
 
 function ttlFrom(intervalMs: unknown): number {

@@ -184,9 +184,9 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
   const kind = String(body.kind ?? '');
   const params = asRecord(body.params);
   const session = String(body.session ?? 'unnamed-session');
-  // The seat a row records as its proposer: only a seat that was actually named. The
-  // placeholder above keeps the duplicate guard working for a caller with no session and is
-  // not a seat anything could be told on.
+  /* The seat a row records as its proposer, and the one its marks are read under: the id the door
+     seated (src/http/mcp.ts), a caller that sent no session included, since the roster gave it a
+     seat and marked that seat. Undefined only for a body that never came through the door. */
   const by = typeof body.session === 'string' && body.session !== '' ? body.session : undefined;
   /* A worker's MCP process never registers a propose tool, and this is the wall behind that one:
      the app minted the worker's session id and seated it as an analyst, so a raw post from that
