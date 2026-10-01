@@ -614,6 +614,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/view/          the basic screen as one pure function, and the mode itself
     scripts/keygen.ts  raw keypairs for developers, written outside the working copy
     scripts/sweep.ts   secret sweep over the tracked tree and the git history
+    scripts/invite.ts  invite codes for whoever hands them out: treasury, issue, reclaim, withdraw,
+                       status, over an encrypted file outside the working copy (scripts/invite/)
     ui/                one window, four screens, no framework, no build
     ui/chart/          the chart engine: two canvases, one pointer surface
     ui/screens/        one file per screen: basic, pro, trade, vault, lock, first run, decision

@@ -95,6 +95,72 @@ Never paste a code into the chat. What you type there goes to your assistant and
 provider, so the chat refuses a code and opens the invite field instead. Phosphor never asks for
 your recovery phrase to claim a code. A page or an app that does is not Phosphor.
 
+### Issuing invite codes
+
+This part is for whoever hands out the invites. Run it in your own Terminal, never through an
+agent: an agent session would keep every live code in its transcripts and send them to its
+model provider. The script refuses piped input, asks for its passphrase with echo off, and shows
+the links on the terminal only, never on stdout.
+
+The money sits in three places. Your wallet is never touched by any of this. The treasury, T,
+holds only the batch you are about to issue. Each code holds its $5 until someone claims it or
+you take it back.
+
+    npm run invite -- treasury
+
+makes T, writes its key to `~/.phosphor-invites/invites.enc.json`, and only then prints T's
+address. The file is mode 0600 and encrypted (AES-256-GCM, its key made by scrypt from a
+passphrase of at least 20 characters that you type on every run and that is stored nowhere).
+Run `treasury` again to see the address and what T holds; it never makes a second T. The file
+is the only copy of T's key. Lose it and whatever sits in T is gone, while people can still
+claim the codes they hold, so keep T near zero between batches. `--file <path>` or
+`PHOSPHOR_INVITES_FILE` picks another file, never one inside the repo.
+
+Fund T with the app's normal Send, so you read the receiver on the card before you click. That
+send pays 1Click about 0.25 percent, so send count x amount / 0.9975 plus a cent: $50.14 for
+ten $5 codes.
+
+    npm run invite -- issue --count 10 --amount 5 --label "SF builders"
+
+checks that T holds enough and asks you to type yes. Then it writes the codes to the file,
+marked pending, before anything is signed, so a crash from that moment loses nothing. It signs
+one payload from T with one transfer per code (ten at most), simulates it, sends it to the
+solver relay, and waits until NEAR Intents shows the payload's one-time number (its nonce)
+spent. It reads every code back, marks it open, and prints the links once. Give one link to one
+person, and never post them.
+
+If the relay does not answer, the same signed bytes go out once more; nothing is ever signed
+twice. If the run stops before the end (a quit, no network), `issue --resume` finishes that
+batch, and no new batch starts until it does. If the relay turns a batch away there is no
+fallback: the script waits until the signed payload has expired on NEAR's own clock, about two
+minutes, and then marks the codes void. T still holds the money.
+
+`--simulate-only` builds, signs and simulates the batch, then stops: nothing is sent and nothing
+is written. The NEAR RPC sees that signature, so it is made to expire one millisecond after the
+block it is simulated at, and no later block can ever run it.
+
+    npm run invite -- status
+
+shows what T holds and every batch: each code's address, amount and state (pending, open,
+claimed, reclaimed, or void for a batch that never ran). It never shows a code.
+
+    npm run invite -- reclaim [--label "SF builders"] [--address <code address>]
+
+pays each open code's balance back to T, signed with that code's own key, and marks it
+reclaimed. A code that already holds under a cent is marked claimed. After a reclaim its link
+says "This code was already used, or it has a typo." With no flag it takes every open code,
+after you type yes.
+
+    npm run invite -- withdraw --to <address>
+
+sends everything T holds to the address you pass. Copy it from Receive in the app, which shows
+only an address it decrypted and checked, and type its last six characters back when asked.
+The script never reads the wallet's key file: its header is plain text that any program running
+as you could edit. A withdraw waits while a batch is pending.
+
+`reclaim` and `withdraw` take `--simulate-only` too. None of these commands has a Plan B: if the
+relay refuses one, it stops and says so.
+
 ## Swap
 
 A swap changes what your intents balance holds. Your assistant proposes it with `propose_swap`:
