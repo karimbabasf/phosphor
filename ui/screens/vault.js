@@ -1168,10 +1168,11 @@
       var made = dateWords(enclave.keyMadeAt);
       dom.setText(refs.custodyValue, 'Touch ID');
       dom.setText(refs.custodyLine, 'Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it.' + (made ? ' Made on ' + made + '.' : ''));
-      /* Which of the two bindings is live, in words. An unsigned copy of the
-         app keeps the key where any process running as you can present it. */
+      /* Which of the two bindings is live, in words, off the binding and never
+         the signature: every build so far, signed or not, keeps the key bound to
+         this Mac, where any process running as you can present it. */
       var device = enclave.binding === 'device';
-      dom.setText(refs.custodyMore, device ? 'This copy of Phosphor is not signed, so other apps on this Mac could ask for the key. The signed Phosphor app keeps it to itself.' : '');
+      dom.setText(refs.custodyMore, device ? 'Bound to this Mac rather than to Phosphor. The vault service answers only Phosphor, but another app running as you could ask to use this key with a Touch ID prompt of its own.' : '');
       dom.setHidden(refs.custodyMore, !device);
       var reach = enclave.attached === false
         ? 'Touch ID only works inside the Phosphor app. Open the app to use this wallet.'
