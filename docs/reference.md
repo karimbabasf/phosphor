@@ -171,7 +171,11 @@ What one seat writes for another carries the writer's web-read mark (`src/web-re
 `agent_board`, `agent_post`'s answer and `agent_jobs` mark the reader of a stamped one. A worker
 spawned by a marked seat starts marked, because its brief is that seat's words. `log_tail` marks
 its reader outright (`STRANGER_TEXT_READS`), since it carries every seat's logged arguments, and
-`diagnose` returns a row's own lines, never one the door wrote from a caller's body.
+`diagnose` returns a row's own lines, never one the door wrote from a caller's body. An outside
+seat's id, label and client name are its own words (`seatWordsStamp`): until the person allows
+it they mark a reader of `agent_roster` or of the full `chart_read` (`lastDriverBy`, an
+indicator's `by`), `start` names such a lead "an agent started outside Phosphor", and a full
+roster is refused with a count rather than the members' names.
 
 | Display tool | Does |
 |---|---|

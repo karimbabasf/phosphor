@@ -69,6 +69,14 @@ export function webReadStamp(source: string, by: unknown): { webRead?: true } {
   return source === 'agent' && typeof by === 'string' && webReadBy(by) ? { webRead: true } : {};
 }
 
+/* The stamp a seat's own words carry: the session id, label and client name an outside seat chose
+   for itself (an app seat's are the app's, or a worker's parent's, stamped on its job). Marked
+   while the person has not allowed it, or once it has read a stranger's text through the app. */
+export function seatWordsStamp(seat: unknown, origin: string | undefined): { webRead?: true } {
+  if (typeof seat !== 'string' || seat === '') return {};
+  return outside.has(seat) || (origin === 'outside' && marked.has(seat)) ? { webRead: true } : {};
+}
+
 // Called by every read that hands labels to an agent, with the labels it hands over.
 export function markIfCarried(seat: unknown, labels: Iterable<{ webRead?: true }>): void {
   if (typeof seat !== 'string' || seat === '') return;

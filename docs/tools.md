@@ -82,7 +82,8 @@ Several agents can drive at once, see [Connect an agent](connect-an-agent.md#mor
 | `agent_spawn` | Starts a worker on a written brief. A worker reads, measures, draws and posts, and has no propose tools. Three at once at most. Lead only |
 
 A post, a brief or a report written by an agent that had read text from outside Phosphor marks
-the agent that reads it, and `log_tail` marks whoever reads it, see
+the agent that reads it, and so does the name an agent started outside Phosphor gave itself, on
+`agent_roster`, until you allow it. `log_tail` marks whoever reads it. See
 [Policy](policy.md#after-a-web-page).
 
 ## Other

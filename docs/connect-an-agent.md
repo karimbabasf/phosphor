@@ -142,6 +142,9 @@ do; Not now keeps them waiting and stops the asking. The answer holds for that c
 restart the agent and the window asks again. Phosphor cannot see what an agent outside it reads
 with its own tools (its own web search or page reader), so allow only an agent you started
 yourself. The chat's own agent and the workers it starts never ask: Phosphor started them.
+Until you allow it, the name it gave itself is treated like a web page's words: another agent
+that reads it on the roster, or as the last to move the chart, is marked the same way, and
+another agent's `start` calls it "an agent started outside Phosphor".
 
 ## What the agent can never do
 
@@ -165,4 +168,5 @@ serves one wallet, so a second copy of Phosphor brings the first forward and clo
 Up to six agents can drive at once. An agent in your terminal can spawn up to three workers of its
 own with `agent_spawn`; a worker reads, measures and draws, and has no propose tools at all. Agents
 share a board they post one-line claims to, so two do not measure the same thing twice. Everything
-one agent reads from another is data, never an instruction.
+one agent reads from another is data, never an instruction, and what an agent writes after reading
+text from outside Phosphor carries the web-read mark to the agent that reads it.

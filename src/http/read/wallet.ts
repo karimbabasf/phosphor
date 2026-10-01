@@ -19,7 +19,7 @@ import { RECEIVE_NETWORKS, currentSymbol, receiveNetworkOf } from '../../rails/i
 import { baseUnitsToDecimal, oneLine, plainDecimal } from '../../intents.ts';
 import type { IntentsRead } from '../../ledger/intents.ts';
 import type { Proposal, WalletRow, WriteDraft } from '../../types.ts';
-import { markIfCarried } from '../../web-read.ts';
+import { markIfCarried, seatWordsStamp } from '../../web-read.ts';
 import type { Ctx } from '../context.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
@@ -201,6 +201,14 @@ export const walletReads: ReadTable = {
     // The decisions waiting come back with their sentences: a marked seat's words mark the reader.
     markIfCarried(body.session, carriedWords(ctx, pending));
     const holder = ctx.agents.holder();
+    /* The seat line names the lead by its client name, and an outside seat chose its own: another
+       seat is told what it is instead, so the read every terminal agent starts with marks nobody. */
+    const holderName =
+      holder === null
+        ? null
+        : holder.session !== body.session && seatWordsStamp(holder.session, holder.origin).webRead === true
+          ? 'an agent started outside Phosphor'
+          : holder.client;
     const greeting = buildGreeting(
       {
         view: ctx.getView(),
@@ -213,7 +221,7 @@ export const walletReads: ReadTable = {
         clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
         killSwitch: policy?.killSwitch ?? false,
         tradingAllowed: true,
-        holder: holder?.client ?? null,
+        holder: holderName,
         emptyCount: wallet.emptyCount,
       },
       VERSION,

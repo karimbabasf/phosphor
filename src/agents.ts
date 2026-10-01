@@ -273,14 +273,15 @@ export function createAgents(
     return expired(m) ? null : m;
   }
 
+  /* Counted, never named: a label is the words of whichever agent chose it, and this sentence
+     reaches an agent that has no seat to be marked on (audit 2026-10-01). */
   function full(): JoinBusy {
-    const names = live().map((m) => `${m.label} (${m.role})`).join(', ');
     return {
       ok: false,
       member: null,
       full: true,
       error:
-        `phosphor already has ${max} agents attached (${names}), which is the maximum. ` +
+        `phosphor already has ${max} agents attached, which is the maximum. ` +
         'Wait for one to finish and stop sending heartbeats, or ask the human to drop one from the window. ' +
         'This is a capacity limit, not a rule against a second agent: several may drive at once.',
     };
