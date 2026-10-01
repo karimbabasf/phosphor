@@ -1129,14 +1129,28 @@ fn running_copy(record: Option<&PidRecord>, me: i32, is_this_app: impl Fn(i32) -
 }
 
 /// Is that pid a running copy of this app, as macOS itself knows it: an application registered
-/// under this app's bundle identifier? The disk image copy and the Applications copy both are,
-/// which is the point, and a pid the pid file still names after its shell died and the number
-/// went to something else is not.
+/// under this app's bundle identifier AND, on a signed build, a Developer ID binary of this app's
+/// team. The disk image copy and the Applications copy both are, which is the point, and a pid the
+/// pid file still names after its shell died and the number went to something else is not.
+///
+/// The bundle identifier alone was the whole check, and any same-user app can declare it: one with
+/// its pid in backend.pid could make the real Phosphor quit and bring itself forward when the person
+/// opened Phosphor from the Dock, a passphrase phishing surface on a password wallet (audit
+/// 2026-10-01, L16). So a signed build also holds the pid to the Developer ID signature of this
+/// app's own team and identifier. An ad-hoc or dev build has no team to check against
+/// (pid_is_signed_app is None), and keeps the identifier check it always had.
 #[cfg(target_os = "macos")]
 fn is_this_app(pid: i32, identifier: &str) -> bool {
-    NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+    let declares_id = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
         .and_then(|running| running.bundleIdentifier())
-        .is_some_and(|declared| declared.to_string() == identifier)
+        .is_some_and(|declared| declared.to_string() == identifier);
+    if !declares_id {
+        return false;
+    }
+    match backend::pid_is_signed_app(pid, identifier) {
+        Some(signed) => signed,
+        None => true,
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1760,6 +1774,9 @@ mod tests {
     #[test]
     fn a_process_that_is_not_this_app_is_never_taken_for_it() {
         use super::is_this_app;
+        // This test binary is signed ad-hoc or not at all, so even though it declares another
+        // identifier, the bundle-id check alone already turns it away. On a Developer ID build
+        // is_this_app also holds the pid to backend::pid_is_signed_app (audit 2026-10-01, L16).
         assert!(!is_this_app(std::process::id() as i32, "com.karimbabasf.phosphor"), "the test runner is not the app");
         assert!(!is_this_app(i32::MAX, "com.karimbabasf.phosphor"), "no process at all is not the app");
     }

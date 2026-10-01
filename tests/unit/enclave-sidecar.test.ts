@@ -41,8 +41,16 @@ test('the service answers only a peer that passes its code signing requirement',
   assert.ok(swift.includes('xpc_connection_set_peer_code_signing_requirement(peer, requirement) == 0'));
   assert.ok(/guard let requirement = peerRequirement\(\),[\s\S]{0,120}else \{\s*xpc_connection_cancel\(peer\)/.test(swift),
     'a requirement that cannot be set, or a signature that cannot be read, cancels the peer');
-  assert.ok(swift.includes('anchor apple generic and identifier \\"\\(hostIdentifier)\\" and certificate leaf[subject.OU] = \\"\\(team)\\"'),
-    'under Developer ID the peer is pinned to Apple, the team and the app');
+  // Under Developer ID the peer is pinned to Apple, a Developer ID certificate chain, the team and
+  // the app: the team OU alone is carried by any cert issued to the team (audit 2026-10-01, L13).
+  for (const part of [
+    'anchor apple generic and identifier \\"\\(hostIdentifier)\\" ',
+    'and certificate 1[field.1.2.840.113635.100.6.2.6] ',
+    'and certificate leaf[field.1.2.840.113635.100.6.1.13] ',
+    'and certificate leaf[subject.OU] = \\"\\(team)\\"',
+  ]) {
+    assert.ok(swift.includes(part), `the peer requirement pins ${part.trim()}`);
+  }
   assert.ok(swift.includes('let hostIdentifier = "com.karimbabasf.phosphor"'));
   assert.ok(/xpc_get_type\(event\) == XPC_TYPE_DICTIONARY else \{[\s\S]{0,200}xpc_connection_cancel\(peer\)/.test(swift),
     'an error event, which is what a failed requirement produces, ends the connection');
@@ -67,7 +75,9 @@ test('the shell reaches the service only over XPC in a release build, and checks
   assert.ok(spawns.length === 1 && spawns[0] > devAt, 'no process is started outside mod dev');
   assert.ok(/#\[cfg\(debug_assertions\)\]\s*if !in_bundle\(\) \{\s*return dev::call\(request\);/.test(rust));
   assert.ok(bridge.includes('xpc_connection_set_peer_code_signing_requirement(conn, requirement)'), 'the shell pins the service too');
-  assert.ok(bridge.includes('certificate leaf[subject.OU]'));
+  for (const part of ['certificate 1[field.1.2.840.113635.100.6.2.6]', 'certificate leaf[field.1.2.840.113635.100.6.1.13]', 'certificate leaf[subject.OU]']) {
+    assert.ok(bridge.includes(part), `the shell's side of the requirement pins ${part}`);
+  }
   assert.ok(!bridge.includes('xpc_connection_create_mach_service'), 'the bundle namespace, never a global name');
 });
 

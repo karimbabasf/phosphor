@@ -26,16 +26,25 @@ int phosphor_own_team(char *out, size_t len) {
 }
 
 // 1 when process `pid`, as the kernel runs it, is signed by a Developer ID Application
-// certificate (the leaf carries Apple's 1.2.840.113635.100.6.1.13) of Team ID `team`; 0 when it
-// is not, with the Security framework's status in *status. The running process is what is asked
-// about, never the file it came from, so a file swapped after the check cannot pass for it, and
-// a file swapped before it no longer matches the process.
-int phosphor_pid_signed_by(pid_t pid, const char *team, int *status) {
+// certificate (the chain carries Apple's Developer ID CA at 1.2.840.113635.100.6.2.6 and the leaf
+// carries 1.2.840.113635.100.6.1.13) of Team ID `team`, AND carries code-signing `identifier`;
+// 0 when it is not, with the Security framework's status in *status. The running process is what
+// is asked about, never the file it came from, so a file swapped after the check cannot pass for
+// it, and a file swapped before it no longer matches the process.
+//
+// `identifier` pins WHICH binary of the team this is: the bundled "node" for the runtime check, the
+// app's own identifier for the launch hand-over. Without it the requirement accepted any Developer
+// ID binary the team ever signed (audit 2026-10-01, L16 and L17). Both `identifier` and `team` are
+// this shell's own constants, validated by the Rust caller to be identifier characters only, so the
+// quoted requirement below cannot be broken out of.
+int phosphor_pid_signed_by(pid_t pid, const char *identifier, const char *team, int *status) {
     char text[256];
     int n = snprintf(text, sizeof text,
-                     "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] and "
+                     "anchor apple generic and identifier \"%s\" and "
+                     "certificate 1[field.1.2.840.113635.100.6.2.6] and "
+                     "certificate leaf[field.1.2.840.113635.100.6.1.13] and "
                      "certificate leaf[subject.OU] = \"%s\"",
-                     team);
+                     identifier, team);
     if (n < 0 || (size_t)n >= sizeof text) {
         *status = errSecParam;
         return 0;

@@ -853,7 +853,20 @@ fn spawn_minted(node: &Path, payload: &Path, data: &Path, built_for: &str, team:
 #[cfg(target_os = "macos")]
 extern "C" {
     fn phosphor_own_team(out: *mut std::ffi::c_char, len: usize) -> std::ffi::c_int;
-    fn phosphor_pid_signed_by(pid: libc::pid_t, team: *const std::ffi::c_char, status: *mut std::ffi::c_int) -> std::ffi::c_int;
+    fn phosphor_pid_signed_by(
+        pid: libc::pid_t,
+        identifier: *const std::ffi::c_char,
+        team: *const std::ffi::c_char,
+        status: *mut std::ffi::c_int,
+    ) -> std::ffi::c_int;
+}
+
+/// A code-signing identifier is letters, digits, dots and hyphens; nothing that can bend the
+/// quoted requirement codesign.c builds. The two this shell passes ("node" and the app's own
+/// identifier) are its own constants, so a value that is not one is a bug, not an attacker.
+#[cfg(target_os = "macos")]
+fn is_identifier(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
 /// The Team ID this shell is signed with. None for an ad-hoc build (local or development), which
@@ -878,29 +891,59 @@ fn own_team() -> Option<String> {
     None
 }
 
-/// Is the process `pid` signed by a Developer ID Application certificate of `team`, as the
-/// kernel runs it? Only ever asked about a child this shell holds and has not reaped, so the
-/// number cannot have passed to another process.
+/// Is `pid`, as the kernel runs it, a Developer ID Application binary of `team` carrying code-signing
+/// `identifier`? Only ever asked about a process this shell holds or macOS names to it, so the number
+/// cannot have passed to another process between the question and the answer.
 #[cfg(target_os = "macos")]
-fn runtime_signed_by(pid: u32, team: &str) -> Result<(), String> {
-    if team.is_empty() || !team.chars().all(|c| c.is_ascii_alphanumeric()) {
+fn signed_by(pid: u32, identifier: &str, team: &str) -> Result<(), String> {
+    if !team.chars().all(|c| c.is_ascii_alphanumeric()) || team.is_empty() {
         return Err(format!("{team:?} is not a Team ID"));
     }
+    if !is_identifier(identifier) {
+        return Err(format!("{identifier:?} is not a code-signing identifier"));
+    }
+    let id_c = std::ffi::CString::new(identifier).map_err(|_| "an identifier with a NUL in it".to_string())?;
     let team_c = std::ffi::CString::new(team).map_err(|_| "a Team ID with a NUL in it".to_string())?;
     let mut status: std::ffi::c_int = 0;
-    // SAFETY: the Team ID is NUL-terminated and outlives the call, and `status` is a live int.
-    let signed = unsafe { phosphor_pid_signed_by(pid as libc::pid_t, team_c.as_ptr(), &mut status) };
+    // SAFETY: both strings are NUL-terminated and outlive the call, and `status` is a live int.
+    let signed = unsafe { phosphor_pid_signed_by(pid as libc::pid_t, id_c.as_ptr(), team_c.as_ptr(), &mut status) };
     if signed == 1 {
         return Ok(());
     }
-    Err(format!(
-        "The bundled runtime is not signed by this app's team ({team}): Security answered {status}. It was stopped before it was given anything."
-    ))
+    Err(format!("process {pid} is not {identifier:?} signed by this app's team ({team}): Security answered {status}"))
+}
+
+/// The runtime (the bundled node) held to this app's team AND to the identifier "node", so only the
+/// bundled runtime passes, not any other Developer ID binary the team ever signed (audit, L17).
+#[cfg(target_os = "macos")]
+fn runtime_signed_by(pid: u32, team: &str) -> Result<(), String> {
+    signed_by(pid, "node", team).map_err(|why| {
+        format!("The bundled runtime is not this app's: {why}. It was stopped before it was given anything.")
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
 fn runtime_signed_by(_pid: u32, _team: &str) -> Result<(), String> {
     Err("the runtime check needs macOS".to_string())
+}
+
+/// Is `pid` a Developer ID build of this app, by `identifier`, of this shell's own team? `None` when
+/// this shell has no team (an ad-hoc or dev build): there is no authority to hold a peer to, exactly
+/// as the runtime check skips then. The launch hand-over asks this before it quits for another copy,
+/// so a same-user app merely declaring the bundle identifier cannot make this one step aside (audit
+/// 2026-10-01, L16).
+#[cfg(target_os = "macos")]
+pub fn pid_is_signed_app(pid: i32, identifier: &str) -> Option<bool> {
+    if pid <= 0 {
+        return Some(false);
+    }
+    let team = own_team()?;
+    Some(signed_by(pid as u32, identifier, &team).is_ok())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn pid_is_signed_app(_pid: i32, _identifier: &str) -> Option<bool> {
+    None
 }
 
 /// Why spawn_backend started nothing.
@@ -1527,13 +1570,32 @@ mod tests {
         // is stopped while it still waits on its stdin, before the handshake, and never leaves its
         // mark.
         match spawn_checked(&runtime, &copy, &root.join("data"), &hand, crate::payload::BUILT_FOR, Some("ABCDE12345")) {
-            Err(SpawnError::Altered(why)) => assert!(why.contains("not signed by this app's team"), "{why}"),
+            Err(SpawnError::Altered(why)) => assert!(why.contains("not this app's") && why.contains("signed by this app's team"), "{why}"),
             Err(SpawnError::Failed(why)) => panic!("refused for another reason: {why}"),
             Ok(_) => panic!("a runtime of no team started under a shell of one"),
         }
         std::thread::sleep(Duration::from_millis(200));
         assert!(!mark.exists(), "the runtime was given the handshake and ran on");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Audit 2026-10-01, L16: the launch hand-over trusted any app declaring the bundle identifier.
+    /// is_this_app now holds the pid to a Developer ID signature of this app's team through
+    /// pid_is_signed_app, which abstains (None) only on an ad-hoc or dev shell with no team, and
+    /// otherwise answers whether the process really is this app. The requirement is real: a bogus
+    /// team, and a bent identifier, are both refused.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_app_pid_is_held_to_a_developer_id_signature_not_the_bundle_id_alone() {
+        let me = std::process::id();
+        // No team on this ad-hoc test binary, so there is no authority to hold a peer to.
+        assert_eq!(pid_is_signed_app(me as i32, "com.karimbabasf.phosphor"), None);
+        assert_eq!(pid_is_signed_app(0, "com.karimbabasf.phosphor"), Some(false), "no process is not the app");
+        // signed_by builds a real requirement: an unsigned or ad-hoc process under a named team is
+        // refused, and an identifier that is not identifier characters never reaches the kernel.
+        assert!(signed_by(me, "com.karimbabasf.phosphor", "ABCDE12345").is_err());
+        assert!(signed_by(me, "bad id\" or true", "ABCDE12345").is_err(), "a bent identifier is refused before the kernel is asked");
+        assert!(signed_by(me, "node", "").is_err(), "an empty team is not a Team ID");
     }
 
     /// A file's Team ID, off its signature; None when it has none.
@@ -1581,11 +1643,18 @@ mod tests {
                 let own = runtime_signed_by(real.id(), &team);
                 let other = runtime_signed_by(real.id(), "ABCDE12345");
                 let bent = runtime_signed_by(real.id(), &format!("{team}\" or anchor apple"));
+                // Audit 2026-10-01, L17: the team alone accepted any Developer ID binary the team
+                // ever signed. The runtime check now pins the identifier "node" too, so the same
+                // real binary checked under the app's identifier is refused, and under "node" passes.
+                let wrong_identifier = signed_by(real.id(), "com.karimbabasf.phosphor", &team);
+                let right_identifier = signed_by(real.id(), "node", &team);
                 let _ = real.kill();
                 let _ = real.wait();
                 assert_eq!(own, Ok(()), "a runtime signed by the team passes");
                 assert!(other.is_err(), "another team's Developer ID is not this app's");
                 assert!(bent.is_err(), "a Team ID is letters and digits, nothing that can bend the requirement");
+                assert!(wrong_identifier.is_err(), "the team is not enough: a team binary that is not \"node\" is refused");
+                assert_eq!(right_identifier, Ok(()), "the bundled runtime's own identifier passes");
             }
             None => eprintln!("the staged runtime has no Team ID (not an official Node build): only the refusals were checked"),
         }
