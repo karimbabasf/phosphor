@@ -542,3 +542,21 @@ the Solana and NEAR keys its mnemonic derived, and nothing reads them.
 Every amount that reaches a signature is a BigInt in base units, checked against the quote the
 human approved (`checkIntentPayload`), and the quote itself is checked against the venue's
 signature (`src/quote-signature.ts`) before it is trusted.
+
+**One stated exception: an invite code.** A code is a key of its own:
+`keccak256("phosphor-invite-v1" || secret)` over 128 random bits, and its account inside
+intents.near is that key's address (`src/invite/code.ts`). A claim signs one ERC-191 `transfer`
+with the code's key, from the code's account to this wallet (`src/invite/signer.ts`,
+`src/invite/claim.ts`), outside the proposals executor and with no approval card. The rule in
+`src/keystore/index.ts` (a signer takes key material and fails while the wallet is locked)
+protects the wallet's key, and this key is not the wallet's: the person typed it, and it can move
+only what the code's account holds. The claim still runs only while the wallet is open, because
+the receiver is the wallet's decrypted address (`addressReport()` verified and not tampered),
+never the plaintext header, and the receiver is inside the signed bytes, so the relay can submit
+the transfer as signed or not at all. The wallet's key never signs for a claim. The one weaker
+path is Plan B through 1Click: there the code signs a transfer to 1Click's handle, the receiver
+is held by the quote echo and 1Click's quote signature rather than by the code's signature, and
+the claim rests on 1Click delivering. The code lives as bytes for the length of one claim, is
+wiped, and is written nowhere: not an audit line, `/api/state`, an SSE frame, the claim record
+(`state/invites.json`) or an error. No agent tool reaches it. The log tail redacts a code by shape
+in every form the parser accepts, as the wall behind that.
