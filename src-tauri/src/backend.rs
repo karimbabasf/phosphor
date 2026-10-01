@@ -1231,7 +1231,12 @@ mod tests {
         let staged = Path::new(env!("CARGO_MANIFEST_DIR")).join("payload").join("phosphor");
         let copy = root.join("phosphor");
         let cloned = Command::new("/bin/cp").arg("-c").arg("-R").arg(&staged).arg(&copy).status().unwrap();
-        assert!(cloned.success(), "clone the staged payload into {}", copy.display());
+        if !cloned.success() {
+            // A volume that cannot clone gets a plain copy.
+            let _ = std::fs::remove_dir_all(&copy);
+            let copied = Command::new("/bin/cp").arg("-R").arg(&staged).arg(&copy).status().unwrap();
+            assert!(copied.success(), "copy the staged payload into {}", copy.display());
+        }
         copy
     }
 
