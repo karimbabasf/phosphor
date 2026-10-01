@@ -380,6 +380,9 @@ The app refuses a move that loses too much of itself to fees, and names the fee 
 - A Hyperliquid deposit is refused under 7 USDC and when the fee is above 5 percent.
 - A Hyperliquid withdrawal is refused under 5 USDC.
 - A swap floor more than 20 percent below the app's quote is refused as no floor at all.
+- A swap may give up at most 3 percent of its value to fees and price, by the swap service's own
+  dollar figures for both sides. A quote whose request carries a fee, a field or a value the app
+  did not ask for is refused before anything is signed.
 
 Every amount the policy reads is priced by the app, never supplied by the agent. A token the app
 cannot price is never assumed to be worth a dollar: a swap that spends one is valued off its quote

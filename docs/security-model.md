@@ -143,7 +143,14 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    against the draft on the dry quote at simulate time and again on the live quote a moment before
    the key is touched (`src/rails/intents-spend.ts`): recipient, `recipientType`
    (`DESTINATION_CHAIN` for a payout, `INTENTS` for a send), both assets and the amount. No echo,
-   no signature.
+   no signature. Both quote clients also hold every echo to the exact request they sent
+   (`requestEchoProblems` in `src/intents.ts`), on every quote, dry or live: each field sent comes
+   back as sent, a field not sent comes back only as 1Click's own default, and `appFees` may pay
+   only 1Click's fee account. A position on the wire that adds a fee line paying itself is refused
+   before anything is signed. `appFees` sits outside 1Click's signature, so a position that also
+   strips its line from the echo is caught by what the fee takes, which is signed: a swap may give
+   up at most 3 percent of its value by 1Click's own dollar figures (`SWAP_MAX_LOSS_BPS`), and a
+   send, a payout and a deposit are held to their loss floors (1, 3 and 5 percent).
 
 The card (`ui/screens/cards.js`, its question in `ui/screens/decision.js`) is what the person reads before the click: the amount, the
 route from their balance through the bridge to the destination, the full address in groups of
@@ -561,8 +568,9 @@ the receiver is the wallet's decrypted address (`addressReport()` verified and n
 never the plaintext header, and the receiver is inside the signed bytes, so the relay can submit
 the transfer as signed or not at all. The wallet's key never signs for a claim. The one weaker
 path is Plan B through 1Click: there the code signs a transfer to 1Click's handle, the receiver
-is held by the quote echo and 1Click's quote signature rather than by the code's signature, and
-the claim rests on 1Click delivering. The code lives as bytes for the length of one claim, is
+is held by the quote echo and 1Click's quote signature rather than by the code's signature (a fee
+line added to the request on the wire is refused by the same echo, and a hidden one by the claim's
+1 percent floor), and the claim rests on 1Click delivering. The code lives as bytes for the length of one claim, is
 wiped, and is written nowhere: not an audit line, `/api/state`, an SSE frame, the claim record
 (`state/invites.json`) or an error. No agent tool reaches it. The log tail redacts a code by shape
 in every form the parser accepts, as the wall behind that.

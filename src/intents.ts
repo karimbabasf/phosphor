@@ -685,6 +685,87 @@ export function quoteEchoProblems(raw: unknown, want: QuoteEcho): string[] {
   return problems;
 }
 
+/* ---------- the request 1Click priced, against the request this app sent ----------
+
+   quoteEchoProblems holds a quote to what the rail meant. This holds it to the exact body the
+   client sent, field by field, because a position between this app and 1Click can add to a
+   request on its way out, and 1Click prices and signs whatever arrives. An appFees line naming
+   that position's own account passed every check until 2026-10-01 (audit, aud-money-rails):
+   1Click priced the fee in, signed the answer, and the echo carried a line nobody read.
+
+   A field the client sent must come back exactly as sent; for the fields inside the signature
+   (src/quote-signature.ts signedRequest) the signature then proves 1Click priced that value. A
+   field the client did not send may come back only as 1Click's own default, the values the live
+   API adds to every echo (checked on 2026-10-01 against swap, send, payout and withdraw shapes).
+   appFees may pay 1Click's own fee account and no one else. Any other field refuses the quote,
+   one this file has never heard of included: a field nobody can read is a field nobody approved.
+
+   appFees and the defaults sit outside the signature, so a position that also rewrites the echo
+   can hide its own line from this check. It cannot hide the fee from amountOut, which is signed:
+   that is the value check each rail runs on its quote (SWAP_MAX_LOSS_BPS on a swap, the loss
+   floors of a send, a payout and a deposit). */
+
+/* The account 1Click's own fee goes to, in every echo since 2026-09-11 (one line of 1 to 25 bp
+   on an unkeyed quote, none on a same-asset send) and in the vendor SDK's signed fixtures. */
+export const ONECLICK_FEE_ACCOUNTS: readonly string[] = ['5880ad2b362620fadf759cbceb1cd5737ce8c6ed7fb8e9942881e6731f9247dd'];
+
+// What 1Click fills in for a field the request left out, and the only value each may come back as.
+const ECHO_DEFAULTS: Readonly<Record<string, unknown>> = {
+  depositMode: 'SIMPLE',
+  confidentiality: 'public',
+  quoteWaitingTimeMs: 0,
+  insured: false,
+};
+// Lists 1Click may echo for a field left out, and only empty: rebates and connected wallets.
+const ECHO_EMPTY_LISTS: ReadonlySet<string> = new Set(['rebates', 'connectedWallets']);
+
+function appFeeProblems(value: unknown): string[] {
+  if (!Array.isArray(value)) return [`the quote carries appFees as ${oneLine(value, 60)}, not a list`];
+  const problems: string[] = [];
+  for (const line of value) {
+    const recipient = (line as { recipient?: unknown } | null)?.recipient;
+    const fee = (line as { fee?: unknown } | null)?.fee;
+    if (typeof recipient !== 'string' || !ONECLICK_FEE_ACCOUNTS.includes(recipient)) {
+      problems.push(`the quote pays a fee of ${oneLine(fee, 20)} bp to ${oneLine(recipient, 70)}, and only 1Click's own fee account may be paid`);
+    } else if (typeof fee !== 'number' || !Number.isFinite(fee) || fee < 0) {
+      problems.push(`the quote's fee line for 1Click reads ${oneLine(fee, 20)}, not a number of basis points`);
+    }
+  }
+  return problems;
+}
+
+export function requestEchoProblems(raw: unknown, sent: Record<string, unknown>): string[] {
+  const echo = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>)['quoteRequest'] : undefined;
+  // No echo at all is each rail's to refuse, in its own words (quoteEchoProblems, noEcho).
+  if (echo === null || typeof echo !== 'object' || Array.isArray(echo)) return [];
+  const req = echo as Record<string, unknown>;
+  const problems: string[] = [];
+  for (const [key, value] of Object.entries(sent)) {
+    const same = key === 'recipient' || key === 'refundTo' ? sameEndpoint(req[key], String(value)) : req[key] === value;
+    if (!same) problems.push(`the quote was priced with ${key} ${oneLine(req[key], 60)}, not the ${oneLine(value, 60)} this app sent`);
+  }
+  for (const [key, value] of Object.entries(req)) {
+    if (Object.hasOwn(sent, key) || value === undefined || value === null) continue;
+    if (key === 'appFees') problems.push(...appFeeProblems(value));
+    else if (Object.hasOwn(ECHO_DEFAULTS, key)) {
+      if (value !== ECHO_DEFAULTS[key]) problems.push(`the quote was priced with ${key} ${oneLine(value, 60)}, which this app never asks for`);
+    } else if (ECHO_EMPTY_LISTS.has(key)) {
+      if (!Array.isArray(value) || value.length > 0) problems.push(`the quote carries ${key} ${oneLine(value, 80)}, which this app never asks for`);
+    } else {
+      problems.push(`the quote carries ${oneLine(key, 40)} ${oneLine(value, 60)}, a field this app did not send`);
+    }
+  }
+  return problems;
+}
+
+// Both quote clients run this on every answer, dry or live, before any rail reads the quote.
+export function refuseUnsentRequest(raw: unknown, sent: Record<string, unknown>): void {
+  const problems = requestEchoProblems(raw, sent);
+  if (problems.length > 0) {
+    throw new ReasonError('simulation_failed', `1click priced a request this app did not send, so the quote is refused and nothing was signed: ${problems.join('; ')}`);
+  }
+}
+
 export type OneClickDeps = { fetchImpl?: typeof fetch };
 
 export type OneClickClient = {
@@ -773,6 +854,7 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
       const msg = payload?.['message'];
       throw new Error(msg !== undefined ? `no quote in 1click response: ${venueSaid('1Click', msg)}` : 'no quote in 1click response');
     }
+    refuseUnsentRequest(payload, body);
 
     return {
       quote: quoteField,
