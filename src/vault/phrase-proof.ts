@@ -13,8 +13,13 @@
 import crypto from 'node:crypto';
 
 export const PHRASE_PROOF_MS = 30 * 60_000;
+/* Misses before the words have to be shown again. The window shows them again after two; this is
+   the wall against using the check as an oracle, together with three DIFFERENT positions per try:
+   one position asked three times would confirm a single word in at most 2048 tries, and three
+   different ones in five tries leave 2048 cubed. */
+export const PHRASE_PROOF_MISSES = 5;
 
-type Held = { key: Buffer; words: Buffer[]; wallet: string; until: number };
+type Held = { key: Buffer; words: Buffer[]; wallet: string; until: number; misses: number };
 let held: Held | null = null;
 
 function mac(key: Buffer, index: number, word: string): Buffer {
@@ -24,22 +29,30 @@ function mac(key: Buffer, index: number, word: string): Buffer {
 export function rememberPhrase(words: string[], wallet: string, now: number = Date.now()): void {
   forgetPhrase();
   const key = crypto.randomBytes(32);
-  held = { key, words: words.map((word, index) => mac(key, index, word)), wallet: wallet.toLowerCase(), until: now + PHRASE_PROOF_MS };
+  held = { key, words: words.map((word, index) => mac(key, index, word)), wallet: wallet.toLowerCase(), until: now + PHRASE_PROOF_MS, misses: 0 };
 }
 
-/* 'none' when nothing was revealed for this wallet in the last half hour: the window shows the
-   words again rather than calling a right answer wrong. */
+/* 'none' when nothing was revealed for this wallet in the last half hour, or the misses ran out:
+   the window shows the words again rather than calling a right answer wrong. Fewer than three
+   different positions is a miss. */
 export function checkPhrase(answers: Array<{ index: number; word: string }>, wallet: string | null, now: number = Date.now()): 'match' | 'mismatch' | 'none' {
   if (held === null || now > held.until || wallet === null || held.wallet !== wallet.toLowerCase()) {
     forgetPhrase();
     return 'none';
   }
   const { key, words } = held;
-  const matched = answers.every((answer) => {
-    const want = words[answer.index];
-    return want !== undefined && crypto.timingSafeEqual(want, mac(key, answer.index, answer.word));
-  });
-  return matched ? 'match' : 'mismatch';
+  const positions = new Set(answers.map((answer) => answer.index));
+  const matched =
+    positions.size >= 3 &&
+    positions.size === answers.length &&
+    answers.every((answer) => {
+      const want = words[answer.index];
+      return want !== undefined && crypto.timingSafeEqual(want, mac(key, answer.index, answer.word));
+    });
+  if (matched) return 'match';
+  held.misses += 1;
+  if (held.misses >= PHRASE_PROOF_MISSES) forgetPhrase();
+  return 'mismatch';
 }
 
 export function forgetPhrase(): void {
