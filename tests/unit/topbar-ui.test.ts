@@ -158,4 +158,7 @@ test('the freeze confirm says it closes open positions, in the Vault\'s words', 
   const shell = read('../../ui/screens/shell.js');
   assert.ok(shell.includes("body: 'This closes your open trading positions at the market price and stops every plan. Nothing can move your money until you unfreeze.'"), 'the bar says something else about positions');
   assert.equal(/does not close a position|nothing in this app can do that|open positions stay open|Nothing you hold is sold/.test(shell), false, 'the bar says a freeze leaves positions open');
+  // A position needs the trading key to close; a freeze with none in reach answers with a note
+  // (src/kill.ts), and the bar says it once the freeze lands, as the Vault's row does.
+  assert.match(shell, /api\.kill\(on\)\s*\.then\(function \(answer\) \{[\s\S]*?if \(answer && answer\.note\) window\.PhosphorToast\.show\(answer\.note\);/);
 });

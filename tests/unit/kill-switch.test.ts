@@ -14,14 +14,16 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
-import { createKill, FREEZE_UNREADABLE, UNFREEZE_UNREADABLE } from '../../src/kill.ts';
+import { createKill, FREEZE_UNREADABLE, LEFT_OPEN_LOCKED, LEFT_OPEN_NO_KEY, UNFREEZE_UNREADABLE } from '../../src/kill.ts';
 import { defaultPolicy, loadPolicy, savePolicy } from '../../src/policy/file.ts';
 import { handle } from '../../src/http/router.ts';
 import type { Ctx } from '../../src/http/context.ts';
 
 const TOKEN = 'k'.repeat(64);
 
-function world(policy: 'readable' | 'unreadable') {
+type Venue = { open: boolean; child: 'on' | 'off'; key: 'present' | 'absent' | 'locked' };
+
+function world(policy: 'readable' | 'unreadable', venue: Venue = { open: false, child: 'off', key: 'present' }) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-kill-'));
   if (policy === 'readable') savePolicy(dataDir, defaultPolicy());
   else fs.writeFileSync(path.join(dataDir, 'policy.json'), '{ not json');
@@ -35,6 +37,8 @@ function world(policy: 'readable' | 'unreadable') {
     stopAll: async (reason: string) => {
       calls.push(`stopAll:${reason}:${String(loadPolicy(dataDir)?.killSwitch ?? 'unreadable')}`);
     },
+    openOnVenue: () => venue.open,
+    status: () => ({ plans: [], child: venue.child, watching: [] }),
   };
   const audit = {
     append: (type: string, msg: string) => {
@@ -43,7 +47,7 @@ function world(policy: 'readable' | 'unreadable') {
     },
     flushTip: () => {},
   };
-  const setKill = createKill({ dataDir, audit: audit as never, runner });
+  const setKill = createKill({ dataDir, audit: audit as never, runner, tradingKey: () => venue.key });
   return { dataDir, calls, lines, setKill };
 }
 
@@ -113,4 +117,32 @@ test('the route answers and logs what the switch did, not what was asked', async
   assert.equal(on.status, 200);
   assert.deepEqual(on.json, { ok: true, killSwitch: true });
   assert.ok(good.lines.some((l) => l.msg === 'KILL SWITCH ON: all writes refused (human)'));
+});
+
+/* Freeze closes positions only with the trading key in reach: a running plan's child holds it, or
+   an open wallet hands it over. Locked with no plan running, stopAll closes nothing and logs why,
+   and docs/trading.md said every position closes. The press now says what stayed open. */
+test('Freeze with positions open and no trading key in reach says they are still open, and why', async () => {
+  const locked = world('readable', { open: true, child: 'off', key: 'locked' });
+  assert.deepEqual(locked.setKill(true), { ok: true, killSwitch: true, note: LEFT_OPEN_LOCKED });
+  assert.deepEqual(locked.calls, ['setKilled:true', 'stopAll:kill switch:true'], 'the freeze itself still happens');
+
+  const noKey = world('readable', { open: true, child: 'off', key: 'absent' });
+  assert.deepEqual(noKey.setKill(true), { ok: true, killSwitch: true, note: LEFT_OPEN_NO_KEY });
+
+  const viaRoute = world('readable', { open: true, child: 'off', key: 'locked' });
+  const answer = await press(viaRoute, true);
+  assert.equal(answer.status, 200);
+  assert.deepEqual(answer.json, { ok: true, killSwitch: true, note: LEFT_OPEN_LOCKED });
+  assert.ok(viaRoute.lines.some((l) => l.msg === 'KILL SWITCH ON: all writes refused (human); trading positions left open, no trading key in reach'));
+});
+
+test('Freeze that can reach the venue, or has nothing there, says nothing more', () => {
+  for (const venue of [
+    { open: true, child: 'on', key: 'locked' },
+    { open: true, child: 'off', key: 'present' },
+    { open: false, child: 'off', key: 'locked' },
+  ] as Venue[]) {
+    assert.deepEqual(world('readable', venue).setKill(true), { ok: true, killSwitch: true }, JSON.stringify(venue));
+  }
 });

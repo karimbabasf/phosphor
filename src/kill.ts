@@ -13,7 +13,8 @@ import type { PlanRunner } from './runner/host.ts';
 import { loadPolicy, savePolicy } from './policy/file.ts';
 
 export type KillAnswer =
-  | { ok: true; killSwitch: boolean }
+  // `note` says what the press could not do: positions it had no key to close.
+  | { ok: true; killSwitch: boolean; note?: string }
   // killSwitch is what binds after the press: an unreadable file refuses every move, and a file
   // that would not take the write still says what it said before.
   | { ok: false; killSwitch: boolean; code: 'policy_unreadable' | 'policy_unsaved'; error: string };
@@ -22,12 +23,33 @@ export const FREEZE_UNREADABLE = 'Every plan is stopped, and every move stays re
 export const FREEZE_UNSAVED = 'Every plan is stopped, but the switch could not be saved and new moves are not refused yet; freeze again.';
 export const UNFREEZE_UNREADABLE = 'The policy file cannot be read, so everything stays frozen until it is fixed.';
 export const UNFREEZE_UNSAVED = 'The switch could not be saved, so everything stays frozen; try again.';
+export const LEFT_OPEN_LOCKED = 'Frozen. Your trading positions are still open, because the wallet is locked; unlock, then close them in the Trade tab or on Hyperliquid.';
+export const LEFT_OPEN_NO_KEY = 'Frozen. Your trading positions are still open, because Phosphor has no trading key for this account; close them on Hyperliquid.';
 
 export type KillDeps = {
   dataDir: string;
   audit: Pick<Audit, 'append' | 'flushTip'>;
-  runner: Pick<PlanRunner, 'setKilled' | 'stopAll'>;
+  runner: Pick<PlanRunner, 'setKilled' | 'stopAll' | 'openOnVenue' | 'status'>;
+  // The trading key as the runner would read it now (src/runner/keys.ts readApiWallet).
+  tradingKey: () => 'present' | 'absent' | 'locked';
 };
+
+/* WHAT A FREEZE CAN CLOSE. Closing a position takes the trading key, held by a running plan's
+   child or read from an open wallet. With something open on the venue and neither in reach,
+   stopAll closes nothing and records why in the log; the press says so too, so the window never
+   reads "closes your positions" over positions that stayed open. Asked before stopAll, which
+   takes the child out. */
+function leftOpen(deps: KillDeps): string | undefined {
+  try {
+    if (!deps.runner.openOnVenue() || deps.runner.status().child === 'on') return undefined;
+    const key = deps.tradingKey();
+    if (key === 'present') return undefined;
+    return key === 'locked' ? LEFT_OPEN_LOCKED : LEFT_OPEN_NO_KEY;
+  } catch {
+    // A sentence that cannot be worked out never stands between a person and the brake.
+    return undefined;
+  }
+}
 
 export function createKill(deps: KillDeps): (on: boolean) => KillAnswer {
   function write(on: boolean): KillAnswer {
@@ -60,8 +82,10 @@ export function createKill(deps: KillDeps): (on: boolean) => KillAnswer {
        every position it can reach and takes the child out. stopAll runs after the write because
        its last step reads the switch back from the file (an unreadable one reads as ON). */
     deps.runner.setKilled(true);
+    const note = leftOpen(deps);
     try {
-      return write(true);
+      const answer = write(true);
+      return answer.ok && note !== undefined ? { ...answer, note } : answer;
     } finally {
       /* Anchored now rather than on the next tick of the timer. This is the line somebody goes
          looking for straight after pulling the switch, and what usually follows a kill switch is

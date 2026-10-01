@@ -677,7 +677,12 @@
   function doFreeze(on) {
     setPending(refs.brakeGo, true);
     api.kill(on)
-      .then(function () { return refresh({}); })
+      .then(function (answer) {
+        /* A freeze with no trading key in reach closes no position, and
+           the answer says which stayed open (src/kill.ts). */
+        if (answer && answer.note) window.PhosphorToast.show(answer.note);
+        return refresh({});
+      })
       .then(function () { closeBrake(true); })
       .catch(function (err) {
         window.PhosphorToast.show(net.readable(err), 'down');

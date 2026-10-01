@@ -269,6 +269,10 @@ export function createRunnerHost(deps: HostDeps) {
     return [...rows.values()].filter(live);
   }
 
+  function openOnVenue(): boolean {
+    return liveRows().some((r) => r.status !== 'waiting') || (account?.positions ?? []).some((p) => p.szi !== 0);
+  }
+
   function childNeeded(): boolean {
     return liveRows().some((r) => (r.status === 'waiting' && r.locked !== true) || r.status === 'placed');
   }
@@ -1135,6 +1139,10 @@ export function createRunnerHost(deps: HostDeps) {
       };
     },
 
+    // Whether the account is known to hold something a freeze has to close: a position, or a
+    // plan with an order on the book. The same test stopAll makes.
+    openOnVenue,
+
     onMarket,
     onAccount,
     onLines(fn: (id: string, t: number) => number | null): void {
@@ -1244,9 +1252,8 @@ export function createRunnerHost(deps: HostDeps) {
       /* Anything on the venue is closed, whether or not a runner is up and whether or not a
          plan made it: a position opened by hand, or one a finished plan left behind, is still
          the account's money at risk. A runner is started for it if none is running. */
-      const onVenue = liveRows().some((r) => r.status !== 'waiting') || (account?.positions ?? []).some((p) => p.szi !== 0);
       let stillOpen: string[] = [];
-      if (onVenue || (doomed !== null && doomed.connected && liveRows().length > 0)) {
+      if (openOnVenue() || (doomed !== null && doomed.connected && liveRows().length > 0)) {
         const out = await flattenAll();
         stillOpen = out.stillOpen;
         if (!out.ok) record({ type: 'error', id: null, message: `${reason}: ${out.detail}` });

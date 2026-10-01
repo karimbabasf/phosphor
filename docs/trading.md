@@ -104,7 +104,11 @@ nothing fires until they are back.
 
 Freeze everything in the top bar ends all of it: every plan is finished, resting orders are
 cancelled, and every open position on the account is closed at the market price when the venue
-can be reached. A position that does not close keeps its stop and target resting.
+can be reached. A position that does not close keeps its stop and target resting. Closing takes
+the trading key, which a running plan holds and an open wallet hands over: with neither (the
+wallet locked and no plan running, or no trading key for the account) nothing on Hyperliquid can
+be closed, the freeze still stops everything else, and the window says the positions are still
+open.
 See [Getting started](getting-started.md#freeze-everything).
 
 ## Reading the account

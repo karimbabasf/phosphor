@@ -703,7 +703,7 @@ function setTheme(next: Theme): void {
    refused future proposals and left the plan running, the one situation a kill switch exists for.
    The runner is told before the policy file is read (src/kill.ts), so a file that will not load
    can never be the reason a plan kept firing. */
-const setKill = createKill({ dataDir: cfg.dataDir, audit, runner });
+const setKill = createKill({ dataDir: cfg.dataDir, audit, runner, tradingKey: () => readApiWallet(cfg.keysPath).source });
 
 // ATR per coin, refreshed on a slow timer and served from a cache.
 //

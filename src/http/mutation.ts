@@ -607,10 +607,10 @@ export async function handleMutation(
     }
     ctx.audit.append(
       'kill_switch',
-      on ? 'KILL SWITCH ON: all writes refused (human)' : 'kill switch off: writes allowed again, subject to policy (human)',
+      on ? `KILL SWITCH ON: all writes refused (human)${answer.note === undefined ? '' : '; trading positions left open, no trading key in reach'}` : 'kill switch off: writes allowed again, subject to policy (human)',
       { on },
     );
-    sendJson(res, 200, { ok: true, killSwitch: answer.killSwitch });
+    sendJson(res, 200, { ok: true, killSwitch: answer.killSwitch, ...(answer.note === undefined ? {} : { note: answer.note }) });
     return;
   }
 
