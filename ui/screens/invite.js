@@ -150,6 +150,10 @@
   var early = {};
   /* Ends that came while the first run was up, said once Basic is. */
   var held = [];
+  /* Ends heard for a claim this window was never answered about, while its own claim was still
+     being asked: the app announces a claim and can end it before its 202 arrives, so the end
+     waits for that answer and is said once, in place when the answer says it was ours. */
+  var deferred = [];
   var lines = [];
 
   function firstRunUp() {
@@ -175,6 +179,7 @@
         entry.status = 'refused';
         entry.reason = answer && answer.reason ? answer.reason : 'offline';
         tell(entry);
+        tellDeferred();
         paintLines();
         return;
       }
@@ -201,6 +206,7 @@
       }
       if (entry.status === 'running' || entry.told) update(entry);
       else tell(entry);
+      tellDeferred();
       paintLines();
     });
     return {
@@ -247,6 +253,16 @@
     toaster.show(claimSentence(entry, 'toast'), entry.status === 'landed' ? 'up' : 'down');
   }
 
+  /* The answers are in: an end no answer claimed is someone else's claim, said now. */
+  function tellDeferred() {
+    if (asking.length) return;
+    var list = deferred;
+    deferred = [];
+    for (var i = 0; i < list.length; i += 1) {
+      if (claims[list[i].id] === list[i]) tell(list[i]);
+    }
+  }
+
   /* The first run closed: what it could not say in place is said now, on Basic. */
   function firstRunClosed() {
     var list = held;
@@ -261,7 +277,7 @@
       if (outcome.status === 'running') {
         /* A claim this window did not ask for: a window opened while one runs. Its end is
            said all the same. One that is already over is history, and Activity shows it. */
-        claims[outcome.claim] = { id: outcome.claim, status: 'running', reason: '', amount: outcome.amount, asset: outcome.asset, told: false, shows: [] };
+        claims[outcome.claim] = { id: outcome.claim, status: 'running', reason: '', amount: outcome.amount, asset: outcome.asset, told: false, shows: [], heard: true };
         paintLines();
       } else {
         early[outcome.claim] = outcome;
@@ -272,7 +288,11 @@
     if (outcome.asset) entry.asset = outcome.asset;
     if (entry.told || outcome.status === 'running' || entry.status !== 'running') return;
     entry.status = outcome.status;
-    tell(entry);
+    if (entry.heard && asking.length) {
+      if (deferred.indexOf(entry) < 0) deferred.push(entry);
+    } else {
+      tell(entry);
+    }
     paintLines();
   }
 

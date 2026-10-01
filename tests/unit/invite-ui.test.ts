@@ -644,6 +644,57 @@ test('the claim\'s answer can come after the step was left, and its frame can be
   assert.deepEqual(world.toasts, [{ words: '$4.99 USDC is in your wallet.', tone: 'up' }]);
 });
 
+test('an end whose frames beat the claim\'s own answer is said once, in place', async () => {
+  // The app announces a claim, and a fast failure ends it, before the 202 reaches the window: the
+  // real backend does this when the verifier refuses the claim's simulation.
+  const holdAnswer = (world: Any): (() => void) => {
+    let release: (value: unknown) => void = () => {};
+    const post = world.sandbox.PhosphorNet.postJson;
+    world.sandbox.PhosphorNet.postJson = (path: string, payload: Any) => {
+      if (path !== '/api/invite/claim') return post(path, payload);
+      world.calls.push({ route: path, ...payload });
+      return new Promise((resolve) => { release = resolve; });
+    };
+    return () => release({ ok: true, claim: 'c-7' });
+  };
+  const frames = (world: Any, status: string): void => {
+    world.emit('invite', { claim: 'c-7', status: 'running', amount: '5.00', asset: 'USDC' });
+    world.emit('invite', { claim: 'c-7', status, amount: '5.00', asset: 'USDC' });
+  };
+
+  // The first run's addresses step: in place, and nothing held for Basic.
+  for (const [status, words] of [['failed', 'Your $5 didn\'t come through. Add the code again from Add money.'], ['landed', '$5 USDC is in your wallet.']]) {
+    const world = build();
+    const answer = holdAnswer(world);
+    const screen = await toAddresses(world);
+    frames(world, status!);
+    assert.equal(world.toasts.length, 0, 'an end was toasted before the answer said whose claim it was');
+    answer();
+    await flush();
+    assert.equal(claimLine(screen), words);
+    buttonNamed(screen, 'Continue').click();
+    buttonNamed(screen, 'Do this later').click();
+    assert.equal(screen.hidden, true);
+    assert.deepEqual(world.toasts, [], `${status}: an end said in place was said again on Basic`);
+  }
+
+  // Add money: on the line, and no toast beside it.
+  const world = build({ money: true });
+  const answer = holdAnswer(world);
+  const { host } = fold(world);
+  buttonNamed(host, 'Have an invite code?').click();
+  lineField(host).value = CODE;
+  lineField(host).dispatch('input');
+  lineKey(host).click();
+  await flush();
+  lineKey(host).click();
+  frames(world, 'failed');
+  answer();
+  await flush();
+  assert.equal(lineSaid(host), 'Your $5 didn\'t come through. Paste the code again to try once more.');
+  assert.deepEqual(world.toasts, [], 'an end said on the line was said again as a toast');
+});
+
 test('a window that opens while a claim runs says how it ends; one already over is history', () => {
   const world = build();
   world.store.put({ ...world.store.get(), invite: { claim: 'old', status: 'landed', amount: '5.00' } });
