@@ -175,6 +175,11 @@
     gap: 12px;
   }
 
+  /* With Details open the stepped-back mark makes room for the well, so every word stays in view. */
+  body[data-state="failed"]:has(details[open]) .mark {
+    display: none;
+  }
+
   .opening {
     margin: 0;
     font-size: 15px;
@@ -231,7 +236,12 @@
   details[open] summary::after { transform: rotate(180deg); margin-top: -4px; }
   details summary:focus-visible { outline: 2px solid var(--text-2); outline-offset: 2px; }
 
+  /* Three lines at most, scrolling inside the well, so Details can never push the words or the
+     keys out of the 420 x 300 window. A fade at its foot says there is more, because macOS hides
+     the scrollbar until a finger is on the pad. */
   details pre {
+    max-height: 4.5em;
+    overflow: auto;
     margin: 8px 0 0;
     padding: 8px 12px;
     border-radius: 12px;
@@ -244,6 +254,11 @@
     text-align: left;
     -webkit-user-select: text;
     user-select: text;
+  }
+
+  details pre[data-more="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
   }
 
   .actions {
@@ -387,6 +402,17 @@
       actions.hidden = false;
       body.setAttribute('data-state', 'failed');
     }
+
+    /* The fade at the foot of the Details well, only while there is more under it. */
+    function edge() {
+      if (detail.scrollTop + detail.clientHeight < detail.scrollHeight - 2) detail.setAttribute('data-more', 'true');
+      else detail.removeAttribute('data-more');
+    }
+    detail.addEventListener('scroll', edge);
+    more.addEventListener('toggle', function () {
+      edge();
+      if (more.open && detail.scrollIntoView) detail.scrollIntoView({ block: 'nearest' });
+    });
 
     window.__phosphorFailed = fail;
     window.__phosphorStarting = starting;

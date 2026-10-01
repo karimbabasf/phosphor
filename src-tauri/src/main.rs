@@ -468,10 +468,47 @@ impl Failure {
         }
     }
 
+    /// What the splash is handed. Its Details get `shown(detail)`; the log line in `fail` keeps the
+    /// reason whole.
     fn payload(&self) -> serde_json::Value {
         let kind = if self.altered { "altered" } else { "failed" };
-        serde_json::json!({ "title": self.title, "message": self.message, "detail": self.detail, "kind": kind })
+        serde_json::json!({ "title": self.title, "message": self.message, "detail": shown(&self.detail), "kind": kind })
     }
+}
+
+/// A reason as the splash's Details show it, in a window 420 points wide: each 64-character digest
+/// as its first 12 characters, and a path into an app bundle as "Phosphor.app". Anything else is
+/// left as it is.
+fn shown(detail: &str) -> String {
+    let words: Vec<String> = detail
+        .split_inclusive(char::is_whitespace)
+        .map(|token| {
+            let word = token.trim_end_matches(char::is_whitespace);
+            let path = word.trim_end_matches(['.', ',', ';', ':', ')']);
+            if path.starts_with('/') && path.split('/').any(|part| part.len() > 4 && part.ends_with(".app")) {
+                format!("Phosphor.app{}", &token[path.len()..])
+            } else {
+                token.to_string()
+            }
+        })
+        .collect();
+    let text = words.concat();
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let run = chars[i..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
+        let starts = i == 0 || !chars[i - 1].is_ascii_alphanumeric();
+        let ends = chars.get(i + run).is_none_or(|c| !c.is_ascii_alphanumeric());
+        if run == 64 && starts && ends {
+            out.extend(&chars[i..i + 12]);
+            i += 64;
+        } else {
+            out.extend(&chars[i..i + run.max(1)]);
+            i += run.max(1);
+        }
+    }
+    out
 }
 
 /// The failure as the splash page takes it once it is running. Serialised with serde_json and the
@@ -1467,7 +1504,7 @@ fn main() {
 mod tests {
     use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL, log_from_response, log_lines, query_value, report_url, HELP_LINKS, HELP_REPORT_ID};
     use super::{launch, running_copy, Launch, Occupant, PidRecord};
-    use super::{failure_script, notice_script, splash_init, Failure, SpawnError, DID_NOT_OPEN, STOPPED};
+    use super::{failure_script, notice_script, payload, shown, splash_init, Failure, SpawnError, DID_NOT_OPEN, STOPPED};
     use super::{
         ALTERED, ALTERED_TITLE, DOWNLOAD_URL, EXITED_STARTING, MCP_COPIED, NOT_BACK, NOT_RESTARTED, NO_WINDOW, OLD_SESSION, OTHER_PHOSPHOR,
         PORT_TAKEN, RESTARTED, START_BLOCKED, STOPPED_TWICE, TAKEN_ON_RESTART, TOO_SLOW,
@@ -1652,6 +1689,32 @@ mod tests {
         assert_eq!((other.message, other.altered), (NOT_RESTARTED, false));
         assert_eq!(other.payload()["kind"], "failed");
         assert_eq!(DOWNLOAD_URL, "https://phosphor.money/");
+    }
+
+    #[test]
+    fn the_altered_details_show_short_digests_and_the_app_name() {
+        let root = std::env::temp_dir().join(format!("phosphor-shown-{}", std::process::id())).join("Phosphor.app/Contents/Resources/phosphor");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("main.ts"), "x").unwrap();
+        let built_for = "0123456789abcdef".repeat(4);
+        let why = payload::check(&root, &built_for).err().expect("a different payload is refused");
+        let _ = std::fs::remove_dir_all(root.ancestors().nth(3).unwrap());
+        let found = why.split("found ").nth(1).unwrap()[..64].to_string();
+
+        let failure = Failure::altered(why.clone());
+        assert_eq!(failure.detail, why, "the log line (fail) keeps every character");
+        assert!(why.contains(&built_for) && why.contains(&found) && why.contains("/Contents/Resources/phosphor"));
+        assert_eq!(
+            failure.payload()["detail"],
+            format!(
+                "The files in Phosphor.app are not the ones this copy of Phosphor was built with, so the backend was not started. \
+                 Built for payload 0123456789ab, found {} over 1 files.",
+                &found[..12]
+            )
+        );
+        // Text with no digest and no app path is left as it is.
+        assert_eq!(shown("The bundled runtime is not signed by this app's team (35Z6P26CBD): Security answered -67050."), "The bundled runtime is not signed by this app's team (35Z6P26CBD): Security answered -67050.");
+        assert_eq!(shown("a /tmp/x path, and abc123"), "a /tmp/x path, and abc123");
     }
 
     #[test]

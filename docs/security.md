@@ -122,7 +122,10 @@ set of them, named by a digest compiled into the signed app. Every time Phosphor
 backend, it works the digest out again from the files on disk. If one was changed, added or
 removed since the release was built, it starts nothing and its window says "Phosphor needs a
 fresh copy". Nothing has opened your wallet at that point; install a fresh copy from
-phosphor.money. The check runs while the window opens, so it adds no wait.
+phosphor.money. The check runs while the window opens, so it adds no wait. The window's Details
+name each digest by its first 12 characters and the folder as Phosphor.app, so they fit; the full
+digests are what `phosphor-desktop --payload-digest` prints (below), and the shell's log line keeps
+the whole reason.
 
 The Node runtime beside those files is checked as well. On a signed release, the running process
 has to carry a Developer ID signature of the same team as the app, or it is stopped before it is
