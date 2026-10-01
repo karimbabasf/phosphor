@@ -78,13 +78,14 @@ money. Claiming signs one transfer with the code's key: everything the code hold
 wallet's address. Your address is inside the signed message, so nobody between this Mac and
 NEAR Intents can send the money anywhere else, and your own wallet key signs nothing. A transfer
 pays no fee, so a $5 code lands as exactly 5.00 USDC. The app calls a claim done only on NEAR
-Intents' own record: the code's one-time number (its nonce) spent and the code's balance down by
-what was signed. Your balance rising is shown, never taken as proof, because a deposit landing
-at the same moment would look the same.
+Intents' own record: the code's one-time number (its nonce) spent, which NEAR Intents writes in
+the same step that moves the money. Your balance rising is shown, never taken as proof, because a
+deposit landing at the same moment would look the same.
 
 If the solver relay turns the claim away, the app sends it through 1Click instead. That route
 costs about 0.25 percent, so a $5 code lands as about $4.99, and the check says the smaller
-figure before you claim.
+figure before you claim. If 1Click refunds it, the refund goes back to the code, and the claim
+ends only once the refund shows there.
 
 A claim that fails moves nothing: the money stays on the code, and you can add it again from Add
 money. If the app quits in the middle of a claim, it finishes the check the next time it opens.

@@ -39,7 +39,7 @@ type Harness = {
   service: ReturnType<typeof createInviteService>;
   audit: Array<{ type: string; msg: string; data: unknown }>;
   frames: Array<Record<string, unknown>>;
-  holds: Array<{ asset: string; proven?: bigint | null }>;
+  holds: Array<{ asset: string; walletBefore: bigint | null; proven?: bigint | null }>;
   refreshes: number;
   dataDir: string;
   lock: { state: 'unlocked' | 'locked'; verified: boolean; tampered: boolean };
@@ -62,8 +62,8 @@ function harness(over: Partial<InviteDeps> & { world?: World; dataDir?: string }
     refreshLedger: async () => {
       h.refreshes += 1;
     },
-    hold: (asset) => {
-      const entry: { asset: string; proven?: bigint | null } = { asset };
+    hold: (asset, walletBefore) => {
+      const entry: { asset: string; walletBefore: bigint | null; proven?: bigint | null } = { asset, walletBefore };
       h.holds.push(entry);
       return (proven) => {
         entry.proven = proven;
@@ -133,7 +133,8 @@ test('a claim on the relay: one signature, simulated, published with no quote, p
   );
   assert.equal(h.audit.filter((e) => e.type === 'executed').length, 0, 'never executed: no approval comes before a claim');
   assert.equal(h.refreshes, 1);
-  assert.deepEqual(h.holds, [{ asset: INVITE_ASSET_ID, proven: 5_000_000n }]);
+  // The hold opened right before the send, with the wallet's balance from a moment before.
+  assert.deepEqual(h.holds, [{ asset: INVITE_ASSET_ID, walletBefore: 0n, proven: 5_000_000n }]);
   assert.deepEqual(h.frames.map((f) => f.status), ['running', 'landed']);
   assert.deepEqual(h.frames[1], { type: 'invite', kind: 'invite', claim: answer.ok ? answer.claim : '', status: 'landed', amount: '5.00', asset: 'USDC' });
   assert.deepEqual(h.service.state(), { claim: answer.ok ? answer.claim : '', status: 'landed', amount: '5.00' });
@@ -215,12 +216,12 @@ test('the watch runs to the deadline plus 30 s on the chain clock before it call
   assert.equal((failed[0]!.data as { reason: string }).reason, 'expired');
   assert.match(failed[0]!.msg, /Nothing moved, and the money is still on the code/);
   assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed']);
-  assert.deepEqual(h.holds, [{ asset: INVITE_ASSET_ID, proven: null }]);
+  assert.deepEqual(h.holds, [{ asset: INVITE_ASSET_ID, walletBefore: 0n, proven: null }]);
   assert.equal(createClaimStore(h.dataDir).all()[0]!.status, 'failed');
   assert.equal(world.balances.get(CODE_ADDRESS), 5_000_000n, 'a failed claim loses nothing');
 });
 
-test("a wallet rise alone is not success: proof is the code's nonce plus the code's balance", async () => {
+test("a wallet rise alone is not success, and dust on the code's address cannot stop a paid claim", async () => {
   const world = freshWorld();
   world.executes = false;
   const h = harness({ world });
@@ -231,29 +232,45 @@ test("a wallet rise alone is not success: proof is the code's nonce plus the cod
   assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed']);
   assert.equal(h.audit.filter((e) => e.type === 'invite_claimed').length, 0);
 
-  // The nonce spent but the code's balance not down yet (a read a block behind): still waiting,
-  // and read again until the fall shows.
-  const world2 = freshWorld();
-  let stale = 0;
-  const live = verifierOf(world2);
-  const lagging = harness({
-    world: world2,
-    verifier: {
-      ...live,
-      balance: async (account, asset) => {
-        const real = await live.balance(account, asset);
-        if (account === CODE_ADDRESS && world2.published.length > 0 && stale < 3) {
-          stale += 1;
-          return 5_000_000n;
-        }
-        return real;
+  // Someone sends a base unit to the public code address between the signature and the proof.
+  // The code never reads zero again, and the claim is still proven, by its nonce.
+  const dusty = freshWorld();
+  dusty.balances.set('0x00000000000000000000000000000000000d0057', 1_000n);
+  const relay = relayOf(dusty);
+  const h2 = harness({
+    world: dusty,
+    relay: {
+      ...relay,
+      async publishIntent(req) {
+        dusty.queued.push({ at: dusty.mac + 500, t: { from: '0x00000000000000000000000000000000000d0057', to: CODE_ADDRESS, amount: 1n, nonce: 'dust' } });
+        return relay.publishIntent(req);
       },
     },
   });
-  await lagging.service.claim(CODE);
-  await lagging.service.idle();
-  assert.equal(stale, 3, 'three reads still showed the code full');
-  assert.deepEqual(lagging.frames.map((f) => f.status), ['running', 'landed']);
+  await h2.service.claim(CODE);
+  await h2.service.idle();
+  assert.equal(dusty.balances.get(CODE_ADDRESS), 1n, 'the dust stays on the code');
+  assert.deepEqual(h2.frames.map((f) => f.status), ['running', 'landed']);
+  assert.equal(h2.audit.filter((e) => e.type === 'invite_claimed').length, 1);
+
+  // Dust on a used code is not an invite: under a cent reads as empty, and nothing is signed.
+  const used = freshWorld();
+  used.balances.set(CODE_ADDRESS, 9_999n);
+  const h3 = harness({ world: used });
+  assert.deepEqual(await h3.service.check(CODE), { ok: false, reason: 'empty' });
+  assert.deepEqual(await h3.service.claim(CODE), { ok: false, reason: 'empty' });
+  assert.equal(used.simulated.length, 0);
+});
+
+test('Plan B only on a refusal to the first send: a resend refused after no reply signs nothing more', async () => {
+  const world = freshWorld();
+  world.relayMode = 'noreply-then-auth';
+  const h = harness({ world });
+  await h.service.claim(CODE);
+  await h.service.idle();
+  assert.equal(world.published.length, 2, 'the one resend, refused');
+  assert.equal(world.oneclick.quotes, 0, 'no second signature: the first send may be live');
+  assert.deepEqual(h.frames.map((f) => f.status), ['running', 'landed'], 'and it was: the first bytes ran');
 });
 
 test('simulate refusals stop the claim before anything is sent, in plain words', async () => {
@@ -326,6 +343,22 @@ test('the boot reconcile finishes a claim published before a quit', async () => 
   assert.equal((third.audit.find((e) => e.type === 'invite_failed')!.data as { reason: string }).reason, 'expired');
   assert.deepEqual(third.frames, [], 'no toast at launch about a claim from an earlier session');
   assert.equal(third.service.state(), null);
+
+  // A pending record naming another receiver is not this wallet's to finish: left as it is.
+  const world3 = freshWorld();
+  world3.executeAfterMs = 60_000;
+  const other = harness({ world: world3, sleep: async () => { throw new Error('the app quit'); } });
+  await other.service.claim(CODE);
+  await other.service.idle();
+  const store = createClaimStore(other.dataDir);
+  store.put({ ...store.all()[0]!, receiver: '0x2222222222222222222222222222222222222222' });
+  world3.mac += 120_000;
+  world3.chain += 120_000;
+  const fourth = harness({ world: world3, dataDir: other.dataDir });
+  fourth.service.reconcile();
+  await fourth.service.idle();
+  assert.equal(fourth.audit.length, 0, 'nothing written for a record that is not this wallet');
+  assert.equal(createClaimStore(other.dataDir).all()[0]!.status, 'pending');
 });
 
 test('the wallet must be open and its address decrypted: locked, unverified or tampered refuses', async () => {
@@ -444,13 +477,49 @@ test('a relay quote refusal falls back too, and any other refusal does not', asy
   assert.equal(silent.oneclick.quotes, 0);
 });
 
-test('Plan B refunded: the money is back on the code and the claim ends failed', async () => {
+test('Plan B refunded: the claim ends failed only once the refund shows on the code', async () => {
   const world = freshWorld();
   world.relayMode = 'auth';
   world.oneclick.status = 'REFUNDED';
   const h = harness({ world });
   await h.service.claim(CODE);
   await h.service.idle();
+  assert.equal(world.balances.get(CODE_ADDRESS), 4_990_000n, 'the refund is back on the code');
   assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed']);
-  assert.equal((h.audit.find((e) => e.type === 'invite_failed')!.data as { reason: string }).reason, 'refunded');
+  const failed = h.audit.find((e) => e.type === 'invite_failed')!;
+  assert.equal((failed.data as { reason: string }).reason, 'refunded');
+  assert.match(failed.msg, /back on it/);
+  assert.equal(createClaimStore(h.dataDir).all()[0]!.status, 'failed');
+  assert.deepEqual(h.holds.map((x) => x.proven), [null]);
+});
+
+test("Plan B FAILED with the refund not back yet never closes on 1Click's word", async () => {
+  const world = freshWorld();
+  world.relayMode = 'auth';
+  world.oneclick.status = 'FAILED';
+  const h = harness({ world });
+  await h.service.claim(CODE);
+  await h.service.idle();
+  assert.equal(world.balances.get(CODE_ADDRESS), 0n, 'the money sits on the handle');
+  const failed = h.audit.find((e) => e.type === 'invite_failed')!;
+  assert.equal((failed.data as { reason: string }).reason, 'unconfirmed');
+  assert.equal(createClaimStore(h.dataDir).all()[0]!.status, 'pending', 'left for the next start to finish');
+  assert.equal(h.holds[0]!.proven, undefined, 'the hold stays: the money may still land');
+});
+
+test('Plan B stopping before its signature watches the refused relay claim to its end', async () => {
+  const world = freshWorld();
+  world.relayMode = 'auth';
+  world.oneclick.quoteFails = true;
+  const h = harness({ world });
+  const signedAt = world.chain;
+  await h.service.claim(CODE);
+  await h.service.idle();
+  assert.equal(world.oneclick.submitted.length, 0, 'nothing was signed on Plan B');
+  assert.ok(world.chain > signedAt + CLAIM_DEADLINE_MS + 30_000, 'closed only once the relay claim was proved dead');
+  const failed = h.audit.find((e) => e.type === 'invite_failed')!;
+  assert.equal((failed.data as { reason: string }).reason, 'expired');
+  assert.match((failed.data as { detail: string }).detail, /1Click stopped the claim before signing/);
+  assert.equal(createClaimStore(h.dataDir).all()[0]!.status, 'failed');
+  assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed']);
 });

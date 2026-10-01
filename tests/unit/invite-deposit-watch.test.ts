@@ -84,7 +84,34 @@ test('a claim alone never ends the watch as credited', async () => {
   watch.stop();
 });
 
-test('a watch opened mid-claim takes no baseline until the claim ends, then a clean one', async () => {
+test("a card opened mid-claim takes the claim's own read from before the send, so a deposit in the window still counts", async () => {
+  const { watch, balances } = build();
+  // The claim read the wallet at 0 and opened the hold; then the person opened the card.
+  const release = watch.holdForClaim(INVITE_ASSET_ID, 0n);
+  watch.show('near', 'USDC', null, NEAR_USDC);
+  balances.set(INVITE_ASSET_ID, 15_000_000n); // the claim's 5 and their own 10
+  await ticks();
+  assert.equal(watch.current()?.phase, 'watching');
+  release(5_000_000n);
+  await ticks();
+  assert.equal(watch.current()?.phase, 'credited');
+  assert.equal(watch.current()?.amount, 10, 'the deposit, and only the deposit');
+  watch.stop();
+});
+
+test('a claim that ends unproven keeps its hold, so a late landing is never a deposit', async () => {
+  const { watch, balances } = build();
+  watch.show('near', 'USDC', null, NEAR_USDC);
+  await ticks();
+  watch.holdForClaim(INVITE_ASSET_ID, 0n);
+  // The claim service never calls release on an unproven end (src/invite/claim.ts settle).
+  balances.set(INVITE_ASSET_ID, 5_000_000n);
+  await ticks();
+  assert.equal(watch.current()?.phase, 'watching');
+  watch.stop();
+});
+
+test('a watch opened mid-claim with no read from before the send takes no baseline until the claim ends', async () => {
   const { watch, balances } = build(undefined);
   const release = watch.holdForClaim(INVITE_ASSET_ID);
   watch.show('near', 'USDC', null, NEAR_USDC);

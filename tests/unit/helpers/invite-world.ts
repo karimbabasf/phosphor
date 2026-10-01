@@ -32,14 +32,24 @@ export type World = {
   locked: Set<string>;
   simRefusal: string | null;
   offline: boolean;
-  relayMode: 'ok' | 'noreply' | 'auth' | 'quote' | 'failed';
+  // 'noreply-then-auth': the first send gets no answer, the resend is refused for auth.
+  relayMode: 'ok' | 'noreply' | 'auth' | 'quote' | 'failed' | 'noreply-then-auth';
   // Whether a payload the relay or 1Click took runs on the chain, and after how long.
   executes: boolean;
   executeAfterMs: number;
   queued: Array<{ at: number; t: Transfer }>;
   published: RelayPublishRequest[];
   simulated: SignedIntent[][];
-  oneclick: { quotes: number; generated: number; submitted: Array<{ payload: string; signature: string }>; status: 'SUCCESS' | 'REFUNDED' | 'PENDING_DEPOSIT' };
+  oneclick: {
+    quotes: number;
+    generated: number;
+    submitted: Array<{ payload: string; signature: string }>;
+    // What 1Click says once the code's transfer to its handle ran: SUCCESS delivers the net to
+    // the wallet, REFUNDED puts the refund back on the code, FAILED is a refund still on its way.
+    status: 'SUCCESS' | 'REFUNDED' | 'FAILED' | 'PENDING_DEPOSIT';
+    quoteFails: boolean;
+    settled: boolean;
+  };
   reads: number;
 };
 
@@ -58,7 +68,7 @@ export function freshWorld(): World {
     queued: [],
     published: [],
     simulated: [],
-    oneclick: { quotes: 0, generated: 0, submitted: [], status: 'SUCCESS' },
+    oneclick: { quotes: 0, generated: 0, submitted: [], status: 'SUCCESS', quoteFails: false, settled: false },
     reads: 0,
   };
 }
@@ -110,7 +120,10 @@ export function relayOf(world: World): RelayClient {
     quote: async () => [],
     async publishIntent(req) {
       world.published.push(req);
-      if (world.relayMode === 'noreply') {
+      if (world.relayMode === 'noreply-then-auth' && world.published.length > 1) {
+        throw new Error('relay publish_intent failed: 401');
+      }
+      if (world.relayMode === 'noreply' || world.relayMode === 'noreply-then-auth') {
         // The answer is lost on the way back; the bytes may still have reached the chain.
         if (world.executes) world.queued.push({ at: world.mac + world.executeAfterMs, t: transferOf(req.payload) });
         throw Object.assign(new Error('fetch failed'), { cause: { code: 'ETIMEDOUT' } });
@@ -134,6 +147,7 @@ export function oneclickOf(world: World): IntentsApiPort {
     tokens: async () => [{ assetId: INVITE_ASSET_ID, decimals: 6, blockchain: 'near', symbol: 'USDC' }],
     async quote(params) {
       world.oneclick.quotes += 1;
+      if (world.oneclick.quoteFails) throw new Error('1click quote http 503');
       const quote: OneClickQuote = {
         depositAddress: HANDLE,
         amountIn: params.amount,
@@ -183,17 +197,31 @@ export function oneclickOf(world: World): IntentsApiPort {
     },
     async submitIntent(signed) {
       world.oneclick.submitted.push(signed);
-      const t = transferOf(signed.payload);
-      // The handle is 1Click's; it delivers the net amount to the wallet once the transfer ran.
-      world.queued.push({ at: world.mac, t });
-      world.queued.push({ at: world.mac, t: { from: HANDLE, to: WALLET_ID, amount: 4_987_500n, nonce: `deliver-${t.nonce}` } });
-      world.balances.set(HANDLE, (world.balances.get(HANDLE) ?? 0n) + 4_987_500n - 5_000_000n);
+      if (world.executes) world.queued.push({ at: world.mac, t: transferOf(signed.payload) });
       return { intentHash: 'OneClickIntentHash11111111111111111111111' };
     },
     async status() {
       settleQueue(world);
       const s = world.oneclick.status;
-      return { found: true, status: s, reported: s, originTxHashes: [], destinationTxHashes: [], nearTxHashes: ['NearTx1'], ...(s === 'SUCCESS' ? { settledAmountOut: '4.9875' } : {}) };
+      const ran = (world.balances.get(HANDLE) ?? 0n) >= 5_000_000n || world.oneclick.settled;
+      if (ran && !world.oneclick.settled && (s === 'SUCCESS' || s === 'REFUNDED')) {
+        world.oneclick.settled = true;
+        const to = s === 'SUCCESS' ? WALLET_ID : CODE_ADDRESS;
+        const amount = s === 'SUCCESS' ? 4_987_500n : 4_990_000n;
+        world.queued.push({ at: world.mac, t: { from: HANDLE, to, amount, nonce: `handle-${s}` } });
+        settleQueue(world);
+      }
+      return {
+        found: true,
+        status: ran ? s : 'PENDING_DEPOSIT',
+        reported: ran ? s : 'PENDING_DEPOSIT',
+        originTxHashes: [],
+        destinationTxHashes: [],
+        nearTxHashes: ['NearTx1'],
+        ...(ran && s === 'SUCCESS' ? { settledAmountOut: '4.9875' } : {}),
+        ...(ran && s === 'REFUNDED' ? { refundedAmount: '4.99' } : {}),
+        ...(ran && s === 'FAILED' ? { refundedAmount: '0' } : {}),
+      };
     },
   };
 }

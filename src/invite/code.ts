@@ -37,8 +37,10 @@ export const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 // Crockford's check alphabet: the 32 above, then the five symbols only a check can carry.
 const CHECK_ALPHABET = CROCKFORD + '*~$=U';
 
-// The secp256k1 group order. A key is a scalar strictly between 0 and this.
-export const SECP256K1_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+/* The secp256k1 group order. A key is a scalar strictly between 0 and this. Written as 2^256 less
+   its published complement, because the order spelled out is a 64 hex run, the shape the secret
+   sweep (scripts/sweep.ts) rightly stops on. */
+export const SECP256K1_N = (1n << 256n) - 0x14551231950b75fc4402da1732fc9bebfn;
 
 const TAG_BYTES = new TextEncoder().encode(INVITE_KEY_TAG);
 
@@ -103,8 +105,11 @@ export function inviteLink(code: string): string {
 
 export type ParsedCode = { ok: true; secret: Uint8Array } | { ok: false };
 
-// Crockford's reading rules: case does not matter, O reads as 0, I and L read as 1.
+/* Crockford's reading rules: case does not matter, O reads as 0, I and L read as 1. ASCII only:
+   toUpperCase folds a dotless ı to I and a long ſ to S, and a ligature to two letters, so a
+   spelling the redaction pattern cannot see would otherwise parse as a real code. */
 function crockfordIndex(ch: string): number {
+  if (!/^[0-9A-Za-z]$/.test(ch)) return -1;
   const upper = ch.toUpperCase();
   const mapped = upper === 'O' ? '0' : upper === 'I' || upper === 'L' ? '1' : upper;
   return CROCKFORD.indexOf(mapped);

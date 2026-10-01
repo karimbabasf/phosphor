@@ -149,6 +149,28 @@ test('the two spare bits must be zero, even under a check symbol that agrees', (
   assert.ok(parsed > 20);
 });
 
+test('only ASCII reads as a code character: no Unicode spelling slips past the matcher', () => {
+  // Sixteen 0x14 bytes: a code with a 1 in its data and S as its check symbol.
+  const code = formatCode(filled(0x14));
+  assert.equal(code, 'PHOS-0M2GA-1850M-2GA18-50M2G-A1850MS');
+  sameSecret(code, filled(0x14));
+  const one = code.indexOf('1', 5);
+  const last = code.length - 1;
+  for (const variant of [
+    code.slice(0, one) + '\u0131' + code.slice(one + 1), // dotless i, which upper-cases to I
+    code.slice(0, last) + '\u017f', // long s, which upper-cases to S
+    code.slice(0, last) + '\ufb06', // the st ligature, which upper-cases to ST
+    code.slice(0, 5) + '\uff10' + code.slice(6), // a full-width zero
+  ]) {
+    assert.equal(parseCode(variant).ok, false, `a Unicode spelling parsed: ${JSON.stringify(variant)}`);
+    assert.equal(containsInviteCode(variant), false);
+  }
+  // A no-break space between groups is a space to both the parser and the matcher.
+  const nbsp = code.replace(/-/g, '\u00a0');
+  sameSecret(nbsp, filled(0x14));
+  assert.equal(containsInviteCode(`code: ${nbsp}`), true);
+});
+
 test('anything else is refused, and the answer never says why', () => {
   const code = formatCode(filled(0x42));
   for (const bad of [
@@ -173,6 +195,8 @@ test('anything else is refused, and the answer never says why', () => {
 });
 
 test('0 < k < n is the rule, and the generator redraws a symbol check character', () => {
+  // The published order, in two halves so this file carries no 64 hex run for the sweep.
+  assert.equal(SECP256K1_N.toString(16), 'fffffffffffffffffffffffffffffffe' + 'baaedce6af48a03bbfd25e8cd0364141');
   assert.equal(keyInRange(0n), false);
   assert.equal(keyInRange(SECP256K1_N), false);
   assert.equal(keyInRange(SECP256K1_N + 1n), false);

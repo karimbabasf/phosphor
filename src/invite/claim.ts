@@ -15,9 +15,13 @@
 //      solver relay with an empty quote_hashes: the identical bytes once more on no reply, never
 //      a second signature;
 //   7. the watch, until the deadline plus 30 s on the chain's clock (src/relay/fate.ts).
-//      PROOF IS THE NONCE PLUS THE CODE'S BALANCE: is_nonce_used must read true and the code's
-//      USDC must have fallen by the signed amount. Never the relay's status word, and never the
-//      wallet's balance, which a deposit landing at the same moment would fool;
+//      PROOF IS THE CODE'S NONCE: is_nonce_used reads true at a final block. The verifier commits
+//      the nonce in the same call that runs the transfer, and the transfer names this wallet, so
+//      a spent nonce is the claim paid (the rule src/proposals/reconcile.ts already holds a relay
+//      swap to). Never the relay's status word, never the wallet's balance, which a deposit
+//      landing at the same moment would fool, and not the code's balance either: anyone can send
+//      dust to a public code address, and a proof that needed the code at zero would call a paid
+//      claim failed;
 //   8. the audit line, the record marked done, refreshLedger, the frame, the key dropped.
 //
 // PLAN B, at run time. When the relay turns a claim away for auth or for a missing quote (its
@@ -114,6 +118,10 @@ export type InviteNet = {
   watchCapMs?: number;
 };
 
+// The least a code must hold to be worth a claim: one cent. Dust sent to a used code's public
+// address is not an invite.
+export const MIN_CLAIM_BASE = 10_000n;
+
 export type InviteDeps = InviteNet & {
   dataDir: string;
   // Demo mode moves nothing, anywhere, ever (docs/reference.md): a claim there is refused before
@@ -125,8 +133,9 @@ export type InviteDeps = InviteNet & {
   broadcastState: () => void;
   // The one refresh seam (refreshNow in src/main.ts), so the ring shows the money at once.
   refreshLedger: () => Promise<void>;
-  // The deposit watch's hold (src/vault/watch.ts), so a claim is never reported as a deposit.
-  hold?: (assetId: string) => (proven: bigint | null) => void;
+  /* The deposit watch's hold (src/vault/watch.ts), so a claim is never reported as a deposit.
+     Opened right before the claim is sent, with the wallet's balance read a moment earlier. */
+  hold?: (assetId: string, walletBefore: bigint | null) => (proven: bigint | null) => void;
   store?: ClaimStore;
 };
 
@@ -145,6 +154,8 @@ export type InviteService = {
 };
 
 type Landed = { kind: 'landed'; route: ClaimRoute; credited: bigint; intentHash: string; nearTx: string | null };
+// The deposit watch's hold, opened once per claim right before the first send.
+type HoldSlot = { release: ((proven: bigint | null) => void) | null };
 type Failed = { kind: 'failed'; reason: FailReason; detail: string; final: boolean };
 type Outcome = Landed | Failed | { kind: 'fallback'; detail: string };
 type Verdict = Landed | Failed | { kind: 'waiting' };
@@ -242,7 +253,7 @@ export function createInviteService(deps: InviteDeps): InviteService {
       verifier.accountLocked === undefined ? Promise.resolve(null) : verifier.accountLocked(address).catch(() => null),
     ]);
     if (balance === null) return no('offline');
-    if (balance <= 0n) return no('empty');
+    if (balance < MIN_CLAIM_BASE) return no('empty');
     if (locked === null) return no('offline');
     if (locked) return no('locked');
     return { ok: true, balance };
@@ -303,10 +314,9 @@ export function createInviteService(deps: InviteDeps): InviteService {
         startedAt: new Date(now()).toISOString(),
       };
       announce({ claim: id, status: 'running', amount: formatUsdc(read.balance) });
-      const release = hold(INVITE_ASSET_ID);
       const own = signer;
       track(
-        run(record, own, release).finally(() => {
+        run(record, own).finally(() => {
           busy = false;
         }),
       );
@@ -323,24 +333,33 @@ export function createInviteService(deps: InviteDeps): InviteService {
     }
   }
 
-  async function run(record: ClaimRecord, signer: KeySigner, release: (proven: bigint | null) => void): Promise<void> {
+  async function run(record: ClaimRecord, signer: KeySigner): Promise<void> {
+    const slot: HoldSlot = { release: null };
     let outcome: Outcome;
     try {
-      outcome = relayRefused ? { kind: 'fallback', detail: 'the relay turned an earlier claim away' } : await relayRoute(record, signer);
+      outcome = relayRefused ? { kind: 'fallback', detail: 'the relay turned an earlier claim away' } : await relayRoute(record, signer, slot);
       if (outcome.kind === 'fallback') {
         relayRefused = true;
-        outcome = await oneclickRoute(record, signer, outcome.detail);
+        outcome = await oneclickRoute(record, signer, slot, outcome.detail);
       }
     } catch (err) {
-      outcome = failed(record.attempts.length > 0 ? 'unconfirmed' : 'refused', `the claim stopped: ${errText(err)}`, false);
+      outcome = failed(record.attempts.length > 0 ? 'unconfirmed' : 'refused', `the claim stopped: ${errText(err)}`, record.attempts.length === 0);
     } finally {
       signer.drop();
     }
-    settle(record, outcome.kind === 'fallback' ? failed('refused', outcome.detail, false) : outcome, release, true);
+    settle(record, outcome.kind === 'fallback' ? failed('refused', outcome.detail, false) : outcome, slot, true);
+  }
+
+  /* The deposit watch's hold, opened once, right before anything can credit the wallet, with the
+     wallet's USDC read a moment before: a baseline the watch knows holds no part of the claim. */
+  async function openHold(record: ClaimRecord, slot: HoldSlot): Promise<void> {
+    if (slot.release !== null) return;
+    const before = await verifier.balance(record.receiver, record.assetId).catch(() => null);
+    slot.release = hold(record.assetId, before);
   }
 
   // Steps 3 to 7 on the relay. Returns the outcome, or a fallback before anything was taken.
-  async function relayRoute(record: ClaimRecord, signer: KeySigner): Promise<Outcome> {
+  async function relayRoute(record: ClaimRecord, signer: KeySigner, slot: HoldSlot): Promise<Outcome> {
     const [salt, block] = await Promise.all([
       verifier.currentSalt().catch(() => null),
       verifier.finalBlock === undefined ? Promise.resolve(null) : verifier.finalBlock().catch(() => null),
@@ -380,15 +399,17 @@ export function createInviteService(deps: InviteDeps): InviteService {
       return failed('refused', `the claim record could not be written (${errText(err)}), so the signed claim was never sent`, true);
     }
 
+    await openHold(record, slot);
     const sent = await publishWithoutQuote(relay, signed);
     let relayHash: string | null = null;
     if (sent.answered && sent.result.status === 'OK') {
       relayHash = sent.result.intentHash;
     } else {
-      // A refusal the relay ANSWERED, never a silence: a publish that got no reply may be live.
+      /* Plan B only on a refusal to the FIRST send. A first send that got no reply may be live at
+         the relay whatever the resend is told, and a second signature then is a second claim on
+         the same money waiting to race the first. */
       const words = sent.answered ? (sent.result.status === 'FAILED' ? sent.result.reason : '') : sent.error;
-      const answered = sent.answered || sent.attempts === 1;
-      if (answered && relayRefusalFallsBack(words)) return { kind: 'fallback', detail: `the relay refused the claim: ${oneLine(words, 160)}` };
+      if (sent.attempts === 1 && relayRefusalFallsBack(words)) return { kind: 'fallback', detail: `the relay refused the claim: ${oneLine(words, 160)}` };
     }
     return watch(record, relayHash);
   }
@@ -396,7 +417,7 @@ export function createInviteService(deps: InviteDeps): InviteService {
   /* Plan B: the same claim through 1Click, as an in-Intents send from the code's account. The
      record gains the attempt, nonce and handle included, before the key signs, or nothing is
      signed. */
-  async function oneclickRoute(record: ClaimRecord, signer: KeySigner, why: string): Promise<Outcome> {
+  async function oneclickRoute(record: ClaimRecord, signer: KeySigner, slot: HoldSlot, why: string): Promise<Outcome> {
     const amount = BigInt(record.amountBase);
     const floor = (amount * BigInt(10_000 - SEND_MAX_LOSS_BPS)) / 10_000n;
     let handle: string | null = null;
@@ -424,6 +445,7 @@ export function createInviteService(deps: InviteDeps): InviteService {
       }
     });
     const before = record.attempts.length;
+    await openHold(record, slot);
     try {
       const spent = await spendFromIntents(
         {
@@ -452,14 +474,21 @@ export function createInviteService(deps: InviteDeps): InviteService {
           checkQuote: (quote) => quoteProblems(quote, amount, floor),
         },
       );
-      if (!spent.signed) return failed('refused', `${why}; 1Click held the claim before anything was signed`, false);
+      if (!spent.signed) return beforeSigning(record, `${why}; 1Click held the claim before anything was signed`, 'refused');
     } catch (err) {
-      // Before the signature: this route signed nothing. The relay attempt, if any, is left to
-      // the next start's reconcile, which proves it dead.
       if (record.attempts.length > before) record.attempts.length = before;
-      return failed(noReply(err) ? 'offline' : 'refused', `${why}; 1Click stopped the claim before signing: ${errText(err)}`, false);
+      return beforeSigning(record, `${why}; 1Click stopped the claim before signing: ${errText(err)}`, noReply(err) ? 'offline' : 'refused');
     }
     return watch(record, null);
+  }
+
+  /* Plan B stopped before its signature. A relay attempt the relay refused is still watched to
+     its end, so the claim closes on proof rather than on the relay's word; with none, nothing was
+     signed anywhere and the claim is over. */
+  async function beforeSigning(record: ClaimRecord, detail: string, reason: FailReason): Promise<Landed | Failed> {
+    if (record.attempts.length === 0) return failed(reason, detail, true);
+    const outcome = await watch(record, null);
+    return outcome.kind === 'failed' && outcome.final ? failed(outcome.reason, `${detail}; ${outcome.detail}`, true) : outcome;
   }
 
   function echoFor(record: ClaimRecord): QuoteEcho {
@@ -491,38 +520,39 @@ export function createInviteService(deps: InviteDeps): InviteService {
     return problems;
   }
 
-  /* One look at every attempt on the record, newest first. Landed needs the nonce spent AND the
-     code's balance down by the signed amount, and on Plan B also 1Click's SUCCESS. Failed needs
-     every attempt proved dead by the chain (src/relay/fate.ts), or 1Click's refund. */
+  /* One look at every attempt on the record, newest first. Landed: an attempt's nonce spent,
+     and on Plan B 1Click's SUCCESS too, because there the code paid 1Click's handle and not the
+     wallet. Failed: every attempt over, each proved dead on the chain (src/relay/fate.ts) or, on
+     Plan B, refunded with the refund back on the code. Anything else is still open. */
   async function judge(record: ClaimRecord): Promise<Verdict> {
-    let allDead = record.attempts.length > 0;
+    if (record.attempts.length === 0) return failed('refused', 'nothing was signed', true);
+    let open = false;
+    let refunded = false;
     for (const attempt of [...record.attempts].reverse()) {
       const fate = await transferFate(fateReads, { account: record.codeAddress, nonce: attempt.nonce, deadline: attempt.deadline }, now()).catch(() => null);
       if (fate !== null && fate.ran === false && fate.dead !== null) continue;
-      allDead = false;
       let ran = fate?.ran === true;
       // A nonce that is not V1 (1Click chooses its own) can still be asked whether it was spent;
       // only its death cannot be proved, so such an attempt never ends a claim as failed.
       if (!ran && fate?.ran === null && fate.why === 'not_the_verifiers') {
         ran = (await verifier.nonceUsed(record.codeAddress, attempt.nonce).catch(() => null)) === true;
       }
-      if (!ran) continue;
-      const proof = await proveRan(record, attempt);
-      if (proof.kind !== 'waiting') return proof;
+      const proof = ran ? await proveRan(record, attempt) : 'open';
+      if (proof === 'refunded') refunded = true;
+      else if (proof === 'open') open = true;
+      else return proof;
     }
-    if (allDead) return failed('expired', 'every signed claim passed its deadline unspent, on the chain clock and this one', true);
-    return { kind: 'waiting' };
+    if (open) return { kind: 'waiting' };
+    return refunded
+      ? failed('refunded', 'the claim went to 1Click, and 1Click refunded it to the code, where the refund now shows', true)
+      : failed('expired', 'every signed claim passed its deadline unspent, on the chain clock and this one', true);
   }
 
-  async function proveRan(record: ClaimRecord, attempt: ClaimAttempt): Promise<Verdict> {
+  async function proveRan(record: ClaimRecord, attempt: ClaimAttempt): Promise<Landed | 'open' | 'refunded'> {
     const amount = BigInt(record.amountBase);
-    if (attempt.route === 'oneclick') {
-      const status = attempt.depositAddress === undefined ? null : await api().status(attempt.depositAddress).catch(() => null);
-      if (status?.status === 'REFUNDED' || status?.status === 'FAILED') {
-        return failed('refunded', `1Click answered ${status.reported} for handle ${oneLine(attempt.depositAddress, 80)}`, true);
-      }
-      if (status?.status !== 'SUCCESS') return { kind: 'waiting' };
-      if (!(await codeFell(record, amount))) return { kind: 'waiting' };
+    if (attempt.route === 'relay') return { kind: 'landed', route: 'relay', credited: amount, intentHash: attempt.intentHash, nearTx: null };
+    const status = attempt.depositAddress === undefined ? null : await api().status(attempt.depositAddress).catch(() => null);
+    if (status?.status === 'SUCCESS') {
       let credited = netOnOneClick(amount);
       try {
         if (status.settledAmountOut !== undefined) credited = decimalToBaseUnits(status.settledAmountOut, INVITE_ASSET_DECIMALS);
@@ -531,16 +561,19 @@ export function createInviteService(deps: InviteDeps): InviteService {
       }
       return { kind: 'landed', route: 'oneclick', credited, intentHash: attempt.intentHash, nearTx: status.nearTxHashes[0] ?? null };
     }
-    if (!(await codeFell(record, amount))) return { kind: 'waiting' };
-    return { kind: 'landed', route: 'relay', credited: amount, intentHash: attempt.intentHash, nearTx: null };
-  }
-
-  /* The code's own USDC, down by the signed amount from what it held when the claim was signed.
-     A claim signs the whole balance, so what it held and what it signed are the same figure. */
-  async function codeFell(record: ClaimRecord, amount: bigint): Promise<boolean> {
-    const before = BigInt(record.amountBase);
-    const after = await verifier.balance(record.codeAddress, record.assetId).catch(() => null);
-    return after !== null && before - after >= amount;
+    // A refund closes the claim only once it shows on the code, never on 1Click's word alone, and
+    // FAILED is a refund still on its way (src/rails/oneclick-words.ts says the same of a swap).
+    if (status?.status === 'REFUNDED' && status.refundedAmount !== undefined) {
+      let refundedBase = 0n;
+      try {
+        refundedBase = decimalToBaseUnits(status.refundedAmount, INVITE_ASSET_DECIMALS);
+      } catch {
+        // not a figure; the refund is not shown yet
+      }
+      const held = refundedBase > 0n ? await verifier.balance(record.codeAddress, record.assetId).catch(() => null) : null;
+      if (held !== null && held >= refundedBase) return 'refunded';
+    }
+    return 'open';
   }
 
   async function watch(record: ClaimRecord, relayHash: string | null): Promise<Landed | Failed> {
@@ -561,9 +594,10 @@ export function createInviteService(deps: InviteDeps): InviteService {
     }
   }
 
-  function settle(record: ClaimRecord, outcome: Landed | Failed, release: (proven: bigint | null) => void, live: boolean): void {
+  function settle(record: ClaimRecord, outcome: Landed | Failed, slot: HoldSlot, live: boolean): void {
     if (outcome.kind === 'landed') {
-      release(outcome.credited);
+      slot.release?.(outcome.credited);
+      slot.release = null;
       const amount = formatUsdc(outcome.credited);
       try {
         deps.audit.append('invite_claimed', `An invite code paid ${amount} USDC into this wallet${outcome.route === 'oneclick' ? ', through 1Click' : ''}.`, {
@@ -593,7 +627,13 @@ export function createInviteService(deps: InviteDeps): InviteService {
       announce({ claim: record.claim, status: 'landed', amount });
       return;
     }
-    release(null);
+    /* Proved over: the hold ends with nothing to add. Not proved (the network stopped answering):
+       the hold stays for the rest of this run, because the claim may still land, and a release
+       now would show it as a deposit when it does. */
+    if (outcome.final) {
+      slot.release?.(null);
+      slot.release = null;
+    }
     /* A reconcile that learned nothing new says nothing: the record stays pending for the next
        start. One that proved a claim dead writes the line and the record, and sends no frame: a
        toast at launch about a claim from an earlier session would only alarm. */
@@ -622,13 +662,22 @@ export function createInviteService(deps: InviteDeps): InviteService {
   }
 
   function reconcile(): void {
+    /* Only this wallet's claims. The record file is not authenticated (like terms.json), and a
+       record naming another receiver is either a wallet this data directory no longer holds or an
+       edit: neither may write "paid into this wallet". The address may be the header's here, at
+       boot with the wallet shut; that is enough to tell this wallet's records from others. */
+    const wallet = deps.keystore.addressReport().addresses.evm?.toLowerCase() ?? null;
     for (const record of store.all()) {
-      if (record.status !== 'pending' || record.attempts.length === 0) continue;
-      const release = hold(record.assetId);
+      if (record.status !== 'pending' || record.attempts.length === 0 || record.receiver !== wallet) continue;
+      /* Held only while an attempt can still run. Past that, whatever the claim did it did before
+         this start, every balance read from now on already holds it, and there is nothing to keep
+         off a deposit card. */
+      const last = Math.max(...record.attempts.map((a) => Date.parse(a.deadline)).filter((t) => Number.isFinite(t)));
+      const slot: HoldSlot = { release: Number.isFinite(last) && now() < last + RELAY_DEADLINE_GRACE_MS ? hold(record.assetId, null) : null };
       track(
         watch(record, null)
           .catch((err: unknown) => failed('unconfirmed', `the reconcile stopped: ${errText(err)}`, false))
-          .then((outcome) => settle(record, outcome, release, false)),
+          .then((outcome) => settle(record, outcome, slot, false)),
       );
     }
   }
