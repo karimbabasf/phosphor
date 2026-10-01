@@ -67,6 +67,13 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   alone. Release secrets live in a protected environment that waits for an approval and lets in
   only version tags, and the Release workflow has a dry run that builds, signs and notarizes and
   publishes nothing.
+- For whoever hands out invite codes: `npm run invite` makes a treasury, funds up to ten codes with
+  one signature, shows their links once on the terminal, takes unused codes back, withdraws to an
+  address you type back, and shows where every code stands without ever showing a code. It runs
+  only in a real terminal, from a file encrypted under a passphrase of at least 20 characters, and
+  rehearses every move with a signature no block can run before it signs the real one.
+- `scripts/invite-proof.ts` checks both claim routes with your own money on throwaway accounts,
+  records what NEAR Intents says about each, and sweeps the rest back.
 - For people who build Phosphor: the secret sweep passes again. All 51 values it stopped on were
   public (transactions and addresses the chain reader reads live, deposit addresses, test
   receivers, one curve constant), each now excused by its exact value. `npm run sweep` reads the

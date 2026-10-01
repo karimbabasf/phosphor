@@ -75,7 +75,8 @@ Someone may send you an invite code, `PHOS-` and 27 letters and digits, usually 
 phosphor.money/invite. It holds USDC for a new wallet. Paste it on the first run's Got an invite
 code? step, or later under Have an invite code? in Add money, and the money moves into your wallet
 once the wallet exists. Never paste a code into the chat: the app keeps it from your agent. How a
-claim works: [docs/money.md](docs/money.md#invite-codes).
+claim works: [docs/money.md](docs/money.md#invite-codes). To hand codes out yourself, see
+[Issuing invite codes](docs/money.md#issuing-invite-codes).
 
 ## Connect an agent
 
