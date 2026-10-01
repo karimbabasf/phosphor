@@ -14,6 +14,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
+import { INVITE_CODE_SOURCE, formatCode, generateSecret } from '../../src/invite/code.ts';
+
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
 const DOM_SOURCE = read('../../ui/core/dom.js');
 const ADAPTER = read('../../ui/core/invite.js');
@@ -241,6 +243,29 @@ test('every form of a code is kept out of the chat at send, and goes to the invi
   }
 });
 
+test('a code an editor rewrote, or one with no prefix, is kept out too, and Add money gets exactly what was typed', () => {
+  const code = formatCode(generateSecret());
+  const dash = String.fromCodePoint(0x2013);
+  const forms: Array<[string, string]> = [
+    ['no-break hyphens', code.replace(/-/g, '‑')],
+    ['en dashes', code.replace(/-/g, dash)],
+    ['zero-width spaces', code.replace(/-/g, '​')],
+    ['soft hyphens', code.replace(/-/g, '­')],
+    ['full-width', code.replace(/[0-9A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0))],
+    ['no prefix', code.slice(5)],
+    ['no prefix, in a sentence', `is ${code.slice(5).toLowerCase()} still good?`],
+    ['a first group cut short', 'PHOS' + code.slice(5).replace(/-/g, '').replace(/(.{4})(?=.)/g, '$1 ')],
+  ];
+  for (const [name, text] of forms) {
+    const world = build();
+    world.send(text);
+    assert.deepEqual(world.sends, [], `${name}: the code was sent to the assistant`);
+    assert.equal(world.input.value, '', `${name}: the code stayed in the box`);
+    assert.equal(world.handed.length, 1, `${name}: the code did not go to Add money`);
+    assert.ok(text.includes(world.handed[0].code), `${name}: Add money got text that was not typed: ${JSON.stringify(world.handed[0].code)}`);
+  }
+});
+
 test('a pasted code leaves the box the moment it lands, before anything can send it', () => {
   for (const [name, text] of FORMS) {
     const world = build();
@@ -302,7 +327,7 @@ test('the matcher is the contract\'s composer guard: the canonical shape and two
   const world = build();
   const codeIn = world.win.PhosphorInviteApi.codeIn;
   // Exactly the shape CONTRACTS.md and src/invite/code.ts write, with its flags.
-  const CANONICAL = String.raw`PH[O0]S(?:[\s-]+|(?=[0-9A-Z]{5}))[0-9A-Z](?:[\s-]*[0-9A-Z]){26}(?![0-9A-Z])`;
+  const CANONICAL = INVITE_CODE_SOURCE;
   assert.ok(ADAPTER.includes(`/${CANONICAL}/gi`), 'ui/core/invite.js does not carry the canonical regex exactly');
   const shape = new RegExp(CANONICAL, 'i');
   for (const [name, text] of FORMS) {

@@ -18,6 +18,7 @@ import {
   codeAddress,
   containsInviteCode,
   deriveKey,
+  foldText,
   formatCode,
   generateSecret,
   inviteCodePattern,
@@ -25,6 +26,7 @@ import {
   keyInRange,
   looksLikeInviteCode,
   parseCode,
+  redactInviteCodes,
 } from '../../src/invite/code.ts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -181,26 +183,52 @@ test('the two spare bits must be zero, even under a check symbol that agrees', (
   assert.ok(parsed > 20);
 });
 
-test('only ASCII reads as a code character: no Unicode spelling slips past the matcher', () => {
+test('one fold for the parser and both matchers: a Unicode spelling reads the same to all three', () => {
   // Sixteen 0x14 bytes: a code with a 1 in its data and S as its check symbol.
   const code = formatCode(filled(0x14));
   assert.equal(code, 'PHOS-0M2GA-1850M-2GA18-50M2G-A1850MS');
   sameSecret(code, filled(0x14));
   const one = code.indexOf('1', 5);
   const last = code.length - 1;
+  // What NFKD reads as a letter or digit is that letter or digit, and an invisible character is
+  // nothing: the parser takes the code, the guard keeps it out, and the tail cuts all of it.
   for (const variant of [
-    code.slice(0, one) + '\u0131' + code.slice(one + 1), // dotless i, which upper-cases to I
-    code.slice(0, last) + '\u017f', // long s, which upper-cases to S
-    code.slice(0, last) + '\ufb06', // the st ligature, which upper-cases to ST
+    code.slice(0, last) + '\u017f', // long s, which NFKD reads as s
     code.slice(0, 5) + '\uff10' + code.slice(6), // a full-width zero
+    code.slice(0, 6) + '\u0301' + code.slice(6), // a combining accent on a letter
+    code.replace(/-/g, '\u2011'), // no-break hyphens
+    code.replace(/-/g, '\u00ad'), // soft hyphens
+    'P\u200bHOS' + code.slice(4).replace(/-/g, '\u200b'), // zero-width spaces, one inside the prefix
   ]) {
-    assert.equal(parseCode(variant).ok, false, `a Unicode spelling parsed: ${JSON.stringify(variant)}`);
+    sameSecret(variant, filled(0x14));
+    assert.equal(containsInviteCode(variant), true, `the matcher missed ${JSON.stringify(variant)}`);
+    assert.equal(looksLikeInviteCode(variant), true, `the guard missed ${JSON.stringify(variant)}`);
+    assert.equal(redactInviteCodes(`code: ${variant} ok`, '[x]'), 'code: [x] ok');
+  }
+  // What the fold cannot read as one letter or digit stays out of all three alike: a dotless i
+  // folds to itself, a separator, so the code is a character short; the st ligature is two letters
+  // where one goes, so it is a character long.
+  for (const variant of [code.slice(0, one) + '\u0131' + code.slice(one + 1), code.slice(0, last) + '\ufb06']) {
+    assert.equal(parseCode(variant).ok, false, `${JSON.stringify(variant)} parsed`);
     assert.equal(containsInviteCode(variant), false);
   }
-  // A no-break space between groups is a space to both the parser and the matcher.
+  // A no-break space between groups is a space to the parser and the matcher alike.
   const nbsp = code.replace(/-/g, '\u00a0');
   sameSecret(nbsp, filled(0x14));
   assert.equal(containsInviteCode(`code: ${nbsp}`), true);
+});
+
+test('a code with no prefix parses too, in its groups, bare, or as a link fragment', () => {
+  const secret = filled(0x42);
+  const data = formatCode(secret).slice(5);
+  sameSecret(data, secret);
+  sameSecret(data.replace(/-/g, '').toLowerCase(), secret);
+  sameSecret(data.replace(/-/g, ' '), secret);
+  sameSecret(`https://phosphor.money/invite#${data}`, secret);
+  // A first group cut short is the same code.
+  sameSecret(`PHOS${data.replace(/-/g, '').replace(/(.{4})(?=.)/g, '$1 ')}`, secret);
+  // No valid code starts with P, so a prefix is never read as data.
+  for (let i = 0; i < 300; i += 1) assert.match(formatCode(generateSecret()).slice(5), /^[0-7]/);
 });
 
 test('anything else is refused, and the answer never says why', () => {
@@ -211,7 +239,6 @@ test('anything else is refused, and the answer never says why', () => {
     42,
     '',
     'PHOS',
-    dataOf(code), // no prefix
     code.replace('PHOS', 'PHO5'),
     code.replace('PHOS', 'PH-OS'),
     code.slice(0, -1), // short
@@ -283,21 +310,38 @@ test('the generator takes the OS CSPRNG and never Math.random', () => {
 
 test('the matcher finds a code in every form the parser accepts, inside any text', () => {
   const code = formatCode(filled(0x42));
+  const data = dataOf(code);
   const forms = [
     code,
     code.toLowerCase(),
-    `PHOS${dataOf(code)}`,
+    `PHOS${data}`,
     code.replace(/-/g, ' '),
     code.replace('PHOS', 'PH0S'),
     inviteLink(code),
-    `PHOS ${dataOf(code)}`,
+    `PHOS ${data}`,
+    // Audit L4: what editors and chat apps do to the hyphens (a Unicode hyphen, an en dash, a
+    // zero-width space), other separators, a code with no prefix, a first group cut short, and
+    // full-width letters.
+    code.replace(/-/g, '‐'),
+    code.replace(/-/g, String.fromCodePoint(0x2013)),
+    code.replace(/-/g, '​'),
+    code.replace(/-/g, '_'),
+    code.replace(/-/g, '.'),
+    code.replace(/-/g, '/'),
+    code.slice(5),
+    data,
+    `PHOS${data.replace(/(.{4})(?=.)/g, '$1-')}`,
+    code.replace(/[0-9A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0xfee0)),
   ];
   for (const form of forms) {
+    sameSecret(form, filled(0x42));
     for (const text of [form, `here is my code: ${form}, thanks`, `"${form}"`, `${form}.`]) {
       assert.equal(containsInviteCode(text), true, `missed ${text}`);
-      const redacted = text.replace(inviteCodePattern(), '[x]');
+      assert.equal(looksLikeInviteCode(text), true, `the guard missed ${text}`);
+      const redacted = redactInviteCodes(text, '[x]');
       assert.equal(parseCode(redacted).ok, false, `a parseable code survived in ${redacted}`);
-      for (const group of dataOf(code).match(/.{5}/g)!) assert.ok(!redacted.toUpperCase().includes(group), `${group} survived in ${redacted}`);
+      const flat = foldText(redacted).text.toUpperCase().replace(/[^0-9A-Z]/g, '');
+      for (const group of data.match(/.{5}/g)!) assert.ok(!flat.includes(group), `${group} survived in ${redacted}`);
     }
   }
 });

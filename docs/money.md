@@ -69,10 +69,11 @@ address, only its first six and last four characters. Read the address in the wi
 An invite code is USDC waiting for a new wallet, usually $5. It looks like
 `PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ` and usually comes as a link,
 `https://phosphor.money/invite#PHOS-...`. Paste the code or the whole link on the invite step
-after the terms on first open, or under Have an invite code? on the Add money card. The app
-checks it first and says what is waiting, that it has a typo, or that it was already used. One
-wrong character, or two neighbours swapped, is caught on this Mac before the network is asked
-anything.
+after the terms on first open, or under Have an invite code? on the Add money card. The code
+still reads with PHOS left off, with its hyphens turned into dashes or spaces, or in full-width
+letters. The app checks it first and says what is waiting, that it has a typo, or that it was
+already used. One wrong character, or two neighbours swapped, is caught on this Mac before the
+network is asked anything.
 
 The money moves once your wallet exists and is open: right after you make it, or after you
 unlock it. It lands as USDC in your NEAR Intents balance and Activity shows "Invite: +5 USDC".
@@ -99,8 +100,11 @@ A code pays once; a second claim says "This code was already used, or it has a t
 Never paste a code into the chat. What you type there goes to your assistant and its model
 provider, so the chat refuses a code and opens the invite field instead. The app's backend turns
 such a message away too, before the assistant sees it, and writes none of it to the log or the
-conversation. Phosphor never asks for your recovery phrase to claim a code. A page or an app that
-does is not Phosphor.
+conversation. Both know a code in every spelling the invite field reads, and a code with PHOS
+left off when its groups are split by spaces or dashes. A code you changed by hand, with a
+character missing or a wrong one and no PHOS in front, can still get through, so paste codes into
+the invite field only. Phosphor never asks for your recovery phrase to claim a code. A page or an
+app that does is not Phosphor.
 
 ### Issuing invite codes
 

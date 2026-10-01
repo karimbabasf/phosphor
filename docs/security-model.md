@@ -564,5 +564,13 @@ path is Plan B through 1Click: there the code signs a transfer to 1Click's handl
 is held by the quote echo and 1Click's quote signature rather than by the code's signature, and
 the claim rests on 1Click delivering. The code lives as bytes for the length of one claim, is
 wiped, and is written nowhere: not an audit line, `/api/state`, an SSE frame, the claim record
-(`state/invites.json`) or an error. No agent tool reaches it. The log tail redacts a code by shape
-in every form the parser accepts, as the wall behind that.
+(`state/invites.json`) or an error. No agent tool reaches it. The chat's guard, the backend's wall
+in front of the agent and the log tail read text through the parser's own fold (Unicode NFKD, one
+character at a time, marks and invisible characters dropped), so a hyphen an editor turned into a
+dash, a zero-width space or a full-width letter is the same code to all four. All three catch a
+code with its prefix in any spelling the parser reads, and one without its prefix when its groups
+are split by spaces or dashes and it reads as a valid code; the chat's two also want two digits
+as typed, which every issued code has (`src/invite/code.ts`, CONTRACTS.md "Code shape"). They
+miss a code someone changed by hand: no prefix and a slip or another separator, a character short
+or one stuck to its end, its digits typed as O, I or L, or a code split over two messages. Each
+costs that one code.
