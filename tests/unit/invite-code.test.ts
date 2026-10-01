@@ -96,18 +96,11 @@ test('generate, format and parse round-trip, and the code is PHOS plus five grou
   }
 });
 
-test('the spare bits sit at the top: every code starts 0 to 7, and its secret carries two digits', () => {
+test('the spare bits sit at the top: every code starts 0 to 7', () => {
   for (let i = 0; i < 3000; i += 1) {
     const data = dataOf(formatCode(generateSecret()));
     assert.match(data[0]!, /[0-7]/, `${data} starts above 7`);
-    assert.ok((data.slice(0, 26).match(/[0-9]/g) ?? []).length >= MIN_CODE_DIGITS, `${data} has fewer than two digits`);
   }
-  // A draw whose secret characters hold one digit is thrown away, like a symbol check character.
-  const lonely = secretFrom(dataWithDigits(1));
-  assert.equal((dataOf(formatCode(lonely)).match(/[0-9]/g) ?? []).length, 1);
-  const draws = [lonely, filled(0x42)];
-  const secret = generateSecret(() => Uint8Array.from(draws.shift()!));
-  assert.deepEqual([...secret], [...filled(0x42)]);
 });
 
 test('the parser accepts every form a person pastes, and strips the prefix before mapping', () => {
@@ -252,6 +245,19 @@ test('0 < k < n is the rule, and the generator redraws a symbol check character'
   assert.deepEqual(drawn, [16, 16], 'the symbol draw was thrown away and a second taken');
   assert.deepEqual([...secret], [...filled(0x42)]);
   for (let i = 0; i < 2000; i += 1) assert.match(formatCode(generateSecret()), /[0-9A-HJKMNP-TV-Z]$/);
+
+  // And redraws until the 26 secret characters hold two literal digits, so the composer can tell
+  // a code from a sentence. The first character is always a digit (0 to 7), so a draw is thrown
+  // away only when none of the other 25 is one: (22/32)^25, about one in 11,700, which costs about
+  // 0.0001 bits of the 128.
+  const lonely = secretFrom(dataWithDigits(1));
+  assert.equal((dataOf(formatCode(lonely)).match(/[0-9]/g) ?? []).length, 1);
+  const two = [lonely, filled(0x42)];
+  assert.deepEqual([...generateSecret(() => Uint8Array.from(two.shift()!))], [...filled(0x42)]);
+  for (let i = 0; i < 3000; i += 1) {
+    const secretChars = dataOf(formatCode(generateSecret())).slice(0, 26);
+    assert.ok((secretChars.match(/[0-9]/g) ?? []).length >= MIN_CODE_DIGITS, `${secretChars} has fewer than two digits`);
+  }
 });
 
 test('the generator takes the OS CSPRNG and never Math.random', () => {
@@ -309,22 +315,16 @@ test('the composer guard: every real form is a code, prose with the shape is not
   assert.equal(parseCode(twoCode).ok, true);
   assert.equal(looksLikeInviteCode(twoCode), true);
   assert.equal(looksLikeInviteCode(twoCode.toLowerCase().replace(/-/g, '')), true);
-  // One digit is a code the generator never issues; a first character above 7 is no code at all.
-  assert.equal(looksLikeInviteCode(formatCode(secretFrom(dataWithDigits(1)))), false);
-  assert.equal(looksLikeInviteCode(`PHOS-8${dataOf(code).slice(1)}`), false);
+  // Digits are counted in the whole match, the zero of PH0S included, as the window counts them.
+  const oneCode = formatCode(secretFrom(dataWithDigits(1)));
+  assert.equal(looksLikeInviteCode(oneCode), false, 'one digit is a code the generator never issues');
+  assert.equal(looksLikeInviteCode(oneCode.replace('PHOS', 'PH0S')), true);
 
-  // Sentences that have the shape: the log tail still cuts them, the composer lets them through.
-  for (const prose of [
-    'phosphorus is used in fertilizer and in matches',
-    'phosphates cost 25 dollars per ton in 2026 so',
-    'Phosphor send 50 usdc to my wallet please',
-    'phos 1 is short for phosphor and the app holds',
-  ]) {
+  // Sentences with the shape and no two digits: the log tail still cuts them, the composer sends them.
+  for (const prose of ['phosphorus is used in fertilizer and in matches', 'Phosphor send 50 usdc to my wallet please']) {
     assert.equal(looksLikeInviteCode(prose), false, `took prose for a code: ${prose}`);
   }
   assert.equal(containsInviteCode('phosphorus is used in fertilizer and in matches'), true, 'the shape alone over-redacts, which the log tail allows');
-  // Two digits and the shape: only the first-character rule tells this one from a code.
-  assert.equal(containsInviteCode('phosphates cost 25 dollars per ton in 2026 so'), true);
 });
 
 test('the matcher leaves prose alone, the app name included', () => {

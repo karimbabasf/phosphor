@@ -16,10 +16,10 @@
 //
 // TWO MATCHERS. The shape found inside any text is what the log tail redacts: right after the
 // prefix a separator or five data characters in a row, so the word "Phosphor" and a sentence are
-// not one, and over-redacting is fine there. The composer guard (looksLikeInviteCode) adds two
-// rules every issued code meets and prose almost never does: the first data character is 0 to 7
-// (O, I and L read as 0 and 1), and at least two of the 27 are literal digits. "phosphorus is used
-// in fertilizer and in matches" has the shape and neither. CONTRACTS.md, "Code shape", pins both.
+// not one, and over-redacting is fine there. The composer guard (looksLikeInviteCode) adds one rule
+// every issued code meets and prose almost never does: at least two literal digits in the match.
+// "phosphorus is used in fertilizer and in matches" has the shape and no digit. CONTRACTS.md,
+// "Code shape", pins both.
 
 import crypto from 'node:crypto';
 
@@ -177,14 +177,13 @@ export function containsInviteCode(text: string): boolean {
 }
 
 /* The composer's question: does this text carry something that is an invite code and not a
-   sentence. The shape above, AND its first data character 0 to 7 (O, I and L included, as the
-   parser reads them; the two spare bits sit at the top), AND at least two literal digits among
-   its 27 data characters, counted as typed with no O, I or L mapping. Every code the generator
-   issues meets all three. Mirrored by the window (CONTRACTS.md); change both or neither. */
+   sentence. The shape above AND at least two literal digits in the match, counted as typed with
+   no O, I or L mapping, the zero of a PH0S prefix included. Every code the generator issues has
+   two in its secret characters alone. Mirrored by the window (CONTRACTS.md); change both or
+   neither. */
 export function looksLikeInviteCode(text: string): boolean {
   for (const match of text.matchAll(inviteCodePattern())) {
-    const data = match[0].slice(INVITE_PREFIX.length).replace(/[\s-]+/g, '');
-    if (/^[0-7OoIiLl]/.test(data) && digitCount(data) >= MIN_CODE_DIGITS) return true;
+    if (digitCount(match[0]) >= MIN_CODE_DIGITS) return true;
   }
   return false;
 }
