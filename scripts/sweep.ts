@@ -270,6 +270,74 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // able to spend nothing. Removing them from history is a rewrite, which is Karim's call.
   ['b8f850b066486a3574eb181f7e79cbf0fdcc321a76bdca151373afc7b3de1662', 'Claude Code machineID from a probe config, data/claude/.claude.json in history'],
   ['ea34155cf36033448c04e0712ddb24f7276ceb2000a1dab145b51b726d053c56', 'Claude Code userID from a probe config, data/claude/.claude.json in history'],
+  // One transaction (and, on the Move chains, one address) per network the chain reader knows,
+  // all seen on mainnet on 2026-09-26: the SAMPLES in scripts/chain-reader-live.ts, which the
+  // chainscan tests reuse as real inputs. That script read each one back from its own chain on
+  // 2026-10-01, except the Fogo signature, which the Fogo RPC no longer serves. The Fogo and
+  // Solana signatures are 64 bytes whose second half is not the public key of the first, so
+  // neither is a Solana or NEAR secret key.
+  ['2e29090c0097b06b32c6746b097dc1357d4322198db89df46932084ea33027bd', 'Ethereum transaction, scripts/chain-reader-live.ts'],
+  ['4c3d4f1b8d30bc5722cfed81a335600145a17d0c43cc0ef3255767b51c27802e', 'Base transaction, scripts/chain-reader-live.ts'],
+  ['c4ad481119309747661c4b913a6ce0d28fcc209926fc1a610b9b6517f0f37b12', 'Arbitrum transaction, scripts/chain-reader-live.ts'],
+  ['5emE5TiSbzeRZFjvFkpBEBnzZAU7ZqatrYAStBUz364L72stKfsFb5rD1zzioTAjW9guRCzGHuQEVQe8M5gKT6k4', 'Solana transaction signature, scripts/chain-reader-live.ts'],
+  ['4e09836ddf2f1a49508a6181a78a0dc170016224f43a05129903cf3316500fde', 'Bitcoin transaction, scripts/chain-reader-live.ts'],
+  ['46e0a62630b76fbb65b819669b28a95c77b1b4f16bb52a07f3faffae904b1895', 'Optimism transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['38bdfb1abee2ece95845c72194baf3c49fa942cf8dc97eadaacef83d07de3df9', 'Gnosis transaction, scripts/chain-reader-live.ts'],
+  ['591fec0abd1a7c40754e05292017e5f528dcb3a626f3e91534d80c59b9440385', 'Polygon transaction, scripts/chain-reader-live.ts'],
+  ['0982d3d27997b552d00f5ea70626052fbb0ba99c9914b9f66dcbbda89dbb4e13', 'BNB Chain transaction, scripts/chain-reader-live.ts'],
+  ['9ab09bd15683efb94858ec2e0dc3609c849af6250ed231f8062977c2111c0636', 'Avalanche transaction, scripts/chain-reader-live.ts'],
+  ['e8be4457d1327cd36d07e08bb57490de2f1bc8b2e91146137dea41f499488ce1', 'Scroll transaction, scripts/chain-reader-live.ts'],
+  ['28fdd09caf98395aed98cb4547c510751dda179a56f049881bfff853843ff707', 'Berachain transaction, scripts/chain-reader-live.ts'],
+  ['3fe3136305364b3e0e6dd5664aee7268e9a9e6e715137cfc7b598931894099ab', 'Monad transaction, scripts/chain-reader-live.ts'],
+  ['27ef092c9d18a52fab43f474a12aa762f643006910ba80586ae67f72582db55f', 'X Layer transaction, scripts/chain-reader-live.ts'],
+  ['13c8d1c88d29c18e74492a13a7a39bce368d04e583db8ac966b7e0a8d90284c7', 'Plasma transaction, scripts/chain-reader-live.ts'],
+  ['3c2331f2ec3903724ebfd622bbd116148a2bda9cf39d6ba16b9905dcecae380e', 'Robinhood Chain transaction, scripts/chain-reader-live.ts'],
+  ['bd3958ff02027a51569f1c21a0e69cd19c79ce0b863c8feef877761b25e45dff', 'ADI transaction, scripts/chain-reader-live.ts'],
+  ['768f34c44582a7fc18e7f1c52e508fae5f91573141402440b9a1227675bf8ad1', 'Abstract transaction, scripts/chain-reader-live.ts'],
+  ['2e4667ba841af8b12fc004454b56f30202c200a01f1e1783d20f130d431ed29b', 'Hyperliquid L1 transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['vfMydTVszQJtB1zNYGYFNqFm2bqvLHwLTmomZbjnteaPPvdaDmfunQCRvCwuQzM5jMCqPBqtJB3UBUM3hDuP3Go', 'Fogo transaction signature, scripts/chain-reader-live.ts'],
+  ['68a604e3579424305614eb07869139df2a5c9a158a4a0e98c62f6461ad3c9724', 'Litecoin transaction, scripts/chain-reader-live.ts'],
+  ['13acf8ceaf9f5d8e32361a28392becbf3feeb2b593f6b35bd32ff36cf1933dca', 'Bitcoin Cash transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['f7f07e2b888cdb0cb0de8ebcaf39a3f8c5422160f9c1d98001033e0540592897', 'Dogecoin transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['6b84b20907756c4be508a73fb9abadebb98779beb6c8eac62c8d19132688aad7', 'Dash transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['007db4da82228d6fedd94c72e736d6b49cdaa63b3b316a57a5cc82c17accc700', 'XRP Ledger transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-*.test.ts'],
+  ['0d5f10a46f0d71fecba5fa19fc555388fd35f1ab9d059e2a793ac0a1c90dfb8c', 'Tron transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['34729f8dd6d4e9bf5243b327c6462552a2d092808c537b9bbae7ee1a0e080a39', 'Sui address, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['d503b95164384a5ebbccbb5c4bdc8b4a5893d9651e9953abda8e1c22fcc1181d', 'Aptos address, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['f73224c5e8676111cc26cb38b0ae2d7be81a0c9ed4ca4e62767548ae13e02824', 'Aptos transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['28d7c00a7b57148312bd9a44c020e9a1763fb41658d412f9817b5c1d9c12dbf3', 'Movement address, scripts/chain-reader-live.ts'],
+  ['deb99ca7ed0b2f57ad2bcb85ba697306d96db193276f0cba02f97ddc458e679d', 'Movement transaction, scripts/chain-reader-live.ts'],
+  ['50c13ecc7b73ce186f4a70a9bf691c3e745b28a63348b4bb82a0ab80086ee40f', 'Cardano transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  ['27d5a9d7f9874932e163ce3cf97e7317c62059ed4e7abfb8ed07e4c1fc6b112c', 'Stellar transaction, scripts/chain-reader-live.ts and tests/unit/chainscan-families.test.ts'],
+  // The same public values in the spelling a reader normalises them to, and one more Tron
+  // transaction (read back on 2026-10-01) that the hash validator tests use as a plain id.
+  ['7227a8086aaf513b81eab6ba0fd38944cfa1e929c63a006c66d9aa0b92b499ef', 'the TON sample transaction in hex (scripts/chain-reader-live.ts holds its base64), tests/unit/chainscan-*.test.ts'],
+  ['0492e0d1794ac2f17437c82fabf003674f5e2ed8ab8248d0fee74f78ab4d6d15', 'the Starknet sample transaction zero padded to 64, tests/unit/chainscan-decoders.test.ts'],
+  ['04678eb497e96599c92b45f342c2bd284321fe219c60a9b6293d80f0fbfa61b5', 'the Starknet sample address zero padded to 64, tests/unit/chainscan-families.test.ts'],
+  ['5d5a9d1667b84d5f2d457392781cb5974736d16cceaf2b428aa02d55ac9df282', 'Tron transaction in block 86603298, tests/unit/chainscan-decoders.test.ts'],
+  // Deposit addresses the POA bridge answered on 2026-09-26, kept whole in
+  // tests/fixtures/poa-deposit-addresses.ts. On Sui, Aptos, Starknet and Movement an address is
+  // 32 bytes of hex and a NEAR implicit account is a public key in hex: places to send to, which
+  // cannot sign anything.
+  ['b3548ec172bd95ce13945a452a4559e86ba580671dc6c06ddd039f527ac955a4', 'POA deposit address on Sui, tests/fixtures/poa-deposit-addresses.ts, chain-pay and agent-cards-ui tests'],
+  ['25e6559870641564220645a8cac7f5841135cfaf8512f325285f5487624726e5', 'POA deposit address on Aptos, tests/fixtures/poa-deposit-addresses.ts'],
+  ['057ea27e45e07ee0bcab6f045e656c782a6789d14a25e8e70309c35b2ff6082d', 'POA deposit address on Starknet, tests/fixtures/poa-deposit-addresses.ts, chain-pay and agent-cards-ui tests'],
+  ['186ed8e9c9214d39b0d25d5b6bb120e235c56e814764b662a2b2a34f1c1d9f5e', 'POA deposit address on Movement, tests/fixtures/poa-deposit-addresses.ts'],
+  ['fae3c94f710b683fd6b0580853dc8f20ed395f4325f57a0759a013839dc726f9', 'POA deposit address on NEAR, tests/fixtures/poa-deposit-addresses.ts'],
+  ['160d5538216a4befb92bedffce42d43f6dd27c9b035f2978a2a82f35f505a437', 'the fixture TON deposit address in raw form (0:<hex>), tests/unit/chain-pay.test.ts'],
+  // 1Click deposit handles (the account a solver names for one swap, inside the verifier) and
+  // receivers drawn in tests, none with any history on its own chain. Read as a private key or a
+  // seed, no hex one derives an Ethereum, NEAR or Solana account with any history either (checked
+  // 2026-10-01), and the Fogo signature is 64 bytes that are not a keypair.
+  ['840ade2d6a0f3a5b8d9c4e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b59da', 'a 1Click deposit handle, tests/unit/swap-reads.test.ts, swap-reasons and swap-exact-amounts'],
+  ['fd16a579c2e84b1d9a3f6e0c7b5d2a8f4e1c9b3d7a6f0e2c8b4d1a9f3e7c5b2d', 'the deposit handle of a swap 1Click reported FAILED, scripts/anxiety/scenes.ts'],
+  ['3f9c2a7b1e4d5c6f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f', 'a deposit handle in the chat proof fixtures, scripts/chat-proof.ts'],
+  ['917148ec47923f2e0e3d73142ac4f94ec4c73078865ba6d29f0ea172cd6f4bf3', 'a NEAR implicit account receiver, tests/unit/send-gate.test.ts and agent-cards-ui.test.ts'],
+  ['1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f53', 'an Aptos receiver, tests/unit/agent-cards-ui.test.ts'],
+  ['c88ad1876cac0814f7295123207711a9e42e0f10aa6fc2ae3b61d0a1cce504f5', 'a Movement receiver, tests/unit/agent-cards-ui.test.ts'],
+  ['LaoihSchWpZatv2FMDT22viNx84CWekqNaM4UDhLMpSSc5UJV6n2nJSvXi1PKrssfe9peAwmp1HCUX19zxS4xCf', 'a Fogo signature in a mocked RPC answer, tests/unit/chainscan-families.test.ts'],
+  // The order of the secp256k1 group, a curve constant published in SEC 2.
+  ['fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141', 'secp256k1 group order n, src/invite/code.ts (invite branch)'],
 ]);
 
 // Machine-written copies of public data carry digests and addresses by the hundred, and the
