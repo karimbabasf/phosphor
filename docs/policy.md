@@ -79,11 +79,13 @@ An agent in your terminal or in another app attaches with a secret the app write
 folder, and any program running as you can read that folder. So the first time one attaches, the
 window asks "Allow this agent?", and until you allow it, every money move it proposes waits for
 your click, whatever its size. The card says under its head: "This agent was started outside
-Phosphor and is not allowed yet, so this move waits for your OK." Allow lets its moves run under these rules like
-the chat's own agent; Not now keeps every one waiting. An Allow holds for that one connection:
-restart the agent and the window asks again. Phosphor cannot see what such an agent reads with
-its own tools, so a read it makes through Phosphor (a page, news, a chain read) still marks it as
-above, and the card says to allow only an agent you started yourself.
+Phosphor and is not allowed yet, so this move waits for your OK." Allow lets its next moves run
+under these rules like the chat's own agent, and a move it already asked for still waits; Ask
+each time keeps every one waiting, and its row in the conversation keeps a Change that asks
+again. An Allow holds for that one connection: restart the agent and the window asks again.
+Phosphor cannot see what such an agent reads with its own tools, so a read it makes through
+Phosphor (a page, news, a chain read) still marks it as above, and the card says to allow only an
+agent you started yourself.
 
 ### After a move that did not go through
 

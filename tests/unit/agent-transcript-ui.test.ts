@@ -294,6 +294,8 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
     emit,
     sends,
     actions,
+    /* The window the column runs in, for a test that stands in another screen on it. */
+    win,
     /* A card another screen asked to show, at the thread's end (PhosphorAgent.showCard). */
     sheets: () => all(host, 'chat-sheet-card'),
     showCard: (fill: (host: Node, done: () => void) => void, opts?: Record<string, unknown>) => (win.PhosphorAgent as { showCard: (b: unknown, o: unknown) => void }).showCard(fill, opts),
@@ -632,6 +634,37 @@ test('idle connections draw no row and are not called a working agent', () => {
   world.agents([{ session: 'w', client: 'claude-code', label: 'Analyst 2', role: 'analyst', ops: 4 }]);
   rows = all(world.host, 'agent-client');
   assert.equal(rows[0].textContent, 'Analyst 2, read only4 calls');
+});
+
+// UX review 2026-10-01, finding 9: after Not now (now Ask each time) nothing let the person allow
+// the agent after all. Its row stays, whatever it did and whoever else runs, with a Change that
+// brings the whole card back (ui/screens/agentask.js reopen): the row itself decides nothing, as
+// agent-panel-ui.test.ts holds every control on this panel to. The rows of the rest read as before.
+test('an agent put off with Ask each time keeps a row with a Change that asks again', () => {
+  const world = build();
+  const reopened: string[] = [];
+  world.win.PhosphorAgentAsk = { reopen: (session: string) => { reopened.push(session); } };
+  world.emit({ kind: 'status', state: 'off' });
+  const outside = { session: 'seat-out', client: 'claude-code', label: 'claude-code', role: 'operator', origin: 'outside', askable: true, allowed: false };
+  world.agents([{ ...outside, ops: 0, later: false }, { session: 'w', client: 'codex', label: 'codex', role: 'operator', ops: 1 }]);
+  let rows = all(world.host, 'agent-client');
+  assert.deepEqual(rows.map((r) => r.textContent), ['codex, can ask1 call'], 'one asked about, never put off, is plumbing until it works');
+  world.agents([{ ...outside, ops: 0, later: true }]);
+  rows = all(world.host, 'agent-client');
+  assert.equal(rows.length, 1, rows.map((r) => r.textContent).join(' | '));
+  assert.equal(all(rows[0], 'agent-client-name')[0].textContent, 'claude-code, its moves wait for your OK');
+  assert.equal(all(rows[0], 'agent-client-calls')[0].textContent, '', 'no call is not a count');
+  const key = all(rows[0], 'agent-client-change')[0];
+  assert.ok(key, 'a put-off agent has no way back');
+  assert.equal(key.textContent, 'Change');
+  fire(key, 'click');
+  assert.deepEqual(reopened, ['seat-out'], 'the row did something other than ask again');
+  /* The built-in assistant at work hides the roster of idle helpers, never a put-off agent. */
+  world.emit({ kind: 'status', state: 'ready' });
+  assert.equal(all(world.host, 'agent-client-change').length, 1);
+  /* Allowed (or gone), the key goes with it. */
+  world.agents([{ ...outside, ops: 2, later: false, allowed: true }]);
+  assert.equal(all(world.host, 'agent-client-change').length, 0);
 });
 
 test('a first move on a live column asks its question at once', () => {

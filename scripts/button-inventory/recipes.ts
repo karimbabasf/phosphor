@@ -51,6 +51,7 @@ export const RECIPES: readonly Recipe[] = [
   { family: 'btn btn-primary mcard-approve', wrap: 'mcard-buttons', children: [label('Approve')], pending: 'Approving', live: true, disables: true },
   { family: 'btn btn-ghost btn-sm mcard-retry', wrap: 'mcard-actions', children: [label('Try again')], disables: true },
   { family: 'btn btn-ghost btn-sm agent-retry', wrap: 'agent-note', children: [label('Retry')], pending: 'Starting', disables: true },
+  { family: 'btn btn-ghost btn-sm agent-client-change', wrap: 'agent-client', children: [label('Change')] },
   { family: 'btn btn-ghost btn-lg', children: [label('Do this later')], disables: true },
   { family: 'btn btn-ghost btn-sm', children: [label('Try again')] },
   { family: 'btn btn-ghost btn-sm agent-connect-back', wrap: 'agent-connect-sheet', children: [label('Back')] },
