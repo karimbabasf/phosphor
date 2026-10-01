@@ -188,7 +188,7 @@ export type SimulationVerdict = 'empty' | 'locked' | 'expired' | 'refused';
 
 export function simulationVerdict(refusal: string): SimulationVerdict {
   if (/insufficient balance|overflow/i.test(refusal)) return 'empty';
-  if (/lock/i.test(refusal)) return 'locked';
+  if (/\block(ed)?\b/i.test(refusal)) return 'locked';
   if (/deadline/i.test(refusal)) return 'expired';
   return 'refused';
 }

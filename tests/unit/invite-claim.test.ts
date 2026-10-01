@@ -450,6 +450,17 @@ test('a relay auth refusal falls back to Plan B with the 3 minute deadline, and 
   assert.deepEqual(await again.service.check(CODE), { ok: true, amount: '5.00', asset: 'USDC', route: 'oneclick', net: '4.98' });
 });
 
+test("1Click's word for what landed is never more than the code held", async () => {
+  const world = freshWorld();
+  world.relayMode = 'auth';
+  world.oneclick.settledOut = '999999.5';
+  const h = harness({ world });
+  await h.service.claim(CODE);
+  await h.service.idle();
+  assert.equal(h.frames[1]!.amount, '5.00');
+  assert.equal(h.service.landed()[0]!.creditedBase, '5000000');
+});
+
 test('a relay quote refusal falls back too, and any other refusal does not', async () => {
   const quote = freshWorld();
   quote.relayMode = 'quote';

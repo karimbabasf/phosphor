@@ -193,6 +193,7 @@ test("simulate refusals read as the contract's own words, then as a verdict", ()
   assert.equal(simulationVerdict(simulationRefusal(live.expired)), 'expired');
   assert.equal(simulationVerdict(simulationRefusal(live.badSig)), 'refused');
   assert.equal(simulationVerdict('account 0xab is locked'), 'locked');
+  assert.equal(simulationVerdict('block height exceeded'), 'refused', 'a block is not a lock');
   // A run that executes names each intent by its hash; an unbalanced one is a refusal.
   const ran = simulationOf({ intents_executed: [{ intent_hash: 'CwtgtQGZ7x2UFBzCRMvDf9oBCnrKnmpVwHzXtfhg9hBd', account_id: CODE, nonce: NONCE }], logs: [], state: {} });
   assert.deepEqual(ran, { ok: true, intentHashes: ['CwtgtQGZ7x2UFBzCRMvDf9oBCnrKnmpVwHzXtfhg9hBd'] });

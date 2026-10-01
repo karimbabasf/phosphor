@@ -49,6 +49,8 @@ export type World = {
     status: 'SUCCESS' | 'REFUNDED' | 'FAILED' | 'PENDING_DEPOSIT';
     quoteFails: boolean;
     settled: boolean;
+    // What 1Click's status says was delivered, formatted, on SUCCESS.
+    settledOut: string;
   };
   reads: number;
 };
@@ -68,7 +70,7 @@ export function freshWorld(): World {
     queued: [],
     published: [],
     simulated: [],
-    oneclick: { quotes: 0, generated: 0, submitted: [], status: 'SUCCESS', quoteFails: false, settled: false },
+    oneclick: { quotes: 0, generated: 0, submitted: [], status: 'SUCCESS', quoteFails: false, settled: false, settledOut: '4.9875' },
     reads: 0,
   };
 }
@@ -218,7 +220,7 @@ export function oneclickOf(world: World): IntentsApiPort {
         originTxHashes: [],
         destinationTxHashes: [],
         nearTxHashes: ['NearTx1'],
-        ...(ran && s === 'SUCCESS' ? { settledAmountOut: '4.9875' } : {}),
+        ...(ran && s === 'SUCCESS' ? { settledAmountOut: world.oneclick.settledOut } : {}),
         ...(ran && s === 'REFUNDED' ? { refundedAmount: '4.99' } : {}),
         ...(ran && s === 'FAILED' ? { refundedAmount: '0' } : {}),
       };

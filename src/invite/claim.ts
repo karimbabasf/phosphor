@@ -555,7 +555,9 @@ export function createInviteService(deps: InviteDeps): InviteService {
     if (status?.status === 'SUCCESS') {
       let credited = netOnOneClick(amount);
       try {
+        // 1Click's own figure, never more than the code held: a claim cannot land more than it moved.
         if (status.settledAmountOut !== undefined) credited = decimalToBaseUnits(status.settledAmountOut, INVITE_ASSET_DECIMALS);
+        if (credited > amount) credited = amount;
       } catch {
         // 1Click's figure did not read as a decimal; the estimate stands.
       }
