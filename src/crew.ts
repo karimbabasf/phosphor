@@ -65,6 +65,10 @@ export type CrewOptions = {
      createAgents in src/agents.ts: a worker announcing `role: "analyst"` was the app trusting a
      claim made by the thing being restricted. */
   onSpawned?(sessionId: string): void;
+  /* This wallet's own addresses and figures (src/http/read/web.ts printsOf), handed to every
+     worker's driver like the chat's: a worker reads wallet and composition and holds web search,
+     so a search of its that carries them closes its page reading too (review correction 2). */
+  prints?: DriverOptions['prints'];
   /* How a worker's process is made. The app never passes this and gets createDriver, which
      spawns a real Claude Code child; tests/unit/crew.test.ts passes a fake one, because the
      lifecycle below (a report accumulating, a deadline firing, a cap refusing, a stop landing
@@ -209,6 +213,7 @@ export function createCrew(opts: CrewOptions): Crew {
         label,
         parent: params.parent,
         systemPrompt: opts.workerPrompt(brief, label),
+        prints: opts.prints,
         onEvent: (event) => onEvent(id, event),
       });
       drivers.set(id, driver);

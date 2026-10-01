@@ -51,8 +51,8 @@ query and the search model's notes, so only the addresses the search engine itse
 count, never an address in that text. An address that carries your wallet's address or
 one of its balances is refused even then, and so is any address on this machine or your own
 network. The agent is also told never to put your balances, your addresses or what you said into
-a search; that one is an instruction, and a search that does it closes page reading for the rest
-of the chat. See [Policy](policy.md#after-a-web-page).
+a search; that one is an instruction, and a search that does it, by the chat's agent or by a
+worker it started, closes page reading for the rest of that agent's session. See [Policy](policy.md#after-a-web-page).
 
 ## The window token
 

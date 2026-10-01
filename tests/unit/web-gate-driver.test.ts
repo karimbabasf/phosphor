@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { createCrew } from '../../src/crew.ts';
 import { createDriver } from '../../src/driver.ts';
 import type { DriverEvent } from '../../src/driver.ts';
 import { checkPage, walletPrints } from '../../src/web-gate.ts';
@@ -135,6 +136,42 @@ test('the same search with no prints to check against records its links and clos
     assert.ok(checkPage('seat-gate-noprints', 'https://verify.example.org/a', walletPrints({ addresses: [], amounts: [] })).ok);
   } finally {
     w.done();
+  }
+});
+
+/* Review correction 2 (2026-10-01): a worker reads wallet and composition and holds web search,
+   and its driver got no prints, so a search of its that carried them sealed nothing. Through the
+   real crew and the real driver over the stand-in: the crew hands the worker the chat's prints. */
+test('a worker\'s search that carries the wallet\'s figure and address closes its page reading', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-web-gate-crew-'));
+  const previous = process.env.TMPDIR;
+  process.env.TMPDIR = dir;
+  let seat = '';
+  const crew = createCrew({
+    repo: ROOT,
+    port: 4177,
+    claudeBin: path.join(ROOT, 'tests', 'fixtures', 'fake-claude-stream.sh'),
+    workerPrompt: (brief) => brief,
+    prints: () => PRINTS,
+    onSpawned: (session) => {
+      seat = session;
+    },
+    // The real driver with this test's home and lockdown copy; every other option is the crew's.
+    makeDriver: (o) => createDriver({ ...o, home: path.join(dir, 'agents', 'claude'), settingsPath: SETTINGS }),
+  });
+  try {
+    const spawned = crew.spawn({ brief: 'LEAKY-SEARCH', parent: 'seat-gate-lead' });
+    assert.ok(spawned.ok, spawned.ok ? '' : spawned.error);
+    await until(() => crew.get(spawned.job.id)?.state !== 'running');
+    assert.equal(crew.get(spawned.job.id)?.state, 'done');
+    assert.notEqual(seat, '');
+    const v = checkPage(seat, 'https://verify.example.org/a', PRINTS);
+    assert.equal(v.ok ? '' : v.code, 'sealed');
+  } finally {
+    crew.stopAll();
+    if (previous === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
