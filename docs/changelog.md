@@ -5,6 +5,18 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.12
+
+Built 2026-09-30. Tagged v0.10.12 on 2026-09-30.
+
+- Phosphor is now signed with an Apple Developer ID and notarized by Apple. A new download opens
+  with a double click, with no Open Anyway step in System Settings. The installer window drops
+  the old first-open tile.
+- The part of the app that asks the Secure Enclave and Touch ID to unlock your keys now runs as
+  its own service inside the app, and answers only a caller signed by Phosphor's team. Another
+  program on your Mac that asks it gets refused.
+- Your wallet, your keys and your settings stay as they were.
+
 ## 0.10.11
 
 Built 2026-09-27. Tagged v0.10.11 on 2026-09-27.
