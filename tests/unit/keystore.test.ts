@@ -476,6 +476,32 @@ test('finishing an interrupted migration refuses a password that does not open t
   assert.ok(fs.existsSync(bak), 'and nothing was destroyed on the way to finding that out');
 });
 
+/* The resume used to open the envelope on its own, with no failure count: twelve wrong guesses
+   through /api/wallet/migrate all came back "does not open" at full speed while unlock walls at
+   five. It goes through the same counter as every other password check now, and the wall it
+   meets is the one unlock meets. */
+test('finishing an interrupted migration counts wrong passwords and walls at five, like unlock', async () => {
+  const keysPath = tempKeys();
+  plaintextWallet(keysPath);
+  const bak = `${keysPath}.bak-2026-08-20`;
+  const bytes = fs.readFileSync(keysPath);
+  await keystore(keysPath).migrate('a long enough password');
+  fs.writeFileSync(bak, bytes);
+
+  const store = keystore(keysPath);
+  const answers: string[] = [];
+  for (let i = 0; i < 7; i += 1) {
+    await store.migrate(`guess number ${i}`).then(
+      () => answers.push('opened'),
+      (err: Error) => answers.push(/Too many tries/.test(err.message) ? 'locked_out' : /does not open/.test(err.message) ? 'wrong' : err.message),
+    );
+  }
+  assert.deepEqual(answers, ['wrong', 'wrong', 'wrong', 'wrong', 'wrong', 'locked_out', 'locked_out']);
+  const unlock = await store.unlock('a long enough password');
+  assert.equal(unlock.ok === false && unlock.error, 'locked_out', 'the right password waits out the same backoff');
+  assert.ok(fs.existsSync(bak), 'nothing was destroyed while guessing');
+});
+
 test('finishing an interrupted migration refuses a plaintext file holding a different wallet', async () => {
   const keysPath = tempKeys();
   plaintextWallet(keysPath);

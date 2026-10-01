@@ -926,7 +926,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
         openAddresses = addressesOf(payload);
         announce();
       };
-      return migrateInto({ keysPath, file, write, kdf: params, setPlain }, password);
+      return migrateInto({ keysPath, file, write, kdf: params, setPlain, open: openWith }, password);
     },
     exportTo,
     reveal,
@@ -958,6 +958,8 @@ type MigrateDeps = {
   write: (password: string, payload: KeysPayload, kdf: KdfParams) => Promise<StoredAddresses>;
   kdf: () => KdfParams;
   setPlain: (body: Buffer) => void;
+  // The keystore's own openWith: the failure counter and the backoff every password check takes.
+  open: (password: string) => Promise<{ ok: true; body: Buffer } | Extract<UnlockResult, { ok: false }>>;
 };
 
 // Every file beside keys.json that is a copy of it. The three the audit found by name
@@ -1029,41 +1031,43 @@ function plaintextResidue(keysPath: string): string[] {
    exactly the state a kill inside the destroy loop leaves. The house rule still holds and is why
    this is not simply a delete: the envelope is opened with the password given and the addresses
    it derives are compared against the ones the surviving plaintext derives, so nothing is
-   shredded until the encrypted wallet is proved to hold the same keys. */
+   shredded until the encrypted wallet is proved to hold the same keys.
+   The password goes through the keystore's openWith, like every other check of it. This used to
+   derive and open on its own, which made it the one door with no failure count: a window-token
+   holder could grind guesses at full speed and never meet the backoff the unlock walls at. */
 async function resumeDestroy(deps: MigrateDeps, password: string, residue: string[]): Promise<{ destroyed: string[]; addresses: StoredAddresses }> {
-  const stored = readKeystoreFile(deps.file);
-  if (stored === null) throw new Error('the encrypted wallet could not be read, so nothing was destroyed');
-  if (stored.header.kdf === undefined) throw new Error('the encrypted wallet is an enclave file, which this migration does not open');
-  const aad = aadFor(stored.header);
-  const kek = await deriveKek(password, stored.header.kdf);
-  let body: Buffer;
-  try {
-    const dataKey = open(stored.wrap as Sealed, kek, aad);
-    body = open(stored.payload, dataKey, aad);
-    wipe(dataKey);
-  } catch {
-    throw new Error('that password does not open the encrypted wallet, so the plaintext key file was left alone');
-  } finally {
-    wipe(kek);
+  const opened = await deps.open(password);
+  if (!opened.ok) {
+    const left = 'so the plaintext key file was left alone';
+    if (opened.error === 'locked_out') throw new Error(`Too many tries. Wait ${opened.retryInSec ?? 30} seconds and try again; the plaintext key file was left alone.`);
+    if (opened.error === 'enclave_required') throw new Error('the encrypted wallet is an enclave file, which this migration does not open');
+    if (opened.error === 'no_wallet' || opened.error === 'damaged') throw new Error('the encrypted wallet could not be read, so nothing was destroyed');
+    if (opened.error === 'tampered') throw new Error(`${opened.detail ?? 'the wallet file has been edited'} (${left})`);
+    throw new Error(`that password does not open the encrypted wallet, ${left}`);
   }
-
-  const encrypted = addressesOf(JSON.parse(body.toString('utf8')) as KeysPayload);
-  for (const target of residue) {
-    let onDisk: StoredAddresses;
-    try {
-      onDisk = addressesOf(JSON.parse(fs.readFileSync(target, 'utf8')) as KeysPayload);
-    } catch {
-      throw new Error(`${target} is not a key file this app can read, so it was left alone`);
-    }
-    if (onDisk.evm !== encrypted.evm || onDisk.solana !== encrypted.solana || onDisk.near !== encrypted.near) {
-      throw new Error(`${target} holds a different wallet from the encrypted one, so it was left alone. Move it aside by hand.`);
-    }
-  }
-
+  const body = opened.body;
   const destroyed: string[] = [];
-  for (const target of residue) {
-    destroyPlaintext(target);
-    destroyed.push(target);
+  let encrypted: StoredAddresses;
+  try {
+    encrypted = addressesOf(JSON.parse(body.toString('utf8')) as KeysPayload);
+    for (const target of residue) {
+      let onDisk: StoredAddresses;
+      try {
+        onDisk = addressesOf(JSON.parse(fs.readFileSync(target, 'utf8')) as KeysPayload);
+      } catch {
+        throw new Error(`${target} is not a key file this app can read, so it was left alone`);
+      }
+      if (onDisk.evm !== encrypted.evm || onDisk.solana !== encrypted.solana || onDisk.near !== encrypted.near) {
+        throw new Error(`${target} holds a different wallet from the encrypted one, so it was left alone. Move it aside by hand.`);
+      }
+    }
+    for (const target of residue) {
+      destroyPlaintext(target);
+      destroyed.push(target);
+    }
+  } catch (err) {
+    wipe(body);
+    throw err;
   }
   deps.setPlain(body);
   return { destroyed, addresses: encrypted };
