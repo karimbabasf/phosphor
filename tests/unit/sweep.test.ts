@@ -3,7 +3,12 @@
 // was the only scan that ran. Each rule here excuses exactly one shape and nothing beside it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FAKE_PEM_FIXTURE, KNOWN_PUBLIC_CONSTANTS, isMnemonicRun, publicFormat, scanContent, type Finding } from '../../scripts/sweep.ts';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { FAKE_PEM_FIXTURE, KNOWN_PUBLIC_CONSTANTS, historyCheck, historyScope, isMnemonicRun, publicFormat, scanContent, type Finding } from '../../scripts/sweep.ts';
 
 // Made from characters, never written out: a 64 hex value that is on no allowlist and is not
 // regular enough to be excused as a ruler.
@@ -83,4 +88,89 @@ test('a public hex constant is excused whatever its case, and never printed in a
   const [found] = findings('a.ts', `const h = '0x${DIGEST}';`);
   assert.equal(found.fingerprint.length, 8);
   assert.equal(JSON.stringify(found).includes(DIGEST), false, 'a finding carries the value it found');
+});
+
+// The history scope. A throwaway repo holds one planted digest per kind of ref: the branch being
+// released (HEAD), a remote-tracking branch whose local branch is gone, a tag on a commit no
+// branch holds, and a local scratch branch that never left the clone. Git runs without the
+// global and system config, so a signing key or a hook on this Mac cannot change what is built.
+const GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_AUTHOR_NAME: 'sweep',
+  GIT_AUTHOR_EMAIL: 'sweep@example.invalid',
+  GIT_COMMITTER_NAME: 'sweep',
+  GIT_COMMITTER_EMAIL: 'sweep@example.invalid',
+};
+
+const planted = (k: number) => Array.from({ length: 64 }, (_, i) => '0123456789abcdef'[(i * 7 + k) % 16]).join('');
+
+function plantedRepo(): { dir: string; done: () => void } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-history-'));
+  const dir = path.join(root, 'work');
+  fs.mkdirSync(dir);
+  const run = (...args: string[]) => execFileSync('git', args, { cwd: dir, env: GIT_ENV, stdio: 'pipe' });
+  const commit = (file: string, text: string) => {
+    fs.writeFileSync(path.join(dir, file), text);
+    run('add', file);
+    run('commit', '-q', '-m', file);
+  };
+  run('init', '-q', '-b', 'main');
+  commit('readme.txt', 'nothing to see\n');
+  run('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  run('checkout', '-q', '-b', 'old-feature');
+  commit('remote.txt', `${planted(1)}\n`);
+  run('update-ref', 'refs/remotes/origin/old-feature', 'HEAD');
+  run('checkout', '-q', 'main');
+  run('branch', '-q', '-D', 'old-feature');
+  run('checkout', '-q', '--detach');
+  commit('tag.txt', `${planted(3)}\n`);
+  run('tag', 'v0.0.1');
+  run('checkout', '-q', '-b', 'scratch', 'main');
+  commit('scratch.txt', `${planted(5)}\n`);
+  run('checkout', '-q', 'main');
+  commit('head.txt', `${planted(7)}\n`);
+  return { dir, done: () => fs.rmSync(root, { recursive: true, force: true }) };
+}
+
+test('the history scan reads what a push can publish, HEAD, the remote branches and the tags, and no local scratch branch', () => {
+  const { dir, done } = plantedRepo();
+  try {
+    const seen = (scope: string) => historyCheck(scope, dir).findings.map((f) => f.file).sort();
+    assert.deepEqual(seen('published'), ['head.txt', 'remote.txt', 'tag.txt']);
+    assert.deepEqual(seen('all'), ['head.txt', 'remote.txt', 'scratch.txt', 'tag.txt'], 'the old scope, every ref, still works by flag');
+    assert.deepEqual(seen('scratch'), ['scratch.txt']);
+    const pushed = historyCheck('origin/main', dir);
+    assert.equal(pushed.ok, true, pushed.detail);
+    assert.match(pushed.detail, /^\d+ blobs reachable from origin\/main scanned$/);
+    const unknown = historyCheck('no-such-branch', dir);
+    assert.equal(unknown.ok, false, 'a revision git does not know passed as an empty history');
+    assert.match(unknown.detail, /^cannot list the history of no-such-branch/);
+    assert.equal(historyCheck('--all', dir).ok, false, 'a scope starting with a dash reached git as an option');
+  } finally {
+    done();
+  }
+});
+
+test('a shallow clone fails the history check instead of passing on a tip with nothing behind it', () => {
+  const { dir, done } = plantedRepo();
+  try {
+    const shallow = path.join(path.dirname(dir), 'shallow');
+    execFileSync('git', ['clone', '-q', '--depth', '1', '--branch', 'main', pathToFileURL(dir).href, shallow], { env: GIT_ENV, stdio: 'pipe' });
+    const result = historyCheck('published', shallow);
+    assert.equal(result.ok, false);
+    assert.match(result.detail, /^shallow clone/);
+  } finally {
+    done();
+  }
+});
+
+test('--history takes published, all or one revision, and anything else stops the sweep', () => {
+  assert.equal(historyScope([]), 'published');
+  assert.equal(historyScope(['--history=all']), 'all');
+  assert.equal(historyScope(['--history=origin/main']), 'origin/main');
+  assert.throws(() => historyScope(['--history', 'origin/main']), /unknown argument --history/, 'a space instead of = fell back to the default scope');
+  assert.throws(() => historyScope(['--history=']), /unknown argument/);
+  assert.throws(() => historyScope(['--all']), /unknown argument --all/);
 });

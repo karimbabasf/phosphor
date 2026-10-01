@@ -363,12 +363,18 @@ network you pick), never by sending to this address on a chain. Then:
 
     npm run sweep
 
-Six checks over both the tracked tree and the entire git history: key-shaped material (64 character
+Six checks over both the tracked tree and the git history: key-shaped material (64 character
 hex runs, 87 to 88 character base58 runs, `ed25519:` values, PEM blocks, seed-phrase-shaped lines),
 every address found in your local config and key file, that `config.local.json`, `keys.json`,
 `.env*` and `state/` are neither tracked nor un-ignored, and that `keysPath` resolves outside the
 working copy. History matters as much as the working tree: a file deleted today is still published
 if any commit holds it.
+
+The history it reads is what a push can publish: HEAD, every remote-tracking branch and every tag.
+Local branches that never left your clone are not in it. `npm run sweep -- --history=all` reads
+every ref instead (before you push more than the current branch), and
+`npm run sweep -- --history=origin/main` reads one revision and everything behind it. A shallow
+clone fails the history check, since its history is not there to read.
 
 Exit 0 means nothing secret is reachable from the remote. A finding names the file, the line and
 the pattern, and never the matched text, because printing it would put the secret in a terminal, a
