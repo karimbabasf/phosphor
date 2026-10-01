@@ -41,17 +41,29 @@
       "ReadMcpResourceTool",
       "ReadMcpResourceDirTool",
       "TodoWrite",
-      "KillBash"
+      "KillBash",
+      "WebFetch"
     ],
     "allow": [
       "mcp__phosphor__*",
-      "WebSearch",
-      "WebFetch"
+      "WebSearch"
     ],
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable"
   },
-  "hooks": {},
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Phosphor reads pages with mcp__phosphor__web_read only, at an address a web search returned or the person gave. WebFetch is off.' >&2; exit 2"
+          }
+        ]
+      }
+    ]
+  },
   "enableAllProjectMcpServers": false,
   "includeCoAuthoredBy": false
 }

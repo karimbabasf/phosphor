@@ -27,6 +27,7 @@ import { marketReads } from './read/market.ts';
 import { swapReads } from './read/swap.ts';
 import { tradeReads } from './read/trade.ts';
 import { walletReads } from './read/wallet.ts';
+import { webReads } from './read/web.ts';
 import { handlePropose } from './propose.ts';
 import { handleView } from './view.ts';
 import { handleSetViewMode } from './mutation.ts';
@@ -45,6 +46,7 @@ const READS: ReadTable = {
   ...tradeReads,
   ...chainReads,
   ...swapReads,
+  ...webReads,
 };
 
 // The table's own keys, for the test that holds READ_TOOLS and this in step. A tool listed in

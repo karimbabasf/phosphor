@@ -39,6 +39,7 @@ import { createSseHub } from './http/sse.ts';
 import { credentialCheck, redactEvent } from './http/log-tail.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
+import { printsOf } from './http/read/web.ts';
 import { linesNamed } from './http/chart.ts';
 import { createEndedNotices } from './http/ended.ts';
 import type { EndedNotices } from './http/ended.ts';
@@ -212,6 +213,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     makeDriver: deps.makeDriver,
     onIdle: (chat) => ended?.flush(chat),
     onEvent: (chat, event) => ended?.event(chat, event),
+    // Read when a chat's agent searches the web, which is always after ctx below exists.
+    prints: () => printsOf(ctx),
   });
   ended = createEndedNotices({
     store,

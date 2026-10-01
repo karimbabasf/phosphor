@@ -18,6 +18,7 @@ import type { ChatVendor } from '../providers/index.ts';
 import { buildRole, customPersona } from '../role.ts';
 import { loadProfile } from '../profile/index.ts';
 import type { ViewMode } from '../types.ts';
+import type { WalletPrints } from '../web-gate.ts';
 import { PROJECT_DIR } from './context.ts';
 import type { Chat, ChatRegistry, SseHub } from './context.ts';
 
@@ -36,8 +37,10 @@ export function createChatRegistry(deps: {
   /* Told every event a chat's driver reports once the transcript has it, so the ending notice
      knows when a turn the app started is over (ended.ts, event). */
   onEvent?: (chat: Chat, event: DriverEvent) => void;
+  // This wallet's own addresses and figures, for the driver's check of a web search's query.
+  prints?: () => WalletPrints;
 }): ChatRegistry {
-  const { cfg, audit, agents, getView, sse, makeDriver, onIdle, onEvent } = deps;
+  const { cfg, audit, agents, getView, sse, makeDriver, onIdle, onEvent, prints } = deps;
 
   // THE DRIVER'S SEATS, PLURAL SINCE 2026-08-21.
   //
@@ -150,8 +153,9 @@ export function createChatRegistry(deps: {
          that, and the rules that are facts about the code ride along with it. */
       systemPrompt:
         cfg.driver?.systemPrompt === undefined
-          ? buildRole({ root: PROJECT_DIR, view: getView(), profile: loadProfile(cfg.dataDir), agent: vendor.name })
+          ? buildRole({ root: PROJECT_DIR, view: getView(), profile: loadProfile(cfg.dataDir), agent: vendor.name, webSearch: vendor.id === 'claude' })
           : customPersona(cfg.driver.systemPrompt),
+      prints,
       onEvent: (event) => driverEvent(chat, event),
     });
   }

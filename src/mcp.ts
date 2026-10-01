@@ -677,6 +677,15 @@ registerRead(
   ].join(' '),
   { query: z.string(), limit: z.number().int().optional() },
 );
+/* The one page reader. The vendors' own (Claude's WebFetch, Grok's web_fetch) are off, because they
+   fetched any address the model wrote, and an address is where a hostile page asks for the
+   person's figures to go. The app reads the page itself, and only at an address that came back in
+   a web search this session or that the person gave (src/web-gate.ts). */
+registerRead(
+  'web_read',
+  'One web page as quoted data, at an address a web search in this chat returned or they gave, word for word. look_for keeps the lines naming it.',
+  { url: z.string(), look_for: z.string().optional() },
+);
 
 /* Chain lookups: the other reads whose answers come from off the machine, and the same shape
    keeps them safe. The agent names a network from a closed list and an address or a hash; the

@@ -31,6 +31,7 @@ import { savePolicyChecked } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import { AXIS_CEILING_USD } from '../policy/engine.ts';
 import { mergePatch, money } from '../proposals/lifecycle.ts';
+import { recordPersonText } from '../web-gate.ts';
 
 /* ---------- the agent connection ---------- */
 
@@ -505,6 +506,10 @@ export async function handleMutation(
       } catch (err) {
         return fail(res, 409, errText(err));
       }
+      /* An address the person typed is one the agent may read (src/web-gate.ts). Only theirs: the
+         screen line above is the app's, an ended-move note is the app's, and a worker's brief is
+         another agent's, and none of those is recorded. */
+      recordPersonText(chat.session, text);
       /* Logged before anything the agent does with it. The dashcam is supposed to answer
          "why did this happen", and the tool calls alone only answer "what happened": a swap
          in the transcript with no instruction above it reads as the app acting on its own. */

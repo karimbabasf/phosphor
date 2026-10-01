@@ -117,6 +117,10 @@ export const READ_TOOLS: readonly string[] = [
   'swap_assets',
   'swap_quote',
   'swap_check',
+  // One web page, read by the APP and only at an address that came back in a web search this
+  // session or that the person gave (src/web-gate.ts). The vendors' own page readers are off, so
+  // this is the one door a page comes through, and it marks the seat like every web read.
+  'web_read',
 ];
 /* The reads a worker never gets. A picture is the window the human is reading. The proposal
    list is the lead's own money timeline, and one row's whole story with it: a spawned worker

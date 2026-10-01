@@ -114,12 +114,13 @@ test(
     const init = await announcedInit(bin as string, path.join(REPO, 'operator', 'driver.settings.json'));
     const tools = Array.isArray(init.tools) ? (init.tools as string[]) : [];
     const builtins = tools.filter((t) => !t.startsWith('mcp__phosphor__')).sort();
-    // WebFetch and WebSearch on Karim's decision of 2026-09-23 (src/providers/claude.ts WEB_TOOLS).
+    // WebSearch on Karim's decision of 2026-09-23 (src/providers/claude.ts WEB_TOOLS). WebFetch is
+    // off since 2026-10-01: pages come through mcp__phosphor__web_read (src/web-gate.ts).
     assert.deepEqual(
       builtins,
-      ['WebFetch', 'WebSearch'],
+      ['WebSearch'],
       `operator/driver.settings.json is out of date: this Claude Code release grants ${builtins.join(', ')}. ` +
-        'Deny anything but the two web tools. The in-app driver refuses to run until only they are left.',
+        'Deny anything but WebSearch. The in-app driver refuses to run until only it is left.',
     );
   },
 );

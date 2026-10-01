@@ -1,14 +1,15 @@
 #!/bin/sh
 # A stand-in for one headless grok turn, in the exact shape grok 1.0.40 printed under
 # --output-format streaming-messages-json --include-partial-messages on 2026-09-23: an init line
-# naming the four built-ins --tools left and the one server, text deltas, a use_tool call whose
+# naming the built-ins --tools left and the one server, text deltas, a use_tool call whose
 # result is grok's MCP wrapper, the final text, and the result line. It records its argv, the two
 # homes and the seat it was given, one line per turn, in grok-argv.txt under TMPDIR (TMPDIR is on
 # the driver's allowlist).
 #
 # The turn's own text picks what it plays: BUILTIN reaches for a shell tool, FOREIGN announces a
 # second MCP server, SEARCH looks a tool up first, DIRECT calls a listed tool by its own name, WEB
-# reads a page with web_fetch, SERVERWEB carries a search the API ran inside the reply, SLOW says
+# reaches for web_fetch (off since 2026-10-01), SERVERWEB carries a search the API ran inside the
+# reply (off too), SLOW says
 # nothing for five seconds, NOISY says so on stderr when it is stopped, STUBBORN holds the session
 # half a second after it is stopped, LINGER stays up two seconds after its result line.
 # The init line lists phosphor__wallet the way grok lists a server that attached before it
@@ -39,13 +40,17 @@ if [ -e "$lock" ] && kill -0 "$(cat "$lock")" 2>/dev/null; then printf '%s start
 printf '%s' "$$" > "$lock"
 printf '%s home=%s grok_home=%s seat=%s\n' "$*" "$HOME" "${GROK_HOME:-}" "${PHOSPHOR_SESSION:-}" >> "${TMPDIR:-/tmp}/grok-argv.txt"
 prompt=''
+tools='search_tool,use_tool'
 while [ $# -gt 0 ]; do
   if [ "$1" = '--prompt-file' ]; then prompt=$(cat "$2"); fi
+  # The init line lists what --tools left, as grok 1.0.40 did.
+  if [ "$1" = '--tools' ]; then tools="$2"; fi
   shift
 done
+listed=$(printf '%s' "$tools" | sed 's/[^,][^,]*/"&"/g')
 servers='[{"name":"phosphor","status":"pending"}]'
 case "$prompt" in *FOREIGN*) servers='[{"name":"other","status":"pending"},{"name":"phosphor","status":"pending"}]' ;; esac
-printf '%s\n' "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fake-grok\",\"tools\":[\"search_tool\",\"use_tool\",\"web_search\",\"web_fetch\",\"phosphor__wallet\"],\"mcp_servers\":$servers}"
+printf '%s\n' "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fake-grok\",\"tools\":[$listed,\"phosphor__wallet\"],\"mcp_servers\":$servers}"
 case "$prompt" in
   *SLOW*)
     sleep 5
