@@ -27,9 +27,10 @@ type Any = Record<string, any>;
 /* A code the shape of a real one. Never funded, never issued. */
 const CODE = 'PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ';
 const BARE = '2X9QKM7RTB0HVFDK3WPZA8GN4CJ';
-/* The two sentences the contract's narrowing and the digit rule exist for. */
+/* The sentences the contract's shape and its two rules exist for (CONTRACTS.md, Code shape). */
 const PHOSPHOR = 'how does phosphor handle swaps between eth and near';
 const PHOSPHORUS = 'phosphorus is used in fertilizer and in matches';
+const PHOSPHATES = 'phosphates cost 25 dollars per ton in 2026 so';
 
 /* ---------- the column's DOM stub ---------- */
 
@@ -221,6 +222,7 @@ const FORMS: Array<[string, string]> = [
   ['in a sentence', 'hey, here is my invite: phos-2x9qk-m7rtb-0hvfd-k3wpz-a8gn4cj thanks!'],
   ['over lines', 'PHOS-2X9QK-M7RTB\n0HVFD-K3WPZ-A8GN4CJ'],
   ['hyphens and spaces', 'phos - 2x9qk - m7rtb - 0hvfd - k3wpz - a8gn4cj'],
+  ['no-break spaces', 'PHOS\u00a02X9QK\u00a0M7RTB\u00a00HVFD\u00a0K3WPZ\u00a0A8GN4CJ'],
 ];
 
 test('every form of a code is kept out of the chat at send, and goes to the invite field instead', () => {
@@ -260,6 +262,7 @@ test('the plain messages that look most like a code still go, and the line goes 
     'Phosphor-powered wallets are my favourite thing to talk about today',
     PHOSPHOR,
     PHOSPHORUS,
+    PHOSPHATES,
   ];
   const world = build();
   for (const text of plain) world.send(text);
@@ -295,40 +298,55 @@ test('the field opens on the tab the person is on when it has Add money, and on 
   }
 });
 
-test('the matcher is the contract\'s canonical regex, and a match is a code only with two digits or more', () => {
+test('the matcher is the contract\'s composer guard: the canonical shape, a first character of 0 to 7, and two digits', () => {
   const world = build();
   const codeIn = world.win.PhosphorInviteApi.codeIn;
-  // Exactly the regex CONTRACTS.md and src/invite/code.ts write, with its flags.
+  // Exactly the shape CONTRACTS.md and src/invite/code.ts write, with its flags.
   const CANONICAL = String.raw`PH[O0]S(?:[\s-]+|(?=[0-9A-Z]{5}))[0-9A-Z](?:[\s-]*[0-9A-Z]){26}(?![0-9A-Z])`;
   assert.ok(ADAPTER.includes(`/${CANONICAL}/gi`), 'ui/core/invite.js does not carry the canonical regex exactly');
-  const canonical = new RegExp(CANONICAL, 'i');
+  const shape = new RegExp(CANONICAL, 'i');
   for (const [name, text] of FORMS) {
-    assert.ok(canonical.test(text), `${name}: the canonical regex misses it, so the form list is wrong`);
+    assert.ok(shape.test(text), `${name}: the canonical shape misses it, so the form list is wrong`);
     assert.ok(codeIn(text), `${name} was not found`);
   }
-  // The word Phosphor is PHOS and letters: the narrowing keeps it out of the shape.
-  assert.equal(canonical.test(PHOSPHOR), false);
+  // The word Phosphor is PHOS and letters: the shape alone keeps it out.
+  assert.equal(shape.test(PHOSPHOR), false);
   assert.equal(codeIn(PHOSPHOR), null);
-  // This one fills the shape with letters alone: the regex takes it, the digit rule lets it go.
-  assert.ok(canonical.test(PHOSPHORUS), 'the sentence no longer fills the shape, so this case proves nothing');
-  assert.equal(codeIn(PHOSPHORUS), null);
-  // Two digits, counted as typed. One is not enough, and an O, I or L is a letter here.
+  // Prose that fills the shape: each sentence fails one rule, and the shape is shown to hold it.
+  assert.ok(shape.test(PHOSPHORUS), 'the sentence no longer fills the shape, so this case proves nothing');
+  assert.equal(codeIn(PHOSPHORUS), null, 'rule 2: no digits');
+  assert.ok(shape.test(PHOSPHATES), 'the sentence no longer fills the shape, so this case proves nothing');
+  assert.equal(codeIn(PHOSPHATES), null, 'rule 1: it starts with a P');
+
+  /* 27 data characters, built to break one rule at a time. */
+  const data = (text: string): string => {
+    assert.equal(text.length, 27, `a test code has ${text.length} data characters`);
+    return 'PHOS-' + text;
+  };
   const letters = 'ABCDEFGHJKMNPQRSTVWXYZABCDE';
-  assert.equal(letters.length, 27);
-  assert.equal(codeIn('PHOS-' + letters), null);
-  assert.equal(codeIn('PHOS-' + letters.slice(0, 26) + '7'), null, 'one digit was taken for a code');
-  assert.ok(codeIn('PHOS-' + letters.slice(0, 25) + '47'), 'two digits were let through');
-  assert.equal(codeIn('PHOS-OIL' + letters.slice(0, 23) + '7'), null, 'an O, I or L was counted as a digit');
-  // The count is over the matched text, so the zero of a PH0S prefix is one of the two.
-  assert.ok(codeIn('PH0S-' + letters.slice(0, 26) + '7'));
+  // Rule 1: the first data character is 0 to 7, or O, I or L in any case.
+  for (const first of ['0', '7', 'O', 'I', 'L', 'o', 'i', 'l']) {
+    assert.ok(codeIn(data(first + BARE.slice(1))), `a code starting ${first} was not found`);
+  }
+  for (const first of ['8', '9', 'P', 'Z', 'a']) {
+    assert.equal(codeIn(data(first + BARE.slice(1))), null, `a code cannot start ${first}`);
+  }
+  // Rule 2: two digits as typed; one is not enough, and an O, I or L is a letter here.
+  assert.equal(codeIn(data('2' + letters.slice(0, 26))), null, 'one digit was taken for a code');
+  assert.ok(codeIn(data('2' + letters.slice(0, 25) + '7')), 'two digits were let through');
+  assert.equal(codeIn(data('OIL' + letters.slice(0, 23) + '7')), null, 'an O, I or L was counted as a digit');
+  // The digits are counted in the 27 data characters, never in the prefix: PH0S brings no digit.
+  assert.equal(codeIn('PH0S-2' + letters.slice(0, 26)), null, 'the zero of PH0S was counted');
+  assert.ok(codeIn('PH0S-2' + letters.slice(0, 25) + '7'));
   // Too short, the wrong prefix, a data character after the 27th, or nothing at all.
   assert.equal(codeIn('PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4C'), null);
   assert.equal(codeIn('PHAS-' + BARE), null);
   assert.equal(codeIn(CODE + 'X'), null);
   assert.equal(codeIn(''), null);
   assert.equal(codeIn(null), null);
-  // Prose that fits the shape does not hide a code after it.
+  // Prose that fills the shape does not hide a code after it.
   assert.ok(codeIn(PHOSPHORUS + ' ' + CODE));
+  assert.ok(codeIn(PHOSPHATES + ' ' + CODE));
   assert.ok(codeIn('phosphor phosphor ' + CODE));
   // A long paste costs nothing: one pass, no backtracking blow-up.
   const started = Date.now();

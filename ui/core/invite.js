@@ -96,17 +96,20 @@
     };
   }
 
-  /* THE CODE'S SHAPE, which keeps a code out of the chat. The contract's canonical
-     matcher, exactly (src/invite/code.ts INVITE_CODE_SOURCE, the log tail's redaction):
-     PHOS or PH0S in any case, a separator or five data characters in a row, then 27 data
-     characters with any spaces or hyphens between them and none after the 27th, alone or
-     inside an invite link.
+  /* THE CODE'S SHAPE, which keeps a code out of the chat: the contract's composer guard,
+     mirrored exactly (src/invite/code.ts looksLikeInviteCode). First the canonical shape
+     (INVITE_CODE_SOURCE, the log tail's redaction): PHOS or PH0S in any case, a separator
+     or five data characters in a row, then 27 data characters with any spaces or hyphens
+     between them and none after the 27th, alone or inside an invite link.
 
-     A match is a code only when it holds two digits or more, counted as typed (an O, I
-     or L is a letter here). Every issued code carries two. Prose can fill the shape with
-     letters alone: "phosphorus is used in fertilizer and in matches" matches it, and is a
-     message, not a code. */
+     Then two rules on the 27 data characters (the match less its prefix, spaces and
+     hyphens dropped), because prose can fill the shape. The first is 0 to 7, or O, I or L
+     in any case: the two spare bits sit at the top, so every code starts there. And two of
+     them or more are digits as typed, an O, I or L counting as a letter: every issued code
+     carries two. "phosphorus is used in fertilizer and in matches" fails the second, and
+     "phosphates cost 25 dollars per ton in 2026 so" the first. */
   var SHAPE = /PH[O0]S(?:[\s-]+|(?=[0-9A-Z]{5}))[0-9A-Z](?:[\s-]*[0-9A-Z]){26}(?![0-9A-Z])/gi;
+  var FIRST = /^[0-7OIL]/i;
   var DIGITS = /[0-9]/g;
 
   function codeIn(text) {
@@ -114,7 +117,8 @@
     SHAPE.lastIndex = 0;
     var found = SHAPE.exec(value);
     while (found !== null) {
-      if ((found[0].match(DIGITS) || []).length >= 2) {
+      var data = found[0].slice(4).replace(/[\s-]/g, '');
+      if (FIRST.test(data) && (data.match(DIGITS) || []).length >= 2) {
         SHAPE.lastIndex = 0;
         return found[0];
       }
