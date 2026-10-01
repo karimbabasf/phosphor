@@ -22,8 +22,11 @@
   update_retry command).
 
   While the install runs the shell calls window.__phosphorProgress(0 to 1) and, if it goes
-  wrong, window.__phosphorFailed(message), through WebviewWindow::eval. A finished install
-  never reaches the page: the app relaunches.
+  wrong, window.__phosphorFailed(message, canRetry, title), through WebviewWindow::eval. The
+  title is there for an update the shell refused (its signature or its contents did not pass
+  the check): that window says so, offers no Try again, and does not send the person to try
+  later, because the same update would be refused again. A finished install never reaches the
+  page: the app relaunches.
 
   Same tokens as the splash and ui/design/tokens.css, copied because this page has no origin
   to import them from. The window is dark only, so this page is too.
@@ -340,7 +343,7 @@
       var said = (cut >= 0 ? text.slice(0, cut) : text).trim();
       var raw = cut >= 0 ? text.slice(cut + 2).trim() : '';
       if (/release feed/i.test(said)) said = 'Phosphor could not reach its update server. Check your connection and try again.';
-      else if (raw && /keeps running\.?$/.test(said)) said = said.replace(/\.?$/, '.') + ' Try again later.';
+      else if (raw && s.retry === true && /keeps running\.?$/.test(said)) said = said.replace(/\.?$/, '.') + ' Try again later.';
       return { said: said, raw: raw };
     }
 
@@ -415,9 +418,10 @@
       progress.firstElementChild.style.width = Math.round(Math.min(1, p) * 100) + '%';
       installing.textContent = p < 1 ? 'Downloading ' + Math.round(p * 100) + '%' : 'Installing';
     };
-    // The second argument is true once the shell can take a Try again (update_retry).
-    window.__phosphorFailed = function (message, canRetry) {
-      render({ state: 'failed', title: 'The update was not installed', message: String(message || ''), retry: canRetry === true });
+    // The second argument is true once the shell can take a Try again (update_retry); the third
+    // is the title of a refused update.
+    window.__phosphorFailed = function (message, canRetry, heading) {
+      render({ state: 'failed', title: String(heading || 'The update was not installed'), message: String(message || ''), retry: canRetry === true });
     };
 
     more.addEventListener('click', function () { showDetail(detail.hidden); });

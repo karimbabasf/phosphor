@@ -236,6 +236,11 @@ Releases are built by CI from a version tag (`.github/workflows/release.yml`): t
 bundle and its signature, `latest.json` and `SHA256SUMS`. Installed copies check that manifest
 and offer a signed update in the app's own window (`src-tauri/frontend/update.html`); the updater
 verifies the bundle's signature, and the version it compares is read out of the signed bundle, not
-the manifest. `scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
+the manifest. Before anything is replaced, the shell also unpacks the bundle into a private folder
+and has Apple's Security framework check its code signature against a requirement compiled into
+the app (`src-tauri/src/update.rs`): Apple's anchor, a Developer ID Application certificate,
+`com.karimbabasf.phosphor` and a Team ID from a short list. A bundle the update key signed but
+another team, or nobody, code-signed is refused, and the window says the update did not pass its
+check and nothing changed. `scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
 notarize both and staples the tickets before anything is checksummed, so a first open needs no
 Gatekeeper step.

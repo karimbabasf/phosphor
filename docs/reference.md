@@ -517,6 +517,15 @@ before it builds. The same chain runs on a Mac, checks included, with nothing pu
 
     npm run notarize:local
 
+An update is held to the same signature. The updater plugin checks the bundle's minisign
+signature, and then `src-tauri/src/update.rs` unpacks it into a private folder and checks its code
+signature with Apple's Security framework, strictly and with nested code, against
+`identifier "com.karimbabasf.phosphor" and anchor apple generic`, the Developer ID intermediate and
+leaf markers, and a Team ID from `TEAMS` (today `35Z6P26CBD`). Only then is the app replaced. Once
+an installed copy has this check, the minisign key alone cannot put code on that Mac (the hop onto
+the first release that carries it still rests on minisign alone). A team change adds the new
+Team ID to `TEAMS` in a release the old team signs, before anything signed by the new team ships.
+
 Touch ID and the Secure Enclave are built (`src-tauri/src/enclave.rs`, the `se-helper` XPC
 service in `Contents/XPCServices`, `src/vault/`): on a Mac with an enclave the key file is sealed
 with a data key wrapped to a key the enclave made and cannot export, and every click ends in a
