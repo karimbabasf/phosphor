@@ -30,8 +30,8 @@
   /* ---------- the words ---------- */
 
   var COPY = {
-    title: 'Got an invite code?',
-    lead: 'Paste it and $5 lands in your wallet once it\'s made.',
+    title: 'Have an invite code?',
+    lead: 'Paste it here. The money in it goes to your new wallet as soon as the wallet is made.',
     label: 'Invite code',
     use: 'Use code',
     skip: 'Skip',
@@ -57,9 +57,9 @@
       case 'typo':
         return 'That code has a typo. Check it and try again.';
       case 'empty':
-        return 'This code was already used, or it has a typo.';
+        return 'This code has nothing left in it. Ask whoever sent it for a new one.';
       case 'locked':
-        return 'This code can\'t pay out right now. Ask whoever sent it for a new one.';
+        return 'This code can\'t pay out. Ask whoever sent it for a new one.';
       case 'busy':
         return 'A code is already on its way to your wallet. Give it a minute.';
       case 'wallet-locked':
@@ -87,11 +87,13 @@
   }
 
   function claimTone(entry) {
-    return toneOf(entry.status === 'refused' ? 'failed' : entry.status);
+    if (entry.status === 'refused') return entry.reason === 'busy' ? 'wait' : 'warn';
+    return toneOf(entry.status);
   }
 
   /* The one line under a field: a tick for good news, the warning glyph for a problem,
-     a spinner while money moves. Never red: nothing here puts money at risk. */
+     a spinner while money moves (another claim's included). Never red: nothing here puts
+     money at risk. */
   function say(node, tone, words) {
     dom.clear(node);
     if (!words) {
@@ -113,7 +115,7 @@
 
   function toneOf(status) {
     if (status === 'valid' || status === 'landed') return 'good';
-    if (status === 'asking' || status === 'running') return 'wait';
+    if (status === 'asking' || status === 'running' || status === 'busy') return 'wait';
     return 'warn';
   }
 

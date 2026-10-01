@@ -70,7 +70,7 @@ An invite code is USDC waiting for a new wallet, usually $5. It looks like
 `PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ` and usually comes as a link,
 `https://phosphor.money/invite#PHOS-...`. Paste the code or the whole link on the invite step
 after the terms on first open, or under Have an invite code? on the Add money card. The app
-checks it first and says what is waiting, that it has a typo, or that it was already used. One
+checks it first and says what is waiting, that it has a typo, or that it has nothing left in it. One
 wrong character, or two neighbours swapped, is caught on this Mac before the network is asked
 anything.
 
@@ -94,7 +94,8 @@ ends only once the refund shows there.
 
 A claim that fails moves nothing: the money stays on the code, and you can add it again from Add
 money. If the app quits in the middle of a claim, it finishes the check the next time it opens.
-A code pays once; a second claim says "This code was already used, or it has a typo."
+A code pays once; a second claim says "This code has nothing left in it. Ask whoever sent it for
+a new one."
 
 Never paste a code into the chat. What you type there goes to your assistant and its model
 provider, so the chat refuses a code and opens the invite field instead. The app's backend turns

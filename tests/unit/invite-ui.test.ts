@@ -351,7 +351,7 @@ const claims = (world: World): Any[] => world.calls.filter((c) => c.route === '/
 function toInvite(world: World): Any {
   world.sandbox.PhosphorFirstRun.open();
   buttonNamed(world.screen, 'Get started').click();
-  assert.equal(title(world.screen), 'Got an invite code?', 'Get started did not reach the invite step');
+  assert.equal(title(world.screen), 'Have an invite code?', 'Get started did not reach the invite step');
   return world.screen;
 }
 
@@ -403,7 +403,7 @@ test('the terms come first, then the invite, and Back from the invite goes to th
   assert.equal(title(world.screen), 'Before you start');
   buttonNamed(world.screen, 'Accept and continue').click();
   await flush();
-  assert.equal(title(world.screen), 'Got an invite code?', 'the invite step does not follow the terms');
+  assert.equal(title(world.screen), 'Have an invite code?', 'the invite step does not follow the terms');
   buttonNamed(world.screen, 'Back').click();
   assert.ok(buttonNamed(world.screen, 'Get started'), 'Back from the invite did not reach the welcome');
 });
@@ -411,7 +411,7 @@ test('the terms come first, then the invite, and Back from the invite goes to th
 test('Skip is the quiet default: Use code is an outline until the field holds something, and Skip checks nothing', () => {
   const world = build();
   const screen = toInvite(world);
-  assert.deepEqual(visibleText(screen).slice(0, 3), ['Got an invite code?', 'Paste it and $5 lands in your wallet once it\'s made.', 'Invite code']);
+  assert.deepEqual(visibleText(screen).slice(0, 3), ['Have an invite code?', 'Paste it here. The money in it goes to your new wallet as soon as the wallet is made.', 'Invite code']);
   const skip = buttonNamed(screen, 'Skip');
   assert.equal(skip.className, 'btn btn-quiet', 'Skip is louder than a quiet key');
   const use = buttonNamed(screen, 'Use code');
@@ -445,7 +445,7 @@ test('a pasted code is checked at once, a good one says what is waiting, and Con
   assert.equal(claims(world).length, 0, 'the check claimed the money before there was a wallet');
   // Back finds the code still good, and an edit takes that back.
   buttonNamed(screen, 'Back').click();
-  assert.equal(title(screen), 'Got an invite code?');
+  assert.equal(title(screen), 'Have an invite code?');
   assert.equal(field(screen).value, CODE);
   assert.equal(said(screen), 'Nice. $5 is waiting for you.');
   field(screen).value = CODE + 'X';
@@ -470,9 +470,9 @@ test('a typed code is checked by Use code, or by Enter in the field', async () =
 test('each refusal is its own calm sentence over the same Use code, and nothing the network said is printed', async () => {
   const cases: Array<[Answer, string]> = [
     [{ ok: false, reason: 'typo' }, 'That code has a typo. Check it and try again.'],
-    [{ ok: false, reason: 'empty' }, 'This code was already used, or it has a typo.'],
+    [{ ok: false, reason: 'empty' }, 'This code has nothing left in it. Ask whoever sent it for a new one.'],
     [{ ok: false, reason: 'offline' }, 'Couldn\'t check the code right now. You can add it later from Add money.'],
-    [{ ok: false, reason: 'locked' }, 'This code can\'t pay out right now. Ask whoever sent it for a new one.'],
+    [{ ok: false, reason: 'locked' }, 'This code can\'t pay out. Ask whoever sent it for a new one.'],
     [{ ok: false, reason: 'busy' }, 'A code is already on its way to your wallet. Give it a minute.'],
     [Object.assign(new Error('Failed to fetch'), { status: 0 }), 'Couldn\'t check the code right now. You can add it later from Add money.'],
     [Object.assign(new Error('missing or wrong token'), { status: 403 }), 'Couldn\'t check the code right now. You can add it later from Add money.'],
@@ -485,7 +485,10 @@ test('each refusal is its own calm sentence over the same Use code, and nothing 
     const screen = toInvite(world);
     await paste(world);
     assert.equal(said(screen), words);
-    assert.equal(find(screen, '.firstrun-invite-said')[0].getAttribute('data-tone'), 'warn');
+    // Busy is a wait, with the spinner: a claim is running and nothing is wrong.
+    const busy = words.startsWith('A code is already');
+    assert.equal(find(screen, '.firstrun-invite-said')[0].getAttribute('data-tone'), busy ? 'wait' : 'warn');
+    assert.equal(find(screen, '.invite-said-spin').length, busy ? 1 : 0, `${words}: the wrong glyph`);
     assert.equal(primary(screen).textContent, 'Use code', 'a refused code turned the key into Continue');
     assert.equal(primary(screen).disabled, false, 'Use code cannot be pressed again');
     assert.ok(buttonNamed(screen, 'Skip'), 'Skip went away with a refusal');
@@ -579,7 +582,7 @@ test('the software flow claims once: back to the addresses step shows the claim 
 
 test('a claim the app refuses says so on the step, in words about the money, never the network\'s', async () => {
   const cases: Array<[Answer, string]> = [
-    [{ ok: false, reason: 'empty' }, 'This code was already used, or it has a typo.'],
+    [{ ok: false, reason: 'empty' }, 'This code has nothing left in it. Ask whoever sent it for a new one.'],
     [{ ok: false, reason: 'offline' }, 'Your $5 didn\'t come through. Add the code again from Add money.'],
     [{ ok: false, reason: 'wallet-locked' }, 'Your $5 didn\'t come through. Add the code again from Add money.'],
     [new Error('Failed to fetch'), 'Your $5 didn\'t come through. Add the code again from Add money.'],
@@ -838,13 +841,13 @@ test('Add money: Have an invite code? opens the field, a good code turns the key
 test('Add money: a paste is checked at once, and each refusal says what to do in the field\'s own words', async () => {
   const cases: Array<[string, Answer, string]> = [
     ['check', { ok: false, reason: 'typo' }, 'That code has a typo. Check it and try again.'],
-    ['check', { ok: false, reason: 'empty' }, 'This code was already used, or it has a typo.'],
+    ['check', { ok: false, reason: 'empty' }, 'This code has nothing left in it. Ask whoever sent it for a new one.'],
     ['check', { ok: false, reason: 'offline' }, 'Couldn\'t check the code right now. Try again in a moment.'],
     ['check', new Error('Failed to fetch'), 'Couldn\'t check the code right now. Try again in a moment.'],
-    ['check', { ok: false, reason: 'locked' }, 'This code can\'t pay out right now. Ask whoever sent it for a new one.'],
+    ['check', { ok: false, reason: 'locked' }, 'This code can\'t pay out. Ask whoever sent it for a new one.'],
     ['check', { ok: false, reason: 'busy' }, 'A code is already on its way to your wallet. Give it a minute.'],
     ['claim', { ok: false, reason: 'wallet-locked' }, 'Your $5 didn\'t come through. Paste the code again to try once more.'],
-    ['claim', { ok: false, reason: 'empty' }, 'This code was already used, or it has a typo.'],
+    ['claim', { ok: false, reason: 'empty' }, 'This code has nothing left in it. Ask whoever sent it for a new one.'],
     ['claim', new Error('Failed to fetch'), 'Your $5 didn\'t come through. Paste the code again to try once more.'],
   ];
   for (const [route, answer, words] of cases) {
@@ -863,7 +866,7 @@ test('Add money: a paste is checked at once, and each refusal says what to do in
       await flush();
     }
     assert.equal(lineSaid(host), words);
-    assert.equal(find(host, '.invite-said')[0].getAttribute('data-tone'), 'warn');
+    assert.equal(find(host, '.invite-said')[0].getAttribute('data-tone'), words.startsWith('A code is already') ? 'wait' : 'warn');
     assert.equal(find(host, '.invite-box')[0].hidden, false, `${words}: the field closed on a problem`);
     assert.equal(lineKey(host).textContent, 'Use code');
     assert.equal(world.toasts.length, 0);

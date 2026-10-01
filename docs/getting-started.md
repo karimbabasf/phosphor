@@ -49,7 +49,7 @@ else opens until you click Accept and continue. The app records the click (the d
 version of the terms) in its own state folder and in the audit log, and asks again only when the
 terms change. Nothing is uploaded and there is no account to make.
 
-Then Got an invite code? If someone sent you a Phosphor invite, paste the code, or the whole
+Then Have an invite code? If someone sent you a Phosphor invite, paste the code, or the whole
 invite link, there. The app checks it on the spot and says what is waiting: "Nice. $5 is waiting
 for you." Nothing moves yet. The money comes into your wallet right after the wallet is made, on
 the addresses step, and that can take up to two minutes; if you have moved on by then, a note on

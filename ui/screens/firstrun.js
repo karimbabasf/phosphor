@@ -674,7 +674,7 @@
     }, { pending: 'Saving' });
   }
 
-  /* GOT AN INVITE CODE? After the welcome and the terms, before the wallet, in
+  /* HAVE AN INVITE CODE? After the welcome and the terms, before the wallet, in
      every flow, and not counted by the progress. Skip is the quiet default: a
      person with no code presses it and the wallet steps start where they always
      did, and Use code stays an outline until the field holds something. A

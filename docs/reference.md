@@ -319,7 +319,7 @@ acceptance is `state/terms.json` (the version accepted and when, mode 0600) and 
 change on the site asks once more. The route is `POST /api/terms/accept` with the window token.
 Nothing here is a control: the file gates a screen, not a key.
 
-After the terms, Got an invite code? takes an invite code; Skip goes on without one, and the
+After the terms, Have an invite code? takes an invite code; Skip goes on without one, and the
 progress does not count the step. A paste, or Use code, asks `POST /api/invite/check` and moves
 nothing: a good code is kept in the first run's draft beside the password and the phrase, and
 wiped with them when the card closes. The claim is `POST /api/invite/claim`, fired once on the

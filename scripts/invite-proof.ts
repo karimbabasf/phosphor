@@ -230,7 +230,7 @@ async function open(browser: Json, backend: Backend): Promise<Json> {
     if (!shots.some((file) => file.endsWith('firstrun-terms.png'))) await shoot(page, 'firstrun-terms');
     await page.click(primary);
   }
-  await waitTitle(page, 'Got an invite code?');
+  await waitTitle(page, 'Have an invite code?');
   return page;
 }
 
@@ -287,7 +287,7 @@ async function main(): Promise<void> {
     await said(page, 'waiting for you');
     const refusals: Array<[string, string, string]> = [
       ['typo', TYPO, 'has a typo'],
-      ['used', codeOf('used'), 'already used'],
+      ['used', codeOf('used'), 'nothing left'],
       ['offline', codeOf('offline'), "Couldn't check"],
       ['locked', codeOf('locked'), "can't pay out"],
     ];
