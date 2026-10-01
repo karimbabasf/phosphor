@@ -30,6 +30,7 @@
 
 mod backend;
 mod enclave;
+mod payload;
 mod update;
 
 use std::path::{Path, PathBuf};
@@ -47,7 +48,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use backend::{
     configured_port, get_root, identity_matches, is_orphaned_backend, node_binary, phosphor_is_listening,
     pid_file_path, post_lock_when_idle, read_pid_file, request_within, spawn_backend, stop_orphan, write_pid_file, Backend,
-    Handshake, PidRecord, StopStep,
+    Handshake, PidRecord, SpawnError, StopStep,
 };
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
@@ -413,10 +414,14 @@ struct Failure {
     title: &'static str,
     message: &'static str,
     detail: String,
+    /// The app's files are not the ones this shell was built with. Try again would find the same
+    /// files, so the splash offers the download page instead.
+    altered: bool,
 }
 
 const DID_NOT_OPEN: &str = "Phosphor did not open";
 const STOPPED: &str = "Phosphor stopped";
+const ALTERED_TITLE: &str = "Phosphor needs a fresh copy";
 
 // Every sentence a failure can say, kept together so one test reads them all.
 const START_BLOCKED: &str = "Something on this Mac stopped it from starting. Try again, and if it happens again, restart your Mac.";
@@ -430,6 +435,11 @@ const STOPPED_TWICE: &str = "It stopped twice in a row, so it was not started ag
 const TAKEN_ON_RESTART: &str = "It stopped, and another program took its address before it could start again. Quit that program, then try again.";
 const NOT_BACK: &str = "It stopped and did not come back when it was restarted. Try again.";
 const NOT_RESTARTED: &str = "It stopped and could not be started again. Try again.";
+const ALTERED: &str = "Some of its files changed after it was installed, so it stopped before opening your wallet. \
+                       Your money is safe. Install a fresh copy from phosphor.money.";
+/// Where the altered state's one action goes. Like the Help links, it lives here and nowhere a
+/// page could change it.
+const DOWNLOAD_URL: &str = "https://phosphor.money/";
 
 // The two lines the window's notice carries for this shell.
 const RESTARTED: &str = "Phosphor stopped and started again. Anything that was moving then shows as Not confirmed in Pro's Recent moves, so check it before you act again.";
@@ -437,15 +447,29 @@ const MCP_COPIED: &str = "The connection line for your agent is on the clipboard
 
 impl Failure {
     fn starting(message: &'static str, detail: impl Into<String>) -> Self {
-        Failure { title: DID_NOT_OPEN, message, detail: detail.into() }
+        Failure { title: DID_NOT_OPEN, message, detail: detail.into(), altered: false }
     }
 
     fn stopped(message: &'static str, detail: impl Into<String>) -> Self {
-        Failure { title: STOPPED, message, detail: detail.into() }
+        Failure { title: STOPPED, message, detail: detail.into(), altered: false }
+    }
+
+    fn altered(detail: impl Into<String>) -> Self {
+        Failure { title: ALTERED_TITLE, message: ALTERED, detail: detail.into(), altered: true }
+    }
+
+    /// A spawn that started nothing, as the person reads it: an altered copy says so whatever
+    /// the step, and every other refusal says `otherwise`.
+    fn spawn(err: SpawnError, otherwise: impl FnOnce(String) -> Failure) -> Self {
+        match err {
+            SpawnError::Altered(why) => Failure::altered(why),
+            SpawnError::Failed(why) => otherwise(why),
+        }
     }
 
     fn payload(&self) -> serde_json::Value {
-        serde_json::json!({ "title": self.title, "message": self.message, "detail": self.detail })
+        let kind = if self.altered { "altered" } else { "failed" };
+        serde_json::json!({ "title": self.title, "message": self.message, "detail": self.detail, "kind": kind })
     }
 }
 
@@ -628,6 +652,52 @@ fn splash_quit(app: tauri::AppHandle, window: tauri::Window) -> Result<(), Strin
     }
     app.exit(0);
     Ok(())
+}
+
+/// The download page, from the splash's altered state, in the system browser. Its address is
+/// DOWNLOAD_URL and nothing the page sends.
+#[tauri::command]
+fn splash_get_phosphor(window: tauri::Window) -> Result<(), String> {
+    if window.label() != SPLASH {
+        return Err("not the splash window".to_string());
+    }
+    std::process::Command::new("open")
+        .arg(DOWNLOAD_URL)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("could not open the download page: {e}"))
+}
+
+/// The payload inside the app bundle this binary runs from, found the way Tauri finds its
+/// resources in one (Contents/MacOS, then Contents/Resources). None outside a bundle.
+fn bundled_payload() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let root = exe.parent()?.parent()?.join("Resources").join("phosphor");
+    root.is_dir().then_some(root)
+}
+
+/// `Phosphor.app/Contents/MacOS/phosphor-desktop --payload-digest`: the payload digest this copy
+/// was built for, the digest of the files it would start, and whether they are the same. Exits 0
+/// only when they are. docs/security.md uses it to check a release against a rebuild of its tag.
+fn print_payload_digest() -> i32 {
+    let Some(root) = bundled_payload() else {
+        eprintln!("phosphor: no payload beside this binary; run it from inside Phosphor.app");
+        return 2;
+    };
+    println!("built for  {}", payload::BUILT_FOR);
+    let started = Instant::now();
+    match payload::digest_of(&root) {
+        Ok((found, files)) => {
+            println!("on disk    {found}  ({files} files, {} ms)", started.elapsed().as_millis());
+            let same = found == payload::BUILT_FOR;
+            println!("{}", if same { "match" } else { "DIFFERENT: this copy will not start; install a fresh one" });
+            if same { 0 } else { 1 }
+        }
+        Err(why) => {
+            println!("on disk    unreadable: {why}");
+            1
+        }
+    }
 }
 
 /// Quit Phosphor, Cmd+Q, and closing the window ask the window first: its quit sheet
@@ -1170,7 +1240,8 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
             Err(err) => {
                 let broken = app.clone();
                 let _ = broken.clone().run_on_main_thread(move || {
-                    fail(&broken, Failure::stopped(NOT_RESTARTED, format!("The backend could not be restarted: {err}")));
+                    let failure = Failure::spawn(err, |why| Failure::stopped(NOT_RESTARTED, format!("The backend could not be restarted: {why}")));
+                    fail(&broken, failure);
                 });
                 return;
             }
@@ -1215,7 +1286,7 @@ fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), Failure> {
 
     let child = {
         let hand = app.state::<Secrets>();
-        spawn_backend(&payload, &data, &hand.0).map_err(|e| Failure::starting(START_BLOCKED, e))?
+        spawn_backend(&payload, &data, &hand.0).map_err(|e| Failure::spawn(e, |why| Failure::starting(START_BLOCKED, why)))?
     };
     app.state::<Backend>().adopt(child, pid_file_path(&data));
 
@@ -1307,6 +1378,14 @@ fn main() {
         println!("{}", enclave::call(&serde_json::json!({ "op": "probe" })));
         return;
     }
+    if std::env::args().nth(1).as_deref() == Some("--payload-digest") {
+        std::process::exit(print_payload_digest());
+    }
+    // Before anything else is built, so the payload check runs beside the rest of the start.
+    // spawn_backend takes its answer, and nothing starts until it has one.
+    if let Some(root) = bundled_payload() {
+        payload::start_early(root);
+    }
 
     // Minted before anything else, because the backend cannot be spawned without it and the
     // window cannot be opened without it. A shell that cannot produce one starts nothing: a
@@ -1338,7 +1417,8 @@ fn main() {
             update::update_dismiss,
             update::update_retry,
             splash_retry,
-            splash_quit
+            splash_quit,
+            splash_get_phosphor
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -1376,10 +1456,10 @@ fn main() {
 mod tests {
     use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL, log_from_response, log_lines, query_value, report_url, HELP_LINKS, HELP_REPORT_ID};
     use super::{launch, running_copy, Launch, Occupant, PidRecord};
-    use super::{failure_script, notice_script, splash_init, Failure, DID_NOT_OPEN, STOPPED};
+    use super::{failure_script, notice_script, splash_init, Failure, SpawnError, DID_NOT_OPEN, STOPPED};
     use super::{
-        EXITED_STARTING, MCP_COPIED, NOT_BACK, NOT_RESTARTED, NO_WINDOW, OLD_SESSION, OTHER_PHOSPHOR, PORT_TAKEN, RESTARTED, START_BLOCKED,
-        STOPPED_TWICE, TAKEN_ON_RESTART, TOO_SLOW,
+        ALTERED, ALTERED_TITLE, DOWNLOAD_URL, EXITED_STARTING, MCP_COPIED, NOT_BACK, NOT_RESTARTED, NO_WINDOW, OLD_SESSION, OTHER_PHOSPHOR,
+        PORT_TAKEN, RESTARTED, START_BLOCKED, STOPPED_TWICE, TAKEN_ON_RESTART, TOO_SLOW,
     };
     use std::time::Duration;
 
@@ -1519,9 +1599,9 @@ mod tests {
 
     // Every sentence a person reads from this shell: plain, whole, and free of the machinery.
     // The port, the timeout and the backend's name stay in the reason behind Details.
-    const SAID: [&str; 13] = [
+    const SAID: [&str; 14] = [
         START_BLOCKED, PORT_TAKEN, OTHER_PHOSPHOR, OLD_SESSION, EXITED_STARTING, TOO_SLOW, NO_WINDOW, STOPPED_TWICE,
-        TAKEN_ON_RESTART, NOT_BACK, NOT_RESTARTED, RESTARTED, MCP_COPIED,
+        TAKEN_ON_RESTART, NOT_BACK, NOT_RESTARTED, RESTARTED, MCP_COPIED, ALTERED,
     ];
 
     #[test]
@@ -1549,6 +1629,18 @@ mod tests {
         assert_eq!(back["message"], START_BLOCKED);
         assert_eq!(back["detail"], reason, "the reason arrives whole, as text");
         assert_eq!(Failure::stopped(NOT_BACK, "x").title, STOPPED);
+    }
+
+    #[test]
+    fn an_altered_copy_is_told_to_get_a_fresh_one_whichever_step_found_it() {
+        let found = Failure::spawn(SpawnError::Altered("built for a, found b".into()), |why| Failure::starting(START_BLOCKED, why));
+        assert_eq!((found.title, found.message, found.altered), (ALTERED_TITLE, ALTERED, true));
+        assert_eq!(found.payload()["kind"], "altered", "the splash shows the download page, never Try again");
+        assert_eq!(found.payload()["detail"], "built for a, found b");
+        let other = Failure::spawn(SpawnError::Failed("no runtime".into()), |why| Failure::stopped(NOT_RESTARTED, why));
+        assert_eq!((other.message, other.altered), (NOT_RESTARTED, false));
+        assert_eq!(other.payload()["kind"], "failed");
+        assert_eq!(DOWNLOAD_URL, "https://phosphor.money/");
     }
 
     #[test]

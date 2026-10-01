@@ -21,10 +21,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { payloadDigest } from './payload-digest.ts';
+
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TAURI = path.join(ROOT, 'src-tauri');
 const STAGE = path.join(TAURI, 'payload', 'phosphor');
 const BINARIES = path.join(TAURI, 'binaries');
+// Beside the stage, not in it: src-tauri/build.rs compiles the digest into the shell, and the
+// manifest names each file's hash, for finding which file a copy differs in.
+const DIGEST_FILE = path.join(TAURI, 'payload', 'phosphor.sha256');
+const MANIFEST_FILE = path.join(TAURI, 'payload', 'phosphor.manifest');
 
 // Rust's target triple, which is what Tauri appends to every externalBin filename.
 const TRIPLE = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
@@ -52,9 +58,14 @@ const DROP_DIRECTORIES = ['.github'];
 // Whole packages, by where they install at the top of node_modules rather than by a name matched
 // anywhere. typescript is a devDependency that --omit=dev keeps: viem, ox and abitype name it as an
 // optional peer, so npm files it as dev or optional. Nothing in the app runs the compiler, and
-// since 7.0 it is a native binary, one package per platform under @typescript. The link npm made
-// to it goes too, or the bundle would carry a link to nothing.
-const DROP_PACKAGES = ['typescript', '@typescript', '.bin/tsc'];
+// since 7.0 it is a native binary, one package per platform under @typescript.
+//
+// And two things npm writes beside the packages rather than unpacks from them: .bin, its links
+// to package commands (the app runs none, and a link is not something the payload digest
+// accepts), and .package-lock.json, its own record of the install, whose layout follows the npm
+// version rather than the lockfile. Without them node_modules is the lockfile's packages and
+// nothing else, which is what lets a rebuild on another Mac reach the same digest.
+const DROP_PACKAGES = ['typescript', '@typescript', '.bin', '.package-lock.json'];
 
 function bytes(dir: string): number {
   let total = 0;
@@ -109,6 +120,23 @@ function stagePayload(): void {
   prune(path.join(STAGE, 'node_modules'));
   const pruned = bytes(path.join(STAGE, 'node_modules'));
   console.log(`payload: node_modules ${mb(installed)} -> ${mb(pruned)}`);
+}
+
+/* The digest the shell is built to accept (scripts/payload-digest.ts). Taken once the stage is
+   final and again after the boot check below: the backend must write nothing into its own
+   payload, because the installed copy is read-only and the next launch would refuse it. */
+function sealPayload(): string {
+  const sealed = payloadDigest(STAGE);
+  if (sealed.problems.length > 0) throw new Error(`bundle-payload: the payload cannot ship as it stands:\n  ${sealed.problems.join('\n  ')}`);
+  fs.writeFileSync(DIGEST_FILE, `${sealed.digest}\n`);
+  fs.writeFileSync(MANIFEST_FILE, sealed.manifest);
+  console.log(`payload: digest ${sealed.digest} over ${sealed.files} files`);
+  return sealed.digest;
+}
+
+function unchangedSince(digest: string): void {
+  const after = payloadDigest(STAGE).digest;
+  if (after !== digest) throw new Error(`bundle-payload: the boot check changed the payload (${digest} -> ${after}); the backend must not write into it`);
 }
 
 // Copied rather than symlinked: an installed app cannot depend on the nvm directory this was
@@ -223,7 +251,9 @@ async function verifyBoots(): Promise<void> {
 }
 
 stagePayload();
+const digest = sealPayload();
 stageRuntime();
 stageEnclaveHelper();
 await verifyBoots();
+unchangedSince(digest);
 console.log(`total: ${mb(bytes(path.join(TAURI, 'payload')) + bytes(BINARIES))} to bundle`);

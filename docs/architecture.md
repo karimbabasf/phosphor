@@ -226,7 +226,11 @@ Every one of these fails toward showing less and moving nothing, never toward si
 
 A Tauri 2 shell (`src-tauri/`, Rust) around the same backend `npm run app` runs. The bundle ships
 Node inside it, so an installed copy needs nothing else; the backend is not compiled or rewritten,
-it runs the same TypeScript from the payload the bundle carries. The shell is what closes the one
+it runs the same TypeScript from the payload the bundle carries. `npm run bundle` stages that
+payload and prints its digest, the shell compiled after it carries the digest, and the shell
+starts no backend from a payload that does not hash to it (`src-tauri/src/payload.rs`, and
+[Security](security.md#check-a-release-yourself) for checking a copy by hand). The bundle step
+always comes before the shell is compiled. The shell is what closes the one
 boundary a browser window cannot: the window token reaches the control webview by an
 initialization script and is served by no route, so the approval surface has no path a local
 caller can fetch a credential from (see the security model). The backend still binds `127.0.0.1`

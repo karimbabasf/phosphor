@@ -14,23 +14,9 @@
 #include <string.h>
 #include <xpc/xpc.h>
 
-// The Team ID this process is signed with, or 0 when it has none (ad-hoc) or it cannot be read.
-static int own_team(char *out, size_t len) {
-    SecCodeRef me = NULL;
-    SecStaticCodeRef mine = NULL;
-    CFDictionaryRef info = NULL;
-    int found = 0;
-    if (SecCodeCopySelf(kSecCSDefaultFlags, &me) == errSecSuccess &&
-        SecCodeCopyStaticCode(me, kSecCSDefaultFlags, &mine) == errSecSuccess &&
-        SecCodeCopySigningInformation(mine, kSecCSSigningInformation, &info) == errSecSuccess) {
-        CFStringRef team = CFDictionaryGetValue(info, kSecCodeInfoTeamIdentifier);
-        found = team != NULL && CFStringGetCString(team, out, (CFIndex)len, kCFStringEncodingUTF8) && out[0] != '\0';
-    }
-    if (info) CFRelease(info);
-    if (mine) CFRelease(mine);
-    if (me) CFRelease(me);
-    return found;
-}
+// The Team ID this process is signed with, or 0 when it has none (ad-hoc). In codesign.c, which
+// the backend's launch asks too.
+int phosphor_own_team(char *out, size_t len);
 
 // Sends one JSON request to the named service and returns its JSON answer, malloc'd, for the
 // caller to free. On failure returns NULL and points *error at a static failure code.
@@ -41,7 +27,7 @@ static int own_team(char *out, size_t len) {
 char *phosphor_xpc_call(const char *service, const char *request, double timeout_secs, const char **error) {
     char team[64] = {0};
     char requirement[512];
-    if (own_team(team, sizeof team)) {
+    if (phosphor_own_team(team, sizeof team)) {
         snprintf(requirement, sizeof requirement,
                  "anchor apple generic and identifier \"%s\" and certificate leaf[subject.OU] = \"%s\"", service, team);
     } else {

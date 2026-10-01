@@ -714,23 +714,135 @@ pub fn node_binary() -> Result<PathBuf, String> {
 /// running `npm run app`, and it mints what it needs and says so.
 ///
 /// The process itself is built by backend_command: NODE_FLAGS before the entry point, and an
-/// environment of BACKEND_ENV and nothing else.
-pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Child, String> {
-    let node = node_binary()?;
-    let mut child = backend_command(&node, payload, data, |name| std::env::var_os(name))
+/// environment of BACKEND_ENV and nothing else. Before it, the payload is checked against the
+/// digest this shell was built with (payload.rs), and a payload that is not that one is never
+/// started.
+pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Child, SpawnError> {
+    let node = node_binary().map_err(SpawnError::Failed)?;
+    spawn_checked(&node, payload, data, hand, crate::payload::BUILT_FOR, own_team().as_deref())
+}
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    fn phosphor_own_team(out: *mut std::ffi::c_char, len: usize) -> std::ffi::c_int;
+    fn phosphor_pid_signed_by(pid: libc::pid_t, team: *const std::ffi::c_char, status: *mut std::ffi::c_int) -> std::ffi::c_int;
+}
+
+/// The Team ID this shell is signed with. None for an ad-hoc build (local or development), which
+/// has no team to hold the runtime to; the Secure Enclave service does not answer such a shell
+/// either (xpc_bridge.c, main.swift).
+#[cfg(target_os = "macos")]
+fn own_team() -> Option<String> {
+    let mut out = [0 as std::ffi::c_char; 64];
+    // SAFETY: the buffer is 64 bytes and its length is passed with it; the function writes a
+    // NUL-terminated string into it or returns 0.
+    let found = unsafe { phosphor_own_team(out.as_mut_ptr(), out.len()) };
+    if found == 0 {
+        return None;
+    }
+    // SAFETY: found means a NUL-terminated string inside the buffer.
+    let team = unsafe { std::ffi::CStr::from_ptr(out.as_ptr()) }.to_str().ok()?.to_string();
+    team.chars().all(|c| c.is_ascii_alphanumeric()).then_some(team)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn own_team() -> Option<String> {
+    None
+}
+
+/// Is the process `pid` signed by a Developer ID Application certificate of `team`, as the
+/// kernel runs it? Only ever asked about a child this shell holds and has not reaped, so the
+/// number cannot have passed to another process.
+#[cfg(target_os = "macos")]
+fn runtime_signed_by(pid: u32, team: &str) -> Result<(), String> {
+    if team.is_empty() || !team.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(format!("{team:?} is not a Team ID"));
+    }
+    let team_c = std::ffi::CString::new(team).map_err(|_| "a Team ID with a NUL in it".to_string())?;
+    let mut status: std::ffi::c_int = 0;
+    // SAFETY: the Team ID is NUL-terminated and outlives the call, and `status` is a live int.
+    let signed = unsafe { phosphor_pid_signed_by(pid as libc::pid_t, team_c.as_ptr(), &mut status) };
+    if signed == 1 {
+        return Ok(());
+    }
+    Err(format!(
+        "The bundled runtime is not signed by this app's team ({team}): Security answered {status}. It was stopped before it was given anything."
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn runtime_signed_by(_pid: u32, _team: &str) -> Result<(), String> {
+    Err("the runtime check needs macOS".to_string())
+}
+
+/// Why spawn_backend started nothing.
+#[derive(Debug)]
+pub enum SpawnError {
+    /// The payload on disk is not the one this shell was built for. Try again would find the same
+    /// files, so the person is asked to install a fresh copy instead.
+    Altered(String),
+    /// Anything else: a missing runtime, a start the system refused, a pipe that would not take
+    /// the handshake.
+    Failed(String),
+}
+
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SpawnError::Altered(why) | SpawnError::Failed(why) => f.write_str(why),
+        }
+    }
+}
+
+/// spawn_backend with the runtime, the expected digest and the team handed in, so a test runs
+/// the real start against a staged bundle, altered copies of it and runtimes signed otherwise.
+fn spawn_checked(
+    node: &Path,
+    payload: &Path,
+    data: &Path,
+    hand: &Handshake,
+    built_for: &str,
+    team: Option<&str>,
+) -> Result<Child, SpawnError> {
+    let checked = crate::payload::check(payload, built_for).map_err(SpawnError::Altered)?;
+    eprintln!(
+        "phosphor: payload checked, {} files in {} ms, the start waited {} ms for it",
+        checked.files,
+        checked.took.as_millis(),
+        checked.waited.as_millis()
+    );
+    let mut child = backend_command(node, payload, data, |name| std::env::var_os(name))
         // Inherited so a crash on boot is readable in Console.app rather than swallowed.
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .stdin(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("could not start the control app with {node:?}: {e}"))?;
+        .map_err(|e| SpawnError::Failed(format!("could not start the control app with {node:?}: {e}")))?;
+
+    /* THE RUNTIME IS HELD TO THE SHELL'S TEAM. It sits beside the payload, outside its digest, and
+       macOS checks its signature when the app is first opened and not again: a runtime swapped in
+       after that would be handed the secrets below and run the checked payload however it liked.
+       So the process the kernel started is checked, not the file, before anything reaches it. The
+       backend is still loading its modules at this point, so the check costs it nothing. */
+    if let Some(team) = team {
+        if let Err(why) = runtime_signed_by(child.id(), team) {
+            let gone = matches!(child.try_wait(), Ok(Some(_)));
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(if gone {
+                SpawnError::Failed(format!("the control app exited before its signature could be read: {why}"))
+            } else {
+                SpawnError::Altered(why)
+            });
+        }
+    }
 
     // Taken and dropped, so the pipe closes as soon as the lines are written: the backend reads the
     // handshake and wants nothing else from stdin ever again.
     match child.stdin.take() {
         Some(mut pipe) => writeln!(pipe, "{}\n{}\n{}\n{}\n{}", hand.token, hand.nonce, hand.seat, hand.transport, hand.relay)
-            .map_err(|e| format!("could not hand the handshake to the control app: {e}"))?,
-        None => return Err("the control app was started with no stdin to hand the handshake to".into()),
+            .map_err(|e| SpawnError::Failed(format!("could not hand the handshake to the control app: {e}")))?,
+        None => return Err(SpawnError::Failed("the control app was started with no stdin to hand the handshake to".into())),
     }
     Ok(child)
 }
@@ -1021,9 +1133,10 @@ mod tests {
     /// backend_command as a closure. This one runs what ships, from a real one: this test binary
     /// starts a copy of itself as the shell, with a NODE_OPTIONS canary in that copy's own
     /// environment, and the copy starts the runtime and the payload `npm run bundle` staged
-    /// exactly as spawn_backend does, environment read with std::env::var_os. The real backend
-    /// has to boot, answer with the boot's nonce and outlive SIGUSR1, and the canary must never
-    /// run. Rerun it after any bundle: `cargo test bundled_backend`.
+    /// through spawn_backend's own path: the payload checked against the digest this shell was
+    /// built with, the environment read with std::env::var_os, the handshake down the pipe. The
+    /// real backend has to boot, answer with the boot's nonce and outlive SIGUSR1, and the canary
+    /// must never run. Rerun it after any bundle: `cargo test bundled_backend`.
     #[cfg(unix)]
     #[test]
     fn the_bundled_backend_never_runs_a_node_options_planted_in_the_shells_environment() {
@@ -1036,16 +1149,8 @@ mod tests {
         if let Some(root) = std::env::var_os(SHELL_ROLE).map(PathBuf::from) {
             let port: u16 = std::env::var("PHOSPHOR_PORT").unwrap().parse().unwrap();
             let hand = Handshake::mint().unwrap();
-            let log = std::fs::File::create(root.join("stderr.log")).unwrap();
-            let mut child = backend_command(&node, &payload, &root.join("data"), |name| std::env::var_os(name))
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::from(log))
-                .spawn()
-                .expect("start the bundled backend the way spawn_backend does");
-            let mut pipe = child.stdin.take().unwrap();
-            writeln!(pipe, "{}\n{}\n{}\n{}\n{}", hand.token, hand.nonce, hand.seat, hand.transport, hand.relay).unwrap();
-            drop(pipe);
+            let mut child = spawn_checked(&node, &payload, &root.join("data"), &hand, crate::payload::BUILT_FOR, own_team().as_deref())
+                .expect("the staged payload is the one this shell was built for, and it starts");
             let deadline = Instant::now() + Duration::from_secs(30);
             let mut up = false;
             while Instant::now() < deadline && matches!(child.try_wait(), Ok(None)) {
@@ -1068,10 +1173,8 @@ mod tests {
             }
             let _ = child.kill();
             let _ = child.wait();
-            let stderr = std::fs::read_to_string(root.join("stderr.log")).unwrap_or_default();
-            assert!(up, "the bundled backend never answered with this boot's nonce on :{port}: {stderr}");
-            assert!(alive_after_usr1 && health_after_usr1.is_some(), "SIGUSR1 took the backend down: {stderr}");
-            assert!(!stderr.contains("Debugger listening"), "SIGUSR1 opened an inspector: {stderr}");
+            assert!(up, "the bundled backend never answered with this boot's nonce on :{port}");
+            assert!(alive_after_usr1 && health_after_usr1.is_some(), "SIGUSR1 took the backend down");
             return;
         }
 
@@ -1114,13 +1217,157 @@ mod tests {
             .expect("start this test binary as the shell");
         let canary_ran = mark.exists();
         let _ = std::fs::remove_dir_all(&root);
-        assert!(
-            shell.status.success(),
-            "the shell's half failed:\n{}{}",
-            String::from_utf8_lossy(&shell.stdout),
-            String::from_utf8_lossy(&shell.stderr)
-        );
+        // The backend's own output came through the shell's, as it does in the app.
+        let said = format!("{}{}", String::from_utf8_lossy(&shell.stdout), String::from_utf8_lossy(&shell.stderr));
+        assert!(shell.status.success(), "the shell's half failed:\n{said}");
+        assert!(said.contains("phosphor: payload checked"), "the start went through the payload check:\n{said}");
+        assert!(!said.contains("Debugger listening"), "SIGUSR1 opened an inspector:\n{said}");
         assert!(!canary_ran, "a NODE_OPTIONS in the shell's environment ran code in the bundled backend");
+    }
+
+    /// A copy of the staged payload a test may change. Cloned, so it costs no disk on APFS.
+    #[cfg(target_os = "macos")]
+    fn payload_copy(root: &Path) -> PathBuf {
+        let staged = Path::new(env!("CARGO_MANIFEST_DIR")).join("payload").join("phosphor");
+        let copy = root.join("phosphor");
+        let cloned = Command::new("/bin/cp").arg("-c").arg("-R").arg(&staged).arg(&copy).status().unwrap();
+        assert!(cloned.success(), "clone the staged payload into {}", copy.display());
+        copy
+    }
+
+    /// The refusals P1a.5 is for, on a copy of what ships: one file changed, one added, one
+    /// removed, one swapped for a link. The runtime here is a script that leaves a mark when it
+    /// is started, so "never started" is something the test sees, and the untouched copy (and a
+    /// Finder .DS_Store, which the digest leaves out) starts it: the control.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_changed_an_added_a_removed_or_a_linked_payload_file_is_never_started() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("phosphor-altered-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let copy = payload_copy(&root);
+        let mark = root.join("started");
+        let runtime = root.join("node");
+        std::fs::write(&runtime, format!("#!/bin/sh\n/bin/cat >/dev/null\n/usr/bin/touch '{}'\n", mark.display())).unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let hand = Handshake::mint().unwrap();
+        let start = |what: &str| -> Option<String> {
+            match spawn_checked(&runtime, &copy, &root.join("data"), &hand, crate::payload::BUILT_FOR, None) {
+                Ok(mut child) => {
+                    let _ = child.wait();
+                    let started = mark.exists();
+                    let _ = std::fs::remove_file(&mark);
+                    assert!(started, "{what}: spawn_checked said it started the runtime");
+                    None
+                }
+                Err(SpawnError::Altered(why)) => {
+                    assert!(!mark.exists(), "{what}: refused, and yet the runtime ran");
+                    Some(why)
+                }
+                Err(SpawnError::Failed(why)) => panic!("{what}: failed for another reason: {why}"),
+            }
+        };
+
+        assert_eq!(start("the copy as built"), None);
+        let main = copy.join("src").join("main.ts");
+        let original = std::fs::read(&main).unwrap();
+        let mut changed = original.clone();
+        changed.extend_from_slice(b"\n");
+        std::fs::write(&main, &changed).unwrap();
+        let why = start("one byte added to src/main.ts").expect("a changed file is refused");
+        assert!(why.contains(crate::payload::BUILT_FOR), "the reason names the payload it was built for: {why}");
+        std::fs::write(&main, &original).unwrap();
+
+        let added = copy.join("ui").join("added.js");
+        std::fs::write(&added, "window.extra = 1;\n").unwrap();
+        assert!(start("a file added under ui/").is_some(), "an added file is refused");
+        std::fs::remove_file(&added).unwrap();
+
+        let removed = copy.join("node_modules").join("viem").join("package.json");
+        let held = root.join("held.json");
+        std::fs::rename(&removed, &held).unwrap();
+        assert!(start("node_modules/viem/package.json removed").is_some(), "a removed file is refused");
+        std::fs::rename(&held, &removed).unwrap();
+
+        let index = copy.join("ui").join("index.html");
+        std::fs::rename(&index, &held).unwrap();
+        std::os::unix::fs::symlink(&held, &index).unwrap();
+        let why = start("ui/index.html swapped for a link to the same bytes").expect("a link is refused");
+        assert!(why.contains("neither a file nor a folder"), "{why}");
+        std::fs::remove_file(&index).unwrap();
+        std::fs::rename(&held, &index).unwrap();
+
+        std::fs::write(copy.join("src").join(".DS_Store"), b"Bud1").unwrap();
+        assert_eq!(start("a .DS_Store Finder wrote"), None, "Finder's file is not a change to the payload");
+
+        // The payload as built, under a shell with a team: this runtime is not signed by it, so it
+        // is stopped while it still waits on its stdin, before the handshake, and never leaves its
+        // mark.
+        match spawn_checked(&runtime, &copy, &root.join("data"), &hand, crate::payload::BUILT_FOR, Some("ABCDE12345")) {
+            Err(SpawnError::Altered(why)) => assert!(why.contains("not signed by this app's team"), "{why}"),
+            Err(SpawnError::Failed(why)) => panic!("refused for another reason: {why}"),
+            Ok(_) => panic!("a runtime of no team started under a shell of one"),
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!mark.exists(), "the runtime was given the handshake and ran on");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file's Team ID, off its signature; None when it has none.
+    #[cfg(target_os = "macos")]
+    fn team_of(file: &Path) -> Option<String> {
+        let out = Command::new("/usr/bin/codesign").arg("-dv").arg(file).output().ok()?;
+        let said = String::from_utf8_lossy(&out.stderr).into_owned();
+        said.lines().find_map(|line| line.strip_prefix("TeamIdentifier=")).map(str::to_string).filter(|team| team != "not set")
+    }
+
+    /// The runtime check against real signatures. `npm run bundle` stages the Node that ran it,
+    /// and an official build (nvm's, CI's setup-node) carries the Node.js Foundation's Developer
+    /// ID: a real certificate of a real team to hold the check to. An ad-hoc copy of the same
+    /// bytes, which is what a swapped runtime would be, passes for no team.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_runtime_is_held_to_the_shells_team_as_the_kernel_runs_it() {
+        let staged = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries").join(format!("node-{}", env!("TARGET_TRIPLE")));
+        let root = std::env::temp_dir().join(format!("phosphor-runtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let adhoc = root.join("node");
+        std::fs::copy(&staged, &adhoc).unwrap();
+        let resigned = Command::new("/usr/bin/codesign").args(["--force", "--sign", "-"]).arg(&adhoc).output().unwrap();
+        assert!(resigned.status.success(), "{}", String::from_utf8_lossy(&resigned.stderr));
+        let run = |file: &Path| {
+            Command::new(file)
+                .args(["-e", "setTimeout(() => {}, 5000)"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap()
+        };
+
+        let mut swapped = run(&adhoc);
+        let refusals: Vec<bool> = ["HX7739G8FX", "35Z6P26CBD"].iter().map(|team| runtime_signed_by(swapped.id(), team).is_err()).collect();
+        let _ = swapped.kill();
+        let _ = swapped.wait();
+        assert_eq!(refusals, vec![true, true], "an ad-hoc runtime passes for no team");
+
+        match team_of(&staged) {
+            Some(team) => {
+                let mut real = run(&staged);
+                let own = runtime_signed_by(real.id(), &team);
+                let other = runtime_signed_by(real.id(), "ABCDE12345");
+                let bent = runtime_signed_by(real.id(), &format!("{team}\" or anchor apple"));
+                let _ = real.kill();
+                let _ = real.wait();
+                assert_eq!(own, Ok(()), "a runtime signed by the team passes");
+                assert!(other.is_err(), "another team's Developer ID is not this app's");
+                assert!(bent.is_err(), "a Team ID is letters and digits, nothing that can bend the requirement");
+            }
+            None => eprintln!("the staged runtime has no Team ID (not an official Node build): only the refusals were checked"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
