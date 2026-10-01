@@ -113,15 +113,32 @@ function stagePayload(): void {
 
 // Copied rather than symlinked: an installed app cannot depend on the nvm directory this was
 // built from still existing, still holding 24.x, or existing on somebody else's machine at all.
+//
+// NODE 24 AND ONLY 24, because the runtime is whatever node runs this script and it is the process
+// that holds the keys. It was "24 or later", so a local build took the first node on PATH, and Node
+// 26 turns on node:ffi by default: dlopen and dlsym from JavaScript, which --no-addons does not
+// cover. CI ships 24 (.github/workflows/release.yml) and every test runs on it. Moving to 26 means
+// adding --no-experimental-ffi to NODE_FLAGS in src-tauri/src/backend.rs in the same change, a flag
+// Node 24 refuses to start with.
 function stageRuntime(): void {
+  const major = Number(process.versions.node.split('.')[0]);
+  if (major !== 24) throw new Error(`bundle-payload: the app ships Node 24, this is ${process.versions.node}. Run it with Node 24 (nvm use 24).`);
+
   fs.mkdirSync(BINARIES, { recursive: true });
   const target = path.join(BINARIES, `node-${TRIPLE}`);
   fs.copyFileSync(process.execPath, target);
   fs.chmodSync(target, 0o755);
-
-  const major = Number(process.versions.node.split('.')[0]);
-  if (major < 24) throw new Error(`bundle-payload: Node 24+ is required, this is ${process.versions.node}`);
   console.log(`runtime: node ${process.versions.node} -> binaries/node-${TRIPLE} (${mb(fs.statSync(target).size)})`);
+}
+
+/* The flags the shell starts the backend with, read out of src-tauri/src/backend.rs rather than
+   copied here, so the boot check below cannot drift from what ships. */
+function backendNodeFlags(): string[] {
+  const source = fs.readFileSync(path.join(TAURI, 'src', 'backend.rs'), 'utf8');
+  const list = /pub const NODE_FLAGS: \[&str; \d+\] = \[([^\]]*)\];/.exec(source)?.[1];
+  const flags = [...(list ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  if (flags.length === 0) throw new Error('bundle-payload: could not read NODE_FLAGS from src-tauri/src/backend.rs');
+  return flags;
 }
 
 /* The Secure Enclave helper, built from src-tauri/se-helper/main.swift by the script that also
@@ -144,7 +161,9 @@ function stageEnclaveHelper(): void {
 //
 // It runs on a port the kernel just handed back as free, against throwaway directories, with the
 // key path pointed somewhere empty. Karim keeps real instances running on 4177 and 4188; this
-// must never collide with them and must never read a real key.
+// must never collide with them and must never read a real key. It starts the runtime with the
+// shell's own NODE_FLAGS, so a runtime that refuses one, or a dependency that needs eval or a
+// native addon at boot, fails here and not in somebody's Applications folder.
 async function freePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
     const probe = net.createServer();
@@ -162,7 +181,7 @@ async function verifyBoots(): Promise<void> {
   const port = await freePort();
   const child = spawn(
     path.join(BINARIES, `node-${TRIPLE}`),
-    [path.join(STAGE, 'src', 'main.ts')],
+    [...backendNodeFlags(), path.join(STAGE, 'src', 'main.ts')],
     {
       env: {
         ...process.env,
