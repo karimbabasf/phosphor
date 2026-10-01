@@ -14,6 +14,7 @@
 // false and never "unspent": each caller says what it does without the read.
 
 import { nearChainSpec } from '../chain/near.ts';
+import { oneLine } from '../intents.ts';
 import { INTENTS_VERIFIER, fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { readTimeout } from '../net.ts';
 
@@ -41,7 +42,45 @@ export type VerifierPort = {
   // The newest final block and its time. Null when the read failed. Optional the same safe way:
   // without it the deadline is judged by this Mac's clock and the grace (src/relay/fate.ts).
   finalBlock?(): Promise<FinalBlock | null>;
+  /* Whether an admin of the verifier has locked this account, which stops it signing anything
+     out. Null when the read failed. Optional: the invite claim (src/invite/claim.ts) is the one
+     reader, and it refuses a claim it cannot ask this about. */
+  accountLocked?(accountId: string): Promise<boolean | null>;
+  /* The verifier running signed intents as a view, free and with no account: what execute would
+     do, or the contract's own refusal. Null when the call did not answer. Optional the same way. */
+  simulate?(signed: SignedIntent[]): Promise<Simulation | null>;
 };
+
+export type SignedIntent = { standard: string; payload: string; signature: string };
+
+/* What simulate_intents said. `refusal` is the contract's own words (its panic message, read live
+   2026-10-01: "insufficient balance or overflow", "deadline has expired", an ECRecoverError on a
+   bad signature), bounded to one line. `intentHashes` is what the verifier names each intent by:
+   base58 of its EIP-191 message hash for an erc191 payload, the same handle the relay answers. */
+export type Simulation = { ok: true; intentHashes: string[] } | { ok: false; refusal: string };
+
+// The message inside a NEAR view error: a contract panic or a host error with a msg, else the
+// whole error, one bounded line either way.
+export function simulationRefusal(raw: unknown): string {
+  const text = typeof raw === 'string' ? raw : (JSON.stringify(raw) ?? String(raw));
+  const said = /panic_msg:\s*"((?:[^"\\]|\\.)*)"/.exec(text) ?? /\bmsg:\s*"((?:[^"\\]|\\.)*)"/.exec(text);
+  const words = (said?.[1] ?? text).replace(/\\"/g, '"');
+  return oneLine(words, 200);
+}
+
+// A successful simulation's output, or a refusal when it reports what execute would refuse.
+export function simulationOf(output: unknown): Simulation {
+  if (output === null || typeof output !== 'object') return { ok: false, refusal: 'the verifier answered the simulation with no output' };
+  const o = output as { intents_executed?: unknown; invariant_violated?: unknown };
+  if (o.invariant_violated !== undefined && o.invariant_violated !== null) {
+    return { ok: false, refusal: `the intents would not balance: ${oneLine(o.invariant_violated, 160)}` };
+  }
+  const executed = Array.isArray(o.intents_executed) ? o.intents_executed : [];
+  const intentHashes = executed
+    .map((e) => (e !== null && typeof e === 'object' ? (e as { intent_hash?: unknown }).intent_hash : null))
+    .filter((h): h is string => typeof h === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,64}$/.test(h));
+  return { ok: true, intentHashes };
+}
 
 type ViewResult = { result: number[] };
 
@@ -135,6 +174,46 @@ export function liveVerifier(fetchImpl: typeof fetch = fetch): VerifierPort {
         if (!res.ok) return null;
         const body = (await res.json()) as { result?: { header?: unknown } };
         return finalBlockOf(body.result?.header);
+      } catch {
+        return null;
+      }
+    },
+    async accountLocked(accountId) {
+      try {
+        const answer = await view('is_account_locked', { account_id: accountId.toLowerCase() }, fetchImpl);
+        return typeof answer === 'boolean' ? answer : null;
+      } catch {
+        return null;
+      }
+    },
+    async simulate(signed) {
+      try {
+        const res = await fetchImpl(nearChainSpec().rpcUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'query',
+            params: {
+              request_type: 'call_function',
+              finality: 'final',
+              account_id: INTENTS_VERIFIER,
+              method_name: 'simulate_intents',
+              args_base64: Buffer.from(JSON.stringify({ signed })).toString('base64'),
+            },
+          }),
+          signal: readTimeout(),
+        });
+        if (!res.ok) return null;
+        /* A contract that panics in a view answers inside `result`, as `result.error` beside the
+           block it ran at (read live 2026-10-01); an RPC that could not run the call at all answers
+           a top-level `error`, which is no answer about the intents. */
+        const body = (await res.json()) as { result?: { result?: number[]; error?: unknown }; error?: unknown };
+        if (body.result === undefined) return null;
+        if (body.result.error !== undefined && body.result.error !== null) return { ok: false, refusal: simulationRefusal(body.result.error) };
+        if (!Array.isArray(body.result.result)) return null;
+        return simulationOf(JSON.parse(Buffer.from(Uint8Array.from(body.result.result)).toString('utf8')));
       } catch {
         return null;
       }
