@@ -84,7 +84,9 @@ each end (a NEAR name whole), the chain. No agent-written text reaches that dial
 A Touch ID or a password opens only what it was asked for. "Show your deposit address" verifies
 the address, and "Reveal your recovery phrase", or the password typed to see the words, shows the
 words; none of them opens the wallet, so a locked wallet stays locked, no trading plan re-arms and
-nothing waiting for an unlock runs. Only Unlock opens it.
+nothing waiting for an unlock runs. The Touch ID that approves a move on a locked wallet opens it
+for that move alone: nothing else can start while it signs, and the key goes as soon as it has.
+Only Unlock opens the wallet for the session.
 
 Two limits belong here. While the vault is open, the unwrapped wallet key sits in the backend's
 memory as bytes, so the app can sign the moves you approved and the small ones the policy allows;

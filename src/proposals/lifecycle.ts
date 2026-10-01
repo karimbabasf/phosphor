@@ -27,6 +27,7 @@ import { evaluate } from '../policy/engine.ts';
 import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { isLocked } from '../keystore/index.ts';
+import { CLOSE_GRACE_MS } from '../keystore/store.ts';
 import type { Keystore } from '../keystore/store.ts';
 import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { reasonFor } from '../vault/reason.ts';
@@ -543,14 +544,13 @@ export function enclaveGated(ctx: PCtx): boolean {
 }
 
 /* The second half of an enclave-gated approval: the shell has answered. A data key opens the
-   wallet (which also lifts anything parked as pending_unlock, through releaseQueued's rules,
-   not through this one) and this proposal alone goes to approved and executes. Anything else
-   (a cancelled dialog, a relay that died, a key that did not open the file) puts the proposal
-   back to pending with the reason in the audit log: the click is not lost, and nothing has
-   been signed. */
+   wallet for this proposal alone, which goes to approved and executes. Anything else (a
+   cancelled dialog, a relay that died, a key that did not open the file) puts the proposal back
+   to pending with the reason in the audit log: the click is not lost, and nothing has been
+   signed. */
 export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): Promise<Proposal | null> {
-  // A data key that arrives with nowhere to go is wiped here; unlockWithDataKey is the only other
-  // place that wipes it, and every path that does not reach it must.
+  // A data key that arrives with nowhere to go is wiped here; the keystore wipes every one it is
+  // handed, and every path that does not reach it must.
   const drop = (): void => {
     if (result.ok && result.op === 'unwrap') result.dek.fill(0);
   };
@@ -587,7 +587,22 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
     ctx.audit.append('policy_refused', `${id} refused after Touch ID: ${verdict.rule}`, { id, rule: verdict.rule, reasons: verdict.reasons });
     return persist(ctx, { ...current, verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
   }
-  const opened = ctx.keystore.unlockWithDataKey(result.dek);
+  /* THE TOUCH OPENS THE WALLET FOR THIS ONE MOVE (Keystore.openFor). The dialog named one move,
+     and it used to be a full unlock: every move under the click threshold then ran with no click
+     until the idle lock, anything waiting on an unlock could follow, and plans whose session had
+     ended re-armed. Now a shut wallet stays shut to everything else, nothing is announced, and
+     the key goes as soon as this move has signed (mayStillSign), or at the cap. An open wallet
+     stays as it was. A move the preflight holds has signed nothing, so the key goes then too,
+     and the hold closes at its next try with the wallet locked. */
+  const opened = ctx.keystore.openFor(
+    `approve:${id}`,
+    result.dek,
+    () => {
+      const row = ctx.store.get(id);
+      return row === undefined || !mayStillSign(row);
+    },
+    CLOSE_GRACE_MS,
+  );
   if (!opened.ok) {
     ctx.audit.append('proposal_created', `${id} goes back to pending: the data key did not open the wallet (${opened.error})`, { id, error: opened.error });
     return persist(ctx, { ...current, status: 'pending' });
