@@ -163,6 +163,11 @@ The three agree when your copy is the one that tag builds. Only the files' conte
 into the digest, never dates or owners, so the same tag gives the same digest on any Mac. Finder's
 `.DS_Store` files are left out because Finder writes one into any folder it shows.
 
+The defences in this document are checked by an attack suite the repository ships: `npm run attack`
+builds an ad-hoc bundle, plays the hostile local process against each one on a throwaway data dir and
+home, prints a table, and exits non-zero on any that does not hold. Add `-- --app <Phosphor.app>` to
+include the checks that need a Developer ID build.
+
 ## The lock
 
 The wallet locks after five minutes with nobody at the window by default (the Vault tab
