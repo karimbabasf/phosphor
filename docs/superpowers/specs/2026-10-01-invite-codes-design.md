@@ -1,8 +1,9 @@
 # Invite codes: $5 for the people Karim invites
 
-Date: 2026-10-01. Status: draft for Karim. Nothing built. Research behind it: a full read of this
-repo at 0.10.12 (`167d18c9`), the `near/intents` contract source at the deployed commit, the
-official Intents SDK, and read-only live calls against `intents.near`.
+Date: 2026-10-01. Status: draft for Karim, revised after an adversarial review (26 findings,
+all folded in). Nothing built. Research behind it: a full read of this repo at 0.10.12
+(`167d18c9`), the `near/intents` contract source at the deployed commit, the official Intents
+SDK, and read-only live calls against `intents.near`.
 
 ## What it does
 
@@ -13,7 +14,7 @@ they have deposited anything.
 
 Rules the design holds to:
 - No code, no money. A code pays once, ever.
-- Nobody can redirect a claim, and no Phosphor server decides who gets paid.
+- On the main route nobody can redirect a claim, and no Phosphor server decides who gets paid.
 - The person's own key never signs anything for the claim.
 - The agent never sees a code and has no tool that touches one.
 - The worst case is capped at the money Karim chose to put in.
@@ -64,21 +65,27 @@ would fall. The hard floor is 96 bits; this spec uses 128.
 generator redraws the secret until `0 < k < n` (secp256k1 order), so every issued code is valid.
 The tag separates this key from every other use of the same bytes.
 
-**Format.** Crockford base32 (no I, L, O, U; case-insensitive), 26 characters for the 128 bits plus
-1 check character (the first 5 bits of `sha256(secret)`), behind a `PHOS` prefix:
+**Format.** `PHOS` plus 27 Crockford base32 characters (no I, L, O, U; case-insensitive): 26 carry
+the 128-bit secret (130 bits, the top 2 must be zero) and the last is Crockford's mod-37 check
+symbol. The generator redraws until the check symbol is one of the 32 letters and digits, never
+`* ~ $ = U`, which costs 0.2 bits.
 
     PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ
 
-The parser strips spaces and hyphens, uppercases, maps O to 0 and I or L to 1, and requires the
-prefix. A wrong check character says "typo" before any network call. The prefix also lets the log
-tail redact codes by shape (see The app).
+Parser order matters. First find and strip the prefix (accept `PHOS`, `PH0S`, any case, or a whole
+pasted invite link), then on the 27 data characters only: drop spaces and hyphens, uppercase, map
+O to 0 and I or L to 1, require the 2 spare bits to be zero, check the symbol. Mod 37 catches every
+single wrong character and every swap of two neighbours before any network call ("That code has a
+typo"). A worse mistake that slips through derives an empty address, so the empty message says
+"used or mistyped". The prefix also lets the log tail redact codes by shape (see The app).
 
 Not 12 words: a code that looks like a recovery phrase trains people to paste phrases into apps,
 which is the exact habit phishing needs.
 
 **Link.** `https://phosphor.money/invite#PHOS-...`. The code sits after `#`, and a browser never
 sends that part to a server (RFC 3986 section 3.5), so it stays out of Vercel's logs and out of
-link-preview fetches. Peanut and Linkdrop do the same.
+link-preview fetches. Peanut and Linkdrop do the same. That only holds if no script on the page
+reads it: see The invite page.
 
 ## The money path
 
@@ -87,61 +94,98 @@ Three kinds of account, and the most any one of them can lose:
 | Account | Holds | Key lives | Max loss if its key leaks |
 |---|---|---|---|
 | Karim's wallet | His real money | Secure Enclave, as today | Never touched by anything in this spec |
-| Treasury `T` | The budget not yet issued | Encrypted invite file on Karim's Mac | What is in `T` |
+| Treasury `T` | Only the batch about to be issued | Encrypted invite file on Karim's Mac | What is in `T` (about 0 between batches) |
 | One code | $5 until claimed | The link, and the encrypted invite file | $5 |
 
-**Fund.** `npm run invite -- treasury` makes `T` once and prints its address. Karim moves the
-budget into it with the app's normal Send (an in-Intents send, his click on the approval card, so
-he reads the receiver before he signs). Keep `T` thin: only what he plans to issue soon.
+All operator commands run in Karim's own Terminal, not through an agent session. The script
+refuses a non-TTY stdin (so a passphrase cannot be piped in), and prints secrets to `/dev/tty`
+only, once. An agent session would put every live code into transcripts on disk and at the model
+provider.
 
-**Issue.** `npm run invite -- issue --count 10 --amount 5 --label "SF builders"` generates the
-codes, signs one payload from `T` with one `transfer` per code, checks it with `simulate_intents`,
-publishes it to the relay, reads every code's balance back, then saves the codes and prints the
-links. Batches of at most 10 per payload. A code is funded only when it is issued, so codes Karim
-has not handed out yet hold no money.
+**Fund.** `npm run invite -- treasury` makes `T`, writes its key to the invite file, and only then
+prints its address. Karim moves one batch into it with the app's normal Send (an in-Intents send,
+his click on the approval card, so he reads the receiver before he signs). That send costs about
+0.25 percent (`src/rails/intents-send.ts:31-33`), so fund `count x amount / 0.9975` plus a cent.
+
+**Issue.** `npm run invite -- issue --count 10 --amount 5 --label "SF builders"`, in this order:
+1. Take the file lock. Generate the codes and write them, marked `pending`, to the invite file with
+   an atomic write. Only then sign. A crash after this point loses nothing: the secrets are on disk
+   before any money moves.
+2. Sign one payload from `T` with one `transfer` per code (at most 10), `simulate_intents`, publish.
+3. Read each code's balance back. Mark each funded code `open`. Print the links once.
+
+The one-signature rule from the app holds here too: an unconfirmed publish is resent as the same
+bytes, never signed again, and a second `issue` cannot start while a batch is `pending`.
 
 **Claim.** Done by the app, below.
 
-**Reclaim.** `npm run invite -- reclaim` signs each unclaimed code's balance back to `T`.
-`npm run invite -- withdraw` sends `T` back to Karim's wallet address, read from the wallet
-header, never typed. After a reclaim, an old code shows "This code was already used."
+**Reclaim.** `npm run invite -- reclaim` signs each `open` code's balance back to `T` and marks it
+`reclaimed` in the file (a claimed code and a reclaimed code both read 0 on-chain, so only the file
+can tell them apart). After a reclaim, an old code shows "This code was already used, or it has a
+typo."
 
-**Status.** `npm run invite -- status` lists every issued code: label, amount, claimed or open, and
-`T`'s balance. All reads are view calls.
+**Withdraw.** `npm run invite -- withdraw --to <address>` sends `T` to Karim's wallet. The script
+does not read the address from the keystore header: that header is plaintext and any process
+running as Karim can edit it (`src/keystore/store.ts:352-361`). Karim copies the address from the
+app's Receive screen, which serves only a decrypted, untampered address, and types the last six
+characters back as a check.
+
+**Status.** `npm run invite -- status` shows labels, code addresses, amount, and pending, open,
+claimed or reclaimed, plus `T`'s balance. Never a code.
 
 **The invite file.** `~/.phosphor-invites/invites.enc.json`, mode 0600, AES-256-GCM under a key
-from scrypt of a passphrase Karim types at a no-echo prompt on each run. It holds `T`'s key and
-every code with its label. Nothing goes on the command line (a `security add-generic-password -w`
-call would put the secret in `ps` output for a moment), nothing goes in the vault or git. If the
-file is lost, holders can still claim their codes; only the reclaim is gone.
+from scrypt (N = 2^17, r = 8, p = 1) of a passphrase of at least 20 characters typed at a no-echo
+prompt on each run. It holds `T`'s key and every code with its label and state. Nothing goes on the
+command line (a `security add-generic-password -w` call would put the secret in `ps` output for a
+moment), nothing goes in the vault or git. It is the only copy of `T`'s key: lose the file and the
+reclaim and whatever sits in `T` are gone, while holders can still claim their codes. Keeping `T`
+near 0 between batches is what makes that loss small. A Time Machine copy of the file is safe only
+as long as the passphrase is strong, which is why the minimum exists.
 
 ## The claim, step by step
 
-Backend module `src/invite/`, network injected like every rail (`fetchImpl`).
+Backend module `src/invite/`, network injected like every rail (`fetchImpl`). The claim needs an
+open wallet: the receiver must come from `addressReport()` with `verified: true` and
+`tampered: false` (`src/keystore/store.ts:362-390`), never from the plaintext header. At
+onboarding the wallet was just created, so it is open. From Add money on a locked wallet, the
+normal Touch ID unlock comes first.
 
-1. Parse the code, check the check character, derive the key and the code address (lowercase).
+1. Parse the code (order above), derive the key and the code address (lowercase).
 2. Views on `intents.near`: `mt_balance_of(code, USDC)` must be above 0, and
    `is_account_locked(code)` must be `false`. The amount is whatever the code holds, so a $10
    code works with no change.
-3. Read `current_salt` and build a V1 nonce with the existing `buildNonce`
-   (`src/relay/payload.ts:36`): magic `5628f6c6`, version 0, salt, nonce deadline now + 120 s
-   (ns, i64 little-endian), 15 random bytes. Do not use the legacy random nonce: it still passes
-   today, and the contract README says it will be banned.
-4. Build the payload with fixed key order, the same way `buildTokenDiffPayload` does
-   (`src/relay/payload.ts:100-118`). `receiver_id` is `evmAddress()` lowercased
-   (`src/ledger/index.ts:171-177`), never a typed value, and must differ from the code address.
+3. Read `current_salt` and the final block's time (`finalBlock`, `src/relay/verifier.ts:127-141`),
+   not the Mac's clock, so a Mac running slow cannot fail every claim with `deadline has expired`.
+   Build a V1 nonce with the existing `buildNonce` (`src/relay/payload.ts:36`): magic `5628f6c6`,
+   version 0, salt, nonce deadline, 15 random bytes. The intent deadline is chain time + 120 s.
+   The nonce lives 7 days past it (`NONCE_LIFE_AFTER_DEADLINE_MS`,
+   `src/rails/intents-relay.ts:97-103`), so a later reconcile can still ask whether it was spent.
+   Never the legacy random nonce: it still passes today, and the contract README says it will be
+   banned.
+4. Build the payload with fixed key order, the way `buildTokenDiffPayload` does
+   (`src/relay/payload.ts:100-118`). `receiver_id` is the verified address lowercased, never a
+   typed value, and must differ from the code address.
 5. Sign with viem `privateKeyToAccount(k).signMessage` and encode with the existing
    `erc191SignatureField` (`src/intents-sign.ts:28-41`): 65 bytes, v as 0 or 1,
    `secp256k1:<base58>`.
 6. `simulate_intents` (view). Any error stops here and maps to a plain sentence.
-7. `publish_intents` to `https://solver-relay-v2.chaindefuser.com/rpc` with `quote_hashes: []`,
-   sending the partner key as `X-API-Key` when one is set, like `src/relay/client.ts:23`. Poll
-   `get_status` until `SETTLED` or `NOT_FOUND_OR_NOT_VALID`, at most 60 s. On no reply, resend
-   the identical bytes once, never a second signature (the rule at
-   `src/rails/intents-submit.ts:28-58`).
-8. Proof is the balances, not the status word: the code reads 0 and the wallet's USDC rose by the
-   amount. Then write the audit line, call `refreshLedger` (`src/http/context.ts:210-215`) so the
-   ring updates at once instead of on the 15 s poll, and drop the key.
+7. Save a pending record before publishing: code address, nonce, intent hash, amount. Never the
+   code. Then publish to `https://solver-relay-v2.chaindefuser.com/rpc` with `quote_hashes: []`.
+   The relay client today has only `publish_intent` with one `signed_data`
+   (`src/relay/client.ts:178-199`); the claim uses it with an empty `quote_hashes`, which is new
+   code. The partner key goes as `X-API-Key` when one is set (`src/relay/client.ts:126`). On no
+   reply, resend the identical bytes once, never a second signature (the relay rail's rule,
+   `src/rails/intents-relay.ts:583-598`). Poll `get_status`, and keep watching until the intent
+   deadline plus 30 s before calling it failed: the intent stays valid that long.
+8. Proof is the nonce plus the code's balance, not the status word and not the wallet's balance.
+   `is_nonce_used(code, our nonce)` must read `true`, and the code's USDC must have fallen by the
+   signed amount. The wallet's rise is shown, never used as proof: a deposit landing at the same
+   moment, or dust sent to the public code address, would fool it. Then write the audit line, mark
+   the pending record done, call `refreshLedger` (`src/http/context.ts:210-215`) so the ring
+   updates at once instead of on the 15 s poll, and drop the key.
+
+At boot, any pending record is reconciled with the same nonce check, so a quit after publish still
+ends in an `invite_claimed` line and an Activity row.
 
 The payload the code signs:
 
@@ -149,7 +193,7 @@ The payload the code signs:
 {
   "signer_id": "0x<code address, lowercase>",
   "verifying_contract": "intents.near",
-  "deadline": "<ISO time, no later than the nonce deadline>",
+  "deadline": "<ISO time, chain time + 120 s, no later than the nonce deadline>",
   "nonce": "<base64 V1 nonce>",
   "intents": [
     {
@@ -167,37 +211,61 @@ plain account has nothing to answer it.
 A failed claim never loses money: the $5 stays on the code until a claim succeeds. One claim runs at
 a time per app.
 
-**Plan B if the relay refuses quote-less intents** (decided by Proof, step 0): sign the same move
-through `spendFromIntents` (`src/rails/intents-spend.ts:164-263`) with a code-key
-`IntentsSignerPort`, the exact shape of today's in-Intents send (`src/rails/intents-send.ts`).
-It works today with no new endpoint. The cost is about 0.25 percent, so a $5 code delivers about
-$4.99, and the app shows the net amount at the check step. Nothing else in this spec changes.
+## Plan B: the 1Click route
+
+Used at run time, not chosen at build time: when the relay refuses a claim for auth or for a
+missing quote, the app falls back to this route on its own, so installed apps keep working if the
+relay starts enforcing its JWT (the docs require one; the endpoint "does not enforce one today",
+`src/relay/client.ts:4-5`). It reuses `spendFromIntents` (`src/rails/intents-spend.ts:164-263`)
+with a code-key `IntentsSignerPort`, the exact shape of today's in-Intents send
+(`src/rails/intents-send.ts`). It is weaker, and the app treats it that way:
+- **The receiver is not in the signature.** The code signs a transfer to 1Click's deposit handle;
+  the receiver lives only in the quote echo (`src/rails/intents-send.ts:25-29`). The quote echo and
+  1Click's quote signature are checked as today, but on this route a claim's safety rests on 1Click
+  delivering. The threat table marks it.
+- **Deadline.** 1Click writes 72 hours; the claim cuts it to 3 minutes before signing, the swap
+  rail's `SIGNED_DEADLINE_MS` (`src/rails/intents-native.ts:142`).
+- **Refunds** go back to `refundTo`, the code account, where any holder of the code can claim them
+  again. No money is lost; the code is live again.
+- **Amount.** About 0.25 percent less: a $5 code delivers about $4.99, and the check step shows the
+  net figure.
+- **Operator commands** have no Plan B. If the relay refuses them, `issue`, `reclaim` and
+  `withdraw` stop and say so; nothing is signed twice.
+- **Age.** This route is 1Click, so the under-18 clause below covers every claim that takes it.
 
 ## The app
 
 **Onboarding.** A new `invite` step after welcome and terms, before `create`, `choose` or
-`foreign`, in all four flows (`ui/screens/firstrun.js:34-39`). It is skippable and Skip is the
-quiet default. The claim fires on entering `addresses`, the one step every flow shares, so the four
-ways a wallet comes into existence (`/api/vault/create`, `/api/vault/restore`,
-`/api/wallet/create`, `/api/wallet/import`) all get it with no hook in any of them. The code is
-held in the page draft beside the phrase and password, and wiped in `close()`
-(`firstrun.js:72, 136-149`), the same pattern as the recovery phrase (`screenImport`, 894-923).
+`foreign`, in all four flows (`ui/screens/firstrun.js:34-39`), and in `UNCOUNTED` beside welcome
+and terms (`firstrun.js:49`) so the progress counter does not call it step 1. It is skippable and
+Skip is the quiet default. The claim fires on entering `addresses`, right after the wallet exists,
+the one step every first-run flow shares. Wallets restored from the lock card or the Vault tab
+(`/api/vault/restore`) never reach `addresses`; they claim through Add money. The code is held in
+the page draft beside the phrase and password, and wiped in `close()` (`firstrun.js:72, 136-149`),
+the same pattern as the recovery phrase (`screenImport`, 894-923).
 
 Copy:
 - Step: "Got an invite code?" / "Paste it and $5 lands in your wallet once it's made." /
   "Use code", "Skip".
 - Valid: "Nice. $5 is waiting for you."
 - Typo: "That code has a typo. Check it and try again."
-- Empty: "This code was already used."
+- Empty: "This code was already used, or it has a typo."
 - Offline: "Couldn't check the code right now. You can add it later from Add money."
 - At `addresses`, landed: "$5 USDC is in your wallet."
-- At `addresses`, failed: "Your $5 didn't come through yet. Add the code again from Add money."
-  Onboarding never stops on a claim.
+- Still running when the person moves on: the outcome arrives as an SSE frame and shows as a toast
+  on Basic: landed, or "Your $5 didn't come through. Add the code again from Add money." A claim can
+  take up to two minutes, and `close()` must not make its result silent. Onboarding never stops on
+  a claim.
 
 **Add money.** A "Have an invite code?" line in the Add money card (`ui/screens/deposit.js`), with
 the same field. It catches a quit between create and claim (nothing records onboarding progress,
-so the first run never reopens after create: `ui/screens/lock.js:72-95`), and it serves people who
-already have a wallet.
+so the first run never reopens after create: `ui/screens/lock.js:72-95`), restored wallets, and
+people who already have a wallet.
+
+**The chat composer.** The composer is on screen in every mode ("Ask, or tell it what to do",
+`ui/screens/agent.js:1-3, 527-534`), and a code pasted there would go to the agent, its model
+provider and the transcripts. The composer checks for the `PHOS` shape in the page before sending,
+refuses to send it, and opens the invite field with the code in it.
 
 **Routes.** `POST /api/invite/check { token, code }` and `POST /api/invite/claim { token, code }`,
 both behind `guarded()` (`src/http/wallet.ts:56-85`), so only the window can call them. Neither is
@@ -205,31 +273,46 @@ an MCP op, neither is in `READ_TOOLS` (`src/http/context.ts:71-121`), and the pi
 (`tests/tool-surface.ts`) does not change.
 
 **The code never leaves that path.** It is not written to an audit line, `/api/state`, an SSE
-frame, a proposal or disk. Second wall: the log tail gets a shape rule for `PHOS` codes, because it
-does not redact by shape today and a bare 64-hex key would pass straight through
-(`src/http/log-tail.ts:22-26`).
+frame, a proposal, the pending record or disk. No error and no `reason` ever quotes the input, in
+any form. Second wall: the log tail gets a shape rule for `PHOS` codes in every form the parser
+accepts (lowercase, spaces, no hyphens, `PH0S`), because it does not redact by shape today and a
+bare 64-hex key would pass straight through (`src/http/log-tail.ts:22-26`).
 
-**One stated exception.** The code signer is the first signer that works while the wallet is
-locked, against the rule at `src/keystore/index.ts:9-12`. That rule protects the wallet key, and
-this key is not the wallet's. The exception gets its own paragraph in `docs/security-model.md`
-under "What signs, and with what".
+**One stated exception.** The code signer is a second signer beside the wallet's, outside the
+proposals executor. The rule at `src/keystore/index.ts:9-12` (a signer takes key material and
+fails while locked) protects the wallet key, and this key is not the wallet's. The claim still
+runs only while the wallet is open, because the receiver must be a decrypted address. The exception
+gets its own paragraph in `docs/security-model.md` under "What signs, and with what".
 
 **What the person and the agent see.** New audit events in the `LogEvent` union
-(`src/types.ts:718-748`): `invite_claimed { codeAddress, receiver, asset, amount, intentHash }` and
-`invite_failed { codeAddress, reason }`. Not `executed`, because the injection test requires every
-`executed` line to follow an approval (`tests/injection.test.ts:804-830`). Receipts get a kind
-`invite`, so Activity shows "Invite: +5 USDC" and the agent reads it like any other receipt instead
-of a bare `0x` counterparty in `intents_activity`. After a claim, an open deposit watch on NEAR
-USDC re-takes its baseline, or the $5 would read as that deposit landing (`src/vault/watch.ts`).
+(`src/types.ts`, from line 718): `invite_claimed { codeAddress, receiver, asset, amount,
+intentHash }` and `invite_failed { codeAddress, reason }`. Not `executed`, because the injection
+test requires every `executed` line to follow an approval (`tests/injection.test.ts:804-830`).
+Receipts get a kind `invite`, so Activity shows "Invite: +5 USDC". The agent's `intents_activity`
+reads NearBlocks for any account (`src/http/read/chain.ts:56-66`), so that reader labels a
+counterparty "Phosphor invite" when it matches a code address from this app's own audit log;
+otherwise it would show a bare `0x`.
+
+**Deposit watch.** The watch checks every 3 s and calls a deposit credited as soon as the asset
+rises (`src/vault/watch.ts`). While a claim runs, it holds "credited" on NEAR USDC; once the claim
+is proven, it adds the proven amount to its baseline. It never reads the baseline again, which
+would also swallow a real deposit landing in the same window.
 
 ## The invite page
 
-`phosphor.money/invite` in `phosphor-site`, static like the rest of the site. It reads the code
-from `location.hash`, clears it from the address bar with `history.replaceState`, and shows the
-code with a Copy button and the Download button. No third-party script on that page, because any
-script there can read the hash: `vercel.json` sets `Content-Security-Policy: script-src 'self'` and
-`Referrer-Policy: no-referrer` for `/invite`. The page never sends the code anywhere. It says: only
-paste this into the Phosphor app, and Phosphor never asks for your recovery phrase to claim.
+`phosphor.money/invite` in `phosphor-site`, static like the rest of the site. Every page there
+loads Vercel Web Analytics from the same origin (`/_vercel/insights/script.js`: `index.html:768`,
+`404.html:184`, and the docs template `scripts/build-docs.mjs:140`), and `script-src 'self'`
+allows it, so a CSP alone does not keep it off the hash. Instead:
+- `/invite` and `404.html` are built with no analytics tag. A build check fails if either has one.
+  `404.html` matters because a mistyped invite path lands there with the hash intact.
+- The page's first script, a same-origin file, reads `location.hash`, keeps the code in a variable
+  and clears the address bar with `history.replaceState` before anything else runs.
+- The site-wide CSP on `/(.*)` (`default-src 'none'`, a short `connect-src` list,
+  `frame-ancestors 'none'`) stays as it is. No second CSP header for `/invite`.
+- The page shows the code with a Copy button and the Download button, and sends the code nowhere.
+  It says: paste it into the invite field on Phosphor's first screen, or in Add money, never into
+  the chat, and Phosphor never asks for your recovery phrase to claim.
 
 ## Threat model
 
@@ -239,14 +322,21 @@ the privacy of who got an invite, and trust in the product.
 | Threat | What stops it | Worst case |
 |---|---|---|
 | Guess a code offline against the public code addresses | 128 bits | About 1 in 10^17 per year at 1,000 GPUs |
-| Copy a claim in flight and redirect it | `receiver_id` is inside the signature; the relay can only submit the bytes as signed | None |
+| Copy a claim in flight and redirect it (relay route) | `receiver_id` is inside the signature; the relay can only submit the bytes as signed | None |
+| The same, on Plan B | 1Click's quote echo and quote signature are checked, but the receiver is not in the code's signature | $5, and only if 1Click misbehaves |
 | Replay a claim | The nonce bitmap spends the nonce; the account is empty after the first claim anyway | None |
 | Claim twice with two signatures | The account holds $5; the second transfer fails | None |
 | A leaked code (screenshot, chat, posted publicly) | Codes go one to one, never posted | $5 to whoever types it first |
+| Clipboard, browser history, history sync | `replaceState` clears the address bar; the claim fires right after create | $5 per code: any process running as the user can read the clipboard (the boundary in `docs/security-model.md:412-416`) |
+| A code pasted into the chat | The composer refuses the `PHOS` shape and opens the invite field | None |
+| A script on the invite page reads the hash | No analytics on `/invite` or `404.html`, a build check, the site-wide CSP | None |
 | One person collects several codes | Karim gives one per person | $5 per extra code |
 | Skip the app and claim with a script | Allowed: the holder owns the code | The same $5 |
-| Invite file and passphrase stolen | Encrypted file, thin treasury, fund-on-issue, reclaim command | What is in `T` plus unclaimed codes |
-| Relay censors or stalls claims | The money stays on the code; retry, or Plan B | Delay, never loss |
+| An edited keystore header redirects a claim or a withdraw | Claims use only a decrypted, untampered address; `withdraw` takes a typed address checked against the Receive screen | None |
+| A balance read fooled by a deposit or by dust | Proof is the nonce plus the code's own balance, never the wallet's | None |
+| Crash mid-issue | Codes are on disk before signing; the batch stays `pending` and is resent as the same bytes | None |
+| Invite file and passphrase stolen | Encrypted file, scrypt 2^17, 20-character minimum, `T` near 0 between batches, reclaim command | What is in `T` plus unclaimed codes |
+| Relay censors, stalls or starts enforcing its JWT | The money stays on the code; Plan B at run time | Delay, never loss |
 | A NEAR Intents admin freezes a code account | `is_account_locked` at the check step | That code cannot pay out; reclaim fails too |
 | Weak randomness | OS CSPRNG only; a test asserts the generator never takes `Math.random` | None |
 | Malicious agent | No tool, no route, no log line carries a code | None |
@@ -263,64 +353,85 @@ none of them.
 - Promo clause on `/terms`: one claim per code; no purchase needed; Phosphor can end the promo and
   take back unclaimed codes at any time; codes are not for sale; recipients handle their own taxes.
 - `/privacy`: a claim links the new wallet to Phosphor's invite treasury in public on-chain data,
-  and the relay and the NEAR RPC see the claim the way they see every Phosphor read.
+  and the relay and the NEAR RPC see the claim the way they see every Phosphor read. If `T` is
+  funded from Karim's own wallet, his wallet is publicly linked to `T` and so to every invitee.
 - Bump `TERMS_VERSION` (`src/terms.ts:17`), so the terms card shows once more, as 0.10.11 did.
 - US position (not legal advice): no chance and no purchase, so not a sweepstakes (Cal. Penal Code
   §319). Giving away Phosphor's own funds accepts nothing from anyone, so very likely not money
   transmission (FinCEN FIN-2019-G001). That changes the day users can buy or fund codes for each
   other. 1099 reporting starts at $2,000 a year per person for tax years after 2025.
 - **Age.** The 1ClickSwap API Terms (updated 2026-08-28, §9.3) say an individual developer under
-  18 "must not use the API". That already covers every Phosphor swap, not only this feature. The
-  main claim path uses the relay, not 1Click, but whether the relay falls under the same terms is
-  not confirmed. The same fix as the Apple account works: a parent or an entity as developer of
-  record.
+  18 "must not use the API". That already covers every Phosphor swap, not only this feature, and
+  every claim that falls back to Plan B. The main claim path uses the relay, not 1Click; whether the
+  relay falls under the same terms is not confirmed. The same fix as the Apple account works: a
+  parent or an entity as developer of record.
 
 ## Tests
 
-Unit (`node --test`, network injected, keys are repeated bytes so `npm run sweep` stays clean):
-- Code: generate, format, parse round-trip; check character catches a one-character typo; O, I, L
-  map; prefix required; known secret to key to address vectors; `0 < k < n` enforced.
-- Payload: exact bytes for a fixed input; lowercase ids; V1 nonce decodes with `decodeNonce`;
-  payload deadline no later than the nonce deadline; receiver equal to the code address refused.
-- Claim: simulate error strings map to the right sentences; publish with an empty `quote_hashes`;
-  one identical resend on no reply, never a second signature; balances, not status, decide success;
-  `invite_claimed` written, `executed` never written.
+Unit (`node --test`, network injected). Throwaway secrets are repeated bytes, and a derived key is
+a 64-hex run that the secret sweep flags whatever the secret was (`scripts/sweep.ts:60`), so each
+pinned vector goes on the sweep's exact allowlist (`scripts/sweep.ts:119`) or the test pins only
+the address.
+- Code: generate, format, parse round-trip; every single substitution and every neighbour swap is
+  caught; the prefix is stripped before mapping (`PHOS` survives, `PH0S` and a whole link are
+  accepted); spare bits must be zero; known vectors; `0 < k < n` enforced; the generator never
+  emits a symbol check character.
+- Payload: exact bytes for a fixed input; lowercase ids; V1 nonce decodes with `decodeNonce`; chain
+  time, not the Mac's clock; payload deadline no later than the nonce deadline; the nonce lives 7
+  days past it; receiver equal to the code address refused.
+- Claim: simulate errors map to the right sentences; publish with an empty `quote_hashes`; one
+  identical resend on no reply, never a second signature; the watch runs to the deadline plus 30 s;
+  proof needs the nonce spent and the code's balance down, and a wallet rise alone is not success;
+  the pending record never holds the code; boot reconcile finishes a claim published before a quit;
+  `invite_claimed` written, `executed` never written; an unverified or tampered address refuses the
+  claim; a relay auth or quote refusal falls back to Plan B with the 3-minute deadline.
 - Routes: no token is refused; `/api/state` and `/api/log` never contain the code (same grep as
-  `tests/unit/wallet-routes.test.ts:226-237`); the log tail redacts the `PHOS` shape; the tool
-  surface is unchanged.
-- UI (`node:vm`, like `tests/unit/firstrun-ui.test.ts`): the `invite` step sits in all four flows;
-  Skip works; the claim fires once at `addresses`; a failed claim does not block; `close()` wipes
-  the code; the Add money field works.
-- Operator script: dry run (`--simulate-only`) builds and simulates the funding payload with no
-  publish.
+  `tests/unit/wallet-routes.test.ts:226-237`); the log tail redacts every accepted form of the
+  code; no error echoes the input; the tool surface is unchanged.
+- UI (`node:vm`, like `tests/unit/firstrun-ui.test.ts`): the `invite` step sits in all four flows
+  and in `UNCOUNTED`; Skip works; the claim fires once at `addresses`; a late result reaches Basic
+  as a toast; `close()` wipes the code; the Add money field works; the composer refuses a `PHOS`
+  paste and opens the field.
+- Deposit watch: a claim on NEAR USDC is not reported as a deposit, and a real deposit in the same
+  window still is.
+- Site: the build fails if `/invite` or `404.html` carries the analytics tag.
+- Operator script: refuses a non-TTY; writes codes before signing; a second `issue` is refused
+  while one is `pending`; `--simulate-only` builds and simulates the funding payload with no
+  publish; `status` never prints a code.
 
 ## Proof
 
-**Step 0, before any app code.** With 20 cents in `T` (Karim's click), issue one $0.10 code and
-claim it to a throwaway address through the relay with `quote_hashes: []`. Record the intent hash,
-both balances before and after, and the `get_status` answer. Pass means Route 1 is the build. A
-refusal (auth or quote) means Plan B, and the step is repeated through `spendFromIntents`.
+**Step 0, before any app code.** With $1 in `T` (Karim's click, sized so 1Click's minimum and the
+0.25 percent send fee are no question), issue one $0.10 code and claim it to a throwaway address
+through the relay with `quote_hashes: []`. Record the intent hash, `is_nonce_used`, both balances
+before and after, and the `get_status` answer. Then claim a second $0.10 code through Plan B and
+record the same. Pass on the relay means it is the main route; Plan B is built either way, because
+it is the run-time fallback.
 
 **Release proof.** A fresh data dir, a real $5 code, the enclave flow end to end: paste, Touch ID,
 the ring reads $5.00, Activity shows the invite row, the code reads 0, a second claim says "already
-used". Then `reclaim` and `withdraw` on a spare code. Then the security-audit skill over the diff
-(keys, signatures, randomness) and `/security-review`.
+used". A quit right after publish, then a relaunch: the boot reconcile writes the row. Then
+`reclaim` and `withdraw` on a spare code. Then the security-audit skill over the diff (keys,
+signatures, randomness) and `/security-review`.
 
 ## Rollout
 
 Ships in the next release after 0.10.12 through the usual PR and signed tag (never `0.11.0`).
 Docs touched: `docs/money.md` (new "Invite codes" section), `docs/getting-started.md` (first open),
 `docs/reference.md` (first run), `docs/security-model.md` (the signer exception),
-`docs/changelog.md`. The site ships `/invite`, the terms clause and the privacy line in the same
-hour. Build estimate: about a day, most of it tests and proof.
+`docs/changelog.md`. The site ships `/invite`, the analytics-free `404.html`, the terms clause and
+the privacy line in the same hour. Build estimate: about a day and a half, most of it tests and
+proof.
 
 ## Open items for Karim
 
 1. Budget and count. Recommendation: 10 codes at $5 to people he knows, look at who claims, then
    more.
-2. Fund `T`. His money and his click, needed first for the 20-cent proof and then for the budget.
-3. Developer of record for NEAR Intents and 1Click while he is under 18.
-4. The lawyer read already open for the terms: add the promo clause to it.
+2. Fund `T`. His money and his click: $1 for the proof, then one batch at a time.
+3. Where `T`'s money comes from. From his own wallet is simplest and links that wallet in public to
+   every invitee; from a separate account keeps it apart.
+4. Developer of record for NEAR Intents and 1Click while he is under 18.
+5. The lawyer read already open for the terms: add the promo clause to it.
 
 ## Not in scope
 
