@@ -16,6 +16,7 @@ import { createAudit } from './audit.ts';
 import { recordAuditChain } from './http/health.ts';
 import { createKeystore, useKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
+import { lockReasonFor } from './keystore/lock-reason.ts';
 import { createStore } from './store.ts';
 import { installCrashHandlers } from './crash.ts';
 import { acquireInstanceLock } from './instancelock.ts';
@@ -237,7 +238,7 @@ const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
   idleMs: () => vaultPrefs.get().idleMinutes * 60_000,
   lock: (reason) => {
-    keystore.lock();
+    if (keystore.lock()) lockReasonFor(keystore).note(reason);
     audit.append(
       'app_start',
       reason === 'sleep'
