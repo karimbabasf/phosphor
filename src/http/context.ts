@@ -43,6 +43,7 @@ import type { RouteHealth } from '../preflight/route-health.ts';
 import type { VaultPrefs } from '../vault/prefs.ts';
 import type { Terms } from '../terms.ts';
 import type { DepositWatch } from '../vault/watch.ts';
+import type { InviteNet, InviteService } from '../invite/claim.ts';
 import type { JsonBody } from './respond.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -258,6 +259,9 @@ export type ServerDeps = {
      lockdown through it: the tool surface is fixed in operator/driver.settings.json and
      checked again at runtime inside src/driver.ts. */
   makeDriver?: () => Driver;
+  /* The invite claim's network: the verifier, the relay, 1Click, the clock. Injected only by
+     tests; absent, src/invite/claim.ts builds the live ones. */
+  invite?: InviteNet;
 };
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after
@@ -276,6 +280,8 @@ export type PhosphorServer = http.Server & {
   // The chart slots, so the entrypoint can hand the runner a reader for drawn lines without
   // the server importing the runner or the runner importing the server.
   charts: ChartSlots;
+  // So the entrypoint can start the invite reconcile at boot.
+  invites: InviteService;
 };
 
 export type ChartStore = ReturnType<typeof createChartStore>;
@@ -352,6 +358,8 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   terms: Terms;
   // The deposit watcher: one address at a time, until landed or a day.
   deposits: DepositWatch;
+  // Invite codes: the check, the claim and the boot reconcile. See src/invite/claim.ts.
+  invites: InviteService;
   /* Re-decide everything an agent proposed while the wallet was locked. Wired by the server
      rather than imported, because the proposal service is what knows how to land a proposal
      and the HTTP layer only knows when to ask. Returns how many were released. */

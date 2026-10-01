@@ -754,6 +754,11 @@ export type LogEvent = {
     | 'policy_changed'
     // The person accepted the terms of use in the window; data names the version.
     | 'terms_accepted'
+    // An invite code's money landed in this wallet, or a claim the window started did not
+    // (src/invite/claim.ts). Never 'executed': no approval comes before a claim, and every
+    // executed line has to follow one. Neither line carries the code.
+    | 'invite_claimed'
+    | 'invite_failed'
     | 'chain_stale'
     // A view change is a thing an agent did to what a human sees, so the transcript
     // says so. 'view_refused' is HISTORICAL: the switch used to be declined while a

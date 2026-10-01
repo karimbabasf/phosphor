@@ -13,7 +13,8 @@
 import { fail, intParam, sendJson } from '../respond.ts';
 import { evmAddress } from '../../keystore/index.ts';
 import { addressSummary, CHAIN_NETWORKS, DEFAULT_LIMIT, intentsActivity, isChainNetwork, MAX_LIMIT, transaction, transactions, validateAddress, validateHash } from '../../chainscan/index.ts';
-import type { ChainDeps } from '../../chainscan/index.ts';
+import type { ChainDeps, IntentsRow } from '../../chainscan/index.ts';
+import { LOG_LIMIT_MAX } from '../context.ts';
 import type { Ctx, ReadTable } from '../context.ts';
 
 // Our own intents account id: the EVM address, lowercased, read off the keystore header the
@@ -29,6 +30,23 @@ function ownAccount(ctx: Ctx): string | null {
 }
 
 const NETWORK_HINT = `network must be one of ${CHAIN_NETWORKS.join(', ')}`;
+
+export const INVITE_COUNTERPARTY_LABEL = 'Phosphor invite';
+
+/* A transfer from an invite code's account reads as a bare 0x on NearBlocks. The code accounts
+   this app claimed from are in its own audit log (invite_claimed, src/invite/claim.ts), so a row
+   whose counterparty is one of them says what it was. The address is public; the code never is. */
+function labelInvites(ctx: Ctx, rows: IntentsRow[]): IntentsRow[] {
+  const codes = new Set<string>();
+  // A context built by hand for one read may carry no audit log; then nothing is labelled.
+  for (const event of ctx.audit?.tail(LOG_LIMIT_MAX) ?? []) {
+    if (event.type !== 'invite_claimed') continue;
+    const address = (event.data as { codeAddress?: unknown } | undefined)?.codeAddress;
+    if (typeof address === 'string') codes.add(address.toLowerCase());
+  }
+  if (codes.size === 0) return rows;
+  return rows.map((row) => (row.counterparty !== null && codes.has(row.counterparty.toLowerCase()) ? { ...row, counterpartyLabel: INVITE_COUNTERPARTY_LABEL } : row));
+}
 
 // Built over injectable deps so a test can hand in a fetch and a reader; the keys come from
 // config on every call rather than being captured, because the table is built at import time.
@@ -62,7 +80,7 @@ export function chainReadsWith(deps: ChainDeps = {}): ReadTable {
       if (!check.ok) return fail(res, 400, check.reason);
       const answer = await intentsActivity(check.normalized, intParam(args.limit, DEFAULT_LIMIT, MAX_LIMIT), depsFor(ctx));
       // Whether this is the app's own ledger, so an agent never mistakes a stranger's for ours.
-      sendJson(res, 200, { ...answer, own: check.normalized === own });
+      sendJson(res, 200, { ...answer, rows: labelInvites(ctx, answer.rows), own: check.normalized === own });
     },
   };
 }

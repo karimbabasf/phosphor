@@ -19,7 +19,7 @@
 //      private key block, an `ed25519:` or `secp256k1:` prefixed base58 value, a bare 64 byte
 //      base58 run (a Solana or NEAR secret key; a Solana signature has that shape too, and a
 //      signature of a deposit somebody sent is a price worth paying), an `sk-` API key, a JWT,
-//      and a bearer token.
+//      a bearer token, and an invite code (`PHOS` and 27 characters, in any form it is typed).
 // A bare 64 hex run is NOT redacted by shape. A transaction hash, an intent hash and a 1Click
 // deposit handle are the same 32 bytes of hex as a private key, and they are the evidence the
 // log exists to carry; cutting them would leave a person a log that proves nothing. The key is
@@ -28,6 +28,7 @@
 
 import type { Ctx } from './context.ts';
 import { tokenMatches } from './auth.ts';
+import { inviteCodePattern } from '../invite/code.ts';
 import type { LogEvent } from '../types.ts';
 
 export const REDACTED = '[redacted]';
@@ -80,6 +81,10 @@ const CREDENTIAL_SHAPES: RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
   // A bearer credential inside a header or a sentence.
   /\bBearer [A-Za-z0-9_.~+/=-]{16,}/gi,
+  // An invite code in every form the parser accepts: any case, PH0S, spaces or no hyphens, alone
+  // or inside an invite link. The code is the key to money, and no writer is meant to have one;
+  // this is the wall behind that (src/invite/code.ts owns the shape).
+  inviteCodePattern(),
 ];
 
 export type IsCredential = (candidate: string) => boolean;

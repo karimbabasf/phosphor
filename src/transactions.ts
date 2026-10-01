@@ -13,6 +13,7 @@
 // log would take the evidence with it. Old records still resolve through the join.
 
 import type { ChainId, DecidedBy, LogEvent, Proposal, RailEvidence, WriteDraft } from './types.ts';
+import type { ClaimRecord } from './invite/store.ts';
 import { chainSpec } from './chain/evm.ts';
 import { HYPERLIQUID_EXPLORER_ADDRESS, HYPERLIQUID_EXPLORER_TX } from './explorers.ts';
 
@@ -92,7 +93,7 @@ export type TxEntry = {
   // The draft kind, except on the venue: an armed plan and the retired standing mandate both
   // read as 'bot' (a thing that acts on its own once armed), and a close, a cancel or a moved
   // stop keeps 'trade'. Activity filters on these two words (src/http/receipts.ts).
-  kind: WriteDraft['kind'] | 'bot';
+  kind: WriteDraft['kind'] | 'bot' | 'invite';
   // 'needs_reconciliation' is a row the app cannot say moved money or did not. It belongs in
   // the history precisely because of that: dropping it would hide the one transaction a person
   // most needs to look at.
@@ -571,7 +572,46 @@ export type BuildParams = {
   proposals: Proposal[];
   events: LogEvent[];
   selfAddresses: string[];
+  // Invite claims that landed (src/invite/store.ts). Money in with no proposal behind it.
+  invites?: ClaimRecord[];
 };
+
+/* An invite claim as a row: money in, signed by the code's key and not the wallet's, from the
+   code's account to this wallet inside the verifier. The record is the source, not the audit
+   log, because the log can be compacted and the record is kept. */
+function inviteEntry(r: ClaimRecord, selfAddresses: Set<string>): TxEntry | null {
+  if (r.status !== 'done' || r.creditedBase === undefined || !/^\d+$/.test(r.creditedBase)) return null;
+  const amount = Number(r.creditedBase) / 1e6;
+  const gross = Number(r.amountBase) / 1e6;
+  const hashes: TxHash[] = [];
+  if (r.intentHash !== undefined) hashes.push({ hash: r.intentHash, place: 'intents', kind: 'intent', url: null });
+  if (r.nearTx !== undefined) hashes.push({ hash: r.nearTx, place: 'near', kind: 'chain', url: explorerTxUrl('near', r.nearTx) });
+  const viaOneClick = r.route === 'oneclick';
+  return {
+    id: r.claim,
+    ts: r.settledAt ?? r.startedAt,
+    action: 'deposit',
+    kind: 'invite',
+    status: 'executed',
+    venue: 'intents.near',
+    place: 'intents',
+    toPlace: 'intents',
+    sent: null,
+    received: { symbol: 'USDC', amount },
+    note: null,
+    valueUsd: amount,
+    from: { label: 'Phosphor invite', address: r.codeAddress, place: 'intents', url: explorerAddressUrl('intents', r.codeAddress), self: false },
+    to: party('to', r.receiver, 'intents', selfAddresses),
+    counterparty: null,
+    decidedBy: null,
+    hashes,
+    venueFeeUsd: viaOneClick ? round(gross - amount) : null,
+    detail:
+      `An invite code paid ${amount} USDC into ${r.receiver} inside intents.near${viaOneClick ? ', through 1Click' : ''}` +
+      `${r.intentHash === undefined ? '' : `; intent ${r.intentHash}`}.`,
+    reasons: [],
+  };
+}
 
 export function buildTransactions(params: BuildParams): TxEntry[] {
   const { proposals, events } = params;
@@ -622,6 +662,11 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
       detail,
       reasons: p.verdict?.reasons ?? [],
     });
+  }
+
+  for (const record of params.invites ?? []) {
+    const entry = inviteEntry(record, selfAddresses);
+    if (entry !== null) entries.push(entry);
   }
 
   // Newest first: a history is read from the top.

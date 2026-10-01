@@ -168,6 +168,8 @@ export function buildState(ctx: Ctx): unknown {
        terms screen ahead of everything else until this says so. */
     terms: ctx.terms.get(),
     deposit: ctx.deposits.current(),
+    // The latest invite claim's id, status and amount, for a window opened after its frame. Never the code.
+    invite: ctx.invites.state(),
     /* Every chain the window may have to name, so no card keeps a table of its own. Fixed size
        and it does not grow with use, which is the rule this payload is held to. */
     chains: CHAIN_TABLE,
@@ -281,6 +283,7 @@ type StateCache = {
   auditLines: number;
   lockState: string;
   snapshot: unknown;
+  invite: number;
 };
 
 const caches = new WeakMap<Ctx, StateCache>();
@@ -291,6 +294,8 @@ function stateKey(ctx: Ctx): Omit<StateCache, 'built' | 'at'> {
     auditLines: ctx.audit.lineCount(),
     lockState: ctx.keystore.state(),
     snapshot: ctx.ledger.snapshot(),
+    // A claim's running frame writes no audit line, so its status moves the key on its own.
+    invite: ctx.invites.revision(),
   };
 }
 
@@ -303,6 +308,7 @@ export function buildStateCached(ctx: Ctx): CachedJson {
     held.auditLines === key.auditLines &&
     held.lockState === key.lockState &&
     held.snapshot === key.snapshot &&
+    held.invite === key.invite &&
     Date.now() - held.at < STATE_CACHE_MAX_MS
   ) {
     return held.built;
@@ -322,6 +328,7 @@ export function transactionsPayload(ctx: Ctx): { entries: ReturnType<typeof buil
     proposals: ctx.proposals.list(),
     events: ctx.audit.tail(LOG_LIMIT_MAX),
     selfAddresses: ctx.cfg.addresses.evm === undefined ? [] : [ctx.cfg.addresses.evm],
+    invites: ctx.invites.landed(),
   });
   return { entries };
 }

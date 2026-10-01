@@ -52,7 +52,7 @@ import type { Preflight, RailHooks } from '../types.ts';
 import type { VenueProbe } from '../preflight/index.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import type { QuoteRecord } from '../quote-signature.ts';
-import { INTENTS_SIGNING_STANDARD, checkIntentPayload, intentDeadline } from './intents-native.ts';
+import { INTENTS_SIGNING_STANDARD, checkIntentPayload, intentDeadline, shortenDeadline } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { submitSignedIntent } from './intents-submit.ts';
 import { FIRST_POLL_MS, watchOneClick } from './watch.ts';
@@ -70,6 +70,10 @@ export type IntentsSpendDeps = {
   // The first wait of the status watch; FIRST_POLL_MS when a rail names none.
   firstPollMs?: number;
   maxDeadlineMs: number;
+  /* When set, the deadline 1Click generated (72 hours out) is cut to this far from now before
+     the payload is checked and signed, the way the swap rail cuts it (SIGNED_DEADLINE_MS). The
+     invite claim's Plan B sets it; the rails that predate it keep the deadline they had. */
+  signedDeadlineMs?: number;
   // The key 1Click signs quotes with. Left unset it is the production key; a test hands the
   // key its own fake signs with, and nothing else ever sets it.
   quoteKey?: string;
@@ -225,9 +229,14 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
     );
   }
 
+  const generatedPayload =
+    deps.signedDeadlineMs !== undefined && typeof generated.payload === 'string'
+      ? shortenDeadline(generated.payload, deps.now() + deps.signedDeadlineMs)
+      : generated.payload;
+
   // The same reader the swap rail uses. A spend comes back as a 'transfer' to the deposit
   // handle, which that reader binds to our own quote and to exactly the amount approved.
-  const payloadProblems = checkIntentPayload(generated.payload, {
+  const payloadProblems = checkIntentPayload(generatedPayload, {
     signerId: req.owner,
     originAsset: req.originAsset,
     destinationAsset: req.destinationAsset,
@@ -241,9 +250,9 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
     throw new Error(`refusing to sign the intent 1click generated: ${payloadProblems.join('; ')}`);
   }
 
-  // Signed exactly as returned: the signature has to cover the same bytes the verifier will
-  // parse, so the payload string is never re-serialised.
-  const payload = generated.payload as string;
+  // Signed exactly as returned, but for a cut deadline: the signature has to cover the same bytes
+  // the verifier will parse, so the payload string is never re-serialised.
+  const payload = generatedPayload as string;
   const deadline = intentDeadline(payload) ?? 'unknown';
   const refused = deps.beforeSign === undefined ? null : await deps.beforeSign();
   if (refused !== null) throw new ReasonError('route_closed', refused);

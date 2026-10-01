@@ -35,7 +35,7 @@ export const RECEIPT_KINDS: Record<string, readonly string[]> = {
   trade: ['trade'],
   move: [
     'intents_deposit', 'intents_withdraw', 'intents_send', 'intents_pay', 'hl_deposit', 'hl_withdraw', 'transfer', 'consolidate',
-    'lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw',
+    'lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'invite',
   ],
   bot: ['bot'],
 };
@@ -63,6 +63,7 @@ const KIND_WORDS: Record<string, string> = {
   transfer: 'send sent transfer',
   trade: 'trade',
   bot: 'bot plan',
+  invite: 'invite code gift arrived added',
 };
 
 export type ReceiptQuery = {
@@ -161,7 +162,9 @@ function feesOf(entry: TxEntry): number | null {
    proposal has been pruned from the store still has the rail's own line to show, and
    inventing a headline for a draft we cannot read would be the one thing worse than
    showing the raw one. */
-function headlineFor(proposal: Proposal | undefined, status: Receipt['status']): string {
+function headlineFor(proposal: Proposal | undefined, status: Receipt['status'], entry: TxEntry): string {
+  // An invite claim has no proposal: the code's key signed it, and it only ever lands.
+  if (entry.kind === 'invite') return entry.received === null ? 'Invite' : `Invite: +${entry.received.amount} ${entry.received.symbol}`;
   if (proposal === undefined) return '';
   const amount = amountUsdOf(proposal.draft);
   return status === 'executed' ? didHeadline(proposal.draft, amount) : triedHeadline(proposal.draft, amount);
@@ -207,7 +210,7 @@ function buildReceipts(ctx: Ctx): Receipt[] {
          written by the thing that actually did the work. It belongs on the opened receipt,
          not as the title of a row: basic.ts:570 already says why, that text is written for
          whoever is debugging this app and reads as noise to the person who owns the money. */
-      headline: headlineFor(proposal, status),
+      headline: headlineFor(proposal, status, entry),
       summary: entry.detail,
       fromChain: entry.place,
       toChain: entry.toPlace,
