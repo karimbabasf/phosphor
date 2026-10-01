@@ -318,6 +318,14 @@ acceptance is `state/terms.json` (the version accepted and when, mode 0600) and 
 change on the site asks once more. The route is `POST /api/terms/accept` with the window token.
 Nothing here is a control: the file gates a screen, not a key.
 
+After the terms, Got an invite code? takes an invite code; Skip goes on without one, and the
+progress does not count the step. A paste, or Use code, asks `POST /api/invite/check` and moves
+nothing: a good code is kept in the first run's draft beside the password and the phrase, and
+wiped with them when the card closes. The claim is `POST /api/invite/claim`, fired once on the
+addresses step, the first moment there is a wallet to pay. Its end arrives as an `invite` frame
+on the event stream: the addresses step shows it in place, and a person who has moved on gets a
+toast on Basic. Both calls live in `ui/core/invite.js`.
+
 The wallet is made in the window. Set a password, write down the twelve words it shows once, and
 it writes `keys.enc.json` beside `keysPath`, file mode 0600, in a directory mode 0700. That path
 is outside the working copy on purpose: a key file inside a git working copy is one `git add -f`

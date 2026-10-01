@@ -1,0 +1,188 @@
+/* Invite codes: the first run's step, the line under it and on the addresses
+   step, the Add money field, and the line under the chat's box when a code was
+   kept out of it. ui/screens/invite.js and ui/screens/firstrun.js build them.
+
+   The code is read one character at a time, so it is set in the mono face, in
+   capitals whatever was pasted (the value itself is left as it came). What is
+   said about a code is one line: a tick for good news, the warning glyph for a
+   problem, a spinner while money moves. Green is the tick alone, because a code
+   that pays is a success; nothing here is red, because nothing here puts money
+   at risk. */
+
+.invite-input {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+#screen-firstrun .invite-input {
+  min-height: 44px;
+  font-size: var(--fs-15);
+}
+
+/* ---------- the one line ---------- */
+
+.invite-said {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text);
+  text-wrap: pretty;
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--dur-enter) var(--ease-out),
+              transform var(--dur-enter) var(--ease-out);
+}
+
+/* It rises into place as it appears, the toast's own entrance. */
+@starting-style {
+  .invite-said {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.invite-said-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  color: var(--warn);
+}
+
+.invite-said[data-tone="good"] .invite-said-icon {
+  color: var(--ink);
+  animation: invite-pop var(--dur-spring) var(--ease-spring) 60ms both;
+}
+
+.invite-said-spin {
+  margin-top: 4px;
+  color: var(--text-2);
+}
+
+.invite-said[data-tone="wait"] {
+  color: var(--text-2);
+}
+
+/* The move card's done check (chatcard.css mcard-pop): the tick lands on the
+   spring. */
+@keyframes invite-pop {
+  from { opacity: 0; transform: scale(0.3); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* On the addresses step the claim's line sits in a soft tile under the title,
+   so a wait of up to two minutes reads as something under way, not as a note. */
+.firstrun-claim {
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
+}
+
+/* ---------- Add money ---------- */
+
+/* Under the network tiles: one quiet line that opens the field in place, the
+   agent list's fold (agentpick.css .agentrow-how) in its grammar. */
+.invite-line {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+  min-width: 0;
+  margin-top: var(--s-3);
+}
+
+.invite-open {
+  gap: var(--s-1);
+  margin-left: calc(var(--s-3) * -1);
+}
+
+.invite-open-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform var(--dur-press) var(--ease-out);
+}
+
+.invite-open[aria-expanded="true"] .invite-open-icon {
+  transform: rotate(180deg);
+}
+
+/* The field in a soft tile on the slab, its input a well pressed into it. */
+.invite-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  align-self: stretch;
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  border-radius: var(--radius-tile);
+  background: var(--tile);
+  box-shadow: var(--hi);
+}
+
+.invite-row .input {
+  min-height: 40px;
+  background: var(--well-bg);
+  border-color: transparent;
+  box-shadow: var(--well);
+  font-size: var(--fs-14);
+}
+
+.invite-row .invite-use {
+  flex: 0 0 auto;
+  min-height: 40px;
+}
+
+.invite-line > .invite-said {
+  align-self: stretch;
+  font-size: var(--fs-13);
+}
+
+/* ---------- the chat ---------- */
+
+/* Over the box, where the code was: why it is not in the chat, and where it
+   went. Quiet, in the words' second tone; it goes with the next key. */
+.composer-aside {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0 0 var(--s-2);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  color: var(--text-2);
+  transition: opacity var(--dur-enter) var(--ease-out),
+              transform var(--dur-enter) var(--ease-out);
+}
+
+@starting-style {
+  .composer-aside {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.composer-aside-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .invite-said,
+  .composer-aside,
+  .invite-open-icon {
+    transition: none;
+  }
+
+  .invite-said[data-tone="good"] .invite-said-icon {
+    animation: none;
+  }
+}

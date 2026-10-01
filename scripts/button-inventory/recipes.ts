@@ -83,6 +83,8 @@ export const RECIPES: readonly Recipe[] = [
   { family: 'btn btn-quiet btn-sm vault-fold', attrs: { 'aria-expanded': 'false' }, children: [label('Show all tokens')], on: { 'aria-expanded': 'true' } },
   { family: 'btn btn-quiet btn-sm vault-rule-change', children: [label('Change')] },
   { family: 'btn btn-quiet btn-sm agentrow-how', wrap: 'agentrow-act', attrs: { 'aria-expanded': 'false' }, children: [label('How to install')], on: { 'aria-expanded': 'true' } },
+  { family: 'btn btn-quiet btn-sm invite-open', wrap: 'invite-line', attrs: { 'aria-expanded': 'false' }, children: [label('Have an invite code?'), { tag: 'svg', icon: 'chevron-down', cls: 'icon invite-open-icon' }], on: { 'aria-expanded': 'true' } },
+  { family: 'btn btn-primary invite-use', wrap: 'invite-row', children: [label('Use code')], pending: 'Checking', disables: true },
   { family: 'lock-forgot', wrap: 'lock-card', children: [{ tag: 'span', text: 'Forgot it? Restore from your recovery phrase' }], labelSelector: 'span' },
   { family: 'chip suggest', wrap: 'suggestions', children: [{ tag: 'span', text: 'What do I hold?' }], labelSelector: 'span' },
   { family: 'chip connection-copy', wrap: 'connection-block', wrapStyle: 'position: relative; width: 320px; min-height: 52px', children: [label('Copy')] },
