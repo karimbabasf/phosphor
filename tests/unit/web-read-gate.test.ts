@@ -3,8 +3,9 @@
 // what it proposes waits for the person's click for the rest of that agent session: the page
 // stays in its context until the session is gone (src/web-read.ts). And a move is judged by what
 // was true when it was asked for, not when it lands.
-// Driven end to end: the real driver over the Claude stand-in marks the chat's seat, and the real
-// proposal service decides a small swap that seat proposes.
+// Driven end to end: the real driver over the Claude stand-in marks the chat's seat on a web search
+// (the page reader is mcp__phosphor__web_read since 2026-10-01, which marks the seat the same way),
+// and the real proposal service decides a small swap that seat proposes.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -103,16 +104,16 @@ test('a turn with no web read still runs a small swap on the policy alone', asyn
   }
 });
 
-test('after the agent reads a page, a small swap waits for the click, and says why', async () => {
+test('after the agent searches the web, a small swap waits for the click, and says why', async () => {
   const w = world('seat-web');
   try {
     await w.start();
-    await w.turn('what is near ai WEB-FETCH');
+    await w.turn('what is near ai WEB-SEARCH');
     const p = await w.swap();
     assert.equal(p.verdict.outcome, 'needs_approval', JSON.stringify(p.verdict));
     assert.equal(p.status, 'pending');
     assert.equal(p.verdict.reasons.at(-1), WEB_READ_REASON);
-    assert.equal(WEB_READ_REASON, 'It read a web page earlier in this chat, so this one waits for your OK.');
+    assert.equal(WEB_READ_REASON, 'This chat read text from outside Phosphor, so this move waits for your OK.');
     assert.equal(p.webRead, true, 'the row carries its own stamp');
     assert.deepEqual(w.executed, [], 'nothing ran on the policy alone');
   } finally {
@@ -126,7 +127,7 @@ test('the person\'s next message does not clear it: the page is still in the age
   const w = world('seat-web-then-talk');
   try {
     await w.start();
-    await w.turn('what is near ai WEB-FETCH');
+    await w.turn('what is near ai WEB-SEARCH');
     await w.turn('thanks');
     const p = await w.swap();
     assert.equal(p.status, 'pending', JSON.stringify(p.verdict));
@@ -143,7 +144,7 @@ test('a swap asked for after a web read waits for the click however long its rea
   const w = world('seat-web-slow-reads', { slowReads: true });
   try {
     await w.start();
-    await w.turn('what is near ai WEB-FETCH');
+    await w.turn('what is near ai WEB-SEARCH');
     const reply = w.ask();
     await new Promise((r) => setTimeout(r, 50));
     await w.turn('thanks');
@@ -161,7 +162,7 @@ test('a move is judged by the mark when it was asked for, not when it lands', as
   const w = world('seat-web-restart', { slowReads: true });
   try {
     await w.start();
-    await w.turn('what is near ai WEB-FETCH');
+    await w.turn('what is near ai WEB-SEARCH');
     const reply = w.ask();
     await new Promise((r) => setTimeout(r, 50));
     // A new session while the swap's reads run: the page is gone from the agent, so is the mark.
@@ -183,7 +184,7 @@ test('a new agent session starts clean: a small swap runs on its own again', asy
   const w = world('seat-web-new-session');
   try {
     await w.start();
-    await w.turn('what is near ai WEB-FETCH');
+    await w.turn('what is near ai WEB-SEARCH');
     assert.equal((await w.swap()).status, 'pending');
     w.driver.stop();
     await w.start();

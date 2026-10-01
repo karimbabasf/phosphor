@@ -12,7 +12,6 @@ import { fileURLToPath } from 'node:url';
 import { createDriver } from '../../src/driver.ts';
 import type { Driver, DriverEvent } from '../../src/driver.ts';
 import { grok, sessionDir } from '../../src/providers/grok.ts';
-import { webReadBy } from '../../src/web-read.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -249,41 +248,33 @@ test('with Phosphor not registered in grok, the turn says to pick Grok again, an
   }
 });
 
-test('a page read with grok\'s web_fetch is shown as a web read, never drawn as a card, and the turn goes on', async () => {
+/* Audit finding 3, 2026-10-01: grok's web_fetch read whatever address the model wrote, and its web
+   search runs on xAI's side where nothing here sees what it fetches. Both are off: the turn holds
+   neither (--tools), and a call to either is a lockdown failure. */
+test('grok is spawned without its web tools, and a web_fetch call ends the session', async () => {
   const w = world();
   try {
     w.driver.start();
     w.driver.send('WEB then read');
-    await until(() => turnEnds(w) === 1 && w.driver.status().state === 'ready');
-    assert.equal(w.driver.status().state, 'ready');
-    const calls = w.events.filter((e) => e.kind === 'tool' || e.kind === 'tool_result') as Array<{ kind: string; name: string; input?: unknown; ok?: boolean }>;
-    assert.deepEqual(calls.map((e) => `${e.kind} ${e.name}`), ['tool web_fetch', 'tool_result web_fetch', 'tool mcp__phosphor__wallet', 'tool_result mcp__phosphor__wallet']);
-    assert.deepEqual(calls[0].input, { url: 'https://near.ai' });
-    assert.equal(calls[1].ok, true);
-    const cards = w.events.filter((e) => e.kind === 'tool_data').map((e) => (e as { name: string }).name);
-    assert.deepEqual(cards, ['mcp__phosphor__wallet']);
-    // The chat's seat is marked, so what it proposes now waits for a click (src/web-read.ts), for
-    // as long as the page is in the session: the next message keeps it (a new session clearing it
-    // is tested in web-read-gate.test.ts, on a chat's fixed seat).
-    const seat = /seat=(\S+)$/.exec(w.argv()[0])?.[1] ?? '';
-    assert.equal(webReadBy(seat), true, 'a page read on Grok marks the chat');
-    w.driver.send('second');
-    await until(() => turnEnds(w) === 2 && w.driver.status().state === 'ready');
-    assert.equal(webReadBy(seat), true, 'the page is still in the session after the next message');
+    await until(() => w.driver.status().state === 'failed');
+    assert.match(w.argv()[0], /--tools search_tool,use_tool /, 'the turn was offered no web tool');
+    assert.equal(w.driver.status().state, 'failed');
+    const error = w.events.find((e) => e.kind === 'error') as { message: string } | undefined;
+    assert.ok(error?.message.includes('web_fetch'), String(error?.message));
+    assert.equal(w.events.some((e) => e.kind === 'tool_result'), false, 'nothing of the page reached the window');
   } finally {
     w.done();
   }
 });
 
-test('a web search the API ran inside the reply is allowed, and shown as one', async () => {
+test('a web search the API ran inside the reply ends the session', async () => {
   const w = world();
   try {
     w.driver.start();
     w.driver.send('SERVERWEB then read');
-    await until(() => turnEnds(w) === 1 && w.driver.status().state === 'ready');
-    assert.notEqual(w.driver.status().state, 'failed');
-    const calls = w.events.filter((e) => e.kind === 'tool' || e.kind === 'tool_result').map((e) => `${e.kind} ${(e as { name: string }).name}`);
-    assert.deepEqual(calls.slice(0, 2), ['tool web_search', 'tool_result web_search']);
+    await until(() => w.driver.status().state === 'failed');
+    const error = w.events.find((e) => e.kind === 'error') as { message: string } | undefined;
+    assert.ok(error?.message.includes('server web_search'), String(error?.message));
   } finally {
     w.done();
   }

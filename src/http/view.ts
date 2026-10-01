@@ -31,6 +31,8 @@ import type { JsonBody } from './respond.ts';
 import { chartDigest, clearDrawn, focusFollowsChart, linesHeld, plansOn, resolveIndicator, resolveViewPatch } from './chart.ts';
 import { LEAD_ONLY_VIEW_TOOLS, VIEW_TOOLS } from './context.ts';
 import type { Ctx } from './context.ts';
+import { tradeNotes } from './read/trade.ts';
+import { markIfCarried, webReadBy } from '../web-read.ts';
 
 type ViewArgs = {
   ctx: Ctx;
@@ -60,6 +62,8 @@ function tradeWrite(apply: (a: ViewArgs) => Outcome): ViewHandler {
     }
     ctx.sse.broadcastTrade();
     ctx.sse.broadcastChart();
+    // The answer carries the whole trade read, so the notes in it mark the seat it is handed to.
+    markIfCarried(rest.by, tradeNotes(ctx));
     sendJson(res, 200, { ok: true, notes: out.notes, trade: ctx.trade.read() });
   };
 }
@@ -418,20 +422,27 @@ const HANDLERS: Record<string, ViewHandler> = {
       fail(res, 400, `ten concepts is the most one session records; the next session can record more`);
       return;
     }
-    const out = recordLearned(ctx.cfg.dataDir, concept, new Date().toISOString().slice(0, 10));
+    /* Stamped like a note when this seat is marked (src/web-read.ts): a concept it records may be
+       a stranger's words, so it is kept out of what later agents are handed (src/profile). */
+    const marked = webReadBy(session);
+    const out = recordLearned(ctx.cfg.dataDir, concept, new Date().toISOString().slice(0, 10), { webRead: marked });
     if (!out.ok) {
       fail(res, 400, out.reason);
       return;
     }
     if (out.added) {
       counts.set(session, sofar + 1);
-      ctx.audit.append('tool_call', `profile: the agent recorded that the human knows ${concept}`, { concept });
+      ctx.audit.append('tool_call', `profile: the agent recorded that the human knows ${concept}`, { concept, ...(marked ? { webRead: true } : {}) });
     }
     sendJson(res, 200, {
       ok: true,
       added: out.added,
       count: out.count,
-      note: out.added ? `recorded; ${out.count} in the Knows list` : 'already recorded, nothing written',
+      note: !out.added
+        ? 'already recorded, nothing written'
+        : marked
+          ? `recorded; ${out.count} in the Knows list. This chat read text from outside Phosphor, so later chats are not handed this one`
+          : `recorded; ${out.count} in the Knows list`,
     });
     return;
   },
@@ -454,7 +465,7 @@ const HANDLERS: Record<string, ViewHandler> = {
     }
     return out;
   }),
-  trade_highlight: tradeWrite(({ ctx, args }) => ctx.trade.view.highlight(args, 'agent')),
+  trade_highlight: tradeWrite(({ ctx, args, by }) => ctx.trade.view.highlight(args, 'agent', by)),
   trade_overlay: tradeWrite(({ ctx, args }) => ctx.trade.view.setOverlay(args, 'agent')),
   trade_clear: tradeWrite(({ ctx, args }) => ctx.trade.view.clear(String(args.what ?? 'agent'))),
   // A plan as an idea: drawn on the chart and listed under Waiting with no authority. It answers
@@ -469,6 +480,7 @@ const HANDLERS: Record<string, ViewHandler> = {
     ctx.audit.append('tool_call', `plan: ${out.notes.join('; ')}`, { plan: out.row });
     ctx.sse.broadcastTrade();
     ctx.sse.broadcastChart();
+    markIfCarried(by, tradeNotes(ctx));
     sendJson(res, 200, { ok: true, notes: out.notes, plan: out.row, trade: ctx.trade.read() });
   },
 

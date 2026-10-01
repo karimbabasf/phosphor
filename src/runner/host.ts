@@ -39,6 +39,7 @@ import type { EndReason, PlanRow, PlanStore } from '../trade/plans.ts';
 import { DEFAULT_TAKER_FEE_BPS, planRisk, sameCoinRefusal } from '../trade/risk.ts';
 import { evaluate } from '../trade/watch.ts';
 import type { Bar, MarketView } from '../trade/watch.ts';
+import { webReadBy } from '../web-read.ts';
 import { isFromChild } from './protocol.ts';
 import type { AssetMeta, Command, FromChild, ToChild } from './protocol.ts';
 
@@ -963,15 +964,19 @@ export function createRunnerHost(deps: HostDeps) {
   const api = {
     // ---------- ideas: drawn, no authority ----------
 
+    // A note written while the drawing seat is marked carries the mark (PlanRow.webRead).
     draw(input: PlanInput, by: string | null): PlanRow {
       const at = nowIso(now());
       const plan: Plan = { id: nextId(), ...input };
-      const row: PlanRow = { ...plan, status: 'idea', hash: planHash(plan), cloids: {}, gen: 0, by, createdAt: at, updatedAt: at };
+      const stamp = input.note !== undefined && by !== null && webReadBy(by) ? { webRead: true as const } : {};
+      const row: PlanRow = { ...plan, status: 'idea', hash: planHash(plan), cloids: {}, gen: 0, by, ...stamp, createdAt: at, updatedAt: at };
       persist(row);
       return row;
     },
 
-    redraw(id: string, changes: Record<string, unknown>): { ok: true; row: PlanRow } | { ok: false; reason: string } {
+    // `by` is the seat making the change: a note it writes while marked is stamped, and a stamp
+    // already on the row stays with it until the note is gone.
+    redraw(id: string, changes: Record<string, unknown>, by: string | null = null): { ok: true; row: PlanRow } | { ok: false; reason: string } {
       const row = rows.get(id);
       if (row === undefined) return { ok: false, reason: `no plan ${id}` };
       if (row.status !== 'idea') return { ok: false, reason: `${id} is ${row.status}: an armed plan changes through propose_trade_change` };
@@ -985,6 +990,8 @@ export function createRunnerHost(deps: HostDeps) {
       if (!parsed.ok) return { ok: false, reason: parsed.errors.join('; ') };
       const plan: Plan = { id, ...parsed.plan };
       const next: PlanRow = { ...bookkeepingOf(row), ...plan, hash: planHash(plan) };
+      if (typeof changes.note === 'string' && by !== null && webReadBy(by)) next.webRead = true;
+      if (next.note === undefined) delete next.webRead;
       persist(next);
       return { ok: true, row: next };
     },

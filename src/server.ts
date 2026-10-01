@@ -41,6 +41,7 @@ import { createSseHub } from './http/sse.ts';
 import { credentialCheck, redactEvent } from './http/log-tail.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
+import { printsOf } from './http/read/web.ts';
 import { linesNamed } from './http/chart.ts';
 import { createEndedNotices } from './http/ended.ts';
 import type { EndedNotices } from './http/ended.ts';
@@ -184,6 +185,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         claudeBin: cfg.driver?.claudeBin,
         model: cfg.driver?.model,
         workerPrompt: (brief, label) => buildWorkerRole({ brief, label, root: PROJECT_DIR }),
+        // The query seal, as the chats have it: read when a worker searches, after ctx exists.
+        prints: () => printsOf(ctx),
         // The role, decided by the seat: this app spawned it, so it is an analyst whatever
         // its own process announces. See the note above createAgents in src/agents.ts.
         onSpawned: (session) => agents.markAnalyst(session),
@@ -214,6 +217,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     makeDriver: deps.makeDriver,
     onIdle: (chat) => ended?.flush(chat),
     onEvent: (chat, event) => ended?.event(chat, event),
+    // Read when a chat's agent searches the web, which is always after ctx below exists.
+    prints: () => printsOf(ctx),
   });
   ended = createEndedNotices({
     store,

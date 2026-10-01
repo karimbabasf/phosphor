@@ -189,10 +189,16 @@ useIdentityValue(handshake[1] ?? '');
    Mode 0600 keeps out another account on this Mac and nothing else. The attacker http/auth.ts
    names, a process this same user owns, reads it and takes a seat; what that costs it is a line
    in the audit log, a row on the roster and the presence light. The seat is not the wall. The
-   human click is, and no seat reaches one. src/mcp.ts says the same thing where it reads this. */
+   human click is, and no seat reaches one. src/mcp.ts says the same thing where it reads this.
+   TWO VALUES SINCE 2026-10-01 (review gap 4). The shell's goes to the agents this app spawns and
+   nowhere else; the file gets one minted here. A seat taken with the file's is OUTSIDE
+   (src/agents.ts): every move it asks for waits for the person's click until they allow that
+   agent in the window, so a process that read the file gets a card the person answers, never a
+   move that runs on its own. */
 const seatSecret = (handshake[2] ?? '').length >= 32 ? (handshake[2] as string) : mintToken();
+const handSeatSecret = mintToken();
 useSeatSecret(seatSecret);
-atomicWrite(seatSecretPath(cfg.dataDir), `${seatSecret}\n`, { mode: 0o600 });
+atomicWrite(seatSecretPath(cfg.dataDir), `${handSeatSecret}\n`, { mode: 0o600 });
 
 /* The enclave transport key, line 4, and the relay built over it. Absent (a bare `npm run app`,
    an older shell) means a relay with no key, which answers every ask with no_relay: the wallet
@@ -215,7 +221,7 @@ if (transportKey !== null) {
   });
 }
 
-const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret });
+const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret, handSecret: handSeatSecret });
 
 /* The lock's clock, and the signing sessions armed rules hold, in one object because they are
    two halves of one question: how long may this process keep a key. It is built here rather

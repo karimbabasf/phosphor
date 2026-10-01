@@ -44,6 +44,11 @@ export type PlanRow = Plan & {
   exitSz?: number;
   holds?: { condition: string; holds: boolean }[];
   by?: string | null;
+  /* The note was written by an agent whose seat had read a stranger's text (src/web-read.ts), the
+     way a chart label is stamped: a note is up to 120 characters of whatever that agent read, kept
+     in plans.json past the chat, and a seat the trade read later hands it to is marked as if it had
+     read the page itself (src/http/read/trade.ts). */
+  webRead?: true;
   createdAt: string;
   updatedAt: string;
 };

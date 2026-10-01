@@ -80,10 +80,11 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `proposal_status` | Where one money move is right now, as the one object the card draws (`src/proposals/view.ts`): the stage and its label, what is being waited on, seconds elapsed and since the last change, the typical duration, the amounts and both pockets, every transaction hash with its leg, and an error code with a sentence |
 | `proposals` | Recent money moves, newest first, each the same object; `kind` filters, `limit` up to 50. Lead only |
 | `diagnose` | One money move in full: its view, its own audit lines, and what the router and the venue say about it. Lead only |
-| `research` | Crypto news. The APP fetches headlines and summaries from four fixed crypto newsrooms and hands back text; the agent never gets a URL it can point anywhere. Anything else is the chat agent's own web search and page reading, which are not Phosphor tools and mark its session (`src/web-read.ts`: every move it proposes after one waits for a click) |
+| `research` | Crypto news. The APP fetches headlines and summaries from four fixed crypto newsrooms and hands back text; the agent never gets a URL it can point anywhere. Anything else is the chat agent's own web search and `web_read`. A read of it marks the session (`src/web-read.ts`: every move it proposes after one waits for a click) |
 | `chain_address` | What an address holds and has done on one network (any of the 36 chains the deposit card lists, from `ethereum` to `aleo`): native balance, transaction count where the chain gives one, contract or not (an EIP-7702 delegation reads as an account), last activity where the chain exposes it, token balances where the same answer carries them, an explorer link. The address has to pass its network's decoder first; a wrong checksum is refused, not repaired. See "Chain lookups" below |
 | `chain_transactions` | The most recent transactions of an address on one network, newest first, at most 25: hash, time, from, to, value, status, method name. Raw inputs never come back. Only on the networks read through an indexer or a history call (ethereum, base, arbitrum, solana, fogo, near, bitcoin, litecoin) |
 | `chain_transaction` | One transaction by hash: the same fields plus fee, block and confirmations |
+| `web_read` | One web page, read by the APP (`src/web-page.ts`) and only at an address that arrived from outside the model: a hit a web search returned this chat (its `url` field, never the query or commentary the answer's text repeats), or the person's own message, word for word, or a folder above one (`src/web-gate.ts`). https, the standard port, a public name whose every address is public at connect, no address or figure of this wallet in it, 12 pages a session and 3 a site. The text comes back stripped and quoted; `look_for` keeps the lines that name it. Marks the session |
 | `intents_activity` | What an account has moved inside NEAR Intents, from NearBlocks: `MINT` rows are deposits in, `BURN` rows withdrawals out, `TRANSFER` rows swap legs and sends, each with token, signed amount and hash. No account means this app's own, and `own` says which. When NearBlocks is down it falls back to the verifier's own views and answers balances only, marked `partial: true` |
 | `swap_assets` | What can be swapped inside the balance, coins held first: symbol, name, network, `assetId`, decimals, price, the exact amount held, and `liquidity` (yes, no or unknown: whether anyone offers a price now). `query` narrows it. Files nothing (`src/http/read/swap.ts`) |
 | `swap_quote` | What a swap would get right now: amount in, expected amount out, the minimum, the fee in dollars and the time it takes. `chain` and `toChain` only when a network was named; otherwise the app picks each coin, the one held first. `sentence` says why when there is no quote, and `candidates` means a name fits several coins. Files nothing |
@@ -658,7 +659,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
 
 A second agent role, shipped opt-in under [operator/](operator/). The session that drives phosphor
 does not also develop it: `operator/settings.json` denies every built-in file writer and command
-runner, and the key file, while allowing `Read` and every `mcp__phosphor__*` tool, so the whole
+runner, the task list tools (an on-disk list any program can write, read back into the model's
+context), and the key file, while allowing `Read` and every `mcp__phosphor__*` tool, so the whole
 tool surface still works.
 
     ./operator/phosphor-operator

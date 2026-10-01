@@ -12,7 +12,7 @@ import { buildCtx, errText, mergePatch, nowIso, persist, totalUsdOf, enclaveGate
 import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
 import { buildWallet } from '../wallet.ts';
-import { WEB_READ_REASON } from '../web-read.ts';
+import { OUTSIDE_REASON, WEB_READ_REASON } from '../web-read.ts';
 import { APP_TURN_REASON } from '../app-turn.ts';
 import type { PCtx } from './lifecycle.ts';
 import { TERMINAL, deadlineAtOf, stageOf } from './view.ts';
@@ -48,6 +48,12 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
         reasons: [...p.verdict.reasons, 'Money leaving for another address always needs a human click, whatever the size.'],
       },
     };
+  }
+  // And any move an agent the app did not spawn asked for before the person allowed it in the
+  // window: it reads with its own tools, where this app cannot look (src/agents.ts). Ahead of the
+  // web-read check, which such a seat also trips, because this reason says what to do about it.
+  if (p.verdict.outcome === 'allow' && p.outside === true) {
+    p = { ...p, verdict: { outcome: 'needs_approval', reasons: [...p.verdict.reasons, OUTSIDE_REASON] } };
   }
   // And any move the chat's agent asked for after it read the web in that session: a page can
   // talk an agent into a move. The row's own stamp, taken when it was asked for (src/web-read.ts).

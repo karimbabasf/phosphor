@@ -55,7 +55,9 @@ Hermes or Grok session on this Mac, not just one folder, and moves under your th
 their own up to your daily auto ceiling (five times the threshold by default, $500 on a fresh
 install; see [Policy](policy.md)). An entry that already exists is removed and written again, so it
 always names the paths of the app you have now. If the registration cannot be written, the tile
-says so and shows the line to paste into your terminal, with Copy.
+says so and shows the line to paste into your terminal, with Copy. Only the app on its own data
+folder writes a registration, at a pick or at boot: a copy started on any other folder (a
+developer run, a test, a check) leaves your agent's settings alone and shows the line instead.
 
 Another agent gets the stdio command instead, with the environment in front of it:
 
@@ -74,15 +76,17 @@ Vault tab, then press Start your agent in the chat. The chat runs the agent you 
 other: if your pick runs in your terminal, the chat says so instead of starting something else.
 The session it starts is locked down, and the lockdown is not a setting you can loosen:
 
-- It sees Phosphor's own tools, plus the vendor's own web search and page reading, and nothing
-  else. No shell and no file access.
-- Once it has searched the web or read a page, every move it proposes in that chat waits for your
-  click, whatever the size, until the chat starts a new session. See
+- It sees Phosphor's own tools, plus Claude's own web search, and nothing else. No shell, no file
+  access, and no page reader of the vendor's: pages come through Phosphor's `web_read`, which
+  reads only an address a search in that chat returned or you gave.
+- Once it has searched the web, read a page, or read a stranger's words through Phosphor (news, a
+  token name on a chain), every move it proposes in that chat waits for your click, whatever the
+  size, until the chat starts a new session. See
   [Security](security.md#a-web-page-is-not-an-instruction).
 - It runs with none of your own settings, hooks, plugins or instruction files (such as
   `CLAUDE.md`), and loads no memory the app did not write.
 - It announces its tool list when it starts. If that list holds anything beyond Phosphor's tools
-  and the two web tools, the app refuses to drive and says so. Grok also reads back everything it
+  (and, for Claude, its web search), the app refuses to drive and says so. Grok also reads back everything it
   would load before each turn, and a turn that would load anything Phosphor did not put there does
   not run.
 - It has no way to approve its own proposals. Approval is your click in the window.
@@ -126,6 +130,18 @@ web and read pages. The Vault tab says the same in one line: "It sees your balan
 never your keys or your phrase."
 
 The full list is in [Tools](tools.md).
+
+## The window asks once
+
+An agent you start in your terminal or in another app is one Phosphor did not start, and it
+attaches with a secret any program running as you could read. So when it first attaches, the
+window shows a card: "Allow this agent?", with the name the agent gave itself and the time it
+arrived. Until you allow it, it can read your wallet and every move it asks for waits for your
+OK, whatever the size. Allow lets its moves run under your rules, the way the chat's own agent's
+do; Not now keeps them waiting and stops the asking. The answer holds for that connection only:
+restart the agent and the window asks again. Phosphor cannot see what an agent outside it reads
+with its own tools (its own web search or page reader), so allow only an agent you started
+yourself. The chat's own agent and the workers it starts never ask: Phosphor started them.
 
 ## What the agent can never do
 

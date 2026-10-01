@@ -27,17 +27,44 @@ import { marketReads } from './read/market.ts';
 import { swapReads } from './read/swap.ts';
 import { tradeReads } from './read/trade.ts';
 import { walletReads } from './read/wallet.ts';
+import { webReads } from './read/web.ts';
 import { handlePropose } from './propose.ts';
 import { handleView } from './view.ts';
 import { handleSetViewMode } from './mutation.ts';
-import { LEAD_ONLY_READ_TOOLS, READ_TOOLS } from './context.ts';
+import { LEAD_ONLY_READ_TOOLS, READ_TOOLS, STRANGER_TEXT_READS } from './context.ts';
 import type { Ctx, ReadTable } from './context.ts';
+import { markWebRead } from '../web-read.ts';
 
-/* Every read tool, in one table assembled from the seven domain files under http/read. A table
+/* A stranger's text marks the seat it is handed to (STRANGER_TEXT_READS, audit finding 5). The
+   mark is set inside writeHead, so it is in place before the first byte of the answer leaves: a
+   swap the agent asks for the instant it has read a token name is already judged marked. Only a
+   200 marks. A 400 is a lookup refused at its shape, before any host was asked, and carries no
+   stranger's word. */
+export function markStrangerReads(table: ReadTable): ReadTable {
+  const out: ReadTable = { ...table };
+  for (const tool of STRANGER_TEXT_READS) {
+    const handler = table[tool];
+    if (handler === undefined) continue;
+    out[tool] = (ctx, body, args, res) => {
+      const seat = typeof body.session === 'string' ? body.session : '';
+      if (seat !== '') {
+        const writeHead = res.writeHead.bind(res);
+        res.writeHead = ((...head: Parameters<typeof writeHead>) => {
+          if (head[0] === 200) markWebRead(seat);
+          return writeHead(...head);
+        }) as typeof res.writeHead;
+      }
+      return handler(ctx, body, args, res);
+    };
+  }
+  return out;
+}
+
+/* Every read tool, in one table assembled from the eight domain files under http/read. A table
    rather than the if-chain it replaces: a chain answers "unknown read tool" for a tool it then
    lists as known the moment a branch above it falls through, which is exactly the break the
    view chain carried for a while (see the note in view.ts). */
-const READS: ReadTable = {
+const READS: ReadTable = markStrangerReads({
   ...walletReads,
   ...marketReads,
   ...chartReads,
@@ -45,7 +72,8 @@ const READS: ReadTable = {
   ...tradeReads,
   ...chainReads,
   ...swapReads,
-};
+  ...webReads,
+});
 
 // The table's own keys, for the test that holds READ_TOOLS and this in step. A tool listed in
 // the refusal message and missing from the table is a tool an agent is told it has and cannot
@@ -86,8 +114,21 @@ function firstRefusal(seen: Set<string>, key: string): boolean {
   return true;
 }
 
-function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerResponse, revoked = false): void {
+function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerResponse, revoked = false, foreign = false): void {
   const session = oneLine(body.session ?? 'unnamed-session', 80);
+  if (foreign) {
+    // A call with the file secret on a seat it does not hold: the app's own agent's, or another
+    // hand-started proxy's. One line per session, like a full roster.
+    if (firstRefusal(ctx.seats, `foreign:${session}`)) {
+      ctx.audit.append('agent_rejected', 'a call posted as a seat it does not hold and was refused', {
+        op: String(body.op ?? ''),
+        session,
+        client: body.client === undefined ? undefined : oneLine(body.client, 80),
+      });
+    }
+    fail(res, 403, error, { seat: 'foreign' });
+    return;
+  }
   if (revoked) {
     // A replaced agent is not a second agent that showed up: the human took the seat off it
     // on purpose. It gets its own marker so the proxy exits instead of reporting a busy
@@ -186,8 +227,9 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
      which log_tail hands to every agent, a worker included, and GET /api/log hands to any local
      process, so the credential the door checks below was open to anyone who read the log. The
      arguments, the session and the client name are the record; the secret was never part of it.
-     A token is stripped for the same reason, in case a caller ever sends one here. */
-  const { secret: _secret, token: _token, ...logged } = body;
+     A token is stripped for the same reason, in case a caller ever sends one here, and so is the
+     key a hand-started proxy binds its seat with (src/agents.ts). */
+  const { secret: _secret, token: _token, key: _key, ...logged } = body;
 
   /* THE SEAT SECRET, ON EVERY OP, FROM EVERY SESSION. Origin above is a header any local process
      sets, and this door is where a propose at or under the click threshold executes with no human
@@ -241,7 +283,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     const shown = rosterShown(ctx);
     const claim = ctx.agents.claim(body);
     if (!claim.ok) {
-      rejectSeat(ctx, claim.error, body, res, claim.revoked === true);
+      rejectSeat(ctx, claim.error, body, res, claim.revoked === true, claim.foreign === true);
       return;
     }
     if (claim.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
@@ -281,7 +323,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   // connected, and something has to be attached for a tool call to exist.
   const seat = ctx.agents.check(body);
   if (!seat.ok) {
-    rejectSeat(ctx, seat.error, body, res, seat.revoked === true);
+    rejectSeat(ctx, seat.error, body, res, seat.revoked === true, seat.foreign === true);
     return;
   }
   if (seat.edge) {

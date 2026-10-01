@@ -1264,7 +1264,7 @@
         return;
       }
       dom.setAttr(row, 'data-idle', null);
-      dom.setText(kids[0], client.name + ', ' + (client.role === 'analyst' ? 'read only' : 'can ask'));
+      dom.setText(kids[0], client.name + ', ' + (client.role === 'analyst' ? 'read only' : client.waits ? 'its moves wait for your OK' : 'can ask'));
       dom.setText(kids[1], String(client.calls || 0) + ' calls');
     });
   }
@@ -2098,7 +2098,9 @@
       next.push({
         name: String(m.label || m.client || m.session || 'an agent'),
         role: String(m.role || ''),
-        calls: typeof m.ops === 'number' ? m.ops : 0
+        calls: typeof m.ops === 'number' ? m.ops : 0,
+        // Started outside Phosphor and not allowed yet (ui/screens/agentask.js asks).
+        waits: m.origin === 'outside' && m.allowed !== true
       });
     }
     roster = next;

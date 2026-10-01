@@ -24,9 +24,9 @@ test('assertSurface accepts phosphor tools and nothing else', () => {
 
 test('assertSurface names every built-in the lockdown missed', () => {
   // The real 2.1.237 surface that operator/settings.json was letting through on 2026-08-19, less
-  // the two web tools the chat holds on purpose since 2026-09-23.
+  // the web search the chat holds on purpose since 2026-09-23. WebFetch is off since 2026-10-01.
   const leaked = ['CronCreate', 'DesignSync', 'Glob', 'Grep', 'Read', 'RemoteTrigger', 'SendMessage'];
-  assert.deepEqual(assertSurface([...leaked, 'WebFetch', 'WebSearch', 'mcp__phosphor__balance']), leaked);
+  assert.deepEqual(assertSurface([...leaked, 'WebFetch', 'WebSearch', 'mcp__phosphor__balance']), [...leaked, 'WebFetch']);
 });
 
 test('assertSurface refuses a session that announced no tool list at all', () => {

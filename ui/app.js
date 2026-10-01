@@ -45,6 +45,7 @@
     window.PhosphorTerms.boot();
     window.PhosphorLock.boot();
     window.PhosphorShell.boot();
+    window.PhosphorAgentAsk.boot();
     window.PhosphorAgent.start();
   }
 

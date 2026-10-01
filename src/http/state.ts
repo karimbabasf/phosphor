@@ -217,6 +217,12 @@ export function buildState(ctx: Ctx): unknown {
         parent: m.parent,
         since: m.since,
         ops: m.ops,
+        // Who started it, and the person's answer for one started outside Phosphor: the window's
+        // card asks about an outside agent that is askable, not allowed and not put off.
+        origin: m.origin,
+        allowed: m.allowed,
+        later: m.later,
+        askable: m.askable,
       })),
       capacity: ctx.agents.capacity(),
       workers: (ctx.crewIfAny()?.list() ?? []).map((j) => ({ id: j.id, label: j.label, state: j.state })),

@@ -15,9 +15,14 @@ this directory, including yours, and would take Edit, Write and Bash off your ow
     ./operator/phosphor-operator
 
 From any directory, and through a symlink on PATH: the script resolves the repo from its own real
-path. It loads `operator/settings.json`, connects `src/mcp.ts` as the only MCP server
-(`--strict-mcp-config`, so no other server on the machine joins the session), and makes the repo
-the working directory. Arguments pass through.
+path. It loads `operator/settings.json`, names the built-in tools in full with `--tools Read`, connects
+`src/mcp.ts` as the only MCP server (`--strict-mcp-config`, so no other server on the machine joins
+the session), and makes the repo the working directory. Arguments pass through.
+
+`--tools Read` is the wall, as `--tools WebSearch` is for the app's own driver: the session holds
+`Read` and Phosphor's MCP tools and nothing else, whatever a later Claude Code release adds or an
+account turns on. The deny list below is the second wall, and what `tests/lockdown.test.ts` reads
+when it launches the profile on its own.
 
 ## What it denies
 
@@ -31,6 +36,15 @@ every command runner, Monitor included because it takes the Bash rules. `BashOut
 those two tools took no path at all, so one `Grep(pattern: "0x[0-9a-f]{64}", path: "~/.phosphor")`
 put the key in the transcript, and the transcript leaves the machine on the next turn. A search
 tool is a read tool that answers about files it never has to name.
+
+`TaskCreate`, `TaskGet`, `TaskList` and `TaskUpdate`, the task list Claude Code turns on per
+account: 2.1.284 to 2.1.287 grant them on this Mac's login and not on a fresh one, so a test run
+under another `HOME` never sees them. They spawn nothing and run nothing. The list lives on disk under
+the Claude config directory, keyed by the session, and Claude Code pastes its entries into the
+model's context on its own ("Here are the existing tasks"). Any program running as you can write
+that list, so it puts words in front of the agent that no Phosphor read ever marked, and the agent
+can write anything there for another program to pick up. `TodoWrite`, their older form, goes with
+them.
 
 `Read` stays, so the operator can read the code it drives, and it stays scoped: the key file is
 denied by path. Every `mcp__phosphor__*` tool is allowed outright and runs without a prompt, so

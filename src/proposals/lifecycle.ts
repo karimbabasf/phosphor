@@ -419,7 +419,7 @@ export function newProposal(
   draft: WriteDraft,
   simulation: SimulationResult | null,
   verdict: Verdict,
-  origin?: { clientKey?: ClientKey; by?: string | null; webRead?: boolean; appTurn?: boolean },
+  origin?: { clientKey?: ClientKey; by?: string | null; webRead?: boolean; appTurn?: boolean; outside?: boolean },
 ): Proposal {
   const clientKey = origin?.clientKey;
   const by = typeof origin?.by === 'string' && origin.by !== '' ? origin.by : undefined;
@@ -440,6 +440,8 @@ export function newProposal(
     ...(origin?.webRead === true ? { webRead: true as const } : {}),
     // And the app-turn stamp, taken the same way (src/app-turn.ts).
     ...(origin?.appTurn === true ? { appTurn: true as const } : {}),
+    // And the outside stamp: a seat the app did not spawn and the person has not allowed.
+    ...(origin?.outside === true ? { outside: true as const } : {}),
   };
 }
 

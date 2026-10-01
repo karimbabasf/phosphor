@@ -35,11 +35,15 @@ The agent's door into the app is guarded by a secret the app writes into its own
 every start. A web page cannot read that file. A program already running as you on this Mac can,
 and once it has, it can do what your agent can do: read your balances and propose moves.
 
-What it means: a move under your click threshold runs without a click. That is the one money
-exposure such a program has, and your rules set its size. If a hostile program running as you is
-something you worry about, lower the threshold in the Vault tab, or ask your assistant to set it
-to zero: at zero every move waits for you. Nothing on this Mac can approve a move: the click
-needs the window token, which no route serves and no program can fetch.
+What it means: such a program takes a seat as an agent started outside Phosphor, so the window
+asks you whether to allow it, and until you do, every move it proposes waits for your click. Say
+Not now to anything you did not start. What stays open: the agents Phosphor starts carry a
+second secret in their environment, and a program running as you can read a running agent's
+environment and pose as it; then a move under your click threshold runs without a click. Your
+rules set its size. If a hostile program running as you is something you worry about, lower the
+threshold in the Vault tab, or ask your assistant to set it to zero: at zero every move waits for
+you. Nothing on this Mac can approve a move: the click needs the window token, which no route
+serves and no program can fetch.
 
 What closes it: the agent's door moving onto a socket the operating system can identify the
 caller of. Until then the seat secret is the credential in its place.

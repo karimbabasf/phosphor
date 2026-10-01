@@ -372,7 +372,7 @@ pending proposal, which the audit then recorded as a human's click.
 |---|---|---|
 | 1 | the **window token**, checked on every decision route | the shell, the backend, and the one webview it is injected into |
 | 2 | the **boot nonce**, echoed in the `x-phosphor` response header | anyone who can reach the port; it is deliberately public |
-| 3 | the **seat secret**, which every op on `/api/mcp` has to carry | the backend, the agents it spawns (through `childEnv`), and a proxy a human started by hand, which reads it off `agent.secret` in the data directory |
+| 3 | the **seat secret** for the agents the app spawns, which every op on `/api/mcp` from them carries | the backend and the agents it spawns (through `childEnv`); a proxy a human started by hand carries a second secret the backend mints and writes to `agent.secret` in the data directory |
 
 **The window token is never served.** `GET /api/session` used to hand it to any local caller and is
 deleted; it appears in no route table (`src/http/router.ts`), in no `/api/state` payload, in no
@@ -394,8 +394,14 @@ and nothing is waiting on it.
 `/api/mcp`, `hello` and `bye` included, that does not carry this boot's secret, before the roster
 seats the session and before any handler runs; the refusal is a 401 that names the file. An agent
 Phosphor spawned gets it through `childEnv` as `PHOSPHOR_SEAT`. A proxy a human started by hand
-(`npm run mcp`, the `claude mcp` registration) reads it off `agent.secret` in the data directory,
-which `src/main.ts` writes before the port opens, owner-readable only, one line, new each boot;
+(`npm run mcp`, the `claude mcp` registration) reads a different one off `agent.secret` in the data
+directory, which `src/main.ts` mints and writes before the port opens, owner-readable only, one
+line, new each boot. A seat taken with the file's secret is OUTSIDE (`src/agents.ts`): it starts
+with the web-read mark, so every move it proposes waits for a click with its own reason, until
+the person allows it on the window's card (`POST /api/agents/answer`, window token). It is also
+bound to a key its proxy mints and holds in memory (`src/mcp.ts` SEAT_KEY), so no other process
+holding the file can post as it, and a call with the file's secret on a seat the app spawned is
+refused with `seat: 'foreign'`;
 `src/mcp.ts` reads the file on every call, so a proxy that outlives an app restart picks the new
 value up on its next call. Behind the door `src/agents.ts` still holds four of the six roster seats
 for sessions it recognises, which is now every session that got in.

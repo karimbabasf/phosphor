@@ -23,7 +23,7 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createMarketStore } from '../../src/market/store.ts';
 import type { LiveSocket } from '../../src/market/live.ts';
 import type { Catalog, MarketRef, Provider } from '../../src/market/catalog.ts';
-import type { AppConfig, Candle, LedgerSnapshot, ViewMode } from '../../src/types.ts';
+import type { AppConfig, Candle, LedgerSnapshot, ProposalService, ViewMode } from '../../src/types.ts';
 import { stubView } from './view.ts';
 
 const COINS = ['BTC', 'ETH', 'SOL'];
@@ -117,6 +117,10 @@ export async function bootChartServer(
     dataDir?: string;
     // The plans on the trading payload from the start, the way a restart finds plans.json.
     plans?: unknown[];
+    // A real proposal service, for a test about where a move lands; the stub otherwise.
+    proposals?: ProposalService;
+    // The file secret a hand-started proxy reads (src/main.ts). Absent, there is none.
+    handSeat?: string;
   } = {},
 ): Promise<ChartHarness> {
   const dataDir = opts.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chart-'));
@@ -163,7 +167,7 @@ export async function bootChartServer(
      below sends it for a test that is not about the door; a test that is posts through `post`
      and chooses what to carry. */
   const seat = 's'.repeat(64);
-  const agents = createAgents(Date.now, MAX_AGENTS, { secret: seat });
+  const agents = createAgents(Date.now, MAX_AGENTS, { secret: seat, ...(opts.handSeat === undefined ? {} : { handSecret: opts.handSeat }) });
   agents.claim({ session: 'unnamed-session', client: 'test' });
 
   const server = createServer({
@@ -174,7 +178,7 @@ export async function bootChartServer(
     riskRows: [],
     ledger: { snapshot, intents: () => undefined, refresh: async () => snapshot(), hyperliquid: () => undefined },
     market,
-    proposals: {
+    proposals: opts.proposals ?? {
       proposePolicyChange: async () => { throw new Error('unused'); },
       proposeSwap: async () => { throw new Error('unused'); },
       proposeHlDeposit: async () => { throw new Error('unused'); },

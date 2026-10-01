@@ -13,16 +13,19 @@
 // the app did not expect. Every tool call on the stream is read the same way: a real tool outside the
 // allowlist ends the session too, and a name no tool has is left for the CLI to turn away.
 //
-// THE WEB, SINCE 2026-09-23. The surface is Phosphor's tools plus the vendor's own web search and
-// page reading, on Karim's decision: the agent has to be able to research anything, not only
-// crypto. That was refused here for a reason that still holds, and it is stated rather than
-// forgotten: an agent that reads balances and addresses and can fetch any URL can be talked by a
-// hostile page into putting them in one. What it cannot do is move money to anyone: a send and a
-// withdrawal wait for the person's click at any size (src/proposals/execute.ts land()), and no
-// tool takes an address but propose_send. Nor can a page talk it into a move of the person's own
-// money: after a web call, every move it asks for waits for the click for the rest of that agent
-// session (src/web-read.ts). The persona tells the agent a page is data and never to put their
-// figures in a search or a URL; that is prose, and the three walls above are code.
+// THE WEB, SINCE 2026-09-23. The surface is Phosphor's tools plus the vendor's own web search, on
+// Karim's decision: the agent has to be able to research anything, not only crypto. It was refused
+// here for a reason that still holds: an agent that reads balances and addresses and can fetch any
+// URL can be talked by a hostile page into putting them in one (audit finding 3). So since
+// 2026-10-01 it cannot fetch any URL: the vendors' page readers are off, and a page is read by
+// mcp__phosphor__web_read, which the app runs only at an address a search result in this session
+// or the person's own message carried (src/web-gate.ts). This file feeds that gate: every search
+// result on the stream is recorded for the seat, and a search whose query carries the wallet's own
+// address or figures closes page reading for the rest of the session. What it cannot do either is
+// move money to anyone: a send and a withdrawal wait for the person's click at any size
+// (src/proposals/execute.ts land()), and no tool takes an address but propose_send. Nor can a page
+// talk it into a move of the person's own money: after a web call, every move it asks for waits for
+// the click for the rest of that agent session (src/web-read.ts).
 //
 // That check is the point. A deny list is a claim about a tool surface that changes with every
 // release, so a deny list alone goes stale silently and the failure is invisible. Written on
@@ -44,6 +47,8 @@ import path from 'node:path';
 import { claude } from './providers/claude.ts';
 import { userAuthFile } from './providers/grok.ts';
 import type { Provider, SpawnSpec } from './providers/types.ts';
+import { clearWebGate, NO_PRINTS, printHit, recordSearchResult, sealWebGate } from './web-gate.ts';
+import type { WalletPrints } from './web-gate.ts';
 import { clearWebRead, markWebRead } from './web-read.ts';
 
 export { assertSurface, buildArgv, resolveClaudeBin } from './providers/claude.ts';
@@ -248,6 +253,10 @@ export type DriverOptions = {
   settingsPath?: string;
   // Which model drives. Left unset, the vendor's own default. See the note in src/http/chats.ts.
   model?: string;
+  /* This wallet's own addresses and figures (src/http/read/web.ts printsOf), read when the agent
+     searches the web: a query that carries one closes page reading for the session. Unset, no
+     query is checked, which is a worker and every test that does not ask. */
+  prints?: () => WalletPrints;
   onEvent: (event: DriverEvent) => void;
 };
 
@@ -697,6 +706,15 @@ export function createDriver(opts: DriverOptions) {
           const what = (block.input as { query?: unknown; url?: unknown } | null) ?? {};
           const target = typeof what.query === 'string' ? what.query : typeof what.url === 'string' ? what.url : '';
           opts.onEvent({ kind: 'debug', message: `agent: web ${call.name} ${JSON.stringify(target.slice(0, 200))}` });
+          /* A search that carries this wallet's own address or figures has already gone to the
+             vendor's search; the read that would follow it is where an attacker who owns pages in
+             the results learns which one was picked. So no page is read for the rest of the
+             session (src/web-gate.ts), and the developer's log says why. */
+          const prints = opts.prints?.() ?? NO_PRINTS;
+          if (target !== '' && printHit(JSON.stringify(block.input ?? {}), prints) !== null) {
+            sealWebGate(seat, "a web search in this chat carried the wallet's own address or figures, so no page is read for the rest of it. A new chat starts clean.");
+            opts.onEvent({ kind: 'debug', message: `agent: web ${call.name} carried the wallet's own data; page reading is closed for this session` });
+          }
         }
         const input = call.kind === 'web' ? block.input : call.input;
         if (id !== '') calls.set(id, { name: call.name, input, meta: false });
@@ -731,6 +749,15 @@ export function createDriver(opts: DriverOptions) {
       const call = calls.get(id);
       if (call !== undefined) calls.delete(id);
       if (call?.meta === true) continue;
+      /* A search's answer is where a page's address may come from. Only the copy the stream carries
+         whole (tool_use_result) is read, and only when it answers this call's own query: the text in
+         the block opens with that query word for word, so an address in it may be one the agent
+         wrote (src/web-gate.ts recordSearchResult). No copy, or another query's, records nothing. */
+      if (call?.name === 'web_search' && block.is_error !== true) {
+        const whole = event.tool_use_result as { query?: unknown } | null | undefined;
+        const asked = (call.input as { query?: unknown } | null | undefined)?.query;
+        if (whole !== null && typeof whole === 'object' && typeof asked === 'string' && whole.query === asked) recordSearchResult(seat, whole);
+      }
       const name = call?.name ?? (typeof block.name === 'string' ? block.name : 'tool');
       const content = provider.result(block.content);
       const ok = block.is_error !== true && content !== null;
@@ -1008,8 +1035,10 @@ export function createDriver(opts: DriverOptions) {
     sessionId = opts.session ?? randomUUID();
     seat = sessionId;
     session = seat;
-    // A new agent session holds no page: its context starts empty (src/web-read.ts).
+    // A new agent session holds no page and no search result: its context starts empty
+    // (src/web-read.ts, src/web-gate.ts).
     clearWebRead(seat);
+    clearWebGate(seat);
     resumable = false;
     answered = false;
     owed = 0;

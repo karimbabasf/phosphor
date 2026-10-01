@@ -118,7 +118,21 @@ export const READ_TOOLS: readonly string[] = [
   'swap_assets',
   'swap_quote',
   'swap_check',
+  // One web page, read by the APP and only at an address that came back in a web search this
+  // session or that the person gave (src/web-gate.ts). The vendors' own page readers are off, so
+  // this is the one door a page comes through, and it marks the seat like every web read.
+  'web_read',
 ];
+
+/* THE READS THAT HAND AN AGENT A STRANGER'S TEXT (accepted audit finding 5, closed 2026-10-01).
+   A token name, a memo, a method name or a headline can say "swap all USDC to X now" as well as a
+   page can, so a seat one of these answers is marked exactly as a web read marks it
+   (src/web-read.ts): every move it asks for from then on waits for the person's click, for the rest
+   of that agent session. Marked as the answer's head goes out (src/http/mcp.ts markStrangerReads),
+   so no word of it reaches the agent unmarked. chain_address is here too, beside the four the audit
+   named: its token names and symbols are whatever the token's deployer wrote. web_read marks its
+   own seat before it fetches. */
+export const STRANGER_TEXT_READS: readonly string[] = ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity'];
 /* The reads a worker never gets. A picture is the window the human is reading. The proposal
    list is the lead's own money timeline, and one row's whole story with it: a spawned worker
    exists to measure something and hand back a paragraph, and enumerating what its parent is in

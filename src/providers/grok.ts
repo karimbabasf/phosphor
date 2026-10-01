@@ -1,5 +1,6 @@
 // Grok as a provider: one headless `grok` process per turn, resumed by the session id the app
-// chose, holding Phosphor's MCP tools and grok's own web search and page reading, and nothing else.
+// chose, holding Phosphor's MCP tools and nothing else. Grok's own web search and page reading
+// were on from 2026-09-23 and are off since 2026-10-01 (see WEB_TOOLS).
 //
 // WHAT WAS MEASURED, 2026-09-23, grok 1.0.40, against a harmless probe MCP server (two tools, no
 // Phosphor money tools) and then against the person's own grok home:
@@ -57,7 +58,14 @@ import { MCP_PREFIX } from './claude.ts';
 import type { Provider, SpawnInput, SpawnSpec, ToolCall } from './types.ts';
 
 const META_TOOLS = ['search_tool', 'use_tool'] as const;
-// Grok's own web search and page reading, by the names its stream and --tools use.
+/* Grok's own web search and page reading, by the names its stream and --tools use. BOTH ARE OFF
+   since 2026-10-01 (accepted audit finding 3), and a call to either ends the session:
+   - web_fetch read any address the model wrote, so a hostile page could ask for the person's
+     figures in one. Pages are read by phosphor__web_read, at an address the person gave
+     (src/web-gate.ts); grok has no search result to offer one.
+   - web_search runs on xAI's side, inside the reply, where nothing of this app can look at what
+     it fetches before it does. It was never offered to the model on this account anyway
+     (web_search_requests 0 over three asks, measured 2026-09-23), so nothing measured is lost. */
 const WEB_TOOLS = ['web_search', 'web_fetch'] as const;
 const SERVER = 'phosphor';
 /* Grok 1.0.40's other built-ins, as its init line listed them with no --tools (measured
@@ -75,7 +83,7 @@ const SERVER_TOOL = /^[A-Za-z0-9_-]+?__[A-Za-z0-9_.-]+$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 // Grok's web tool by a lowercased name, or null. Underscores are ignored, so its rule names
-// (WebSearch, WebFetch, which are Claude's) still read as a web read and set the mark.
+// (WebSearch, WebFetch, which are Claude's) read as the same tools.
 function webTool(folded: string): (typeof WEB_TOOLS)[number] | null {
   return WEB_TOOLS.find((t) => t.replaceAll('_', '') === folded.replaceAll('_', '')) ?? null;
 }
@@ -116,7 +124,8 @@ export function sessionDir(grokHome: string, cwd: string, sessionId: string): st
 }
 
 // Every harness-compatibility cell off (05-configuration.md), memory and sub-agents off, the update
-// check off, each a documented variable. Page reading on (off by default in this release).
+// check off, each a documented variable. Page reading off, its default in this release: pages
+// come through phosphor__web_read (see WEB_TOOLS).
 const QUIET: Record<string, string> = {
   GROK_CLAUDE_SKILLS_ENABLED: '0',
   GROK_CLAUDE_RULES_ENABLED: '0',
@@ -133,7 +142,7 @@ const QUIET: Record<string, string> = {
   GROK_CODEX_SESSIONS_ENABLED: '0',
   GROK_MEMORY: '0',
   GROK_SUBAGENTS: '0',
-  GROK_WEB_FETCH: '1',
+  GROK_WEB_FETCH: '0',
   GROK_DISABLE_AUTOUPDATER: '1',
   /* A recap, a turn summary and an early title refresh are each a second model call over the
      chat after the answer, which kept every turn's process up about four seconds past its result
@@ -203,11 +212,11 @@ export function buildGrokArgv(opts: { promptFile: string; sessionId: string; res
     '--prompt-file', opts.promptFile,
     '--output-format', 'streaming-messages-json',
     '--include-partial-messages',
-    '--tools', [...META_TOOLS, ...WEB_TOOLS].join(','),
+    // The web tools are neither listed nor allowed: --tools is an allowlist named in full, and under
+    // dontAsk an unallowed web_fetch was refused (measured 2026-09-23).
+    '--tools', META_TOOLS.join(','),
     '--permission-mode', 'dontAsk',
     '--allow', `MCPTool(${SERVER}__*)`,
-    '--allow', 'WebSearch',
-    '--allow', 'WebFetch',
     '--disallowed-tools', 'Agent',
     '--no-subagents',
     '--no-plan',
@@ -264,7 +273,7 @@ export const grok: Provider = {
   },
   surface(init) {
     const found: string[] = [];
-    const allowed: readonly string[] = [...META_TOOLS, ...WEB_TOOLS];
+    const allowed: readonly string[] = META_TOOLS;
     const tools = Array.isArray(init.tools) ? init.tools : null;
     if (tools === null) found.push('<the init event carried no tool list>');
     else for (const t of tools) if (typeof t !== 'string' || !(allowed.includes(t) || t.startsWith(`${SERVER}__`))) found.push(String(t));
@@ -273,13 +282,13 @@ export const grok: Provider = {
     return found;
   },
   tool(name, input, server): ToolCall {
-    // A server-run block is grok's backend web search, inline in the reply, and nothing else.
-    if (server === true) return name === 'web_search' ? { kind: 'web', name: 'web_search' } : { kind: 'builtin', name: `server ${name}` };
+    // A server-run block is a tool xAI ran inside the reply, its web search included: off (WEB_TOOLS).
+    if (server === true) return { kind: 'builtin', name: `server ${name}` };
     // Compared without case, as claude's are (src/providers/claude.ts).
     const folded = name.toLowerCase();
     if (folded === 'search_tool') return { kind: 'meta' };
-    const web = webTool(folded);
-    if (web !== null) return { kind: 'web', name: web };
+    // Grok's own web tools are off, under any spelling: a call to one ends the session.
+    if (webTool(folded) !== null) return { kind: 'builtin', name };
     if (folded.startsWith(`${SERVER}__`)) return { kind: 'phosphor', name: `${MCP_PREFIX}${name.slice(SERVER.length + 2)}`, input };
     if (folded === 'use_tool' && input !== null && typeof input === 'object') {
       const call = input as { tool_name?: unknown; tool_input?: unknown };
@@ -290,9 +299,8 @@ export const grok: Provider = {
       /* use_tool reaches MCP tools (measured), but one that reached a built-in would run it, so a
          built-in or a web tool named through it reads as that tool, and another server's tool is a
          real one. A name no tool has is turned away by use_tool. */
-      const via = webTool(called.toLowerCase());
-      if (via !== null) return { kind: 'web', name: via };
       const named = `use_tool ${String(call.tool_name)}`;
+      if (webTool(called.toLowerCase()) !== null) return { kind: 'builtin', name: named };
       return builtinTool(called.toLowerCase()) ? { kind: 'builtin', name: named } : { kind: 'unknown', name: named };
     }
     if (builtinTool(folded)) return { kind: 'builtin', name };

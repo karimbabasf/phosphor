@@ -211,6 +211,7 @@ type App = {
   port: number;
   base: string;
   token: string;
+  seat: string;
   dataDir: string;
   output: string[];
   stop(): Promise<void>;
@@ -224,13 +225,17 @@ async function bootApp(stage: string, scenario: Scenario): Promise<App> {
   writeDemoState(stage, scenario);
 
   const token = crypto.randomBytes(32).toString('hex');
+  /* The seat secret the app hands the agents it spawns, on the handshake's third line as the
+     shell sends it. The agent under test stands in for the chat's own, so it carries this one;
+     agent.secret holds the other, for agents started outside the app (src/agents.ts). */
+  const seat = crypto.randomBytes(32).toString('hex');
   const output: string[] = [];
   const child = spawn(process.execPath, ['src/main.ts'], {
     cwd: stage,
     env: { ...cleanEnv(), ACC_PORT: String(port), ACC_MODE: 'demo', ACC_DATA_DIR: dataDir, ...demoRailSpeed() },
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as AppProcess;
-  child.stdin.write(`${token}\n`);
+  child.stdin.write(`${token}\n\n${seat}\n`);
   child.stdin.end();
   child.stdout.on('data', (chunk: Buffer) => output.push(chunk.toString()));
   child.stderr.on('data', (chunk: Buffer) => output.push(chunk.toString()));
@@ -266,7 +271,7 @@ async function bootApp(stage: string, scenario: Scenario): Promise<App> {
     await stop();
     throw new Error(`the app did not boot on ${base}: ${output.join('').slice(-600)}`);
   }
-  return { port, base, token, dataDir, output, stop };
+  return { port, base, token, seat, dataDir, output, stop };
 }
 
 // ---------- the window half ----------
@@ -507,12 +512,14 @@ async function runScenario(stage: string, scenario: Scenario, surfaces: Record<'
   const app = await bootApp(stage, scenario);
   fs.writeFileSync(path.join(stage, '.eval-scenario.json'), JSON.stringify(scenario));
 
-  /* The seat this boot minted. src/mcp.ts refuses every op without it, and the driver reads it
-     from this module rather than from the environment, because the app normally IS this process.
-     Here the app is a child, so the secret is read off its data directory and handed over. */
-  const seat = path.join(app.dataDir, 'agent.secret');
-  const secret = fs.existsSync(seat) ? fs.readFileSync(seat, 'utf8').trim() : '';
-  if (secret !== '') useSeatSecret(secret);
+  /* The seat the agent under test carries. src/mcp.ts refuses every op without one, and the
+     driver reads it from this module rather than from the environment, because the app normally
+     IS this process. Here the app is a child: the secret it gives its own agents is the one this
+     harness sent on the handshake. The colleague below posts with agent.secret, the way an agent
+     started outside the app does. */
+  useSeatSecret(app.seat);
+  const file = path.join(app.dataDir, 'agent.secret');
+  const secret = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '';
 
   /* THE COLLEAGUE'S LINES, written through /api/mcp under a session of the harness's own. The
      board is memory only, so a fixture cannot seed it the way it seeds proposals or the audit
