@@ -21,8 +21,11 @@
   buttons out of reach. Try again shows when the shell says it can take one (retry: true, the
   update_retry command).
 
-  While the install runs the shell calls window.__phosphorProgress(0 to 1) and, if it goes
-  wrong, window.__phosphorFailed(message, canRetry, title), through WebviewWindow::eval. The
+  While the install runs the shell calls window.__phosphorProgress(0 to 1) as the download
+  comes in, window.__phosphorChecking() before it checks the code signature (a few seconds, with
+  no figure to show, so the bar moves on its own), window.__phosphorInstalling() right before the
+  swap, and, if it goes wrong, window.__phosphorFailed(message, canRetry, title), all through
+  WebviewWindow::eval. The
   title is there for an update the shell refused (its signature or its contents did not pass
   the check): that window says so, offers no Try again, and does not send the person to try
   later, because the same update would be refused again. A finished install never reaches the
@@ -316,6 +319,18 @@
 
     function dismiss() { invoke('update_dismiss'); }
 
+    /* The bar: a share of 0 to 1, or null for one that moves on its own. The moving bar takes its
+       width from the stylesheet, so no width of its own may be left on it. */
+    function bar(p) {
+      if (p === null) {
+        progress.setAttribute('data-indeterminate', '');
+        progress.firstElementChild.style.width = '';
+      } else {
+        progress.removeAttribute('data-indeterminate');
+        progress.firstElementChild.style.width = Math.round(p * 100) + '%';
+      }
+    }
+
     /* The notes are the release's tag message, wrapped at a line length when it was written,
        and a wrapped line is not a break anyone meant: it is joined back into its paragraph so
        the text wraps at this box's width. A blank line stays a paragraph, and a line that
@@ -371,8 +386,7 @@
       showDetail(false);
       more.hidden = true;
       working.hidden = true;
-      progress.removeAttribute('data-indeterminate');
-      progress.firstElementChild.style.width = '0';
+      bar(0);
       install.hidden = true;
       retry.hidden = true;
       later.hidden = false;
@@ -394,8 +408,8 @@
         line.textContent = 'Downloading and checking the update. The app closes and opens again on its own when this is done.';
         later.hidden = true;
         working.hidden = false;
-        progress.setAttribute('data-indeterminate', '');
-        installing.textContent = 'Installing';
+        bar(null);
+        installing.textContent = 'Downloading';
       } else {
         var f = failure(s);
         title.textContent = s.title || 'Could not check for updates';
@@ -414,9 +428,17 @@
     window.__phosphorProgress = function (p) {
       p = Number(p);
       if (!(p >= 0)) return;
-      progress.removeAttribute('data-indeterminate');
-      progress.firstElementChild.style.width = Math.round(Math.min(1, p) * 100) + '%';
-      installing.textContent = p < 1 ? 'Downloading ' + Math.round(p * 100) + '%' : 'Installing';
+      p = Math.min(1, p);
+      bar(p);
+      installing.textContent = 'Downloading ' + Math.round(p * 100) + '%';
+    };
+    window.__phosphorChecking = function () {
+      bar(null);
+      installing.textContent = 'Checking the update';
+    };
+    window.__phosphorInstalling = function () {
+      bar(null);
+      installing.textContent = 'Installing';
     };
     // The second argument is true once the shell can take a Try again (update_retry); the third
     // is the title of a refused update.

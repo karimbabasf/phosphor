@@ -336,9 +336,12 @@ async fn install(app: &AppHandle, update: &Update) -> Result<(), Stop> {
             _ => Stop::Failed(format!("the download did not finish: {e}")),
         })?;
 
-    // The bytes are minisign-checked by now. Everything else is checked before the swap.
+    // The bytes are minisign-checked by now. Everything else is checked before the swap. The code
+    // signature check takes seconds, so the window says so instead of sitting on a full bar.
+    tell(app, CHECKING);
     vet(&bytes, &update.version, &running, TEAMS)?;
 
+    tell(app, INSTALLING);
     update.install(bytes).map_err(|e| Stop::Failed(format!("the app folder could not be replaced: {e}")))?;
 
     // The new bundle is on disk. Lock the wallet with a reason the audit log keeps, unless a move
@@ -348,6 +351,17 @@ async fn install(app: &AppHandle, update: &Update) -> Result<(), Stop> {
     let token = app.state::<crate::Secrets>().0.token.clone();
     app.state::<Backend>().lock_and_stop(Some(port), &token, "installing an update", |_| {});
     Ok(())
+}
+
+/// What the update window shows while the install runs, past the download: the check, then the
+/// swap. Each is one eval into the window, sent without waiting for the page.
+const CHECKING: &str = "window.__phosphorChecking && window.__phosphorChecking()";
+const INSTALLING: &str = "window.__phosphorInstalling && window.__phosphorInstalling()";
+
+fn tell(app: &AppHandle, script: &str) {
+    if let Some(win) = app.get_webview_window(WINDOW) {
+        let _ = win.eval(script);
+    }
 }
 
 pub(crate) fn port_for(app: &AppHandle) -> Result<u16, String> {

@@ -243,7 +243,9 @@ verifies the bundle's signature, and the version it compares is read out of the 
 the manifest. Before anything is replaced, the shell also unpacks the bundle into a private folder
 and has Apple's Security framework check its code signature against a requirement compiled into
 the app (`src-tauri/src/update.rs`): Apple's anchor, a Developer ID Application certificate,
-`com.karimbabasf.phosphor` and a Team ID from a short list. A bundle the update key signed but
+`com.karimbabasf.phosphor` and a Team ID from a short list. That check takes a few seconds, and
+the window says "Checking the update" while it runs; it says "Installing" only once the swap
+starts. A bundle the update key signed but
 another team, or nobody, code-signed is refused, and the window says the update did not pass its
 check and nothing changed. `scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
 notarize both and staples the tickets before anything is checksummed, so a first open needs no
