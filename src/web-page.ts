@@ -35,9 +35,14 @@ const TEXT_TYPES = ['text/html', 'application/xhtml+xml', 'text/plain', 'text/ma
 
 // Every range that is not a public unicast address: this machine, the local networks, the shared
 // address space, link-local (the cloud metadata address), documentation, multicast and reserved,
-// and the IPv6 forms that carry an IPv4 address inside them. An IPv4 address written as IPv6
-// (::ffff:127.0.0.1, ::ffff:7f00:1) is held to the IPv4 rules by BlockList itself, so ::ffff:0:0/96
-// is NOT listed: as an IPv6 rule it matches every IPv4 address there is (measured on Node 26).
+// and every IPv6 form that carries an IPv4 address inside it:
+// - IPv4-mapped, ::ffff:0:0/96 (::ffff:127.0.0.1, ::ffff:7f00:1): held to the IPv4 rules by
+//   BlockList itself, so it is NOT listed; as an IPv6 rule it matches every IPv4 address there is.
+// - IPv4-compatible, ::/96 (::127.0.0.1, which also holds :: and ::1), and IPv4-translated,
+//   ::ffff:0:0:0/96 (::ffff:0:127.0.0.1): BlockList reads both as IPv6, so they are listed whole.
+// - NAT64, 64:ff9b::/96 and the local-use 64:ff9b:1::/48 (RFC 8215), 6to4 2002::/16 and Teredo
+//   2001::/32: listed whole, so an IPv4-only site on a NAT64 network is not read.
+// Measured on Node 24.16.0 and 26.9.0, 2026-10-01.
 const PRIVATE = new net.BlockList();
 for (const [address, prefix] of [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12],
@@ -45,14 +50,18 @@ for (const [address, prefix] of [
   ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4],
 ] as const) PRIVATE.addSubnet(address, prefix, 'ipv4');
 for (const [address, prefix] of [
-  ['::', 128], ['::1', 128], ['64:ff9b::', 96], ['100::', 64], ['2001::', 32], ['2001:db8::', 32],
-  ['2002::', 16], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
+  ['::', 96], ['::ffff:0:0:0', 96], ['64:ff9b::', 96], ['64:ff9b:1::', 48], ['100::', 64], ['2001::', 32],
+  ['2001:db8::', 32], ['2002::', 16], ['3fff::', 20], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
 ] as const) PRIVATE.addSubnet(address, prefix, 'ipv6');
 
 export function isPublicAddress(ip: string): boolean {
-  const family = net.isIP(ip);
-  if (family === 4) return !PRIVATE.check(ip, 'ipv4');
-  if (family === 6) return !PRIVATE.check(ip, 'ipv6');
+  try {
+    const family = net.isIP(ip);
+    if (family === 4) return !PRIVATE.check(ip, 'ipv4');
+    if (family === 6) return !PRIVATE.check(ip, 'ipv6');
+  } catch {
+    // An address BlockList cannot read is not one the read may go to.
+  }
   return false;
 }
 

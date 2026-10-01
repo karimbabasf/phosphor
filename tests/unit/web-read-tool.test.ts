@@ -196,6 +196,71 @@ test('isPublicAddress: every local, private, reserved and embedded range is refu
   }
 });
 
+/* Every IPv6 form that carries an IPv4 address inside it (review correction 9, 2026-10-01). Before
+   this, the local-use NAT64 range (RFC 8215), IPv4-compatible and IPv4-translated addresses read as
+   public on Node 24.16.0 and 26.9.0: a name answering ::7f00:1 or 64:ff9b:1::7f00:1 was let through. */
+test('isPublicAddress: every IPv6 form with an IPv4 address inside is refused, mapped ones by the IPv4 rules', () => {
+  const embedded: Array<[string, string]> = [
+    ['::ffff:10.0.0.1', 'IPv4-mapped, private'],
+    ['::ffff:a9fe:a9fe', 'IPv4-mapped, the cloud metadata address in hex'],
+    ['::ffff:100.64.0.1', 'IPv4-mapped, shared address space'],
+    ['0:0:0:0:0:ffff:127.0.0.1', 'IPv4-mapped, written out'],
+    ['::127.0.0.1', 'IPv4-compatible loopback'],
+    ['::7f00:1', 'IPv4-compatible loopback in hex'],
+    ['::a9fe:a9fe', 'IPv4-compatible metadata address'],
+    ['::5db8:d822', 'IPv4-compatible, even a public one'],
+    ['::ffff:0:127.0.0.1', 'IPv4-translated loopback'],
+    ['::ffff:0:7f00:1', 'IPv4-translated loopback in hex'],
+    ['64:ff9b::5db8:d822', 'NAT64 well-known prefix'],
+    ['64:ff9b:1::7f00:1', 'NAT64 local-use prefix, RFC 8215'],
+    ['64:ff9b:1:abcd::7f00:1', 'NAT64 local-use prefix, a longer form'],
+    ['64:ff9b:1:ffff:ffff:ffff:a9fe:a9fe', 'NAT64 local-use prefix, its last address'],
+    ['2002:5db8:d822::1', '6to4'],
+    ['2001:0:4136:e378:8000:63bf:80ff:fffe', 'Teredo'],
+    ['3fff::1', 'documentation, RFC 9637'],
+  ];
+  for (const [ip, what] of embedded) assert.equal(isPublicAddress(ip), false, `${what}: ${ip}`);
+  // An IPv4-mapped public address is held to the IPv4 rules, so it passes like the address itself.
+  assert.equal(isPublicAddress('::ffff:93.184.216.34'), true);
+  // The prefixes end where they should: the next ranges up are ordinary public addresses.
+  assert.equal(isPublicAddress('64:ff9b:2::1'), true);
+  assert.equal(isPublicAddress('4000::1'), true);
+});
+
+test('a redirect hop is looked up through the same guard: a public name that answers 64:ff9b:1::7f00:1 is never connected to', async () => {
+  const lookups: string[] = [];
+  const guarded = httpsTransport(async (host) => {
+    lookups.push(host);
+    return [{ address: '64:ff9b:1::7f00:1', family: 6 }];
+  });
+  // The first hop is answered here; the redirect hop goes through the app's own transport.
+  const transport: Transport = async (url, opts) => (url.hostname === 'near.ai' ? redirect('https://rebind.example.org/next') : guarded(url, opts));
+  const answer = await readPage(new URL('https://near.ai/'), { transport });
+  assert.equal(answer.ok, false);
+  assert.match(answer.ok ? '' : answer.failed, /rebind\.example\.org points at a private or local address/);
+  assert.deepEqual(lookups, ['rebind.example.org']);
+});
+
+/* Node reads HTTPS_PROXY when NODE_USE_ENV_PROXY is set, and a proxy looks the name up itself, past
+   the guard. The transport makes its own agent, which takes no proxy: run in a child with both set
+   and a proxy that does not exist, the guard still answers for the name. */
+test('an environment proxy never carries a page read past the guarded lookup', () => {
+  const script = [
+    `import { httpsTransport } from ${JSON.stringify(path.join(ROOT, 'src', 'web-page.ts'))};`,
+    'const asked = [];',
+    "const t = httpsTransport(async (h) => { asked.push(h); return [{ address: '10.0.0.1', family: 4 }]; });",
+    "t(new URL('https://proxy-probe.example.org/'), { deadline: Date.now() + 3000, maxBytes: 100 })",
+    "  .then(() => console.log(JSON.stringify({ code: 'answered', asked })), (e) => console.log(JSON.stringify({ code: e.code, asked })));",
+  ].join('\n');
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    env: { PATH: process.env.PATH ?? '', NODE_USE_ENV_PROXY: '1', HTTPS_PROXY: 'http://127.0.0.1:9', HTTP_PROXY: 'http://127.0.0.1:9' },
+    encoding: 'utf8',
+    timeout: 10_000,
+  });
+  const line = run.stdout.trim().split('\n').pop() ?? '';
+  assert.deepEqual(JSON.parse(line), { code: 'EPRIVATE', asked: ['proxy-probe.example.org'] }, run.stderr);
+});
+
 test('the prints come from what the app holds: its addresses, its holdings and its trading account', () => {
   const ctx = {
     cfg: { addresses: { evm: EVM } },
