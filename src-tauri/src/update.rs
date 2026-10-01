@@ -3,8 +3,9 @@
 // The control window has no IPC bridge on purpose (see main.rs), so nothing about updates goes
 // through the page. The check runs in this shell, the offer is a window of the shell's own
 // (frontend/update.html, served by Tauri like the splash), the manual check is a native menu
-// item, and the control page never learns any of it. The update window's commands are three:
-// install, dismiss, and retry (a failed check or install asked again). Each refuses a caller
+// item, and the control page never learns any of it. The update window's commands are four:
+// install, dismiss, retry (a failed check or install asked again), and the download page after a
+// refusal (its one fixed address, crate::DOWNLOAD_URL, as the splash opens it). Each refuses a caller
 // that is not that window, and a remote page cannot reach app commands at the ACL anyway.
 //
 // What the plugin does, and why it is the one thing here that is not hand-rolled: it fetches
@@ -263,13 +264,24 @@ pub fn update_install(app: AppHandle, window: tauri::Window) -> Result<(), Strin
                 // stops offering this version for the rest of the run, as if it was answered Later.
                 app.state::<Updates>().dismiss(update.version.clone());
                 if let Some(win) = app.get_webview_window(WINDOW) {
-                    let (message, title) = refused(&running, &err);
-                    let _ = win.eval(&format!("window.__phosphorFailed({}, false, {})", init_literal(&message), init_literal(&title)));
+                    let (message, title) = refused(&running, &update.version, &err);
+                    // No Try again (false); the fourth argument shows Open phosphor.money.
+                    let _ = win.eval(&format!("window.__phosphorFailed({}, false, {}, true)", init_literal(&message), init_literal(&title)));
                 }
             }
         }
     });
     Ok(())
+}
+
+/// The download page, from a refused update, in the system browser: the same fixed address and the
+/// same way of opening it as the splash's altered state. Nothing the page sends picks the address.
+#[tauri::command]
+pub fn update_get_phosphor(window: tauri::Window) -> Result<(), String> {
+    if window.label() != WINDOW {
+        return Err("not the update window".to_string());
+    }
+    crate::open_download_page()
 }
 
 /// Why an install stopped. Either way nothing on disk changed.
@@ -283,11 +295,11 @@ enum Stop {
     Failed(String),
 }
 
-/// What the window says about a refused update: calm, because nothing changed, and the reason
-/// behind Details.
-fn refused(running: &str, err: &str) -> (serde_json::Value, serde_json::Value) {
+/// What the window says about a refused update: calm, because nothing changed, where the offered
+/// version can still be had, and the reason behind Details.
+fn refused(running: &str, offered: &str, err: &str) -> (serde_json::Value, serde_json::Value) {
     (
-        serde_json::json!(format!("Nothing changed: Phosphor {running} keeps running.\n\n{err}")),
+        serde_json::json!(format!("Nothing changed: Phosphor {running} keeps running. You can get {offered} from phosphor.money.\n\n{err}")),
         serde_json::json!("The update did not pass its check"),
     )
 }
@@ -905,10 +917,10 @@ mod tests {
 
     #[test]
     fn a_refusal_says_nothing_changed_and_keeps_the_reason_behind_details() {
-        let (message, title) = refused("0.10.13", "the update is not signed as Phosphor");
+        let (message, title) = refused("0.10.12", "0.10.13", "the update is not signed as Phosphor");
         assert_eq!(title, "The update did not pass its check");
         let (sentence, raw) = message.as_str().unwrap().split_once("\n\n").unwrap();
-        assert_eq!(sentence, "Nothing changed: Phosphor 0.10.13 keeps running.");
+        assert_eq!(sentence, "Nothing changed: Phosphor 0.10.12 keeps running. You can get 0.10.13 from phosphor.money.");
         assert_eq!(raw, "the update is not signed as Phosphor");
     }
 

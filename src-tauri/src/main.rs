@@ -662,6 +662,12 @@ fn splash_get_phosphor(window: tauri::Window) -> Result<(), String> {
     if window.label() != SPLASH {
         return Err("not the splash window".to_string());
     }
+    open_download_page()
+}
+
+/// DOWNLOAD_URL in the system browser. The splash's altered state and the update window's refusal
+/// both open it, and only it.
+fn open_download_page() -> Result<(), String> {
     std::process::Command::new("open")
         .arg(DOWNLOAD_URL)
         .spawn()
@@ -1419,6 +1425,7 @@ fn main() {
             update::update_install,
             update::update_dismiss,
             update::update_retry,
+            update::update_get_phosphor,
             splash_retry,
             splash_quit,
             splash_get_phosphor

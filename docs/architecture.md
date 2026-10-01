@@ -247,7 +247,9 @@ the app (`src-tauri/src/update.rs`): Apple's anchor, a Developer ID Application 
 the window says "Checking the update" while it runs; it says "Installing" only once the swap
 starts. A bundle the update key signed but
 another team, or nobody, code-signed is refused, and the window says the update did not pass its
-check and nothing changed. `scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
+check and nothing changed. It offers no Try again, since the same bundle would be refused again,
+and offers Open phosphor.money instead, the same fixed address the splash opens for a copy whose
+files changed (`update_get_phosphor`; the page cannot pick the address). `scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
 notarize both and staples the tickets before anything is checksummed, so a first open needs no
 Gatekeeper step.
 

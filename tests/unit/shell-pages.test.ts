@@ -47,9 +47,11 @@ class El {
     initialization script is. Returns the elements and the IPC commands the page sent. */
 function load(html: string, init: Record<string, unknown>) {
   const els = new Map<string, El>();
-  for (const m of html.matchAll(/<(\w+)([^>]*?)\sid="([^"]+)"([^>]*)>/g)) {
+  for (const m of html.matchAll(/<(\w+)([^>]*?)\sid="([^"]+)"([^>]*)>([^<]*)/g)) {
     const attrs = m[2] + m[4];
-    els.set(m[3], new El(m[3], m[1].toUpperCase(), /\shidden(?=[\s>/]|$)/.test(attrs)));
+    const el = new El(m[3], m[1].toUpperCase(), /\shidden(?=[\s>/]|$)/.test(attrs));
+    el.textContent = m[5].trim();
+    els.set(m[3], el);
   }
   for (const el of els.values()) if (el.id === 'progress') el.firstElementChild = new El('', 'I', false);
   const body = new El('body', 'BODY', false);
@@ -123,6 +125,40 @@ test('every window hook update.rs calls is defined by the page', () => {
     return i;
   };
   assert.ok(at('CHECKING') < at('vet(') && at('vet(') < at('INSTALLING') && at('INSTALLING') < at('update.install('));
+});
+
+test('a refused update offers phosphor.money and no Try again, and says nothing changed', () => {
+  const page = load(UPDATE, { __PHOSPHOR_UPDATE__: OFFER });
+  page.el('install').click();
+  page.call(
+    '__phosphorFailed',
+    'Nothing changed: Phosphor 0.10.12 keeps running. You can get 0.10.13 from phosphor.money.\n\nthe update is not signed as Phosphor',
+    false,
+    'The update did not pass its check',
+    true,
+  );
+  assert.equal(page.el('title').textContent, 'The update did not pass its check');
+  assert.equal(page.el('line').textContent, 'Nothing changed: Phosphor 0.10.12 keeps running. You can get 0.10.13 from phosphor.money.');
+  assert.ok(!page.shown('retry'), 'the same bytes would be refused again');
+  assert.ok(page.shown('get') && page.shown('later') && page.shown('more'));
+  assert.equal(page.el('get').textContent, 'Open phosphor.money');
+  assert.equal(page.el('later').textContent, 'Close');
+  page.el('get').click();
+  assert.deepEqual(page.sent, ['update_install', 'update_get_phosphor']);
+  page.key('Enter');
+  assert.deepEqual(page.sent.slice(2), ['update_get_phosphor'], 'Return presses the green key');
+});
+
+test('a failure that can be tried again does not also say later, and offers no phosphor.money', () => {
+  const page = load(UPDATE, { __PHOSPHOR_UPDATE__: OFFER });
+  page.el('install').click();
+  page.call('__phosphorFailed', 'Nothing changed: Phosphor 0.10.12 keeps running.\n\n1 proposal(s) are executing right now.', true);
+  assert.equal(page.el('line').textContent, 'Nothing changed: Phosphor 0.10.12 keeps running. Try again.');
+  assert.ok(page.shown('retry'));
+  assert.ok(!page.shown('get'));
+  // The older shell's three arguments still draw a refusal, without the new key.
+  page.call('__phosphorFailed', 'Nothing changed: Phosphor 0.10.12 keeps running.\n\nrefused', false, 'The update did not pass its check');
+  assert.ok(!page.shown('retry') && !page.shown('get'));
 });
 
 const ALTERED = {
