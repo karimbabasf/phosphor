@@ -1,5 +1,6 @@
 // Phosphor secret sweep. Answers one question: if this repo were pushed right now, would
-// anything secret go with it? Run: npm run sweep. Exit 0 means no, exit 1 means stop.
+// anything secret go with it? Run: npm run sweep. Exit 0 means no, exit 1 means stop, exit 2
+// means the command line was wrong.
 //
 // The claim under test is Karim's instruction for the remote: config and installable code
 // only, no private keys, no addresses, no state. Six checks, all of which must pass:
@@ -11,10 +12,23 @@
 //                        not a secret, and he asked for neither to be published.
 //   3. ignored paths     config.local.json, keys.json, .env*, state/ are untracked AND ignored.
 //   4. keys outside repo keysPath resolves outside the working copy, so git cannot reach it.
-//   5. git history       every blob reachable from every ref, scanned like check 1. A file
-//                        deleted from the working tree is still published if a commit holds
-//                        it, so scanning the working tree alone proves nothing.
+//   5. git history       every blob in the history a push can publish, scanned like check 1.
+//                        A file deleted from the working tree is still published if a commit
+//                        holds it, so scanning the working tree alone proves nothing.
 //   6. config load       config.json parses, since it is itself published.
+//
+// "The history a push can publish" is HEAD (the branch being released), every remote-tracking
+// branch (what the remote holds, and what it held before a branch was deleted there: published
+// once is published) and every tag (a tag push is one flag away, and refs/tags cannot tell a
+// fetched tag from a local one). Local branches that never left this clone are not in it: in a
+// shared clone they are other agents' scratch work, and a release that fails on them is failing
+// on something no push of this branch would send. Two flags change the scope:
+//
+//   --history=all         every ref in the clone, before pushing more than the current branch
+//   --history=<revision>  one revision and everything behind it, e.g. --history=origin/main
+//
+// A shallow clone fails check 5: its history is not there to scan, and a pass on the tip alone
+// would claim what it never looked at.
 //
 // What this sweep does NOT see, stated so nobody reads a pass as more than it is: a mnemonic
 // in single quotes or separated by commas (the mnemonic check reads whole lines and double
@@ -39,12 +53,13 @@ import { assertOutsideRepo, loadConfig } from '../src/config.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
-function git(args: string[], input?: string): string {
+function git(args: string[], input?: string, cwd = ROOT): string {
   return execFileSync('git', args, {
-    cwd: ROOT,
+    cwd,
     input,
     maxBuffer: 512 * 1024 * 1024,
     encoding: 'latin1',
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
 
@@ -446,13 +461,33 @@ function trackedFiles(): string[] {
   return git(['ls-files', '-z']).split('\0').filter((f) => f !== '');
 }
 
-type Blob = { sha: string; file: string; content: string };
+export type Blob = { sha: string; file: string; content: string };
 
-// Every object reachable from every ref, which is exactly what a push can publish. Unreachable
-// objects in the object database are excluded on purpose: they cannot be pushed, and reporting
-// them would fail the sweep for a commit that was amended away.
-function historyBlobs(): Blob[] {
-  const listing = git(['rev-list', '--objects', '--all']).split('\n').filter((l) => l !== '');
+// The scope check 5 reads, as the header describes it: published, all, or one revision.
+export function historyScope(argv: readonly string[]): string {
+  let scope = 'published';
+  for (const arg of argv) {
+    if (!arg.startsWith('--history=') || arg === '--history=') {
+      throw new Error(`unknown argument ${arg}: the one flag is --history=published, --history=all or --history=<revision>`);
+    }
+    scope = arg.slice('--history='.length);
+  }
+  return scope;
+}
+
+const SCOPE_TEXT: Record<string, string> = { published: 'HEAD, the remote branches and the tags', all: 'every ref' };
+
+function historyRevs(scope: string): string[] {
+  if (scope === 'published') return ['HEAD', '--remotes', '--tags'];
+  if (scope === 'all') return ['--all'];
+  return [scope];
+}
+
+// Every object reachable from the given revisions. Unreachable objects in the object database
+// are excluded on purpose: they cannot be pushed, and reporting them would fail the sweep for a
+// commit that was amended away.
+export function historyBlobs(revs: readonly string[], cwd = ROOT): Blob[] {
+  const listing = git(['rev-list', '--objects', ...revs], undefined, cwd).split('\n').filter((l) => l !== '');
   const paths = new Map<string, string>();
   const shas: string[] = [];
   for (const line of listing) {
@@ -466,7 +501,7 @@ function historyBlobs(): Blob[] {
 
   // One `git cat-file --batch` process for the whole set. Output frames are
   // "<sha> <type> <size>\n<content>\n"; missing objects answer "<sha> missing\n".
-  const raw = Buffer.from(git(['cat-file', '--batch'], shas.join('\n') + '\n'), 'latin1');
+  const raw = Buffer.from(git(['cat-file', '--batch'], shas.join('\n') + '\n', cwd), 'latin1');
   const blobs: Blob[] = [];
   let off = 0;
   while (off < raw.length) {
@@ -482,6 +517,28 @@ function historyBlobs(): Blob[] {
     off += size + 1;
   }
   return blobs;
+}
+
+export type HistoryResult = { ok: boolean; detail: string; findings: Finding[]; blobs: Blob[] };
+
+export function historyCheck(scope: string, cwd = ROOT): HistoryResult {
+  const what = SCOPE_TEXT[scope] ?? scope;
+  const refuse = (detail: string): HistoryResult => ({ ok: false, detail, findings: [], blobs: [] });
+  // A revision that starts with a dash would reach git as an option.
+  if (scope.startsWith('-')) return refuse(`--history takes published, all or a revision, not ${scope}`);
+  let blobs: Blob[];
+  try {
+    if (git(['rev-parse', '--is-shallow-repository'], undefined, cwd).trim() === 'true') {
+      return refuse(`shallow clone: the history behind ${what} is not here to scan (fetch it whole, e.g. fetch-depth: 0)`);
+    }
+    blobs = historyBlobs(historyRevs(scope), cwd);
+  } catch (err) {
+    const stderr = (err as { stderr?: string }).stderr?.trim().split('\n')[0];
+    return refuse(`cannot list the history of ${what}: ${stderr || (err instanceof Error ? err.message : String(err))}`);
+  }
+  const findings: Finding[] = [];
+  for (const blob of blobs) scanContent(`history ${blob.sha.slice(0, 8)}`, blob.file, blob.content, findings);
+  return { ok: findings.length === 0, detail: `${blobs.length} blobs reachable from ${what} scanned`, findings, blobs };
 }
 
 // ---------- identifying values from the local, unpublished files ----------
@@ -525,6 +582,14 @@ function localIdentifyingValues(keysPath: string): string[] {
 type Check = { name: string; ok: boolean; detail: string; findings: Finding[] };
 
 function main(): void {
+  let scope: string;
+  try {
+    scope = historyScope(process.argv.slice(2));
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(2);
+  }
+
   const checks: Check[] = [];
 
   function add(name: string, ok: boolean, detail: string, findings: Finding[] = []): void {
@@ -553,13 +618,9 @@ function main(): void {
   }
 
   // 5. git history
-  let blobs: Blob[] = [];
-  {
-    const findings: Finding[] = [];
-    blobs = historyBlobs();
-    for (const blob of blobs) scanContent(`history ${blob.sha.slice(0, 8)}`, blob.file, blob.content, findings);
-    add('git history', findings.length === 0, `${blobs.length} reachable blobs scanned`, findings);
-  }
+  const history = historyCheck(scope);
+  add('git history', history.ok, history.detail, history.findings);
+  const blobs = history.blobs;
 
   // 2. local addresses, across the tracked tree and the history
   {
