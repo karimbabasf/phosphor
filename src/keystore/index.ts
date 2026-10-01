@@ -44,7 +44,12 @@ export function walletAddresses(): StoredAddresses {
   return { evm: null, solana: null, near: null, nearPublicKey: null };
 }
 
+/* The EVM key alone, for a signature. Through the keystore it never decodes the rest of the
+   payload, so a signature does not leave the recovery phrase in heap (see `evmKey` in store.ts).
+   The plaintext fallback below reads the whole file, as it always did, until that install
+   migrates. */
 export function evmPrivateKey(keysPath: string): `0x${string}` {
+  if (active !== null) return active.evmPrivateKey();
   const key = keyMaterial(keysPath).evm?.privateKey;
   if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
     throw new Error('this wallet has no valid EVM private key');
