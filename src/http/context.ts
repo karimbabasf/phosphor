@@ -36,6 +36,7 @@ import type { Board } from '../board.ts';
 import type { Crew } from '../crew.ts';
 import type { DuplicateGuard } from '../duplicates.ts';
 import type { Keystore, LockState } from '../keystore/index.ts';
+import type { KillAnswer } from '../kill.ts';
 import type { Session } from '../keystore/session.ts';
 import type { VaultRelay } from '../vault/relay.ts';
 import type { IntentsReceiveReport } from './wallet.ts';
@@ -232,7 +233,9 @@ export type ServerDeps = {
   market: MarketData;
   proposals: ProposalService;
   getPolicy: () => Policy | null;
-  setKill: (on: boolean) => void;
+  // The app's switch always answers (src/kill.ts); a test double that answers nothing is a switch
+  // that took.
+  setKill: (on: boolean) => KillAnswer | void;
   // Who is driving, and the one-at-a-time rule. See src/agents.ts.
   agents: AgentPresence;
   getView: () => ViewMode;

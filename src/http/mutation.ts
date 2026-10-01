@@ -593,16 +593,24 @@ export async function handleMutation(
     return;
   }
 
+  /* The answer and the log line say what the switch did, never what was asked: a press over a
+     policy file that would not load used to answer ok and log KILL SWITCH ON while nothing had
+     been saved and the runner had not been told (src/kill.ts). */
   if (route === '/api/kill') {
     const on = body.on === true;
-    ctx.setKill(on);
+    const answer = ctx.setKill(on) ?? { ok: true as const, killSwitch: on };
+    ctx.sse.broadcastState();
+    if (!answer.ok) {
+      ctx.audit.append('kill_switch', `${on ? 'Freeze' : 'Unfreeze'} pressed (human), and the switch was not saved: ${answer.error}`, { on, code: answer.code });
+      fail(res, 409, answer.error, { ok: false, code: answer.code, killSwitch: answer.killSwitch });
+      return;
+    }
     ctx.audit.append(
       'kill_switch',
       on ? 'KILL SWITCH ON: all writes refused (human)' : 'kill switch off: writes allowed again, subject to policy (human)',
       { on },
     );
-    ctx.sse.broadcastState();
-    sendJson(res, 200, { ok: true, killSwitch: on });
+    sendJson(res, 200, { ok: true, killSwitch: answer.killSwitch });
     return;
   }
 

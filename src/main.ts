@@ -41,6 +41,7 @@ import { MAX_AGENTS, RESERVED_SEATS, createAgents, seatSecretPath } from './agen
 import { atomicWrite } from './fsatomic.ts';
 import { createRunnerHost } from './runner/host.ts';
 import { readApiWallet, readApiWalletKey } from './runner/keys.ts';
+import { createKill } from './kill.ts';
 import { createTradeService } from './trade/service.ts';
 import type { TradeService } from './trade/service.ts';
 import { createPlanStore } from './trade/plans.ts';
@@ -697,29 +698,12 @@ function setTheme(next: Theme): void {
   writeTheme(cfg.dataDir, next);
 }
 
-function setKill(on: boolean): void {
-  const p = getPolicy();
-  if (p === null) {
-    audit.append('error', 'kill toggle ignored: policy file unreadable (writes already refused)');
-    return;
-  }
-  p.killSwitch = on;
-  savePolicy(cfg.dataDir, p);
-  audit.append('kill_switch', on ? 'kill switch ON: all writes refused' : 'kill switch off');
-  /* Anchored now rather than on the next tick of the timer. This is the line somebody goes
-     looking for straight after pulling the switch, and what usually follows a kill switch is
-     somebody stopping the app in a hurry. */
-  audit.flushTip();
-
-  // Stop what is already running, not just what tries to start next.
-  //
-  // The switch used to be consulted only when a plan armed, so flipping it while a plan held a
-  // position refused future proposals and left the plan running: the one situation a kill
-  // switch exists for. setKilled stops any fire from now on; stopAll cancels every resting
-  // order, closes every position and takes the child out whether or not it answered.
-  runner.setKilled(on);
-  if (on) void runner.stopAll('kill switch');
-}
+/* The Freeze switch. It stops what is already running, not just what tries to start next: the
+   switch used to be consulted only when a plan armed, so flipping it while a plan held a position
+   refused future proposals and left the plan running, the one situation a kill switch exists for.
+   The runner is told before the policy file is read (src/kill.ts), so a file that will not load
+   can never be the reason a plan kept firing. */
+const setKill = createKill({ dataDir: cfg.dataDir, audit, runner });
 
 // ATR per coin, refreshed on a slow timer and served from a cache.
 //
