@@ -457,6 +457,20 @@
     return 'Your limits say this one needs a click.';
   }
 
+  /* A move under the person's own limit that waits anyway, because of where it came from: its
+     chat read text from outside Phosphor, its agent was started outside Phosphor, or the app
+     started the turn it was asked in (src/proposals/execute.ts, land). The same size from their
+     own chat runs alone, so the card says why on its face (cards.js lineFor), in the app's own
+     sentence: the verdict's last reason, as written. '' for any other row. */
+  function gateLine(proposal) {
+    var p = proposal && typeof proposal === 'object' ? proposal : {};
+    if (p.webRead !== true && p.outside !== true && p.appTurn !== true) return '';
+    var verdict = p.verdict || {};
+    if (!Array.isArray(verdict.reasons) || !verdict.reasons.length) return '';
+    var last = String(verdict.reasons[verdict.reasons.length - 1]).trim();
+    return last.charAt(0).toUpperCase() + last.slice(1);
+  }
+
   /* Where the money actually lands, every address in full, labelled by who chose it. The
      venue mints a fresh deposit address per quote, which is why it can never sit on an
      allowlist, and it is the address the funds are signed over to: showing the allowlisted
@@ -542,10 +556,11 @@
   }
 
   /* The secondary lines, for the card's Details: why it asks, where the money goes, how long
-     the price holds, the route, and the rail's own summary. True, and one click away. */
+     the price holds, the route, and the rail's own summary. True, and one click away. Why it
+     asks is said once: a card that says it on its face (gateLine) leaves it out here. */
   function askDetails(proposal) {
     var draft = proposal.draft || {};
-    var out = [detailLine('Why it asks', whyLine(proposal), true)];
+    var out = gateLine(proposal) ? [] : [detailLine('Why it asks', whyLine(proposal), true)];
     var destinations = destinationsOf(proposal);
     for (var d = 0; d < destinations.length; d += 1) {
       var where = dom.el('div', 'destination');
@@ -775,6 +790,7 @@
     askKey: askKey,
     retryButton: retryButton,
     heldLine: heldLine,
+    gateLine: gateLine,
     preflightOf: preflightOf,
     showCard: showCard,
     diffOf: diffOf,

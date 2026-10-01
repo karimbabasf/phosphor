@@ -597,6 +597,15 @@ test('a card says who decided: a click is the person\'s, an auto-run is the rule
   assert.ok(!lines.some((t) => t.startsWith('You approved it at') || t.startsWith('Your rules allowed')), lines.join(' | '));
   assert.ok(lines.some((t) => t.startsWith('Ended at')), lines.join(' | '));
   assert.ok(faceOf(world.cardNodes('move')[0]).includes('This swap cannot be valued in dollars.'));
+
+  /* The person's Cancel is a click too, and it said no (UX review 2026-10-01, finding 5: the
+     cancelled card's Details read "You approved it at 14:05" beside "You said no"). */
+  world.proposals([row('refused', 'human', { verdict: { outcome: 'needs_approval', reasons: [] },
+    view: view({ stage: 'declined', stageLabel: 'Declined', outcome: 'declined', decidedAt: '2026-09-20T22:41:00Z', decidedBy: 'human', settledAt: null }) })]);
+  assert.equal(stateWord(world.cardNodes('move')[0]), 'Cancelled');
+  lines = detailsOf(world.cardNodes('move')[0]);
+  assert.ok(lines.some((t) => t.startsWith('You said no at')), lines.join(' | '));
+  assert.ok(!lines.some((t) => t.startsWith('You approved it at')), lines.join(' | '));
 });
 
 test('a floor prints as a quantity, cut and never rounded up', () => {
