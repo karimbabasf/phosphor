@@ -502,9 +502,11 @@ async function sweep(file: string, net: ProofNet, deps: ProofDeps, rawTo: unknow
       signer.drop();
     }
   }
-  // Codes first, then the receiver, then T.
+  // Codes first, then the receiver, then T. An account with a sweep still pending (unproven, or
+  // never signed) gets no second one: the next sweep finishes the first.
+  const waiting = new Set(pendingMoves(proof.book, 'sweep').map((m) => m.signer));
   for (const account of ours) {
-    if (unproven.has(account)) continue;
+    if (unproven.has(account) || waiting.has(account)) continue;
     const signer = signerFor(proof, account);
     if (signer === null) continue;
     try {

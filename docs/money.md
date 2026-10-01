@@ -139,8 +139,9 @@ fallback: the script waits until the signed payload has expired on NEAR's own cl
 minutes, and then marks the codes void. T still holds the money.
 
 `--simulate-only` is the rehearsal alone: it shows what NEAR Intents would say, and nothing is
-sent or written. If this Mac's clock is behind NEAR's, every command stops before it signs and
-says so: a block that looks later than this clock would stretch a rehearsal's life.
+sent or written. If this Mac's clock is behind NEAR's, or the RPC does not answer, a command
+stops before it signs anything that can run and says so (a block that looks later than this
+clock would stretch a rehearsal's life). A batch then waits for `issue --resume`.
 
     npm run invite -- status
 

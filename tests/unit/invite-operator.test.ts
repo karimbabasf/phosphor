@@ -17,9 +17,11 @@ import { containsInviteCode, parseCode } from '../../src/invite/code.ts';
 import { INVITE_ASSET_ID, intentHashOf } from '../../src/invite/payload.ts';
 import { keySigner } from '../../src/invite/signer.ts';
 import type { KeySigner } from '../../src/invite/signer.ts';
+import { newBook } from '../../scripts/invite/book.ts';
 import type { InviteBook } from '../../scripts/invite/book.ts';
 import { openInviteFile, takeLock } from '../../scripts/invite/file.ts';
-import type { MoneyNet } from '../../scripts/invite/money.ts';
+import { issueBatch, newTreasury, reclaimCodes, resumeBatch } from '../../scripts/invite/money.ts';
+import type { Io, Ledger, MoneyNet } from '../../scripts/invite/money.ts';
 import { readTerminalLine } from '../../scripts/invite/tty.ts';
 import { NOT_A_TERMINAL, main } from '../../scripts/invite.ts';
 import { freshChain, netOn, relayOn, verdict } from './helpers/invite-chain.ts';
@@ -640,22 +642,36 @@ test('a rehearsal nobody answers, or one the verifier refuses, leaves nothing th
     };
     const r = await b.run(['issue', '--count', '2', '--amount', '5', '--label', mode], [PASS, 'yes'], { net: { ...b.net, simulateAt } });
     assert.equal(r.code, 1);
-    assert.ok(r.out.some((l) => /^Nothing that can run was sent: /.test(l)), r.out.join('\n'));
     assert.equal(runnable(b).length, 0, 'only rehearsals were signed');
     assert.equal(b.chain.published.length, 0);
     const book = b.book();
-    assert.equal(book.moves[0]!.state, 'failed');
-    assert.ok(book.codes.every((c) => c.state === 'void'));
+    if (mode === 'silent') {
+      // Nothing that can run exists, so the batch waits to be tried again rather than dying.
+      assert.ok(r.out.some((l) => /^Nothing that can run was signed: the verifier did not answer the simulation\. The batch stays pending/.test(l)), r.out.join('\n'));
+      assert.equal(book.moves[0]!.state, 'pending');
+      assert.equal(book.moves[0]!.signed, undefined);
+      assert.ok(book.codes.every((c) => c.state === 'pending'));
+    } else {
+      assert.ok(r.out.some((l) => /^Nothing that can run was sent: NEAR Intents has locked/.test(l)), r.out.join('\n'));
+      assert.equal(book.moves[0]!.state, 'failed');
+      assert.ok(book.codes.every((c) => c.state === 'void'));
+    }
     // Whoever saw the rehearsals publishes them: not one can run, at any later block.
     b.chain.chain += 600;
     for (const s of b.chain.simulated.flat()) {
       assert.equal(await verdict(b.chain, s.payload, s.signature, false), 'deadline has expired');
     }
     assert.equal(await b.net.verifier.balance(t, INVITE_ASSET_ID), 20_000_000n);
+    if (mode === 'silent') {
+      const resumed = await b.run(['issue', '--resume'], [PASS]);
+      assert.equal(resumed.code, 0, resumed.out.join('\n'));
+      assert.equal(runnable(b).length, 1);
+      assert.equal(resumed.tty.join('').split('https://phosphor.money/invite#').length - 1, 2);
+    }
   }
 });
 
-test("a final block stamped ahead of this Mac's clock is refused before anything is signed", async () => {
+test("a final block stamped ahead of this Mac's clock is refused before anything is signed, and the batch waits", async () => {
   const b = await funded(20n);
   // The RPC says the chain is five seconds ahead of the real time.
   b.chain.chain = b.chain.mac + 5_000;
@@ -665,7 +681,12 @@ test("a final block stamped ahead of this Mac's clock is refused before anything
   const real = await b.run(['issue', '--count', '2', '--amount', '5', '--label', 'x'], [PASS, 'yes']);
   assert.equal(real.code, 1);
   assert.equal(b.signed.length, 0, 'not a rehearsal, not a batch');
-  assert.ok(b.book().codes.every((c) => c.state === 'void'));
+  assert.ok(b.book().codes.every((c) => c.state === 'pending'), 'the codes wait, not void');
+  // An honest clock again: the same batch goes through, signed for the first time.
+  b.chain.chain = b.chain.mac - 2_500;
+  const resumed = await b.run(['issue', '--resume'], [PASS]);
+  assert.equal(resumed.code, 0, resumed.out.join('\n'));
+  assert.ok(b.book().codes.every((c) => c.state === 'open'));
 });
 
 test('an older copy of the invite file put back cannot make a batch sign twice: its money is reclaimed instead', async () => {
@@ -756,4 +777,54 @@ test('money that reaches a void code is shown by status and taken back by reclai
   assert.equal(b.chain.balances.get(code.address), 0n);
   assert.equal(b.chain.balances.get(b.book().treasury.address), 23_000_000n);
   assert.equal(b.book().codes[0]!.state, 'reclaimed');
+});
+
+test('a reclaim still waiting for proof keeps its batch from being signed, so a funded, shown code is never marked reclaimed', async () => {
+  const chain = freshChain();
+  let crash = true;
+  let blind = false;
+  const signerOf = (key: Hex): KeySigner => {
+    const inner = keySigner(key);
+    return {
+      address: inner.address,
+      async sign(payload) {
+        if (crash) throw new Error('the Mac lost power');
+        return inner.sign(payload);
+      },
+      drop: () => inner.drop(),
+    };
+  };
+  const base = netOn(chain, { signerOf });
+  const net: MoneyNet = { ...base, verifier: { ...base.verifier, nonceUsed: (a, n, at) => (blind ? Promise.resolve(null) : base.verifier.nonceUsed(a, n, at)) } };
+  const book = newBook(newTreasury(net));
+  const ledger: Ledger = { book, save() {} };
+  const said: string[] = [];
+  const shown: string[] = [];
+  const io: Io = { say: (l) => said.push(l), confirm: async () => true, ask: async () => null, reveal: (t) => shown.push(t) };
+  chain.balances.set(book.treasury.address, 20_000_000n);
+
+  // A batch cut off at its first signature: written, never signed.
+  await assert.rejects(issueBatch(ledger, net, { count: 2, amountBase: 5_000_000n, label: 'cut', simulateOnly: false }, io), /lost power/);
+  crash = false;
+  const code = book.codes[0]!;
+  // Stray money reaches one of its codes. A reclaim runs on the chain, but its proof never reads.
+  chain.balances.set(code.address, 3_000_000n);
+  blind = true;
+  assert.equal(await reclaimCodes(ledger, net, { simulateOnly: false }, io), 1);
+  blind = false;
+  assert.equal(chain.balances.get(code.address), 0n, 'the reclaim ran');
+
+  // The batch is not signed while that reclaim waits for proof.
+  assert.equal(await resumeBatch(ledger, net, io), 1);
+  assert.ok(said.some((l) => /A reclaim of one of these codes is still waiting for proof/.test(l)));
+  const batch = book.moves.find((m) => m.kind === 'batch')!;
+  assert.equal(batch.signed, undefined);
+  // The reclaim is finished and proven, and then the batch closes without ever being signed.
+  assert.equal(await reclaimCodes(ledger, net, { simulateOnly: false }, io), 0);
+  assert.equal(code.state, 'reclaimed');
+  assert.equal(await resumeBatch(ledger, net, io), 1);
+  assert.equal(batch.state, 'failed');
+  assert.equal(batch.signed, undefined);
+  assert.deepEqual(shown, [], 'no link was ever shown');
+  assert.equal(chain.balances.get(book.treasury.address), 23_000_000n);
 });

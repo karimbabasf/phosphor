@@ -137,7 +137,8 @@ export type Io = {
 
 export type MoveResult =
   | { kind: 'landed'; status: RelayStatus | null }
-  | { kind: 'refused'; detail: string } // nothing left this Mac
+  | { kind: 'held'; detail: string } // nothing that can run was signed; the move stays pending, to try again
+  | { kind: 'refused'; detail: string } // the verifier said no; nothing that can run left this Mac
   | { kind: 'dead'; detail: string } // signed, perhaps sent, proven never to run
   | { kind: 'unconfirmed'; detail: string }; // sent, no proof either way yet: the move stays pending
 
@@ -320,20 +321,26 @@ function trySave(ledger: Ledger): void {
   }
 }
 
-/* One move to its end. Unsigned: rehearse (a refusal ends it with nothing that can run sent), sign,
-   write the signed bytes, publish. Signed already (a run that stopped): ask the chain first, and
-   resend the same bytes only while they can still run. Then watch until the nonce is spent or the
-   move is proven dead. The move is in the book and saved at every step the next run would need. */
+/* One move to its end. Unsigned: rehearse, sign, write the signed bytes, publish. The verifier
+   saying no ends the move; a rehearsal nobody could sign or answer (no clock, a clock ahead of
+   this Mac, a silent RPC) leaves it pending, unsigned, to be tried again, because nothing that
+   can run exists. Signed already (a run that stopped): ask the chain first, and resend the same
+   bytes only while they can still run. Then watch until the nonce is spent or the move is proven
+   dead. The move is in the book and saved at every step the next run would need. */
 export async function runMove(ledger: Ledger, move: Move, signer: KeySigner, net: MoneyNet, say: (line: string) => void): Promise<MoveResult> {
   if (move.signed === undefined) {
     const rehearsal = await rehearse(move, signer, net);
-    const built = rehearsal.ok ? await signMove(move, signer, net, CLAIM_DEADLINE_MS, MOVE_AHEAD_MS) : null;
-    if (!rehearsal.ok || built === null || !built.ok) {
+    if (!rehearsal.ok && rehearsal.why === 'refused') {
       move.state = 'failed';
       move.settledAt = nowIso(net);
-      move.detail = `Nothing that can run was sent: ${!rehearsal.ok ? rehearsal.detail : built?.ok === false ? built.detail : 'it was not signed'}.`;
+      move.detail = `Nothing that can run was sent: ${rehearsal.detail}.`;
       ledger.save();
       return { kind: 'refused', detail: move.detail };
+    }
+    const built = rehearsal.ok ? await signMove(move, signer, net, CLAIM_DEADLINE_MS, MOVE_AHEAD_MS) : null;
+    if (built === null || !built.ok) {
+      ledger.save();
+      return { kind: 'held', detail: `Nothing that can run was signed: ${!rehearsal.ok ? rehearsal.detail : built?.ok === false ? built.detail : 'it was not signed'}.` };
     }
     move.signed = built.signed;
     try {
@@ -545,6 +552,10 @@ function voidPending(ledger: Ledger, move: Move, net: MoneyNet): number {
 async function freshCodesProblem(ledger: Ledger, move: Move, net: MoneyNet): Promise<string | null> {
   const codes = codesOf(ledger.book, move.id);
   if (codes.some((c) => c.state !== 'pending')) return 'handled';
+  const reclaiming = new Set(pendingMoves(ledger.book, 'reclaim').map((m) => m.signer));
+  if (codes.some((c) => reclaiming.has(c.address))) {
+    return 'A reclaim of one of these codes is still waiting for proof, so nothing was signed. Run `npm run invite -- reclaim` to finish it, then `issue --resume`.';
+  }
   const held = await Promise.all(codes.map((c) => net.verifier.balance(c.address, INVITE_ASSET_ID).catch(() => null)));
   if (held.some((h) => h === null)) return "Couldn't read the new codes' balances, so nothing was signed. Check the connection and run it again.";
   const funded = held.filter((h) => h !== null && h > 0n).length;
@@ -579,6 +590,10 @@ async function finishBatch(ledger: Ledger, move: Move, net: MoneyNet, io: Io): P
     }
     if (result.kind === 'unconfirmed') {
       io.say(`${result.detail} Run \`npm run invite -- issue --resume\` in a few minutes to finish it. A new batch waits until then.`);
+      return 1;
+    }
+    if (result.kind === 'held') {
+      io.say(`${result.detail} The batch stays pending: run \`npm run invite -- issue --resume\` once that is fixed. A new batch waits until then.`);
       return 1;
     }
     if (result.kind !== 'landed') io.say(result.detail);
@@ -645,14 +660,20 @@ export type ReclaimRequest = { label?: string; address?: string; simulateOnly: b
 
 async function closeCode(ledger: Ledger, code: InviteCode, result: MoveResult, net: MoneyNet, io: Io): Promise<boolean> {
   if (result.kind === 'landed') {
+    // The reclaim emptied the code; money on it now came after, and stays reclaimable.
+    const after = await net.verifier.balance(code.address, INVITE_ASSET_ID).catch(() => null);
+    if (after !== null && after >= MIN_CLAIM_BASE) {
+      io.say(`${shortAddress(code.address)}: its reclaim ran, and it holds $${formatUsdc(after)} again since. Left as ${code.state}; run reclaim again to take that back.`);
+      return false;
+    }
     code.state = 'reclaimed';
     code.closedAt = nowIso(net);
     ledger.save();
     io.say(`${shortAddress(code.address)}: reclaimed to T. Its link now says it was already used.`);
     return true;
   }
-  if (result.kind === 'unconfirmed') {
-    io.say(`${shortAddress(code.address)}: ${result.detail} Run reclaim again in a few minutes to finish it.`);
+  if (result.kind === 'unconfirmed' || result.kind === 'held') {
+    io.say(`${shortAddress(code.address)}: ${result.detail} Run reclaim again ${result.kind === 'held' ? 'once that is fixed' : 'in a few minutes'} to finish it.`);
     return false;
   }
   // Nothing moved. The holder may have claimed it in the same minute.
@@ -784,7 +805,7 @@ export async function withdrawTreasury(ledger: Ledger, net: MoneyNet, req: Withd
       try {
         const result = await runMove(ledger, move, signer, net, io.say);
         if (result.kind !== 'landed') {
-          io.say(result.kind === 'unconfirmed' ? `${result.detail} Run withdraw again in a few minutes.` : result.detail);
+          io.say(result.kind === 'unconfirmed' || result.kind === 'held' ? `${result.detail} Run withdraw again in a few minutes.` : result.detail);
           return 1;
         }
       } finally {
@@ -849,7 +870,7 @@ export async function withdrawTreasury(ledger: Ledger, net: MoneyNet, req: Withd
       io.say(`Done. $${formatUsdc(held)} went from T to ${to}.`);
       return 0;
     }
-    io.say(result.kind === 'unconfirmed' ? `${result.detail} Run withdraw again in a few minutes to finish it.` : result.detail);
+    io.say(result.kind === 'unconfirmed' || result.kind === 'held' ? `${result.detail} Run withdraw again in a few minutes to finish it.` : result.detail);
     return 1;
   } finally {
     signer.drop();
