@@ -728,6 +728,25 @@ test('Done, a lock, or leaving the tab wipes the words', async () => {
   assert.equal(find(flow(world), '.word').length, 0, 'the words stayed on a locked window');
 });
 
+/* The reveal opens nothing, so the proof is checked against what the reveal left in the app for
+   half an hour. Past that (or after a restart) the backend says to show the words again: the row
+   closes so Back it up is there to press, and the sentence says so once. */
+test('a proof the app can no longer check closes the row and says to show the words again', async () => {
+  const world = build();
+  world.answer.proven = () => ({ ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(world), 'I wrote them down').click();
+  const panel = flow(world);
+  find(panel, 'input').forEach((input: Any) => { input.value = WORDS[Number(input.dataset.index)]; });
+  buttonNamed(panel, 'Prove it').click();
+  await flush();
+  assert.equal(flow(world).hidden, true, 'the words are wiped and the row is closed');
+  assert.equal(find(flow(world), '.word').length, 0);
+  assert.deepEqual(world.toasts, ['Show your words once more with Back it up, then type three of them back.']);
+  assert.ok(backup(world).startsWith('Not backed up yet.'));
+});
+
 test('a cancelled Touch ID on the reveal shows nothing and says nothing', async () => {
   const world = build();
   world.answer.reveal = { ok: false, error: 'cancelled', code: 'user_cancel' };

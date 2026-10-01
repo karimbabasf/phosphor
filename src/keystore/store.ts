@@ -235,6 +235,14 @@ export type Keystore = {
   // The version 2 unlock: the data key came back from the enclave, open the payload with it.
   // Wipes the buffer it is given either way.
   unlockWithDataKey(dek: Buffer): UnlockResult;
+  /* The payload opened for one read and wiped, under a data key or a password, with the lock
+     state exactly as it was: what a touch or a password asked for something other than opening
+     the wallet (showing an address, revealing the phrase) gets. The data key is wiped either way. */
+  readWithDataKey<T>(dek: Buffer, read: (payload: KeysPayload) => T): { ok: true; value: T } | Extract<UnlockResult, { ok: false }>;
+  readWithPassword<T>(password: string, read: (payload: KeysPayload) => T): Promise<{ ok: true; value: T } | Extract<UnlockResult, { ok: false }>>;
+  /* An approval's Touch ID: the wallet is opened for one move and stays locked to everything else
+     (lockWhen under `key`), or, when it is already open, the touch is only proved. */
+  openFor(key: string, dek: Buffer, done: () => boolean, capMs: number): UnlockResult;
   createWithEnclave(enclave: EnclaveRef): { addresses: StoredAddresses };
   importWithEnclave(enclave: EnclaveRef, from: { mnemonic?: string; keys?: Partial<RailKeys> }): { addresses: StoredAddresses };
   // A version 1 file becomes a version 2 file: the password opens it once, a fresh data key is
@@ -775,7 +783,13 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     announce();
   }
 
-  function unlockWithDataKey(dek: Buffer): UnlockResult {
+  /* The version 2 decrypt and NOTHING ELSE, the data-key twin of openOnce: whether the wallet
+     ends up open is the caller's decision. The data key is wiped on every failure and handed back
+     untouched on success. The addresses the header claims are compared against the ones the keys
+     actually give: a header any process can edit is never believed over the payload only the
+     enclave could open, so a mismatch is recorded, the derived addresses are served, and the
+     window is told. */
+  function openWithDataKey(dek: Buffer): { ok: true; body: Buffer; payload: KeysPayload } | Extract<UnlockResult, { ok: false }> {
     let stored: KeystoreFile | null;
     try {
       stored = readKeystoreFile(file);
@@ -791,27 +805,83 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       wipe(dek);
       return { ok: false, error: 'wrong_password', detail: 'this is a password wallet; the enclave cannot open it' };
     }
+    let body: Buffer | null = null;
     let payload: KeysPayload;
-    let body: Buffer;
     try {
       body = open(stored.payload, dek, proofAad(stored.header));
       payload = JSON.parse(body.toString('utf8')) as KeysPayload;
     } catch (err) {
-      wipe(dek);
+      wipe(dek, body);
       return { ok: false, error: 'damaged', detail: err instanceof Error ? err.message : String(err) };
     }
-    /* The addresses the header claims against the ones the keys actually give. A header any
-       process can edit is never believed over the payload only the enclave could open; a
-       mismatch is recorded, the derived addresses are served, and the window is told. */
     const derived = addressesOf(payload);
     tampered = !sameAddresses(derived, stored.header.addresses);
-    hold(body, payload);
-    if (dataKey !== null) wipe(dataKey);
-    dataKey = dek;
     openAddresses = derived;
     failures = 0;
     backoffUntil = 0;
+    return { ok: true, body, payload };
+  }
+
+  function unlockWithDataKey(dek: Buffer): UnlockResult {
+    const opened = openWithDataKey(dek);
+    if (!opened.ok) return opened;
+    hold(opened.body, opened.payload);
+    if (dataKey !== null) wipe(dataKey);
+    dataKey = dek;
     announce();
+    return { ok: true };
+  }
+
+  /* A TOUCH OR A PASSWORD OPENS ONLY WHAT IT WAS ASKED FOR. The payload is opened for one read
+     and wiped, and the lock state is exactly what it was: nothing is held, nothing is announced,
+     so nothing queued is released and no plan re-arms. "Show your deposit address" verified the
+     addresses through an unlock and locked again, but the unlock had already told every listener,
+     and the runner re-armed a locked plan and took the trading key for a fresh session in that
+     same tick; "Reveal your recovery phrase" left the whole wallet open for signing until the
+     idle lock. Both read through here now. The addresses come out verified, as from any open. */
+  function readWithDataKey<T>(dek: Buffer, read: (payload: KeysPayload) => T): { ok: true; value: T } | Extract<UnlockResult, { ok: false }> {
+    const opened = openWithDataKey(dek);
+    if (!opened.ok) return opened;
+    try {
+      return { ok: true, value: read(opened.payload) };
+    } finally {
+      wipe(opened.body, dek);
+    }
+  }
+
+  // The same for a password wallet, through openWith, so every guess is counted.
+  async function readWithPassword<T>(password: string, read: (payload: KeysPayload) => T): Promise<{ ok: true; value: T } | Extract<UnlockResult, { ok: false }>> {
+    const opened = await openWith(password);
+    if (!opened.ok) return opened;
+    try {
+      const payload = JSON.parse(opened.body.toString('utf8')) as KeysPayload;
+      openAddresses = addressesOf(payload);
+      tampered = false;
+      return { ok: true, value: read(payload) };
+    } finally {
+      wipe(opened.body);
+    }
+  }
+
+  /* An approval's Touch ID opens the wallet for that one move. On a wallet already open it only
+     proves the touch opened this file, and changes nothing. On a shut one the payload is held
+     the way a closing wallet holds it (lockWhen): state() says locked throughout, nothing is
+     announced, so no plan re-arms, nothing queued is released and no other move can start, and
+     the key goes as soon as `done` says this move has signed, or at the cap. It used to be a full
+     unlock, and every move under the click threshold then ran with no click until the idle lock,
+     on a touch whose dialog named one move. */
+  function openFor(key: string, dek: Buffer, done: () => boolean, capMs: number): UnlockResult {
+    if (plain !== null && closers.size === 0) {
+      const proved = readWithDataKey(dek, () => true);
+      return proved.ok ? { ok: true } : proved;
+    }
+    const opened = openWithDataKey(dek);
+    if (!opened.ok) return opened;
+    // The data key is not kept: nothing may rewrite the payload while the wallet is shut.
+    if (plain === null) hold(opened.body, opened.payload);
+    else wipe(opened.body);
+    wipe(dek);
+    lockWhen(key, done, capMs);
     return { ok: true };
   }
 
@@ -1008,6 +1078,9 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     enclave,
     enclaveRequest,
     unlockWithDataKey,
+    readWithDataKey,
+    readWithPassword,
+    openFor,
     createWithEnclave,
     importWithEnclave,
     rewrapToEnclave,

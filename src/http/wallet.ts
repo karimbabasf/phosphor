@@ -35,7 +35,9 @@ import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
 import type { RailKeys } from '../keystore/derive.ts';
 import { CLOSE_GRACE_MS } from '../keystore/store.ts';
+import { wipe } from '../keystore/envelope.ts';
 import { mayStillSign } from '../proposals.ts';
+import { rememberPhrase } from '../vault/phrase-proof.ts';
 import type { Ctx } from './context.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
 import type { RouteAudience, RouteGate, RouteState, RouteVerdict } from '../preflight/route-health.ts';
@@ -49,7 +51,9 @@ const MIN_PASSWORD = 8;
 // enough that a nonce left in a page's memory is not a standing key.
 const REVEAL_TTL_MS = 30_000;
 
-type Pending = { what: 'mnemonic' | 'keys'; expires: number };
+// The material rides in the slot as bytes, read under the password at the POST, so the GET needs
+// no open wallet and the slot can be wiped.
+type Pending = { what: 'mnemonic' | 'keys'; expires: number; secret: Buffer | null };
 const pending = new Map<string, Pending>();
 
 /* Every route here carries the window token, the same way approve does, and answers the same
@@ -362,40 +366,36 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   // Re-entering the password is the control, so it is checked against the file rather than
   // against the fact that the wallet happens to be open.
   //
-  // This one DOES unlock, unlike the backup above, and it has to: the second half of the
-  // handshake reads material off an open wallet, thirty seconds later, with no password in
-  // hand. What was missing is that the app never noticed. So the unlock is announced below,
-  // exactly as pressing Unlock would be.
-  const wasShut = ctx.keystore.state() === 'locked';
-  const opened = await ctx.keystore.unlock(password);
-  if (!opened.ok && opened.error !== 'no_wallet') {
-    ctx.audit.append('approve_attempt_rejected', `reveal refused: ${opened.error}`, { error: opened.error, what });
-    return sendJson(res, 200, refusal(opened.error, opened.retryInSec));
+  // IT OPENS NOTHING. The material is read under the password into this nonce's slot, for the GET
+  // to spend once, and the wallet stays exactly as it was (Keystore.readWithPassword). This used to
+  // be a full unlock, announced and releasing the queue, on a password typed to see the words: the
+  // wallet then stayed open for signing until the idle lock, and every plan waiting on an unlock
+  // re-armed.
+  const read = await ctx.keystore.readWithPassword(password, (payload) => (what === 'keys' ? payload.evm?.privateKey : payload.mnemonic) ?? null);
+  if (!read.ok) {
+    if (read.error === 'no_wallet') return sendJson(res, 200, refusal('no_wallet'));
+    ctx.audit.append('approve_attempt_rejected', `reveal refused: ${read.error}`, { error: read.error, what });
+    return sendJson(res, 200, refusal(read.error, read.retryInSec));
   }
-  if (ctx.keystore.state() !== 'unlocked') return sendJson(res, 200, refusal('no_wallet'));
-
-  if (wasShut) {
-    /* The wallet is open now and everything that watches it has to be told: the window draws a
-       whole screen off the lock frame, and the queue behind the lock is waiting on exactly this.
-       The queue is released in the BACKGROUND rather than awaited, because this response carries
-       a nonce that dies in thirty seconds and releasing a queue means sending a rail apiece. */
-    ctx.audit.append('app_start', 'the wallet was unlocked by the reveal handshake');
-    announce(ctx);
-    void ctx.releaseQueued().catch((err: unknown) => {
-      ctx.audit.append('error', `releasing the queue after a reveal failed: ${errText(err)}`);
-    });
-  }
-  if (what === 'mnemonic' && ctx.keystore.header()?.hasMnemonic !== true) {
+  if (what === 'mnemonic' && (typeof read.value !== 'string' || read.value === '')) {
     return sendJson(res, 200, refusal('no_mnemonic'));
+  }
+  if (what === 'mnemonic' && typeof read.value === 'string') {
+    const wallet = ctx.keystore.addresses().evm;
+    if (wallet !== null) rememberPhrase(read.value.split(' '), wallet);
   }
 
   // Nonces that were issued and never spent are dropped here rather than by a timer, because
   // the only thing that can add one is this line, so this is the only place the map can grow.
   const at = Date.now();
-  for (const [key, held] of [...pending]) if (at > held.expires) pending.delete(key);
+  for (const [key, held] of [...pending]) {
+    if (at <= held.expires) continue;
+    wipe(held.secret);
+    pending.delete(key);
+  }
 
   const nonce = crypto.randomBytes(32).toString('hex');
-  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS });
+  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS, secret: typeof read.value === 'string' ? Buffer.from(read.value, 'utf8') : null });
   // The log records that somebody asked to see the key, which is exactly the event an owner
   // reading this file later wants to find. It records nothing about what they saw.
   ctx.audit.append('app_start', `the window asked to reveal the ${what === 'keys' ? 'private keys' : 'recovery phrase'}`, { what });
@@ -425,20 +425,21 @@ function revealSameOrigin(req: http.IncomingMessage): boolean {
   return mode !== 'navigate';
 }
 
-export function handleRevealFetch(ctx: Ctx, nonce: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+export function handleRevealFetch(_ctx: Ctx, nonce: string, req: http.IncomingMessage, res: http.ServerResponse): void {
   if (!revealSameOrigin(req)) return fail(res, 403, 'cross-origin request');
   const held = pending.get(nonce);
   // Spent on sight, before anything can go wrong further down: a nonce that survives a failed
   // read is a nonce that can be retried.
   pending.delete(nonce);
   if (held === undefined) return fail(res, 404, 'that reveal has already been used, or was never issued');
+  // Read out of the slot and wiped before any answer, so no path leaves it behind.
+  const secret = held.secret === null ? null : held.secret.toString('utf8');
+  wipe(held.secret);
   if (Date.now() > held.expires) return fail(res, 410, 'that reveal expired. Ask again.');
-  if (!ctx.keystore.isUnlocked()) return fail(res, 409, 'the wallet locked before the reveal was read');
 
-  const secret = ctx.keystore.reveal();
   if (held.what === 'mnemonic') {
-    if (secret.mnemonic === null) return fail(res, 404, 'this wallet has no recovery phrase');
-    return sendJson(res, 200, { ok: true, what: 'mnemonic', mnemonic: secret.mnemonic.split(' ') });
+    if (secret === null) return fail(res, 404, 'this wallet has no recovery phrase');
+    return sendJson(res, 200, { ok: true, what: 'mnemonic', mnemonic: secret.split(' ') });
   }
   sendJson(res, 200, {
     ok: true,
@@ -446,7 +447,7 @@ export function handleRevealFetch(ctx: Ctx, nonce: string, req: http.IncomingMes
     // The EVM key alone: it is the intents account and the Hyperliquid signer. The Solana and
     // NEAR keys the file still seals sign nothing in this app, so they are not shown.
     keys: {
-      evm: secret.keys.evm?.privateKey ?? null,
+      evm: secret,
     },
   });
 }

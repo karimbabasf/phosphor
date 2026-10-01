@@ -81,6 +81,11 @@ login password, and each click on a proposal ends in a Touch ID dialog whose sen
 composes from the proposal's numbers: the amount, the receiver shortened to eight characters at
 each end (a NEAR name whole), the chain. No agent-written text reaches that dialog. Read it before you confirm.
 
+A Touch ID or a password opens only what it was asked for. "Show your deposit address" verifies
+the address, and "Reveal your recovery phrase", or the password typed to see the words, shows the
+words; none of them opens the wallet, so a locked wallet stays locked, no trading plan re-arms and
+nothing waiting for an unlock runs. Only Unlock opens it.
+
 Two limits belong here. While the vault is open, the unwrapped wallet key sits in the backend's
 memory as bytes, so the app can sign the moves you approved and the small ones the policy allows;
 the lock wipes it. And on a build that is not signed with a Developer ID, the enclave key is bound

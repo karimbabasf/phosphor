@@ -839,6 +839,14 @@
       api.vaultBackupProven(words)
         .then(function (answer) {
           if (answer && answer.ok === false) {
+            /* The words in this row were shown long enough ago that the app no
+               longer holds them to check against (or it restarted): the row
+               closes and Back it up shows them again. */
+            if (answer.code === 'reveal_again') {
+              wipePhrase();
+              window.PhosphorToast.show(answer.error || 'Show your words once more with Back it up, then type three of them back.');
+              return;
+            }
             if (answer.code === 'wrong_words') {
               misses += 1;
               if (misses >= 2) {
