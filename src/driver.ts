@@ -749,8 +749,15 @@ export function createDriver(opts: DriverOptions) {
       const call = calls.get(id);
       if (call !== undefined) calls.delete(id);
       if (call?.meta === true) continue;
-      // A search's answer is where a page's address may come from: kept for the seat, whole.
-      if (call?.name === 'web_search' && block.is_error !== true) recordSearchResult(seat, block.content);
+      /* A search's answer is where a page's address may come from. Only the copy the stream carries
+         whole (tool_use_result) is read, and only when it answers this call's own query: the text in
+         the block opens with that query word for word, so an address in it may be one the agent
+         wrote (src/web-gate.ts recordSearchResult). No copy, or another query's, records nothing. */
+      if (call?.name === 'web_search' && block.is_error !== true) {
+        const whole = event.tool_use_result as { query?: unknown } | null | undefined;
+        const asked = (call.input as { query?: unknown } | null | undefined)?.query;
+        if (whole !== null && typeof whole === 'object' && typeof asked === 'string' && whole.query === asked) recordSearchResult(seat, whole);
+      }
       const name = call?.name ?? (typeof block.name === 'string' ? block.name : 'tool');
       const content = provider.result(block.content);
       const ok = block.is_error !== true && content !== null;

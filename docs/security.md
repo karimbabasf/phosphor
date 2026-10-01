@@ -46,7 +46,9 @@ news headlines, and the token names and memos in the chain reads.
 
 A page cannot get your data sent out either. The vendors' own page readers are off: the app reads
 a page itself, and only at an address that came back in a web search in that chat or that you
-gave, word for word, never one the agent wrote. An address that carries your wallet's address or
+gave, word for word, never one the agent wrote. A search's answer also repeats the agent's own
+query and the search model's notes, so only the addresses the search engine itself returned
+count, never an address in that text. An address that carries your wallet's address or
 one of its balances is refused even then, and so is any address on this machine or your own
 network. The agent is also told never to put your balances, your addresses or what you said into
 a search; that one is an instruction, and a search that does it closes page reading for the rest

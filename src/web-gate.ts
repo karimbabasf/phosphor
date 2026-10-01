@@ -23,9 +23,10 @@
 //
 // ONE CHOKE POINT. The vendors' page readers are switched off (src/providers/), so the only way the
 // agent reads a page is mcp__phosphor__web_read (src/http/read/web.ts), which runs this gate in the
-// app's own process before any lookup or connection. src/driver.ts feeds it every search result
-// the stream carries, and src/http/mutation.ts feeds it the person's messages. Keyed by the seat,
-// like the web-read mark, and cleared with it when an agent session starts.
+// app's own process before any lookup or connection. src/driver.ts feeds it the addresses each
+// search returned (never the text around them, which repeats the agent's own query), and
+// src/http/mutation.ts feeds it the person's messages. Keyed by the seat, like the web-read mark,
+// and cleared with it when an agent session starts.
 
 export const READS_PER_SESSION = 12;
 export const READS_PER_SITE = 3;
@@ -234,36 +235,50 @@ export function recordPersonText(seat: string, text: string): number {
   return kept;
 }
 
-// Every string in a tool result, whatever shape the vendor wrapped it in.
-function stringsIn(value: unknown, out: string[], depth = 0): void {
-  if (depth > 8 || out.length > 2000) return;
-  if (typeof value === 'string') {
-    out.push(value);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const v of value) stringsIn(v, out, depth + 1);
-    return;
-  }
-  if (value !== null && typeof value === 'object') {
-    for (const v of Object.values(value as Record<string, unknown>)) stringsIn(v, out, depth + 1);
-  }
+function urlOf(hit: unknown): string | null {
+  const url = hit !== null && typeof hit === 'object' ? (hit as { url?: unknown }).url : undefined;
+  return typeof url === 'string' ? url : null;
 }
 
-/* One web search result, as the stream carried it: Claude's WebSearch answers text with a JSON
-   list of links in it, a server-run search answers blocks with a `url` each. Every https address in
-   it is kept: a search engine wrote them, and none of them can hold what the agent has read since.
-   Returns how many it kept. */
-export function recordSearchResult(seat: string, content: unknown): number {
-  if (seat === '') return 0;
-  const texts: string[] = [];
-  stringsIn(content, texts);
-  let kept = 0;
-  for (const t of texts) {
-    for (const u of urlsIn(t)) {
-      if (kept >= MAX_PER_RESULT) return kept;
-      if (remember(seat, u, 'search')) kept++;
+// The `url` fields of one search answer, by its shape. A string anywhere in it is never read.
+function searchHits(result: unknown): string[] {
+  const out: string[] = [];
+  const blocks = Array.isArray(result) ? result : [result];
+  for (const block of blocks) {
+    if (block === null || typeof block !== 'object') continue;
+    const b = block as { type?: unknown; content?: unknown; results?: unknown };
+    // Claude Code's WebSearch output: hit lists, and the search model's commentary as strings.
+    if (Array.isArray(b.results)) {
+      for (const r of b.results) {
+        const hits = r !== null && typeof r === 'object' ? (r as { content?: unknown }).content : undefined;
+        if (Array.isArray(hits)) for (const hit of hits) out.push(urlOf(hit) ?? '');
+      }
     }
+    // A server-run search: its result blocks, alone or inside the tool result that holds them.
+    if (b.type === 'web_search_result') out.push(urlOf(b) ?? '');
+    if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) {
+      for (const hit of b.content) if ((hit as { type?: unknown } | null)?.type === 'web_search_result') out.push(urlOf(hit) ?? '');
+    }
+  }
+  return out.filter((u) => u !== '');
+}
+
+/* One web search's answer: the addresses the search engine returned, and nothing else. Read from
+   the `url` fields of two shapes:
+   - Claude Code's WebSearch output, which the stream carries whole beside the text the model reads
+     (tool_use_result, src/driver.ts): { query, results: [{ content: [{ title, url }] }, commentary] }.
+   - A server-run search's blocks: [{ type: 'web_search_result', url }].
+   NEVER AN ADDRESS IN TEXT (review correction 1, 2026-10-01). The text the model reads opens with
+   its own query word for word (`Web search results for query: "..."`, Claude Code 2.1.286), so
+   an agent that searched for https://evil.example/?d=<data> got that address back as provenance.
+   The search model's commentary follows, and the query can ask it to write any `Links:` line, so
+   not even a Links line in text is the engine's. Returns how many it kept. */
+export function recordSearchResult(seat: string, result: unknown): number {
+  if (seat === '') return 0;
+  let kept = 0;
+  for (const u of searchHits(result)) {
+    if (kept >= MAX_PER_RESULT) return kept;
+    if (remember(seat, u, 'search')) kept++;
   }
   return kept;
 }

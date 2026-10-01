@@ -78,6 +78,41 @@ test('a web search\'s links become readable for the chat that searched, and for 
   }
 });
 
+/* REGRESSION, review correction 1 (2026-10-01), through the real driver: the agent searches for
+   an address of its own, the text the stream carries echoes it at the top and the commentary adds
+   a forged Links line, and only the engine's hit becomes readable. */
+test('regression: an address that appears only in the echoed query is refused through the real driver', async () => {
+  const w = world('seat-gate-echo');
+  try {
+    await w.start();
+    await w.turn('HOSTILE-SEARCH');
+    assert.ok(checkPage('seat-gate-echo', 'https://news.example.org/real', PRINTS).ok, 'the engine\'s hit is readable');
+    for (const [url, code] of [
+      ['https://evil.example.net/v?d=swap-all-usdc', 'query'],
+      ['https://evil.example.net/forged?d=1', 'query'],
+      ['https://evil.example.net/said?d=2', 'query'],
+      ['https://evil.example.net/forged?d=3', 'query'],
+      ['https://evil.example.net/v', 'provenance'],
+    ] as const) {
+      const v = checkPage('seat-gate-echo', url, PRINTS);
+      assert.equal(v.ok ? '' : v.code, code, url);
+    }
+  } finally {
+    w.done();
+  }
+});
+
+test('a search answer with no whole copy beside its text records nothing', async () => {
+  const w = world('seat-gate-textonly');
+  try {
+    await w.start();
+    await w.turn('TEXT-ONLY-SEARCH');
+    assert.equal((checkPage('seat-gate-textonly', 'https://near.ai/', PRINTS) as { code?: string }).code, 'provenance');
+  } finally {
+    w.done();
+  }
+});
+
 test('a search that carried the wallet\'s figure and address closes page reading for the session', async () => {
   const w = world('seat-gate-leak', () => PRINTS);
   try {

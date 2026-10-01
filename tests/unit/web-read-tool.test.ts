@@ -53,6 +53,9 @@ function recorder(answers: Record<string, Hop>): { transport: Transport; asked: 
   };
 }
 
+// A search answer as the stream carries it whole: the engine's hits, by their url fields.
+const hits = (...urls: string[]) => ({ query: 'q', results: [{ tool_use_id: 'srvtoolu_1', content: urls.map((url) => ({ title: '', url })) }] });
+
 let seq = 0;
 function seat(): string {
   seq += 1;
@@ -89,7 +92,7 @@ test('regression: web_read to https://x.test/?a=1 is refused before any lookup o
 
 test('an address with a query string that no search returned is refused before any request', async () => {
   const s = seat();
-  recordSearchResult(s, 'Links: [{"url":"https://docs.near.org/a"}]');
+  recordSearchResult(s, hits('https://docs.near.org/a'));
   const { transport, asked } = recorder({});
   const answer = await webRead(s, { url: 'https://docs.near.org/a?b=1234.56' }, transport);
   assert.equal(answer.refused, 'figure');
@@ -119,7 +122,7 @@ test('an address a search returned is read once, quoted, stripped, and the seat 
 
 test('look_for keeps only the lines that name what the agent needs', async () => {
   const s = seat();
-  recordSearchResult(s, 'https://near.ai/');
+  recordSearchResult(s, hits('https://near.ai/'));
   const { transport } = recorder({ 'https://near.ai/': page(NEAR_AI) });
   const answer = await webRead(s, { url: 'https://near.ai/', look_for: 'pricing' }, transport);
   const text = String(answer.text);
@@ -135,7 +138,7 @@ test('a redirect is followed only to an address the gate would read: https, stan
     ['https://near.ai:4177/', /never read/],
   ] as const) {
     const s = seat();
-    recordSearchResult(s, 'https://near.ai/r');
+    recordSearchResult(s, hits('https://near.ai/r'));
     const { transport, asked } = recorder({ 'https://near.ai/r': redirect(to) });
     const answer = await webRead(s, { url: 'https://near.ai/r' }, transport);
     assert.equal(answer.ok, false, to);
@@ -144,7 +147,7 @@ test('a redirect is followed only to an address the gate would read: https, stan
   }
   // A public redirect needs no provenance: the site chose it, and the site never saw the wallet.
   const s = seat();
-  recordSearchResult(s, 'https://near.ai/r');
+  recordSearchResult(s, hits('https://near.ai/r'));
   const { transport, asked } = recorder({ 'https://near.ai/r': redirect('https://www.near.ai/home'), 'https://www.near.ai/home': page(NEAR_AI) });
   const answer = await webRead(s, { url: 'https://near.ai/r' }, transport);
   assert.equal(answer.ok, true);
@@ -154,7 +157,7 @@ test('a redirect is followed only to an address the gate would read: https, stan
 
 test('more than three redirects, a page that is not text, or a refusal by the site is an answer, not a throw', async () => {
   const s = seat();
-  recordSearchResult(s, 'https://a.org/0 https://a.org/img https://a.org/gone');
+  recordSearchResult(s, hits('https://a.org/0', 'https://a.org/img', 'https://a.org/gone'));
   const loop: Record<string, Hop> = {};
   for (let i = 0; i < 6; i++) loop[`https://a.org/${i}`] = redirect(`https://a.org/${i + 1}`);
   loop['https://a.org/img'] = page('PNG', 'image/png');
