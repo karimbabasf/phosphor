@@ -32,7 +32,7 @@ import { chartDigest, clearDrawn, focusFollowsChart, linesHeld, plansOn, resolve
 import { LEAD_ONLY_VIEW_TOOLS, VIEW_TOOLS } from './context.ts';
 import type { Ctx } from './context.ts';
 import { tradeNotes } from './read/trade.ts';
-import { markIfCarried } from '../web-read.ts';
+import { markIfCarried, webReadBy } from '../web-read.ts';
 
 type ViewArgs = {
   ctx: Ctx;
@@ -422,20 +422,27 @@ const HANDLERS: Record<string, ViewHandler> = {
       fail(res, 400, `ten concepts is the most one session records; the next session can record more`);
       return;
     }
-    const out = recordLearned(ctx.cfg.dataDir, concept, new Date().toISOString().slice(0, 10));
+    /* Stamped like a note when this seat is marked (src/web-read.ts): a concept it records may be
+       a stranger's words, so it is kept out of what later agents are handed (src/profile). */
+    const marked = webReadBy(session);
+    const out = recordLearned(ctx.cfg.dataDir, concept, new Date().toISOString().slice(0, 10), { webRead: marked });
     if (!out.ok) {
       fail(res, 400, out.reason);
       return;
     }
     if (out.added) {
       counts.set(session, sofar + 1);
-      ctx.audit.append('tool_call', `profile: the agent recorded that the human knows ${concept}`, { concept });
+      ctx.audit.append('tool_call', `profile: the agent recorded that the human knows ${concept}`, { concept, ...(marked ? { webRead: true } : {}) });
     }
     sendJson(res, 200, {
       ok: true,
       added: out.added,
       count: out.count,
-      note: out.added ? `recorded; ${out.count} in the Knows list` : 'already recorded, nothing written',
+      note: !out.added
+        ? 'already recorded, nothing written'
+        : marked
+          ? `recorded; ${out.count} in the Knows list. This chat read text from outside Phosphor, so later chats are not handed this one`
+          : `recorded; ${out.count} in the Knows list`,
     });
     return;
   },

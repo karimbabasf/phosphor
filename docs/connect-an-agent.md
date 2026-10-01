@@ -129,6 +129,18 @@ never your keys or your phrase."
 
 The full list is in [Tools](tools.md).
 
+## The window asks once
+
+An agent you start in your terminal or in another app is one Phosphor did not start, and it
+attaches with a secret any program running as you could read. So when it first attaches, the
+window shows a card: "Allow this agent?", with the name the agent gave itself and the time it
+arrived. Until you allow it, it can read your wallet and every move it asks for waits for your
+OK, whatever the size. Allow lets its moves run under your rules, the way the chat's own agent's
+do; Not now keeps them waiting and stops the asking. The answer holds for that connection only:
+restart the agent and the window asks again. Phosphor cannot see what an agent outside it reads
+with its own tools (its own web search or page reader), so allow only an agent you started
+yourself. The chat's own agent and the workers it starts never ask: Phosphor started them.
+
 ## What the agent can never do
 
 - Approve, refuse, dismiss or execute anything. No tool on the surface does that, and the

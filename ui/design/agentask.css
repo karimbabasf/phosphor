@@ -1,0 +1,159 @@
+/* The card that asks about an agent started outside Phosphor (ui/screens/agentask.js).
+
+   A small panel that floats, so it carries the lift, in the corner the freeze
+   panel opens from: under the top bar on the right. It covers the top of the
+   world for the moment it is up, never the conversation. It grows out of that
+   corner and goes back into it (data-motion="pop", ui/design/motion.css). */
+.agent-ask {
+  position: fixed;
+  top: calc(var(--topbar-h) + var(--s-3));
+  right: var(--s-4);
+  z-index: 55;
+  width: min(360px, calc(100vw - var(--s-6)));
+  padding: 18px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-pop);
+  box-shadow: var(--lift);
+  transform-origin: top right;
+  color: var(--text);
+}
+
+/* Behind a full screen (the lock, the first run, the terms) the card waits: nothing is answered
+   before the person is in. */
+body[data-locked="true"] .agent-ask {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Who is asking: the icon set's link on a key disc, the question, and the name the agent gave
+   itself with the time it arrived. */
+.agent-ask-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.agent-ask-glyph {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  box-shadow: var(--hi);
+  color: var(--text-2);
+}
+
+.agent-ask-glyph .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.agent-ask-who {
+  min-width: 0;
+}
+
+.agent-ask-title {
+  margin: 0;
+  font-size: var(--fs-16);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.agent-ask-name {
+  margin: 2px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+/* What it can do now and after an Allow: label over line, the way a move card lays out facts. */
+.agent-ask-facts {
+  display: grid;
+  gap: var(--s-3);
+  margin: var(--s-4) 0 0;
+}
+
+.agent-ask-fact dt {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.agent-ask-fact dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.agent-ask-note {
+  margin: var(--s-4) 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+  text-wrap: pretty;
+}
+
+.agent-ask-error {
+  margin: var(--s-3) 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  color: var(--warn);
+  overflow-wrap: anywhere;
+}
+
+.agent-ask-error[hidden] {
+  display: none;
+}
+
+/* Not now first, so the harmless answer is the one the hand reaches; Allow at the right edge. */
+.agent-ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+
+/* The harmless answer is a soft key of its own, as on the freeze panel, not a bare word. */
+.agent-ask-actions > .btn-quiet {
+  --btn-bg: var(--bg-3);
+  --btn-bg-hover: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 6%);
+}
+
+.agent-ask-actions > .btn:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+/* Stacked (ui/design/layout.css): the world above, the conversation docked below. The card spans
+   the world's width under the top bar, the two facts side by side, so it stays in the world's
+   share of the height; held to that share, and scrolled inside, if the split leaves it less. */
+@media (max-width: 959px) {
+  .agent-ask {
+    left: var(--s-4);
+    right: var(--s-4);
+    width: auto;
+    max-height: calc(54vh - var(--topbar-h) - var(--s-4));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    transform-origin: top center;
+  }
+
+  .agent-ask-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--s-5);
+  }
+}
+
+@media (max-width: 559px) {
+  .agent-ask-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

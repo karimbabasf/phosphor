@@ -73,6 +73,18 @@ one is marked too. A move
 that would have been refused is still refused; the mark only turns a move that would have run on
 its own into one that asks. [Security](security.md#a-web-page-is-not-an-instruction) says why.
 
+### An agent you started outside Phosphor
+
+An agent in your terminal or in another app attaches with a secret the app writes into its data
+folder, and any program running as you can read that folder. So the first time one attaches, the
+window asks "Allow this agent?", and until you allow it, every money move it proposes waits for
+your click, whatever its size. Why it asks says: "This agent was started outside Phosphor and is
+not allowed yet, so this move waits for your OK." Allow lets its moves run under these rules like
+the chat's own agent; Not now keeps every one waiting. An Allow holds for that one connection:
+restart the agent and the window asks again. Phosphor cannot see what such an agent reads with
+its own tools, so a read it makes through Phosphor (a page, news, a chain read) still marks it as
+above, and the card says to allow only an agent you started yourself.
+
 ### After a move that did not go through
 
 When a move your agent proposed does not go through, the app wakes the agent to tell you in one

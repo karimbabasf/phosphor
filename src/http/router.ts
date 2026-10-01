@@ -20,6 +20,7 @@ import { handleConnectionRead, handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
 import { handleMcp } from './mcp.ts';
 import { handleTermsAccept } from './terms.ts';
+import { handleAgentAnswer } from './agent-answer.ts';
 import {
   handleActivity,
   handleLock,
@@ -172,6 +173,8 @@ const POST: Record<string, Route> = {
   '/api/vault/prefs': (ctx, req, res) => handleVaultPrefs(ctx, req, res),
   // The person accepted the terms of use. Window token, like every write a person makes here.
   '/api/terms/accept': (ctx, req, res) => handleTermsAccept(ctx, req, res),
+  // The person's Allow or Not now for an agent started outside Phosphor (src/agents.ts).
+  '/api/agents/answer': (ctx, req, res) => handleAgentAnswer(ctx, req, res),
   '/api/deposit/show': (ctx, req, res) => handleDepositShow(ctx, req, res),
   '/api/deposit/stop': (ctx, req, res) => handleDepositStop(ctx, req, res),
 };

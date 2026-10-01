@@ -27,7 +27,10 @@ export type Profile = {
   name: string;
   style: 'plain' | 'technical';
   levels: { markets: Level; charting: Level; perps: Level; blockchain: Level };
-  knows: { concept: string; date: string }[];
+  /* `webRead`: recorded by a seat that had read text from outside Phosphor (src/web-read.ts),
+     written ` [web]` after the date. Kept in the file and never handed to an agent: profileBlock
+     leaves it out, and a build before the stamp drops the line as no concept at all. */
+  knows: { concept: string; date: string; webRead?: true }[];
 };
 
 // A concept is a noun phrase: letters, digits, spaces, commas, apostrophes and hyphens. No
@@ -37,7 +40,7 @@ export const CONCEPT_RULE = /^[A-Za-z0-9 ,'-]{1,48}$/;
 const NAME_RULE = /^[A-Za-z0-9 ,'-]{1,40}$/;
 const A_LETTER = /[A-Za-z]/;
 const DATE_RULE = /^\d{4}-\d{2}-\d{2}$/;
-const KNOWS_LINE = /^- (.*?)(?: \((\d{4}-\d{2}-\d{2})\))?$/;
+const KNOWS_LINE = /^- (.*?)(?: \((\d{4}-\d{2}-\d{2})\))?( \[web\])?$/;
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 const LEVEL_KEYS = ['markets', 'charting', 'perps', 'blockchain'] as const;
 
@@ -101,7 +104,7 @@ export function parseProfile(text: string): Profile {
       if (m === null || !isConcept(m[1]) || seen.has(m[1].toLowerCase())) continue;
       if (p.knows.length >= KNOWS_MAX) continue;
       seen.add(m[1].toLowerCase());
-      p.knows.push({ concept: m[1], date: m[2] ?? '' });
+      p.knows.push({ concept: m[1], date: m[2] ?? '', ...(m[3] === undefined ? {} : { webRead: true as const }) });
       continue;
     }
     const colon = line.indexOf(':');
@@ -189,13 +192,16 @@ export function profileBlock(p: Profile): string {
   const tail = '\n</knows>';
   // The fixed text plus the newline before the fence's close, and what is left is the line's.
   const budget = BLOCK_MAX_CHARS - head.length - tail.length - ', and 60 more'.length;
-  return `${head}${knowsLine(p.knows, budget)}${tail}`;
+  /* A concept a marked seat recorded is a stranger's words in the agent's own brief, and every
+     agent reads this block first: left out rather than marking every session that reads it. */
+  return `${head}${knowsLine(p.knows.filter((k) => k.webRead !== true), budget)}${tail}`;
 }
 
 export function recordLearned(
   dataDir: string,
   concept: string,
   today: string,
+  stamp: { webRead?: boolean } = {},
 ): { ok: true; added: boolean; count: number } | { ok: false; reason: string } {
   concept = normalizeConcept(concept);
   if (!isConcept(concept)) {
@@ -216,13 +222,27 @@ export function recordLearned(
   if (file.state === 'unreadable') return { ok: false, reason: `profile.md could not be read: ${file.error}` };
   const text = file.state === 'text' ? file.text : null;
   const current = text === null ? defaultProfile() : parseProfile(text);
-  if (current.knows.some((k) => k.concept.toLowerCase() === concept.toLowerCase())) {
+  const same = current.knows.find((k) => k.concept.toLowerCase() === concept.toLowerCase());
+  if (same !== undefined) {
+    /* A seat with no mark recording a concept a marked one recorded first: the person learned it
+       here too, so the stamp comes off and the concept is handed on from now. */
+    if (same.webRead === true && stamp.webRead !== true && text !== null) {
+      const lines = text.replace(/\n$/, '').split('\n');
+      const at = lines.findIndex((l) => {
+        const m = KNOWS_LINE.exec(l.trim());
+        return m !== null && m[3] !== undefined && m[1]!.toLowerCase() === concept.toLowerCase();
+      });
+      if (at !== -1) {
+        lines[at] = lines[at]!.replace(/ \[web\]\s*$/, '');
+        atomicWrite(profilePath(dataDir), `${lines.join('\n')}\n`, { mode: 0o600 });
+      }
+    }
     return { ok: true, added: false, count: current.knows.length };
   }
   if (current.knows.length >= KNOWS_MAX) {
     return { ok: false, reason: `the Knows list is full at ${KNOWS_MAX} entries; the human can trim profile.md` };
   }
-  const entry = `- ${concept} (${today})`;
+  const entry = `- ${concept} (${today})${stamp.webRead === true ? ' [web]' : ''}`;
   const lines =
     text === null
       ? ['name:', 'markets: 0', 'charting: 0', 'perps: 0', 'blockchain: 0', 'style: plain', '', '## Knows']

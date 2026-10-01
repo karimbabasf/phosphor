@@ -641,6 +641,9 @@ export type Proposal = {
   // Set when it was asked for inside a turn the app started, not the person (src/app-turn.ts).
   // land() makes such a row wait for a click too, whatever its size.
   appTurn?: true;
+  // Set when the seat that asked is an agent the app did not spawn and the person has not allowed
+  // in the window (src/agents.ts, src/web-read.ts). land() makes such a row wait for a click.
+  outside?: true;
   // Set when a person filed an unconfirmed row from the dock ("Got it, waiting on the venue").
   // The row stays needs_reconciliation, keeps counting against the day and keeps its place in
   // Activity; only the dock stops asking. Cleared the moment a re-check changes what the venue
@@ -727,6 +730,9 @@ export type LogEvent = {
     // An agent was turned away: the roster was full, or the session had been replaced from
     // the window. One line per refused session, not per refused call: see src/agents.ts.
     | 'agent_rejected'
+    // The person answered the window's card about an agent started outside Phosphor: Allow, or
+    // Not now. data names the agent; src/http/agent-answer.ts.
+    | 'agent_answered'
     // Written by a human-run compaction, never by the app. The log is append-only,
     // so the one thing a removal owes its reader is a line saying it happened.
     | 'audit_compacted'

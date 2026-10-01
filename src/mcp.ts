@@ -7,7 +7,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SPEND_NETWORKS } from './rails/intents-address.ts';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -142,6 +142,14 @@ const PARENT = process.env.PHOSPHOR_PARENT ?? '';
 const SEAT_ENV = process.env.PHOSPHOR_SEAT ?? '';
 const SEAT_FILE = seatSecretPath(resolveDataDir());
 
+/* THIS PROCESS'S OWN KEY, minted here and held only in memory: never in the environment, never in
+   a file, never in the audit log (src/http/mcp.ts strips it). A proxy started by hand binds its
+   seat with it on its first call, so another process that read agent.secret cannot post as this
+   one, and an Allow the person gives this agent in the window holds for this process alone
+   (src/agents.ts). An agent the app spawned is told apart by PHOSPHOR_SEAT instead, which is why
+   two copies of this server under one PHOSPHOR_SESSION still share a seat. */
+const SEAT_KEY = randomBytes(32).toString('hex');
+
 function seat(): string {
   if (SEAT_ENV !== '') return SEAT_ENV;
   try {
@@ -190,7 +198,7 @@ async function proxy(body: Record<string, unknown>) {
     res = await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: POST_HEADERS,
-      body: JSON.stringify({ ...body, session: SESSION, client: clientName(), label: LABEL, parent: PARENT, secret: seat() }),
+      body: JSON.stringify({ ...body, session: SESSION, client: clientName(), label: LABEL, parent: PARENT, secret: seat(), key: SEAT_KEY }),
       signal: venueWriteTimeout(),
     });
   } catch (err) {
@@ -262,6 +270,7 @@ async function announce(): Promise<void> {
         session: SESSION,
         intervalMs: HELLO_MS,
         secret: seat(),
+        key: SEAT_KEY,
         // No role. The app decides it from the seat, because a role this process announced
         // would be a claim made by the thing being restricted. ROLE below still governs which
         // tools this process REGISTERS, which is the restriction that actually binds.

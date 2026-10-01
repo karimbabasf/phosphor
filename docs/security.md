@@ -42,7 +42,14 @@ because the page stays in the agent's memory until the session ends. And it trav
 labels: a label the agent writes after a web read keeps the mark across a quit, and any agent
 that reads that label back is marked as if it had read the page itself. Plan notes and highlight
 notes carry it the same way, and so do Phosphor's own reads that hand over a stranger's words:
-news headlines, and the token names and memos in the chain reads.
+news headlines, and the token names and memos in the chain reads. A concept the agent records as
+one you learned (`profile_learned`) after such a read is kept on your Mac and never handed to a
+later agent.
+
+An agent you start outside Phosphor (in your terminal, in another app) reads with its own tools,
+where Phosphor cannot look, so it starts marked: the window asks once whether to allow it, and
+until you do, every move it proposes waits for your click. See
+[Connect an agent](connect-an-agent.md#the-window-asks-once).
 
 A page cannot get your data sent out either. The vendors' own page readers are off: the app reads
 a page itself, and only at an address that came back in a web search in that chat or that you

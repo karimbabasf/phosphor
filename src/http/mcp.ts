@@ -114,8 +114,21 @@ function firstRefusal(seen: Set<string>, key: string): boolean {
   return true;
 }
 
-function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerResponse, revoked = false): void {
+function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerResponse, revoked = false, foreign = false): void {
   const session = oneLine(body.session ?? 'unnamed-session', 80);
+  if (foreign) {
+    // A call with the file secret on a seat it does not hold: the app's own agent's, or another
+    // hand-started proxy's. One line per session, like a full roster.
+    if (firstRefusal(ctx.seats, `foreign:${session}`)) {
+      ctx.audit.append('agent_rejected', 'a call posted as a seat it does not hold and was refused', {
+        op: String(body.op ?? ''),
+        session,
+        client: body.client === undefined ? undefined : oneLine(body.client, 80),
+      });
+    }
+    fail(res, 403, error, { seat: 'foreign' });
+    return;
+  }
   if (revoked) {
     // A replaced agent is not a second agent that showed up: the human took the seat off it
     // on purpose. It gets its own marker so the proxy exits instead of reporting a busy
@@ -214,8 +227,9 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
      which log_tail hands to every agent, a worker included, and GET /api/log hands to any local
      process, so the credential the door checks below was open to anyone who read the log. The
      arguments, the session and the client name are the record; the secret was never part of it.
-     A token is stripped for the same reason, in case a caller ever sends one here. */
-  const { secret: _secret, token: _token, ...logged } = body;
+     A token is stripped for the same reason, in case a caller ever sends one here, and so is the
+     key a hand-started proxy binds its seat with (src/agents.ts). */
+  const { secret: _secret, token: _token, key: _key, ...logged } = body;
 
   /* THE SEAT SECRET, ON EVERY OP, FROM EVERY SESSION. Origin above is a header any local process
      sets, and this door is where a propose at or under the click threshold executes with no human
@@ -269,7 +283,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     const shown = rosterShown(ctx);
     const claim = ctx.agents.claim(body);
     if (!claim.ok) {
-      rejectSeat(ctx, claim.error, body, res, claim.revoked === true);
+      rejectSeat(ctx, claim.error, body, res, claim.revoked === true, claim.foreign === true);
       return;
     }
     if (claim.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
@@ -309,7 +323,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   // connected, and something has to be attached for a tool call to exist.
   const seat = ctx.agents.check(body);
   if (!seat.ok) {
-    rejectSeat(ctx, seat.error, body, res, seat.revoked === true);
+    rejectSeat(ctx, seat.error, body, res, seat.revoked === true, seat.foreign === true);
     return;
   }
   if (seat.edge) {

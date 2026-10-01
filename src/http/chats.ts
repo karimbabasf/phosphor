@@ -168,6 +168,9 @@ export function createChatRegistry(deps: {
        driver afterwards: `status().sessionId` is the vendor's own id once the init event lands.
        Every call this child makes carries it as `session` on /api/mcp. */
     const session = crypto.randomUUID();
+    // Held for this chat's own agent: the id is on /api/state, and a hand-started proxy must not
+    // sit in it first (src/agents.ts markOwn).
+    agents.markOwn(session);
     const chat = { id, session, label: `AGENT ${chatSeq}`, transcript: [] } as Partial<Chat> as Chat;
     const vendor = picked();
     chat.driver = buildDriver(chat, vendor);

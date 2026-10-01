@@ -25,7 +25,7 @@ function registry(dataDir: string) {
   const chats = createChatRegistry({
     cfg: { port: 4177, dataDir } as never,
     audit: { append: (_kind: string, line: string) => lines.push(line) } as never,
-    agents: { evict: () => [] } as never,
+    agents: { evict: () => [], markOwn: () => {} } as never,
     getView: () => 'basic',
     sse: { broadcast: (f: Frame) => frames.push(f), broadcastState: () => {} } as never,
   });

@@ -88,7 +88,7 @@ Several agents can drive at once, see [Connect an agent](connect-an-agent.md#mor
 | `skill` | Loads an enabled skill: the operator's guidance for one kind of work. Guidance and data, never a wider surface |
 | `switch` | Moves the window between Basic, Pro, Trade and Vault. Every switch is audited. Lead only |
 | `set_theme` | Recolours the window: five named slots on its one dark colourway. Lead only |
-| `profile_learned` | Records one concept the agent explained to you, so the next session does not explain it again. Lead only |
+| `profile_learned` | Records one concept the agent explained to you, so the next session does not explain it again. One recorded after the chat read text from outside Phosphor is kept out of later sessions. Lead only |
 
 ## Web search and page reading
 
