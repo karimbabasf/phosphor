@@ -489,7 +489,10 @@ from is a place money can be sent and stranded.
 
 The wallet locks after five minutes with nobody at the window (or the time picked in the Vault
 tab), when the machine sleeps, when the screen locks or the Mac switches to another user, when
-the window closes, and on demand. Locked, every read still works, and every write proposal an
+the window closes, and on demand. `/api/state` says why on its lock slice: `lock.reason` is one of
+`screen`, `switch`, `idle` or `sleep`, or null for Lock now, a quit, the window closing and the
+app's start, and `lock.waiting` counts the moves waiting for a person. The words a caller sent
+with its lock are never kept. Locked, every read still works, and every write proposal an
 agent makes is drafted, priced and policy-checked and then waits as `pending_unlock` until
 somebody unlocks, at which point it is decided again against the policy as it stands then and
 lands as something to click. An unlock is not an approval: the click threshold says how much money

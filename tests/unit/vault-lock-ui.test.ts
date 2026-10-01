@@ -412,6 +412,65 @@ test('the fine print says what really runs while the app is locked, for both kin
   }
 });
 
+/* ---------- why it locked, and what waits ---------- */
+
+// The lines under the title, in order, or [] when the block is hidden or absent.
+function whyOf(world: World): string[] {
+  const block = find(world.nodes['screen-lock'], '.lock-why')[0];
+  if (!block || block.hidden) return [];
+  return find(block, 'p').filter((p: Any) => !p.hidden).map((p: Any) => p.textContent);
+}
+
+test('the lock screen says why it locked, in one line under the title, for each reason the backend names', () => {
+  const cases: Array<[string, number, string]> = [
+    ['screen', 5, 'Locked when your screen locked.'],
+    ['switch', 5, 'Locked when this Mac switched users.'],
+    ['sleep', 5, 'Locked while this Mac was asleep.'],
+    ['idle', 5, 'Locked after 5 quiet minutes.'],
+    ['idle', 15, 'Locked after 15 quiet minutes.'],
+    ['idle', 60, 'Locked after a quiet hour.'],
+  ];
+  for (const custody of ['software', 'secure-enclave']) {
+    for (const [reason, idleMinutes, line] of cases) {
+      const world = build({ lock: { state: 'locked', idleLocksInSec: null, reason, waiting: 0 }, vault: vaultState({ custody, idleMinutes }) }, [LOCK]);
+      world.sandbox.PhosphorLock.boot();
+      assert.deepEqual(whyOf(world), [line], `${custody} ${reason} ${idleMinutes}`);
+      const title = find(world.nodes['screen-lock'], '.lock-title')[0];
+      assert.equal(title.textContent, 'Phosphor is locked');
+    }
+  }
+});
+
+test('Lock now, the app starting, and a reason the window does not know get no line', () => {
+  for (const reason of [null, undefined, 'quitting', 'the screen locked']) {
+    const world = build({ lock: { state: 'locked', idleLocksInSec: null, reason, waiting: 0 }, vault: vaultState({ custody: 'software', idleMinutes: 5 }) }, [LOCK]);
+    world.sandbox.PhosphorLock.boot();
+    assert.deepEqual(whyOf(world), [], String(reason));
+  }
+});
+
+test('waiting moves are counted, never named, with one and with many', () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null, reason: 'screen', waiting: 1 }, vault: vaultState({ custody: 'software', idleMinutes: 5 }) }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  assert.deepEqual(whyOf(world), ['Locked when your screen locked.', '1 move is waiting for your OK.']);
+
+  // A second move arrives while locked: the line changes in place and the field keeps what was typed.
+  const input = find(world.nodes['screen-lock'], 'input[type="password"]')[0];
+  input.value = 'half a passw';
+  world.put({ lock: { state: 'locked', idleLocksInSec: null, reason: 'screen', waiting: 2 } });
+  assert.deepEqual(whyOf(world), ['Locked when your screen locked.', '2 moves are waiting for your OK.']);
+  assert.equal(find(world.nodes['screen-lock'], 'input[type="password"]')[0], input, 'the card was rebuilt under the person typing');
+  assert.equal(input.value, 'half a passw');
+
+  // A count with no reason (Lock now) still says what waits.
+  world.put({ lock: { state: 'locked', idleLocksInSec: null, reason: null, waiting: 3 } });
+  assert.deepEqual(whyOf(world), ['3 moves are waiting for your OK.']);
+
+  // Nothing waiting and no reason: the block goes, so no gap is left under the title.
+  world.put({ lock: { state: 'locked', idleLocksInSec: null, reason: null, waiting: 0 } });
+  assert.deepEqual(whyOf(world), []);
+});
+
 test('too many tries count down in place, hold Unlock in its outline until nought, then clear', async () => {
   const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, [LOCK]);
   const ticks: Array<() => void> = [];

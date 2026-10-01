@@ -355,6 +355,14 @@ test('three sections in reading order, the assistant and Safety side by side fir
   assert.match(css, /@container vault \(min-width: 620px\)/, 'the two columns do not follow the page');
 });
 
+test('the lock row says the screen lock locks the window too, so a long timer is no surprise', () => {
+  const world = build();
+  const row = find(world.view, '.vault-row').find((r: Any) => r.dataset.surface === 'window');
+  assert.ok(row, 'no lock row');
+  assert.deepEqual(find(row, '.vault-text').map((t: Any) => t.textContent),
+    ["The window locks after this long without you, and whenever your Mac's screen locks. It hides everything until you open it."]);
+});
+
 test('no red but the freeze, and no green anywhere on the Vault but the tick on a proven phrase', () => {
   // btn-danger is set in the freeze's own code and nowhere else; btn-primary is Approve's.
   const danger = SOURCE.split('btn-danger').length - 1;

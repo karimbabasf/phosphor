@@ -33,6 +33,7 @@ import { oneLine } from '../intents.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
+import { lockCodeOf, lockReasonFor } from '../keystore/lock-reason.ts';
 import type { RailKeys } from '../keystore/derive.ts';
 import type { Ctx } from './context.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
@@ -200,7 +201,11 @@ export async function handleLock(ctx: Ctx, req: http.IncomingMessage, res: http.
     if (executing !== 0) return sendJson(res, 200, { ...refusal('busy'), executing: executing < 0 ? null : executing });
   }
   const was = ctx.keystore.lock();
-  if (was) ctx.audit.append('app_start', `the wallet was locked (${String(body.reason ?? 'on demand')})`, { reason: body.reason ?? 'on_demand' });
+  // Only a lock that happened gets a code; a second request while locked keeps the first one's.
+  if (was) {
+    lockReasonFor(ctx.keystore).note(lockCodeOf(body.reason));
+    ctx.audit.append('app_start', `the wallet was locked (${String(body.reason ?? 'on demand')})`, { reason: body.reason ?? 'on_demand' });
+  }
   announce(ctx);
   sendJson(res, 200, { ok: true });
 }
