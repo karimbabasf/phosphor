@@ -777,16 +777,46 @@ mod tests {
     /// updater plugin runs, the way `Update::download` runs it. Past this, the bytes are what an
     /// attacker holding the minisign key could serve.
     fn assert_minisign_valid(bytes: &[u8], dir: &Path) {
+        let (cli, key, public) = throwaway_key(dir);
+        let file = dir.join("update.app.tar.gz");
+        std::fs::write(&file, bytes).unwrap();
+        run(&cli, &[os("signer"), os("sign"), os("-f"), key.as_os_str(), file.as_os_str()], &[("TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "")]);
+        let signature = minisign_verify::Signature::decode(&unbase64(&std::fs::read(dir.join("update.app.tar.gz.sig")).unwrap())).unwrap();
+        public.verify(bytes, &signature, true).expect("the plugin's verifier accepts the signature");
+    }
+
+    /// A key with no password from `tauri signer generate`, and its public half as the plugin
+    /// reads one.
+    fn throwaway_key(dir: &Path) -> (PathBuf, PathBuf, minisign_verify::PublicKey) {
         let cli = Path::new(env!("CARGO_MANIFEST_DIR")).join("../node_modules/.bin/tauri");
         assert!(cli.exists(), "{} is missing: run npm ci at the repo root first", cli.display());
         let key = dir.join("throwaway.key");
-        let file = dir.join("update.app.tar.gz");
-        std::fs::write(&file, bytes).unwrap();
         run(&cli, &[os("signer"), os("generate"), os("--ci"), os("-p"), os(""), os("-w"), key.as_os_str()], &[]);
-        run(&cli, &[os("signer"), os("sign"), os("-f"), key.as_os_str(), file.as_os_str()], &[("TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "")]);
         let public = minisign_verify::PublicKey::decode(&unbase64(&std::fs::read(dir.join("throwaway.key.pub")).unwrap())).unwrap();
-        let signature = minisign_verify::Signature::decode(&unbase64(&std::fs::read(dir.join("update.app.tar.gz.sig")).unwrap())).unwrap();
-        public.verify(bytes, &signature, true).expect("the plugin's verifier accepts the signature");
+        (cli, key, public)
+    }
+
+    #[test]
+    fn the_release_signer_makes_signatures_the_plugin_accepts() {
+        // scripts/updater-sign.ts signs releases with Node alone; this is the plugin's own check
+        // of what it writes.
+        let dir = Scratch::new().unwrap();
+        let (_, key, public) = throwaway_key(dir.path());
+        let file = dir.path().join("Phosphor.app.tar.gz");
+        let bytes = tar_app(&tiny_app(dir.path(), "0.10.13"));
+        std::fs::write(&file, &bytes).unwrap();
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/updater-sign.ts");
+        let public_path = dir.path().join("throwaway.key.pub");
+        run(
+            "node",
+            &[script.as_os_str(), file.as_os_str(), os("--public-key"), public_path.as_os_str()],
+            &[("TAURI_SIGNING_PRIVATE_KEY", key.to_str().unwrap()), ("TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "")],
+        );
+        let signature = minisign_verify::Signature::decode(&unbase64(&std::fs::read(dir.path().join("Phosphor.app.tar.gz.sig")).unwrap())).unwrap();
+        public.verify(&bytes, &signature, true).expect("the plugin's verifier accepts the release signer");
+        let mut changed = bytes.clone();
+        changed.push(0);
+        assert!(public.verify(&changed, &signature, true).is_err());
     }
 
     fn refusal(outcome: Result<(), Stop>) -> String {
@@ -813,6 +843,16 @@ mod tests {
         }
         assert!(TEAMS.contains(&"35Z6P26CBD"));
         assert!(TEAMS.iter().all(|team| team.len() == 10 && team.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())));
+    }
+
+    #[test]
+    fn the_release_gate_holds_each_release_to_this_requirement() {
+        // The release workflow checks the updater bundle with codesign against the same text,
+        // so a release this check would refuse never ships.
+        let workflow = include_str!("../../.github/workflows/release.yml");
+        let (_, rest) = workflow.split_once("--test-requirement='=").expect("the release gate tests the update requirement");
+        let (gate, _) = rest.split_once('\'').unwrap();
+        assert_eq!(gate, requirement(TEAMS));
     }
 
     #[test]

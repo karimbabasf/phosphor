@@ -509,11 +509,14 @@ So the bundle carries `src-tauri/entitlements.plist` and a `bundle.macOS` block 
 hardened runtime without `get-task-allow`, which is the entitlement that would let a debugger
 attach (`tests/unit/code-signing.test.ts` holds the file to that, and to the one entitlement
 V8 needs, `allow-jit`). `signingIdentity` is `-` in the config, so `tauri build` on its own makes
-an ad hoc bundle, locally and on the release runner alike. The release workflow then runs
-`scripts/notarize-mac.sh`: it signs every nested binary and the Secure Enclave XPC service inside
-out with the Developer ID from its secrets (hardened runtime, secure timestamp), has Apple
+an ad hoc bundle, locally and on the release runner alike. The release workflow's sign job then
+runs `scripts/notarize-mac.sh`: it signs every nested binary and the Secure Enclave XPC service
+inside out with the Developer ID from its secrets (hardened runtime, secure timestamp), has Apple
 notarize the app and the disk image, and staples both. A release without those secrets fails
-before it builds. The same chain runs on a Mac, checks included, with nothing published:
+before it signs anything. That job installs and builds nothing (the build job, which holds no
+secret, does), deletes the signing keychain right after the script, and only then signs the
+updater bundle with `scripts/updater-sign.ts`, which uses Node's own crypto. The same chain runs on
+a Mac, checks included, with nothing published:
 
     npm run notarize:local
 

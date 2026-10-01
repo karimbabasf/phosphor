@@ -15,8 +15,6 @@
 #                     the Apple ID notarytool submits as, an app-specific password, the team
 #   or NOTARY_KEY_PATH, NOTARY_KEY_ID, NOTARY_ISSUER
 #                     an App Store Connect API key; the Apple ID wins when both are set
-#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-#                     the updater key; the updater bundle is rebuilt from the stapled app
 #   NOTARY_TIMEOUT    how long to wait on Apple per submission, 45m unless set. A team's first
 #                     submissions can sit In Progress for hours.
 #   NOTARIZE=0        sign and rebuild everything but skip Apple's service. Only for proving the
@@ -32,11 +30,14 @@
 #
 #   1. sign inside out: every Mach-O, then every nested bundle deepest first, then the app
 #   2. notarize the app and staple its ticket
-#   3. rebuild the updater bundle and its signature from the stapled app
+#   3. rebuild the updater bundle from the stapled app
 #   4. put the stapled app into the DMG in place of the ad-hoc one (Finder layout kept)
 #   5. sign the DMG, notarize it, staple it
 #
-# Checksums, latest.json and provenance come after this, so they describe the stapled files.
+# The updater bundle's minisign signature is not made here: scripts/updater-sign.ts makes it in a
+# later step, once the signing keychain is deleted, so the update key and the Developer ID are
+# never usable at the same moment. Checksums, latest.json and provenance come after that, so
+# they describe the stapled files.
 set -euo pipefail
 
 bundle="${1:?usage: notarize-mac.sh <bundle dir> <version>}"
@@ -56,7 +57,6 @@ if [ "$notarize" = 1 ]; then
     exit 1
   fi
 fi
-: "${TAURI_SIGNING_PRIVATE_KEY:?TAURI_SIGNING_PRIVATE_KEY is not set; the updater bundle needs a new signature}"
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 entitlements="$root/src-tauri/entitlements.plist"
@@ -172,8 +172,6 @@ fi
 # Phosphor.app), without the AppleDouble files and extended attributes macOS tar would add.
 rm -f "$tarball" "$tarball.sig"
 COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -czf "$tarball" -C "$(dirname "$app")" Phosphor.app
-npx --no-install tauri signer sign "$tarball" >/dev/null
-test -s "$tarball.sig" || { echo "notarize: tauri signer wrote no $tarball.sig" >&2; exit 1; }
 
 # 4. Swap the app inside the DMG. Converting to read-write and back keeps Tauri's Finder layout
 # (.DS_Store, background, icon positions), which is keyed on the name, and the name is the same.
