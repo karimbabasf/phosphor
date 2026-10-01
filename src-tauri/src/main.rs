@@ -669,12 +669,12 @@ fn splash_get_phosphor(window: tauri::Window) -> Result<(), String> {
         .map_err(|e| format!("could not open the download page: {e}"))
 }
 
-/// The payload inside the app bundle this binary runs from, found the way Tauri finds its
-/// resources in one (Contents/MacOS, then Contents/Resources). None outside a bundle.
+/// The payload this binary runs, found where Tauri puts its resources: Contents/Resources in an
+/// app bundle, and the binary's own folder in a development build.
 fn bundled_payload() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let root = exe.parent()?.parent()?.join("Resources").join("phosphor");
-    root.is_dir().then_some(root)
+    let beside = exe.parent()?;
+    [beside.parent()?.join("Resources").join("phosphor"), beside.join("phosphor")].into_iter().find(|root| root.is_dir())
 }
 
 /// `Phosphor.app/Contents/MacOS/phosphor-desktop --payload-digest`: the payload digest this copy

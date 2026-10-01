@@ -16,6 +16,13 @@ fn main() {
         panic!("src-tauri/payload/phosphor.sha256 is missing or is not a digest: run `npm run bundle` before building the shell");
     }
     println!("cargo:rustc-env=PHOSPHOR_PAYLOAD_DIGEST={digest}");
+    // tauri_build copies the payload next to a development or test binary (target/<profile>/
+    // phosphor) over whatever an older bundle left there, and a file the new payload no longer has
+    // stays behind. The shell would refuse that copy as altered, so it is cleared first and comes
+    // back whole. OUT_DIR is target/<profile>/build/<crate>-<hash>/out.
+    if let Some(profile) = std::env::var_os("OUT_DIR").and_then(|out| std::path::Path::new(&out).ancestors().nth(3).map(|p| p.join("phosphor"))) {
+        let _ = std::fs::remove_dir_all(profile);
+    }
     // The XPC hop to the Secure Enclave service, see src/xpc_bridge.c, and the signature checks
     // in src/codesign.c it shares with the backend's launch.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {

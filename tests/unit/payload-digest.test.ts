@@ -102,6 +102,9 @@ test('the bundler seals the payload npm left without its own files, and the boot
   const build = fs.readFileSync(path.join(ROOT, 'src-tauri', 'build.rs'), 'utf8');
   assert.match(build, /payload\/phosphor\.sha256/);
   assert.match(build, /cargo:rustc-env=PHOSPHOR_PAYLOAD_DIGEST=/);
+  // A development copy keeps files an older payload had; it is cleared before tauri_build copies.
+  const cleared = build.indexOf('remove_dir_all(profile)');
+  assert.ok(cleared > 0 && cleared < build.indexOf('tauri_build::build()'), 'the copy next to a development binary is cleared, then copied whole');
   const shell = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'payload.rs'), 'utf8');
   assert.match(shell, /pub const BUILT_FOR: &str = env!\("PHOSPHOR_PAYLOAD_DIGEST"\);/);
 });
