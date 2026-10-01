@@ -7,7 +7,8 @@
 //   refuse          -> policy_refused, terminal
 // There is no override, no force flag and no fourth path. Approval re-runs the engine against
 // the policy and balances as they are at that moment, so a kill switch flipped after the
-// proposal was created still stops it. Every transition appends one line to the audit log.
+// proposal was created still stops it, and the Touch ID that completes an enclave approval
+// runs it once more before anything signs. Every transition appends one line to the audit log.
 //
 // This file is the door. The work is in src/proposals/, split by job: lifecycle.ts is what a
 // proposal is and what a click does to it, execute.ts is what actually runs, draft.ts is how a

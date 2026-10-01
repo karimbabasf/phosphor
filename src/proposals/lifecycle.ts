@@ -575,12 +575,24 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
     ctx.audit.append('proposal_created', `${id} goes back to pending: the enclave answered the wrong thing`, { id });
     return persist(ctx, { ...current, status: 'pending' });
   }
+  /* THE ENGINE RUNS AGAIN HERE, the last moment before anything signs. approve() judged the
+     click when it was made, and the dialog can then sit open for a minute: a kill switch turned
+     on in that minute, a policy file that stopped loading, or other clicks whose touches landed
+     first all change the answer. Inside the serialiser, so the spend it reads is every move
+     ahead of this one. A refusal opens nothing and the data key is wiped, as retryHeld refuses
+     a held row. */
+  const verdict = evaluate(current.draft, buildCtx(ctx, ctx.ledger.snapshot(), loadPolicy(ctx.dataDir)));
+  if (verdict.outcome === 'refuse') {
+    drop();
+    ctx.audit.append('policy_refused', `${id} refused after Touch ID: ${verdict.rule}`, { id, rule: verdict.rule, reasons: verdict.reasons });
+    return persist(ctx, { ...current, verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
+  }
   const opened = ctx.keystore.unlockWithDataKey(result.dek);
   if (!opened.ok) {
     ctx.audit.append('proposal_created', `${id} goes back to pending: the data key did not open the wallet (${opened.error})`, { id, error: opened.error });
     return persist(ctx, { ...current, status: 'pending' });
   }
-  const approved = persist(ctx, { ...current, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
+  const approved = persist(ctx, { ...current, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
   ctx.audit.append('approved', `human approved ${current.kind} proposal ${id} with Touch ID`, { id, totalUsd: totalUsdOf(current.draft), touch: true });
   rememberRecipient(ctx, approved);
   return ctx.execute(approved);
