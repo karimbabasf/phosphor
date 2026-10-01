@@ -15,9 +15,14 @@ this directory, including yours, and would take Edit, Write and Bash off your ow
     ./operator/phosphor-operator
 
 From any directory, and through a symlink on PATH: the script resolves the repo from its own real
-path. It loads `operator/settings.json`, connects `src/mcp.ts` as the only MCP server
-(`--strict-mcp-config`, so no other server on the machine joins the session), and makes the repo
-the working directory. Arguments pass through.
+path. It loads `operator/settings.json`, names the built-in tools in full with `--tools Read`, connects
+`src/mcp.ts` as the only MCP server (`--strict-mcp-config`, so no other server on the machine joins
+the session), and makes the repo the working directory. Arguments pass through.
+
+`--tools Read` is the wall, as `--tools WebSearch` is for the app's own driver: the session holds
+`Read` and Phosphor's MCP tools and nothing else, whatever a later Claude Code release adds or an
+account turns on. The deny list below is the second wall, and what `tests/lockdown.test.ts` reads
+when it launches the profile on its own.
 
 ## What it denies
 
