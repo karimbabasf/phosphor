@@ -118,7 +118,9 @@ app that does is not Phosphor.
 This part is for whoever hands out the invites. Run it in your own Terminal, never through an
 agent: an agent session would keep every live code in its transcripts and send them to its
 model provider. The script refuses piped input, asks for its passphrase with echo off, and shows
-the links on the terminal only, never on stdout.
+the links on the terminal only, never on stdout. Refusing piped input stops a run by accident; a
+program that pretends to be a terminal gets past it and can read what the terminal shows. The
+passphrase is what keeps the file shut, so type it only in your own Terminal.
 
 The money sits in three places. Your wallet is never touched by any of this. The treasury, T,
 holds only the batch you are about to issue. Each code holds its $5 until someone claims it or

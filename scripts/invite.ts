@@ -12,9 +12,11 @@
 //   --file <path> (or PHOSPHOR_INVITES_FILE) for a file other than ~/.phosphor-invites/invites.enc.json
 //
 // RUN IT IN YOUR OWN TERMINAL, never through an agent: a session would put every live code into
-// transcripts on disk and at the model provider. stdin must be a TTY, which also keeps the
-// passphrase from being piped in; the passphrase is typed at a no-echo prompt on every run and
-// never goes on the command line; the links go to /dev/tty once and never to stdout.
+// transcripts on disk and at the model provider. stdin must be a TTY, which stops a pipe or an
+// agent from running it by accident. It is a speed bump, not a wall: a program that fakes a
+// terminal (script(1)) gets past it, can type the passphrase for you and reads what goes to
+// /dev/tty (audit L9). The wall is the passphrase: typed by a person at a no-echo prompt on every
+// run, never on the command line, stored nowhere. The links go to /dev/tty once and never to stdout.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -48,8 +50,8 @@ export const USAGE = [
 ].join('\n');
 
 export const NOT_A_TERMINAL =
-  'Run this in your own Terminal. It reads a passphrase at a prompt, and it refuses piped input so a passphrase can never be piped in. ' +
-  'Never run it through an agent: the codes would land in its transcripts.';
+  'Run this in your own Terminal. It reads the invite file passphrase at a prompt and refuses piped input, so a script or an agent does not run it by accident. ' +
+  'Never run it through an agent: the codes would land in its transcripts. Your passphrase is what keeps the file shut, so type it only in your own Terminal.';
 
 const FLAGS: Record<string, readonly string[]> = {
   treasury: ['file'],

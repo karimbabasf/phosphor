@@ -901,3 +901,16 @@ test('a reclaim still waiting for proof keeps its batch from being signed, so a 
   assert.deepEqual(shown, [], 'no link was ever shown');
   assert.equal(chain.balances.get(book.treasury.address), 23_000_000n);
 });
+
+/* Audit L9: a program that fakes a terminal (script(1)) gets past the TTY rule, types a passphrase
+   and reads /dev/tty. No code makes that impossible, so nothing here may say it is: the rule is a
+   speed bump against running by accident, and the passphrase a person types is the guard. */
+test('the terminal rule is described as what it is: a speed bump, with the passphrase as the guard', () => {
+  assert.doesNotMatch(NOT_A_TERMINAL, /can never|never be piped/);
+  assert.match(NOT_A_TERMINAL, /refuses piped input, so a script or an agent does not run it by accident/);
+  assert.match(NOT_A_TERMINAL, /Your passphrase is what keeps the file shut/);
+  for (const file of ['scripts/invite.ts', 'scripts/invite/tty.ts', 'scripts/invite/money.ts', 'docs/money.md']) {
+    const text = fs.readFileSync(path.join(REPO, file), 'utf8');
+    assert.doesNotMatch(text, /can never be piped|keeps a passphrase\s+from being piped|no block can ever run it|never holds bytes that could move money\./, file);
+  }
+});
