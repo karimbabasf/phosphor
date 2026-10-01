@@ -144,9 +144,13 @@ checks that T holds enough and asks you to type yes. Then it writes the codes to
 marked pending, before anything is signed, so a crash from that moment loses nothing. It builds
 one payload from T with one transfer per code (ten at most) and rehearses it: the same transfers,
 signed so the signature expires one millisecond after a recent NEAR block, and simulated at that
-block. The NEAR RPC that answers the simulation is someone else's computer, and no later block
-can run a rehearsal, so it never holds bytes that could move money. Only then is the real payload
-signed, once, written to the file, and sent to the solver relay. The script waits until NEAR
+block. The NEAR RPC that answers the simulation is someone else's computer. No later block can
+run a rehearsal as long as the block's time is true, and the script refuses a block stamped less
+than a second behind this Mac's clock, so with this clock right the RPC never holds bytes that
+could move money. A Mac clock running fast is the one thing that check cannot see, so every
+account a rehearsal pays (T, your typed address, or codes already in the file) has its key on
+disk before the rehearsal is signed. Only then is the real payload signed, once, written to the
+file, and sent to the solver relay. The script waits until NEAR
 Intents shows the payload's one-time number (its nonce) spent, reads every code back, marks it
 open, and prints the links once. Give one link to one person, and never post them.
 
@@ -157,14 +161,17 @@ fallback: the script waits until the signed payload has expired on NEAR's own cl
 minutes, and then marks the codes void. T still holds the money.
 
 `--simulate-only` is the rehearsal alone: it shows what NEAR Intents would say, and nothing is
-sent or written. If this Mac's clock is behind NEAR's, or the RPC does not answer, a command
-stops before it signs anything that can run and says so (a block that looks later than this
-clock would stretch a rehearsal's life). A batch then waits for `issue --resume`.
+sent. A dry run of `issue` writes its codes to the file as void before it signs, so a reclaim
+could take back anything that ever reached them, and `status` lists it as a dry run; it takes the
+file's lock like any write. If NEAR's final block looks less than a second behind this Mac's
+clock (an honest one trails by about 2.6 s, so a clock running slow shows this), or the RPC does
+not answer, a command stops before it signs anything and says so. A batch then waits for
+`issue --resume`.
 
     npm run invite -- status
 
 shows what T holds and every batch: each code's address, amount and state (pending, open,
-claimed, reclaimed, or void for a batch that never ran). It never shows a code.
+claimed, reclaimed, or void for a batch that never ran or a dry run). It never shows a code.
 
     npm run invite -- reclaim [--label "SF builders"] [--address <code address>]
 

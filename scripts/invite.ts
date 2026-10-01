@@ -238,8 +238,9 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
   const net = deps.net();
   const simulate = values['simulate-only'] === true;
   // Every command that can write the file holds the lock for its whole run. status and a
-  // simulate-only run read and never write, so they run beside one.
-  const writes = command !== 'status' && !simulate;
+  // simulate-only reclaim or withdraw read and never write, so they run beside one. A simulate-only
+  // issue writes its codes, void, before it signs (scripts/invite/money.ts), so it takes the lock.
+  const writes = command !== 'status' && !(simulate && command !== 'issue');
 
   let lock: FileLock | null = null;
   let opened: InviteFile | null = null;
