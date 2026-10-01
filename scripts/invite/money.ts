@@ -43,6 +43,7 @@ import {
   CLAIM_DEADLINE_MS,
   INVITE_ASSET_ID,
   MAX_TRANSFERS,
+  REHEARSAL_LIFE_MS,
   buildTransfersPayload,
   checkTransfersPayload,
   claimNonce,
@@ -114,8 +115,7 @@ export function liveSimulateAt(fetchImpl: typeof fetch = fetch): NonNullable<Mon
   };
 }
 
-// How long a rehearsal's signature lives past the block it is simulated at.
-export const REHEARSAL_LIFE_MS = 1;
+export { REHEARSAL_LIFE_MS };
 /* How far ahead of this Mac's clock NEAR's final block may be stamped. An honest final block trails
    real time by about 2.6 s (src/relay/verifier.ts), so it is behind this clock, never ahead. A
    rehearsal allows nothing ahead: its signature lives until 1 ms past the block, and a block

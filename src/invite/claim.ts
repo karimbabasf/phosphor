@@ -5,15 +5,23 @@
 // THE SEQUENCE, one signature per route, and the person's own key never signs anything:
 //   1. parse the code (src/invite/code.ts) and derive its key and its account;
 //   2. read the account: it must hold USDC, and NEAR Intents must not have locked it;
-//   3. read current_salt and the final block, and build the V1 nonce and a deadline two minutes
-//      past the CHAIN's clock;
+//   3. read current_salt and the final block, refused when the block is stamped more than
+//      FATE_AHEAD_MAX_MS ahead of this Mac's clock, and build the V1 nonce and a deadline past
+//      the CHAIN's clock;
 //   4. one `transfer` of everything the code holds to the wallet's DECRYPTED address, built and
 //      read back as a stranger would (src/invite/payload.ts);
-//   5. sign with the code's key, then simulate_intents, a free view: any refusal stops here and
-//      nothing is sent;
-//   6. the pending record goes to disk (src/invite/store.ts), and only then the publish to the
-//      solver relay with an empty quote_hashes: the identical bytes once more on no reply, never
-//      a second signature;
+//   5. the REHEARSAL, the operator's pattern (scripts/invite/money.ts): that transfer signed with
+//      a deadline one millisecond past the final block and simulated AT that block. The verifier
+//      answers for the block, and every block that could run the rehearsal is stamped later, so
+//      the NEAR RPC, which is someone else's computer, never holds claim bytes that can still run.
+//      An RPC that lies about the time can stretch that millisecond to at most FATE_AHEAD_MAX_MS,
+//      and even then the bytes pay only this wallet. Any refusal stops here;
+//   6. the real claim, two minutes past the chain's clock, signed and sent to the solver relay
+//      alone with an empty quote_hashes, never to a simulation: the identical bytes once more on
+//      no reply, never a second signature. Every attempt, the rehearsals included, is on disk in
+//      the pending record (src/invite/store.ts) before the key signs it, so a signature the record
+//      does not name never exists, and a claim that stops early stays pending until the next start
+//      proves each of them dead or spent;
 //   7. the watch, until the deadline plus 30 s on the chain's clock (src/relay/fate.ts).
 //      PROOF IS THE CODE'S NONCE: is_nonce_used reads true at a final block. The verifier commits
 //      the nonce in the same call that runs the transfer, and the transfer names this wallet, so
@@ -52,16 +60,17 @@ import { noReply } from '../rails/intents-submit.ts';
 import { FIRST_POLL_MS } from '../rails/watch.ts';
 import { relayClient } from '../relay/client.ts';
 import type { RelayClient } from '../relay/client.ts';
-import { RELAY_DEADLINE_GRACE_MS, transferFate } from '../relay/fate.ts';
+import { FATE_AHEAD_MAX_MS, RELAY_DEADLINE_GRACE_MS, transferFate } from '../relay/fate.ts';
 import type { FateReads } from '../relay/fate.ts';
 import { liveVerifier } from '../relay/verifier.ts';
-import type { VerifierPort } from '../relay/verifier.ts';
+import type { FinalBlock, SignedIntent, VerifierPort } from '../relay/verifier.ts';
 import { codeAddress, parseCode } from './code.ts';
 import {
   CLAIM_DEADLINE_MS,
   INVITE_ASSET_DECIMALS,
   INVITE_ASSET_ID,
   INVITE_ASSET_SYMBOL,
+  REHEARSAL_LIFE_MS,
   SIMULATION_SENTENCES,
   buildTransfersPayload,
   checkTransfersPayload,
@@ -159,9 +168,15 @@ type HoldSlot = { release: ((proven: bigint | null) => void) | null };
 type Failed = { kind: 'failed'; reason: FailReason; detail: string; final: boolean };
 type Outcome = Landed | Failed | { kind: 'fallback'; detail: string };
 type Verdict = Landed | Failed | { kind: 'waiting' };
+type Clock = { kind: 'clock'; salt: Uint8Array; block: FinalBlock };
+type Signed = { kind: 'signed'; signed: SignedIntent };
+
+// How many final blocks a rehearsal tries before it gives up: a node a block behind the one it was
+// asked about cannot answer for it.
+const REHEARSAL_TRIES = 3;
 
 const FAIL_SENTENCES: Record<FailReason, string> = {
-  offline: 'the network did not answer, so nothing was sent.',
+  offline: 'the network did not answer, so the claim was never sent.',
   empty: 'the code holds nothing now: it was used, or reclaimed, a moment ago.',
   locked: "NEAR Intents has locked the code's account, so it cannot pay out.",
   expired: 'the signed claim passed its deadline unspent. Nothing moved, and the money is still on the code.',
@@ -358,17 +373,36 @@ export function createInviteService(deps: InviteDeps): InviteService {
     slot.release = hold(record.assetId, before);
   }
 
-  // Steps 3 to 7 on the relay. Returns the outcome, or a fallback before anything was taken.
-  async function relayRoute(record: ClaimRecord, signer: KeySigner, slot: HoldSlot): Promise<Outcome> {
+  /* A stop before a signature. Over for good when nothing was ever signed for this claim; with a
+     rehearsal or an attempt already signed, the record stays pending, and the next start proves
+     each of them spent or dead before it calls the claim failed. */
+  function stopped(record: ClaimRecord, reason: FailReason, detail: string): Failed {
+    return failed(reason, detail, record.attempts.length === 0);
+  }
+
+  /* The chain's salt and final block, read together. A block stamped more than FATE_AHEAD_MAX_MS
+     ahead of this Mac's clock is a clock far behind or an RPC that is not telling the time: a
+     deadline built off it would outlive anything the watch can prove (src/relay/fate.ts stops
+     believing such a block), so nothing is signed on it. */
+  async function chainClock(record: ClaimRecord): Promise<Clock | Failed> {
     const [salt, block] = await Promise.all([
       verifier.currentSalt().catch(() => null),
       verifier.finalBlock === undefined ? Promise.resolve(null) : verifier.finalBlock().catch(() => null),
     ]);
-    if (salt === null || block === null) return failed('offline', 'the verifier did not answer with its salt and its clock, so nothing was signed', true);
+    if (salt === null || block === null) return stopped(record, 'offline', 'the verifier did not answer with its salt and its clock, so the claim was never signed');
+    const ahead = block.atMs - now();
+    if (ahead > FATE_AHEAD_MAX_MS) {
+      return stopped(record, 'refused', `NEAR's final block is stamped ${Math.round(ahead / 1000)} s ahead of this Mac's clock, so the claim was never signed: this clock is behind, or the RPC is not telling the time`);
+    }
+    return { kind: 'clock', salt, block };
+  }
 
-    const amount = BigInt(record.amountBase);
-    const legs = [{ receiverId: record.receiver, amountBase: amount }];
-    const deadline = signingDeadline(block.atMs);
+  /* The claim's one transfer, its deadline `lifeMs` past the chain's final block, read back as a
+     stranger would, and its attempt written to the record before the key signs it. */
+  async function signClaim(record: ClaimRecord, signer: KeySigner, clock: Clock, lifeMs: number, rehearsal: boolean): Promise<Signed | Failed> {
+    const { salt, block } = clock;
+    const legs = [{ receiverId: record.receiver, amountBase: BigInt(record.amountBase) }];
+    const deadline = signingDeadline(block.atMs, lifeMs);
     const nonce = claimNonce(salt, deadline, random);
     const payload = buildTransfersPayload({ signerId: record.codeAddress, assetId: record.assetId, deadline, nonce, transfers: legs });
     const problems = checkTransfersPayload(payload, {
@@ -379,28 +413,48 @@ export function createInviteService(deps: InviteDeps): InviteService {
       now: block.atMs,
       maxDeadlineMs: CLAIM_DEADLINE_MS,
     });
-    if (problems.length > 0) return failed('refused', `refusing to sign the claim this app built: ${problems[0]}`, true);
-
-    const signature = await signer.sign(payload);
-    const signed = { standard: ERC191_STANDARD, payload, signature };
-    const sim = verifier.simulate === undefined ? null : await verifier.simulate([signed]).catch(() => null);
-    if (sim === null) return failed('offline', 'the verifier did not answer the simulation, so the signed claim was never sent', true);
-    if (!sim.ok) {
-      const verdict = simulationVerdict(sim.refusal);
-      return failed(verdict, `${SIMULATION_SENTENCES[verdict]} The verifier said: ${sim.refusal}. Nothing was sent.`, true);
-    }
-
-    const intentHash = intentHashOf(payload);
-    record.attempts.push({ route: 'relay', nonce, deadline, intentHash });
+    if (problems.length > 0) return stopped(record, 'refused', `refusing to sign the claim this app built: ${problems[0]}`);
+    record.attempts.push({ route: 'relay', nonce, deadline, intentHash: intentHashOf(payload), ...(rehearsal ? { rehearsal: true as const } : {}) });
     try {
       store.put(record);
     } catch (err) {
       record.attempts.pop();
-      return failed('refused', `the claim record could not be written (${errText(err)}), so the signed claim was never sent`, true);
+      return stopped(record, 'refused', `the claim record could not be written (${errText(err)}), so the claim was never signed`);
     }
+    return { kind: 'signed', signed: { standard: ERC191_STANDARD, payload, signature: await signer.sign(payload) } };
+  }
+
+  /* Step 5: the rehearsal, on disk before it is signed and simulated at the block its millisecond
+     is counted from. The chain's clock it passed at, which the claim itself is then signed off, so
+     the claim costs no extra read. A refusal, or a verifier silent at REHEARSAL_TRIES blocks, ends
+     the claim without its real signature; the rehearsals stay on the pending record for the next
+     start to prove dead. */
+  async function rehearse(record: ClaimRecord, signer: KeySigner): Promise<Clock | Failed> {
+    if (verifier.simulate === undefined) return stopped(record, 'offline', 'the verifier cannot simulate, so the claim was never signed');
+    for (let tries = 0; tries < REHEARSAL_TRIES; tries += 1) {
+      if (tries > 0) await sleep(1_000);
+      const clock = await chainClock(record);
+      if (clock.kind === 'failed') return clock;
+      const built = await signClaim(record, signer, clock, REHEARSAL_LIFE_MS, true);
+      if (built.kind === 'failed') return built;
+      const sim = await verifier.simulate([built.signed], clock.block.hash).catch(() => null);
+      if (sim === null) continue;
+      if (sim.ok) return clock;
+      const verdict = simulationVerdict(sim.refusal);
+      return stopped(record, verdict, `${SIMULATION_SENTENCES[verdict]} The verifier said: ${sim.refusal}. The claim itself was never signed.`);
+    }
+    return stopped(record, 'offline', `the verifier did not answer the rehearsal at ${REHEARSAL_TRIES} blocks in a row, so the claim itself was never signed`);
+  }
+
+  // Steps 3 to 7 on the relay. Returns the outcome, or a fallback before anything was taken.
+  async function relayRoute(record: ClaimRecord, signer: KeySigner, slot: HoldSlot): Promise<Outcome> {
+    const clock = await rehearse(record, signer);
+    if (clock.kind === 'failed') return clock;
+    const built = await signClaim(record, signer, clock, CLAIM_DEADLINE_MS, false);
+    if (built.kind === 'failed') return built;
 
     await openHold(record, slot);
-    const sent = await publishWithoutQuote(relay, signed);
+    const sent = await publishWithoutQuote(relay, built.signed);
     let relayHash: string | null = null;
     if (sent.answered && sent.result.status === 'OK') {
       relayHash = sent.result.intentHash;

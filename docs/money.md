@@ -93,8 +93,15 @@ costs about 0.25 percent, so a $5 code lands as about $4.99, and the check says 
 figure before you claim. If 1Click refunds it, the refund goes back to the code, and the claim
 ends only once the refund shows there.
 
-A claim that fails moves nothing: the money stays on the code, and you can add it again from Add
-money. If the app quits in the middle of a claim, it finishes the check the next time it opens.
+Before the claim is signed, the app rehearses it: the same transfer, signed to expire one
+millisecond after a recent NEAR block and checked by NEAR Intents at that block. The NEAR RPC
+that answers the check is someone else's computer, so it only ever sees that copy, which no later
+block can run; the claim itself goes to the solver relay alone. Every signature is written down
+before it leaves this Mac. A claim that fails moves nothing: the money stays on the code, and you
+can add it again from Add money. An RPC that lies about the time could stretch the copy's life by
+up to two minutes, and even then the money can only land in your wallet; the app finds it there
+the next time it opens. If the app quits in the middle of a claim, it finishes the check the next
+time it opens.
 A code pays once; a second claim says "This code was already used, or it has a typo."
 
 Never paste a code into the chat. What you type there goes to your assistant and its model

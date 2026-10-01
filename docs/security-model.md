@@ -559,7 +559,14 @@ protects the wallet's key, and this key is not the wallet's: the person typed it
 only what the code's account holds. The claim still runs only while the wallet is open, because
 the receiver is the wallet's decrypted address (`addressReport()` verified and not tampered),
 never the plaintext header, and the receiver is inside the signed bytes, so the relay can submit
-the transfer as signed or not at all. The wallet's key never signs for a claim. The one weaker
+the transfer as signed or not at all. The wallet's key never signs for a claim. The claim is
+rehearsed first, as the operator's moves are: the same transfer signed with a deadline one
+millisecond past a final block and simulated at that block, so the NEAR RPC never holds claim
+bytes a later block can run; the claim itself goes only to the relay. A final block stamped more
+than two minutes ahead of this Mac's clock is refused before anything is signed, and every
+signature, rehearsals included, is in the pending claim record before the key makes it; the
+record of a claim that stops early stays open until the next start proves each signature spent or
+dead, whatever the RPC said. The one weaker
 path is Plan B through 1Click: there the code signs a transfer to 1Click's handle, the receiver
 is held by the quote echo and 1Click's quote signature rather than by the code's signature, and
 the claim rests on 1Click delivering. The code lives as bytes for the length of one claim, is

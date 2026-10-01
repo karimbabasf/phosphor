@@ -22,7 +22,8 @@ export const SALT = Uint8Array.from(Buffer.from('252812b3', 'hex'));
 export const HANDLE = 'a7d101a893efccc5e560badd89b55325c99a4da76f2ec584d6a355415e388058';
 export const START = Date.parse('2026-10-01T20:00:00.000Z');
 
-export type Transfer = { from: string; to: string; amount: bigint; nonce: string };
+// `deadline` is the signed intent's own, in ms: the verifier runs nothing in a block stamped past it.
+export type Transfer = { from: string; to: string; amount: bigint; nonce: string; deadline?: number };
 
 export type World = {
   mac: number;
@@ -81,8 +82,11 @@ export function settleQueue(world: World): void {
     world.queued.splice(world.queued.indexOf(item), 1);
     const key = `${item.t.from}|${item.t.nonce}`;
     const held = world.balances.get(item.t.from) ?? 0n;
-    // The verifier runs a transfer and spends its nonce in one call, or does neither.
-    if (world.spent.has(key) || held < item.t.amount) continue;
+    // The chain's time when the item came due: the two clocks move together in this world.
+    const chainAt = item.at - (world.mac - world.chain);
+    // The verifier runs a transfer and spends its nonce in one call, or does neither, and never in
+    // a block stamped past the intent's deadline.
+    if (world.spent.has(key) || held < item.t.amount || (item.t.deadline !== undefined && chainAt > item.t.deadline)) continue;
     world.spent.add(key);
     world.balances.set(item.t.from, held - item.t.amount);
     world.balances.set(item.t.to, (world.balances.get(item.t.to) ?? 0n) + item.t.amount);
@@ -90,9 +94,15 @@ export function settleQueue(world: World): void {
 }
 
 export function transferOf(payload: string): Transfer {
-  const body = JSON.parse(payload) as { signer_id: string; nonce: string; intents: Array<{ receiver_id: string; tokens: Record<string, string> }> };
+  const body = JSON.parse(payload) as { signer_id: string; nonce: string; deadline: string; intents: Array<{ receiver_id: string; tokens: Record<string, string> }> };
   const intent = body.intents[0]!;
-  return { from: body.signer_id, to: intent.receiver_id, amount: BigInt(intent.tokens[INVITE_ASSET_ID]!), nonce: body.nonce };
+  return { from: body.signer_id, to: intent.receiver_id, amount: BigInt(intent.tokens[INVITE_ASSET_ID]!), nonce: body.nonce, deadline: Date.parse(body.deadline) };
+}
+
+// The time of a block this world named (`block<ms>`), or the chain's own time now.
+function blockTime(world: World, at: string | undefined): number {
+  const named = at === undefined ? null : /^block(\d+)$/.exec(at);
+  return named === null ? world.chain : Number(named[1]);
 }
 
 export function verifierOf(world: World): VerifierPort {
@@ -108,10 +118,13 @@ export function verifierOf(world: World): VerifierPort {
     isValidSalt: () => read(true),
     finalBlock: () => read({ hash: `block${world.chain}`, atMs: world.chain }),
     accountLocked: (account) => read(world.locked.has(account)),
-    simulate: async (signed) => {
+    simulate: async (signed, at) => {
       world.simulated.push(signed);
       if (world.offline) return null;
       if (world.simRefusal !== null) return { ok: false, refusal: world.simRefusal };
+      // Run at the block asked for, as the verifier does: a deadline at or before its stamp is refused.
+      const stamp = blockTime(world, at);
+      if (signed.some((s) => (transferOf(s.payload).deadline ?? Infinity) <= stamp)) return { ok: false, refusal: 'deadline has expired' };
       return { ok: true, intentHashes: signed.map((s) => intentHashOf(s.payload)) };
     },
   };
