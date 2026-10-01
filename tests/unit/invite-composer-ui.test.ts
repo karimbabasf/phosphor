@@ -27,10 +27,10 @@ type Any = Record<string, any>;
 /* A code the shape of a real one. Never funded, never issued. */
 const CODE = 'PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ';
 const BARE = '2X9QKM7RTB0HVFDK3WPZA8GN4CJ';
-/* The sentences the contract's shape and its digit rule are tried on (CONTRACTS.md, Code shape).
-   The third fills the shape with two digits, so it stays out: a sentence given up for a slip. */
+/* The sentences the contract's shape and its digit rule are tested on (CONTRACTS.md, Code shape). */
 const PHOSPHOR = 'how does phosphor handle swaps between eth and near';
 const PHOSPHORUS = 'phosphorus is used in fertilizer and in matches';
+/* Prose with the shape and two digits: the guard holds it back, as the contract's rule does. */
 const PHOSPHATES = 'phosphates cost 25 dollars per ton in 2026 so';
 
 /* ---------- the column's DOM stub ---------- */
@@ -298,7 +298,7 @@ test('the field opens on the tab the person is on when it has Add money, and on 
   }
 });
 
-test('the matcher is the contract\'s composer guard: the canonical shape at any start, and two digits in the match', () => {
+test('the matcher is the contract\'s composer guard: the canonical shape and two digits in the whole match', () => {
   const world = build();
   const codeIn = world.win.PhosphorInviteApi.codeIn;
   // Exactly the shape CONTRACTS.md and src/invite/code.ts write, with its flags.
@@ -312,30 +312,30 @@ test('the matcher is the contract\'s composer guard: the canonical shape at any 
   // The word Phosphor is PHOS and letters: the shape alone keeps it out.
   assert.equal(shape.test(PHOSPHOR), false);
   assert.equal(codeIn(PHOSPHOR), null);
-  // Prose that fills the shape goes only without two digits in the match, and the shape is
-  // shown to hold each sentence. With two, it stays out: a sentence given up for a code with a slip.
+  // Prose that fills the shape with letters alone is a message.
   assert.ok(shape.test(PHOSPHORUS), 'the sentence no longer fills the shape, so this case proves nothing');
-  assert.equal(codeIn(PHOSPHORUS), null, 'no digits');
-  assert.ok(shape.test(PHOSPHATES), 'the sentence no longer fills the shape, so this case proves nothing');
-  assert.ok(codeIn(PHOSPHATES), 'two digits in the match');
+  assert.equal(codeIn(PHOSPHORUS), null);
 
-  /* 27 data characters, built to break one rule at a time. */
-  const data = (text: string): string => {
+  /* 27 data characters behind the prefix, built to sit on either side of the rule. */
+  const data = (prefix: string, text: string): string => {
     assert.equal(text.length, 27, `a test code has ${text.length} data characters`);
-    return 'PHOS-' + text;
+    return prefix + '-' + text;
   };
   const letters = 'ABCDEFGHJKMNPQRSTVWXYZABCDE';
-  // Any first character: a code typed with a slip in its first character is still a code.
-  for (const first of ['0', '7', '8', '9', 'O', 'P', 'Z', 'a']) {
-    assert.ok(codeIn(data(first + BARE.slice(1))), `a code starting ${first} was not found`);
-  }
   // Two digits as typed; one is not enough, and an O, I or L is a letter here.
-  assert.equal(codeIn(data('2' + letters.slice(0, 26))), null, 'one digit was taken for a code');
-  assert.ok(codeIn(data('2' + letters.slice(0, 25) + '7')), 'two digits were let through');
-  assert.equal(codeIn(data('OIL' + letters.slice(0, 23) + '7')), null, 'an O, I or L was counted as a digit');
-  // The digits are counted in the whole match: the zero of PH0S is one of them.
-  assert.ok(codeIn('PH0S-2' + letters.slice(0, 26)), 'the zero of PH0S was not counted');
-  assert.ok(codeIn('PH0S-2' + letters.slice(0, 25) + '7'));
+  assert.equal(codeIn(data('PHOS', letters)), null);
+  assert.equal(codeIn(data('PHOS', '2' + letters.slice(0, 26))), null, 'one digit was taken for a code');
+  assert.ok(codeIn(data('PHOS', '2' + letters.slice(0, 25) + '7')), 'two digits were let through');
+  assert.equal(codeIn(data('PHOS', 'OIL' + letters.slice(0, 23) + '7')), null, 'an O, I or L was counted as a digit');
+  // The whole match is counted, so the zero of PH0S is one of the two.
+  assert.ok(codeIn(data('PH0S', '2' + letters.slice(0, 26))), 'the zero of PH0S was not counted');
+  // The first data character is not looked at: the layout fact is not part of the rule.
+  for (const first of ['8', '9', 'P', 'Z', 'a']) {
+    assert.ok(codeIn(data('PHOS', first + BARE.slice(1))), `a code starting ${first} went through`);
+  }
+  // So prose with the shape and two digits is held back too: the rule's known cost.
+  assert.ok(shape.test(PHOSPHATES));
+  assert.ok(codeIn(PHOSPHATES), 'the guard is looser than the contract');
   // Too short, the wrong prefix, a data character after the 27th, or nothing at all.
   assert.equal(codeIn('PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4C'), null);
   assert.equal(codeIn('PHAS-' + BARE), null);
@@ -344,7 +344,6 @@ test('the matcher is the contract\'s composer guard: the canonical shape at any 
   assert.equal(codeIn(null), null);
   // Prose that fills the shape does not hide a code after it.
   assert.ok(codeIn(PHOSPHORUS + ' ' + CODE));
-  assert.ok(codeIn(PHOSPHATES + ' ' + CODE));
   assert.ok(codeIn('phosphor phosphor ' + CODE));
   // A long paste costs nothing: one pass, no backtracking blow-up.
   const started = Date.now();
