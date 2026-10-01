@@ -27,6 +27,9 @@ type Any = Record<string, any>;
 /* A code the shape of a real one. Never funded, never issued. */
 const CODE = 'PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ';
 const BARE = '2X9QKM7RTB0HVFDK3WPZA8GN4CJ';
+/* The two sentences the contract's narrowing and the digit rule exist for. */
+const PHOSPHOR = 'how does phosphor handle swaps between eth and near';
+const PHOSPHORUS = 'phosphorus is used in fertilizer and in matches';
 
 /* ---------- the column's DOM stub ---------- */
 
@@ -255,6 +258,8 @@ test('the plain messages that look most like a code still go, and the line goes 
     'What is PHOS?',
     'PHOS-2X9QK-M7RTB-0HVFD',
     'Phosphor-powered wallets are my favourite thing to talk about today',
+    PHOSPHOR,
+    PHOSPHORUS,
   ];
   const world = build();
   for (const text of plain) world.send(text);
@@ -290,26 +295,44 @@ test('the field opens on the tab the person is on when it has Add money, and on 
   }
 });
 
-test('the matcher: the contract\'s shape with a first character a code can start with', () => {
+test('the matcher is the contract\'s canonical regex, and a match is a code only with two digits or more', () => {
   const world = build();
   const codeIn = world.win.PhosphorInviteApi.codeIn;
-  for (const [name, text] of FORMS) assert.ok(codeIn(text), `${name} was not found`);
-  // The first data character carries the two spare bits, so it is 0 to 7, or O, I or L read as 0 and 1.
-  for (const first of ['0', '7', 'O', 'I', 'L', 'o', 'i', 'l']) {
-    assert.ok(codeIn('PHOS-' + first + BARE.slice(1)), `a code starting ${first} was not found`);
+  // Exactly the regex CONTRACTS.md and src/invite/code.ts write, with its flags.
+  const CANONICAL = String.raw`PH[O0]S(?:[\s-]+|(?=[0-9A-Z]{5}))[0-9A-Z](?:[\s-]*[0-9A-Z]){26}(?![0-9A-Z])`;
+  assert.ok(ADAPTER.includes(`/${CANONICAL}/gi`), 'ui/core/invite.js does not carry the canonical regex exactly');
+  const canonical = new RegExp(CANONICAL, 'i');
+  for (const [name, text] of FORMS) {
+    assert.ok(canonical.test(text), `${name}: the canonical regex misses it, so the form list is wrong`);
+    assert.ok(codeIn(text), `${name} was not found`);
   }
-  for (const first of ['8', '9', 'P', 'Z']) {
-    assert.equal(codeIn('PHOS-' + first + BARE.slice(1)), null, `a code cannot start ${first}`);
-  }
-  // Too short, the wrong prefix, or nothing at all.
+  // The word Phosphor is PHOS and letters: the narrowing keeps it out of the shape.
+  assert.equal(canonical.test(PHOSPHOR), false);
+  assert.equal(codeIn(PHOSPHOR), null);
+  // This one fills the shape with letters alone: the regex takes it, the digit rule lets it go.
+  assert.ok(canonical.test(PHOSPHORUS), 'the sentence no longer fills the shape, so this case proves nothing');
+  assert.equal(codeIn(PHOSPHORUS), null);
+  // Two digits, counted as typed. One is not enough, and an O, I or L is a letter here.
+  const letters = 'ABCDEFGHJKMNPQRSTVWXYZABCDE';
+  assert.equal(letters.length, 27);
+  assert.equal(codeIn('PHOS-' + letters), null);
+  assert.equal(codeIn('PHOS-' + letters.slice(0, 26) + '7'), null, 'one digit was taken for a code');
+  assert.ok(codeIn('PHOS-' + letters.slice(0, 25) + '47'), 'two digits were let through');
+  assert.equal(codeIn('PHOS-OIL' + letters.slice(0, 23) + '7'), null, 'an O, I or L was counted as a digit');
+  // The count is over the matched text, so the zero of a PH0S prefix is one of the two.
+  assert.ok(codeIn('PH0S-' + letters.slice(0, 26) + '7'));
+  // Too short, the wrong prefix, a data character after the 27th, or nothing at all.
   assert.equal(codeIn('PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4C'), null);
   assert.equal(codeIn('PHAS-' + BARE), null);
+  assert.equal(codeIn(CODE + 'X'), null);
   assert.equal(codeIn(''), null);
   assert.equal(codeIn(null), null);
-  // A miss on the way to a code does not hide the code after it.
+  // Prose that fits the shape does not hide a code after it.
+  assert.ok(codeIn(PHOSPHORUS + ' ' + CODE));
   assert.ok(codeIn('phosphor phosphor ' + CODE));
   // A long paste costs nothing: one pass, no backtracking blow-up.
   const started = Date.now();
   codeIn('phos ' + 'a '.repeat(50_000));
+  codeIn('phos'.repeat(20_000));
   assert.ok(Date.now() - started < 500, 'the matcher is slow on a long paste');
 });

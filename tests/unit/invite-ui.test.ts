@@ -651,9 +651,9 @@ test('a window that opens while a claim runs says how it ends; one already over 
   world.store.put({ ...world.store.get(), invite: { claim: 'c-2', status: 'running', amount: '5.00' } });
   world.emit('invite', { claim: 'c-2', status: 'landed', amount: '5.00', asset: 'USDC' });
   assert.deepEqual(world.toasts, [{ words: '$5 USDC is in your wallet.', tone: 'up' }]);
-  // The contract's word for the frame's field is read too.
+  // The frame as the contract writes it: `type` for the stream, `kind` beside it.
   world.store.put({ ...world.store.get(), invite: { claim: 'c-3', status: 'running', amount: '5.00' } });
-  world.emit('event', { kind: 'invite', claim: 'c-3', status: 'failed', amount: '5.00' });
+  world.emit('invite', { kind: 'invite', claim: 'c-3', status: 'failed', amount: '5.00', asset: 'USDC' });
   assert.equal(world.toasts[1]?.words, 'Your $5 didn\'t come through. Add the code again from Add money.');
 });
 
@@ -693,7 +693,7 @@ test('close() wipes the code with the phrase and the password, and nothing else 
 
 /* ---------- the adapter ---------- */
 
-test('the adapter: one door for both routes, every failure is offline, and the frame is read under either name', async () => {
+test('the adapter: one door for both routes, every failure is offline, and the frame is read by its type', async () => {
   const world = build();
   const door = world.sandbox.PhosphorInviteApi;
   assert.deepEqual({ ...(await door.check(CODE)) }, { ok: true, amount: '5.00', asset: 'USDC', route: 'relay', net: '5.00' });

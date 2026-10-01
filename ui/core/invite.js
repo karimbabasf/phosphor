@@ -75,18 +75,12 @@
   }
 
   /* Every outcome the app reports, from the stream as it happens and from the state
-     slice as the window last read it. The stream keys a frame by `type`
-     (ui/core/events.js); the contract calls the same field `kind`, so a frame that
-     carries it under that name is read too. */
+     slice as the window last read it. The frame carries `type: 'invite'` beside the
+     contract's `kind`, because the stream dispatches on `type` (ui/core/events.js). */
   function onOutcome(fn) {
     var offs = [];
     if (events && typeof events.on === 'function') {
       offs.push(events.on('invite', function (frame) {
-        var outcome = outcomeOf(frame);
-        if (outcome) fn(outcome, 'frame');
-      }));
-      offs.push(events.on('*', function (frame) {
-        if (!frame || frame.type === 'invite' || frame.kind !== 'invite') return;
         var outcome = outcomeOf(frame);
         if (outcome) fn(outcome, 'frame');
       }));
@@ -102,27 +96,29 @@
     };
   }
 
-  /* THE CODE'S SHAPE, which keeps a code out of the chat. The contract's shape: PHOS or
-     PH0S in any case, then 27 data characters from 0-9 and A-Z with any spaces or
-     hyphens between them, alone or inside an invite link. The backend's matcher (the log
-     tail's redaction) is the canonical one and this mirrors it, tested on the same forms.
+  /* THE CODE'S SHAPE, which keeps a code out of the chat. The contract's canonical
+     matcher, exactly (src/invite/code.ts INVITE_CODE_SOURCE, the log tail's redaction):
+     PHOS or PH0S in any case, a separator or five data characters in a row, then 27 data
+     characters with any spaces or hyphens between them and none after the 27th, alone or
+     inside an invite link.
 
-     One rule more on this side. The first data character carries the two spare bits,
-     which are always zero, so it is 0 to 7 (or O, I or L, which the parser reads as 0, 1
-     and 1). Without that rule "Phosphor send 50 usdc to my wallet please" has 27 letters
-     and digits after its "Phos" and a plain message would be refused. */
-  var SHAPE = /PH[O0]S(?:[\s-]*[0-9A-Z]){27}/gi;
-  var FIRST = /^[\s-]*[0-7OIL]/i;
+     A match is a code only when it holds two digits or more, counted as typed (an O, I
+     or L is a letter here). Every issued code carries two. Prose can fill the shape with
+     letters alone: "phosphorus is used in fertilizer and in matches" matches it, and is a
+     message, not a code. */
+  var SHAPE = /PH[O0]S(?:[\s-]+|(?=[0-9A-Z]{5}))[0-9A-Z](?:[\s-]*[0-9A-Z]){26}(?![0-9A-Z])/gi;
+  var DIGITS = /[0-9]/g;
 
   function codeIn(text) {
     var value = String(text || '');
     SHAPE.lastIndex = 0;
     var found = SHAPE.exec(value);
     while (found !== null) {
-      if (FIRST.test(found[0].slice(4))) {
+      if ((found[0].match(DIGITS) || []).length >= 2) {
         SHAPE.lastIndex = 0;
         return found[0];
       }
+      /* Prose that fits the shape: look on, from the next character, for a code after it. */
       SHAPE.lastIndex = found.index + 1;
       found = SHAPE.exec(value);
     }
