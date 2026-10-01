@@ -691,7 +691,7 @@ test('with the terms still to accept, the welcome comes first and the terms are 
   buttonNamed(screen, 'Get started').click();
   assert.ok(textOf(screen).includes('Before you start'), 'the terms are not the step after the welcome');
   assert.equal(find(screen, '.screen-progress').length, 0, 'the terms are counted as a wallet step');
-  assert.equal(find(screen, '.terms-fact').length, 4);
+  assert.equal(find(screen, '.terms-fact').length, 5);
   buttonNamed(screen, 'Accept and continue').click();
   await flush();
   await flush();

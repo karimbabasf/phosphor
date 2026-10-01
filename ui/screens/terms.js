@@ -2,7 +2,7 @@
 
    The window does not open on the wallet, the lock or the first run until the
    person has accepted the terms at their current version: the app moves real
-   money, and nobody should fund it on a footer link they never read. Four
+   money, and nobody should fund it on a footer link they never read. Five
    plain facts, the two pages opened in the browser, one button. The click is
    recorded by the app (state/terms.json and one audit line), and the terms
    leave only when the app says so.
@@ -175,7 +175,7 @@
     Promise.resolve(finished).then(clear, clear);
   }
 
-  /* The terms themselves: the line, four facts, the two pages, and the note
+  /* The terms themselves: the line, five facts, the two pages, and the note
      that says which version is being accepted. Drawn into the card here and
      into the first run's step there. Returns the note, which carries what
      happened to the answer. */
@@ -184,13 +184,14 @@
     var terms = state.terms || {};
     var urls = terms.urls || {};
 
-    body.appendChild(dom.el('p', 'terms-lead', 'Phosphor is alpha software that moves real money. Four things to know, then the rules in full.'));
+    body.appendChild(dom.el('p', 'terms-lead', 'Phosphor is alpha software that moves real money. Five things to know, then the rules in full.'));
 
     var facts = dom.el('ul', 'firstrun-facts terms-facts');
     facts.appendChild(fact('It moves real money, and it is alpha.', 'Transactions are final. Put in only what you can afford to lose.'));
     facts.appendChild(fact('Your keys are yours alone.', 'Nobody can reset, recover or freeze your wallet: not the author, not your assistant.'));
     facts.appendChild(fact('The venues are not ours.', 'NEAR Intents and Hyperliquid set their own rules and fees, and they can fail.'));
     facts.appendChild(fact('You are 18 or older.', 'And allowed to use these services where you live.'));
+    facts.appendChild(fact('An invite code is free and pays out once.', 'Codes are not for sale. The author can end them and take back what unclaimed ones hold, and any tax on what you claim is yours.'));
     body.appendChild(facts);
 
     var read = dom.el('p', 'terms-read');

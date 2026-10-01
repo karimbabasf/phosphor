@@ -40,8 +40,9 @@ not this. What it does not prove: that the code is free of bugs. For that, read
 The window opens on the welcome: "Your money stays on this Mac, under a key only you hold. Your
 assistant does the work. You decide what needs your click." Click Get started.
 
-Then the terms, under Before you start: four plain facts (it is alpha and moves real money, your
-keys are yours alone, the venues are not ours, you are 18 or older) and links to the full
+Then the terms, under Before you start: five plain facts (it is alpha and moves real money, your
+keys are yours alone, the venues are not ours, you are 18 or older, an invite code is free, pays
+out once and is not for sale) and links to the full
 [terms of use](https://phosphor.money/terms/) and the
 [privacy page](https://phosphor.money/privacy/), which open in your browser. Nothing
 else opens until you click Accept and continue. The app records the click (the date and the
