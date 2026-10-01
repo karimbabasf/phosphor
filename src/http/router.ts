@@ -20,6 +20,7 @@ import { handleConnectionRead, handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
 import { handleMcp } from './mcp.ts';
 import { handleTermsAccept } from './terms.ts';
+import { handleInviteCheck, handleInviteClaim } from './invite.ts';
 import {
   handleActivity,
   handleLock,
@@ -174,6 +175,9 @@ const POST: Record<string, Route> = {
   '/api/terms/accept': (ctx, req, res) => handleTermsAccept(ctx, req, res),
   '/api/deposit/show': (ctx, req, res) => handleDepositShow(ctx, req, res),
   '/api/deposit/stop': (ctx, req, res) => handleDepositStop(ctx, req, res),
+  // Invite codes. Window token like custody, never an op on /api/mcp. See src/http/invite.ts.
+  '/api/invite/check': (ctx, req, res) => handleInviteCheck(ctx, req, res),
+  '/api/invite/claim': (ctx, req, res) => handleInviteClaim(ctx, req, res),
 };
 
 // The one path with a variable in it. A table cannot hold it, and a second table of patterns

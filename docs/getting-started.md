@@ -48,6 +48,11 @@ else opens until you click Accept and continue. The app records the click (the d
 version of the terms) in its own state folder and in the audit log, and asks again only when the
 terms change. Nothing is uploaded and there is no account to make.
 
+Then Got an invite code? If someone sent you one, paste it, or the whole invite link, and the app
+says what is waiting. The money moves into your wallet the moment the wallet exists. Skip is fine:
+you can add a code later from Add money. Never paste a code into the chat. See
+[Invite codes](money.md#invite-codes).
+
 Every address the app makes is a real address that can hold real money. There is no practice
 mode. Size your first deposit as a test.
 

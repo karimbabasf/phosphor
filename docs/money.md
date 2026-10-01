@@ -59,6 +59,41 @@ few seconds for ten minutes, then more slowly, and stops after two hours. Closin
 not stop it, and money sent after it stops still arrives. Your assistant is never given the full
 address, only its first six and last four characters. Read the address in the window.
 
+## Invite codes
+
+An invite code is USDC waiting for a new wallet, usually $5. It looks like
+`PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ` and usually comes as a link,
+`https://phosphor.money/invite#PHOS-...`. Paste the code or the whole link on the invite step
+after the terms on first open, or under Have an invite code? on the Add money card. The app
+checks it first and says what is waiting, that it has a typo, or that it was already used. One
+wrong character, or two neighbours swapped, is caught on this Mac before the network is asked
+anything.
+
+The money moves once your wallet exists and is open: right after you make it, or after you
+unlock it. It lands as USDC in your NEAR Intents balance and Activity shows "Invite: +5 USDC".
+A claim can take up to two minutes. You can move on, and the app tells you when it lands.
+
+Each code is a key, and the key's address is an account inside NEAR Intents that holds the
+money. Claiming signs one transfer with the code's key: everything the code holds, to your
+wallet's address. Your address is inside the signed message, so nobody between this Mac and
+NEAR Intents can send the money anywhere else, and your own wallet key signs nothing. A transfer
+pays no fee, so a $5 code lands as exactly 5.00 USDC. The app calls a claim done only on NEAR
+Intents' own record: the code's one-time number (its nonce) spent and the code's balance down by
+what was signed. Your balance rising is shown, never taken as proof, because a deposit landing
+at the same moment would look the same.
+
+If the solver relay turns the claim away, the app sends it through 1Click instead. That route
+costs about 0.25 percent, so a $5 code lands as about $4.99, and the check says the smaller
+figure before you claim.
+
+A claim that fails moves nothing: the money stays on the code, and you can add it again from Add
+money. If the app quits in the middle of a claim, it finishes the check the next time it opens.
+A code pays once; a second claim says "This code was already used, or it has a typo."
+
+Never paste a code into the chat. What you type there goes to your assistant and its model
+provider, so the chat refuses a code and opens the invite field instead. Phosphor never asks for
+your recovery phrase to claim a code. A page or an app that does is not Phosphor.
+
 ## Swap
 
 A swap changes what your intents balance holds. Your assistant proposes it with `propose_swap`:

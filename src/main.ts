@@ -818,6 +818,11 @@ const server = createServer({
   autostart: cfg.driver?.autostart === true,
 });
 
+/* An invite claim this app published before it last stopped is finished here, by the same proof
+   the claim itself waits on: the code's nonce spent and its balance down, or the signed deadline
+   passed unspent on the chain's clock. Never awaited: it reads the network. See src/invite/claim.ts. */
+server.invites.reconcile();
+
 /* Now that there are clients to tell, an automatic lock says so on the wire.
    The `lock` frame itself is not sent from here. The server subscribes to the keystore, so the
    whole-screen answer follows the state change wherever it comes from; this line is the state

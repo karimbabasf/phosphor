@@ -318,6 +318,15 @@ acceptance is `state/terms.json` (the version accepted and when, mode 0600) and 
 change on the site asks once more. The route is `POST /api/terms/accept` with the window token.
 Nothing here is a control: the file gates a screen, not a key.
 
+After the terms comes the invite step, skippable. A code is checked with `POST /api/invite/check`
+and claimed with `POST /api/invite/claim`, both with the window token and neither an agent op;
+the claim fires once the wallet exists and is open. Each claim is a record in
+`state/invites.json` (mode 0600: the code's account, the nonce, the intent hash and the amount,
+never the code), written before the signed claim is sent, so a claim cut short by a quit is
+finished at the next start. A claim that lands writes `invite_claimed` to the audit log, one that
+does not writes `invite_failed`, and neither line is `executed`. See
+[money.md](money.md#invite-codes).
+
 The wallet is made in the window. Set a password, write down the twelve words it shows once, and
 it writes `keys.enc.json` beside `keysPath`, file mode 0600, in a directory mode 0700. That path
 is outside the working copy on purpose: a key file inside a git working copy is one `git add -f`
@@ -412,7 +421,7 @@ stayed true. It lives beside `keysPath`, and THE DATA DIRECTORY DECIDES where th
 
 The installed app keeps everything else it writes under
 `~/Library/Application Support/com.karimbabasf.phosphor/`: `state/` (policy.json, proposals.json,
-audit.jsonl, terms.json, agent.secret) and `config.local.json` beside it. The shell creates that
+audit.jsonl, terms.json, invites.json, agent.secret) and `config.local.json` beside it. The shell creates that
 folder before the backend starts, and `loadConfig` creates the data directory it is given, so a
 first run on an empty Mac makes both without a step from the person; the key folder is made at
 mode 0700 the moment the wallet is created. `tests/unit/keys-path.test.ts` holds all three rows.
@@ -582,6 +591,7 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/runner/        the host (registry, watcher, fills watch) and the child that signs
     src/chain/         the EVM readers and explorer prefixes, the NEAR RPC and account id rules
     src/ledger/        the NEAR Intents verifier read + demo fixtures
+    src/invite/        invite codes: the code, its payload, its signer, the claim and its record
     src/transactions.ts  the transaction history, derived from the store and the log
     src/role.ts        what the app tells an agent it is, in the MCP handshake
     src/composition.ts risk classification against data/risk-table.json
@@ -613,7 +623,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     ui/logos/          the token and venue logos as SVG files, with their notices in ATTRIBUTION.md
     operator/          the opt-in operator profile: an agent that drives but cannot develop
     state/             policy.json, proposals.json, audit.jsonl (append-only), terms.json,
-                       agent.secret; the installed app keeps it under Application Support
+                       invites.json, agent.secret; the installed app keeps it under Application
+                       Support
 
 ## The operator profile
 

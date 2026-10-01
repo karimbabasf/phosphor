@@ -77,6 +77,9 @@ export type IntentsRow = {
   tokenId: string;
   delta: string; // signed, scaled by the token's decimals when known
   counterparty: string | null;
+  // What this app knows the counterparty to be, when it knows: 'Phosphor invite' for a code
+  // account it claimed from (src/http/read/chain.ts). Absent otherwise.
+  counterpartyLabel?: string;
   hash: string;
   time: string | null;
 };
