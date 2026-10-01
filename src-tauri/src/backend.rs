@@ -851,7 +851,7 @@ fn spawn_checked(
 /// point, and an environment cleared and then filled by name. `parent` reads one name from the
 /// environment this shell was started with; it is a parameter so a test can hand it a hostile
 /// environment without touching its own.
-fn backend_command(node: &Path, payload: &Path, data: &Path, parent: impl Fn(&str) -> Option<OsString>) -> Command {
+pub(crate) fn backend_command(node: &Path, payload: &Path, data: &Path, parent: impl Fn(&str) -> Option<OsString>) -> Command {
     let mut command = Command::new(node);
     command
         .args(NODE_FLAGS)

@@ -31,6 +31,7 @@
 mod backend;
 mod enclave;
 mod payload;
+mod session_watch;
 mod update;
 
 use std::path::{Path, PathBuf};
@@ -1330,6 +1331,8 @@ fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), Failure> {
                 });
                 update::schedule(&handle);
                 start_enclave_relay(&handle, port);
+                // From here a screen lock or a switch to another user locks the wallet.
+                session_watch::backend_up(port, &handle.state::<Secrets>().0.token);
                 watch(handle, paths, port);
                 return;
             }
@@ -1431,6 +1434,7 @@ fn main() {
             }
             app.set_menu(build_menu(&handle)?)?;
             app.on_menu_event(on_menu);
+            session_watch::watch();
 
             open_splash(&handle, None)?;
             if let Err(failure) = found.map_err(|e| Failure::starting(START_BLOCKED, e)).and_then(|found| start(&handle, found)) {

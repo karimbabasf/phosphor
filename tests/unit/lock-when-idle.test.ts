@@ -91,14 +91,32 @@ test('every lock the shell sends on its way out is the backend\'s own when-idle 
   const backend = read('../../src-tauri/src/backend.rs');
   const shell = read('../../src-tauri/src/main.rs');
   const update = read('../../src-tauri/src/update.rs');
+  const watch = read('../../src-tauri/src/session_watch.rs');
   const code = (source: string): string => source.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
 
   assert.ok(/"whenIdle": true/.test(backend), 'the lock request asks the backend to decide');
-  for (const [name, source] of [['main.rs', shell], ['update.rs', update], ['backend.rs', backend]]) {
+  for (const [name, source] of [['main.rs', shell], ['update.rs', update], ['backend.rs', backend], ['session_watch.rs', watch]]) {
     assert.equal(/\bpost_lock\(/.test(code(source)), false, `${name} sends no lock that skips the check`);
   }
   assert.ok(/post_lock_when_idle\(port, &token, "the control window was closed"\)/.test(code(shell)), 'the window closing mid-quit cannot lock under a move');
   assert.ok(/lock_and_stop\(/.test(code(shell)), 'the quit locks and stops through the shared helper');
   assert.ok(/lock_and_stop\(/.test(code(update)), 'so does the update relaunch');
   assert.equal(/get_health/.test(code(shell)), false, 'the quit no longer reads health and then locks');
+});
+
+/* The person stepping away locks the wallet: macOS's screen lock and a switch to another user,
+   watched by the shell (src-tauri/src/session_watch.m) and sent as the same when-idle lock. The
+   chain itself runs end to end in cargo test against the staged backend; this holds the names
+   the app watches for, which that test swaps for a name of its own. */
+test('a screen lock and a switch to another user send the when-idle lock, from the moment the backend answers', () => {
+  const watch = read('../../src-tauri/src/session_watch.rs');
+  const objc = read('../../src-tauri/src/session_watch.m');
+  const shell = read('../../src-tauri/src/main.rs');
+  assert.match(watch, /pub const SCREEN_LOCKED: &str = "com\.apple\.screenIsLocked";/);
+  assert.match(watch, /watch_for\(SCREEN_LOCKED\)/);
+  assert.match(watch, /post_lock_when_idle\(port, token, reason\)/);
+  assert.match(objc, /addObserverForName:NSWorkspaceSessionDidResignActiveNotification/);
+  assert.match(objc, /NSDistributedNotificationCenter defaultCenter\] addObserverForName:name/);
+  assert.match(shell, /session_watch::watch\(\);/);
+  assert.match(shell, /session_watch::backend_up\(port, &handle\.state::<Secrets>\(\)\.0\.token\);/);
 });

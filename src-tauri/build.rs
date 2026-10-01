@@ -26,6 +26,11 @@ fn main() {
             .file("src/codesign.c")
             .flag("-fblocks")
             .compile("phosphor_xpc_bridge");
+        // The screen-lock and user-switch watch, see src/session_watch.m.
+        println!("cargo:rerun-if-changed=src/session_watch.m");
+        cc::Build::new().file("src/session_watch.m").flag("-fobjc-arc").compile("phosphor_session_watch");
+        println!("cargo:rustc-link-lib=framework=AppKit");
+        println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rustc-link-lib=framework=Security");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
     }

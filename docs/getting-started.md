@@ -116,8 +116,9 @@ behind the enclave. Nothing moves and the addresses stay the same.
 
 ## The five minute lock
 
-The wallet locks after five minutes with nobody at the window, when the Mac sleeps, and when
-you close the window. Locks after, under Safety in the Vault tab, sets the time to 5 minutes,
+The wallet locks after five minutes with nobody at the window, when the Mac sleeps, when the
+screen locks or the Mac switches to another user, and when you close the window. A move waiting
+for your click stays on its card through a lock. Locks after, under Safety in the Vault tab, sets the time to 5 minutes,
 15 minutes or 1 hour, and Lock now locks at once. The window frosts and says Phosphor is locked.
 Unlock with Touch ID, or with your password on a software wallet.
 
