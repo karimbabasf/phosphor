@@ -84,7 +84,7 @@ The session it starts is locked down, and the lockdown is not a setting you can 
 - It runs with none of your own settings, hooks, plugins or instruction files (such as
   `CLAUDE.md`), and loads no memory the app did not write.
 - It announces its tool list when it starts. If that list holds anything beyond Phosphor's tools
-  and web search, the app refuses to drive and says so. Grok also reads back everything it
+  (and, for Claude, its web search), the app refuses to drive and says so. Grok also reads back everything it
   would load before each turn, and a turn that would load anything Phosphor did not put there does
   not run.
 - It has no way to approve its own proposals. Approval is your click in the window.

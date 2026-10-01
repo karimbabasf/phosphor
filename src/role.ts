@@ -23,7 +23,7 @@
 
 import { CAPABILITIES } from './greeting.ts';
 import type { Profile } from './profile/index.ts';
-import { CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, RESEARCH, TRADING, VOICE, WINDOW, WORDS } from './persona.ts';
+import { CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, RESEARCH, RESEARCH_BY_LINK, TRADING, VOICE, WINDOW, WORDS } from './persona.ts';
 import { skillsInstruction } from './skills.ts';
 
 export type RoleOptions = {
@@ -108,7 +108,7 @@ export function buildRole(opts: RoleOptions): string {
     '',
     'RESEARCH.',
     '',
-    ...RESEARCH,
+    ...(opts.webSearch === false ? RESEARCH_BY_LINK : RESEARCH),
     '',
     'CHECKING.',
     '',

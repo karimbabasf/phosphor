@@ -113,7 +113,7 @@ test('after the agent searches the web, a small swap waits for the click, and sa
     assert.equal(p.verdict.outcome, 'needs_approval', JSON.stringify(p.verdict));
     assert.equal(p.status, 'pending');
     assert.equal(p.verdict.reasons.at(-1), WEB_READ_REASON);
-    assert.equal(WEB_READ_REASON, 'It read a web page earlier in this chat, so this one waits for your OK.');
+    assert.equal(WEB_READ_REASON, 'This chat read text from outside Phosphor, so this move waits for your OK.');
     assert.equal(p.webRead, true, 'the row carries its own stamp');
     assert.deepEqual(w.executed, [], 'nothing ran on the policy alone');
   } finally {

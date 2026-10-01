@@ -29,7 +29,8 @@
 const marked = new Set<string>();
 const outside = new Set<string>();
 
-export const WEB_READ_REASON = 'It read a web page earlier in this chat, so this one waits for your OK.';
+// The lead's wording (2026-10-01): a chain read or news sets the mark too, not only a page.
+export const WEB_READ_REASON = 'This chat read text from outside Phosphor, so this move waits for your OK.';
 export const OUTSIDE_REASON = 'This agent was started outside Phosphor and is not allowed yet, so this move waits for your OK.';
 
 export function markWebRead(seat: string): void {

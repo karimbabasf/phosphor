@@ -42,7 +42,7 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 
 Every propose tool goes through the policy engine, see [Policy](policy.md). Three of them wait
 for your click at any size; the rest run on their own under the click threshold, except after the
-chat's agent read a web page.
+chat's agent read text from outside Phosphor (a web page, the news, a chain read).
 
 | Tool | Does |
 |---|---|

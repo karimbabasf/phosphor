@@ -49,8 +49,8 @@ size, and the policy engine never executes them on its own:
 
 Two more cases wait for a click whatever their size: a swap the app cannot measure, because it
 spends a coin the app cannot price or one whose listed price nothing in the quote can check (see
-[Money](money.md#swap)), and every move the chat's agent proposes after it read a web page (see
-below).
+[Money](money.md#swap)), and every move the chat's agent proposes after it read text from outside
+Phosphor (see below).
 
 A move that waits is one card in the chat that says Needs your OK. It shows what leaves and what
 arrives at least, its Details say why it asks, and it has two buttons: Cancel and Approve. On an
@@ -66,8 +66,8 @@ tab, or ask your assistant to set it to zero: at zero every move waits for a per
 Once the agent in the chat has searched the web, read a page, or read a stranger's words through
 Phosphor (news headlines, token names and memos on a chain), every money move it proposes in that
 chat waits for your click, whatever its size, until the chat starts a new session (the agent
-restarts, or you start a new chat). Why it asks, in the card's Details, says: "It read a web
-page earlier in this chat, so this one waits for your OK." A chart label, a plan note or a
+restarts, or you start a new chat). Why it asks, in the card's Details, says: "This chat read
+text from outside Phosphor, so this move waits for your OK." A chart label, a plan note or a
 highlight the agent writes after a web read carries the same mark, and an agent that later reads
 one is marked too. A move
 that would have been refused is still refused; the mark only turns a move that would have run on

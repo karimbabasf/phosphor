@@ -72,7 +72,8 @@ The amount is "all", which means every last unit you hold, or an exact amount; m
 is refused before any price is asked. The app asks for a price once per swap and sets the floor,
 the least you will get, one percent under that quote. A floor you name yourself is kept, but a
 floor of zero, or one more than 20 percent below the app's quote, is refused. Under the click
-threshold a swap runs on its own, unless your assistant read a web page earlier in that chat;
+threshold a swap runs on its own, unless your assistant read text from outside Phosphor (a web
+page, the news, a chain read) earlier in that chat;
 above it, the card shows what you pay and what you get at least, and waits for your click. See
 [Policy](policy.md#the-click-threshold).
 

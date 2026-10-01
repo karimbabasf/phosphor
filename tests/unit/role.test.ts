@@ -64,6 +64,10 @@ test('a Grok persona holds no web search, and reads a page only from a link they
   const text = buildRole({ root: ROOT, agent: 'Grok', webSearch: false });
   assert.ok(text.includes("You hold Phosphor's tools and nothing else: no web search, no shell, no files. To read a page, ask them for its link and use web_read."));
   assert.ok(!text.includes("You hold Phosphor's tools and a web search"));
+  // Its research rule asks for the link, and never sends it to a search it does not hold.
+  assert.ok(text.includes('You have no web search: for anything else (a company, the news, a number), ask them for a link to the source, then web_read it just as they gave it.'));
+  assert.ok(!text.includes('is a web search for the one value you need'));
+  assert.ok(!text.includes('as a search returned it'));
 });
 
 test('the persona states the injection law and names the only principal', () => {
