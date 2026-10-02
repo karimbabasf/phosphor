@@ -107,7 +107,9 @@ the address, and "Reveal your recovery phrase", or the password typed to see the
 words; none of them opens the wallet, so a locked wallet stays locked, no trading plan re-arms and
 nothing waiting for an unlock runs. The Touch ID that approves a move on a locked wallet opens it
 for that move alone: nothing else can start while it signs, and the key goes as soon as it has.
-Only Unlock opens the wallet for the session.
+Only Unlock opens the wallet for the session. One gap: in the first seconds after the app starts,
+such a touch can let waiting trading plans re-arm, see
+[Known limits](known-limits.md#a-touch-id-while-the-app-starts-can-re-arm-a-plan).
 
 Two limits belong here. While the vault is open, the unwrapped wallet key sits in the backend's
 memory as bytes, so the app can sign the moves you approved and the small ones the policy allows.
@@ -181,6 +183,9 @@ Phosphor code involved in the check.
    ```
    /Applications/Phosphor.app/Contents/MacOS/phosphor-desktop --payload-digest
    ```
+
+   This flag is new in 0.10.13. An older copy does not know it and opens the app instead, so on
+   an older version skip this step and compare steps 2 and 3.
 
 2. The same digest, worked out with the tools macOS ships:
 

@@ -158,14 +158,15 @@ another agent's `start` calls it "an agent started outside Phosphor".
 ## What the agent can never do
 
 - Approve, refuse, dismiss or execute anything. No tool on the surface does that, and the
-  approval routes need a token the agent's process never holds. See [Security](security.md).
+  approval routes need a token the agent's process never holds. A small move it proposes runs
+  only when your rules allow it with no click. See [Security](security.md).
 - Read a private key or the recovery phrase. Neither leaves the window.
 - Move money without a proposal. Every write goes through the policy engine, see
   [Policy](policy.md), and the ones that leave your custody always wait for a click.
-- Send without your click. `propose_send` always waits for you, and the card and the Touch ID
-  dialog both name the address in full. The agent is told to use only an address you gave it and
-  to read it back first, but the app cannot check where an address came from, so read it before
-  you approve.
+- Send without your click. `propose_send` always waits for you. The card names the address in
+  full, and the Touch ID dialog on a Touch ID wallet names its two ends. The agent is told to use
+  only an address you gave it and to read it back first, but the app cannot check where an
+  address came from, so read it before you approve.
 - Talk a rule away. A policy change is itself a proposal and always waits for your click.
 - Turn off the gate. There is no flag, setting or argument that reaches execution without a
   click or a policy allow inside limits you wrote.

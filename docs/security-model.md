@@ -6,8 +6,8 @@ What this app defends against, how, and where the v1 boundary honestly sits.
 
 This is the short version of Phosphor's security model, for anyone deciding whether to trust it
 with money. It says who Phosphor plans for, what the agent can and cannot do, what Phosphor
-defends against and the test that proves each defence, what stays open, and how to check a
-release yourself. It describes version 0.10.13. The rest of the
+defends against and the test that proves each defence, what stays open, what the invite tools
+guard, and how to check a release yourself. It describes version 0.10.13. The rest of the
 [security model](security-model.md#the-trust-boundary-is-the-app-window-not-the-conversation)
 gives the detail behind each line.
 
@@ -23,8 +23,8 @@ gives the detail behind each line.
 - **Someone between your Mac and a venue** who changes a quote on its way.
 - **A changed copy of the app**: a file swapped inside it, or a fake update.
 
-It does not plan for root, the kernel, or someone who holds both release signing keys and the
-maintainer's approval.
+It does not plan for root, the kernel, or someone who controls the maintainer's GitHub account,
+which is enough to run a release with both signing keys (see [What stays open](#what-stays-open)).
 
 ### What the agent can and cannot do
 
@@ -32,29 +32,32 @@ The agent can:
 
 - read your balances, positions, rules and waiting moves;
 - price any move and propose it;
-- run small moves on its own: swaps, Hyperliquid deposits and trades at or under your click
-  threshold ($100 by default), up to a daily total ($500 by default). See [Policy](policy.md);
+- propose small moves that your rules run with no click: swaps, Hyperliquid deposits and trades
+  at or under your click threshold ($100 by default), up to a daily total ($500 by default). See
+  [Policy](policy.md);
 - search the web when it is Claude, and read a page only at an address a search returned or you
   typed;
 - switch the screen you see, and draw on the chart.
 
 The agent cannot:
 
-- approve, refuse or run a move, or change a rule;
+- approve or refuse a move, run one your rules do not allow, or change a rule;
 - send money out, or withdraw from Hyperliquid, without your click, at any size;
 - see or use the wallet key;
 - read a page at an address it wrote itself;
 - see an invite code you put in the invite field.
 
 A small move still waits for your click when its agent read text from outside Phosphor in that
-session (a page, the news, a chain read, or words a marked agent wrote), when its agent was
-started outside Phosphor and you have not allowed it, when the agent asked for it on its own after
-a move failed, or when it spends a coin the app cannot price.
+session (a page, the news, a chain read, a venue's words the app does not know, or words a marked
+agent wrote), when its agent was started outside Phosphor and you have not allowed it, when the
+agent asked for it on its own after a move failed, or when it spends a coin the app cannot price.
 
 ### What it defends against, and the test that proves it
 
-Each line names the test that fails if the defence stops holding. `npm test` runs the unit tests
-in `tests/unit/`, the injection suite and the lockdown suite. `npm run attack` boots the app this checkout builds
+Each line names the tests that fail if the defence stops holding, and claims only what they
+prove. `npm test` runs the unit tests in `tests/unit/`, the injection suite and the lockdown
+suite. `cargo test` in `src-tauri` runs the shell's own tests, after `npm run bundle` has built
+the payload they check. `npm run attack` boots the app this checkout builds
 (`npm run app:build`) on a throwaway data folder and home, plays a hostile program in each case of
 `tests/attack/cases/`, and exits with an error when a defence does not hold. Two cases have a half
 that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
@@ -70,29 +73,40 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
 - **A program running as you takes the agent's door with its secret file.** Its seat counts as
   an agent started outside Phosphor, so every move it proposes waits until you allow it, however
   it names itself. Proof: attacks `06-agent-door`, `15-seat-id-dodge`.
-- **A page, a token name, a memo or a venue's error text talks the agent into a small move.** The
-  read marks that agent until its session ends, and any agent that reads its words is marked too.
-  Every move a marked agent asks for waits for your click. A venue refusal the app knows reaches
-  the agent as the app's own sentence, built from its numbers alone, and marks nothing. Proof:
-  attacks `07-stranger-text`, `16-mark-laundering`; `stranger-relay.test.ts`,
-  `venue-words-mark.test.ts`, `venue-refusals.test.ts`.
+- **A page, the news, a token name or memo on a chain, or a venue's error text talks the agent
+  into a small move.** The read marks that agent until its session ends, and any agent that reads
+  its words is marked too. Every move a marked agent asks for waits for your click. A venue
+  refusal the app knows reaches the agent as the app's own sentence, built from its numbers
+  alone, and marks nothing. Proof: attacks `07-stranger-text` (a chain read),
+  `16-mark-laundering`; `web-read-tool.test.ts` and `web-read-gate.test.ts` (a page, a search),
+  `stranger-reads.test.ts`, `stranger-relay.test.ts`, `venue-words-mark.test.ts`,
+  `venue-refusals.test.ts`.
 - **A page gets your data sent out in a web address.** A page is read only at an address a search
   returned or you typed. An address that carries your wallet's address or balances, or points at
   this Mac or your network, is refused. Proof: attacks `05-web-gate-addresses`,
-  `05-web-gate-dns`, `05-web-gate-echo`, `05-web-gate-redirect`.
+  `05-web-gate-dns`, `05-web-gate-echo`, `05-web-gate-redirect`; `web-gate.test.ts` (your
+  wallet's address and balances).
 - **A small send to an attacker.** Every send and every withdrawal waits for your click, whatever
-  its size. Proof: `send-gate.test.ts`, `injection.test.ts`.
+  its size. Proof: `send-gate.test.ts` (sends and payouts), `rail-wiring.test.ts` (Hyperliquid
+  withdrawals).
 - **A program stops the backend and takes its port.** The shell knows its backend by a fresh
-  question only that backend can answer, and posts no token to a backend that died.
-  Proof: attack `17-port-takeover`.
+  question only that backend can answer, and will not restart onto a port another program holds.
+  Once it sees the backend gone, which takes up to two seconds, it posts nothing more that carries
+  the window token. Proof: attack `17-port-takeover`.
 - **Code loaded into the process that holds the key.** That process gets nothing from your
   environment but the settings Phosphor names, no debugger signal, no add-ons and no eval, and
   only 14 reviewed packages can load in it. Proof: attacks `01-env-injection`, `02-inspector`, `11-key-process`;
   `key-process-packages.test.ts`.
 - **A file changed inside the installed app.** The shell checks the files against the digest
   built into the release, and starts nothing when they differ. Proof: attack `03-payload-tamper`.
-- **A fake update.** An update must pass its minisign signature, then carry Phosphor's Developer
-  ID, identifier and team. Proof: attack `04-update-signature`.
+- **A fake update.** An update comes only from this repository's release download for its
+  version, must carry a version inside it newer than the one running, and must carry Phosphor's
+  Developer ID, identifier and team; an archive that could unpack outside its folder is refused
+  before it writes. Before any of that, the updater plugin (Tauri's code, not this repository's)
+  checks the update's minisign signature; the tests show a release's signature passes that check,
+  not that a forged one fails it. Proof: attack `04-update-signature` (the Developer ID
+  requirement); the `update.rs` tests under `cargo test` (the download, the version inside, the
+  archive, and a bundle that passes minisign without the Developer ID refused).
 - **Another program asks the Secure Enclave service to open the wallet.** On a signed release
   the service answers only the signed Phosphor app. Proof: attack `12-xpc-vault`.
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
@@ -103,19 +117,24 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   Proof: `asset-pins.test.ts`.
 - **The screen locks with the wallet open.** The wallet shuts at once. A move already signing
   gets its signature, then the key goes. Proof: attacks `10-screen-lock-shell`,
-  `10-screen-lock-backend`.
-- **One Touch ID opens more than it should.** A Touch ID that approves a move on a locked wallet
-  opens it for that move alone, and your rules run again after the touch, before anything signs.
-  Proof: `approve-touch-lease.test.ts`, `touch-recheck.test.ts`.
+  `10-screen-lock-backend` (the wallet shuts); `lock-when-signed.test.ts` (a move already
+  signing).
+- **One Touch ID opens more than it should.** A Touch ID that shows your deposit address or your
+  recovery phrase leaves a locked wallet locked. A Touch ID that approves a move on a locked
+  wallet opens it for that move alone, and your rules run again after the touch, before anything
+  signs. Proof: `vault-routes.test.ts` (the address and the phrase),
+  `approve-touch-lease.test.ts`, `touch-recheck.test.ts`.
 - **Freeze is pressed while the policy file is broken.** Plans stop first, and the window says
   the switch could not be saved. Proof: `kill-switch.test.ts`.
 - **Someone guesses your password.** Five wrong tries start a wait, on unlock and on every other
   password check. Proof: `keystore.test.ts`.
 - **An invite code reaches the agent or a log.** The chat's guard, the backend's wall and the log
   tail hold back a code as it was issued, and as an editor or a chat app changes it. Proof:
-  attacks `13-invite-composer-guard`, `13-invite-no-leak`.
-- **An invite claim is replayed, or paid to an edited address.** One code signs once, and the
-  money goes to the wallet's decrypted address, never to the plain copy on disk. Proof: attacks
+  attacks `13-invite-composer-guard`, `13-invite-no-leak` (the guard and the wall);
+  `invite-guard-parity.test.ts` (the log tail).
+- **An invite claim is replayed, or paid to an edited address.** One code makes one signature that
+  can land (its rehearsal is dead a millisecond past the block it was tried at), and the money
+  goes to the wallet's decrypted address, never to the plain copy on disk. Proof: attacks
   `13-invite-replay`, `13-invite-replay-sim`, `13-invite-tampered-header`.
 - **Words are planted in Claude Code's task list.** The task tools are denied to the chat's agent
   and to the operator profile. Proof: attack `08-task-list`.
@@ -133,6 +152,11 @@ your money.
   until it is reused. What closes it: the chip vault, where the Secure Enclave signs NEAR Intents
   moves itself, so that key never exists as bytes. It is planned, not built. Until then, lock the
   wallet when you step away.
+- **A Touch ID while the app starts can re-arm a locked plan.** For up to 20 seconds after the
+  app starts, its plan check waits for Hyperliquid's first answer. If a Touch ID approves a move on
+  the locked wallet in that time, and the check lands while that move holds the key, every waiting
+  plan re-arms with its trading key, as an unlock would. That key can place and cancel orders, and
+  can never withdraw or transfer. What closes it: the check arming plans only after an unlock.
 - **The Touch ID key is bound to this Mac, not to Phosphor.** Another app running as you can ask
   to use it and show its own Touch ID dialog. Approve a Touch ID dialog only for something you
   started in Phosphor, and read its sentence. What closes it: custody binding, which needs a
@@ -142,20 +166,45 @@ your money.
   also read the secret that an agent Phosphor started carries in its environment, and a move filed
   with that one under your click threshold runs with no click. If that worries you, set the
   threshold to zero: then every move waits for you.
-- **A fee can hide inside fixed floors.** 1Click does not sign its fee field. Someone who can
-  change a quote on its way, which takes breaking HTTPS or being 1Click, can take up to a move's
-  loss floor: 3 percent of a swap, 1 percent of a send, 3 percent of a payout, 5 percent of a
-  Hyperliquid deposit. A swap of a coin 1Click puts no dollar figure on has no cap at all. What
-  closes it: 1Click signing its fee field.
+- **A program that takes the backend's port gets two seconds of the window.** If a program
+  running as you stops the backend and takes its port, the shell needs up to two seconds to see
+  it. In that time the open window still posts to the port, a click or a password typed into
+  Unlock included, and so does a screen lock, with the window token. The token is dead by then:
+  the shell will not restart onto a port another program holds.
+- **Names a venue lists reach the agent unmarked.** 1Click's coin names, the bridge's asset names
+  and its deposit memo, and the account names in a swap's record do not mark the agent that reads
+  them. A venue that lies, or someone who breaks HTTPS to it, can put words there, and the agent's
+  next small move still runs on your rules alone. A token name or memo read on a chain marks as
+  usual.
+- **A fee can hide inside fixed floors.** 1Click does not sign its fee field, and the solver relay
+  signs nothing it quotes. Someone who can change a quote on its way, which takes breaking HTTPS
+  or being the venue, can take up to a move's loss floor: 3 percent of a swap, 1 percent of a
+  send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4 percent of a
+  Hyperliquid withdrawal, and 1 percent of an invite claim through 1Click. A swap of a coin 1Click
+  puts no dollar figure on has no cap at all. What closes it: the venues signing what they quote,
+  the fee included.
 - **The quote check fails closed.** If 1Click starts sending back a field this app does not know,
   every quote is refused until Phosphor is updated. Nothing is signed, and your money stays where
   it is.
+- **Some coins take their 1Click id on first sight.** A card pins each coin's 1Click id and
+  decimals when it lands, and the registry names the id ahead of time for most of its coins. ETH
+  (on Ethereum, Base and Arbitrum), SOL and six registry coins (USDS, PYUSD and USDe on Ethereum,
+  DAI on Base and on Arbitrum, PYUSD on Solana) take the id 1Click's coin list gives the first
+  time the card is priced. A list forged before then, which takes breaking HTTPS or being 1Click,
+  could price another coin under that name. When 1Click prices both coins, its signed figures
+  still hold the swap to the 3 percent floor.
 - **A release signs what its build job made.** Before signing, the release checks that the
   payload's own files match the tagged source and that every program carries only the committed
-  entitlements. It cannot vouch for the compiled programs (the shell, the bundled Node, the
-  Secure Enclave service) or for the installed packages, and the release build does not repeat
-  CI's check of each package's registry signature. What closes it: a build anyone can reproduce
-  byte for byte.
+  entitlements. That check skips anything named `.DS_Store`, a folder of that name and what is in
+  it included, and nothing checks the rest of the disk image beside the app. It cannot vouch for
+  the compiled programs (the shell, the bundled Node, the Secure Enclave service) or for the
+  installed packages, and the release build does not repeat CI's check of each package's registry
+  signature. What closes it: a build anyone can reproduce byte for byte.
+- **The release keys are not behind an approval yet.** The release workflow names a `release`
+  environment, but at 0.10.13 that environment asks no approval and lets any branch in, and the
+  signing secrets sit at repository level. Any workflow pushed to this repository can read both
+  signing keys, the Developer ID and the update key. Only the maintainer can push. What closes it:
+  the secrets moved into the environment, with a required approval and only `v*` tags let in.
 - **An armed trading plan outlives a lock.** Its trading key can place and cancel orders until the
   plan expires, seven days at most, and can never withdraw or transfer. Freeze stops every plan
   from placing anything new.
@@ -171,6 +220,58 @@ your money.
 - **An invite code changed by hand can reach the agent.** The guards catch a code as it was
   issued and as an editor or a chat app changes it, not one someone retyped with a slip. Paste
   codes only into the invite field.
+- **A lying NEAR RPC can make a claim look failed.** An RPC that stamps a final block up to two
+  minutes ahead can run a claim's rehearsal. It pays only this wallet, but the window says the
+  claim failed until the app's next start finds the money and marks it claimed.
+- **One agent can get in the way of another.** When an agent's seat lapses, another program with
+  the agent's secret file can take its id. Its bye then removes your Allow, so the returning
+  agent's moves wait for your click again, or the returning agent shows as allowed while every
+  move it asks for waits. Any agent can also stop a worker another agent started. None of this
+  moves money.
+
+### The invite tools
+
+`npm run invite` is a separate program for whoever hands out invite codes
+([Money](money.md#issuing-invite-codes) has every command). It never reads the wallet's key file.
+What it guards: the treasury, T, which funds each batch; each code's key until someone claims
+it; and the invite file that holds both, `~/.phosphor-invites/invites.enc.json`. What it trusts:
+the solver relay to publish a batch, a reclaim or a withdraw, which it can send or drop but not
+change, since the signed bytes name every account they pay; 1Click to fill a convert; and a NEAR
+RPC to rehearse each payload before the real one is signed.
+
+- **Someone reads or edits the invite file.** It is encrypted (AES-256-GCM) under a key scrypt
+  makes from a passphrase of at least 20 characters, typed on every run and stored nowhere. A
+  wrong passphrase or a changed byte stops every command before anything is read or signed, and
+  the file is never on disk in the clear. Proof: `invite-file.test.ts`, `invite-operator.test.ts`.
+- **A batch signs twice.** The codes are in the file before the payload is signed, a stopped run
+  is finished with the same bytes, and a batch the relay turned away is closed only once its
+  signature has expired on NEAR. Proof: `invite-operator.test.ts`.
+- **A convert pays someone else or gives up too much.** The quote must echo the request, carry
+  1Click's signature, pay out to T and refund to T, and the payload may pay only the deposit
+  address that quote names. A convert gives up at most 1 percent, and its signed bytes are in the
+  file before 1Click sees them. Proof: `invite-convert.test.ts`.
+- **A withdraw goes to a look-alike address.** You type back the first six and last six
+  characters of the address before anything is signed. Proof: `invite-operator.test.ts`.
+
+What stays open:
+
+- **The terminal rule is a speed bump. The passphrase is the wall.** Every command refuses input
+  that is not a terminal, so a script or an agent does not run it by accident. A program that
+  pretends to be a terminal gets past that and reads what the terminal shows, the codes' links
+  included. Type the passphrase only in your own Terminal.
+- **1Click's word closes a convert.** 1Click's status is unsigned. A lying 1Click, or someone who
+  breaks HTTPS to it, can close a convert before its money reaches T, by saying it succeeded or
+  that it refunded a tiny amount. `invite-proof.ts sweep` can then call a proof file done while
+  money may still arrive on the key that file alone holds.
+- **A fast Mac clock and a lying RPC can run a rehearsal.** With the Mac's clock fast and the RPC
+  lying about the time, a batch's rehearsal can run beside its real payload when T holds twice the
+  batch: each code then holds twice its amount, a claim takes all of it, and `reclaim` takes back
+  what nobody claimed. A convert's rehearsal run that way pays 1Click's deposit address, and the
+  way back is 1Click delivering or refunding to T.
+- **A fee can hide inside a convert.** Up to its 1 percent floor, as with the app's own floors.
+- **The proof script keeps its keys in the clear.** `scripts/invite-proof.ts` asks for no
+  passphrase, so its file holds its throwaway keys in the clear, and `release-code` prints a live
+  code to stdout. Put in only what you are ready to lose, sweep it, then delete the file.
 
 ### Check a release yourself
 
@@ -181,11 +282,16 @@ SHA-256 on its release page:
 shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg
 ```
 
-It should be built from this repository's code, at the commit the release names:
+It should be built by this repository's release workflow, from the tag of its version:
 
 ```
-gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor
+gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
+  --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.10.13
 ```
+
+With `--repo` alone, the check also passes for a file any other workflow in this repository
+vouched for, on any branch.
 
 Its files should be the ones the release's source builds. The app's own report, the tools macOS
 ships and the source each give a payload digest, and the three agree when your copy is the one
@@ -201,10 +307,11 @@ git clone --depth 1 --branch v0.10.13 https://github.com/karimbabasf/phosphor.gi
 cd phosphor && npm run bundle
 ```
 
-Use the tag of the version you have. The last step needs Node 24 and Xcode's command line tools,
-and prints `payload: digest` with the value. The digest covers the payload's files, not the
-compiled programs (see the release item above). [Security](security.md#check-a-release-yourself)
-has the full steps.
+Use the tag of the version you have. `--payload-digest` is new in 0.10.13: an older copy does not
+know it and opens the app instead, so on an older version use the other two. The last step needs
+Node 24 and Xcode's command line tools, and prints `payload: digest` with the value. The digest
+covers the payload's files, not the compiled programs (see the release item above).
+[Security](security.md#check-a-release-yourself) has the full steps.
 
 ## The trust boundary is the app window, not the conversation
 
@@ -625,14 +732,17 @@ once proves nothing for the next challenge. A request without a challenge, and a
 When the backend dies, the shell sees it within two seconds (its watch polls every two), takes the
 window down, shows the splash, and restarts the backend once onto a fresh token; it will not
 restart onto a port another program holds, and a second death stops the app with a sentence
-(`src-tauri/src/main.rs`, `watch`). The window's closing lock and the screen-lock watch post only
-to a backend still running, so a process that killed the backend and took the port gets no token
-from them (`npm run attack`, 17-port-takeover). The shell's own reads (Copy MCP Config, Copy Log,
+(`src-tauri/src/main.rs`, `watch`). The window's closing lock asks the backend's own process
+whether it is still running before it posts, so a process that killed the backend and took the
+port gets no token from it (`npm run attack`, 17-port-takeover). The screen-lock watch posts to
+the backend the shell last saw answer (`src-tauri/src/session_watch.rs`, `BACKEND`), which it
+forgets only when its watch sees the death. The shell's own reads (Copy MCP Config, Copy Log,
 an update's health check) carry the read key and never the window token, the first two with a
 challenge too, so a process that took the port reads nothing that can approve or unlock
 (`src-tauri/src/backend.rs`, `read_head`). One gap remains: for up to those two seconds the open
 window can still post to whatever holds the port, a click or a password typed into Unlock
-included.
+included, and a screen lock in those seconds posts its lock there too, with the window token.
+That token opens nothing after: the shell never restarts onto a port another program holds.
 
 **The seat secret is the agent door's credential.** `src/http/mcp.ts` refuses every op on
 `/api/mcp`, `hello` and `bye` included, that does not carry this boot's secret, before the roster
@@ -852,9 +962,12 @@ signature (`src/quote-signature.ts`) before it is trusted. The coins it names ar
 card was priced with. A coin's 1Click id and its decimals come off 1Click's token list, which
 nothing signs, so the proposal pins both into the draft when it lands (`src/proposals/draft.ts`),
 execute signs for exactly those, and a list that names another id or other decimals for them at
-the click refuses the move with nothing signed (`src/rails/asset-pin.ts`). The registry's own coins
-carry 1Click's id in `data/tokens.json`, and a list that files one under another id is refused
-before the card is priced.
+the click refuses the move with nothing signed (`src/rails/asset-pin.ts`). Eleven of the
+registry's seventeen coins carry 1Click's id in `data/tokens.json`, and a list that files one of
+them under another id is refused before the card is priced. The other six (USDS, PYUSD and USDe
+on Ethereum, DAI on Base and on Arbitrum, PYUSD on Solana) and the chains' own coins (ETH and
+SOL, `NATIVE_ASSET` in `src/intents.ts`, decimals pinned) take the id the list gives the first
+time the card is priced, which [What stays open](#what-stays-open) names.
 
 **One stated exception: an invite code.** A code is a key of its own:
 `keccak256("phosphor-invite-v1" || secret)` over 128 random bits, and its account inside

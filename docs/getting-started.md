@@ -25,11 +25,15 @@ The checksum proves your file is the one on the release page. This proves the re
 file was built from the public code. It needs the GitHub CLI (`brew install gh`):
 
 ```sh
-gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor
+gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
+  --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.10.13
 ```
 
-It passes only for a file that this repository's release workflow built on GitHub's machines,
-and it prints the commit it came from, so you can read the exact code you are about to run. The
+Put the version you downloaded in the last line. It passes only for a file that this
+repository's release workflow built on GitHub's machines from that version's tag, and it prints
+the commit it came from, so you can read the exact code you are about to run. Leave out the last
+two lines and it also passes for a file any other workflow in this repository vouched for. The
 record is signed through Sigstore and kept in a public log that this project cannot edit, so
 someone who took over the release page or the site could swap the file and its checksum, but
 not this. What it does not prove: that the code is free of bugs. For that, read
