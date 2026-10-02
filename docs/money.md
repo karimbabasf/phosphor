@@ -296,9 +296,10 @@ above it, the card shows what you pay and what you get at least, and waits for y
 
 Every coin the swap service lists has a price in your balance. A swap that spends a coin priced
 only by that list is judged at the larger of the listed price and what the quote says arrives,
-so a wrong listed price cannot make a move look small. Two cases always wait for your click,
-whatever the size: a swap whose listed price nothing in the quote can check, and a swap that
-spends a coin the app cannot price at all, which is valued off what the quote says arrives.
+so a wrong listed price cannot make a move look small. Three cases always wait for your click,
+whatever the size: a swap whose listed price nothing in the quote can check, a swap that spends a
+coin the app cannot price at all, which is valued off what the quote says arrives, and a swap
+1Click's quote puts no dollar figure on, since nothing can measure what it gives up.
 
 ## Send
 
