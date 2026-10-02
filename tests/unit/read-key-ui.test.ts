@@ -152,3 +152,25 @@ test('a new token is traded again before the next read, and the picture URLs fol
   assert.equal(JSON.parse(trades[1].body).token, next);
   assert.equal(w.calls[w.calls.length - 1].headers['x-phosphor-read'], 'n'.repeat(64));
 });
+
+/* A read that is never revalidated is never kept. One of them is the reveal: the recovery phrase it
+   brings used to stay in the window's read cache after the Vault row that showed it closed and
+   after a lock, where a 304 on the same path would still hand it out. */
+test('the words a reveal brings leave no copy in the window once they are handed over', async () => {
+  const w = load();
+  const words = 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' ');
+  const served: number[] = [];
+  const passOn = w.sandbox.fetch;
+  w.sandbox.fetch = async (url: string, init: Any = {}) => {
+    if (!url.startsWith('/api/wallet/reveal/')) return passOn(url, init);
+    served.push(served.length);
+    return served.length === 1
+      ? { ok: true, status: 200, headers: { get: (name: string) => (name === 'etag' ? '"r1"' : null) }, text: async () => '', json: async () => ({ ok: true, what: 'mnemonic', mnemonic: words }) }
+      : { ok: false, status: 304, headers: { get: () => null }, text: async () => '', json: async () => null };
+  };
+  const shown = await w.api.revealFetch('n1');
+  assert.deepEqual(shown.mnemonic, words);
+  const again = await w.net.getJson('/api/wallet/reveal/n1');
+  assert.equal(again.status, 304);
+  assert.equal(again.data, undefined, 'the window kept the words after the reveal was spent');
+});

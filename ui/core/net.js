@@ -187,8 +187,13 @@
         }
         var tag = res.headers.get('etag');
         return res.json().then(function (body) {
-          if (tag) etags[key] = tag;
-          cache[key] = body;
+          /* A read that is never revalidated is never kept either: one of
+             them is the reveal, and a copy of the recovery phrase here
+             outlived the row that showed it, and the lock. */
+          if (!opts.noCache) {
+            if (tag) etags[key] = tag;
+            cache[key] = body;
+          }
           return { data: body, fresh: true, status: res.status };
         });
       })
