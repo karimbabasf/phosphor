@@ -17,8 +17,8 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_PORT: u16 = 4177;
@@ -40,11 +40,18 @@ const SETTLE_CAP_MS_IN_SHUTDOWN_TS: u64 = 32_000;
 
 const PID_FILE: &str = "backend.pid";
 
-/// The backend process and the pid file that names it.
+/// The backend process, what it was handed at its spawn, and the pid file that names it.
 ///
-/// Both are behind their own lock so a panic while reporting one cannot strand the other.
+/// Each is behind its own lock so a panic while reporting one cannot strand the others.
 pub struct Backend {
     child: Mutex<Option<Child>>,
+    /// The handshake the child was spawned with, kept beside it and dropped with it. A window
+    /// token, a nonce and a relay secret live exactly as long as the one process that holds them:
+    /// whatever a dead backend's window or port let out opens nothing on the next one.
+    hand: Mutex<Option<Arc<Handshake>>>,
+    /// Which spawn the child is from, counted up by adopt(), so a thread made for one backend (the
+    /// enclave relay, a window's close handler) can tell it from the next.
+    generation: AtomicU64,
     pid_file: Mutex<Option<PathBuf>>,
     /// Set the moment kill() begins and never cleared: this shell has decided to stop its
     /// backend, so a respawn that lands afterwards (the supervisor was mid-respawn when an
@@ -64,6 +71,8 @@ impl Backend {
     pub fn new() -> Self {
         Backend {
             child: Mutex::new(None),
+            hand: Mutex::new(None),
+            generation: AtomicU64::new(0),
             pid_file: Mutex::new(None),
             stopping: AtomicBool::new(false),
         }
@@ -103,6 +112,9 @@ impl Backend {
         let Some(mut child) = guard.take() else {
             return;
         };
+        if let Ok(mut hand) = lock(&self.hand) {
+            hand.take();
+        }
         request_stop(&child);
         let deadline = Instant::now() + SHUTDOWN_GRACE;
         while Instant::now() < deadline {
@@ -121,7 +133,9 @@ impl Backend {
         self.stopping.load(Ordering::SeqCst)
     }
 
-    pub fn adopt(&self, child: Child, pid_file: PathBuf) {
+    /// Holds `child` and the handshake it was spawned with, and answers the spawn's generation.
+    /// `None` when the shell is stopping and the child was taken down instead.
+    pub fn adopt(&self, child: Child, hand: Arc<Handshake>, pid_file: PathBuf) -> Option<u64> {
         // A child spawned after the decision to stop is taken down here, not kept: the shell is
         // about to exit (an update relaunch), and a backend adopted now would outlive it with
         // the wallet loaded and no window, the orphan this whole file exists to prevent.
@@ -130,16 +144,24 @@ impl Backend {
             request_stop(&late);
             let _ = late.kill();
             let _ = late.wait();
-            return;
+            return None;
         }
         let pid = child.id();
-        if let Ok(mut guard) = lock(&self.child) {
+        // The child, its handshake and its generation change together, under the child's lock, so
+        // nothing reads one spawn's child beside another spawn's secrets.
+        let generation = {
+            let mut guard = lock(&self.child).ok()?;
             guard.replace(child);
-        }
+            if let Ok(mut held) = lock(&self.hand) {
+                held.replace(hand);
+            }
+            self.generation.fetch_add(1, Ordering::SeqCst) + 1
+        };
         write_pid_file(&pid_file, pid as i32);
         if let Ok(mut guard) = lock(&self.pid_file) {
             guard.replace(pid_file);
         }
+        Some(generation)
     }
 
     /// Has the child exited? `None` means there is no child at all, which is a different answer
@@ -148,6 +170,19 @@ impl Backend {
         let mut guard = lock(&self.child).ok()?;
         let child = guard.as_mut()?;
         Some(matches!(child.try_wait(), Ok(Some(_))))
+    }
+
+    /// The handshake of the child held now, while there is one.
+    pub fn handshake(&self) -> Option<Arc<Handshake>> {
+        lock(&self.hand).ok()?.clone()
+    }
+
+    /// Is the child of spawn `generation` still the one held, and still running?
+    pub fn alive(&self, generation: u64) -> bool {
+        let Ok(mut guard) = lock(&self.child) else {
+            return false;
+        };
+        self.generation.load(Ordering::SeqCst) == generation && guard.as_mut().is_some_and(|child| matches!(child.try_wait(), Ok(None)))
     }
 
     fn clear_pid_file(&self) {
@@ -476,8 +511,9 @@ pub fn mint_token() -> Result<String, String> {
 /// The four secrets this shell mints per boot and hands to the backend down one pipe.
 ///
 /// `token` is the approval token, injected into the control webview and checked on every write.
-/// `nonce` is how this shell recognises its OWN backend: the backend echoes it in the x-phosphor
-/// header and nowhere else, so a local process that grabs the port cannot answer with it.
+/// `nonce` is how this shell recognises its OWN backend: the key the backend answers this shell's
+/// challenges with (Challenge). It never leaves the backend, so a local process that grabs the port
+/// cannot answer one.
 /// `seat` is the roster handshake secret, which the backend passes to the agents it spawns so a
 /// seat claimed from outside cannot fill the roster the human's own agent needs.
 /// `transport` is the key the Secure Enclave sidecar seals the wallet's data key under on its way
@@ -489,7 +525,7 @@ pub fn mint_token() -> Result<String, String> {
 /// it. The page never sees this value; only this thread and the backend do.
 ///
 /// All five are separate values. A secret reused for a second purpose is a secret whose exposure
-/// in the weaker place costs you the stronger one, and the nonce is deliberately public.
+/// in the weaker place costs you the stronger one.
 pub struct Handshake {
     pub token: String,
     pub nonce: String,
@@ -622,46 +658,124 @@ impl Backend {
     }
 }
 
-/// The value of one header in a raw HTTP response, lowercased by the caller.
+/// The value of one header in a raw HTTP response, lowercased by the caller. Only the head is
+/// read: a body line is never taken for a header.
 fn header_value<'a>(lowered: &'a str, name: &str) -> Option<&'a str> {
-    lowered
-        .lines()
-        .find_map(|line| line.strip_prefix(name))
-        .map(str::trim)
+    let head = lowered.split("\r\n\r\n").next().unwrap_or("");
+    head.lines().find_map(|line| line.strip_prefix(name)).map(str::trim)
+}
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    // <CommonCrypto/CommonHMAC.h>, in libSystem beside the CC_SHA256 payload.rs uses: the system's
+    // own HMAC, so the identity check brings no crate into the shell either.
+    fn CCHmac(algorithm: u32, key: *const std::ffi::c_void, key_len: usize, data: *const std::ffi::c_void, data_len: usize, mac: *mut std::ffi::c_void);
+}
+
+/// kCCHmacAlgSHA256.
+#[cfg(target_os = "macos")]
+const HMAC_SHA256: u32 = 2;
+
+#[cfg(target_os = "macos")]
+fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<[u8; 32], String> {
+    let mut out = [0u8; 32];
+    // SAFETY: CCHmac reads `key.len()` bytes of `key` and `data.len()` bytes of `data`, both live
+    // slices of exactly those lengths, and writes the 32-byte SHA-256 MAC into `out`.
+    unsafe {
+        CCHmac(HMAC_SHA256, key.as_ptr().cast(), key.len(), data.as_ptr().cast(), data.len(), out.as_mut_ptr().cast());
+    }
+    Ok(out)
+}
+
+/// The shell ships for macOS only. Anywhere else no backend can prove itself, so no window opens.
+#[cfg(not(target_os = "macos"))]
+fn hmac_sha256(_key: &[u8], _data: &[u8]) -> Result<[u8; 32], String> {
+    Err("the identity check needs macOS".to_string())
+}
+
+/// What the backend answers a challenge with: HMAC-SHA256 keyed by this spawn's nonce, over a
+/// domain line and the challenge. src/http/respond.ts (identityProof) computes the same thing.
+fn identity_proof(nonce: &str, challenge: &str) -> Result<String, String> {
+    let message = format!("phosphor identity\n{challenge}");
+    hmac_sha256(nonce.as_bytes(), message.as_bytes()).map(|mac| crate::payload::hex(&mac))
+}
+
+/// A question only the backend this shell started can answer.
+///
+/// TWO QUESTIONS, AND THEY WERE THE SAME FUNCTION ONCE. "Is a Phosphor on this port" names a
+/// process to quit. "Is MY backend on this port" gates the window, which is where the approval
+/// token gets injected, and the relay, the clipboard lines and the log copy. Answering the second
+/// with the first is what made the check defeatable: the marker was the fixed word
+/// `x-phosphor: control`, then the boot nonce itself, and the backend served either to anyone who
+/// asked, so a local process that read it once could answer with it after the backend died
+/// (audit 2026-10-01, L15).
+///
+/// Now the nonce reaches the backend over its stdin and never leaves it. Each request whose answer
+/// is trusted carries 32 fresh random bytes; the backend answers with a MAC of them under the
+/// nonce, and only that answer is taken. A captured answer is worth nothing for the next
+/// challenge, and every spawn gets a new nonce (spawn_backend), so nothing learned from one
+/// backend answers for the next.
+pub struct Challenge {
+    value: String,
+    expected: String,
+}
+
+impl Challenge {
+    pub fn new(nonce: &str) -> Result<Challenge, String> {
+        let value = mint_token()?;
+        let expected = identity_proof(nonce, &value)?;
+        Ok(Challenge { value, expected })
+    }
+
+    /// The request header line that carries it, line ending included, for a hand-rolled request.
+    pub fn header(&self) -> String {
+        format!("x-phosphor-challenge: {}\r\n", self.value)
+    }
+
+    /// The answer only the backend holding the nonce can give, for a test to answer with.
+    #[cfg(test)]
+    pub fn expected(&self) -> &str {
+        &self.expected
+    }
+
+    /// Compared in constant time, though nothing waits on the answer long enough to time it.
+    fn answered_by(&self, value: &str) -> bool {
+        value.len() == self.expected.len() && value.bytes().zip(self.expected.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+    }
 }
 
 /// Does this response come from the backend this shell started?
 ///
-/// TWO QUESTIONS, AND THEY WERE THE SAME FUNCTION UNTIL NOW. "Is a Phosphor on this port" names a
-/// process to quit. "Is MY backend on this port" gates the window, which is where the approval
-/// token gets injected. Answering the second with the first is what made the check defeatable: the
-/// marker used to be the fixed string `x-phosphor: control`, which any server can send, so a local
-/// process that took the port during the boot race or the respawn backoff was handed the token and
-/// then the keystore passphrase, in a window titled PHOSPHOR.
-///
-/// So `nonce` decides which question is being asked. `None` accepts any Phosphor-shaped answer and
-/// is only used where nothing is opened onto what answered: the launch survey, which gives way to
-/// a running copy, stops a proven orphan or refuses. `Some` requires the header
-/// to carry the value this shell minted this boot and gave the backend over its stdin, which is a
-/// channel no other process can read and no other process can guess.
+/// `None` asks only whether the answer is Phosphor-shaped, and is used only where nothing is
+/// opened onto what answered: the launch survey, which gives way to a running copy, stops a proven
+/// orphan or refuses. `Some` requires the header to carry the proof for that challenge.
 ///
 /// The marker is still a header rather than the page's <title>, and that half has not changed: a
 /// retitle of ui/index.html once left this polling a healthy server it could not recognise and the
 /// app died on a 45-second timeout with nothing wrong with it. Header names are case-insensitive
 /// on the wire, so the match is too, and the value is hex.
-pub fn identity_matches(response: &str, nonce: Option<&str>) -> bool {
+pub fn identity_matches(response: &str, challenge: Option<&Challenge>) -> bool {
     let lowered = response.to_ascii_lowercase();
     let Some(value) = header_value(&lowered, "x-phosphor:") else {
         return false;
     };
-    match nonce {
+    match challenge {
         None => true,
-        Some(want) => value == want.to_ascii_lowercase(),
+        Some(challenge) => challenge.answered_by(value),
     }
 }
 
+/// `nonce` as identity_matches takes its challenge: `None` for the survey, `Some` for every probe
+/// that opens anything onto the answer, with a challenge of its own.
 pub fn phosphor_is_listening(port: u16, nonce: Option<&str>) -> bool {
-    get_root(port).is_some_and(|res| identity_matches(&res, nonce))
+    let Some(nonce) = nonce else {
+        return get_root(port).is_some_and(|res| identity_matches(&res, None));
+    };
+    let Ok(challenge) = Challenge::new(nonce) else {
+        return false;
+    };
+    let head = format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Connection: close\r\n\r\n", challenge.header());
+    request(port, &head, None).is_some_and(|res| identity_matches(&res, Some(&challenge)))
 }
 
 /// Reads the port the way src/config.ts does, and only the port.
@@ -719,15 +833,40 @@ pub fn node_binary() -> Result<PathBuf, String> {
 /// environment of BACKEND_ENV and nothing else. Before it, the payload is checked against the
 /// digest this shell was built with (payload.rs), and a payload that is not that one is never
 /// started.
-pub fn spawn_backend(payload: &Path, data: &Path, hand: &Handshake) -> Result<Child, SpawnError> {
+///
+/// EVERY SPAWN MINTS ITS OWN HANDSHAKE, here and nowhere else, and hands it back with the child.
+/// The respawn used to hand the new backend the boot's own five values. A backend's death leaves
+/// its window open on the port for a moment, and whatever answered there in that moment saw the
+/// window token, which the respawned backend then accepted (audit 2026-10-01, HIGH). A token now
+/// opens only the backend it was minted for, and dies with it.
+pub fn spawn_backend(payload: &Path, data: &Path) -> Result<(Child, Handshake), SpawnError> {
     let node = node_binary().map_err(SpawnError::Failed)?;
-    spawn_checked(&node, payload, data, hand, crate::payload::BUILT_FOR, own_team().as_deref())
+    spawn_minted(&node, payload, data, crate::payload::BUILT_FOR, own_team().as_deref())
+}
+
+fn spawn_minted(node: &Path, payload: &Path, data: &Path, built_for: &str, team: Option<&str>) -> Result<(Child, Handshake), SpawnError> {
+    let hand = Handshake::mint().map_err(SpawnError::Failed)?;
+    let child = spawn_checked(node, payload, data, &hand, built_for, team)?;
+    Ok((child, hand))
 }
 
 #[cfg(target_os = "macos")]
 extern "C" {
     fn phosphor_own_team(out: *mut std::ffi::c_char, len: usize) -> std::ffi::c_int;
-    fn phosphor_pid_signed_by(pid: libc::pid_t, team: *const std::ffi::c_char, status: *mut std::ffi::c_int) -> std::ffi::c_int;
+    fn phosphor_pid_signed_by(
+        pid: libc::pid_t,
+        identifier: *const std::ffi::c_char,
+        team: *const std::ffi::c_char,
+        status: *mut std::ffi::c_int,
+    ) -> std::ffi::c_int;
+}
+
+/// A code-signing identifier is letters, digits, dots and hyphens; nothing that can bend the
+/// quoted requirement codesign.c builds. The two this shell passes ("node" and the app's own
+/// identifier) are its own constants, so a value that is not one is a bug, not an attacker.
+#[cfg(target_os = "macos")]
+fn is_identifier(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
 /// The Team ID this shell is signed with. None for an ad-hoc build (local or development), which
@@ -752,29 +891,59 @@ fn own_team() -> Option<String> {
     None
 }
 
-/// Is the process `pid` signed by a Developer ID Application certificate of `team`, as the
-/// kernel runs it? Only ever asked about a child this shell holds and has not reaped, so the
-/// number cannot have passed to another process.
+/// Is `pid`, as the kernel runs it, a Developer ID Application binary of `team` carrying code-signing
+/// `identifier`? Only ever asked about a process this shell holds or macOS names to it, so the number
+/// cannot have passed to another process between the question and the answer.
 #[cfg(target_os = "macos")]
-fn runtime_signed_by(pid: u32, team: &str) -> Result<(), String> {
-    if team.is_empty() || !team.chars().all(|c| c.is_ascii_alphanumeric()) {
+fn signed_by(pid: u32, identifier: &str, team: &str) -> Result<(), String> {
+    if !team.chars().all(|c| c.is_ascii_alphanumeric()) || team.is_empty() {
         return Err(format!("{team:?} is not a Team ID"));
     }
+    if !is_identifier(identifier) {
+        return Err(format!("{identifier:?} is not a code-signing identifier"));
+    }
+    let id_c = std::ffi::CString::new(identifier).map_err(|_| "an identifier with a NUL in it".to_string())?;
     let team_c = std::ffi::CString::new(team).map_err(|_| "a Team ID with a NUL in it".to_string())?;
     let mut status: std::ffi::c_int = 0;
-    // SAFETY: the Team ID is NUL-terminated and outlives the call, and `status` is a live int.
-    let signed = unsafe { phosphor_pid_signed_by(pid as libc::pid_t, team_c.as_ptr(), &mut status) };
+    // SAFETY: both strings are NUL-terminated and outlive the call, and `status` is a live int.
+    let signed = unsafe { phosphor_pid_signed_by(pid as libc::pid_t, id_c.as_ptr(), team_c.as_ptr(), &mut status) };
     if signed == 1 {
         return Ok(());
     }
-    Err(format!(
-        "The bundled runtime is not signed by this app's team ({team}): Security answered {status}. It was stopped before it was given anything."
-    ))
+    Err(format!("process {pid} is not {identifier:?} signed by this app's team ({team}): Security answered {status}"))
+}
+
+/// The runtime (the bundled node) held to this app's team AND to the identifier "node", so only the
+/// bundled runtime passes, not any other Developer ID binary the team ever signed (audit, L17).
+#[cfg(target_os = "macos")]
+fn runtime_signed_by(pid: u32, team: &str) -> Result<(), String> {
+    signed_by(pid, "node", team).map_err(|why| {
+        format!("The bundled runtime is not this app's: {why}. It was stopped before it was given anything.")
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
 fn runtime_signed_by(_pid: u32, _team: &str) -> Result<(), String> {
     Err("the runtime check needs macOS".to_string())
+}
+
+/// Is `pid` a Developer ID build of this app, by `identifier`, of this shell's own team? `None` when
+/// this shell has no team (an ad-hoc or dev build): there is no authority to hold a peer to, exactly
+/// as the runtime check skips then. The launch hand-over asks this before it quits for another copy,
+/// so a same-user app merely declaring the bundle identifier cannot make this one step aside (audit
+/// 2026-10-01, L16).
+#[cfg(target_os = "macos")]
+pub fn pid_is_signed_app(pid: i32, identifier: &str) -> Option<bool> {
+    if pid <= 0 {
+        return Some(false);
+    }
+    let team = own_team()?;
+    Some(signed_by(pid as u32, identifier, &team).is_ok())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn pid_is_signed_app(_pid: i32, _identifier: &str) -> Option<bool> {
+    None
 }
 
 /// Why spawn_backend started nothing.
@@ -895,9 +1064,41 @@ mod tests {
         assert!(backend.stopping());
         let child = Command::new("sleep").arg("30").stdin(Stdio::null()).spawn().unwrap();
         let pid = child.id();
-        backend.adopt(child, std::env::temp_dir().join(format!("phosphor-adopt-test-{pid}.pid")));
+        let hand = Arc::new(Handshake::mint().unwrap());
+        assert_eq!(backend.adopt(child, hand, std::env::temp_dir().join(format!("phosphor-adopt-test-{pid}.pid"))), None);
         assert!(matches!(backend.exited(), None), "nothing is kept after stopping");
+        assert!(backend.handshake().is_none(), "and no secrets either");
         assert!(!pid_is_alive(pid as i32), "the late child was taken down");
+    }
+
+    /// The secrets go with the child they were minted for: a dead child's generation is never
+    /// alive again, a respawn's handshake replaces the dead one's, and a stop takes it away.
+    #[test]
+    fn a_backends_secrets_and_generation_end_with_it() {
+        let backend = Backend::new();
+        let pid_file = |n: u32| std::env::temp_dir().join(format!("phosphor-generation-test-{}-{n}.pid", std::process::id()));
+        let first = Command::new("sleep").arg("30").stdin(Stdio::null()).spawn().unwrap();
+        let first_pid = first.id() as libc::pid_t;
+        let first_hand = Arc::new(Handshake::mint().unwrap());
+        let one = backend.adopt(first, first_hand.clone(), pid_file(1)).unwrap();
+        assert!(backend.alive(one));
+        assert_eq!(backend.handshake().map(|h| h.token.clone()), Some(first_hand.token.clone()));
+
+        let second = Command::new("sleep").arg("30").stdin(Stdio::null()).spawn().unwrap();
+        let second_hand = Arc::new(Handshake::mint().unwrap());
+        let two = backend.adopt(second, second_hand.clone(), pid_file(2)).unwrap();
+        // SAFETY: kill(2) on the sleep this test started and no longer holds.
+        unsafe { libc::kill(first_pid, libc::SIGKILL) };
+        assert_ne!(one, two);
+        assert!(!backend.alive(one), "a spawn that was replaced is never alive again, whatever runs now");
+        assert!(backend.alive(two));
+        assert_eq!(backend.handshake().map(|h| h.token.clone()), Some(second_hand.token.clone()));
+
+        backend.stop_for_retry();
+        assert!(!backend.alive(two), "a child that was stopped is not alive");
+        assert!(backend.handshake().is_none(), "a stopped backend leaves no token to send anywhere");
+        let _ = std::fs::remove_file(pid_file(1));
+        let _ = std::fs::remove_file(pid_file(2));
     }
 
     /// A server that answers `GET /` with one `x-phosphor` header and the value it was given.
@@ -921,6 +1122,30 @@ mod tests {
         port
     }
 
+    /// The backend's half of the challenge, as src/http/respond.ts answers it: the proof for the
+    /// challenge the request carried, under `nonce`, and the fixed word when it carried none.
+    /// `upper` sends the proof upper-cased, as a header value may arrive.
+    fn prover(nonce: &'static str, upper: bool) -> u16 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+        let port = listener.local_addr().expect("read the bound port").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let Ok(mut sock) = stream else { continue };
+                let mut scratch = [0u8; 2048];
+                let n = sock.read(&mut scratch).unwrap_or(0);
+                let asked = String::from_utf8_lossy(&scratch[..n]).to_ascii_lowercase();
+                let value = header_value(&asked, "x-phosphor-challenge:")
+                    .map(|challenge| identity_proof(nonce, challenge).unwrap())
+                    .unwrap_or_else(|| "control".to_string());
+                let value = if upper { value.to_ascii_uppercase() } else { value };
+                let res = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nX-Phosphor: {value}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = sock.write_all(res.as_bytes());
+                let _ = sock.shutdown(Shutdown::Both);
+            }
+        });
+        port
+    }
+
     #[test]
     fn a_squatter_sending_the_old_fixed_marker_is_not_this_shells_backend() {
         let port = stub("control");
@@ -935,14 +1160,45 @@ mod tests {
     }
 
     #[test]
-    fn the_backend_that_echoes_this_boots_nonce_is_recognised() {
-        let port = stub("a1b2c3d4");
+    fn only_the_backend_holding_this_spawns_nonce_answers_its_challenge() {
+        let port = prover("a1b2c3d4", false);
         assert!(phosphor_is_listening(port, Some("a1b2c3d4")));
+        assert!(!phosphor_is_listening(port, Some("a1b2c3d5")), "a backend keyed by another nonce is not this spawn's");
+        assert!(phosphor_is_listening(port, None), "and to the survey it is Phosphor-shaped");
+        let loud = prover("a1b2c3d4", true);
         assert!(
-            phosphor_is_listening(port, Some("A1B2C3D4")),
+            phosphor_is_listening(loud, Some("a1b2c3d4")),
             "header values are compared case-insensitively, as the names are"
         );
-        assert!(!phosphor_is_listening(port, Some("a1b2c3d5")), "one character off is not ours");
+    }
+
+    /// Audit L15: the nonce used to ride on every answer, token-free /api/health included, so a
+    /// process that asked once could answer with it after the backend died. Neither the nonce nor
+    /// an answer to an earlier challenge passes now: every probe asks a question of its own.
+    #[test]
+    fn a_squatter_replaying_the_nonce_or_an_answer_it_saw_is_refused() {
+        let nonce: &'static str = Box::leak("a1b2c3d4".repeat(8).into_boxed_str());
+        assert!(!phosphor_is_listening(stub(nonce), Some(nonce)), "the nonce itself");
+        let seen = Challenge::new(nonce).unwrap();
+        let earlier: &'static str = Box::leak(seen.expected().to_string().into_boxed_str());
+        assert!(!phosphor_is_listening(stub(earlier), Some(nonce)), "an answer to an earlier challenge");
+    }
+
+    #[test]
+    fn the_proof_is_hmac_sha256_of_the_challenge_as_the_backend_computes_it() {
+        // RFC 4231, test case 2: the system HMAC is the HMAC.
+        assert_eq!(
+            crate::payload::hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?").unwrap()),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        // The same vector tests/unit/boot-nonce.test.ts holds src/http/respond.ts to.
+        let nonce = "a1b2c3d4".repeat(8);
+        let challenge = "0123456789abcdef".repeat(4);
+        assert_eq!(identity_proof(&nonce, &challenge).unwrap(), "a12aa33231a6d44541d89e7db2589e4bc49d9c5d92fc4faa2208ab845a607375");
+        let a = Challenge::new(&nonce).unwrap();
+        let b = Challenge::new(&nonce).unwrap();
+        assert_ne!(a.header(), b.header(), "every challenge is fresh");
+        assert!(a.header().starts_with("x-phosphor-challenge: ") && a.header().ends_with("\r\n") && a.header().len() == 22 + 64 + 2);
     }
 
     #[test]
@@ -958,7 +1214,9 @@ mod tests {
     fn a_response_with_no_marker_at_all_is_never_a_match() {
         let res = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
         assert!(!identity_matches(res, None));
-        assert!(!identity_matches(res, Some("a1b2c3d4")));
+        assert!(!identity_matches(res, Some(&Challenge::new("a1b2c3d4").unwrap())));
+        let in_the_body = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\nx-phosphor: control";
+        assert!(!identity_matches(in_the_body, None), "a body line is never taken for the header");
     }
 
     #[test]
@@ -1312,13 +1570,32 @@ mod tests {
         // is stopped while it still waits on its stdin, before the handshake, and never leaves its
         // mark.
         match spawn_checked(&runtime, &copy, &root.join("data"), &hand, crate::payload::BUILT_FOR, Some("ABCDE12345")) {
-            Err(SpawnError::Altered(why)) => assert!(why.contains("not signed by this app's team"), "{why}"),
+            Err(SpawnError::Altered(why)) => assert!(why.contains("not this app's") && why.contains("signed by this app's team"), "{why}"),
             Err(SpawnError::Failed(why)) => panic!("refused for another reason: {why}"),
             Ok(_) => panic!("a runtime of no team started under a shell of one"),
         }
         std::thread::sleep(Duration::from_millis(200));
         assert!(!mark.exists(), "the runtime was given the handshake and ran on");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Audit 2026-10-01, L16: the launch hand-over trusted any app declaring the bundle identifier.
+    /// is_this_app now holds the pid to a Developer ID signature of this app's team through
+    /// pid_is_signed_app, which abstains (None) only on an ad-hoc or dev shell with no team, and
+    /// otherwise answers whether the process really is this app. The requirement is real: a bogus
+    /// team, and a bent identifier, are both refused.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_app_pid_is_held_to_a_developer_id_signature_not_the_bundle_id_alone() {
+        let me = std::process::id();
+        // No team on this ad-hoc test binary, so there is no authority to hold a peer to.
+        assert_eq!(pid_is_signed_app(me as i32, "com.karimbabasf.phosphor"), None);
+        assert_eq!(pid_is_signed_app(0, "com.karimbabasf.phosphor"), Some(false), "no process is not the app");
+        // signed_by builds a real requirement: an unsigned or ad-hoc process under a named team is
+        // refused, and an identifier that is not identifier characters never reaches the kernel.
+        assert!(signed_by(me, "com.karimbabasf.phosphor", "ABCDE12345").is_err());
+        assert!(signed_by(me, "bad id\" or true", "ABCDE12345").is_err(), "a bent identifier is refused before the kernel is asked");
+        assert!(signed_by(me, "node", "").is_err(), "an empty team is not a Team ID");
     }
 
     /// A file's Team ID, off its signature; None when it has none.
@@ -1366,13 +1643,54 @@ mod tests {
                 let own = runtime_signed_by(real.id(), &team);
                 let other = runtime_signed_by(real.id(), "ABCDE12345");
                 let bent = runtime_signed_by(real.id(), &format!("{team}\" or anchor apple"));
+                // Audit 2026-10-01, L17: the team alone accepted any Developer ID binary the team
+                // ever signed. The runtime check now pins the identifier "node" too, so the same
+                // real binary checked under the app's identifier is refused, and under "node" passes.
+                let wrong_identifier = signed_by(real.id(), "com.karimbabasf.phosphor", &team);
+                let right_identifier = signed_by(real.id(), "node", &team);
                 let _ = real.kill();
                 let _ = real.wait();
                 assert_eq!(own, Ok(()), "a runtime signed by the team passes");
                 assert!(other.is_err(), "another team's Developer ID is not this app's");
                 assert!(bent.is_err(), "a Team ID is letters and digits, nothing that can bend the requirement");
+                assert!(wrong_identifier.is_err(), "the team is not enough: a team binary that is not \"node\" is refused");
+                assert_eq!(right_identifier, Ok(()), "the bundled runtime's own identifier passes");
             }
             None => eprintln!("the staged runtime has no Team ID (not an official Node build): only the refusals were checked"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Audit 2026-10-01, HIGH: the respawn handed the new backend the boot's own handshake, so a
+    /// window token that reached whatever answered on the port while the first backend was dead
+    /// opened the second. Two spawns, read off the pipe as the backend reads it: nothing repeats.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn no_two_spawns_ever_hand_a_backend_the_same_secrets() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("phosphor-fresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        let copy = payload_copy(&root);
+        // A runtime that keeps what it was handed, where the cleared environment still points.
+        let runtime = root.join("node");
+        std::fs::write(&runtime, "#!/bin/sh\n/bin/cat > \"$PHOSPHOR_CONFIG_DIR/handed-$$\"\n").unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut seen: Vec<(Vec<String>, Handshake)> = Vec::new();
+        for _ in 0..2 {
+            let (mut child, hand) = spawn_minted(&runtime, &copy, &root.join("data"), crate::payload::BUILT_FOR, None).expect("the staged payload starts");
+            let pid = child.id();
+            let _ = child.wait();
+            let piped = std::fs::read_to_string(root.join("data").join(format!("handed-{pid}"))).unwrap();
+            seen.push((piped.lines().map(str::to_string).collect(), hand));
+        }
+        for (piped, hand) in &seen {
+            assert_eq!(piped, &[&hand.token, &hand.nonce, &hand.seat, &hand.transport, &hand.relay].map(|s| s.to_string()), "the pipe carried what was returned");
+        }
+        let (first, second) = (&seen[0].0, &seen[1].0);
+        for (line, name) in ["token", "nonce", "seat", "transport", "relay"].iter().enumerate() {
+            assert_ne!(first[line], second[line], "the {name} was handed to two backends");
         }
         let _ = std::fs::remove_dir_all(&root);
     }

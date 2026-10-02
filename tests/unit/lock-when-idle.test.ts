@@ -118,5 +118,7 @@ test('a screen lock and a switch to another user send the when-idle lock, from t
   assert.match(objc, /addObserverForName:NSWorkspaceSessionDidResignActiveNotification/);
   assert.match(objc, /NSDistributedNotificationCenter defaultCenter\] addObserverForName:name/);
   assert.match(shell, /session_watch::watch\(\);/);
-  assert.match(shell, /session_watch::backend_up\(port, &handle\.state::<Secrets>\(\)\.0\.token\);/);
+  // The session watch is handed this spawn's token, at the boot start and again on a respawn, so a
+  // screen lock after a restart still locks the fresh backend with its own token.
+  assert.equal([...shell.matchAll(/session_watch::backend_up\(port, &hand\.token\);/g)].length, 2);
 });

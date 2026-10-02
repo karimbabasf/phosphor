@@ -3,6 +3,10 @@
 // This is the authoritative state owner. The MCP process (src/mcp.ts) is a thin
 // client of the HTTP surface this file boots.
 
+// FIRST, before any other module of this app: the payload resolve guard, so nothing can be loaded
+// from outside the digested payload (src/boot-guard.ts, audit 2026-10-01, L14).
+import './boot-guard.ts';
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -106,8 +110,9 @@ useKeystore(keystore);
    Five lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
 
      1. the window token, which every write from the control page carries
-     2. the boot nonce, which this process echoes in its x-phosphor header so the shell can tell
-        its OWN backend from anything else that took the port
+     2. the boot nonce, the key this process answers the shell's challenges with in its x-phosphor
+        header, so the shell can tell its OWN backend from anything else that took the port. It is
+        never served itself; see src/http/respond.ts
      3. the roster seat secret, which reaches the agents this app spawns and nothing else
      4. the enclave transport key, under which the Secure Enclave sidecar seals the wallet's data
         key on its way back here over loopback; see src/vault/relay.ts
@@ -172,8 +177,8 @@ const windowTokenValue = await readWindowToken({
   stdin: Readable.from([`${handshake[0] ?? ''}\n`]) as NodeJS.ReadableStream,
 });
 
-// The identity header answers with this boot's nonce from here on. Set before the port opens, so
-// there is no window in which this app answers with the fixed word the shell would refuse.
+// The identity header proves this boot's nonce from here on. Set before the port opens, so there
+// is no window in which this app answers a challenge with the fixed word the shell would refuse.
 useIdentityValue(handshake[1] ?? '');
 
 /* The roster seat secret, and a minted one when nobody sent it.

@@ -30,7 +30,7 @@ never be able to approve its own actions.
 
 Installed, the shell is a third process and deliberately a small one: it mints the window token,
 the boot nonce and the seat secret, spawns the bundled Node backend with them on its stdin, waits
-for the backend to answer with that nonce, opens one webview onto `http://127.0.0.1:4177` with the
+for the backend to prove that nonce against a fresh challenge, opens one webview onto `http://127.0.0.1:4177` with the
 token injected, and supervises the child for as long as the window is open. It holds no key and
 makes no decision. `npm run app` runs the backend alone with no shell above it, and the system
 browser stands in for the window.

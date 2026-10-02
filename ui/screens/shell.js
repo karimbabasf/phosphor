@@ -45,6 +45,15 @@
     refs.layoutRows = document.getElementById('bar-layout-rows');
     refs.notice = document.getElementById('notice');
 
+    /* A line the shell set on the window before any script ran, for the one case the shell has
+       something to say the moment the page opens: the reconnect notice on a fresh window after the
+       backend was restarted (src-tauri/src/main.rs, open_control_window). Shown once, through the
+       same notice the shell uses while the window is up. */
+    if (typeof window.__PHOSPHOR_BOOT_NOTICE__ === 'string') {
+      sayFromShell(window.__PHOSPHOR_BOOT_NOTICE__);
+      try { delete window.__PHOSPHOR_BOOT_NOTICE__; } catch (err) { window.__PHOSPHOR_BOOT_NOTICE__ = undefined; }
+    }
+
     mountConversation();
     wireTabs();
     wireBrake();

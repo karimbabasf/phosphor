@@ -371,7 +371,7 @@ pending proposal, which the audit then recorded as a human's click.
 | Line | What it is | Who ever sees it |
 |---|---|---|
 | 1 | the **window token**, checked on every decision route | the shell, the backend, and the one webview it is injected into |
-| 2 | the **boot nonce**, echoed in the `x-phosphor` response header | anyone who can reach the port; it is deliberately public |
+| 2 | the **boot nonce**, the key the backend proves itself with in the `x-phosphor` response header | the shell and the backend; it is never served |
 | 3 | the **seat secret** for the agents the app spawns, which every op on `/api/mcp` from them carries | the backend and the agents it spawns (through `childEnv`); a proxy a human started by hand carries a second secret the backend mints and writes to `agent.secret` in the data directory |
 
 **The window token is never served.** `GET /api/session` used to hand it to any local caller and is
@@ -385,10 +385,15 @@ control is that this process has none to pass on.
 **The boot nonce is how the shell recognises its own backend.** The marker used to be the fixed
 string `x-phosphor: control`, which any local process can send, so a process that took the port
 during the boot race or the three-second respawn backoff was recognised as the backend, handed a
-window with the token injected into it, and then handed the keystore passphrase. The value is the
-nonce now (`src/http/respond.ts`, `identityValue`), and `phosphor_is_listening` compares against the
-value this shell minted. A bare `npm run app` has no shell above it, answers with the fixed word,
-and nothing is waiting on it.
+window with the token injected into it, and then handed the keystore passphrase. Then it was the
+nonce itself, echoed on every answer including the token-free `/api/health`, so any local process
+could read it once and answer with it later. Now the nonce never leaves the backend: every request
+whose answer the shell trusts (the readiness polls, the enclave relay, Copy MCP Config, Copy Log)
+carries a fresh 32-byte challenge in `x-phosphor-challenge`, and only an answer of
+HMAC-SHA256(nonce, `phosphor identity` + challenge) is taken (`src/http/respond.ts`,
+`identityValue`; `src-tauri/src/backend.rs`, `Challenge`). An answer seen once proves nothing for
+the next challenge. A request without a challenge, and a bare `npm run app` with no shell above it,
+get the fixed word, and nothing is waiting on them.
 
 **The seat secret is the agent door's credential.** `src/http/mcp.ts` refuses every op on
 `/api/mcp`, `hello` and `bye` included, that does not carry this boot's secret, before the roster

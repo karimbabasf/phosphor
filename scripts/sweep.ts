@@ -356,6 +356,11 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['LaoihSchWpZatv2FMDT22viNx84CWekqNaM4UDhLMpSSc5UJV6n2nJSvXi1PKrssfe9peAwmp1HCUX19zxS4xCf', 'a Fogo signature in a mocked RPC answer, tests/unit/chainscan-families.test.ts'],
   // The order of the secp256k1 group, a curve constant published in SEC 2.
   ['fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141', 'secp256k1 group order n, src/invite/code.ts (invite branch)'],
+  // HMAC-SHA256 test vectors. RFC 4231 test case 2 ("Jefe"), and the identity proof of the made-up
+  // nonce "a1b2c3d4" x 8 for the challenge "0123456789abcdef" x 4, which pins the shell and the
+  // backend to the same MAC. Neither keys anything.
+  ['5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843', 'RFC 4231 HMAC-SHA256 test case 2, src-tauri/src/backend.rs'],
+  ['a12aa33231a6d44541d89e7db2589e4bc49d9c5d92fc4faa2208ab845a607375', 'identity proof test vector, src-tauri/src/backend.rs and tests/unit/boot-nonce.test.ts'],
 ]);
 
 // Machine-written copies of public data carry digests and addresses by the hundred, and the

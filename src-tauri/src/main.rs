@@ -49,7 +49,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use backend::{
     configured_port, get_root, identity_matches, is_orphaned_backend, node_binary, phosphor_is_listening,
     pid_file_path, post_lock_when_idle, read_pid_file, request_within, spawn_backend, stop_orphan, write_pid_file, Backend,
-    Handshake, PidRecord, SpawnError, StopStep,
+    Challenge, Handshake, PidRecord, SpawnError, StopStep,
 };
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
@@ -122,12 +122,13 @@ fn probe_interval(elapsed: Duration) -> Duration {
     }
 }
 
-/// What this shell minted, held so the window can be given the token, the close handler can lock
-/// with it, and the readiness polls can recognise the backend by its nonce. Never written to disk.
-/// The token and the seat secret are never served; the nonce is served, on purpose, and is the one
-/// of the three that is not a secret from anyone who can already reach the port.
-pub(crate) struct Secrets(pub(crate) Handshake);
-
+/// The handshake is minted per spawn now (backend::spawn_backend) and held beside the child it was
+/// given to (backend::Backend), so the token, nonce and relay secret live and die with the one
+/// backend they belong to. There is no app-wide boot handshake any more: a window that outlived its
+/// backend used to keep the boot token alive and hand it to whatever took the port (audit
+/// 2026-10-01, HIGH). Readers (the menu's Copy items, shut_down, the update install) take the
+/// running backend's handshake from `Backend::handshake`, which is None when none is running.
+///
 /// Everything `start` resolved, so the supervisor thread does not have to resolve it again.
 #[derive(Clone)]
 struct Paths {
@@ -172,22 +173,23 @@ pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 ///
 /// THE ANSWER IS TRUSTED ONLY FROM THIS BOOT'S BACKEND. The port can be held by something else
 /// during the respawn backoff (see watch), and a line copied to the clipboard is a
-/// command the person is about to paste into a terminal, so the response has to carry this
-/// boot's nonce in its identity header (identity_matches, the same check the readiness poll
+/// command the person is about to paste into a terminal, so the response has to prove this
+/// boot's nonce against a fresh challenge (identity_matches, the same check the readiness poll
 /// makes) before a byte of it is read, and the command it carries has to be one printable line.
 fn mcp_command(_payload: &Path, _data: &Path, port: u16, nonce: &str) -> Result<String, String> {
     node_binary()?;
-    let head = format!("GET /api/connection HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    let challenge = Challenge::new(nonce)?;
+    let head = format!("GET /api/connection HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Connection: close\r\n\r\n", challenge.header());
     let raw = backend::request_within(port, &head, None, Duration::from_secs(5))
         .ok_or_else(|| "Phosphor is not answering yet, so there is no line to copy.".to_string())?;
-    connection_line_from(&raw, nonce)
+    connection_line_from(&raw, &challenge)
 }
 
 /// The command in a GET /api/connection response, or why it is refused. Pure, so the two
 /// refusals a person must never paste through (a stranger on the port, a command that is not
 /// one line) are held by tests without a socket.
-fn connection_line_from(response: &str, nonce: &str) -> Result<String, String> {
-    if !backend::identity_matches(response, Some(nonce)) {
+fn connection_line_from(response: &str, challenge: &Challenge) -> Result<String, String> {
+    if !backend::identity_matches(response, Some(challenge)) {
         return Err("Something else is answering in Phosphor's place, so nothing was copied. Quit it and try again.".to_string());
     }
     let body = response.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
@@ -293,21 +295,25 @@ fn macos_version() -> String {
 /// tail is a real read. `for=report` asks for the copy with addresses fingerprinted, since this
 /// text is about to land on a public issue.
 fn fetch_log_tail(port: u16, limit: u16, nonce: &str) -> Option<String> {
-    let head = format!("GET /api/log?limit={limit}&for=report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    let challenge = Challenge::new(nonce).ok()?;
+    let head = format!(
+        "GET /api/log?limit={limit}&for=report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Connection: close\r\n\r\n",
+        challenge.header()
+    );
     let raw = request_within(port, &head, None, Duration::from_secs(5))?;
-    log_from_response(&raw, nonce)
+    log_from_response(&raw, &challenge)
 }
 
 /// The answer to that GET, judged before a byte of it reaches the clipboard: a 200, the
-/// `x-phosphor` header carrying THIS boot's nonce (the same check that gates opening the
-/// window, `identity_matches`), and a JSON array. A local process squatting the configured
-/// port can answer 200 with a list; it cannot answer with the nonce, which reached the backend
-/// over its stdin and nothing else.
-fn log_from_response(raw: &str, nonce: &str) -> Option<String> {
+/// `x-phosphor` header carrying the proof of THIS boot's nonce for this request's challenge (the
+/// same check that gates opening the window, `identity_matches`), and a JSON array. A local
+/// process squatting the configured port can answer 200 with a list; it cannot answer the
+/// challenge, because the nonce reached the backend over its stdin and is never served.
+fn log_from_response(raw: &str, challenge: &Challenge) -> Option<String> {
     if !raw.starts_with("HTTP/1.1 200") {
         return None;
     }
-    if !identity_matches(raw, Some(nonce)) {
+    if !identity_matches(raw, Some(challenge)) {
         return None;
     }
     let body = raw.split_once("\r\n\r\n").map(|(_, b)| b)?;
@@ -326,7 +332,7 @@ fn copy_log_for_report(app: &tauri::AppHandle) {
     let outcome = payload_dir(app).and_then(|payload| {
         let data = data_dir(app)?;
         let port = configured_port(&payload, &data);
-        let nonce = app.state::<Secrets>().0.nonce.clone();
+        let nonce = app.state::<Backend>().handshake().ok_or_else(|| "no backend is running, so there is no log to copy".to_string())?.nonce.clone();
         let text = fetch_log_tail(port, LOG_LINES_FOR_A_REPORT, &nonce).ok_or_else(|| "the control app did not answer as this shell's backend".to_string())?;
         app.clipboard()
             .write_text(text)
@@ -388,7 +394,7 @@ fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
     let result = payload_dir(app).and_then(|payload| {
         let data = data_dir(app)?;
         let port = configured_port(&payload, &data);
-        let nonce = app.state::<Secrets>().0.nonce.clone();
+        let nonce = app.state::<Backend>().handshake().ok_or_else(|| "Phosphor is not ready yet, so there is no line to copy.".to_string())?.nonce.clone();
         let command = mcp_command(&payload, &data, port, &nonce)?;
         app.clipboard().write_text(command).map_err(|e| {
             eprintln!("phosphor: copy MCP config: the clipboard refused it: {e}");
@@ -583,6 +589,29 @@ fn fail(app: &tauri::AppHandle, failure: Failure) {
         .kind(MessageDialogKind::Error)
         .title(failure.title)
         .show(move |_| handle.exit(1));
+}
+
+/// The backend this shell is running has gone, and a respawn is coming: take down its window so no
+/// page is left carrying its token to whatever answers on the port, and bring the splash back in
+/// its place (its starting state, one calm "Opening Phosphor") until the fresh window is built.
+fn show_reconnecting(app: &tauri::AppHandle) {
+    if let Some(control) = app.get_webview_window(CONTROL) {
+        let _ = control.destroy();
+    }
+    match app.get_webview_window(SPLASH) {
+        Some(splash) => {
+            let script = "window.__phosphorStarting && window.__phosphorStarting()";
+            let mut load = splash_load(app);
+            if load.loaded {
+                let _ = splash.eval(script);
+            } else {
+                load.pending = Some(script.to_string());
+            }
+        }
+        None => {
+            let _ = open_splash(app, None);
+        }
+    }
 }
 
 /// One line in the window's own notice (#notice), the place the app already says what needs the
@@ -860,7 +889,9 @@ fn ask_page(app: tauri::AppHandle, control: WebviewWindow) {
 /// behind either way.
 fn shut_down(app: &tauri::AppHandle, control: &WebviewWindow) {
     app.state::<Quitting>().confirmed.store(true, Ordering::SeqCst);
-    let token = app.state::<Secrets>().0.token.clone();
+    // The running backend's own token. None (no backend) locks nothing, which is right: there is no
+    // open wallet to lock, and the kill below still runs.
+    let token = app.state::<Backend>().handshake().map(|h| h.token.clone()).unwrap_or_default();
     app.state::<Backend>().lock_and_stop(update::port_for(app).ok(), &token, "quitting", |step| {
         let _ = control.eval(&landed_script(step));
     });
@@ -886,18 +917,33 @@ fn shut_down(app: &tauri::AppHandle, control: &WebviewWindow) {
 /// The initialization script is the second half of the token contract: it runs before any page
 /// script on THIS window only, so the control page can read `window.__PHOSPHOR_TOKEN__` and no
 /// other webview, page or local process ever sees it.
-fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> {
-    let url = format!("http://127.0.0.1:{port}")
+fn open_control_window(app: &tauri::AppHandle, port: u16, token: &str, boot_notice: Option<&str>) -> Result<(), String> {
+    let url: tauri::Url = format!("http://127.0.0.1:{port}")
         .parse()
         .map_err(|e| format!("cannot parse the control app URL: {e}"))?;
-    let token = app.state::<Secrets>().0.token.clone();
     // The token is hex from mint_token, so it cannot carry a quote or a backslash and the literal
     // below cannot be broken out of. Asserted rather than assumed: a token that is not hex is a
     // bug in mint_token, and injecting it would be worse than refusing to open the window.
     if !token.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("the window token is not hex, so it will not be injected".to_string());
     }
-    let script = format!("window.__PHOSPHOR_TOKEN__ = \"{token}\";");
+    // A line for the page to show the moment it boots: the reconnect notice after a respawn, where
+    // this window is a fresh one onto a fresh backend. init_literal serialises and escapes it, so
+    // it arrives as data and ui/screens/shell.js sets it as text. The token is on the same init
+    // script that already runs before any page script, so the fresh window carries the new spawn's
+    // token and only that.
+    let notice = boot_notice
+        .map(|text| format!("window.__PHOSPHOR_BOOT_NOTICE__ = {};", update::init_literal(&serde_json::json!(text))))
+        .unwrap_or_default();
+    let script = format!("window.__PHOSPHOR_TOKEN__ = \"{token}\";{notice}");
+    // The one origin this window may ever be on. The token init script runs on every page this
+    // webview loads, so a page off this origin would carry the approval token (audit 2026-10-01,
+    // L3). No route navigates it today (every link is target=_blank and handled by on_new_window,
+    // the backend sends no redirect), so this guard turns none away; it is the control that keeps
+    // it that way. host_str and port are what tao parsed, so a userinfo or a non-loopback host
+    // cannot wear the address.
+    let origin_host = url.host_str().map(str::to_string);
+    let nav_guard = move |url: &tauri::Url| url.scheme() == "http" && url.host_str() == origin_host.as_deref() && url.port() == Some(port);
 
     // Opens maximized: the window fills the screen without going into macOS fullscreen, so the
     // menu bar and the dock stay where they are. The size below is what it falls back to when
@@ -920,6 +966,7 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
         .resizable(true)
         .maximized(true)
         .initialization_script(&script)
+        .on_navigation(nav_guard)
         .on_new_window(|url, _features| open_in_browser(url))
         .build()
         .map_err(|e| format!("cannot open the control window: {e}"))?;
@@ -930,7 +977,7 @@ fn open_control_window(app: &tauri::AppHandle, port: u16) -> Result<(), String> 
        while the drain lets that move finish, and a lock under it would cut it partway, so this
        is the when-idle lock too and the stop takes the key. Best effort either way. Off the main
        thread, because it is a socket round trip and this handler runs on the event loop. */
-    let lock_token = app.state::<Secrets>().0.token.clone();
+    let lock_token = token.to_string();
     let quit_app = app.clone();
     window.on_window_event(move |event| {
         // Closing the window quits the app, so it asks the way Quit does, and locks only once
@@ -1082,14 +1129,28 @@ fn running_copy(record: Option<&PidRecord>, me: i32, is_this_app: impl Fn(i32) -
 }
 
 /// Is that pid a running copy of this app, as macOS itself knows it: an application registered
-/// under this app's bundle identifier? The disk image copy and the Applications copy both are,
-/// which is the point, and a pid the pid file still names after its shell died and the number
-/// went to something else is not.
+/// under this app's bundle identifier AND, on a signed build, a Developer ID binary of this app's
+/// team. The disk image copy and the Applications copy both are, which is the point, and a pid the
+/// pid file still names after its shell died and the number went to something else is not.
+///
+/// The bundle identifier alone was the whole check, and any same-user app can declare it: one with
+/// its pid in backend.pid could make the real Phosphor quit and bring itself forward when the person
+/// opened Phosphor from the Dock, a passphrase phishing surface on a password wallet (audit
+/// 2026-10-01, L16). So a signed build also holds the pid to the Developer ID signature of this
+/// app's own team and identifier. An ad-hoc or dev build has no team to check against
+/// (pid_is_signed_app is None), and keeps the identifier check it always had.
 #[cfg(target_os = "macos")]
 fn is_this_app(pid: i32, identifier: &str) -> bool {
-    NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+    let declares_id = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
         .and_then(|running| running.bundleIdentifier())
-        .is_some_and(|declared| declared.to_string() == identifier)
+        .is_some_and(|declared| declared.to_string() == identifier);
+    if !declares_id {
+        return false;
+    }
+    match backend::pid_is_signed_app(pid, identifier) {
+        Some(signed) => signed,
+        None => true,
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1152,6 +1213,18 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
             Some(true) => {}
         }
 
+        /* THE WINDOW DIES WITH ITS BACKEND. The dead backend's control window is still open on the
+           port, still holds that spawn's token, and its idle beacon and any click go on posting
+           that token to whatever answers there now (audit 2026-10-01, HIGH). So it is torn down the
+           instant the child is seen gone, before the backoff, and the splash comes back in its
+           place: from here there is no page carrying a token to anything. A fresh window onto the
+           respawned backend, with the respawn's own token, is built once that backend answers its
+           nonce challenge below. Destroying the window posts a when-idle lock to the dead port,
+           which simply fails; the respawned backend boots locked regardless, so a wallet that was
+           open is closed across the gap and the person unlocks the fresh window once. */
+        let gone = app.clone();
+        let _ = gone.clone().run_on_main_thread(move || show_reconnecting(&gone));
+
         if respawned {
             let dead = app.clone();
             let _ = dead.clone().run_on_main_thread(move || {
@@ -1175,10 +1248,10 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
         /* NOTHING MAY BE ON THE PORT BEFORE THE RESPAWN. This path had no check at all, which made
            it the deterministic half of the finding: the backend dies, this thread sleeps three
            seconds, and a local process that binds the port in that window gets the readiness poll
-           below reporting a healthy restart while the real backend dies on EADDRINUSE. The control
-           window from the first boot is still open, still holds the token, and goes on posting
-           writes and the keystore passphrase to whatever is now answering. `start` has had this
-           check since the orphan bug; the respawn is where it was missing. */
+           below reporting a healthy restart while the real backend dies on EADDRINUSE. The window
+           from the first boot is gone by now (above), so nothing carries a token to the squatter,
+           but a window must still never open onto a process this shell did not start. `start` has
+           had this check since the orphan bug; the respawn had none. */
         if get_root(port).is_some() {
             let taken = app.clone();
             let _ = taken.clone().run_on_main_thread(move || {
@@ -1196,17 +1269,20 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
             return;
         }
 
-        let hand = app.state::<Secrets>();
-        match spawn_backend(&paths.payload, &paths.data, &hand.0) {
-            Ok(child) => {
-                app.state::<Backend>().adopt(child, pid_file_path(&paths.data));
-                // Wait for it to bind before saying it is back. "Restarted" over a process that
-                // spawned and then failed to listen is the same lie as the silent death this
+        // A fresh handshake for the respawn, held beside its child. The dead backend's token and
+        // nonce die with it, so nothing minted for the first boot opens the second.
+        match spawn_backend(&paths.payload, &paths.data) {
+            Ok((child, hand)) => {
+                let hand = std::sync::Arc::new(hand);
+                let Some(generation) = app.state::<Backend>().adopt(child, hand.clone(), pid_file_path(&paths.data)) else {
+                    return;
+                };
+                // Wait for it to bind before building the window over it. A window onto a process
+                // that spawned and then failed to listen is the same lie as the silent death this
                 // whole thread exists to end.
                 let started = Instant::now();
                 let deadline = started + READY_TIMEOUT;
                 let mut answered = false;
-                let nonce = app.state::<Secrets>().0.nonce.clone();
                 while Instant::now() < deadline {
                     /* The dead child is asked about FIRST. Tested the other way round, a backend
                        that failed to bind and a squatter that did are the same observation, and the
@@ -1215,26 +1291,33 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
                     if app_backend_exited(&app) {
                         break;
                     }
-                    if phosphor_is_listening(port, Some(&nonce)) {
+                    if phosphor_is_listening(port, Some(&hand.nonce)) {
                         answered = true;
                         break;
                     }
                     std::thread::sleep(probe_interval(started.elapsed()));
                 }
-                let back = app.clone();
-                let _ = back.clone().run_on_main_thread(move || {
-                    if answered {
-                        // A line in the window's notice, where the person is, not a box over it.
-                        eprintln!("phosphor: the backend stopped and was started again");
-                        notice(&back, RESTARTED);
-                    } else {
+                if answered {
+                    eprintln!("phosphor: the backend stopped and was started again");
+                    let back = app.clone();
+                    let token = hand.token.clone();
+                    let _ = back.clone().run_on_main_thread(move || {
+                        // A fresh window, this spawn's token, and the reconnect line the page shows
+                        // on boot: the one calm line a person reads for the whole gap.
+                        if let Err(err) = open_control_window(&back, port, &token, Some(RESTARTED)) {
+                            fail(&back, Failure::starting(NO_WINDOW, err));
+                        }
+                    });
+                    start_enclave_relay(&app, port, &hand, generation);
+                    session_watch::backend_up(port, &hand.token);
+                } else {
+                    let back = app.clone();
+                    let _ = back.clone().run_on_main_thread(move || {
                         fail(
                             &back,
                             Failure::stopped(NOT_BACK, "The restarted backend never answered. Its error is in Console.app under Phosphor."),
                         );
-                    }
-                });
-                if !answered {
+                    });
                     return;
                 }
             }
@@ -1285,18 +1368,19 @@ fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), Failure> {
         }
     }
 
-    let child = {
-        let hand = app.state::<Secrets>();
-        spawn_backend(&payload, &data, &hand.0).map_err(|e| Failure::spawn(e, |why| Failure::starting(START_BLOCKED, why)))?
+    let (child, hand) = spawn_backend(&payload, &data).map_err(|e| Failure::spawn(e, |why| Failure::starting(START_BLOCKED, why)))?;
+    let hand = std::sync::Arc::new(hand);
+    // None means the shell is already stopping (an update relaunch landed in this gap); the child
+    // was taken down in adopt, and starting a window onto it would be the orphan all over again.
+    let Some(generation) = app.state::<Backend>().adopt(child, hand.clone(), pid_file_path(&data)) else {
+        return Ok(());
     };
-    app.state::<Backend>().adopt(child, pid_file_path(&data));
 
     // Polled on a worker so the event loop keeps running and the splash keeps painting. The same
     // thread goes on to supervise, so there is no gap between "it came up" and "somebody is
     // watching it".
     let handle = app.clone();
     let paths = Paths { payload, data };
-    let nonce = app.state::<Secrets>().0.nonce.clone();
     std::thread::spawn(move || {
         let started = Instant::now();
         let deadline = started + READY_TIMEOUT;
@@ -1320,19 +1404,21 @@ fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), Failure> {
                 });
                 return;
             }
-            // Our backend, by the nonce it was given on stdin, and not merely a Phosphor-shaped
-            // answer. This is the poll that opens the window and injects the approval token.
-            if phosphor_is_listening(port, Some(&nonce)) {
+            // Our backend, by the nonce challenge only it can answer, and not merely a
+            // Phosphor-shaped answer. This is the poll that opens the window and injects this
+            // spawn's approval token.
+            if phosphor_is_listening(port, Some(&hand.nonce)) {
                 let ready = handle.clone();
+                let token = hand.token.clone();
                 let _ = ready.clone().run_on_main_thread(move || {
-                    if let Err(err) = open_control_window(&ready, port) {
+                    if let Err(err) = open_control_window(&ready, port, &token, None) {
                         fail(&ready, Failure::starting(NO_WINDOW, err));
                     }
                 });
                 update::schedule(&handle);
-                start_enclave_relay(&handle, port);
+                start_enclave_relay(&handle, port, &hand, generation);
                 // From here a screen lock or a switch to another user locks the wallet.
-                session_watch::backend_up(port, &handle.state::<Secrets>().0.token);
+                session_watch::backend_up(port, &hand.token);
                 watch(handle, paths, port);
                 return;
             }
@@ -1354,21 +1440,22 @@ fn app_backend_exited(app: &tauri::AppHandle) -> bool {
 }
 
 /// The thread that lends the backend this shell's reach into the Secure Enclave, for as long as
-/// the backend this shell started is alive. It is started only after the backend answered with
-/// this boot's nonce, so it never relays for anything else on the port, and it stops on its own
-/// when the child is gone; a respawned backend gets a fresh one from the watch loop's caller.
-/// See enclave.rs for why the request comes from the backend and never from the page.
-fn start_enclave_relay(app: &tauri::AppHandle, port: u16) {
-    let hand = app.state::<Secrets>();
+/// THIS spawn of the backend is alive. It is started only after that backend answered its nonce
+/// challenge, so it never relays for anything else on the port, and it stops on its own when that
+/// spawn's child is gone, by its generation rather than "any child", so the old relay ends the
+/// moment a respawn replaces it and the respawn starts its own (audit 2026-10-01, L19: the relay
+/// was never restarted after a respawn, so an enclave wallet could not unlock until a full
+/// restart). See enclave.rs for why the request comes from the backend and never from the page.
+fn start_enclave_relay(app: &tauri::AppHandle, port: u16, hand: &Handshake, generation: u64) {
     let relay = enclave::Relay {
         port,
-        relay: hand.0.relay.clone(),
-        nonce: hand.0.nonce.clone(),
-        transport: hand.0.transport.clone(),
+        relay: hand.relay.clone(),
+        nonce: hand.nonce.clone(),
+        transport: hand.transport.clone(),
     };
     let alive = app.clone();
     std::thread::spawn(move || {
-        enclave::run(relay, || !app_backend_exited(&alive));
+        enclave::run(relay, || alive.state::<Backend>().alive(generation));
     });
 }
 
@@ -1385,29 +1472,18 @@ fn main() {
         std::process::exit(print_payload_digest());
     }
     // Before anything else is built, so the payload check runs beside the rest of the start.
-    // spawn_backend takes its answer, and nothing starts until it has one.
+    // spawn_backend takes its answer, and nothing starts until it has one. The handshake is minted
+    // inside spawn_backend now, one per spawn, so there is nothing to mint here: a backend that
+    // cannot get a random source fails its own spawn, with the same sentence a failed start says.
     if let Some(root) = bundled_payload() {
         payload::start_early(root);
     }
-
-    // Minted before anything else, because the backend cannot be spawned without it and the
-    // window cannot be opened without it. A shell that cannot produce one starts nothing: a
-    // guessable token would be no token at all, and the same goes for the nonce that decides
-    // which process this shell is willing to open a window onto.
-    let secrets = match Handshake::mint() {
-        Ok(value) => value,
-        Err(err) => {
-            eprintln!("phosphor: {err}");
-            std::process::exit(1);
-        }
-    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Backend::new())
-        .manage(Secrets(secrets))
         .manage(update::Updates::default())
         .manage(SplashPage::default())
         .manage(Retrying::default())
@@ -1460,7 +1536,7 @@ fn main() {
 mod tests {
     use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL, log_from_response, log_lines, query_value, report_url, HELP_LINKS, HELP_REPORT_ID};
     use super::{launch, running_copy, Launch, Occupant, PidRecord};
-    use super::{failure_script, notice_script, splash_init, Failure, SpawnError, DID_NOT_OPEN, STOPPED};
+    use super::{failure_script, notice_script, splash_init, Challenge, Failure, SpawnError, DID_NOT_OPEN, STOPPED};
     use super::{
         ALTERED, ALTERED_TITLE, DOWNLOAD_URL, EXITED_STARTING, MCP_COPIED, NOT_BACK, NOT_RESTARTED, NO_WINDOW, OLD_SESSION, OTHER_PHOSPHOR,
         PORT_TAKEN, RESTARTED, START_BLOCKED, STOPPED_TWICE, TAKEN_ON_RESTART, TOO_SLOW,
@@ -1469,41 +1545,48 @@ mod tests {
 
     const NONCE: &str = "abc123";
 
-    fn answer(nonce_header: Option<&str>, body: &str) -> String {
-        let header = nonce_header.map(|n| format!("x-phosphor: {n}\r\n")).unwrap_or_default();
+    fn answer(identity: Option<&str>, body: &str) -> String {
+        let header = identity.map(|n| format!("x-phosphor: {n}\r\n")).unwrap_or_default();
         format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n{header}\r\n{body}")
     }
 
     #[test]
     fn the_copied_line_comes_only_from_this_boots_backend() {
+        let challenge = Challenge::new(NONCE).unwrap();
+        let proof = challenge.expected().to_string();
         let body = r#"{"agent":"codex","command":"codex mcp add phosphor --env PHOSPHOR_PORT=4177 -- node /x/src/mcp.ts"}"#;
         assert_eq!(
-            connection_line_from(&answer(Some(NONCE), body), NONCE).unwrap(),
+            connection_line_from(&answer(Some(&proof), body), &challenge).unwrap(),
             "codex mcp add phosphor --env PHOSPHOR_PORT=4177 -- node /x/src/mcp.ts"
         );
         // The header is matched without regard to case, as on the wire.
-        assert!(connection_line_from(&answer(Some("ABC123"), body), NONCE).is_ok());
-        // Another boot's nonce, the fixed marker any server can send, and no marker at all are
-        // all a stranger on the port: refused before the body is read.
-        assert!(connection_line_from(&answer(Some("other"), body), NONCE).unwrap_err().contains("Something else is answering"));
-        assert!(connection_line_from(&answer(Some("control"), body), NONCE).is_err());
-        assert!(connection_line_from(&answer(None, body), NONCE).is_err());
+        assert!(connection_line_from(&answer(Some(&proof.to_ascii_uppercase()), body), &challenge).is_ok());
+        // The nonce itself (what an older backend served to any caller), an answer to another
+        // challenge, the fixed marker any server can send, and no marker at all are all a stranger
+        // on the port: refused before the body is read.
+        assert!(connection_line_from(&answer(Some(NONCE), body), &challenge).unwrap_err().contains("Something else is answering"));
+        let earlier = Challenge::new(NONCE).unwrap();
+        assert!(connection_line_from(&answer(Some(earlier.expected()), body), &challenge).is_err(), "a replayed answer");
+        assert!(connection_line_from(&answer(Some("control"), body), &challenge).is_err());
+        assert!(connection_line_from(&answer(None, body), &challenge).is_err());
     }
 
     #[test]
     fn a_command_that_is_not_one_printable_line_is_never_copied() {
+        let challenge = Challenge::new(NONCE).unwrap();
+        let ours = |body: &str| answer(Some(challenge.expected()), body);
         let two_lines = r#"{"command":"codex mcp add phosphor\nrm -rf ~"}"#;
-        assert!(connection_line_from(&answer(Some(NONCE), two_lines), NONCE).unwrap_err().contains("not one line"));
+        assert!(connection_line_from(&ours(two_lines), &challenge).unwrap_err().contains("not one line"));
         let carriage = r#"{"command":"codex mcp add phosphor\r"}"#;
-        assert!(connection_line_from(&answer(Some(NONCE), carriage), NONCE).is_err());
+        assert!(connection_line_from(&ours(carriage), &challenge).is_err());
         let escape = "{\"command\":\"codex \\u001b[31m mcp add\"}";
-        assert!(connection_line_from(&answer(Some(NONCE), escape), NONCE).is_err());
-        assert!(connection_line_from(&answer(Some(NONCE), r#"{"command":""}"#), NONCE).is_err());
+        assert!(connection_line_from(&ours(escape), &challenge).is_err());
+        assert!(connection_line_from(&ours(r#"{"command":""}"#), &challenge).is_err());
         let long = format!(r#"{{"command":"{}"}}"#, "a".repeat(5000));
-        assert!(connection_line_from(&answer(Some(NONCE), &long), NONCE).is_err());
+        assert!(connection_line_from(&ours(&long), &challenge).is_err());
         // No line at all (Claude Desktop) and an unreadable body are refused with their own sentence.
-        assert!(connection_line_from(&answer(Some(NONCE), r#"{"command":null}"#), NONCE).unwrap_err().contains("has no line to paste"));
-        assert!(connection_line_from(&answer(Some(NONCE), "not json"), NONCE).unwrap_err().contains("could not be read"));
+        assert!(connection_line_from(&ours(r#"{"command":null}"#), &challenge).unwrap_err().contains("has no line to paste"));
+        assert!(connection_line_from(&ours("not json"), &challenge).unwrap_err().contains("could not be read"));
     }
 
     #[test]
@@ -1523,19 +1606,21 @@ mod tests {
 
     #[test]
     fn the_log_copy_takes_only_an_answer_that_carries_this_boots_nonce() {
+        let challenge = Challenge::new("abcdef0123").unwrap();
+        let proof = challenge.expected().to_ascii_uppercase();
         let body = r#"[{"ts":"t1","type":"tool_call","msg":"a"}]"#;
-        let ours = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Phosphor: ABCDEF0123\r\n\r\n{body}");
-        let copied = log_from_response(&ours, "abcdef0123").expect("this boot's nonce, upper-cased on the wire, is this shell's backend");
+        let ours = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Phosphor: {proof}\r\n\r\n{body}");
+        let copied = log_from_response(&ours, &challenge).expect("this boot's proof, upper-cased on the wire, is this shell's backend");
         assert_eq!(copied.lines().count(), 1);
         assert!(copied.contains(r#""msg":"a""#), "the event came through: {copied}");
         let squatter = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{body}");
-        assert_eq!(log_from_response(&squatter, "abcdef0123"), None, "a 200 with a list and no nonce is a stranger's text");
-        let old_boot = format!("HTTP/1.1 200 OK\r\nX-Phosphor: 999999\r\n\r\n{body}");
-        assert_eq!(log_from_response(&old_boot, "abcdef0123"), None, "another boot's nonce is not this shell's backend");
+        assert_eq!(log_from_response(&squatter, &challenge), None, "a 200 with a list and no proof is a stranger's text");
+        let replayed = format!("HTTP/1.1 200 OK\r\nX-Phosphor: abcdef0123\r\n\r\n{body}");
+        assert_eq!(log_from_response(&replayed, &challenge), None, "the nonce itself, read off an older backend, proves nothing");
         let fixed_marker = format!("HTTP/1.1 200 OK\r\nX-Phosphor: control\r\n\r\n{body}");
-        assert_eq!(log_from_response(&fixed_marker, "abcdef0123"), None, "the old fixed marker any server can send is refused");
-        let refused = format!("HTTP/1.1 401 Unauthorized\r\nX-Phosphor: abcdef0123\r\n\r\n{body}");
-        assert_eq!(log_from_response(&refused, "abcdef0123"), None);
+        assert_eq!(log_from_response(&fixed_marker, &challenge), None, "the old fixed marker any server can send is refused");
+        let refused = format!("HTTP/1.1 401 Unauthorized\r\nX-Phosphor: {proof}\r\n\r\n{body}");
+        assert_eq!(log_from_response(&refused, &challenge), None);
     }
 
     #[test]
@@ -1689,6 +1774,9 @@ mod tests {
     #[test]
     fn a_process_that_is_not_this_app_is_never_taken_for_it() {
         use super::is_this_app;
+        // This test binary is signed ad-hoc or not at all, so even though it declares another
+        // identifier, the bundle-id check alone already turns it away. On a Developer ID build
+        // is_this_app also holds the pid to backend::pid_is_signed_app (audit 2026-10-01, L16).
         assert!(!is_this_app(std::process::id() as i32, "com.karimbabasf.phosphor"), "the test runner is not the app");
         assert!(!is_this_app(i32::MAX, "com.karimbabasf.phosphor"), "no process at all is not the app");
     }

@@ -308,9 +308,13 @@ exit(0)
    the signature this service carries allows. The service reads its own signature and pins the
    peer to the same authority:
 
-   - Developer ID (a Team ID on this code): the peer must be Apple-anchored, carry the Team ID
-     this service was signed with, and be the app with identifier com.karimbabasf.phosphor.
-     Nobody without the team's private key can produce that.
+   - Developer ID (a Team ID on this code): the peer must be Apple-anchored, carry a Developer ID
+     certificate chain (the CA at certificate 1 and the leaf marker Apple puts only on a Developer
+     ID Application leaf), carry the Team ID this service was signed with, and be the app with
+     identifier com.karimbabasf.phosphor. The Team ID alone was not enough: any certificate issued
+     to the team (an Apple Development cert from Xcode on any Mac) carries the same OU, so the
+     markers pin the authority to Developer ID, the only kind a shipped build has (audit 2026-10-01,
+     L13). Nobody without the team's Developer ID private key can produce that.
    - Ad-hoc (no Team ID): the peer must carry identifier com.karimbabasf.phosphor. An ad-hoc
      signature is not tied to anyone, so this stops a stray process or a copy of this service
      hosted under another name, and nothing more: a same-user process that builds its own bundle
@@ -333,7 +337,10 @@ func peerRequirement() -> String? {
         let signing = info as? [String: Any]
   else { return nil }
   if let team = signing[kSecCodeInfoTeamIdentifier as String] as? String, !team.isEmpty {
-    return "anchor apple generic and identifier \"\(hostIdentifier)\" and certificate leaf[subject.OU] = \"\(team)\""
+    return "anchor apple generic and identifier \"\(hostIdentifier)\" "
+      + "and certificate 1[field.1.2.840.113635.100.6.2.6] "
+      + "and certificate leaf[field.1.2.840.113635.100.6.1.13] "
+      + "and certificate leaf[subject.OU] = \"\(team)\""
   }
   return "identifier \"\(hostIdentifier)\""
 }
