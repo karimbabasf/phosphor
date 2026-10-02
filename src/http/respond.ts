@@ -93,13 +93,24 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/* AN ANSWER CAN BE REWORDED FOR WHOEVER READS IT, after it is written and before its length is.
+   The agent door registers one (src/http/mcp.ts: a venue's known refusal in the app's words);
+   every other route sends what it built. */
+const rewordings = new WeakMap<http.ServerResponse, (body: string) => string>();
+
+export function rewordAnswer(res: http.ServerResponse, reword: (body: string) => string): void {
+  rewordings.set(res, reword);
+}
+
 /* The identity header rides on every JSON answer too, not only on the page. The shell's enclave
    relay reads it on /api/vault/pending and /api/vault/answer and refuses any answer that does not
    prove this boot's nonce, so a local process that took the port cannot hand the relay a request
    to run against the enclave, nor swallow the answer to one. It was the page's header alone until
    the relay existed; nothing about the page changes. */
 export function sendJson(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
+  const written = JSON.stringify(payload);
+  const reword = rewordings.get(res);
+  const body = reword === undefined ? written : reword(written);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(body),
