@@ -430,8 +430,10 @@ export function createAgents(
     if (origin === 'outside') keys.set(session, keyOf(params.key));
     const allowed = origin === 'app' || allowedNow(session);
     // The mark an outside seat starts with (src/web-read.ts), unless the person already allowed
-    // this very proxy before its seat lapsed.
+    // this very proxy before its seat lapsed. Then a mark another key left on the id while it held
+    // the lapsed seat goes, or every move would wait under an Allow the roster shows (re-audit R-L8).
     if (!allowed) markOutside(session);
+    else if (origin === 'outside') allowOutside(session);
     const stamp = new Date(now()).toISOString();
     const member: AgentMember = {
       session,
@@ -515,6 +517,14 @@ export function createAgents(
       const bound = keys.get(id) || allowances.get(id) || '';
       if (bound !== '' && keyOf(params.key) !== bound) return foreign('that seat belongs to another process. Start your own session.');
       const m = liveOne(id);
+      /* An Allow is the person's answer to one proxy's key. Another key that took the id after the
+         seat lapsed ends its own seat with its bye, and the Allow stays for the proxy it was given
+         to (re-audit R-L8). */
+      const allowedTo = allowances.get(id);
+      if (allowedTo !== undefined && allowedTo !== keyOf(params.key)) {
+        drop(id);
+        return { ok: true, member: m };
+      }
       end(id);
       return { ok: true, member: m };
     },
