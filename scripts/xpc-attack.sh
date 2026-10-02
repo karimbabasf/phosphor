@@ -58,7 +58,7 @@ int main(void) {
     return 1;
 }
 EOF
-clang -fblocks -O2 -o "$work/host" "$work/host.c" src-tauri/src/xpc_bridge.c -framework Security -framework CoreFoundation
+clang -fblocks -O2 -o "$work/host" "$work/host.c" src-tauri/src/xpc_bridge.c src-tauri/src/codesign.c -framework Security -framework CoreFoundation
 
 host_app() { # identifier -> path of a signed host bundle
   dir="$work/$1.app"

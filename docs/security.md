@@ -193,6 +193,12 @@ with the tag file by file and reads the entitlements of every binary in it:
 node scripts/release-check.ts --app /Applications/Phosphor.app --checkout . --stage signed
 ```
 
+The defences in this document are checked by an attack suite the repository ships: `npm run attack`
+runs the app this checkout builds (`npm run app:build` makes the ad-hoc bundle it boots), plays the
+hostile local process against each defence on a throwaway data dir and home, prints a table, and
+exits non-zero on any that does not hold. Add `-- --app <Phosphor.app>` to include the checks that
+need a Developer ID build.
+
 ## The lock
 
 The wallet locks after five minutes with nobody at the window by default (the Vault tab
