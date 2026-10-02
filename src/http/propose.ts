@@ -81,6 +81,7 @@ function sendFacts(proposal: Proposal): { send?: Record<string, unknown> } {
       where: 'network' in draft ? draft.network : 'intents',
       to: draft.to,
       symbol: draft.symbol,
+      ...(draft.fromChain === undefined ? {} : { fromChain: draft.fromChain }),
       amount: draft.amount,
       amountUsd: draft.amountUsd,
       recipient: r === undefined ? null : { known: r.known, count: r.count, lastAt: r.lastAt, ownAddress: r.ownAddress },

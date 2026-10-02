@@ -312,6 +312,9 @@ export type IntentsSendDraft = {
   kind: 'intents_send';
   symbol: string;
   originAsset: string; // the 1Click asset id of the flavor held; the same asset arrives
+  /* The chain the coin that leaves came in on (a registry id), set only when the symbol is held
+     from more than one chain, so the card can say which one goes. Absent otherwise. */
+  fromChain?: string;
   amount: number;
   amountUsd: number;
   minReceived: number; // the least that may be credited to the receiver
@@ -332,6 +335,7 @@ export type IntentsPayDraft = {
   kind: 'intents_pay';
   symbol: string;
   originAsset: string; // the 1Click asset id of the flavor held inside the verifier
+  fromChain?: string; // as on IntentsSendDraft: which chain's coin leaves, when several are held
   /* The real chain the payout lands on, as the one registry ids a chain (src/rails/
      intents-address.ts). Wider than ChainNetwork, which is the six chains this app can also READ
      an address on: a payout needs an address it can decode, and it can decode more chains than
