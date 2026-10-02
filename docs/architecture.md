@@ -253,7 +253,10 @@ starts. A bundle the update key signed but
 another team, or nobody, code-signed is refused, and the window says the update did not pass its
 check and nothing changed. It offers no Try again, since the same bundle would be refused again,
 and offers Open phosphor.money instead, the same fixed address the splash opens for a copy whose
-files changed (`update_get_phosphor`; the page cannot pick the address). `scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
+files changed (`update_get_phosphor`; the page cannot pick the address). A copy in a folder whose
+name holds a quote mark or a backslash is never offered an update, because the updater plugin's
+admin fallback writes the app's path into a shell line run as root (`path_breaks_quoting`).
+`scripts/notarize-mac.sh` signs the app and the DMG with a Developer ID, has Apple
 notarize both and staples the tickets before anything is checksummed, so a first open needs no
 Gatekeeper step.
 
@@ -264,8 +267,7 @@ every release secret and wait for the maintainer's approval; at 0.10.13 the secr
 repository level and the environment asks no approval (see
 [Known limits](known-limits.md#the-release-keys-are-not-behind-an-approval-yet)). Before any key
 is in it, it holds the build job's app to its own checkout (`scripts/release-check.ts`): every
-first-party payload file byte for byte (it skips anything named `.DS_Store`, a folder of that name
-and what is in it included), the payload digest the
+first-party payload file byte for byte (it skips only files named `.DS_Store`), the payload digest the
 shell carries, and the entitlements of every binary, the committed `src-tauri/entitlements.plist`
 on the app's executables and none anywhere else, because `notarize-mac.sh` keeps a nested binary's
 entitlements as it found them. Then it runs

@@ -156,7 +156,9 @@ unfreeze."
 
 Frozen, the button reads Frozen and the policy reads "KILL SWITCH ON: all writes refused." Every
 proposal is refused until you unfreeze, whatever its size, and a move already on its way stops
-at its last step, before it is signed; one signed before you pressed Freeze still lands. The app
+at its last step, before it is signed, whether you clicked it or your rules allowed it; one signed
+before you pressed Freeze still lands. A trading plan stops before it fires, arms or changes its
+orders. The app
 also cancels the orders its own plans have resting, closes every open position on your
 Hyperliquid account when it can reach the venue, including one you opened somewhere else, and
 ends every plan whose position closed. An
@@ -174,7 +176,9 @@ Help in the menu bar opens the documentation, a problem report on GitHub with yo
 macOS version already filled in, the security page, the terms of use and the privacy page, each
 in your browser. Copy Log for a Report, under Report a Problem, puts the newest audit lines on
 the clipboard for the report, with this app's own secrets already removed. The Phosphor menu
-beside it has Check for Updates and Copy MCP Config.
+beside it has Check for Updates and Copy MCP Config. Updates need Phosphor in Applications: a copy
+running from the disk image or an external disk, or from a folder whose name holds a quote mark
+or a backslash, is not offered one, and Check for Updates says to move it into Applications.
 
 ## Next
 

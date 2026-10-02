@@ -156,7 +156,7 @@ still protected. A limit or stop entry rests on the venue and its exits are plac
 anything fills. A plan with conditions waits with nothing at risk until they hold. The runner
 child holds plans by id and refuses any command for one it does not hold; the host decides when.
 Plans persist in `plans.json` beside the policy, and on boot a waiting plan re-arms only if its
-proposal executed with the same hash. The human's own buttons (cancel, close at 100 bps, flatten)
+proposal executed with the same hash and the wallet is open; a touch's lease does not count. The human's own buttons (cancel, close at 100 bps, flatten)
 live on `/api/trade/action`, which the agent's door does not open onto.
 
 | Team tool | Does |
@@ -571,8 +571,8 @@ inside out with the Developer ID from its secrets (hardened runtime, secure time
 notarize the app and the disk image, and staples both. A release without those secrets fails
 before it signs anything. That job installs and builds nothing (the build job, which holds no
 secret, does). Before it signs, it holds the unsigned app to its own checkout with
-`scripts/release-check.ts` (first-party payload files byte for byte, skipping anything named
-`.DS_Store`, a folder of that name included; the digest the shell carries; the committed
+`scripts/release-check.ts` (first-party payload files byte for byte, skipping only files named
+`.DS_Store`; the digest the shell carries; the committed
 entitlements on the app's executables and none on any other binary), and it runs the same check
 on the signed app in the DMG and in the update; the rest of the DMG is the build job's and goes
 unchecked. It deletes the signing keychain right

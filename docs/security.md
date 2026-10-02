@@ -107,9 +107,8 @@ the address, and "Reveal your recovery phrase", or the password typed to see the
 words; none of them opens the wallet, so a locked wallet stays locked, no trading plan re-arms and
 nothing waiting for an unlock runs. The Touch ID that approves a move on a locked wallet opens it
 for that move alone: nothing else can start while it signs, and the key goes as soon as it has.
-Only Unlock opens the wallet for the session. One gap: in the first seconds after the app starts,
-such a touch can let waiting trading plans re-arm, see
-[Known limits](known-limits.md#a-touch-id-while-the-app-starts-can-re-arm-a-plan).
+Only Unlock opens the wallet for the session, and waiting trading plans re-arm only while the
+wallet is open, never on a touch for one move.
 
 Two limits belong here. While the vault is open, the unwrapped wallet key sits in the backend's
 memory as bytes, so the app can sign the moves you approved and the small ones the policy allows.

@@ -16,11 +16,12 @@ gets called an audit until a third party signs it.
 
 ## The key is in memory while the vault is open
 
-Your wallet file is sealed on disk, and on a Mac with a Secure Enclave the seal opens only with
-Touch ID. But while the vault is open the unsealed key sits in the app's memory, because that is
-what signs the moves you approved and the small ones your rules allow. The lock overwrites it, and
-the lock comes after five minutes with nobody at the window (or the time you set in the Vault
-tab), when the Mac wakes from a sleep of more than a minute, when the screen locks or the Mac
+Your wallet file is sealed on disk: a Touch ID wallet to this Mac's Secure Enclave, which opens
+it with Touch ID or your Mac login password, and a password wallet with your password. But while
+the vault is open the unsealed key sits in the app's memory, because that is what signs the moves
+you approved and the small ones your rules allow. The lock overwrites it, along with a key or
+recovery phrase you asked to see and had not read yet. The lock comes after five minutes with
+nobody at the window (or the time you set in the Vault tab), when the Mac wakes from a sleep of more than a minute, when the screen locks or the Mac
 switches to another user, when you close the window, and when you press Lock now. The key stays
 in memory while the Mac sleeps. When the screen locks, the Mac switches user or the window closes,
 a move that has not been signed yet gets its signature first, two minutes at most, while nothing
@@ -36,25 +37,11 @@ only while you are using it.
 What closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself so that
 key never exists as bytes, or a hardware signer. Neither ships here.
 
-## A Touch ID while the app starts can re-arm a plan
-
-For up to 20 seconds after Phosphor starts, its check of your trading plans waits for
-Hyperliquid's first answer. If you approve a move with Touch ID on a locked wallet in that time,
-and the check lands while that move holds the key, every waiting plan re-arms with its trading
-key, as an unlock would.
-
-What it means: a plan you armed earlier can trade again without an unlock, inside the limits you
-armed it with. Its trading key can place and cancel orders and can never withdraw or transfer.
-Freeze stops it.
-
-What closes it: the check arming plans only after an unlock.
-
 ## Two seconds after the backend stops
 
 If a program running as you stops the app's backend and takes its port, the app needs up to two
 seconds to notice. In that time what the window sends goes to that program: a click, or a
-password typed into Unlock. A screen lock in those seconds sends the lock there too, with the
-window token, which no longer opens anything.
+password typed into Unlock, with the window token, which no longer opens anything.
 
 What it means: the program would have to time this to the second, and a password wallet's
 password is what it would be after. If the window suddenly shows the splash, or Phosphor says
@@ -131,27 +118,13 @@ not caught.
 What it means: someone who can change a quote between your Mac and the venue, which takes
 breaking HTTPS or being the venue, can take up to 3 percent of a swap on either route, 1 percent
 of a send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4 percent
-of a Hyperliquid withdrawal, or 1 percent of an invite claim that goes through 1Click. A swap of a
-coin 1Click puts no dollar figure on has no cap at all; on the relay route such a swap waits for
-your click. The same strict check cuts the other way:
+of a Hyperliquid withdrawal, or 1 percent of an invite claim that goes through 1Click. A swap
+1Click puts no dollar figure on has no cap, so it waits for your click on either route. The same
+strict check cuts the other way:
 if 1Click starts sending back a field the app does not know, every quote is refused until
 Phosphor is updated, and nothing moves.
 
 What closes it: the venues signing what they quote, the fee included.
-
-## Some coins take their 1Click id on first sight
-
-A card pins each coin's 1Click id and decimals when it lands, so the coin list cannot change under
-it before you click. For most coins the app's own registry names the id ahead of time. ETH (on
-Ethereum, Base and Arbitrum), SOL, and six registry coins (USDS, PYUSD and USDe on Ethereum, DAI on
-Base and on Arbitrum, PYUSD on Solana) take the id 1Click's coin list gives the first time a card
-is priced.
-
-What it means: someone who can forge 1Click's coin list at that moment, which takes breaking HTTPS
-or being 1Click, could price another coin under one of those names. When 1Click prices both coins,
-its signed figures still hold the swap to the 3 percent floor.
-
-What closes it: the registry naming 1Click's id for every coin it lists.
 
 ## Names a venue lists do not mark the agent
 
@@ -168,14 +141,13 @@ your daily limit.
 Releases are built in a job that holds no secret, and signed in another job that installs and
 builds nothing. Before signing, the release checks that the payload's own files match the tagged
 source and that every program inside carries only the committed entitlements. That check skips
-anything named `.DS_Store`, a folder of that name and what is in it included, and nothing checks
-what else the build put on the disk image beside the app. It cannot vouch for the compiled
+only files named `.DS_Store`, and nothing checks what else the build put on the disk image beside
+the app. It cannot vouch for the compiled
 programs (the shell, the bundled Node, the Secure Enclave service) or for the installed packages,
 and the release build does not repeat CI's check of each package's registry signature.
 
-What it means: a build job someone tampered with could hand the signing job a changed program, a
-file in a `.DS_Store` folder, or an extra file beside the app on the disk image, and it would be
-signed. [Check a release yourself](security.md#check-a-release-yourself) covers the payload's
+What it means: a build job someone tampered with could hand the signing job a changed program or
+an extra file beside the app on the disk image, and it would be signed. [Check a release yourself](security.md#check-a-release-yourself) covers the payload's
 files, not those programs.
 
 What closes it: a build anyone can reproduce byte for byte.
@@ -239,13 +211,9 @@ finds it and marks the code claimed. Restart Phosphor before you ask for a new c
 
 ## One agent can get in the way of another
 
-When an outside agent's seat lapses, another program that read the agent's secret file can take
-its id. Its goodbye then removes your Allow, so the returning agent's moves wait for your click
-again; or the returning agent shows as allowed while every move it asks for waits. Any agent can
-also stop a worker another agent started.
+Any agent can stop a worker another agent started.
 
-What it means: an agent can lose its no-click moves, or a worker its job. None of this moves
-money; each case ends in a move that waits for you.
+What it means: a worker can lose its job before it finishes. That moves no money.
 
 ## The invite tools
 
@@ -255,8 +223,8 @@ only stops a script or an agent from running it by accident: a program that pret
 terminal gets past it and can read what the terminal shows, live links included.
 
 What it means: type the passphrase only in your own Terminal, never through an agent. A convert
-closes on 1Click's word, which is unsigned, so a lying 1Click can mark a convert done or refunded
-before its money reaches the treasury. A Mac clock running fast
+closes on 1Click's word, which is unsigned, so a lying 1Click can mark a convert done before its
+money reaches the treasury; a refund counts only once it shows there. A Mac clock running fast
 and a lying NEAR RPC together can run a batch's rehearsal as well as its real payload: each code
 then holds twice its amount, a claim takes all of it, and `reclaim` takes back what nobody
 claimed. A convert may give up 1 percent of its
