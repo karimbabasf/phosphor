@@ -12,7 +12,8 @@
 // on that session id, and the tool list each announces in its init event is read. The defense:
 // both profiles deny the task tools by name, the launcher passes --tools Read and the driver
 // --tools WebSearch, so neither session holds TaskUpdate and the planted list is never read back.
-// Every child is killed on its init line, before a model request goes out.
+// Every child is killed on its init line, before a model request goes out. The CLI is the one the
+// app would run (resolveClaudeBin); with none on this Mac the case skips and says so.
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -113,11 +114,17 @@ export const attack: AttackCase = {
       const print = ['--print', '--output-format', 'stream-json', '--verbose', '--setting-sources='];
 
       // Control: same HOME, same session id, the operator profile with its deny list emptied, no --tools.
+      // A CLI that cannot start here cannot show the plant either way, so that is a skip, not a FAIL.
       const profile = JSON.parse(fs.readFileSync(path.join(ROOT, 'operator', 'settings.json'), 'utf8'));
       profile.permissions.deny = [];
       const bare = path.join(ctx.scratch, 'nodeny.json');
       fs.writeFileSync(bare, JSON.stringify(profile));
-      const control = builtinsOf(await initOf(bin, [...print, '--settings', bare, '--strict-mcp-config', '--permission-mode', 'dontAsk', '--session-id', sid, 'unused'], env));
+      let control: string[];
+      try {
+        control = builtinsOf(await initOf(bin, [...print, '--settings', bare, '--strict-mcp-config', '--permission-mode', 'dontAsk', '--session-id', sid, 'unused'], env));
+      } catch (e) {
+        return { expected: '', observed: '', pass: true, evidence: '', skipped: `the claude CLI at ${bin} did not start a control session: ${e instanceof Error ? e.message : String(e)}` };
+      }
       const live = TASK_TOOLS.filter(t => control.includes(t));
       if (live.length !== TASK_TOOLS.length) {
         return {
@@ -129,8 +136,15 @@ export const attack: AttackCase = {
         };
       }
 
-      // The real operator launcher, its own flags untouched, print mode through its "$@".
-      const operator = builtinsOf(await initOf(path.join(ROOT, 'operator', 'phosphor-operator'), [...print, '--session-id', sid, 'unused'], env));
+      // The real operator launcher, its own flags untouched, print mode through its "$@". It finds
+      // `claude` and `node` on PATH the way a terminal does, so its PATH starts with a folder holding
+      // the CLI the app found and the node running this suite: the same CLI as the control and the
+      // driver, whatever the PATH this suite was started with.
+      const shim = path.join(ctx.scratch, 'bin');
+      fs.mkdirSync(shim);
+      fs.symlinkSync(bin, path.join(shim, 'claude'));
+      fs.symlinkSync(process.execPath, path.join(shim, 'node'));
+      const operator = builtinsOf(await initOf(path.join(ROOT, 'operator', 'phosphor-operator'), [...print, '--session-id', sid, 'unused'], { ...env, PATH: `${shim}:${env.PATH ?? ''}` }));
 
       // The real driver argv and child environment, on the same session id. The driver reads
       // stream-json from stdin, so one user line goes in; the child is killed at its init line,
@@ -153,7 +167,7 @@ export const attack: AttackCase = {
         expected: 'with the task tools live (control), the operator launcher announces only Read and the driver only WebSearch: no TaskUpdate, so the planted list is never pasted back',
         observed: `control (deny emptied, no --tools) held ${live.join(',')}; operator builtins=${JSON.stringify(operator)}; driver builtins=${JSON.stringify(driver)}, assertSurface offending=${JSON.stringify(offending)}${leaked.length ? `; LEAKED ${leaked.join(',')}` : ''}`,
         pass,
-        evidence: `claude init (HOME=throwaway, ~/.claude/tasks/<sid>/1.json planted, ENABLE_TODO_TOOLS=1): control tools ⊇ ${JSON.stringify(live)}; phosphor-operator tools=${JSON.stringify(operator)}; buildArgv driver tools=${JSON.stringify(driver)}`,
+        evidence: `claude init (${bin}, found as the app finds it; HOME=throwaway, ~/.claude/tasks/<sid>/1.json planted, ENABLE_TODO_TOOLS=1): control tools ⊇ ${JSON.stringify(live)}; phosphor-operator tools=${JSON.stringify(operator)}; buildArgv driver tools=${JSON.stringify(driver)}`,
       };
     } finally {
       await app.stop();
