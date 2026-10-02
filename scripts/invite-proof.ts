@@ -652,6 +652,10 @@ async function init(file: string, net: ProofNet, deps: ProofDeps): Promise<numbe
   deps.out(`Treasury T: ${back.book.treasury.address}`);
   deps.out(`Throwaway receiver: ${back.receiver.address}`);
   deps.out(`Next: send $1 to T with the app's Send. Then: node scripts/invite-proof.ts run --file ${file}`);
+  deps.out(
+    'Any USDC sent inside NEAR Intents works. If it lands as USDC on Base or another chain, run turns it into NEAR USDC through ' +
+      `1Click first and says so; node scripts/invite-proof.ts convert --file ${file} does that step alone.`,
+  );
   return 0;
 }
 

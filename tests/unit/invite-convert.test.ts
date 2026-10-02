@@ -519,3 +519,17 @@ test('status says what other USDC T holds and that convert turns it into NEAR US
   ]);
   assert.equal(b.chain.oneclick.quotes, 0);
 });
+
+test('treasury says what T holds of NEAR USDC and of any other USDC, and that any USDC sent inside NEAR Intents works through convert', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const r = await b.run(['treasury'], [PASS]);
+  assert.equal(r.code, 0, text(r));
+  assert.deepEqual(r.out.slice(2), [
+    'It holds $0.00 of NEAR USDC, the USDC a code holds.',
+    'It also holds $1.00 USDC on Base inside NEAR Intents: `npm run invite -- convert` turns it into NEAR USDC.',
+    "To fund a batch, send T count x amount / 0.9975 plus a cent with the app's Send: 10 codes of $5 is $50.14.",
+    'Any USDC sent inside NEAR Intents works. The Send pays out of whichever USDC the wallet holds, so it may land as USDC on Base or another chain; `npm run invite -- convert` turns that into NEAR USDC first, through 1Click.',
+  ]);
+  assert.equal(b.chain.oneclick.quotes, 0);
+});

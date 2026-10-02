@@ -66,6 +66,12 @@ test('init makes a 0600 proof file outside the repo, prints the two addresses an
   const proof = b.proof();
   assert.ok(r.out.includes(`Treasury T: ${proof.book.treasury.address}`));
   assert.ok(r.out.includes(`Throwaway receiver: ${proof.receiver.address}`));
+  assert.ok(
+    r.out.includes(
+      `Any USDC sent inside NEAR Intents works. If it lands as USDC on Base or another chain, run turns it into NEAR USDC through 1Click first and says so; node scripts/invite-proof.ts convert --file ${b.file} does that step alone.`,
+    ),
+    r.out.join('\n'),
+  );
   assertNothingSpendable(r.out.join('\n'), proof);
 
   const before = fs.readFileSync(b.file);

@@ -131,14 +131,15 @@ you take it back.
 makes T, writes its key to `~/.phosphor-invites/invites.enc.json`, and only then prints T's
 address. The file is mode 0600 and encrypted (AES-256-GCM, its key made by scrypt from a
 passphrase of at least 20 characters that you type on every run and that is stored nowhere).
-Run `treasury` again to see the address and what T holds; it never makes a second T. The file
+Run `treasury` again to see the address and what T holds, NEAR USDC and any other USDC; it never
+makes a second T. The file
 is the only copy of T's key. Lose it and whatever sits in T is gone, while people can still
 claim the codes they hold, so keep T near zero between batches. `--file <path>` or
 `PHOSPHOR_INVITES_FILE` picks another file, never one inside the repo.
 
 Fund T with the app's normal Send, so you read the receiver on the card before you click. That
 send pays 1Click about 0.25 percent, so send count x amount / 0.9975 plus a cent: $50.14 for
-ten $5 codes.
+ten $5 codes. Any USDC sent inside NEAR Intents works, because
 
     npm run invite -- convert
 
