@@ -235,6 +235,21 @@ test('live refusals on record match their venue\'s list, and their sentence carr
   for (const [venue, said, want] of cases) assert.equal(knownRefusal(venue, said), want, said);
 });
 
+test('Hyperliquid\'s refusal for a position past its margin tier is known, as the error table writes it and with a live suffix', () => {
+  // Read from the list, where the venue's sentence is written verbatim, so its spelling lives in one place.
+  const entry = HYPERLIQUID.refusals.find((r) => r.said.startsWith('Order would cause position to exceed margin tier limit at current '));
+  assert.ok(entry !== undefined, 'PerpMaxPosition is on the list');
+  const table = entry.said.replace('[.]', '').replace('[ asset={asset:int}]', '');
+  const want = 'Hyperliquid refused the order because the position would pass the size its margin tier allows';
+  assert.equal(knownRefusal('Hyperliquid', table), want);
+  assert.equal(knownRefusal('Hyperliquid', `${table}. asset=4`), `${want} (asset 4)`);
+  assert.equal(inAppWords(`failed:${venueSaid('Hyperliquid', `${table}. asset=4`)}`), `failed:${want} (asset 4)`);
+  // Anything more in it is not the venue's sentence, and stays quoted.
+  const longer = `failed:${venueSaid('Hyperliquid', `${table}. ${INJ}`)}`;
+  assert.equal(knownRefusal('Hyperliquid', `${table}. ${INJ}`), null);
+  assert.equal(inAppWords(longer), longer);
+});
+
 test('regression: a known refusal with anything more in it, or under another venue\'s name, is not known', () => {
   const near: Array<[string, string]> = [
     ['Hyperliquid', `Order must have minimum value of $10 ${INJ}. asset=4`],

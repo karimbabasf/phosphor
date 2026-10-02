@@ -56,6 +56,10 @@ export const HYPERLIQUID: VenueVocabulary = {
       said: `Order price cannot be more than {pct:int}% away from the reference price[.]${ASSET}`,
       means: (p) => `Hyperliquid refused the order because its price is more than ${p.pct}% away from the reference price${on(p)}`,
     },
+    {
+      said: `Order would cause position to exceed margin tier limit at current leverage[.]${ASSET}`,
+      means: (p) => `Hyperliquid refused the order because the position would pass the size its margin tier allows${on(p)}`,
+    },
     { said: `Order has invalid price.${ASSET}`, means: (p) => `Hyperliquid refused the order because its price is not valid${on(p)}` },
     { said: `Order has invalid size.${ASSET}`, means: (p) => `Hyperliquid refused the order because its size is not valid${on(p)}` },
     { said: `Order has zero size.${ASSET}`, means: (p) => `Hyperliquid refused the order because its size is zero${on(p)}` },
